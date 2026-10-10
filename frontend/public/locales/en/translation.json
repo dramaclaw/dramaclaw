@@ -5559,8 +5559,7 @@
       "doubleClickReplace": "Double-click to replace this reference",
       "clickToPlay": "{{label}} · click to play",
       "replace": "Replace reference",
-      "removePrefix": "Remove prefix",
-      "reshootTimecode": "Reshoot clip time range"
+      "removePrefix": "Remove prefix"
     },
     "naming": {
       "copySuffix": "{{name}} - Copy",
@@ -5672,6 +5671,7 @@
       "defaultSourceName": "the source video",
       "defaultLabel": "video",
       "promptPrefix": "Extend the {{start}}-{{end}} clip of {{name}}: ",
+      "promptPrefixTrimmed": "Extend {{name}}: ",
       "nodeDisplayName": "Extend {{name}}",
       "durationSeconds": "{{seconds}}s",
       "exit": "Exit extend clip selection",
@@ -5679,16 +5679,6 @@
       "endHandle": "Extend clip end",
       "tooShort": "Video is shorter than {{seconds}}s and can't be extended",
       "confirm": "Confirm extend"
-    },
-    "videoReshoot": {
-      "clickToCapture": "Click to capture a new clip",
-      "dragStart": "Drag to adjust the start",
-      "dragEnd": "Drag to adjust the end",
-      "deleteClip": "Delete this clip",
-      "countFullHint": "Reached the {{max}}-clip limit; delete one to add another",
-      "durationFullHint": "Seedance 2.5 caps total clip length at {{seconds}}s and it's full; shorten a clip to add more",
-      "hint": "Click to capture {{clipSeconds}}s, drag either end to fine-tune (each clip ≥ {{clipSeconds}}s, total ≤ {{maxSeconds}}s)",
-      "clipCount": "{{count}}/{{max}} clips"
     }
   },
   "tool": {
@@ -5769,7 +5759,6 @@
       }
     },
     "video": {
-      "reshoot": "Reshoot Clip",
       "hd": "HD",
       "analyze": "Analyze",
       "frameAnalysis": "Frame-by-Frame",
@@ -5790,7 +5779,6 @@
       "fullscreen": "Fullscreen",
       "notImplementedYet": "Coming soon",
       "requiresVideo": "Upload a video first",
-      "reshootRequiresSeedance25": "Reshoot Clip requires Seedance 2.5, which is not enabled for this project",
       "extendRequiresSeedance25": "Smart Extend requires Seedance 2.5, which is not enabled for this project",
       "extendPickHint": "Select the clip to extend from"
     },
@@ -6492,8 +6480,6 @@
       },
       "videoLoadFailed": "Video failed to load",
       "depthCapture": {
-        "preparing": "Loading depth model…",
-        "processing": "Capturing depth {{percent}}%",
         "failed": "Depth capture failed",
         "interrupted": "Processing was interrupted (page reloaded or closed). You can capture again.",
         "retry": "Capture again",
@@ -6888,7 +6874,6 @@
       },
       "extendLockReason": "Smart extend only supports Seedance 2.5's all-reference mode",
       "extendPlaceholder": "Enter what you want to extend with",
-      "reshootLockedReason": "Reshoot only supports Seedance 2.5",
       "modeRestrictedDefault": "This node doesn't support switching generation mode"
     },
     "threeDWorld": {

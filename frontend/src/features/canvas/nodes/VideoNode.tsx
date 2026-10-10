@@ -79,7 +79,7 @@ import {
   MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
   referenceDurationLimitsMs,
-  findReshootVideoModel,
+  findSeedance25VideoModel,
   isHappyHorseVideoModel,
   isSeedance2VideoModel,
   isSeedance25VideoModel,
@@ -209,21 +209,15 @@ import { VideoExtendPanel } from "@/features/canvas/nodes/VideoExtendPanel";
 import {
   extendNodeDisplayName,
   extendPromptPrefix,
+  extendPromptPrefixTrimmed,
+  extendRangeNeedsTrim,
   type ExtendClipRange,
 } from "@/features/canvas/application/videoExtendClip";
+import { trimAndUploadExtendClip } from "@/features/canvas/application/videoExtendTrim";
 import {
   submitVideoUpscale,
   VIDEO_UPSCALE_RESOLUTIONS,
 } from "@/features/canvas/application/videoUpscale";
-import {
-  RESHOOT_TIMELINE_HEIGHT,
-  VideoReshootTimeline,
-} from "@/features/canvas/nodes/VideoReshootTimeline";
-import {
-  pruneReshootClipsByPrompt,
-  syncReshootPrompt,
-  type VideoReshootClip,
-} from "@/features/canvas/application/videoReshootClips";
 import {
   CAMERA_MOVEMENT_PRESETS,
   findCameraMovementPreset,
@@ -856,6 +850,18 @@ export const VideoNode = memo(
           ? node.data.durationMs
           : null,
       );
+      // 续写提交前会把选区真截出来顶替第一条视频素材，估价按截出来的那段算。
+      if (
+        data.isExtendMode &&
+        typeof data.extendStartMs === "number" &&
+        typeof data.extendEndMs === "number" &&
+        extendRangeNeedsTrim(
+          { startMs: data.extendStartMs, endMs: data.extendEndMs },
+          durations[0],
+        )
+      ) {
+        durations[0] = data.extendEndMs - data.extendStartMs;
+      }
       const ready = durations.every((duration) => duration != null);
       return {
         present: true,
@@ -864,7 +870,15 @@ export const VideoNode = memo(
           ? durations.reduce((sum, duration) => sum + (duration ?? 0), 0) / 1000
           : 0,
       };
-    }, [data.referenceOrder, genMode, selectedVideoModel, upstreamNodes]);
+    }, [
+      data.extendEndMs,
+      data.extendStartMs,
+      data.isExtendMode,
+      data.referenceOrder,
+      genMode,
+      selectedVideoModel,
+      upstreamNodes,
+    ]);
     useEffect(() => {
       const patch: Partial<VideoNodeData> = {};
       if (data.quality !== quality) {
@@ -1151,65 +1165,6 @@ export const VideoNode = memo(
     const durationMs =
       typeof data.durationMs === "number" ? data.durationMs : null;
 
-    // 片段重拍：轨道上截出来的区间即是要交给模型的指令，所以每次变动都把时间码
-    // 同步进 prompt（新增追加 / 拖动改写 / 删除摘掉），用户手写的正文原样保留。
-    const isReshootMode = Boolean(data.isReshootMode);
-    const reshootClips = useMemo(
-      () => (Array.isArray(data.reshootClips) ? data.reshootClips : []),
-      [data.reshootClips],
-    );
-    const handleReshootClipsChange = useCallback(
-      (next: VideoReshootClip[]) => {
-        updateNodeData(id, {
-          reshootClips: next,
-          prompt: syncReshootPrompt(
-            typeof data.prompt === "string" ? data.prompt : "",
-            reshootClips,
-            next,
-          ),
-        });
-      },
-      [data.prompt, id, reshootClips, updateNodeData],
-    );
-    // 反过来：用户在输入框里删掉某行时间码（chip 上的 × 或退格），轨道上那段也撤掉。
-    // 不撤的话它还留在轨道上，一拖又把时间码写回 prompt，用户会觉得根本删不掉。
-    useEffect(() => {
-      if (!isReshootMode || reshootClips.length === 0) return;
-      const pruned = pruneReshootClipsByPrompt(prompt, reshootClips);
-      // 引用没变 = 一段都没少，别白写一次 store（否则每敲一个字都要过一遍）。
-      if (pruned !== reshootClips) {
-        updateNodeData(id, { reshootClips: pruned });
-      }
-    }, [id, isReshootMode, prompt, reshootClips, updateNodeData]);
-
-    // 片段重拍只有「Seedance 2.5 + 视频编辑」这一条路：时间码是写给它的视频编辑的
-    // 指令，落到别的模式上等于把时间码当普通提示词发出去。面板里模型选择器是锁死的、
-    // 功能切换整块不显示，所以这里是这两个值在重拍节点上的**唯一作者**——别处再写
-    // 就会两边对着改（见下方 videos→allReference 那条 effect 的注释）。
-    //
-    // 模型也一并纠正：节点存的是目录条目 id，目录换了或这条被删掉时解析会回退成列表
-    // 第一个模型（很可能不支持视频编辑），而选择器锁着，用户没有任何手段把它改回来。
-    useEffect(() => {
-      if (!isReshootMode) return;
-      if (videoModelsLoading) return;
-      const patch: Record<string, unknown> = {};
-      if (genMode !== "videoEdit") patch.genMode = "videoEdit";
-      const reshootModel = findReshootVideoModel(availableVideoModels);
-      if (reshootModel && !isSeedance25VideoModel(selectedVideoModelId)) {
-        patch.model = reshootModel.id;
-      }
-      if (Object.keys(patch).length === 0) return;
-      updateNodeData(id, patch);
-    }, [
-      availableVideoModels,
-      genMode,
-      id,
-      isReshootMode,
-      selectedVideoModelId,
-      updateNodeData,
-      videoModelsLoading,
-    ]);
-
     const resolvedTitle = useMemo(
       () => localizeNodeDisplayName(CANVAS_NODE_TYPES.video, data, t),
       [data, t],
@@ -1235,6 +1190,38 @@ export const VideoNode = memo(
           )
         : null;
 
+    // 提交时真正拼进 prompt 的前缀。选区只是源视频的一部分时，提交前会把这一段
+    // 截出来当素材（见 handleSubmit），模型看到的片段从 0 秒起，时间码不再成立。
+    const extendRange: ExtendClipRange | null =
+      isExtendMode &&
+      typeof data.extendStartMs === "number" &&
+      typeof data.extendEndMs === "number"
+        ? { startMs: data.extendStartMs, endMs: data.extendEndMs }
+        : null;
+    const extendSourceDurationMs = useMemo(() => {
+      if (!extendRange) return null;
+      const source = sortUpstreamByReferenceOrder(
+        upstreamNodes,
+        data.referenceOrder,
+      ).find((node) => Boolean(referenceVideoUrl(node)));
+      const duration = source?.data.durationMs;
+      return typeof duration === "number" && duration > 0 ? duration : null;
+      // extendRange 每次渲染都是新对象，这里只关心它有没有。
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [Boolean(extendRange), data.referenceOrder, upstreamNodes]);
+    const extendTrimRange =
+      extendRange && extendRangeNeedsTrim(extendRange, extendSourceDurationMs)
+        ? extendRange
+        : null;
+    const extendTrimStartMs = extendTrimRange?.startMs ?? null;
+    const extendTrimEndMs = extendTrimRange?.endMs ?? null;
+    const extendSubmitPrefix =
+      extendPrefixText !== null && extendTrimRange
+        ? extendPromptPrefixTrimmed(
+            typeof data.extendSourceName === "string" ? data.extendSourceName : "",
+          )
+        : extendPrefixText;
+
     const handleExtendExit = useCallback(() => {
       updateNodeData(id, { isExtendPickMode: false });
     }, [id, updateNodeData]);
@@ -1247,7 +1234,7 @@ export const VideoNode = memo(
           DEFAULT_WIDTH,
           DEFAULT_HEIGHT,
         );
-        const extendModel = findReshootVideoModel(availableVideoModels);
+        const extendModel = findSeedance25VideoModel(availableVideoModels);
         const newNodeId = addNode(CANVAS_NODE_TYPES.video, position, {
           displayName: extendNodeDisplayName(resolvedTitle),
           isExtendMode: true,
@@ -1280,7 +1267,7 @@ export const VideoNode = memo(
       ],
     );
 
-    // 续写节点上模型 / 模式的**唯一作者**（同上面 isReshootMode 那条）：面板里
+    // 续写节点上模型 / 模式的**唯一作者**：面板里
     // 其他模型和其他模式只是灰掉、不是不存在，而目录换版或这条被下架时解析会
     // 回退成列表第一个模型，得在这里纠回来。
     useEffect(() => {
@@ -1288,7 +1275,7 @@ export const VideoNode = memo(
       if (videoModelsLoading) return;
       const patch: Record<string, unknown> = {};
       if (genMode !== "allReference") patch.genMode = "allReference";
-      const extendModel = findReshootVideoModel(availableVideoModels);
+      const extendModel = findSeedance25VideoModel(availableVideoModels);
       if (extendModel && !isSeedance25VideoModel(selectedVideoModelId)) {
         patch.model = extendModel.id;
       }
@@ -1808,7 +1795,6 @@ export const VideoNode = memo(
         hasAudioUpstream &&
         data.genMode !== "allReference" &&
         !(data.genMode === "videoEdit" && videoEditAcceptsAudio) &&
-        !isReshootMode &&
         !isHappyHorseModel &&
         supportsAllReference
       ) {
@@ -1819,7 +1805,6 @@ export const VideoNode = memo(
       hasAudioUpstream,
       id,
       isHappyHorseModel,
-      isReshootMode,
       supportsAllReference,
       updateNodeData,
       videoEditAcceptsAudio,
@@ -1889,7 +1874,6 @@ export const VideoNode = memo(
     useEffect(() => {
       if (upstreamCounts.videos === 0) return;
       if (isHappyHorseModel) return;
-      if (isReshootMode) return;
       if (genMode === "videoEdit" && supportsVideoEdit) return;
       if (genMode === "videoExtend" && supportsVideoExtend) return;
       if (!supportsAllReference) return;
@@ -1900,7 +1884,6 @@ export const VideoNode = memo(
       genMode,
       id,
       isHappyHorseModel,
-      isReshootMode,
       supportsAllReference,
       supportsVideoEdit,
       supportsVideoExtend,
@@ -2509,8 +2492,8 @@ export const VideoNode = memo(
         : userPrompt;
       // 续写的时间码指令是渲染层挂在输入框里的只读前缀（不在 data.prompt 里，
       // 免得一个退格就啃掉半句），提交时才拼到最前面，模型才知道从哪一段往后接。
-      const fallbackPrompt = extendPrefixText
-        ? `${extendPrefixText}${composedPromptBody}`
+      const fallbackPrompt = extendSubmitPrefix
+        ? `${extendSubmitPrefix}${composedPromptBody}`
         : composedPromptBody;
       try {
         const composedPrompt = await compileWorkflowNodePrompt({
@@ -2944,6 +2927,20 @@ export const VideoNode = memo(
             });
             return;
           }
+          // 智能续写：选区只是源视频的一部分时，把这一段真截出来顶替整条源视频。
+          // 源视频是连进来的第一条视频素材（建续写节点时连的那根边）。放在时长校验
+          // 之前——校验该看的是截出来的这段，不是整条源视频。
+          if (extendTrimStartMs !== null && extendTrimEndMs !== null && videoRefs.length > 0) {
+            const sourceRef = videoRefs[0];
+            const trimmed = await trimAndUploadExtendClip({
+              projectId,
+              videoUrl: sourceRef.url,
+              range: { startMs: extendTrimStartMs, endMs: extendTrimEndMs },
+            });
+            const reference = references.find((item) => item.type === "video");
+            if (reference) reference.url = trimmed.url;
+            videoRefs[0] = { ...sourceRef, url: trimmed.url, durationMs: trimmed.durationMs };
+          }
           if (!(await validateReferenceDurations("audio", audioRefs))) return;
           if (!(await validateReferenceDurations("video", videoRefs))) return;
           doSubmit = (targetId) =>
@@ -3202,7 +3199,9 @@ export const VideoNode = memo(
       data.referenceOrder,
       durationBounds,
       durationSec,
-      extendPrefixText,
+      extendSubmitPrefix,
+      extendTrimEndMs,
+      extendTrimStartMs,
       generateAudio,
       genMode,
       humanReview,
@@ -3319,29 +3318,6 @@ export const VideoNode = memo(
       !data.referenceOnly &&
       // 视频高清节点用自己的 VideoUpscaleEditorOverlay 配置面板，不走常规生成面板。
       !data.isUpscaleNode;
-
-    // 剪辑 / 去字幕 / 画册都会占用节点底下那块位置，轨道让位给当前正在用的那个。
-    // 另外时间码是喂给 Seedance 2.5 视频编辑的，用户在这个节点上把模型换成别的，
-    // 轨道就得收起来 —— 留着只会截出一串没人消费的区间。已截的片段不清空：切回
-    // 2.5 立刻原样回来，prompt 里那几行时间码也一直在，两边始终对得上。
-    const showReshootTimeline =
-      // 只在选中这个节点时才挂出来：轨道是外挑 240px 的一长条，节点没被选中还
-      // 铺在那儿的话，画布上一排视频节点就会拖出一串谁也不看的轨道，互相压叠。
-      // 跟着它定位的操作面板 / 历史面板本来就只在 selected 时出现，收起来正好对齐。
-      selected &&
-      !isBoxSelecting &&
-      isReshootMode &&
-      isSeedance25VideoModel(selectedVideoModelId) &&
-      Boolean(videoSource) &&
-      !isClipMode &&
-      !isCropMode &&
-      !isExtendPickMode &&
-      !subtitleEraseMode &&
-      !albumExpanded;
-    // 轨道占掉的高度：下面的操作面板 / 历史面板都相对节点底边定位，得一起往下让。
-    const reshootOffset = showReshootTimeline
-      ? RESHOOT_TIMELINE_HEIGHT + OPERATIONS_PANEL_GAP
-      : 0;
 
     const handleCaptureFrame = useCallback(
       async (mode: "first" | "last" | "current") => {
@@ -3978,28 +3954,6 @@ export const VideoNode = memo(
           </div>
         )}
 
-        {/* 片段重拍的时间轨道：独立一条挂在卡片外面（画面 → 轨道 → 操作面板），
-            压在画面上会挡住正在对照的镜头，也不好跟下方 prompt 一起看。 */}
-        {showReshootTimeline && (
-          <div
-            className="absolute z-10"
-            style={{
-              top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
-              // 跟操作面板同宽（两边各外挑一截）：轨道越宽，同样的秒数摊到的像素
-              // 越多，截片段才好下手；顺带跟下面的 prompt 面板对齐成一根竖线。
-              left: -panelOverhang,
-              right: -panelOverhang,
-            }}
-          >
-            <VideoReshootTimeline
-              videoUrl={videoSource!}
-              durationMs={durationMs}
-              clips={reshootClips}
-              onChange={handleReshootClipsChange}
-            />
-          </div>
-        )}
-
         {isClipMode && videoSource && (
           <div
             // 剪辑条宽度由素材时长决定（见 VideoClipPanel 的 trackMinWidth），
@@ -4124,7 +4078,6 @@ export const VideoNode = memo(
             selectedModelReferenceError={selectedModelReferenceError}
             mediaRejectionReason={mediaRejectionReason}
             expanded={panelExpanded}
-            topOffset={reshootOffset}
             onExpandedChange={setPanelExpanded}
             onSubmit={handleSubmit}
           />
@@ -4144,7 +4097,7 @@ export const VideoNode = memo(
             <div
               className={`nodrag absolute z-[300] rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS} ${NODE_OPS_PANEL_ENTER_CLASS} px-3 py-2`}
               style={{
-                top: `calc(100% + ${OPERATIONS_PANEL_GAP * 2 + panelHeight + reshootOffset}px)`,
+                top: `calc(100% + ${OPERATIONS_PANEL_GAP * 2 + panelHeight}px)`,
                 left: -panelOverhang,
                 right: -panelOverhang,
               }}

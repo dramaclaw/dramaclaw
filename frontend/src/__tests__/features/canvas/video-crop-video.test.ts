@@ -155,6 +155,17 @@ describe("cropVideoBlob", () => {
     expect(mb.disposed).toBe(1);
   });
 
+  it("trims a time range without cropping the frame", async () => {
+    const result = await cropVideoBlob({
+      blob: new Blob(["src"]),
+      trim: { startMs: 5_000, endMs: 10_000 },
+    });
+
+    expect(mb.initArgs[0]).toMatchObject({ trim: { start: 5, end: 10 } });
+    expect((mb.initArgs[0] as { video: Record<string, unknown> }).video).not.toHaveProperty("crop");
+    expect(result).toMatchObject({ width: 720, height: 1280, durationMs: 5_000 });
+  });
+
   it("re-encodes non web-safe audio to AAC", async () => {
     mb.audioCodec = "pcm-s16";
     await run();

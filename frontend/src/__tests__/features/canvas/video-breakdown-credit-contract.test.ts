@@ -88,7 +88,10 @@ describe("canvas video breakdown credit contract", () => {
       toolbarSource.indexOf('key="video-frame-analysis"'),
       toolbarSource.indexOf('key="video-subtitle-removal"'),
     );
-    expect(entry).toContain("isCropMode: true");
+    // 进入裁切的实现提在组件层的 handleOpenVideoCrop（agent 的 open_video_crop_tool
+    // 也走它），下拉项只负责进/退切换。
+    expect(entry).toContain("handleOpenVideoCrop();");
+    expect(toolbarSource).toContain("isCropMode: true");
     expect(entry).not.toContain('handleVideoStub("frame-crop")');
   });
 
@@ -121,22 +124,21 @@ describe("canvas video breakdown credit contract", () => {
     expect(frameAnalysisEntry).toContain("guardVideoCropInFlight(node.id)");
     expect(toolbarSource).toMatch(
       flexible(
-        "if (guardVideoCropInFlight(node.id)) return; updateNodeData(node.id, { isExtendPickMode: true, isCropMode: false });",
+        "if (guardVideoCropInFlight(node.id)) return; handleOpenVideoExtend();",
       ),
+    );
+    expect(toolbarSource).toMatch(
+      flexible("updateNodeData(node.id, { isExtendPickMode: true, isCropMode: false });"),
     );
   });
 
-  it("keeps the reshoot entry off the toolbar and leaves smart extend standalone", () => {
-    // 片段重拍下线：整片编辑改不到指定区间，等按「裁剪→分段编辑→拼接」重做。
-    // 入口一摘，下拉只剩续写一项就没必要了，续写退回单颗按钮。
-    expect(toolbarSource).not.toContain('key="video-reshoot"');
-    expect(toolbarSource).not.toContain("handleVideoReshoot");
+  it("keeps smart extend as a standalone toolbar button", () => {
     const entry = toolbarSource.slice(
       toolbarSource.indexOf('key="video-extend"'),
       toolbarSource.indexOf('key="video-hd"'),
     );
     expect(entry).toContain("handleVideoExtendPick();");
-    expect(entry).toContain("!hasVideo || !reshootModel");
+    expect(entry).toContain("!hasVideo || !extendModel");
   });
 
   it("clears isCropMode from both subtitle-erase entries", () => {

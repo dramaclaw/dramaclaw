@@ -203,26 +203,6 @@ function buildChipElement(candidate: MentionCandidate): HTMLElement {
   return span;
 }
 
-/**
- * 片段重拍写进 prompt 的时间码（`00:24-00:29`）。它不是 @ 引用，没有候选项，
- * 但对用户来说同样是「一块引用」——渲染成 chip，才看得出这行不是随手打的文字，
- * 也才能一键整块删掉。序列化仍还原成纯文本，后端拿到的 prompt 不变。
- */
-const TIMECODE_SOURCE = '\\d{2}:\\d{2}-\\d{2}:\\d{2}';
-
-function buildTimecodeChipElement(token: string): HTMLElement {
-  const span = document.createElement('span');
-  span.contentEditable = 'false';
-  span.dataset.timecode = token;
-  span.className = 'mention-chip mention-chip-timecode';
-  span.title = i18n.t('canvas.mentionChip.reshootTimecode');
-  const labelEl = document.createElement('span');
-  labelEl.className = 'mention-chip-label';
-  labelEl.textContent = token;
-  span.appendChild(labelEl);
-  return span;
-}
-
 function buildPrefixElement(prefix: PromptEditorPrefix, removable: boolean): HTMLElement {
   const span = document.createElement('span');
   span.contentEditable = 'false';
@@ -274,40 +254,7 @@ function buildPrefixElement(prefix: PromptEditorPrefix, removable: boolean): HTM
   return span;
 }
 
-/**
- * 光标紧贴着的时间码 chip：退格看它前面那个，Delete 看后面那个；不贴着返回 null。
- *
- * 为什么要自己判而不靠浏览器：`contenteditable=false` 的行内块在各家实现里删起来
- * 并不一致——有的一下删掉、有的先整块选中要按两下、有的干脆不动。时间码对用户来说
- * 就是一段文字，得按一下就没，所以这里接管。
- */
-function adjacentTimecodeChip(direction: 'backward' | 'forward'): HTMLElement | null {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return null;
-  const range = selection.getRangeAt(0);
-  const node = range.startContainer;
-  const offset = range.startOffset;
-
-  let target: Node | null = null;
-  if (node.nodeType === Node.TEXT_NODE) {
-    // 只有贴着文本节点的边缘才算「紧贴」——中间还有字符时该删字符，不该删 chip。
-    const text = node as Text;
-    if (direction === 'backward') {
-      if (offset !== 0) return null;
-      target = text.previousSibling;
-    } else {
-      if (offset !== (text.textContent?.length ?? 0)) return null;
-      target = text.nextSibling;
-    }
-  } else {
-    const children = node.childNodes;
-    target =
-      direction === 'backward' ? (children[offset - 1] ?? null) : (children[offset] ?? null);
-  }
-  return target instanceof HTMLElement && target.dataset.timecode ? target : null;
-}
-
-/** 光标是不是就贴在前缀 chip 后面。判定方式与 [[adjacentTimecodeChip]] 同源。 */
+/** 光标是不是就贴在前缀 chip 后面。 */
 function adjacentPrefixChip(): HTMLElement | null {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return null;
@@ -402,27 +349,20 @@ function rebuildDOM(
     .map((c) => c.name)
     .filter((n) => n.length > 0)
     .sort((a, b) => b.length - a.length);
-  // 没有任何 @ 候选时也要认时间码——片段重拍的节点常常一个引用都还没接。
-  const mentionSource =
-    names.length > 0 ? '@(' + names.map(escapeRegex).join('|') + ')' : null;
-  const pattern = new RegExp(
-    [mentionSource, `(${TIMECODE_SOURCE})`].filter(Boolean).join('|'),
-    'g',
-  );
-  // 少了 mention 那一组时，捕获组会整体前移一位。
-  const timecodeGroup = mentionSource ? 2 : 1;
+  if (names.length === 0) {
+    appendTextWithLineBreaks(root, text);
+    return;
+  }
+  const pattern = new RegExp('@(' + names.map(escapeRegex).join('|') + ')', 'g');
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
     if (match.index > lastIndex) {
       appendTextWithLineBreaks(root, text.slice(lastIndex, match.index));
     }
-    const timecode = match[timecodeGroup];
-    const name = mentionSource ? match[1] : undefined;
-    const candidate = name ? candidates.find((c) => c.name === name) : undefined;
-    if (timecode) {
-      root.appendChild(buildTimecodeChipElement(timecode));
-    } else if (candidate) {
+    const name = match[1];
+    const candidate = candidates.find((c) => c.name === name);
+    if (candidate) {
       root.appendChild(buildChipElement(candidate));
     } else {
       appendTextWithLineBreaks(root, match[0]);
@@ -447,10 +387,6 @@ function serialize(root: HTMLElement): string {
     if (el.dataset.leadChip !== undefined) return;
     if (el.dataset.mention) {
       out += '@' + (el.dataset.name ?? '');
-      return;
-    }
-    if (el.dataset.timecode) {
-      out += el.dataset.timecode;
       return;
     }
     // 前缀只渲染不入库：它由调用方在提交时拼，序列化进 value 会被当成用户输入
@@ -966,34 +902,11 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
         if (event.key === 'Escape') {
           setHover(null);
         }
-        // 退格 / Delete 吃掉紧邻的时间码 chip：一下删干净，光标停在它原来的位置，
-        // 接着按就继续往前删（含它独占的那个换行）——跟删一段普通文字的手感一致。
         // 前缀不可删：它在 DOM 里就是个 contenteditable=false 的行内块，各家浏览器
         // 对退格吃掉这种块的处理并不一致，删掉之后 value 又不含它，重建时补不回来。
         if (event.key === 'Backspace' && adjacentPrefixChip()) {
           event.preventDefault();
           return;
-        }
-        if (event.key === 'Backspace' || event.key === 'Delete') {
-          const chip = adjacentTimecodeChip(
-            event.key === 'Backspace' ? 'backward' : 'forward',
-          );
-          if (chip?.parentNode) {
-            event.preventDefault();
-            const parent = chip.parentNode;
-            const index = Array.prototype.indexOf.call(parent.childNodes, chip);
-            chip.remove();
-            // range 必须在移除之后按「父节点 + 下标」重建：先 setStartBefore(chip)
-            // 再删，光标锚点会跟着 chip 一起失效。
-            const range = document.createRange();
-            range.setStart(parent, index);
-            range.collapse(true);
-            const selection = window.getSelection();
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-            commitChange();
-            return;
-          }
         }
         onKeyDown?.(event);
       },

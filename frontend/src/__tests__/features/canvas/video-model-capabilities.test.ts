@@ -17,7 +17,7 @@ import {
   isSeedance25VideoModel,
   isSeedance2VideoModel,
   isVideoModeSupportedByModel,
-  findReshootVideoModel,
+  findSeedance25VideoModel,
   videoOutputFollowsSourceVideo,
   referenceDurationLimitsMs,
   resolveVideoKeyframeUrls,
@@ -103,7 +103,7 @@ describe("video model family detection", () => {
   });
 });
 
-describe("findReshootVideoModel — 片段重拍只认 Seedance 2.5", () => {
+describe("findSeedance25VideoModel — 智能续写只认 Seedance 2.5", () => {
   it("picks the 2.5 entry out of a mixed catalog by apiModel", () => {
     const models = [
       { id: "cat-fast", apiModel: SEEDANCE2_FAST },
@@ -111,22 +111,22 @@ describe("findReshootVideoModel — 片段重拍只认 Seedance 2.5", () => {
       { id: "cat-hh", apiModel: HAPPYHORSE },
     ];
     // 返回的是目录条目本身（`id` 才是要写进 VideoNodeData.model 的值，不是 apiModel）。
-    expect(findReshootVideoModel(models)?.id).toBe("cat-25");
+    expect(findSeedance25VideoModel(models)?.id).toBe("cat-25");
   });
 
   it("falls back to id when the catalog entry carries no apiModel", () => {
-    expect(findReshootVideoModel([{ id: "seedance-2.5" }])?.id).toBe("seedance-2.5");
+    expect(findSeedance25VideoModel([{ id: "seedance-2.5" }])?.id).toBe("seedance-2.5");
   });
 
   it("returns null when the project catalog has no 2.5 at all", () => {
     // 目录里没上 2.5 → 入口该置灰，而不是随便挑个 2.0 顶上。
     expect(
-      findReshootVideoModel([
+      findSeedance25VideoModel([
         { id: "cat-fast", apiModel: SEEDANCE2_FAST },
         { id: "cat-hh", apiModel: HAPPYHORSE },
       ]),
     ).toBeNull();
-    expect(findReshootVideoModel([])).toBeNull();
+    expect(findSeedance25VideoModel([])).toBeNull();
   });
 });
 

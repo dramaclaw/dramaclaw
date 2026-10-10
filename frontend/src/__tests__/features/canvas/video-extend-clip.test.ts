@@ -9,9 +9,19 @@ import {
   extendClipBoundMessage,
   extendNodeDisplayName,
   extendPromptPrefix,
+  extendRangeNeedsTrim,
+  formatTimecode,
   isExtendRangeSubmittable,
   resolveExtendRange,
 } from '@/features/canvas/application/videoExtendClip';
+
+describe('formatTimecode', () => {
+  it('按 mm:ss 显示，分钟不截断', () => {
+    expect(formatTimecode(0)).toBe('00:00');
+    expect(formatTimecode(6_000)).toBe('00:06');
+    expect(formatTimecode(75_000)).toBe('01:15');
+  });
+});
 
 describe('defaultExtendRange', () => {
   it('长素材贴着片尾取 30s —— 续写是从这段结尾往后接', () => {
@@ -119,5 +129,24 @@ describe('前缀与节点名', () => {
 
   it('节点名就是「续写 + 源视频名」', () => {
     expect(extendNodeDisplayName('视频 (2)')).toBe('续写 视频 (2)');
+  });
+});
+
+describe('extendRangeNeedsTrim', () => {
+  it('源视频 30.08s、只选了 25-30s：必须截，否则整条发出去会超模型 30s 上限', () => {
+    expect(extendRangeNeedsTrim({ startMs: 25_000, endMs: 30_000 }, 30_080)).toBe(true);
+  });
+
+  it('选区就是整条（贴边差一两帧也算）时不白转一遍', () => {
+    expect(extendRangeNeedsTrim({ startMs: 0, endMs: 15_070 }, 15_070)).toBe(false);
+    expect(extendRangeNeedsTrim({ startMs: 20, endMs: 15_040 }, 15_070)).toBe(false);
+  });
+
+  it('源时长没读出来时按需要截处理', () => {
+    expect(extendRangeNeedsTrim({ startMs: 0, endMs: 5_000 }, null)).toBe(true);
+  });
+
+  it('空选区不截', () => {
+    expect(extendRangeNeedsTrim({ startMs: 0, endMs: 0 }, 10_000)).toBe(false);
   });
 });

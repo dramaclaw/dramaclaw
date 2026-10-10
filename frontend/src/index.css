@@ -533,17 +533,6 @@
   display: inline-flex;
 }
 
-/* 片段重拍的时间码：比普通 mention 深一档，一眼看出是区间引用而不是用户手打的
-   数字。不配图标——等宽数字本身已经足够辨识，加图标反而把这一行撑得很杂。 */
-.mention-chip-timecode {
-  background: rgba(0, 0, 0, 0.42);
-  font-variant-numeric: tabular-nums;
-}
-
-.mention-chip-timecode:hover {
-  background: rgba(0, 0, 0, 0.55);
-}
-
 /* 音频引用：可点击的 ▶ / ⏸ 播放按钮（无缩略图）。 */
 .mention-chip-audio-play {
   display: inline-flex;

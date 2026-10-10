@@ -7,7 +7,6 @@ import type {
   DirectorWorldSource,
 } from '@/features/viewer-kit/three-d/directorManifest';
 import type { KeyElementCategory } from './keyElements';
-import type { VideoReshootClip } from '@/features/canvas/application/videoReshootClips';
 
 export const CANVAS_NODE_TYPES = {
   vectorSvg: 'vectorSvgNode',
@@ -193,15 +192,6 @@ export interface VideoNodeData extends NodeDisplayData {
    * 与 isClipMode / isExtendPickMode / subtitleEraseMode 互斥。
    */
   isCropMode?: boolean;
-  // reshoot clips (libtv-style 片段重拍) --------------------------------------
-  /**
-   * 「片段重拍」产出的下游节点：视频本体下面挂一条时间轨道，最多截 5 段，
-   * 截出来的时间码自动写进 prompt 当作重拍指令。与 isClipMode 互斥 ——
-   * 后者是把视频真裁开，这里只标注区间，视频本身不动。
-   */
-  isReshootMode?: boolean;
-  /** 见 [[videoReshootClips]]；顺序按 startMs 升序，互不重叠。 */
-  reshootClips?: VideoReshootClip[];
   // smart extend (libtv-style 智能续写) --------------------------------------
   /**
    * **源**视频节点上的临时态：正在截「续写前置视频」，卡片底下挂选段轨道。

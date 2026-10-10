@@ -7,6 +7,8 @@ type NodeGenerationOverlayProps = {
   startedAt?: number | null;
   /** 预估生成总时长(毫秒),用于模拟进度推进。 */
   durationMs?: number;
+  /** 真实进度(0-100)。传入时直接显示它,不再用时间估算。 */
+  percent?: number;
   /** @deprecated 仅保留兼容旧调用，加载态不再绘制背景遮罩。 */
   hasBackground?: boolean;
   /** 圆角,默认跟随节点圆角变量。 */
@@ -24,12 +26,21 @@ const DEFAULT_DURATION_MS = 60000;
 export function NodeGenerationOverlay({
   startedAt = null,
   durationMs = DEFAULT_DURATION_MS,
+  percent: actualPercent,
   hasBackground: _hasBackground = false,
   rounded = 'rounded-[var(--node-radius)]',
   messageKey: _messageKey = 'canvas.generationProgress',
 }: NodeGenerationOverlayProps) {
   // 估算算法抽到 useEstimatedProgress，与故事板卡片/详情共用。
-  const percent = useEstimatedProgress(startedAt, durationMs);
+  const estimatedPercent = useEstimatedProgress(
+    startedAt,
+    durationMs,
+    actualPercent !== undefined,
+  );
+  const percent =
+    actualPercent === undefined
+      ? estimatedPercent
+      : Math.min(100, Math.max(0, Math.round(actualPercent)));
 
   return (
     <div

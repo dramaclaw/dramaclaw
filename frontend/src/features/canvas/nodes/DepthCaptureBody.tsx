@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-// 深度动作捕捉产出节点在拿到 videoUrl 之前的节点体：处理中显示进度；失败或刷新后
+// 深度动作捕捉产出节点在拿到 videoUrl 之前的节点体：处理中显示与生成中一致的进度；失败或刷新后
 // 残留的 running 态（任务表里已没有它）显示错误与重试。
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { DEPTH_MAX_DURATION_SEC } from "@/features/canvas/application/depthCapture/depthMath";
@@ -11,6 +11,7 @@ import {
   startDepthCapture,
 } from "@/features/canvas/application/depthCapture/runDepthCapture";
 import type { DepthCaptureState } from "@/features/canvas/domain/canvasNodes";
+import { NodeGenerationOverlay } from "@/features/canvas/ui/NodeGenerationOverlay";
 import { RegenerateButton } from "@/features/canvas/ui/RegenerateButton";
 import { readUrl } from "@/lib/url-params";
 
@@ -27,13 +28,9 @@ export function DepthCaptureBody({ nodeId, state }: { nodeId: string; state: Dep
 
   if (state.status === "running" && isDepthCaptureActive(nodeId)) {
     return (
-      <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-text-muted/85">
-        <Loader2 className="h-7 w-7 animate-spin opacity-70" />
-        <span className="px-4 text-center text-[12px] leading-6">
-          {state.progress > 0
-            ? t("node.videoNode.depthCapture.processing", { percent: state.progress })
-            : t("node.videoNode.depthCapture.preparing")}
-        </span>
+      // 与图片/视频节点生成中一致的进度展示，只是百分比用真实进度。
+      <div className="relative h-full w-full">
+        <NodeGenerationOverlay percent={state.progress} />
       </div>
     );
   }

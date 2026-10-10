@@ -62,13 +62,13 @@ export function isSeedance25VideoModel(modelId: string | null | undefined): bool
 }
 
 /**
- * 「片段重拍」要落到哪个模型上：目录里第一个 Seedance 2.5，没有则 null。
+ * 「智能续写」要落到哪个模型上：目录里第一个 Seedance 2.5，没有则 null。
  *
  * 返回 null 意味着这个项目的目录里压根没上 2.5 —— 调用方应该把入口置灰而不是随便
- * 挑一个模型顶上：时间码是写给 2.5 的视频编辑用的，换个模型只会得到一次莫名其妙的
+ * 挑一个模型顶上：续写的参考素材规格是按 2.5 定的，换个模型只会得到一次莫名其妙的
  * 生成。
  */
-export function findReshootVideoModel<T extends { id: string; apiModel?: string }>(
+export function findSeedance25VideoModel<T extends { id: string; apiModel?: string }>(
   models: readonly T[],
 ): T | null {
   return models.find((model) => isSeedance25VideoModel(model.apiModel ?? model.id)) ?? null;

@@ -85,6 +85,7 @@ import {
 import { deriveNodeDropInfo } from "@/stores/assetDropStore";
 
 import {
+  VIDEO_BREAKDOWN_DIMENSIONS,
   NODE_TOOL_TYPES,
   CANVAS_NODE_TYPES,
   DEFAULT_NODE_WIDTH,
@@ -108,6 +109,7 @@ import { GROUP_COLOR_PRESETS } from "@/features/canvas/domain/groupColors";
 import { StoryboardGroupToolbar } from "@/features/canvas/ui/StoryboardGroupToolbar";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import {
+  dispatchNodeAction,
   publishNodeActionAccepted,
   publishNodeActionError,
   publishNodeActionSuccess,
@@ -132,7 +134,7 @@ import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData"
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
-import { findReshootVideoModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
+import { findSeedance25VideoModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { analyzeVideoStory } from "@/features/canvas/application/videoAnalyzeStory";
 import { separateVideoAudio } from "@/features/canvas/application/videoSeparateAudio";
@@ -531,10 +533,10 @@ export const NodeActionToolbar = memo(
     // 片段重拍是 Seedance 2.5 独占能力（时间码要交给它的视频编辑消费），所以入口
     // 的可用性直接由「这个项目的模型目录里有没有 2.5」决定。目录是 module 级共享
     // store，这里多订一份不会多发请求。
-    const { models: videoModelsForReshoot } = useFreezoneVideoModels();
-    const reshootModel = useMemo(
-      () => findReshootVideoModel(videoModelsForReshoot),
-      [videoModelsForReshoot],
+    const { models: videoModelsForExtend } = useFreezoneVideoModels();
+    const extendModel = useMemo(
+      () => findSeedance25VideoModel(videoModelsForExtend),
+      [videoModelsForExtend],
     );
     const isImageEdit = isImageEditNode(node);
     // Plain (non-protected) group → eligible for ungroup. Captured up here as a
@@ -1130,6 +1132,152 @@ export const NodeActionToolbar = memo(
       [node.id, requireVideoUrl, setSelectedNode, updateNodeData],
     );
 
+    // 逐帧拉片：在下游落一个空的拉片节点并连边就完事 —— 节点自己会顺着
+    // 这根上游边认素材（VideoBreakdownNode 里 upstreamVideo 优先于
+    // data.sourceVideoUrl），所以这里不必再把 URL 抄一份进去，抄了反而
+    // 会让「断开边退回空态」失效。工具条入口只建节点，拆什么维度、什么时候
+    // 开跑交给用户在那个节点上决定；agent 入口可以带 dimensions / auto_start，
+    // 开跑仍然走拉片节点自己的 start_video_breakdown 动作。
+    const handleCreateVideoBreakdown = useCallback(
+      (parameters?: Record<string, unknown>) => {
+        requireVideoUrl();
+        const requested = Array.isArray(parameters?.dimensions)
+          ? VIDEO_BREAKDOWN_DIMENSIONS.filter((dimension) =>
+              (parameters.dimensions as unknown[]).includes(dimension),
+            )
+          : [];
+        const position = findNodePosition(node.id, 300, 292);
+        const breakdownNodeId = addNode(
+          CANVAS_NODE_TYPES.videoBreakdown,
+          position,
+          {
+            sourceNodeId: node.id,
+            ...(requested.length > 0 ? { dimensions: requested } : {}),
+          },
+        );
+        addEdge(node.id, breakdownNodeId);
+        const autoStart = parameters?.auto_start === true;
+        if (autoStart) {
+          // 新节点这一拍还没挂载；带 requestId 派发会进待投递表，节点挂载订阅时补投。
+          dispatchNodeAction({
+            nodeId: breakdownNodeId,
+            action: "start_video_breakdown",
+            requestId: `video-breakdown-autostart:${breakdownNodeId}`,
+          });
+        }
+        return { nodeId: breakdownNodeId, started: autoStart };
+      },
+      [addEdge, addNode, findNodePosition, node.id, requireVideoUrl],
+    );
+
+    // 画面裁切：进入裁剪模式并让浮层的裁剪框抢一次焦点。裁切正在传的这几十秒里
+    // 不许切走：结果落地时会把 isCropMode 拍回 false，中途改道会跟那次收尾打架。
+    const handleOpenVideoCrop = useCallback(() => {
+      requireVideoUrl();
+      if (isVideoCropInFlight(node.id)) {
+        throw new Error(t("node.videoNode.crop.busy"));
+      }
+      updateNodeData(node.id, {
+        isCropMode: true,
+        isClipMode: false,
+        isExtendPickMode: false,
+        subtitleEraseMode: null,
+      });
+      requestVideoCropFocus(node.id);
+      setSelectedNode(node.id);
+    }, [node.id, requireVideoUrl, setSelectedNode, t, updateNodeData]);
+
+    // 智能续写：入口不建节点，只是把源节点切进「截前置视频」态 ——
+    // 底下浮出一条只能选一段的轨道，用户确认区间后才由 VideoNode 建
+    // 下游节点（区间是新节点 prompt 前缀的一部分，得先有区间）。
+    const handleOpenVideoExtend = useCallback(() => {
+      requireVideoUrl();
+      if (!extendModel) {
+        throw new Error(t("nodeToolbar.video.extendRequiresSeedance25"));
+      }
+      if (isVideoCropInFlight(node.id)) {
+        throw new Error(t("node.videoNode.crop.busy"));
+      }
+      updateNodeData(node.id, { isExtendPickMode: true, isCropMode: false });
+      setSelectedNode(node.id);
+    }, [extendModel, node.id, requireVideoUrl, setSelectedNode, t, updateNodeData]);
+
+    // 深度动作捕捉：浏览器里逐帧算深度，产物是一条新视频，所以先在下游落一个
+    // 处理态视频节点（referenceOnly，不挂生成面板），任务在节点上显示进度，
+    // 算完上传写回 videoUrl。时长上限在这里先挡一次，免得白建节点。
+    const handleStartVideoDepthCapture = useCallback(() => {
+      const url = requireVideoUrl();
+      const videoData = node.data as Record<string, unknown>;
+      const projectId = readUrl().project;
+      if (!projectId) {
+        throw new Error(t("node.videoNode.depthCapture.errors.noProject"));
+      }
+      if (
+        typeof videoData.durationMs === "number" &&
+        videoData.durationMs > DEPTH_MAX_DURATION_SEC * 1000
+      ) {
+        throw new Error(
+          t("node.videoNode.depthCapture.errors.tooLong", {
+            seconds: DEPTH_MAX_DURATION_SEC,
+          }),
+        );
+      }
+      if (!("gpu" in navigator)) {
+        toast.info(t("node.videoNode.depthCapture.noWebGpu"));
+      }
+      const label = t("nodeToolbar.video.motionCapture");
+      const sourceName =
+        typeof videoData.displayName === "string" &&
+        videoData.displayName.trim().length > 0
+          ? videoData.displayName.trim()
+          : label;
+      const position = findNodePosition(node.id, 580, 380);
+      const depthNodeId = addNode(
+        CANVAS_NODE_TYPES.video,
+        position,
+        {
+          displayName: `${sourceName}-${label}`,
+          videoUrl: null,
+          previewImageUrl: null,
+          aspectRatio:
+            typeof videoData.aspectRatio === "string"
+              ? videoData.aspectRatio
+              : "16:9",
+          referenceOnly: true,
+          isGenerating: false,
+          depthCapture: {
+            status: "running",
+            progress: 0,
+            sourceVideoUrl: url,
+            errorCode: null,
+            errorDetail: null,
+          },
+        } as unknown as Parameters<typeof addNode>[2],
+      );
+      addEdge(node.id, depthNodeId);
+      onNodesChange([
+        { id: node.id, type: "select", selected: false },
+        { id: depthNodeId, type: "select", selected: true },
+      ]);
+      setSelectedNode(depthNodeId);
+      void startDepthCapture({
+        nodeId: depthNodeId,
+        projectId,
+        sourceVideoUrl: url,
+      });
+      return { nodeId: depthNodeId, started: true };
+    }, [
+      addEdge,
+      addNode,
+      findNodePosition,
+      node.data,
+      node.id,
+      onNodesChange,
+      requireVideoUrl,
+      setSelectedNode,
+      t,
+    ]);
+
     // 以下符号被暂时隐藏的 toolbar 按钮使用，保留代码不删除：
     // - Sparkles 图标用于 AI 改图按钮
     // - Copy 图标用于复制按钮
@@ -1334,6 +1482,30 @@ export const NodeActionToolbar = memo(
             .catch((error) => publishNodeActionError(requestId, node.id, action, error));
           return;
         }
+        if (action === "open_video_crop_tool" || action === "open_video_extend_tool") {
+          try {
+            publishNodeActionAccepted(requestId, node.id, action);
+            if (action === "open_video_crop_tool") handleOpenVideoCrop();
+            else handleOpenVideoExtend();
+            publishNodeActionSuccess(requestId, node.id, action, { openedUiAction: true });
+          } catch (error) {
+            publishNodeActionError(requestId, node.id, action, error);
+          }
+          return;
+        }
+        if (action === "run_video_breakdown" || action === "run_video_depth_capture") {
+          try {
+            publishNodeActionAccepted(requestId, node.id, action);
+            const output =
+              action === "run_video_breakdown"
+                ? handleCreateVideoBreakdown(parameters)
+                : handleStartVideoDepthCapture();
+            publishNodeActionSuccess(requestId, node.id, action, output);
+          } catch (error) {
+            publishNodeActionError(requestId, node.id, action, error);
+          }
+          return;
+        }
         if (action === "open_video_subtitle_erase_smart" || action === "open_video_subtitle_erase_box") {
           try {
             publishNodeActionAccepted(requestId, node.id, action);
@@ -1346,11 +1518,15 @@ export const NodeActionToolbar = memo(
       });
     }, [
       handleAnalyzeVideo,
+      handleCreateVideoBreakdown,
       handleDownloadAudioNode,
       handleDownloadSaveAs,
       handleDownloadVideo,
       handleMatteImage,
       handleOpenVideoClip,
+      handleOpenVideoCrop,
+      handleOpenVideoExtend,
+      handleStartVideoDepthCapture,
       handleOpenVideoSubtitleErase,
       handleOpenVideoUpscale,
       handleOpenVideoViewer,
@@ -1947,101 +2123,26 @@ export const NodeActionToolbar = memo(
                   );
                 };
 
-                // 深度动作捕捉：浏览器里逐帧算深度，产物是一条新视频，所以先在下游落一个
-                // 处理态视频节点（referenceOnly，不挂生成面板），任务在节点上显示进度，
-                // 算完上传写回 videoUrl。时长上限在这里先挡一次，免得白建节点。
+                // 这几个入口的实现提在组件层（agent 的节点动作也走同一份），这里只
+                // 负责把抛出来的原因变成 toast。
                 const handleVideoMotionCapture = () => {
-                  if (!hasVideo || !videoUrl) {
-                    return;
+                  if (!hasVideo) return;
+                  try {
+                    handleStartVideoDepthCapture();
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : String(error));
                   }
-                  const projectId = readUrl().project;
-                  if (!projectId) {
-                    toast.error(t("node.videoNode.depthCapture.errors.noProject"));
-                    return;
-                  }
-                  if (
-                    typeof videoData.durationMs === "number" &&
-                    videoData.durationMs > DEPTH_MAX_DURATION_SEC * 1000
-                  ) {
-                    toast.error(
-                      t("node.videoNode.depthCapture.errors.tooLong", {
-                        seconds: DEPTH_MAX_DURATION_SEC,
-                      }),
-                    );
-                    return;
-                  }
-                  if (!("gpu" in navigator)) {
-                    toast.info(t("node.videoNode.depthCapture.noWebGpu"));
-                  }
-                  const label = t("nodeToolbar.video.motionCapture");
-                  const sourceName =
-                    typeof videoData.displayName === "string" &&
-                    videoData.displayName.trim().length > 0
-                      ? videoData.displayName.trim()
-                      : label;
-                  const position = findNodePosition(node.id, 580, 380);
-                  const depthNodeId = addNode(
-                    CANVAS_NODE_TYPES.video,
-                    position,
-                    {
-                      displayName: `${sourceName}-${label}`,
-                      videoUrl: null,
-                      previewImageUrl: null,
-                      aspectRatio:
-                        typeof videoData.aspectRatio === "string"
-                          ? videoData.aspectRatio
-                          : "16:9",
-                      referenceOnly: true,
-                      isGenerating: false,
-                      depthCapture: {
-                        status: "running",
-                        progress: 0,
-                        sourceVideoUrl: videoUrl,
-                        errorCode: null,
-                        errorDetail: null,
-                      },
-                    } as unknown as Parameters<typeof addNode>[2],
-                  );
-                  addEdge(node.id, depthNodeId);
-                  onNodesChange([
-                    { id: node.id, type: "select", selected: false },
-                    { id: depthNodeId, type: "select", selected: true },
-                  ]);
-                  setSelectedNode(depthNodeId);
-                  void startDepthCapture({
-                    nodeId: depthNodeId,
-                    projectId,
-                    sourceVideoUrl: videoUrl,
-                  });
                 };
 
-                // 逐帧拉片：在下游落一个空的拉片节点并连边就完事 —— 节点自己会顺着
-                // 这根上游边认素材（VideoBreakdownNode 里 upstreamVideo 优先于
-                // data.sourceVideoUrl），所以这里不必再把 URL 抄一份进去，抄了反而
-                // 会让「断开边退回空态」失效。拆什么维度、什么时候开跑，交给用户在
-                // 那个节点上决定。
                 const handleVideoBreakdown = () => {
-                  if (!hasVideo || !videoUrl) {
-                    return;
-                  }
-                  const position = findNodePosition(node.id, 300, 292);
-                  const breakdownNodeId = addNode(
-                    CANVAS_NODE_TYPES.videoBreakdown,
-                    position,
-                    { sourceNodeId: node.id },
-                  );
-                  addEdge(node.id, breakdownNodeId);
+                  if (!hasVideo) return;
+                  handleCreateVideoBreakdown();
                 };
 
-                // 智能续写：入口不建节点，只是把源节点切进「截前置视频」态 ——
-                // 底下浮出一条只能选一段的轨道，用户确认区间后才由 VideoNode 建
-                // 下游节点（区间是新节点 prompt 前缀的一部分，得先有区间）。
                 const handleVideoExtendPick = () => {
-                  if (!hasVideo || !videoUrl || !reshootModel) {
-                    return;
-                  }
+                  if (!hasVideo || !extendModel) return;
                   if (guardVideoCropInFlight(node.id)) return;
-                  updateNodeData(node.id, { isExtendPickMode: true, isCropMode: false });
+                  handleOpenVideoExtend();
                   toast.info(t("nodeToolbar.video.extendPickHint"));
                 };
 
@@ -2135,20 +2236,20 @@ export const NodeActionToolbar = memo(
                     <UiChipButton
                       key="video-extend"
                       className={`${stubButtonClass} ${
-                        !hasVideo || !reshootModel
+                        !hasVideo || !extendModel
                           ? "opacity-50 cursor-not-allowed"
                           : ""
                       }`}
                       title={
                         !hasVideo
                           ? t("nodeToolbar.video.requiresVideo")
-                          : !reshootModel
+                          : !extendModel
                             ? t("nodeToolbar.video.extendRequiresSeedance25")
                             : undefined
                       }
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (!hasVideo || !reshootModel) return;
+                        if (!hasVideo || !extendModel) return;
                         handleVideoExtendPick();
                       }}
                     >
@@ -2273,21 +2374,14 @@ export const NodeActionToolbar = memo(
                           onSelect={() => {
                             if (guardVideoCropInFlight(node.id)) return;
                             cropItemSelectedRef.current = true;
-                            const entering = !videoData.isCropMode;
-                            updateNodeData(
-                              node.id,
-                              entering
-                                ? {
-                                    isCropMode: true,
-                                    isClipMode: false,
-                                    isExtendPickMode: false,
-                                    subtitleEraseMode: null,
-                                  }
-                                : { isCropMode: false },
-                            );
-                            // 只有「进入」裁剪模式才挂号抢一次焦点；退出时浮层根本
-                            // 不会再渲染，挂号也没人消费，白白占着挂号表。
-                            if (entering) requestVideoCropFocus(node.id);
+                            // 只有「进入」裁剪模式才挂号抢一次焦点（在
+                            // handleOpenVideoCrop 里）；退出时浮层根本不会再渲染，
+                            // 挂号也没人消费，白白占着挂号表。
+                            if (videoData.isCropMode) {
+                              updateNodeData(node.id, { isCropMode: false });
+                            } else {
+                              handleOpenVideoCrop();
+                            }
                           }}
                         >
                           <Crop className="h-4 w-4" />

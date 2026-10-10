@@ -5445,8 +5445,7 @@
       "doubleClickReplace": "Bấm đúp để thay tham chiếu này",
       "clickToPlay": "{{label}} · bấm để phát",
       "replace": "Thay tham chiếu",
-      "removePrefix": "Xóa tiền tố",
-      "reshootTimecode": "Khoảng thời gian cắt để quay lại đoạn"
+      "removePrefix": "Xóa tiền tố"
     },
     "naming": {
       "copySuffix": "{{name}} - Bản sao",
@@ -5558,6 +5557,7 @@
       "defaultSourceName": "video gốc",
       "defaultLabel": "video",
       "promptPrefix": "Nối tiếp đoạn {{start}}-{{end}} của {{name}}: ",
+      "promptPrefixTrimmed": "Nối tiếp {{name}}: ",
       "nodeDisplayName": "Nối tiếp {{name}}",
       "durationSeconds": "{{seconds}} giây",
       "exit": "Thoát chọn đoạn nối tiếp",
@@ -5565,16 +5565,6 @@
       "endHandle": "Điểm kết thúc đoạn nối tiếp",
       "tooShort": "Video ngắn hơn {{seconds}} giây nên không thể nối tiếp",
       "confirm": "Xác nhận nối tiếp"
-    },
-    "videoReshoot": {
-      "clickToCapture": "Nhấp để cắt đoạn mới",
-      "dragStart": "Kéo để chỉnh điểm bắt đầu",
-      "dragEnd": "Kéo để chỉnh điểm kết thúc",
-      "deleteClip": "Xóa đoạn này",
-      "countFullHint": "Đã đạt giới hạn {{max}} đoạn, hãy xóa một đoạn rồi cắt tiếp",
-      "durationFullHint": "Seedance 2.5 giới hạn tổng thời lượng {{seconds}}s và đã dùng hết; hãy rút ngắn một đoạn rồi cắt tiếp",
-      "hint": "Nhấp để cắt {{clipSeconds}}s, kéo hai đầu để tinh chỉnh (mỗi đoạn ≥ {{clipSeconds}}s, tổng ≤ {{maxSeconds}}s)",
-      "clipCount": "{{count}}/{{max}} đoạn"
     }
   },
   "tool": {
@@ -5655,7 +5645,6 @@
       "sceneSettingSheet": "Bảng thiết kế bối cảnh"
     },
     "video": {
-      "reshoot": "Quay lại đoạn",
       "hd": "HD",
       "analyze": "Phân tích",
       "frameAnalysis": "Phân tích từng khung hình",
@@ -5676,7 +5665,6 @@
       "fullscreen": "Toàn màn hình",
       "notImplementedYet": "Sắp có",
       "requiresVideo": "Hãy tải video lên trước",
-      "reshootRequiresSeedance25": "Quay lại đoạn chỉ hỗ trợ Seedance 2.5, dự án hiện chưa bật model này",
       "extendRequiresSeedance25": "Viết tiếp thông minh chỉ hỗ trợ Seedance 2.5, dự án hiện chưa bật model này",
       "extendPickHint": "Hãy chọn đoạn video làm phần mở đầu để viết tiếp"
     },
@@ -6369,8 +6357,6 @@
       },
       "videoLoadFailed": "Tải video thất bại",
       "depthCapture": {
-        "preparing": "Đang tải mô hình độ sâu…",
-        "processing": "Đang bắt chiều sâu {{percent}}%",
         "failed": "Bắt chuyển động chiều sâu thất bại",
         "interrupted": "Quá trình bị gián đoạn (trang đã tải lại hoặc đóng). Có thể bắt lại.",
         "retry": "Bắt lại",
@@ -6765,7 +6751,6 @@
       },
       "extendLockReason": "Nối tiếp thông minh chỉ hỗ trợ chế độ tham chiếu toàn năng của Seedance 2.5",
       "extendPlaceholder": "Nhập nội dung cần nối tiếp",
-      "reshootLockedReason": "Quay lại đoạn chỉ hỗ trợ Seedance 2.5",
       "modeRestrictedDefault": "Node này không hỗ trợ chuyển chế độ tạo"
     },
     "threeDWorld": {

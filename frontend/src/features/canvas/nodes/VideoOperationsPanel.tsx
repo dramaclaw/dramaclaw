@@ -851,34 +851,31 @@ export function VideoOperationsPanel({
                   />
                 </div>
                 <div className="ml-3 flex shrink-0 items-center gap-3">
-                  {/* 片段重拍固定走视频编辑（时间码只有它吃得下），功能切换整块不显示 */}
-                  {!data.isReshootMode && (
-                    <GenModeSelect
-                      value={genMode}
-                      modelId={
-                        selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId
-                      }
-                      supportedModes={selectedVideoModel?.supportedModes}
-                      // HappyHorse 的可选模式由上游节点类型（含未填图的空节点）决定，
-                      // 其余模型仍按已解析素材 URL 计数。
-                      upstreamCounts={
-                        isHappyHorseModel ? upstreamTypeCounts : upstreamCounts
-                      }
-                      restrictToMode={isExtendMode ? "allReference" : undefined}
-                      // 智能续写把模型 / 模式钉死时给出的统一理由，与下面模型选择器共用一句。
-                      restrictReason={t("node.videoOps.extendLockReason")}
-                      onChange={(nextMode) =>
-                        updateNodeData(id, {
-                          genMode: nextMode,
-                          modelParams: filterMediaModelParamsForMode(
-                            selectedVideoModel?.request?.parameters,
-                            data.modelParams,
-                            nextMode,
-                          ),
-                        })
-                      }
-                    />
-                  )}
+                  <GenModeSelect
+                    value={genMode}
+                    modelId={
+                      selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId
+                    }
+                    supportedModes={selectedVideoModel?.supportedModes}
+                    // HappyHorse 的可选模式由上游节点类型（含未填图的空节点）决定，
+                    // 其余模型仍按已解析素材 URL 计数。
+                    upstreamCounts={
+                      isHappyHorseModel ? upstreamTypeCounts : upstreamCounts
+                    }
+                    restrictToMode={isExtendMode ? "allReference" : undefined}
+                    // 智能续写把模型 / 模式钉死时给出的统一理由，与下面模型选择器共用一句。
+                    restrictReason={t("node.videoOps.extendLockReason")}
+                    onChange={(nextMode) =>
+                      updateNodeData(id, {
+                        genMode: nextMode,
+                        modelParams: filterMediaModelParamsForMode(
+                          selectedVideoModel?.request?.parameters,
+                          data.modelParams,
+                          nextMode,
+                        ),
+                      })
+                    }
+                  />
                   <NodeContextPromptPaletteButton
                     nodeId={id}
                     onInsert={insertContextPaletteEntry}
@@ -960,7 +957,7 @@ export function VideoOperationsPanel({
 
               {/* 引用素材单独占一行：顶排功能 chip 已经排满，素材再挤进去会顶掉输入区。 */}
               {(upstreamTextContents.length > 0 ||
-                (!data.isReshootMode && !isExtendMode && referenceMedia.length > 0)) && (
+                (!isExtendMode && referenceMedia.length > 0)) && (
                 <div className="nowheel flex shrink-0 items-center gap-3 overflow-x-auto px-3 pb-2">
                   {upstreamTextContents.map((content) => (
                     <ReferenceTextChip
@@ -972,7 +969,7 @@ export function VideoOperationsPanel({
                       onJump={handleJumpToReference}
                     />
                   ))}
-                  {!data.isReshootMode && !isExtendMode && referenceMedia.length > 0 && (
+                  {!isExtendMode && referenceMedia.length > 0 && (
                     <ReferenceMediaRow
                       items={referenceMediaCapInfo}
                       caps={referenceCaps}
@@ -990,9 +987,9 @@ export function VideoOperationsPanel({
                 </div>
               )}
 
-              {/* 片段重拍 / 智能续写的引用只有原片一个，挤在工具条尾巴上会被右边的
+              {/* 智能续写的引用只有原片一个，挤在工具条尾巴上会被右边的
                   展开按钮推得老远；单独起一行贴左放，跟下面的提示词对齐成一列。 */}
-              {(data.isReshootMode || isExtendMode) && referenceMedia.length > 0 && (
+              {isExtendMode && referenceMedia.length > 0 && (
                 <div className="flex shrink-0 items-center overflow-x-auto px-3 pb-2">
                   <ReferenceMediaRow
                     items={referenceMediaCapInfo}
@@ -1061,10 +1058,6 @@ export function VideoOperationsPanel({
                 <div className="flex min-w-0 items-center gap-2">
                   <ProviderModelPicker
                     selectedModelId={modelId}
-                    // 片段重拍是 Seedance 2.5 独占的：时间码只有它的视频编辑吃得下，
-                    // 换任何一个模型这个节点都白做。所以这里直接锁死，不给切。
-                    locked={Boolean(data.isReshootMode)}
-                    lockedReason={t("node.videoOps.reshootLockedReason")}
                     onChange={(nextModelId) => {
                       const nextModel = availableVideoModels.find(
                         (item) => item.id === nextModelId,

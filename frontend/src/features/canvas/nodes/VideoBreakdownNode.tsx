@@ -55,6 +55,12 @@ import {
 } from "@/api/ops";
 import { awaitTaskCompletion } from "@/api/tasks";
 import { readUrl } from "@/lib/url-params";
+import {
+  publishNodeActionAccepted,
+  publishNodeActionError,
+  publishNodeActionSuccess,
+  subscribeNodeAction,
+} from "@/features/canvas/application/nodeActionResult";
 
 type VideoBreakdownNodeProps = NodeProps & {
   id: string;
@@ -201,25 +207,39 @@ export const VideoBreakdownNode = memo(
       startPick({ requesterNodeId: id, kind: "video" });
     }, [id, startPick]);
 
-    const handleStartBreakdown = useCallback(async () => {
+    // submitted 回调只给 agent 的节点动作用：拉片要跑几分钟，动作在任务提交成功
+    // 那一刻就回报「已开跑」，不等结果落地。
+    const handleStartBreakdown = useCallback(async (
+      options: {
+        dimensions?: VideoBreakdownDimension[];
+        onSubmitted?: () => void;
+        onSubmitError?: (error: unknown) => void;
+      } = {},
+    ) => {
       if (!videoUrl || isBreakingDown) return;
       const projectId = readUrl().project;
       if (!projectId) {
         console.error("[video-breakdown] no project in URL");
+        options.onSubmitError?.(new Error("no project in URL"));
         return;
       }
+      const runDimensions = options.dimensions ?? dimensions;
 
       updateNodeData(id, {
         isBreakingDown: true,
         breakdownStartedAt: Date.now(),
         breakdownError: null,
+        ...(options.dimensions ? { dimensions: options.dimensions } : {}),
       });
 
+      let submitted = false;
       try {
         const ref = await submitFreezoneVideoBreakdown(projectId, {
           videoUrl,
-          dimensions,
+          dimensions: runDimensions,
         });
+        submitted = true;
+        options.onSubmitted?.();
         const taskKey =
           typeof ref?.task_key === "string" ? ref.task_key : null;
         // 端点正常走异步任务（返回 task_key）；同步返回结果时直接当结果用，
@@ -266,6 +286,7 @@ export const VideoBreakdownNode = memo(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error("[video-breakdown] failed", error);
+        if (!submitted) options.onSubmitError?.(error);
         updateNodeData(id, { isBreakingDown: false, breakdownError: message });
         toast.error(t("videoBreakdown.failed"));
       }
@@ -277,6 +298,37 @@ export const VideoBreakdownNode = memo(
       updateNodeData,
       videoUrl,
     ]);
+
+    useEffect(
+      () => subscribeNodeAction(({ nodeId, action, requestId, parameters }) => {
+        if (nodeId !== id || action !== "start_video_breakdown") return;
+        publishNodeActionAccepted(requestId, id, action);
+        if (!videoUrl) {
+          publishNodeActionError(requestId, id, action, t("videoBreakdown.emptyHint"));
+          return;
+        }
+        if (isBreakingDown) {
+          publishNodeActionError(requestId, id, action, t("videoBreakdown.running"));
+          return;
+        }
+        if (breakdownBillingRuleMissing) {
+          publishNodeActionError(requestId, id, action, t("common.billingRuleNotConfiguredShort"));
+          return;
+        }
+        const requested = Array.isArray(parameters?.dimensions)
+          ? VIDEO_BREAKDOWN_DIMENSIONS.filter((dimension) =>
+              (parameters.dimensions as unknown[]).includes(dimension),
+            )
+          : [];
+        void handleStartBreakdown({
+          ...(requested.length > 0 ? { dimensions: requested } : {}),
+          onSubmitted: () =>
+            publishNodeActionSuccess(requestId, id, action, { started: true }),
+          onSubmitError: (error) => publishNodeActionError(requestId, id, action, error),
+        });
+      }),
+      [breakdownBillingRuleMissing, handleStartBreakdown, id, isBreakingDown, t, videoUrl],
+    );
 
     return (
       <div

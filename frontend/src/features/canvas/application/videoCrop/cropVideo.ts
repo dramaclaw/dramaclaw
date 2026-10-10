@@ -39,10 +39,12 @@ export class VideoCropError extends Error {
 
 export interface CropVideoOptions {
   blob: Blob;
-  /** UI 里的框，坐标系是 sourceWidth × sourceHeight。 */
-  box: CropBox;
-  sourceWidth: number;
-  sourceHeight: number;
+  /** UI 里的框，坐标系是 sourceWidth × sourceHeight。不传 = 不裁画面（只截时间段）。 */
+  box?: CropBox;
+  sourceWidth?: number;
+  sourceHeight?: number;
+  /** 只保留源视频的这一段（毫秒）。智能续写用它把选区真截出来再喂给模型。 */
+  trim?: { startMs: number; endMs: number };
   onProgress?: (progress: number) => void;
   /** 中途取消：已经中止就直接短路，跑起来了就转发给 conversion.cancel()。 */
   signal?: AbortSignal;
@@ -61,8 +63,9 @@ const UNDECODABLE_VIDEO_REASONS = new Set(["unknown_source_codec", "undecodable_
 export async function cropVideoBlob({
   blob,
   box,
-  sourceWidth,
-  sourceHeight,
+  sourceWidth = 0,
+  sourceHeight = 0,
+  trim,
   onProgress,
   signal,
 }: CropVideoOptions): Promise<CropVideoResult> {
@@ -87,11 +90,13 @@ export async function cropVideoBlob({
     const displayHeight = await track.getDisplayHeight();
     const scaleX = sourceWidth > 0 ? displayWidth / sourceWidth : 1;
     const scaleY = sourceHeight > 0 ? displayHeight / sourceHeight : 1;
-    const rect = toEvenSourceRect(
-      { x: box.x * scaleX, y: box.y * scaleY, width: box.width * scaleX, height: box.height * scaleY },
-      displayWidth,
-      displayHeight,
-    );
+    const rect = box
+      ? toEvenSourceRect(
+          { x: box.x * scaleX, y: box.y * scaleY, width: box.width * scaleX, height: box.height * scaleY },
+          displayWidth,
+          displayHeight,
+        )
+      : null;
 
     const audioTrack = await input.getPrimaryAudioTrack();
     const audioCodec = audioTrack ? await audioTrack.getCodec() : null;
@@ -102,12 +107,13 @@ export async function cropVideoBlob({
     const conversion = await Conversion.init({
       input,
       output,
-      video: { codec: "avc", bitrate: QUALITY_HIGH, crop: rect },
+      video: { codec: "avc", bitrate: QUALITY_HIGH, ...(rect ? { crop: rect } : {}) },
       // AAC/MP3 直通不重编；其余（pcm、ac3、opus…）重编成 AAC，与 videoTranscode 一致。
       audio:
         audioCodec && !["aac", "mp3"].includes(audioCodec)
           ? { codec: "aac", bitrate: 128_000 }
           : undefined,
+      ...(trim ? { trim: { start: trim.startMs / 1000, end: trim.endMs / 1000 } } : {}),
       showWarnings: false,
     });
 
@@ -145,12 +151,14 @@ export async function cropVideoBlob({
     if (!buffer || buffer.byteLength === 0) {
       throw new VideoCropError("failed", "conversion produced empty output");
     }
-    const durationSec = await input.computeDuration();
+    const sourceDurationMs = Math.round((await input.computeDuration()) * 1000);
     return {
       blob: new Blob([buffer], { type: "video/mp4" }),
-      width: rect.width,
-      height: rect.height,
-      durationMs: Math.round(durationSec * 1000),
+      width: rect ? rect.width : displayWidth,
+      height: rect ? rect.height : displayHeight,
+      durationMs: trim
+        ? Math.max(0, Math.min(trim.endMs, sourceDurationMs) - Math.max(trim.startMs, 0))
+        : sourceDurationMs,
     };
   } catch (error) {
     if (error instanceof VideoCropError) throw error;
