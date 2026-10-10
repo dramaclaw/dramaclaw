@@ -1090,6 +1090,64 @@ def find_channel_by_name(
     return sorted(matches, key=lambda item: int(item.get("id") or 0), reverse=True)[0]
 
 
+def fetch_provider_channel_models(
+    cfg: NewApiProvisionerConfig,
+    admin: AdminToken,
+    *,
+    provider: str,
+    channel_type: int | None = None,
+) -> dict[str, Any]:
+    """Ask NewAPI to discover upstream models using a synced channel's credentials."""
+    provider_key = provider.strip().lower()
+    if not provider_key:
+        raise ValueError("provider is required")
+    if channel_type is not None and channel_type <= 0:
+        raise ValueError("type must be positive")
+    existing = find_channel_by_name(
+        cfg, admin, name=f"DC-{provider_key}", channel_type=channel_type
+    )
+    if not existing:
+        raise LookupError("provider channel not found; save and sync it first")
+    channel_id = existing.get("id")
+    if type(channel_id) is not int or channel_id <= 0:
+        raise RuntimeError("NewAPI returned an invalid channel id")
+    with httpx.Client(trust_env=False, timeout=30) as client:
+        res = client.get(
+            f"{cfg.admin_base_url}/api/channel/fetch_models/{channel_id}",
+            headers=admin_headers(admin),
+        )
+    # Upstream error messages can contain channel keys; never include the body.
+    if res.status_code >= 400:
+        raise RuntimeError("NewAPI rejected provider model discovery")
+    try:
+        body = res.json()
+    except ValueError:
+        raise RuntimeError("NewAPI returned an invalid model list") from None
+    if not isinstance(body, dict) or body.get("success") is not True:
+        raise RuntimeError("NewAPI rejected provider model discovery")
+    raw_models = body.get("data")
+    if not isinstance(raw_models, list):
+        raise RuntimeError("NewAPI returned an invalid model list")
+    models: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_models:
+        if not isinstance(raw, str):
+            continue
+        model = raw.strip()
+        # NewAPI stores comma-separated model ids with a 255-character limit.
+        if (
+            not model
+            or len(model) > 255
+            or "," in model
+            or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in model)
+            or model in seen
+        ):
+            continue
+        seen.add(model)
+        models.append(model)
+    return {"provider": provider_key, "models": models, "channelId": channel_id}
+
+
 def delete_channel_by_name(
     cfg: NewApiProvisionerConfig,
     admin: AdminToken,
@@ -1319,7 +1377,40 @@ def update_provider_channel_credentials(
         channel_type=int(channel_type or preset["type"]),
     )
     if not existing:
-        raise LookupError(f"NewAPI channel {channel_name} does not exist")
+        # Credentials are saved before model selection; create a channel with no
+        # routable models, then let the model-mapping flow populate it later.
+        payload = {
+            "mode": "single",
+            "channel": {
+                "name": channel_name,
+                "type": int(channel_type or preset["type"]),
+                "key": key,
+                "base_url": str(base_url or "").strip().rstrip("/"),
+                "models": "",
+                "model_mapping": "{}",
+                "group": "default",
+                "status": 1,
+                "auto_ban": 1,
+                "setting": "{}",
+                "settings": "{}",
+            },
+        }
+        result = create_channel(cfg, admin, payload)
+        created = (
+            find_channel_by_name(
+                cfg, admin, name=channel_name,
+                channel_type=payload["channel"]["type"],
+            )
+            if result.get("ok") else None
+        )
+        return {
+            **result,
+            "sentPayload": payload,
+            "action": "create",
+            "channelId": created.get("id") if created else None,
+            "name": channel_name,
+            "provider": provider_key,
+        }
 
     detail = get_channel_detail(cfg, admin, existing["id"])
     allowed_fields = {
