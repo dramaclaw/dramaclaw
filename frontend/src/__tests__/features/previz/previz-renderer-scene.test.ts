@@ -1,0 +1,3271 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import * as THREE from 'three';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { OUTPUT_PIXEL_SIZE, aspectRatio } from '@/features/previz/domain/camera';
+import { createCameraDraft } from '@/features/previz/domain/cameraDraft';
+import { createCharacterDraft } from '@/features/previz/domain/characterDraft';
+import { createPrevizObject } from '@/features/previz/domain/objects';
+import {
+  createDefaultScene,
+  type HeightPolicy,
+  type PrevizScene,
+  type Vec3,
+} from '@/features/previz/domain/scene';
+import { dropRayOriginY } from '@/features/previz/domain/drop';
+import { PREVIZ_DEFAULT_VIEW } from '@/features/previz/domain/view';
+import {
+  PREVIZ_TOP_DOWN_DEFAULT_BOUNDS,
+  canvasToWorld,
+} from '@/features/previz/domain/topDownMap';
+import {
+  PREVIZ_CAMERA_COLOR,
+  PREVIZ_LIVE_FRUSTUM_COLOR,
+} from '@/features/previz/engine/cameraModel';
+import { PrevizRenderer } from '@/features/previz/engine/PrevizRenderer';
+import { CharacterRigFactory } from '@/features/previz/engine/characterRig';
+import { PrevizSceneGraph } from '@/features/previz/engine/sceneGraph';
+
+/**
+ * 这份用例盯的是渲染器与场景图 / 取景数学之间的接线，不是 three 本身。真 three 在
+ * jsdom 里连 WebGLRenderer 都建不出来，所以整个模块换成一份够用的假实现——它只需要
+ * 忠实到能反映被测代码依赖的那几条行为：
+ *
+ * - `Box3.setFromObject()` 先 `makeEmpty()`，没有几何体时留下 min=+∞ / max=-∞；
+ * - `isEmpty()` 判的是 max < min（照抄 three 0.185 的 `math/Box3.js`）；
+ * - `Raycaster` 只按 layers 过滤，**不看 visible**（three 0.185 `core/Raycaster.js`
+ *   的 `intersect()`，`Mesh.raycast()` 里也没有这项检查），隐藏对象要调用方自己剔。
+ */
+
+const render = vi.fn();
+const setFromCamera = vi.fn();
+let intersections: Array<{ object: unknown; point?: { x: number; y: number; z: number } }> = [];
+const intersectObjects = vi.fn((_objects: unknown[], _recursive?: boolean) => intersections);
+/**
+ * `Raycaster.set(origin, direction)`：拾取走的是 `setFromCamera`，落地走的是这一条。
+ * 记下来才断言得了「射线是从盒顶往**下**打的」——方向翻个个儿在假实现里照样有命中，
+ * 屏幕上则是对象被吸到头顶那个天花板上。
+ */
+const raySet = vi.fn();
+
+/** 建出来的材质只在「dispose 了几次」这一件事上被断言，所以只记这一个方法。 */
+interface FakeMaterial {
+  dispose: ReturnType<typeof vi.fn>;
+}
+const materials: FakeMaterial[] = [];
+
+/** 建出来的假 WebGLRenderer。监看 pass 借了视口 / 剪刀 / autoClear，断言它有没有还回去。 */
+interface FakeWebGLRenderer {
+  autoClear: boolean;
+  shadowMap: { enabled: boolean; type: number };
+  toneMapping: number;
+  setPixelRatio: ReturnType<typeof vi.fn>;
+  setSize: ReturnType<typeof vi.fn>;
+  setViewport: ReturnType<typeof vi.fn>;
+  setScissor: ReturnType<typeof vi.fn>;
+  setScissorTest: ReturnType<typeof vi.fn>;
+  clearDepth: ReturnType<typeof vi.fn>;
+  setRenderTarget: ReturnType<typeof vi.fn>;
+  readRenderTargetPixels: ReturnType<typeof vi.fn>;
+}
+const webglRenderers: FakeWebGLRenderer[] = [];
+
+/** 打开后所有 `setFromObject()` 都交出空盒，模拟「节点下面还没有任何几何体」。 */
+let boxIsEmpty = false;
+
+/**
+ * 打开后所有 `setFromObject()` 都交出一个 x 两端为 NaN 的盒子，模拟几何体里混进了
+ * NaN 顶点的资产（导坏的 GLB 真会这样）。这种盒子**过得了 `isEmpty()`**——那句判的是
+ * `max.x < min.x`，而 NaN 的比较恒为 false，所以想挡住它只能另外查有限性。
+ */
+let boxHasNaN = false;
+
+/**
+ * 假包围盒的盒底相对对象原点的偏移，默认 0（脚底就在原点上）。
+ *
+ * 默认值下 `boxMinY === currentY` 恒成立，于是落地公式里的位移
+ * `currentY + (surfaceY - boxMinY)` 与错误的 `y = surfaceY` **算出来一模一样**，
+ * 这一层根本分不开这两件事（偏移方向本身在 `drop.test.ts` 里测）。要在渲染器这一层
+ * 也压住它的用例，把这个偏移调成非 0：原点不在脚底的模型（导入的 obj 常在几何中心）
+ * 就是这样的。
+ */
+let boxMinYOffset = 0;
+
+/**
+ * 假盒水平中心相对对象原点的偏移，同上一条的道理换到 x/z 上：默认盒子以对象原点为
+ * 水平中心，那种形状下「盒中心」和「对象原点」是同一个数，起点取哪个都测不出来。
+ * 枢轴不在几何水平中心的资产（壁挂搁板、以世界原点导出的 obj）真会踩到这个差别：
+ * 按原点起射会从对象轮廓**之外**往下打，落到枢轴底下那块表面上而不是对象底下的。
+ */
+let boxCentreOffset = 0;
+
+/**
+ * 地面取点时射线打在 y=0 平面上的位置。null 表示射线与地面平行（相机平视时的真实
+ * 情况），`Ray.intersectPlane` 这时返回 null——被测代码必须扛得住。
+ */
+let groundHit: Vec3 | null = [0, 0, 0];
+
+/**
+ * 上一次射线求交拿到的那个平面。绘制平面的高度只体现在平面本身上——假实现无论平面在
+ * 哪都交出同一个落点，不把平面记下来的话「按对象高度取平面」这件事在这里测不出来。
+ */
+let lastPlane: { normal: { x: number; y: number; z: number }; constant: number } | null = null;
+function rayPlaneHit(
+  plane: unknown,
+  target: { set: (x: number, y: number, z: number) => unknown },
+) {
+  lastPlane = plane as typeof lastPlane;
+  if (!groundHit) return null;
+  target.set(groundHit[0], groundHit[1], groundHit[2]);
+  return target;
+}
+
+vi.mock('three', () => {
+  class Vector2 {
+    constructor(
+      public x = 0,
+      public y = 0,
+    ) {}
+  }
+  class Vector3 {
+    constructor(
+      public x = 0,
+      public y = 0,
+      public z = 0,
+    ) {}
+    set(x: number, y: number, z: number) {
+      this.x = x;
+      this.y = y;
+      this.z = z;
+      return this;
+    }
+    /** 监看相机从节点的世界矩阵取位置；本假实现不模拟矩阵，取到什么不影响断言。 */
+    setFromMatrixPosition(_matrix: unknown) {
+      return this;
+    }
+  }
+  class Object3D {
+    name = '';
+    visible = true;
+    userData: Record<string, unknown> = {};
+    children: Object3D[] = [];
+    parent: Object3D | null = null;
+    position = new Vector3();
+    rotation = new Vector3();
+    scale = new Vector3(1, 1, 1);
+    quaternion = { setFromRotationMatrix: vi.fn() };
+    matrixWorld = {};
+    updateWorldMatrix(_updateParents?: boolean, _updateChildren?: boolean) {}
+    add(child: Object3D) {
+      child.parent = this;
+      this.children.push(child);
+      return this;
+    }
+    remove(child: Object3D) {
+      this.children = this.children.filter((entry) => entry !== child);
+      child.parent = null;
+      return this;
+    }
+    traverse(callback: (object: Object3D) => void) {
+      callback(this);
+      for (const child of [...this.children]) child.traverse(callback);
+    }
+    /** 沿父链累加：本用例里的节点只有平移，够用且不用假装有矩阵。 */
+    getWorldPosition(target: Vector3) {
+      let x = 0;
+      let y = 0;
+      let z = 0;
+      let node: Object3D | null = this;
+      while (node) {
+        x += node.position.x;
+        y += node.position.y;
+        z += node.position.z;
+        node = node.parent;
+      }
+      return target.set(x, y, z);
+    }
+  }
+  class Box3 {
+    min = new Vector3(Infinity, Infinity, Infinity);
+    max = new Vector3(-Infinity, -Infinity, -Infinity);
+    /** 非空时给一个 2×2×2、脚底贴地、跟着对象位置走的盒子。 */
+    setFromObject(object: Object3D) {
+      if (boxIsEmpty) return this;
+      if (boxHasNaN) {
+        this.min.set(NaN, 0, -1);
+        this.max.set(NaN, 2, 1);
+        return this;
+      }
+      const origin = object.getWorldPosition(new Vector3());
+      const cx = origin.x + boxCentreOffset;
+      const cz = origin.z + boxCentreOffset;
+      this.min.set(cx - 1, origin.y + boxMinYOffset, cz - 1);
+      this.max.set(cx + 1, origin.y + 2 + boxMinYOffset, cz + 1);
+      return this;
+    }
+    isEmpty() {
+      return this.max.x < this.min.x || this.max.y < this.min.y || this.max.z < this.min.z;
+    }
+    /** 取两端中点写进 target 再交回来，同 three 0.185 `math/Box3.js:224`。真身在
+     * `:226` 还有一条空盒走 `set(0,0,0)` 的分支，这里没抄——调用点先判了 `isEmpty()`。 */
+    getCenter(target: Vector3) {
+      return target.set(
+        (this.min.x + this.max.x) / 2,
+        (this.min.y + this.max.y) / 2,
+        (this.min.z + this.max.z) / 2,
+      );
+    }
+  }
+  class FakeGeometry {
+    dispose = vi.fn();
+    constructor(..._args: number[]) {}
+  }
+  class FakeMaterialImpl {
+    transparent = false;
+    opacity = 1;
+    needsUpdate = false;
+    // 真材质身上一定有这两样，全灰模式的记账就走它们。缺一个，这边任何一条走到全灰的
+    // 用例都会炸在一句和显示模式毫无关系的 TypeError 上。
+    color = { set: vi.fn(), getHex: vi.fn(() => 0xffffff) };
+    userData: Record<string, unknown> = {};
+    dispose = vi.fn();
+    constructor(public params: Record<string, unknown> = {}) {
+      materials.push(this as unknown as FakeMaterial);
+    }
+  }
+
+  return {
+    Scene: class extends Object3D {
+      background: unknown = null;
+    },
+    Group: class extends Object3D {},
+    Mesh: class extends Object3D {
+      constructor(
+        public geometry: FakeGeometry,
+        public material: FakeMaterialImpl,
+      ) {
+        super();
+      }
+    },
+    Object3D,
+    Box3,
+    Vector2,
+    Vector3,
+    Euler: Vector3,
+    Color: class {},
+    PlaneGeometry: FakeGeometry,
+    ShaderMaterial: FakeMaterialImpl,
+    // 只画影子的承影材质。走同一份材质替身，于是它也进 `materials` 账本——
+    // 「每份材质只 dispose 一次」那条照样管得着它。
+    ShadowMaterial: FakeMaterialImpl,
+    DoubleSide: 2,
+    PCFSoftShadowMap: 2,
+    ACESFilmicToneMapping: 4,
+    // create() 现在会把中键从默认的推拉改成环绕，读的就是这个常量。
+    MOUSE: { LEFT: 0, MIDDLE: 1, RIGHT: 2, ROTATE: 0, DOLLY: 1, PAN: 2 },
+    HemisphereLight: class extends Object3D {
+      constructor(
+        public sky: number,
+        public ground: number,
+        public intensity: number,
+      ) {
+        super();
+      }
+    },
+    DirectionalLight: class extends Object3D {
+      // 主光要投影：投影相机的框与深度图尺寸都得照着场景调，默认那个 ±5 米的框装不下
+      // 一间屋子。替身缺了这一坨，create() 会炸在一句和本用例无关的 TypeError 上。
+      shadow = {
+        camera: {
+          left: -5,
+          right: 5,
+          top: 5,
+          bottom: -5,
+          near: 0.5,
+          far: 500,
+          updateProjectionMatrix: vi.fn(),
+        },
+        mapSize: { set: vi.fn() },
+        normalBias: 0,
+      };
+    },
+    CapsuleGeometry: FakeGeometry,
+    ConeGeometry: FakeGeometry,
+    RingGeometry: FakeGeometry,
+    SphereGeometry: FakeGeometry,
+    CylinderGeometry: FakeGeometry,
+    // 手柄改造要新建它（`gizmoEmphasis.ts`）。今天走不到——这份替身的 `getHelper()`
+    // 交出的 helper `traverse` 是空实现，改造找不到手柄就早退了。留着是因为下一个把
+    // 那个 traverse 补忠实的人不该撞上一句 `new undefined()`：报错点在 gizmoEmphasis 里，
+    // 和他改的那一行隔着两层，找起来费时间而收获为零。补忠实的人还得留意：
+    // `FakeMaterialImpl` 的构造会 `materials.push(this)`，而改造要新建 1 份中心材质加
+    // 3 份平面材质——「每份材质只 dispose 一次」那条会凭空多出 4 笔进账本。
+    OctahedronGeometry: FakeGeometry,
+    BufferGeometry: class extends FakeGeometry {
+      drawRange = { start: 0, count: Infinity };
+      setFromPoints = vi.fn(() => this);
+      setAttribute = vi.fn(() => this);
+      setDrawRange(start: number, count: number) {
+        this.drawRange = { start, count };
+      }
+    },
+    Float32BufferAttribute: class {
+      constructor(
+        public array: number[],
+        public itemSize: number,
+      ) {}
+    },
+    BufferAttribute: class {
+      needsUpdate = false;
+      constructor(
+        public array: Float32Array,
+        public itemSize: number,
+      ) {}
+    },
+    LineBasicMaterial: FakeMaterialImpl,
+    MeshBasicMaterial: FakeMaterialImpl,
+    Line: class extends Object3D {
+      constructor(
+        public geometry: FakeGeometry,
+        public material: FakeMaterialImpl,
+      ) {
+        super();
+      }
+    },
+    LineSegments: class extends Object3D {
+      constructor(
+        public geometry: FakeGeometry,
+        public material: FakeMaterialImpl,
+      ) {
+        super();
+      }
+    },
+    Plane: class {
+      constructor(
+        public normal: Vector3 = new Vector3(),
+        public constant = 0,
+      ) {}
+    },
+    BoxGeometry: FakeGeometry,
+    MeshStandardMaterial: FakeMaterialImpl,
+    PerspectiveCamera: class extends Object3D {
+      aspect = 1;
+      fov: number;
+      // 木偶预览要 `lookAt`（视口相机的朝向由 OrbitControls 管，从来不调它）。正交那
+      // 台早就补过同一个，见下面。
+      lookAt = vi.fn();
+      updateProjectionMatrix = vi.fn();
+      constructor(fov = 50) {
+        super();
+        this.fov = fov;
+      }
+    },
+    OrthographicCamera: class extends Object3D {
+      left = -1;
+      right = 1;
+      top = 1;
+      bottom = -1;
+      near = 0.1;
+      far = 100;
+      up = new Vector3(0, 1, 0);
+      lookAt = vi.fn();
+      updateProjectionMatrix = vi.fn();
+    },
+    Raycaster: class {
+      setFromCamera = setFromCamera;
+      set = raySet;
+      intersectObjects = intersectObjects;
+      ray = { intersectPlane: (plane: unknown, target: Vector3) => rayPlaneHit(plane, target) };
+    },
+    WebGLRenderer: class {
+      domElement = document.createElement('canvas');
+      shadowMap = { enabled: false, type: 0 };
+      toneMapping = 0;
+      render = render;
+      setPixelRatio = vi.fn();
+      setSize = vi.fn();
+      dispose = vi.fn();
+      forceContextLoss = vi.fn();
+      autoClear = true;
+      getSize = vi.fn((target: { x: number; y: number }) => {
+        target.x = 800;
+        target.y = 450;
+        return target;
+      });
+      setViewport = vi.fn();
+      setScissor = vi.fn();
+      setScissorTest = vi.fn();
+      clearDepth = vi.fn();
+      // 出片走的是离屏 render target。读回来的像素全是 0，出片本身在
+      // `render-capture.test.ts` 那边测；这里只要这条路能走通，好让出片那一次
+      // `render()` 真的发生——藏没藏住辅助物就是在那一刻断言的。
+      getRenderTarget = vi.fn(() => null);
+      setRenderTarget = vi.fn();
+      readRenderTargetPixels = vi.fn();
+      constructor() {
+        webglRenderers.push(this as unknown as FakeWebGLRenderer);
+      }
+    },
+    WebGLRenderTarget: class {
+      constructor(
+        public width: number,
+        public height: number,
+      ) {}
+      dispose = vi.fn();
+    },
+    SRGBColorSpace: 'srgb',
+  };
+});
+
+/**
+ * 人物模型的加载：本文件测的是渲染器与场景图 / 取景数学的接线，模型自身的行为归
+ * `character-rig.test.ts` 与 `scene-graph.test.ts`。默认让加载永不落地——别的用例里的
+ * 人物就一直停在占位胶囊上，不会有一次异步换模型插进它们的断言中间。要测这条接线的
+ * 那条用例自己把 `pendingGltf` 填上。
+ */
+let pendingGltf: unknown = null;
+/** 同上，OBJ 那一路。物件默认也停在占位方块上。 */
+let pendingObj: unknown = null;
+const loadedUrls: string[] = [];
+
+/** 最近一次建出来的那个手柄 helper，见下面 mock 里的 `getHelper`。 */
+let gizmoHelper: { traverse: () => void; visible: boolean; userData: Record<string, unknown> };
+
+/**
+ * 最近一次建出来的那个 TransformControls 替身。松手落地是「渲染器把算法接给手柄」，
+ * 只有从这里把 `dragging-changed` 真的敲一遍，才验得到那根线接没接上。
+ */
+let transformControls: {
+  object: unknown;
+  axis: string | null;
+  emit: (type: string, event?: { value?: boolean }) => void;
+};
+
+vi.mock('three/examples/jsm/controls/TransformControls.js', () => ({
+  TransformControls: class {
+    enabled = true;
+    object: unknown = null;
+    // attach/detach 照抄 three 0.185 的副作用：`_root.visible` 跟着开关（`TransformControlsRoot`
+    // 构造里初值就是 false）。替身在这个属性上偏离真身的话，「手柄该不该在」这一类回归
+    // 在集成层就永远观测不到——而单测那份替身已经是忠实的，两份互相打架更糟。
+    attach = vi.fn((object: unknown) => {
+      this.object = object;
+      gizmoHelper.visible = true;
+    });
+    detach = vi.fn(() => {
+      this.object = null;
+      gizmoHelper.visible = false;
+    });
+    setMode = vi.fn();
+    setSpace = vi.fn();
+    dispose = vi.fn();
+    // 真手柄是个 Object3D，挂在 scene 下面。谁扫一遍 scene 的子节点都会碰到它，
+    // 少了 userData 就是一句和被测行为毫无关系的 TypeError。
+    //
+    // 每次都返回同一份，而不是新建一个字面量：`setHelperVisible` 改的就是它的 visible，
+    // 每次换一份的话那次赋值写完就丢，「手柄藏没藏住」在这里根本观测不到；
+    // gizmo dispose 里那次 `root.remove(getHelper())` 同理，删的得是当初加进去的那个。
+    getHelper = vi.fn(() => gizmoHelper);
+    /**
+     * 正在被拖的那根手柄的名字。真身在 `pointerUp` 里先 `this.dragging = false`
+     * （这一句才派发 `dragging-changed`），下一句才 `this.axis = null`
+     * （three 0.185 `TransformControls.js:784-785`）——所以收尾事件跑的时候它还在。
+     */
+    axis: string | null = null;
+    private readonly listeners: Record<string, Array<(event: { value?: boolean }) => void>> = {};
+    addEventListener = vi.fn((type: string, handler: (event: { value?: boolean }) => void) => {
+      (this.listeners[type] ??= []).push(handler);
+    });
+    constructor() {
+      gizmoHelper = { traverse() {}, visible: false, userData: {} };
+      transformControls = this as unknown as typeof transformControls;
+    }
+    emit(type: string, event: { value?: boolean } = {}) {
+      for (const handler of this.listeners[type] ?? []) handler(event);
+    }
+  },
+}));
+
+vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
+  GLTFLoader: class {
+    loadAsync = vi.fn((url: string) => {
+      loadedUrls.push(url);
+      return pendingGltf ? Promise.resolve(pendingGltf) : new Promise(() => {});
+    });
+  },
+}));
+
+vi.mock('three/examples/jsm/loaders/OBJLoader.js', () => ({
+  OBJLoader: class {
+    loadAsync = vi.fn((url: string) => {
+      loadedUrls.push(url);
+      return pendingObj ? Promise.resolve(pendingObj) : new Promise(() => {});
+    });
+  },
+}));
+
+// 真的 BVHLoader 继承 three 的 `Loader`，而这里的 three 是假的；这一份只测接线，不解析。
+vi.mock('three/examples/jsm/loaders/BVHLoader.js', () => ({
+  BVHLoader: class {
+    parse = vi.fn();
+  },
+}));
+
+vi.mock('three/examples/jsm/utils/SkeletonUtils.js', () => ({
+  clone: (object: unknown) => object,
+}));
+
+class FakeTarget {
+  x = 0;
+  y = 0;
+  z = 0;
+  set(x: number, y: number, z: number) {
+    this.x = x;
+    this.y = y;
+    this.z = z;
+    return this;
+  }
+}
+
+class FakeControls {
+  enabled = true;
+  enableDamping = false;
+  // create() 里会把 MIDDLE 从默认值改写成 MOUSE.ROTATE；这里得有这张表才接得住那次赋值。
+  mouseButtons: Record<string, number | null> = { LEFT: 0, MIDDLE: 1, RIGHT: 2 };
+  target = new FakeTarget();
+  // 恒为 false：本文件测的都是「显式调了 requestRender 吗」，让 update() 自己报
+  // 「相机动了」会把这条路径盖掉。
+  update = vi.fn(() => false);
+  dispose = vi.fn();
+  addEventListener() {}
+}
+
+let controls: FakeControls;
+
+vi.mock('three/examples/jsm/controls/OrbitControls.js', () => ({
+  OrbitControls: class {
+    constructor() {
+      controls = new FakeControls();
+      return controls as unknown as object;
+    }
+  },
+}));
+
+let frames: FrameRequestCallback[] = [];
+
+/** 跑一帧：rAF 回调里会重新排下一帧，所以先取走再执行。 */
+function step() {
+  const pending = frames;
+  frames = [];
+  for (const frame of pending) frame(0);
+}
+
+/** 排空微任务队列：模型换入走的是一条纯 Promise 链，没有定时器。 */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+beforeEach(() => {
+  frames = [];
+  intersections = [];
+  pendingGltf = null;
+  pendingObj = null;
+  loadedUrls.length = 0;
+  materials.length = 0;
+  webglRenderers.length = 0;
+  boxIsEmpty = false;
+  boxHasNaN = false;
+  boxMinYOffset = 0;
+  boxCentreOffset = 0;
+  groundHit = [0, 0, 0];
+  lastPlane = null;
+  render.mockClear();
+  setFromCamera.mockClear();
+  intersectObjects.mockClear();
+  raySet.mockClear();
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    frames.push(cb);
+    return frames.length;
+  });
+  vi.stubGlobal('cancelAnimationFrame', () => {});
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+/** jsdom 的 clientWidth/clientHeight 恒为 0，resize() 要拿到真尺寸只能自己盖上去。 */
+function setClientSize(canvas: HTMLCanvasElement, width: number, height: number) {
+  Object.defineProperty(canvas, 'clientWidth', { value: width, configurable: true });
+  Object.defineProperty(canvas, 'clientHeight', { value: height, configurable: true });
+}
+
+async function createRenderer(size?: { width: number; height: number }) {
+  const canvas = document.createElement('canvas');
+  // 尺寸要赶在 create() 之前盖上：这里测的正是 create() 自己那次 resize()。
+  if (size) setClientSize(canvas, size.width, size.height);
+  const instance = await PrevizRenderer.create(canvas);
+  // 这里只做搭台，不放断言：helper 里的断言一红，15 条用例会一起红，
+  // 谁都看不出坏的是哪一处。create() 自己的行为归下面「重置回共享的默认机位」那条管。
+  // create() 里的 resize() 置了 needsRender，先把首帧跑掉再计数。
+  step();
+  render.mockClear();
+  return { canvas, instance };
+}
+
+/** 每个位置放一个人物。假 Box3 会把包围盒挂到这些位置上，取景结果才分得开。 */
+function sceneWith(...positions: Vec3[]): PrevizScene {
+  const scene = createDefaultScene();
+  for (const position of positions) {
+    scene.objects.push(
+      createPrevizObject('character', scene.objects, {
+        transform: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+      }),
+    );
+  }
+  return scene;
+}
+
+function targetOf(): Vec3 {
+  return [controls.target.x, controls.target.y, controls.target.z];
+}
+
+/** 相机相对轨道中心的方向与距离——聚焦要保住前者、只改后者。 */
+function orbitOffset(instance: PrevizRenderer): { unit: Vec3; distance: number } {
+  const position = instance.cameraPositionForTest();
+  const target = targetOf();
+  const raw: Vec3 = [position[0] - target[0], position[1] - target[1], position[2] - target[2]];
+  const distance = Math.hypot(raw[0], raw[1], raw[2]);
+  return { unit: [raw[0] / distance, raw[1] / distance, raw[2] / distance], distance };
+}
+
+describe('PrevizRenderer 的当前导演视角', () => {
+  it('把眼位与轨道中心一起交出来', async () => {
+    const { instance } = await createRenderer();
+    instance.applyViewDirection('front');
+
+    const pose = instance.viewPose();
+
+    // 摄影机创建对话框要的就是这两样：站位从眼位来，朝向从眼位指向轨道中心。
+    expect(pose.position).toEqual(instance.cameraPositionForTest());
+    expect(pose.target).toEqual(targetOf());
+  });
+
+  it('交出的是快照而不是 three 内部对象的引用', async () => {
+    const { instance } = await createRenderer();
+
+    const pose = instance.viewPose();
+    pose.position[0] = 999;
+    pose.target[0] = 999;
+
+    // 对话框会把这两个数组存进 React state 再逐分量改；漏出引用的话用户拖一下滑杆
+    // 就把视口相机搬走了。
+    expect(instance.cameraPositionForTest()[0]).not.toBe(999);
+    expect(targetOf()[0]).not.toBe(999);
+  });
+
+  it('销毁之后画预览不炸', async () => {
+    const { instance } = await createRenderer();
+    instance.dispose();
+
+    // 对话框关闭与编辑器卸载谁先谁后不好保证，画到一台已销毁的渲染器上是会发生的。
+    expect(() =>
+      instance.renderCameraPreview(
+        { width: 320, height: 180, getContext: () => null },
+        createCameraDraft(instance.viewPose()),
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe('PrevizRenderer 视角球', () => {
+  it('顶视图框的是选中对象', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWith([2, 0, 0], [-8, 0, 0]);
+    instance.setScene(scene);
+    instance.setSelection(scene.objects[1].id);
+
+    instance.applyViewDirection('top');
+
+    // 选中对象自己的盒子是 [-9,0,-1]..[-7,2,1]，中心 (-8,1,0)；全场景并集中心是 (-3,1,0)。
+    expect(targetOf()[0]).toBeCloseTo(-8, 6);
+    expect(targetOf()[1]).toBeCloseTo(1, 6);
+
+    instance.dispose();
+  });
+});
+
+describe('PrevizRenderer 接场景图', () => {
+  it('把场景灌进对象树并请求一次重绘', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWith([0, 0, 0]);
+
+    // 静止帧不重绘，否则下面那次计数不是在测 setScene。
+    step();
+    expect(render).not.toHaveBeenCalled();
+
+    instance.setScene(scene);
+    step();
+
+    expect(render).toHaveBeenCalledTimes(1);
+    const node = instance.nodeFor(scene.objects[0].id);
+    expect(node?.userData.previzObjectId).toBe(scene.objects[0].id);
+
+    // 对象挂在一个独立的对象根上，对象根再挂进场景。两头都要锁：
+    // 把 scene 本身交给场景图的话，显示模式会连地面网格与常驻灯光一起改材质，
+    // dispose 也会顺手把它们清掉；而对象根忘了 add 进场景的话，nodeFor / 拾取 /
+    // 取景全都照常工作，只有画面上一个对象都看不见——最难查的那种症状。
+    const objectRoot = node?.parent;
+    expect(objectRoot).toBeInstanceOf(THREE.Group);
+    expect(objectRoot).not.toBeInstanceOf(THREE.Scene);
+    expect(objectRoot?.parent).toBeInstanceOf(THREE.Scene);
+    // 对象根必须是恒等变换，两个理由各管一半：
+    //
+    // 缩放和旋转是松手落地（`dropToSurface`）的承重前提。它拿世界坐标的包围盒算出位移，
+    // 却把结果加到节点的**局部** y 上：非 1 的缩放让世界位移是局部的 s 倍，旋转让局部
+    // y 轴不再竖直、对象被推着往斜里走。两种都是静默失败——画面上只是「没落准」。
+    // （纯 y 偏移在这条公式里是无害的，平移保位移，它在减法里约掉了；下面那句锁的是
+    // 另一件事。）
+    expect(objectRoot?.scale.x).toBe(1);
+    expect(objectRoot?.scale.y).toBe(1);
+    expect(objectRoot?.scale.z).toBe(1);
+    expect(objectRoot?.rotation.x).toBe(0);
+    expect(objectRoot?.rotation.y).toBe(0);
+    expect(objectRoot?.rotation.z).toBe(0);
+    // 偏移这一句管的是坐标系本身：store 里存的就是节点的局部 transform（`onCommit` 读
+    // 什么就存什么），对象根一旦偏移，场景数据里的坐标和用户在视口里看到的世界坐标
+    // 就对不上了——保存出去的位置全体错一个常量。
+    expect(objectRoot?.position.x).toBe(0);
+    expect(objectRoot?.position.y).toBe(0);
+    expect(objectRoot?.position.z).toBe(0);
+
+    instance.dispose();
+  });
+
+  it('按方向把相机摆到包围球之外，注视点落在对象中心', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWith([2, 0, 0]);
+    instance.setScene(scene);
+
+    instance.applyViewDirection('left');
+
+    // 假 Box3 给这个对象的是 [1,0,-1]..[3,2,1]：中心 (2,1,0)、包围球半径 √3。
+    expect(targetOf()[0]).toBeCloseTo(2, 6);
+    expect(targetOf()[1]).toBeCloseTo(1, 6);
+    expect(targetOf()[2]).toBeCloseTo(0, 6);
+
+    const position = instance.cameraPositionForTest();
+    // 左视图站在中心的 -X 一侧，另外两轴与中心齐平，且要退到包围球之外。
+    expect(position[1]).toBeCloseTo(1, 6);
+    expect(position[2]).toBeCloseTo(0, 6);
+    expect(position[0]).toBeLessThan(2 - Math.sqrt(3));
+
+    instance.dispose();
+  });
+
+  it('有选中对象就只框选中的，没有就框全场景', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWith([2, 0, 0], [-8, 0, 0]);
+    instance.setScene(scene);
+
+    instance.applyViewDirection('front');
+    // 两个盒子并起来是 x∈[-9,3]，中心 -3。
+    expect(targetOf()[0]).toBeCloseTo(-3, 6);
+
+    instance.setSelection(scene.objects[1].id);
+    instance.applyViewDirection('front');
+    expect(targetOf()[0]).toBeCloseTo(-8, 6);
+
+    instance.setSelection(null);
+    instance.applyViewDirection('front');
+    expect(targetOf()[0]).toBeCloseTo(-3, 6);
+
+    instance.dispose();
+  });
+
+  it('隐藏的对象不进「框全场景」的并集', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWith([2, 0, 0], [-8, 0, 0]);
+    scene.objects[1].visible = false;
+    instance.setScene(scene);
+
+    instance.applyViewDirection('front');
+
+    expect(targetOf()[0]).toBeCloseTo(2, 6);
+
+    instance.dispose();
+  });
+
+  it('空场景切视图时回落到占位包围盒，而不是崩在 null 上', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(createDefaultScene());
+
+    instance.applyViewDirection('front');
+
+    const position = instance.cameraPositionForTest();
+    expect(position.every((value) => Number.isFinite(value))).toBe(true);
+    // 占位盒是 1.75 m 高、0.44 m 宽、脚底贴地的一个人，中心在 y=0.875。
+    expect(targetOf()).toEqual([0, 0.875, 0]);
+    // 正视图的注视点在 z=0，所以 position[2] 就是取景距离。这一个数把整条取景链路
+    // 都钉住了：包围球半径 √(0.22² + 0.875² + 0.22²) ≈ 0.92867，除以 sin(50°/2)
+    // 再乘 1.25 的留白 ≈ 2.7468。占位盒半宽归零会退化成一条竖线，这个数掉到 2.588。
+    // 期望值刻意写字面量：从被测模块 import 常量来算期望，改一处两边一起变。
+    expect(position[2]).toBeCloseTo(2.7468, 3);
+    // 上面那个 2.7468 里已经含着「取景用 50°」，这里再把**相机自己**的视场角钉在同一
+    // 个数上，两条合起来锁的是二者的耦合：分岔之后「切到正视图」框出来的画面就不是
+    // 相机真正看到的画面（一边裁掉、一边留白），而取景数学和相机各自看起来都「对」，
+    // 没有任何东西会报错。这两行合在一起也顺带把 50 这个取值本身变成了棘轮——改它
+    // 要同时改这两个字面量，是有意的。
+    // （下面「出片画幅不改编辑视角的视场角」那条用的是区间断言，测的是另一件事：
+    //   同一个渲染器实例内，切画幅前后 fov 不变。）
+    expect(instance.editorFovForTest()).toBe(50);
+
+    instance.dispose();
+  });
+
+  it('对象没有几何体时，占位包围盒挂在它自己的位置上', async () => {
+    boxIsEmpty = true;
+    const { instance } = await createRenderer();
+    const scene = sceneWith([4, 0, 0]);
+    instance.setScene(scene);
+
+    instance.applyViewDirection('front');
+
+    // 空 Box3 是 min=+∞ / max=-∞，原样交给取景数学会收敛成「原点上的一个点」，
+    // 相机被甩回场景中心；占位盒既要有人的尺寸，也要跟着对象走。
+    expect(targetOf()[0]).toBeCloseTo(4, 6);
+    expect(targetOf()[1]).toBeCloseTo(0.875, 6);
+    expect(instance.cameraPositionForTest()[2]).toBeGreaterThan(1);
+
+    instance.dispose();
+  });
+
+  it('聚焦保住当前观察方向，只改注视点与距离', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWith([0, 0, 0], [10, 0, 0]);
+    instance.setScene(scene);
+    const before = orbitOffset(instance);
+
+    instance.focusObject(scene.objects[1].id);
+
+    const after = orbitOffset(instance);
+    expect(targetOf()[0]).toBeCloseTo(10, 6);
+    expect(after.unit[0]).toBeCloseTo(before.unit[0], 6);
+    expect(after.unit[1]).toBeCloseTo(before.unit[1], 6);
+    expect(after.unit[2]).toBeCloseTo(before.unit[2], 6);
+    // 默认机位离原点 √109 ≈ 10.4，框一个半径 √3 的盒子该拉近到几米。
+    expect(after.distance).toBeGreaterThan(Math.sqrt(3));
+    expect(after.distance).toBeLessThan(before.distance);
+
+    // 认不出的 id 什么都不做，别把相机甩到原点。
+    const parked = instance.cameraPositionForTest();
+    instance.focusObject('no-such-object');
+    expect(instance.cameraPositionForTest()).toEqual(parked);
+    expect(targetOf()[0]).toBeCloseTo(10, 6);
+
+    instance.dispose();
+  });
+
+  it('重置回共享的默认机位', async () => {
+    // 这条不走 createRenderer()：它要数的正是 create() 自己留下的那次 update()，
+    // 而 helper 会先跑掉一帧，tick 里那次 update() 会把计数顶到 2。
+    const instance = await PrevizRenderer.create(document.createElement('canvas'));
+    // create() 写完 position/target 之后必须自己 update() 一次。真 OrbitControls 的
+    // 构造函数末尾也有一次 update()，但它跑在我们写 target 之前——不补这一次的话
+    // 内部球坐标记的还是 target=(0,0,0)，用户第一次拖拽相机会跳一下。
+    expect(controls.update).toHaveBeenCalledTimes(1);
+    expect(instance.cameraPositionForTest()).toEqual([...PREVIZ_DEFAULT_VIEW.position]);
+    // create() 里的初始轨道中心也走同一份真相，不是另抄一遍的 (0, 0, 0)——
+    // 抄错的话用户第一次点「重置」之前轨道中心就是错的，聚焦的首次观察方向也跟着歪。
+    expect(targetOf()).toEqual([...PREVIZ_DEFAULT_VIEW.target]);
+
+    instance.applyViewDirection('top');
+    expect(instance.cameraPositionForTest()).not.toEqual([...PREVIZ_DEFAULT_VIEW.position]);
+
+    // 先把上一次的重绘请求消化掉，下面那次计数才是在测 resetView 自己。
+    step();
+    render.mockClear();
+    controls.update.mockClear();
+    instance.resetView();
+
+    expect(instance.cameraPositionForTest()).toEqual([...PREVIZ_DEFAULT_VIEW.position]);
+    expect(targetOf()).toEqual([...PREVIZ_DEFAULT_VIEW.target]);
+    // 直接写 position/target 之后必须让 OrbitControls 重算一次：真 three 里这一步
+    // 才会 lookAt(target) 把姿态摆正，少了它相机位置变了、朝向还停在原处。
+    // 计数要赶在 step() 之前：tick 每帧自己也会调一次 update()。
+    expect(controls.update).toHaveBeenCalledTimes(1);
+
+    // 假 controls 的 update() 恒为 false，所以这一帧要重绘只可能是 moveCamera
+    // 自己请求的。生产里还有 controls 的 'change' 事件兜底，但那是第二层。
+    step();
+    expect(render).toHaveBeenCalledTimes(1);
+
+    instance.dispose();
+  });
+
+  it('取景用的是画布当前的宽高比', async () => {
+    const { canvas, instance } = await createRenderer({ width: 400, height: 1600 });
+    instance.setScene(sceneWith([0, 0, 0]));
+
+    // 刻意不先调 resize()：create() 自己就该把画布尺寸接上。少了那一步，aspect 会
+    // 停在 PerspectiveCamera 构造时的 1，竖幅容器里第一帧的取景就是错的（左右被裁），
+    // 一直错到容器第一次改尺寸、ResizeObserver 补上为止。
+    instance.applyViewDirection('front');
+    const tall = instance.cameraPositionForTest()[2];
+
+    setClientSize(canvas, 1600, 1600);
+    instance.resize();
+    instance.applyViewDirection('front');
+    const square = instance.cameraPositionForTest()[2];
+
+    // 注视点在 z=0，所以 position[2] 就是取景距离。竖幅下水平方向更紧，必须退得更远，
+    // 否则左右会被裁掉——写死 aspect=1 的话这两个数会一模一样。
+    expect(square).toBeGreaterThan(1);
+    expect(tall).toBeGreaterThan(square * 2);
+
+    instance.dispose();
+  });
+
+  it('把画布坐标换成 NDC，并从命中的子网格往上找到对象组', async () => {
+    const { canvas, instance } = await createRenderer();
+    canvas.getBoundingClientRect = () => new DOMRect(100, 50, 400, 200);
+    const scene = sceneWith([0, 0, 0]);
+    instance.setScene(scene);
+    const node = instance.nodeFor(scene.objects[0].id);
+
+    // 命中的永远是子网格，previzObjectId 挂在它上面那个组上。
+    intersections = [{ object: node?.children[0] }];
+    expect(instance.pickAt(300, 100)).toBe(scene.objects[0].id);
+
+    // 递归必须开着：交给射线的是 createNode() 建出来的 Group，几何体挂在它的子
+    // Mesh 上，而 Object3D.raycast() 是空实现——关掉递归就永远命中不了任何东西。
+    expect(intersectObjects.mock.calls[0][1]).toBe(true);
+
+    const pointer = setFromCamera.mock.calls[0][0] as { x: number; y: number };
+    expect(pointer.x).toBeCloseTo(0, 6);
+    // 画布上半部分在 NDC 里是正的：y 轴符号搞反的话拾取会上下颠倒。
+    expect(pointer.y).toBeCloseTo(0.5, 6);
+
+    intersections = [];
+    expect(instance.pickAt(300, 100)).toBeNull();
+
+    instance.dispose();
+  });
+
+  it('容器还没布局时也给出有限的 NDC', async () => {
+    const { canvas, instance } = await createRenderer();
+    canvas.getBoundingClientRect = () => new DOMRect(0, 0, 0, 0);
+    instance.setScene(sceneWith([0, 0, 0]));
+
+    instance.pickAt(0, 0);
+
+    const pointer = setFromCamera.mock.calls[0][0] as { x: number; y: number };
+    expect(Number.isFinite(pointer.x)).toBe(true);
+    expect(Number.isFinite(pointer.y)).toBe(true);
+
+    instance.dispose();
+  });
+
+  it('隐藏的对象不参与拾取', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWith([0, 0, 0], [3, 0, 0]);
+    scene.objects[0].visible = false;
+    instance.setScene(scene);
+
+    instance.pickAt(1, 1);
+
+    // three 的 Raycaster 只测 layers，不看 visible，不主动剔的话隐藏对象照样点得中。
+    const candidates = intersectObjects.mock.calls[0][0];
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toBe(instance.nodeFor(scene.objects[1].id));
+
+    instance.dispose();
+  });
+
+  it('从轨迹点球上拾取轨迹点，点在曲线上不算', async () => {
+    const { canvas, instance } = await createRenderer();
+    canvas.getBoundingClientRect = () => new DOMRect(0, 0, 400, 200);
+    const scene = sceneWith([0, 0, 0]);
+    scene.timeline.tracks.push({
+      id: 'track',
+      objectId: scene.objects[0].id,
+      clips: [
+        {
+          id: 'clip',
+          kind: 'path' as const,
+          startFrame: 0,
+          endFrame: 120,
+          points: [
+            { id: 'p0', u: 0, position: [0, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+            { id: 'p1', u: 1, position: [4, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+          ],
+        },
+      ],
+    });
+    instance.setScene(scene);
+
+    intersections = [{ object: { userData: { previzClipId: 'clip', previzPointId: 'p1' } } }];
+    expect(instance.pickPathPointAt(10, 10)).toEqual({ clipId: 'clip', pointId: 'p1' });
+
+    // 递给射线的必须是轨迹预览这一组：轨迹点球挂在预览根下，不在任何对象节点里，
+    // 跟着 pickAt 那份候选走的话永远打不中。
+    const candidates = intersectObjects.mock.calls[0][0] as Array<{
+      userData: Record<string, unknown>;
+    }>;
+    const markers = candidates.filter((entry) => typeof entry.userData.previzPointId === 'string');
+    expect(markers).toHaveLength(2);
+
+    // 曲线身上也有 clipId，但它不是某一个点：点在两点之间的线上不该选中任何轨迹点。
+    intersections = [{ object: { userData: { previzClipId: 'clip' } } }];
+    expect(instance.pickPathPointAt(10, 10)).toBeNull();
+
+    instance.dispose();
+  });
+
+  it('出片画幅不改编辑视角的视场角', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    instance.setScene(scene);
+
+    const before = instance.editorFovForTest();
+    // 0 / 180 / 负数 / NaN 都会被 three 静默收下，只留一个空视口。
+    expect(before).toBeGreaterThan(0);
+    expect(before).toBeLessThan(180);
+
+    render.mockClear();
+    instance.setScene({ ...scene, settings: { ...scene.settings, outputAspect: '9:16' } });
+    step();
+
+    // 编辑视角是自由飞行相机，画幅只影响取景与截图；跟着画幅改视场角的话，
+    // 切一次画幅整个视图会突然拉近或推远。
+    expect(instance.editorFovForTest()).toBe(before);
+    expect(render).toHaveBeenCalledTimes(1);
+
+    instance.dispose();
+  });
+
+  it('dispose 连带把场景图还掉，每份材质只 dispose 一次', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWith([0, 0, 0]);
+    instance.setScene(scene);
+    const id = scene.objects[0].id;
+    expect(instance.nodeFor(id)).toBeDefined();
+    // 只要求「确实建了材质」，不钉数量：一个节点建几份材质是场景图的事，
+    // 由 scene-graph 的用例管；钉在这里的话那边多加一份材质就会把这条无关的用例带红。
+    expect(materials.length).toBeGreaterThan(0);
+
+    instance.dispose();
+
+    expect(instance.nodeFor(id)).toBeUndefined();
+    // 场景图先把节点从对象根上摘掉再还资源，之后 dispose() 里的 scene.traverse
+    // 就遍历不到它们了；两步顺序反过来的话每份材质会被 dispose 两次。
+    for (const material of materials) expect(material.dispose).toHaveBeenCalledTimes(1);
+
+    // 已经 dispose 的渲染器不该再被灌活，也不该再打射线。
+    instance.setScene(scene);
+    expect(instance.nodeFor(id)).toBeUndefined();
+    expect(instance.pickAt(1, 1)).toBeNull();
+    expect(setFromCamera).not.toHaveBeenCalled();
+  });
+  it('把角色 rig 工厂接给场景图，模型到位后主动请求一帧', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWith([0, 0, 0]);
+    instance.setScene(scene);
+    // 先把 setScene 自己那次重绘消化掉，下面数的才是模型到位换来的那一帧。
+    step();
+    render.mockClear();
+
+    await flush();
+
+    const node = instance.nodeFor(scene.objects[0].id);
+    // 占位胶囊换成了真模型：工厂没接上的话这里还是那个胶囊。脚下那组辨识标记
+    // 不带 `previzPlaceholder`，换模型时清不到它头上，所以是两个子节点。
+    expect(node?.children).toHaveLength(2);
+    expect(node?.children.some((child) => child.userData.previzRig)).toBe(true);
+    // 加载的是仓库里那份共享角色模型，外加补齐蹲坐走跑等姿势的 UAL1 动画库。
+    // 路径写字面量：从被测模块 import 回来的常量改一处两边一起变。
+    expect(loadedUrls).toEqual([
+      '/viewer-kit/quaternius/ual2/UAL2_Standard.glb',
+      '/viewer-kit/quaternius/ual1/UAL1_Standard.glb',
+    ]);
+
+    // 模型到位时按需重绘的循环早就静下来了。不把 requestRender 接上，人物要等到
+    // 用户下一次动鼠标才出现在画面上。
+    step();
+    expect(render).toHaveBeenCalledTimes(1);
+
+    instance.dispose();
+  });
+
+  // 导入模型时对象是先建、模型后到的：`addObject` 那一刻节点上还挂着占位方块，当场
+  // 聚焦框到的是那个占位盒，而真模型可能有几百米高——用户看到的正是「相机停在模型
+  // 内部」。所以聚焦要压到模型真的换进来那一刻。
+  it('推迟聚焦到模型真的换进来那一刻', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWith([0, 0, 0], [10, 0, 0]);
+    instance.setScene(scene);
+    const parked = targetOf();
+
+    instance.focusObjectWhenReady(scene.objects[1].id);
+
+    // 排队的这一刻不能动：这时候量到的还是占位盒。
+    expect(targetOf()).toEqual(parked);
+
+    await flush();
+
+    // 两个人物都会到位，先到的那个不能把镜头抢走——聚焦认的是排队时那个 id。
+    expect(targetOf()[0]).toBeCloseTo(10, 6);
+
+    instance.dispose();
+  });
+
+  // 远平面写死 500 m 的年代，退到七八百米开外去框一栋按厘米建模的房子，模型会被
+  // 齐刷刷切掉一截、地面网格从缺口里透出来，看着像模型本身坏了。深度范围因此每帧
+  // 跟着轨道距离重算——不能只在 `moveCamera` 里算，滚轮推拉是 OrbitControls 直接
+  // 写 `camera.position` 的，根本不经过那条路。
+  it('远平面跟着轨道距离往外推', async () => {
+    const { instance } = await createRenderer();
+    // 过去能正常工作的场景（默认机位离轨道中心十来米）逐位拿到从前那对参数。
+    expect(instance.cameraDepthRangeForTest()).toEqual({ near: 0.1, far: 500 });
+
+    // 两个隔了 1 km 的对象：框住整个场景要退到远超 500 m 的地方。
+    instance.setScene(sceneWith([0, 0, 0], [1000, 0, 0]));
+    instance.applyViewDirection('front');
+    step();
+
+    const { near, far } = instance.cameraDepthRangeForTest();
+    expect(far).toBeGreaterThan(2000);
+    // 相机站在 far 以内才看得见东西——这正是从前被切掉的那一截。
+    expect(far).toBeGreaterThan(orbitOffset(instance).distance);
+    // 远近比封在 20000：near 钉死在 0.1 而 far 涨到几千，远处相邻的两个面会落进
+    // 同一个深度值，墙上出现一片随镜头闪烁的花纹。
+    expect(far / near).toBeCloseTo(20000, 6);
+
+    instance.dispose();
+  });
+
+  // 排队的对象要是被删了（或者压根没这个 id），到位回调不该把相机甩到原点去。
+  it('忽略认不出的排队 id', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWith([10, 0, 0]);
+    instance.setScene(scene);
+    const parked = targetOf();
+
+    instance.focusObjectWhenReady('no-such-object');
+    await flush();
+
+    expect(targetOf()).toEqual(parked);
+
+    instance.dispose();
+  });
+  // 监看是同一个 WebGLRenderer 的第二次 pass。另开一个 renderer 才是真正的坑：
+  // 浏览器并发 WebGL 上下文上限约 16 个，而预演台反复开关，迟早静默黑屏。
+  it('renders a second monitor pass only when a camera is active', async () => {
+    const instance = await PrevizRenderer.create(document.createElement('canvas'));
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject('camera', scene.objects));
+    instance.setScene(scene);
+    step();
+
+    render.mockClear();
+    instance.requestRender();
+    step();
+    expect(render).toHaveBeenCalledTimes(1);
+
+    instance.setActiveCamera(scene.objects[0]!.id);
+    render.mockClear();
+    step();
+
+    // 主视图一次 + 监看一次，共享同一个 WebGLRenderer。
+    expect(render).toHaveBeenCalledTimes(2);
+
+    instance.dispose();
+  });
+
+  it('reuses the main pass shadow map for the monitor pass', async () => {
+    const instance = await PrevizRenderer.create(document.createElement('canvas'));
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject('camera', scene.objects));
+    instance.setScene(scene);
+    instance.setActiveCamera(scene.objects[0]!.id);
+    const gl = webglRenderers[webglRenderers.length - 1]! as unknown as {
+      shadowMap: { autoUpdate?: boolean };
+    };
+    const autoUpdates: (boolean | undefined)[] = [];
+    render.mockClear();
+    render.mockImplementation(() => autoUpdates.push(gl.shadowMap.autoUpdate));
+    step();
+
+    // 主视图照常重画阴影图，监看框沿用它；画完得还回去，否则下一帧阴影冻住不动。
+    expect(autoUpdates).toHaveLength(2);
+    expect(autoUpdates[0]).not.toBe(false);
+    expect(autoUpdates[1]).toBe(false);
+    expect(gl.shadowMap.autoUpdate).toBe(true);
+
+    render.mockReset();
+    instance.dispose();
+  });
+
+  it('does not render a monitor pass for a non-camera object', async () => {
+    const instance = await PrevizRenderer.create(document.createElement('canvas'));
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject('light', scene.objects));
+    instance.setScene(scene);
+    step();
+
+    // 灯不是机位：从它「看出去」没有意义，而 syncMonitorCamera 会照着一个没有
+    // focalMm / sensor 的对象读出 NaN 视场角，监看框直接全黑。
+    instance.setActiveCamera(scene.objects[0]!.id);
+    render.mockClear();
+    step();
+
+    expect(render).toHaveBeenCalledTimes(1);
+
+    instance.dispose();
+  });
+
+  it('restores the viewport and hides the camera model during the monitor pass', async () => {
+    const instance = await PrevizRenderer.create(document.createElement('canvas'));
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject('camera', scene.objects));
+    instance.setScene(scene);
+    instance.setActiveCamera(scene.objects[0]!.id);
+    step();
+
+    const node = instance.nodeFor(scene.objects[0]!.id);
+    // 机位模型就长在相机原点上，不藏起来会糊满整个监看画面；但 pass 结束必须还回去，
+    // 否则主视图里那个机位从此消失。
+    expect(node?.visible).toBe(true);
+    // 剪刀测试留在打开状态的话，之后每一帧主视图都只画得出右下角那一小块。
+    const gl = webglRenderers[webglRenderers.length - 1]!;
+    expect(gl.setScissorTest).toHaveBeenLastCalledWith(false);
+    expect(gl.setViewport).toHaveBeenLastCalledWith(0, 0, 800, 450);
+    // autoClear 借出去必须还：留在 false 之后主视图不再清屏，画面会一层层糊上去。
+    expect(gl.autoClear).toBe(true);
+
+    instance.dispose();
+  });
+
+  it('keeps the editor-only helpers out of the monitor pass and out of the capture', async () => {
+    const instance = await PrevizRenderer.create(document.createElement('canvas'));
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject('camera', scene.objects));
+    instance.setScene(scene);
+    instance.setActiveCamera(scene.objects[0]!.id);
+    step();
+
+    // 机位停在自己的轨迹上时，那颗轨迹点小球就贴在镜头前——不藏起来，监看框和出片
+    // 的成片都会被一团糊满整幅画面的白挡住，而这恰恰是「机位走位」的常规用法。
+    //
+    // 必须在 `render()` 被调用的**那一刻**取样：藏起来是借的，pass 结束就还回去了，
+    // 事后翻 mock.calls 里那个场景对象，读到的永远是还完之后的状态。
+    type Traversable = {
+      traverse(callback: (object: { userData: Record<string, unknown>; visible: boolean }) => void): void;
+    };
+    let seen: boolean[][] = [];
+    render.mockImplementation((target: unknown) => {
+      const pass: boolean[] = [];
+      (target as Traversable).traverse((object) => {
+        if (object.userData.previzEditorOnly) pass.push(object.visible);
+      });
+      seen.push(pass);
+    });
+    /**
+     * 每趟 pass 收一格：这一趟里的辅助物是不是全都看得见。一个都没扫到记 `null`——
+     * 空数组的 `every` 是 true，不区分的话「标记全丢了」会伪装成「全都看得见」。
+     */
+    const helperVisibility = () =>
+      seen.map((pass) => (pass.length === 0 ? null : pass.every(Boolean)));
+
+    seen = [];
+    instance.requestRender();
+    step();
+    // 主视图一次 + 监看一次。主视图要看得见轨迹，监看不能。
+    expect(helperVisibility()).toEqual([true, false]);
+
+    // 出片同理，而且更要紧：监看糊了还能重摆机位，成片糊了是直接送进后面流程的。
+    // jsdom 的 canvas 交不出 2D 上下文，而出片在拿不到它时会当场抛错、一帧都不渲染，
+    // 于是这条断言就无从取样了——塞一个够用的假上下文进去，让整条出片路径真的跑完。
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation((contextId: string) =>
+        contextId === '2d'
+          ? ({
+              createImageData: (width: number, height: number) => ({
+                data: new Uint8ClampedArray(width * height * 4),
+                width,
+                height,
+              }),
+              putImageData: () => {},
+            } as unknown as CanvasRenderingContext2D)
+          : null,
+      );
+    // jsdom 的 toBlob 同样没实现：它只打一行 "Not implemented" 就再也不回调，
+    // 出片那个 Promise 会一直挂着，测试直接超时。
+    const toBlob = vi
+      .spyOn(HTMLCanvasElement.prototype, 'toBlob')
+      .mockImplementation((callback: BlobCallback) => callback(new Blob()));
+    seen = [];
+    await instance.capture().catch(() => null);
+    toBlob.mockRestore();
+    getContext.mockRestore();
+    expect(helperVisibility()).toEqual([false]);
+
+    // 借出去要还：留在隐藏状态，主视图里整条轨迹从此消失。
+    seen = [];
+    instance.requestRender();
+    step();
+    expect(helperVisibility()[0]).toBe(true);
+
+    render.mockReset();
+    instance.dispose();
+  });
+
+  it('draws the stroke being dragged, and drops it on release', async () => {
+    const { instance } = await createRenderer();
+
+    instance.setStroke([
+      [0, 0, 0],
+      [1, 0, -1],
+      [2, 0, -2],
+    ]);
+
+    // 这条线属于编辑视图，和轨迹曲线挂在同一个 previzEditorOnly 组下面——监看框和
+    // 出片里不该出现一条正在画的笔画。
+    const lines: { visible: boolean; geometry: { drawRange: { count: number } } }[] = [];
+    (instance as unknown as { scene: { traverse(cb: (o: unknown) => void): void } }).scene.traverse(
+      (object) => {
+        const candidate = object as { geometry?: { drawRange?: { count: number } } };
+        if (candidate.geometry?.drawRange) {
+          lines.push(object as (typeof lines)[number]);
+        }
+      },
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0].visible).toBe(true);
+    expect(lines[0].geometry.drawRange.count).toBe(3);
+
+    instance.setStroke(null);
+
+    // 松手后轨迹曲线接管；两条重叠着画会看成一条粗细不匀的线。
+    expect(lines[0].visible).toBe(false);
+    instance.dispose();
+  });
+
+  it('repaints while the stroke grows', async () => {
+    const { instance } = await createRenderer();
+    step();
+    render.mockClear();
+
+    instance.setStroke([
+      [0, 0, 0],
+      [1, 0, 0],
+    ]);
+    step();
+
+    // 不请求重绘的话，按需重绘的循环早就静下来了——线改了屏幕上一帧都不动。
+    expect(render).toHaveBeenCalled();
+    instance.dispose();
+  });
+});
+
+describe('PrevizRenderer timeline', () => {
+  function sceneWithWalk(): PrevizScene {
+    const scene = createDefaultScene();
+    const object = createPrevizObject('character', scene.objects);
+    return {
+      ...scene,
+      objects: [object],
+      timeline: {
+        ...scene.timeline,
+        tracks: [
+          {
+            id: 'track',
+            objectId: object.id,
+            clips: [
+              {
+                id: 'clip',
+                kind: 'path' as const,
+                startFrame: 0,
+                endFrame: 120,
+                points: [
+                  { id: 'p0', u: 0, position: [0, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+                  { id: 'p1', u: 1, position: [10, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  /** 节点下面那个模型根（`build()` 在它身上留了 `previzRig`）。 */
+  function rigOf(instance: PrevizRenderer, objectId: string) {
+    return instance.nodeFor(objectId)?.children.find((child) => child.userData.previzRig);
+  }
+
+  /**
+   * 走位的人物之外再加一个有自己轨道的旁观者：`soloScene` 认「独奏集合里至少有一个 id
+   * 落在场景的某条轨道上」才会真的裁剪，独奏一个场景里根本不存在的 id 等于没独奏，见
+   * `domain/timeline.ts` 的 `soloScene`。
+   */
+  function sceneWithWalkAndBystander() {
+    const scene = sceneWithWalk();
+    const walker = scene.objects[0]!;
+    const bystander = createPrevizObject('character', scene.objects);
+    return {
+      scene: {
+        ...scene,
+        objects: [...scene.objects, bystander],
+        timeline: {
+          ...scene.timeline,
+          tracks: [
+            ...scene.timeline.tracks,
+            { id: 'bystander-track', objectId: bystander.id, clips: [] },
+          ],
+        },
+      },
+      walker,
+      bystander,
+    };
+  }
+
+  it('poses the actor for the playhead frame', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+    await flush();
+
+    instance.setFrame(60);
+
+    // 走位中的人物换成走的循环，姿势内时间从片段首帧起算：60 帧就是 2 秒。
+    // 位置在变而脚不动，看着是整个人被平移过去的。
+    const rig = rigOf(instance, scene.objects[0]!.id);
+    expect(rig?.userData.previzMotion).toEqual({ primary: { ref: 'walking', time: 2 }, weight: 1 });
+  });
+
+  it('poses a model that arrives after the playhead moved', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+    instance.setFrame(60);
+
+    await flush();
+
+    // build() 摆的是静态姿势；模型到位时播放头已经在路径中间。不把当前帧重放一遍，
+    // 后到的模型会一直站着滑，直到播放头下一次移动。
+    expect(rigOf(instance, scene.objects[0]!.id)?.userData.previzMotion?.primary.ref).toBe(
+      'walking',
+    );
+  });
+
+  it('moves the object to where the playhead says it is', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+
+    instance.setFrame(60);
+
+    const node = instance.nodeFor(scene.objects[0].id);
+    // 半程：两点之间的中点。
+    expect(node?.position.x).toBeCloseTo(5, 5);
+  });
+
+  it('keeps an object that is not soloed at its static placement', async () => {
+    const { instance } = await createRenderer();
+    const { scene, walker, bystander } = sceneWithWalkAndBystander();
+    instance.setScene(scene);
+
+    instance.setSoloObjects([bystander.id]);
+    instance.setFrame(60);
+
+    expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(walker.transform.position[0], 5);
+  });
+
+  it('re-evaluates the paused frame when solo changes', async () => {
+    const { instance } = await createRenderer();
+    const { scene, walker, bystander } = sceneWithWalkAndBystander();
+    instance.setScene(scene);
+    instance.setFrame(60);
+
+    instance.setSoloObjects([bystander.id]);
+    expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(walker.transform.position[0], 5);
+
+    instance.setSoloObjects([]);
+    expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(5, 5);
+  });
+
+  it('records the full scene even while a track is soloed', async () => {
+    const { instance } = await createRenderer();
+    const { scene, walker, bystander } = sceneWithWalkAndBystander();
+    instance.setScene(scene);
+    instance.setSoloObjects([bystander.id]);
+
+    const pass = instance.startRecording('global', null)!;
+    try {
+      pass.drawFrame(60, null);
+      // 忘了关 S 就导出，视频里其他人全站着不动——只有看片时才发现。录制一律按完整场景。
+      expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(5, 5);
+    } finally {
+      pass.end();
+    }
+
+    // 录完视口回到独奏视图，不用等播放头再动一下。
+    expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(walker.transform.position[0], 5);
+  });
+
+  it('captures the full scene even while a track is soloed', async () => {
+    const { instance } = await createRenderer();
+    const { scene, walker, bystander } = sceneWithWalkAndBystander();
+    instance.setScene(scene);
+    instance.setFrame(60);
+    instance.setSoloObjects([bystander.id]);
+
+    // 在 render() 被调用的那一刻取样：出图结束就换回独奏视图了，事后读到的是还原后的位置。
+    const seenX: number[] = [];
+    render.mockImplementation(() => {
+      seenX.push(instance.nodeFor(walker.id)!.position.x);
+    });
+    // jsdom 交不出 2D 上下文、也没实现 toBlob，不垫上出片会当场抛错或一直挂着。
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation((contextId: string) =>
+        contextId === '2d'
+          ? ({
+              createImageData: (width: number, height: number) => ({
+                data: new Uint8ClampedArray(width * height * 4),
+                width,
+                height,
+              }),
+              putImageData: () => {},
+            } as unknown as CanvasRenderingContext2D)
+          : null,
+      );
+    const toBlob = vi
+      .spyOn(HTMLCanvasElement.prototype, 'toBlob')
+      .mockImplementation((callback: BlobCallback) => callback(new Blob()));
+    try {
+      await instance.capture();
+    } finally {
+      toBlob.mockRestore();
+      getContext.mockRestore();
+      render.mockReset();
+    }
+
+    // 忘了关 S 就出图，图里其他人不该停着。
+    expect(seenX).toHaveLength(1);
+    expect(seenX[0]).toBeCloseTo(5, 5);
+    // 出完视口回到独奏视图。
+    expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(walker.transform.position[0], 5);
+  });
+
+  it('re-applies the evaluated frame after a scene sync', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+    instance.setFrame(120);
+
+    // 一次无关的编辑（比如改了名字）会走 setScene → graph.sync，而 sync 每次都把
+    // 静态 transform 写回节点。求值结果不在 sync 之后重放一遍，播放中随便改点什么
+    // 人就瞬移回起点了。
+    instance.setScene({ ...scene, objects: [{ ...scene.objects[0], name: 'B' }] });
+
+    const node = instance.nodeFor(scene.objects[0].id);
+    expect(node?.position.x).toBeCloseTo(10, 5);
+  });
+
+  it('lets a hand-placed object stay put until the playhead moves', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+    const objectId = scene.objects[0]!.id;
+
+    // 拖动手柄提交的是静态 transform。求值器每次 setScene 都无条件重放的话，
+    // 提交的那一瞬间人又被路径拽回去了——画面上就是「有轨迹的对象拖不动」。
+    instance.setScene({
+      ...scene,
+      objects: [
+        {
+          ...scene.objects[0]!,
+          transform: { ...scene.objects[0]!.transform, position: [7, 0, 3] as Vec3 },
+        },
+      ],
+    });
+
+    const node = instance.nodeFor(objectId);
+    expect([node?.position.x, node?.position.z]).toEqual([7, 3]);
+    // 轨迹本身一动不动：手动摆的是这一刻的位置，不是把整条路径搬走。
+    expect(scene.timeline.tracks[0]!.clips[0]).toMatchObject({ id: 'clip' });
+
+    // 播放头一动，时间轴收回控制权，人自动回到轨迹上。
+    instance.setFrame(60);
+    expect(instance.nodeFor(objectId)?.position.x).toBeCloseTo(5, 5);
+  });
+
+  it('keeps a hand-placed object put across unrelated edits', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWithWalk();
+    instance.setScene(scene);
+
+    const moved = {
+      ...scene,
+      objects: [
+        {
+          ...scene.objects[0]!,
+          transform: { ...scene.objects[0]!.transform, position: [7, 0, 3] as Vec3 },
+        },
+      ],
+    };
+    instance.setScene(moved);
+    // 摆好之后随便改点别的（这里是改名）。这一下不该把人弹回轨迹：中间没人碰过播放头。
+    instance.setScene({ ...moved, objects: [{ ...moved.objects[0]!, name: 'B' }] });
+
+    expect(instance.nodeFor(scene.objects[0]!.id)?.position.x).toBe(7);
+  });
+
+  it('leaves objects without a track on their static transform', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const object = createPrevizObject('prop', scene.objects, {
+      transform: { position: [3, 0, 4], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
+    instance.setScene({ ...scene, objects: [object] });
+
+    instance.setFrame(60);
+
+    const node = instance.nodeFor(object.id);
+    expect([node?.position.x, node?.position.z]).toEqual([3, 4]);
+  });
+
+  it('asks for a repaint when the playhead moves', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(sceneWithWalk());
+    step();
+    render.mockClear();
+
+    instance.setFrame(30);
+    step();
+
+    // 按需重绘的循环这时是静止的；不主动请求一帧，播放头动了画面不动。
+    expect(render).toHaveBeenCalled();
+  });
+
+  it('projects a pointer onto the ground plane', async () => {
+    const { instance } = await createRenderer();
+    groundHit = [2, 0, -3];
+
+    expect(instance.planePointAt(100, 100, 0)).toEqual([2, 0, -3]);
+  });
+
+  it('puts the drawing plane at the requested height', async () => {
+    const { instance } = await createRenderer();
+    groundHit = [2, 4, -3];
+
+    expect(instance.planePointAt(100, 100, 4)).toEqual([2, 4, -3]);
+    // three 的平面方程是 n·p + d = 0，法线朝 +Y 时 y = -d，所以 4 米高的平面常量是 -4。
+    // 写成 +4 一样能画出轨迹，只是整条镜像到地面下方去了——而俯视角下这两种看着一模一样。
+    expect(lastPlane?.constant).toBe(-4);
+    expect([lastPlane?.normal.x, lastPlane?.normal.y, lastPlane?.normal.z]).toEqual([0, 1, 0]);
+  });
+
+  it('returns null when the ray never meets the ground', async () => {
+    const { instance } = await createRenderer();
+    groundHit = null;
+
+    // 相机平视时射线与地面平行。返回一个瞎编的点，笔画上会多出一个乱跳的顶点。
+    expect(instance.planePointAt(100, 100, 0)).toBeNull();
+  });
+
+  it('refuses to evaluate or pick after dispose', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(sceneWithWalk());
+    instance.dispose();
+
+    expect(() => instance.setFrame(60)).not.toThrow();
+    expect(instance.planePointAt(100, 100, 0)).toBeNull();
+  });
+});
+
+describe('live camera highlight', () => {
+  /** 机位模型里那根视锥线框记的本色。直播色就落在这个字段上。 */
+  function frustumColorOf(instance: PrevizRenderer, objectId: string): unknown {
+    let color: unknown;
+    instance.nodeFor(objectId)?.traverse((child) => {
+      if (child.userData.previzCameraFrustum) color = child.userData.previzPlaceholderColor;
+    });
+    return color;
+  }
+
+  /** 机位某一件占位体的材质最后一次被涂成什么色：视锥线框，或随便一件机身。 */
+  function lastColourOf(
+    instance: PrevizRenderer,
+    objectId: string,
+    part: 'frustum' | 'body',
+  ): unknown {
+    let found = false;
+    let colour: unknown;
+    instance.nodeFor(objectId)?.traverse((child) => {
+      const { material } = child as unknown as {
+        material?: { color: { set: ReturnType<typeof vi.fn> } };
+      };
+      if (found || !material || !child.userData.previzPlaceholder) return;
+      if (Boolean(child.userData.previzCameraFrustum) !== (part === 'frustum')) return;
+      found = true;
+      colour = material.color.set.mock.lastCall?.[0];
+    });
+    return colour;
+  }
+
+  it('recolours the live camera frustum and restores the previous one', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const camA = createPrevizObject('camera', scene.objects);
+    const camB = createPrevizObject('camera', [camA]);
+    instance.setScene({ ...scene, objects: [camA, camB] });
+
+    instance.setLiveCamera(camA.id);
+    expect(frustumColorOf(instance, camA.id)).toBe(PREVIZ_LIVE_FRUSTUM_COLOR);
+
+    // 切机位：上一台的 tally 灯要灭，否则视口里同时亮着两盏。
+    instance.setLiveCamera(camB.id);
+    expect(frustumColorOf(instance, camA.id)).toBe(PREVIZ_CAMERA_COLOR.frustum);
+    expect(frustumColorOf(instance, camB.id)).toBe(PREVIZ_LIVE_FRUSTUM_COLOR);
+
+    instance.setLiveCamera(null);
+    expect(frustumColorOf(instance, camB.id)).toBe(PREVIZ_CAMERA_COLOR.frustum);
+  });
+
+  it('relights the live camera when its node is rebuilt', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const camA = createPrevizObject('camera', scene.objects);
+    instance.setScene({ ...scene, objects: [camA] });
+    instance.setLiveCamera(camA.id);
+
+    // 删掉再撤销：sync 把节点连模型一起重建，新模型是按本色建出来的，直播色得补回去。
+    instance.setScene({ ...scene, objects: [] });
+    instance.setScene({ ...scene, objects: [camA] });
+
+    expect(frustumColorOf(instance, camA.id)).toBe(PREVIZ_LIVE_FRUSTUM_COLOR);
+  });
+
+  it('lights a camera that only arrives after setLiveCamera', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const camA = createPrevizObject('camera', scene.objects);
+
+    // 编辑器里两路订阅谁先到并无保证：镜头轨可能先说 A 在直播，场景才灌进来。
+    instance.setLiveCamera(camA.id);
+    instance.setScene({ ...scene, objects: [camA] });
+
+    expect(frustumColorOf(instance, camA.id)).toBe(PREVIZ_LIVE_FRUSTUM_COLOR);
+  });
+
+  it('lets clay mode repaint a camera that stops being live', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const camA = createPrevizObject('camera', scene.objects);
+    const camB = createPrevizObject('camera', [camA]);
+    instance.setScene({
+      ...scene,
+      settings: { ...scene.settings, displayMode: 'clay' },
+      objects: [camA, camB],
+    });
+    // 机身没被直播色碰过，它此刻的颜色就是全灰模式那个灰——不用把常量抄过来。
+    const clay = lastColourOf(instance, camA.id, 'body');
+    expect(typeof clay).toBe('number');
+    expect(clay).not.toBe(PREVIZ_CAMERA_COLOR.frustum);
+
+    instance.setLiveCamera(camA.id);
+    instance.setLiveCamera(camB.id);
+
+    // 全灰只在切模式时整树刷一遍。熄灯若直接涂回橙色，一片灰里就多出一具橙视锥；
+    // 而 tally 是逐帧切的，最后每台直播过的机位都是橙的。
+    expect(lastColourOf(instance, camA.id, 'frustum')).toBe(clay);
+    // 离开全灰时靠的是这个字段，它得记着本色而不是灰。
+    expect(frustumColorOf(instance, camA.id)).toBe(PREVIZ_CAMERA_COLOR.frustum);
+  });
+
+  it('hides the live camera from its own frame and shows it in the director view', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const cam = createPrevizObject('camera', scene.objects);
+    instance.setScene({ ...scene, objects: [cam] });
+    const node = instance.nodeFor(cam.id)!;
+    const monitor = (instance as unknown as { monitorCamera: unknown }).monitorCamera;
+    const gl = webglRenderers[webglRenderers.length - 1]!;
+
+    // 机位模型藏没藏住只在 render() 发生的那一刻才看得出来，画完就还回去了。
+    const seen: Array<{ camera: unknown; visible: boolean }> = [];
+    const record = (_scene: unknown, camera: unknown) => {
+      seen.push({ camera, visible: node.visible });
+    };
+    render.mockImplementationOnce(record).mockImplementationOnce(record);
+
+    const pass = instance.startRecording('global', null)!;
+    pass.drawFrame(0, cam.id);
+    pass.drawFrame(1, null);
+    pass.end();
+
+    expect(seen).toHaveLength(2);
+    // 直播机位那一帧从监看相机出片，而它自己的模型不能出现在自己拍的画面里。
+    expect(seen[0]?.camera).toBe(monitor);
+    expect(seen[0]?.visible).toBe(false);
+    // 镜头轨没指定机位就回到导演视角，这时机位模型是场景的一部分，要露出来。
+    expect(seen[1]?.camera).not.toBe(monitor);
+    expect(seen[1]?.visible).toBe(true);
+    expect(node.visible).toBe(true);
+    // 录制直接画在视口画布上：没有离屏目标，也没有那次把每帧卡住 50 多毫秒的像素读回。
+    for (const call of gl.setRenderTarget.mock.calls) expect(call[0]).toBeNull();
+    expect(gl.readRenderTargetPixels).not.toHaveBeenCalled();
+  });
+});
+
+describe('PrevizRenderer recording', () => {
+  /** 带一台机位的场景。监看那趟 pass 录制期间必须停掉，得有机位才测得出来。 */
+  function sceneWithCamera() {
+    const scene = createDefaultScene();
+    const cam = createPrevizObject('camera', scene.objects);
+    return { scene: { ...scene, objects: [cam] }, cam };
+  }
+
+  function lastGl(): FakeWebGLRenderer {
+    return webglRenderers[webglRenderers.length - 1]!;
+  }
+
+  it('pins the drawing buffer to the output size and hands over the viewport canvas', async () => {
+    const { canvas, instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene } = sceneWithCamera();
+    instance.setScene({ ...scene, settings: { ...scene.settings, outputAspect: '9:16' } });
+    step();
+    const gl = lastGl();
+    gl.setPixelRatio.mockClear();
+    gl.setSize.mockClear();
+    // object-fit 必须赶在 setSize 之前落下：位图一改尺寸，下一次合成就按 CSS 盒子拉伸。
+    let fitAtResize = '';
+    gl.setSize.mockImplementationOnce(() => {
+      fitAtResize = canvas.style.objectFit;
+    });
+
+    const pass = instance.startRecording('global', null)!;
+    try {
+      const { width, height } = OUTPUT_PIXEL_SIZE['9:16'];
+      expect(pass.width).toBe(width);
+      expect(pass.height).toBe(height);
+      // 编码器接的就是视口那块 DOM 画布：没有第二块画布，也没有像素读回。
+      expect(pass.canvas).toBe(canvas);
+      // DPR 钉成 1：位图尺寸就是出片尺寸，不是出片尺寸再乘 DPR。
+      expect(gl.setPixelRatio).toHaveBeenCalledWith(1);
+      expect(gl.setSize).toHaveBeenCalledWith(width, height, false);
+      expect(canvas.style.objectFit).toBe('contain');
+      expect(fitAtResize).toBe('contain');
+      // 轨道控制停掉：录制中拖一下视口会改导演视角，而那正是全局录制的出片相机。
+      expect(controls.enabled).toBe(false);
+    } finally {
+      pass.end();
+    }
+  });
+
+  it('renders each recorded frame once, straight into the default framebuffer', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene({ ...scene, settings: { ...scene.settings, outputAspect: '9:16' } });
+    instance.setActiveCamera(cam.id);
+    step();
+    const gl = lastGl();
+    const internals = instance as unknown as {
+      monitorCamera: unknown;
+      camera: { aspect: number };
+    };
+    // 相机的 aspect 画完就还回去了，只能在 render() 那一刻取样。
+    const seen: Array<{ camera: unknown; aspect: number }> = [];
+    render.mockImplementation((_scene: unknown, camera: unknown) => {
+      seen.push({ camera, aspect: (camera as { aspect: number }).aspect });
+    });
+
+    const pass = instance.startRecording('global', null)!;
+    render.mockClear();
+    try {
+      pass.drawFrame(0, cam.id);
+      expect(render).toHaveBeenCalledTimes(1);
+      expect(seen[0]?.camera).toBe(internals.monitorCamera);
+
+      pass.drawFrame(1, null);
+      expect(render).toHaveBeenCalledTimes(2);
+      expect(seen[1]?.camera).toBe(internals.camera);
+      // 导演视角借来出片要按出片画幅取景，不是视口的 16:9；画完立刻还回去。
+      expect(seen[1]?.aspect).toBeCloseTo(aspectRatio('9:16'));
+      expect(internals.camera.aspect).toBeCloseTo(800 / 450);
+
+      for (const call of gl.setRenderTarget.mock.calls) expect(call[0]).toBeNull();
+      expect(gl.readRenderTargetPixels).not.toHaveBeenCalled();
+    } finally {
+      render.mockReset();
+      pass.end();
+    }
+  });
+
+  it('keeps the editor view and the monitor inset off the canvas until the pass ends', async () => {
+    const { canvas, instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    instance.setActiveCamera(cam.id);
+    step();
+    const gl = lastGl();
+
+    const pass = instance.startRecording('global', null)!;
+    pass.drawFrame(0, cam.id);
+    render.mockClear();
+    gl.setSize.mockClear();
+    gl.setPixelRatio.mockClear();
+
+    // setFrame 顺手标了 needsRender。录制期间那条 rAF 循环不许把编辑视图或监看框画到
+    // 画布上盖掉刚出的那一帧：captureStream 采的就是画布此刻的内容。
+    instance.setFrame(3);
+    instance.requestRender();
+    step();
+    expect(render).not.toHaveBeenCalled();
+    // 循环本身要活着，pass 结束后不必重新起。
+    expect(frames).toHaveLength(1);
+
+    // 视口尺寸变了也不动位图：它此刻钉在出片分辨率上，新尺寸留到 end() 再落。
+    setClientSize(canvas, 640, 360);
+    instance.resize();
+    expect(gl.setSize).not.toHaveBeenCalled();
+    expect(render).not.toHaveBeenCalled();
+
+    pass.end();
+    expect(canvas.style.objectFit).toBe('');
+    expect(controls.enabled).toBe(true);
+    expect(gl.setPixelRatio).toHaveBeenLastCalledWith(Math.min(window.devicePixelRatio, 2));
+    expect(gl.setSize).toHaveBeenLastCalledWith(640, 360, false);
+    // 录制中攒下的那次尺寸变化在这里落地，并当场画一帧，别让画布空着等下一次 rAF。
+    expect(render).toHaveBeenCalled();
+  });
+
+  it('refuses to move the director camera while recording', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    instance.setSelection(cam.id);
+    step();
+
+    const pass = instance.startRecording('global', null)!;
+    const before = instance.cameraPositionForTest();
+    const targetBefore = targetOf();
+
+    // 停掉 OrbitControls 只挡住了鼠标。H 与 F、以及视口控件上那几个按钮走的是这三个
+    // 方法：录制中跳一下机位，后面每一帧都换了取景，而成片上看不出发生过什么。
+    instance.resetView();
+    instance.applyViewDirection('top');
+    instance.focusObject(cam.id);
+
+    expect(instance.cameraPositionForTest()).toEqual(before);
+    expect(targetOf()).toEqual(targetBefore);
+
+    pass.end();
+    // 录完就该还能用：这是录制期间的临时锁，不是把这几个功能拆了。
+    instance.applyViewDirection('top');
+    expect(instance.cameraPositionForTest()).not.toEqual(before);
+  });
+
+  it('stands the offscreen previews down while recording', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    // 得先选中点什么：手柄没挂在对象上的时候本来就该是隐藏的，不选的话末尾那条
+    // 「录完要还回来」全程都是 false，守卫删了也绿。
+    instance.setSelection(cam.id);
+    step();
+    const gl = lastGl();
+
+    // 这块画布得能真交出 2D 上下文：`blitCameraToCanvas` 拿不到上下文就直接 return，
+    // 一句 `getContext: () => null` 会让下面那条「一笔都没画」永远绿——守卫删了也绿。
+    const previewCanvas = {
+      width: 320,
+      height: 180,
+      getContext: () => ({
+        fillStyle: '',
+        fillRect: () => {},
+        createImageData: (width: number, height: number) => ({
+          data: new Uint8ClampedArray(width * height * 4),
+          width,
+          height,
+        }),
+        putImageData: () => {},
+      }),
+    } as unknown as Parameters<typeof instance.renderQuadPreview>[0];
+
+    /** 轨迹与手柄这类编辑期辅助物此刻藏没藏住。 */
+    type HelperChild = { userData: Record<string, unknown>; visible: boolean };
+    const helpersHidden = () =>
+      (instance as unknown as { scene: { children: HelperChild[] } }).scene.children
+        .filter((child) => child.userData.previzEditorOnly)
+        .every((child) => !child.visible);
+
+    const pass = instance.startRecording('track', cam.id)!;
+    pass.drawFrame(0, null);
+    render.mockClear();
+
+    // 四视图是跟着播放头重画的，而播放头正是录制在推——每三帧就来一次。
+    instance.renderQuadPreview(previewCanvas, 'top');
+    instance.renderCameraView(previewCanvas, cam.id);
+    const draft = createCameraDraft(instance.viewPose());
+    instance.renderCameraPreview(previewCanvas, draft);
+    // 创建人物对话框那块木偶预览走的是同一条 finally，也得一起站下来。它是异步的，
+    // 但守卫在第一个 await 之前就早退了，await 它不会把这条用例拖成竞态。
+    await instance.renderCharacterPreview(previewCanvas, createCharacterDraft(scene.objects));
+
+    // 一笔都没画：这四条路各自都是几趟离屏 pass 加同步读回，正是这次改动要删掉的开销。
+    expect(render).not.toHaveBeenCalled();
+    expect(gl.readRenderTargetPixels).not.toHaveBeenCalled();
+    // 更要紧的是它们的 finally 会把可见性「还」成可见：还回去之后，手柄与轨迹就被烤进
+    // 后面每一帧成片里。四块预览都还手柄，只有 `renderCameraView` 连轨迹描边一起还，
+    // 所以两样都要断言，少一样就有几块预览的守卫删掉也没人报。
+    expect(gizmoHelper.visible).toBe(false);
+    expect(helpersHidden()).toBe(true);
+
+    pass.end();
+    expect(helpersHidden()).toBe(false);
+    expect(gizmoHelper.visible).toBe(true);
+  });
+
+  it('画完木偶预览把手柄的可见性还回去', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    // 手柄没挂在对象上时本来就是隐藏的，不选的话末尾那条断言全程都是 true。
+    instance.setSelection(cam.id);
+    step();
+    expect(gizmoHelper.visible).toBe(true);
+
+    // 用「简化圆柱体」那一档：真模型要 await 一次 GLB 加载，而这份 fixture 里的加载器
+    // 不会决议，这条用例会挂在超时上——它要盯的是 finally，不是加载。
+    await instance.renderCharacterPreview(
+      { width: 320, height: 180, getContext: () => null },
+      { ...createCharacterDraft(scene.objects), bodyType: 'capsule' },
+    );
+
+    // 离屏那一趟要先把手柄藏起来（它不该出现在预览里），画完必须还回去——不还的话，
+    // 用户开一次创建人物对话框，视口里的手柄就再也不出现了，而对象照样选中着。
+    expect(gizmoHelper.visible).toBe(true);
+  });
+
+  it('refuses to grab a still while recording', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    instance.setActiveCamera(cam.id);
+    step();
+
+    /** 轨迹与手柄这类编辑期辅助物此刻藏没藏住。 */
+    type HelperChild = { userData: Record<string, unknown>; visible: boolean };
+    const helpersHidden = () =>
+      (instance as unknown as { scene: { children: HelperChild[] } }).scene.children
+        .filter((child) => child.userData.previzEditorOnly)
+        .every((child) => !child.visible);
+
+    const pass = instance.startRecording('global', null)!;
+    pass.drawFrame(0, null);
+    render.mockClear();
+
+    // 出图那条路和三块离屏预览是同一个毛病：它的 finally 把辅助物一律还成可见，还完
+    // 手柄与轨迹就烤进后面每一帧成片里。编辑器那边按钮是禁着的，但守卫得在这一层。
+    const still = await instance.capture().catch(() => 'threw' as const);
+    expect(still).toBeNull();
+    expect(render).not.toHaveBeenCalled();
+    expect(gizmoHelper.visible).toBe(false);
+    expect(helpersHidden()).toBe(true);
+
+    pass.end();
+    expect(helpersHidden()).toBe(false);
+  });
+
+  /** 出片画面里不该出现的三样东西各自的标记。 */
+  const FURNITURE = ['previzGrid', 'previzMarker', 'previzCameraModel'] as const;
+  type FurnitureNode = {
+    userData: Record<string, unknown>;
+    visible: boolean;
+    children?: FurnitureNode[];
+  };
+  type Tally = Record<(typeof FURNITURE)[number], { found: number; drawn: number }>;
+
+  /**
+   * 数一遍这棵树上的辅助物：找到几个、其中几个真画得出来。
+   *
+   * 看的是**有效**可见性，自己走一趟而不是用 three 的 `traverse`：只要有一级祖先关了
+   * three 就整棵不画，而辨识环是整组藏起来的，环与箭头自己那面开关一直没动过——只看
+   * 节点自己的 `visible`，藏得好好的东西会报成露在画面里。
+   */
+  function tallyFurniture(root: FurnitureNode): Tally {
+    const tally = Object.fromEntries(
+      FURNITURE.map((key) => [key, { found: 0, drawn: 0 }]),
+    ) as Tally;
+    const walk = (node: FurnitureNode, inherited: boolean) => {
+      const drawn = inherited && node.visible;
+      for (const key of FURNITURE) {
+        if (!node.userData[key]) continue;
+        tally[key].found += 1;
+        if (drawn) tally[key].drawn += 1;
+      }
+      for (const child of node.children ?? []) walk(child, drawn);
+    };
+    walk(root, true);
+    return tally;
+  }
+
+  it('keeps the ground, the markers and the camera models out of recorded frames', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const scene = createDefaultScene();
+    const hero = createPrevizObject('character', scene.objects);
+    const cam = createPrevizObject('camera', [hero]);
+    instance.setScene({ ...scene, objects: [hero, cam] });
+    step();
+
+    /*
+      成片里只该有布景与演员。地面网格是编辑期的空间参照，人物脚下那圈辨识环是画在
+      场景里的界面，机位的机身与视锥是器材——三样都不是镜头里的东西，用户拿到的 9:16
+      成片里却三样俱全（环与锥体尤其扎眼，锥体的线糊满整幅画）。
+
+      必须在 `render()` 被调用的**那一刻**取样：藏起来是借的，pass 结束就还回去了，
+      事后翻 mock.calls 里那个场景对象，读到的永远是还完之后的状态。
+    */
+    let tally: Tally | null = null;
+    render.mockImplementation((target: unknown) => {
+      tally = tallyFurniture(target as FurnitureNode);
+    });
+
+    const pass = instance.startRecording('global', null)!;
+    pass.drawFrame(0, null);
+
+    for (const key of FURNITURE) {
+      // 先确认真找着了：找不到的话「一个都没画」是空欢喜，标记改名就悄悄失效。
+      expect(tally![key].found, key).toBeGreaterThan(0);
+      expect(tally![key].drawn, key).toBe(0);
+    }
+
+    // 借出去要还：留在隐藏状态，录完一次编辑视图就永久少了地面、辨识环与机位。
+    pass.end();
+    const restored = tallyFurniture(
+      (instance as unknown as { scene: FurnitureNode }).scene,
+    );
+    for (const key of FURNITURE) {
+      expect(restored[key].drawn, key).toBe(restored[key].found);
+    }
+  });
+
+  it('ends once, and hands the helpers and the live camera back', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const { scene, cam } = sceneWithCamera();
+    instance.setScene(scene);
+    step();
+    const node = instance.nodeFor(cam.id)!;
+    const gl = lastGl();
+
+    type Traversable = {
+      traverse(
+        callback: (object: { userData: Record<string, unknown>; visible: boolean }) => void,
+      ): void;
+    };
+    // 每趟 pass 收一格：这一趟里的辅助物是不是全都看得见。地面与轨迹预览都挂着这个
+    // 标记，一趟里不止一个，逐个收进同一个平数组的话「几趟」和「几个」就分不开了。
+    const helpersSeen: (boolean | null)[] = [];
+    render.mockImplementation((target: unknown) => {
+      const seen: boolean[] = [];
+      (target as Traversable).traverse((object) => {
+        if (object.userData.previzEditorOnly) seen.push(object.visible);
+      });
+      helpersSeen.push(seen.length === 0 ? null : seen.every(Boolean));
+    });
+
+    const pass = instance.startRecording('track', cam.id)!;
+    // 单轨录制开录就把机位藏起来，整段都藏着。
+    expect(node.visible).toBe(false);
+    pass.drawFrame(0, null);
+    expect(helpersSeen).toEqual([false]);
+
+    gl.setSize.mockClear();
+    pass.end();
+    pass.end();
+    render.mockReset();
+
+    expect(node.visible).toBe(true);
+    // end() 里那次 resize() 当场画的一帧：辅助物已经还回来了。
+    expect(helpersSeen.slice(1)).toEqual([true]);
+    // 第二次 end() 不再重设尺寸、也不再画。
+    expect(gl.setSize).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PrevizRenderer 松手落地', () => {
+  /** 一个人物加若干道具，各自摆在给定位置上。 */
+  function dropScene(characterY: number, ...propPositions: Vec3[]): PrevizScene {
+    const scene = createDefaultScene();
+    scene.objects.push(
+      createPrevizObject('character', scene.objects, {
+        transform: { position: [0, characterY, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      }),
+    );
+    for (const position of propPositions) {
+      scene.objects.push(
+        createPrevizObject('prop', scene.objects, {
+          transform: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+        }),
+      );
+    }
+    return scene;
+  }
+
+  // 原点不在脚底：假 Box3 默认盒底恰好等于对象原点，那种形状下「按位移挪」和
+  // 「y = 命中高度」算出来一模一样，这一层压根分不开这两件事。把盒底挪到原点下方
+  // 0.5 米（导入的 obj 原点常在几何中心），两者才有区别。
+  const FOOT_BELOW_ORIGIN = -0.5;
+
+  it('drops a character onto the surface it hit, moving by the offset not onto it', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    const scene = dropScene(3, [0, 0, 0]);
+    instance.setScene(scene);
+    // 桌面在 0.75。人物原点在 3、盒底在 2.5，落完盒底该在 0.75，即原点在 1.25。
+    // 直接把 y 赋成 0.75 的话人物半截埋进桌子里。
+    intersections = [{ object: {}, point: { x: 0, y: 0.75, z: 0 } }];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeCloseTo(1.25, 12);
+  });
+
+  // 「取最近的那个命中」正是这个特性存在的理由：桌面和地板同时在射线上，落到桌面上
+  // 还是穿过桌子落到地板上，全看取哪一个。three 的 `intersectObjects` 交出来时已经按
+  // 距离升序排过（`Raycaster.js:222`），射线朝下时距离升序恰好就是 y 降序，所以第 0 个
+  // 是最高的那个面——这里的假件照着那个次序给，用例钉的是「取第 0 个」。
+  it('lands on the nearest surface under it, not the farthest', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    const scene = dropScene(3, [0, 0, 0]);
+    instance.setScene(scene);
+    // 桌面 0.75 在前、地板 0 在后。人物原点在 3、盒底在 2.5：落到桌面上原点该在 1.25，
+    // 取成最远那个（地板）会得到 0.5——那正是「穿过桌子掉到地上」。
+    intersections = [
+      { object: {}, point: { x: 0, y: 0.75, z: 0 } },
+      { object: {}, point: { x: 0, y: 0, z: 0 } },
+    ];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeCloseTo(1.25, 12);
+  });
+
+  // 场景里没有可命中的地面：`grid.ts` 把地面的 raycast 整个摘掉了（铺满视野的话每次
+  // 空点都会命中它）。所以「没命中」不是异常，是绝大多数落地的正常情形，必须当成
+  // y=0 那块地面——退回 null 的话在平地上拖东西永远不会落地。
+  it('falls to the ground plane when the ray hits nothing', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    const scene = dropScene(5);
+    instance.setScene(scene);
+    intersections = [];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeCloseTo(0.5, 12);
+  });
+
+  // 反方向也得成立，而且这一条才证明射线是从盒**顶**往下打的：从盒底往下打的话，
+  // 沉在地板以下的对象只会继续往下找，永远浮不回来。
+  it('lifts a character that sank below the ground back onto it', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    const scene = dropScene(-3);
+    instance.setScene(scene);
+    intersections = [];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeCloseTo(0.5, 12);
+  });
+
+  it('aims the ray straight down from just above the top of the box', async () => {
+    const { instance } = await createRenderer();
+    // 枢轴既不在几何水平中心、对象也不在世界原点：三个数（0、对象原点、盒中心）
+    // 两两不等，起点取错哪一个都会被下面三条抓住。
+    boxCentreOffset = 0.75;
+    const scene = dropScene(2, [4, 0, 0]);
+    scene.objects[0].transform.position = [3, 2, -5];
+    instance.setScene(scene);
+    intersections = [];
+
+    instance.dropToSurface(scene.objects[0].id);
+
+    const node = instance.nodeFor(scene.objects[0].id)!;
+    const [origin, direction] = raySet.mock.calls[0] as [
+      { x: number; y: number; z: number },
+      { x: number; y: number; z: number },
+    ];
+    // 盒子是 [2.75,2,-5.25]..[4.75,4,-3.25]：水平取盒中心（不是对象原点），
+    // 竖直取顶面再抬一个 epsilon。
+    expect(origin.x).toBe(3.75);
+    expect(origin.z).toBe(-4.25);
+    expect(origin.x).not.toBe(node.position.x);
+    expect(origin.z).not.toBe(node.position.z);
+    expect(origin.y).toBe(dropRayOriginY(4));
+    // 朝上打的话对象会被吸到头顶那块天花板上，而画面上只是「它自己飞起来了」。
+    expect([direction.x, direction.y, direction.z]).toEqual([0, -1, 0]);
+  });
+
+  // 不剔掉自己的话，从盒顶往下打第一个命中的永远是对象自身的顶面，落地变成
+  // 「把盒底抬到盒顶」——每松一次手对象就往上跳一个身位。
+  it('keeps the object itself out of the candidates it rays against', async () => {
+    const { instance } = await createRenderer();
+    const scene = dropScene(2, [4, 0, 0]);
+    instance.setScene(scene);
+    intersections = [];
+
+    instance.dropToSurface(scene.objects[0].id);
+
+    const candidates = intersectObjects.mock.calls[0][0] as unknown[];
+    expect(candidates).not.toContain(instance.nodeFor(scene.objects[0].id));
+    expect(candidates).toContain(instance.nodeFor(scene.objects[1].id));
+    // 递归：对象节点自己是个空 Group，几何体全在它下面那层占位体 / 模型里。
+    expect(intersectObjects.mock.calls[0][1]).toBe(true);
+  });
+
+  // 机位与灯本来就该浮在空中。把一台俯拍机吸到地板上，取景当场毁掉，而用户只是
+  // 拖了一下位置。
+  it('refuses to drop a camera or a light', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    for (const kind of ['camera', 'light'] as const) {
+      scene.objects.push(
+        createPrevizObject(kind, scene.objects, {
+          transform: { position: [0, 5, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        }),
+      );
+    }
+    instance.setScene(scene);
+    intersections = [];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeNull();
+    expect(instance.dropToSurface(scene.objects[1].id)).toBeNull();
+  });
+
+  // 模型还在下载 / 下载失败时节点下面一个几何体都没有，包围盒是空的。这里必须自己
+  // `new Box3().setFromObject()` 再判 `isEmpty()`，不能图省事复用 `boundsOf()`——那个
+  // 函数会把空盒换成一个人体尺寸的**占位盒**（那是给聚焦用的产品行为），拿它落地
+  // 等于按一个假盒子把对象瞬移走，而且完全看不出发生过什么。
+  it('declines while the object still has no geometry', async () => {
+    const { instance } = await createRenderer();
+    const scene = dropScene(5);
+    instance.setScene(scene);
+    boxIsEmpty = true;
+    intersections = [];
+
+    expect(instance.dropToSurface(scene.objects[0].id)).toBeNull();
+  });
+
+  // 端到端：渲染器有没有真的把这套算法接到手柄上。上面那些用例全是直接调方法的，
+  // 接线那一行删掉它们一条都不红——而少了那一行，松手就是彻底不落地。
+  it('drops the object when a free-move drag ends in the viewport', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    const scene = dropScene(5);
+    instance.setScene(scene);
+    instance.setGizmoMode('translate');
+    instance.setSelection(scene.objects[0].id);
+    intersections = [];
+
+    transformControls.axis = 'XYZ';
+    transformControls.emit('dragging-changed', { value: true });
+    transformControls.emit('objectChange');
+    transformControls.emit('dragging-changed', { value: false });
+
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
+  });
+});
+
+describe('PrevizRenderer 贴合地面', () => {
+  // 同上面松手落地那一组：假 Box3 默认盒底就在对象原点上，那种形状下「按位移挪」和
+  // 「y = 命中高度」算出来一模一样，这一层分不开这两件事。把盒底挪到原点下方 0.5 米
+  // （导入的 obj 原点常在几何中心），下面每条断言的期望值才两两不同。
+  const FOOT_BELOW_ORIGIN = -0.5;
+
+  /** 一个人物，站在给定高度、用给定的高度策略。 */
+  function standScene(policy: HeightPolicy, y: number): PrevizScene {
+    const scene = createDefaultScene();
+    scene.objects.push(
+      createPrevizObject('character', scene.objects, {
+        heightPolicy: policy,
+        transform: { position: [0, y, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      }),
+    );
+    return scene;
+  }
+
+  it('stands a ground-policy character on the prop under their feet', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    // 命中要赶在 setScene 之前摆好：贴地是跟着求值走的，setScene 当场就打这条射线。
+    intersections = [{ object: {}, point: { x: 0, y: 0.8, z: 0 } }];
+    const scene = standScene('ground', 3);
+
+    instance.setScene(scene);
+
+    // 台面在 0.8。人物原点在 3、盒底在 2.5，落完盒底该压在 0.8 上，即原点在 1.3。
+    // 直接把 y 赋成 0.8 的话人物半截埋进台子里。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(1.3, 12);
+  });
+
+  it('drops a ground-policy character to the floor where nothing is under them', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    // 空地上什么都命中不了，而这正是常态：`grid.ts` 的 `createInfiniteGrid` 把网格的
+    // `raycast` 摘成了空函数（铺满视野的它会吃掉每一次空点），y=0 那层地面于是只存在于
+    // 落地代码自己的兜底里。
+    intersections = [];
+    const scene = standScene('ground', 5);
+
+    instance.setScene(scene);
+
+    // 盒底 4.5 压到 0 上，原点随之落到 0.5——脚底正好贴地。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
+  });
+
+  it('leaves a follow-policy character exactly where the evaluator put them', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    intersections = [{ object: {}, point: { x: 0, y: 0.8, z: 0 } }];
+    const scene = standScene('follow', 3);
+
+    instance.setScene(scene);
+
+    // `follow` 就是「写多少是多少」，脚下有没有台面都不该动它——会飞的、坐在桌上的、
+    // 站在没建模的楼板上的人物全靠这一档。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(3, 12);
+  });
+
+  it('does not raycast at all when no character asks for the ground', async () => {
+    const { instance } = await createRenderer();
+    const scene = standScene('follow', 3);
+    scene.objects.push(createPrevizObject('prop', scene.objects));
+    intersectObjects.mockClear();
+
+    instance.setScene(scene);
+
+    // 每人每帧一条射线加一次 `Box3.setFromObject`（后者要遍历整棵子树）是播放期间的
+    // 固定开销。绝大多数场景一个贴地的人物都没有，那些场景一条都不该打。
+    expect(intersectObjects).not.toHaveBeenCalled();
+  });
+
+  it('rays once per ground-policy character and skips everyone else', async () => {
+    const { instance } = await createRenderer();
+    intersections = [];
+    const scene = standScene('ground', 3);
+    scene.objects.push(
+      createPrevizObject('character', scene.objects, { heightPolicy: 'plane' }),
+      createPrevizObject('character', scene.objects, { heightPolicy: 'follow' }),
+      createPrevizObject('prop', scene.objects),
+    );
+    intersectObjects.mockClear();
+
+    instance.setScene(scene);
+
+    // `plane` 那一档在 `domain/evaluate.ts` 里纯算出来，一条射线都不用打；这里多打
+    // 一条就说明分支写成了「不是 follow 就落地」。
+    expect(intersectObjects).toHaveBeenCalledTimes(1);
+  });
+
+  // 上面那条只有一个贴地人物，`toHaveBeenCalledTimes(1)` 同时兼容「循环写对了」和
+  // 「只处理了第一个」。循环体里插一句 `return`（或把循环重构成 `find`）会让第二个
+  // 及以后的贴地人物全部悬空，而门禁全绿——这条就是来堵那个口子的。
+  it('stands every ground-policy character, not just the first one', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    intersections = [];
+    const scene = standScene('ground', 3);
+    scene.objects.push(
+      createPrevizObject('character', scene.objects, {
+        heightPolicy: 'ground',
+        transform: { position: [4, 5, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      }),
+    );
+    intersectObjects.mockClear();
+
+    instance.setScene(scene);
+
+    // 起始高度不同（3 和 5），落完都该站在地上——期望值相同不等于用例分不开它们：
+    // 只落第一个的话第二个停在 5。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
+    expect(instance.nodeFor(scene.objects[1].id)?.position.y).toBeCloseTo(0.5, 12);
+    expect(intersectObjects).toHaveBeenCalledTimes(2);
+  });
+
+  it('rays against the props as they stand this frame, not last frame', async () => {
+    const { instance } = await createRenderer();
+    intersections = [];
+    const scene = standScene('ground', 3);
+    const platform = createPrevizObject('prop', scene.objects);
+    scene.objects.push(platform);
+    scene.timeline.tracks.push({
+      id: 'track',
+      objectId: platform.id,
+      clips: [
+        {
+          id: 'clip',
+          kind: 'path' as const,
+          startFrame: 0,
+          endFrame: 120,
+          points: [
+            { id: 'p0', u: 0, position: [0, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+            { id: 'p1', u: 1, position: [10, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+          ],
+        },
+      ],
+    });
+    instance.setScene(scene);
+    const platformNode = instance.nodeFor(platform.id)!;
+    let platformXAtRayTime = Number.NaN;
+    intersectObjects.mockImplementationOnce(() => {
+      platformXAtRayTime = platformNode.position.x;
+      return intersections;
+    });
+
+    instance.setFrame(120);
+
+    // 人物排在道具**前面**，所以「边解算边落地」会让他拿平台上一帧的位置打射线：
+    // 站在移动平台上的人于是永远慢一帧，看着在平台上滑。射线必须等整帧解算写完再打。
+    expect(platformXAtRayTime).toBeCloseTo(10, 12);
+  });
+
+  it('keeps standing a ground-policy character while recording', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    // 开录前脚下是空地，人物落在 0.5。
+    intersections = [];
+    const scene = standScene('ground', 5);
+    instance.setScene(scene);
+    const pass = instance.startRecording('global', null)!;
+
+    // 要录的这一帧脚下多了个 0.8 的台面，落完该到 1.3。高度必须跟开录前不同，
+    // 否则「渲染前落的地」和「渲染后落的地」读出来是一个数，什么也钉不住。
+    intersections = [{ object: {}, point: { x: 0, y: 0.8, z: 0 } }];
+
+    // 趁这一帧真正被画出去的那一刻把 y 记下来：落地要是排到 `render()` 之后，
+    // 画面里就是上一帧的高度，出片整个差一拍。
+    let yAtRender = Number.NaN;
+    render.mockImplementationOnce(() => {
+      yAtRender = instance.nodeFor(scene.objects[0].id)!.position.y;
+    });
+
+    try {
+      pass.drawFrame(0, null);
+    } finally {
+      pass.end();
+    }
+
+    // 录制期间照落。`drawFrame` 每帧第一句就是 `setFrame`，贴地跟着它跑；这道闸要是
+    // 关上，出片里贴地的人物全都悬在半空——而视口里他们是站着的，谁都不会发现。
+    expect(yAtRender).toBeCloseTo(1.3, 12);
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(1.3, 12);
+  });
+
+  it('leaves a ground-policy character alone while their model is still loading', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    boxIsEmpty = true;
+    intersections = [];
+    const scene = standScene('ground', 5);
+
+    instance.setScene(scene);
+
+    // 空包围盒算不出脚底在哪。保持求值给的高度，别拿 0 兜底——那等于在模型到达之前
+    // 先把人物瞬移到地面上，模型一到又跳回来。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(5, 12);
+  });
+
+  // 人物的 GLB 骨架是异步挂上去的**子节点**（`PrevizSceneGraph.swapInCharacterModel`
+  // 里那句 `node.add(model)`；不写行号，那个文件在动）。
+  // 剔候选剔的是人物那个根节点，`intersectObjects` 从剩下的根往下递归，所以骨架跟着
+  // 一起不在候选里——这里断言的是「整棵子树」而不只是根：只剔根、把子节点放回去的话，
+  // 从盒顶往下第一个命中的就是他自己的头，人物每帧被自己顶高一个身位。
+  it('keeps the character rig out of the candidates once the model arrives', async () => {
+    const { instance } = await createRenderer();
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    intersections = [];
+    const scene = standScene('ground', 3);
+    instance.setScene(scene);
+    await flush();
+    intersectObjects.mockClear();
+
+    instance.setFrame(1);
+
+    const node = instance.nodeFor(scene.objects[0].id)!;
+    // 骨架真的到了才测得出东西来——没到的话下面那条空数组是白给的。
+    expect(node.children.some((child) => child.userData.previzRig)).toBe(true);
+    // 场景里只有他一个对象，剔掉自己这一整棵之后一个候选都不剩。
+    expect(intersectObjects.mock.calls[0]![0]).toEqual([]);
+  });
+
+  /**
+   * 一个贴着某个高度策略站在 `characterY` 的人物，加一台锁在他脸上的特写机位。
+   * 交出人物落定后的 y 与机位解出来的 y。
+   */
+  async function closeupHeights(policy: HeightPolicy, characterY: number) {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    const hero = createPrevizObject('character', scene.objects, {
+      heightPolicy: policy,
+      transform: { position: [0, characterY, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
+    const cam = createPrevizObject('camera', [hero]);
+    scene.objects.push(hero, cam);
+    scene.timeline.tracks.push({
+      id: 'rig',
+      objectId: cam.id,
+      clips: [
+        {
+          id: 'clip',
+          kind: 'rig' as const,
+          startFrame: 0,
+          endFrame: 120,
+          anchorObjectId: hero.id,
+          anchorPart: 'face' as const,
+          aimObjectId: hero.id,
+          azimuth: 0,
+          elevation: 0,
+          distance: 3,
+          height: 0,
+          bearing: 'custom' as const,
+          motion: 'static' as const,
+        },
+      ],
+    });
+    instance.setScene(scene);
+    return {
+      character: instance.nodeFor(hero.id)!.position.y,
+      camera: instance.nodeFor(cam.id)!.position.y,
+    };
+  }
+
+  // 量出「落地不重算机位」这道缝有多宽，把它钉在这里而不是留一句含糊的「有已知误差」。
+  // 缝的宽度**恰好等于这一帧落地挪动的距离**：求值层是拿人物落地**之前**的 y 反推机位
+  // 与俯仰的（`evaluate.ts` 的 `applyCloseups` / `applyPathAims`），渲染层事后改 y
+  // 不会让它们重解一遍。人物本来就站在地上（走位画在 y=0 平面上、脚下是空地）时这个
+  // 距离是 0，机位分毫不差；他一脚踏上 0.8 米高的台子，特写就低 0.8 米——脸部特写的
+  // 取景半径不到一米，那是整颗头出画。修法见 `standGroundCharacters` 的注释。
+  it('solves a closeup from the height the character had before the drop', async () => {
+    intersections = [{ object: {}, point: { x: 0, y: 0.8, z: 0 } }];
+    const stepped = await closeupHeights('ground', 0);
+    expect(stepped.character).toBeCloseTo(0.8, 12);
+
+    intersections = [];
+    const settled = await closeupHeights('follow', 0.8);
+    expect(settled.character).toBeCloseTo(0.8, 12);
+
+    // 两边人物站的高度一模一样，机位却差了整整一个落地位移。
+    expect(settled.camera - stepped.camera).toBeCloseTo(0.8, 12);
+  });
+
+  it('overrides a height the user placed by hand', async () => {
+    const { instance } = await createRenderer();
+    boxMinYOffset = FOOT_BELOW_ORIGIN;
+    intersections = [];
+    const scene = standScene('ground', 0.5);
+    instance.setScene(scene);
+    const lifted = structuredClone(scene);
+    lifted.objects[0]!.transform.position = [0, 5, 0];
+
+    instance.setScene(lifted);
+
+    // 改静态 transform 会把对象记成「手摆过」，求值那一趟于是让位给它。贴地不让：
+    // `ground` 的高度是算出来的，手摆的是他站在哪（x/z），不是他浮多高。
+    expect(instance.nodeFor(scene.objects[0].id)?.position.y).toBeCloseTo(0.5, 12);
+  });
+});
+
+describe('PrevizRenderer 量道具的落地范围', () => {
+  /** 一件道具，摆在给定位置上；`visible` 留给用例改。 */
+  function propScene(...positions: Vec3[]): PrevizScene {
+    const scene = createDefaultScene();
+    for (const position of positions) {
+      scene.objects.push(
+        createPrevizObject('prop', scene.objects, {
+          transform: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+        }),
+      );
+    }
+    return scene;
+  }
+
+  it("measures each prop's ground footprint in world space", async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([3, 0, -2], [-5, 1, 4]);
+
+    instance.setScene(scene);
+
+    // 假 Box3 给的是一个以对象水平中心为心、半边长 1 m 的盒子。量的是**包围盒**而不是
+    // 对象的 position：后者只是一个点，一间铺开十米的布景在图上还是一颗点。
+    expect(instance.propFootprints()).toEqual([
+      { id: scene.objects[0]!.id, minX: 2, maxX: 4, minZ: -3, maxZ: -1 },
+      { id: scene.objects[1]!.id, minX: -6, maxX: -4, minZ: 3, maxZ: 5 },
+    ]);
+  });
+
+  it('leaves out a prop whose model has not landed yet', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    instance.setScene(scene);
+    // 空 Box3（min=+∞ / max=-∞）就是「这个节点下面还没有任何几何体」：模型还在下载，
+    // 或者下载失败了。
+    boxIsEmpty = true;
+
+    // 这里**不能**照搬 `boundsOf()` 那条兜底。那个函数空盒时换成一个人体尺寸的占位盒，
+    // 答的是「用户点了聚焦、可对象没有几何体，画面上该看到什么」；搬到这里就是给一件
+    // 根本没有几何体的道具画出一块人体大小的假地面，比什么都不画更误导人。
+    expect(instance.propFootprints()).toEqual([]);
+  });
+
+  it('measures only props', async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    for (const kind of ['character', 'camera', 'light', 'prop'] as const) {
+      scene.objects.push(
+        createPrevizObject(kind, scene.objects, {
+          transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        }),
+      );
+    }
+
+    instance.setScene(scene);
+
+    // 人物的轮廓是个 0.4 m 的圆，在一张 320 px 的缩略图上和现在那颗点几乎一样大，画了
+    // 等于没画；机位的包围盒含取景视锥，一台 35mm 机位的锥体能盖住半个场地，画上去
+    // 会把整张图淹掉。
+    expect(instance.propFootprints().map((entry) => entry.id)).toEqual([scene.objects[3]!.id]);
+  });
+
+  it('leaves out a prop whose bounding box is not finite', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    instance.setScene(scene);
+    boxHasNaN = true;
+
+    // NaN 顶点的资产量出来的盒子过得了 `isEmpty()`（NaN 的比较恒为 false）。放它出去，
+    // `sceneTopDownBounds` 的跨度就是 NaN，选位图上每一次点击都映射成 NaN——人放不
+    // 下去，画面上却没有任何报错。
+    expect(instance.propFootprints()).toEqual([]);
+  });
+
+  it('leaves out a hidden prop', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    scene.objects[0]!.visible = false;
+
+    instance.setScene(scene);
+
+    // 看不见的东西不该在选位图上占一块地：用户会照着一块画面上根本不存在的家具让位。
+    expect(instance.propFootprints()).toEqual([]);
+  });
+
+  // `propExtents()` 与 `propFootprints()` 是同一次测量的两种切法：轮廓是**世界**盒，
+  // 给选位图画地用；尺寸是**本地**半尺寸，给求值层的移动辅助用——那一轮要拿这一帧
+  // 解算出的道具位置现算世界盒，所以这里给的数里不能含位置。
+  it('measures each prop into local half-extents for the evaluator', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([3, 0, -2], [-5, 1, 4]);
+
+    instance.setScene(scene);
+
+    expect(instance.propExtents()).toEqual([
+      { id: scene.objects[0]!.id, halfX: 1, halfZ: 1 },
+      { id: scene.objects[1]!.id, halfX: 1, halfZ: 1 },
+    ]);
+  });
+
+  // 位置必须被除掉。留在里面的话，走位中的道具每一帧都在「变大」——人会被推到越来越
+  // 远的地方，而画面上只是「他莫名其妙绕了一个越来越大的圈」。
+  it('keeps the half-extents put when the prop moves', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    instance.setScene(scene);
+    const before = instance.propExtents();
+
+    const moved = structuredClone(scene);
+    moved.objects[0]!.transform.position = [9, 0, 9];
+    instance.setScene(moved);
+
+    expect(instance.propExtents()).toEqual(before);
+  });
+
+  // 节点上已经套过一次 `transform.scale`，量出来的世界盒含它。不除掉，缩放就被乘两遍：
+  // 一件放大到 3 倍的道具，人会离它九倍远。
+  // （假 Box3 交出的盒子不随缩放变化，所以这一条钉的是那一步除法本身。）
+  it("divides the scale back out of the node's world box", async () => {
+    const { instance } = await createRenderer();
+    const scene = createDefaultScene();
+    scene.objects.push(
+      createPrevizObject('prop', scene.objects, {
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [2, 1, 4] },
+      }),
+    );
+
+    instance.setScene(scene);
+
+    expect(instance.propExtents()).toEqual([
+      { id: scene.objects[0]!.id, halfX: 0.5, halfZ: 0.25 },
+    ]);
+  });
+
+  it('leaves out the same props the footprints leave out', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    instance.setScene(scene);
+
+    // 两份测量的筛选口径必须一致：选位图上画着地的那件道具，播放时就该推得动人；
+    // 反过来，图上没有的东西不该在暗处把人挡开。
+    boxIsEmpty = true;
+    expect(instance.propExtents()).toEqual([]);
+    boxIsEmpty = false;
+    boxHasNaN = true;
+    expect(instance.propExtents()).toEqual([]);
+    boxHasNaN = false;
+
+    const hidden = structuredClone(scene);
+    hidden.objects[0]!.visible = false;
+    instance.setScene(hidden);
+    expect(instance.propExtents()).toEqual([]);
+  });
+
+  // 缩放为 0 除下去是 Infinity，`propWorldBox` 会给出一个从负无穷铺到正无穷的盒子，
+  // 全场的人都被推到 NaN 上。
+  //
+  // 从场景数据进不来：`PREVIZ_SCALE_RANGE.min` 是 1e-4，工厂、`parseScene` 与
+  // `sceneGraph` 写节点那一步各夹一道。走得到的是**缩放手柄拖出来的那一下**——
+  // TransformControls 直接写 `node.scale`，拖过枢轴就是 0 甚至负数，而那一帧的求值
+  // 照样会跑。所以这里也直接写节点，与手柄同一条路。
+  it('leaves out a prop whose scale gizmo has been dragged onto zero', async () => {
+    const { instance } = await createRenderer();
+    const scene = propScene([0, 0, 0]);
+    instance.setScene(scene);
+    expect(instance.propExtents()).toHaveLength(1);
+
+    instance.nodeFor(scene.objects[0]!.id)!.scale.x = 0;
+
+    expect(instance.propExtents()).toEqual([]);
+  });
+});
+
+describe('PrevizRenderer 的俯视底图', () => {
+  /**
+   * 一块真能交出 2D 上下文的画布。`blitCameraToCanvas` 拿不到上下文就直接 return，
+   * 一句 `getContext: () => null` 会让「画了一帧」那几条断言全部落空。
+   */
+  function mapCanvas(width = 320, height = 320) {
+    return {
+      width,
+      height,
+      getContext: () => ({
+        fillStyle: '',
+        fillRect: () => {},
+        createImageData: (w: number, h: number) => ({
+          data: new Uint8ClampedArray(w * h * 4),
+          width: w,
+          height: h,
+        }),
+        putImageData: () => {},
+      }),
+    } as unknown as Parameters<typeof PrevizRenderer.prototype.renderTopDownMap>[0];
+  }
+
+  /** 这一趟离屏 pass 用的那台相机。`render(scene, camera)` 的第二个参数就是它。 */
+  function cameraUsed() {
+    const call = render.mock.calls[render.mock.calls.length - 1];
+    return call?.[1] as unknown as {
+      left: number;
+      right: number;
+      top: number;
+      bottom: number;
+      position: { x: number; y: number; z: number };
+      up: { x: number; y: number; z: number };
+    };
+  }
+
+  it('renders the set from straight above and hands back the framing it used', async () => {
+    const { instance } = await createRenderer();
+    // 摆在离原点一截的地方：取景中心若被写死成世界原点，这条就红。
+    const scene = sceneWith([6, 0, -4]);
+    instance.setScene(scene);
+    step();
+    render.mockClear();
+
+    const canvas = mapCanvas();
+    const view = instance.renderTopDownMap(canvas)!;
+
+    expect(render).toHaveBeenCalledTimes(1);
+    const camera = cameraUsed();
+    // 正俯视：相机在注视点正上方，up 是世界 -Z（俯视图里 +X 朝右、+Z 朝下）。
+    expect(camera.position.x).toBeCloseTo(6, 9);
+    expect(camera.position.z).toBeCloseTo(-4, 9);
+    expect(camera.position.y).toBeGreaterThan(1);
+    expect([camera.up.x, camera.up.y, camera.up.z]).toEqual([0, 0, -1]);
+
+    // 回传的取景框必须与**画出来的那一帧**自洽，这正是这个方法要返回东西的理由：
+    // 一米在画布上占几个像素，只能是「画布宽 / 正交窗口宽」。各算各的话用户点在画面
+    // 上某处、人却落在别处，而那种错位在静态图上看不出来。
+    expect(view.width).toBe(320);
+    expect(view.height).toBe(320);
+    expect(view.pixelsPerMeter).toBeCloseTo(320 / (camera.right - camera.left), 9);
+    expect(view.pixelsPerMeter).toBeCloseTo(320 / (camera.top - camera.bottom), 9);
+    expect(view.centerX).toBeCloseTo(camera.position.x, 9);
+    expect(view.centerZ).toBeCloseTo(camera.position.z, 9);
+  });
+
+  it('still frames a whole default block when the scene is empty', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(createDefaultScene());
+    step();
+
+    const view = instance.renderTopDownMap(mapCanvas())!;
+
+    // 空场景照搬 `boundsOf()` 那条人体尺寸的占位盒兜底，画面只有两米出头——而用户开局
+    // 第一件事正是在空场景里点个站位。这里要框得下 `topDownMap` 那块 12 m 的默认地。
+    const [leftX, topZ] = canvasToWorld(view, [0, 0]);
+    const [rightX, bottomZ] = canvasToWorld(view, [view.width, view.height]);
+    expect(leftX).toBeLessThanOrEqual(PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.minX);
+    expect(rightX).toBeGreaterThanOrEqual(PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.maxX);
+    expect(topZ).toBeLessThanOrEqual(PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.minZ);
+    expect(bottomZ).toBeGreaterThanOrEqual(PREVIZ_TOP_DOWN_DEFAULT_BOUNDS.maxZ);
+  });
+
+  it('draws nothing and hands back nothing while recording', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    const base = createDefaultScene();
+    const cam = createPrevizObject('camera', base.objects);
+    const scene = { ...base, objects: [cam] };
+    instance.setScene(scene);
+    step();
+
+    const pass = instance.startRecording('track', cam.id)!;
+    pass.drawFrame(0, null);
+    render.mockClear();
+
+    // 录制期间画它就是往成片里塞一趟离屏 pass，还要连带一次同步读回。调用方拿到 null
+    // 会回落到那张 2D 示意图，选位照样能用。
+    expect(instance.renderTopDownMap(mapCanvas())).toBeNull();
+    expect(render).not.toHaveBeenCalled();
+
+    pass.end();
+    expect(instance.renderTopDownMap(mapCanvas())).not.toBeNull();
+  });
+
+  it('hands back nothing once the renderer is gone', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(createDefaultScene());
+    step();
+    instance.dispose();
+
+    // 对话框开着的时候用户能关掉整个预演台。dispose 之后 WebGL 上下文已经 forceContextLoss
+    // 过了，再画一趟是往一个死了的上下文上写。
+    expect(instance.renderTopDownMap(mapCanvas())).toBeNull();
+  });
+});
+
+/**
+ * 布光与接触阴影。
+ *
+ * 用户报的症状是「导进来的模型像没渲染出来」：一整面白墙上没有任何明暗，只剩轮廓。
+ * 病因是三件事叠在一起——补光是平的、高光段被线性输出整片裁成纯白、以及没有影子，
+ * 于是物体和地面之间不存在任何分界。这一组钉的就是这三件，外加「主光真的在投影」。
+ */
+describe('PrevizRenderer 的布光', () => {
+  interface SceneChild {
+    userData: Record<string, unknown>;
+    receiveShadow?: boolean;
+    castShadow?: boolean;
+    sky?: number;
+    ground?: number;
+    intensity?: number;
+    position?: { y: number };
+    shadow?: {
+      camera: { left: number; right: number; top: number; bottom: number; far: number };
+      mapSize: { set: ReturnType<typeof vi.fn> };
+      normalBias: number;
+    };
+  }
+
+  function sceneOf(instance: PrevizRenderer) {
+    return (
+      instance as unknown as {
+        scene: { children: SceneChild[] };
+      }
+    ).scene;
+  }
+
+  function keyLightOf(instance: PrevizRenderer): SceneChild {
+    return sceneOf(instance).children.find((child) => child.shadow)!;
+  }
+
+  function gl(): FakeWebGLRenderer {
+    return webglRenderers[webglRenderers.length - 1]!;
+  }
+
+  it('turns on soft shadow maps', async () => {
+    const { instance } = await createRenderer();
+
+    expect(gl().shadowMap.enabled).toBe(true);
+    // PCFSoft 而不是默认的 PCF：预演台里几乎全是白模，硬边阴影在白模上格外像渲染错误。
+    expect(gl().shadowMap.type).toBe(2);
+
+    instance.dispose();
+  });
+
+  // 白模在这套光下必然把高光段推到 1.0 以上。线性输出会把超出去的部分整片裁成纯白，
+  // 而那正是「没渲染出来」的样子——墙面上一点起伏都留不住。
+  it('rolls the highlights off instead of clipping them', async () => {
+    const { instance } = await createRenderer();
+
+    expect(gl().toneMapping).toBe(4);
+
+    instance.dispose();
+  });
+
+  // 补光不能是平的。`AmbientLight` 给的是一个常数，每个法线方向加的是同一个值，
+  // 背光面于是整片一个颜色——形体正好读不出来。半球光按法线朝上的程度在天光与地光
+  // 之间插值，背光面也还有过渡。所以这里钉的不是「有补光」，是「天地两色不一样」。
+  it('fills with a light that still has a direction to it', async () => {
+    const { instance } = await createRenderer();
+
+    const fill = sceneOf(instance).children.find((child) => child.sky !== undefined)!;
+    expect(fill).toBeDefined();
+    expect(fill.sky).not.toBe(fill.ground);
+    expect(fill.intensity).toBeGreaterThan(0);
+
+    instance.dispose();
+  });
+
+  it('lets the key light cast', async () => {
+    const { instance } = await createRenderer();
+
+    expect(keyLightOf(instance).castShadow).toBe(true);
+
+    instance.dispose();
+  });
+
+  // 正交阴影相机的默认框是 ±5 米，而预演台的常见场景是一整间屋子（`Room.obj` 换算完
+  // 是 5.7×8.9 米）。框小了的表现不是「影子变糊」，是**框外的东西一律不投影**——
+  // 半间屋子有影半间没有，而画面上没有任何东西说明为什么。
+  it('sizes the shadow camera for a whole room, not the stock five metres', async () => {
+    const { instance } = await createRenderer();
+
+    const shadow = keyLightOf(instance).shadow!;
+    expect(shadow.camera.right).toBeGreaterThanOrEqual(10);
+    expect(shadow.camera.left).toBe(-shadow.camera.right);
+    expect(shadow.camera.top).toBe(shadow.camera.right);
+    expect(shadow.camera.bottom).toBe(-shadow.camera.right);
+    // 框放大了 16 倍面积，深度图跟着提上去，接触处的影子边缘才还是实的。
+    expect(shadow.mapSize.set).toHaveBeenCalledWith(2048, 2048);
+    // 导入的模型全被改成了双面，双面材质的阴影两面都写，薄墙上会起一层自阴影的斑。
+    expect(shadow.normalBias).toBeGreaterThan(0);
+
+    instance.dispose();
+  });
+
+  // 地面网格是自定义 ShaderMaterial，而 three 的阴影是在**内置材质**的着色器里拼进去
+  // 的——自定义着色器收不到影子。没有这块承影平面，站在空地上的对象就是把影子投进虚无。
+  it('lays down something for the shadows to land on', async () => {
+    const { instance } = await createRenderer();
+
+    const catcher = sceneOf(instance).children.find((child) => child.receiveShadow);
+    expect(catcher).toBeDefined();
+    // 和地面网格同属编辑期的参照物：镜头里不该出现一块凭空的影子地。
+    expect(catcher!.userData.previzEditorOnly).toBe(true);
+    // 沉在地平面以下：导进来的屋子自带地板，它也接影。两块共面的话同一道影子画两遍，
+    // 暗处比该有的更暗，远处两张片还会互相穿插。沉下去之后它只在空地上露出来。
+    expect(catcher!.position!.y).toBeLessThan(0);
+
+    instance.dispose();
+  });
+});
+
+describe('PrevizRenderer 导入动作', () => {
+  /** 一条导入动作，指向一个假 URL；拉取由各条用例 stub 的 `fetch` 决定。 */
+  function sceneWithMotion(): PrevizScene {
+    return {
+      ...createDefaultScene(),
+      motions: [
+        {
+          id: 'm1',
+          name: 'Wave',
+          url: 'https://assets.example/wave.bvh',
+          sourceFileName: 'wave.bvh',
+          format: 'bvh' as const,
+          skeleton: 'mixamo' as const,
+          clipIndex: 0,
+          durationSec: 2,
+          loop: false,
+        },
+      ],
+    };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('replays the loading status to a listener wired after setScene', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    const { instance } = await createRenderer();
+    instance.setScene(sceneWithMotion());
+
+    // 编辑器接监听的 effect 跑在第一次 setScene 之后；不重放的话入场那批动作永远不显示加载中。
+    const listener = vi.fn();
+    instance.setMotionStatusListener(listener);
+
+    expect(listener).toHaveBeenCalledWith({ m1: { state: 'loading' } });
+  });
+
+  it('waits for imported motions before reporting the models settled', async () => {
+    let answer: (response: Response) => void = () => {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve) => (answer = resolve))),
+    );
+    const { instance } = await createRenderer();
+    instance.setScene(sceneWithMotion());
+
+    let settled = false;
+    void instance.whenModelsSettled().then(() => (settled = true));
+    await flush();
+    await flush();
+    // 录制前等的就是这个：动作没到的那几秒录进去的是一个站着不动的人。
+    expect(settled).toBe(false);
+
+    answer(new Response(null, { status: 404 }));
+    await vi.waitFor(() => expect(settled).toBe(true));
+  });
+
+  it('times a stuck download out instead of hanging the queue forever', async () => {
+    // 逼进 `motionFetchAbortSignal` 的兜底分支：这个运行时如果真带 `AbortSignal.timeout`，
+    // 它是宿主自己的内部定时器，`vi.useFakeTimers` 拨不动，硬等的话这条用例要跑 60 秒
+    // 真实时间。装作「这个环境没有它」，逼渲染器退回 `AbortController` + `setTimeout`，
+    // 两者都受假计时器摆布。
+    const originalTimeout = AbortSignal.timeout;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => {
+        // 模拟真 fetch 在 signal 中止时的行为：请求本身永远不会自己决出胜负，
+        // 只有 abort 才会让它落地。
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          });
+        });
+      }),
+    );
+    const { instance } = await createRenderer();
+    const listener = vi.fn();
+    instance.setMotionStatusListener(listener);
+    instance.setScene(sceneWithMotion());
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      // @ts-expect-error 测试临时摘掉，finally 里照原样还回去；挪进 try 是因为这一行本身
+      // 就可能抛（比如这个环境压根没有这个属性），抛了也不该漏掉下面 `useRealTimers()`
+      // 那一步的清理。
+      delete AbortSignal.timeout;
+      let settled = false;
+      void instance.whenModelsSettled().then(() => (settled = true));
+
+      // 差一毫秒都不许超时：这条锁的是「确实等满了整段超时」。
+      await vi.advanceTimersByTimeAsync(179_999);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => expect(settled).toBe(true));
+
+      // 超时和网络层失败走同一条路，最终都报 `fetch_failed`——调用方不必分辨
+      // 「断网」和「卡住不动」。
+      expect(listener).toHaveBeenLastCalledWith({
+        m1: { state: 'error', error: { code: 'fetch_failed' } },
+      });
+    } finally {
+      vi.useRealTimers();
+      AbortSignal.timeout = originalTimeout;
+    }
+  });
+
+  it('reports a failed download and re-poses the actors', async () => {
+    // 下载先不落地：要等人物底模先落地摆过一次姿势、且下载真的发起了之后，再清空 spy、
+    // 放这条下载失败。两个原因都得等：(1) 底模到位那一刻 `attachCharacterRig` 的回调
+    // 自己就会调一次 `applyEvaluatedFrame`，不等它先发生、先清 spy，摆姿势的锅就分不清
+    // 是底模到位摆的、还是下载失败摆的；(2) `PrevizMotionClips.load()` 内部在真正调用
+    // `fetch` 之前还要先过一次 `setTimeout(0)` 排队，跟底模那条纯 Promise 链谁先谁后
+    // 不是数 `flush()` 次数能保证的——用固定次数的 `flush()` 赌顺序，赌输了就是
+    // `answerMotion` 还没被这次请求的 resolver 覆盖就被调用，请求本身永远悬着，把
+    // `whenModelsSettled()` 挂到天荒地老。用 `vi.waitFor` 死等这两件事真正发生，
+    // 才是确定性的写法。
+    let answerMotion: (response: Response) => void = () => {};
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => (answerMotion = resolve)));
+    vi.stubGlobal('fetch', fetchMock);
+    const invalidate = vi.spyOn(CharacterRigFactory.prototype, 'invalidateMotions');
+    // `graph.applyMotion` 只在场上真有 character 对象、且它这一帧解算出了姿势时才会被
+    // 调用；空场景测不出「重摆」，光断言 `invalidateMotions` 只证明 rig 手里的缓存作废
+    // 了，证不出真有谁被重新摆过姿势。
+    const applyMotion = vi.spyOn(PrevizSceneGraph.prototype, 'applyMotion');
+    const { instance } = await createRenderer();
+    const listener = vi.fn();
+    instance.setMotionStatusListener(listener);
+
+    // 人物自己的底模也走 `whenModelsSettled` 那一份在途计数；不喂 `pendingGltf` 的话
+    // 假 GLTFLoader 永远不 resolve（见文件顶部定义），底模这一路自己就会把
+    // `instance.whenModelsSettled()` 挂到天荒地老，跟这条用例要测的下载超时无关。
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWithMotion();
+    scene.objects = [createPrevizObject('character', scene.objects)];
+    instance.setScene(scene);
+
+    const anyInstance = instance as unknown as { graph: { modelsInFlight: number } };
+    // 死等底模落地（`modelsInFlight` 归零，`onModelReady` 那次 `applyEvaluatedFrame`
+    // 也跑完了）、且导入动作那次 `fetch` 真的被调用过（`answerMotion` 已经指向这次
+    // 请求的 resolver），这两件事都发生之后，才清空 spy、放行下载失败。
+    await vi.waitFor(() => {
+      expect(anyInstance.graph.modelsInFlight).toBe(0);
+      expect(fetchMock).toHaveBeenCalled();
+    });
+    // `setScene` 自己那次初始摆位，加上底模落地那次重摆，都不是这条用例要断言的
+    // 因果——只看下载失败之后那一次，才对得上「下载失败会不会重摆」这件事。
+    applyMotion.mockClear();
+
+    answerMotion(new Response(null, { status: 404 }));
+
+    // 404 也得算下载失败，而不是把一页错误 HTML 拿去解析、报成「解析失败」。
+    await vi.waitFor(() => {
+      expect(listener).toHaveBeenLastCalledWith({
+        m1: { state: 'error', error: { code: 'fetch_failed' } },
+      });
+    });
+    expect(invalidate).toHaveBeenCalled();
+    expect(applyMotion).toHaveBeenCalled();
+  });
+
+  it('stops reporting once disposed', async () => {
+    let answer: (response: Response) => void = () => {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve) => (answer = resolve))),
+    );
+    const { instance } = await createRenderer();
+    instance.setScene(sceneWithMotion());
+    const listener = vi.fn();
+    instance.setMotionStatusListener(listener);
+    listener.mockClear();
+
+    const settled = instance.whenModelsSettled();
+    instance.dispose();
+    answer(new Response(null, { status: 404 }));
+
+    // 编辑器关掉时还在等录制的那一方要被叫醒，而已经没人要听的状态不该再推给 store。
+    await settled;
+    await flush();
+    expect(listener).not.toHaveBeenCalled();
+  });
+});

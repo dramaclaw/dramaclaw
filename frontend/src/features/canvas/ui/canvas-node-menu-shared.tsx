@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useTranslation } from "react-i18next";
 import {
+  Camera,
   FileText,
   Gamepad2,
   Megaphone,
@@ -39,6 +40,7 @@ export const canvasMenuIconMap: Record<MenuIconKey | "gamepad" | "megaphone", Lu
   pano360: Globe,
   threeDWorld: Orbit,
   videoCompose: Film,
+  previz: Camera,
 };
 
 // 可直接创建画布节点的类型及其菜单顺序。新增普通节点仍在这里登记。
@@ -55,6 +57,7 @@ export const CANVAS_ADD_NODE_TYPES: readonly CanvasNodeType[] = [
   CANVAS_NODE_TYPES.upload,
   CANVAS_NODE_TYPES.pano360Viewer,
   CANVAS_NODE_TYPES.threeDWorld,
+  CANVAS_NODE_TYPES.previz,
   CANVAS_NODE_TYPES.htmlArtifact,
 ];
 

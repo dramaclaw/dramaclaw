@@ -105,12 +105,14 @@ export interface CreditPromotion {
 }
 
 export interface CreditTransaction {
+  // Optional while older backends are still deployed.
+  reason?: string;
   id: string;
   occurred_at: string | null;
   category: Exclude<CreditTransactionCategory, "all">;
   status: "pending" | "confirmed" | "refunded" | "completed";
   delta: number;
-  balance_after: number;
+  balance_after: number | null;
   project_id: string;
   project_name: string;
   resource_kind: string;

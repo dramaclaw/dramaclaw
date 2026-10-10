@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from novelvideo.media_model_request_schema import MEDIA_MODEL_CATALOG_TYPES
 from novelvideo.official_defaults import (
     DEFAULT_COGNEE_EMBEDDING_DIM,
     DEFAULT_COGNEE_EMBEDDING_MODEL,
@@ -32,6 +33,9 @@ from novelvideo.official_media_catalog_schema import (
 )
 from novelvideo.shared.runtime_env import uses_local_ce_runtime
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+
+# 媒体模型映射可声明的类型：目录类型（图片/视频/白模）加上只做名称映射的音频。
+_MEDIA_MAPPING_TYPES = frozenset({*MEDIA_MODEL_CATALOG_TYPES, "audio"})
 
 MODE_OFFICIAL = "official"
 MODE_CUSTOM = "custom"
@@ -374,7 +378,7 @@ def _decode_media_model_mappings(value: str | None) -> dict[str, dict[str, Any]]
             "provider": provider,
             "upstreamModel": str(item.get("upstreamModel") or "").strip(),
         }
-        if media_type in {"image", "video", "audio"}:
+        if media_type in _MEDIA_MAPPING_TYPES:
             mapping["mediaType"] = media_type
         if str(item.get("label") or "").strip():
             mapping["label"] = str(item.get("label") or "").strip()
@@ -615,6 +619,7 @@ def save_newapi_media_model_mappings(
     mappings: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     from novelvideo.media_model_request_schema import (
+        MEDIA_MODEL_CATALOG_TYPES,
         normalize_media_model_catalog_config,
         validate_media_model_catalog_config,
     )
@@ -629,14 +634,14 @@ def save_newapi_media_model_mappings(
             raise ValueError(f"provider is required for media model {model_name}")
         media_type = str(item.get("mediaType") or "").strip().lower()
         config = item.get("config") if isinstance(item.get("config"), dict) else {}
-        if media_type in {"image", "video"}:
+        if media_type in MEDIA_MODEL_CATALOG_TYPES:
             config = normalize_media_model_catalog_config(config)
             validate_media_model_catalog_config(config, media_type)
         normalized_item: dict[str, Any] = {
             "provider": provider,
             "upstreamModel": str(item.get("upstreamModel") or "").strip(),
         }
-        if media_type in {"image", "video", "audio"}:
+        if media_type in _MEDIA_MAPPING_TYPES:
             normalized_item["mediaType"] = media_type
         label = str(item.get("label") or "").strip()
         if label:
@@ -846,10 +851,15 @@ def _media_model_catalog(
     provider: str | None = None,
     include_disabled: bool = False,
 ) -> list[dict[str, Any]]:
-    from novelvideo.media_model_request_schema import normalize_media_model_catalog_config
+    from novelvideo.media_model_request_schema import (
+        MEDIA_MODEL_CATALOG_TYPES,
+        default_media_model_request,
+        media_model_api_model,
+        normalize_media_model_catalog_config,
+    )
 
     wanted = str(media_type or "").strip().lower()
-    if wanted not in {"image", "video"}:
+    if wanted not in MEDIA_MODEL_CATALOG_TYPES:
         return []
     result: list[dict[str, Any]] = []
     for model, item in mappings.items():
@@ -860,17 +870,9 @@ def _media_model_catalog(
             continue
         config = item.get("config") if isinstance(item.get("config"), dict) else {}
         config = normalize_media_model_catalog_config(config)
-        config.setdefault(
-            "request",
-            {
-                "endpoint": (
-                    "images/generations" if wanted == "image" else "video/generations"
-                ),
-                "parameters": [],
-            },
-        )
+        config.setdefault("request", default_media_model_request(wanted))
         gateway_model = str(item.get("upstreamModel") or model)
-        api_model = model if wanted == "image" else f"newapi_{model}"
+        api_model = media_model_api_model(wanted, model)
         aliases = item.get("aliases") if isinstance(item.get("aliases"), list) else []
         result.append(
             {

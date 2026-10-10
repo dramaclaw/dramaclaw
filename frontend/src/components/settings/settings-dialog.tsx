@@ -94,6 +94,13 @@ import {
   type MediaModelEntry,
   type MediaStorageProvider,
 } from "@/stores/settingsStore";
+import {
+  MEDIA_MODEL_REQUEST_ENDPOINTS,
+  defaultMediaModelRequest,
+  isMediaModelCatalogType,
+  type MediaModelCatalogType,
+  type MediaModelType,
+} from "@/lib/media-model-catalog-types";
 import { isCeRuntime } from "@/lib/runtime-config";
 import { FreezoneSkillRecipeSettings } from "./freezone-skill-recipe-settings";
 
@@ -1384,7 +1391,7 @@ function splitFeatureModelGroups(
 
 const MEDIA_MODEL_ROWS: readonly {
   model: string;
-  kind: "image" | "video" | "audio";
+  kind: MediaModelType;
   officialOnly?: boolean;
 }[] = [
   { model: "LingShan-G2", kind: "image" },
@@ -1422,7 +1429,7 @@ interface QuickProfileChannel {
 interface QuickProfileModel {
   channel: string;
   model: string;
-  mediaType?: "image" | "video" | "audio";
+  mediaType?: MediaModelType;
   label?: string;
   enabled?: boolean;
   sortOrder?: number;
@@ -1768,16 +1775,8 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
         sortOrder: 100,
         config:
           mapping.config ??
-          (mapping.mediaType === "image" || mapping.mediaType === "video"
-            ? {
-                request: {
-                  endpoint:
-                    mapping.mediaType === "image"
-                      ? "images/generations"
-                      : "video/generations",
-                  parameters: [],
-                },
-              }
+          (isMediaModelCatalogType(mapping.mediaType)
+            ? { request: defaultMediaModelRequest(mapping.mediaType) }
             : {}),
       },
     ]),
@@ -3977,10 +3976,14 @@ function LocalMediaModelEditor({
   onSave: (model: string, entry: MediaModelEntry) => void;
 }) {
   const { t } = useTranslation();
-  const initialType = entry?.mediaType === "image" ? "image" : "video";
+  const initialType: MediaModelCatalogType = isMediaModelCatalogType(
+    entry?.mediaType,
+  )
+    ? entry.mediaType
+    : "video";
   const [model, setModel] = useState(originalModel ?? "");
   const [label, setLabel] = useState(entry?.label ?? originalModel ?? "");
-  const [mediaType, setMediaType] = useState<"image" | "video">(initialType);
+  const [mediaType, setMediaType] = useState<MediaModelCatalogType>(initialType);
   const [provider, setProvider] = useState<FeatureModelProvider>(
     entry?.provider ?? configuredProviders[0] ?? "comfyui",
   );
@@ -3989,13 +3992,7 @@ function LocalMediaModelEditor({
   );
   const [enabled, setEnabled] = useState(entry?.enabled !== false);
   const [sortOrder, setSortOrder] = useState(entry?.sortOrder ?? 100);
-  const defaultConfig = {
-    request: {
-      endpoint:
-        mediaType === "image" ? "images/generations" : "video/generations",
-      parameters: [],
-    },
-  };
+  const defaultConfig = { request: defaultMediaModelRequest(mediaType) };
   const [configJson, setConfigJson] = useState(
     JSON.stringify(entry?.config ?? defaultConfig, null, 2),
   );
@@ -4026,7 +4023,7 @@ function LocalMediaModelEditor({
       ? (parsedConfig[key] as unknown[]).map(String)
       : [];
 
-  const handleMediaTypeChange = (nextType: "image" | "video") => {
+  const handleMediaTypeChange = (nextType: MediaModelCatalogType) => {
     setMediaType(nextType);
     try {
       const current = JSON.parse(configJson) as Record<string, unknown>;
@@ -4042,10 +4039,7 @@ function LocalMediaModelEditor({
             ...current,
             request: {
               ...request,
-              endpoint:
-                nextType === "image"
-                  ? "images/generations"
-                  : "video/generations",
+              endpoint: MEDIA_MODEL_REQUEST_ENDPOINTS[nextType],
               parameters: Array.isArray(request.parameters)
                 ? request.parameters
                 : [],
@@ -4126,7 +4120,7 @@ function LocalMediaModelEditor({
           <Select
             value={mediaType}
             onValueChange={(value) =>
-              handleMediaTypeChange(value as "image" | "video")
+              handleMediaTypeChange(value as MediaModelCatalogType)
             }
           >
             <SelectTrigger size="sm">
@@ -4138,6 +4132,9 @@ function LocalMediaModelEditor({
               </SelectItem>
               <SelectItem value="video">
                 {t("settings.modelConfig.mediaModels.types.video")}
+              </SelectItem>
+              <SelectItem value="blockout">
+                {t("settings.modelConfig.mediaModels.types.blockout")}
               </SelectItem>
             </SelectContent>
           </Select>
@@ -4193,167 +4190,170 @@ function LocalMediaModelEditor({
           {t("settings.modelConfig.mediaModels.enabled")}
         </label>
       </div>
-      <div className="mt-3">
-        <p className="text-[11px] font-medium text-foreground">
-          {t("settings.modelConfig.mediaModels.commonCapabilities")}
-        </p>
-        <div className="mt-2 grid grid-cols-2 gap-3">
-          <CatalogMultiSelectField
-            label={t("settings.modelConfig.mediaModels.resolutionOptions")}
-            value={stringOptions("resolutionOptions")}
-            onChange={(value) => setCapability("resolutionOptions", value)}
-            options={
-              mediaType === "image"
-                ? ["1K", "2K", "3K", "4K", "8K", "1024x1024", "2048x2048"]
-                : ["480p", "720p", "1080p", "2K", "4K"]
-            }
-          />
-          <CatalogMultiSelectField
-            label={t("settings.modelConfig.mediaModels.ratioOptions")}
-            value={stringOptions("ratioOptions")}
-            onChange={(value) => setCapability("ratioOptions", value)}
-            options={[
-              "1:1",
-              "16:9",
-              "9:16",
-              "4:3",
-              "3:4",
-              "3:2",
-              "2:3",
-              "21:9",
-              "adaptive",
-            ]}
-          />
-          {mediaType === "image" ? (
-            <CatalogListField
-              label={t("settings.modelConfig.mediaModels.qualityOptions")}
-              value={stringOptions("qualityOptions")}
-              onChange={(value) => setCapability("qualityOptions", value)}
-              placeholder="low, medium, high"
+      {/* 白模模型是对话模型，图片 / 视频的能力字段对它无意义，后端也会拒绝。 */}
+      {mediaType !== "blockout" && (
+        <div className="mt-3">
+          <p className="text-[11px] font-medium text-foreground">
+            {t("settings.modelConfig.mediaModels.commonCapabilities")}
+          </p>
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <CatalogMultiSelectField
+              label={t("settings.modelConfig.mediaModels.resolutionOptions")}
+              value={stringOptions("resolutionOptions")}
+              onChange={(value) => setCapability("resolutionOptions", value)}
+              options={
+                mediaType === "image"
+                  ? ["1K", "2K", "3K", "4K", "8K", "1024x1024", "2048x2048"]
+                  : ["480p", "720p", "1080p", "2K", "4K"]
+              }
             />
-          ) : (
-            <>
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.minDuration")}
-                value={parsedConfig?.minDuration}
-                onChange={(value) => setCapability("minDuration", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.maxDuration")}
-                value={parsedConfig?.maxDuration}
-                onChange={(value) => setCapability("maxDuration", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.referenceImageMax")}
-                value={parsedConfig?.referenceImageMax}
-                min={0}
-                onChange={(value) => setCapability("referenceImageMax", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.referenceVideoMax")}
-                value={parsedConfig?.referenceVideoMax}
-                min={0}
-                onChange={(value) => setCapability("referenceVideoMax", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.referenceAudioMax")}
-                value={parsedConfig?.referenceAudioMax}
-                min={0}
-                onChange={(value) => setCapability("referenceAudioMax", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.referenceFileMax")}
-                value={parsedConfig?.referenceFileMax}
-                min={0}
-                max={1}
-                onChange={(value) => setCapability("referenceFileMax", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.referenceLinkMax")}
-                value={parsedConfig?.referenceLinkMax}
-                min={0}
-                max={1}
-                onChange={(value) => setCapability("referenceLinkMax", value)}
-              />
+            <CatalogMultiSelectField
+              label={t("settings.modelConfig.mediaModels.ratioOptions")}
+              value={stringOptions("ratioOptions")}
+              onChange={(value) => setCapability("ratioOptions", value)}
+              options={[
+                "1:1",
+                "16:9",
+                "9:16",
+                "4:3",
+                "3:4",
+                "3:2",
+                "2:3",
+                "21:9",
+                "adaptive",
+              ]}
+            />
+            {mediaType === "image" ? (
               <CatalogListField
-                label={t("settings.modelConfig.mediaModels.referenceFileTypes")}
-                value={stringOptions("referenceFileTypes")}
-                onChange={(value) => setCapability("referenceFileTypes", value)}
-                placeholder="pdf, docx, xlsx, pptx, txt, md"
+                label={t("settings.modelConfig.mediaModels.qualityOptions")}
+                value={stringOptions("qualityOptions")}
+                onChange={(value) => setCapability("qualityOptions", value)}
+                placeholder="low, medium, high"
               />
-              {[
-                "referenceAudioMinSeconds",
-                "referenceAudioMaxSeconds",
-                "referenceAudioTotalMinSeconds",
-                "referenceAudioTotalMaxSeconds",
-                "referenceVideoMinSeconds",
-                "referenceVideoMaxSeconds",
-                "referenceVideoTotalMinSeconds",
-                "referenceVideoTotalMaxSeconds",
-              ].map((field) => (
+            ) : (
+              <>
                 <CatalogNumberField
-                  key={field}
-                  label={t(`settings.modelConfig.mediaModels.${field}`)}
-                  value={parsedConfig?.[field]}
-                  min={0.1}
-                  step={0.1}
-                  onChange={(value) => setCapability(field, value)}
+                  label={t("settings.modelConfig.mediaModels.minDuration")}
+                  value={parsedConfig?.minDuration}
+                  onChange={(value) => setCapability("minDuration", value)}
                 />
-              ))}
-              <label className="flex items-center gap-2 text-xs text-foreground">
-                <input
-                  type="checkbox"
-                  checked={parsedConfig?.humanReview === true}
-                  onChange={(event) =>
-                    setCapability("humanReview", event.target.checked)
-                  }
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.maxDuration")}
+                  value={parsedConfig?.maxDuration}
+                  onChange={(value) => setCapability("maxDuration", value)}
                 />
-                {t("settings.modelConfig.mediaModels.humanReview")}
-              </label>
-              <div className="col-span-2">
-                <p className="mb-2 text-[11px] text-muted-foreground">
-                  {t("settings.modelConfig.mediaModels.supportedModes")}
-                </p>
-                <div className="grid grid-cols-3 gap-2">
-                  {/* 左边是后端目录里的模式值，右边只是展示名，和视频节点的页签共用词条。 */}
-                  {[
-                    ["text_to_video", "node.videoNode.tabs.textToVideo"],
-                    ["first_frame", "node.videoNode.tabs.firstFrame"],
-                    ["first_last_frame", "node.videoNode.tabs.firstLastFrame"],
-                    ["image_to_video", "node.videoNode.tabs.imageToVideo"],
-                    ["image_reference", "node.videoNode.tabs.imageReference"],
-                    ["all_reference", "node.videoNode.tabs.allReference"],
-                    ["video_edit", "node.videoNode.tabs.videoEdit"],
-                    ["video_extend", "node.videoNode.tabs.videoExtend"],
-                  ].map(([value, labelKey]) => {
-                    const selected = stringOptions("supportedModes");
-                    return (
-                      <label
-                        key={value}
-                        className="flex items-center gap-2 text-xs text-foreground"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selected.includes(value)}
-                          onChange={(event) =>
-                            setCapability(
-                              "supportedModes",
-                              event.target.checked
-                                ? [...selected, value]
-                                : selected.filter((item) => item !== value),
-                            )
-                          }
-                        />
-                        {t(labelKey)}
-                      </label>
-                    );
-                  })}
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.referenceImageMax")}
+                  value={parsedConfig?.referenceImageMax}
+                  min={0}
+                  onChange={(value) => setCapability("referenceImageMax", value)}
+                />
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.referenceVideoMax")}
+                  value={parsedConfig?.referenceVideoMax}
+                  min={0}
+                  onChange={(value) => setCapability("referenceVideoMax", value)}
+                />
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.referenceAudioMax")}
+                  value={parsedConfig?.referenceAudioMax}
+                  min={0}
+                  onChange={(value) => setCapability("referenceAudioMax", value)}
+                />
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.referenceFileMax")}
+                  value={parsedConfig?.referenceFileMax}
+                  min={0}
+                  max={1}
+                  onChange={(value) => setCapability("referenceFileMax", value)}
+                />
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.referenceLinkMax")}
+                  value={parsedConfig?.referenceLinkMax}
+                  min={0}
+                  max={1}
+                  onChange={(value) => setCapability("referenceLinkMax", value)}
+                />
+                <CatalogListField
+                  label={t("settings.modelConfig.mediaModels.referenceFileTypes")}
+                  value={stringOptions("referenceFileTypes")}
+                  onChange={(value) => setCapability("referenceFileTypes", value)}
+                  placeholder="pdf, docx, xlsx, pptx, txt, md"
+                />
+                {[
+                  "referenceAudioMinSeconds",
+                  "referenceAudioMaxSeconds",
+                  "referenceAudioTotalMinSeconds",
+                  "referenceAudioTotalMaxSeconds",
+                  "referenceVideoMinSeconds",
+                  "referenceVideoMaxSeconds",
+                  "referenceVideoTotalMinSeconds",
+                  "referenceVideoTotalMaxSeconds",
+                ].map((field) => (
+                  <CatalogNumberField
+                    key={field}
+                    label={t(`settings.modelConfig.mediaModels.${field}`)}
+                    value={parsedConfig?.[field]}
+                    min={0.1}
+                    step={0.1}
+                    onChange={(value) => setCapability(field, value)}
+                  />
+                ))}
+                <label className="flex items-center gap-2 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={parsedConfig?.humanReview === true}
+                    onChange={(event) =>
+                      setCapability("humanReview", event.target.checked)
+                    }
+                  />
+                  {t("settings.modelConfig.mediaModels.humanReview")}
+                </label>
+                <div className="col-span-2">
+                  <p className="mb-2 text-[11px] text-muted-foreground">
+                    {t("settings.modelConfig.mediaModels.supportedModes")}
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* 左边是后端目录里的模式值，右边只是展示名，和视频节点的页签共用词条。 */}
+                    {[
+                      ["text_to_video", "node.videoNode.tabs.textToVideo"],
+                      ["first_frame", "node.videoNode.tabs.firstFrame"],
+                      ["first_last_frame", "node.videoNode.tabs.firstLastFrame"],
+                      ["image_to_video", "node.videoNode.tabs.imageToVideo"],
+                      ["image_reference", "node.videoNode.tabs.imageReference"],
+                      ["all_reference", "node.videoNode.tabs.allReference"],
+                      ["video_edit", "node.videoNode.tabs.videoEdit"],
+                      ["video_extend", "node.videoNode.tabs.videoExtend"],
+                    ].map(([value, labelKey]) => {
+                      const selected = stringOptions("supportedModes");
+                      return (
+                        <label
+                          key={value}
+                          className="flex items-center gap-2 text-xs text-foreground"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected.includes(value)}
+                            onChange={(event) =>
+                              setCapability(
+                                "supportedModes",
+                                event.target.checked
+                                  ? [...selected, value]
+                                  : selected.filter((item) => item !== value),
+                              )
+                            }
+                          />
+                          {t(labelKey)}
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            </>
-          )}
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
       <div className="mt-3 border-t border-border/60 pt-3">
         <Label className="text-[11px] font-normal text-muted-foreground">
           {t("settings.modelConfig.mediaModels.capabilitiesJson")}

@@ -440,7 +440,7 @@ def test_classification_matches_the_real_leaf_signatures() -> None:
 
 
 def test_every_dispatch_site_names_a_classified_leaf() -> None:
-    """20 个调用点逐个对到表里；新增未分类的调用点即红。
+    """21 个调用点逐个对到表里；新增未分类的调用点即红。
 
     `leaf_name` 是必填位置参数，不是可选项——漏传是 `TypeError`，不是静默放行。
     """
@@ -468,7 +468,8 @@ def test_every_dispatch_site_names_a_classified_leaf() -> None:
 
     # 19 → 20：`origin/staging` 的 f33ac189（#279）带进来的
     # `generate_freezone_text`，正是上一条用例点名预言的那个形状。
-    assert len(named) == 20
+    # 20 → 21：参考图转白模的 `generate_blockout_from_image`。
+    assert len(named) == 21
     assert set(named) <= set(FREEZONE_LEAF_EGRESS)
 
 

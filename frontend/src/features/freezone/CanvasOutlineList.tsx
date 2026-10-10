@@ -7,6 +7,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AudioLines,
   Box,
+  Camera,
   ChevronDown,
   ChevronRight,
   Clapperboard,
@@ -99,6 +100,7 @@ const NODE_TYPE_ICON: Record<CanvasNodeType, LucideIcon> = {
   [CANVAS_NODE_TYPES.script]: ScrollText,
   [CANVAS_NODE_TYPES.pano360Viewer]: Globe,
   [CANVAS_NODE_TYPES.threeDWorld]: Box,
+  [CANVAS_NODE_TYPES.previz]: Camera,
   [CANVAS_NODE_TYPES.skill]: Sparkles,
   [CANVAS_NODE_TYPES.style]: Palette,
 };
@@ -308,7 +310,14 @@ export const CANVAS_OUTLINE_FILTERS: ReadonlyArray<{
   { key: "beat", types: [CANVAS_NODE_TYPES.beatContext] },
   { key: "audio", types: [CANVAS_NODE_TYPES.audio] },
   { key: "script", types: [CANVAS_NODE_TYPES.script] },
-  { key: "world", types: [CANVAS_NODE_TYPES.pano360Viewer, CANVAS_NODE_TYPES.threeDWorld] },
+  {
+    key: "world",
+    types: [
+      CANVAS_NODE_TYPES.pano360Viewer,
+      CANVAS_NODE_TYPES.threeDWorld,
+      CANVAS_NODE_TYPES.previz,
+    ],
+  },
   { key: "skill", types: [CANVAS_NODE_TYPES.skill] },
   { key: "webpage", types: [CANVAS_NODE_TYPES.htmlArtifact] },
 ];
