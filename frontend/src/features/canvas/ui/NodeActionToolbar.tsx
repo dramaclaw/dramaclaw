@@ -133,12 +133,6 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { findReshootVideoModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
-import {
-  fetchFreezoneAudioSeparateResult,
-  submitFreezoneAnalyzeVideoStory,
-  submitFreezoneAudioSeparate,
-  uploadFreezoneImage,
-} from "@/api/ops";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { analyzeVideoStory } from "@/features/canvas/application/videoAnalyzeStory";
 import { separateVideoAudio } from "@/features/canvas/application/videoSeparateAudio";
@@ -575,6 +569,7 @@ export const NodeActionToolbar = memo(
     );
     const deleteNode = useCanvasStore((state) => state.deleteNode);
     const addNode = useCanvasStore((state) => state.addNode);
+    const findNodePosition = useCanvasStore((state) => state.findNodePosition);
     const addEdge = useCanvasStore((state) => state.addEdge);
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const onNodesChange = useCanvasStore((state) => state.onNodesChange);
