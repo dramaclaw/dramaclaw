@@ -431,6 +431,11 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
     "discovery rules. Reuse known preferences; explicit "
     "delegation allows stated recommendations. A request to create an outline alone is not "
     "delegation. Carry these preferences into the saved outline as the Skill specifies. "
+    "After explicit user approval of the current outline in chat, read the saved outline "
+    "and call dramaclaw_confirm_interactive_story_outline with its ID and revision. "
+    "A plan-card click is optional; both paths persist the same confirmation. "
+    "If the user also requested the script, continue to Create after confirmation succeeds, "
+    "including both write receipts. Never confirm revised content using an older approval. "
     "After its production plan is approved, make missing storyboard "
     "images with the existing text-to-image-video Workflow Skill, the general-image Recipe, and one validated image-only "
     "WorkflowPlan. Map every frame to its existing story segment and video node in "
@@ -455,7 +460,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v4"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v32"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v33"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -670,9 +675,11 @@ Canvas write contract:
   or a timeout do not accept defaults. Follow the Skill to persist these preferences in the outline.
   Local edits do not restart this intake; interactive ads follow their own discovery rules.
   Read dramaclaw_get_freezone_canvas for the persisted
-  revision, save the approved outline with dramaclaw_save_interactive_story_outline and wait for the
-  user to confirm it on the canvas before creating the story, then create or patch with the story
-  tools and validate. Placeholder media is supported.
+  revision and save the outline with dramaclaw_save_interactive_story_outline. Explicit chat
+  approval of that exact outline can be recorded with dramaclaw_confirm_interactive_story_outline
+  after reading its ID and revision; a plan-card click is optional. If the user requested the
+  script too, confirm then create and validate without another approval question. Retain both
+  write receipts. Changed outline content requires renewed approval. Placeholder media is supported.
   Characters, scenes, storyboard, and complete are manual progress stages. During the character
   or scene production stage, a request to create reference assets is not a request to confirm the
   stage or move past it.
@@ -1061,6 +1068,7 @@ def _codex_story_write_intent(
         "dramaclaw_create_interactive_story",
         "dramaclaw_patch_interactive_story",
         "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_outline",
         "dramaclaw_confirm_interactive_story_stages",
     }:
         return None
@@ -1073,6 +1081,8 @@ def _codex_story_write_intent(
             outline, dict
         ):
             story_id = outline.get("outline_id")
+        elif name == "dramaclaw_confirm_interactive_story_outline":
+            story_id = args.get("outline_id")
         else:
             story_id = args.get("story_id")
         base = args.get("base_revision")
@@ -5180,8 +5190,10 @@ async def _stream_assistant_reply_codex(
                                 )
                                 receipt_identity = receipt.get(
                                     "outline_id"
-                                    if _codex_freezone_tool_name(event)
-                                    == "dramaclaw_save_interactive_story_outline"
+                                    if _codex_freezone_tool_name(event) in {
+                                        "dramaclaw_save_interactive_story_outline",
+                                        "dramaclaw_confirm_interactive_story_outline",
+                                    }
                                     else "story_id"
                                 )
                                 if intent is not None and receipt_identity == intent[1]:

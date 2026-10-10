@@ -217,6 +217,22 @@ def test_confirm_requires_matching_pending_outline(
     assert exc.value.code == "outline_not_found"
 
 
+def test_chat_confirmation_cannot_approve_content_edited_since_review(service):
+    service.save_outline(save_request(service, key="outline-before-review", base_revision=0))
+    service.save_outline(save_request(
+        service, key="outline-after-review", base_revision=1, plot_summary="用户未批准的新内容",
+    ))
+    with pytest.raises(InteractiveStoryServiceError) as exc:
+        service.confirm_outline(ConfirmStoryOutlineRequest(
+            canvas_id="default", outline_id="outline-round-1", status="confirmed",
+            base_revision=1, idempotency_key="confirm-stale-review",
+        ))
+    assert exc.value.code == "revision_conflict"
+    current = service.get_outline("default")
+    assert current.outline.status == "pending"
+    assert current.outline.plot_summary == "用户未批准的新内容"
+
+
 def test_create_links_confirmed_outline_only(
     service: InteractiveStoryService, story: StoryDraftV2
 ) -> None:

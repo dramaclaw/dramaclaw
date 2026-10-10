@@ -6,6 +6,7 @@
 
 Codex MCP 和 Hermes adapter 中，核心故事读写与校验工具的名称和语义一致：
 
+- `dramaclaw_confirm_interactive_story_outline`：仅在用户明确批准当前大纲时，传回读得到的 `outline_id`、`base_revision` 和新的 `idempotency_key`。与方案卡确认使用同一接口，确认后回读最新版本再创建；最终回复保留确认与创建两项写入回执。
 - `dramaclaw_create_interactive_story`：`base_revision`、`idempotency_key` 和完整 `story`。
 - `dramaclaw_get_interactive_story`：`story_id`。
 - `dramaclaw_patch_interactive_story`：`story_id`、`base_revision`、`idempotency_key` 和 `operations`。

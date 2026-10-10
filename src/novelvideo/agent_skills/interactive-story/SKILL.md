@@ -51,7 +51,7 @@ description: "在 DramaClaw 中策划、创建、检查或编辑互动影游、�
 
 ## 故事工作流
 
-1. **方案与确认**：影游先按“起草大纲前的偏好收集”补齐画风、互动强度、单次游玩时长和侧重主题，再起草；改编时确认必须保留的内容。给出可审核的大纲和路径时长。用户要进入画布创作时，用 `dramaclaw_save_interactive_story_outline` 保存待确认大纲；用户在画布方案卡确认前，不创建正式故事。改稿后重新保存并等待再次确认。
+1. **方案与确认**：影游先按“起草大纲前的偏好收集”补齐画风、互动强度、单次游玩时长和侧重主题，再起草；改编时确认必须保留的内容。给出可审核的大纲和路径时长。用户要进入画布创作时，用 `dramaclaw_save_interactive_story_outline` 保存待确认大纲；用户可在聊天中明确确认或点击方案卡确认。聊天确认时，回读已保存大纲及 revision，调用 `dramaclaw_confirm_interactive_story_outline` 记录对当前 outline_id 与版本的批准；若用户已批准刚展示的完整方案，原样保存后即可确认，无需再点卡片。用户同时要求创建剧本时，确认成功后继续创建，不重复询问。仅问“下一步”或要求改稿不等于批准；内容改动后需要重新确认。
 2. **创建**：回读 `dramaclaw_get_interactive_story_outline` 的确认状态和 `dramaclaw_get_freezone_canvas` 的 revision；用 `dramaclaw_create_interactive_story` 写完整 StoryDraftV2，再调用 `dramaclaw_validate_interactive_story`。写入和校验成功后立即读取 `dramaclaw_get_interactive_story_progress`，按最早未完成阶段引导下一步；通常先处理角色，再处理场景，不直接建议分镜或视频。占位媒体可用于试玩，不要求先有视频。若结构校验失败，先 Get 最新故事；仅在修法由获批大纲唯一确定时 Patch 并重验，否则指出断开的片段。
 3. **编辑或检查**：从故事组的 `data.interactiveStoryId` 定位故事，不把组节点 ID 当故事 ID；先 Get 最新故事和 revision。范围明确就直接改，同一意图合并一次 Patch，成功后 Validate。仅润色文案时保留结构、媒体与参数；增删分支按用户要求处理。只读检查直接 Get/Validate。
 4. **阶段进度**：制作前回读 `dramaclaw_get_interactive_story_progress`。剧本未完成时先处理缺口，除非用户明确要求先规划。角色、场景、分镜和完成属于人工阶段；用户明确确认完成或要求越过时，用 `dramaclaw_confirm_interactive_story_stages` 记录，返工时用 `action=reopen`。用户说“创建场景/角色”是制作请求，不是完成确认；先按 [阶段引导](references/stage-guidance.md) 制作并核实产物，不能调用确认工具代替创建。角色定义或图片节点不能证明阶段完成。
@@ -59,4 +59,4 @@ description: "在 DramaClaw 中策划、创建、检查或编辑互动影游、�
 
 ## 写入边界
 
-故事持久化只用专用 story tools；不得用通用节点、连线或直接 canvas JSON 冒充故事。Create/Patch 前读取最新状态，成功后 Validate；故事和普通画布写入共用 revision，任何中间画布写入、阶段确认或媒体回填后，下一次故事写入前必须重新读取版本并核对修改，不能复用旧故事快照的 revision；结果不明时先回读，不重放。生产参数不属于 StoryDraft。没有绑定项目或专用工具不可用时，说明阻塞。`outline_not_confirmed` 时请用户在画布方案卡确认，不绕过门禁。
+故事持久化只用专用 story tools；不得用通用节点、连线或直接 canvas JSON 冒充故事。Create/Patch 前读取最新状态，成功后 Validate；故事和普通画布写入共用 revision，任何中间画布写入、阶段确认或媒体回填后，下一次故事写入前必须重新读取版本并核对修改，不能复用旧故事快照的 revision；结果不明时先回读，不重放。生产参数不属于 StoryDraft。没有绑定项目或专用工具不可用时，说明阻塞。`outline_not_confirmed` 时先回读大纲；已获用户对当前内容的明确批准则调用大纲确认工具，收到成功回执后再创建；否则询问确认。不得直接重试未确认的 Create。

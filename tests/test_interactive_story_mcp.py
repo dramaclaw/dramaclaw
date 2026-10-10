@@ -58,7 +58,7 @@ async def test_independent_story_server_loads_no_hermes_plugins(monkeypatch):
     monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", unexpected)
     tools = await interactive_story_mcp.list_tools()
     assert {tool.name for tool in tools} == story_tools.STORY_TOOL_NAMES
-    assert len(tools) == 9
+    assert len(tools) == 10
     monkeypatch.setattr(
         interactive_story_mcp,
         "_request",
@@ -98,7 +98,7 @@ def request(*args, **kwargs):
 interactive_story_mcp._request = request
 
 async def run():
-    assert len(await interactive_story_mcp.list_tools()) == 9
+    assert len(await interactive_story_mcp.list_tools()) == 10
     result = await interactive_story_mcp.call_tool('dramaclaw_get_freezone_canvas', {})
     assert not result.isError
     assert result.structuredContent['revision'] == 7
@@ -223,6 +223,68 @@ async def test_story_schema_rejection_preserves_correction_details_without_http(
     assert result.structuredContent["details"]
     assert "operations.0" in result.structuredContent["path"]
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_chat_outline_confirmation_persists_then_allows_create(monkeypatch, tmp_path):
+    from novelvideo.interactive_story.models import (
+        ConfirmStoryOutlineRequest, CreateInteractiveStoryRequest, SaveStoryOutlineRequest,
+    )
+    from novelvideo.interactive_story.service import InteractiveStoryService
+    from novelvideo.chat.runtime_event_evidence import _codex_freezone_write_receipt
+    from novelvideo.chat.canvas_outcome import finalize_canvas_reply, receipt_reference
+
+    service = InteractiveStoryService(tmp_path / "project", project_id="project-a", actor_id="local")
+    service.save_outline(SaveStoryOutlineRequest.model_validate({
+        "canvas_id": "canvas-a", "base_revision": 0, "idempotency_key": "save-outline-a",
+        "outline": {"outline_id": "outline-a", "kind": "story", "title": "回归大纲",
+                    "premise": "已向用户展示的方案", "plot_summary": "已获批准的分支故事"},
+    }))
+    writes = []
+
+    def request(method, path, *, body=None, query=None):
+        if method == "GET":
+            return service.get_outline(query["canvas_id"]).model_dump(mode="json")
+        writes.append((method, path, body))
+        if path.endswith("/confirm"):
+            return service.confirm_outline(ConfirmStoryOutlineRequest.model_validate(body)).model_dump(mode="json")
+        return service.create(CreateInteractiveStoryRequest.model_validate(body)).model_dump(mode="json")
+
+    monkeypatch.setattr(interactive_story_mcp, "_request", request)
+    story = json.loads((Path(__file__).resolve().parents[1] / "examples/interactive_story/story_draft_v2.json").read_text())
+    create_args = {"base_revision": 1, "idempotency_key": "create-story-a", "story": story}
+    blocked = await interactive_story_mcp.call_tool("dramaclaw_create_interactive_story", create_args)
+    assert blocked.isError
+    assert writes == []
+
+    args = {"outline_id": "outline-a", "base_revision": 1, "idempotency_key": "confirm-outline-a"}
+    confirmed = await interactive_story_mcp.call_tool("dramaclaw_confirm_interactive_story_outline", args)
+    assert not confirmed.isError
+    assert confirmed.structuredContent["status"] == "confirmed"
+    assert writes[0][1].endswith("/interactive-story-outline/confirm")
+    assert writes[0][2]["status"] == "confirmed"
+    assert service.get_outline("canvas-a").outline.status == "confirmed"
+
+    created = await interactive_story_mcp.call_tool("dramaclaw_create_interactive_story", {
+        **create_args, "base_revision": confirmed.structuredContent["revision"],
+    })
+    assert not created.isError
+    receipts = set()
+    for name, args_, result in [
+        ("dramaclaw_confirm_interactive_story_outline", args, confirmed),
+        ("dramaclaw_create_interactive_story", create_args, created),
+    ]:
+        event = SimpleNamespace(name=name, status="completed", error=None,
+                                input=args_, structured=result.structuredContent, output=None)
+        receipt = _codex_freezone_write_receipt(event, expected_project="project-a", expected_canvas="canvas-a")
+        assert receipt is not None
+        receipts.add(receipt_reference(receipt))
+    assert receipts == {("", 2), ("", 3)}
+    assert finalize_canvas_reply(json.dumps({
+        "message": "大纲已确认，剧本已创建。", "mode": "mutation",
+        "canvas_receipts": [{"bridge_key": None, "revision": r} for _, r in sorted(receipts)],
+    }), attempts={"confirm": "succeeded", "create": "succeeded"}, receipts=receipts) == "大纲已确认，剧本已创建。"
+    assert service.get_outline("canvas-a").outline.status == "linked"
 
 
 @pytest.mark.asyncio

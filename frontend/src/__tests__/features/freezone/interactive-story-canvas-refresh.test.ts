@@ -49,11 +49,11 @@ describe("interactive story canvas refresh", () => {
     })).toEqual({ project: "project-a", canvasId: "canvas-a" });
   });
 
-  it("refreshes the canvas after an agent outline save", () => {
+  it.each(["dramaclaw_save_interactive_story_outline", "dramaclaw_confirm_interactive_story_outline"])("refreshes the canvas after %s", (name) => {
     expect(interactiveStoryRefreshTarget({
       type: "agent.tool.updated",
       scope: { kind: "project", id: "project-a", canvasId: "canvas-a" },
-      name: "dramaclaw_save_interactive_story_outline",
+      name,
       status: "completed",
       result_json: {
         ok: true,

@@ -858,6 +858,7 @@ def _load_recent_freezone_tool_result(
         "dramaclaw_get_interactive_story",
         "dramaclaw_validate_interactive_story",
         "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_outline",
         "dramaclaw_get_interactive_story_outline",
         "dramaclaw_get_interactive_story_progress",
         "dramaclaw_confirm_interactive_story_stages",

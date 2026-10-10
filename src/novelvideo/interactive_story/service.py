@@ -317,7 +317,7 @@ class InteractiveStoryService:
     def confirm_outline(
         self, request: ConfirmStoryOutlineRequest
     ) -> InteractiveStoryOutlineSaveResult:
-        """Record the user's canvas-side confirmation; never rewrites outline content."""
+        """Record the user's card or chat confirmation; never rewrites outline content."""
 
         def build_payload(existing: dict | None) -> dict:
             current = existing or {}
@@ -892,7 +892,7 @@ def _require_confirmed_outline_for_create(canvas: dict) -> None:
     """Hard gate on the formal-story create path.
 
     A canvas that carries a pending outline slot may only be created into
-    once the user confirmed it on the plan card. This is enforced here (not
+    once user approval was recorded through the confirmation endpoint. This is enforced here (not
     just at the MCP tool entry) so no caller can bypass the confirmation.
     A missing slot stays permissive for outline-free direct creation; an
     unreadable slot fails closed because its confirmation cannot be proven.
@@ -908,7 +908,7 @@ def _require_confirmed_outline_for_create(canvas: dict) -> None:
             "outline_not_confirmed",
             "the canvas still carries a user-unconfirmed pending story outline"
             + (f" (status={stored.status!r})" if stored is not None else " (unreadable slot)")
-            + "; ask the user to confirm it on the plan card before creating",
+            + "; record explicit user approval through outline confirmation before creating",
         )
 
 
@@ -926,8 +926,8 @@ def _next_outline_state(
 
     An identical re-save keeps an existing confirmation (safe retries); any
     content change resets to pending because the user approved different text.
-    Agents never persist confirmed/linked: those statuses belong to the canvas
-    confirmation and the create-time link respectively.
+    Outline saves never persist confirmed/linked: those statuses belong to the
+    confirmation endpoint and the create-time link respectively.
     """
     now = canvas_store.utc_now_iso()
     if previous is not None and previous.outline_id == incoming.outline_id:

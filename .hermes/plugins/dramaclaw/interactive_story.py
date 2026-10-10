@@ -818,7 +818,9 @@ def build_tools(
             return (
                 "outline_not_confirmed: the canvas still has a pending story outline "
                 f"(status={outline.get('status')!r}) that the user has not confirmed "
-                "on the plan card. Do not retry; ask the user to confirm it, and "
+                "yet. Do not retry Create. If the user explicitly approved this exact "
+                "outline in chat, read its latest revision and call "
+                "dramaclaw_confirm_interactive_story_outline; otherwise ask for approval. "
                 "only call Create after dramaclaw_get_interactive_story_outline "
                 "reports status confirmed or linked."
             )
@@ -909,6 +911,14 @@ def build_tools(
                     query={"canvas_id": canvas_id or "default"},
                 )
             )
+        except Exception as exc:
+            return tool_error(str(exc))
+
+    def handle_confirm_outline(args: dict[str, Any], **_: Any) -> str:
+        try:
+            body = story_body(args, "outline_id", "base_revision", "idempotency_key")
+            body["status"] = "confirmed"
+            return tool_result(request("POST", outline_path(args) + "/confirm", body=body))
         except Exception as exc:
             return tool_error(str(exc))
 
@@ -1097,6 +1107,23 @@ def build_tools(
                 additional_properties=False,
             ),
             handle_save_outline,
+        ),
+        (
+            "dramaclaw_confirm_interactive_story_outline",
+            schema(
+                "dramaclaw_confirm_interactive_story_outline",
+                "Record the user's explicit chat approval of the current saved outline using the same confirmation as the plan card. Read the latest outline first and use its outline_id and revision. Never infer approval from a next-step question, silence, or a request to revise. If the user already approved the exact proposal before saving, save it unchanged then confirm it without asking again. Content edits invalidate approval; a revision conflict requires rereading and checking that the approved content is unchanged. This does not create a story or authorize media generation. Include this write revision in the final canvas receipts, together with any subsequent Create receipt.",
+                {
+                    "project_id": {"type": "string"},
+                    "canvas_id": {"type": "string"},
+                    "outline_id": dict(_ENTITY_ID_SCHEMA),
+                    "base_revision": dict(_BASE_REVISION_SCHEMA),
+                    "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 200},
+                },
+                ["outline_id", "base_revision", "idempotency_key"],
+                additional_properties=False,
+            ),
+            handle_confirm_outline,
         ),
         (
             "dramaclaw_get_interactive_story_outline",
@@ -1323,6 +1350,12 @@ STORY_SUCCESS_REQUIRED = {
     ),
 }
 
+STORY_RESULT_FIELDS["dramaclaw_confirm_interactive_story_outline"] = STORY_RESULT_FIELDS[
+    "dramaclaw_save_interactive_story_outline"
+]
+STORY_SUCCESS_REQUIRED["dramaclaw_confirm_interactive_story_outline"] = STORY_SUCCESS_REQUIRED[
+    "dramaclaw_save_interactive_story_outline"
+]
 STORY_TOOL_NAMES = frozenset(STORY_RESULT_FIELDS)
 
 

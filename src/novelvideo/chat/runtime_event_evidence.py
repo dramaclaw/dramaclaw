@@ -94,11 +94,12 @@ def _codex_freezone_write_receipt(
                 "dramaclaw_create_interactive_story",
                 "dramaclaw_patch_interactive_story",
                 "dramaclaw_save_interactive_story_outline",
+                "dramaclaw_confirm_interactive_story_outline",
                 "dramaclaw_confirm_interactive_story_stages",
             }:
                 identity_field = (
                     "outline_id"
-                    if story_tool == "dramaclaw_save_interactive_story_outline"
+                    if story_tool in {"dramaclaw_save_interactive_story_outline", "dramaclaw_confirm_interactive_story_outline"}
                     else "story_id"
                 )
                 if (
