@@ -3268,24 +3268,53 @@ def test_recipe_result_does_not_use_media_task_id_as_model_evidence(
     assert operation["model_evidence"] == {}
 
 
+@pytest.mark.parametrize("waiter_before_delivery", [False, True])
+@pytest.mark.parametrize(
+    "tampered_field",
+    [
+        None,
+        "kind",
+        "id",
+        "workflow_run_id",
+        "node_id",
+        "recipe_id",
+        "action.job_id",
+        "action.task_type",
+        "action.recipe_id",
+        "action.recipe_version",
+        "action.product_operation_id",
+    ],
+)
 def test_direct_voice_recipe_result_is_delivered_from_completed_audio_task(
-    workflow_run_client: TestClient, monkeypatch
+    workflow_run_client: TestClient, monkeypatch, waiter_before_delivery, tampered_field
 ) -> None:
+    import asyncio
+
     from novelvideo.api.routes import freezone
-    from novelvideo.freezone.agent_product_operations import read_agent_product_operation
+    from novelvideo.freezone.agent_product_operations import (
+        AgentProductSettlementPending,
+        read_agent_product_operation,
+    )
+    from novelvideo.task_backend.runners.freezone import (
+        _run_freezone_agent_product_async,
+    )
     from novelvideo.freezone.workflow_runs import claim_workflow_media_action
 
     monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
     base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
     created = workflow_run_client.post(
         base,
-        json={"actions": [{
-            "node_id": "voice-1",
-            "action": "generate_audio",
-            "recipe_id": "drama-shot-voice",
-            "recipe_version": "1.0.0",
-            "generation_attempt_id": "attempt-voice",
-        }]},
+        json={
+            "actions": [
+                {
+                    "node_id": "voice-1",
+                    "action": "generate_audio",
+                    "recipe_id": "drama-shot-voice",
+                    "recipe_version": "1.0.0",
+                    "generation_attempt_id": "attempt-voice",
+                }
+            ]
+        },
     ).json()["data"]
     operation_id = created["actions"][0]["product_operation_id"]
     claimed = claim_workflow_media_action(
@@ -3302,13 +3331,17 @@ def test_direct_voice_recipe_result_is_delivered_from_completed_audio_task(
     task_key = f"task:freezone_audio_speech:project:proj_demo:0:{job_id}"
     workflow_run_client.patch(
         f"{base}/{created['run_id']}",
-        json={"action_updates": [{
-            "node_id": "voice-1",
-            "action": "generate_audio",
-            "status": "running",
-            "task_key": task_key,
-            "job_id": job_id,
-        }]},
+        json={
+            "action_updates": [
+                {
+                    "node_id": "voice-1",
+                    "action": "generate_audio",
+                    "status": "running",
+                    "task_key": task_key,
+                    "job_id": job_id,
+                }
+            ]
+        },
     )
     media_task = SimpleNamespace(
         task_type="freezone_audio_speech",
@@ -3330,6 +3363,20 @@ def test_direct_voice_recipe_result_is_delivered_from_completed_audio_task(
         ),
     )
 
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir, operation_id=operation_id
+    )
+    envelope = {
+        "task_type": "freezone_agent_recipe_result",
+        "__run_task_id": operation["task_id"],
+        "payload": {"operation_id": operation_id, "product_kind": "recipe_result"},
+    }
+    ctx = SimpleNamespace(state_dir=workflow_run_client.state_dir)
+    if waiter_before_delivery:
+        with pytest.raises(AgentProductSettlementPending) as exc_info:
+            asyncio.run(_run_freezone_agent_product_async(envelope, ctx))
+        assert exc_info.value.status == "awaiting_delivery"
+
     response = workflow_run_client.get(base)
 
     assert response.status_code == 200
@@ -3339,6 +3386,33 @@ def test_direct_voice_recipe_result_is_delivered_from_completed_audio_task(
     assert operation["status"] == "delivered"
     assert operation["result_ref"]["id"] == job_id
     assert operation["model_evidence"] == {}
+
+    if tampered_field:
+        with sqlite3.connect(workflow_run_client.state_dir / "data.db") as conn:
+            if tampered_field.startswith("action."):
+                # Columns come exclusively from the test parameter list above.
+                column = tampered_field.removeprefix("action.")
+                conn.execute(
+                    f"UPDATE workflow_run_actions SET {column} = ? WHERE run_id = ?",
+                    ("untrusted", created["run_id"]),
+                )
+            else:
+                receipt = {**operation["result_ref"], tampered_field: "untrusted"}
+                conn.execute(
+                    "UPDATE freezone_agent_product_operations SET result_ref_json = ? "
+                    "WHERE operation_id = ?",
+                    (json.dumps(receipt), operation_id),
+                )
+        with pytest.raises(RuntimeError, match="lacks trusted delivery evidence"):
+            asyncio.run(_run_freezone_agent_product_async(envelope, ctx))
+        return
+
+    # Starting after delivery and replaying must consume the same trusted receipt.
+    result = asyncio.run(_run_freezone_agent_product_async(envelope, ctx))
+    assert result["delivery_status"] == "delivered"
+    assert result["result_ref"] == operation["result_ref"]
+    assert result["model_evidence"] == {}
+    assert asyncio.run(_run_freezone_agent_product_async(envelope, ctx)) == result
 
 
 def test_cancelled_workflow_reconciles_late_recipe_media_result(

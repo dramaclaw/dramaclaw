@@ -1497,6 +1497,22 @@
     }
   },
   "credits": {
+    "transactionSource": {
+      "orgAllocate": "Credits allocated by organization",
+      "orgReduce": "Credits reclaimed by organization",
+      "orgDepartureSweep": "Credits reclaimed on departure",
+      "orgRefundSweep": "Refunded credits reclaimed after departure",
+      "orgTransfer": "Organization credit adjustment",
+
+      "orgRecharge": "Organization credit recharge",
+      "personalRecharge": "Credit recharge",
+      "paymentReceived": "Payment received, credits added",
+      "adminIncrease": "Credits added by administrator",
+      "adminDecrease": "Credits deducted by administrator",
+      "adminRecharge": "Administrator recharge",
+      "adminAdjustment": "Manual adjustment by administrator",
+      "adminRechargeReceived": "Manual recharge credited by administrator"
+    },
     "balance": "Current credit balance",
     "short": "Credits",
     "openPanel": "Open credit panel",
