@@ -7267,6 +7267,16 @@
           "media": "Lưu model media"
         }
       },
+      "channelModels": {
+        "fetch": "Lấy danh sách model",
+        "select": "Chọn model của kênh",
+        "inputLabel": "Tên model phía nhà cung cấp",
+        "loading": "Đang lấy danh sách model…",
+        "manualHint": "Nhập để tìm kiếm hoặc nhập tên model thủ công.",
+        "empty": "Không có model phù hợp. Bạn vẫn có thể nhập tên thủ công.",
+        "fetchFailed": "Không thể lấy danh sách model. Hãy đồng bộ kênh và kiểm tra hỗ trợ của nhà cung cấp, hoặc nhập tên thủ công.",
+        "syncFirst": "Đồng bộ key và Base URL của kênh trước khi lấy danh sách model."
+      },
       "featureModels": {
         "title": "Ánh xạ model theo nghiệp vụ",
         "description": "Gán model từ nhà cung cấp cho các tính năng hiểu văn bản, tạo nội dung và hiểu hình ảnh. Tính năng chưa gán sẽ dùng mặc định của backend.",

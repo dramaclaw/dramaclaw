@@ -7624,6 +7624,16 @@
           "media": "Save media models"
         }
       },
+      "channelModels": {
+        "fetch": "Fetch models",
+        "select": "Select channel model",
+        "inputLabel": "Upstream model name",
+        "loading": "Fetching channel models…",
+        "manualHint": "Type to search or enter a model name manually.",
+        "empty": "No matching models. You can enter a name manually.",
+        "fetchFailed": "Could not fetch models. Sync the channel and check upstream model-list support, or enter a name manually.",
+        "syncFirst": "Sync the channel key and Base URL before fetching models."
+      },
       "featureModels": {
         "title": "Business Model Mapping",
         "description": "Assign upstream models to text understanding, content generation, and vision understanding features. Unset features use backend defaults.",

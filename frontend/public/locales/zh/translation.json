@@ -7624,6 +7624,16 @@
           "media": "保存媒体模型"
         }
       },
+      "channelModels": {
+        "fetch": "获取模型列表",
+        "select": "选择渠道模型",
+        "inputLabel": "上游模型名称",
+        "loading": "正在获取渠道模型列表…",
+        "manualHint": "输入关键词搜索，也可直接填写模型名称。",
+        "empty": "没有匹配的模型，可继续手动填写。",
+        "fetchFailed": "未能获取模型列表，请确认渠道已同步且上游支持模型列表接口；也可手动填写。",
+        "syncFirst": "请先同步渠道的 Key 和 Base URL，再获取模型列表。"
+      },
       "featureModels": {
         "title": "业务模型映射",
         "description": "为文本理解、内容生成和视觉理解功能指定上游模型；未设置则使用后端默认。",
