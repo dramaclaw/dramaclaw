@@ -38,6 +38,7 @@ import { PIKO_MAYOR_IDLE_SRC, PIKO_MAYOR_POSITION } from "./runtime/mayor-idle";
 import { createMayorActor } from "./runtime/mayor-actor";
 import { createResidentActor, RESIDENT_INITIAL_POSITION, RESIDENT_WORLD_SCALE } from "./runtime/resident-actor";
 import { PikoTownNpcInteraction } from "./PikoTownNpcInteraction";
+import { PikoResidentInteraction } from "./PikoResidentInteraction";
 import { townNpcsForMap, townNpcIdleSrc } from "./piko-town-npcs";
 import { createTownNpcActor } from "./runtime/town-npc-actor";
 import { DOG_MAPS } from "./runtime/dog-world-routes";
@@ -51,6 +52,7 @@ import { PIKO_PLAYABLE_RESIDENTS, type PlayablePikoResidentId } from "./piko-res
 import { PLAYER_ACCESSORIES, accessoryDefinition, accessorySrc, type PlayerAccessoryId, type PlayerAccessorySelection } from "./piko-player-accessories";
 import { createPlayerAccessory } from "./runtime/player-accessory";
 import { playPikoUiSound } from "./piko-audio";
+import type { PikoFacing, PikoRemotePlayer } from "./piko-world-client";
 
 import { canStand } from "./runtime/character-movement";
 import { canActivateTransport, createExitGate, enabledMapExits, type MapExit } from "./runtime/map-travel";
@@ -73,10 +75,32 @@ type PikoWorldCanvasProps = {
   showMayorHint?: boolean;
   mayorHintVisible?: boolean;
   movementBlocked?: boolean;
+  initialPosition?: { x: number; y: number; facing: PikoFacing };
+  remotePlayers?: PikoRemotePlayer[];
+  onRemoteChatRequest?: (characterId: string) => boolean;
+  onLocalState?: (x: number, y: number, facing: PikoFacing) => void;
   onLoadStateChange?: (loadState: PikoMapLoadState) => void;
 };
 
-export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, taskStatus, residentId = "m01", playerGender, accessory = null, onLoadStateChange, showMayorHint = false, mayorHintVisible = showMayorHint, movementBlocked = false }: PikoWorldCanvasProps) {
+function PikoRemotePlayerInteraction({ player, fit, onBusyChange, onChatRequest }: {
+  player: PikoRemotePlayer;
+  fit: { x: number; y: number; scale: number };
+  onBusyChange: (id: string, busy: boolean) => void;
+  onChatRequest?: (characterId: string) => boolean;
+}) {
+  const handleBusyChange = useCallback(
+    (busy: boolean) => onBusyChange(player.character_id, busy),
+    [onBusyChange, player.character_id],
+  );
+  const handleHover = useCallback(() => {}, []);
+  return <PikoResidentInteraction
+    target={{ id: player.character_id, nickname: player.nickname, bio: player.bio ?? "" }}
+    position={{ x: player.x, y: player.y }} fit={fit}
+    onBusyChange={handleBusyChange} onHover={handleHover}
+    onChatRequest={() => onChatRequest?.(player.character_id) ?? false} />;
+}
+
+export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, taskStatus, residentId = "m01", playerGender, accessory = null, onLoadStateChange, showMayorHint = false, mayorHintVisible = showMayorHint, movementBlocked = false, initialPosition, remotePlayers = [], onRemoteChatRequest, onLocalState }: PikoWorldCanvasProps) {
   const { t } = useTranslation();
   const exitDefinitions = isPikoMapId(mapId) ? MAP_EXIT_MARKERS[mapId] ?? [] : [];
   const onExitRef = useRef(onExit);
@@ -89,7 +113,13 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
   const mayorActiveRef = useRef(showMayorHint);
   const [welcomeOpen, setWelcomeOpen] = useState(false);
   const blockedRef = useRef(movementBlocked);
+  const remoteInteractionBusyIds = useRef(new Set<string>());
+  const [remoteInteractionBusy, setRemoteInteractionBusy] = useState(false);
   const stopPlayerRef = useRef(() => {});
+  const remotePlayersRef = useRef(remotePlayers);
+  const onLocalStateRef = useRef(onLocalState);
+  remotePlayersRef.current = remotePlayers;
+  onLocalStateRef.current = onLocalState;
   const activateTransportRef = useRef<(exitId: string) => void>(() => {});
   const npcHoverRef = useRef(new Map<string, (hovered: boolean) => void>());
   const [playerPosition, setPlayerPosition] = useState(RESIDENT_INITIAL_POSITION);
@@ -104,6 +134,15 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
     hostRef.current?.focus({ preventScroll: true });
   }, []);
   const onNpcHover = useCallback((id: string, hovered: boolean) => npcHoverRef.current.get(id)?.(hovered), []);
+  const onRemoteInteractionBusy = useCallback((id: string, busy: boolean) => {
+    if (busy) {
+      remoteInteractionBusyIds.current.add(id);
+      stopPlayerRef.current();
+    } else {
+      remoteInteractionBusyIds.current.delete(id);
+    }
+    setRemoteInteractionBusy(remoteInteractionBusyIds.current.size > 0);
+  }, []);
   const welcomeOpenRef = useRef(false);
   const interactRef = useRef<()=>void>(()=>{});
   const nicknameRef = useRef(nickname);
@@ -125,7 +164,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
   }, [nickname]);
   useEffect(() => { residentPresentationRef.current?.setNameGap(playerNameGap); }, [playerNameGap]);
   const mayorHoverRef = useRef<(hovered:boolean)=>void>(()=>{});
-  useEffect(()=>{blockedRef.current=movementBlocked;},[movementBlocked]);
+  useEffect(()=>{blockedRef.current=movementBlocked || remoteInteractionBusy;},[movementBlocked, remoteInteractionBusy]);
   useEffect(() => { mayorActiveRef.current = showMayorHint; }, [showMayorHint]);
   useEffect(() => {
     if (showMayorHint && !blockedRef.current) hostRef.current?.focus({preventScroll:true});
@@ -152,6 +191,10 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
     let residentSilhouette: ReturnType<typeof createResidentOcclusionSilhouette> | null = null;
     let clickFeedback: ReturnType<typeof createClickFeedback> | null = null;
     const npcActors: ReturnType<typeof createTownNpcActor>[] = [];
+    const remoteActors = new Map<string, {
+      actor: ReturnType<typeof createResidentActor>;
+      target: { x: number; y: number };
+    }>();
     let playerAccessory: ReturnType<typeof createPlayerAccessory> | null = null;
     let residentActor: ReturnType<typeof createResidentActor> | null = null;
     let mayorActor: ReturnType<typeof createMayorActor> | null = null;
@@ -222,6 +265,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
       mayorActor?.destroy();
       playerAccessory?.destroy();
       residentActor?.destroy();
+      remoteActors.forEach(({ actor }) => actor.destroy());
+      remoteActors.clear();
       npcActors.forEach(actor => actor.destroy());
       changeResidentRef.current = () => {};
       residentPresentationRef.current = null;
@@ -473,6 +518,11 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             : playerGender === "female" ? PIKO_FEMALE_PLAYER_MOTION_SRC : null;
           const playerMotionTexture = playerMotionSrc ? await loadTexture(playerMotionSrc) : null;
           if (playerMotionSrc && !playerMotionTexture) return;
+          const [remoteMaleTexture, remoteFemaleTexture] = await Promise.all([
+            playerGender === "male" && playerMotionTexture ? playerMotionTexture : loadTexture(PIKO_MALE_PLAYER_MOTION_SRC),
+            playerGender === "female" && playerMotionTexture ? playerMotionTexture : loadTexture(PIKO_FEMALE_PLAYER_MOTION_SRC),
+          ]);
+          if (!remoteMaleTexture || !remoteFemaleTexture) return;
           const seatedArt = playerGender && interactions.interactions.some(item => item.kind === "seat" && pikoSeatAction(item.actionId))
             ? PIKO_PLAYER_SEATED_ART[playerGender] : null;
           if (seatedArt) {
@@ -483,10 +533,12 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
               return action ? [{ id: item.actionId, action }] : [];
             }));
           }
+          let playerFacing: PikoFacing = initialPosition?.facing ?? spawn?.facing ?? "south";
           residentActor = createResidentActor(playerMotionTexture ?? residentTextures.get(residentIdRef.current)!, nextApp.ticker,
             canInteract,
-            {host, navigation, position: spawn?.position, facing: spawn?.facing, footsteps: !["boundless-sea", "changfeng-sea", "town-hall-interior"].includes(mapId),
+            {host, navigation, position: initialPosition ?? spawn?.position, facing: initialPosition?.facing ?? spawn?.facing, footsteps: !["boundless-sea", "changfeng-sea", "town-hall-interior"].includes(mapId),
               onPose: (facing, column, idleElapsedMs) => {
+                playerFacing = facing;
                 if (residentActor) {
                   const seated = residentActor.isSeated();
                   const perspectiveScale = mapPerspectiveScale(mapId, residentActor.container.y);
@@ -562,6 +614,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             world.addChild(actor.container);
           }
           let playerX = residentActor.container.x, playerY = residentActor.container.y;
+          let lastNetworkSync = 0;
           setPlayerPosition({ x: playerX, y: playerY });
           environmentAudio?.update({ x: playerX, y: playerY });
           animalAudio?.update({ x: playerX, y: playerY });
@@ -573,6 +626,58 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           const dogActor = courtyardAnimalRuntime?.actors.find(actor => actor.placement.kind === "dog");
           const syncPosition = () => {
             const now = Date.now();
+            const currentRemoteIds = new Set(remotePlayersRef.current.map(player => player.character_id));
+            for (const [id, remote] of remoteActors) {
+              if (!currentRemoteIds.has(id)) {
+                remote.actor.destroy();
+                remoteActors.delete(id);
+              }
+            }
+            for (const remote of remotePlayersRef.current) {
+              const existing = remoteActors.get(remote.character_id);
+              if (existing) {
+                existing.target = { x: remote.x, y: remote.y };
+                if (Math.hypot(existing.actor.container.x - remote.x, existing.actor.container.y - remote.y) > 400) {
+                  existing.actor.container.position.set(remote.x, remote.y);
+                }
+                continue;
+              }
+              const state = { x: remote.x, y: remote.y };
+              const actor = createResidentActor(
+                remote.gender === "female" ? remoteFemaleTexture : remoteMaleTexture,
+                nextApp.ticker,
+                () => !disposed,
+                {
+                  host,
+                  navigation,
+                  label: `piko-remote-${remote.character_id}`,
+                  position: state,
+                  facing: remote.facing,
+                  simulatedInput: () => {
+                    const target = remoteActors.get(remote.character_id)?.target ?? state;
+                    const dx = target.x - actor.container.x, dy = target.y - actor.container.y;
+                    return Math.hypot(dx, dy) < 2 ? { x: 0, y: 0 } : { x: dx, y: dy };
+                  },
+                  footsteps: false,
+                  motionColumns: PIKO_PLAYER_MOTION_COLUMNS,
+                  walkColumns: PIKO_PLAYER_WALK_COLUMNS,
+                  idleFrameAt: pikoPlayerIdleFrameAt,
+                  idleCycleMs: PIKO_PLAYER_IDLE_CYCLE_MS,
+                  speed: PIKO_PLAYER_SPEED,
+                  gaitCycleSourcePixels: PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS,
+                  onPose: () => {
+                    const scale = RESIDENT_WORLD_SCALE * mapPerspectiveScale(mapId, actor.container.y);
+                    actor.body.scale.set(scale);
+                    actor.shadow.scale.set(scale);
+                    actor.container.zIndex = actor.container.y;
+                  },
+                },
+              );
+              remoteActors.set(remote.character_id, { actor, target: state });
+              addCharacterPresentation(actor.container, remote.nickname, false, 6);
+              actor.container.zIndex = actor.container.y;
+              world.addChild(actor.container);
+            }
             const canGreet = canInteract() && !reducedMotion?.matches && !document.hidden && document.hasFocus();
             if (canGreet) worldDog?.greetNearby(mapId, residentActor?.container ?? { x: playerX, y: playerY }, now,
               () => animalAudio?.prepareDogGreeting() ?? false);
@@ -589,6 +694,10 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
               setPlayerPosition({ x: playerX, y: playerY });
               environmentAudio?.update({ x: playerX, y: playerY });
               animalAudio?.update({ x: playerX, y: playerY });
+            }
+            if (now - lastNetworkSync >= 100 && residentActor) {
+              lastNetworkSync = now;
+              onLocalStateRef.current?.(playerX, playerY, playerFacing);
             }
             const headSeated = residentActor?.isSeated() ?? false;
             if (playerMoved || headSeated !== lastHeadSeated || lastTreeOutline !== animatedTree?.outline) {
@@ -687,6 +796,16 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
         available={loadState === "ready" && showMayorHint && !movementBlocked && !welcomeOpen && !speech}
         onInteract={() => stopPlayerRef.current()} />}
       {loadState === "ready" && showMayorHint && speech && !playerHeadOccluded && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 73 : 128) * mapPerspectiveScale(mapId, playerPosition.y) + playerNameGap} />}
+      {loadState === "ready" && showMayorHint && remotePlayers.map(player => player.speech && player.speech.expiresAt > Date.now() ? (
+        <PikoSpeechBubble key={player.speech.id} body={player.speech.body}
+          position={{ x: player.x, y: player.y }} fit={worldFit}
+          headOffset={128 * mapPerspectiveScale(mapId, player.y) + 6} />
+      ) : null)}
+      {loadState === "ready" && showMayorHint && !movementBlocked && worldFit.scale > 0 && remotePlayers.map(player => (
+        <PikoRemotePlayerInteraction key={`interaction:${player.character_id}`}
+          player={player} fit={worldFit} onBusyChange={onRemoteInteractionBusy}
+          onChatRequest={onRemoteChatRequest} />
+      ))}
       {loadState === "ready" && showMayorHint && dogGreeting?.mapId === mapId && <PikoSpeechBubble body="🐶❤️" position={dogGreeting} fit={worldFit} headOffset={dogGreeting.headOffset} />}
       {loadState === "ready" && mapId === "town-hall-interior" && hallNotice && !movementBlocked && <>
         <PikoSpeechBubble body={hallNotice.body} position={hallNotice.position} fit={worldFit} headOffset={185} />

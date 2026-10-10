@@ -12,13 +12,14 @@ import popupStyles from "./piko-popup.module.css";
 import iconStyles from "./piko-icon-button.module.css";
 
 export type PikoInteractionTarget = {
-  id: string; nickname: string; bio: string; residentId: PikoResidentId;
+  id: string; nickname: string; bio: string; residentId?: PikoResidentId;
 };
 
 /** Local resident interaction; no network request is sent by the chat preview. */
-export function PikoResidentInteraction({ target, position, fit, onBusyChange, onHover }: {
+export function PikoResidentInteraction({ target, position, fit, onBusyChange, onHover, onChatRequest }: {
   target: PikoInteractionTarget; position: Point; fit: PikoViewportFit;
   onBusyChange: (busy: boolean) => void; onHover: (hovered: boolean) => void;
+  onChatRequest?: () => boolean;
 }) {
   const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -48,7 +49,11 @@ export function PikoResidentInteraction({ target, position, fit, onBusyChange, o
         finalFocus={panel ? false : undefined}
         className={`${popupStyles.surface} w-32 min-w-0 max-w-[calc(100vw-1rem)] p-1`}>
         <DropdownMenuItem className={popupStyles.item} onClick={() => { setMenuOpen(false); setPanel("profile"); playPikoUiSound("open"); }}>{t("pikoWorld.viewResidentInfo")}</DropdownMenuItem>
-        <DropdownMenuItem className={popupStyles.item} onClick={() => { setMenuOpen(false); setRequestNotice(previous => previous + 1); playPikoUiSound("open"); }}>{t("pikoWorld.chatWithResident")}</DropdownMenuItem>
+        <DropdownMenuItem className={popupStyles.item} onClick={() => {
+          setMenuOpen(false);
+          if (onChatRequest?.() ?? true) setRequestNotice(previous => previous + 1);
+          playPikoUiSound("open");
+        }}>{t("pikoWorld.chatWithResident")}</DropdownMenuItem>
         <DropdownMenuItem className={popupStyles.item} onClick={() => playPikoUiSound("close")}>{t("common.close")}</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

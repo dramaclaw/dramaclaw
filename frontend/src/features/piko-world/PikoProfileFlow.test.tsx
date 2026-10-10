@@ -78,6 +78,20 @@ it("rejects blank nicknames and keeps the profile form open if persistence fails
   expect(onOpenChange).not.toHaveBeenCalled();
 });
 
+it("waits for account profile persistence before closing the form", async () => {
+  let finishSave: ((saved: boolean) => void) | undefined;
+  const onSave = vi.fn(() => new Promise<boolean>(resolve => { finishSave = resolve; }));
+  const onOpenChange = vi.fn();
+  render(<PikoProfileDialog open profile={{ nickname: "Alice", bio: "" }} onSave={onSave} onOpenChange={onOpenChange} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+  expect(onOpenChange).not.toHaveBeenCalled();
+
+  finishSave?.(true);
+  await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+});
+
 it("isolates profiles by account and restores the saved nickname on return", () => {
   const { result, rerender } = renderHook(({ username }) => usePikoProfile(username), { initialProps: { username: "alice" } });
   act(() => { expect(result.current.saveProfile({ nickname: "小禾", bio: "散步" })).toBe(true); });

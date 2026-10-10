@@ -7,11 +7,22 @@ import { selectPikoMusic, setPikoMusicMuted, usePikoSelection, usePikoMusicMuted
 import { PIKO_MUSIC_PLAYLISTS } from "./piko-map-music";
 import { renderHook } from "@testing-library/react";
 const auth = vi.hoisted(() => ({ username: "alice" }));
+const worldApi = vi.hoisted(() => ({ character: null as null | {
+  id: string; nickname: string; gender: "male" | "female"; bio: string;
+  scene_id: string; position_x: number; position_y: number; facing: "south";
+} }));
 vi.mock("@/stores/auth-store", () => ({ useAuthStore: (select: (state: typeof auth) => unknown) => select(auth) }));
 vi.mock("./use-piko-task-status", () => ({ usePikoTaskStatus: () => ({ status: null }) }));
 vi.mock("./PikoWorldShell", () => ({ PikoWorldShell: ({ playerGender }: { playerGender: string }) => <div data-testid="world">{playerGender}</div> }));
-vi.mock("./PikoOnboarding", () => ({ PikoOnboarding: ({ onSave, onEnter, onMusicStart }: { onMusicStart: () => void; onSave: (gender: "female", name: string) => boolean; onEnter: () => void }) => <><button onClick={onMusicStart}>listen</button><button onClick={() => { if (onSave("female", "小花")) onEnter(); }}>create</button></> }));
-beforeEach(() => { localStorage.clear(); auth.username = "alice"; vi.spyOn(document, "hasFocus").mockReturnValue(true); });
+vi.mock("./PikoOnboarding", () => ({ PikoOnboarding: ({ onSave, onEnter, onMusicStart }: { onMusicStart: () => void; onSave: (gender: "female", name: string) => boolean | Promise<boolean>; onEnter: () => void }) => <><button onClick={onMusicStart}>listen</button><button onClick={async () => { if (await onSave("female", "小花")) onEnter(); }}>create</button></> }));
+vi.mock("./piko-world-client", () => ({
+  fetchPikoCharacter: vi.fn(async () => worldApi.character),
+  savePikoCharacter: vi.fn(async (gender: "male" | "female", nickname: string) => ({
+    id: "character-alice", nickname, gender, bio: "", scene_id: "welcome-courtyard",
+    position_x: 1270, position_y: 480, facing: "south",
+  })),
+}));
+beforeEach(() => { localStorage.clear(); auth.username = "alice"; worldApi.character = null; vi.spyOn(document, "hasFocus").mockReturnValue(true); });
 afterEach(() => vi.restoreAllMocks());
 it("resets manual selection, pause and progress for each new town visit", async () => {
   const clips: (EventTarget & { src: string; currentTime: number; duration: number; play: ReturnType<typeof vi.fn> })[] = [];
@@ -23,7 +34,7 @@ it("resets manual selection, pause and progress for each new town visit", async 
   const state = renderHook(() => ({ selection: usePikoSelection(), muted: usePikoMusicMuted(), playback: usePikoPlayback() }));
   try {
     const first = render(<PikoWorldExperience />);
-    fireEvent.click(screen.getByText("listen"));
+    fireEvent.click(await screen.findByText("listen"));
     await act(async () => {});
     act(() => selectPikoMusic(PIKO_MUSIC_PLAYLISTS.skyport));
     await act(async () => {});
@@ -35,7 +46,7 @@ it("resets manual selection, pause and progress for each new town visit", async 
     expect(state.result.current.selection).toBeNull();
     expect(state.result.current.muted).toBe(false);
     expect(state.result.current.playback.currentTime).toBe(0);
-    fireEvent.click(screen.getByText("listen"));
+    fireEvent.click(await screen.findByText("listen"));
     await act(async () => {});
     expect(clips[clips.length - 1].src).toBe(PIKO_MUSIC_PLAYLISTS.courtyard[0]);
     expect(clips[clips.length - 1].currentTime).toBe(0);
@@ -43,21 +54,23 @@ it("resets manual selection, pause and progress for each new town visit", async 
     second.unmount();
   } finally { state.unmount(); vi.unstubAllGlobals(); }
 });
-it("mounts the world only after successful creation, persists identity and resets on account change", () => {
+it("mounts the world only after successful creation and isolates account state", async () => {
   const { rerender } = render(<PikoWorldExperience />);
-  expect(screen.queryByTestId("world")).toBeNull(); fireEvent.click(screen.getByText("create"));
-  expect(screen.getByTestId("world")).toHaveTextContent("female");
+  expect(screen.queryByTestId("world")).toBeNull(); fireEvent.click(await screen.findByText("create"));
+  expect(await screen.findByTestId("world")).toHaveTextContent("female");
   expect(readPikoPlayer("alice")?.gender).toBe("female");
   auth.username = "bob"; rerender(<PikoWorldExperience />);
-  expect(screen.queryByTestId("world")).toBeNull();
+  expect(screen.queryByTestId("world")).toBeNull(); await screen.findByText("create");
   auth.username = "alice"; rerender(<PikoWorldExperience />);
   expect(screen.queryByTestId("world")).toBeNull();
-  expect(screen.getByText("create")).toBeInTheDocument();
+  expect(await screen.findByText("create")).toBeInTheDocument();
 });
-it("development entry clears previous creation and always replays onboarding", () => {
+it("loads an existing account character without replaying onboarding", async () => {
+  worldApi.character = { id: "existing", nickname: "小叶", gender: "male", bio: "", scene_id: "welcome-courtyard", position_x: 900, position_y: 500, facing: "south" };
   savePikoPlayer("alice", "male", "小叶"); render(<PikoWorldExperience />);
-  expect(screen.getByText("create")).toBeInTheDocument(); expect(screen.queryByTestId("world")).toBeNull();
-  expect(readPikoPlayer("alice")).toBeNull();
+  expect(await screen.findByTestId("world")).toHaveTextContent("male");
+  expect(screen.queryByText("create")).toBeNull();
+  expect(readPikoPlayer("alice")?.nickname).toBe("小叶");
 });
 
 it("keeps the same music channel from creation through map entry and releases it on exit", async () => {
@@ -69,11 +82,12 @@ it("keeps the same music channel from creation through map entry and releases it
   try {
     const { unmount } = render(<PikoWorldExperience />);
     expect(clips).toHaveLength(0);
+    await act(async () => {});
     fireEvent.click(screen.getByText("listen"));
     await act(async () => {});
     act(() => vi.advanceTimersByTime(2000));
     expect(clips).toHaveLength(1); expect(clips[0].volume).toBe(1);
-    fireEvent.click(screen.getByText("create"));
+    await act(async () => { fireEvent.click(screen.getByText("create")); });
     expect(screen.getByTestId("world")).toBeInTheDocument();
     expect(clips).toHaveLength(1); expect(clips[0].removeAttribute).not.toHaveBeenCalled();
     unmount(); act(() => vi.advanceTimersByTime(800));

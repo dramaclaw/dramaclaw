@@ -12,13 +12,14 @@ export function PikoProfileDialog({ open, profile, onOpenChange, onSave }: {
   open: boolean;
   profile: PikoProfile;
   onOpenChange: (open: boolean) => void;
-  onSave: (profile: PikoProfile) => boolean;
+  onSave: (profile: PikoProfile) => boolean | Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(profile);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
-    if (open) { setDraft(profile); setSaveFailed(false); }
+    if (open) { setDraft(profile); setSaveFailed(false); setSaving(false); }
   }, [open, profile]);
   const valid = isValidPikoProfile(normalizePikoProfile(draft));
   return <Dialog open={open} onOpenChange={onOpenChange}>
@@ -34,9 +35,19 @@ export function PikoProfileDialog({ open, profile, onOpenChange, onSave }: {
       <form className="relative z-10 max-h-[calc(100dvh-7rem)] overflow-y-auto px-[12%] pb-[22%] pt-[21%] text-primary-foreground"
         onSubmit={event => {
           event.preventDefault();
-          if (!valid) return;
-          if (onSave(normalizePikoProfile(draft))) onOpenChange(false);
-          else setSaveFailed(true);
+          if (!valid || saving) return;
+          setSaveFailed(false);
+          const result = onSave(normalizePikoProfile(draft));
+          if (typeof result === "boolean") {
+            if (result) onOpenChange(false);
+            else setSaveFailed(true);
+            return;
+          }
+          setSaving(true);
+          void result.then(saved => {
+            if (saved) onOpenChange(false);
+            else setSaveFailed(true);
+          }).catch(() => setSaveFailed(true)).finally(() => setSaving(false));
         }}>
         <DialogTitle className="text-center text-base font-semibold">{t("pikoWorld.editProfile")}</DialogTitle>
         <DialogDescription className="mt-2 text-center text-xs text-primary-foreground/70">{t("pikoWorld.profileDescription")}</DialogDescription>
@@ -50,7 +61,7 @@ export function PikoProfileDialog({ open, profile, onOpenChange, onSave }: {
           className={`${inputStyles.input} mt-2 resize-none`} />
         {saveFailed && <p role="alert" className="mt-2 text-sm">{t("pikoWorld.profileSaveFailed")}</p>}
         <footer className="mt-5 flex translate-y-4 justify-center">
-          <button type="submit" disabled={!valid}
+          <button type="submit" disabled={!valid || saving} aria-busy={saving}
             className={`${iconStyles.button} rounded-md border border-amber-950/25 bg-amber-200/85 px-5 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40`}>
             {t("pikoWorld.saveProfile")}
           </button>

@@ -1,160 +1,92 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, expect, it, vi } from "vitest";
 import { PikoPrivateChat } from "./PikoPrivateChat";
+import type {
+  PikoPrivateChatMessage,
+  PikoPrivateChatPeer,
+  PikoPrivateChatRequest,
+} from "./piko-world-client";
+import { playPikoUiSound } from "./piko-audio";
+
 vi.mock("./piko-audio", () => ({ playPikoUiSound: vi.fn(), unlockPikoNotifications: vi.fn() }));
-beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(100000); });
-afterEach(() => vi.useRealTimers());
-it("shows a sliced request once, accepts it, replies locally and retains the conversation", () => {
-  const onOpenChange = vi.fn();
-  render(<PikoPrivateChat active onOpenChange={onOpenChange} />);
-  expect(screen.queryByRole("region")).toBeNull();
-  act(() => vi.advanceTimersByTime(5000));
-  const request = screen.getByRole("region", { name: "私聊申请" });
-  expect(request.querySelectorAll("img")).toHaveLength(3);
-  expect(request).toHaveTextContent("小苔申请聊天");
-  fireEvent.click(screen.getByRole("button", { name: "接受" }));
-  expect(screen.getByRole("dialog", { name: "小苔" })).toBeTruthy();
-  expect(onOpenChange).toHaveBeenLastCalledWith(true);
-  const input = screen.getByRole("textbox", { name: "输入私聊消息" });
-  fireEvent.change(input, { target: { value: "你好小苔" } });
-  fireEvent.submit(input.closest("form")!);
-  expect(screen.getByRole("log")).toHaveTextContent("你好小苔");
-  act(() => vi.advanceTimersByTime(1000));
-  expect(screen.getByRole("log")).toHaveTextContent("小苔的模拟回复");
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-  act(() => vi.advanceTimersByTime(1000));
-  expect(onOpenChange).toHaveBeenLastCalledWith(false);
-  fireEvent.click(screen.getByRole("button", { name: "与小苔的聊天" }));
-  expect(screen.getByRole("log")).toHaveTextContent("你好小苔");
-});
-it("rejects without opening a dialog or repeatedly asking", () => {
-  render(<PikoPrivateChat active onOpenChange={vi.fn()} />);
-  act(() => vi.advanceTimersByTime(5000));
-  fireEvent.click(screen.getByRole("button", { name: "拒绝" }));
-  act(() => vi.advanceTimersByTime(3000));
-  act(() => vi.advanceTimersByTime(60000));
-  expect(screen.queryByText("小苔申请聊天")).toBeNull();
-  expect(screen.getByRole("region")).toHaveTextContent("喜欢散步的小禾申请聊天");
-  expect(screen.queryByRole("dialog")).toBeNull();
-});
-it("keeps unanswered requests available after a long delay and accepts them later", () => {
-  const callback = vi.fn();
-  const { rerender, unmount } = render(<PikoPrivateChat active={false} onOpenChange={callback} />);
-  act(() => vi.advanceTimersByTime(60000));
-  expect(screen.queryByRole("region")).toBeNull();
-  rerender(<PikoPrivateChat active onOpenChange={callback} />);
-  act(() => vi.advanceTimersByTime(5000));
-  expect(screen.getByRole("region")).toBeTruthy();
-  act(() => vi.advanceTimersByTime(3000));
-  act(() => vi.advanceTimersByTime(3600000));
-  expect(screen.getAllByRole("region")).toHaveLength(2);
-  fireEvent.click(within(screen.getAllByRole("region")[0]).getByRole("button", { name: "接受" }));
-  expect(screen.getByRole("dialog", { name: "小苔" })).toBeTruthy();
-  unmount(); expect(callback).toHaveBeenLastCalledWith(false);
+
+const request: PikoPrivateChatRequest = {
+  id: "request-one",
+  from_character_id: "character-leaf",
+  from_nickname: "在线小叶",
+  sent_at: "2026-10-09T10:00:00Z",
+};
+const peer: PikoPrivateChatPeer = {
+  request_id: request.id,
+  character_id: request.from_character_id,
+  nickname: request.from_nickname,
+};
+const message = (id: string, from: string, to: string, body: string): PikoPrivateChatMessage => ({
+  id, from_character_id: from, to_character_id: to,
+  from_nickname: from === "character-me" ? "我" : "在线小叶",
+  body, sent_at: "2026-10-09T10:01:00Z",
 });
 
-it("stacks an accepted chat and a new request with the same skin and separate histories", () => {
-  render(<PikoPrivateChat active onOpenChange={vi.fn()} />);
-  act(() => vi.advanceTimersByTime(5000));
-  fireEvent.click(screen.getByRole("button", { name: "接受" }));
-  const input = screen.getByRole("textbox");
-  fireEvent.change(input, { target: { value: "只给小苔" } });
-  fireEvent.submit(input.closest("form")!);
-  act(() => vi.advanceTimersByTime(1000));
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-  act(() => vi.advanceTimersByTime(2000));
-  const saved = screen.getByRole("button", { name: "与小苔的聊天" }).closest("section")!;
-  const request = screen.getByRole("region");
-  expect(saved.parentElement).toBe(request.parentElement);
-  expect(saved.nextElementSibling).toBe(request);
-  expect(saved.querySelectorAll("img")).toHaveLength(3);
-  expect(request).toHaveTextContent("喜欢散步的小禾申请聊天");
-  fireEvent.click(screen.getByRole("button", { name: "接受" }));
-  expect(screen.getByRole("dialog", { name: "喜欢散步的小禾" })).toBeTruthy();
-  expect(screen.getByRole("log")).not.toHaveTextContent("只给小苔");
-});
-it("counts incoming replies while closed and clears the badge when read", () => {
-  render(<PikoPrivateChat active onOpenChange={vi.fn()} ownNickname="测试玩家" />);
-  act(() => vi.advanceTimersByTime(5000));
-  fireEvent.click(screen.getByRole("button", { name: "接受" }));
-  expect(screen.queryByText("本地模拟私聊")).toBeNull();
-  const input = screen.getByRole("textbox");
-  fireEvent.change(input, { target: { value: "稍后看回复" } });
-  fireEvent.submit(input.closest("form")!);
-  expect(screen.getByRole("log")).toHaveTextContent("测试玩家");
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-  act(() => vi.advanceTimersByTime(1000));
-  expect(screen.getByLabelText("1 条未读消息")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: /^与小苔的聊天/ }));
-  expect(screen.queryByLabelText("1 条未读消息")).toBeNull();
-});
-it("keeps declined requests mounted for their fade before removing them", () => {
-  const { container } = render(<PikoPrivateChat active onOpenChange={vi.fn()} />);
-  act(() => vi.advanceTimersByTime(8000));
-  fireEvent.click(within(screen.getAllByRole("region")[0]).getByRole("button", { name: "拒绝" }));
-  const exiting = container.querySelector('section[data-state="closing"]');
-  expect(exiting).toHaveAttribute("data-state", "closing");
-  expect(exiting).toHaveAttribute("inert");
-  act(() => vi.advanceTimersByTime(950));
-  expect(container.querySelector('section[data-state="closing"]')).toBeNull();
-});
-it("dismisses an accepted chat through its lightweight close control and cancels pending replies", () => {
-  const { container } = render(<PikoPrivateChat active onOpenChange={vi.fn()} />);
-  act(() => vi.advanceTimersByTime(5000));
-  fireEvent.click(screen.getByRole("button", { name: "接受" }));
-  const input = screen.getByRole("textbox");
-  fireEvent.change(input, { target: { value: "结束这次聊天" } });
-  fireEvent.submit(input.closest("form")!);
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-  fireEvent.click(screen.getByRole("button", { name: "关闭与小苔的聊天" }));
-  const closing = container.querySelector('section[data-state="closing"]');
-  expect(closing).toHaveTextContent("与小苔的聊天");
-  expect(closing).not.toHaveTextContent("申请聊天");
-  act(() => vi.advanceTimersByTime(400));
-  expect(closing).toBeInTheDocument();
-  act(() => vi.advanceTimersByTime(550));
-  expect(closing).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /^与小苔的聊天/ })).toBeNull();
-});
+beforeEach(() => vi.mocked(playPikoUiSound).mockClear());
 
-it("keeps the same two request nodes across map visibility changes without notifying again", async () => {
-  const { playPikoUiSound } = await import("./piko-audio");
-  vi.mocked(playPikoUiSound).mockClear();
-  const callback = vi.fn();
-  const { rerender } = render(<PikoPrivateChat active onOpenChange={callback} />);
-  act(() => vi.advanceTimersByTime(8000));
-  const requests = screen.getAllByRole("region", { name: "私聊申请" });
-  expect(requests).toHaveLength(2);
-  for (let i = 0; i < 3; i++) {
-    rerender(<PikoPrivateChat active={false} onOpenChange={callback} />);
-    expect(screen.queryByRole("region", { name: "私聊申请" })).toBeNull();
-    expect(requests.every(node => node.isConnected)).toBe(true);
-    rerender(<PikoPrivateChat active onOpenChange={callback} />);
-    act(() => vi.advanceTimersByTime(10000));
-    expect(screen.getAllByRole("region", { name: "私聊申请" })).toEqual(requests);
-  }
-  expect(vi.mocked(playPikoUiSound).mock.calls.filter(([sound]) => sound === "notification")).toHaveLength(2);
-});
-
-it("keeps declined requests dismissed and accepted histories intact across map changes", () => {
-  const callback = vi.fn();
-  const { rerender } = render(<PikoPrivateChat active onOpenChange={callback} />);
-  act(() => vi.advanceTimersByTime(8000));
-  fireEvent.click(within(screen.getAllByRole("region")[1]).getByRole("button", { name: "拒绝" }));
-  fireEvent.click(screen.getByRole("button", { name: "接受" }));
-  const input = screen.getByRole("textbox");
-  fireEvent.change(input, { target: { value: "切图后继续聊" } });
-  fireEvent.submit(input.closest("form")!);
-  act(() => vi.advanceTimersByTime(1000));
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-  act(() => vi.advanceTimersByTime(1000));
-  const saved = screen.getByRole("button", { name: "与小苔的聊天" });
-  rerender(<PikoPrivateChat active={false} onOpenChange={callback} />);
-  rerender(<PikoPrivateChat active onOpenChange={callback} />);
-  act(() => vi.advanceTimersByTime(60000));
+it("does not create the old simulated requests", () => {
+  render(<PikoPrivateChat active requests={[]} onOpenChange={vi.fn()} />);
   expect(screen.queryByRole("region", { name: "私聊申请" })).toBeNull();
-  expect(screen.getByRole("button", { name: "与小苔的聊天" })).toBe(saved);
-  fireEvent.click(saved);
-  expect(screen.getByRole("log")).toHaveTextContent("切图后继续聊");
+  expect(screen.queryByText(/小苔申请聊天|喜欢散步的小禾申请聊天/)).toBeNull();
+});
+
+it("sends the real accept response back through the connection", () => {
+  const onRespond = vi.fn(() => true);
+  render(<PikoPrivateChat active requests={[request]} onRespond={onRespond}
+    onOpenChange={vi.fn()} />);
+  expect(screen.getByRole("region", { name: "私聊申请" }))
+    .toHaveTextContent("在线小叶申请聊天");
+  fireEvent.click(screen.getByRole("button", { name: "接受" }));
+  expect(onRespond).toHaveBeenCalledWith(request.id, true);
+});
+
+it("opens the same conversation for either participant after server acceptance", () => {
+  const onOpenChange = vi.fn();
+  render(<PikoPrivateChat active ownCharacterId="character-me" peers={[peer]}
+    onOpenChange={onOpenChange} />);
+  expect(screen.getByRole("dialog", { name: "在线小叶" })).toBeVisible();
+  expect(onOpenChange).toHaveBeenLastCalledWith(true);
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  expect(screen.getByRole("button", { name: "与在线小叶的聊天" })).toBeVisible();
+});
+
+it("sends private text through the network callback and renders server messages", () => {
+  const onSend = vi.fn(() => true);
+  const props = {
+    active: true,
+    ownCharacterId: "character-me",
+    ownNickname: "我",
+    peers: [peer],
+    onOpenChange: vi.fn(),
+    onSend,
+  };
+  const view = render(<PikoPrivateChat {...props} messages={[]} />);
+  const input = screen.getByRole("textbox", { name: "输入私聊消息" });
+  fireEvent.change(input, { target: { value: "这是真实私聊" } });
+  fireEvent.submit(input.closest("form")!);
+  expect(onSend).toHaveBeenCalledWith(peer.character_id, "这是真实私聊");
+  expect(input).toHaveValue("");
+
+  view.rerender(<PikoPrivateChat {...props} messages={[
+    message("mine", "character-me", peer.character_id, "这是真实私聊"),
+    message("theirs", peer.character_id, "character-me", "我收到了"),
+  ]} />);
+  expect(screen.getByRole("log")).toHaveTextContent("这是真实私聊");
+  expect(screen.getByRole("log")).toHaveTextContent("我收到了");
+  expect(screen.queryByText(/模拟回复/)).toBeNull();
+});
+
+it("ends the real private session through the network callback", () => {
+  const onEnd = vi.fn(() => true);
+  render(<PikoPrivateChat active ownCharacterId="character-me" peers={[peer]}
+    onOpenChange={vi.fn()} onEnd={onEnd} />);
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  fireEvent.click(screen.getByRole("button", { name: "关闭与在线小叶的聊天" }));
+  expect(onEnd).toHaveBeenCalledWith(peer.character_id);
 });

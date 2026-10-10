@@ -7,7 +7,8 @@ import { resetPikoMusicSession, useMapMusic } from "./piko-bgm";
 import type { PikoMapId } from "./piko-map-transitions";
 import { PikoOnboarding } from "./PikoOnboarding";
 import { usePikoProfile } from "./piko-profile";
-import { clearPikoPlayer, savePikoPlayer, type PikoPlayer, type PikoPlayerGender } from "./piko-player";
+import { savePikoPlayer, type PikoPlayer } from "./piko-player";
+import { fetchPikoCharacter, savePikoCharacter, type PikoCharacter } from "./piko-world-client";
 
 export function PikoWorldExperience() {
   const owner = useAuthStore(state => state.username);
@@ -16,21 +17,40 @@ export function PikoWorldExperience() {
 }
 function AccountExperience({ owner }: { owner: string | null }) {
   const taskStatus = usePikoTaskStatus(owner);
-  const [player, setPlayer] = useState<PikoPlayer | null>(null);
+  const [character, setCharacter] = useState<PikoCharacter | null | undefined>(undefined);
   const [musicMap, setMusicMap] = useState<PikoMapId | null>(null);
+  const { saveProfile } = usePikoProfile(owner);
   useEffect(() => { resetPikoMusicSession(); }, []);
+  useEffect(() => {
+    let active = true;
+    void fetchPikoCharacter().then(value => {
+      if (!active) return;
+      if (value) {
+        saveProfile({ nickname: value.nickname, bio: value.bio });
+        savePikoPlayer(owner, value.gender, value.nickname);
+      }
+      setCharacter(value);
+    })
+      .catch(() => { if (active) setCharacter(null); });
+    return () => { active = false; };
+  }, []);
   useMapMusic(musicMap);
   const startCreationMusic = useCallback(() => setMusicMap("welcome-courtyard"), []);
-  const { saveProfile } = usePikoProfile(owner);
-  const pending = useRef<PikoPlayer | null>(null);
-  useEffect(() => { clearPikoPlayer(owner); }, [owner]);
-  if (player) return <PikoWorldShell taskStatus={taskStatus} playerGender={player.gender} onMusicMapChange={setMusicMap} />;
-  const save = (gender: PikoPlayerGender, nickname: string) => {
-    if (!saveProfile({ nickname, bio: "" }) || !savePikoPlayer(owner, gender, nickname)) return false;
-    pending.current = { version: 1, gender, nickname };
-    return true;
+  const pending = useRef<PikoCharacter | null>(null);
+  if (character === undefined) return null;
+  if (character) return <PikoWorldShell taskStatus={taskStatus} character={character} playerGender={character.gender} onMusicMapChange={setMusicMap} />;
+  const save = async (gender: PikoPlayer["gender"], nickname: string) => {
+    try {
+      const saved = await savePikoCharacter(gender, nickname);
+      saveProfile({ nickname, bio: "" });
+      savePikoPlayer(owner, gender, nickname);
+      pending.current = saved;
+      return true;
+    } catch {
+      return false;
+    }
   };
   return <PikoOnboarding onMusicStart={startCreationMusic} initialNickname="" onSave={save} onEnter={() => {
-    if (pending.current) setPlayer(pending.current);
+    if (pending.current) setCharacter(pending.current);
   }} />;
 }

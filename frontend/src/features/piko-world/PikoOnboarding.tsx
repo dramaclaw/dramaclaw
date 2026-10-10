@@ -13,7 +13,7 @@ import { usePikoCursors } from "./use-piko-cursors";
 
 type Stage = "intro" | "hold" | "invitation" | "out" | "reveal" | "create" | "depart";
 export function PikoOnboarding({ initialNickname, onSave, onEnter, onMusicStart }: {
-  initialNickname: string; onMusicStart?: () => void; onSave: (gender: PikoPlayerGender, nickname: string) => boolean; onEnter: () => void;
+  initialNickname: string; onMusicStart?: () => void; onSave: (gender: PikoPlayerGender, nickname: string) => boolean | Promise<boolean>; onEnter: () => void;
 }) {
   usePikoCursors();
   const { t } = useTranslation();
@@ -147,8 +147,16 @@ export function PikoOnboarding({ initialNickname, onSave, onEnter, onMusicStart 
     if (!isValidPikoProfile(normalized)) { setFormError(t("pikoWorld.onboarding.nameError")); input.current?.focus(); return; }
     if (!soundMuted.current) playPikoUiSound("open");
     savePending.current = true;
-    if (!onSave(gender, normalized.nickname)) { savePending.current = false; setFormError(t("pikoWorld.onboarding.saveError")); return; }
-    setStage("depart");
+    const completeSave = (saved: boolean) => {
+      if (!saved) { savePending.current = false; setFormError(t("pikoWorld.onboarding.saveError")); return; }
+      setStage("depart");
+    };
+    const saved = onSave(gender, normalized.nickname);
+    if (typeof saved === "object" && saved && "then" in saved) {
+      void saved.then(completeSave).catch(() => completeSave(false));
+    } else {
+      completeSave(saved);
+    }
   };
   const showVideo = stage === "intro" || stage === "hold" || stage === "invitation" || stage === "out";
   const art = PIKO_PLAYER_ART[gender];
