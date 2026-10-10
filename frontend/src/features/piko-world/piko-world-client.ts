@@ -4,6 +4,8 @@ import { apiClient } from "@/api/client";
 import type { PikoPlayerGender } from "./piko-player";
 import { PIKO_CHAT_BUBBLE_MS } from "./piko-public-chat";
 
+const PIKO_HEARTBEAT_MS = 15_000;
+
 export type PikoCharacter = {
   id: string;
   nickname: string;
@@ -127,6 +129,19 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
   useEffect(() => {
     if (!character) return;
     closedRef.current = false;
+    let heartbeatTimer: number | undefined;
+    let pageIsLeaving = false;
+    const stopHeartbeat = () => {
+      if (heartbeatTimer !== undefined) window.clearInterval(heartbeatTimer);
+      heartbeatTimer = undefined;
+    };
+    const leaveWorld = () => {
+      pageIsLeaving = true;
+      const socket = socketRef.current;
+      if (socket?.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: "client.leave" }));
+      socket.close(1000, "page_exit");
+    };
     const connect = () => {
       if (closedRef.current) return;
       const socket = new WebSocket(worldSocketUrl());
@@ -135,6 +150,12 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
         if (socketRef.current !== socket) return;
         setConnected(true);
         send({ type: "scene.join", scene_id: sceneRef.current, ...lastPositionRef.current });
+        stopHeartbeat();
+        heartbeatTimer = window.setInterval(() => {
+          if (socketRef.current === socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "ping" }));
+          }
+        }, PIKO_HEARTBEAT_MS);
       };
       socket.onmessage = event => {
         if (socketRef.current !== socket) return;
@@ -211,20 +232,36 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
       };
       socket.onclose = event => {
         if (socketRef.current !== socket) return;
+        stopHeartbeat();
         socketRef.current = null;
         setConnected(false);
         setRemotePlayers([]);
         setChatRequests([]);
         setPrivateChatPeers([]);
         setPrivateChatMessages([]);
-        if (!closedRef.current && event.code !== 1008 && event.code !== 4001) {
+        if (!closedRef.current && !pageIsLeaving
+          && event.code !== 1008 && event.code !== 4001) {
           reconnectRef.current = window.setTimeout(connect, 1500);
         }
       };
     };
+    const resumeWorld = (event: PageTransitionEvent) => {
+      if (!event.persisted || closedRef.current) return;
+      pageIsLeaving = false;
+      const state = socketRef.current?.readyState;
+      if (state !== WebSocket.OPEN && state !== WebSocket.CONNECTING) connect();
+    };
+    window.addEventListener("pagehide", leaveWorld);
+    window.addEventListener("beforeunload", leaveWorld);
+    window.addEventListener("pageshow", resumeWorld);
     connect();
     return () => {
       closedRef.current = true;
+      leaveWorld();
+      window.removeEventListener("pagehide", leaveWorld);
+      window.removeEventListener("beforeunload", leaveWorld);
+      window.removeEventListener("pageshow", resumeWorld);
+      stopHeartbeat();
       if (reconnectRef.current !== undefined) window.clearTimeout(reconnectRef.current);
       socketRef.current?.close();
       socketRef.current = null;

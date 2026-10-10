@@ -34,6 +34,7 @@ ROOM_TTL_SECONDS = 60
 CHAT_REQUEST_TTL_SECONDS = 300
 ACTIVE_CHAT_TTL_SECONDS = 86400
 HEARTBEAT_SECONDS = 10
+CLIENT_STALE_SECONDS = 75
 LOCATION_PERSIST_SECONDS = 10
 MOVE_MIN_INTERVAL_SECONDS = 0.08
 
@@ -339,6 +340,7 @@ class DistributedPikoWorldHub:
         return player
 
     async def handle(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        player.last_seen_at = monotonic()
         event_type = payload.get("type")
         if event_type == "player.move":
             await self._move(player, payload)
@@ -800,56 +802,79 @@ class DistributedPikoWorldHub:
         )
 
     async def _listen_events(self) -> None:
-        pubsub = self.redis.pubsub(ignore_subscribe_messages=True)
-        await pubsub.subscribe(EVENT_CHANNEL)
-        self._pubsub_ready.set()
-        try:
-            async for item in pubsub.listen():
-                if item.get("type") != "message":
-                    continue
-                try:
-                    envelope = json.loads(item["data"])
-                except (json.JSONDecodeError, TypeError):
-                    continue
-                target_instance = envelope.get("target_instance")
-                if target_instance and target_instance != self.instance_id:
-                    continue
-                async with self._lock:
-                    players = list(self._players.values())
-                scope = envelope.get("scope")
-                if scope == "room":
-                    recipients = [
-                        player
-                        for player in players
-                        if player.instance_id == envelope.get("room_id")
-                        and player.character_id != envelope.get("exclude_character_id")
-                    ]
-                else:
-                    targets = set(envelope.get("target_character_ids") or [])
-                    if envelope.get("target_character_id"):
-                        targets.add(envelope["target_character_id"])
-                    recipients = [player for player in players if player.character_id in targets]
-                for player in recipients:
-                    if envelope.get("payload", {}).get("type") == "session.replaced":
-                        await self._close_replaced(player.websocket)
+        while True:
+            pubsub = self.redis.pubsub(ignore_subscribe_messages=True)
+            try:
+                await pubsub.subscribe(EVENT_CHANNEL)
+                self._pubsub_ready.set()
+                while True:
+                    # Poll below the Redis client's socket timeout. A blocking
+                    # pubsub.listen() otherwise dies whenever the room is idle.
+                    item = await pubsub.get_message(timeout=1.0)
+                    if item is None or item.get("type") != "message":
+                        continue
+                    try:
+                        envelope = json.loads(item["data"])
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    target_instance = envelope.get("target_instance")
+                    if target_instance and target_instance != self.instance_id:
+                        continue
+                    async with self._lock:
+                        players = list(self._players.values())
+                    scope = envelope.get("scope")
+                    if scope == "room":
+                        recipients = [
+                            player
+                            for player in players
+                            if player.instance_id == envelope.get("room_id")
+                            and player.character_id != envelope.get("exclude_character_id")
+                        ]
                     else:
-                        await self._safe_send(player.websocket, envelope["payload"])
-        except asyncio.CancelledError:
-            raise
-        finally:
-            await pubsub.aclose()
+                        targets = set(envelope.get("target_character_ids") or [])
+                        if envelope.get("target_character_id"):
+                            targets.add(envelope["target_character_id"])
+                        recipients = [
+                            player for player in players if player.character_id in targets
+                        ]
+                    for player in recipients:
+                        if envelope.get("payload", {}).get("type") == "session.replaced":
+                            await self._close_replaced(player.websocket)
+                        else:
+                            await self._safe_send(player.websocket, envelope["payload"])
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Redis may briefly reset an idle subscription. Keep the task
+                # alive so existing browser sessions continue receiving events.
+                await asyncio.sleep(1)
+            finally:
+                await pubsub.aclose()
 
     async def _heartbeat_loop(self) -> None:
         try:
             while True:
                 await asyncio.sleep(HEARTBEAT_SECONDS)
-                async with self._lock:
-                    players = list(self._players.values())
-                for player in players:
-                    with contextlib.suppress(Exception):
-                        await self._refresh_player(player)
+                await self._heartbeat_once()
         except asyncio.CancelledError:
             raise
+
+    async def _heartbeat_once(self) -> None:
+        """Refresh active clients and evict connections that stopped talking to us."""
+        async with self._lock:
+            players = list(self._players.values())
+        cutoff = monotonic() - CLIENT_STALE_SECONDS
+        for player in players:
+            if player.last_seen_at <= cutoff:
+                # Do not keep renewing Redis presence for a half-open browser socket.
+                # Removing presence first also broadcasts player.left immediately.
+                with contextlib.suppress(Exception):
+                    await self.disconnect(player.websocket)
+                with contextlib.suppress(Exception):
+                    await player.websocket.close(code=1001)
+                continue
+            with contextlib.suppress(Exception):
+                await self._refresh_player(player)
 
     async def _safe_send(self, websocket: WebSocket, payload: dict[str, Any]) -> None:
         lock = self._send_locks.get(websocket)

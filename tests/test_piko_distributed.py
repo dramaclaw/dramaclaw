@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import fakeredis.aioredis
 import pytest
 
-from novelvideo.piko.distributed import DistributedPikoWorldHub
+from novelvideo.piko.distributed import CLIENT_STALE_SECONDS, DistributedPikoWorldHub
 from novelvideo.piko.world import PikoCharacter
 
 
@@ -77,7 +77,9 @@ async def test_players_and_chat_cross_realtime_server_processes() -> None:
     first_hub = DistributedPikoWorldHub(store, redis_url="redis://unused")  # type: ignore[arg-type]
     second_hub = DistributedPikoWorldHub(store, redis_url="redis://unused")  # type: ignore[arg-type]
     first_hub.redis = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
-    second_hub.redis = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+    second_hub.redis = fakeredis.aioredis.FakeRedis(
+        server=server, decode_responses=True
+    )
     first_socket, second_socket = FakeWebSocket(), FakeWebSocket()
 
     try:
@@ -107,7 +109,9 @@ async def test_scene_change_broadcasts_and_persists_new_facing() -> None:
     first_hub = DistributedPikoWorldHub(store, redis_url="redis://unused")  # type: ignore[arg-type]
     second_hub = DistributedPikoWorldHub(store, redis_url="redis://unused")  # type: ignore[arg-type]
     first_hub.redis = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
-    second_hub.redis = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+    second_hub.redis = fakeredis.aioredis.FakeRedis(
+        server=server, decode_responses=True
+    )
     first_socket, second_socket = FakeWebSocket(), FakeWebSocket()
 
     try:
@@ -134,6 +138,41 @@ async def test_scene_change_broadcasts_and_persists_new_facing() -> None:
         joined = await wait_for_frame(second_socket, "player.joined")
         assert joined["player"]["facing"] == "west"
         assert store.locations[-1] == ("user-1", "artisan-market", 111, 222, "west")
+    finally:
+        await first_hub.close()
+        await second_hub.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_browser_is_removed_and_broadcasts_player_left() -> None:
+    server = fakeredis.FakeServer()
+    store = FakeStore()
+    first_hub = DistributedPikoWorldHub(store, redis_url="redis://unused")  # type: ignore[arg-type]
+    second_hub = DistributedPikoWorldHub(store, redis_url="redis://unused")  # type: ignore[arg-type]
+    first_hub.redis = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+    second_hub.redis = fakeredis.aioredis.FakeRedis(
+        server=server, decode_responses=True
+    )
+    stale_socket, observer_socket = FakeWebSocket(), FakeWebSocket()
+
+    try:
+        stale = await first_hub.join(
+            stale_socket, user_id="user-1", character=character(1)  # type: ignore[arg-type]
+        )
+        await second_hub.join(
+            observer_socket, user_id="user-2", character=character(2)  # type: ignore[arg-type]
+        )
+        observer_socket.frames.clear()
+        stale.last_seen_at -= CLIENT_STALE_SECONDS + 1
+
+        await first_hub._heartbeat_once()
+
+        left = await wait_for_frame(observer_socket, "player.left")
+        assert left["character_id"] == stale.character_id
+        assert stale_socket.close_code == 1001
+        assert (
+            await first_hub.redis.get(first_hub._player_key(stale.character_id)) is None
+        )
     finally:
         await first_hub.close()
         await second_hub.close()

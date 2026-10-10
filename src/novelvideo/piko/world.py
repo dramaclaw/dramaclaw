@@ -8,7 +8,7 @@ import math
 import sqlite3
 import threading
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
@@ -163,6 +163,7 @@ class OnlinePlayer:
     last_private_chat_at: float = 0.0
     last_move_at: float = 0.0
     last_persist_at: float = 0.0
+    last_seen_at: float = field(default_factory=monotonic)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -225,6 +226,7 @@ class PikoWorldHub:
         return player
 
     async def handle(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        player.last_seen_at = monotonic()
         event_type = payload.get("type")
         if event_type == "player.move":
             await self._move(player, payload)

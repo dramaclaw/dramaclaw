@@ -87,6 +87,8 @@ async def piko_world_ws(websocket: WebSocket) -> None:
         while True:
             payload = parse_client_payload(await websocket.receive_text())
             if payload is not None:
+                if payload.get("type") == "client.leave":
+                    break
                 await world_hub.handle(player, payload)
     except HTTPException:
         try:

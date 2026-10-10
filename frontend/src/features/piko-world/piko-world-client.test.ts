@@ -1,6 +1,23 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { expect, it } from "vitest";
-import { upsertRemotePlayer, type PikoRemotePlayer } from "./piko-world-client";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import {
+  upsertRemotePlayer,
+  usePikoWorldConnection,
+  type PikoCharacter,
+  type PikoRemotePlayer,
+} from "./piko-world-client";
+
+const OriginalWebSocket = globalThis.WebSocket;
+
+afterEach(() => {
+  vi.useRealTimers();
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: OriginalWebSocket,
+  });
+});
 
 const remotePlayer = (overrides: Partial<PikoRemotePlayer> = {}): PikoRemotePlayer => ({
   character_id: "player-1",
@@ -34,4 +51,63 @@ it("drops an expired speech bubble on the next player update", () => {
   const result = upsertRemotePlayer(players, remotePlayer({ x: 140 }), 20_000);
 
   expect(result[0].speech).toBeUndefined();
+});
+
+it("sends heartbeats and leaves explicitly when the page is hidden", () => {
+  vi.useFakeTimers();
+  const sockets: TestWebSocket[] = [];
+  class TestWebSocket {
+    static readonly OPEN = 1;
+    readyState = 0;
+    sent: string[] = [];
+    closeArgs: [number?, string?] | null = null;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: ((event: CloseEvent) => void) | null = null;
+
+    constructor(_url: string) {
+      sockets.push(this);
+    }
+
+    send(value: string) {
+      this.sent.push(value);
+    }
+
+    close(code?: number, reason?: string) {
+      this.closeArgs = [code, reason];
+    }
+
+    open() {
+      this.readyState = TestWebSocket.OPEN;
+      this.onopen?.();
+    }
+  }
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: TestWebSocket,
+  });
+  const character: PikoCharacter = {
+    id: "player-local",
+    nickname: "小花",
+    gender: "female",
+    bio: "",
+    scene_id: "welcome-courtyard",
+    position_x: 1270,
+    position_y: 480,
+    facing: "south",
+  };
+
+  const hook = renderHook(() => usePikoWorldConnection(character, character.scene_id));
+  act(() => sockets[0].open());
+  act(() => vi.advanceTimersByTime(15_000));
+  act(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
+
+  expect(sockets[0].sent.map(frame => JSON.parse(frame))).toEqual([
+    expect.objectContaining({ type: "scene.join" }),
+    { type: "ping" },
+    { type: "client.leave" },
+  ]);
+  expect(sockets[0].closeArgs).toEqual([1000, "page_exit"]);
+  hook.unmount();
 });
