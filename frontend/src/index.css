@@ -63,6 +63,7 @@
   --sidebar-border: oklch(0.9436 0.0051 228.8204);
   --sidebar-ring: oklch(0.6400 0.1500 205.0000);
   --radius: 1rem;
+  --button-radius: 6px;
   --tracking-normal: 0em;
   --spacing: 0.25rem;
   --font-family-ui-default: "Noto Sans SC", "Noto Sans CJK SC", "Noto Sans CJK JP", "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, "Segoe UI", sans-serif;
@@ -173,6 +174,112 @@
   --shadow-2xl: 0px 4px 12px 0px hsl(0 0% 0% / 1.00);
 
   color-scheme: dark;
+}
+
+/* 画布（虾画）专用皮肤：单色，取自 DESIGN.md —— 亮色是纸白上的墨色，暗色是近黑
+   底上的白。没有强调色相，没有投影，层次靠明度。只在虾画处于前台时生效
+   （FreezoneCanvasHost 在 <html> 上挂 data-surface="canvas"），挂在 <html> 而不是
+   画布容器上，是因为弹层都 portal 到 body，得一起吃到这套变量。 */
+:root[data-surface="canvas"] {
+  --button-radius: 9999px;
+  --background: #ffffff;
+  --foreground: #030303;
+  --card: #ffffff;
+  --card-foreground: #030303;
+  --popover: #ffffff;
+  --popover-foreground: #030303;
+  --primary: #000000;
+  --primary-foreground: #ffffff;
+  --secondary: #e7eaf0;
+  --secondary-foreground: #030303;
+  --muted: #f3f4f7;
+  --muted-foreground: #676f7b;
+  --accent: #e7eaf0;
+  --accent-foreground: #030303;
+  --border: #e7eaf0;
+  --input: #c9ccd1;
+  --ring: #030303;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #030303;
+  --sidebar-primary: #000000;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e7eaf0;
+  --sidebar-accent-foreground: #030303;
+  --sidebar-border: #e7eaf0;
+  --sidebar-ring: #030303;
+  --radius: 0.5rem;
+  --surface-rgb: 254 254 254;
+  --border-rgb: 231 234 240;
+  --text-rgb: 3 3 3;
+  --text-muted-rgb: 103 111 123;
+  --accent-rgb: 0 0 0;
+  --ui-surface-panel: #ffffff;
+  --ui-surface-modal: #ffffff;
+  --ui-surface-field: #ffffff;
+  --ui-border-soft: #e7eaf0;
+  --ui-border-strong: #c9ccd1;
+  --ui-shadow-panel: 0 0 #0000;
+  --ui-radius-lg: 8px;
+  --ui-radius-2xl: 16px;
+  --shadow-2xs: 0 0 #0000;
+  --shadow-xs: 0 0 #0000;
+  --shadow-sm: 0 0 #0000;
+  --shadow: 0 0 #0000;
+  --shadow-md: 0 0 #0000;
+  --shadow-lg: 0 0 #0000;
+  --shadow-xl: 0 0 #0000;
+  --shadow-2xl: 0 0 #0000;
+}
+
+.dark[data-surface="canvas"] {
+  --background: #030303;
+  --foreground: #ffffff;
+  --card: #1a1a1a;
+  --card-foreground: #ffffff;
+  --popover: #1a1a1a;
+  --popover-foreground: #ffffff;
+  --primary: #ffffff;
+  --primary-foreground: #000000;
+  --secondary: #2b2b2b;
+  --secondary-foreground: #ffffff;
+  --muted: #222222;
+  --muted-foreground: #939393;
+  --accent: #2b2b2b;
+  --accent-foreground: #ffffff;
+  --border: #2b2b2b;
+  --input: #404040;
+  --ring: #ffffff;
+  --sidebar: #030303;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #1a1a1a;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #2b2b2b;
+  --sidebar-ring: #ffffff;
+  --bg-rgb: 3 3 3;
+  --surface-rgb: 26 26 26;
+  --border-rgb: 43 43 43;
+  --text-rgb: 255 255 255;
+  --text-muted-rgb: 147 147 147;
+  --accent-rgb: 255 255 255;
+  --ui-surface-panel: rgba(26, 26, 26, 0.92);
+  --ui-surface-modal: rgba(26, 26, 26, 0.98);
+  --ui-surface-field: rgba(3, 3, 3, 0.85);
+  --ui-border-soft: rgba(255, 255, 255, 0.08);
+  --ui-border-strong: rgba(255, 255, 255, 0.16);
+  --ui-shadow-panel: 0 0 #0000;
+  --ui-glow-accent: 0 0 #0000;
+  --ui-radius-lg: 8px;
+  --ui-radius-2xl: 16px;
+  --shadow-2xs: 0 0 #0000;
+  --shadow-xs: 0 0 #0000;
+  --shadow-sm: 0 0 #0000;
+  --shadow: 0 0 #0000;
+  --shadow-md: 0 0 #0000;
+  --shadow-lg: 0 0 #0000;
+  --shadow-xl: 0 0 #0000;
+  --shadow-2xl: 0 0 #0000;
 }
 
 @theme inline {
@@ -328,7 +435,17 @@
 .tap-field:focus,
 .ui-field:focus {
   border-color: rgb(var(--accent-rgb) / 0.5);
-  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.12);
+}
+
+/* 强调色在暗色下是纯白：实心强调色底上原本写死的白色滑块 / 白字 / 白图标会消失，
+   统一翻成底色。 */
+.dark[data-surface="canvas"] .bg-\[rgb\(var\(--accent-rgb\)\)\] > .bg-white {
+  background-color: rgb(var(--bg-rgb));
+}
+
+.dark[data-surface="canvas"] .bg-\[rgb\(var\(--accent-rgb\)\)\].text-white,
+.dark[data-surface="canvas"] .bg-\[rgb\(var\(--accent-rgb\)\)\] > .text-white {
+  color: rgb(var(--bg-rgb));
 }
 
 .ui-scrollbar {
@@ -690,11 +807,8 @@ body.canvas-node-drag-focus [role="listbox"] {
   content: "";
   position: absolute;
   inset: -9px;
-  border: 1px solid rgb(255 255 255 / 0.26);
+  border: 1px solid rgb(var(--text-rgb) / 0.26);
   border-radius: calc(var(--node-radius) + 9px);
-  box-shadow:
-    0 0 0 1px rgb(255 255 255 / 0.06),
-    0 0 22px rgb(255 255 255 / 0.14);
   opacity: 0;
   pointer-events: none;
   animation: canvas-node-placement-ring 840ms var(--ease-out-quint);
@@ -748,9 +862,9 @@ body.canvas-node-drag-focus [role="listbox"] {
    @xyflow/react 默认样式。 */
 .react-flow .react-flow__selection,
 .react-flow .react-flow__nodesselection-rect {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px dashed rgba(255, 255, 255, 0.55);
-  border-radius: 6px;
+  background: rgb(var(--text-rgb) / 0.04);
+  border: 1px dashed rgb(var(--text-rgb) / 0.55);
+  border-radius: 4px;
 }
 
 /* 按住鼠标中键（滚轮）拖动平移画布时显示抓取手。
@@ -795,7 +909,7 @@ body.canvas-node-drag-focus [role="listbox"] {
 }
 
 .react-flow__handle.connectingto {
-  box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.35), 0 0 14px rgba(96, 165, 250, 0.65);
+  box-shadow: 0 0 0 4px rgb(var(--accent-rgb) / 0.35);
 }
 
 /* 拖连线落点反馈（对标 libtv）：把连线从节点 A 拖到节点 B，当连线进入 B 的可接受
@@ -865,7 +979,6 @@ body.canvas-node-drag-focus [role="listbox"] {
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
   mask-composite: exclude;
-  box-shadow: 0 0 8px color-mix(in oklch, var(--primary) 16%, transparent);
   pointer-events: none;
   transform-origin: center;
   /* 边框环与卡片本体 `> *` 跑同一份 nudge，确保放大时两者始终重合、描边贴边不漂移。 */
@@ -929,12 +1042,12 @@ body.canvas-node-drag-focus [role="listbox"] {
 .dc-lod-shell {
   position: relative;
   overflow: hidden;
-  border-radius: 12px;
-  background: rgba(64, 64, 68, 0.55);
+  border-radius: var(--node-radius);
+  background: rgb(var(--surface-rgb));
 }
 
 .dc-lod-shell--selected {
-  outline: 3px solid rgba(96, 165, 250, 0.9);
+  outline: 3px solid rgb(var(--accent-rgb) / 0.9);
 }
 
 .dc-lod-shell__thumb {
