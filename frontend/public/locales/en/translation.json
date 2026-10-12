@@ -980,6 +980,7 @@
         "audioOff": "Muted"
       },
       "clarification": {
+        "submitFailed": "Failed to submit additional information. Please try again.",
         "cancelled": "Cancelled",
         "skipped": "Skipped",
         "submitted": "Submitted",

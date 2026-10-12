@@ -962,6 +962,7 @@
         "audioOff": "Tắt tiếng"
       },
       "clarification": {
+        "submitFailed": "Không thể gửi thông tin bổ sung. Vui lòng thử lại.",
         "cancelled": "Đã hủy",
         "skipped": "Đã bỏ qua",
         "submitted": "Đã gửi",

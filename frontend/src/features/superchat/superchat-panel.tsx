@@ -15477,7 +15477,7 @@ export function SuperChatPanel({
       });
       if (result.ok === false) {
         submittedAssistantClarificationKeysRef.current.delete(submissionKey);
-        toast.error(result.errors?.find(Boolean) || result.message || "提交补充信息失败，请重试");
+        toast.error(result.errors?.find(Boolean) || result.message || t("freezone.chat.clarification.submitFailed"));
         return false;
       }
       if (event.turn_id) {
@@ -15526,10 +15526,10 @@ export function SuperChatPanel({
     } catch (error) {
       submittedAssistantClarificationKeysRef.current.delete(submissionKey);
       console.error("[superchat] clarification result submit failed", error);
-      toast.error("提交补充信息失败，请重试");
+      toast.error(t("freezone.chat.clarification.submitFailed"));
       return false;
     }
-	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages]);
+	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages, t]);
 
   const submitSkillStudioDraftResponse = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,

@@ -980,6 +980,7 @@
         "audioOff": "静音"
       },
       "clarification": {
+        "submitFailed": "提交补充信息失败，请重试",
         "cancelled": "已取消",
         "skipped": "已跳过",
         "submitted": "已提交",
