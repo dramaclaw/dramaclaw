@@ -42,6 +42,7 @@ from novelvideo.generators.nanobanana_grid import (
     _call_newapi_image_api,
     _call_openai_image_api,
     _call_openrouter_image_api,
+    _call_webai_chat_image_api,
     generate_reference_edit_image,
     generate_text_to_image,
     normalize_openai_quality,
@@ -1272,6 +1273,18 @@ STRICT REQUIREMENTS (MUST AVOID):
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] DramaClawAPI 失败详情: {error_detail}")
                     raise RuntimeError(error_detail)
+            elif self.provider == "gemini_webai":
+                print(f"[NanoBanana Character] 调用 Gemini WebAI ({self.model}) 生成图像...")
+                image_bytes, _text_response, error_detail = await _call_webai_chat_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt,
+                    reference_images=None,
+                    base_url=self.base_url,
+                )
+                if not image_bytes and error_detail:
+                    print(f"[NanoBanana Character] Gemini WebAI 失败详情: {error_detail}")
+                    raise RuntimeError(error_detail)
             else:
                 # Google 直连模式
                 from google.genai import types
@@ -1541,6 +1554,32 @@ STRICT REQUIREMENTS (MUST AVOID):
                 )
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] DramaClawAPI 失败详情: {error_detail}")
+                    raise RuntimeError(error_detail)
+            elif self.provider == "gemini_webai":
+                print(
+                    f"[NanoBanana Character] 调用 Gemini WebAI ({self.model}) 生成图像（带参考图）..."
+                )
+                ref_images = []
+                if reference_image_bytes:
+                    ref_images.append(_named_image_ref(reference_image_bytes, reference_image_name))
+                if additional_image_bytes:
+                    additional_names = list(additional_image_names or [])
+                    for idx, image_bytes_item in enumerate(additional_image_bytes):
+                        ref_images.append(
+                            _named_image_ref(
+                                image_bytes_item,
+                                additional_names[idx] if idx < len(additional_names) else "",
+                            )
+                        )
+                image_bytes, _text_response, error_detail = await _call_webai_chat_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt,
+                    reference_images=ref_images or None,
+                    base_url=self.base_url,
+                )
+                if not image_bytes and error_detail:
+                    print(f"[NanoBanana Character] Gemini WebAI 失败详情: {error_detail}")
                     raise RuntimeError(error_detail)
             else:
                 # Google 直连模式

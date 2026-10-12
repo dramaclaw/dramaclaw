@@ -39,6 +39,12 @@ services:
       NEWAPI_ADMIN_USERNAME: root
       # 默认开；用户在同目录 .env 里写 NEWAPI_PROVISIONER_ENABLED=false 即可关（compose 插值读 .env）。
       NEWAPI_PROVISIONER_ENABLED: "${NEWAPI_PROVISIONER_ENABLED:-true}"
+      # 本地 dev-only：桥接自建 WebAI-to-API Gemini 服务生成角色 Portrait（见
+      # nanobanana_grid.py `_call_webai_chat_image_api`）。该服务只有 /chat/completions，
+      # 没有 OpenAI Images API，图片以 Google 私有 URL 形式返回，需要同一份 Playwright
+      # cookie 才能下载。不设 GEMINI_WEBAI_COOKIE_FILE_HOST 时完全不生效（挂载 /dev/null，
+      # 下面这个变量留空），对其他用户零影响。
+      GEMINI_WEBAI_COOKIE_FILE: "${GEMINI_WEBAI_COOKIE_FILE:-}"
     # 宿主发布端口可配，便于一机多套（每套换 ST_API_PORT + 换 -p 项目名）。
     # 冒号右侧 8780 是容器内端口，固定不变（web 经内部网络访问它）。
     ports:
@@ -46,6 +52,7 @@ services:
     volumes:
       - ce-data:/data
       - newapi-data:/newapi-data
+      - ${GEMINI_WEBAI_COOKIE_FILE_HOST:-/dev/null}:/run/secrets/gemini_webai_cookie.json:ro
     # 只等网关容器启动，不等其健康：官方模式用户不用网关，网关拉不到/端口冲突不能拖垮 api。
     depends_on:
       newapi:

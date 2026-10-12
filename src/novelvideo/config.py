@@ -612,6 +612,12 @@ INDEXTTS2_RECORD_MODEL = (
 )
 NEWAPI_IMAGE_MODEL = os.environ.get("NEWAPI_IMAGE_MODEL", "LingShan-G2")
 NEWAPI_NANOBANANA2_MODEL = os.environ.get("NEWAPI_NANOBANANA2_MODEL", "LingShan-NB-2")
+# Dev-only bridge to a local WebAI-to-API Gemini server (no OpenAI Images API,
+# only /chat/completions returning an `artifacts[].url`; see nanobanana_grid.py
+# `_call_webai_chat_image_api`). Never used by the hosted gateway.
+GEMINI_WEBAI_MODEL = os.environ.get("GEMINI_WEBAI_MODEL", "gemini6969")
+GEMINI_WEBAI_COOKIE_FILE = os.environ.get("GEMINI_WEBAI_COOKIE_FILE", "")
+GEMINI_WEBAI_TIMEOUT_SECONDS = _env_float("GEMINI_WEBAI_TIMEOUT_SECONDS", 180.0)
 SCENE_MASTER_IMAGE_PROVIDER = (
     os.environ.get("SCENE_MASTER_IMAGE_PROVIDER", "").strip().lower() or "newapi"
 )
@@ -1059,6 +1065,12 @@ IMAGE_GENERATION_SELECTIONS: dict[str, dict[str, str]] = {
         "provider": "newapi",
         "model": NEWAPI_NANOBANANA2_MODEL,
     },
+    # Dev-only: local Gemini WebAI bridge, never shown in the hosted-gateway UI.
+    "gemini_webai": {
+        "label": "Gemini WebAI (local dev)",
+        "provider": "gemini_webai",
+        "model": GEMINI_WEBAI_MODEL,
+    },
 }
 
 VISIBLE_IMAGE_GENERATION_SELECTION_KEYS = (
@@ -1139,6 +1151,11 @@ def _visible_image_generation_selection(value: str | None) -> str:
         candidate in VISIBLE_IMAGE_GENERATION_SELECTION_KEYS
         and candidate in IMAGE_GENERATION_SELECTIONS
     ):
+        return candidate
+    # Dev-only selection: only "visible" on a machine that has actually set up
+    # the local WebAI-to-API cookie bridge. Everywhere else it stays unreachable,
+    # so it never becomes an accidental fallback.
+    if candidate == "gemini_webai" and GEMINI_WEBAI_COOKIE_FILE:
         return candidate
     alias = LEGACY_IMAGE_GENERATION_SELECTION_ALIASES.get(candidate)
     if (
@@ -1274,6 +1291,14 @@ def _image_provider_config(
             "provider": provider,
             "api_key": gateway.api_key,
             "model": model or NEWAPI_IMAGE_MODEL,
+            "base_url": gateway.base_url,
+        }
+    if provider == "gemini_webai":
+        gateway = get_effective_newapi_gateway_config()
+        return {
+            "provider": provider,
+            "api_key": gateway.api_key,
+            "model": model or GEMINI_WEBAI_MODEL,
             "base_url": gateway.base_url,
         }
 

@@ -4216,6 +4216,152 @@ async def _relay_reference_images_for_newapi(
 _ORIGINAL_RELAY_REFERENCE_IMAGES_FOR_NEWAPI = _relay_reference_images_for_newapi
 
 
+def _download_webai_artifact(url: str, cookie_file: str) -> tuple[bytes | None, str]:
+    """Download a Gemini WebAI-generated image using its Playwright session cookies.
+
+    The artifact URL (from `/chat/completions` → `choices[].artifacts[].url`) is a
+    private googleusercontent link gated by the same Google account session the
+    WebAI server's browser is logged into — a bare request without those cookies
+    gets HTTP 403. `=s0` requests the original resolution instead of Google's
+    default 512px thumbnail (same trick as comfy-trends' gemini_client.py).
+    """
+    import http.cookiejar
+    import urllib.request
+
+    try:
+        raw = json.loads(Path(cookie_file).expanduser().read_text())
+    except OSError as exc:
+        return None, f"cannot read GEMINI_WEBAI_COOKIE_FILE: {exc}"
+    except ValueError as exc:
+        return None, f"GEMINI_WEBAI_COOKIE_FILE is not valid JSON: {exc}"
+
+    jar = http.cookiejar.CookieJar()
+    for cookie in raw.get("cookies", []):
+        expires = cookie.get("expires", -1)
+        jar.set_cookie(
+            http.cookiejar.Cookie(
+                0,
+                cookie["name"],
+                cookie["value"],
+                None,
+                False,
+                cookie["domain"],
+                True,
+                cookie["domain"].startswith("."),
+                cookie.get("path", "/"),
+                True,
+                bool(cookie.get("secure")),
+                None if expires is None or expires <= 0 else int(expires),
+                False,
+                None,
+                None,
+                {},
+            )
+        )
+
+    last_segment = url.rsplit("/", 1)[-1]
+    full_res_url = url.split("=")[0] + "=s0" if "=s" not in last_segment else url
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    try:
+        with opener.open(
+            urllib.request.Request(full_res_url, headers={"User-Agent": "Mozilla/5.0"}),
+            timeout=180,
+        ) as resp:
+            data = resp.read()
+    except Exception as exc:
+        return None, f"failed to download webai image artifact: {exc}"
+
+    if not data.startswith((b"\x89PNG", b"\xff\xd8")):
+        return None, "downloaded artifact is not a valid image (cookie expired?)"
+    return data, ""
+
+
+async def _call_webai_chat_image_api(
+    *,
+    api_key: str,
+    model: str,
+    prompt: str,
+    reference_images: list[tuple[str, bytes, str]] | None = None,
+    image_config: dict | None = None,
+    base_url: str | None = None,
+    cookie_file: str = "",
+) -> tuple[bytes | None, str, str]:
+    """Generate an image via a local WebAI-to-API Gemini bridge (dev-only).
+
+    Unlike `_call_newapi_image_api`, this upstream has no OpenAI Images API — it
+    only exposes `/chat/completions`, returning the generated image as a
+    Google-hosted URL in `choices[0].artifacts`. That URL is session-gated, so it
+    is fetched with the same Playwright storage-state cookies the WebAI server's
+    own browser is logged in with (see `_download_webai_artifact`).
+    """
+    import httpx
+
+    from novelvideo.config import GEMINI_WEBAI_COOKIE_FILE, GEMINI_WEBAI_TIMEOUT_SECONDS
+
+    if not api_key:
+        return None, "", "DramaClawAPI API key is missing"
+    cookie_file = cookie_file or GEMINI_WEBAI_COOKIE_FILE
+    if not cookie_file:
+        return None, "", "GEMINI_WEBAI_COOKIE_FILE is not configured"
+
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    for name, data, mime in reference_images or []:
+        encoded = base64.b64encode(data).decode()
+        content.append(
+            {
+                "type": "file",
+                "file": {
+                    "filename": name or "reference.png",
+                    "file_data": f"data:{mime or 'image/png'};base64,{encoded}",
+                },
+            }
+        )
+
+    if base_url:
+        endpoint = base_url.rstrip("/")
+    else:
+        from novelvideo.config import get_effective_newapi_gateway_config
+
+        endpoint = get_effective_newapi_gateway_config().base_url.rstrip("/")
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {"model": model, "messages": [{"role": "user", "content": content}]}
+
+    try:
+        async with httpx.AsyncClient(timeout=GEMINI_WEBAI_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                f"{endpoint}/chat/completions", headers=headers, json=payload
+            )
+    except httpx.HTTPError as exc:
+        return None, "", f"webai chat request failed: {exc}"
+
+    if response.status_code >= 400:
+        return None, "", f"webai chat HTTP {response.status_code}: {response.text[:500]}"
+
+    try:
+        data = response.json()
+    except ValueError:
+        return None, "", "webai chat returned non-JSON response"
+
+    choices = data.get("choices") or []
+    first_choice = choices[0] if choices else {}
+    artifacts = first_choice.get("artifacts") or []
+    image_url = next(
+        (a.get("url") for a in artifacts if a.get("type") == "image" and a.get("url")),
+        None,
+    )
+    if not image_url:
+        text = (first_choice.get("message") or {}).get("content") or ""
+        return None, text, "webai chat response had no image artifact"
+
+    image_bytes, download_error = await asyncio.to_thread(
+        _download_webai_artifact, image_url, cookie_file
+    )
+    if image_bytes is None:
+        return None, "", download_error
+    return image_bytes, "", ""
+
+
 async def _call_huimeng_image_api(
     *,
     api_key: str,
