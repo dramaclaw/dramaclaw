@@ -6,10 +6,10 @@
 // worker 里，主线程只收进度和最终 mp4。一个任务一个 worker，完成或取消就 terminate；
 // 模型权重走浏览器缓存，重建 worker 只多一次建推理 session。
 //
-// 模型 onnx-community/depth-anything-v2-small（Apache-2.0）。权重从 HF Hub、ort wasm
-// 从 jsDelivr 加载，CSP 要求与 matteWorker 相同。
+// 模型 onnx-community/depth-anything-v2-small（Apache-2.0）。权重与 ort wasm 的来源见
+// browserModelSource.ts：配了自托管前缀走前缀，否则走 HF Hub + jsDelivr。
 
-import { pipeline, RawImage } from "@huggingface/transformers";
+import { env, pipeline, RawImage } from "@huggingface/transformers";
 import {
   ALL_FORMATS,
   BlobSource,
@@ -21,6 +21,10 @@ import {
   QUALITY_HIGH,
   VideoSampleSink,
 } from "mediabunny";
+import {
+  applyBrowserModelSource,
+  type TransformersEnvLike,
+} from "@/features/canvas/application/browserModelSource";
 import type { DepthCaptureErrorCode } from "@/features/canvas/domain/canvasNodes";
 import type { DepthWorkerInbound, DepthWorkerOutbound } from "./depthCaptureProtocol";
 import {
@@ -75,7 +79,8 @@ async function detectGpu(): Promise<boolean> {
   }
 }
 
-async function createEstimator(): Promise<DepthEstimator> {
+async function createEstimator(modelAssetBase: string | null): Promise<DepthEstimator> {
+  applyBrowserModelSource(env as unknown as TransformersEnvLike, modelAssetBase, ctx.navigator);
   const useGpu = await detectGpu();
   const estimator = await pipeline("depth-estimation", DEPTH_MODEL, {
     device: useGpu ? "webgpu" : "wasm",
@@ -96,7 +101,7 @@ function post(message: DepthWorkerOutbound): void {
   ctx.postMessage(message);
 }
 
-async function captureDepth(blob: Blob): Promise<void> {
+async function captureDepth(blob: Blob, modelAssetBase: string | null): Promise<void> {
   const input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
   try {
     const track = await input.getPrimaryVideoTrack();
@@ -139,7 +144,7 @@ async function captureDepth(blob: Blob): Promise<void> {
     );
     await output.start();
 
-    const estimator = await createEstimator();
+    const estimator = await createEstimator(modelAssetBase);
     post({ type: "progress", progress: 0 });
 
     let range: DepthRange | null = null;
@@ -192,7 +197,7 @@ ctx.onmessage = (event: MessageEvent<DepthWorkerInbound>) => {
   if (event.data.type !== "run") {
     return;
   }
-  captureDepth(event.data.blob).catch((err: unknown) => {
+  captureDepth(event.data.blob, event.data.modelAssetBase).catch((err: unknown) => {
     post({
       type: "error",
       code: err instanceof WorkerJobError ? err.code : "failed",

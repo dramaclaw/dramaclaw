@@ -512,6 +512,7 @@ frontend/src/__tests__/features/canvas/audio-voice-prereq.test.tsx,Elastic-2.0,2
 frontend/src/__tests__/features/canvas/auto-layout.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/background-cropper-dialog.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/beat-context-node.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/browser-model-source.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-add-node-panel.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-bookmark-context-menu.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-file-drop-overlay.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1128,6 +1129,7 @@ frontend/src/features/canvas/application/audioDownload.ts,Elastic-2.0,2026 Super
 frontend/src/features/canvas/application/audioSpeechText.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/autoLayout.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/bookmarkActions.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/application/browserModelSource.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/canvasLod.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/canvasMediaScope.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/canvasServices.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1913,6 +1915,7 @@ scripts/check_workflow_agent_contracts.py,Elastic-2.0,2026 SuperTale contributor
 scripts/cleanup_html_artifact_exports.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/compliance/generate_p0b_artifacts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/convert_canvas_voice_refs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/fetch_browser_models.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/frontend_i18n_allowlist.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/generate_workflow_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/lint_banned_words.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2672,6 +2675,7 @@ tests/test_evidence_metrics.py,Elastic-2.0,2026 SuperTale contributors,REUSE.tom
 tests/test_fanout_partial_dispatch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_feature_models_cover_official_defaults.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_feature_settlement_safe_logging.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_fetch_browser_models.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_fish_speech_prompt_removed.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_format_check.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_agent_bundle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

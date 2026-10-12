@@ -9,6 +9,7 @@ export const RuntimeConfigResponse = z.object({
     auth_required: z.boolean(),
     instance_id: z.string().optional(),
     mcp_direct_canvas_apply: z.boolean().optional(),
+    browser_model_asset_base: z.string().nullable().optional(),
   }),
 });
 
@@ -25,6 +26,8 @@ export interface RuntimeConfig {
   phoneOtpEntryVisible: boolean;
   instanceId?: string;
   mcpDirectCanvasApply: boolean;
+  /** 浏览器端推理模型的自托管前缀；null 表示走 transformers.js 默认源。 */
+  browserModelAssetBase: string | null;
 }
 
 let runtimeConfig: RuntimeConfig = {
@@ -32,12 +35,25 @@ let runtimeConfig: RuntimeConfig = {
   authRequired: true,
   mcpDirectCanvasApply: false,
   phoneOtpEntryVisible: false,
+  browserModelAssetBase: null,
 };
 
 function fallbackRuntimeConfig(): RuntimeConfig {
   return import.meta.env.VITE_EDITION === "ce"
-    ? { edition: "ce", authRequired: false, phoneOtpEntryVisible: false, mcpDirectCanvasApply: false }
-    : { edition: "ee", authRequired: true, phoneOtpEntryVisible: false, mcpDirectCanvasApply: false };
+    ? {
+        edition: "ce",
+        authRequired: false,
+        phoneOtpEntryVisible: false,
+        mcpDirectCanvasApply: false,
+        browserModelAssetBase: null,
+      }
+    : {
+        edition: "ee",
+        authRequired: true,
+        phoneOtpEntryVisible: false,
+        mcpDirectCanvasApply: false,
+        browserModelAssetBase: null,
+      };
 }
 
 async function loadPhoneOtpEntryVisibility(): Promise<boolean> {
@@ -71,6 +87,7 @@ export async function loadRuntimeConfig(): Promise<void> {
       phoneOtpEntryVisible,
       instanceId: parsed.data.instance_id,
       mcpDirectCanvasApply: parsed.data.mcp_direct_canvas_apply ?? false,
+      browserModelAssetBase: parsed.data.browser_model_asset_base || null,
     };
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -93,4 +110,8 @@ export function mcpDirectCanvasApplyEnabled(): boolean {
 
 export function phoneOtpEntryVisible(): boolean {
   return runtimeConfig.phoneOtpEntryVisible;
+}
+
+export function browserModelAssetBase(): string | null {
+  return runtimeConfig.browserModelAssetBase;
 }

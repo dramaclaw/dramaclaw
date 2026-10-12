@@ -12,7 +12,8 @@
 // 为什么要自建 Worker:推理(尤其 WASM 回退路径)若跑在主线程会把整个画布卡死。
 // 把 pipeline 整段放进 worker,无论 WebGPU 是否可用,主线程都不被阻塞。
 
-import { pipeline } from "@huggingface/transformers";
+import { env, pipeline } from "@huggingface/transformers";
+import { applyBrowserModelSource, type TransformersEnvLike } from "./browserModelSource";
 
 // 抠图模型(全部为宽松商用许可,可随时切换):
 //   - "Xenova/modnet"            Apache-2.0,~6.6MB(q8)/13MB(fp16),人像/角色 matting,体积最小
@@ -20,9 +21,10 @@ import { pipeline } from "@huggingface/transformers";
 // 本项目画布以角色立绘/分镜人物为主,默认用 MODNet(下载远小于旧的 imgly ~45MB)。
 const MATTE_MODEL = "Xenova/modnet";
 
+// modelAssetBase：模型自托管前缀（见 browserModelSource.ts）；null 走库默认源。
 type InboundMessage =
-  | { type: "preload"; id: number }
-  | { type: "matte"; id: number; blob: Blob };
+  | { type: "preload"; id: number; modelAssetBase: string | null }
+  | { type: "matte"; id: number; blob: Blob; modelAssetBase: string | null };
 
 type OutboundMessage =
   | { type: "ready"; id: number }
@@ -70,9 +72,10 @@ type MatteImage = { toBlob(): Promise<Blob> };
 type RemoveBackground = (input: string) => Promise<MatteImage>;
 let removerPromise: Promise<RemoveBackground> | null = null;
 
-function getRemover(): Promise<RemoveBackground> {
+function getRemover(modelAssetBase: string | null): Promise<RemoveBackground> {
   if (!removerPromise) {
     removerPromise = (async () => {
+      applyBrowserModelSource(env as unknown as TransformersEnvLike, modelAssetBase, ctx.navigator);
       const useGpu = await detectGpu();
       const remover = await pipeline("background-removal", MATTE_MODEL, {
         device: useGpu ? "webgpu" : "wasm",
@@ -89,11 +92,11 @@ ctx.onmessage = async (event: MessageEvent<InboundMessage>) => {
   const message = event.data;
   try {
     if (message.type === "preload") {
-      await getRemover();
+      await getRemover(message.modelAssetBase);
       ctx.postMessage({ type: "ready", id: message.id } satisfies OutboundMessage);
       return;
     }
-    const remover = await getRemover();
+    const remover = await getRemover(message.modelAssetBase);
     // background-removal pipeline 对单个输入返回单个 RawImage(已把 matte 合成到 alpha 通道)。
     const url = URL.createObjectURL(message.blob);
     try {
@@ -112,7 +115,6 @@ ctx.onmessage = async (event: MessageEvent<InboundMessage>) => {
   }
 };
 
-// 模型权重从 Hugging Face Hub 加载、ort wasm 运行时从 jsDelivr 加载(均为
-// transformers.js 默认行为)。生产环境需在边缘 worker 的 CSP 放行这两个来源
-// (见 worker/index.ts 的 connect-src / script-src)。若改为自托管同源,设
-// env.allowRemoteModels=false / env.localModelPath / env.backends.onnx.wasm.wasmPaths。
+// 模型权重与 ort wasm 的来源见 ./browserModelSource.ts:后端配了
+// BROWSER_MODEL_ASSET_BASE 就从该前缀拉,否则走 transformers.js 默认行为
+// (权重 Hugging Face Hub、wasm jsDelivr)。
