@@ -5030,6 +5030,7 @@
           "needs_review": "Imported structure needs review",
           "automatic_no_fallback": "Automatic branches have no fallback; the story can stop when none match",
           "automatic_fallback_order": "The unconditional automatic branch must be the final and only fallback",
+          "runtime_dead_end": "Không có nhánh nào có thể thực hiện trong trạng thái truyện có thể đạt tới; người chơi không thể tiếp tục",
           "runtime_unreachable": "Connected in the graph, but unreachable under every current story state",
           "condition_unreachable": "This branch can never trigger under the current state changes",
           "variable_out_of_bounds": "This branch pushes \"{{detail}}\" outside its declared range",

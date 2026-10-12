@@ -6,6 +6,7 @@ const MAX_ANALYSIS_STATES = 2_000;
 const MAX_AUTOMATIC_CHAIN = 100;
 
 export type StoryPathFindingCode =
+  | 'runtime_dead_end'
   | 'runtime_unreachable'
   | 'condition_unreachable'
   | 'variable_out_of_bounds'
@@ -99,6 +100,10 @@ export function analyzeStoryPaths(
     const transitions = selectedAutomatic
       ? [selectedAutomatic]
       : visible.filter((edge) => conditionMatches(edgeCondition(edge), item.state));
+
+    if (sourceEdges.length > 0 && transitions.length === 0) {
+      addFinding({ code: 'runtime_dead_end', nodeId: item.state.nodeId });
+    }
 
     for (const edge of transitions) {
       reachedEdges.add(edge.id);

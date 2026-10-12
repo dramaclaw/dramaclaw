@@ -164,7 +164,7 @@ export function lintStory(
     const validStoryEdges = storyEdges.filter((edge) => memberIds.has(edge.target));
     for (const finding of analyzeStoryPaths(memberIds, validStoryEdges, startId, variables, flags)) {
       issues.push({
-        severity: finding.code === 'automatic_cycle' || finding.code === 'variable_out_of_bounds' ? 'error' : 'warning',
+        severity: ['automatic_cycle', 'variable_out_of_bounds', 'runtime_dead_end'].includes(finding.code) ? 'error' : 'warning',
         ...finding,
       });
     }

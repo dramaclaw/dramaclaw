@@ -102,6 +102,16 @@ def analyze_story_paths(story: StoryDraftV2) -> list[InteractiveStoryIssue]:
             for choice in visible
             if _condition_matches(choice.condition, state, variable_index, flag_index, segment_index)
         ]
+        if source_choices and not transitions:
+            add_issue(
+                InteractiveStoryIssue(
+                    severity="error",
+                    code="runtime_dead_end",
+                    message="当前可达状态下没有可执行的分支，玩家无法继续剧情。",
+                    entity_type="segment",
+                    entity_id=state.segment_id,
+                )
+            )
         for choice in transitions:
             reached_choices.add(choice.id)
             next_state = _apply_choice(

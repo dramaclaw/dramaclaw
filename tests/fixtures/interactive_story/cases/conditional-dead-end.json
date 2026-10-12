@@ -69,20 +69,12 @@
       "code": "condition_unreachable",
       "entityId": "blocked",
       "severity": "warning"
+    },
+    {
+      "code": "runtime_dead_end",
+      "entityId": "start",
+      "severity": "error"
     }
   ],
-  "playthroughs": [
-    {
-      "choices": [],
-      "expectedSegments": [
-        "start"
-      ],
-      "expectedVariables": {
-        "score": 0
-      },
-      "expectedRuntimeErrors": [
-        "ran out of content"
-      ]
-    }
-  ]
+  "playthroughs": []
 }

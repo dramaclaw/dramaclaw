@@ -5255,6 +5255,7 @@
           "needs_review": "导入的结构待人工确认",
           "automatic_no_fallback": "自动分支没有兜底，条件都不满足时剧情会停止",
           "automatic_fallback_order": "“否则”自动分支必须是最后且唯一的兜底",
+          "runtime_dead_end": "当前剧情状态下没有可执行的分支，玩家无法继续",
           "runtime_unreachable": "连线能到达，但当前剧情状态永远无法进入",
           "condition_unreachable": "当前状态变化下，这条分支永远不会触发",
           "variable_out_of_bounds": "这条分支会让「{{detail}}」超出设定范围",

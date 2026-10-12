@@ -1271,3 +1271,26 @@ def test_interruption_reconciles_inside_existing_project_lock(source, operation)
     else:
         store.prune_drafts(pending["public_id"])
     assert store.version(pending["public_id"], pending["version"])["error"] == "publication_interrupted"
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_publication_rejects_reachable_conditional_dead_end(source, partial):
+    store, output, canvas, body = source
+    case = "state-dependent-dead-end" if partial else "visible-conditional-dead-end"
+    story = StoryDraftV2.model_validate(
+        json.loads(Path(f"tests/fixtures/interactive_story/cases/{case}.json").read_text())["story"]
+    )
+    projection = project_story_to_canvas(story)
+    canvas.update(nodes=projection.nodes, edges=projection.edges)
+    body["group_id"] = projection.group_id
+    for node in canvas["nodes"]:
+        if node["type"] == "videoNode":
+            node["data"]["videoUrl"] = "/api/v1/projects/p/media/clip.mp4"
+    prepared = store.prepare("owner", Path("."), output, "p", body)
+    store.finish(prepared)
+    version = store.version(prepared["public_id"], prepared["version"])
+    assert version["status"] == "failed"
+    assert version["error"] == "invalid_story"
+    assert any(i["code"] == "runtime_dead_end" and i["severity"] == "error" for i in version["issues"])
+    with pytest.raises(PublicationError, match="version_not_ready"):
+        store.activate(prepared["public_id"], "owner", prepared["version"], True)
