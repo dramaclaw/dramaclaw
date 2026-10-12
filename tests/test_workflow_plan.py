@@ -871,6 +871,25 @@ def test_text_to_image_video_standard_plan_feeds_outline_into_each_image(monkeyp
     assert catalog.skill_stage_blockers("text-to-image-video", plan["nodes"], plan["edges"]) == []
 
 
+def test_text_to_image_standard_plan_creates_images_without_video(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    result = catalog.compile_workflow_intent(
+        {
+            "skill_id": "text-to-image",
+            "user_goal": "生成两张森林主题插画",
+            "planner": {"mode": "standard", "item_count": 2},
+        }
+    )
+
+    assert result["ok"] is True, result
+    assert result["planner"]["deliverable"] == "images"
+    nodes = result["plan"]["nodes"]
+    assert len([node for node in nodes if node["node_type"] == "imageGenNode"]) == 2
+    assert not any(node["node_type"] == "videoNode" for node in nodes)
+    assert catalog.skill_stage_blockers("text-to-image", nodes, result["plan"]["edges"]) == []
+
+
 def test_ecommerce_standard_plan_feeds_creative_outline_into_product_reference(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
@@ -4663,6 +4682,7 @@ def test_project_catalog_uses_canonical_pixar_skill_and_recipes(monkeypatch):
     assert skills["ecommerce-ad"]["name"] == "电商广告"
     assert skills["video-tutorial"]["name"] == "视频解说教程"
     assert skills["text-to-image-video"]["name"] == "文生图生视频（动态）"
+    assert skills["text-to-image"]["name"] == "文生图（动态）"
     assert skills["short-drama-quick"]["name"] == "短剧（快速测试）"
     assert skills["pixar-ip-ad-video"]["name"] == "皮克斯 IP 品牌广告短片"
     assert skills["lego-minifigure-animation-video"]["name"] == "乐高小人动画短片"

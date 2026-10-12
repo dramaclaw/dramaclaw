@@ -57,6 +57,69 @@ def test_background_canvas_agent_notification_is_hidden_from_chat_history(
     assert [item["role"] for item in chat_store.list_messages("admin", scope)] == ["user"]
 
 
+@pytest.mark.anyio
+async def test_cancelled_canvas_turn_settles_pending_clarification(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from novelvideo.chat import hermes_pool, hermes_workspace
+    from novelvideo.freezone import canvas_command_bridge
+
+    event = {
+        "type": "assistant.clarification.request",
+        "bridge_key": "bridge-a",
+        "clarification_id": "clarify-a",
+        "questions": [{"id": "image_model", "options": []}],
+    }
+    appended = []
+    resolved = []
+
+    async def list_messages(*_args, **_kwargs):
+        return [{"role": "user", "turn_id": "turn-a", "ui_events": [event]}]
+
+    async def append_event(_username, _scope, turn_id, persisted_event):
+        appended.append((turn_id, persisted_event))
+        return {}
+
+    monkeypatch.setattr(chat_store, "list_messages_async", list_messages)
+    monkeypatch.setattr(chat_store, "append_ui_event_async", append_event)
+    monkeypatch.setattr(
+        hermes_workspace,
+        "ensure_user_hermes_workspace",
+        lambda *_args, **_kwargs: tmp_path / "hermes",
+    )
+    monkeypatch.setattr(
+        hermes_pool,
+        "canvas_bridge_dir_for_profile",
+        lambda *_args, **_kwargs: tmp_path / "bridge",
+    )
+    monkeypatch.setattr(
+        canvas_command_bridge,
+        "resolve_clarification_result",
+        lambda key, result, **kwargs: resolved.append((key, result, kwargs)),
+    )
+
+    await chat_service._cancel_pending_clarifications_for_turn(
+        username="admin",
+        store_scope=ChatScope(kind="project", id="project-a"),
+        turn_id="turn-a",
+        project_state_dir=tmp_path / "project",
+        agent_profile="freezone:main",
+    )
+
+    assert appended[0][0] == "turn-a"
+    assert appended[0][1]["submitted"] is True
+    assert appended[0][1]["cancelled"] is True
+    assert appended[0][1]["clarification_status"] == "cancelled"
+    assert resolved[0][0] == "bridge-a"
+    assert resolved[0][1]["cancelled"] is True
+    assert resolved[0][1]["message"] == "用户已取消本轮请求"
+    assert resolved[0][1]["message_i18n"] == {
+        "code": "freezone.chat.clarification.cancelledRequest",
+    }
+    assert resolved[0][2]["bridge_dir"] == tmp_path / "bridge"
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
@@ -1604,6 +1667,7 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
         "freezone_confirm_workflow_draft does not accept run_after_create" in instructions
     )
     assert "not a Workflow catalog skill_id" in instructions
+    assert "text-to-image for a pure image workflow" in instructions
     assert "text-to-image-video" in instructions
     assert "Never ask for a duplicate 'create and run' confirmation" in instructions
     assert "the Freezone write tool creates that card" in instructions
@@ -1614,6 +1678,7 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "freezone_run_node_action" in instructions
 
     canvas_instructions = chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS
+    assert "pure image workflow must use text-to-image" in canvas_instructions
     assert "one-node workflow is still a workflow" in canvas_instructions
     assert "do not read node detail before starting it" in canvas_instructions
     assert "freezone_run_node_action" in canvas_instructions

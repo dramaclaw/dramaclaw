@@ -90,6 +90,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { apiCall } from "@/api/client";
 import {
+  getFreezoneWorkflowRun,
+  type FreezoneWorkflowRun,
+} from "@/api/canvas";
+import {
   Dialog,
   DialogClose,
   DialogContent,
@@ -183,7 +187,6 @@ import type {
 } from "@/features/freezone/canvasChatCommands";
 import {
   applyCanvasChatCommandsAsync,
-  canvasCommandEnvelopesRequireDurableAcceptance,
   canvasCommandEnvelopesRunInBackground,
   directGenerationTargetsForPreflight,
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
@@ -4053,6 +4056,11 @@ function canvasCommandFeedbackReconciliationPending(feedback: CanvasCommandFeedb
     step.status === "pending" && step.output?.reason === "workflow_server_reconciliation_pending");
 }
 
+function canvasCommandFeedbackBackgroundRunning(feedback: CanvasCommandFeedback): boolean {
+  return (feedback.commandResults ?? []).some((step) =>
+    step.status === "pending" && step.output?.reason === "background_generation_running");
+}
+
 function canvasCommandFeedbackIsInvalidCommand(feedback: CanvasCommandFeedback): boolean {
   return (feedback.commandResults ?? []).some((step) => step.label === "画布命令无效");
 }
@@ -4094,9 +4102,14 @@ function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback, t: T
   const firstPlan = feedback.plans?.[0];
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "画布操作已过期";
   if (firstFailedStep?.label === "已取消" || canvasCommandFeedbackIsUserCancelled(feedback)) return "画布操作已取消";
-  if (canvasCommandFeedbackHasPending(feedback)) return canvasCommandFeedbackReconciliationPending(feedback)
-    ? t("freezone.chat.workflowReconciliationPendingLabel", { defaultValue: "对账中" })
-    : t("freezone.chat.workflowOutputSyncPendingLabel", { defaultValue: "产物待同步" });
+  if (canvasCommandFeedbackHasPending(feedback)) {
+    if (canvasCommandFeedbackBackgroundRunning(feedback)) {
+      return t("freezone.chat.backgroundGenerationRunningLabel", { defaultValue: "后台生成中" });
+    }
+    return canvasCommandFeedbackReconciliationPending(feedback)
+      ? t("freezone.chat.workflowReconciliationPendingLabel", { defaultValue: "对账中" })
+      : t("freezone.chat.workflowOutputSyncPendingLabel", { defaultValue: "产物待同步" });
+  }
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成图片")) return "生成图片失败";
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成视频")) return "生成视频失败";
   if (firstFailedStep?.label) return firstFailedStep.label;
@@ -4165,7 +4178,11 @@ function CanvasCommandFeedbackCard({
         })
       : null;
   const userFailureMessage = pending
-    ? canvasCommandFeedbackReconciliationPending(feedback)
+    ? canvasCommandFeedbackBackgroundRunning(feedback)
+      ? t("freezone.chat.backgroundGenerationRunningMessage", {
+          defaultValue: "任务已提交，正在后台生成。完成或失败后会自动更新这里的状态。",
+        })
+      : canvasCommandFeedbackReconciliationPending(feedback)
       ? t("freezone.chat.workflowReconciliationPendingMessage", {
           defaultValue: "画布产物已生成，服务端仍在核对任务产物；请稍后检查运行状态，暂勿重复生成。",
         })
@@ -4693,6 +4710,7 @@ type AssistantClarificationUiEvent = {
   recommended_answers?: AssistantClarificationAnswers;
   allow_skip?: boolean;
   submitted?: boolean;
+  cancelled?: boolean;
   action?: string;
   clarification_status?: string;
   answers?: AssistantClarificationAnswers;
@@ -6968,20 +6986,27 @@ function AssistantClarificationSummaryCard({ event }: { event: AssistantClarific
     event.action,
   );
   const answeredCount = timelineItems.length;
+  const cancelled = event.cancelled === true
+    || event.action === "cancel"
+    || event.clarification_status === "cancelled";
   const skipped = event.skipped === true || event.action === "skip";
-  const statusLabel = skipped
-    ? t("freezone.chat.clarification.skipped")
-    : t("freezone.chat.clarification.submitted");
-  const countLabel = skipped
-    ? t("freezone.chat.clarification.skippedQuestions")
-    : t("freezone.chat.clarification.submittedAnswers", { count: answeredCount });
+  const statusLabel = cancelled
+    ? t("freezone.chat.clarification.cancelled")
+    : skipped
+      ? t("freezone.chat.clarification.skipped")
+      : t("freezone.chat.clarification.submitted");
+  const countLabel = cancelled
+    ? t("freezone.chat.clarification.cancelledQuestions")
+    : skipped
+      ? t("freezone.chat.clarification.skippedQuestions")
+      : t("freezone.chat.clarification.submittedAnswers", { count: answeredCount });
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] px-3 py-3 text-sm shadow-[0_14px_40px_rgba(0,0,0,0.16)] backdrop-blur-sm">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-foreground/90">
             <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-emerald-400/10 text-emerald-100/85">
-              <CheckCircle2 className="size-3.5" />
+              {cancelled ? <X className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
             </span>
             <span className="truncate font-medium tracking-normal">{event.title || "问题回答"}</span>
           </div>
@@ -7024,7 +7049,9 @@ function AssistantClarificationSummaryCard({ event }: { event: AssistantClarific
         ))}
         {timelineItems.length === 0 && (
           <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs text-muted-foreground">
-            {skipped
+            {cancelled
+              ? t("freezone.chat.clarification.noAnswersCancelled")
+              : skipped
               ? t("freezone.chat.clarification.noAnswersSkipped")
               : t("freezone.chat.clarification.noAnswersSubmitted")}
           </div>
@@ -7050,6 +7077,8 @@ function AssistantClarificationInputCard({
   const [answers, setAnswers] = useState<AssistantClarificationAnswers>(() =>
     event.answers && typeof event.answers === "object" ? event.answers : {},
   );
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const generationCatalogIssue = assistantClarificationGenerationCatalogIssue(
     eventQuestions, imageModelCatalog, videoModelCatalog, answers,
   );
@@ -7057,6 +7086,8 @@ function AssistantClarificationInputCard({
   useEffect(() => {
     setAnswers(event.answers && typeof event.answers === "object" ? event.answers : {});
     setActiveQuestionPosition(0);
+    isSubmittingRef.current = false;
+    setIsSubmitting(false);
   }, [eventIdentity]);
   const questions = useMemo(
     () => clarificationQuestionsWithLiveModelCatalogs(
@@ -7146,10 +7177,25 @@ function AssistantClarificationInputCard({
       };
     });
   }, []);
+  const submitResponse = useCallback(async (responseAnswers: AssistantClarificationAnswers) => {
+    if (!onSubmit || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    let submitted = false;
+    try {
+      submitted = await onSubmit({ ...event, questions }, responseAnswers);
+    } catch {
+      submitted = false;
+    }
+    if (!submitted) {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+    }
+  }, [event, onSubmit, questions]);
   const submitAnswers = useCallback(() => {
-    if (!onSubmit || !canSubmit) return;
-    void onSubmit({ ...event, questions }, answers);
-  }, [answers, canSubmit, event, onSubmit, questions]);
+    if (!canSubmit) return;
+    void submitResponse(answers);
+  }, [answers, canSubmit, submitResponse]);
   const activeQuestion = activeItem?.question;
   const activeQuestionIndex = activeItem?.index ?? 0;
   const activeQuestionKey = activeQuestion ? skillStudioQuestionKey(activeQuestion, activeQuestionIndex) : "";
@@ -7282,8 +7328,9 @@ function AssistantClarificationInputCard({
               size="sm"
               variant="ghost"
               className="h-8 rounded-full px-3 text-xs text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+              disabled={isSubmitting}
               onClick={() => {
-                void onSubmit?.(event, { __action: "skip" });
+                void submitResponse({ __action: "skip" });
               }}
             >
               跳过
@@ -7297,8 +7344,9 @@ function AssistantClarificationInputCard({
               size="sm"
               variant="outline"
               className="h-8 rounded-full border-white/[0.12] bg-white/[0.04] px-3 text-xs hover:bg-white/[0.08]"
+              disabled={isSubmitting}
               onClick={() => {
-                void onSubmit?.(event, { ...recommendedAnswers, __action: "recommended" });
+                void submitResponse({ ...recommendedAnswers, __action: "recommended" });
               }}
             >
               使用推荐配置
@@ -7308,10 +7356,10 @@ function AssistantClarificationInputCard({
             type="button"
             size="sm"
             className="h-8 rounded-full px-3 text-xs"
-            disabled={!onSubmit || (hasNext ? false : !canSubmit)}
+            disabled={!onSubmit || isSubmitting || (hasNext ? false : !canSubmit)}
             onClick={continueAction}
           >
-            {continueLabel}
+            {isSubmitting ? "提交中…" : continueLabel}
           </Button>
         </div>
       </div>
@@ -10997,6 +11045,9 @@ type CanvasCommandFeedback = Pick<CanvasChatCommandApplyResult, "applied" | "ope
   cancelReason?: CanvasCommandApprovalCancelReason;
   anchorTextPrefix?: string;
   surfaceOrder?: number;
+  workflowRunId?: string;
+  turnId?: string;
+  bridgeKey?: string;
 };
 
 const CANVAS_APPROVAL_IMAGE_SIZE_OPTIONS = ["1K", "2K", "4K"] as const;
@@ -11438,6 +11489,85 @@ function canvasCommandPlansFromEnvelopes(envelopes: CanvasChatCommandEnvelope[] 
   }
   return plans;
 }
+
+function backgroundCanvasCommandPendingResult(
+  plans: CanvasCommandPlan[],
+  workflowRunId?: string | null,
+): CanvasChatCommandApplyResult {
+  const generationPlans = plans.filter((plan) =>
+    plan.type === "run_workflow" || plan.type === "run_node_action");
+  const visiblePlans = generationPlans.length > 0 ? generationPlans : plans.slice(0, 1);
+  return {
+    applied: 0,
+    openedUiActions: 0,
+    createdNodeIds: [],
+    errors: [],
+    commandResults: visiblePlans.map((plan) => ({
+      commandIndex: plan.index,
+      type: plan.type,
+      status: "pending",
+      label: plan.label,
+      output: {
+        pending: true,
+        reason: "background_generation_running",
+        ...(workflowRunId ? { workflow_run_id: workflowRunId } : {}),
+      },
+    })),
+  };
+}
+
+export const backgroundCanvasCommandPendingResultForTest = backgroundCanvasCommandPendingResult;
+
+function canvasCommandResultFromWorkflowRun(
+  feedback: CanvasCommandFeedback,
+  run: FreezoneWorkflowRun,
+  t: TFunction,
+): CanvasChatCommandApplyResult {
+  const terminalError = run.status === "failed"
+    ? t("freezone.chat.backgroundGenerationFailed", {
+        defaultValue: "后台生成失败，请检查任务详情后重试。",
+      })
+    : run.status === "cancelled"
+      ? t("freezone.chat.backgroundGenerationCancelled", {
+          defaultValue: "后台生成已取消。",
+        })
+      : run.status === "interrupted"
+        ? t("freezone.chat.backgroundGenerationInterrupted", {
+            defaultValue: "后台生成已中断，请恢复任务或重试。",
+          })
+        : null;
+  const commandResults = (feedback.commandResults ?? []).map((step, index): CanvasChatCommandApplyStep => {
+    const action = run.actions[index];
+    const actionSucceeded = action?.status === "completed" || action?.status === "skipped";
+    const actionError = action?.user_error || action?.error || terminalError || undefined;
+    return {
+      ...step,
+      type: step.type as CanvasChatCommandApplyStep["type"],
+      status: actionSucceeded || run.status === "completed" ? "success" : "error",
+      ...(action?.node_id ? { nodeId: action.node_id } : {}),
+      ...(action?.action ? { action: action.action } : {}),
+      ...(actionError ? { error: actionError } : {}),
+      output: {
+        workflow_run_id: run.run_id,
+        workflow_run_status: run.status,
+      },
+    };
+  });
+  const errors = commandResults
+    .map((step) => step.error)
+    .filter((error): error is string => Boolean(error));
+  return {
+    applied: run.status === "completed"
+      ? run.actions.filter((action) => action.status === "completed").length
+      : 0,
+    openedUiActions: 0,
+    createdNodeIds: [],
+    errors: dedupeGenerationErrors(errors),
+    commandResults,
+  };
+}
+
+export const canvasCommandResultFromWorkflowRunForTest = canvasCommandResultFromWorkflowRun;
 
 function canvasContextLabelsFromTypes(types: string[]): string[] {
   return Array.from(new Set(types))
@@ -11903,6 +12033,32 @@ function mergeCanvasCommandFeedbackValue(
   };
 }
 
+function replaceCanvasCommandFeedbackCard(
+  current: CanvasCommandFeedback[] | undefined,
+  key: string,
+  result: Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
+    commandResults: CanvasCommandFeedbackStep[];
+  },
+  plans: CanvasCommandPlan[] = [],
+  anchorTextPrefix?: string | null,
+  surfaceOrder?: number,
+): CanvasCommandFeedback[] {
+  const replacement = mergeCanvasCommandFeedbackValue(
+    undefined,
+    key,
+    result,
+    plans,
+    anchorTextPrefix,
+    surfaceOrder,
+  );
+  const items = current ?? [];
+  const index = items.findIndex((item) => item.key === key);
+  if (index < 0) return [...items, replacement];
+  const next = [...items];
+  next[index] = replacement;
+  return next;
+}
+
 function appendCanvasCommandFeedbackCard(
   current: CanvasCommandFeedback[] | undefined,
   key: string,
@@ -11983,7 +12139,14 @@ function canvasCommandFeedbacksFromUiEvents(events: unknown[] | undefined): Canv
     feedback.envelopes = envelopes;
     feedback.cancelled = value.cancelled === true;
     feedback.cancelReason = value.cancel_reason === "timeout" ? "timeout" : value.cancelled === true ? "user" : undefined;
-    feedbacks.push(feedback);
+    feedback.workflowRunId = typeof value.workflow_run_id === "string"
+      ? value.workflow_run_id
+      : undefined;
+    feedback.turnId = typeof value.turn_id === "string" ? value.turn_id : undefined;
+    feedback.bridgeKey = typeof value.bridge_key === "string" ? value.bridge_key : undefined;
+    const existingIndex = feedbacks.findIndex((item) => item.key === key);
+    if (existingIndex >= 0) feedbacks[existingIndex] = feedback;
+    else feedbacks.push(feedback);
   }
   return feedbacks;
 }
@@ -12547,6 +12710,8 @@ export function SuperChatPanel({
   const executingCanvasCommandApprovalIdsRef = useRef<Set<string>>(new Set());
   const appliedCanvasCommandApprovalKeysRef = useRef<Set<string>>(new Set());
   const resolvedCanvasCommandApprovalKeysRef = useRef<Set<string>>(new Set());
+  const submittedAssistantClarificationKeysRef = useRef<Set<string>>(new Set());
+  const recoveringBackgroundWorkflowKeysRef = useRef<Set<string>>(new Set());
   const [canvasCommandExecutionMode, setCanvasCommandExecutionMode] = useState<CanvasCommandExecutionMode>(() => loadCanvasCommandExecutionMode());
   const [canvasCommandModeMenuOpen, setCanvasCommandModeMenuOpen] = useState(false);
   const directorRunProject = params.project?.trim() || "home";
@@ -13142,6 +13307,27 @@ export function SuperChatPanel({
     }));
   }, []);
 
+  const replaceCanvasCommandFeedback = useCallback((
+    messageId: string,
+    feedbackKey: string,
+    result: Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors" | "commandResults">,
+    plans: CanvasCommandPlan[] = [],
+    anchorTextPrefix?: string | null,
+    surfaceOrder?: number,
+  ) => {
+    setCanvasCommandFeedbackByMessageId((current) => ({
+      ...current,
+      [messageId]: replaceCanvasCommandFeedbackCard(
+        current[messageId],
+        feedbackKey,
+        result,
+        plans,
+        anchorTextPrefix,
+        surfaceOrder,
+      ),
+    }));
+  }, []);
+
   const buildApprovalFromDetail = useCallback((detail: CanvasCommandApprovalEventDetail): PendingCanvasCommandApproval | null => {
     if (variant === "freezone" && detail.canvasId && effectiveFreezoneCanvasId && detail.canvasId !== effectiveFreezoneCanvasId) {
       return null;
@@ -13549,6 +13735,100 @@ export function SuperChatPanel({
       });
   }, [effectiveFreezoneCanvasId, params.project]);
 
+  useEffect(() => {
+    const projectId = params.project?.trim();
+    const canvasIdForRequest = effectiveFreezoneCanvasId?.trim();
+    if (variant !== "freezone" || !projectId || !canvasIdForRequest) return;
+
+    const pendingByRunId = new Map<string, { messageId: string; feedback: CanvasCommandFeedback }>();
+    for (const [messageId, feedbacks] of Object.entries(
+      persistedCanvasCommandFeedbackByMessageId,
+    )) {
+      for (const feedback of feedbacks) {
+        if (!feedback.workflowRunId || !canvasCommandFeedbackBackgroundRunning(feedback)) continue;
+        if (!pendingByRunId.has(feedback.workflowRunId)) {
+          pendingByRunId.set(feedback.workflowRunId, { messageId, feedback });
+        }
+      }
+    }
+    if (pendingByRunId.size === 0) return;
+
+    let disposed = false;
+    const recoveryKeys: string[] = [];
+    for (const [runId, { messageId, feedback }] of pendingByRunId) {
+      const recoveryKey = `${projectId}:${canvasIdForRequest}:${runId}`;
+      if (recoveringBackgroundWorkflowKeysRef.current.has(recoveryKey)) continue;
+      recoveringBackgroundWorkflowKeysRef.current.add(recoveryKey);
+      recoveryKeys.push(recoveryKey);
+      void (async () => {
+        try {
+          while (!disposed) {
+            let run: FreezoneWorkflowRun;
+            try {
+              run = await getFreezoneWorkflowRun(projectId, canvasIdForRequest, runId, 10);
+            } catch {
+              if (disposed) return;
+              await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+              continue;
+            }
+            if (disposed) return;
+            if (run.status === "running") continue;
+
+            const result = canvasCommandResultFromWorkflowRun(feedback, run, t);
+            replaceCanvasCommandFeedback(
+              messageId,
+              feedback.key,
+              result,
+              feedback.plans,
+              feedback.anchorTextPrefix,
+              feedback.surfaceOrder,
+            );
+            const terminalFeedback: CanvasCommandFeedback = {
+              ...feedback,
+              ...result,
+              commandResults: result.commandResults,
+            };
+            chat.upsertAssistantMessagePart(
+              { messageId, turnId: feedback.turnId },
+              {
+                id: canvasFeedbackPartId(terminalFeedback),
+                type: "canvas_feedback",
+                event: terminalFeedback,
+              },
+            );
+            await persistCanvasCommandUiEvent(feedback.turnId, {
+              schema_version: "canvas_command_result.v1",
+              type: "canvas_command_result",
+              canvas_id: canvasIdForRequest,
+              bridge_key: feedback.bridgeKey ?? null,
+              workflow_run_id: runId,
+              envelopes: feedback.envelopes,
+              result,
+              anchor_text_prefix: feedback.anchorTextPrefix ?? null,
+              received_at: Date.now(),
+            });
+            return;
+          }
+        } finally {
+          recoveringBackgroundWorkflowKeysRef.current.delete(recoveryKey);
+        }
+      })();
+    }
+    return () => {
+      disposed = true;
+      for (const key of recoveryKeys) recoveringBackgroundWorkflowKeysRef.current.delete(key);
+    };
+  }, [
+    chat,
+    effectiveFreezoneCanvasId,
+    params.project,
+    persistCanvasCommandUiEvent,
+    persistedCanvasCommandFeedbackByMessageId,
+    replaceCanvasCommandFeedback,
+    t,
+    variant,
+  ]);
+
   const persistSkillStudioUiEvent = useCallback((
     turnId: string | null | undefined,
     event: Record<string, unknown>,
@@ -13609,6 +13889,12 @@ export function SuperChatPanel({
     setExecutingCanvasCommandApprovalIds(new Set(executingCanvasCommandApprovalIdsRef.current));
     void (async () => {
       const receivedAt = Date.now();
+      const feedbackKey = canvasCommandFeedbackKey(
+        approval.bridgeKey,
+        approval.turnId,
+        undefined,
+        approval.key,
+      );
       try {
         await persistCanvasCommandUiEvent(approval.turnId, {
           schema_version: "canvas_command_approval_resolution.v1",
@@ -13637,19 +13923,22 @@ export function SuperChatPanel({
 
         let result: CanvasChatCommandApplyResult;
         let backgroundAccepted = false;
+        let persistedWorkflowRunId: string | null = null;
         try {
           let resolveWorkflowRunPersisted: ((runId: string) => void) | undefined;
-          const workflowRunPersisted = canvasCommandEnvelopesRequireDurableAcceptance(
-            approval.envelopes,
-          )
+          const runsInBackground = canvasCommandEnvelopesRunInBackground(approval.envelopes);
+          const workflowRunPersisted = runsInBackground
             ? new Promise<string>((resolve) => { resolveWorkflowRunPersisted = resolve; })
             : undefined;
           const execution = applyCanvasChatCommandsAsync(approval.envelopes, {
             projectId: params.project,
             canvasId: effectiveFreezoneCanvasId,
-            onWorkflowRunPersisted: resolveWorkflowRunPersisted,
+            onWorkflowRunPersisted: (runId) => {
+              persistedWorkflowRunId = runId;
+              resolveWorkflowRunPersisted?.(runId);
+            },
           });
-          if (canvasCommandEnvelopesRunInBackground(approval.envelopes)) {
+          if (runsInBackground) {
             const immediateResult = await waitForImmediateCanvasCommandResult(
               execution,
               workflowRunPersisted,
@@ -13667,6 +13956,63 @@ export function SuperChatPanel({
                 agentId: approval.agentId ?? effectiveFreezoneAgentId,
                 accepted: true,
               });
+              const pendingResult = backgroundCanvasCommandPendingResult(
+                approval.plans,
+                persistedWorkflowRunId,
+              );
+              appendCanvasCommandFeedback(
+                approval.messageId,
+                feedbackKey,
+                pendingResult,
+                approval.plans,
+                approval.anchorTextPrefix,
+                receivedAt,
+              );
+              if (approval.turnId) {
+                appendCanvasCommandFeedback(
+                  approval.turnId,
+                  feedbackKey,
+                  pendingResult,
+                  approval.plans,
+                  approval.anchorTextPrefix,
+                  receivedAt,
+                );
+              }
+              const pendingFeedback: CanvasCommandFeedback = {
+                ...pendingResult,
+                commandResults: pendingResult.commandResults,
+                key: feedbackKey,
+                plans: approval.plans,
+                envelopes: approval.envelopes,
+                anchorTextPrefix: approval.anchorTextPrefix ?? undefined,
+                surfaceOrder: receivedAt,
+                workflowRunId: persistedWorkflowRunId ?? undefined,
+                turnId: approval.turnId ?? undefined,
+                bridgeKey: approval.bridgeKey ?? undefined,
+              };
+              chat.replaceAssistantMessagePart(
+                { messageId: approval.messageId, turnId: approval.turnId },
+                canvasApprovalPartId(approval),
+                {
+                  id: canvasFeedbackPartId(pendingFeedback),
+                  type: "canvas_feedback",
+                  event: pendingFeedback,
+                },
+              );
+              void persistCanvasCommandUiEvent(approval.turnId, {
+                schema_version: "canvas_command_result.v1",
+                type: "canvas_command_result",
+                canvas_id: effectiveFreezoneCanvasId,
+                turn_id: approval.turnId ?? null,
+                bridge_key: approval.bridgeKey ?? null,
+                workflow_run_id: persistedWorkflowRunId,
+                envelopes: approval.envelopes,
+                result: pendingResult,
+                anchor_text_prefix: approval.anchorTextPrefix ?? null,
+                received_at: receivedAt,
+              });
+              setPendingCanvasCommandApprovals((current) =>
+                removePendingCanvasCommandApproval(current, approval));
               result = await execution;
             }
           } else {
@@ -13709,8 +14055,10 @@ export function SuperChatPanel({
           result,
           followup: backgroundAccepted,
         });
-        const feedbackKey = canvasCommandFeedbackKey(approval.bridgeKey, approval.turnId, undefined, approval.key);
-        appendCanvasCommandFeedback(
+        const updateFeedback = backgroundAccepted
+          ? replaceCanvasCommandFeedback
+          : appendCanvasCommandFeedback;
+        updateFeedback(
           approval.messageId,
           feedbackKey,
           result,
@@ -13719,7 +14067,7 @@ export function SuperChatPanel({
           receivedAt,
         );
         if (approval.turnId) {
-          appendCanvasCommandFeedback(
+          updateFeedback(
             approval.turnId,
             feedbackKey,
             result,
@@ -13736,20 +14084,30 @@ export function SuperChatPanel({
           anchorTextPrefix: approval.anchorTextPrefix ?? undefined,
           surfaceOrder: receivedAt,
         };
-        chat.replaceAssistantMessagePart(
-          { messageId: approval.messageId, turnId: approval.turnId },
-          canvasApprovalPartId(approval),
-          {
-            id: canvasFeedbackPartId(feedback),
-            type: "canvas_feedback",
-            event: feedback,
-          },
-        );
+        const feedbackPart = {
+          id: canvasFeedbackPartId(feedback),
+          type: "canvas_feedback" as const,
+          event: feedback,
+        };
+        if (backgroundAccepted) {
+          chat.upsertAssistantMessagePart(
+            { messageId: approval.messageId, turnId: approval.turnId },
+            feedbackPart,
+          );
+        } else {
+          chat.replaceAssistantMessagePart(
+            { messageId: approval.messageId, turnId: approval.turnId },
+            canvasApprovalPartId(approval),
+            feedbackPart,
+          );
+        }
         void persistCanvasCommandUiEvent(approval.turnId, {
           schema_version: "canvas_command_result.v1",
           type: "canvas_command_result",
           canvas_id: effectiveFreezoneCanvasId,
+          turn_id: approval.turnId ?? null,
           bridge_key: approval.bridgeKey ?? null,
+          workflow_run_id: persistedWorkflowRunId,
           envelopes: approval.envelopes,
           result,
           anchor_text_prefix: approval.anchorTextPrefix ?? null,
@@ -13761,7 +14119,7 @@ export function SuperChatPanel({
         setExecutingCanvasCommandApprovalIds(new Set(executingCanvasCommandApprovalIdsRef.current));
       }
     })();
-  }, [appendCanvasCommandFeedback, chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistCanvasCommandUiEvent]);
+  }, [appendCanvasCommandFeedback, chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistCanvasCommandUiEvent, replaceCanvasCommandFeedback]);
 
   const handleCancelCanvasCommandApproval = useCallback((approval: PendingCanvasCommandApproval, reason: CanvasCommandApprovalCancelReason = "user") => {
     if (executingCanvasCommandApprovalIdsRef.current.has(approval.id)) return;
@@ -15078,6 +15436,11 @@ export function SuperChatPanel({
       toast.error("补充信息桥接缺失，请重试");
       return false;
     }
+    const submissionKey = `${event.turn_id}:${event.bridge_key}`;
+    if (submittedAssistantClarificationKeysRef.current.has(submissionKey)) {
+      return true;
+    }
+    submittedAssistantClarificationKeysRef.current.add(submissionKey);
     try {
       const action = answers.__action === "recommended"
         ? "recommended"
@@ -15087,19 +15450,34 @@ export function SuperChatPanel({
       if (action === "recommended" && !assistantClarificationCanSubmitRecommended(
         event, answers,
       )) {
+        submittedAssistantClarificationKeysRef.current.delete(submissionKey);
         toast.error("推荐配置缺少有效参数，请重新选择或刷新后重试");
         return false;
       }
       const skillStudioRevision = activeAssistantClarificationIsSkillStudioRevision(visibleMessages, event);
-	      const payload = {
-	        ...buildAssistantClarificationToolResultForTest(event, answers, { skillStudioRevision, projectId: params.project || undefined, canvasId: effectiveFreezoneCanvasId || undefined, agentId: effectiveFreezoneAgentId || undefined }),
-	        action,
-	        clarification_status: action === "submit" ? "answered" : action,
-	        skipped: action === "skip",
-	        used_recommended: action === "recommended",
-	      };
-      if (!chat.submitAssistantClarificationResult(payload)) {
-        toast.error("补充信息连接未就绪，请重试");
+      const payload = {
+        ...buildAssistantClarificationToolResultForTest(event, answers, {
+          skillStudioRevision,
+          projectId: params.project || undefined,
+          canvasId: effectiveFreezoneCanvasId || undefined,
+          agentId: effectiveFreezoneAgentId || undefined,
+        }),
+        action,
+        clarification_status: action === "submit" ? "answered" : action,
+        skipped: action === "skip",
+        used_recommended: action === "recommended",
+      };
+      const result = await apiCall<{
+        ok?: boolean;
+        message?: string | null;
+        errors?: string[];
+      }>("chat/clarification-tool-result", {
+        method: "POST",
+        json: payload,
+      });
+      if (result.ok === false) {
+        submittedAssistantClarificationKeysRef.current.delete(submissionKey);
+        toast.error(result.errors?.find(Boolean) || result.message || "提交补充信息失败，请重试");
         return false;
       }
       if (event.turn_id) {
@@ -15139,8 +15517,14 @@ export function SuperChatPanel({
         );
         persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       }
+      if (submittedAssistantClarificationKeysRef.current.size > 200) {
+        submittedAssistantClarificationKeysRef.current = new Set(
+          [...submittedAssistantClarificationKeysRef.current].slice(-100),
+        );
+      }
       return true;
     } catch (error) {
+      submittedAssistantClarificationKeysRef.current.delete(submissionKey);
       console.error("[superchat] clarification result submit failed", error);
       toast.error("提交补充信息失败，请重试");
       return false;
