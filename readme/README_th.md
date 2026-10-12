@@ -211,24 +211,24 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 ### Xia Director — agent
 
 <p align="center">
-  <img src="../assets/readme/xia-director.jpg" width="900" alt="Xia Director — project context and reviewed actions"/>
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
 </p>
-<p align="center"><sub>ภาพแนะนำฟีเจอร์จากภาพหน้าจอเดิม รายละเอียดอาจแตกต่างจากเวอร์ชันปัจจุบัน</sub></p>
+<p align="center"><sub>Xia Director สร้างและเริ่ม workflow ที่มี 17 node และ 32 เส้นเชื่อม โดยแสดง canvas และประวัติการยืนยันร่วมกัน</sub></p>
 
 **วันนี้**
 
+ความสามารถของ agent ด้านล่างมีแล้วในซอร์ส branch `main`; image ที่เผยแพร่อาจยังเป็นเวอร์ชันก่อนหน้า
+
 - **รู้จักโปรเจกต์ของคุณ** &mdash; ตรวจความคืบหน้า เดินหน้างานบท / ช็อต ตรวจสอบความครบถ้วนของงานส่งมอบ และแนะนำขั้นตอนถัดไป
-- **เปิดให้ agent อื่น** &mdash; MCP server บนเครื่องเปิด DramaClaw ให้ Claude Code, Codex และ MCP client ใด ๆ ใช้ได้ (loopback เท่านั้น ต้องเปิด trust flag อย่างชัดเจน); ดู [MCP สำหรับ Claude Code](../docs/en/guides/mcp-claude-code.md)
-
-**ถัดไป**
-
-- **ทำงานบน canvas** &mdash; ภาพหน้าจอด้านบนคือทิศทางที่กำลังไป: บรรยายหนังที่ต้องการ แล้ว Xia Director จะสร้างและเชื่อม node จัดวาง รัน และตรวจทานผลลัพธ์ โดยทุกคำสั่ง canvas ต้องได้รับการอนุมัติในเบราว์เซอร์ของคุณก่อน canvas + agent คือแกนกลางของ DramaClaw นับจากนี้; ดู [กำลังพัฒนา](#in-development)
+- **ทำงานบน canvas** &mdash; บรรยายหนังที่ต้องการ ยืนยัน workflow แล้ว Xia Director จะสร้าง เชื่อม จัดวาง และรัน node ติดตามความคืบหน้าและใช้เครื่องมือ workflow เพื่อกู้คืนขั้นตอนที่ล้มเหลว
+- **แคตตาล็อก workflow และ skill จากชุมชน** &mdash; workflow skill 11 รายการและ recipe 60 รายการสำหรับละครสั้น โฆษณาอีคอมเมิร์ซ ตัวละคร IP เนื้อหาโซเชียล และอื่น ๆ พร้อมติดตั้ง ส่งออก และแชร์ bundle ของ skill / recipe
+- **เปิดให้ agent อื่น** &mdash; [Agent Kit](../agent-kit/README.md) นำ workflow เดียวกันไปใช้กับ Codex, Claude Code, OpenClaw, Hermes, WorkBuddy และ stdio MCP client อื่น ๆ agent ในตัวยืนยัน workflow ในเบราว์เซอร์ ส่วน agent ภายนอกยืนยันในแชตของตนเอง แล้ว canvas ที่เปิดอยู่จะดำเนินการเปลี่ยนแปลง
 
 <br/>
 
 ## ทำไมต้อง DramaClaw?
 
-**canvas ที่เข้าใจละคร และ agent ที่ทำงานบนมัน** node canvas ทั่วไปเชื่อมอะไรก็ได้แต่ไม่รู้จักตอน ตัวละคร หรือช็อต; เครื่องมือซีรีส์รู้จักงานฝีมือแต่ขังคุณไว้ใน wizard XiaHua ให้ canvas อิสระพร้อม node และ skill ที่เข้าใจละคร และ Xia Director กำลังถูกสร้างเพื่อจัดวาง รัน และตรวจทาน graph เหล่านั้นให้คุณ การผสมผสานนี้คือที่ที่ DramaClaw กำลังมุ่งไป
+**canvas ที่เข้าใจละคร และ agent ที่ทำงานบนมัน** node canvas ทั่วไปเชื่อมอะไรก็ได้แต่ไม่รู้จักตอน ตัวละคร หรือช็อต; เครื่องมือซีรีส์รู้จักงานฝีมือแต่ขังคุณไว้ใน wizard XiaHua ให้ canvas อิสระพร้อม node และ skill ที่เข้าใจละคร และ Xia Director วางแผน จัดวาง และรัน graph หลังจากคุณยืนยัน canvas และ agent ทำงานร่วมกันตลอด workflow การผลิต
 
 **สร้างมาเพื่อนิยายสู่ละครสั้น** เครื่องมือเวิร์กโฟลว์ทั่วไปเชื่อม node เข้าด้วยกันได้ แต่ไม่รู้ว่า "beat ของตอน" คืออะไร ไม่เข้าใจว่าทำไมความสม่ำเสมอของตัวตนตัวละครข้ามฉากถึงสำคัญ และจะไม่คอยรักษาโครงอารมณ์ของบทหนึ่ง ๆ ให้คงอยู่ตลอดทั้งภาพ + เสียง + การตัดต่อ DramaClaw ฝังวิจารณญาณทั้งหมดนั้นไว้ในเครื่องมือ
 
@@ -246,8 +246,11 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 
 | ความสามารถ | L\*TV | R\*Hub | T\*Now | S\*ko | U\*dream | O\*II | J\*/K\* | **DramaClaw** |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| agent ในตัว (วางแผน workflow, จัดการ canvas, ดำเนินงาน) | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
+| workflow skill และ recipe (ใช้ซ้ำ, ติดตั้ง, ส่งออก, แชร์) | — | — | — | — | — | — | — | ✅ |
+| เวทีผู้กำกับ 3D (จัดตำแหน่ง, การเคลื่อนไหว, timeline, บันทึก) | — | — | — | — | — | — | — | เตรียมทดสอบแบบปิด |
+| ซีรีส์แบบอินเทอร์แอคทีฟ (หลายตอน, แตกแขนง, IP) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | เตรียมทดสอบแบบปิด |
 | ดูตัวอย่างสตอรีบอร์ด (บท→ช็อต, บอร์ด) | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
-| ซีรีส์แบบอินเทอร์แอคทีฟ (หลายตอน, แตกแขนง, IP) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
 | คลังแอสเซ็ต (ตัวละคร/ฉาก/พร็อพ/เสียง) | ◐ | ❌ | ◐ | ✅ | ◐ | ○ | ❌ | ✅ |
 | ความสม่ำเสมอของฉาก (ตัวแปร, 360°, หลายสถานะ) | ✅ | ◐ | ❌ | ❌ | ○ | ❌ | ❌ | ✅ |
 | โลกของผู้กำกับ (ฉาก 360°/3D, กล้อง, การจัดเฟรม) | ✅ | ◐ | ❌ | ❌ | ◐ | ❌ | ❌ | ✅ |
@@ -256,9 +259,10 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 | canvas ไร้ขอบเขต (แบบ node, สำรวจอิสระ) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
 | รางคู่ (สายการผลิตหลัก + สำรวจบน canvas) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | สไตล์กำหนดเอง (เทมเพลต, prompt, negative) | ✅ | ◐ | ○ | ✅ | ◐ | ○ | ◐ | ✅ |
-| agent ในตัว (ผู้ช่วย, skill, คำแนะนำ) | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
 | เพื่อนคู่คิดสร้างสรรค์ (บุคลิก, การกระตุ้น, ฟีดแบ็ก) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | เปิดเผยซอร์สโค้ด (โฮสต์เอง, fork, ปรับแต่ง) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+<sub>ในคอลัมน์ DramaClaw ✅ หมายถึงความสามารถที่มีในซอร์ส branch main; ฟีเจอร์ที่เตรียมทดสอบแบบปิดยังไม่เปิดให้ใช้งานทั่วไป — หมายถึงยังไม่ได้ตรวจสอบความสามารถของคู่แข่งในแถวใหม่</sub>
 
 <br/>
 
@@ -377,14 +381,22 @@ adapter ของผู้ให้บริการที่มากับ ga
 
 ## <a name="in-development"></a>กำลังพัฒนา
 
-สิ่งเหล่านี้กำลังถูกสร้างอย่างเปิดเผยและยังไม่อยู่ใน release ติดตาม branch หรือมาช่วยกันได้
+เวที 3D และเรื่องราวแบบอินเทอร์แอคทีฟกำลังเตรียมทดสอบแบบปิด ยังไม่เปิดให้ใช้งานทั่วไป ส่วนโฆษณาแบบอินเทอร์แอคทีฟยังเป็นทิศทางการพัฒนาต่อไป
 
-- **Xia Director บน canvas** &mdash; agent สร้างและเชื่อม node อัปเดตข้อมูล node จัดวางและจัดกลุ่ม node รัน action ของ node และสร้าง workflow graph ทั้งชุด โดยทุกคำสั่ง canvas ต้องได้รับการอนุมัติในเบราว์เซอร์ที่เปิดอยู่ก่อน
-- **แคตตาล็อกเวิร์กโฟลว์และ skill จากชุมชน** &mdash; แคตตาล็อก workflow skill 11 รายการและ recipe 60 รายการ (ละครสั้น, โฆษณาอีคอมเมิร์ซ, โฆษณาตัวละคร IP, แคมเปญโซเชียล, สไตล์อนิเมะ / Pixar / LEGO / กังฟู…) ที่จัดวาง generation graph ทั้งชุด; skill และ recipe เป็น bundle ที่ติดตั้ง ส่งออก และแชร์ได้
-- **agent-kit** &mdash; แพ็กเกจพกพาที่นำเวิร์กโฟลว์ DramaClaw ชุดเดียวกันไปยัง Hermes, OpenClaw, WorkBuddy, Claude Code และ Codex
-- **Previz stage** &mdash; เวที 3D blocking ในเบราว์เซอร์ในรูป node บน canvas: timeline หลายแทร็ก, rig และเส้นทางตัวละคร, กล้องจำลองเลนส์ / เซ็นเซอร์จริง, ติดตามภาพระยะใกล้ แล้วจับภาพช็อตที่จัดเฟรมแล้วส่งตรงเข้า node ถัดไป Branch: `feat/previz-canvas-node`
-- **เรื่องราวแบบอินเทอร์แอคทีฟ** &mdash; จุดเลือกแบบแตกแขนงบน canvas คอมไพล์เป็น ink story และส่งออกเป็น HTML player แบบ self-contained พร้อมสถิติ playtest และ path coverage Branch: `feat/canvas-fmv`
-- **โฆษณาแบบอินเทอร์แอคทีฟ** &mdash; ad skill และ recipe ด้านบน ผสมกับการเล่นแบบแตกแขนง สำหรับวิดีโอสินค้าที่ผู้ชมเลือกทางเองได้
+- **เวทีผู้กำกับ 3D (Previz)** &mdash; รวมเข้า `staging` แล้ว กำลังเตรียมทดสอบแบบปิด สร้างฉาก blockout จากภาพอ้างอิง จัดวางตัวละครและพร็อพ ดูตัวอย่างการเคลื่อนไหวและเส้นทางบน timeline หลายแทร็ก และปรับกล้องด้วยค่าของเลนส์ / เซ็นเซอร์ จับภาพหรือบันทึกวิดีโอแล้วส่งกลับไปยัง node ที่เชื่อมต่อบน canvas
+
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
+</p>
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
+</p>
+<p align="center"><sub>หน้าจอทดสอบแบบปิด: ภาพอ้างอิงที่เชื่อมกับ node Previz และฉาก blockout 3D ที่สร้างจากภาพนั้น</sub></p>
+
+[▶ ดู demo เวที 3D (6 วินาที)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
+
+- **เรื่องราวแบบอินเทอร์แอคทีฟ** &mdash; กำลังเตรียมทดสอบแบบปิด กำหนดตัวเลือกแบบแตกแขนงและตัวแปรเรื่องราวบน canvas คอมไพล์เป็น ink story และส่งออก HTML player แบบ self-contained พร้อมสถิติ playtest และ path coverage Branch สำหรับพัฒนา: `feat/canvas-fmv`
+- **โฆษณาแบบอินเทอร์แอคทีฟ** &mdash; ad skill และ recipe ด้านบนผสมกับการเล่นแบบแตกแขนง สำหรับวิดีโอสินค้าที่ผู้ชมเลือกทางเองได้
 
 <br/>
 
@@ -409,35 +421,6 @@ adapter ของผู้ให้บริการที่มากับ ga
 - [นโยบายความปลอดภัย](../SECURITY.md)
 
 เราคัดสรรและติดป้าย [`good first issue`](https://github.com/dramaclaw/dramaclaw/labels/good%20first%20issue) อย่างต่อเนื่อง — จุดเริ่มต้นที่ดีเยี่ยม
-
-<br/>
-
-## ผู้มีส่วนร่วม
-
-ผู้คนที่สร้าง DramaClaw — ขอบคุณ 💜
-
-<table>
-  <tr>
-    <td align="center"><a href="https://github.com/bopy-zou"><img src="https://github.com/bopy-zou.png?size=100" width="72" alt="bopy-zou"/><br/><sub>bopy-zou</sub></a></td>
-    <td align="center"><a href="https://github.com/Handanhhhy"><img src="https://github.com/Handanhhhy.png?size=100" width="72" alt="Handanhhhy"/><br/><sub>Handanhhhy</sub></a></td>
-    <td align="center"><a href="https://github.com/Hanlin-Gabriel"><img src="https://github.com/Hanlin-Gabriel.png?size=100" width="72" alt="Hanlin-Gabriel"/><br/><sub>Hanlin-Gabriel</sub></a></td>
-    <td align="center"><a href="https://github.com/ryanhuang-duat"><img src="https://github.com/ryanhuang-duat.png?size=100" width="72" alt="ryanhuang-duat"/><br/><sub>ryanhuang-duat</sub></a></td>
-    <td align="center"><a href="https://github.com/lywaterman"><img src="https://github.com/lywaterman.png?size=100" width="72" alt="lywaterman"/><br/><sub>lywaterman</sub></a></td>
-    <td align="center"><a href="https://github.com/n7s4"><img src="https://github.com/n7s4.png?size=100" width="72" alt="n7s4"/><br/><sub>n7s4</sub></a></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/NewYuee"><img src="https://github.com/NewYuee.png?size=100" width="72" alt="NewYuee"/><br/><sub>NewYuee</sub></a></td>
-    <td align="center"><a href="https://github.com/SimonRen"><img src="https://github.com/SimonRen.png?size=100" width="72" alt="SimonRen"/><br/><sub>SimonRen</sub></a></td>
-    <td align="center"><a href="https://github.com/vkiki"><img src="https://github.com/vkiki.png?size=100" width="72" alt="vkiki"/><br/><sub>vkiki</sub></a></td>
-    <td align="center"><a href="https://github.com/wangwenqq"><img src="https://github.com/wangwenqq.png?size=100" width="72" alt="wangwenqq"/><br/><sub>wangwenqq</sub></a></td>
-    <td align="center"><a href="https://github.com/zhen2025109"><img src="https://github.com/zhen2025109.png?size=100" width="72" alt="zhen2025109"/><br/><sub>zhen2025109</sub></a></td>
-    <td align="center"><a href="https://github.com/revolutionarybukhari"><img src="https://github.com/revolutionarybukhari.png?size=100" width="72" alt="revolutionarybukhari"/><br/><sub>revolutionarybukhari</sub></a></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/yhay81"><img src="https://github.com/yhay81.png?size=100" width="72" alt="yhay81"/><br/><sub>yhay81</sub></a></td>
-    <td align="center"><a href="https://github.com/hoanglongggggggggg"><img src="https://github.com/hoanglongggggggggg.png?size=100" width="72" alt="hoanglongggggggggg"/><br/><sub>hoanglongggggggggg</sub></a></td>
-  </tr>
-</table>
 
 <br/>
 

@@ -210,24 +210,24 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 ### 虾导 —— 智能体
 
 <p align="center">
-  <img src="../assets/readme/xia-director.jpg" width="900" alt="Xia Director — project context and reviewed actions"/>
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
 </p>
-<p align="center"><sub>基于已有截图重新制作的功能展示图；界面细节可能与当前版本不同。</sub></p>
+<p align="center"><sub>虾导创建并启动了 17 个节点、32 条连线的工作流；画布成果与确认、执行记录同时可见。</sub></p>
 
 **现在**
 
+以下智能体能力已进入 `main` 源码分支；已发布镜像可能仍对应较早版本。
+
 - **懂你的项目** &mdash; 查询进度、推进脚本 / 镜头任务、检查交付完整性并给出下一步建议
-- **对其它 agent 开放** &mdash; 本地 MCP 服务把 DramaClaw 暴露给 Claude Code、Codex 和任何 MCP 客户端（仅本机回环，需显式信任开关），见 [MCP 接入 Claude Code](../docs/en/guides/mcp-claude-code.md)
-
-**接下来**
-
-- **直接上画布干活** &mdash; 上面那张截图就是方向：你描述这部片子，虾导负责创建并连接节点、排版、运行、审校结果，每条画布指令都先在你的浏览器里确认。画布 + 智能体是 DramaClaw 往后的核心，见[正在开发](#in-development)。
+- **直接上画布干活** &mdash; 描述创作需求，确认工作流后，虾导创建并连接节点、排版、运行；可以查看执行进度，并通过工作流工具恢复失败步骤
+- **工作流目录与社区技能** &mdash; 11 个工作流技能 + 60 个配方，覆盖快速漫剧、电商广告、IP 角色广告、社媒内容等；技能与配方支持安装、导出和分享
+- **对其它 agent 开放** &mdash; [Agent Kit](../agent-kit/README.md) 将同一套工作流带给 Codex、Claude Code、OpenClaw、Hermes、WorkBuddy 及其它 stdio MCP 客户端。内置智能体在浏览器里确认工作流；外部 Agent 在自己的聊天中确认，由打开的画布执行写入
 
 <br/>
 
 ## 为什么是 DramaClaw？
 
-**一张懂剧的画布，加一个在画布上干活的智能体。** 通用节点画布什么都能连，但不知道什么是剧集、角色、镜头；剧集工具懂行，却把你锁在向导里。虾画给你自由画布，节点和技能都懂剧；虾导正在被做成替你铺图、跑图、审图的那个人。这个组合就是 DramaClaw 要去的地方。
+**一张懂剧的画布，加一个在画布上干活的智能体。** 通用节点画布什么都能连，但不知道什么是剧集、角色、镜头；剧集工具懂行，却把你锁在向导里。虾画给你自由画布，节点和技能都懂剧；虾导在你确认后规划、铺图并运行工作流。画布与智能体一起贯穿创作生产过程。
 
 **为小说转短剧而生。** 通用的工作流工具确实可以把节点拼起来，但它们不知道「剧集节拍」是什么，不懂为什么角色的跨场景身份一致性那么重要，也不会在图像 + 配音 + 剪辑里去守护一整章节的情绪弧。DramaClaw 把这些判断全部内建到工具里。
 
@@ -245,8 +245,11 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 
 | 能力维度 | L\*TV | R\*Hub | T\*Now | S\*ko | U\*dream | O\*II | 即\*/可\* | **DramaClaw** |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| 内置 Agent（工作流规划、画布编排、执行） | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
+| 工作流技能与配方（复用、安装、导出、分享） | — | — | — | — | — | — | — | ✅ |
+| 3D 导演台（走位、动作、时间线、录制） | — | — | — | — | — | — | — | 准备内测 |
+| 互动影游（多剧集、分支叙事、IP 连续） | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | 准备内测 |
 | 分镜预览（脚本拆分镜、分镜图、故事板） | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
-| 互动影游（多剧集、分支叙事、IP 连续） | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
 | 资产库（角色/场景/道具/声线复用） | ◐ | ❌ | ◐ | ✅ | ◐ | ○ | ❌ | ✅ |
 | 场景一致性（变体、背面图、360、多状态） | ✅ | ◐ | ❌ | ❌ | ○ | ❌ | ❌ | ✅ |
 | 导演世界（360/3D 片场、机位、构图） | ✅ | ◐ | ❌ | ❌ | ◐ | ❌ | ❌ | ✅ |
@@ -255,9 +258,10 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 | 无限画布（节点创作、多素材编排、自由探索） | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
 | 双线模式（主线生产 + 自由画布探索） | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | 自定义风格（风格模板、提示词、避免指令） | ✅ | ◐ | ○ | ✅ | ◐ | ○ | ◐ | ✅ |
-| 内置 Agent（助手、技能调用、任务建议） | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
 | 创作搭子（陪伴形象、任务气泡、创作反馈） | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | 开放源代码（可私有化二开与深度定制） | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+<sub>DramaClaw 列中，✅ 表示 main 源码已支持；准备内测的功能尚未正式开放。新增行的 — 表示竞品能力未核实。</sub>
 
 <br/>
 
@@ -376,13 +380,21 @@ DramaClaw 对模型侧保持中立 —— 所有文本 / 图片 / 视频 / 音�
 
 ## <a name="in-development"></a>正在开发
 
-以下功能公开开发中，还没进正式版。可以盯着分支看，更欢迎来一起做。
+3D 导演台与互动剧正在准备内测，尚未正式开放；互动广告仍为后续开发方向。
 
-- **虾导直接上画布干活** &mdash; 智能体创建并连接节点、更新节点数据、排版与分组、运行节点动作、一次搭出整张工作流图，每条画布指令都先在打开的浏览器里确认再执行
-- **工作流目录与社区技能** &mdash; 一套 11 个工作流技能 + 60 个配方（快速漫剧、电商广告、IP 角色广告、社媒内容、日漫 / 皮克斯 / 乐高 / 功夫喜剧等风格），自动铺好整张生成图；技能与配方做成可安装、可导出、可分享的 bundle
-- **agent-kit** &mdash; 便携包，把同一套 DramaClaw 工作流带给 Hermes、OpenClaw、WorkBuddy、Claude Code、Codex
-- **预演台** &mdash; 浏览器内的 3D 走位预演台，以画布节点的形式存在：多轨时间线、角色绑定与路径、真实镜头 / 传感器参数的相机模型、特写跟踪，取好的镜头直接送进下一个节点。分支：`feat/previz-canvas-node`
-- **互动剧** &mdash; 在画布上设置分支选择点，编译成 ink 故事并导出为独立 HTML 播放器，带试玩统计与路径覆盖。分支：`feat/canvas-fmv`
+- **3D 导演台（预演台）** &mdash; 已合入 `staging`，准备内测。从参考图生成 3D 场景，安排角色与道具，通过多轨时间线预演动作和走位，使用镜头 / 传感器参数控制机位；截图或录制结果直接接回画布节点
+
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
+</p>
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
+</p>
+<p align="center"><sub>内测界面：参考图连接预演台节点，生成对应的 3D 场景。</sub></p>
+
+[▶ 观看 3D 导演台演示（6 秒）](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
+
+- **互动剧** &mdash; 准备内测。在画布上设置分支选择点与剧情变量，编译成 ink 故事并导出为独立 HTML 播放器，带试玩统计与路径覆盖。开发分支：`feat/canvas-fmv`
 - **互动广告** &mdash; 把上面的广告技能与配方和分支播放结合，做观众能自己选的产品视频
 
 <br/>
@@ -408,35 +420,6 @@ DramaClaw 对模型侧保持中立 —— 所有文本 / 图片 / 视频 / 音�
 - [安全策略](../SECURITY.md)
 
 我们会持续整理并标记 [`good first issue`](https://github.com/dramaclaw/dramaclaw/labels/good%20first%20issue) —— 欢迎从这里起手。
-
-<br/>
-
-## 贡献者
-
-构建 DramaClaw 的伙伴们 —— 谢谢你们。💜
-
-<table>
-  <tr>
-    <td align="center"><a href="https://github.com/bopy-zou"><img src="https://github.com/bopy-zou.png?size=100" width="72" alt="bopy-zou"/><br/><sub>bopy-zou</sub></a></td>
-    <td align="center"><a href="https://github.com/Handanhhhy"><img src="https://github.com/Handanhhhy.png?size=100" width="72" alt="Handanhhhy"/><br/><sub>Handanhhhy</sub></a></td>
-    <td align="center"><a href="https://github.com/Hanlin-Gabriel"><img src="https://github.com/Hanlin-Gabriel.png?size=100" width="72" alt="Hanlin-Gabriel"/><br/><sub>Hanlin-Gabriel</sub></a></td>
-    <td align="center"><a href="https://github.com/honggui-duat"><img src="https://github.com/honggui-duat.png?size=100" width="72" alt="honggui-duat"/><br/><sub>honggui-duat</sub></a></td>
-    <td align="center"><a href="https://github.com/lywaterman"><img src="https://github.com/lywaterman.png?size=100" width="72" alt="lywaterman"/><br/><sub>lywaterman</sub></a></td>
-    <td align="center"><a href="https://github.com/n7s4"><img src="https://github.com/n7s4.png?size=100" width="72" alt="n7s4"/><br/><sub>n7s4</sub></a></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/NewYuee"><img src="https://github.com/NewYuee.png?size=100" width="72" alt="NewYuee"/><br/><sub>NewYuee</sub></a></td>
-    <td align="center"><a href="https://github.com/SimonRen"><img src="https://github.com/SimonRen.png?size=100" width="72" alt="SimonRen"/><br/><sub>SimonRen</sub></a></td>
-    <td align="center"><a href="https://github.com/vkiki"><img src="https://github.com/vkiki.png?size=100" width="72" alt="vkiki"/><br/><sub>vkiki</sub></a></td>
-    <td align="center"><a href="https://github.com/wangwenqq"><img src="https://github.com/wangwenqq.png?size=100" width="72" alt="wangwenqq"/><br/><sub>wangwenqq</sub></a></td>
-    <td align="center"><a href="https://github.com/zhen2025109"><img src="https://github.com/zhen2025109.png?size=100" width="72" alt="zhen2025109"/><br/><sub>zhen2025109</sub></a></td>
-    <td align="center"><a href="https://github.com/revolutionarybukhari"><img src="https://github.com/revolutionarybukhari.png?size=100" width="72" alt="revolutionarybukhari"/><br/><sub>revolutionarybukhari</sub></a></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/yhay81"><img src="https://github.com/yhay81.png?size=100" width="72" alt="yhay81"/><br/><sub>yhay81</sub></a></td>
-    <td align="center"><a href="https://github.com/hoanglongggggggggg"><img src="https://github.com/hoanglongggggggggg.png?size=100" width="72" alt="hoanglongggggggggg"/><br/><sub>hoanglongggggggggg</sub></a></td>
-  </tr>
-</table>
 
 <br/>
 

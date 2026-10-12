@@ -211,24 +211,24 @@ Every step has its own interface — run them in order, skip steps, resume from 
 ### Xia Director — the agent
 
 <p align="center">
-  <img src="./assets/readme/xia-director.jpg" width="900" alt="Xia Director — project context and reviewed actions"/>
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
 </p>
-<p align="center"><sub>Screenshot-based feature illustration; interface details may differ from the current release.</sub></p>
+<p align="center"><sub>Xia Director created and started a 17-node, 32-edge workflow; the canvas and confirmation history remain visible together.</sub></p>
 
 **Today**
 
+The agent capabilities below are available in the `main` source branch; published images may contain an earlier version.
+
 - **Knows your project** &mdash; checks progress, advances script / shot tasks, audits deliverable completeness and suggests next steps
-- **Open to other agents** &mdash; a local MCP server exposes DramaClaw to Claude Code, Codex and any MCP client (loopback-only, explicit trust flag); see [MCP for Claude Code](docs/en/guides/mcp-claude-code.md)
-
-**Next**
-
-- **Works on the canvas** &mdash; the screenshot above is where this is going: describe the film, and Xia Director creates and connects the nodes, lays them out, runs them, and reviews the results, with every canvas command approved in your browser first. Canvas + agent is the core of DramaClaw from here on; see [In Development](#in-development).
+- **Works on the canvas** &mdash; describe your film, confirm the workflow, and Xia Director creates, connects, lays out and runs the nodes. Follow execution progress and recover failed steps with the workflow tools.
+- **Workflow catalog and community skills** &mdash; 11 workflow skills and 60 recipes for short drama, e-commerce ads, IP character ads, social campaigns and more; install, export and share skill / recipe bundles.
+- **Open to other agents** &mdash; [Agent Kit](agent-kit/README.md) brings the same workflows to Codex, Claude Code, OpenClaw, Hermes, WorkBuddy and other stdio MCP clients. Confirm built-in agent workflows in the browser; external agents confirm in their own chat while the open canvas executes the changes.
 
 <br/>
 
 ## Why DramaClaw?
 
-**A canvas that understands drama, and an agent that works on it.** Generic node canvases will wire anything together but know nothing about episodes, characters or shots; series tools know the craft but lock you into a wizard. XiaHua gives you the free canvas with drama-aware nodes and skills, and Xia Director is being built to lay out, run and review those graphs for you. That combination is where DramaClaw is going.
+**A canvas that understands drama, and an agent that works on it.** Generic node canvases will wire anything together but know nothing about episodes, characters or shots; series tools know the craft but lock you into a wizard. XiaHua gives you the free canvas with drama-aware nodes and skills, and Xia Director plans, lays out and runs those graphs with your confirmation. The canvas and agent work together across the production workflow.
 
 **Built for novel-to-short-drama.** General workflow tools can wire nodes together, but they don't know what an "episode beat" is, don't understand why a character's cross-scene identity consistency matters, and won't guard a chapter's emotional arc across image + voice + editing. DramaClaw builds all that judgment into the tool.
 
@@ -246,8 +246,11 @@ The edge isn't "more generation" — it's organizing the whole short-drama produ
 
 | Capability | L\*TV | R\*Hub | T\*Now | S\*ko | U\*dream | O\*II | J\*/K\* | **DramaClaw** |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Built-in agent (workflow planning, canvas orchestration, execution) | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
+| Workflow skills and recipes (reuse, install, export, share) | — | — | — | — | — | — | — | ✅ |
+| 3D director stage (blocking, motion, timeline, recording) | — | — | — | — | — | — | — | Preparing for closed beta |
+| Interactive series (multi-episode, branching, IP) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | Preparing for closed beta |
 | Storyboard preview (script→shots, boards) | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
-| Interactive series (multi-episode, branching, IP) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
 | Asset library (characters/scenes/props/voices) | ◐ | ❌ | ◐ | ✅ | ◐ | ○ | ❌ | ✅ |
 | Scene consistency (variants, 360°, multi-state) | ✅ | ◐ | ❌ | ❌ | ○ | ❌ | ❌ | ✅ |
 | Director's world (360°/3D set, camera, framing) | ✅ | ◐ | ❌ | ❌ | ◐ | ❌ | ❌ | ✅ |
@@ -256,9 +259,10 @@ The edge isn't "more generation" — it's organizing the whole short-drama produ
 | Infinite canvas (node-based, free exploration) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
 | Dual-track (main pipeline + canvas exploration) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Custom style (templates, prompts, negatives) | ✅ | ◐ | ○ | ✅ | ◐ | ○ | ◐ | ✅ |
-| Built-in agent (assistant, skills, suggestions) | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
 | Creative companion (persona, nudges, feedback) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Source-available (self-host, fork, customize) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+<sub>For DramaClaw, ✅ refers to capabilities in the `main` source branch; closed-beta features are not yet generally available. — means the competitor capability has not been verified for the new rows.</sub>
 
 <br/>
 
@@ -382,14 +386,22 @@ Provider adapters shipped in the gateway today (see the [channel support matrix]
 
 ## <a name="in-development"></a>In Development
 
-These are being built in the open and are not in a release yet. Watch the branches, or come help.
+The 3D stage and interactive stories are preparing for closed beta; they are not yet generally available. Interactive ads remain a development direction.
 
-- **Xia Director on the canvas** &mdash; the agent creates and connects nodes, updates node data, lays out and groups nodes, runs node actions and builds whole workflow graphs, with every canvas command approved in the open browser first.
-- **Workflow catalog and community skills** &mdash; a catalog of 11 workflow skills and 60 recipes (short drama, e-commerce ads, IP character ads, social campaigns, anime / Pixar / LEGO / kung-fu styles…) that lay out whole generation graphs; skills and recipes as installable, exportable, shareable bundles
-- **agent-kit** &mdash; a portable package that brings the same DramaClaw workflows to Hermes, OpenClaw, WorkBuddy, Claude Code and Codex
-- **Previz stage** &mdash; an in-browser 3D blocking stage as a canvas node: multi-track timeline, character rigs and paths, real lens / sensor camera model, close-up tracking, then capture the framed shot straight into the next node. Branch: `feat/previz-canvas-node`
-- **Interactive stories** &mdash; branching choice points on the canvas, compiled to an ink story and exported as a self-contained HTML player, with playtest stats and path coverage. Branch: `feat/canvas-fmv`
-- **Interactive ads** &mdash; the ad skills and recipes above, combined with branching playback, for product videos viewers can steer
+- **3D director stage (Previz)** &mdash; merged into `staging`, preparing for closed beta. Generate a blockout scene from a reference image, arrange characters and props, preview motion and paths on a multi-track timeline, and frame shots with lens / sensor controls. Capture images or record the preview back into connected canvas nodes.
+
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
+</p>
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
+</p>
+<p align="center"><sub>Closed-beta preview: a reference image connected to the Previz node, followed by its generated 3D blockout scene.</sub></p>
+
+[▶ Watch the 3D stage demo (6 seconds)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
+
+- **Interactive stories** &mdash; preparing for closed beta. Set branching choices and story variables on the canvas, compile to an ink story and export a self-contained HTML player, with playtest stats and path coverage. Development branch: `feat/canvas-fmv`.
+- **Interactive ads** &mdash; the ad skills and recipes above, combined with branching playback, for product videos viewers can steer.
 
 <br/>
 
@@ -414,35 +426,6 @@ These are being built in the open and are not in a release yet. Watch the branch
 - [Security Policy](./SECURITY.md)
 
 We continuously curate and label [`good first issue`](https://github.com/dramaclaw/dramaclaw/labels/good%20first%20issue) — a great place to start.
-
-<br/>
-
-## Contributors
-
-The people building DramaClaw — thank you. 💜
-
-<table>
-  <tr>
-    <td align="center"><a href="https://github.com/bopy-zou"><img src="https://github.com/bopy-zou.png?size=100" width="72" alt="bopy-zou"/><br/><sub>bopy-zou</sub></a></td>
-    <td align="center"><a href="https://github.com/Handanhhhy"><img src="https://github.com/Handanhhhy.png?size=100" width="72" alt="Handanhhhy"/><br/><sub>Handanhhhy</sub></a></td>
-    <td align="center"><a href="https://github.com/Hanlin-Gabriel"><img src="https://github.com/Hanlin-Gabriel.png?size=100" width="72" alt="Hanlin-Gabriel"/><br/><sub>Hanlin-Gabriel</sub></a></td>
-    <td align="center"><a href="https://github.com/ryanhuang-duat"><img src="https://github.com/ryanhuang-duat.png?size=100" width="72" alt="ryanhuang-duat"/><br/><sub>ryanhuang-duat</sub></a></td>
-    <td align="center"><a href="https://github.com/lywaterman"><img src="https://github.com/lywaterman.png?size=100" width="72" alt="lywaterman"/><br/><sub>lywaterman</sub></a></td>
-    <td align="center"><a href="https://github.com/n7s4"><img src="https://github.com/n7s4.png?size=100" width="72" alt="n7s4"/><br/><sub>n7s4</sub></a></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/NewYuee"><img src="https://github.com/NewYuee.png?size=100" width="72" alt="NewYuee"/><br/><sub>NewYuee</sub></a></td>
-    <td align="center"><a href="https://github.com/SimonRen"><img src="https://github.com/SimonRen.png?size=100" width="72" alt="SimonRen"/><br/><sub>SimonRen</sub></a></td>
-    <td align="center"><a href="https://github.com/vkiki"><img src="https://github.com/vkiki.png?size=100" width="72" alt="vkiki"/><br/><sub>vkiki</sub></a></td>
-    <td align="center"><a href="https://github.com/wangwenqq"><img src="https://github.com/wangwenqq.png?size=100" width="72" alt="wangwenqq"/><br/><sub>wangwenqq</sub></a></td>
-    <td align="center"><a href="https://github.com/zhen2025109"><img src="https://github.com/zhen2025109.png?size=100" width="72" alt="zhen2025109"/><br/><sub>zhen2025109</sub></a></td>
-    <td align="center"><a href="https://github.com/revolutionarybukhari"><img src="https://github.com/revolutionarybukhari.png?size=100" width="72" alt="revolutionarybukhari"/><br/><sub>revolutionarybukhari</sub></a></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/yhay81"><img src="https://github.com/yhay81.png?size=100" width="72" alt="yhay81"/><br/><sub>yhay81</sub></a></td>
-    <td align="center"><a href="https://github.com/hoanglongggggggggg"><img src="https://github.com/hoanglongggggggggg.png?size=100" width="72" alt="hoanglongggggggggg"/><br/><sub>hoanglongggggggggg</sub></a></td>
-  </tr>
-</table>
 
 <br/>
 
