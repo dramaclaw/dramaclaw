@@ -32,6 +32,8 @@ const ANCHORED_POPOVER_PANELS: ReadonlySet<QuickPanel> = new Set([
   'shortcuts',
 ]);
 const PRODUCT_MANUAL_URL = 'https://neo-flying.feishu.cn/docx/T2UgdVA4Fo1A5KxCh0vckDz3nTg';
+// Ink 导入尚未接入完整影游制作流程，暂时隐藏入口。
+const STORY_IMPORT_ENABLED = false;
 
 interface CanvasQuickActionBarProps {
   placement?: 'bottom-right' | 'top-right';
@@ -263,23 +265,25 @@ export function CanvasQuickActionBar({
                 </span>
               );
             })}
-            <span className="group relative inline-flex">
-              <button
-                type="button"
-                onClick={onImportStory}
-                aria-label={t('canvas.story.import')}
-                className="flex h-9 w-9 items-center justify-center rounded-[10px] text-white/52 transition-colors hover:bg-white/[0.09] hover:text-white/82"
-              >
-                <FileInput className="h-[18px] w-[18px]" />
-              </button>
-              <span
-                className={`pointer-events-none absolute left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-[6px] border border-white/[0.08] bg-[#11151d]/95 px-2 py-1 text-[11px] leading-none text-white/78 opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.32)] transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 ${
-                  isTop ? 'top-full mt-2' : 'bottom-full mb-2'
-                }`}
-              >
-                {t('canvas.story.import')}
+            {STORY_IMPORT_ENABLED && (
+              <span className="group relative inline-flex">
+                <button
+                  type="button"
+                  onClick={onImportStory}
+                  aria-label={t('canvas.story.import')}
+                  className="flex h-9 w-9 items-center justify-center rounded-[10px] text-white/52 transition-colors hover:bg-white/[0.09] hover:text-white/82"
+                >
+                  <FileInput className="h-[18px] w-[18px]" />
+                </button>
+                <span
+                  className={`pointer-events-none absolute left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-[6px] border border-white/[0.08] bg-[#11151d]/95 px-2 py-1 text-[11px] leading-none text-white/78 opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.32)] transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 ${
+                    isTop ? 'top-full mt-2' : 'bottom-full mb-2'
+                  }`}
+                >
+                  {t('canvas.story.import')}
+                </span>
               </span>
-            </span>
+            )}
           </div>
         </div>
       </div>
