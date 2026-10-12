@@ -18,6 +18,7 @@ import {
 } from "@/features/freezone/canvasDraftStorage";
 import {
   applyRemoteFreezoneCanvas,
+  refreshRemoteFreezoneCanvas,
   consumeQueuedLocalFreezoneProjections,
   queueLocalFreezoneProjection,
   removeLocalFreezoneProjection,
@@ -1082,6 +1083,65 @@ describe("useCanvasSync hydrate lifecycle", () => {
     hook.unmount();
   });
 
+  it.each([false, true])("ignores late Agent refreshes without disturbing local edits or the next save (dirty: %s)", async dirty => {
+    vi.useFakeTimers();
+    const canvasId = `agent_refresh_reordered_${dirty}`;
+    const remote = (revision: number, id: string) => ({
+      nodes: [{ id, type: CANVAS_NODE_TYPES.upload, position: { x: 0, y: 0 },
+        data: { imageUrl: `/static/${id}.png` } }],
+      edges: [], revision, metadata: null,
+    });
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({ nodes: [], edges: [], revision: 7, metadata: null });
+    vi.mocked(putFreezoneCanvas).mockResolvedValue({ saved: true, revision: 10 });
+    const hook = renderHook(() => useCanvasSync("project-a", canvasId));
+    await act(async () => {
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    expect(hook.result.current.status).toBe("ready");
+    let resolveOld!: (value: ReturnType<typeof remote>) => void;
+    let resolveNew!: (value: ReturnType<typeof remote>) => void;
+    vi.mocked(getFreezoneCanvas)
+      .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveNew = resolve; }));
+    const old = refreshRemoteFreezoneCanvas("project-a", canvasId, { protectUnsavedLocalEdits: true });
+    const fresh = refreshRemoteFreezoneCanvas("project-a", canvasId, { protectUnsavedLocalEdits: true });
+    await act(async () => {
+      resolveNew(remote(9, "newest"));
+      expect(await fresh).toBe(true);
+    });
+    expect(hook.result.current.revision).toBe(9);
+    if (dirty) {
+      act(() => { useCanvasStore.getState().addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {}); });
+    }
+    const nodesBeforeOldResponse = useCanvasStore.getState().nodes;
+    await act(async () => {
+      resolveOld(remote(8, "outdated"));
+      expect(await old).toBe(false);
+    });
+    expect(hook.result.current.revision).toBe(9);
+    expect(hook.result.current.status).toBe("ready");
+    expect(hook.result.current.error).toBeNull();
+    expect(hook.result.current.readConflictSnapshot()).toBeNull();
+    expect(useCanvasStore.getState().nodes).toEqual(nodesBeforeOldResponse);
+    if (!dirty) {
+      act(() => { useCanvasStore.getState().addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {}); });
+    }
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    expect(putFreezoneCanvas).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(putFreezoneCanvas).mock.calls[0][2].base_revision).toBe(9);
+    expect(hook.result.current.revision).toBe(10);
+    const savedNodes = useCanvasStore.getState().nodes;
+    act(() => {
+      expect(applyRemoteFreezoneCanvas("project-a", canvasId, remote(9, "outdated-after-save"))).toBe(false);
+    });
+    expect(hook.result.current.revision).toBe(10);
+    expect(useCanvasStore.getState().nodes).toEqual(savedNodes);
+    hook.unmount();
+  });
+
   it("adopts consecutive Agent remote refreshes when normalized local state is fully saved", async () => {
     vi.mocked(getFreezoneCanvas).mockResolvedValue({
       nodes: [],
@@ -1095,7 +1155,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
     );
     await waitFor(() => expect(hook.result.current.status).toBe("ready"));
 
-    let applied = false;
+    let applied: boolean | null = false;
     act(() => {
       applied = applyRemoteFreezoneCanvas(
         "project-a",
@@ -1175,7 +1235,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
         .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
     });
 
-    let applied = true;
+    let applied: boolean | null = true;
     act(() => {
       applied = applyRemoteFreezoneCanvas(
         "project-a",
