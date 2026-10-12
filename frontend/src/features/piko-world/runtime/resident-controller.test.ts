@@ -3,7 +3,9 @@ import type { Texture, Ticker } from "pixi.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createResidentActor } from "./resident-actor";
 import { PIKO_PLAYER_SPEED, PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS, PIKO_PLAYER_MOTION_COLUMNS, PIKO_PLAYER_WALK_COLUMNS } from "../piko-player";
-import type { PikoNavigation } from "./map-package-schema";
+import { PikoNavigationSchema, type PikoNavigation } from "./map-package-schema";
+import { canStand } from "./character-movement";
+import { readFileSync } from "node:fs";
 const mock=vi.hoisted(()=>({setFrame:vi.fn(),setStaticTexture:vi.fn(),destroy:vi.fn(),step:vi.fn(),stop:vi.fn(),unlock:vi.fn(),audioDestroy:vi.fn()}));
 vi.mock("./footstep-audio",()=>({createGrassFootsteps:()=>({step:mock.step,stop:mock.stop,unlock:mock.unlock,destroy:mock.audioDestroy})}));
 vi.mock("./character-actor",()=>({createCharacterActor:()=>({
@@ -238,5 +240,23 @@ it("uses compact player rows while retaining facing on stopping", () => {
   window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyW" }));
   tick({ deltaMS: 16 });
   expect(mock.setFrame).toHaveBeenLastCalledWith(6);
+  actor.destroy();
+});
+
+it.each([false, true])("reaches a remote position behind a wall only when following it: %s", followsRemote => {
+  const host = document.createElement("div"); document.body.append(host);
+  const navigation = PikoNavigationSchema.parse(JSON.parse(readFileSync("public/piko/world/maps/amber-wilds/data/navigation.json", "utf8")));
+  // Both ends are standable, but the straight line between them crosses a collider.
+  const start = { x: 549, y: 552 }, target = { x: 722, y: 552 };
+  expect(canStand(start, navigation) && canStand(target, navigation)).toBe(true);
+  const ticker = { add: vi.fn(), remove: vi.fn() };
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => true, { host, navigation, followsRemote,
+    simulatedInput: () => ({ x: target.x - actor.container.position.x, y: target.y - actor.container.position.y }) });
+  actor.container.position.set(start.x, start.y);
+  const tick = ticker.add.mock.calls[0][0];
+  for (let frame = 0; frame < 1000; frame++) tick({ deltaMS: 16 });
+  const remaining = Math.hypot(target.x - actor.container.position.x, target.y - actor.container.position.y);
+  if (followsRemote) expect(remaining).toBeLessThan(0.01);
+  else expect(remaining).toBeGreaterThan(100);
   actor.destroy();
 });

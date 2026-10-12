@@ -135,3 +135,93 @@ it("sends heartbeats and leaves explicitly when the page is hidden", () => {
   expect(sockets[0].closeArgs).toEqual([1000, "page_exit"]);
   hook.unmount();
 });
+
+function installSockets() {
+  const sockets: FakeSocket[] = [];
+  class FakeSocket {
+    static readonly OPEN = 1;
+    readyState = 0;
+    sent: Array<Record<string, unknown>> = [];
+    closed = false;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: ((event: CloseEvent) => void) | null = null;
+
+    constructor(_url: string) { sockets.push(this); }
+    send(value: string) { this.sent.push(JSON.parse(value)); }
+    close() { this.closed = true; }
+    open() { this.readyState = FakeSocket.OPEN; this.onopen?.(); }
+    receive(frame: Record<string, unknown>) {
+      this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(frame) }));
+    }
+  }
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true, writable: true, value: FakeSocket,
+  });
+  return sockets;
+}
+
+const localCharacter: PikoCharacter = {
+  id: "player-local", nickname: "小花", gender: "female", bio: "",
+  scene_id: "welcome-courtyard", position_x: 1270, position_y: 480, facing: "south",
+};
+const acceptedChat = {
+  type: "chat.request.responded", request_id: "request-1", accepted: true,
+  peer: { character_id: "player-1", nickname: "小叶" },
+};
+
+it("keeps the connection and its private chats when the profile is saved", () => {
+  const sockets = installSockets();
+  const hook = renderHook(
+    ({ character }) => usePikoWorldConnection(character, character.scene_id),
+    { initialProps: { character: localCharacter } },
+  );
+  act(() => sockets[0].open());
+  act(() => sockets[0].receive(acceptedChat));
+  expect(hook.result.current.privateChatPeers).toHaveLength(1);
+
+  // Saving returns a new object for the same character.
+  hook.rerender({ character: { ...localCharacter, nickname: "小花花", bio: "换了名字" } });
+
+  expect(sockets).toHaveLength(1);
+  expect(sockets[0].closed).toBe(false);
+  expect(sockets[0].sent.some(frame => frame.type === "client.leave")).toBe(false);
+  expect(hook.result.current.privateChatPeers).toHaveLength(1);
+  act(() => { hook.result.current.refreshProfile(); });
+  expect(sockets[0].sent[sockets[0].sent.length - 1]).toEqual({ type: "profile.refresh" });
+  hook.unmount();
+});
+
+it("applies another player's profile update in place", () => {
+  const sockets = installSockets();
+  const hook = renderHook(() => usePikoWorldConnection(localCharacter, localCharacter.scene_id));
+  act(() => sockets[0].open());
+  act(() => sockets[0].receive({ type: "world.snapshot", players: [remotePlayer()] }));
+
+  act(() => sockets[0].receive({
+    type: "player.updated", player: remotePlayer({ nickname: "改名的小叶", bio: "新简介" }),
+  }));
+
+  expect(hook.result.current.remotePlayers).toHaveLength(1);
+  expect(hook.result.current.remotePlayers[0]).toMatchObject({ nickname: "改名的小叶", bio: "新简介" });
+  hook.unmount();
+});
+
+it("drops the previous character's session state when the character changes", () => {
+  const sockets = installSockets();
+  const hook = renderHook(
+    ({ character }) => usePikoWorldConnection(character, character.scene_id),
+    { initialProps: { character: localCharacter } },
+  );
+  act(() => sockets[0].open());
+  act(() => sockets[0].receive(acceptedChat));
+  act(() => sockets[0].receive({ type: "world.snapshot", players: [remotePlayer()] }));
+
+  hook.rerender({ character: { ...localCharacter, id: "player-other" } });
+
+  expect(sockets).toHaveLength(2);
+  expect(sockets[0].closed).toBe(true);
+  expect(hook.result.current.privateChatPeers).toEqual([]);
+  expect(hook.result.current.remotePlayers).toEqual([]);
+  hook.unmount();
+});

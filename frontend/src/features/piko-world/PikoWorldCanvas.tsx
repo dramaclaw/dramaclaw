@@ -670,6 +670,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
                     const dx = target.x - actor.container.x, dy = target.y - actor.container.y;
                     return Math.hypot(dx, dy) < 2 ? { x: 0, y: 0 } : { x: dx, y: dy };
                   },
+                  followsRemote: true,
                   footsteps: false,
                   motionColumns: PIKO_PLAYER_MOTION_COLUMNS,
                   walkColumns: PIKO_PLAYER_WALK_COLUMNS,

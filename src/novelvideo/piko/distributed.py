@@ -372,6 +372,18 @@ class DistributedPikoWorldHub:
             exclude_character_id=player.character_id,
         )
 
+    async def update_profile(self, player: OnlinePlayer, *, nickname: str, bio: str) -> None:
+        if (player.nickname, player.bio) == (nickname, bio):
+            return
+        player.nickname, player.bio = nickname, bio
+        await self._refresh_player(player)
+        await self._publish(
+            "room",
+            {"type": "player.updated", "player": player.public_dict()},
+            room_id=player.instance_id,
+            exclude_character_id=player.character_id,
+        )
+
     async def handle(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
         player.last_seen_at = monotonic()
         event_type = payload.get("type")

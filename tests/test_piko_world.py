@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from fastapi import HTTPException, WebSocketDisconnect
+
 from novelvideo.api.routes import piko as piko_routes
 from novelvideo.piko.world import PikoCharacterStore, PikoWorldHub
 
@@ -273,3 +275,235 @@ async def test_private_chat_acceptance_and_messages_reach_only_the_two_players(
     assert second_socket.frames[-1] == first_socket.frames[-1]
     assert second_socket.frames[-1]["message"]["body"] == "你好"
     assert third_socket.frames == []
+
+
+async def open_private_chat(hub: PikoWorldHub, sender, recipient, recipient_socket) -> None:
+    await hub.handle(
+        sender, {"type": "chat.request", "target_character_id": recipient.character_id}
+    )
+    request_id = recipient_socket.frames[-1]["request"]["id"]
+    await hub.handle(
+        recipient,
+        {"type": "chat.request.respond", "request_id": request_id, "accepted": True},
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_takeover_ends_private_chats_for_the_peer(tmp_path: Path) -> None:
+    store = PikoCharacterStore(tmp_path / "world.db")
+    first = store.create_or_update("user-a", nickname="小花", gender="female")
+    second = store.create_or_update("user-b", nickname="小叶", gender="male")
+    hub = PikoWorldHub(store)
+    first_socket, second_socket, takeover_socket = (
+        FakeWebSocket(), FakeWebSocket(), FakeWebSocket()
+    )
+    sender = await hub.join(first_socket, user_id="user-a", character=first)  # type: ignore[arg-type]
+    recipient = await hub.join(second_socket, user_id="user-b", character=second)  # type: ignore[arg-type]
+    await open_private_chat(hub, sender, recipient, second_socket)
+    first_socket.frames.clear()
+
+    # The same account enters from another tab; the old route then runs disconnect().
+    takeover = await hub.join(takeover_socket, user_id="user-b", character=second)  # type: ignore[arg-type]
+    await hub.disconnect(second_socket)  # type: ignore[arg-type]
+
+    assert second_socket.close_code == 4001
+    ended = [frame for frame in first_socket.frames if frame["type"] == "chat.private.ended"]
+    assert ended == [{"type": "chat.private.ended", "character_id": second.id}]
+    # The old socket's cleanup must not take the new connection offline.
+    assert not any(frame["type"] == "player.left" for frame in first_socket.frames)
+    await hub.handle(takeover, {"type": "chat.send", "body": "我回来了"})
+    assert first_socket.frames[-1]["message"]["body"] == "我回来了"
+
+
+class ScriptedWebSocket(FakeWebSocket):
+    """A socket that replays client frames, running a hook before each one."""
+
+    def __init__(self, script: list) -> None:
+        super().__init__()
+        self.headers: dict[str, str] = {}
+        self.query_params: dict[str, str] = {}
+        self.cookies = {piko_routes.AUTH_COOKIE_NAME: "cookie"}
+        self._script = list(script)
+
+    async def accept(self) -> None:
+        return None
+
+    async def receive_text(self) -> str:
+        if not self._script:
+            raise WebSocketDisconnect()
+        step = self._script.pop(0)
+        if callable(step):
+            step()
+            return await self.receive_text()
+        return step
+
+
+class RecordingHub:
+    def __init__(self) -> None:
+        self.handled: list[dict] = []
+        self.profiles: list[dict] = []
+        self.disconnected = False
+
+    async def join(self, websocket, **kwargs):
+        return SimpleNamespace()
+
+    async def update_public_task_status(self, player, status) -> None:
+        return None
+
+    async def update_profile(self, player, **profile) -> None:
+        self.profiles.append(profile)
+
+    async def handle(self, player, payload: dict) -> None:
+        self.handled.append(payload)
+
+    async def disconnect(self, websocket) -> None:
+        self.disconnected = True
+
+
+def install_world_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, verify
+) -> RecordingHub:
+    store = PikoCharacterStore(tmp_path / "world.db")
+    store.create_or_update("user-a", nickname="小花", gender="female")
+    hub = RecordingHub()
+
+    async def no_task_status(user) -> None:
+        return None
+
+    monkeypatch.setattr(piko_routes, "character_store", store)
+    monkeypatch.setattr(piko_routes, "world_hub", hub)
+    monkeypatch.setattr(piko_routes, "_public_task_status", no_task_status)
+    monkeypatch.setattr(piko_routes, "_verify_browser_session", verify)
+    return hub
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["chat.send", "chat.private.send", "ping"])
+async def test_revoked_session_is_disconnected_before_its_next_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event_type: str
+) -> None:
+    state = {"revoked": False}
+
+    async def verify(cookie):
+        if state["revoked"]:
+            raise HTTPException(status_code=401, detail="Invalid session")
+        return {"id": "user-a", "username": "alice"}
+
+    hub = install_world_route(monkeypatch, tmp_path, verify)
+    socket = ScriptedWebSocket(
+        [
+            '{"type": "player.move", "x": 1, "y": 2, "facing": "south"}',
+            lambda: state.update(revoked=True),
+            '{"type": "%s", "body": "还能发吗"}' % event_type,
+            '{"type": "chat.send", "body": "不应到达"}',
+        ]
+    )
+
+    await piko_routes.piko_world_ws(socket)  # type: ignore[arg-type]
+
+    assert [payload["type"] for payload in hub.handled] == ["player.move"]
+    assert socket.frames[-1] == {"type": "error", "code": "unauthorized"}
+    assert socket.close_code == 1008
+    assert hub.disconnected
+
+
+@pytest.mark.asyncio
+async def test_session_handed_to_another_account_is_disconnected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = {"user": "user-a"}
+
+    async def verify(cookie):
+        return {"id": state["user"], "username": state["user"]}
+
+    hub = install_world_route(monkeypatch, tmp_path, verify)
+    socket = ScriptedWebSocket(
+        [lambda: state.update(user="user-b"), '{"type": "chat.send", "body": "冒名"}']
+    )
+
+    await piko_routes.piko_world_ws(socket)  # type: ignore[arg-type]
+
+    assert hub.handled == []
+    assert socket.close_code == 1008
+
+
+@pytest.mark.asyncio
+async def test_auth_outage_drops_the_event_but_keeps_the_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = {"down": False}
+
+    async def verify(cookie):
+        if state["down"]:
+            raise HTTPException(status_code=503, detail="Authentication service unavailable")
+        return {"id": "user-a", "username": "alice"}
+
+    hub = install_world_route(monkeypatch, tmp_path, verify)
+    socket = ScriptedWebSocket(
+        [
+            lambda: state.update(down=True),
+            '{"type": "chat.send", "body": "鉴权不可用"}',
+            lambda: state.update(down=False),
+            '{"type": "chat.send", "body": "恢复"}',
+        ]
+    )
+
+    await piko_routes.piko_world_ws(socket)  # type: ignore[arg-type]
+
+    assert [payload["body"] for payload in hub.handled] == ["恢复"]
+    assert socket.close_code is None
+
+
+@pytest.mark.asyncio
+async def test_profile_refresh_updates_the_online_player_without_reconnecting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def verify(cookie):
+        return {"id": "user-a", "username": "alice"}
+
+    hub = install_world_route(monkeypatch, tmp_path, verify)
+    store = piko_routes.character_store
+    socket = ScriptedWebSocket(
+        [
+            lambda: store.create_or_update(
+                "user-a", nickname="小花花", gender="female", bio="换了名字"
+            ),
+            '{"type": "profile.refresh"}',
+        ]
+    )
+
+    await piko_routes.piko_world_ws(socket)  # type: ignore[arg-type]
+
+    assert hub.profiles == [{"nickname": "小花花", "bio": "换了名字"}]
+    assert hub.handled == []
+    assert socket.close_code is None
+
+
+@pytest.mark.asyncio
+async def test_profile_update_reaches_scene_peers_and_keeps_private_chats(
+    tmp_path: Path,
+) -> None:
+    store = PikoCharacterStore(tmp_path / "world.db")
+    first = store.create_or_update("user-a", nickname="小花", gender="female")
+    second = store.create_or_update("user-b", nickname="小叶", gender="male")
+    hub = PikoWorldHub(store)
+    first_socket, second_socket = FakeWebSocket(), FakeWebSocket()
+    sender = await hub.join(first_socket, user_id="user-a", character=first)  # type: ignore[arg-type]
+    recipient = await hub.join(second_socket, user_id="user-b", character=second)  # type: ignore[arg-type]
+    await open_private_chat(hub, sender, recipient, second_socket)
+    first_socket.frames.clear()
+    second_socket.frames.clear()
+
+    await hub.update_profile(sender, nickname="小花花", bio="换了名字")
+
+    assert first_socket.frames == []
+    assert [frame["type"] for frame in second_socket.frames] == ["player.updated"]
+    assert second_socket.frames[0]["player"]["nickname"] == "小花花"
+    assert second_socket.frames[0]["player"]["bio"] == "换了名字"
+    await hub.handle(
+        sender,
+        {"type": "chat.private.send", "target_character_id": second.id, "body": "还在"},
+    )
+    assert second_socket.frames[-1]["message"]["from_nickname"] == "小花花"
+    await hub.update_profile(sender, nickname="小花花", bio="换了名字")
+    assert [frame["type"] for frame in second_socket.frames].count("player.updated") == 1

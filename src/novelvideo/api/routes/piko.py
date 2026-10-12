@@ -77,6 +77,38 @@ async def _authenticate_piko_ws(websocket: WebSocket) -> dict[str, Any]:
     return await _verify_browser_session(websocket.cookies.get(AUTH_COOKIE_NAME))
 
 
+# Events that speak for the account or keep it online. Movement stays unchecked:
+# it arrives a dozen times a second and the next heartbeat ends a revoked session.
+_REVERIFIED_EVENTS = frozenset(
+    {
+        "ping",
+        "chat.send",
+        "chat.request",
+        "chat.request.respond",
+        "chat.private.send",
+        "profile.refresh",
+    }
+)
+
+
+async def _session_still_valid(websocket: WebSocket, user_id: str) -> bool:
+    """Re-check the browser session behind an open socket.
+
+    Raises when the session was revoked, expired, suspended or now belongs to
+    another account. Returns False when the auth backend cannot answer, so the
+    caller drops the event without disconnecting everyone during an outage.
+    """
+    try:
+        fresh = await _authenticate_piko_ws(websocket)
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            return False
+        raise
+    if await user_id_from_api_user(fresh) != user_id:
+        raise HTTPException(status_code=403, detail="principal changed")
+    return True
+
+
 async def _public_task_status(user: dict[str, Any]) -> str | None:
     """Expose only whether this account has active work in an accessible project."""
     try:
@@ -135,6 +167,19 @@ async def piko_world_ws(websocket: WebSocket) -> None:
             if payload is not None:
                 if payload.get("type") == "client.leave":
                     break
+                if payload.get("type") in _REVERIFIED_EVENTS and not (
+                    await _session_still_valid(websocket, user_id)
+                ):
+                    continue
+                if payload.get("type") == "profile.refresh":
+                    # The profile was saved over HTTP; the open connection re-reads it
+                    # instead of reconnecting, which would end every private chat.
+                    saved = await _store_call(character_store.get, user_id)
+                    if saved is not None:
+                        await world_hub.update_profile(
+                            player, nickname=saved.nickname, bio=saved.bio
+                        )
+                    continue
                 if payload.get("type") == "ping":
                     await world_hub.update_public_task_status(
                         player, await _public_task_status(user)

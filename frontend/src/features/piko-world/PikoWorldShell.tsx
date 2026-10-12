@@ -119,6 +119,7 @@ export function PikoWorldShell({ character = null, playerGender, onMusicMapChang
   const username = useAuthStore(state => state.username);
   const { profile, saveProfile } = usePikoProfile(username);
   const [savedCharacter, setSavedCharacter] = useState(character);
+  const refreshWorldProfile = useRef<() => boolean>(() => false);
   useEffect(() => setSavedCharacter(character), [character]);
   const saveAccountProfile = useCallback(async (next: typeof profile) => {
     if (!savedCharacter) return saveProfile(next);
@@ -130,6 +131,8 @@ export function PikoWorldShell({ character = null, playerGender, onMusicMapChang
       );
       if (!saveProfile({ nickname: updated.nickname, bio: updated.bio })) return false;
       setSavedCharacter(updated);
+      // The open connection keeps running; tell it to pick up the saved profile.
+      refreshWorldProfile.current();
       return true;
     } catch {
       return false;
@@ -144,6 +147,7 @@ export function PikoWorldShell({ character = null, playerGender, onMusicMapChang
     x: character.position_x, y: character.position_y, facing: character.facing,
   } : undefined);
   const world = usePikoWorldConnection(savedCharacter, location.mapId);
+  refreshWorldProfile.current = world.refreshProfile;
   useMapMusic(onMusicMapChange ? null : location.mapId);
   useEffect(() => { onMusicMapChange?.(location.mapId); }, [location.mapId, onMusicMapChange]);
   const [travelFade, setTravelFade] = useState<"idle" | "out" | "black" | "loading" | "in">("idle");

@@ -61,8 +61,9 @@ function IncomingRequest({ request, onRespond }: {
   </RequestSkin>;
 }
 
-function PrivateConversation({ peer, messages, ownCharacterId, ownNickname, onOpenChange,
+function PrivateConversation({ active, peer, messages, ownCharacterId, ownNickname, onOpenChange,
   onSend, onEnd }: {
+  active: boolean;
   peer: PikoPrivateChatPeer;
   messages: PikoPrivateChatMessage[];
   ownCharacterId: string;
@@ -73,17 +74,20 @@ function PrivateConversation({ peer, messages, ownCharacterId, ownNickname, onOp
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
+  // The dialog portals out of the hidden tray, so it has to honour `active` itself.
+  const visible = active && open;
   const openRef = useRef(true);
-  openRef.current = open;
+  openRef.current = visible;
   const [unread, setUnread] = useState(0);
   const [draft, setDraft] = useState("");
   const seenMessages = useRef(new Set(messages.map(message => message.id)));
   const log = useRef<HTMLDivElement>(null);
   useEffect(() => { playPikoUiSound("open"); }, []);
   useEffect(() => {
-    onOpenChange(peer.character_id, open);
+    onOpenChange(peer.character_id, visible);
     return () => onOpenChange(peer.character_id, false);
-  }, [onOpenChange, open, peer.character_id]);
+  }, [onOpenChange, visible, peer.character_id]);
+  useEffect(() => { if (visible) setUnread(0); }, [visible]);
   useEffect(() => {
     let incoming = 0;
     for (const message of messages) {
@@ -98,7 +102,7 @@ function PrivateConversation({ peer, messages, ownCharacterId, ownNickname, onOp
   }, [messages, ownCharacterId]);
   useEffect(() => {
     if (log.current) log.current.scrollTop = log.current.scrollHeight;
-  }, [messages, open]);
+  }, [messages, visible]);
   const send = () => {
     const body = draft.trim();
     if (!body || Array.from(body).length > 80 || !onSend(peer.character_id, body)) return;
@@ -126,7 +130,7 @@ function PrivateConversation({ peer, messages, ownCharacterId, ownNickname, onOp
         </button>
       </div>
     </RequestSkin>
-    <Dialog open={open} onOpenChange={value => {
+    <Dialog open={visible} onOpenChange={value => {
       setOpen(value);
       if (!value) playPikoUiSound("close");
     }}>
@@ -210,7 +214,7 @@ export function PikoPrivateChat({ active, onOpenChange, ownNickname,
     className="absolute right-4 top-[6.5rem] z-30 flex w-max max-w-[calc(100%-2rem)] flex-col items-end">
     {requests.map(request => <IncomingRequest key={request.id} request={request}
       onRespond={onRespond ?? (() => false)} />)}
-    {peers.map(peer => <PrivateConversation key={peer.character_id} peer={peer}
+    {peers.map(peer => <PrivateConversation key={peer.character_id} active={active} peer={peer}
       ownCharacterId={ownCharacterId} ownNickname={ownNickname}
       messages={messages.filter(message => message.from_character_id === peer.character_id
         || message.to_character_id === peer.character_id)}

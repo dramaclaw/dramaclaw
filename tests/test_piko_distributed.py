@@ -538,3 +538,37 @@ async def test_expiry_sweep_removes_a_leftover_member_without_ending_its_new_ses
     finally:
         await first_hub.close()
         await second_hub.close()
+
+
+@pytest.mark.asyncio
+async def test_profile_update_crosses_processes_and_reaches_later_snapshots() -> None:
+    server = fakeredis.FakeServer()
+    store = FakeStore()
+    first_hub, second_hub = make_hub(server, store), make_hub(server, store)
+    first_socket, second_socket, late_socket = (FakeWebSocket() for _ in range(3))
+
+    try:
+        first = await first_hub.join(
+            first_socket, user_id="user-1", character=character(1)  # type: ignore[arg-type]
+        )
+        await second_hub.join(
+            second_socket, user_id="user-2", character=character(2)  # type: ignore[arg-type]
+        )
+        second_socket.frames.clear()
+
+        await first_hub.update_profile(first, nickname="新名字", bio="新简介")
+
+        updated = await wait_for_frame(second_socket, "player.updated")
+        assert updated["player"]["nickname"] == "新名字"
+        assert updated["player"]["bio"] == "新简介"
+        assert all(frame["type"] != "player.updated" for frame in first_socket.frames)
+        await second_hub.join(
+            late_socket, user_id="user-3", character=character(3)  # type: ignore[arg-type]
+        )
+        snapshot = {
+            player["character_id"]: player for player in late_socket.frames[0]["players"]
+        }
+        assert snapshot[first.character_id]["nickname"] == "新名字"
+    finally:
+        await first_hub.close()
+        await second_hub.close()

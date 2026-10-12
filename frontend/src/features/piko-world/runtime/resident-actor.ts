@@ -2,7 +2,7 @@
 import type { Texture, Ticker } from "pixi.js";
 import { createCharacterActor } from "./character-actor";
 import type { PikoNavigation } from "./map-package-schema";
-import { CHARACTER_SPEED, FACINGS, facingFor, moveCharacter, type Facing, type Point } from "./character-movement";
+import { CHARACTER_SPEED, FACINGS, facingFor, moveCharacter, moveToward, type Facing, type Point } from "./character-movement";
 import { advanceGait, gaitColumn, crossesFootContact } from "./character-gait";
 import { createGrassFootsteps } from "./footstep-audio";
 import { findClickPath } from "./click-path";
@@ -31,6 +31,8 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     host: HTMLElement; navigation: PikoNavigation;
     label?: string; position?: Point; facing?: Facing;
     simulatedInput?: () => Point;
+    /** simulatedInput is the offset to a position its owner already reached: follow it without local collision. */
+    followsRemote?: boolean;
     footsteps?: boolean;
     idleFrameAt?: (elapsedMs: number, facing?: Facing) => number;
     idleCycleMs?: number;
@@ -95,7 +97,10 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     }
     if(input.x||input.y) facing = facingFor(input);
     const before = actor.container.position;
-    const next = moveCharacter(before,input,deltaMs,controls.navigation,speed);
+    // A remote player's path is not replayed here, so colliding locally would strand it at walls.
+    const next = controls.followsRemote
+      ? moveToward(before,input,deltaMs,speed)
+      : moveCharacter(before,input,deltaMs,controls.navigation,speed);
     const travelled = Math.hypot(next.x-before.x,next.y-before.y);
     const moving = travelled>0.01;
     actor.container.position.set(next.x,next.y);

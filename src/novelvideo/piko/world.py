@@ -217,8 +217,15 @@ class PikoWorldHub:
                 socket for socket, current in self._players.items()
                 if current.user_id == user_id and socket is not websocket
             ]
+            ended: list[tuple[WebSocket, str]] = []
             for socket in replaced:
-                self._players.pop(socket, None)
+                old = self._players.pop(socket, None)
+                # The route's later disconnect() finds no player for this socket,
+                # so the takeover has to end the old connection's private chats.
+                for peer_socket in self._private_peers.pop(socket, set()):
+                    self._private_peers.get(peer_socket, set()).discard(socket)
+                    if old is not None:
+                        ended.append((peer_socket, old.character_id))
             self._players[websocket] = player
             snapshot = [
                 current.public_dict() for current in self._players.values()
@@ -226,6 +233,13 @@ class PikoWorldHub:
             ]
         for socket in replaced:
             await self._close_replaced(socket)
+        for peer_socket, character_id in ended:
+            try:
+                await peer_socket.send_json(
+                    {"type": "chat.private.ended", "character_id": character_id}
+                )
+            except Exception:  # noqa: BLE001 - takeover cleanup is best effort
+                pass
         await websocket.send_json({"type": "world.snapshot", "players": snapshot})
         await self._broadcast_scene(
             player.scene_id, {"type": "player.joined", "player": player.public_dict()},
@@ -247,6 +261,16 @@ class PikoWorldHub:
                 "character_id": player.character_id,
                 "task_status": normalized,
             },
+            exclude=player.websocket,
+        )
+
+    async def update_profile(self, player: OnlinePlayer, *, nickname: str, bio: str) -> None:
+        if (player.nickname, player.bio) == (nickname, bio):
+            return
+        player.nickname, player.bio = nickname, bio
+        await self._broadcast_scene(
+            player.scene_id,
+            {"type": "player.updated", "player": player.public_dict()},
             exclude=player.websocket,
         )
 

@@ -38,6 +38,13 @@ export function moveCharacter(position: Point, input: Point, deltaMs: number, na
   }
   return result;
 }
+/** Step straight toward a position another client already walked to; no local collision. */
+export function moveToward(position: Point, offset: Point, deltaMs: number, speed = CHARACTER_SPEED) {
+  const length = Math.hypot(offset.x,offset.y);
+  if (!length || !Number.isFinite(deltaMs)) return {x:position.x,y:position.y};
+  const distance = Math.min(length, speed * Math.max(0,Math.min(deltaMs,50)) / 1000);
+  return {x:position.x+offset.x/length*distance,y:position.y+offset.y/length*distance};
+}
 export function facingFor(input: Point): Facing {
   return Math.abs(input.x)>Math.abs(input.y) ? (input.x<0?"west":"east") : (input.y<0?"north":"south");
 }

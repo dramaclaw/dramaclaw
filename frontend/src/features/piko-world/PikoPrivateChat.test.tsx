@@ -90,3 +90,29 @@ it("ends the real private session through the network callback", () => {
   fireEvent.click(screen.getByRole("button", { name: "关闭与在线小叶的聊天" }));
   expect(onEnd).toHaveBeenCalledWith(peer.character_id);
 });
+
+it("keeps an accepted conversation closed until the tray becomes active", () => {
+  const onOpenChange = vi.fn();
+  const props = { ownCharacterId: "character-me", peers: [peer], onOpenChange };
+  const view = render(<PikoPrivateChat {...props} active={false} messages={[]} />);
+  // The dialog portals to <body>, outside the hidden tray, so it must not exist at all.
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(onOpenChange).not.toHaveBeenCalledWith(true);
+
+  // A message that arrives while the world is loading is unread, not silently seen.
+  view.rerender(<PikoPrivateChat {...props} active={false} messages={[
+    message("theirs", peer.character_id, "character-me", "在吗"),
+  ]} />);
+  expect(document.querySelector('[aria-label="1 条未读消息"]')).not.toBeNull();
+
+  view.rerender(<PikoPrivateChat {...props} active messages={[
+    message("theirs", peer.character_id, "character-me", "在吗"),
+  ]} />);
+  expect(screen.getByRole("dialog", { name: "在线小叶" })).toBeVisible();
+  expect(onOpenChange).toHaveBeenLastCalledWith(true);
+  expect(document.querySelector('[aria-label="1 条未读消息"]')).toBeNull();
+
+  view.rerender(<PikoPrivateChat {...props} active={false} messages={[]} />);
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(onOpenChange).toHaveBeenLastCalledWith(false);
+});
