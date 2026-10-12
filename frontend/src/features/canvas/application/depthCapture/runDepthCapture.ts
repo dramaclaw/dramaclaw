@@ -101,12 +101,16 @@ export async function startDepthCapture({
   let job: DepthCaptureJob | null = null;
   const slot = acquireSlot();
   let holdsSlot = false;
+  // 取源视频和上传结果都可能很慢；取消时必须真的掐断请求，否则这个已经没人要的
+  // 任务会一直占着唯一名额，后面排队的全被它堵住。
+  const abort = new AbortController();
   // 排队和取源视频期间 worker 还没建，也要先占住任务表，否则节点会误显示「已中断」。
   activeJobs.set(nodeId, {
     sourceVideoUrl,
     cancel: () => {
       cancelled = true;
       slot.abandon();
+      abort.abort();
       job?.cancel();
     },
   });
@@ -135,7 +139,9 @@ export async function startDepthCapture({
     if (!holdsSlot || cancelled) {
       return;
     }
-    const response = await fetch(resolveImageDisplayUrl(sourceVideoUrl));
+    const response = await fetch(resolveImageDisplayUrl(sourceVideoUrl), {
+      signal: abort.signal,
+    });
     if (!response.ok) {
       throw new DepthCaptureError("failed", `source video HTTP ${response.status}`);
     }
@@ -162,6 +168,7 @@ export async function startDepthCapture({
       projectId,
       result.blob,
       `depth-capture-${Date.now()}.mp4`,
+      { signal: abort.signal },
     );
     if (cancelled || !nodeExists(nodeId)) {
       return;
