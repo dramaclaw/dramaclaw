@@ -153,7 +153,46 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 
 <br/>
 
+## <a name="in-development"></a>กำลังพัฒนา
+
+เวที 3D และเรื่องราวแบบอินเทอร์แอคทีฟกำลังเตรียมทดสอบแบบปิด ยังไม่เปิดให้ใช้งานทั่วไป ส่วนโฆษณาแบบอินเทอร์แอคทีฟยังเป็นทิศทางการพัฒนาต่อไป
+
+- **เวทีผู้กำกับ 3D (Previz)** &mdash; รวมเข้า `staging` แล้ว กำลังเตรียมทดสอบแบบปิด สร้างฉาก blockout จากภาพอ้างอิง จัดวางตัวละครและพร็อพ ดูตัวอย่างการเคลื่อนไหวและเส้นทางบน timeline หลายแทร็ก และปรับกล้องด้วยค่าของเลนส์ / เซ็นเซอร์ จับภาพหรือบันทึกวิดีโอแล้วส่งกลับไปยัง node ที่เชื่อมต่อบน canvas
+
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
+</p>
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
+</p>
+<p align="center"><sub>หน้าจอทดสอบแบบปิด: ภาพอ้างอิงที่เชื่อมกับ node Previz และฉาก blockout 3D ที่สร้างจากภาพนั้น</sub></p>
+
+[▶ ดู demo เวที 3D (6 วินาที)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
+
+- **เรื่องราวแบบอินเทอร์แอคทีฟ** &mdash; กำลังเตรียมทดสอบแบบปิด กำหนดตัวเลือกแบบแตกแขนงและตัวแปรเรื่องราวบน canvas คอมไพล์เป็น ink story และส่งออก HTML player แบบ self-contained พร้อมสถิติ playtest และ path coverage Branch สำหรับพัฒนา: `feat/canvas-fmv`
+- **โฆษณาแบบอินเทอร์แอคทีฟ** &mdash; ad skill และ recipe ด้านบนผสมกับการเล่นแบบแตกแขนง สำหรับวิดีโอสินค้าที่ผู้ชมเลือกทางเองได้
+
+<br/>
+
 ## ความสามารถหลัก
+
+### Xia Director — agent
+
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
+</p>
+<p align="center"><sub>Xia Director สร้างและเริ่ม workflow ที่มี 17 node และ 32 เส้นเชื่อม โดยแสดง canvas และประวัติการยืนยันร่วมกัน</sub></p>
+
+**วันนี้**
+
+ความสามารถของ agent ด้านล่างมีแล้วในซอร์ส branch `main`; image ที่เผยแพร่อาจยังเป็นเวอร์ชันก่อนหน้า
+
+- **ทำงานบน canvas** &mdash; บรรยายหนังที่ต้องการ ยืนยัน workflow แล้ว Xia Director จะสร้าง เชื่อม จัดวาง และรัน node ติดตามความคืบหน้าและใช้เครื่องมือ workflow เพื่อกู้คืนขั้นตอนที่ล้มเหลว
+- **แคตตาล็อก workflow และ skill จากชุมชน** &mdash; workflow skill 11 รายการและ recipe 60 รายการสำหรับละครสั้น โฆษณาอีคอมเมิร์ซ ตัวละคร IP เนื้อหาโซเชียล และอื่น ๆ พร้อมติดตั้ง ส่งออก และแชร์ bundle ของ skill / recipe
+- **เปิดให้ agent อื่น** &mdash; [Agent Kit](../agent-kit/README.md) นำ workflow เดียวกันไปใช้กับ Codex, Claude Code, OpenClaw, Hermes, WorkBuddy และ stdio MCP client อื่น ๆ agent ในตัวยืนยัน workflow ในเบราว์เซอร์ ส่วน agent ภายนอกยืนยันในแชตของตนเอง แล้ว canvas ที่เปิดอยู่จะดำเนินการเปลี่ยนแปลง
+- **รู้จักโปรเจกต์ของคุณ** &mdash; ตรวจความคืบหน้า เดินหน้างานบท / ช็อต ตรวจสอบความครบถ้วนของงานส่งมอบ และแนะนำขั้นตอนถัดไป
+
+<br/>
 
 ### XiaHua — canvas ไร้ขอบเขต
 
@@ -207,22 +246,6 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
   <img src="../assets/readme/storyboards.jpg" width="900" alt="สตอรีบอร์ดและเฟรมแรก"/>
 </p>
 <p align="center"><sub>ภาพแนะนำฟีเจอร์จากภาพหน้าจอเดิม รายละเอียดอาจแตกต่างจากเวอร์ชันปัจจุบัน</sub></p>
-
-### Xia Director — agent
-
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
-</p>
-<p align="center"><sub>Xia Director สร้างและเริ่ม workflow ที่มี 17 node และ 32 เส้นเชื่อม โดยแสดง canvas และประวัติการยืนยันร่วมกัน</sub></p>
-
-**วันนี้**
-
-ความสามารถของ agent ด้านล่างมีแล้วในซอร์ส branch `main`; image ที่เผยแพร่อาจยังเป็นเวอร์ชันก่อนหน้า
-
-- **รู้จักโปรเจกต์ของคุณ** &mdash; ตรวจความคืบหน้า เดินหน้างานบท / ช็อต ตรวจสอบความครบถ้วนของงานส่งมอบ และแนะนำขั้นตอนถัดไป
-- **ทำงานบน canvas** &mdash; บรรยายหนังที่ต้องการ ยืนยัน workflow แล้ว Xia Director จะสร้าง เชื่อม จัดวาง และรัน node ติดตามความคืบหน้าและใช้เครื่องมือ workflow เพื่อกู้คืนขั้นตอนที่ล้มเหลว
-- **แคตตาล็อก workflow และ skill จากชุมชน** &mdash; workflow skill 11 รายการและ recipe 60 รายการสำหรับละครสั้น โฆษณาอีคอมเมิร์ซ ตัวละคร IP เนื้อหาโซเชียล และอื่น ๆ พร้อมติดตั้ง ส่งออก และแชร์ bundle ของ skill / recipe
-- **เปิดให้ agent อื่น** &mdash; [Agent Kit](../agent-kit/README.md) นำ workflow เดียวกันไปใช้กับ Codex, Claude Code, OpenClaw, Hermes, WorkBuddy และ stdio MCP client อื่น ๆ agent ในตัวยืนยัน workflow ในเบราว์เซอร์ ส่วน agent ภายนอกยืนยันในแชตของตนเอง แล้ว canvas ที่เปิดอยู่จะดำเนินการเปลี่ยนแปลง
 
 <br/>
 
@@ -376,27 +399,6 @@ adapter ของผู้ให้บริการที่มากับ ga
 | **Story graph**      | Cognee (`DC-cognee-embedding`)                     | embedding channel ใดก็ได้                                     |
 | **Task runtime**     | inline ใน process (ไม่มี Ray / Redis / Celery)        | เหมือนกัน                                                      |
 | **Storage**          | ระบบไฟล์ในเครื่อง                                   | เหมือนกัน                                                      |
-
-<br/>
-
-## <a name="in-development"></a>กำลังพัฒนา
-
-เวที 3D และเรื่องราวแบบอินเทอร์แอคทีฟกำลังเตรียมทดสอบแบบปิด ยังไม่เปิดให้ใช้งานทั่วไป ส่วนโฆษณาแบบอินเทอร์แอคทีฟยังเป็นทิศทางการพัฒนาต่อไป
-
-- **เวทีผู้กำกับ 3D (Previz)** &mdash; รวมเข้า `staging` แล้ว กำลังเตรียมทดสอบแบบปิด สร้างฉาก blockout จากภาพอ้างอิง จัดวางตัวละครและพร็อพ ดูตัวอย่างการเคลื่อนไหวและเส้นทางบน timeline หลายแทร็ก และปรับกล้องด้วยค่าของเลนส์ / เซ็นเซอร์ จับภาพหรือบันทึกวิดีโอแล้วส่งกลับไปยัง node ที่เชื่อมต่อบน canvas
-
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
-</p>
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
-</p>
-<p align="center"><sub>หน้าจอทดสอบแบบปิด: ภาพอ้างอิงที่เชื่อมกับ node Previz และฉาก blockout 3D ที่สร้างจากภาพนั้น</sub></p>
-
-[▶ ดู demo เวที 3D (6 วินาที)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
-
-- **เรื่องราวแบบอินเทอร์แอคทีฟ** &mdash; กำลังเตรียมทดสอบแบบปิด กำหนดตัวเลือกแบบแตกแขนงและตัวแปรเรื่องราวบน canvas คอมไพล์เป็น ink story และส่งออก HTML player แบบ self-contained พร้อมสถิติ playtest และ path coverage Branch สำหรับพัฒนา: `feat/canvas-fmv`
-- **โฆษณาแบบอินเทอร์แอคทีฟ** &mdash; ad skill และ recipe ด้านบนผสมกับการเล่นแบบแตกแขนง สำหรับวิดีโอสินค้าที่ผู้ชมเลือกทางเองได้
 
 <br/>
 

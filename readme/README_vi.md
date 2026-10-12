@@ -153,7 +153,46 @@ Nó được xây cho người sáng tạo, studio độc lập và kỹ sư sá
 
 <br/>
 
+## <a name="in-development"></a>Đang phát triển
+
+Sân khấu 3D và truyện tương tác đang chuẩn bị thử nghiệm kín, chưa được mở rộng rãi. Quảng cáo tương tác vẫn là hướng phát triển tiếp theo.
+
+- **Sân khấu đạo diễn 3D (Previz)** &mdash; đã merge vào `staging`, chuẩn bị thử nghiệm kín. Tạo bối cảnh blockout từ ảnh tham chiếu, sắp xếp nhân vật và đạo cụ, xem trước chuyển động và đường đi trên timeline đa track, điều chỉnh camera bằng thông số ống kính / cảm biến. Chụp ảnh hoặc ghi hình rồi đưa kết quả về các node canvas được kết nối.
+
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
+</p>
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
+</p>
+<p align="center"><sub>Giao diện thử nghiệm kín: ảnh tham chiếu nối với node Previz và bối cảnh blockout 3D được tạo từ ảnh đó.</sub></p>
+
+[▶ Xem demo sân khấu 3D (6 giây)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
+
+- **Truyện tương tác** &mdash; chuẩn bị thử nghiệm kín. Đặt lựa chọn phân nhánh và biến truyện trên canvas, biên dịch thành truyện ink và xuất trình phát HTML độc lập, kèm thống kê playtest và độ phủ đường đi. Nhánh phát triển: `feat/canvas-fmv`.
+- **Quảng cáo tương tác** &mdash; các skill và recipe quảng cáo ở trên kết hợp với phát lại phân nhánh, cho video sản phẩm mà người xem tự điều hướng.
+
+<br/>
+
 ## Năng lực cốt lõi
+
+### Xia Director — agent
+
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
+</p>
+<p align="center"><sub>Xia Director đã tạo và khởi chạy workflow gồm 17 node và 32 cạnh; canvas và lịch sử xác nhận được hiển thị cùng nhau.</sub></p>
+
+**Hiện tại**
+
+Các tính năng agent dưới đây đã có trên nhánh mã nguồn `main`; image đã phát hành có thể vẫn dùng phiên bản cũ hơn.
+
+- **Làm việc trên canvas** &mdash; mô tả bộ phim, xác nhận workflow, rồi Xia Director tạo, kết nối, bố trí và chạy các node. Theo dõi tiến độ và dùng công cụ workflow để khôi phục các bước thất bại.
+- **Danh mục workflow và skill cộng đồng** &mdash; 11 workflow skill và 60 recipe cho phim ngắn, quảng cáo thương mại điện tử, nhân vật IP, nội dung mạng xã hội và nhiều hơn nữa; cài đặt, xuất và chia sẻ bundle skill / recipe.
+- **Mở cho các agent khác** &mdash; [Agent Kit](../agent-kit/README.md) mang cùng workflow tới Codex, Claude Code, OpenClaw, Hermes, WorkBuddy và các stdio MCP client khác. Agent tích hợp xác nhận workflow trong trình duyệt; agent bên ngoài xác nhận trong chat của mình, còn canvas đang mở thực thi thay đổi.
+- **Hiểu dự án của bạn** &mdash; kiểm tra tiến độ, đẩy các tác vụ kịch bản / cảnh quay, rà soát mức độ hoàn chỉnh của sản phẩm bàn giao và gợi ý bước tiếp theo
+
+<br/>
 
 ### XiaHua — bảng vẽ vô hạn
 
@@ -207,22 +246,6 @@ Mỗi bước có giao diện riêng — chạy theo thứ tự, bỏ qua bướ
   <img src="../assets/readme/storyboards.jpg" width="900" alt="Storyboard & khung hình đầu"/>
 </p>
 <p align="center"><sub>Minh họa tính năng dựa trên ảnh chụp có sẵn; giao diện có thể khác phiên bản hiện tại.</sub></p>
-
-### Xia Director — agent
-
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
-</p>
-<p align="center"><sub>Xia Director đã tạo và khởi chạy workflow gồm 17 node và 32 cạnh; canvas và lịch sử xác nhận được hiển thị cùng nhau.</sub></p>
-
-**Hiện tại**
-
-Các tính năng agent dưới đây đã có trên nhánh mã nguồn `main`; image đã phát hành có thể vẫn dùng phiên bản cũ hơn.
-
-- **Hiểu dự án của bạn** &mdash; kiểm tra tiến độ, đẩy các tác vụ kịch bản / cảnh quay, rà soát mức độ hoàn chỉnh của sản phẩm bàn giao và gợi ý bước tiếp theo
-- **Làm việc trên canvas** &mdash; mô tả bộ phim, xác nhận workflow, rồi Xia Director tạo, kết nối, bố trí và chạy các node. Theo dõi tiến độ và dùng công cụ workflow để khôi phục các bước thất bại.
-- **Danh mục workflow và skill cộng đồng** &mdash; 11 workflow skill và 60 recipe cho phim ngắn, quảng cáo thương mại điện tử, nhân vật IP, nội dung mạng xã hội và nhiều hơn nữa; cài đặt, xuất và chia sẻ bundle skill / recipe.
-- **Mở cho các agent khác** &mdash; [Agent Kit](../agent-kit/README.md) mang cùng workflow tới Codex, Claude Code, OpenClaw, Hermes, WorkBuddy và các stdio MCP client khác. Agent tích hợp xác nhận workflow trong trình duyệt; agent bên ngoài xác nhận trong chat của mình, còn canvas đang mở thực thi thay đổi.
 
 <br/>
 
@@ -376,27 +399,6 @@ Các adapter nhà cung cấp có sẵn trong gateway hiện nay (xem [ma trận 
 | **Story graph**      | Cognee (`DC-cognee-embedding`)                     | bất kỳ kênh embedding nào                                 |
 | **Runtime tác vụ**   | inline trong tiến trình (không Ray / Redis / Celery) | như trên                                                |
 | **Lưu trữ**          | hệ thống file cục bộ                               | như trên                                                  |
-
-<br/>
-
-## <a name="in-development"></a>Đang phát triển
-
-Sân khấu 3D và truyện tương tác đang chuẩn bị thử nghiệm kín, chưa được mở rộng rãi. Quảng cáo tương tác vẫn là hướng phát triển tiếp theo.
-
-- **Sân khấu đạo diễn 3D (Previz)** &mdash; đã merge vào `staging`, chuẩn bị thử nghiệm kín. Tạo bối cảnh blockout từ ảnh tham chiếu, sắp xếp nhân vật và đạo cụ, xem trước chuyển động và đường đi trên timeline đa track, điều chỉnh camera bằng thông số ống kính / cảm biến. Chụp ảnh hoặc ghi hình rồi đưa kết quả về các node canvas được kết nối.
-
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
-</p>
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
-</p>
-<p align="center"><sub>Giao diện thử nghiệm kín: ảnh tham chiếu nối với node Previz và bối cảnh blockout 3D được tạo từ ảnh đó.</sub></p>
-
-[▶ Xem demo sân khấu 3D (6 giây)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
-
-- **Truyện tương tác** &mdash; chuẩn bị thử nghiệm kín. Đặt lựa chọn phân nhánh và biến truyện trên canvas, biên dịch thành truyện ink và xuất trình phát HTML độc lập, kèm thống kê playtest và độ phủ đường đi. Nhánh phát triển: `feat/canvas-fmv`.
-- **Quảng cáo tương tác** &mdash; các skill và recipe quảng cáo ở trên kết hợp với phát lại phân nhánh, cho video sản phẩm mà người xem tự điều hướng.
 
 <br/>
 
