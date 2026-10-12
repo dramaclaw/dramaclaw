@@ -19,6 +19,7 @@ export interface PromptPreviewStep {
   label: string;
   model_kind: PromptModelKind;
   supported: boolean;
+  note: string;
   needs_episode: boolean;
   targets: PromptPreviewTarget[];
 }

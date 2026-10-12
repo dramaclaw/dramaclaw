@@ -113,7 +113,11 @@ function PromptPreviewBody({ project }: { project: string }) {
   } else if (!stepInfo) {
     content = <p className="text-xs text-muted-foreground">{t("promptPreview.loading")}</p>;
   } else if (!stepInfo.supported) {
-    content = <p className="text-xs text-muted-foreground">{t("promptPreview.unsupported")}</p>;
+    content = (
+      <p className="text-xs text-muted-foreground">
+        {stepInfo.note || t("promptPreview.unsupported")}
+      </p>
+    );
   } else if (needsEpisode) {
     content = <p className="text-xs text-muted-foreground">{t("promptPreview.needsEpisode")}</p>;
   } else if (targets.length === 0) {
