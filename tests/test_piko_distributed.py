@@ -449,3 +449,92 @@ async def test_private_message_to_an_unrouted_peer_ends_the_chat() -> None:
     finally:
         await first_hub.close()
         await second_hub.close()
+
+
+@pytest.mark.asyncio
+async def test_session_takeover_on_another_shard_leaves_the_previous_room() -> None:
+    server = fakeredis.FakeServer()
+    store = FakeStore()
+    first_hub, second_hub = make_hub(server, store), make_hub(server, store)
+    first_hub.scene_capacity = second_hub.scene_capacity = 2
+    sockets = [FakeWebSocket() for _ in range(4)]
+
+    try:
+        # Two players fill shard 1, so the player and its observer land on shard 2.
+        for number in (1, 2):
+            await first_hub.join(
+                sockets[number - 1],
+                user_id=f"user-{number}",
+                character=character(number),  # type: ignore[arg-type]
+            )
+        player = await first_hub.join(
+            sockets[2], user_id="user-3", character=character(3)  # type: ignore[arg-type]
+        )
+        observer = await first_hub.join(
+            sockets[3], user_id="user-4", character=character(4)  # type: ignore[arg-type]
+        )
+        assert player.instance_id == observer.instance_id == "welcome-courtyard:2"
+        await first_hub.disconnect(sockets[0])  # type: ignore[arg-type]
+        sockets[3].frames.clear()
+
+        takeover_socket = FakeWebSocket()
+        takeover = await second_hub.join(
+            takeover_socket, user_id="user-3", character=character(3)  # type: ignore[arg-type]
+        )
+
+        assert takeover.instance_id == "welcome-courtyard:1"
+        left = await wait_for_frame(sockets[3], "player.left")
+        assert left["character_id"] == player.character_id
+        old_room = first_hub._room_key(observer.instance_id)
+        assert await first_hub.redis.zrange(old_room, 0, -1) == [observer.character_id]
+        assert sockets[2].close_code == 4001
+    finally:
+        await first_hub.close()
+        await second_hub.close()
+
+
+@pytest.mark.asyncio
+async def test_expiry_sweep_removes_a_leftover_member_without_ending_its_new_session() -> None:
+    server = fakeredis.FakeServer()
+    store = FakeStore()
+    first_hub, second_hub = make_hub(server, store), make_hub(server, store)
+    observer_socket, moved_socket, friend_socket = (FakeWebSocket() for _ in range(3))
+
+    try:
+        observer = await first_hub.join(
+            observer_socket, user_id="user-1", character=character(1)  # type: ignore[arg-type]
+        )
+        moved = await second_hub.join(
+            moved_socket,
+            user_id="user-2",
+            character=replace(character(2), scene_id="artisan-market"),  # type: ignore[arg-type]
+        )
+        friend = await second_hub.join(
+            friend_socket,
+            user_id="user-3",
+            character=replace(character(3), scene_id="artisan-market"),  # type: ignore[arg-type]
+        )
+        await open_private_chat(
+            second_hub, moved, moved_socket, second_hub, friend, friend_socket
+        )
+        observer_socket.frames.clear()
+        # An expired membership of the moved character lingers in the observer's room.
+        old_room = first_hub._room_key(observer.instance_id)
+        await first_hub.redis.zadd(old_room, {moved.character_id: 1})
+
+        await first_hub._heartbeat_once()
+
+        left = await wait_for_frame(observer_socket, "player.left")
+        assert left["character_id"] == moved.character_id
+        assert await first_hub.redis.zrange(old_room, 0, -1) == [observer.character_id]
+        await asyncio.sleep(0.05)
+        assert all(frame["type"] != "chat.private.ended" for frame in friend_socket.frames)
+        assert await first_hub.redis.sismember(
+            first_hub._active_chat_key(moved.character_id), friend.character_id
+        )
+        new_room = first_hub._room_key(moved.instance_id)
+        assert moved.character_id in await first_hub.redis.zrange(new_room, 0, -1)
+        assert await first_hub.redis.exists(first_hub._route_key(moved.character_id))
+    finally:
+        await first_hub.close()
+        await second_hub.close()

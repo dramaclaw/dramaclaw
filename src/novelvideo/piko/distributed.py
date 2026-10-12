@@ -330,6 +330,11 @@ class DistributedPikoWorldHub:
         if previous:
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 old = json.loads(previous)
+                old_room = old.get("room_id")
+                if old_room and old_room != room_id:
+                    # The replaced connection no longer owns the route, so its
+                    # disconnect() cannot take the character out of the old shard.
+                    await self._leave_room(old_room, character.id)
                 old_instance = old.get("server_instance")
                 if old_instance and old_instance != self.instance_id:
                     await self._publish(
@@ -822,37 +827,60 @@ class DistributedPikoWorldHub:
                     )
         return players
 
-    async def _evict_expired(self, room_id: str) -> None:
-        """Remove room members whose server stopped refreshing them and announce it.
+    async def _leave_room(
+        self, room_id: str, character_id: str, *, stale_before: float | None = None
+    ) -> bool:
+        """Take a character out of a room and announce it, once across all servers.
 
-        A crashed API process never runs disconnect() for its players, so their
-        presence only expires. Whichever surviving process claims an expired member
-        here publishes the player.left its own server could not.
+        With stale_before the member is only removed while its score is still that
+        old, so a refresh racing with the sweep keeps the player in the room.
         """
-        evicted = await self.redis.eval(
+        removed = await self.redis.eval(
             """
-            local evicted = {}
-            for _, id in ipairs(redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])) do
-                -- A live route means the owner is refreshing on a skewed clock.
-                if redis.call('EXISTS', ARGV[2] .. id) == 0 then
-                    redis.call('ZREM', KEYS[1], id)
-                    evicted[#evicted + 1] = id
-                end
+            local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+            if not score or (ARGV[2] ~= '' and tonumber(score) > tonumber(ARGV[2])) then
+                return 0
             end
-            return evicted
+            return redis.call('ZREM', KEYS[1], ARGV[1])
             """,
             1,
             self._room_key(room_id),
-            time() - PRESENCE_TTL_SECONDS,
-            self._route_key(""),
+            character_id,
+            "" if stale_before is None else stale_before,
         )
-        for character_id in evicted or []:
-            await self._end_private_chats(character_id)
+        if removed:
             await self._publish(
                 "room",
                 {"type": "player.left", "character_id": character_id},
                 room_id=room_id,
             )
+        return bool(removed)
+
+    async def _evict_expired(self, room_id: str) -> None:
+        """Remove room members that stopped being refreshed here and announce it.
+
+        A crashed API process never runs disconnect() for its players, and a session
+        taken over on another shard leaves its old membership behind. Whichever
+        surviving process claims such a member publishes the missing player.left.
+        """
+        cutoff = time() - PRESENCE_TTL_SECONDS
+        stale_ids = await self.redis.zrangebyscore(self._room_key(room_id), "-inf", cutoff)
+        if not stale_ids:
+            return
+        records = await self.redis.mget([self._player_key(value) for value in stale_ids])
+        for character_id, raw in zip(stale_ids, records):
+            current_room = None
+            if raw:
+                with contextlib.suppress(json.JSONDecodeError, TypeError, AttributeError):
+                    current_room = json.loads(raw).get("room_id")
+            if current_room == room_id:
+                # Still online in this room: its server refreshes on a skewed clock.
+                continue
+            if not await self._leave_room(room_id, character_id, stale_before=cutoff):
+                continue
+            if current_room is None:
+                # Offline everywhere. A character that only moved shards keeps its chats.
+                await self._end_private_chats(character_id)
 
     async def _redis_player(self, character_id: str) -> dict[str, Any] | None:
         raw = await self.redis.get(self._player_key(character_id))

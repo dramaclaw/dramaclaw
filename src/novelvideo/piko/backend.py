@@ -13,7 +13,8 @@ DISTRIBUTED_BACKEND: Final[str] = "distributed"
 
 
 def configured_backend() -> str:
-    backend = os.environ.get(BACKEND_ENV, DEMO_BACKEND).strip().lower()
+    # Literal name: the env-config ratchet only recognises literal reads.
+    backend = os.environ.get("PIKO_WORLD_BACKEND", DEMO_BACKEND).strip().lower()
     if backend not in {DEMO_BACKEND, DISTRIBUTED_BACKEND}:
         raise RuntimeError(
             f"{BACKEND_ENV} must be either {DEMO_BACKEND!r} or {DISTRIBUTED_BACKEND!r}"
