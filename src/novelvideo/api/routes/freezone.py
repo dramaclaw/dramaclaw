@@ -15144,7 +15144,7 @@ async def _resolve_workflow_draft_external_inputs(
 
 async def _validate_workflow_draft_story_targets(
     compiled: dict, *, state_dir: Path, canvas_id: str
-) -> None:
+) -> bool:
     from novelvideo.freezone.workflow_story_targets import (
         validate_story_asset_targets,
         validate_story_frame_targets,
@@ -15153,13 +15153,14 @@ async def _validate_workflow_draft_story_targets(
     plan = compiled.get("plan") or {}
     context = plan.get("source_context")
     if not isinstance(context, dict) or not ({"story_id", "targets", "asset_targets"} & context.keys()):
-        return
+        return False
     canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
     try:
         validate_story_frame_targets(plan, canvas)
         validate_story_asset_targets(plan, canvas)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    return bool(context.get("targets") or context.get("asset_targets"))
 
 
 @router.post(
@@ -15298,9 +15299,17 @@ async def create_canvas_workflow_draft(
         )
     prepared = await _prepare_workflow_source(body, user)
     validated = prepared["compiled"]
-    await _validate_workflow_draft_story_targets(
+    has_story_targets = await _validate_workflow_draft_story_targets(
         validated, state_dir=state_dir, canvas_id=canvas_id,
     )
+    if has_story_targets and "run_after_create" not in body:
+        raise HTTPException(400, {
+            "ok": False,
+            "code": "story_execution_policy_required",
+            "error": "Story-bound workflows require an explicit run_after_create boolean.",
+            "retryable": True,
+            "next_action": "prepare_with_explicit_execution_policy",
+        })
     validated["external_inputs_verified"] = await _resolve_workflow_draft_external_inputs(
         validated, state_dir=state_dir, canvas_id=canvas_id, project_id=ctx.project_id,
     )

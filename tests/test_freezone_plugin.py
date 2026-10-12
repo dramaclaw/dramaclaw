@@ -443,7 +443,7 @@ def test_freezone_plugin_registers_canvas_command_tools():
     assert "freezone_get_saved_skill" in names
     assert "freezone_get_saved_recipe" in names
     create_schema = schemas["freezone_prepare_workflow_plan_draft"]["parameters"]
-    assert create_schema["required"] == ["operation_id", "plan", "run_after_create"]
+    assert create_schema["required"] == ["operation_id", "plan"]
     assert "workflow_type" not in create_schema["properties"]
     assert "items" not in create_schema["properties"]
     plan_schema = create_schema["properties"]["plan"]
@@ -493,7 +493,7 @@ def test_freezone_plugin_registers_canvas_command_tools():
     draft_schema = schemas["freezone_confirm_workflow_draft"]["parameters"]
     assert draft_schema["required"] == ["draft_id", "revision"]
     prepare_schema = schemas["freezone_prepare_workflow"]["parameters"]
-    assert prepare_schema["required"] == ["operation_id", "run_after_create"]
+    assert prepare_schema["required"] == ["operation_id"]
     # Execution policy is decided when the draft is prepared or patched and the
     # user reviews that preview; confirmation must not be able to change it.
     assert "run_after_create" not in draft_schema["properties"]
@@ -511,7 +511,7 @@ def test_freezone_plugin_registers_canvas_command_tools():
             prepare_props["run_after_create"]["description"]
         ), prepare_name
     prepare_draft_schema = schemas["freezone_prepare_workflow_draft"]["parameters"]
-    assert prepare_draft_schema["required"] == ["operation_id", "run_after_create"]
+    assert prepare_draft_schema["required"] == ["operation_id"]
     intent_inputs = prepare_draft_schema["properties"]["intent"]["properties"]["inputs"]
     assert intent_inputs["additionalProperties"] is True
     assert intent_inputs["properties"]["image_variants_per_node"] == {
@@ -9779,3 +9779,54 @@ def test_observation_timeout_only_retries_read(monkeypatch):
     result = plugin._handle_observe_workflow_run({"run_id": "run_1"})
     assert result["next_action"] == "observe_same_run"
     assert result["retryable"] is True
+
+
+@pytest.mark.parametrize("name", [
+    "freezone_prepare_workflow", "freezone_prepare_workflow_draft", "freezone_prepare_workflow_plan_draft",
+])
+@pytest.mark.parametrize("policy", [None, True, False])
+def test_mcp_prepare_preserves_missing_execution_policy(monkeypatch, name, policy):
+    """A missing field must reach the API intact for story-target classification."""
+    import asyncio
+    from novelvideo.chat import dramaclaw_mcp
+
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "tool_result", json.dumps)
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    plan = {"schema_version": "freezone_workflow_plan.v1", "skill": {"id": "video-ad", "version": "1"},
+            "nodes": [{"id": "brief", "node_type": "textAnnotationNode", "stage": "input",
+                       "data": {"content": "Brief"}}], "edges": []}
+    compiled = {"ok": True, "skill_id": "video-ad", "plan": plan}
+    monkeypatch.setattr(plugin, "validate_agent_workflow_plan", lambda *_a, **_kw: compiled)
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda *_a, **_kw: compiled)
+    monkeypatch.setattr(plugin, "_workflow_runtime_preflight", lambda *_a, **_kw: {"blockers": []})
+    monkeypatch.setattr(plugin, "_workflow_plan_operation_admission_error", lambda *_a: None)
+    captured = []
+
+    def api_request(method, path, *, body=None, **kwargs):
+        if method == "GET" and "/agent-product-operations/" in path:
+            return {"ok": True, "data": {"product_kind": "workflow_result",
+                "status": "reserved", "canvas_id": "canvas-a", "artifact_id": "video-ad@1",
+                "metadata": {"skill_id": "video-ad", "skill_version": "1"}}}
+        assert method == "POST", path
+        captured.append(body)
+        return {"ok": False, "code": "policy_probe", "error": "Stopped at API boundary"}
+
+    monkeypatch.setattr(plugin, "_request", api_request)
+    arguments = {"operation_id": "test-operation"}
+    if name == "freezone_prepare_workflow_draft":
+        arguments["intent"] = {"skill_id": "video-ad", "user_goal": "Test"}
+    else:
+        arguments["plan"] = plan
+    if policy is not None:
+        arguments["run_after_create"] = policy
+    result = asyncio.run(dramaclaw_mcp.call_tool(
+        name, arguments, tool_index=dramaclaw_mcp._tool_index(plugin),
+    ))
+    assert result.structuredContent["code"] == "policy_probe", result.structuredContent
+    assert len(captured) == 1
+    assert ("run_after_create" in captured[0]) is (policy is not None)
+    if policy is not None:
+        assert captured[0]["run_after_create"] is policy

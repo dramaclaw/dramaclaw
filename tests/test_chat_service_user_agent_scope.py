@@ -1423,7 +1423,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "never include questions in the same call" in developer_instructions
         assert "applies only to image and video for now" in developer_instructions
         assert "run_after_create=true" in developer_instructions
-        assert "Every workflow prepare call must explicitly pass run_after_create" in (
+        assert "Workflows bound to story targets must explicitly pass run_after_create" in (
             developer_instructions
         )
         assert "A terse confirmation such as 可以 or 确认 inherits" in (
@@ -5067,7 +5067,7 @@ def test_freezone_prompt_allows_creative_ideation_canvas_framework_without_mainl
     assert "freezone_prepare_workflow_plan_draft once" in prompt
     assert "not a Workflow catalog `skill_id`" in prompt
     assert "Do not ask for a second “创建并运行” confirmation" in prompt
-    assert "Every workflow prepare call must explicitly include `run_after_create`" in prompt
+    assert "Workflows bound to story targets must explicitly include `run_after_create`" in prompt
     assert "A terse confirmation such as “可以” or “确认” inherits" in prompt
     assert "the write tool creates it" in prompt
     assert "Never\n  use the host's built-in request_user_input" in prompt

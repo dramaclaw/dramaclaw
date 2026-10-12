@@ -1,7 +1,10 @@
 # Backend workflow operations
 
 `freezone_prepare_workflow` takes exactly one `intent` or `plan`, the admitted `operation_id`,
-required boolean `run_after_create`, and optional `bindings`. A terse confirmation inherits this
+boolean `run_after_create`, and optional `bindings`. `run_after_create` is required only for plans
+bound to story targets through `source_context.targets` or `source_context.asset_targets`; ordinary
+workflows may omit it and default to `false` (create only). The API validates declared bindings
+against the saved canvas before requiring this decision. A terse confirmation inherits this
 decision from the immediately preceding proposal. It returns the persisted identity, revision,
 digest, preview and next action, not the full compiled graph. It does not execute the canvas.
 

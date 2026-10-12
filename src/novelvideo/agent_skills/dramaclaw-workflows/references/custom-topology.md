@@ -131,13 +131,15 @@ order) stays an agent-authored draft with the difference recorded in
    Never ask the user to choose a direct-canvas or standalone-node fallback after Plan validation
    fails. Such a choice cannot authorize bypassing the validator. Add the required Skill stages to
    the same Plan once, or report that they conflict with the user's exact topology.
-7. Call `freezone_prepare_workflow(plan=...)` once. It strictly validates the complete Plan,
+7. Choose `run_after_create=true` for an approved create-and-run request or `false` for create-only.
+   Story-bound plans must pass this choice; ordinary plans may omit it and default to `false`.
+   Call `freezone_prepare_workflow(operation_id=..., plan=..., run_after_create=...)` once. It strictly validates the complete Plan,
    obtains an operation-bound planning quote and server receipt, then persists an exact preview
    without writing canvas nodes. After the user reviews that preview, call
    `freezone_confirm_workflow_draft` with its exact `draft_id` and `revision`. Do not call
    `workflow_graph_compile` as a routine preflight before preparing the first draft. Use the read-only compiler
    only to diagnose and correct a validation failure. After a recovery compile succeeds, immediately
-   prepare that exact corrected Plan with `freezone_prepare_workflow(plan=...)`; do not stop after
+   prepare that exact corrected Plan with `freezone_prepare_workflow(operation_id=..., plan=..., run_after_create=...)`; do not stop after
    reporting that compilation passed.
 
 The user's imperative does not replace an exact billing confirmation receipt. Follow the quote

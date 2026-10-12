@@ -4811,3 +4811,107 @@ def test_recipe_compile_does_not_replay_attempt_settled_during_replay(
     )
     assert response.status_code == 409
     assert "recipe attempt ended (failed)" in response.json()["detail"]
+
+
+@pytest.fixture(params=["frame", "subject", "scene"])
+def story_execution_plan(request, monkeypatch):
+    from novelvideo.api.routes import freezone
+
+    canvas = {"nodes": [
+        {"id": "story-group", "type": "groupNode", "data": {
+            "storyGroup": True, "interactiveStoryId": "story-1",
+            "storyCharacters": [{"id": "hero"}], "storyScenes": [{"id": "room"}],
+        }},
+        {"id": "video-opening", "type": "videoNode", "parentId": "story-group", "data": {
+            "storySegmentId": "opening", "storyCharacterIds": ["hero"],
+            "storySceneRefs": [{"scene_id": "room", "usage": "setting"}],
+        }},
+    ]}
+    monkeypatch.setattr(freezone.canvas_store, "read_canvas", lambda *_args: canvas)
+
+    async def image_models(*_args, **_kwargs):
+        return {"ok": True, "data": [{"id": "story-image-model"}]}
+
+    monkeypatch.setattr(freezone, "freezone_image_models", image_models)
+    context = {"story_id": "story-1"}
+    if request.param == "frame":
+        context["targets"] = [{"plan_node_id": "image", "story_segment_id": "opening",
+                               "video_node_id": "video-opening"}]
+    else:
+        context["asset_targets"] = [{"plan_node_id": "image", "kind": request.param,
+            "entity_id": "hero" if request.param == "subject" else "room",
+            "segment_ids": ["opening"]}]
+    return {
+        "schema_version": "freezone_workflow_plan.v1",
+        "skill": {"id": "text-to-image-video"}, "source_context": context,
+        "nodes": [{"id": "image", "node_type": "imageGenNode", "stage": "image",
+                   "data": {"prompt": "Story image", "model": "story-image-model",
+                            "workflowCatalog": {"skillId": "text-to-image-video", "recipeId": "general-image"}}}],
+        "edges": [],
+    }
+
+
+def test_story_bound_prepare_requires_execution_policy(workflow_run_client, story_execution_plan):
+    from novelvideo.freezone.workflow_drafts import workflow_drafts_db_path
+
+    client = workflow_run_client
+    base = "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts"
+    response = client.post(base, json={"plan": story_execution_plan})
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "story_execution_policy_required"
+    assert detail["retryable"] is True
+    assert "run_after_create" in detail["error"]
+    assert not workflow_drafts_db_path(client.state_dir).exists()
+    assert client.enqueued_tasks == []
+    # The rejected request can be corrected without creating duplicate drafts.
+    corrected = client.post(base, json={"plan": story_execution_plan, "run_after_create": False})
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()["data"]["run_after_create"] is False
+
+
+@pytest.mark.parametrize("policy", [True, False])
+def test_story_bound_prepare_preserves_explicit_policy(workflow_run_client, story_execution_plan, policy):
+    client = workflow_run_client
+    base = "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts"
+    response = client.post(base, json={"plan": story_execution_plan, "run_after_create": policy})
+    assert response.status_code == 200, response.text
+    draft = response.json()["data"]
+    assert draft["run_after_create"] is policy
+    # Ordinary edits to an existing draft inherit the saved decision.
+    patched = client.patch(f"{base}/{draft['draft_id']}", json={"expected_revision": 1, "plan": story_execution_plan})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["data"]["run_after_create"] is policy
+    assert client.enqueued_tasks == []
+
+
+def test_ordinary_prepare_defaults_false_on_story_canvas(workflow_run_client, monkeypatch):
+    from novelvideo.api.routes import freezone
+
+    monkeypatch.setattr(freezone.canvas_store, "read_canvas", lambda *_args: {"nodes": [{
+        "id": "story-group", "type": "groupNode",
+        "data": {"storyGroup": True, "interactiveStoryId": "story-1"},
+    }]})
+    # Use the full ordinary image/video template of the same story-production Skill.
+    plan = _mode_revision_plan()
+    response = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts",
+        json={"plan": plan},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["run_after_create"] is False
+    assert workflow_run_client.enqueued_tasks == []
+
+
+@pytest.mark.parametrize("policy", [None, True, False])
+def test_execution_policy_never_bypasses_invalid_story_binding(workflow_run_client, story_execution_plan, policy):
+    plan = deepcopy(story_execution_plan)
+    plan["source_context"]["story_id"] = "missing-story"
+    body = {"plan": plan}
+    if policy is not None:
+        body["run_after_create"] = policy
+    response = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts", json=body,
+    )
+    assert response.status_code == 409, response.text
+    assert workflow_run_client.enqueued_tasks == []

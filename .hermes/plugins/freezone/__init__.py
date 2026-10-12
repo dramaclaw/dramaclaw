@@ -6323,7 +6323,6 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
         if mode_clarification is not None:
             return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
-    run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
     if not operation_id and _available():
         return tool_result(
@@ -6345,7 +6344,8 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             body={
                 "intent": source,
                 "compiled": validated,
-                "run_after_create": bool(run_after_create),
+                **({"run_after_create": args["run_after_create"]}
+                   if "run_after_create" in args else {}),
                 "operation_id": operation_id,
             },
         )
@@ -7219,7 +7219,6 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
         if mode_clarification is not None:
             return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
-    run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
     if not operation_id and _available():
         return tool_result(
@@ -7237,7 +7236,8 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             body={
                 "intent": intent,
                 "compiled": compiled,
-                "run_after_create": bool(run_after_create),
+                **({"run_after_create": args["run_after_create"]}
+                   if "run_after_create" in args else {}),
                 "operation_id": operation_id,
             },
         )
@@ -10122,10 +10122,11 @@ _WORKFLOW_RUN_AFTER_CREATE_PROPS = {
     "run_after_create": {
         "type": "boolean",
         "description": (
-            "Required execution decision. Set true when the user asked to create and generate/run, "
-            "or when a terse confirmation such as 可以/确认 approves a preceding proposal that "
-            "included generation. Set false only when the approved request is create-only. Never "
-            "omit this field or rely on an implicit false default. Decide it when preparing or patching the draft; freezone_confirm_workflow_draft does not accept it."
+            "Execution decision: required for workflows bound to story targets through "
+            "source_context.targets or source_context.asset_targets. Ordinary workflows may omit "
+            "it and default to false (create only). Set true when the approved request includes "
+            "generation/run; a terse confirmation inherits the preceding proposal's policy. "
+            "Decide it when preparing or patching the draft; freezone_confirm_workflow_draft does not accept it."
         ),
     },
 }
@@ -11788,7 +11789,7 @@ TOOLS = (
                 },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
-            ["operation_id", "run_after_create"],
+            ["operation_id"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow,
@@ -11855,7 +11856,7 @@ TOOLS = (
                 },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
-            ["operation_id", "run_after_create"],
+            ["operation_id"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow_draft,
@@ -11943,14 +11944,15 @@ TOOLS = (
                 "run_after_create": {
                     "type": "boolean",
                     "description": (
-                        "Required execution decision. Set true to append run_workflow after graph "
-                        "creation in the same approved frontend batch. A terse confirmation such "
-                        "as 可以/确认 inherits true from a preceding create-and-generate proposal. "
-                        "Set false only for create-only; never omit this field. Decide it here; freezone_confirm_workflow_draft does not accept it."
+                        "Execution decision: required when source_context.targets or "
+                        "source_context.asset_targets binds this plan to a story. Ordinary plans "
+                        "may omit it and default to false (create only). Set true to run after "
+                        "creation when the approved proposal includes generation; otherwise set "
+                        "false. Decide it here; freezone_confirm_workflow_draft does not accept it."
                     ),
                 },
             },
-            ["operation_id", "plan", "run_after_create"],
+            ["operation_id", "plan"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow_plan_draft,

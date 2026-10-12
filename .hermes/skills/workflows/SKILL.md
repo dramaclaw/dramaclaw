@@ -58,7 +58,7 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 5. 缺少素材但允许从文字创建时，把素材锚点作为第一个 PlanItem，选择同一 Skill 允许的、`requires_source_media=false` 且输出类型匹配的 Recipe；后续依赖项通过 `depends_on` 引用该语义 item id。
 6. 严格按草稿工具返回的 `preview` 展示节点数量、作品清单、阶段和执行方式，不展示内部 JSON、`draft_id` 或 `revision`。
 7. 用户调整方案时，只把发生变化的字段传给 `freezone_patch_workflow_draft(draft_id=..., expected_revision=..., changes=...)`；不要重建 Intent 或创建新草稿。按新预览展示结果并记录新 revision。
-8. 用户确认后调用一次 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`。每次准备草稿都必须显式传 `run_after_create`：用户要求创建并生成/运行时传 `true`；用户用“可以”“确认”等简短回复确认上一轮含生成的方案时，继承该方案并继续传 `true`；只有明确仅创建画布时才传 `false`，不得依赖缺省值。确认时使用草稿中已经固定的执行策略。
+8. 用户确认后调用一次 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`。绑定影游目标（`source_context.targets` 或 `source_context.asset_targets`）的草稿必须显式传 `run_after_create`，常规工作流可省略并默认 `false`（仅创建）：用户要求创建并生成/运行时传 `true`；用户用“可以”“确认”等简短回复确认上一轮含生成的方案时，继承该方案并继续传 `true`；仅创建画布时传 `false`；影游绑定工作流不得依赖缺省值。确认时使用草稿中已经固定的执行策略。
 9. 草稿校验失败时只修正返回的输入、item、Plan 映射或选项字段后重试；绝不原样重提。同一错误路径修正一次后仍失败，本轮停止重试并报告阻塞，避免累计“失败 ×N”。已有故事图片批次报 `skill_stage_missing`（缺少策划／视频阶段）时，先检查 `story_id`、全部图片在 `asset_targets` / `targets` 的唯一映射及多余执行节点，不补可执行策划或视频、不更改图片用途。仍失败时准确报告自己的图片计划尚未符合契约；不能宣称平台不支持纯图片或建议放宽校验、附加视频。禁止改用单节点工具绕过校验；普通 Intent 不退回整份 Plan，已选择的图片 Plan 路径不改为完整视频 Intent。
 
 Plan 中的边只表示真实输入依赖，不表示时间顺序。节点 ID 必须稳定且唯一；禁止环、坏边、未知节点类型、未知 Recipe 和不兼容 Recipe。用户要求自动执行时才设置 `run_after_create=true`，否则只创建画布。
