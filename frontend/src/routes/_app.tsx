@@ -12,6 +12,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { Header } from "@/components/layout/header";
+import { PromptPreviewPanel } from "@/components/layout/prompt-preview-panel";
 import {
   endRouteSwitch,
   useRouteSwitchPending,
@@ -280,6 +281,7 @@ function AppLayout() {
                   )}
                 </motion.div>
               </main>
+              <PromptPreviewPanel project={canonicalProject} />
               {/* 必须挂在被 re-key 的 motion.div 外面：key 里带着 $section，
                   放进去就等于每次切换重建一遍画布，保活也就没了意义。作为
                   <main> 的后继兄弟绝对定位，在虾画时正好盖住它。 */}

@@ -109,6 +109,10 @@ export const queryKeys = {
   videoPool: (p: string, ep: number) =>
     ["projects", p, "episodes", ep, "video-pool"] as const,
   videoBackends: (p: string) => ["projects", p, "video-backends"] as const,
+  promptPreviewSteps: (p: string, ep: number | null) =>
+    ["projects", p, "prompt-preview", "steps", ep] as const,
+  promptPreview: (p: string, step: string, ep: number | null, target: string) =>
+    ["projects", p, "prompt-preview", step, ep, target] as const,
   renderSettings: (p: string) => ["projects", p, "render-settings"] as const,
   sketchSettings: (p: string) => ["projects", p, "sketch-settings"] as const,
   narratorVoice: (p: string) => ["projects", p, "narrator-voice"] as const,

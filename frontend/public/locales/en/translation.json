@@ -8416,5 +8416,29 @@
     "aligncenter": "Center",
     "alignright": "Align right",
     "selectLeaf": "Select the innermost text element to preserve nested formatting."
+  },
+  "promptPreview": {
+    "title": "Prompt preview",
+    "description": "Preview the prompt each pipeline step will send.",
+    "toggle": "Prompt preview",
+    "close": "Close prompt preview",
+    "resize": "Drag to resize",
+    "refresh": "Refresh",
+    "copy": "Copy",
+    "step": "Pipeline step",
+    "target": "Target",
+    "soon": "not available yet",
+    "loading": "Loading…",
+    "loadFailed": "Could not load the prompt preview.",
+    "unsupported": "Preview is not available for this step yet.",
+    "needsEpisode": "Open an episode to preview this step.",
+    "noTargets": "Nothing to preview for this step yet.",
+    "empty": "No prompt could be built yet.",
+    "noLastSent": "This step has not sent a prompt yet.",
+    "tab": {
+      "preview": "Will send",
+      "lastSent": "Last sent",
+      "inputs": "Inputs"
+    }
   }
 }

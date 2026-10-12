@@ -11,6 +11,7 @@ import {
   Bolt,
   Camera,
   Check,
+  ScrollText,
   ChevronRight,
   Languages,
   LogOut,
@@ -59,6 +60,7 @@ import {
   ProjectSwitcher,
   ProjectXiajiMenu,
 } from "@/components/layout/project-header-navigation";
+import { usePromptPreviewStore } from "@/stores/prompt-preview-store";
 const ACCOUNT_PANEL_TRANSITION_MS = 350;
 
 export function Header({ ambientBackground = false }: { ambientBackground?: boolean }) {
@@ -145,6 +147,8 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     hasSettingsWarning && !settingsOpen && !settingsWarningBubbleDismissed,
   );
   const project = params.project ?? null;
+  const promptPreviewOpen = usePromptPreviewStore((s) => s.open);
+  const togglePromptPreview = usePromptPreviewStore((s) => s.toggle);
 
   useEffect(() => {
     return () => {
@@ -401,6 +405,20 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               className="companion-capsule-entry__icon size-[22px] object-contain [image-rendering:pixelated]"
             />
           </Button>
+          {project ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="size-[32px] text-sidebar-foreground/82 transition-colors duration-150 ease-[var(--ease-out-quint)] hover:bg-white/[0.05] hover:text-white aria-pressed:bg-white/[0.08] aria-pressed:text-white"
+              aria-label={t("promptPreview.toggle")}
+              aria-pressed={promptPreviewOpen}
+              title={t("promptPreview.toggle")}
+              onClick={togglePromptPreview}
+            >
+              <ScrollText className="size-[17px]" />
+            </Button>
+          ) : null}
           <CreditBalanceBadge />
           <div
             id="superchat-header-controls"
