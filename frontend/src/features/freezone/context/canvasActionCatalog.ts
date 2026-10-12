@@ -606,12 +606,12 @@ export const BASE_CANVAS_ACTION_CAPABILITIES: CanvasActionCapability[] = [
   }),
   videoUiCapability("ui.open_video_subtitle_erase_smart", "智能去字幕", "open_video_subtitle_erase_smart"),
   videoUiCapability("ui.open_video_subtitle_erase_box", "框选去字幕", "open_video_subtitle_erase_box"),
-  videoUiCapability("ui.run_video_breakdown", "逐帧拉片", "run_video_breakdown", {
+  videoUiCapability("ui.run_video_breakdown", "逐帧拉片", "run_video_breakdown", { // i18n-exempt -- agent catalog display name
     execution: "frontend_node",
   }),
-  videoUiCapability("ui.open_video_crop_tool", "画面裁切", "open_video_crop_tool"),
-  videoUiCapability("ui.open_video_extend_tool", "智能续写", "open_video_extend_tool"),
-  videoUiCapability("ui.run_video_depth_capture", "深度动作捕捉", "run_video_depth_capture", {
+  videoUiCapability("ui.open_video_crop_tool", "画面裁切", "open_video_crop_tool"), // i18n-exempt -- agent catalog display name
+  videoUiCapability("ui.open_video_extend_tool", "智能续写", "open_video_extend_tool"), // i18n-exempt -- agent catalog display name
+  videoUiCapability("ui.run_video_depth_capture", "深度动作捕捉", "run_video_depth_capture", { // i18n-exempt -- agent catalog display name
     execution: "frontend_node",
     mediaType: "video",
     nodeKind: "candidate",
