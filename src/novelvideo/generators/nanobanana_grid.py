@@ -4273,6 +4273,9 @@ def _download_webai_artifact(url: str, cookie_file: str) -> tuple[bytes | None, 
 
     if not data.startswith((b"\x89PNG", b"\xff\xd8")):
         return None, "downloaded artifact is not a valid image (cookie expired?)"
+    from novelvideo.llm_call_log import record_artifact
+
+    record_artifact("image", data=data, label="gemini_webai", source_url=url)
     return data, ""
 
 

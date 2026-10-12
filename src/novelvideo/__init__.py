@@ -8,3 +8,14 @@
 - 角色一致性保障（参考图 + SeedEdit）
 - 多 Agent 协作生成
 """
+
+import os as _os
+
+# Dev-only model-call logging (Langfuse). Inert unless LLM_CALL_LOG_ENABLED is set.
+if _os.environ.get("LLM_CALL_LOG_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+    import atexit as _atexit
+
+    from novelvideo import llm_call_log as _llm_call_log
+
+    if _llm_call_log.install():
+        _atexit.register(_llm_call_log.flush)

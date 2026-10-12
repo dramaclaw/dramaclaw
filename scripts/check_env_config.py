@@ -33,6 +33,21 @@ DYNAMIC_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
         "src/novelvideo/task_backend/limits.py builds per-lane task limit names dynamically.",
     ),
     (
+        re.compile(
+            r"^(?:LLM_CALL_LOG_(?:CAPTURE_MEDIA|ENVIRONMENT|EXTRA_HOSTS|MAX_MEDIA_MB|MAX_TEXT_CHARS))$"
+        ),
+        "src/novelvideo/llm_call_log/settings.py reads these from an injectable env mapping "
+        "(defaults to os.environ) so tests can drive it without touching the process env.",
+    ),
+    (
+        re.compile(
+            r"^LANGFUSE_(?:CLICKHOUSE_PASSWORD|ENCRYPTION_KEY|INIT_USER_EMAIL|INIT_USER_PASSWORD|"
+            r"MEDIA_ENDPOINT|MINIO_PASSWORD|NEXTAUTH_SECRET|PORT|POSTGRES_PASSWORD|REDIS_PASSWORD|SALT)$"
+        ),
+        "Interpolated by docker-compose.langfuse.yml (the dev-only Langfuse stack); "
+        "the DramaClaw runtime never reads them.",
+    ),
+    (
         re.compile(r"^EMBEDDING_BATCH_SIZE$"),
         "Written to os.environ in src/novelvideo/cognee/config.py for Cognee to consume; "
         "no direct runtime read.",

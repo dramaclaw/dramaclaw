@@ -1,0 +1,127 @@
+# Dev-only Langfuse stack for the LLM call log (see docs/en/guides/llm-call-log.md).
+# Separate project from DramaClaw so it can be started/stopped/wiped on its own:
+#   docker compose -f docker-compose.langfuse.yml --env-file .env up -d
+# Everything is bound to 127.0.0.1; do not expose it. Secrets come from .env.
+name: dramaclaw-langfuse
+
+x-langfuse-env: &langfuse-env
+  DATABASE_URL: postgresql://postgres:${LANGFUSE_POSTGRES_PASSWORD:-postgres}@postgres:5432/postgres
+  SALT: ${LANGFUSE_SALT:?generate with `openssl rand -base64 32`}
+  ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?generate with `openssl rand -hex 32`}
+  TELEMETRY_ENABLED: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: clickhouse
+  CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: ${LANGFUSE_REDIS_PASSWORD:-redis}
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  # Media (images/audio/video) is uploaded by the SDK straight to MinIO through a
+  # presigned URL, and played back by the browser from the same URL. The host in
+  # that URL must therefore resolve from BOTH the api container and the browser.
+  # host.docker.internal does for the container; if your browser cannot resolve
+  # it, add `127.0.0.1 host.docker.internal` to /etc/hosts.
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_MEDIA_ENDPOINT:-http://host.docker.internal:9090}
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+services:
+  langfuse-web:
+    image: langfuse/langfuse:3
+    restart: unless-stopped
+    depends_on: [postgres, clickhouse, redis, minio]
+    ports:
+      - "127.0.0.1:${LANGFUSE_PORT:-3100}:3000"
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3100}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?generate with `openssl rand -base64 32`}
+      # Headless bootstrap: org/project/user and API keys are created on first boot,
+      # using the same LANGFUSE_PUBLIC_KEY/SECRET_KEY the DramaClaw api reads.
+      LANGFUSE_INIT_ORG_ID: dramaclaw
+      LANGFUSE_INIT_ORG_NAME: DramaClaw
+      LANGFUSE_INIT_PROJECT_ID: llm-calls
+      LANGFUSE_INIT_PROJECT_NAME: llm-calls
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?set the same value DramaClaw uses}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?set the same value DramaClaw uses}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@dramaclaw.local}
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:?choose a login password}
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    restart: unless-stopped
+    depends_on: [postgres, clickhouse, redis, minio]
+    environment:
+      <<: *langfuse-env
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12
+    restart: unless-stopped
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+
+  minio:
+    image: cgr.dev/chainguard/minio
+    restart: unless-stopped
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+    ports:
+      - "127.0.0.1:9090:9000"
+    volumes:
+      - minio-data:/data
+
+  # Expire stored media/events after LLM_LOG_RETENTION_DAYS (default 14). Trace rows
+  # are pruned by scripts/llm_call_log_cleanup.py; this covers the blobs.
+  minio-retention:
+    image: minio/mc:latest
+    depends_on: [minio]
+    restart: "no"
+    entrypoint: >
+      sh -c "until mc alias set local http://minio:9000 minio $${MINIO_PASSWORD}; do sleep 2; done;
+      mc ilm rule add --expire-days $${RETENTION_DAYS} local/langfuse"
+    environment:
+      MINIO_PASSWORD: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+      RETENTION_DAYS: ${LLM_LOG_RETENTION_DAYS:-14}
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: --requirepass ${LANGFUSE_REDIS_PASSWORD:-redis} --maxmemory-policy noeviction
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LANGFUSE_POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-data:
+  clickhouse-data:
+  clickhouse-logs:
+  minio-data:
