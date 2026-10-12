@@ -2340,6 +2340,7 @@ src/novelvideo/freezone/agent_catalog/builtins/skills/pixar-ip-ad-video.json,Ela
 src/novelvideo/freezone/agent_catalog/builtins/skills/retro-hong-kong-kungfu-comedy-video.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/agent_catalog/builtins/skills/short-drama-quick.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/agent_catalog/builtins/skills/social-content-campaign.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/agent_catalog/builtins/skills/text-to-image.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/agent_catalog/builtins/skills/text-to-image-video.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/agent_catalog/builtins/skills/video-tutorial.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/agent_catalog_schema.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
