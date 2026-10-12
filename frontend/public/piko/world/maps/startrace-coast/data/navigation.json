@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "mapId": "startrace-coast",
+  "walkableAreas": [
+    {
+      "id": "map-preview-bounds",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 1152
+        },
+        {
+          "x": 0,
+          "y": 1152
+        }
+      ]
+    }
+  ],
+  "colliders": [],
+  "spawnPoints": [
+    {
+      "id": "crimson-canyon-arrival",
+      "position": {
+        "x": 475,
+        "y": 880
+      },
+      "facing": "east"
+    },
+    {
+      "id": "starfall-tidal-wetland-arrival",
+      "position": {
+        "x": 635,
+        "y": 210
+      },
+      "facing": "south"
+    },
+    {
+      "id": "boundless-sea-arrival",
+      "position": {
+        "x": 1030,
+        "y": 335
+      },
+      "facing": "south"
+    }
+  ],
+  "exits": [
+    {
+      "id": "to-crimson-canyon",
+      "trigger": {
+        "id": "to-crimson-canyon-trigger",
+        "points": [
+          {
+            "x": 280,
+            "y": 843
+          },
+          {
+            "x": 340,
+            "y": 843
+          },
+          {
+            "x": 340,
+            "y": 887
+          },
+          {
+            "x": 280,
+            "y": 887
+          }
+        ]
+      },
+      "targetMapId": "crimson-canyon",
+      "targetSpawnId": "startrace-coast-arrival"
+    },
+    {
+      "id": "to-starfall-tidal-wetland",
+      "trigger": {
+        "id": "to-starfall-tidal-wetland-trigger",
+        "points": [
+          {
+            "x": 560,
+            "y": 53
+          },
+          {
+            "x": 620,
+            "y": 53
+          },
+          {
+            "x": 620,
+            "y": 97
+          },
+          {
+            "x": 560,
+            "y": 97
+          }
+        ]
+      },
+      "targetMapId": "starfall-tidal-wetland",
+      "targetSpawnId": "startrace-coast-arrival"
+    },
+    {
+      "id": "to-boundless-sea",
+      "trigger": {
+        "id": "to-boundless-sea-trigger",
+        "points": [
+          {
+            "x": 970,
+            "y": 413
+          },
+          {
+            "x": 1030,
+            "y": 413
+          },
+          {
+            "x": 1030,
+            "y": 457
+          },
+          {
+            "x": 970,
+            "y": 457
+          }
+        ]
+      },
+      "targetMapId": "boundless-sea",
+      "targetSpawnId": "startrace-coast-arrival"
+    }
+  ]
+}

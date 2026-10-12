@@ -12,12 +12,21 @@ import {
   Camera,
   Check,
   ChevronRight,
+  Gamepad2,
+  Map,
+  Users,
   Languages,
   LogOut,
   KeyRound,
   X,
 } from "lucide-react";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { capturePikoTaskEntry } from "@/features/piko-world/piko-task-entry";
+import { enterPikoWorld } from "@/features/piko-world/piko-entry-transition";
+import { playPikoUiSound } from "@/features/piko-world/piko-audio";
 import { Button } from "@/components/ui/button";
+import { NotificationDot } from "@/components/ui/notification-dot";
+import { useFeatureEntrySeen } from "@/lib/feature-entry-state";
 import { AvatarUploadDialog } from "@/components/account/avatar-upload-dialog";
 import { PasswordChangeDialog } from "@/components/account/password-change-dialog";
 import { PhoneBindingDialog } from "@/components/account/phone-binding-dialog";
@@ -53,13 +62,13 @@ import {
   markUpgradeSeen,
   shouldShowUpgradeNudge,
 } from "@/lib/release-notification-state";
-import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from "@/features/freezone/dockOffset";
 import {
   ProjectHeaderNavigation,
   ProjectSwitcher,
   ProjectXiajiMenu,
 } from "@/components/layout/project-header-navigation";
-const ACCOUNT_PANEL_TRANSITION_MS = 350;
+import entryStyles from "./header-entry.module.css";
+const ACCOUNT_PANEL_TRANSITION_MS = 150;
 
 export function Header({ ambientBackground = false }: { ambientBackground?: boolean }) {
   const { t, i18n } = useTranslation();
@@ -79,6 +88,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     top: 56,
     right: 16,
   });
+  const accountHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const accountCloseTimerRef = useRef<number | null>(null);
   const accountUnmountTimerRef = useRef<number | null>(null);
   const accountOpenFrameRef = useRef<number | null>(null);
@@ -89,6 +99,8 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   const accountPanelPinnedRef = useRef(false);
   const settingsAnchorRef = useRef<HTMLDivElement | null>(null);
   const { username, displayName: storedDisplayName, logout } = useAuthStore();
+  const { seen: pikoEntrySeen, markSeen: markPikoEntrySeen } =
+    useFeatureEntrySeen("piko-hub-v1", username);
   const queryClient = useQueryClient();
   // 退出登录是 SPA 内部跳转（不刷新页面），必须一并清掉 React Query 缓存和
   // 用户级 zustand/localStorage 状态，否则换账号登录后 projectSummaries 等
@@ -148,6 +160,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
 
   useEffect(() => {
     return () => {
+      if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
       clearAccountCloseTimer();
       clearAccountUnmountTimer();
       clearAccountOpenFrame();
@@ -193,6 +206,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   };
 
   const closeAccountPanelNow = () => {
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
     accountPanelPinnedRef.current = false;
     clearAccountCloseTimer();
     clearAccountOpenFrame();
@@ -202,6 +216,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   };
 
   const openAccountPanel = () => {
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
     clearAccountCloseTimer();
     clearAccountUnmountTimer();
     clearAccountOpenFrame();
@@ -219,7 +234,16 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     });
   };
 
+  const scheduleOpenAccountPanel = () => {
+    clearAccountCloseTimer();
+    clearAccountUnmountTimer();
+    if (accountPanelOpen) { openAccountPanel(); return; }
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
+    accountHoverTimerRef.current = setTimeout(openAccountPanel, 100);
+  };
+
   const scheduleCloseAccountPanel = () => {
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
     // 钉住的面板只由 Escape、面板外交互或选中某一项关闭 —— 鼠标掠过就收走的话,
     // 触屏和键盘用户点开后根本读不完里面的内容(公告中心现在只在这儿)。
     if (accountPanelPinnedRef.current) return;
@@ -232,7 +256,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         accountUnmountTimerRef.current = null;
       }, ACCOUNT_PANEL_TRANSITION_MS);
       accountCloseTimerRef.current = null;
-    }, 120);
+    }, 180);
   };
 
   const toggleAccountPanel = () => {
@@ -263,7 +287,8 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
       closeAccountPanelNow();
     };
     const handleFocusIn = (event: FocusEvent) => {
-      if (isInsideAccountUi(event.target)) return;
+      // Hover panels do not own focus; another popup may restore it on exit.
+      if (!accountPanelPinnedRef.current || isInsideAccountUi(event.target)) return;
       closeAccountPanelNow();
     };
     document.addEventListener("keydown", handleKeyDown);
@@ -319,14 +344,10 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   };
 
   return (
-    // marginRight：自由画布的虾导抽屉打开时是一块通屏高的浮层，会盖住顶栏右侧。
-    // 顶栏整条往左收，右上角那组入口（设置/通知/伙伴/算力/头像）与中间的 虾画/虾集
-    // 就跟着往左靠，仍然可见可点（对标 liblib）。抽屉没开时变量不存在 → 0px，原样。
     <div
       className={`relative z-20 shrink-0 text-sidebar-foreground ${
         ambientBackground ? "bg-transparent" : "bg-background/58 backdrop-blur-xl"
       }`}
-      style={FREEZONE_DOCK_OFFSET_ANIMATED_STYLE}
     >
       <header className="relative flex h-[48px] items-center justify-between gap-3 px-4">
         <div className="flex min-w-0 flex-1 items-center">
@@ -363,44 +384,56 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         {/* Actions */}
         <div className="flex min-w-0 flex-1 shrink-0 items-center justify-end gap-1">
           <div ref={settingsAnchorRef} className="relative">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="relative size-[32px] text-sidebar-foreground/82 transition-colors duration-150 ease-[var(--ease-out-quint)] hover:bg-white/[0.05] hover:text-white aria-expanded:bg-white/[0.05] aria-expanded:text-white"
-              aria-label={
-                hasSettingsWarning ? t("header.settingsWithWarning") : t("header.settings")
-              }
-              aria-expanded={settingsOpen}
-              onClick={() => setSettingsOpen(true)}
-            >
-              <Bolt className="size-[17px]" />
-              {hasSettingsWarning ? (
-                <span
-                  className="absolute right-[5px] top-[5px] flex size-[11px] items-center justify-center rounded-full bg-amber-400 text-black shadow-[0_0_7px_rgba(251,191,36,0.68)]"
-                  aria-hidden="true"
-                >
-                  <AlertTriangle className="size-[8px]" strokeWidth={3} />
-                </span>
-              ) : null}
-            </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="relative size-[32px] text-sidebar-foreground/82 transition-colors duration-150 ease-[var(--ease-out-quint)] hover:bg-white/[0.05] hover:text-white aria-expanded:bg-white/[0.05] aria-expanded:text-white"
+                aria-label={
+                  hasSettingsWarning ? t("header.settingsWithWarning") : t("header.settings")
+                }
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen(true)}
+              >
+                <Bolt className="size-[17px]" />
+                {hasSettingsWarning ? (
+                  <span
+                    className="absolute right-[5px] top-[5px] flex size-[11px] items-center justify-center rounded-full bg-amber-400 text-black shadow-[0_0_7px_rgba(251,191,36,0.68)]"
+                    aria-hidden="true"
+                  >
+                    <AlertTriangle className="size-[8px]" strokeWidth={3} />
+                  </span>
+                ) : null}
+              </Button>
           </div>
-          <Button
-            id="mybuddy-companion-entry"
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="companion-capsule-entry -ml-0.5 -mr-0.5 size-[32px]"
-            onClick={() => setCompanionOpen(true)}
-            aria-label={t("myBuddy.companion.entry")}
-          >
-            <img
-              src="/piko/entry/companion-capsule.png"
-              alt=""
-              aria-hidden="true"
-              className="companion-capsule-entry__icon size-[22px] object-contain [image-rendering:pixelated]"
-            />
-          </Button>
+          <DropdownMenu modal={false} onOpenChange={(open, details) => {
+            if (open && (details.reason === "trigger-press" || details.reason === "list-navigation")) {
+              markPikoEntrySeen();
+            }
+          }}>
+            <DropdownMenuTrigger openOnHover delay={100} closeDelay={180} onClick={markPikoEntrySeen}
+              render={<Button id="piko-hub-entry" variant="ghost" size="sm" className={`${entryStyles.trigger} px-2 text-xs font-medium`} />}>
+              <span className={entryStyles.pikoLabel}>
+                Piko Piko
+                {!pikoEntrySeen ? <NotificationDot className={entryStyles.pikoDot} /> : null}
+              </span>
+            </DropdownMenuTrigger>
+            <HeaderMenuPanel dropdown>
+              <HeaderMenuRow menuItem
+                icon={<Map className="size-3.5" />}
+                label={t("header.pikoHub.world")}
+                badge="New"
+                onClick={() => { markPikoEntrySeen(); capturePikoTaskEntry(username, window.location.href); playPikoUiSound("open"); void enterPikoWorld(() => navigate({ to: "/piko-world" })); }} />
+              <HeaderMenuRow menuItem id="mybuddy-companion-entry"
+                icon={<Users className="size-3.5" />}
+                label={t("header.pikoHub.companion")}
+                onClick={() => { markPikoEntrySeen(); setCompanionOpen(true); }} />
+              <HeaderMenuRow menuItem
+                icon={<Gamepad2 className="size-3.5" />}
+                label={t("header.pikoHub.play")}
+                onClick={() => { markPikoEntrySeen(); window.dispatchEvent(new Event("piko-open-station")); }} />
+            </HeaderMenuPanel>
+          </DropdownMenu>
           <CreditBalanceBadge />
           <div
             id="superchat-header-controls"
@@ -409,7 +442,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
           <div
             ref={accountAnchorRef}
             className="relative ml-1 flex items-center"
-            onMouseEnter={openAccountPanel}
+            onMouseEnter={scheduleOpenAccountPanel}
             onMouseLeave={scheduleCloseAccountPanel}
           >
             <Button
@@ -417,14 +450,14 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="relative size-[28px] rounded-full p-0 hover:bg-transparent"
+              className={`${entryStyles.trigger} relative size-[28px] rounded-full p-0`}
               aria-label={t("header.account.open")}
               aria-haspopup="true"
               aria-expanded={accountPanelOpen}
               aria-controls={accountPanelOpen ? "header-account-panel" : undefined}
               onClick={toggleAccountPanel}
             >
-              <span className="flex size-[26px] items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[11px] font-normal text-white/72">
+              <span data-account-avatar className="flex size-[26px] items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[11px] font-normal text-white/72">
                 {avatarUrl ? (
                   <img src={avatarUrl} alt="" className="size-full object-cover" />
                 ) : (
@@ -432,10 +465,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
                 )}
               </span>
               {hasUnreadNotification ? (
-                <span
-                  className="absolute right-0 top-0 size-1.5 rounded-full border border-background bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.72)]"
-                  aria-hidden="true"
-                />
+                <NotificationDot className="absolute right-0 top-0" />
               ) : null}
             </Button>
           </div>
@@ -632,14 +662,14 @@ function AccountPanel({
       ref={panelRef}
       id="header-account-panel"
       aria-label={t("header.account.open")}
-      className={`fixed z-[80] w-[216px] transition-opacity duration-[350ms] ease-[var(--ease-out-quint)] ${
+      className={`fixed z-[80] w-[216px] transition-opacity duration-150 ease-[var(--ease-out-quint)] motion-reduce:transition-none ${
         visible ? "opacity-100" : "opacity-0"
       }`}
       style={{ top: position.top, right: position.right }}
       onMouseEnter={onEnter}
       onMouseLeave={onClose}
     >
-      <div className="rounded-[14px] border border-white/[0.08] bg-[#202020]/78 p-2.5 text-slate-100 shadow-[0_18px_50px_rgba(0,0,0,0.36)] backdrop-blur-xl">
+      <HeaderMenuPanel>
         <div className="mb-2.5 flex h-[50px] items-center gap-2.5 rounded-[10px] bg-white/[0.07] px-2.5">
           <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-xs font-normal text-white/72">
             {avatarUrl ? (
@@ -653,24 +683,24 @@ function AccountPanel({
           </span>
         </div>
         <div className="space-y-0.5">
-          {onBindPhone ? <AccountMenuRow
+          {onBindPhone ? <HeaderMenuRow
             icon={<KeyRound className="size-3.5" />}
             label={t("header.account.phoneBinding.title")}
             onClick={onBindPhone}
           /> : null}
-          <AccountMenuRow
+          <HeaderMenuRow
             icon={<Bell className="size-3.5" />}
             label={t("header.notifications")}
             unread={hasUnreadNotification}
             onClick={onNotifications}
           />
-          <AccountMenuRow
+          <HeaderMenuRow
             icon={<Camera className="size-3.5" />}
             label={t("header.account.changeAvatar")}
             onClick={onChangeAvatar}
           />
           {onChangePassword ? (
-            <AccountMenuRow
+            <HeaderMenuRow
               icon={<KeyRound className="size-3.5" />}
               label={t(
                 passwordConfigured
@@ -680,7 +710,7 @@ function AccountPanel({
               onClick={onChangePassword}
             />
           ) : null}
-          <AccountMenuRow
+          <HeaderMenuRow
             active={languageOpen}
             icon={<Languages className="size-3.5" />}
             label={t("header.account.selectLanguage")}
@@ -700,59 +730,79 @@ function AccountPanel({
             </div>
           ) : null}
           {onLogout ? (
-            <AccountMenuRow
+            <HeaderMenuRow
               icon={<LogOut className="size-3.5" />}
               label={t("auth.logout")}
               onClick={onLogout}
             />
           ) : null}
         </div>
-      </div>
+      </HeaderMenuPanel>
     </div>
   );
 }
 
-function AccountMenuRow({
+function HeaderMenuPanel({ children, dropdown = false }: {
+  children: ReactNode;
+  dropdown?: boolean;
+}) {
+  const className = `${entryStyles.panel} ${entryStyles.menuPanel}`;
+  return dropdown ? (
+    <DropdownMenuContent align="end" sideOffset={8} className={className}>
+      {children}
+    </DropdownMenuContent>
+  ) : <div className={className}>{children}</div>;
+}
+
+function HeaderMenuRow({
+  menuItem = false,
+  id,
   active = false,
   icon,
   label,
+  badge,
   meta,
   unread = false,
   onClick,
 }: {
+  menuItem?: boolean;
+  id?: string;
   active?: boolean;
   icon: ReactNode;
   label: string;
+  badge?: string;
   meta?: string;
   unread?: boolean;
   onClick?: () => void;
 }) {
   const content = (
     <>
-      <span className="ml-1 flex size-3.5 shrink-0 items-center justify-center text-slate-100/58" aria-hidden="true">
+      <span className={`${entryStyles.menuIcon} ml-1 flex size-3.5 shrink-0 items-center justify-center`} aria-hidden="true">
         {icon}
       </span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className={`${entryStyles.menuLabel} flex min-w-0 flex-1 items-center gap-1.5`}>
+        <span className="truncate">{label}</span>
+        {badge && <span className={entryStyles.newBadge}>{badge}</span>}
+      </span>
       {meta ? (
         <span className="max-w-16 truncate text-[11px] text-slate-400">{meta}</span>
       ) : null}
       {unread ? (
-        <span
-          className="size-1.5 shrink-0 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.62)]"
-          aria-hidden="true"
-        />
+        <NotificationDot />
       ) : null}
       <ChevronRight
-        className={`mr-1 size-3.5 shrink-0 text-slate-100/88 transition-transform duration-150 ${
+        className={`${entryStyles.menuChevron} mr-1 size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none ${
           active ? "rotate-90" : ""
         }`}
       />
     </>
   );
-  const className =
-    "flex h-9 w-full items-center gap-2 rounded-[8px] px-1.5 text-left text-[13px] font-normal text-slate-100 transition-colors duration-150 hover:bg-white/[0.05]";
+  const className = entryStyles.menuRow;
+  if (menuItem) {
+    return <DropdownMenuItem id={id} className={className} onClick={onClick}>{content}</DropdownMenuItem>;
+  }
   return (
-    <button type="button" className={className} onClick={onClick}>
+    <button id={id} type="button" className={className} onClick={onClick}>
       {content}
     </button>
   );

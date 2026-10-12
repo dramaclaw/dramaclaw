@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "mapId": "boundless-sea",
+  "globalLighting": {
+    "preset": "baked-daylight",
+    "intensity": 0
+  },
+  "effects": [],
+  "audioZones": []
+}

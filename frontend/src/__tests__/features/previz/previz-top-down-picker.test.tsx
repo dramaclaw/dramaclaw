@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { spyOnCanvasGetContext } from "@/__tests__/helpers/canvas-context";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -197,7 +199,7 @@ function fakeContext() {
 /** 让画布交出假上下文。返回记下来的圆、线与矩形，随后断言直接读它们。 */
 function captureDraw() {
   const { context, arcs, lines, rects } = fakeContext();
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+  spyOnCanvasGetContext().mockReturnValue(
     context as unknown as CanvasRenderingContext2D,
   );
   return { context, arcs, lines, rects };

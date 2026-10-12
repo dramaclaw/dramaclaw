@@ -4,6 +4,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { spyOnCanvasGetContext } from '@/__tests__/helpers/canvas-context';
+
 import { PREVIZ_MAX_AUDIO_CLIPS } from '@/features/previz/domain/audioTrack';
 import {
   createDefaultScene,
@@ -71,7 +73,7 @@ const addButton = () => screen.getByRole('button', { name: 'previz.audio.add' })
 /** 最小 2D 上下文：只记下调用，什么也不画。 */
 function stubCanvas2D() {
   const context = { clearRect: vi.fn(), setTransform: vi.fn(), fillRect: vi.fn(), fillStyle: '' };
-  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+  spyOnCanvasGetContext().mockReturnValue(
     context as unknown as CanvasRenderingContext2D,
   );
   return context;
@@ -103,7 +105,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   loadAudioPeaks.mockImplementation(async () => new Float32Array(240).fill(0.5));
   // jsdom 没有 canvas 2D 上下文；波形绘制得能在 getContext 返回 null 时安静跳过。
-  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  spyOnCanvasGetContext().mockReturnValue(null);
 });
 
 afterEach(() => {

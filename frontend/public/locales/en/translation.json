@@ -455,6 +455,11 @@
     }
   },
   "header": {
+    "pikoHub": {
+      "play": "Piko Play",
+      "companion": "Companions",
+      "world": "Piko Town"
+    },
     "partyFounding105": "庆祝建党105周年",
     "settings": "Settings",
     "settingsWithWarning": "Settings, missing configuration",
@@ -2435,6 +2440,352 @@
       "aria": "Download the desktop app"
     }
   },
+  "pikoWorld": {
+    "sitDown": "Sit down",
+    "taskLabel": {
+      "running": "Task in progress",
+      "completed": "Task completed",
+      "failed": "Task failed",
+      "publicRunning": "Creating a work",
+      "open": "{{status}}. Return to creation",
+      "unavailable": "The original creation is unavailable. Returned to the workspace.",
+      "openError": "Could not open the creation. Please try again."
+    },
+    "translationAction": "Translate",
+    "translationLoading": "Translating…",
+    "translationHide": "Hide translation",
+    "translationRetry": "Retry translation",
+    "translationLanguage": "Translate to",
+    "translationLabel": "Translation",
+    "translationError": "Translation is unavailable. Please try again shortly.",
+    "musicToggle": "Music",
+    "mapTravel": {
+      "retry": "Retry",
+      "return": "Return to previous map",
+      "dismiss": "Dismiss"
+    },
+    "residentComingSoon": "Animation in progress",
+    "playableResident_f01": "Female · F01",
+    "playableResident_m01": "Male · M01",
+    "profileSaveFailed": "Could not save. Check your browser storage and try again.",
+    "profileDescription": "Let your neighbors get to know you.",
+    "defaultNickname": "Town visitor",
+    "saveProfile": "Save",
+    "bio": "About me",
+    "nickname": "Nickname",
+    "changeResident": "Change character",
+    "editProfile": "Edit profile",
+    "settings": "Settings",
+    "loadingScenes": {
+      "welcome-courtyard": {
+        "title": "Welcome Courtyard",
+        "line": "Morning light dances in the fountain; the town awaits your first hello."
+      },
+      "whispering-meadow": {
+        "title": "Whispering Meadow",
+        "line": "The wind rolls over green hills, bringing the distant world a little closer."
+      },
+      "whalesong-skyport": {
+        "title": "Whalesong Skyport",
+        "line": "A whale sails the sea of clouds, its song drifting past the sails."
+      },
+      "boundless-sea": {
+        "title": "Boundless Sea",
+        "line": "Raise the sail and follow the sunlight to where the sea meets the sky."
+      },
+      "amber-wilds": {
+        "title": "Amber Wilds",
+        "line": "Sunset spills through an old stone arch, turning the fields to amber."
+      },
+      "startrace-coast": {
+        "title": "Startrace Coast",
+        "line": "Hold a shell to your ear and hear the tide trade secrets with the evening sky."
+      },
+      "starlight-dock": {
+        "title": "Starlight Dock",
+        "line": "Lanterns sway upon the water; greetings from afar are coming ashore."
+      },
+      "whispering-forest": {
+        "title": "Whispering Forest",
+        "line": "A flute sings between the trees, and even the resting wind steps softly."
+      },
+      "mountain-observatory": {
+        "title": "Cloudtop Observatory",
+        "line": "Beyond the sea of clouds, another discovery awaits."
+      },
+      "amber-expedition": {
+        "title": "Amber Expedition",
+        "line": "Unfold the map and find the next trail together."
+      },
+      "frozen-lake-rest": {
+        "title": "Frozen Lake Rest",
+        "line": "Warm your hands around a cup and rest beneath the stars."
+      },
+      "tidal-discovery": {
+        "title": "Tidal Discoveries",
+        "line": "Look a little closer: a tiny world waits in the shallows."
+      }
+    },
+    "loadingTitle": "Travel to Piko Town",
+    "loadingPreparing": "Preparing the town, please wait…",
+    "loadingReady": "The town is ready. Let's go!",
+    "loadingFailed": "Loading did not finish. Check your connection and retry.",
+    "loadingProgress": "Illustrative town loading progress",
+    "loadingEnter": "Enter Piko Town",
+    "loadingBack": "Back to workbench",
+    "loadingRetry": "Reload",
+    "worldControls": "Piko Piko World controls",
+    "returnToWorkbench": "Back to workbench",
+    "chatToggle": "Open or collapse world chat",
+    "chatToggleUnread": "Open or collapse world chat. Unread messages: {{count}}.",
+    "chatTitle": "World chat",
+    "chatClose": "Close world chat",
+    "chatEmptyTitle": "The breeze hasn't brought any messages yet",
+    "chatEmptyDescription": "When the shared world opens, greetings from the town will appear here.",
+    "chatMessagesLabel": "Chat messages",
+    "chatComposerPlaceholder": "Say something to everyone in town…",
+    "openResidentSelector": "Choose resident character",
+    "residentSelectorTitle": "Choose your resident",
+    "residentSelectorDescription": "Choose your playable character. More residents are being animated.",
+    "residentSelectorClose": "Close resident selection",
+    "residentSelectorConfirm": "All set",
+    "residentOptionLabel": "Resident {{number}}",
+    "chatMockMayorName": "Mayor Piko",
+    "chatMockResidentName": "Town resident",
+    "chatMockYouName": "Me",
+    "chatMockMayorWelcome": "Welcome to the courtyard. The breeze feels lovely today.",
+    "chatMockResidentLantern": "A new message lantern just lit up beside the fountain.",
+    "chatMockVisitorReply": "I'll come take a look in a moment!",
+    "mapAriaLabel": "Welcome Courtyard, use arrow keys to move",
+    "talkToMayor": "Talk to the mayor",
+    "welcomeTitle": "Mayor · Piko",
+    "welcomePage1": "Welcome to Piko Town! I'm the mayor. Slow down and enjoy your time in the courtyard.",
+    "welcomePage2": "Explore the town and chat with residents. Change your look and nickname in the top right, and come say hello anytime.",
+    "welcomeNext": "Tell me more",
+    "welcomeDone": "Explore the courtyard",
+    "mapLoading": "Loading {{mapName}}…",
+    "mapLoadError": "{{mapName}} failed to load",
+    "mapTransitionAnnouncement": "Entering {{mapName}}",
+    "residentActions": "Interact with {{nickname}}",
+    "viewResidentInfo": "View info",
+    "chatWithResident": "Have a chat",
+    "simulatedResidentLabel": "Temporary simulated resident",
+    "emptyResidentBio": "No bio yet.",
+    "chatRequestSent": "Chat request sent. Please wait for a reply.",
+    "chatTooLong": "Messages can contain up to 80 characters",
+    "chatCooldown": "Wait {{seconds}}s",
+    "chatSendHint": "Enter to send · Shift+Enter for a new line",
+    "chatSend": "Send",
+    "privateRequestTitle": "Chat request",
+    "privateRequestFrom": "{{nickname}} requests a chat",
+    "privateAccept": "Accept",
+    "privateDecline": "Decline",
+    "privateReopen": "Chat with {{nickname}}",
+    "privateMessages": "Private messages",
+    "privateMessageInput": "Type a private message",
+    "privateReplying": "Replying…",
+    "privateSendHint": "Enter to send · up to 80 characters",
+    "privateMockGreeting": "Hello! Nice to meet you in town.",
+    "privateMockReply": "Got it! This is a simulated reply from {{nickname}}. Nice chatting with you!",
+    "privateUnread": "{{count}} unread messages",
+    "privateEndChat": "Close chat with {{nickname}}",
+    "transport": {
+      "sail": "Explore the open sea",
+      "returnShore": "Return to Startrace Coast",
+      "ascend": "Travel to Whalesong Skyport",
+      "enterHall": "Enter Town Hall",
+      "returnSlope": "Return to Cloudtop Slope"
+    },
+    "onboarding": {
+      "title": "One more name, and everyone is here.",
+      "description": "Choose a look and introduce yourself.",
+      "newFriend": "New friend",
+      "appearance": "Your appearance",
+      "male": "Male",
+      "female": "Female",
+      "nickname": "Nickname",
+      "namePlaceholder": "What should we call you?",
+      "nameHint": "Up to 16 characters. You can change it in settings.",
+      "nameError": "Enter a nickname of 1–16 characters.",
+      "saveError": "Could not save. Please retry; your entries are preserved.",
+      "enter": "Begin the journey",
+      "videoError": "The invitation could not play. Retry or skip it.",
+      "videoSlow": "The film is loading slowly. You can wait or skip.",
+      "invitation": "An invitation from the town is waiting for you.",
+      "retry": "Retry",
+      "play": "Play invitation",
+      "skipAnimation": "Skip animation",
+      "unmute": "Enable sound",
+      "mute": "Mute",
+      "join": "Come join us",
+      "skip": "Skip animation",
+      "assetError": "Character artwork could not load. Please retry.",
+      "preparing": "Preparing a place for you…",
+      "resume": "Continue playback",
+      "resumeHint": "Continue playing, or skip the film.",
+      "createTitle": "Create your character"
+    },
+    "wardrobe": {
+      "title": "Character wardrobe",
+      "description": "Choose clothes and accessories here.",
+      "clothes": "Clothes",
+      "base": "Current base outfit",
+      "unavailable": "Outfit unavailable",
+      "saveError": "Could not save. Please try again.",
+      "accessories": "Accessories",
+      "confirm": "Confirm"
+    },
+    "privateYou": "You",
+    "music": {
+      "albumTitle": "Piko Town Original Soundtrack",
+      "caption": "{{album}} – {{title}}",
+      "captionEmpty": "Pick a town melody",
+      "followMap": "Follow map music",
+      "playbackError": "Playback is unavailable right now. Select a track to try again.",
+      "trackList": "Map music tracks",
+      "playTrack": "Play {{title}}",
+      "pauseTrack": "Pause {{title}}",
+      "close": "Close music player",
+      "nowPlaying": "Now playing: {{title}}",
+      "nowPlayingMarquee": "Now playing · {{title}}",
+      "tracks": {
+        "courtyard": "Windrest Courtyard – First Meeting",
+        "courtyardWarm": "Windrest Courtyard – A Moment's Rest",
+        "lanternWaterfront": "Lantern Light on the Evening Tide",
+        "tidalSeas": "Song of Xiluya",
+        "meadowGate": "Fantasy of the Golden Land",
+        "forest": "Old Words of the Deep Forest",
+        "cloudtopFrostmoon": "Frost Moon Beyond the Clouds",
+        "amberCanyon": "Amber Afterglow",
+        "skyport": "Song of Lomir"
+      }
+    },
+    "maps": {
+      "town-hall-interior": {
+        "title": "Warmlight Hall",
+        "subtitle": "Sunlight by the window, warmth by the hearth"
+      },
+      "welcome-courtyard": {
+        "title": "Welcome Courtyard",
+        "subtitle": "The breeze carries greetings from the spring"
+      },
+      "artisan-market": {
+        "title": "Artisan Market",
+        "subtitle": "The scent of wood and laughter settle beneath the awnings"
+      },
+      "lantern-canal-street": {
+        "title": "Lantern Canal Street",
+        "subtitle": "Lamplight wakes along the sound of water"
+      },
+      "wind-garden-gate": {
+        "title": "Wind Garden Gate",
+        "subtitle": "The wind blows from the trellis toward faraway places"
+      },
+      "starlight-dock": {
+        "title": "Starlight Dock",
+        "subtitle": "Faint lights come ashore with the evening tide"
+      },
+      "whispering-meadow": {
+        "title": "Whispering Meadow",
+        "subtitle": "The wind sweeps over tall grass and endless sky"
+      },
+      "starfall-tidal-wetland": {
+        "title": "Starfall Tidal Wetland",
+        "subtitle": "Starlight rests among the tide pools"
+      },
+      "cloudtop-slope": {
+        "title": "Cloudtop Slope",
+        "subtitle": "Cloud shadows drift away as starlight arrives"
+      },
+      "amber-wilds": {
+        "title": "Amber Wilds",
+        "subtitle": "Golden waves of grass keep watch over old times"
+      },
+      "startrace-coast": {
+        "title": "Startrace Coast",
+        "subtitle": "The tide recedes; the starlight remains"
+      },
+      "changfeng-sea": {
+        "title": "Changfeng Sea",
+        "subtitle": "The long wind fades; sea and sky fall silent"
+      },
+      "boundless-sea": {
+        "title": "Boundless Sea",
+        "subtitle": "A small sail heads for the edge of sea and sky"
+      },
+      "whispering-forest": {
+        "title": "Whispering Forest",
+        "subtitle": "The wind lingers among the tree rings"
+      },
+      "frostmoon-tundra": {
+        "title": "Frostmoon Tundra",
+        "subtitle": "Moonlight sets the ice fields quietly aglow"
+      },
+      "crimson-canyon": {
+        "title": "Crimson Canyon",
+        "subtitle": "Evening light travels along the canyon walls"
+      },
+      "whalesong-skyport": {
+        "title": "Whalesong Skyport",
+        "subtitle": "Whale song rises from deep within the sea of clouds"
+      }
+    },
+    "townNpcs": {
+      "town-m01": {
+        "nickname": "Ayan",
+        "bio": "Lives in the market and loves handicrafts and the bustle of neighborhood life.",
+        "greeting": "I just finished a little trinket. Want to come see the workshop?"
+      },
+      "town-f01": {
+        "nickname": "Xiaotai",
+        "bio": "Loves the flowers in the courtyard and meeting new friends.",
+        "greeting": "The flowers are lovely today. I wish I could share a wisp of their scent with you."
+      },
+      "town-m02": {
+        "nickname": "Achuan",
+        "bio": "Lives on Lantern Canal Street and always carries a repair kit.",
+        "greeting": "It's windy by the river. I'd better check that the lanterns are hung securely."
+      },
+      "hall-bookkeeper": {
+        "nickname": "Shuhe",
+        "bio": "Looks after the hall's bookshelves and collects the town's old stories.",
+        "greeting": "This book holds the town's old stories. Shall we flip through a few pages together?"
+      }
+    },
+    "pets": {
+      "fountain-path-dog": "Tin Can",
+      "northwest-lawn-cat": "Little Moon",
+      "hall-sleeping-cat": "Roly"
+    },
+    "hallNotices": {
+      "hall-noticeboard": "Welcome to town. If your feet are tired, sit by the hearth for a while.",
+      "hall-reading": "A dried leaf is pressed between the pages. The window seat is perfect for reading right now.",
+      "hall-reception": "The guest book lies open on the desk. The mayor is out in the courtyard welcoming new friends."
+    },
+    "navEditor": {
+      "launch": "Scene debug",
+      "overlay": "Map region editing layer",
+      "tools": "Scene debug tools",
+      "showTools": "Show debug tools",
+      "hideTools": "Hide debug tools",
+      "collision": "Colliders",
+      "occlusion": "Occluders",
+      "drawCollision": "Draw region",
+      "drawOcclusion": "Draw occluder",
+      "resume": "Resume editing",
+      "cancelDrawing": "Cancel drawing",
+      "trial": "Test walk",
+      "exportJson": "Export JSON",
+      "exit": "Exit debug",
+      "draftHint": "Drafts are for debugging only. Export the JSON and write it into the map files to save.",
+      "occlusionHint": "Occluder outlines can be edited and exported. They take effect once imported into the map.",
+      "needThreePoints": "At least three points are needed to close the outline.",
+      "invalidOutline": "The outline crosses itself, repeats a point or is degenerate. Undo points and adjust before closing.",
+      "duplicatePoint": "That point already exists. Pick a new position.",
+      "fixBeforeTrial": "Fix the outline problems before the test walk.",
+      "playerBlocked": "The draft blocks the character's current position. Move or delete that collider before the test walk."
+    }
+  },
   "project": {
     "create": "Create Project",
     "createCard": "New Project",
@@ -2451,6 +2802,8 @@
     "dashboardTitle": "Project Management Center",
     "dashboardReturn": "Back to Project Management",
     "dashboardSubtitle": "Manage your drama productions and scripts.",
+    "pikoWorldEntry": "Enter Piko Piko World",
+    "pikoWorldEntryDragHint": "Click to enter Piko Piko World; hold and drag to move",
     "emptyTitle": "Start your first story",
     "emptyDescription": "Create a project to begin scripting, generating sketches, and producing episodes.",
     "heroTitle": "Start your creative journey",

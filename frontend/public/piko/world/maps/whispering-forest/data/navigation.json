@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "mapId": "whispering-forest",
+  "walkableAreas": [
+    {
+      "id": "map-preview-bounds",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 1152
+        },
+        {
+          "x": 0,
+          "y": 1152
+        }
+      ]
+    }
+  ],
+  "colliders": [],
+  "spawnPoints": [
+    {
+      "id": "whispering-meadow-arrival",
+      "position": {
+        "x": 1820,
+        "y": 760
+      },
+      "facing": "west"
+    }
+  ],
+  "exits": [
+    {
+      "id": "to-whispering-meadow",
+      "trigger": {
+        "id": "to-whispering-meadow-trigger",
+        "points": [
+          {
+            "x": 1940,
+            "y": 753
+          },
+          {
+            "x": 2000,
+            "y": 753
+          },
+          {
+            "x": 2000,
+            "y": 797
+          },
+          {
+            "x": 1940,
+            "y": 797
+          }
+        ]
+      },
+      "targetMapId": "whispering-meadow",
+      "targetSpawnId": "whispering-forest-arrival"
+    }
+  ]
+}

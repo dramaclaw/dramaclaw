@@ -3,6 +3,8 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { spyOnCanvasGetContext } from '@/__tests__/helpers/canvas-context';
+
 import { OUTPUT_PIXEL_SIZE, aspectRatio } from '@/features/previz/domain/camera';
 import { createCameraDraft } from '@/features/previz/domain/cameraDraft';
 import { createCharacterDraft } from '@/features/previz/domain/characterDraft';
@@ -1290,9 +1292,7 @@ describe('PrevizRenderer 接场景图', () => {
     // 出片同理，而且更要紧：监看糊了还能重摆机位，成片糊了是直接送进后面流程的。
     // jsdom 的 canvas 交不出 2D 上下文，而出片在拿不到它时会当场抛错、一帧都不渲染，
     // 于是这条断言就无从取样了——塞一个够用的假上下文进去，让整条出片路径真的跑完。
-    const getContext = vi
-      .spyOn(HTMLCanvasElement.prototype, 'getContext')
-      .mockImplementation((contextId: string) =>
+    const getContext = spyOnCanvasGetContext().mockImplementation((contextId: string) =>
         contextId === '2d'
           ? ({
               createImageData: (width: number, height: number) => ({
@@ -1534,9 +1534,7 @@ describe('PrevizRenderer timeline', () => {
       seenX.push(instance.nodeFor(walker.id)!.position.x);
     });
     // jsdom 交不出 2D 上下文、也没实现 toBlob，不垫上出片会当场抛错或一直挂着。
-    const getContext = vi
-      .spyOn(HTMLCanvasElement.prototype, 'getContext')
-      .mockImplementation((contextId: string) =>
+    const getContext = spyOnCanvasGetContext().mockImplementation((contextId: string) =>
         contextId === '2d'
           ? ({
               createImageData: (width: number, height: number) => ({

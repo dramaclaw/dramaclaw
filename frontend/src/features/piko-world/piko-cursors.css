@@ -1,0 +1,24 @@
+/* Scoped overrides include body portals. Pixi retains control of its canvas cursor. */
+body[data-piko-cursors="true"] {
+  cursor: var(--piko-default-cursor) !important;
+}
+
+body[data-piko-cursors="true"] *:not(canvas) {
+  cursor: inherit !important;
+}
+
+body[data-piko-cursors="true"] :is(
+  button, a[href], summary, select, label[for],
+  [role="button"], [role="link"], [role="menuitem"],
+  [role="menuitemcheckbox"], [role="menuitemradio"], [role="tab"],
+  [role="checkbox"], [role="radio"], [role="switch"], [role="option"],
+  input[type="button"], input[type="submit"], input[type="reset"],
+  input[type="checkbox"], input[type="radio"], input[type="range"]
+) {
+  cursor: var(--piko-action-cursor) !important;
+}
+
+body[data-piko-cursors="true"] :is(:disabled, [aria-disabled="true"], [data-disabled], [inert]),
+body[data-piko-cursors="true"] :is(:disabled, [aria-disabled="true"], [data-disabled], [inert]) * {
+  cursor: var(--piko-default-cursor) !important;
+}

@@ -5,43 +5,44 @@ import { ChevronRight, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { CREDIT_VALUE_CLASS, CreditSparkIcon } from "@/components/credits/credit-visual";
-import {
-  CreditCenterDialog,
-  type CreditCenterTab,
-} from "@/components/credits/CreditCenterDialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useCurrentUser } from "@/lib/queries/auth";
 import { useCreditSummary } from "@/lib/queries/credits";
-import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
 import { isCeRuntime } from "@/lib/runtime-config";
-import { CREDIT_CENTER_TAB_KEY, OPEN_CREDIT_CENTER_KEY } from "@/lib/payment-navigation";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
+
+import { CreditCenterDialog, type CreditCenterTab } from "@/components/credits/CreditCenterDialog";
+import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
+import { CREDIT_CENTER_TAB_KEY, OPEN_CREDIT_CENTER_KEY } from "@/lib/payment-navigation";
+
+import entryStyles from "./header-entry.module.css";
 
 function formatFullCredits(value: number, language: string): string {
   return new Intl.NumberFormat(language, { maximumFractionDigits: 0 }).format(value);
 }
 
 export function CreditBalanceBadge() {
-  // Hooks must run unconditionally (Rules of Hooks); gate the CE/auth checks
-  // after them. `useCurrentUser` stays disabled in CE so we don't fetch there.
+  // Keep hooks unconditional; disable requests in CE and when signed out.
   const ce = isCeRuntime();
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const [centerOpen, setCenterOpen] = useState(false);
   const [centerTab, setCenterTab] = useState<CreditCenterTab>("packages");
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pinnedRef = useRef(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const username = useAuthStore((s) => s.username);
-  const { data, isLoading, isError } = useCurrentUser(Boolean(username) && !ce);
   const summaryQuery = useCreditSummary(Boolean(username) && !ce);
   const productSurfaces = useProductSurfaces(Boolean(username) && !ce);
   const paymentAvailable = surfaceAccess(productSurfaces.data, "payment")?.available ?? false;
   const summary = summaryQuery.data?.data;
-  const balance = summary?.balance ?? data?.data.credit_balance;
+  // Auth may describe a different wallet; never use it as a loading fallback.
+  const balance = summary?.balance;
   const language = i18n?.resolvedLanguage ?? i18n?.language ?? "en";
 
   useEffect(
     () => () => {
+      if (openTimerRef.current) clearTimeout(openTimerRef.current);
       if (closeTimerRef.current !== null) {
         clearTimeout(closeTimerRef.current);
       }
@@ -58,7 +59,7 @@ export function CreditBalanceBadge() {
     setCenterOpen(true);
   }, []);
 
-  if (ce || !username || isError) return null;
+  if (ce || !username) return null;
 
   const cancelScheduledClose = () => {
     if (closeTimerRef.current !== null) {
@@ -68,20 +69,34 @@ export function CreditBalanceBadge() {
   };
 
   const openPanel = () => {
+    if (openTimerRef.current) clearTimeout(openTimerRef.current);
+    openTimerRef.current = null;
     cancelScheduledClose();
     if (!open) void summaryQuery.refetch();
     setOpen(true);
   };
 
+  const scheduleOpenPanel = () => {
+    cancelScheduledClose();
+    if (openTimerRef.current) clearTimeout(openTimerRef.current);
+    openTimerRef.current = setTimeout(openPanel, 100);
+  };
+
   const scheduleClosePanel = () => {
+    if (openTimerRef.current) clearTimeout(openTimerRef.current);
+    openTimerRef.current = null;
+    if (pinnedRef.current) return;
     cancelScheduledClose();
     closeTimerRef.current = setTimeout(() => {
       setOpen(false);
       closeTimerRef.current = null;
-    }, 160);
+    }, 180);
   };
 
   const openCredits = (tab: CreditCenterTab) => {
+    if (openTimerRef.current) clearTimeout(openTimerRef.current);
+    openTimerRef.current = null;
+    pinnedRef.current = false;
     cancelScheduledClose();
     setOpen(false);
     setCenterTab(tab);
@@ -90,9 +105,14 @@ export function CreditBalanceBadge() {
 
   return (
     <>
+      <span aria-hidden="true" className={entryStyles.separator} />
       <Popover
+        modal={false}
         open={open}
         onOpenChange={(nextOpen) => {
+          if (openTimerRef.current) clearTimeout(openTimerRef.current);
+          cancelScheduledClose();
+          pinnedRef.current = nextOpen;
           if (nextOpen && !open) void summaryQuery.refetch();
           setOpen(nextOpen);
         }}
@@ -101,29 +121,32 @@ export function CreditBalanceBadge() {
           render={
             <button
               type="button"
-              className="group/credits ml-1 flex h-9 min-w-0 items-center gap-1 rounded-md px-1 text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-white focus:outline-none focus:shadow-none focus:ring-0 focus-visible:outline-none focus-visible:shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              className={`${entryStyles.trigger} group/credits ml-1 flex h-9 min-w-0 items-center gap-1 rounded-md px-1 text-sm font-medium text-muted-foreground outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:shadow-none`}
               aria-label={t("credits.openPanel")}
-              onMouseEnter={openPanel}
+              onMouseEnter={scheduleOpenPanel}
               onMouseLeave={scheduleClosePanel}
             />
           }
         >
           <span className="flex shrink-0 items-center">
-            <CreditSparkIcon className="size-[17px]" withHoverMotion />
+            <CreditSparkIcon className="size-[17px]" />
           </span>
           <span
+            data-credit-value
             className={cn(
               "shrink-0 whitespace-nowrap text-[12px] leading-none tabular-nums",
               CREDIT_VALUE_CLASS,
             )}
           >
-            {isLoading || balance === undefined ? "--" : formatFullCredits(balance, language)}
+            {balance === undefined ? "--" : formatFullCredits(balance, language)}
           </span>
         </PopoverTrigger>
         <PopoverContent
+          initialFocus={() => pinnedRef.current}
+          finalFocus={() => pinnedRef.current}
           align="end"
-          sideOffset={10}
-          className="w-[330px] overflow-hidden border border-white/10 bg-[#17191d] p-0 text-white shadow-2xl"
+          sideOffset={8}
+          className={`${entryStyles.panel} w-[330px] overflow-hidden p-0`}
           onMouseEnter={openPanel}
           onMouseLeave={scheduleClosePanel}
         >
@@ -176,7 +199,7 @@ export function CreditBalanceBadge() {
             <button
               type="button"
               onClick={() => openCredits("benefits")}
-              className="flex w-full items-center gap-3 border-t border-white/8 px-4 py-3 text-left transition-colors hover:bg-white/[0.04]"
+              className={`${entryStyles.actionHover} flex w-full items-center gap-3 border-t border-white/8 px-4 py-3 text-left`}
             >
               <span className="flex size-8 items-center justify-center rounded-lg bg-amber-400/12 text-amber-300">
                 <Sparkles className="size-4" />
@@ -190,17 +213,9 @@ export function CreditBalanceBadge() {
               <ChevronRight className="size-4 text-white/35" />
             </button>
           ) : null}
-
         </PopoverContent>
       </Popover>
-      {centerOpen ? (
-        <CreditCenterDialog
-          open={centerOpen}
-          onOpenChange={setCenterOpen}
-          initialTab={centerTab}
-          paymentAvailable={paymentAvailable}
-        />
-      ) : null}
+      {centerOpen ? <CreditCenterDialog open={centerOpen} onOpenChange={setCenterOpen} initialTab={centerTab} paymentAvailable={paymentAvailable} /> : null}
     </>
   );
 }

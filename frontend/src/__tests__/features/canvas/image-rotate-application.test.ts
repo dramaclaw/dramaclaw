@@ -2,6 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { spyOnCanvasGetContext } from '@/__tests__/helpers/canvas-context';
+
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
 
@@ -49,7 +51,7 @@ function stubCanvas() {
     scale: vi.fn(),
     drawImage: vi.fn(),
   };
-  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+  spyOnCanvasGetContext().mockReturnValue(
     ctx as unknown as CanvasRenderingContext2D,
   );
   vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function (
