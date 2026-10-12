@@ -113,7 +113,11 @@ function PromptPreviewBody({ project }: { project: string }) {
   } else if (!stepInfo) {
     content = <p className="text-xs text-muted-foreground">{t("promptPreview.loading")}</p>;
   } else if (!stepInfo.supported) {
-    content = <p className="text-xs text-muted-foreground">{t("promptPreview.unsupported")}</p>;
+    content = (
+      <p className="text-xs text-muted-foreground">
+        {stepInfo.note || t("promptPreview.unsupported")}
+      </p>
+    );
   } else if (needsEpisode) {
     content = <p className="text-xs text-muted-foreground">{t("promptPreview.needsEpisode")}</p>;
   } else if (targets.length === 0) {
@@ -156,9 +160,11 @@ function PromptPreviewBody({ project }: { project: string }) {
         {tab === "lastSent" &&
           (data.last_sent ? (
             <>
-              <p className="text-[11px] text-muted-foreground">
-                {new Date(data.last_sent.mtime * 1000).toLocaleString()}
-              </p>
+              {data.last_sent.mtime > 0 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  {new Date(data.last_sent.mtime * 1000).toLocaleString()}
+                </p>
+              ) : null}
               <PromptBlock
                 label={data.last_sent.path.split("/").slice(-2).join("/")}
                 text={data.last_sent.text}

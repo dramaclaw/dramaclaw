@@ -352,6 +352,14 @@ def verify_evidence(
     return (chunk.source_start + local, chunk.source_start + local + len(needle))
 
 
+def build_character_chunk_prompt(chunk: SourceChunk, language: AssetLanguage) -> str:
+    """The user message sent with CHARACTER_EXTRACTION_SYSTEM_PROMPT for one chunk."""
+    return (
+        f"{asset_language_instruction(language)}\n\n"
+        f"【片段 {chunk.section_label}】\n{chunk.text}"
+    )
+
+
 async def extract_characters_from_chunks(
     chunks: list[SourceChunk],
     *,
@@ -402,11 +410,7 @@ async def extract_characters_from_chunks(
     runner = _create_character_extraction_agent(agent)
 
     async def analyse(chunk: SourceChunk) -> tuple[SourceChunk, ChunkCharacterOutput]:
-        output = await _run_structured(
-            runner,
-            f"{asset_language_instruction(language)}\n\n"
-            f"【片段 {chunk.section_label}】\n{chunk.text}",
-        )
+        output = await _run_structured(runner, build_character_chunk_prompt(chunk, language))
         if on_chunk_done:
             await _maybe_await(on_chunk_done(chunk, output))
         return chunk, output

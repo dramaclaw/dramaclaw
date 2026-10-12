@@ -330,6 +330,82 @@ OTHER_IDENTITY_PROMPT = """# 你是影视视觉身份分析师
 # =============================================================================
 
 
+
+def format_character_info(characters: list[str], resolve_name, get_character) -> str:
+    """基础信息 + 已有身份文本（Pass A/B 共用）。"""
+    lines = []
+    for char_name in characters:
+        resolved = resolve_name(char_name)
+        char = get_character(resolved)
+        if char:
+            lines.append(f"### {char.name}")
+            base_attrs = []
+            if char.gender:
+                base_attrs.append(f"性别: {char.gender}")
+            if char.age_group:
+                base_attrs.append(f"默认年龄段: {char.age_group}")
+            if char.face_prompt:
+                base_attrs.append(f"默认面部: {char.face_prompt}")
+            if char.body_type:
+                base_attrs.append(f"体型: {char.body_type}")
+            if base_attrs:
+                lines.append(f"基础信息: {', '.join(base_attrs)}")
+            if char.identities:
+                for ident in char.identities:
+                    desc = ident.appearance_details or "无描述"
+                    extra = ""
+                    if ident.face_prompt:
+                        extra = f" [身份级面容: {ident.face_prompt[:30]}, 年龄段={ident.age_group}]"
+                    lines.append(f"- `{ident.identity_id}`: {desc}{extra}")
+            else:
+                lines.append("- （无已有身份）")
+            lines.append("")
+        else:
+            lines.append(f"### {resolved or char_name}")
+            lines.append("- （无已有身份）")
+            lines.append("")
+    return "\n".join(lines)
+
+
+def build_default_identity_system_prompt(content_text: str) -> str:
+    return f"{DEFAULT_IDENTITY_PROMPT}\n{asset_language_instruction(detect_asset_language(content_text))}"
+
+
+def build_default_identity_task(
+    *,
+    episode_number: int,
+    episode_title: str,
+    cast_names: list[str],
+    identity_info: str,
+    graph_context: str | None,
+    content_text: str,
+) -> str:
+    """Pass A user message: each cast member's default identity for the episode."""
+    graph_section = ""
+    if graph_context and graph_context.strip():
+        graph_section = f"\n## 图谱上下文\n{graph_context[:3000]}\n"
+    return f"""分析第 {episode_number} 集《{episode_title}》中每个角色的**现实主线默认身份**。
+
+## 出场角色
+{", ".join(cast_names)}
+
+## 已有身份列表（优先复用）
+{identity_info}
+{graph_section}
+## 本集原文
+{content_text}
+
+---
+请为每个出场角色确定一个默认身份（现实主线中最常出现的稳定形态）。
+- 已有身份能覆盖的，使用相同的 visual_state 名称（复用）
+- character_name 使用角色主名称
+- 每个角色只输出一个默认身份
+- 同时输出 age_group
+  - 如果 visual_state 明确是年龄阶段，请填写对应 age_group
+  - 如果只是同龄造型分支，可留空
+"""
+
+
 class IdentityPlanner:
     """批量为所有剧集规划角色身份。
 
@@ -737,38 +813,9 @@ class IdentityPlanner:
 
     def _build_character_info(self, characters: list[str]) -> str:
         """构建角色基础信息 + 已有身份信息文本。"""
-        lines = []
-        for char_name in characters:
-            resolved = self.cognee_store.resolve_name(char_name)
-            char = self.cognee_store.get_character(resolved)
-            if char:
-                lines.append(f"### {char.name}")
-                base_attrs = []
-                if char.gender:
-                    base_attrs.append(f"性别: {char.gender}")
-                if char.age_group:
-                    base_attrs.append(f"默认年龄段: {char.age_group}")
-                if char.face_prompt:
-                    base_attrs.append(f"默认面部: {char.face_prompt}")
-                if char.body_type:
-                    base_attrs.append(f"体型: {char.body_type}")
-                if base_attrs:
-                    lines.append(f"基础信息: {', '.join(base_attrs)}")
-                if char.identities:
-                    for ident in char.identities:
-                        desc = ident.appearance_details or "无描述"
-                        extra = ""
-                        if ident.face_prompt:
-                            extra = f" [身份级面容: {ident.face_prompt[:30]}, 年龄段={ident.age_group}]"
-                        lines.append(f"- `{ident.identity_id}`: {desc}{extra}")
-                else:
-                    lines.append("- （无已有身份）")
-                lines.append("")
-            else:
-                lines.append(f"### {resolved or char_name}")
-                lines.append("- （无已有身份）")
-                lines.append("")
-        return "\n".join(lines)
+        return format_character_info(
+            characters, self.cognee_store.resolve_name, self.cognee_store.get_character
+        )
 
     def _normalize_cast_names(self, names: list[str]) -> list[str]:
         """将主名/别名统一映射成主名并去重。"""
@@ -924,40 +971,21 @@ class IdentityPlanner:
             cast_names = [c.name for c in self.cognee_store.get_all_characters()]
 
         identity_info = self._build_character_info(cast_names)
-        graph_section = ""
-        if graph_context and graph_context.strip():
-            graph_section = f"\n## 图谱上下文\n{graph_context[:3000]}\n"
-
-        task = f"""分析第 {episode.number} 集《{episode.title}》中每个角色的**现实主线默认身份**。
-
-## 出场角色
-{", ".join(cast_names)}
-
-## 已有身份列表（优先复用）
-{identity_info}
-{graph_section}
-## 本集原文
-{content_text}
-
----
-请为每个出场角色确定一个默认身份（现实主线中最常出现的稳定形态）。
-- 已有身份能覆盖的，使用相同的 visual_state 名称（复用）
-- character_name 使用角色主名称
-- 每个角色只输出一个默认身份
-- 同时输出 age_group
-  - 如果 visual_state 明确是年龄阶段，请填写对应 age_group
-  - 如果只是同龄造型分支，可留空
-"""
+        task = build_default_identity_task(
+            episode_number=episode.number,
+            episode_title=episode.title,
+            cast_names=cast_names,
+            identity_info=identity_info,
+            graph_context=graph_context,
+            content_text=content_text,
+        )
         try:
-            language_instruction = asset_language_instruction(
-                detect_asset_language(content_text)
-            )
             agent = Agent(
                 self._identity_model(
                     "IDENTITY_PLANNER_ANALYSIS_MODEL",
                     brainclaw_profile=BrainClawProfile.IDENTITY_DEFAULT_ANALYSIS,
                 ),
-                system_prompt=f"{DEFAULT_IDENTITY_PROMPT}\n{language_instruction}",
+                system_prompt=build_default_identity_system_prompt(content_text),
                 model_settings=self._identity_model_settings(),
                 output_type=EpisodeDefaultIdentities,
             )

@@ -75,13 +75,108 @@ def create_keyframe_prompt_builder_agent(language: str = "zh") -> Agent:
     )
     return Agent(
         model,
-        system_prompt=(
-            f"{KEYFRAME_PROMPT_BUILDER_INSTRUCTIONS_EN}\n\n"
-            f"## Output Language\n{asset_language_instruction(language)}"
-        ),
+        system_prompt=build_keyframe_system_prompt(language),
         output_type=str,
         name="Keyframe Prompt Builder",
     )
+
+
+def keyframe_output_label(language: str) -> str:
+    return "English" if language == "en" else "Chinese (中文)"
+
+
+def build_keyframe_system_prompt(language: str = "zh") -> str:
+    return (
+        f"{KEYFRAME_PROMPT_BUILDER_INSTRUCTIONS_EN}\n\n"
+        f"## Output Language\n{asset_language_instruction(language)}"
+    )
+
+
+def build_keyframe_task(
+    *,
+    narration: str,
+    next_narration: str = "",
+    language: str = "zh",
+    color_map_text: str = "",
+    visual_description: str = "",
+    next_visual_description: str = "",
+    audio_type: str = "narration",
+    dialogue_line: str = "",
+) -> str:
+    """User message sent with the two keyframe images (the images themselves are attached)."""
+    # 构建 dialogue 提示
+    dialogue_hint = ""
+    if audio_type == "dialogue" and dialogue_line:
+        dialogue_hint = "\n⚠️ This Beat is DIALOGUE — speaking is the primary motion. Describe lips moving, gestures while talking. Dialogue text is appended by the system; only describe physical action.\n"
+
+    # 构建任务提示
+    if language == "en":
+        output_label = "English"
+        length_target = "4-6 sentences, ~50-90 words"
+    else:
+        output_label = "Chinese (中文)"
+        length_target = "4-6 句, ~50-90 字"
+    language_instruction = asset_language_instruction(language)
+
+    if color_map_text:
+        # English + color map mode (SuperPower)
+        task = f"""Craft a 5-second transition between these two sketches in {output_label} ({length_target}).
+
+## Images
+- Image 1: First sketch (starting point)
+- Image 2: Last sketch (ending point)
+
+## Character Color Map (sketch color marks → character appearance)
+{color_map_text}
+
+## First Frame Visual Description
+{visual_description if visual_description else "N/A"}
+## Last Frame Visual Description
+{next_visual_description if next_visual_description else "N/A"}
+
+## Narration (Story Intent)
+{narration}
+"""
+        if next_narration:
+            task += f"\n## Next Narration (Emotional Direction)\n{next_narration}\n"
+        task += f"""{dialogue_hint}
+## Rules
+- Identify characters by color marks, NEVER use character names
+- Camera must have displacement/zoom, describe camera endpoint
+- NO emotion labels → use body language
+- Include ambient audio layer
+- {length_target}
+
+## Output Language
+{language_instruction}
+
+Output the transition prompt in {output_label} directly."""
+    else:
+        task = f"""Craft an imaginative 5-second transition between these two frames in {output_label} ({length_target}).
+
+## Images
+- Image 1: First frame (starting point)
+- Image 2: Last frame (ending point)
+
+## Narration (Story Intent)
+{narration}
+"""
+        if next_narration:
+            task += f"\n## Next Narration (Emotional Direction)\n{next_narration}\n"
+        task += f"""{dialogue_hint}
+## Rules
+- Describe visible element transitions from the frames
+- Camera must have displacement/zoom, describe camera endpoint
+- NO character names → use visual features
+- NO emotion labels → use body language
+- Include ambient audio layer
+- {length_target}
+
+## Output Language
+{language_instruction}
+
+Output the transition prompt in {output_label} directly."""
+    return task
 
 
 class KeyframePromptBuilder:
@@ -156,6 +251,7 @@ class KeyframePromptBuilder:
         next_visual_description: str = "",
         audio_type: str = "narration",
         dialogue_line: str = "",
+        allow_fallback: bool = True,
     ) -> str:
         """生成首尾帧过渡提示词。
 
@@ -165,6 +261,8 @@ class KeyframePromptBuilder:
             narration: 当前 beat 解说词
             next_narration: 下一个 beat 解说词（可选，提供更多上下文）
             language: 输出语言，"en" 英文，"zh" 中文
+            allow_fallback: 模型调用失败时是否退回默认过渡提示词。为 False 时直接抛出异常，
+                避免把一句通用模板当成该 beat 的提示词静默保存。
         Returns:
             首尾帧过渡提示词
         """
@@ -185,80 +283,18 @@ class KeyframePromptBuilder:
             data=last_frame_bytes, media_type="image/jpeg"
         )  # 尾帧
 
-        # 构建 dialogue 提示
-        dialogue_hint = ""
-        if audio_type == "dialogue" and dialogue_line:
-            dialogue_hint = "\n⚠️ This Beat is DIALOGUE — speaking is the primary motion. Describe lips moving, gestures while talking. Dialogue text is appended by the system; only describe physical action.\n"
+        task = build_keyframe_task(
+            narration=narration,
+            next_narration=next_narration,
+            language=language,
+            color_map_text=color_map_text,
+            visual_description=visual_description,
+            next_visual_description=next_visual_description,
+            audio_type=audio_type,
+            dialogue_line=dialogue_line,
+        )
+        lang_hint = keyframe_output_label(language)
 
-        # 构建任务提示
-        if language == "en":
-            output_label = "English"
-            length_target = "4-6 sentences, ~50-90 words"
-        else:
-            output_label = "Chinese (中文)"
-            length_target = "4-6 句, ~50-90 字"
-        language_instruction = asset_language_instruction(language)
-
-        if color_map_text:
-            # English + color map mode (SuperPower)
-            task = f"""Craft a 5-second transition between these two sketches in {output_label} ({length_target}).
-
-## Images
-- Image 1: First sketch (starting point)
-- Image 2: Last sketch (ending point)
-
-## Character Color Map (sketch color marks → character appearance)
-{color_map_text}
-
-## First Frame Visual Description
-{visual_description if visual_description else "N/A"}
-## Last Frame Visual Description
-{next_visual_description if next_visual_description else "N/A"}
-
-## Narration (Story Intent)
-{narration}
-"""
-            if next_narration:
-                task += f"\n## Next Narration (Emotional Direction)\n{next_narration}\n"
-            task += f"""{dialogue_hint}
-## Rules
-- Identify characters by color marks, NEVER use character names
-- Camera must have displacement/zoom, describe camera endpoint
-- NO emotion labels → use body language
-- Include ambient audio layer
-- {length_target}
-
-## Output Language
-{language_instruction}
-
-Output the transition prompt in {output_label} directly."""
-        else:
-            task = f"""Craft an imaginative 5-second transition between these two frames in {output_label} ({length_target}).
-
-## Images
-- Image 1: First frame (starting point)
-- Image 2: Last frame (ending point)
-
-## Narration (Story Intent)
-{narration}
-"""
-            if next_narration:
-                task += f"\n## Next Narration (Emotional Direction)\n{next_narration}\n"
-            task += f"""{dialogue_hint}
-## Rules
-- Describe visible element transitions from the frames
-- Camera must have displacement/zoom, describe camera endpoint
-- NO character names → use visual features
-- NO emotion labels → use body language
-- Include ambient audio layer
-- {length_target}
-
-## Output Language
-{language_instruction}
-
-Output the transition prompt in {output_label} directly."""
-
-        lang_hint = output_label
         log_agent_start("首尾帧过渡提示词生成师", f"生成过渡描述 ({lang_hint})")
 
         # 存储上下文供调试
@@ -298,6 +334,8 @@ Output the transition prompt in {output_label} directly."""
 
         except Exception as e:
             log_agent_end("首尾帧过渡提示词生成师", success=False, result=str(e))
+            if not allow_fallback:
+                raise
             # 失败时回退到默认提示词
             return self._fallback_build(language)
 
