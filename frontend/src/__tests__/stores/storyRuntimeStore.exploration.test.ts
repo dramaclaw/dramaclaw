@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { stateNameForVariable } from '@/features/canvas/story/inkNames';
 import { compileGraphToInk } from '@/features/canvas/story/compileGraphToInk';
 import { CANVAS_NODE_TYPES, type CanvasEdge, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CHOICE_EDGE_TYPE, type CompiledStory } from '@/features/canvas/story/storyTypes';
@@ -24,22 +25,22 @@ describe('player exploration and reversible checkpoints', () => {
     state().enterPlay(branch(), { saveKey: KEY });
     expect(state().rewindToNode('right')).toBe(false);
     state().choose(0);
-    expect(state().story!.variablesState.$('score')).toBe(5);
-    expect(state().story!.variablesState.$('key')).toBe(true);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(5);
+    expect(state().story!.variablesState.$(stateNameForVariable('key'))).toBe(true);
     expect(state().story!.state.VisitCountAtPathString(branch().knotByNodeId.left)).toBe(1);
     state().completeCurrentNode();
     state().choose(0);
     state().completeCurrentNode();
     expect(state().exploration.totalRuns).toBe(1);
     expect(state().rewindToNode('intro')).toBe(true);
-    expect(state().story!.variablesState.$('score')).toBe(0);
-    expect(state().story!.variablesState.$('key')).toBe(false);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(0);
+    expect(state().story!.variablesState.$(stateNameForVariable('key'))).toBe(false);
     expect(state().story!.state.VisitCountAtPathString(branch().knotByNodeId.left)).toBe(0);
     expect(state().exploration.route.map((step) => step.nodeId)).toEqual(['intro']);
     expect(state().exploration.completedNodeIds).toEqual(['intro', 'left', 'end']);
     state().choose(1);
     expect(state().currentNodeId).toBe('right');
-    expect(state().story!.variablesState.$('score')).toBe(0);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(0);
     expect(state().exploration.route.map((step) => step.nodeId)).toEqual(['intro', 'right']);
     state().completeCurrentNode();
     expect(explorationSummary(state().explorationNodes, state().exploration).percent).toBe(100);
@@ -93,7 +94,7 @@ describe('player exploration and reversible checkpoints', () => {
     expect(state().exploration.route[state().exploration.route.length - 1].visit).not.toBe(firstVisit);
     state().choose(1);
     expect(state().rewindToNode('intro')).toBe(true);
-    expect(state().story!.variablesState.$('score')).toBe(1);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(1);
     expect(state().exploration.route.map((step) => step.nodeId)).toEqual(['intro', 'intro']);
     expect(state().exploration.completedNodeIds).toEqual(['intro']);
   });
@@ -145,10 +146,10 @@ describe('player exploration and reversible checkpoints', () => {
     state().resumeSaved();
     expect(state().rewindToPreviousChoice()).toBe(true);
     expect(state().currentNodeId).toBe('left');
-    expect(state().story!.variablesState.$('score')).toBe(5);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(5);
     expect(state().rewindToPreviousChoice()).toBe(true);
     expect(state().currentNodeId).toBe('intro');
-    expect(state().story!.variablesState.$('score')).toBe(0);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(0);
     expect(state().rewindToPreviousChoice()).toBe(false);
     expect(state().exploration.completedNodeIds).toEqual(['intro', 'left', 'end']);
   });
@@ -160,12 +161,12 @@ describe('player exploration and reversible checkpoints', () => {
     state().enterPlay(compiled, { saveKey: KEY });
     state().choose(0);
     state().choose(0);
-    expect(state().story!.variablesState.$('score')).toBe(2);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(2);
     expect(state().rewindToPreviousChoice()).toBe(true);
-    expect(state().story!.variablesState.$('score')).toBe(1);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(1);
     expect(state().exploration.route).toHaveLength(2);
     expect(state().rewindToPreviousChoice()).toBe(true);
-    expect(state().story!.variablesState.$('score')).toBe(0);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(0);
     expect(state().exploration.route).toHaveLength(1);
   });
 
@@ -184,10 +185,10 @@ describe('player exploration and reversible checkpoints', () => {
     expect(state().rewindToNode('end')).toBe(true);
     expect(state().rewindToPreviousChoice()).toBe(true);
     expect(state().currentNodeId).toBe('left');
-    expect(state().story!.variablesState.$('score')).toBe(5);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(5);
     expect(state().rewindToPreviousChoice()).toBe(true);
     expect(state().currentNodeId).toBe('intro');
-    expect(state().story!.variablesState.$('score')).toBe(0);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(0);
   });
 
   it('restores historical loop visits after newer visits overwrite the node checkpoint', () => {
@@ -206,9 +207,9 @@ describe('player exploration and reversible checkpoints', () => {
     state().resumeSaved();
     expect(state().rewindToNode('end')).toBe(true);
     expect(state().rewindToPreviousChoice()).toBe(true);
-    expect(state().story!.variablesState.$('score')).toBe(1);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(1);
     expect(state().rewindToPreviousChoice()).toBe(true);
-    expect(state().story!.variablesState.$('score')).toBe(0);
+    expect(state().story!.variablesState.$(stateNameForVariable('score'))).toBe(0);
     expect(state().rewindToPreviousChoice()).toBe(false);
     const history = state().exploration.checkpoints.end.decisions!;
     expect(history).toHaveLength(2);
@@ -239,7 +240,7 @@ describe('player exploration and reversible checkpoints', () => {
     state().choose(1);
     state().rewindToPreviousChoice();
     expect(state().currentNodeId).toBe('intro');
-    expect(state().story!.variablesState.$('key')).toBe(false);
+    expect(state().story!.variablesState.$(stateNameForVariable('key'))).toBe(false);
     state().choose(0);
     state().restart();
     expect(state().rewindToPreviousChoice()).toBe(false);

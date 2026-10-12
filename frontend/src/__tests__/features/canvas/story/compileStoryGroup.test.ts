@@ -28,7 +28,7 @@ describe('compileStoryGroup', () => {
     ];
     const edges = [cedge('a', 'b', '去 b', 0)];
     const result = compileStoryGroup('g1', nodes, edges);
-    expect(result.ink).toContain('VAR fav = 0');
+    expect(result.ink).toContain('VAR state_fav = 0');
     expect(result.ink).toContain('=== clip_a ===');
     expect(result.ink).toContain('=== clip_b ===');
     expect(result.ink).not.toContain('clip_x');

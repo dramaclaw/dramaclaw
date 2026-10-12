@@ -325,14 +325,14 @@ describe('compileGraphToInk variables', () => {
   it('为每个变量生成 VAR 声明', () => {
     const nodes = [videoNode('a', 'a.mp4', 'start')];
     const result = compileGraphToInk(nodes, [], vars);
-    expect(result.ink).toContain('VAR fav = 0');
+    expect(result.ink).toContain('VAR state_fav = 0');
   });
 
   it('带条件的选项生成 + {var op value}', () => {
     const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
     const edges = [richEdge('a', 'b', '去 b', 0, { condition: { var: 'fav', op: '>=', value: 3 } })];
     const result = compileGraphToInk(nodes, edges, vars);
-    expect(result.ink).toContain('+ {fav >= 3} [去 b]');
+    expect(result.ink).toContain('+ {state_fav >= 3} [去 b]');
     expect(result.ink).toContain('-> clip_b');
   });
 
@@ -340,7 +340,7 @@ describe('compileGraphToInk variables', () => {
     const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
     const edges = [richEdge('a', 'b', '去 b', 0, { effects: [{ var: 'fav', delta: 2 }] })];
     const result = compileGraphToInk(nodes, edges, vars);
-    expect(result.ink).toContain('~ fav += 2');
+    expect(result.ink).toContain('~ state_fav += 2');
   });
 
   it('引用未注册变量的条件/效果被静默跳过且记 warning', () => {
@@ -387,7 +387,7 @@ describe('compileGraphToInk variables', () => {
         condition: { join: 'and', items: [{ var: 'favor', op: '>=', value: 5 }, { visitedNodeId: 'secret', op: '>=', value: 1 }] } } } as CanvasEdge,
     ];
     const ink = compileGraphToInk(nodes, edges, vars2).ink;
-    expect(ink).toContain('{favor >= 5 && clip_secret >= 1} [混合]');
+    expect(ink).toContain('{state_favor >= 5 && clip_secret >= 1} [混合]');
   });
 
   it('访问叶子指向不可达/组外节点 → 跳过该叶子 + warning', () => {
@@ -413,7 +413,7 @@ describe('compileGraphToInk variables', () => {
       { var: 'trust', op: '>=', value: 0 },
     ])];
     const result = compileGraphToInk(nodes, edges, vars2);
-    expect(result.ink).toContain('+ {fav >= 5 && trust >= 0} [去 b]');
+    expect(result.ink).toContain('+ {state_fav >= 5 && state_trust >= 0} [去 b]');
   });
 
   it('复合 OR 条件组生成 { a >= 5 || b < 1 }', () => {
@@ -427,7 +427,7 @@ describe('compileGraphToInk variables', () => {
       { var: 'trust', op: '<', value: 1 },
     ])];
     const result = compileGraphToInk(nodes, edges, vars2);
-    expect(result.ink).toContain('+ {fav >= 5 || trust < 1} [去 b]');
+    expect(result.ink).toContain('+ {state_fav >= 5 || state_trust < 1} [去 b]');
   });
 
   it('组里任一叶子引用未注册变量 → 整组丢弃 + warning', () => {
@@ -487,9 +487,9 @@ describe('compileGraphToInk variables', () => {
       } } as CanvasEdge,
     ];
     const result = compileGraphToInk(nodes, edges, [], flags);
-    expect(result.ink).toContain('VAR has_key = false');
-    expect(result.ink).toContain('{ has_key == true:');
-    expect(result.ink).toContain('~ has_key = true');
+    expect(result.ink).toContain('VAR state_has_5f_key = false');
+    expect(result.ink).toContain('{ state_has_5f_key == true:');
+    expect(result.ink).toContain('~ state_has_5f_key = true');
     expect(result.ink).not.toContain('+ [');
   });
 

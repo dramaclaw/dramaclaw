@@ -5,6 +5,7 @@ import { Compiler } from 'inkjs/full';
 import type { CanvasNode, CanvasEdge } from '@/features/canvas/domain/canvasNodes';
 import type { StoryConditionExpr, StoryVariable, StoryFlag } from '@/features/canvas/story/storyTypes';
 import { lintStory } from '@/features/canvas/story/lintStory';
+import { stateNameForVariable } from '@/features/canvas/story/inkNames';
 import { compileStoryGroup } from '@/features/canvas/story/compileStoryGroup';
 
 type Leaf =
@@ -121,7 +122,7 @@ for (const file of files) {
           expect(errors[i]).toContain(message);
         }
         for (const [name, value] of Object.entries(trace.expectedVariables)) {
-          expect(runtime.variablesState!.$(name)).toBe(value);
+          expect(runtime.variablesState!.$(stateNameForVariable(name))).toBe(value);
         }
         return runtime.currentChoices.map(choice => choice.text);
       };

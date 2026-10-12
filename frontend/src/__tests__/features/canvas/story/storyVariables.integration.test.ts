@@ -3,6 +3,7 @@ import { Compiler } from 'inkjs/full';
 import type { CanvasEdge, CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CHOICE_EDGE_TYPE, type StoryVariable } from '@/features/canvas/story/storyTypes';
+import { stateNameForVariable } from '@/features/canvas/story/inkNames';
 import { compileGraphToInk } from '@/features/canvas/story/compileGraphToInk';
 
 function v(id: string, url: string, start?: 'start'): CanvasNode {
@@ -38,8 +39,7 @@ describe('变量+条件 端到端(inkjs)', () => {
     story.Continue();
     // fav>=3 满足 → 「表白」可见
     expect(story.currentChoices.map((c) => c.text)).toEqual(['表白', '走开']);
-    // inkjs 读变量值:story.variablesState['fav'] 走 index signature proxy,与 story.variablesState.$('fav') 等价
-    expect(story.variablesState['fav']).toBe(3);
+    expect(story.variablesState.$(stateNameForVariable('fav'))).toBe(3);
   });
 
   it('好感度不足时,阈值条件选项被隐藏', () => {

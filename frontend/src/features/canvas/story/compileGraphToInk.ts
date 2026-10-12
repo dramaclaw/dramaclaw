@@ -1,6 +1,6 @@
 import i18next from 'i18next';
 import { isVideoNode, type CanvasEdge, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
-import { knotNameForNodeId } from './inkNames';
+import { knotNameForNodeId, stateNameForVariable } from './inkNames';
 import { resolveStartNodeId } from './resolveStart';
 import {
   STORY_CHOICE_EDGE_TYPE,
@@ -44,9 +44,9 @@ function guardFor(
       }
       parts.push(`${knotNameForNodeId(leaf.visitedNodeId)} ${leaf.op} ${leaf.value}`);
     } else if (isFlagCondition(leaf)) {
-      parts.push(`${leaf.flag} == ${leaf.value ? 'true' : 'false'}`);
+      parts.push(`${stateNameForVariable(leaf.flag)} == ${leaf.value ? 'true' : 'false'}`);
     } else {
-      parts.push(`${leaf.var} ${leaf.op} ${leaf.value}`);
+      parts.push(`${stateNameForVariable(leaf.var)} ${leaf.op} ${leaf.value}`);
     }
   }
   if (parts.length === 0) return '';
@@ -229,8 +229,8 @@ export function compileGraphToInk(
   // knot. Route self-transitions through a content-free sibling knot so every
   // segment entry counts once, including automatic transitions and saved games.
   const usedNames = new Set([
-    ...variables.map(variable => variable.name),
-    ...flags.map(flag => flag.name),
+    ...variables.map(variable => stateNameForVariable(variable.name)),
+    ...flags.map(flag => stateNameForVariable(flag.name)),
     ...reachable.map(knotNameForNodeId),
   ]);
   const reentryKnots = new Map<string, string>();
@@ -267,9 +267,9 @@ export function compileGraphToInk(
   // 生成 VAR 声明(放在 divert 之前)
   const lines: string[] = [];
   for (const v of variables) {
-    lines.push(`VAR ${v.name} = ${Math.trunc(v.initial)}`);
+    lines.push(`VAR ${stateNameForVariable(v.name)} = ${Math.trunc(v.initial)}`);
   }
-  for (const flag of flags) lines.push(`VAR ${flag.name} = ${flag.initial ? 'true' : 'false'}`);
+  for (const flag of flags) lines.push(`VAR ${stateNameForVariable(flag.name)} = ${flag.initial ? 'true' : 'false'}`);
   if (variables.length > 0 || flags.length > 0) lines.push('');
   lines.push(`-> ${knotNameForNodeId(entryNodeId)}`, '');
 
@@ -324,8 +324,8 @@ export function compileGraphToInk(
         if (leaves.length > 0 && guardExpr) lines.push(`{ ${guardExpr}:`);
         for (const eff of choice.effects ?? []) {
           lines.push('flag' in eff
-            ? `${leaves.length > 0 && guardExpr ? '    ' : ''}~ ${eff.flag} = ${eff.value ? 'true' : 'false'}`
-            : `${leaves.length > 0 && guardExpr ? '    ' : ''}~ ${eff.var} += ${Math.trunc(eff.delta)}`);
+            ? `${leaves.length > 0 && guardExpr ? '    ' : ''}~ ${stateNameForVariable(eff.flag)} = ${eff.value ? 'true' : 'false'}`
+            : `${leaves.length > 0 && guardExpr ? '    ' : ''}~ ${stateNameForVariable(eff.var)} += ${Math.trunc(eff.delta)}`);
         }
         lines.push(`${leaves.length > 0 && guardExpr ? '    ' : ''}-> ${transitionTarget(id, choice.target)}`);
         if (leaves.length > 0 && guardExpr) lines.push('}');
@@ -374,8 +374,8 @@ export function compileGraphToInk(
         lines.push(`+ ${guard}[${text}${feedbackTag}${interactionTag}${defaultTag}]`);
         for (const eff of choice.effects ?? []) {
           lines.push('flag' in eff
-            ? `    ~ ${eff.flag} = ${eff.value ? 'true' : 'false'}`
-            : `    ~ ${eff.var} += ${Math.trunc(eff.delta)}`);
+            ? `    ~ ${stateNameForVariable(eff.flag)} = ${eff.value ? 'true' : 'false'}`
+            : `    ~ ${stateNameForVariable(eff.var)} += ${Math.trunc(eff.delta)}`);
         }
         lines.push(`    -> ${transitionTarget(id, choice.target)}`);
       }

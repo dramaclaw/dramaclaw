@@ -4,6 +4,8 @@ import { Compiler } from 'inkjs/full';
 import type { BuildPlayerHtmlOptions } from '@/features/canvas/story/export/buildPlayerHtml';
 import { buildPlayerHtml } from '@/features/canvas/story/export/buildPlayerHtml';
 import type { CompiledStory } from '@/features/canvas/story/storyTypes';
+import type { CanvasEdge, CanvasNode } from '@/features/canvas/domain/canvasNodes';
+import { compileGraphToInk } from '@/features/canvas/story/compileGraphToInk';
 
 // Execute the actual exported inline bundle as file://, independently of the app.
 const { JSDOM, VirtualConsole } = createRequire(import.meta.url)('jsdom');
@@ -42,6 +44,40 @@ async function openExport(story = compiled(), rejectPlay = false, options: Build
 afterEach(() => { windows.splice(0).forEach((window) => window.close()); });
 
 describe('exported HTML using the shared player', () => {
+  it('plays a compiled story with state names that collide with knots', async () => {
+    const nodes = ['start', 'gate', 'end'].map(id => ({
+      id, type: 'videoNode', position: { x: 0, y: 0 }, data: {
+        narration: id, ...(id === 'start' ? { storyRole: 'start' } : {}),
+        ...(id === 'end' ? { endingLabel: 'END' } : {}),
+      },
+    })) as CanvasNode[];
+    const edges = [
+      { id: 'take', type: 'storyChoiceEdge', source: 'start', target: 'gate', data: {
+        choiceText: 'Take key', order: 0,
+        effects: [{ var: 'clip_start', delta: 1 }, { flag: 'clip_end', value: true }],
+      } },
+      { id: 'use', type: 'storyChoiceEdge', source: 'gate', target: 'end', data: {
+        choiceText: 'Use key', order: 0, condition: { join: 'and', items: [
+          { var: 'clip_start', op: '>=', value: 1 }, { flag: 'clip_end', value: true },
+        ] },
+      } },
+    ] as CanvasEdge[];
+    const story = compileGraphToInk(nodes, edges,
+      [{ name: 'clip_start', label: 'Score', initial: 0 }],
+      [{ name: 'clip_end', label: 'Key', initial: false }]);
+    const { document, errors } = await openExport(story);
+    const take = document.querySelector('[data-choice-stage] button') as HTMLButtonElement;
+    expect(take.textContent).toContain('Take key');
+    take.click();
+    await pause(550);
+    const use = document.querySelector('[data-choice-stage] button') as HTMLButtonElement;
+    expect(use.textContent).toContain('Use key');
+    use.click();
+    await pause(550);
+    expect(document.querySelector('[data-story-ending]')).not.toBeNull();
+    expect(errors).toEqual([]);
+  });
+
   it('exports the exploration map, progress, rewind and clear controls without app services', async () => {
     const { document, errors, html } = await openExport(compiled({
       explorationNodes: [
