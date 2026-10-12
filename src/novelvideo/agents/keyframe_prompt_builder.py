@@ -251,6 +251,7 @@ class KeyframePromptBuilder:
         next_visual_description: str = "",
         audio_type: str = "narration",
         dialogue_line: str = "",
+        allow_fallback: bool = True,
     ) -> str:
         """生成首尾帧过渡提示词。
 
@@ -260,6 +261,8 @@ class KeyframePromptBuilder:
             narration: 当前 beat 解说词
             next_narration: 下一个 beat 解说词（可选，提供更多上下文）
             language: 输出语言，"en" 英文，"zh" 中文
+            allow_fallback: 模型调用失败时是否退回默认过渡提示词。为 False 时直接抛出异常，
+                避免把一句通用模板当成该 beat 的提示词静默保存。
         Returns:
             首尾帧过渡提示词
         """
@@ -331,6 +334,8 @@ class KeyframePromptBuilder:
 
         except Exception as e:
             log_agent_end("首尾帧过渡提示词生成师", success=False, result=str(e))
+            if not allow_fallback:
+                raise
             # 失败时回退到默认提示词
             return self._fallback_build(language)
 
