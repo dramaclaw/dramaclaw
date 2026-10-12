@@ -60,7 +60,6 @@ from novelvideo.storage.media_relay import (
     media_relay_ttl_seconds,
     upload_media_bytes,
 )
-from novelvideo.i18n_message import lmsg
 from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
 from novelvideo.task_backend.envelope import RunningTaskAuthorityIndeterminate
 from novelvideo.task_backend.subprocesses import run_project_subprocess
