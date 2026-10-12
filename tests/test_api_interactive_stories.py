@@ -592,3 +592,53 @@ def test_story_patch_after_canvas_parameter_write_requires_refreshed_revision(
     })
     assert raced.status_code == 409
     assert raced.json()["code"] == "revision_conflict"
+
+
+@pytest.mark.parametrize("entity", ["node", "edge"])
+def test_interactive_story_patch_returns_id_conflict_without_changing_canvas(
+    interactive_story_client, entity,
+) -> None:
+    from novelvideo.freezone import canvas_store
+    from novelvideo.interactive_story.canvas_mapper import (
+        story_choice_edge_id,
+        story_segment_node_id,
+    )
+
+    client, state_dir, _ = interactive_story_client
+    story = _story_payload()
+    endpoint = "/api/v1/projects/proj_demo/interactive-stories"
+    created = client.post(endpoint, json={
+        "canvas_id": "default", "base_revision": 0,
+        "idempotency_key": "identity-api-create", "story": story,
+    })
+    assert created.status_code == 200, created.text
+    canvas = canvas_store.read_canvas(state_dir, "default")
+    if entity == "node":
+        collision = story_segment_node_id(story["story_id"], "new")
+        canvas["nodes"].append({
+            "id": collision, "type": "imageGenNode", "position": {"x": 0, "y": 0}, "data": {},
+        })
+        operation = {"op": "add_segment", "segment": {
+            "id": "new", "title": "New", "script": "New",
+        }}
+    else:
+        collision = story_choice_edge_id(story["story_id"], "new")
+        start = story_segment_node_id(story["story_id"], story["start_segment_id"])
+        canvas["edges"].append({"id": collision, "source": start, "target": start})
+        original = story["choices"][0]
+        order = max(c["order"] for c in story["choices"] if c["source_segment_id"] == story["start_segment_id"]) + 1
+        operation = {"op": "add_choice", "choice": {
+            "id": "new", "source_segment_id": story["start_segment_id"],
+            "target_segment_id": original["target_segment_id"], "text": "Another option", "order": order,
+        }}
+    canvas["revision"] = 2
+    canvas_store.save_canvas(state_dir, "default", base_revision=1, build_payload=lambda _: canvas)
+    before = canvas_store.canvas_path(state_dir, "default").read_bytes()
+    response = client.patch(f"{endpoint}/{story['story_id']}", json={
+        "canvas_id": "default", "story_id": story["story_id"], "base_revision": 2,
+        "idempotency_key": "identity-api-conflict", "operations": [operation],
+    })
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "story_id_conflict"
+    assert collision in response.json()["message"]
+    assert canvas_store.canvas_path(state_dir, "default").read_bytes() == before

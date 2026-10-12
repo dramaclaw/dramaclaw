@@ -103,7 +103,11 @@ def project_story_to_canvas(
                 and not data["storySegmentId"].strip()):
             raise CanvasStoryMappingError("Story segment has an empty storySegmentId")
     current_segments = {
-        str(data["storySegmentId"]): node
+        _domain_id(
+            data.get("storySegmentId"),
+            fallback=str(node.get("id") or ""),
+            prefix="segment",
+        ): node
         for node in existing_nodes
         if node.get("type") == VIDEO_NODE_TYPE
         and isinstance((data := node.get("data")), dict)
@@ -112,11 +116,14 @@ def project_story_to_canvas(
     }
     current_segment_node_ids = {str(node.get("id") or "") for node in current_segments.values()}
     current_choices = {
-        str(data["storyChoiceId"]): edge
+        _domain_id(
+            data.get("storyChoiceId"),
+            fallback=str(edge.get("id") or ""),
+            prefix="choice",
+        ): edge
         for edge in existing_edges
         if edge.get("type") == STORY_CHOICE_EDGE_TYPE
         and isinstance((data := edge.get("data")), dict)
-        and isinstance(data.get("storyChoiceId"), str)
         and str(edge.get("source") or "") in current_segment_node_ids
     }
 
@@ -637,8 +644,15 @@ def _choice_loop_from_canvas(data: dict[str, Any]) -> StoryChoiceLoop | None:
 
 def _domain_id(value: Any, *, fallback: str, prefix: str) -> str:
     candidate = str(value or fallback).strip()
-    if candidate and candidate[0].isalnum() and all(char.isalnum() or char in "_-" for char in candidate):
-        return candidate[:128]
+    if (
+        candidate
+        and len(candidate) <= 128
+        and candidate.isascii()
+        and candidate[0].isalnum()
+        and all(char.isalnum() or char in "_-" for char in candidate)
+    ):
+        return candidate
+    # Hash the full ID: manual edges can differ only after the domain limit.
     digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:20]
     return f"{prefix}_{digest}"
 

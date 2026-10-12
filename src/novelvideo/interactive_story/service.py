@@ -209,6 +209,9 @@ class InteractiveStoryService:
                 and str(edge.get("source") or "") not in removed_node_ids
                 and str(edge.get("target") or "") not in removed_node_ids
             ]
+            _ensure_projection_ids_available(
+                {"nodes": nodes, "edges": edges}, projection.nodes, projection.edges
+            )
             nodes.extend(projection.nodes)
             edges.extend(projection.edges)
             return self._canvas_payload(

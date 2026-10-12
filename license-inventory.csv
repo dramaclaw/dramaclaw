@@ -3160,6 +3160,7 @@ tests/test_indextts2_fal_smoke.py,Elastic-2.0,2026 SuperTale contributors,REUSE.
 tests/test_ingest_progress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_interactive_ad.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_interactive_story_frame_workflow.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_interactive_story_identity.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_interactive_story_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_interactive_story_models.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_interactive_story_outline.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
