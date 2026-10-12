@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assistantCompletionPrefix,
+  backgroundCanvasCommandPendingResultForTest,
   buildCanvasCommandFlowItemsForTest,
   canvasCommandFeedbackVisualToneForTest,
   canvasCommandFeedbackIsValidationOnlyForTest,
@@ -39,6 +40,29 @@ describe("assistant success summary", () => {
       .toBeNull();
     expect(assistantCompletionPrefix("当前任务没有生成完成。"))
       .toBeNull();
+  });
+});
+
+describe("background canvas generation status", () => {
+  it("marks media and workflow commands as running instead of completed", () => {
+    const result = backgroundCanvasCommandPendingResultForTest([
+      { index: 0, type: "run_node_action", label: "生成音频", details: [] },
+      { index: 1, type: "run_workflow", label: "运行工作流", details: [] },
+    ]);
+
+    expect(result.applied).toBe(0);
+    expect(result.commandResults).toEqual([
+      expect.objectContaining({
+        commandIndex: 0,
+        status: "pending",
+        output: { pending: true, reason: "background_generation_running" },
+      }),
+      expect.objectContaining({
+        commandIndex: 1,
+        status: "pending",
+        output: { pending: true, reason: "background_generation_running" },
+      }),
+    ]);
   });
 });
 

@@ -359,6 +359,7 @@ class CanvasCommandToolResultIn(BaseModel):
     )
     tool_call_status: str = "completed"
     canvas_apply_status: str
+    background_execution_status: str | None = None
     applied: bool = False
     cancelled: bool = False
     errors: list[str] = []
@@ -1104,10 +1105,11 @@ def _resolve_canvas_command_tool_result_payload(
             or "Do not claim success. Read errors and command_results, then fix the command before trying again. Do not expose raw canvas protocol details to the user."
         )
     elif payload.canvas_apply_status == "accepted":
-        message = payload.message or "Canvas command was submitted to the canvas."
+        message = payload.message or "Canvas command was submitted and is running in the background."
         agent_instruction = (
-            "Tell the user the canvas command has been submitted to the canvas. Do not claim that "
-            "generation is complete, do not say a tool was opened, and do not ask the user to operate it manually."
+            "Tell the user generation is running in the background and its status will update automatically. "
+            "Do not claim that generation is complete, do not say a tool was opened, and do not ask the user "
+            "to operate it manually."
         )
     else:
         message = payload.message or "Frontend executor applied the canvas command."
@@ -1128,6 +1130,7 @@ def _resolve_canvas_command_tool_result_payload(
         "turn_id": payload.turn_id,
         "tool_call_status": payload.tool_call_status,
         "canvas_apply_status": payload.canvas_apply_status,
+        "background_execution_status": payload.background_execution_status,
         "applied": payload.applied,
         "cancelled": payload.cancelled,
         "errors": payload.errors,

@@ -942,6 +942,8 @@
       "canvasConfirmExecution": "确认执行",
       "canvasTimeoutCancelled": "画布操作因等待超时已取消，没有应用到画布。",
       "canvasManuallyCancelled": "画布操作已手动取消，没有应用到画布。",
+      "backgroundGenerationRunningLabel": "后台生成中",
+      "backgroundGenerationRunningMessage": "任务已提交，正在后台生成。完成或失败后会自动更新这里的状态。",
       "workflowOutputSyncPendingLabel": "产物待同步",
       "workflowRecipeAttemptEnded": "本次节点执行已结束，请重新运行该节点以开始新的执行（{{reason}}）",
       "workflowOutputSyncPendingMessage": "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。",

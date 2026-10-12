@@ -7,6 +7,7 @@ import {
 import { api } from "@/lib/api";
 
 type CanvasApplyStatus = "accepted" | "applied" | "pending" | "partially_applied" | "failed" | "cancelled_by_user";
+type BackgroundExecutionStatus = "running" | "succeeded" | "failed" | "cancelled";
 
 const workflowResultSyncPendingMessage = () => i18next.t(
   "freezone.chat.workflowOutputSyncPendingMessage",
@@ -40,6 +41,7 @@ export type CanvasCommandToolResultPayload = {
   agent_id?: string | null;
   tool_call_status: "completed" | "cancelled" | "failed";
   canvas_apply_status: CanvasApplyStatus;
+  background_execution_status?: BackgroundExecutionStatus;
   applied: boolean;
   cancelled: boolean;
   errors: string[];
@@ -239,7 +241,7 @@ function buildCanvasCommandToolResultPayload({
       ? canvasCommandUserMessageFromResult(result?.errors, result?.commandResults)
       : undefined;
   const agentHint = accepted
-    ? "The canvas command has been submitted to the canvas. Reply briefly that it has been submitted; do not say a tool was opened or ask the user to operate it manually."
+    ? "The canvas command has been submitted and is still running in the background. Reply briefly that generation is in progress and the status will update automatically. Do not claim completion."
     : cancelled
     ? "Do not claim the canvas change was applied; ask the user before retrying."
     : canvasApplyStatus === "pending"
@@ -259,6 +261,13 @@ function buildCanvasCommandToolResultPayload({
     agent_id: agentId ?? null,
     tool_call_status: cancelled ? "cancelled" : canvasApplyStatus === "failed" ? "failed" : "completed",
     canvas_apply_status: canvasApplyStatus,
+    background_execution_status: accepted || canvasApplyStatus === "pending"
+      ? "running"
+      : cancelled || canvasApplyStatus === "cancelled_by_user"
+        ? "cancelled"
+        : canvasApplyStatus === "failed"
+          ? "failed"
+          : "succeeded",
     applied: accepted || (!cancelled && !workflowFailed && canvasApplyStatus !== "pending"
       && Boolean(result && (result.applied > 0 || result.openedUiActions > 0))),
     cancelled,
@@ -268,7 +277,7 @@ function buildCanvasCommandToolResultPayload({
     created_node_ids: result?.createdNodeIds ?? [],
     command_results: result?.commandResults ?? [],
     message: accepted
-      ? "Canvas command was submitted to the canvas."
+      ? "Canvas command was submitted and is running in the background."
       : cancelled
       ? "画布操作已取消，没有应用到画布。"
       : canvasApplyStatus === "pending"
