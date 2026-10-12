@@ -11448,12 +11448,13 @@ function canvasCommandResultFromWorkflowRun(
             defaultValue: "后台生成已中断，请恢复任务或重试。",
           })
         : null;
-  const commandResults = (feedback.commandResults ?? []).map((step, index) => {
+  const commandResults = (feedback.commandResults ?? []).map((step, index): CanvasChatCommandApplyStep => {
     const action = run.actions[index];
     const actionSucceeded = action?.status === "completed" || action?.status === "skipped";
     const actionError = action?.user_error || action?.error || terminalError || undefined;
     return {
       ...step,
+      type: step.type as CanvasChatCommandApplyStep["type"],
       status: actionSucceeded || run.status === "completed" ? "success" : "error",
       ...(action?.node_id ? { nodeId: action.node_id } : {}),
       ...(action?.action ? { action: action.action } : {}),
