@@ -123,7 +123,7 @@ function persistedCompanionPet(pet: AppState["companionPet"]): AppState["compani
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
-      language: "zh",
+      language: "en",
       theme: "dark",
       dashboardTab: "active",
       dashboardView: "card",

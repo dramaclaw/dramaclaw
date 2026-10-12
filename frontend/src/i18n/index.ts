@@ -14,17 +14,17 @@ function initialLanguage(): Supported {
     const queryLanguage = new URLSearchParams(window.location.search).get("lng");
     if (queryLanguage) return normalize(queryLanguage);
   }
-  return normalize(useAppStore.getState().language || "zh");
+  return normalize(useAppStore.getState().language || "en");
 }
 
 i18n
   .use(HttpBackend)
   .use(initReactI18next)
   .init({
-    // Default to Chinese unless the user explicitly selects another supported
+    // Default to English unless the user explicitly selects another supported
     // language via URL or the app language setting.
     lng: initialLanguage(),
-    fallbackLng: "zh",
+    fallbackLng: "en",
     supportedLngs: [...SUPPORTED],
     // `zh-CN` / `en-US` / `vi-VN` collapse to `zh` / `en` / `vi`, so the
     // backend loader only has to serve one translation file per language.
