@@ -19,6 +19,7 @@
 | [Self-Hosting Guide](guides/self-hosting.md) | Deploy / upgrade / back up |
 | [ffmpeg Guide](guides/ffmpeg.md) | Install / locate / licensing obligations |
 | [Telemetry Notes](guides/telemetry.md) | No data collected by default / optional tracing |
+| [LLM Call Log](guides/llm-call-log.md) | Dev-only: record every model call's input/output (incl. media) in Langfuse |
 | [Troubleshooting](guides/troubleshooting.md) | Common failures and how to diagnose them |
 
 ## Concepts

@@ -71,6 +71,9 @@ async def download_to_path(
         if expected_sha256 and actual_sha256.lower() != expected_sha256.lower():
             raise VideoDeliveryError("VIDEO_ARCHIVE_SHA256_MISMATCH", retryable=True)
         os.replace(temp_name, destination)
+        from novelvideo.llm_call_log import record_artifact
+
+        record_artifact("video", path=destination, label=destination.name, source_url=url)
         return VideoDeliveryReceipt(
             method="download",
             size=size,
