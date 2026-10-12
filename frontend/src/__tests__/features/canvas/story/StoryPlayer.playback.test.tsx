@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react
 import { StoryPlayer, STORY_AUTOMATIC_PLACEHOLDER_MIN_MS } from '@/features/canvas/story/StoryPlayer';
 import { useStoryRuntimeStore as store } from '@/stores/storyRuntimeStore';
 import { CHOICE_STAGE_TIMING } from '@/components/canvas/useChoicePointMachine';
+import { spyOnCanvasGetContext } from '@/__tests__/helpers/canvas-context';
 
 function enter(ink: string, clips: Record<string, string>, loops: Record<string, string> = {}, placeholders: Record<string, { text: string; label?: string }> = {}) {
   store.getState().enterPlay({
@@ -26,7 +27,7 @@ describe('shared player playback visits', () => {
     vi.useFakeTimers();
     try {
       const drawImage = vi.fn();
-      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
+      spyOnCanvasGetContext().mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
       enter(chain, { a: '/a.mp4', b: '/b.mp4', c: '/c.mp4' });
       const previous = document.querySelector('video')!;
       Object.defineProperties(previous, {
@@ -80,7 +81,7 @@ describe('shared player playback visits', () => {
   it('ignores a stale decoded-frame callback after another clip replaces it', () => {
     vi.useFakeTimers();
     try {
-      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+      spyOnCanvasGetContext().mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
       enter(chain, { a: '/a.mp4', b: '/b.mp4', c: '/c.mp4' });
       const first = document.querySelector('video')!;
       fireEvent.ended(first);
