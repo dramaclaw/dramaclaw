@@ -959,10 +959,13 @@
         "audioOff": "Tắt tiếng"
       },
       "clarification": {
+        "cancelled": "Đã hủy",
         "skipped": "Đã bỏ qua",
         "submitted": "Đã gửi",
+        "cancelledQuestions": "Các câu hỏi trong lượt này đã bị hủy",
         "skippedQuestions": "Các câu hỏi đã bỏ qua",
         "submittedAnswers": "Câu trả lời đã gửi · {{count}}",
+        "noAnswersCancelled": "Lượt này đã bị hủy mà không gửi lựa chọn.",
         "noAnswersSkipped": "Đã bỏ qua các câu hỏi này.",
         "noAnswersSubmitted": "Chưa gửi lựa chọn cụ thể nào."
       }

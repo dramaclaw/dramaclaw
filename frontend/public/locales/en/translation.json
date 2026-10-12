@@ -977,10 +977,13 @@
         "audioOff": "Muted"
       },
       "clarification": {
+        "cancelled": "Cancelled",
         "skipped": "Skipped",
         "submitted": "Submitted",
+        "cancelledQuestions": "Questions cancelled for this turn",
         "skippedQuestions": "Questions skipped",
         "submittedAnswers": "Submitted answers · {{count}}",
+        "noAnswersCancelled": "This turn was cancelled without submitting options.",
         "noAnswersSkipped": "These questions were skipped.",
         "noAnswersSubmitted": "No specific options were submitted."
       }

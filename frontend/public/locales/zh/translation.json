@@ -977,10 +977,13 @@
         "audioOff": "静音"
       },
       "clarification": {
+        "cancelled": "已取消",
         "skipped": "已跳过",
         "submitted": "已提交",
+        "cancelledQuestions": "本轮问题已取消",
         "skippedQuestions": "已跳过问题",
         "submittedAnswers": "已提交回答 · {{count}} 个",
+        "noAnswersCancelled": "本轮请求已取消，未提交选项。",
         "noAnswersSkipped": "本次问题已跳过。",
         "noAnswersSubmitted": "本次未提交具体选项。"
       }

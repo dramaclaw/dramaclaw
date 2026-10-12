@@ -4622,6 +4622,7 @@ type AssistantClarificationUiEvent = {
   recommended_answers?: AssistantClarificationAnswers;
   allow_skip?: boolean;
   submitted?: boolean;
+  cancelled?: boolean;
   action?: string;
   clarification_status?: string;
   answers?: AssistantClarificationAnswers;
@@ -6897,20 +6898,27 @@ function AssistantClarificationSummaryCard({ event }: { event: AssistantClarific
     event.action,
   );
   const answeredCount = timelineItems.length;
+  const cancelled = event.cancelled === true
+    || event.action === "cancel"
+    || event.clarification_status === "cancelled";
   const skipped = event.skipped === true || event.action === "skip";
-  const statusLabel = skipped
-    ? t("freezone.chat.clarification.skipped")
-    : t("freezone.chat.clarification.submitted");
-  const countLabel = skipped
-    ? t("freezone.chat.clarification.skippedQuestions")
-    : t("freezone.chat.clarification.submittedAnswers", { count: answeredCount });
+  const statusLabel = cancelled
+    ? t("freezone.chat.clarification.cancelled")
+    : skipped
+      ? t("freezone.chat.clarification.skipped")
+      : t("freezone.chat.clarification.submitted");
+  const countLabel = cancelled
+    ? t("freezone.chat.clarification.cancelledQuestions")
+    : skipped
+      ? t("freezone.chat.clarification.skippedQuestions")
+      : t("freezone.chat.clarification.submittedAnswers", { count: answeredCount });
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] px-3 py-3 text-sm shadow-[0_14px_40px_rgba(0,0,0,0.16)] backdrop-blur-sm">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-foreground/90">
             <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-emerald-400/10 text-emerald-100/85">
-              <CheckCircle2 className="size-3.5" />
+              {cancelled ? <X className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
             </span>
             <span className="truncate font-medium tracking-normal">{event.title || "问题回答"}</span>
           </div>
@@ -6953,7 +6961,9 @@ function AssistantClarificationSummaryCard({ event }: { event: AssistantClarific
         ))}
         {timelineItems.length === 0 && (
           <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-xs text-muted-foreground">
-            {skipped
+            {cancelled
+              ? t("freezone.chat.clarification.noAnswersCancelled")
+              : skipped
               ? t("freezone.chat.clarification.noAnswersSkipped")
               : t("freezone.chat.clarification.noAnswersSubmitted")}
           </div>
@@ -6979,6 +6989,8 @@ function AssistantClarificationInputCard({
   const [answers, setAnswers] = useState<AssistantClarificationAnswers>(() =>
     event.answers && typeof event.answers === "object" ? event.answers : {},
   );
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const generationCatalogIssue = assistantClarificationGenerationCatalogIssue(
     eventQuestions, imageModelCatalog, videoModelCatalog, answers,
   );
@@ -6986,6 +6998,8 @@ function AssistantClarificationInputCard({
   useEffect(() => {
     setAnswers(event.answers && typeof event.answers === "object" ? event.answers : {});
     setActiveQuestionPosition(0);
+    isSubmittingRef.current = false;
+    setIsSubmitting(false);
   }, [eventIdentity]);
   const questions = useMemo(
     () => clarificationQuestionsWithLiveModelCatalogs(
@@ -7075,10 +7089,25 @@ function AssistantClarificationInputCard({
       };
     });
   }, []);
+  const submitResponse = useCallback(async (responseAnswers: AssistantClarificationAnswers) => {
+    if (!onSubmit || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    let submitted = false;
+    try {
+      submitted = await onSubmit({ ...event, questions }, responseAnswers);
+    } catch {
+      submitted = false;
+    }
+    if (!submitted) {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+    }
+  }, [event, onSubmit, questions]);
   const submitAnswers = useCallback(() => {
-    if (!onSubmit || !canSubmit) return;
-    void onSubmit({ ...event, questions }, answers);
-  }, [answers, canSubmit, event, onSubmit, questions]);
+    if (!canSubmit) return;
+    void submitResponse(answers);
+  }, [answers, canSubmit, submitResponse]);
   const activeQuestion = activeItem?.question;
   const activeQuestionIndex = activeItem?.index ?? 0;
   const activeQuestionKey = activeQuestion ? skillStudioQuestionKey(activeQuestion, activeQuestionIndex) : "";
@@ -7211,8 +7240,9 @@ function AssistantClarificationInputCard({
               size="sm"
               variant="ghost"
               className="h-8 rounded-full px-3 text-xs text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+              disabled={isSubmitting}
               onClick={() => {
-                void onSubmit?.(event, { __action: "skip" });
+                void submitResponse({ __action: "skip" });
               }}
             >
               跳过
@@ -7226,8 +7256,9 @@ function AssistantClarificationInputCard({
               size="sm"
               variant="outline"
               className="h-8 rounded-full border-white/[0.12] bg-white/[0.04] px-3 text-xs hover:bg-white/[0.08]"
+              disabled={isSubmitting}
               onClick={() => {
-                void onSubmit?.(event, { ...recommendedAnswers, __action: "recommended" });
+                void submitResponse({ ...recommendedAnswers, __action: "recommended" });
               }}
             >
               使用推荐配置
@@ -7237,10 +7268,10 @@ function AssistantClarificationInputCard({
             type="button"
             size="sm"
             className="h-8 rounded-full px-3 text-xs"
-            disabled={!onSubmit || (hasNext ? false : !canSubmit)}
+            disabled={!onSubmit || isSubmitting || (hasNext ? false : !canSubmit)}
             onClick={continueAction}
           >
-            {continueLabel}
+            {isSubmitting ? "提交中…" : continueLabel}
           </Button>
         </div>
       </div>
@@ -12509,6 +12540,7 @@ export function SuperChatPanel({
   const executingCanvasCommandApprovalIdsRef = useRef<Set<string>>(new Set());
   const appliedCanvasCommandApprovalKeysRef = useRef<Set<string>>(new Set());
   const resolvedCanvasCommandApprovalKeysRef = useRef<Set<string>>(new Set());
+  const submittedAssistantClarificationKeysRef = useRef<Set<string>>(new Set());
   const [canvasCommandExecutionMode, setCanvasCommandExecutionMode] = useState<CanvasCommandExecutionMode>(() => loadCanvasCommandExecutionMode());
   const [canvasCommandModeMenuOpen, setCanvasCommandModeMenuOpen] = useState(false);
   const directorRunProject = params.project?.trim() || "home";
@@ -15096,6 +15128,11 @@ export function SuperChatPanel({
       toast.error("补充信息桥接缺失，请重试");
       return false;
     }
+    const submissionKey = `${event.turn_id}:${event.bridge_key}`;
+    if (submittedAssistantClarificationKeysRef.current.has(submissionKey)) {
+      return true;
+    }
+    submittedAssistantClarificationKeysRef.current.add(submissionKey);
     try {
       const action = answers.__action === "recommended"
         ? "recommended"
@@ -15105,19 +15142,34 @@ export function SuperChatPanel({
       if (action === "recommended" && !assistantClarificationCanSubmitRecommended(
         event, answers,
       )) {
+        submittedAssistantClarificationKeysRef.current.delete(submissionKey);
         toast.error("推荐配置缺少有效参数，请重新选择或刷新后重试");
         return false;
       }
       const skillStudioRevision = activeAssistantClarificationIsSkillStudioRevision(visibleMessages, event);
-	      const payload = {
-	        ...buildAssistantClarificationToolResultForTest(event, answers, { skillStudioRevision, projectId: params.project || undefined, canvasId: effectiveFreezoneCanvasId || undefined, agentId: effectiveFreezoneAgentId || undefined }),
-	        action,
-	        clarification_status: action === "submit" ? "answered" : action,
-	        skipped: action === "skip",
-	        used_recommended: action === "recommended",
-	      };
-      if (!chat.submitAssistantClarificationResult(payload)) {
-        toast.error("补充信息连接未就绪，请重试");
+      const payload = {
+        ...buildAssistantClarificationToolResultForTest(event, answers, {
+          skillStudioRevision,
+          projectId: params.project || undefined,
+          canvasId: effectiveFreezoneCanvasId || undefined,
+          agentId: effectiveFreezoneAgentId || undefined,
+        }),
+        action,
+        clarification_status: action === "submit" ? "answered" : action,
+        skipped: action === "skip",
+        used_recommended: action === "recommended",
+      };
+      const result = await apiCall<{
+        ok?: boolean;
+        message?: string | null;
+        errors?: string[];
+      }>("chat/clarification-tool-result", {
+        method: "POST",
+        json: payload,
+      });
+      if (result.ok === false) {
+        submittedAssistantClarificationKeysRef.current.delete(submissionKey);
+        toast.error(result.errors?.find(Boolean) || result.message || "提交补充信息失败，请重试");
         return false;
       }
       if (event.turn_id) {
@@ -15157,8 +15209,14 @@ export function SuperChatPanel({
         );
         persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       }
+      if (submittedAssistantClarificationKeysRef.current.size > 200) {
+        submittedAssistantClarificationKeysRef.current = new Set(
+          [...submittedAssistantClarificationKeysRef.current].slice(-100),
+        );
+      }
       return true;
     } catch (error) {
+      submittedAssistantClarificationKeysRef.current.delete(submissionKey);
       console.error("[superchat] clarification result submit failed", error);
       toast.error("提交补充信息失败，请重试");
       return false;

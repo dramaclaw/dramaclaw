@@ -57,6 +57,65 @@ def test_background_canvas_agent_notification_is_hidden_from_chat_history(
     assert [item["role"] for item in chat_store.list_messages("admin", scope)] == ["user"]
 
 
+@pytest.mark.anyio
+async def test_cancelled_canvas_turn_settles_pending_clarification(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from novelvideo.chat import hermes_pool, hermes_workspace
+    from novelvideo.freezone import canvas_command_bridge
+
+    event = {
+        "type": "assistant.clarification.request",
+        "bridge_key": "bridge-a",
+        "clarification_id": "clarify-a",
+        "questions": [{"id": "image_model", "options": []}],
+    }
+    appended = []
+    resolved = []
+
+    async def list_messages(*_args, **_kwargs):
+        return [{"role": "user", "turn_id": "turn-a", "ui_events": [event]}]
+
+    async def append_event(_username, _scope, turn_id, persisted_event):
+        appended.append((turn_id, persisted_event))
+        return {}
+
+    monkeypatch.setattr(chat_store, "list_messages_async", list_messages)
+    monkeypatch.setattr(chat_store, "append_ui_event_async", append_event)
+    monkeypatch.setattr(
+        hermes_workspace,
+        "ensure_user_hermes_workspace",
+        lambda *_args, **_kwargs: tmp_path / "hermes",
+    )
+    monkeypatch.setattr(
+        hermes_pool,
+        "canvas_bridge_dir_for_profile",
+        lambda *_args, **_kwargs: tmp_path / "bridge",
+    )
+    monkeypatch.setattr(
+        canvas_command_bridge,
+        "resolve_clarification_result",
+        lambda key, result, **kwargs: resolved.append((key, result, kwargs)),
+    )
+
+    await chat_service._cancel_pending_clarifications_for_turn(
+        username="admin",
+        store_scope=ChatScope(kind="project", id="project-a"),
+        turn_id="turn-a",
+        project_state_dir=tmp_path / "project",
+        agent_profile="freezone:main",
+    )
+
+    assert appended[0][0] == "turn-a"
+    assert appended[0][1]["submitted"] is True
+    assert appended[0][1]["cancelled"] is True
+    assert appended[0][1]["clarification_status"] == "cancelled"
+    assert resolved[0][0] == "bridge-a"
+    assert resolved[0][1]["cancelled"] is True
+    assert resolved[0][2]["bridge_dir"] == tmp_path / "bridge"
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
