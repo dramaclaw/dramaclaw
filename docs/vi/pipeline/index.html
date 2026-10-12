@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipeline DramaClaw</title>
+<style>
+:root{
+  --bg:#f7f6f3; --surface:#fff; --text:#1d1c1a; --muted:#6b6862; --line:#e4e1da;
+  --accent:#b4441f; --accent-soft:#f6e6df;
+  --c1:#2f6f9f; --c2:#7a4fa3; --c3:#b4441f; --c4:#2e7d5b;
+  --code:#f0eee9;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513; --surface:#201f1c; --text:#ecebe7; --muted:#a3a098; --line:#33312d;
+    --accent:#e8805a; --accent-soft:#3a2a23;
+    --c1:#6aaee0; --c2:#b394d8; --c3:#e8805a; --c4:#5cc19a; --code:#2a2824;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513; --surface:#201f1c; --text:#ecebe7; --muted:#a3a098; --line:#33312d;
+  --accent:#e8805a; --accent-soft:#3a2a23;
+  --c1:#6aaee0; --c2:#b394d8; --c3:#e8805a; --c4:#5cc19a; --code:#2a2824;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:24px 16px 64px}
+header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+h1{margin:0 0 4px;font-size:26px}
+.sub{color:var(--muted);margin:0;max-width:62ch}
+button.theme{background:var(--surface);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 12px;cursor:pointer;font:inherit}
+.stages{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:24px 0 8px}
+.stage{background:var(--surface);border:1px solid var(--line);border-top:4px solid var(--sc);border-radius:10px;padding:10px 12px;cursor:pointer;text-align:left;font:inherit;color:inherit}
+.stage b{display:block;color:var(--sc)}
+.stage span{color:var(--muted);font-size:13px}
+.stage[aria-pressed="true"]{outline:2px solid var(--sc)}
+.layout{display:grid;grid-template-columns:300px 1fr;gap:16px;margin-top:16px}
+nav.steps{display:flex;flex-direction:column;gap:2px}
+.group{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--sc);margin:14px 0 4px;font-weight:600}
+.group:first-child{margin-top:0}
+.step{display:flex;gap:10px;align-items:center;background:none;border:1px solid transparent;border-radius:8px;padding:7px 10px;cursor:pointer;text-align:left;color:inherit;font:inherit;width:100%}
+.step:hover{background:var(--surface)}
+.step[aria-current="true"]{background:var(--surface);border-color:var(--line);box-shadow:0 1px 0 var(--line)}
+.dot{flex:none;width:22px;height:22px;border-radius:50%;background:var(--sc);color:#fff;font-size:11px;display:grid;place-items:center;font-weight:600}
+.step small{display:block;color:var(--muted);font-size:12px}
+.badge{margin-left:auto;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:0 7px;white-space:nowrap}
+main.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px 22px;min-height:420px}
+.panel h2{margin:0 0 2px;font-size:21px}
+.tag{display:inline-block;font-size:12px;border-radius:999px;padding:1px 9px;background:var(--accent-soft);color:var(--accent);margin-right:6px}
+.panel p.lead{margin:8px 0 16px}
+dl{display:grid;grid-template-columns:130px 1fr;gap:10px 14px;margin:0}
+dt{color:var(--muted);font-size:13px;padding-top:2px}
+dd{margin:0}
+code{background:var(--code);border-radius:5px;padding:1px 5px;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}
+ul{margin:0;padding-left:18px}
+.flow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:14px 0 18px}
+.flow .node{border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-size:13px;background:var(--bg)}
+.flow .node.on{border-color:var(--sc);color:var(--sc);font-weight:600;background:var(--surface)}
+.flow .arr{color:var(--muted)}
+.note{border-left:3px solid var(--accent);background:var(--accent-soft);padding:8px 12px;border-radius:0 8px 8px 0;margin-top:16px;font-size:14px}
+.pager{display:flex;justify-content:space-between;margin-top:22px}
+.pager button{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 12px;cursor:pointer;font:inherit}
+.pager button:disabled{opacity:.4;cursor:default}
+footer{margin-top:28px;color:var(--muted);font-size:13px}
+@media (max-width:760px){
+  .stages{grid-template-columns:repeat(2,1fr)}
+  .layout{grid-template-columns:1fr}
+  dl{grid-template-columns:1fr;gap:2px}
+  dt{padding-top:8px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Pipeline sản xuất video DramaClaw</h1>
+      <p class="sub">Từ tiểu thuyết hoặc kịch bản đến tập phim hoàn chỉnh, theo code hiện tại. Chọn một chặng hoặc một bước để xem đầu vào, thao tác, đầu ra và điều kiện hoàn tất.</p>
+    </div>
+    <button class="theme" id="themeBtn" type="button">Giao diện</button>
+  </header>
+
+  <div class="stages" id="stages" role="group" aria-label="Chặng"></div>
+
+  <div class="layout">
+    <nav class="steps" id="steps" aria-label="Các bước"></nav>
+    <main class="panel" id="panel" aria-live="polite"></main>
+  </div>
+
+  <footer>
+    Dựa trên đọc tĩnh <code>src/novelvideo/</code>, chưa chạy thực tế. Chi tiết đầy đủ trong các file markdown cùng thư mục.
+    Việc chia 4 chặng là cách nhóm của tài liệu, không phải khái niệm cứng trong code.
+  </footer>
+</div>
+
+<script>
+const STAGES = [
+  {id:1, name:"Ingest",  desc:"Nạp nguồn, cấu hình, trích nhân vật/cảnh", color:"var(--c1)"},
+  {id:2, name:"Plan",    desc:"Phân tập, identity, kịch bản",             color:"var(--c2)"},
+  {id:3, name:"Produce", desc:"Sketch, first frame, giọng, video",        color:"var(--c3)"},
+  {id:4, name:"Deliver", desc:"Ghép tập, SRT, zip",                       color:"var(--c4)"}
+];
+
+// kind: "task" = hàng đợi, "sync" = gọi API đồng bộ, "config" = cấu hình, "status" = chỉ là trạng thái
+const STEPS = [
+ {stage:1, key:"ingest", name:"Nạp nguồn", kind:"task", task:"ingest_fast",
+  lead:"Kiểm tra và chia chunk bản thảo. Với structured_v1 bước này không gọi LLM.",
+  input:["File tiểu thuyết hoặc kịch bản (có hỗ trợ Fountain)","Tùy chọn spine_template (drama hoặc narrated), rebuild"],
+  action:["Upload: kiểm tra giới hạn ký tự và dung lượng, xem trước chương, kiểm tra định dạng","Template drama bắt buộc có tiêu đề cảnh, thiếu thì báo lỗi screenplay_format","Chia chunk, tạo hoặc tái dùng analysis run (khóa theo hash nguồn, phiên bản, template)"],
+  output:["novel.txt (ghi cuối, là dấu đã nạp xong)","uploads/*","analysis run và chunk trong data.db"],
+  prereq:"Chỉ cần file đã upload.",
+  done:"Task hoàn tất, hoặc đã có nhân vật/tập.",
+  api:"POST /projects/{p}/ingest/upload, rồi /ingest/start", mcp:"dramaclaw_list_ingest_uploads, dramaclaw_post"},
+
+ {stage:1, key:"configure", name:"Cấu hình dự án", kind:"config",
+  lead:"Không phải task. Là PATCH vào project_config.json.",
+  input:["spine_template, aspect_ratio, visual_style, narration_style, ethnicity, rhythm, TTS, grid_mode, grid_model"],
+  action:["visual_style là id của style có sẵn hoặc style tùy chỉnh; id sai thì dùng mặc định","Ảnh tham chiếu: POST /styles/analyze (đồng bộ, LLM thị giác, tính phí) chỉ gợi ý; lưu bằng POST /styles","spine_template bị khóa sau khi đã có novel.txt"],
+  output:["state/<user>/<project>/project_config.json"],
+  prereq:"Không có.",
+  done:"Gần như luôn đúng, vì mặc định đã có ethnicity=Chinese.",
+  api:"PATCH /projects/{p}", mcp:"dramaclaw_patch"},
+
+ {stage:1, key:"characters", name:"Trích nhân vật", kind:"task", task:"build_characters",
+  lead:"Trích và làm giàu danh sách nhân vật bằng LLM, có kiểm chứng bằng chứng trong văn bản.",
+  input:["novel.txt"],
+  action:["Trích theo chunk, dùng lại chunk cũ nếu nguồn không đổi","Gộp bí danh, chức danh, cách xưng hô; phân xử trùng lặp","Bổ sung ngoại hình, face prompt, nhóm tuổi, giọng, đề cử người dẫn","Thêm nhân vật mới, không ghi đè nhân vật đã có"],
+  output:["Bảng nhân vật trong data.db","Bằng chứng thực thể"],
+  prereq:"Đã nạp nguồn.",
+  done:"Có nhân vật.",
+  api:"POST /projects/{p}/characters/build", mcp:"dramaclaw_build_characters",
+  note:"Cảnh: build_scenes chỉ trích ngay với template drama; template khác để tới lúc lập kế hoạch từng tập. Đạo cụ (build_props) là no-op với structured_v1."},
+
+ {stage:2, key:"episodes", name:"Phân tập", kind:"task", task:"build_episodes",
+  lead:"Chia nguồn thành các tập.",
+  input:["planning_mode: chapters, ai hoặc ai_events","target_episodes (mặc định 10)"],
+  action:["structured_v1 chỉ hỗ trợ chapters","Tạo các NovelEpisode"],
+  output:["Các tập trong data.db"],
+  prereq:"Đã nạp nguồn. Không cần nhân vật.",
+  done:"Có tập.",
+  api:"POST /projects/{p}/episodes/plan", mcp:"dramaclaw_plan_episodes"},
+
+ {stage:2, key:"portraits", name:"Chân dung nhân vật", kind:"task", task:"character_portrait",
+  lead:"Ảnh chân dung gốc của từng nhân vật.",
+  input:["face_prompt của nhân vật","ethnicity, style và model ảnh"],
+  action:["Sinh ảnh từ face_prompt; thiếu face_prompt thì lỗi"],
+  output:["assets/characters/<tên>/portrait.png"],
+  prereq:"Chỉ cần nhân vật tồn tại. Độc lập với identity_planner.",
+  done:"Mọi nhân vật chính có file chân dung (đây là cổng toàn dự án trong trạng thái pipeline).",
+  api:"POST /projects/{p}/characters/{name}/portrait-async", mcp:"dramaclaw_generate_portrait, dramaclaw_update_character_face_prompt"},
+
+ {stage:2, key:"identity_plan", name:"Lập identity", kind:"task", task:"identity_planner",
+  lead:"Quyết định nhân vật xuất hiện với những ngoại hình nào trong từng tập.",
+  input:["Văn bản nguồn của tập","Danh sách nhân vật"],
+  action:["Lọc dàn diễn viên của tập (lỗi nếu không tìm thấy ai)","Xác định identity mặc định và identity theo tập","Có thể tự nâng cấp nhân vật"],
+  output:["identity_ids và identity_default_map trên tập","Character.identities"],
+  prereq:"Có ít nhất 1 nhân vật và không có build_characters đang chạy.",
+  done:"Tập có identity_ids.",
+  api:"POST /projects/{p}/episodes/{n}/identities/plan", mcp:"dramaclaw_plan_identities"},
+
+ {stage:2, key:"identity_images", name:"Ảnh identity", kind:"task", task:"identity_image",
+  lead:"Ảnh cho từng identity, nền để giữ nhân vật nhất quán giữa các tập.",
+  input:["appearance_details hoặc ảnh costume","Chân dung gốc nếu cùng nhóm tuổi"],
+  action:["Cùng nhóm tuổi: cần portrait gốc","Khác nhóm tuổi: dùng identity portrait hoặc face prompt"],
+  output:["assets/characters/<tên>/identities/<tên>.png"],
+  prereq:"Identity đã được lập.",
+  done:"Mọi identity của nhân vật chính trong tập đều có file ảnh.",
+  api:"POST /projects/{p}/characters/{name}/identities/{id}/generate", mcp:"dramaclaw_generate_identity_image"},
+
+ {stage:2, key:"scene_prop", name:"Cảnh và đạo cụ theo tập", kind:"task", task:"episode_scene_planner, episode_prop_planner",
+  lead:"Phân tích văn bản tập thành menu cảnh và đạo cụ. Không nằm trong trạng thái pipeline.",
+  input:["Văn bản nguồn của tập"],
+  action:["Tạo scene_menu và prop_menu; đạo cụ được nâng thành đạo cụ toàn cục","Ảnh tham chiếu là task riêng: scene_reference_asset, prop_reference_asset"],
+  output:["scene_menu, prop_menu trên tập","Cảnh trong catalog"],
+  prereq:"Chỉ cần tập tồn tại; cảnh không chạy khi build_scenes đang chạy.",
+  done:"Không có cờ trạng thái riêng.",
+  api:"POST /projects/{p}/episodes/{n}/scenes/plan, .../props/plan", mcp:"dramaclaw_plan_scenes, dramaclaw_plan_props, dramaclaw_generate_scene_master"},
+
+ {stage:2, key:"script", name:"Viết kịch bản", kind:"task", task:"script_writer",
+  lead:"Một chế độ duy nhất: viết theo từng dòng nguồn, mỗi dòng gọi LLM một lần.",
+  input:["Văn bản nguồn của tập","identity_ids, scene_menu, prop_menu của tập"],
+  action:["Tách thành dòng và khối cảnh","Lỗi cấu trúc: thử lại một lần rồi dùng beat dự phòng; bị lọc nội dung thì thành beat im lặng","Sau đó dọn sketch cũ và gán màu sketch cho nhân vật"],
+  output:["Các VisualBeat (narration_segment, visual_description có marker identity/đạo cụ, scene_ref, audio_type silence|narration|dialogue, người nói)"],
+  prereq:"Tập phải có identity_ids (cổng cứng). Menu cảnh/đạo cụ rỗng vẫn chạy được.",
+  done:"Có beat và mọi beat đều có nội dung.",
+  api:"POST /projects/{p}/episodes/{n}/script/generate", mcp:"dramaclaw_generate_script, dramaclaw_get_episode_script",
+  note:"beat_video_prompt là task riêng để tạo video_prompt sau khi đã có kịch bản."},
+
+ {stage:3, key:"colors", name:"Gán màu sketch", kind:"sync",
+  lead:"Lời gọi API đồng bộ, không qua hàng đợi. Phải làm trước khi sinh sketch.",
+  input:["Beats và nhân vật của tập"],
+  action:["Gán màu cho từng nhân vật và đánh dấu màu cho đạo cụ","Nếu màu đổi có thể dọn sketch hiện có"],
+  output:["sketch_colors trong DB","marker_color của đạo cụ trong prop_menu"],
+  prereq:"Đã có kịch bản.",
+  done:"Sketch generate báo lỗi nếu chưa có màu.",
+  api:"POST /episodes/{ep}/sketches/assign-colors", mcp:"dramaclaw_post"},
+
+ {stage:3, key:"sketches", name:"Storyboard sketch", kind:"task", task:"sketch_generation",
+  lead:"Ảnh phác thảo theo từng beat.",
+  input:["Beats, character_map, scene_menu, prop_menu, sketch_colors, style"],
+  action:["Chia beat thành các grid (có thể gộp theo cảnh)","Sinh ảnh grid bằng NanoBanana, một số chế độ chạy hai lượt","Tách ô, đưa vào image pool, chọn ra ảnh từng beat","Tham chiếu director 3GS tùy chọn buộc dùng provider OpenAI"],
+  output:["grids/epNNN/sketch/*","sketches/epNNN/beat_XX.png"],
+  prereq:"Đã gán màu.",
+  done:"Có file sketch hoặc grid của tập.",
+  api:"POST /episodes/{ep}/sketches/generate", mcp:"dramaclaw_generate_sketches, dramaclaw_get_sketches"},
+
+ {stage:3, key:"coloring", name:"Nhận diện identity và đạo cụ", kind:"sync",
+  lead:"LLM thị giác khớp màu trên sketch để biết mỗi beat có ai và đạo cụ nào. Tính phí.",
+  input:["Sketch của tập"],
+  action:["Ghép sketch thành grid tạm theo lô 25","LLM thị giác khớp theo màu","Có thể gán thủ công"],
+  output:["detected_identities và detected_props của từng beat trong DB"],
+  prereq:"Đã có sketch.",
+  done:"Mọi beat đã có kết quả nhận diện.",
+  api:"POST /episodes/{ep}/sketches/detect-identities", mcp:"dramaclaw_detect_sketch_identities",
+  note:"Là điều kiện cứng của bước first frame: thiếu thì render báo RenderIdentityDetectionRequired."},
+
+ {stage:3, key:"global_optimize", name:"Tối ưu video toàn tập", kind:"task", task:"global_optimize_video",
+  lead:"Chạy trên sketch, chưa cần first frame.",
+  input:["Sketch, beats và nhân vật"],
+  action:["Với từng beat theo thứ tự, đọc sketch, beat lân cận và prompt trước đó","Ghi video_prompt, đặt video_mode=first_frame, xóa keyframe_prompt"],
+  output:["video_mode, video_prompt trên beat (không sinh file mới)"],
+  prereq:"Đã có sketch.",
+  done:"Mọi beat có video_mode và video_prompt.",
+  api:"POST /episodes/{ep}/optimize/video-global", mcp:"dramaclaw_optimize_video_global"},
+
+ {stage:3, key:"first_frames", name:"First frame", kind:"task", task:"selected_regen",
+  lead:"Khung hình đầu của từng shot.",
+  input:["Beat đã chọn, character_map, prop_menu, sketch_colors, style, sketch làm hướng dẫn"],
+  action:["Kiểm tra đã nhận diện identity, đảm bảo có ảnh tham chiếu cảnh","Sinh ảnh render theo grid, tách ô, đưa vào image pool","Có thể regen chọn lọc từng beat hoặc cả grid"],
+  output:["grids/epNNN/render/*","frames/epNNN/beat_XX.png"],
+  prereq:"Đã nhận diện identity.",
+  done:"Đủ frames/epNNN/beat_XX.png.",
+  api:"POST /episodes/{ep}/render/execute, .../beats/regenerate", mcp:"dramaclaw_render_first_frames, dramaclaw_get_first_frames"},
+
+ {stage:3, key:"voice", name:"Chuẩn bị giọng và TTS", kind:"task", task:"system_voice_setup, audio_generation_indextts2",
+  lead:"voice_setup chỉ là bước chèn khi còn thiếu giọng tham chiếu, không phải bước lưu trữ.",
+  input:["Beat có audio_type narration hoặc dialogue","Giọng tham chiếu của người nói hoặc người dẫn"],
+  action:["voice_setup: điền giọng còn thiếu bằng giọng hệ thống Edge-TTS","tts: clone giọng bằng IndexTTS2; chế độ missing_only, sync_changed (mặc định), redo_selected, redo_all","Mới/cũ xác định bằng SHA256 của văn bản và giọng"],
+  output:["assets/narrator/voice.mp3","audio/epNNN/beat_XX.mp3"],
+  prereq:"Có giọng cho mọi người nói, nếu không kế hoạch báo lỗi.",
+  done:"Đủ mp3 cho các beat cần tiếng (beat im lặng không tính).",
+  api:"POST /episodes/{ep}/audio/system-voices/prepare, .../audio/generate", mcp:"dramaclaw_prepare_system_voices, dramaclaw_generate_audio"},
+
+ {stage:3, key:"video", name:"Sinh video từng shot", kind:"task", task:"single_video, video_generation",
+  lead:"Image-to-video từ first frame, một beat một clip.",
+  input:["First frame","video_prompt (Seedance 2 dùng seedance2_config.final_prompt)","Độ dài lấy từ mp3 rồi giới hạn theo backend"],
+  action:["Chế độ: first_frame, keyframe (khung cuối là first frame của beat kế), và với Seedance 2 còn text_to_video, multimodal_reference","Backend: model qua gateway, Seedance, ComfyUI, LTX 2.3, Grok","mp3 chỉ đặt mức sàn độ dài, không gửi cho Seedance 2 làm tham chiếu"],
+  output:["videos/beats/epNNN/beat_XX.mp4","video pool"],
+  prereq:"First frame tồn tại và có prompt. Không phụ thuộc cứng vào tts.",
+  done:"Đủ beat_XX.mp4.",
+  api:"POST /episodes/{ep}/beats/{n}/video", mcp:"dramaclaw_start_single_video, dramaclaw_start_video_batch"},
+
+ {stage:4, key:"compose", name:"Ghép tập phim", kind:"task", task:"compose_episode",
+  lead:"Nối các clip beat thành một video bằng FFmpeg.",
+  input:["videos/beats/epNNN/*.mp4","audio/epNNN/*.mp3","Độ phân giải đích (mặc định 720x1280)"],
+  action:["Mã hóa lại từng beat (libx264 + aac); beat lỗi bị bỏ qua","Scale/pad rồi nối cứng bằng concat, không có transition","add_subtitles và add_bgm được nhận nhưng không có tác dụng"],
+  output:["videos/episodes/epNNN_final.mp4"],
+  prereq:"Các beat đã có video.",
+  done:"File epNNN_final.mp4 tồn tại.",
+  api:"POST /projects/{p}/episodes/{n}/videos/compose", mcp:"dramaclaw_compose_episode"},
+
+ {stage:4, key:"export", name:"SRT và xuất gói", kind:"sync",
+  lead:"Phụ đề chỉ có dạng file SRT tải riêng, không đốt vào video.",
+  input:["narration_segment từng beat","Độ dài mp3 của beat"],
+  action:["SRT tạo tại chỗ; mỗi cue dài bằng mp3 của beat (mặc định 5 giây nếu thiếu)","Beat không có lời dẫn bị bỏ qua nên SRT có thể lệch video","Zip gồm video/âm thanh từng beat, video cuối, frames, grids và SRT"],
+  output:["Tải SRT, video cuối, hoặc zip"],
+  prereq:"Có video cuối cho phần tải video.",
+  done:"Trạng thái done chỉ nghĩa là file video cuối tồn tại; không kiểm tra độ dài, đồng bộ hay phụ đề.",
+  api:"GET .../export/srt, .../export/video; POST .../export/zip", mcp:"dramaclaw_get_final_video"}
+];
+
+const KIND = {task:"Task hàng đợi", sync:"Gọi đồng bộ", config:"Cấu hình"};
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const stageOf = id => STAGES.find(s => s.id === id);
+let current = 0;
+
+function renderStages(){
+  $("#stages").innerHTML = STAGES.map(s =>
+    `<button class="stage" style="--sc:${s.color}" data-stage="${s.id}" aria-pressed="${STEPS[current].stage===s.id}">
+       <b>${s.id}. ${esc(s.name)}</b><span>${esc(s.desc)}</span></button>`).join("");
+  document.querySelectorAll(".stage").forEach(b => b.onclick = () => {
+    current = STEPS.findIndex(x => x.stage === +b.dataset.stage); render();
+  });
+}
+
+function renderNav(){
+  let html = "", last = 0;
+  STEPS.forEach((st, i) => {
+    const sg = stageOf(st.stage);
+    if (st.stage !== last){ html += `<div class="group" style="--sc:${sg.color}">${sg.id}. ${esc(sg.name)}</div>`; last = st.stage; }
+    html += `<button class="step" style="--sc:${sg.color}" data-i="${i}" aria-current="${i===current}">
+      <span class="dot">${i+1}</span><span>${esc(st.name)}<small>${esc(st.task || KIND[st.kind])}</small></span>
+      <span class="badge">${esc(KIND[st.kind])}</span></button>`;
+  });
+  $("#steps").innerHTML = html;
+  document.querySelectorAll(".step").forEach(b => b.onclick = () => { current = +b.dataset.i; render(); });
+}
+
+function list(a){ return `<ul>${a.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`; }
+
+function renderPanel(){
+  const st = STEPS[current], sg = stageOf(st.stage);
+  const flow = STEPS.filter(x => x.stage === st.stage).map(x =>
+    `<span class="node ${x===st?'on':''}">${esc(x.name)}</span>`).join('<span class="arr">→</span>');
+  $("#panel").style.setProperty("--sc", sg.color);
+  $("#panel").innerHTML = `
+    <div><span class="tag">Chặng ${sg.id}: ${esc(sg.name)}</span><span class="tag">${esc(KIND[st.kind])}</span></div>
+    <h2>${current+1}. ${esc(st.name)}</h2>
+    <div class="flow" style="--sc:${sg.color}">${flow}</div>
+    <p class="lead">${esc(st.lead)}</p>
+    <dl>
+      <dt>Đầu vào</dt><dd>${list(st.input)}</dd>
+      <dt>Thao tác</dt><dd>${list(st.action)}</dd>
+      <dt>Đầu ra</dt><dd>${st.output.map(o => `<div><code>${esc(o)}</code></div>`).join("")}</dd>
+      <dt>Điều kiện</dt><dd>${esc(st.prereq)}</dd>
+      <dt>Tính là xong</dt><dd>${esc(st.done)}</dd>
+      ${st.task ? `<dt>Task</dt><dd><code>${esc(st.task)}</code></dd>` : ""}
+      <dt>API</dt><dd><code>${esc(st.api)}</code></dd>
+      <dt>Tool MCP</dt><dd><code>${esc(st.mcp)}</code></dd>
+    </dl>
+    ${st.note ? `<div class="note">${esc(st.note)}</div>` : ""}
+    <div class="pager">
+      <button id="prev" ${current===0?"disabled":""}>← Bước trước</button>
+      <button id="next" ${current===STEPS.length-1?"disabled":""}>Bước sau →</button>
+    </div>`;
+  $("#prev").onclick = () => { current--; render(); };
+  $("#next").onclick = () => { current++; render(); };
+}
+
+function render(){ renderStages(); renderNav(); renderPanel(); }
+
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowDown" || e.key === "ArrowRight"){ if (current < STEPS.length-1){ current++; render(); } }
+  if (e.key === "ArrowUp" || e.key === "ArrowLeft"){ if (current > 0){ current--; render(); } }
+});
+
+$("#themeBtn").onclick = () => {
+  const r = document.documentElement, dark = getComputedStyle(r).getPropertyValue("--bg").trim() === "#161513";
+  r.setAttribute("data-theme", dark ? "light" : "dark");
+};
+
+render();
+</script>
+</body>
+</html>
