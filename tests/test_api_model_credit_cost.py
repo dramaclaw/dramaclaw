@@ -511,6 +511,7 @@ async def test_generation_credit_cost_route_resolves_freezone_image_reverse_prom
 ):
     from novelvideo.api.routes import model_credits
 
+    monkeypatch.setenv("ST_EDITION", "ee")
     monkeypatch.setenv("FREEZONE_VISION_MODEL", "freezone-vision-model")
     patch_quote_expect(
         monkeypatch,

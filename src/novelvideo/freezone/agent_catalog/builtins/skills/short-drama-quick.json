@@ -1,0 +1,80 @@
+{
+  "id": "short-drama-quick",
+  "name": "短剧（快速测试）",
+  "enabled": true,
+  "version": 2,
+  "description": "用于快速验证动态短剧工作流：故事规划、角色锚点、分镜、视频、配音和自动合成。",
+  "category": "drama",
+  "triggers": {
+    "keywords": [
+      "短剧快速测试",
+      "快速短剧",
+      "一键短剧"
+    ],
+    "node_scopes": [
+      "textGeneration",
+      "imageGeneration",
+      "videoGeneration",
+      "audioGeneration"
+    ]
+  },
+  "planning": {
+    "planning_notes": "这是轻量测试流程；正式复杂短剧继续使用原有 short-drama Skill。先明确 visual_style：用户已确认视觉风格时填其原意，未确认时填“未指定”，不要自行指定风格。已确认风格须进入每个图片和视频任务本身，或通过 prompt_for/context_for 消费含该风格的上游文本节点；仅靠图片素材边或 Plan 输入不算传递。每个镜头 item 必须提供 title、prompt 和非空 narration，narration 是该镜头实际朗读的一句旁白或对白。",
+    "prompt_guide": "保持角色身份、服装、场景和叙事连续，每个计划项对应一个剧情镜头。已确认视觉风格须在视觉任务的画面 prompt 或其可消费上游文本中可追踪；未确认时不要强加风格。prompt 只描述画面，narration 只写该镜头实际朗读的旁白或对白，不要包含时间码、时长、情绪标签、环境音、音效或配乐说明。",
+    "conduct_rules": [
+      "根据用户目标动态决定节点数量和依赖关系",
+      "仅使用 allowed_recipe_ids 中声明的能力",
+      "创建画布节点前先生成并确认动态计划",
+      "不得省略视觉风格决定：已确认风格填 visual_style 并传到视觉任务；未确认填“未指定”，不得擅自强加"
+    ]
+  },
+  "schema_version": "dramaclaw.workflow-skill.v1",
+  "allowed_recipe_ids": [
+    "drama-plot-outline",
+    "drama-character-extraction",
+    "drama-character-turnaround",
+    "drama-scene-extraction",
+    "drama-scene-image",
+    "drama-prop-extraction",
+    "drama-prop-image",
+    "drama-shot-planning",
+    "drama-shot-group-detail",
+    "drama-shot-group-storyboard",
+    "keyframe-scene-script",
+    "general-text",
+    "general-image",
+    "general-video",
+    "drama-shot-voice",
+    "drama-background-music"
+  ],
+  "input_parameters": [
+    {
+      "id": "visual_style",
+      "label": "已确认视觉风格（未确认填“未指定”）",
+      "type": "text",
+      "required": true
+    }
+  ],
+  "evaluation": {
+    "rating_bands": [
+      {
+        "score": 10,
+        "description": "完整满足用户目标且工作流可以执行"
+      },
+      {
+        "score": 7,
+        "description": "核心流程完整，允许少量非关键调整"
+      },
+      {
+        "score": 4,
+        "description": "缺少关键阶段或依赖关系不完整"
+      }
+    ],
+    "visual_review_items": [],
+    "text_review_items": [],
+    "quality_threshold": 7,
+    "domain_constraints": [
+      "工作流必须符合用户目标并保持输入素材一致性"
+    ]
+  }
+}

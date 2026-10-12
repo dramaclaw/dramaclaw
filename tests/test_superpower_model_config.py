@@ -19,6 +19,7 @@ def _capture_model_calls(monkeypatch):
     def fake_get_pydantic_model(
         provider_override: str | None = None,
         model_name_override: str | None = None,
+        **_kwargs,
     ):
         calls.append(
             {
@@ -74,7 +75,9 @@ def test_superpower_prompt_agents_use_default_model_provider_unless_overridden(
     assert calls == [{"provider_override": None, "model_name_override": None}]
 
 
-def test_global_video_reviewer_superpower_can_use_feature_specific_model_override(monkeypatch):
+def test_global_video_reviewer_superpower_can_use_feature_specific_model_override(
+    monkeypatch,
+):
     calls = _capture_model_calls(monkeypatch)
     from novelvideo.agents import global_video_optimizer
 
@@ -96,10 +99,10 @@ def test_keyframe_prompt_builder_uses_video_optimizer_model(monkeypatch):
     from novelvideo import config
     from novelvideo.agents import keyframe_prompt_builder
 
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str | None]] = []
 
     def fake_get_newapi_text_pydantic_model(
-        model_env: str, default_model: str, *, capability: str = "text.generate"
+        model_env: str, default_model: str | None = None, **_kwargs
     ):
         calls.append((model_env, default_model))
         return object()
@@ -113,6 +116,4 @@ def test_keyframe_prompt_builder_uses_video_optimizer_model(monkeypatch):
 
     keyframe_prompt_builder.create_keyframe_prompt_builder_agent()
 
-    assert calls == [
-        ("KEYFRAME_PROMPT_MODEL", "DC-video-prompt-optimizer-LLM")
-    ]
+    assert calls == [("KEYFRAME_PROMPT_MODEL", None)]

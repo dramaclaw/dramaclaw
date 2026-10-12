@@ -39,6 +39,7 @@ export const TASK_TYPES = {
   // Audio
   AUDIO_GENERATION: "audio_generation",
   AUDIO_GENERATION_INDEXTTS2: "audio_generation_indextts2",
+  SYSTEM_VOICE_SETUP: "system_voice_setup",
   // Video
   SINGLE_VIDEO: "single_video",
   GLOBAL_OPTIMIZE_VIDEO: "global_optimize_video",

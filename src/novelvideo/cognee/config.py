@@ -47,7 +47,7 @@ from novelvideo.shared.billing_errors import (
     find_insufficient_credits_stop,
 )
 from novelvideo.shared.env_guard import preserve_st_env
-from novelvideo.shared.runtime_env import is_ce_effective
+from novelvideo.shared.runtime_env import is_ce_effective, uses_local_ce_runtime
 
 # 抑制 cognee/litellm 内部的 Pydantic 序列化警告
 # （豆包等非 OpenAI provider 的 Message 字段数与 cognee 期望不同，不影响功能）
@@ -333,13 +333,18 @@ def _effective_newapi_gateway() -> tuple[str, str]:
 
         return get_newapi_runtime_credentials()
     except Exception:
-        if is_ce_effective():
+        if uses_local_ce_runtime():
             # CE credentials are never allowed to fall back to deployment env.
             return "", OFFICIAL_NEWAPI_BASE_URL
         return (
             os.getenv("NEWAPI_API_KEY", "").strip(),
             os.getenv("NEWAPI_BASE_URL", "").strip() or OFFICIAL_NEWAPI_BASE_URL,
         )
+
+
+def _resolve_llm_model(provider: str) -> str:
+    model = os.getenv("COGNEE_LLM_MODEL", "").strip() or DEFAULT_COGNEE_LLM_MODEL
+    return _normalize_llm_model(provider, model)
 
 
 def _current_gateway_fingerprint() -> str:
@@ -1267,10 +1272,7 @@ def _apply_embedding_env(llm_provider: str, api_key: str) -> tuple[str, str, str
 
 
 llm_provider = _resolve_llm_provider()
-llm_model = _normalize_llm_model(
-    llm_provider,
-    os.getenv("COGNEE_LLM_MODEL", "").strip() or DEFAULT_COGNEE_LLM_MODEL,
-)
+llm_model = _resolve_llm_model(llm_provider)
 _apply_embedding_runtime_defaults(llm_provider)
 
 api_key = _resolve_llm_api_key(llm_provider, llm_model)
@@ -1359,10 +1361,7 @@ def init_cognee() -> None:
             "CE 在设置页配置，EE 通过 NEWAPI_API_KEY 配置。"
         )
 
-    llm_model = _normalize_llm_model(
-        llm_provider,
-        os.getenv("COGNEE_LLM_MODEL", "").strip() or DEFAULT_COGNEE_LLM_MODEL,
-    )
+    llm_model = _resolve_llm_model(llm_provider)
 
     _apply_llm_env(llm_provider, llm_model, api_key)
     (

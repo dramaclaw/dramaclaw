@@ -1,0 +1,16 @@
+{
+  "id": "general-text",
+  "enabled": true,
+  "version": 1,
+  "name": "通用文本增强",
+  "output_kind": "text",
+  "action_keys": [
+    "general-text"
+  ],
+  "system_prompt": "You are an Expert Prompt Engineer for text generation tasks.\nRewrite rough user intent into a clear, structured and executable instruction.\nOutput ONLY refined prompt text.",
+  "planning_prompt": "根据用户目标、当前计划项和上游结果规划本节点的具体生成要求。",
+  "result_summary": "已完成通用文本增强。",
+  "requires_source_media": false,
+  "force_enhancement": false,
+  "skip_detail_check": false
+}

@@ -5,9 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiCall, apiCallEnvelope } from "@/api/client";
 import {
   buildProjectionFromPreset,
+  admitFreezoneRecipeResult,
   createBlankFreezoneCanvas,
   getFreezoneCanvas,
   getProjectionStatuses,
+  listFreezoneWorkflowRuns,
   putFreezoneCanvas,
 } from "@/api/canvas";
 
@@ -21,6 +23,19 @@ describe("canvas projection api", () => {
   beforeEach(() => {
     vi.mocked(apiCall).mockReset();
     vi.mocked(apiCallEnvelope).mockReset();
+  });
+
+  it('admits a standalone Recipe result using the existing product endpoint', async () => {
+    vi.mocked(apiCall).mockResolvedValueOnce({ operation_id: 'op' });
+    expect(await admitFreezoneRecipeResult('project a', 'canvas', 'html', 'recipe', 'attempt'))
+      .toEqual({ operation_id: 'op' });
+    expect(apiCall).toHaveBeenCalledWith('projects/project%20a/freezone/agent-product-operations', {
+      method: 'POST', json: {
+        product_kind: 'recipe_result', generation_session_id: 'attempt', canvas_id: 'canvas',
+        artifact_id: 'html', normalized_inputs_hash: 'attempt',
+        metadata: { recipe_id: 'recipe', generation_attempt_id: 'attempt' },
+      },
+    });
   });
 
   it("passes abort signals through canvas detail GETs", async () => {
@@ -160,5 +175,43 @@ describe("canvas projection api", () => {
         }),
       },
     ]);
+  });
+
+  it("coalesces concurrent workflow-run polling for the same canvas", async () => {
+    let resolveRequest: (value: { runs: [] }) => void = () => {
+      throw new Error("workflow-run request resolver was not initialized");
+    };
+    vi.mocked(apiCall).mockImplementationOnce(
+      () =>
+        new Promise<{ runs: [] }>((resolve) => {
+          resolveRequest = resolve;
+        }),
+    );
+
+    const first = listFreezoneWorkflowRuns("project-a", "canvas-a");
+    const second = listFreezoneWorkflowRuns("project-a", "canvas-a");
+
+    expect(first).toBe(second);
+    expect(apiCall).toHaveBeenCalledTimes(1);
+
+    resolveRequest({ runs: [] });
+    await first;
+
+    vi.mocked(apiCall).mockResolvedValueOnce({ runs: [] });
+    await listFreezoneWorkflowRuns("project-a", "canvas-a");
+    expect(apiCall).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the workflow-run request lock after a failed request", async () => {
+    vi.mocked(apiCall)
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce({ runs: [] });
+
+    await expect(
+      listFreezoneWorkflowRuns("project-b", "canvas-b"),
+    ).rejects.toThrow("timeout");
+    await listFreezoneWorkflowRuns("project-b", "canvas-b");
+
+    expect(apiCall).toHaveBeenCalledTimes(2);
   });
 });

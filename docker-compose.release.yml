@@ -25,8 +25,9 @@ services:
       NOVELVIDEO_OUTPUT_DIR: /data/output
       NOVELVIDEO_STATE_DIR: /data/state
       NOVELVIDEO_RUNTIME_DIR: /data/runtime
-      DRAMACLAW_CHAT_BACKEND: hermes
+      DRAMACLAW_CHAT_BACKEND: "${DRAMACLAW_CHAT_BACKEND:-hermes}"
       HERMES_CLI_PATH: /root/.local/bin/hermes
+      SUPERTALE_ALLOW_UNSANDBOXED: "1"
       # 运行时用哪个网关由应用设置（settings.db 的 model_gateway_mode）决定，CE 的网关路由不回退到 env；
       # NEWAPI_BASE_URL 只是兜底，默认官方地址，与桌面版 main.js 一致。
       NEWAPI_BASE_URL: "${NEWAPI_BASE_URL:-https://relayclaw.cdnfg.com/v1}"

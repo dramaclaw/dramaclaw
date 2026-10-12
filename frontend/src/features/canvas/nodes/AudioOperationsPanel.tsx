@@ -53,6 +53,7 @@ import {
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { VoiceSelectionModal } from './VoiceSelectionModal';
+import { requiresCustomVoiceSelection } from './audioVoicePolicy';
 
 const PANEL_GAP_PX = 12;
 const PANEL_OVERHANG_PX = 60;
@@ -63,7 +64,7 @@ const AUDIO_INPUT_FIELD_CLASS =
   'nodrag nowheel w-full rounded-[10px] border border-white/[0.08] bg-transparent px-3 text-[13px] text-text-dark outline-none transition-colors placeholder:text-text-muted/70 hover:border-white/[0.12] focus:border-white/20';
 
 // music 模式时长默认 30s（对齐后端 music_length_ms 默认 30000）。
-const DEFAULT_MUSIC_LENGTH_MS = 30000;
+export const DEFAULT_MUSIC_LENGTH_MS = 30000;
 const AUDIO_SPEECH_FEATURE_KEY = 'freezone.audio_speech';
 const AUDIO_MUSIC_FEATURE_KEY = 'freezone.audio_music';
 // 音乐时长下拉样式：暗色画布风格 + min-width 兜底,避免画布缩放/窄触发器时
@@ -73,17 +74,17 @@ const MUSIC_LENGTH_SELECT_CLASS =
 const MUSIC_LENGTH_SELECT_MENU_CLASS =
   '!z-[260] !min-w-[140px] !border-white/10 !bg-[#202024] !text-text-dark shadow-[0_14px_34px_rgba(0,0,0,0.5)]';
 // 音乐时长预设（毫秒）。后端范围 3000–600000，这里给常用档位。
-const MUSIC_LENGTH_PRESETS: ReadonlyArray<{ ms: number; labelKey: string }> = [
-  { ms: 30000, labelKey: 'node.audioPanel.musicLength.30s' },
-  { ms: 60000, labelKey: 'node.audioPanel.musicLength.1m' },
-  { ms: 120000, labelKey: 'node.audioPanel.musicLength.2m' },
-  { ms: 180000, labelKey: 'node.audioPanel.musicLength.3m' },
-  { ms: 240000, labelKey: 'node.audioPanel.musicLength.4m' },
-  { ms: 300000, labelKey: 'node.audioPanel.musicLength.5m' },
-  { ms: 600000, labelKey: 'node.audioPanel.musicLength.10m' },
+export const MUSIC_LENGTH_PRESETS: ReadonlyArray<{ ms: number; label: string; labelKey: string }> = [
+  { ms: 30000, label: '30秒', labelKey: 'node.audioPanel.musicLength.30s' },
+  { ms: 60000, label: '1分钟', labelKey: 'node.audioPanel.musicLength.1m' },
+  { ms: 120000, label: '2分钟', labelKey: 'node.audioPanel.musicLength.2m' },
+  { ms: 180000, label: '3分钟', labelKey: 'node.audioPanel.musicLength.3m' },
+  { ms: 240000, label: '4分钟', labelKey: 'node.audioPanel.musicLength.4m' },
+  { ms: 300000, label: '5分钟', labelKey: 'node.audioPanel.musicLength.5m' },
+  { ms: 600000, label: '10分钟', labelKey: 'node.audioPanel.musicLength.10m' },
 ];
 
-function musicBillingSecondsFromMs(ms: number): number {
+export function musicBillingSecondsFromMs(ms: number): number {
   return Math.max(Math.ceil(Math.max(ms, 0) / 1000), 1);
 }
 
@@ -103,10 +104,12 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
   const [panelExpanded, setPanelExpanded] = useState(false);
   // 音色设置默认收起，参考 libtv：控制行的设置按钮点开后才展示音色卡。
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [voicePickerOpen, setVoicePickerOpen] = useState(false);
   // music 模式：高级设置（音乐时长等）默认收起，点底部设置按钮展开。
   const [showMusicSettings, setShowMusicSettings] = useState(false);
   // 'music'：文字生成音乐(走 /freezone/audio/eleven-music)；缺省/'speech'：克隆音频(TTS)。
   const isMusic = data.audioKind === 'music';
+  const voiceMissing = requiresCustomVoiceSelection(data);
   // 生成逻辑(含失败重试)抽到 useAudioGeneration，与节点本体的重试共用同一实现。
   const {
     generate: handleSubmit,
@@ -223,10 +226,9 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
   }, [handleTextChange, isGenerating, isTranslating, modelTaskAccess.blocked, t, text]);
 
   // 文本框为空但引用了非空文本时也允许提交（effectivePrompt 会回退到上游引用）。
-  const voiceMissing = !isMusic && data.voiceAvailable === false;
   const submitDisabled =
     isGenerating || billingRuleMissing || modelTaskAccess.blocked ||
-    effectivePrompt.length === 0 || voiceMissing;
+    effectivePrompt.length === 0;
 
   return (
     <OperationPanelShell
@@ -336,9 +338,16 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
       )}
 
       {voiceMissing ? (
-        <p className="px-3 pb-2 text-[12px] text-amber-300">
-          {t('node.audioPanel.voiceMissing')}
-        </p>
+        <div className="flex items-center justify-between gap-3 px-3 pb-2 text-[12px] text-amber-300">
+          <span>{t('node.audioPanel.voiceMissing')}</span>
+          <button
+            type="button"
+            onClick={() => setVoicePickerOpen(true)}
+            className="rounded-full border border-amber-300/30 px-2.5 py-1 text-[11px] text-amber-200 hover:bg-amber-300/10"
+          >
+            {t('node.audioPanel.switchVoice')}
+          </button>
+        </div>
       ) : null}
 
       <div className="flex shrink-0 items-center justify-end gap-2 px-3 pb-3 pt-1">
@@ -388,9 +397,11 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
           disabled={submitDisabled}
           title={
             modelTaskAccess.message
-            ?? (voiceMissing ? t('node.audioPanel.voiceMissing') : t('node.audioPanel.generate'))
+            ?? (voiceMissing
+              ? t('node.audioPanel.generateWithoutVoice')
+              : t('node.audioPanel.generate'))
           }
-          onClick={handleSubmit}
+          onClick={() => void handleSubmit()}
           className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
             submitDisabled
               ? NODE_GENERATE_BUTTON_DISABLED_CLASS
@@ -411,6 +422,26 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
 
       {isMusic && showMusicSettings && (
         <AudioMusicSettingsPanel nodeId={nodeId} data={data} />
+      )}
+      {!isMusic && (
+        <VoiceSelectionModal
+          open={voicePickerOpen}
+          initialTab="mine"
+          currentRef={data.voiceRef ?? { scope: 'project_narrator' }}
+          onClose={() => setVoicePickerOpen(false)}
+          onPick={({ ref, label, language }) => {
+            updateNodeData(nodeId, {
+              speechMode: 'clone',
+              voicePolicyConfirmed: true,
+              voiceRef: ref,
+              voiceAvailable: true,
+              voiceLabel: label,
+              voiceLanguage: language ?? '',
+              generationError: null,
+            });
+            setVoicePickerOpen(false);
+          }}
+        />
       )}
     </OperationPanelShell>
   );
@@ -692,10 +723,12 @@ function AudioVoiceSettingsPanel({ nodeId, data }: AudioVoiceSettingsPanelProps)
         currentRef={currentRef}
         onPick={({ ref, label, language }) => {
           updateNodeData(nodeId, {
+            speechMode: 'clone',
             voiceRef: ref,
             voiceAvailable: true,
             voiceLabel: label,
             voiceLanguage: language ?? '',
+            generationError: null,
           });
           setModalOpen(false);
         }}

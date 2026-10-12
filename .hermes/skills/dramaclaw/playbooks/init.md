@@ -1,6 +1,7 @@
 # 当前项目初始化阶段（Steps 1-7）
 
-> API 请求细节不确定时，`Read references/pipeline-details.md`。
+> 本文件是 Steps 1-7 流程顺序的唯一事实源。API 请求细节不确定时，读取
+> `references/step-api-reference.md`；技术参考不得改变本文件的顺序。
 
 ## 前置：项目存在性检查
 
@@ -19,8 +20,11 @@ Step 0（SKILL.md §0）的 `/pipeline/status` 返回决定从哪一步开始：
    ├─ 有 → 使用前端提供的上传/摄入上下文
    └─ 没有 → 停止，提示通过“虾料”上传剧本文档
 
-2. 自动执行（不需要问用户）
-   上传小说(1) → 启动摄入(2)。摄入是异步任务，启动后立即收口；若状态仍为 queued/running，只告知后台正在摄入中，不等待完成后继续配置。
+2. 按当前状态执行一个动作（不重复确认同一步）
+   - 前端已注入 `[DRAMACLAW_INGEST_AUTOMATION]`：上传和摄入启动已由前端处理，不重复调用写工具，只汇报当前状态。
+   - 当前附件尚未上传：只执行上传（Step 1）并收口；用户下次继续时再启动摄入。
+   - 文件已上传但摄入未启动：只启动摄入（Step 2）并立即收口。
+   - 摄入处于 queued/running：只告知后台正在摄入，不等待完成后继续配置。
 
 3. 智能推荐配置（§5 决策点规则）
    摄入完成后分析小说内容再推荐：
@@ -43,7 +47,7 @@ Step 0（SKILL.md §0）的 `/pipeline/status` 返回决定从哪一步开始：
 
 ## 步骤详情
 
-**步骤详情**：见 `references/pipeline-details.md` Steps 1-7。项目创建由前端/系统完成，不属于虾导步骤。
+**API 详情**：见 `references/step-api-reference.md` Steps 1-7。项目创建由前端/系统完成，不属于虾导步骤。
 
 **Step 4 失败处理**：若 `build_characters` 返回空结果，从小说内容分析角色后通过 `POST /projects/{project}/characters` 逐个添加。
 
@@ -78,7 +82,7 @@ Step 0（SKILL.md §0）的 `/pipeline/status` 返回决定从哪一步开始：
 
 **无论手动/自动模式**，输出阶段摘要（如："全局准备完成：项目 X，5角色(2核心3重要)，10集，肖像已生成"）。
 
-**逐步确认模式**：见 `references/run-modes.md` 模式一——从 Step 4 起每个写操作步骤前都停下问用户，
+**逐步确认模式**：见 `references/run-modes.md` 模式一——从 Step 3 起每个写操作步骤前都停下问用户，
 一次只推进一步。CP1 处展示核心角色 Portrait + 级别 + 分集标题，用户可改角色分级/外貌/分集数量，
 确认后再问「执行下一步吗」。
 

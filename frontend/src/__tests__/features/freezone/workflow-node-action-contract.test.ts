@@ -1,0 +1,104 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+const readNodeSource = (name: string) =>
+  readFileSync(
+    resolve(process.cwd(), `src/features/canvas/nodes/${name}.tsx`),
+    "utf8",
+  );
+
+const readSource = (path: string) =>
+  readFileSync(resolve(process.cwd(), path), "utf8");
+
+describe("dynamic workflow node action contract", () => {
+  it.each([
+    ["TextAnnotationNode", "generate_text"],
+    ["ImageGenNode", "generate_image"],
+    ["VideoNode", "generate_video"],
+    ["AudioNode", "generate_audio"],
+    ["VideoComposeNode", "auto_compose_video"],
+  ])("keeps %s subscribed to %s", (nodeName, action) => {
+    const source = readNodeSource(nodeName);
+
+    expect(source).toContain("subscribeNodeAction");
+    expect(source).toContain(action);
+    expect(source).toContain("publishNodeActionAccepted");
+    expect(source).toContain("publishNodeActionSuccess");
+    expect(source).toContain("publishNodeActionError");
+  });
+
+  it("keeps offscreen workflow nodes mounted while a run is active", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/features/canvas/Canvas.tsx"),
+      "utf8",
+    );
+
+    expect(source).toContain("WORKFLOW_RUN_UPDATED_EVENT");
+    expect(source).toContain("onlyRenderVisibleElements={!workflowExecutionActive && !lowDetailActive}");
+  });
+
+  it("allows long-running media tasks to finish before timing out", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/features/freezone/canvasChatCommands.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("DEFAULT_NODE_ACTION_TIMEOUT_MS = 30 * 60 * 1000");
+  });
+
+  it("persists and reports the durable auto-compose task reference", () => {
+    const source = readNodeSource("VideoComposeNode");
+
+    expect(source).toContain("generationTaskDescriptor(ref)");
+    expect(source).toContain("task_key: ref.task_key");
+    expect(source).toContain("task_type: ref.task_type");
+    expect(source).toContain("job_id: ref.job_id");
+  });
+
+  it("compiles catalog-backed image workflow prompts before generation", () => {
+    const source = readSource("src/features/canvas/nodes/shared/useImageGenerationForm.ts");
+
+    expect(source).toContain("compileWorkflowNodePrompt");
+    expect(source).toContain("workflowRecipeCompileMode: mode");
+    expect(source).toContain("workflowRecipeCompiledPrompt: compiledPrompt");
+  });
+
+  it("compiles non-direct speech workflow prompts before TTS submission", () => {
+    const source = readSource("src/features/canvas/nodes/useAudioGeneration.ts");
+    const speechTextSource = readSource("src/features/canvas/application/audioSpeechText.ts");
+    const compile = source.indexOf("await compileWorkflowNodePrompt({");
+    const submitSpeech = source.indexOf("submitFreezoneAudioSpeech(project");
+
+    expect(compile).toBeGreaterThan(-1);
+    expect(submitSpeech).toBeGreaterThan(compile);
+    expect(source).toContain("const compiledPrompt = directVoiceRecipe");
+    expect(source).toContain("catalog.recipeId === 'drama-shot-voice'");
+    expect(source).toContain("resolveSafeSpeechSubmissionText");
+    expect(speechTextSource).toContain("compileMode === 'timeout_fallback'");
+    expect(speechTextSource).toContain("extractExplicitSpeakableAudioText(compiledPrompt)");
+  });
+
+  it.each([
+    ["image generation", "src/features/canvas/nodes/shared/useImageGenerationForm.ts", "prompt"],
+    ["image edit", "src/features/canvas/nodes/ImageEditNode.tsx", "prompt"],
+    ["video generation", "src/features/canvas/nodes/shared/useVideoGenerationForm.ts", "prompt"],
+    ["canvas video generation", "src/features/canvas/nodes/VideoNode.tsx", "prompt"],
+  ])("persists compiled workflow prompts back to %s node prompts", (_label, path, field) => {
+    const source = readSource(path);
+
+    expect(source).toContain("workflowRecipeCompiledPrompt: compiledPrompt");
+    expect(source).toMatch(
+      new RegExp(`workflowRecipeCompiledPrompt:\\s*compiledPrompt,\\s*\\n\\s*${field}:\\s*compiledPrompt`),
+    );
+  });
+
+  it("does not persist timeout fallback production instructions as speech text", () => {
+    const source = readSource("src/features/canvas/nodes/useAudioGeneration.ts");
+
+    expect(source).toContain("workflowRecipeCompiledPrompt: compiledPrompt");
+    expect(source).toContain("text: persistedPrompt");
+    expect(source).toContain("safeFallbackPrompt: speechFallbackPrompt");
+  });
+});

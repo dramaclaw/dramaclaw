@@ -13,8 +13,6 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, Depends, UploadFile, File, Query
 from fastapi.responses import JSONResponse
 
-logger = logging.getLogger("novelvideo.api.characters")
-
 from novelvideo.api.asset_metadata import newest_updated_at, tree_updated_at
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.upload_workers import (
@@ -87,6 +85,8 @@ from novelvideo.seedance2_i2v.character_voice_storage import (
     voice_resource_lock,
 )
 from novelvideo.sqlite_store import SQLiteStore
+
+logger = logging.getLogger("novelvideo.api.characters")
 
 router = APIRouter()
 

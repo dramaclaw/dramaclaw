@@ -13,6 +13,9 @@ import {
 // the key is unknown. Our two keys are "known", so return a marker per key.
 const t = ((key: string, opts?: { defaultValue?: string; index?: number }) => {
   if (key === "common.generationChannelPolicyBlocked") return "POLICY_MSG";
+  if (key === "common.generationInputContentPolicyBlocked") return "INPUT_POLICY_MSG";
+  if (key === "common.generationOutputContentPolicyBlocked") return "OUTPUT_POLICY_MSG";
+  if (key === "common.generationContentPolicyBlocked") return "CONTENT_POLICY_MSG";
   if (key === "common.generationRateLimited") return "RATE_MSG";
   if (key === "common.error") return "GENERIC_ERROR";
   if (key === "node.videoNode.humanReviewErrors.contentRejected") {
@@ -36,6 +39,12 @@ const MODERATION_RAW =
   'DramaClawAPI image generation failed: HTTP 400: request_id=req-123; ' +
   'body={"error":{"message":"Content failed safety review. / 内容未通过安全审核。",' +
   '"type":"content_policy_violation","param":"","code":"moderation_blocked"}}';
+const INPUT_POLICY_RAW =
+  "freezone video generation failed: " +
+  "[InputImageSensitiveContentDetected.PrivacyInformation] input blocked. Request id: input-1";
+const OUTPUT_POLICY_RAW =
+  "freezone video generation failed: " +
+  "[OutputVideoSensitiveContentDetected] output blocked. Request id: output-1";
 
 describe("providerErrorMessage", () => {
   it("extracts a top-level message from a pure provider JSON error", () => {
@@ -78,6 +87,12 @@ describe("classifyGatewayError", () => {
     expect(classifyGatewayError(REAL_429_RAW)).toBe("rate_limit");
   });
 
+  it("distinguishes input and output safety reviews", () => {
+    expect(classifyGatewayError(INPUT_POLICY_RAW)).toBe("input_content_policy");
+    expect(classifyGatewayError(OUTPUT_POLICY_RAW)).toBe("output_content_policy");
+    expect(classifyGatewayError(MODERATION_RAW)).toBe("content_policy");
+  });
+
   it("returns null for unrelated errors and empty input", () => {
     expect(classifyGatewayError("something else failed")).toBeNull();
     expect(classifyGatewayError("")).toBeNull();
@@ -99,13 +114,13 @@ describe("humanizeTaskError", () => {
     expect(humanizeTaskError("disk full", t)).toBe("disk full");
   });
 
-  it("shows only the provider message for moderation failures", () => {
-    expect(humanizeTaskError(MODERATION_RAW, t)).toBe(
-      "Content failed safety review. / 内容未通过安全审核。",
-    );
+  it("shows user-facing safety messages while preserving raw parsing separately", () => {
+    expect(humanizeTaskError(MODERATION_RAW, t)).toBe("CONTENT_POLICY_MSG");
     expect(backendErrorToastMessage(new Error(MODERATION_RAW), t)).toBe(
-      "Content failed safety review. / 内容未通过安全审核。",
+      "CONTENT_POLICY_MSG",
     );
+    expect(humanizeTaskError(INPUT_POLICY_RAW, t)).toBe("INPUT_POLICY_MSG");
+    expect(humanizeTaskError(OUTPUT_POLICY_RAW, t)).toBe("OUTPUT_POLICY_MSG");
   });
 
   it("localizes a structured human-review failure embedded in a video task error", () => {

@@ -4,6 +4,7 @@ import type { TFunction } from "i18next";
 import {
   backendErrorCodeToastMessage,
   humanizeTaskError,
+  providerErrorMessage,
 } from "@/lib/api-errors";
 import type { TaskState } from "./types";
 
@@ -24,5 +25,7 @@ export function taskErrorMessage(task: TaskState, t: TFunction): string {
       defaultValue: task.error || t("common.error"),
     });
   }
+  const providerMessage = providerErrorMessage(task.error);
+  if (providerMessage) return providerMessage;
   return humanizeTaskError(task.error, t);
 }

@@ -2,6 +2,27 @@
 // Copyright (c) 2026 ClaymoreLab
 import { apiCall, apiCallEnvelope } from "./client";
 
+/** Admit one standalone Recipe use before synchronous generation. */
+export async function admitFreezoneRecipeResult(
+  projectId: string,
+  canvasId: string,
+  nodeId: string,
+  recipeId: string,
+  attemptId: string,
+): Promise<{ operation_id: string }> {
+  return apiCall(`projects/${encodeURIComponent(projectId)}/freezone/agent-product-operations`, {
+    method: 'POST',
+    json: {
+      product_kind: 'recipe_result',
+      generation_session_id: attemptId,
+      canvas_id: canvasId,
+      artifact_id: nodeId,
+      normalized_inputs_hash: attemptId,
+      metadata: { recipe_id: recipeId, generation_attempt_id: attemptId },
+    },
+  });
+}
+
 // SuperTale-side canvas storage (`/api/v1/projects/<project_id>/freezone/canvases/*`).
 // The wire format is intentionally generic: `{nodes, edges, viewport}`. The
 // backend treats the canvas graph as opaque JSON, so node/capability evolutions stay
@@ -87,6 +108,154 @@ export interface FreezoneCanvasSaveResult {
   updated_at?: string;
   client_save_id?: string;
   backup_status?: CanvasBackupStatus;
+}
+
+export type WorkflowRunStatus = "running" | "completed" | "failed" | "cancelled" | "interrupted";
+export type WorkflowRunActionStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "skipped";
+export type WorkflowRunActionPhase =
+  | "waiting_dependencies"
+  | "waiting_slot"
+  | "waiting_capacity"
+  | "preparing"
+  | "compiling_recipe"
+  | "submitting"
+  | "generating"
+  | "syncing_result"
+  | "retrying";
+
+export interface FreezoneWorkflowRunAction {
+  node_id: string;
+  action: string;
+  status: WorkflowRunActionStatus;
+  phase?: WorkflowRunActionPhase | null;
+  updated_at?: string | null;
+  error?: string | null;
+  task_key?: string | null;
+  task_type?: string | null;
+  job_id?: string | null;
+  error_category?: string | null;
+  error_request_id?: string | null;
+  error_fingerprint?: string | null;
+  user_error?: string | null;
+  retryable?: boolean | null;
+  artifact_status?: "valid" | "missing" | "unverified" | "not_required" | null;
+  recipe_id?: string | null;
+  recipe_version?: string | null;
+  generation_attempt_id?: string | null;
+  product_operation_id?: string | null;
+  retry_count?: number;
+}
+
+export interface FreezoneWorkflowRun {
+  schema_version: "freezone_workflow_run.v1";
+  run_id: string;
+  project_id: string;
+  canvas_id: string;
+  status: WorkflowRunStatus;
+  resumable: boolean;
+  created_at: string;
+  started_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+  runner_id?: string | null;
+  lease_expires_at?: string | null;
+  actions: FreezoneWorkflowRunAction[];
+  metadata?: Record<string, unknown>;
+}
+
+export async function createFreezoneWorkflowRun(
+  projectId: string,
+  canvasId: string,
+  actions: Array<{
+    node_id: string;
+    action: string;
+    recipe_id?: string;
+    recipe_version?: string;
+    generation_attempt_id?: string;
+  }>,
+  idempotencyKey?: string,
+  runnerId?: string,
+): Promise<FreezoneWorkflowRun> {
+  return await apiCall<FreezoneWorkflowRun>(
+    `projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}/workflow-runs`,
+    {
+      method: "POST",
+      json: {
+        actions,
+        ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
+        ...(runnerId ? { runner_id: runnerId } : {}),
+      },
+    },
+  );
+}
+
+export async function updateFreezoneWorkflowRun(
+  projectId: string,
+  canvasId: string,
+  runId: string,
+  payload: {
+    status?: WorkflowRunStatus;
+    action_updates?: Array<{
+      node_id: string;
+      action: string;
+      status: WorkflowRunActionStatus;
+      phase?: WorkflowRunActionPhase | null;
+      error?: string | null;
+      task_key?: string | null;
+      task_type?: string | null;
+      job_id?: string | null;
+      retry_count?: number;
+    }>;
+    runner_id?: string;
+  },
+): Promise<FreezoneWorkflowRun> {
+  return await apiCall<FreezoneWorkflowRun>(
+    `projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}/workflow-runs/${encodeURIComponent(runId)}`,
+    { method: "PATCH", json: payload },
+  );
+}
+
+export function getFreezoneWorkflowRun(
+  projectId: string,
+  canvasId: string,
+  runId: string,
+  waitSeconds = 0,
+): Promise<FreezoneWorkflowRun> {
+  return apiCall<FreezoneWorkflowRun>(
+    `projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}/workflow-runs/${encodeURIComponent(runId)}?wait_seconds=${waitSeconds}`,
+  );
+}
+
+const workflowRunsInFlight = new Map<
+  string,
+  Promise<{ runs: FreezoneWorkflowRun[] }>
+>();
+
+export function listFreezoneWorkflowRuns(
+  projectId: string,
+  canvasId: string,
+): Promise<{ runs: FreezoneWorkflowRun[] }> {
+  const key = `${projectId}\u0000${canvasId}`;
+  const existing = workflowRunsInFlight.get(key);
+  if (existing) return existing;
+
+  const request = apiCall<{ runs: FreezoneWorkflowRun[] }>(
+    `projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(
+      canvasId,
+    )}/workflow-runs`,
+  ).finally(() => {
+    if (workflowRunsInFlight.get(key) === request) {
+      workflowRunsInFlight.delete(key);
+    }
+  });
+  workflowRunsInFlight.set(key, request);
+  return request;
 }
 
 /**

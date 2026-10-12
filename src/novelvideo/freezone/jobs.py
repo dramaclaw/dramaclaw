@@ -941,6 +941,7 @@ async def _render_video_clip(
     output_path: Path,
     source_start: float,
     duration: float,
+    speed: float,
     width: int,
     height: int,
     fps: int,
@@ -949,15 +950,25 @@ async def _render_video_clip(
     volume: float,
     muted: bool,
 ) -> None:
-    video_filter = (
+    if speed <= 0:
+        speed = 1.0
+    output_duration = duration / speed
+    video_filter_parts = [
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={background_color},fps={fps}"
-    )
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={background_color}",
+    ]
+    if abs(speed - 1.0) > 1e-6:
+        video_filter_parts.append(f"setpts=PTS/{speed:.6f}")
+    video_filter_parts.append(f"fps={fps}")
+    video_filter = ",".join(video_filter_parts)
     has_audio = (
         keep_original_audio and (not muted) and await _probe_has_audio(source_path)
     )
 
     if has_audio:
+        audio_filter = f"volume={volume:.4f}"
+        if abs(speed - 1.0) > 1e-6:
+            audio_filter = f"{_audio_tempo_filter(speed)},volume={volume:.4f}"
         cmd = [
             "ffmpeg",
             "-y",
@@ -982,7 +993,7 @@ async def _render_video_clip(
             "-ac",
             "2",
             "-af",
-            f"volume={volume:.4f}",
+            audio_filter,
             "-movflags",
             "+faststart",
             str(output_path),
@@ -1000,7 +1011,7 @@ async def _render_video_clip(
             "-f",
             "lavfi",
             "-t",
-            f"{duration:.3f}",
+            f"{output_duration:.3f}",
             "-i",
             "anullsrc=channel_layout=stereo:sample_rate=48000",
             "-map",
@@ -1027,6 +1038,27 @@ async def _render_video_clip(
             str(output_path),
         ]
     await _run_cmd(cmd)
+
+
+def _compose_clip_output_duration(item: dict[str, Any], source_duration: float) -> float:
+    speed = float(item.get("speed", 1.0) or 1.0)
+    if speed <= 0:
+        speed = 1.0
+    return source_duration / speed
+
+
+def _audio_tempo_filter(speed: float) -> str:
+    """Return an atempo chain for ffmpeg. Each atempo factor must be 0.5..100."""
+    factors: list[float] = []
+    remaining = speed
+    while remaining < 0.5:
+        factors.append(0.5)
+        remaining /= 0.5
+    while remaining > 100.0:
+        factors.append(100.0)
+        remaining /= 100.0
+    factors.append(remaining)
+    return ",".join(f"atempo={factor:.6f}" for factor in factors)
 
 
 async def _render_audio_clip(
@@ -1234,6 +1266,7 @@ async def run_freezone_video_compose(
                 raise RuntimeError(
                     f"compose item {item.get('item_id') or index} has invalid source range"
                 )
+            output_duration = _compose_clip_output_duration(item, duration)
             if timeline_start < cursor - 1e-6:
                 raise RuntimeError(
                     "overlapping video clips are not supported in MVP compose"
@@ -1257,6 +1290,7 @@ async def run_freezone_video_compose(
                 output_path=clip_path,
                 source_start=source_start,
                 duration=duration,
+                speed=float(item.get("speed", 1.0) or 1.0),
                 width=width,
                 height=height,
                 fps=fps,
@@ -1266,7 +1300,7 @@ async def run_freezone_video_compose(
                 muted=bool(item.get("muted")),
             )
             segment_paths.append(clip_path)
-            cursor = timeline_start + duration
+            cursor = timeline_start + output_duration
 
         concatenated_path = temp_dir / "concatenated.mp4"
         await _concat_media_segments(segment_paths, concatenated_path)
@@ -1980,7 +2014,12 @@ async def run_freezone_analyze_shots(
         vision_model, text = await vision_gateway.call_freezone_vision_model(
             prompt=prompt,
             images=frame_inputs,
-            model_override=model,
+            # ``prepare_freezone_vision_egress`` has already resolved catalog
+            # aliases and pinned the exact transport model.  Passing the
+            # caller-facing alias again makes the gateway compare two
+            # different namespaces and reject an otherwise valid trusted
+            # transport context.
+            model_override=None if vision_egress else model,
             timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
             transport_context=(
                 vision_egress.transport_context if vision_egress else None

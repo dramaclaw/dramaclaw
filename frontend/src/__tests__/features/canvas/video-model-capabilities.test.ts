@@ -346,10 +346,10 @@ describe("videoSubmitMediaRejectionReason — 提交前素材守卫 (P1/P2)", ()
 
   it("Seedance 1.x：单图 / 纯文本 → 放行", () => {
     expect(
-      videoSubmitMediaRejectionReason("imageToVideo", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
+      videoSubmitMediaRejectionReason("firstFrame", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
     ).toBeNull();
     expect(
-      videoSubmitMediaRejectionReason("imageReference", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
+      videoSubmitMediaRejectionReason("firstFrame", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
     ).toBeNull();
     expect(videoSubmitMediaRejectionReason("textToVideo", SEEDANCE10_PRO_FAST, none)).toBeNull();
   });
@@ -484,7 +484,10 @@ describe("videoMultiImageAutoSwitchMode — 首帧接多图时的自动改模式
   // effect 还没跑、或将来又有人加了 bail 条件），提交也只能带 1 张图，绝不能靠
   // 张数悄悄变成图片参考。这条上限是结构性的，不接受媒体目录 referenceImageMax 覆盖。
   it("首帧和单图图生视频的图片上限锁死在 1，且不被媒体目录配置覆盖", () => {
-    const source = readFileSync("src/features/canvas/nodes/VideoNode.tsx", "utf8");
+    const source = readFileSync(
+      "src/features/canvas/nodes/shared/videoFormOptions.ts",
+      "utf8",
+    );
     expect(source).toContain("firstFrame: { image: 1, video: 0, audio: 0 }");
     expect(source).toContain("imageToVideo: { image: 1, video: 0, audio: 0 }");
     expect(source).toContain("const FIXED_IMAGE_CAP_BY_MODE");
@@ -565,7 +568,7 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
       const counts = { ...none, images };
       const pickerBlocked = videoModelReferenceDisabledReason(SEEDANCE15_PRO, counts) != null;
       const submitBlocked =
-        videoSubmitMediaRejectionReason("imageToVideo", SEEDANCE15_PRO, counts) != null;
+        videoSubmitMediaRejectionReason("firstFrame", SEEDANCE15_PRO, counts) != null;
       expect(pickerBlocked).toBe(submitBlocked);
     }
   });
@@ -632,10 +635,12 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
   // 死胡同。这里锁住「传整个 ModelOption」，与 VideoNode 的提交守卫同源。
   it("模型选择器必须把整个 ModelOption 传给置灰守卫（而非只传 id）", () => {
     const source = readFileSync(
-      "src/features/canvas/nodes/VideoOperationsPanel.tsx",
+      "src/features/canvas/nodes/shared/VideoGenerationForm.tsx",
       "utf8",
     );
-    expect(source).toContain("videoModelReferenceDisabledReason(model, {");
+    expect(source).toMatch(
+      /videoModelReferenceDisabledReason\(\s*model,\s*modelUpstreamCounts/,
+    );
     expect(source).not.toContain(
       "videoModelReferenceDisabledReason(model.apiModel ?? model.id",
     );
@@ -1318,5 +1323,21 @@ describe("VideoNode 接线：素材撤空 → 文生视频", () => {
     expect(source).not.toContain(
       "videoModeRequiresPrompt(genMode)\n        ? !hasPromptText\n        : !hasRequiredMediaForMode",
     );
+  });
+});
+
+
+describe("node-specific video modes", () => {
+  const textOnly = { id: "text-only", supportedModes: ["text_to_video"] };
+  it("rejects unsupported modes even when a single image is present", () => {
+    expect(videoSubmitMediaRejectionReason("imageToVideo", textOnly,
+      { images: 1, videos: 0, audios: 0 })).toBe("node.videoModel.reason.modeUnsupported");
+  });
+  it("does not infer or silently discard image input for a text-only model", () => {
+    expect(videoUpstreamImageDefaultMode(textOnly)).toBeNull();
+    expect(videoSubmitMediaRejectionReason("textToVideo", textOnly,
+      { images: 1, videos: 0, audios: 0 })).toBe("node.videoModel.reason.imageUnsupported");
+    expect(videoSubmitMediaRejectionReason("textToVideo", textOnly,
+      { images: 0, videos: 0, audios: 0 })).toBeNull();
   });
 });

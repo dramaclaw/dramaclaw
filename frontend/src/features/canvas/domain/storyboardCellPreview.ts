@@ -3,6 +3,7 @@
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import {
   CANVAS_NODE_TYPES,
+  isPendingUpscaleNode,
   resolveNodeSourceImageUrl,
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
@@ -48,6 +49,13 @@ export function getStoryboardCellPreview(node: CanvasNode): StoryboardCellPrevie
   const label =
     firstStr((data as { displayName?: unknown }).displayName, (data as { label?: unknown }).label) ??
     '';
+
+  // 还没出图的高清结果节点：它的 previewImageUrl 是待放大的**源图**，不是自己的
+  // 内容。照常渲染出来用户会以为那就是放大后的效果，所以走空态占位（「待确认后
+  // 生成」），与 liblib 一致。
+  if (isPendingUpscaleNode(node)) {
+    return { nodeId: node.id, kind: 'image', imageUrl: null, label };
+  }
 
   // Type-specific kinds first (so video keeps its play badge, etc.).
   switch (node.type) {

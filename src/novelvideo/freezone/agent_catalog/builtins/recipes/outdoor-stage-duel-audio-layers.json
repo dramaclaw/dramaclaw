@@ -1,0 +1,30 @@
+{
+  "schema_version": "dramaclaw.recipe.v1",
+  "id": "outdoor-stage-duel-audio-layers",
+  "enabled": true,
+  "version": "1.0.0",
+  "name": "舞台对决音频层",
+  "output_kind": "audio",
+  "action_keys": [
+    "outdoor-stage-duel-audio-layers"
+  ],
+  "system_prompt": "你将把已确认的 shot video 视觉节奏、Storyboard Audio_BGM_* / Audio_VO_*、开始前选项中的 vo_language，转换成可直接送入 audioGeneration 节点执行的 VO 与 BGM 生成提示词。重要：你的输出是一条下游节点提示词/指令，不是最终音频；只输出提示词，不要解释。\n\n只有在视觉视频完成后才使用本 Recipe。VO 只覆盖开场和收尾短句，不复述完整视觉动作；默认是短日语句子，语言必须跟随已确认的旁白语言。每条 Audio_VO_* 必须包含 narration_speaker_profile，例如 deep mysterious male、ethereal cool female、passionate male、energetic male，并标注应对齐 Beat 1 的开场或 Final beat 的结尾。\n\nAudio_BGM_* 必须是纯器乐/音效型 soundtrack，不含 vocals 或 lyrics。提示词应包含情绪关键词、核心音效类型、节奏特征和现场观众反应氛围，例如 Taiko drum、bass rumble、whoosh、lightning、fire、smoke impact、crowd gasps。若多条视频共用 BGM，必须复用同一 audio_id，不要重复创建。\n\n输出必须包含音频层名称、类型、适用视频/beat、生成提示词、音量和同步建议。默认 BGM volume 0.7，VO volume 1.0；每条视频末尾 2 秒淡出，但不能切断 VO。BGM 能量峰值对齐 Beat 3，开场不要过早拉满。",
+  "must_have_items": [
+    "Audio_BGM",
+    "Audio_VO",
+    "opening",
+    "closing",
+    "narration_speaker_profile",
+    "no vocals",
+    "no lyrics",
+    "BGM volume 0.7",
+    "VO volume 1.0",
+    "2秒淡出",
+    "Beat 3"
+  ],
+  "planning_prompt": "根据已完成视觉节奏生成户外舞台对决 VO、BGM 和同步混音提示词。",
+  "result_summary": "户外舞台双人对决 VO 与纯器乐/音效 BGM 生成提示词。",
+  "requires_source_media": false,
+  "force_enhancement": false,
+  "skip_detail_check": true
+}

@@ -150,3 +150,12 @@ export function removeLocalFreezoneProjection(
   }
   return currentRuntime.removeLocalProjection(projectionKey);
 }
+
+/** Capture the registered canvas identity before an asynchronous artifact save.
+ * A different registration (even the same URL after leaving) must not receive
+ * nodes from a previous canvas session.
+ */
+export function captureFreezoneCanvasScope(project: string, canvasId: string): () => boolean {
+  const runtime = currentRuntime;
+  return () => Boolean(runtime && currentRuntime === runtime && runtime.project === project && runtime.canvasId === canvasId);
+}

@@ -92,6 +92,7 @@ def test_dc_banana_2_selection_maps_to_newapi_nanobanana2(monkeypatch, tmp_path)
 def test_fixed_asset_image_providers_default_to_newapi_when_env_is_empty(monkeypatch):
     for key in (
         "PROP_REF_IMAGE_PROVIDER",
+        "PROP_REF_IMAGE_MODEL",
         "SCENE_MASTER_IMAGE_PROVIDER",
         "SCENE_REVERSE_MASTER_IMAGE_PROVIDER",
         "SCENE_360_IMAGE_PROVIDER",

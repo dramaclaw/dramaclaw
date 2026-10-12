@@ -10,10 +10,18 @@
 from __future__ import annotations
 
 import json
+import math
+import os
+import tempfile
+import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import portalocker
 
 from novelvideo.freezone.paths import freezone_root
 from novelvideo.video_duration import (
@@ -139,6 +147,34 @@ def normalize_video_aspect_ratio(value: str | None) -> str:
     if not text:
         return "16:9"
     return text
+
+
+def supported_image_aspect_ratio(
+    frame_path: str, options: list[str] | None
+) -> str:
+    """Choose the closest supported fixed ratio for the locked first frame.
+
+    NewAPI canonicalizes adaptive to auto, which does not guarantee source
+    geometry; a fixed catalog ratio survives the final wire contract.
+    """
+    size = _read_reference_image_size(Path(frame_path))
+    if size is None:
+        return "auto"
+    supported: list[tuple[str, float]] = []
+    for option in options or []:
+        try:
+            width, height = (float(part) for part in option.split(":"))
+        except (ValueError, TypeError):
+            continue
+        if width > 0 and height > 0:
+            supported.append((option, width / height))
+    if not supported:
+        return "auto"
+    source_ratio = size[0] / size[1]
+    return min(
+        supported,
+        key=lambda candidate: abs(math.log(source_ratio / candidate[1])),
+    )[0]
 
 
 def normalize_video_resolution(value: str | None) -> str:
@@ -878,6 +914,61 @@ def video_character_library_path(project_dir: Path) -> Path:
     return freezone_root(project_dir) / "video_character_library.json"
 
 
+# 关键区只是两份小 JSON 的读改写，正常毫秒级；等这么久还拿不到说明持锁方卡死了。
+_LIBRARY_LOCK_TIMEOUT_SECONDS = 30.0
+_LIBRARY_LOCK_RETRY_INTERVAL_SECONDS = 0.02
+
+
+@contextmanager
+def _library_lock(project_dir: Path) -> Iterator[None]:
+    """串行化资产库两份 JSON（条目 + 文件夹）的「读→改→写」。
+
+    API 多 worker 进程下，并发登记各自读到同一份旧列表、再整份写回，后写的会把
+    先写的冲掉——一次上传 4 张只剩 2 张。条目和文件夹共用一把锁，因为删文件夹
+    要同时改两份文件。锁不可重入：持锁期间不要再调用本模块其它加锁的函数。
+
+    用 portalocker 而不是 fcntl：Windows 没有 fcntl，取不到锁就必须报错，绝不能
+    静默放行。非阻塞 + 重试是因为 Windows 的阻塞锁自带固定超时，行为和 POSIX 不一致。
+    """
+    lock_path = freezone_root(project_dir) / "video_character_library.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + _LIBRARY_LOCK_TIMEOUT_SECONDS
+    with open(lock_path, "a+", encoding="utf-8") as lock_file:
+        while True:
+            try:
+                portalocker.lock(lock_file, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                break
+            except portalocker.exceptions.AlreadyLocked as exc:
+                # 仅竞争重试；其余锁故障（如不支持锁的挂载）立即上抛。
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"asset library lock busy: {lock_path}"
+                    ) from exc
+                time.sleep(_LIBRARY_LOCK_RETRY_INTERVAL_SECONDS)
+        try:
+            yield
+        finally:
+            portalocker.unlock(lock_file)
+
+
+def _write_json_atomic(path: Path, data: Any) -> None:
+    """先写临时文件再 os.replace，读方永远看不到写了一半的 JSON。
+
+    load_* 遇到解析失败会返回空列表，半截文件一旦被读到再写回，整个库就清空了。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+    except BaseException:
+        Path(temp_path).unlink(missing_ok=True)
+        raise
+
+
 def load_video_character_library(project_dir: Path) -> list[dict[str, Any]]:
     path = video_character_library_path(project_dir)
     if not path.exists():
@@ -894,9 +985,7 @@ def load_video_character_library(project_dir: Path) -> list[dict[str, Any]]:
 def save_video_character_library(
     project_dir: Path, items: list[dict[str, Any]]
 ) -> None:
-    path = video_character_library_path(project_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json_atomic(video_character_library_path(project_dir), items)
 
 
 LIBRARY_CATEGORIES = ("other", "character", "scene", "prop", "style", "audio")
@@ -932,23 +1021,22 @@ def load_video_character_folders(project_dir: Path) -> list[dict[str, Any]]:
 
 
 def save_video_character_folders(project_dir: Path, folders: list[dict[str, Any]]) -> None:
-    path = video_character_folders_path(project_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(folders, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json_atomic(video_character_folders_path(project_dir), folders)
 
 
 def add_video_character_folder(project_dir: Path, *, name: str) -> dict[str, Any]:
     """新建一个资产库文件夹。重名（含系统文件夹名）直接拒绝，避免目录里两个同名项。"""
     clean = name.strip()
-    folders = load_video_character_folders(project_dir)
-    _validate_folder_name(clean, folders)
-    folder = {
-        "id": uuid.uuid4().hex[:12],
-        "name": clean,
-        "created_at": datetime.now().isoformat(),
-    }
-    folders.append(folder)
-    save_video_character_folders(project_dir, folders)
+    with _library_lock(project_dir):
+        folders = load_video_character_folders(project_dir)
+        _validate_folder_name(clean, folders)
+        folder = {
+            "id": uuid.uuid4().hex[:12],
+            "name": clean,
+            "created_at": datetime.now().isoformat(),
+        }
+        folders.append(folder)
+        save_video_character_folders(project_dir, folders)
     return folder
 
 
@@ -979,17 +1067,18 @@ def update_video_character_folder(
     封面存的是素材本身的 URL（前端从文件夹里挑一张），所以不需要额外的文件管理；
     素材被删掉后封面会指向失效 URL，前端按缺省封面渲染即可。
     """
-    folders = load_video_character_folders(project_dir)
-    target = next((f for f in folders if str(f.get("id")) == folder_id), None)
-    if target is None:
-        return None
-    if name is not None:
-        clean = name.strip()
-        _validate_folder_name(clean, folders, skip_id=folder_id)
-        target["name"] = clean
-    if cover is not None:
-        target["cover"] = cover.strip() or None
-    save_video_character_folders(project_dir, folders)
+    with _library_lock(project_dir):
+        folders = load_video_character_folders(project_dir)
+        target = next((f for f in folders if str(f.get("id")) == folder_id), None)
+        if target is None:
+            return None
+        if name is not None:
+            clean = name.strip()
+            _validate_folder_name(clean, folders, skip_id=folder_id)
+            target["name"] = clean
+        if cover is not None:
+            target["cover"] = cover.strip() or None
+        save_video_character_folders(project_dir, folders)
     return target
 
 
@@ -999,16 +1088,17 @@ def delete_video_character_folder(project_dir: Path, folder_id: str) -> int | No
     返回被删掉的素材条数；文件夹不存在时返回 ``None``。系统文件夹（主线/类目同名
     目录）不落盘，也就永远走不到这里——路由层按 id 找不到直接 404。
     """
-    folders = load_video_character_folders(project_dir)
-    kept_folders = [f for f in folders if str(f.get("id")) != folder_id]
-    if len(kept_folders) == len(folders):
-        return None
-    items = load_video_character_library(project_dir)
-    kept_items = [item for item in items if str(item.get("folder") or "") != folder_id]
-    removed = len(items) - len(kept_items)
-    if removed:
-        save_video_character_library(project_dir, kept_items)
-    save_video_character_folders(project_dir, kept_folders)
+    with _library_lock(project_dir):
+        folders = load_video_character_folders(project_dir)
+        kept_folders = [f for f in folders if str(f.get("id")) != folder_id]
+        if len(kept_folders) == len(folders):
+            return None
+        items = load_video_character_library(project_dir)
+        kept_items = [item for item in items if str(item.get("folder") or "") != folder_id]
+        removed = len(items) - len(kept_items)
+        if removed:
+            save_video_character_library(project_dir, kept_items)
+        save_video_character_folders(project_dir, kept_folders)
     return removed
 
 
@@ -1143,20 +1233,21 @@ def add_video_character_library_item(
     ``category`` 是用途类目（标签），``folder`` 是保存位置，两者互不影响，缺省时
     分别按来源/媒介、按类目兜底推导。
     """
-    items = load_video_character_library(project_dir)
-    item = _upsert_library_item(
-        items,
-        name=name,
-        image_urls=image_urls,
-        media=media,
-        source=source,
-        video_url=video_url,
-        audio_url=audio_url,
-        item_id=item_id,
-        category=category,
-        folder=folder,
-    )
-    save_video_character_library(project_dir, items)
+    with _library_lock(project_dir):
+        items = load_video_character_library(project_dir)
+        item = _upsert_library_item(
+            items,
+            name=name,
+            image_urls=image_urls,
+            media=media,
+            source=source,
+            video_url=video_url,
+            audio_url=audio_url,
+            item_id=item_id,
+            category=category,
+            folder=folder,
+        )
+        save_video_character_library(project_dir, items)
     return item
 
 
@@ -1178,22 +1269,24 @@ def rename_video_character_library_item(
         raise ValueError("item name is required")
     if len(clean) > LIBRARY_ITEM_NAME_MAX_LEN:
         raise ValueError(f"item name must be <= {LIBRARY_ITEM_NAME_MAX_LEN} characters")
-    items = load_video_character_library(project_dir)
-    target = next((item for item in items if str(item.get("id")) == item_id), None)
-    if target is None:
-        return None
-    target["name"] = clean
-    target["updated_at"] = datetime.now().isoformat()
-    save_video_character_library(project_dir, items)
+    with _library_lock(project_dir):
+        items = load_video_character_library(project_dir)
+        target = next((item for item in items if str(item.get("id")) == item_id), None)
+        if target is None:
+            return None
+        target["name"] = clean
+        target["updated_at"] = datetime.now().isoformat()
+        save_video_character_library(project_dir, items)
     return target
 
 
 def delete_video_character_library_item(project_dir: Path, item_id: str) -> bool:
-    items = load_video_character_library(project_dir)
-    kept = [item for item in items if item.get("id") != item_id]
-    if len(kept) == len(items):
-        return False
-    save_video_character_library(project_dir, kept)
+    with _library_lock(project_dir):
+        items = load_video_character_library(project_dir)
+        kept = [item for item in items if item.get("id") != item_id]
+        if len(kept) == len(items):
+            return False
+        save_video_character_library(project_dir, kept)
     return True
 
 
@@ -1210,25 +1303,26 @@ def sync_mainline_assets_into_library(
     整个批次只读一次、写一次库文件（内存里逐条 upsert），避免 N 条资产触发
     N 次全量 load+save 的 O(N²) IO。
     """
-    items = load_video_character_library(project_dir)
-    changed = False
-    for asset in assets:
-        media = str(asset.get("media") or "image")
-        url = asset.get("url") or ""
-        if not url:
-            continue
-        _upsert_library_item(
-            items,
-            name=str(asset.get("name") or ""),
-            media=media,
-            source=str(asset.get("source") or "upload"),
-            item_id=str(asset.get("id") or "") or None,
-            category=str(asset.get("category") or "") or None,
-            image_urls=[url] if media == "image" else None,
-            video_url=url if media == "video" else None,
-            audio_url=url if media == "audio" else None,
-        )
-        changed = True
-    if changed:
-        save_video_character_library(project_dir, items)
+    with _library_lock(project_dir):
+        items = load_video_character_library(project_dir)
+        changed = False
+        for asset in assets:
+            media = str(asset.get("media") or "image")
+            url = asset.get("url") or ""
+            if not url:
+                continue
+            _upsert_library_item(
+                items,
+                name=str(asset.get("name") or ""),
+                media=media,
+                source=str(asset.get("source") or "upload"),
+                item_id=str(asset.get("id") or "") or None,
+                category=str(asset.get("category") or "") or None,
+                image_urls=[url] if media == "image" else None,
+                video_url=url if media == "video" else None,
+                audio_url=url if media == "audio" else None,
+            )
+            changed = True
+        if changed:
+            save_video_character_library(project_dir, items)
     return items
