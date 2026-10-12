@@ -8,6 +8,7 @@ import { queryKeys } from "@/lib/query-keys";
 import type { ErrorResponse, OkResponse } from "@/types/api";
 
 export type GatewayMode = "official" | "custom" | "hybrid";
+export type CustomLlmMode = "relayclaw_brainclaw" | "advanced";
 
 /** 通用的「端点预览」：服务端只回 key 预览，绝不回完整 key。 */
 export interface GatewayEndpointPreview {
@@ -24,6 +25,7 @@ export interface OfficialGatewayConfig extends GatewayEndpointPreview {
 }
 
 export interface CustomGatewayConfig extends GatewayEndpointPreview {
+  llmMode: CustomLlmMode;
   adminBaseUrl: string;
   tokenName: string;
   tokenId: string;
@@ -35,6 +37,12 @@ export interface EffectiveGatewayConfig {
   baseUrl: string;
   apiKeyPreview: string;
   configured: boolean;
+}
+
+export interface EffectiveLlmConfig extends EffectiveGatewayConfig {
+  mode: string;
+  model: string;
+  brainclaw: boolean;
 }
 
 export interface NewApiDatabaseStatus {
@@ -118,7 +126,9 @@ export interface MediaRelayConfig {
 export interface ModelGatewayConfig {
   mode: GatewayMode;
   effective: EffectiveGatewayConfig;
+  llmEffective: EffectiveLlmConfig;
   official: OfficialGatewayConfig;
+  brainclaw?: GatewayEndpointPreview;
   custom: CustomGatewayConfig;
   provisioner?: ModelGatewayProvisionerConfig;
   mediaRelay?: MediaRelayConfig;
@@ -141,6 +151,11 @@ export interface OfficialMediaCatalogStatus {
 
 export interface SaveOfficialConfigInput {
   newApiApiKey: string;
+}
+
+export interface SaveBrainClawConfigInput {
+  newApiBaseUrl: string;
+  newApiApiKey?: string;
 }
 
 export interface NewApiDatabaseConfigInput {
@@ -217,6 +232,18 @@ export interface SyncProviderChannelInput {
   provider: string;
   upstreamKey?: string;
   baseUrl?: string;
+}
+
+export interface ChannelModelsInput {
+  newApiBaseUrl: string;
+  database?: NewApiDatabaseConfigInput;
+  provider: string;
+}
+
+export interface ChannelModelsResult {
+  provider: string;
+  channelId: number | string;
+  models: string[];
 }
 
 export interface SaveMediaModelsInput {
@@ -440,12 +467,51 @@ export function useEnableCustom() {
   });
 }
 
+export function useSaveBrainClawConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SaveBrainClawConfigInput) =>
+      api
+        .post("api/v1/model-gateway/custom/brainclaw/config", { json: input })
+        .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+    },
+  });
+}
+
 export function useEnableHybrid() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
       api
         .post("api/v1/model-gateway/hybrid/enable", { throwHttpErrors: false })
+        .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+    },
+  });
+}
+
+export function useEnableBrainClaw() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post("api/v1/model-gateway/custom/brainclaw/enable")
+        .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+    },
+  });
+}
+
+export function useSetCustomLlmMode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (mode: CustomLlmMode) =>
+      api
+        .post("api/v1/model-gateway/custom/llm-mode", { json: { mode } })
         .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
@@ -496,6 +562,7 @@ export function useSaveProviderChannels() {
         >(),
     onSuccess: async (response) => {
       if (response.ok === true) {
+        await qc.resetQueries({ queryKey: CHANNEL_MODELS_QUERY_KEY });
         await qc.cancelQueries({ queryKey: queryKeys.modelGateway() });
         qc.setQueryData<OkResponse<ModelGatewayConfig>>(
           queryKeys.modelGateway(),
@@ -545,7 +612,32 @@ export function useClearComfyUIConfig() {
   });
 }
 
-/** 更新 NewAPI 中已存在的供应商渠道 key / Base URL，不改模型映射。 */
+const CHANNEL_MODELS_QUERY_KEY = ["newapi-channel-models"] as const;
+
+/** Fetch explicitly; all model inputs for this gateway/provider share the list. */
+export function useChannelModels(input: ChannelModelsInput) {
+  return useQuery({
+    queryKey: [
+      ...CHANNEL_MODELS_QUERY_KEY,
+      input.newApiBaseUrl.trim().replace(/\/v1\/?$/, ""),
+      input.provider,
+    ],
+    queryFn: ({ signal }) =>
+      api
+        .post("api/v1/model-gateway/custom/newapi/provider-channel/models", {
+          json: input,
+          signal,
+          timeout: 60_000,
+          retry: 0,
+        })
+        .json<OkResponse<ChannelModelsResult>>(),
+    enabled: false,
+    retry: false,
+    staleTime: Infinity,
+  });
+}
+
+/** 首次创建供应商渠道，后续更新 key / Base URL 并保留模型映射。 */
 export function useSyncProviderChannel() {
   const qc = useQueryClient();
   return useMutation({
@@ -557,8 +649,9 @@ export function useSyncProviderChannel() {
           throwHttpErrors: false,
         })
         .json<OkResponse<SyncProviderChannelResult> | ErrorResponse | FastApiErrorResponse>(),
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       if (data.ok === true) {
+        await qc.resetQueries({ queryKey: CHANNEL_MODELS_QUERY_KEY });
         qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
       }
     },

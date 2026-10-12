@@ -80,7 +80,7 @@
 
 | 方法 | 路径 | 用途 |
 |------|------|------|
-| `POST` | `/projects/{project}/episodes/{ep}/sketches/generate` | 草图 `{"style":"...","model":"nanobanana","grid_index":0,"sketch_location_grouping":true}` [ASYNC]。后端按 beat 数自动拆成 N 张 grid（2x4 起步，按容量 8/6/4/2/1 降级；18 beat→`2x4+2x4+1x2` 共 3 张）。每次只启动一个 `grid_index`；首次调用的 SSE result 里返回 `total_grids`。如果还有后续 grid，等用户下一轮“继续”再启动下一个；不要同一轮循环所有 grid。详见 `pipeline-details.md` Step 12。 |
+| `POST` | `/projects/{project}/episodes/{ep}/sketches/generate` | 草图 `{"style":"...","model":"nanobanana","grid_index":0,"sketch_location_grouping":true}` [ASYNC]。后端按 beat 数自动拆成 N 张 grid（2x4 起步，按容量 8/6/4/2/1 降级；18 beat→`2x4+2x4+1x2` 共 3 张）。每次只启动一个 `grid_index`；首次调用的 SSE result 里返回 `total_grids`。如果还有后续 grid，等用户下一轮“继续”再启动下一个；不要同一轮循环所有 grid。详见 `step-api-reference.md` Step 12。 |
 | `POST` | `/projects/{project}/episodes/{ep}/grids/generate` | 九宫格 [ASYNC] |
 | `POST` | `/projects/{project}/episodes/{ep}/grids/{idx}/regenerate` | 重新生成单个网格 [ASYNC] |
 | `POST` | `/projects/{project}/episodes/{ep}/grids/{idx}/cut` | 切割入池 |
@@ -94,6 +94,7 @@
 | 方法 | 路径 | 用途 |
 |------|------|------|
 | `POST` | `/projects/{project}/episodes/{ep}/audio/generate` | 批量语音生成 [ASYNC: audio_generation_indextts2]；当前主线用这个 |
+| `POST` | `/projects/{project}/episodes/{ep}/audio/system-voices/prepare` | 经用户确认后准备系统声线 [ASYNC: system_voice_setup]；仅虾导使用，不启动 TTS |
 | `POST` | `/projects/{project}/episodes/{ep}/beats/{beat}/audio` | 重做单beat音频 (SYNC) |
 
 旧 `/tts/generate`、`/tts/preview`、`/tts/voices` 已移除，不要调用。

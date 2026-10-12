@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/stores/app-store";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { FREEZONE_DOCK_OFFSET_STYLE } from "@/features/freezone/dockOffset";
 import { TaskList } from "./task-list";
 import { TaskDetail } from "./task-detail";
 
@@ -83,7 +84,9 @@ export function TaskPanel() {
             ? "border-t border-border/70 opacity-100"
             : "pointer-events-none border-t border-transparent opacity-0",
         )}
-        style={{ height: open ? height : 0 }}
+        // 同状态条：给自由画布那块通屏高的虾导抽屉让出右侧，别被盖掉半个任务列表。
+        // 这里只借 marginRight，过渡沿用面板自己的 transition-all（展开动画归它管）。
+        style={{ height: open ? height : 0, ...FREEZONE_DOCK_OFFSET_STYLE }}
         role="region"
         aria-label={t("taskCenter.title")}
         aria-hidden={!open}

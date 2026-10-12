@@ -28,6 +28,7 @@ def test_global_video_optimizer_applies_language_to_system_and_task(
     monkeypatch, tmp_path, language, required, forbidden
 ):
     import novelvideo.agents.global_video_optimizer as module
+    import novelvideo.config as config_module
 
     agent_kwargs = {}
 
@@ -37,7 +38,8 @@ def test_global_video_optimizer_applies_language_to_system_and_task(
 
     monkeypatch.setattr(module, "Agent", FactoryAgent)
     monkeypatch.setattr(
-        "novelvideo.config.get_newapi_text_pydantic_model",
+        config_module,
+        "get_newapi_text_pydantic_model",
         lambda *_args, **_kwargs: object(),
     )
 

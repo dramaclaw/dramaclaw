@@ -78,7 +78,11 @@ async def test_english_identity_analysis_explicitly_requires_english(
             return SimpleNamespace(output=output)
 
     monkeypatch.setattr(identity_planner_module, "Agent", FakeAgent)
-    monkeypatch.setattr(IdentityPlanner, "_identity_model", staticmethod(lambda _env: None))
+    monkeypatch.setattr(
+        IdentityPlanner,
+        "_identity_model",
+        staticmethod(lambda _env, **_kwargs: None),
+    )
     planner = IdentityPlanner(_Store())
     episode = SimpleNamespace(number=1, title="The Last Letter")
     source = "INT. STATION - NIGHT\nHan Ji-won waits alone on the platform."

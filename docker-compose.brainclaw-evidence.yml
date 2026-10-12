@@ -1,0 +1,34 @@
+# DramaClaw with the BrainClaw evidence plane wired.
+#
+# Trusted collection needs no shared signing keys. It is accepted only when an
+# administrator explicitly selects trusted mode on the paired Claymore channel;
+# channels default to off and verified channels reject the unsigned t1 envelope.
+# DramaClaw creates one local, persistent grouping key under its state directory
+# to keep raw project and trajectory ids private; it never leaves this container.
+#
+# The image must carry the Hermes fork. The default install spec in the
+# Dockerfile pulls hermes-agent from PyPI, which keeps the same version string
+# and drops every `_meta` extension at runtime: no per-turn credential, no
+# capability, no evidence, and a turn that still answers. `deploy/verify_hermes_fork.py`
+# fails the build rather than shipping that.
+services:
+  dramaclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        HERMES_INSTALL_SPEC: ${HERMES_INSTALL_SPEC:?point this at the fork, e.g. git+https://github.com/dramaclaw/hermes-agent@<sha>#egg=hermes-agent[acp]}
+    image: ${DRAMACLAW_IMAGE:-dramaclaw/dramaclaw:brainclaw-evidence}
+    restart: always
+    ports:
+      - "${DRAMACLAW_BIND_ADDRESS:-127.0.0.1}:${DRAMACLAW_PORT:-8000}:8000"
+    volumes:
+      - ${DRAMACLAW_DATA_DIR:-./data}:/data
+    environment:
+      # Optional override. By default the key is generated once under /data/state.
+      - BRAINCLAW_CONTROL_CONTEXT_GROUPING_KEY_EPOCH=${BRAINCLAW_CONTROL_CONTEXT_GROUPING_KEY_EPOCH:-1}
+      # Where the workers send model traffic. Also the only host they may reach:
+      # under the per-turn latch a request to anything else is refused before it
+      # is sent, since an unauthenticated call still carries the prompt away.
+      - NEWAPI_BASE_URL=${NEWAPI_BASE_URL:?set the gateway origin}
+      - TZ=${TZ:-Asia/Singapore}

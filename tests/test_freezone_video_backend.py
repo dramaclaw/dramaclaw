@@ -35,6 +35,7 @@ from novelvideo.freezone.video_node import (
     normalize_video_duration_for_backend,
     normalize_video_resolution,
     normalize_video_resolution_for_backend,
+    supported_image_aspect_ratio,
     rename_video_character_library_item,
     resolve_freezone_video_backend,
     summarize_omni_reference_counts,
@@ -65,6 +66,17 @@ def test_video_camera_template_lookup_works() -> None:
 
     assert template is not None
     assert template["name"] == "固定镜头"
+
+
+def test_locked_frame_selects_nearest_supported_ratio(tmp_path: Path) -> None:
+    from PIL import Image
+
+    source = tmp_path / "portrait.png"
+    Image.new("RGB", (400, 600)).save(source)
+    assert supported_image_aspect_ratio(
+        str(source), ["16:9", "1:1", "3:4", "9:16", "auto"]
+    ) == "3:4"
+    assert supported_image_aspect_ratio(str(source), None) == "auto"
 
 
 def test_video_character_library_roundtrip(tmp_path: Path) -> None:

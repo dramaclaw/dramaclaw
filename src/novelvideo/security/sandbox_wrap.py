@@ -18,6 +18,8 @@ import logging
 import os
 import platform
 import shutil
+import subprocess
+import tempfile
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,7 +37,13 @@ SEATBELT_NETWORK_POLICY = SANDBOX_PROFILES_DIR / "seatbelt_network_policy.sbpl"
 def _data_dir(kind: str) -> Path:
     env = os.environ.get(f"NOVELVIDEO_{kind.upper()}_DIR", "").strip()
     if env:
-        return Path(env).expanduser()
+        p = Path(env).expanduser()
+        # A relative override (e.g. NOVELVIDEO_OUTPUT_DIR=output) MUST be
+        # anchored to SUPERTALE_ROOT — mirroring the no-override default below.
+        # A relative path here would reach the Seatbelt profile as
+        # `(subpath "output")`, which Seatbelt silently never matches, leaving
+        # the wholesale peer-read deny disabled for that tree. Always absolute.
+        return p if p.is_absolute() else (SUPERTALE_ROOT / p)
     return SUPERTALE_ROOT / kind
 
 
@@ -74,20 +82,14 @@ class SandboxSpec:
         ]
         return paths
 
-    def other_user_paths(self) -> list[Path]:
-        """All other users' state/output/runtime trees — must be denied."""
-        result: list[Path] = []
-        for top in ("state", "output", "runtime"):
-            top_dir = _data_dir(top)
-            if not top_dir.is_dir():
-                continue
-            for child in top_dir.iterdir():
-                if not child.is_dir():
-                    continue
-                if child.name in (self.user, "_shared"):
-                    continue
-                result.append(child)
-        return result
+    def data_roots(self) -> list[Path]:
+        """The per-user data roots (state/output/runtime tops).
+
+        The macOS profile denies reads on these wholesale and then allows back
+        only this user's own slice + ``_shared`` — so every peer (existing or
+        created mid-session) is denied without enumeration.
+        """
+        return [_data_dir("state"), _data_dir("output"), _data_dir("runtime")]
 
 
 def wrap_command(cmd: list[str], spec: SandboxSpec) -> list[str]:
@@ -109,12 +111,17 @@ def wrap_command(cmd: list[str], spec: SandboxSpec) -> list[str]:
     return _fallback_or_raise(cmd, f"no sandbox backend on {system}")
 
 
-def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
-    binary = shutil.which("codex-linux-sandbox") or "/usr/local/bin/codex-linux-sandbox"
-    if not Path(binary).exists():
-        return _fallback_or_raise(cmd, "codex-linux-sandbox not found on PATH")
+# One-time result of the "can this host actually create a sandbox?" probe,
+# keyed by binary path. Populated lazily by _sandbox_can_run; tests clear it.
+_SANDBOX_PROBE_CACHE: dict[str, bool] = {}
 
-    hermes_home = spec.resolved_hermes_home()
+
+def _linux_sandbox_argv(binary: str, hermes_home: Path, cmd: list[str]) -> list[str]:
+    """Build the codex-linux-sandbox argv wrapping ``cmd`` (no capability check).
+
+    Shared by the real wrap path and the functional probe so both exercise the
+    identical invocation shape (restricted fs + outbound network).
+    """
     permission_profile = {
         "type": "managed",
         "file_system": {
@@ -130,7 +137,14 @@ def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
                 },
             ],
         },
-        "network": "restricted",
+        # Outbound network is allowed, matching the macOS Seatbelt profile
+        # (`(allow network-outbound)`). codex's "restricted" network mode
+        # `--unshare-net`s the sandbox — no egress at all — which would strangle
+        # Hermes's required calls to the project API (DRAMACLAW_API_URL) and the
+        # model gateway; the `/bin/true` probe cannot see that break. The two
+        # platforms stay consistent here; tightening egress to an allowlist
+        # (project API + model gateway only) on BOTH platforms is #346 P1②.
+        "network": "enabled",
     }
     args = [
         binary,
@@ -140,9 +154,68 @@ def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
         str(hermes_home),
         "--permission-profile",
         json.dumps(permission_profile, separators=(",", ":")),
+        "--",
     ]
-    args.append("--")
     return args + cmd
+
+
+def _sandbox_can_run(binary: str) -> bool:
+    """Functional probe: can ``binary`` actually create a sandbox on this host?
+
+    A present binary is not sufficient — codex-linux-sandbox's default pipeline
+    execs bubblewrap, which needs unprivileged user namespaces; on a kernel that
+    lacks them the binary exists but every sandboxed exec fails at runtime, which
+    the missing-binary check never catches. Runs ``/bin/true`` inside a throwaway
+    sandbox once and caches the verdict (keyed by binary path)."""
+    cached = _SANDBOX_PROBE_CACHE.get(binary)
+    if cached is not None:
+        return cached
+    ok = False
+    try:
+        with tempfile.TemporaryDirectory(prefix="hermes-sbx-probe-") as tmp:
+            home = Path(tmp) / ".hermes"
+            home.mkdir(parents=True)
+            probe = _linux_sandbox_argv(binary, home, ["/bin/true"])
+            proc = subprocess.run(probe, capture_output=True, timeout=30)
+            ok = proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        ok = False
+    _SANDBOX_PROBE_CACHE[binary] = ok
+    return ok
+
+
+def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
+    binary = shutil.which("codex-linux-sandbox") or "/usr/local/bin/codex-linux-sandbox"
+    if not Path(binary).exists():
+        return _fallback_or_raise(cmd, "codex-linux-sandbox not found on PATH")
+    if not _linux_sandbox_active():
+        # Binary is installed and may well be usable, but Linux activation is a
+        # deliberate opt-in: codex's restricted profile grants broad `root` read
+        # (peer state/output/runtime is readable — see _linux_sandbox_active),
+        # and that read-confidentiality gap is closable only at the deployment
+        # layer (mount just this user's slice), tracked in #346 P1②. Until a
+        # deployment sets SUPERTALE_LINUX_SANDBOX=1 to assert it has done so, do
+        # NOT wrap: EE fail-closes rather than run with false read-isolation; CE
+        # single-tenant degrades/​refuses per its opt-in (no cross-user risk).
+        return _fallback_or_raise(
+            cmd,
+            "Linux sandbox not activated (peer-read isolation via per-user "
+            "mounts pending #346 P1②); set SUPERTALE_LINUX_SANDBOX=1 only where "
+            "the deployment mounts a single user's slice",
+        )
+    if not _sandbox_can_run(binary):
+        # Binary present but the sandbox cannot be created (host kernel most
+        # likely lacks unprivileged user namespaces for bubblewrap). Route
+        # through the same fail-close/degrade decision as a missing binary:
+        # EE/production raises, CE single-tenant with the opt-in runs raw.
+        return _fallback_or_raise(
+            cmd,
+            "codex-linux-sandbox present but sandbox creation failed "
+            "(host kernel likely lacks unprivileged user namespaces)",
+        )
+
+    hermes_home = spec.resolved_hermes_home()
+    return _linux_sandbox_argv(binary, hermes_home, cmd)
 
 
 def _wrap_macos(cmd: list[str], spec: SandboxSpec) -> list[str]:
@@ -171,6 +244,14 @@ def _expand_aliases(paths: Iterable[Path]) -> list[Path]:
     out: list[Path] = []
     seen: set[str] = set()
     for p in paths:
+        # Fail loud, never silent: Seatbelt `(subpath "…")` only matches
+        # absolute paths. A relative one never matches, so a relative deny would
+        # silently leave a tree open (see _data_dir). Refuse to emit one.
+        if not p.is_absolute():
+            raise ValueError(
+                f"sandbox profile path must be absolute, got relative {p!r}; "
+                f"a relative subpath silently disables the Seatbelt rule"
+            )
         for alt in _aliases(p):
             s = str(alt)
             if s not in seen:
@@ -211,13 +292,38 @@ def build_macos_profile(spec: SandboxSpec) -> str:
 
     # --- READ allow: broad ((subpath "/") — same as codex workspace-write mode) ---
     # Rationale: macOS dyld needs many paths to launch even `cat`; strict
-    # subpath whitelist is unmaintainable. Defense relies on explicit DENY
-    # of host secrets + other-user dirs below, which override this broad allow.
+    # subpath whitelist is unmaintainable. Defense relies on the specific DENY
+    # rules below (per-user data roots + host secrets), which override this
+    # broad allow via Seatbelt last-match-wins.
     parts.append(";; READ: broad allow; specific denies below override\n")
     parts.append("(allow file-read* (subpath \"/\"))\n")
 
-    # --- READ deny: host secrets (specific denies override broad allow) ---
-    parts.append("\n;; READ deny: host secrets — overrides broad allow\n")
+    # --- READ deny: per-user data roots, WHOLESALE ---
+    # Deny reads on the entire state/output/runtime roots rather than
+    # enumerating sibling users at session start. Enumeration (iterdir) only
+    # captured users that existed when the profile was built, so a peer dir
+    # created mid-session stayed readable (TOCTOU). Denying the roots then
+    # allowing back only this user's own slice + _shared closes that gap and
+    # covers all future peers with no enumeration.
+    parts.append(
+        "\n;; READ deny: per-user data roots wholesale "
+        "(blocks all peers incl. future — no enumeration)\n"
+    )
+    parts.append(_deny_read_block(_expand_aliases(spec.data_roots())))
+
+    # --- READ allow-back: this user's own trees + shared read-only resources ---
+    # Comes AFTER the data-root deny so last-match-wins re-opens only the
+    # current user's slice and the shared resources.
+    allow_back = _expand_aliases(
+        [*spec.self_business_paths(), *spec.shared_read_paths()]
+    )
+    parts.append(
+        "\n;; READ allow-back: own dirs + shared resources override root deny\n"
+    )
+    parts.append(_allow_read_block(allow_back))
+
+    # --- READ deny: host secrets (LAST so nothing above can re-open them) ---
+    parts.append("\n;; READ deny: host secrets — overrides every allow above\n")
     parts.append(_deny_read_block(_expand_aliases([
         Path.home() / ".ssh",
         Path.home() / ".gnupg",
@@ -229,17 +335,9 @@ def build_macos_profile(spec: SandboxSpec) -> str:
         Path("/etc/sudoers.d"),
     ])))
 
-    # --- READ deny: other users ---
-    other = list(spec.other_user_paths())
-    if other:
-        parts.append("\n;; READ deny: other users' state/output/runtime\n")
-        parts.append(_deny_read_block(other))
-
-    # --- WRITE deny: explicit host /tmp + other users (must come BEFORE allow HERMES_HOME) ---
-    #     (base profile already `deny default`, but be explicit about /tmp and other users)
-    if other:
-        parts.append("\n;; WRITE deny: other users' state/output/runtime\n")
-        parts.append(_deny_write_block(other))
+    # --- WRITE: base profile is `deny default`, so peer/other-user writes
+    #     (existing AND future) are already denied without enumeration. Only
+    #     HERMES_HOME is allowed, last, so it wins over the /tmp deny. ---
     parts.append("\n;; WRITE deny: host /tmp (must use $TMPDIR=$HERMES_HOME/tmp)\n")
     parts.append(_deny_write_block(_expand_aliases([Path("/tmp")])))
 
@@ -283,10 +381,73 @@ def _deny_write_block(paths: Iterable[Path]) -> str:
     return "\n".join(lines)
 
 
+def _sandbox_required() -> bool:
+    """多租户/生产必须强制沙箱,不允许裸跑。
+
+    两个独立触发条件,满足其一即视为"必须沙箱":
+    - ``SUPERTALE_ENV=production`` —— 显式生产标记;
+    - ``ST_CONTROL_PLANE_DSN`` 非空 —— EE 控制面已接入,即多用户模式。
+
+    刻意不只依赖容易漏配的 ``SUPERTALE_ENV``:只要连了控制面(EE),哪怕忘了设
+    生产标记,也必须 fail-close。
+    """
+    if os.environ.get("SUPERTALE_ENV", "").strip().lower() == "production":
+        return True
+    if os.environ.get("ST_CONTROL_PLANE_DSN", "").strip():
+        return True
+    return False
+
+
+def _dev_unsandboxed_opt_in() -> bool:
+    """本地无沙箱开发必须走醒目的显式开关,而不是静默降级。"""
+    return os.environ.get("SUPERTALE_ALLOW_UNSANDBOXED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _linux_sandbox_active() -> bool:
+    """Linux 沙箱是否被**显式激活**(默认关)。
+
+    codex 的 managed ``restricted`` 文件系统是 allow-only:它没有 deny-entry,无法
+    表达 macOS 那套"broad-read 再挖掉 peer 数据根"。实测(#349 review)证实,一旦把
+    读范围从 ``root`` 收窄,codex/bwrap 连自身 re-exec 都跑不起来——所以 **peer 目录的
+    读机密性在 profile 层堵不住**,只能靠部署拓扑(worker 只挂当前用户的 slice /
+    per-user mount namespace)来关闭。在那套隔离真正落地(#346 P1②)之前激活沙箱,
+    会给多租户一个**假的读隔离**(能读他人 state/output/runtime 并经网络带出)。
+
+    因此激活是**显式 opt-in**:只有部署方确认"已经只挂当前用户 slice"时才设
+    ``SUPERTALE_LINUX_SANDBOX=1``。默认不激活 → 走 ``_fallback_or_raise``:EE fail-close
+    (拒绝裸跑,即拒绝以假隔离运行),CE 单租户按 opt-in 降级/拒绝(单租户无跨用户风险)。
+    """
+    return os.environ.get("SUPERTALE_LINUX_SANDBOX", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _fallback_or_raise(cmd: list[str], reason: str) -> list[str]:
-    if os.environ.get("SUPERTALE_ENV", "").lower() == "production":
-        raise RuntimeError(f"sandbox required in production but {reason}")
-    msg = f"sandbox unavailable ({reason}); running unsandboxed — dev only"
+    if _sandbox_required():
+        raise RuntimeError(
+            f"sandbox required (production or EE control-plane) but {reason}; "
+            f"refusing to run Hermes worker unsandboxed"
+        )
+    if not _dev_unsandboxed_opt_in():
+        # CE 本地开发也默认 fail-close:必须显式开 SUPERTALE_ALLOW_UNSANDBOXED=1
+        # 才允许裸跑,杜绝"漏配就静默无沙箱"。
+        raise RuntimeError(
+            f"sandbox unavailable ({reason}) and SUPERTALE_ALLOW_UNSANDBOXED is not "
+            f"set; refusing to run unsandboxed. Set SUPERTALE_ALLOW_UNSANDBOXED=1 to "
+            f"explicitly allow unsandboxed workers in local development only"
+        )
+    msg = (
+        f"sandbox unavailable ({reason}); running UNSANDBOXED because "
+        f"SUPERTALE_ALLOW_UNSANDBOXED is set — dev only, never in multi-user"
+    )
     _log.warning(msg)
     warnings.warn(msg, RuntimeWarning, stacklevel=3)
     return cmd

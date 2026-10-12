@@ -25,6 +25,8 @@ import {
   videoModelDefaultGenerateAudio,
   videoModelSupportsGenerateAudio,
   videoModelReferenceDisabledReason,
+  videoModeForModel,
+  videoModeMissingInputReason,
   videoMultiImageAutoSwitchMode,
   videoNoUpstreamResetMode,
   videoReferenceAutoSwitchAction,
@@ -54,6 +56,48 @@ const SEEDANCE2_VALUE = "newapi_seedance-2.0-fast-value";
 const SEEDANCE10_PRO_FAST = "newapi_seedance-1.0-pro-fast";
 const SEEDANCE15_PRO = "newapi_seedance-1.5-pro";
 const HAPPYHORSE = "newapi_happyhorse-1.0";
+
+describe("catalog models requiring video input", () => {
+  const none = { images: 0, videos: 0, audios: 0 };
+  const depth = { id: "catalog-depth", apiModel: "Depth-Anything-Video", supportedModes: ["video_edit"] };
+
+  it("disables video-only models until a video node is connected", () => {
+    for (const supportedModes of [["video_edit"], ["video_extend"], ["video_edit", "video_extend"]]) {
+      expect(videoModelReferenceDisabledReason({ ...depth, supportedModes }, none))
+        .toBe("node.videoOps.modeDisabled.needOneVideo");
+      expect(videoModelReferenceDisabledReason({ ...depth, supportedModes }, { ...none, videos: 1 }))
+        .toBeNull();
+    }
+    expect(videoModelReferenceDisabledReason({ ...depth, supportedModes: ["text_to_video", "video_edit"] }, none))
+      .toBeNull();
+  });
+
+  it("switches to the supported mode and preserves it when the input is removed", () => {
+    expect(videoModeForModel("textToVideo", depth, { ...none, videos: 1 })).toBe("videoEdit");
+    expect(videoModeForModel("textToVideo", depth, none)).toBe("videoEdit");
+    expect(videoNoUpstreamResetMode("videoEdit", none, depth)).toBeNull();
+    expect(videoNoUpstreamResetMode("videoEdit", none, HAPPYHORSE)).toBe("textToVideo");
+  });
+
+  it("selects an input-compatible fallback without changing a supported explicit mode", () => {
+    const model = { supportedModes: ["text_to_video", "video_edit", "video_extend"] };
+    expect(videoModeForModel("firstFrame", model, none)).toBe("textToVideo");
+    expect(videoModeForModel("firstFrame", model, { ...none, videos: 1 })).toBe("videoEdit");
+    expect(videoModeForModel("textToVideo", model, { ...none, videos: 1 })).toBe("videoEdit");
+    expect(videoModeForModel("videoExtend", model, { ...none, videos: 1 })).toBe("videoExtend");
+  });
+
+  it("requires images for image modes without adding an all-reference restriction", () => {
+    for (const mode of ["firstFrame", "imageToVideo", "imageReference", "firstLastFrame"] as const) {
+      expect(videoModeMissingInputReason(mode, none)).toBe("node.videoOps.modeDisabled.needOneImage");
+      expect(videoModeMissingInputReason(mode, { ...none, images: 1 })).toBeNull();
+    }
+    expect(videoModeMissingInputReason("allReference", none)).toBeNull();
+    expect(videoModeMissingInputReason("allReference", { ...none, hasOtherReference: true })).toBeNull();
+    expect(videoNoUpstreamResetMode("allReference", { ...none, hasOtherReference: true }, SEEDANCE2_FAST)).toBeNull();
+    expect(videoModeMissingInputReason("textToVideo", none)).toBeNull();
+  });
+});
 
 describe("video model family detection", () => {
   it("classifies Seedance 2.0 variants (not 1.x)", () => {
@@ -346,10 +390,10 @@ describe("videoSubmitMediaRejectionReason — 提交前素材守卫 (P1/P2)", ()
 
   it("Seedance 1.x：单图 / 纯文本 → 放行", () => {
     expect(
-      videoSubmitMediaRejectionReason("imageToVideo", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
+      videoSubmitMediaRejectionReason("firstFrame", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
     ).toBeNull();
     expect(
-      videoSubmitMediaRejectionReason("imageReference", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
+      videoSubmitMediaRejectionReason("firstFrame", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
     ).toBeNull();
     expect(videoSubmitMediaRejectionReason("textToVideo", SEEDANCE10_PRO_FAST, none)).toBeNull();
   });
@@ -484,7 +528,10 @@ describe("videoMultiImageAutoSwitchMode — 首帧接多图时的自动改模式
   // effect 还没跑、或将来又有人加了 bail 条件），提交也只能带 1 张图，绝不能靠
   // 张数悄悄变成图片参考。这条上限是结构性的，不接受媒体目录 referenceImageMax 覆盖。
   it("首帧和单图图生视频的图片上限锁死在 1，且不被媒体目录配置覆盖", () => {
-    const source = readFileSync("src/features/canvas/nodes/VideoNode.tsx", "utf8");
+    const source = readFileSync(
+      "src/features/canvas/nodes/shared/videoFormOptions.ts",
+      "utf8",
+    );
     expect(source).toContain("firstFrame: { image: 1, video: 0, audio: 0 }");
     expect(source).toContain("imageToVideo: { image: 1, video: 0, audio: 0 }");
     expect(source).toContain("const FIXED_IMAGE_CAP_BY_MODE");
@@ -565,7 +612,7 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
       const counts = { ...none, images };
       const pickerBlocked = videoModelReferenceDisabledReason(SEEDANCE15_PRO, counts) != null;
       const submitBlocked =
-        videoSubmitMediaRejectionReason("imageToVideo", SEEDANCE15_PRO, counts) != null;
+        videoSubmitMediaRejectionReason("firstFrame", SEEDANCE15_PRO, counts) != null;
       expect(pickerBlocked).toBe(submitBlocked);
     }
   });
@@ -632,10 +679,12 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
   // 死胡同。这里锁住「传整个 ModelOption」，与 VideoNode 的提交守卫同源。
   it("模型选择器必须把整个 ModelOption 传给置灰守卫（而非只传 id）", () => {
     const source = readFileSync(
-      "src/features/canvas/nodes/VideoOperationsPanel.tsx",
+      "src/features/canvas/nodes/shared/VideoGenerationForm.tsx",
       "utf8",
     );
-    expect(source).toContain("videoModelReferenceDisabledReason(model, {");
+    expect(source).toMatch(
+      /videoModelReferenceDisabledReason\(\s*model,\s*modelUpstreamCounts/,
+    );
     expect(source).not.toContain(
       "videoModelReferenceDisabledReason(model.apiModel ?? model.id",
     );
@@ -1298,7 +1347,7 @@ describe("VideoNode 接线：素材撤空 → 文生视频", () => {
     // upstreamCounts（已解析 URL）会把空态 CTA 刚铺好、还没出图的图片节点算成 0 张，
     // 用它当场就会把三个 CTA 顶回文生视频。
     expect(source).toContain(
-      "videoNoUpstreamResetMode(genMode, upstreamTypeCounts)",
+      "videoNoUpstreamResetMode(compatibleMode, counts, selectedVideoModel)",
     );
   });
 
@@ -1318,5 +1367,21 @@ describe("VideoNode 接线：素材撤空 → 文生视频", () => {
     expect(source).not.toContain(
       "videoModeRequiresPrompt(genMode)\n        ? !hasPromptText\n        : !hasRequiredMediaForMode",
     );
+  });
+});
+
+
+describe("node-specific video modes", () => {
+  const textOnly = { id: "text-only", supportedModes: ["text_to_video"] };
+  it("rejects unsupported modes even when a single image is present", () => {
+    expect(videoSubmitMediaRejectionReason("imageToVideo", textOnly,
+      { images: 1, videos: 0, audios: 0 })).toBe("node.videoModel.reason.modeUnsupported");
+  });
+  it("does not infer or silently discard image input for a text-only model", () => {
+    expect(videoUpstreamImageDefaultMode(textOnly)).toBeNull();
+    expect(videoSubmitMediaRejectionReason("textToVideo", textOnly,
+      { images: 1, videos: 0, audios: 0 })).toBe("node.videoModel.reason.imageUnsupported");
+    expect(videoSubmitMediaRejectionReason("textToVideo", textOnly,
+      { images: 0, videos: 0, audios: 0 })).toBeNull();
   });
 });

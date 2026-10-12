@@ -25,13 +25,14 @@ from typing import Any, Mapping, Union
 
 __all__ = [
     "LocalizableMessage",
+    "MessageLike",
+    "has_localizable_log",
     "lmsg",
-    "message_text",
-    "message_payload",
     "log_entry_payload",
     "log_entry_text",
     "log_lines_text",
-    "has_localizable_log",
+    "message_payload",
+    "message_text",
 ]
 
 
@@ -43,7 +44,6 @@ class LocalizableMessage:
     ``text``   Chinese fallback, already interpolated.
     ``params`` interpolation values for the catalog entry.
     """
-
     code: str
     text: str
     params: Mapping[str, Any] | None = None

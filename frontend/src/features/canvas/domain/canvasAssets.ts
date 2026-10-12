@@ -116,8 +116,11 @@ function firstStr(...values: unknown[]): string | null {
  * Best-effort creation timestamp. Image nodes carry an ISO `committed_at`;
  * generative nodes keep a numeric `generationStartedAt`. Returns null when the
  * node has neither so the caller can bucket it under an "unknown date" group.
+ *
+ * Exported so other domain modules (e.g. `assetBoard.ts`) can reuse the exact
+ * same rule instead of maintaining a copy.
  */
-function timestampOf(data: Record<string, unknown>): number | null {
+export function timestampOf(data: Record<string, unknown>): number | null {
   const committed = str(data.committed_at);
   if (committed) {
     const parsed = Date.parse(committed);

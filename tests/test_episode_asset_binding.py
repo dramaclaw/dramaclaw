@@ -536,7 +536,8 @@ async def test_narrated_planning_failure_is_not_treated_as_legitimate_empty_scop
     assert (await store.get_episode_from_graph(1)).scene_menu == []
 
 
-async def test_scene_backfill_resolves_exact_alias_within_episode_scope(store):
+@pytest.mark.parametrize("facade", [False, True])
+async def test_scene_backfill_resolves_exact_alias_within_episode_scope(store, facade):
     source = "1-1 场景：急诊部 白天 内\n△医生在柜台前停下。"
     await store.patch_episode(1, beat_source_text=source)
     await store.add_scene(NovelScene(name="医院急诊科", aliases=["急诊部"]))
@@ -549,8 +550,11 @@ async def test_scene_backfill_resolves_exact_alias_within_episode_scope(store):
             )
         ]
     )
-    count = await AssetCompiler(store).backfill_missing_scene_refs(
-        store.get_episode(1), [SceneMenuItem(scene_id="医院急诊科")]
+    compiler_store = (
+        CogneeStore("test/project", sqlite_store=store) if facade else store
+    )
+    count = await AssetCompiler(compiler_store).backfill_missing_scene_refs(
+        await store.get_episode_from_graph(1), [SceneMenuItem(scene_id="医院急诊科")]
     )
     assert count == 1
     assert (await store.get_beats_for_episode(1))[0].scene_id == "医院急诊科"
@@ -614,3 +618,33 @@ async def test_automatic_planning_preserves_menu_selected_while_model_runs(
     else:
         assert [item.prop_id for item in persisted.prop_menu] == ["用户选的玉佩"]
         assert [item.prop_id for item in snapshot.prop_menu] == ["用户选的玉佩"]
+
+
+async def test_shared_script_generation_resolves_episode_scene_alias(
+    store, monkeypatch
+):
+    source = "1-1 场景：急诊部 白天 内\n△医生在柜台前停下。"
+    await store.patch_episode(
+        1,
+        beat_source_text=source,
+        scene_menu=[SceneMenuItem(scene_id="医院急诊科")],
+        prop_menu=[PropMenuItem(prop_id="已有道具")],
+    )
+    await store.add_scene(NovelScene(name="医院急诊科", aliases=["急诊部"]))
+
+    class Agent:
+        async def run(self, prompt):
+            return SimpleNamespace(
+                output=LiteralBeatMetaOutput(visual_description="医生在柜台前停下。")
+            )
+
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow, "agent", property(lambda self: Agent())
+    )
+    workflow = create_script_writing_workflow(
+        CogneeStore("test/project", sqlite_store=store)
+    )
+    script = await workflow.run(episode_num=1)
+    assert script.beats[0].scene_ref is not None
+    assert script.beats[0].scene_ref.scene_id == "医院急诊科"
+    assert (await store.get_beats_for_episode(1))[0].scene_id == "医院急诊科"

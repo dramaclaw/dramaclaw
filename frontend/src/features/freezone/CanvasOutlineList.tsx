@@ -80,11 +80,14 @@ export type CanvasOutlineItem = {
 };
 
 const NODE_TYPE_ICON: Record<CanvasNodeType, LucideIcon> = {
+  vectorSvgNode: ImageIcon,
+  animatedGifNode: Film,
   [CANVAS_NODE_TYPES.upload]: Upload,
   [CANVAS_NODE_TYPES.imageEdit]: ImageIcon,
   [CANVAS_NODE_TYPES.imageGen]: ImageIcon,
   [CANVAS_NODE_TYPES.exportImage]: ImageIcon,
   [CANVAS_NODE_TYPES.beatContext]: Clapperboard,
+  [CANVAS_NODE_TYPES.htmlArtifact]: FileText,
   [CANVAS_NODE_TYPES.textAnnotation]: FileText,
   [CANVAS_NODE_TYPES.group]: Folder,
   [CANVAS_NODE_TYPES.storyboardSplit]: LayoutGrid,
@@ -263,7 +266,8 @@ export type CanvasOutlineFilterKey =
   | "audio"
   | "script"
   | "world"
-  | "skill";
+  | "skill"
+  | "webpage";
 
 /**
  * 类型筛选按「用户眼里的东西」分档，不是逐个节点类型列出来——
@@ -283,6 +287,8 @@ export const CANVAS_OUTLINE_FILTERS: ReadonlyArray<{
       CANVAS_NODE_TYPES.imageEdit,
       CANVAS_NODE_TYPES.imageGen,
       CANVAS_NODE_TYPES.exportImage,
+      CANVAS_NODE_TYPES.vectorSvg,
+      CANVAS_NODE_TYPES.animatedGif,
       // 风格节点不独立存在，它是图片节点所选风格的投影，跟着图片一起筛。
       CANVAS_NODE_TYPES.style,
     ],
@@ -304,6 +310,7 @@ export const CANVAS_OUTLINE_FILTERS: ReadonlyArray<{
   { key: "script", types: [CANVAS_NODE_TYPES.script] },
   { key: "world", types: [CANVAS_NODE_TYPES.pano360Viewer, CANVAS_NODE_TYPES.threeDWorld] },
   { key: "skill", types: [CANVAS_NODE_TYPES.skill] },
+  { key: "webpage", types: [CANVAS_NODE_TYPES.htmlArtifact] },
 ];
 
 export function outlineFilterTypes(key: CanvasOutlineFilterKey): readonly CanvasNodeType[] {

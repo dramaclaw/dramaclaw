@@ -1,0 +1,15 @@
+{
+  "id": "drama-background-music",
+  "name": "短剧背景音乐",
+  "version": 1,
+  "enabled": true,
+  "output_kind": "audio",
+  "action_keys": [
+    "drama-background-music"
+  ],
+  "description": "根据整部短剧的题材和情绪生成独立背景音乐。",
+  "planning_prompt": "生成覆盖整部短剧的纯音乐提示词，不包含旁白和对白。",
+  "system_prompt": "你是短剧配乐导演。根据用户目标和故事规划输出纯背景音乐生成提示词，描述情绪曲线、节奏、配器、声音质感和收尾方式。禁止加入旁白、对白、歌词、环境音或需要朗读的控制说明，只输出最终音乐生成指令。",
+  "requires_source_media": false,
+  "result_summary": "已完成短剧背景音乐。"
+}

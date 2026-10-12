@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent
 
+from novelvideo.brainclaw_contract import BrainClawProfile
 from novelvideo.config import (
     get_newapi_structured_output_model_settings,
     get_newapi_text_pydantic_model,
@@ -190,7 +191,7 @@ async def rewrite_episode_content(
     agent = Agent(
         get_newapi_text_pydantic_model(
             "CONTENT_REWRITER_MODEL",
-            "gpt-5.4-mini",
+            brainclaw_profile=BrainClawProfile.CONTENT_REWRITE,
             capability="text.generate",
         ),
         system_prompt=REWRITE_PROMPT,

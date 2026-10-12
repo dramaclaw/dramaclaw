@@ -195,9 +195,13 @@ def insufficient_credits_payload(exc: BaseException | None = None) -> dict[str, 
 
 
 def billing_rule_not_configured_payload(
-    exc: BaseException | None = None,
+    exc: BillingRuleNotConfiguredError | BaseException | None = None,
 ) -> dict[str, Any]:
-    err = find_billing_rule_not_configured_error(exc)
+    err = (
+        exc
+        if isinstance(exc, BillingRuleNotConfiguredError)
+        else find_billing_rule_not_configured_error(exc)
+    )
     payload: dict[str, Any] = {
         "error_code": BILLING_RULE_NOT_CONFIGURED_CODE,
         "message": BILLING_RULE_NOT_CONFIGURED_MESSAGE,

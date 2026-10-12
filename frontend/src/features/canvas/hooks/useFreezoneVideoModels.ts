@@ -110,6 +110,16 @@ export function prefetchFreezoneVideoModels(project: string): void {
   ensureLoaded(project);
 }
 
+export function getFreezoneVideoModelsSnapshot(
+  projectOverride?: string | null,
+): UseFreezoneVideoModelsResult {
+  const project =
+    projectOverride !== undefined ? projectOverride : readUrl().project;
+  if (!project) return getNoProjectState();
+  ensureLoaded(project);
+  return states.get(project) ?? getNoProjectState();
+}
+
 function refreshKnownVideoModelCatalogs() {
   const projects = new Set(states.keys());
   const currentProject = readUrl().project;

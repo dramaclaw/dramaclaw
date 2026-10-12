@@ -38,6 +38,7 @@ deploy/compose/windows/users.json
 *.skill
 /scripts/output
 node_modules/
+frontend/.tanstack/
 /.pnpm-store/
 /docs/issues
 scripts/incident_drills/.drill.local.env
@@ -45,6 +46,56 @@ scripts/incident_drills/.drill.local.env
 
 # 验收日志（证据归档在本地/CI 工件，不进 git）
 /acceptance-logs/
+
+# SuperTale-only Hermes overlays must not be committed to the open-source repo.
+/.hermes/plugins/workflows/
+/.hermes/skills/supertale/
+/.hermes/plugins/supertale/
+/.hermes/skills/freezone-workflows/
+/.hermes/plugins/freezone-workflows/
+src/novelvideo/freezone/agent_catalog/builtins/skills/*
+src/novelvideo/freezone/agent_catalog/builtins/recipes/*
+!src/novelvideo/freezone/agent_catalog/builtins/skills/retro-hong-kong-kungfu-comedy-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/retro-kungfu-bgm.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/retro-kungfu-key-elements.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/retro-kungfu-shot-list.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/retro-kungfu-shot-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/retro-kungfu-story-outline.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/retro-kungfu-video-spec.json
+!src/novelvideo/freezone/agent_catalog/builtins/skills/pixar-ip-ad-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/pixar-ip-audio-layers.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/pixar-ip-character-design.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/pixar-ip-compose-plan.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/pixar-ip-prop-anchor.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/pixar-ip-shot-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/pixar-ip-storyboard-sketch.json
+!src/novelvideo/freezone/agent_catalog/builtins/skills/lego-minifigure-animation-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/lego-minifig-input-analysis.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/lego-minifig-script-outline.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/lego-minifig-video-spec.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/lego-minifig-storyboard.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/lego-minifig-key-elements.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/lego-minifig-shot-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/lego-minifig-audio-layers.json
+!src/novelvideo/freezone/agent_catalog/builtins/skills/ling-cage-cinematic-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/ling-cage-story-script.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/ling-cage-video-spec.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/ling-cage-storyboard.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/ling-cage-key-elements.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/ling-cage-shot-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/ling-cage-audio-layers.json
+!src/novelvideo/freezone/agent_catalog/builtins/skills/outdoor-stage-duel-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/outdoor-stage-duel-video-spec.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/outdoor-stage-duel-storyboard.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/outdoor-stage-duel-key-elements.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/outdoor-stage-duel-shot-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/outdoor-stage-duel-audio-layers.json
+!src/novelvideo/freezone/agent_catalog/builtins/skills/japanese-anime-drama-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/jp-anime-drama-script.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/jp-anime-drama-storyboard.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/jp-anime-drama-key-elements.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/jp-anime-drama-shot-video.json
+!src/novelvideo/freezone/agent_catalog/builtins/recipes/jp-anime-drama-audio-layers.json
 docs/oss-split/
 
 # 内部过程文档不进公开仓（迁至 dc workspace docs）

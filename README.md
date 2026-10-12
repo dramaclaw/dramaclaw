@@ -329,10 +329,15 @@ cd dramaclaw
 uv sync
 cp .env.example .env && $EDITOR .env
 
-uv run novelvideo api --port 8780   # start the REST API (CE defaults to inline tasks, no Ray/Redis)
+scripts/start-ce.sh   # installs dependencies, then starts the API and bundled frontend
 ```
 
-Frontend in a second terminal: `cd frontend && pnpm install && pnpm dev`.
+For frontend development with hot reload: `cd frontend && pnpm install && pnpm dev`.
+
+The local launcher installs Hermes in an isolated environment and explicitly uses it as the
+safe source-checkout chat runtime. Source-built Docker images ship the patched Codex App
+Server runtime and default to Codex. The pinned 2.0.4 release image uses Hermes. To run the API command directly, configure a supported chat backend
+first; do not rely on the stock Codex binary for gateway credentials.
 
 **Gateway.** In **Official** mode you need nothing else. For **Custom** or **Local + Official Hybrid** the API expects a gateway on `127.0.0.1:3000` whose SQLite file is `./state/newapi/one-api.db` (that is what "Initialize" in Settings writes to; `NEWAPI_ADMIN_BASE_URL` in `.env` already points there). Either run the published image with that directory mounted:
 

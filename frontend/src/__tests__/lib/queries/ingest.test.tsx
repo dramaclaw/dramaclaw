@@ -3,11 +3,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { setupServer } from "msw/node";
+import { server } from "@/__mocks__/msw/server";
 import ky from "ky";
 import { File as NodeFile } from "node:buffer";
 import type { ReactNode } from "react";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
@@ -21,14 +21,10 @@ import {
   useUploadNovel,
 } from "@/lib/queries/ingest";
 
-const server = setupServer();
-
-beforeAll(() => server.listen());
 afterEach(() => {
   server.resetHandlers();
   vi.unstubAllGlobals();
 });
-afterAll(() => server.close());
 
 function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

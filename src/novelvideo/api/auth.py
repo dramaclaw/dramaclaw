@@ -11,6 +11,7 @@ only provisioning credentials for ``POST /api/v1/agent/sessions``.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Callable, Optional
 from urllib.parse import unquote
@@ -26,8 +27,21 @@ logger = logging.getLogger("novelvideo.api.auth")
 AUTH_COOKIE_NAME = "st_session"
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-AGENT_WRITE_SCOPES = {"projects:write", "tasks:submit"}
+# Scopes that satisfy the central agent write-boundary backstop. This set must
+# include every precise write scope a route may require, otherwise a token that
+# legitimately holds only that precise scope (e.g. [projects:read,
+# projects:purge]) is rejected here — before its route's own require_scope check
+# ever runs — for lacking the generic write scope. The route-level require_scope
+# still enforces the exact scope, so listing these here only lifts the redundant
+# backstop, it does not widen what any single route accepts.
+AGENT_WRITE_SCOPES = {
+    "projects:write",
+    "tasks:submit",
+    "projects:lifecycle",
+    "projects:purge",
+}
 PROJECT_PATH_RE = re.compile(r"/projects/([^/]+)")
+LOCAL_TRUST_HOSTS = {"127.0.0.1", "::1", "localhost"}
 UNSUPPORTED_QUERY_CREDENTIALS = {"token", "access_token", "api_key"}
 _EFFECTIVE_ACCESS_DENIED = "effective access denied"
 
@@ -40,6 +54,57 @@ def _bearer_token_from_request(request: Request) -> Optional[str]:
     if scheme.lower() != "bearer" or not token.strip():
         return None
     return token.strip()
+
+
+def _local_agent_trust_enabled() -> bool:
+    return os.environ.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _host_without_port(value: str | None) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    if text.startswith("["):
+        end = text.find("]")
+        return text[1:end] if end >= 0 else text
+    return text.rsplit(":", 1)[0] if ":" in text and text.count(":") == 1 else text
+
+
+def _is_local_trusted_agent_request(request: Request) -> bool:
+    if not _local_agent_trust_enabled():
+        return False
+    if any(
+        name in request.headers
+        for name in ("forwarded", "x-forwarded-for", "x-forwarded-proto")
+    ):
+        return False
+    client_host = _host_without_port(getattr(request.client, "host", None))
+    host_header = _host_without_port(request.headers.get("host"))
+    forwarded_host = _host_without_port(request.headers.get("x-forwarded-host"))
+    if client_host not in LOCAL_TRUST_HOSTS:
+        return False
+    if host_header and host_header not in LOCAL_TRUST_HOSTS:
+        return False
+    if forwarded_host and forwarded_host not in LOCAL_TRUST_HOSTS:
+        return False
+    return True
+
+
+def _local_trusted_agent_user() -> dict:
+    username = os.environ.get("ST_LOCAL_USERNAME", "").strip() or "local"
+    return {
+        "id": "local",
+        "user_id": "local",
+        "username": username,
+        "role": "owner",
+        "credential_kind": "local_trusted_agent",
+        "agent_kind": "local_mcp",
+    }
 
 
 async def _verify_browser_session(raw_cookie: str | None) -> dict:
@@ -133,6 +198,9 @@ async def get_api_user(
         _enforce_agent_request_boundary(request, user)
         return user
 
+    if _is_local_trusted_agent_request(request):
+        return _local_trusted_agent_user()
+
     return await _verify_browser_session(request.cookies.get(AUTH_COOKIE_NAME))
 
 
@@ -171,6 +239,7 @@ def require_scope(needed: str) -> Callable[[dict], dict]:
             )
         return user
 
+    _check._required_scope = needed  # introspection hook for route-wiring tests
     return _check
 
 

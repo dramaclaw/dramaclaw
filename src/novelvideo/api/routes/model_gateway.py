@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 from novelvideo import config as app_config
 from novelvideo.model_gateway_settings import (
     MODE_CUSTOM,
+    CUSTOM_LLM_MODE_ADVANCED,
+    CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
     MODE_OFFICIAL,
     MODE_HYBRID,
     build_media_relay_status,
@@ -24,6 +26,7 @@ from novelvideo.model_gateway_settings import (
     save_media_relay_config,
     save_official_media_catalog_auto_update,
     save_official_newapi_key,
+    save_relayclaw_brainclaw_key,
     save_custom_newapi_gateway,
     save_newapi_database_config,
     save_newapi_embedding_model_config,
@@ -34,6 +37,7 @@ from novelvideo.model_gateway_settings import (
     get_newapi_provider_channel,
     get_newapi_provider_channels,
     set_model_gateway_mode,
+    set_custom_llm_mode,
 )
 from novelvideo.official_media_catalog_remote import (
     check_official_media_catalog_update,
@@ -52,6 +56,7 @@ from novelvideo.newapi_provisioner import (
     delete_channel_by_name,
     ensure_newapi_setup,
     ensure_admin_access_token,
+    fetch_provider_channel_models,
     get_provisioner_config,
     list_channel_types,
     mask_token,
@@ -162,6 +167,15 @@ class OfficialMediaCatalogPreferencesBody(BaseModel):
     auto_update: bool = Field(alias="autoUpdate")
 
 
+class BrainClawGatewayBody(BaseModel):
+    new_api_base_url: str | None = Field(default=None, alias="newApiBaseUrl")
+    new_api_api_key: str | None = Field(default=None, alias="newApiApiKey")
+
+
+class CustomLlmModeBody(BaseModel):
+    mode: str
+
+
 class MediaRelayConfigBody(BaseModel):
     provider: str = "aliyun_oss"
     ttl_seconds: int = Field(default=1800, alias="ttlSeconds")
@@ -253,6 +267,13 @@ class SyncProviderChannelBody(BaseModel):
     provider: str
     upstream_key: str | None = Field(default=None, alias="upstreamKey")
     base_url: str | None = Field(default=None, alias="baseUrl")
+
+
+class ProviderChannelModelsBody(BaseModel):
+    new_api_base_url: str | None = Field(default=None, alias="newApiBaseUrl")
+    database: NewApiDatabaseBody | None = None
+    provider: str
+    type: int | None = None
 
 
 class MediaModelConfigBody(BaseModel):
@@ -649,6 +670,111 @@ async def save_official_gateway_config(body: OfficialGatewayBody) -> dict[str, A
     }
 
 
+@router.post("/custom/brainclaw/config")
+async def save_custom_brainclaw_config(
+    body: BrainClawGatewayBody,
+) -> dict[str, Any]:
+    """Save the BrainClaw endpoint for Custom mode (does not switch the active mode)."""
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    current = build_model_gateway_status(
+        official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+        official_api_key=app_config.NEWAPI_API_KEY,
+    )
+    api_key = normalize_api_key(body.new_api_api_key)
+    base_url = normalize_relay_base_url(body.new_api_base_url)
+    # A custom endpoint must carry its own key. The previous condition accepted
+    # a non-empty apiKeyPreview as proof one existed, but the preview falls back
+    # to the official key — so saving a custom URL with an empty key was
+    # accepted, and every later request sent the official RelayClaw credential
+    # to that host.
+    from novelvideo.model_gateway_settings import _is_official_relay_url
+
+    target_is_official = _is_official_relay_url(base_url or current["brainclaw"]["baseUrl"])
+    has_dedicated_key = bool(current["brainclaw"].get("dedicatedKeyConfigured"))
+    if not api_key and not has_dedicated_key and not target_is_official:
+        raise HTTPException(
+            status_code=400,
+            detail="newApiApiKey is required for a custom BrainClaw endpoint")
+    if not api_key and not current["brainclaw"]["apiKeyPreview"]:
+        raise HTTPException(status_code=400, detail="newApiApiKey is required")
+    if body.new_api_base_url is not None and not base_url:
+        raise HTTPException(status_code=400, detail="newApiBaseUrl is required")
+    save_relayclaw_brainclaw_key(
+        api_key=api_key,
+        base_url=base_url,
+    )
+    runtime = refresh_model_gateway_runtime()
+    return {
+        "ok": True,
+        "data": build_model_gateway_status(
+            official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+            official_api_key=app_config.NEWAPI_API_KEY,
+        ),
+        "runtime": runtime,
+    }
+
+
+@router.post("/custom/brainclaw/enable")
+async def enable_custom_brainclaw() -> dict[str, Any]:
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    status = build_model_gateway_status(
+        official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+        official_api_key=app_config.NEWAPI_API_KEY,
+    )
+    if not status["brainclaw"]["configured"]:
+        raise HTTPException(
+            status_code=400, detail="RelayClaw API key is not configured"
+        )
+    set_custom_llm_mode(CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW)
+    runtime = refresh_model_gateway_runtime()
+    return {
+        "ok": True,
+        "data": build_model_gateway_status(
+            official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+            official_api_key=app_config.NEWAPI_API_KEY,
+        ),
+        "runtime": runtime,
+    }
+
+
+@router.post("/custom/llm-mode")
+async def save_custom_llm_routing_mode(body: CustomLlmModeBody) -> dict[str, Any]:
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    if body.mode not in {
+        CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
+        CUSTOM_LLM_MODE_ADVANCED,
+    }:
+        raise HTTPException(status_code=400, detail="unsupported custom LLM mode")
+    if body.mode == CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW:
+        status = build_model_gateway_status(
+            official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+            official_api_key=app_config.NEWAPI_API_KEY,
+        )
+        if not status["brainclaw"]["configured"]:
+            raise HTTPException(
+                status_code=400, detail="RelayClaw API key is not configured"
+            )
+    set_custom_llm_mode(body.mode)
+    runtime = refresh_model_gateway_runtime()
+    return {
+        "ok": True,
+        "data": build_model_gateway_status(
+            official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+            official_api_key=app_config.NEWAPI_API_KEY,
+        ),
+        "runtime": runtime,
+    }
+
+
 @router.post("/media-relay/config")
 async def save_media_relay_settings(body: MediaRelayConfigBody) -> dict[str, Any]:
     try:
@@ -962,6 +1088,48 @@ async def get_custom_newapi_channel_types() -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"ok": True, "data": {"items": items}}
+
+
+@router.post("/custom/newapi/provider-channel/models")
+async def get_custom_newapi_provider_channel_models(
+    body: ProviderChannelModelsBody,
+) -> dict[str, Any]:
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from None
+    provider = body.provider.strip().lower()
+    if not provider:
+        raise HTTPException(status_code=400, detail="provider is required")
+    if body.type is not None and body.type <= 0:
+        raise HTTPException(status_code=400, detail="type must be positive")
+
+    def discover() -> dict[str, Any]:
+        cfg = _get_provisioner_config_from_request(body.new_api_base_url, body.database)
+        saved_channel = get_newapi_provider_channel(provider) or {}
+        channel_type = body.type or int(saved_channel.get("type") or 0) or None
+        admin = ensure_admin_access_token(cfg)
+        return fetch_provider_channel_models(
+            cfg, admin, provider=provider, channel_type=channel_type
+        )
+
+    try:
+        data = await asyncio.to_thread(discover)
+    except LookupError:
+        raise HTTPException(
+            status_code=404, detail="provider channel not found; save and sync it first"
+        ) from None
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504, detail="NewAPI provider model discovery timed out"
+        ) from None
+    except Exception:
+        # Configuration, admin-token checks and channel lookup can also contain
+        # credentials in their exceptions. Keep all management failures opaque.
+        raise HTTPException(
+            status_code=502, detail="NewAPI provider model discovery failed"
+        ) from None
+    return {"ok": True, "data": data}
 
 
 @router.post("/custom/newapi/provider-channel/sync")

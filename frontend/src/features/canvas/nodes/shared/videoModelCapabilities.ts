@@ -274,6 +274,45 @@ export function videoModeRequiresMedia(mode: VideoGenMode): boolean {
   return mode !== "textToVideo";
 }
 
+export interface VideoModeInputCounts {
+  images: number;
+  videos: number;
+  audios: number;
+  hasOtherReference?: boolean;
+}
+
+/** Required inputs, shared by mode availability and model switching. */
+export function videoModeMissingInputReason(
+  mode: VideoGenMode,
+  counts: VideoModeInputCounts,
+): string | null {
+  if (mode === "videoEdit" || mode === "videoExtend") {
+    return counts.videos === 0 ? "node.videoOps.modeDisabled.needOneVideo" : null;
+  }
+  // All-reference entry semantics are separate from input-required image/video modes.
+  if (mode !== "textToVideo" && mode !== "allReference" && counts.images === 0) {
+    return "node.videoOps.modeDisabled.needOneImage";
+  }
+  return null;
+}
+
+/** Preserve compatible explicit modes, including those waiting for their input. */
+export function videoModeForModel(
+  mode: VideoGenMode,
+  model: VideoModelRef,
+  counts: VideoModeInputCounts,
+): VideoGenMode {
+  if (!model) return mode;
+  const supportsCurrentMode = isVideoModeSupportedByModel(mode, model);
+  if (supportsCurrentMode && !videoSubmitMediaRejectionReason(mode, model, counts)) return mode;
+  const candidates = (Object.keys(GEN_MODE_TO_CATALOG_MODE) as VideoGenMode[])
+    .filter((candidate) => isVideoModeSupportedByModel(candidate, model));
+  return candidates.find((candidate) =>
+    !videoModeMissingInputReason(candidate, counts) &&
+    !videoSubmitMediaRejectionReason(candidate, model, counts)
+  ) ?? (supportsCurrentMode ? mode : candidates[0] ?? mode);
+}
+
 /**
  * 上游素材被全部撤走后该退回哪个模式：`"textToVideo"` = 退回文生视频，null = 不动。
  *
@@ -290,9 +329,11 @@ export function videoModeRequiresMedia(mode: VideoGenMode): boolean {
  */
 export function videoNoUpstreamResetMode(
   mode: VideoGenMode,
-  counts: { images: number; videos: number; audios: number },
+  counts: VideoModeInputCounts,
+  model?: VideoModelRef,
 ): VideoGenMode | null {
-  if (counts.images > 0 || counts.videos > 0 || counts.audios > 0) return null;
+  if (counts.images > 0 || counts.videos > 0 || counts.audios > 0 || counts.hasOtherReference) return null;
+  if (model && !isVideoModeSupportedByModel("textToVideo", model)) return null;
   return mode === "textToVideo" ? null : "textToVideo";
 }
 
@@ -372,6 +413,61 @@ export function videoMultiImageAutoSwitchMode(
 export const MIN_AUDIO_REFERENCE_DURATION_MS = 1_800;
 export const MAX_AUDIO_REFERENCE_DURATION_MS = 15_200;
 export const MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS = 15_200;
+
+const COMPOSITION_TIMELINE_AUDIO_ROLES = new Set([
+  "voiceover",
+  "narration",
+  "shot_voice",
+  "music",
+  "bgm",
+  "background_music",
+]);
+const COMPOSITION_TIMELINE_AUDIO_INTENT =
+  /(?:旁白|配音|解说|背景音乐|配乐|纯音乐|(?:^|[\s_-])bgm(?:$|[\s_-])|background[_\s-]*music|voice[_\s-]*over|narration)/i;
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/**
+ * Detect full-length narration/music tracks that belong on the compose
+ * timeline. New workflows carry an explicit timelineRole; legacy workflows
+ * are recovered from their catalog item identity without classifying manually
+ * connected audio uploads as timeline tracks.
+ */
+export function isCompositionTimelineAudioData(data: unknown): boolean {
+  const source = recordValue(data);
+  if (!source) return false;
+  const catalog = recordValue(source.workflowCatalog);
+  const promptBuilder = recordValue(catalog?.promptBuilder);
+  const planItem = recordValue(promptBuilder?.planItem);
+  const explicitRole = [
+    catalog?.timelineRole,
+    catalog?.timeline_role,
+    source.timelineRole,
+    source.timeline_role,
+    planItem?.timelineRole,
+    planItem?.timeline_role,
+  ]
+    .map((value) => String(value ?? "").trim().toLowerCase())
+    .find(Boolean);
+  if (explicitRole) return COMPOSITION_TIMELINE_AUDIO_ROLES.has(explicitRole);
+  if (!catalog) return false;
+  const searchable = [
+    source.displayName,
+    source.title,
+    catalog.stepId,
+    catalog.operationType,
+    catalog.recipeId,
+    planItem?.id,
+    planItem?.title,
+    planItem?.audio_kind,
+    planItem?.audioKind,
+  ].filter(Boolean).join(" ");
+  return COMPOSITION_TIMELINE_AUDIO_INTENT.test(searchable);
+}
 
 /** 媒体目录里与音频时长相关的那个字段（`ModelOption` 的子集）。 */
 export interface AudioDurationLimitModel {
@@ -596,12 +692,13 @@ export function videoSubmitMediaRejectionReason(
   ) {
     return "node.videoModel.reason.videoExtendSourceOnly";
   }
-  if (
-    counts.videos > 0 &&
-    mode !== "allReference" &&
-    mode !== "videoEdit" &&
-    mode !== "videoExtend"
-  ) {
+  if (!isVideoModeSupportedByModel(mode, model)) {
+    return "node.videoModel.reason.modeUnsupported";
+  }
+  if (counts.images > 0 && videoEmptyStateCtaModes(model).length === 0) {
+    return "node.videoModel.reason.imageUnsupported";
+  }
+  if (counts.videos > 0 && mode !== "allReference" && mode !== "videoEdit" && mode !== "videoExtend") {
     return "node.videoModel.reason.videoUnsupported";
   }
   const videoEditAcceptsAudio =
@@ -648,6 +745,15 @@ export function videoModelReferenceDisabledReason(
   counts: { images: number; videos: number; audios: number },
 ): string | null {
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    if (
+      counts.videos === 0 &&
+      model.supportedModes?.every((mode) => mode === "video_edit" || mode === "video_extend")
+    ) {
+      return "node.videoOps.modeDisabled.needOneVideo";
+    }
+    if (counts.images > 0 && videoEmptyStateCtaModes(model).length === 0) {
+      return "node.videoModel.reason.imageUnsupported";
+    }
     const supportsAllReference = isVideoModeSupportedByModel("allReference", model);
     const supportsVideoEdit = isVideoModeSupportedByModel("videoEdit", model);
     const supportsVideoExtend = isVideoModeSupportedByModel("videoExtend", model);

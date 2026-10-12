@@ -1,0 +1,72 @@
+import type { ServerFrame } from "@/features/superchat/types";
+import {
+  readCanvasCommandReceipt,
+  type CanvasCommandToolResultPayload,
+} from "@/features/freezone/canvasCommandToolResult";
+
+type ExternalCanvasCommandClaim = {
+  externalMcpCommand: boolean;
+  bridgeKey: string | null;
+  accepted: boolean;
+  terminalReceipt?: CanvasCommandToolResultPayload;
+};
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/**
+ * Realtime websocket delivery and reconnect polling can observe the same pending
+ * external-MCP bridge file. Claim its bridge key in one synchronous place so
+ * only the first delivery reaches the approval flow. Hermes frames do not carry
+ * the external marker and intentionally bypass this guard.
+ */
+export function claimExternalCanvasCommand(
+  seenBridgeKeys: Set<string>,
+  frame: ServerFrame,
+  explicitlyExternal = false,
+): ExternalCanvasCommandClaim {
+  const frameRecord = record(frame);
+  const envelope = record(frameRecord?.envelope);
+  const externalMcpCommand =
+    explicitlyExternal ||
+    frameRecord?.external_mcp_command === true ||
+    frameRecord?.externalMcpCommand === true ||
+    envelope?.external_mcp_command === true ||
+    envelope?.externalMcpCommand === true;
+  const bridgeKey =
+    typeof frameRecord?.bridge_key === "string"
+      ? frameRecord.bridge_key
+      : typeof frameRecord?.bridgeKey === "string"
+        ? frameRecord.bridgeKey
+        : null;
+
+  if (!externalMcpCommand || !bridgeKey) {
+    return { externalMcpCommand, bridgeKey, accepted: true };
+  }
+  const terminalReceipt = readCanvasCommandReceipt(bridgeKey);
+  if (terminalReceipt) {
+    seenBridgeKeys.add(bridgeKey);
+    return { externalMcpCommand, bridgeKey, accepted: false, terminalReceipt };
+  }
+  if (seenBridgeKeys.has(bridgeKey)) {
+    return { externalMcpCommand, bridgeKey, accepted: false };
+  }
+  seenBridgeKeys.add(bridgeKey);
+  return { externalMcpCommand, bridgeKey, accepted: true };
+}
+
+/**
+ * Seen keys normally suppress reconnect polling. A stored terminal receipt is
+ * different: the command was executed, but the server may not have received
+ * its result, so omit that key and let the server redeliver it for replay.
+ */
+export function confirmedExternalCanvasCommandKeys(
+  seenBridgeKeys: Set<string>,
+): string[] {
+  return Array.from(seenBridgeKeys).filter(
+    (bridgeKey) => readCanvasCommandReceipt(bridgeKey) === null,
+  );
+}

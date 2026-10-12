@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_va
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior
 
+from novelvideo.brainclaw_contract import BrainClawProfile
 from novelvideo.config import (
     get_newapi_structured_output_model_settings,
     get_newapi_text_pydantic_model,
@@ -418,7 +419,7 @@ class LiteralScriptWritingWorkflow:
             self._agent = Agent(
                 get_newapi_text_pydantic_model(
                     "LITERAL_BEAT_META_MODEL",
-                    "gemini-3.5-flash",
+                    brainclaw_profile=BrainClawProfile.LITERAL_BEAT_METADATA,
                     capability="text.generate.workflow",
                 ),
                 system_prompt=(
@@ -901,14 +902,18 @@ class LiteralScriptWritingWorkflow:
             fallback_speaker = ""
             visual_description = speech or line
         else:
-            audio_type = "narration" if self.audio_type_mode == "narrated" else "silence"
+            audio_type = (
+                "narration" if self.audio_type_mode == "narrated" else "silence"
+            )
             fallback_speaker = ""
             visual_description = line
 
         # 不让未经校验的资产标记进入后续生成，但保留原文语义。
         visual_description = (
-            visual_description.replace("{{", "").replace("}}", "")
-            .replace("[[", "").replace("]]", "")
+            visual_description.replace("{{", "")
+            .replace("}}", "")
+            .replace("[[", "")
+            .replace("]]", "")
             .strip()
         )
         if len(visual_description) < 5:
@@ -986,7 +991,8 @@ class LiteralScriptWritingWorkflow:
         return "\n".join(lines) + "\n"
 
     async def _load_scene_aliases_for_episode(self) -> None:
-        list_scenes = getattr(self.sqlite_store, "list_scenes", None)
+        store = getattr(self.sqlite_store, "sqlite_store", self.sqlite_store)
+        list_scenes = getattr(store, "list_scenes", None)
         if not callable(list_scenes):
             return
         base_ids = self._base_ids()

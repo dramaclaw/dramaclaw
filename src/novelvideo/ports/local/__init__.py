@@ -20,6 +20,7 @@ from novelvideo.ports.model_credentials import (
 from novelvideo.ports.local.audit import NoOpAuditSink
 from novelvideo.ports.local.auth import FileAuthPort, LocalAuthSession
 from novelvideo.ports.local.credit_quote import LocalCreditQuote
+from novelvideo.ports.local.egress_operations import LocalEgressOperations
 from novelvideo.ports.local.lifecycle import NoOpLifecycle
 from novelvideo.ports.local.project import AllowAllProjectAccess, SQLiteProjectRegistry
 from novelvideo.ports.local.release_feed import LocalReleaseFeed
@@ -144,6 +145,7 @@ def register_local_ports() -> None:
         ("model_credentials", LocalModelCredentials()),
         ("authz", authz),
         ("egress", LocalEgress()),
+        ("egress_operations", LocalEgressOperations()),
     )
     for name, port in ports:
         register_port(name, port)

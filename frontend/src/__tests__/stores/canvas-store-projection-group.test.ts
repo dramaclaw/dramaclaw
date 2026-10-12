@@ -234,6 +234,38 @@ describe("canvasStore projection groups", () => {
     expect(group?.style).toMatchObject({ width: 600, height: 264 });
   });
 
+
+  it("removes an empty normal group after deleting all of its members", () => {
+    useCanvasStore.getState().setCanvasData([
+      {
+        id: "a",
+        type: CANVAS_NODE_TYPES.imageEdit,
+        position: { x: 100, y: 100 },
+        width: 260,
+        height: 160,
+        style: { width: 260, height: 160 },
+        data: { imageUrl: "a.png" },
+      },
+      {
+        id: "b",
+        type: CANVAS_NODE_TYPES.imageEdit,
+        position: { x: 420, y: 130 },
+        width: 240,
+        height: 180,
+        style: { width: 240, height: 180 },
+        data: { imageUrl: "b.png" },
+      },
+    ], []);
+
+    const groupId = useCanvasStore.getState().groupNodes(["a", "b"]);
+    expect(groupId).not.toBeNull();
+
+    useCanvasStore.getState().deleteNodes(["a", "b"]);
+
+    expect(useCanvasStore.getState().nodes.some((node) => node.id === groupId)).toBe(false);
+    expect(useCanvasStore.getState().nodes).toEqual([]);
+  });
+
   it("allows normal groups to be ungrouped", () => {
     const group = "group_normal";
     const child = "child_normal";

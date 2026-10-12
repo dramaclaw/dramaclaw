@@ -1,0 +1,144 @@
+{
+  "schema_version": "dramaclaw.workflow-skill.v1",
+  "id": "lego-minifigure-animation-video",
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "乐高小人动画短片",
+  "description": "把主题、角色、场景、冲突或参考素材发展成 LEGO Minifigure 风格动画短片，按剧本大纲、分镜规划、关键元素锚定和单段视频分阶段推进，保持乐高小人比例、积木场景逻辑和跨镜头一致性。",
+  "category": "video",
+  "triggers": {
+    "keywords": [
+      "乐高动画",
+      "LEGO Minifigure",
+      "乐高小人",
+      "积木动画",
+      "玩具定格感",
+      "小人动画短片",
+      "乐高分镜",
+      "积木场景"
+    ],
+    "node_scopes": [
+      "textGeneration",
+      "imageGeneration",
+      "videoGeneration"
+    ]
+  },
+  "input_parameters": [
+    {
+      "id": "total_duration",
+      "label": "目标时长",
+      "type": "single_select",
+      "required": true,
+      "default": "30s",
+      "options": [
+        "15s",
+        "30s",
+        "60s"
+      ]
+    },
+    {
+      "id": "aspect_ratio",
+      "label": "画幅",
+      "type": "single_select",
+      "required": true,
+      "default": "16:9",
+      "options": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3"
+      ]
+    },
+    {
+      "id": "dialogue_language",
+      "label": "对白语言",
+      "type": "single_select",
+      "required": true,
+      "default": "中文",
+      "options": [
+        "中文",
+        "英文",
+        "无对白"
+      ]
+    }
+  ],
+  "allowed_recipe_ids": [
+    "short-film-script-outline",
+    "storyboard-plan",
+    "visual-key-elements",
+    "storyboard-shot-video"
+  ],
+  "planning": {
+    "planning_notes": "【阶段路径】\n1. 开始前根据目标时长、画幅、对白语言、用户输入和画布/上传素材判断入口；需要补充时先向用户确认主题、角色、场景、冲突、情绪、目标受众和素材可用性。\n2. 基于已确认信息生成 Logline 和三幕剧本大纲，并让该阶段产物清晰可审阅。\n3. 基于剧本大纲和已确认信息生成 Key Elements、Sequence → Shot Group → Shot 三层分镜，并让该阶段产物清晰可审阅。\n4. 分镜规划完成后进入视觉关键元素阶段：先根据 Key Elements 列出需要跨镜复用的独立资产，并为每项资产分别创建草稿节点。每个持续出现的主角或重要角色各一个节点；每个会被多个镜头复用的主要场景各一个节点；每个需要保持外观一致的核心道具、载具或生物各一个节点。优先绑定用户已有素材，缺失时才生成对应节点。不得只创建一个笼统的“视觉关键元素”总节点，也不得把多个可独立引用的角色、场景或道具合并成一张总图；只有始终作为同一整体被下游引用的资产才可共用一个节点。让每项关键元素产物清晰可审阅。\n5. 关键元素完成后，按 Shot Group 或单个 Shot 生成视频片段；每个视频片段只引用实际需要的角色、场景和道具元素图，通常跳过上一镜视频引用，只有强连续动作才使用。\n6. 最终剪辑和导出交给画布合成节点处理。\n\n【规划规则】\n开始前确认的画幅、目标时长和对白语言必须贯穿分镜、关键元素和视频阶段。\nShot Group 围绕单一叙事目标，通常 8-15 秒、3-8 个 Shot；Shot 必须服务叙事逻辑，不堆砌无意义运镜。",
+    "prompt_guide": "所有阶段输出使用中文 Markdown，除非用户明确要求英文。\n\n【LEGO 视觉语言】\n核心风格锁定为 LEGO Minifigure animation：官方乐高小人比例、ABS 塑料材质、脸部印刷、积木手部、短腿比例、电影级灯光、清晰高质感玩具摄影观感。禁止真人写实比例、Anime 长身比例、非积木玩具风格和有机写实材质。\n\n【积木场景语言】\n所有场景元素遵循 LEGO building logic：建筑、道路、家具、车辆、树木、水体和道具都由积木几何形态构成；避免真实有机曲面结构。场景描述要写清建筑布局、道路、关键道具位置、时间段和光线方向。\n\n【提示词表达】\n图片提示词只写画面可见内容，重点锁定发型、服装颜色与图案、配饰、脸部印刷、场景空间关系和关键道具位置。视频提示词按 Subject description → Action beats → Scene and environment → Shot scale + camera movement → Lighting effects → style anchoring 组织；对白用 {原始对白}，音效用 <sound effect description>。",
+    "conduct_rules": [
+      "先创建完整工作流草稿；各主要阶段产物必须清晰可审阅，实际继续、重试和执行节奏由画布工作流控制。",
+      "开始前必须确认主题、角色、场景、冲突、情绪、目标受众和已有素材可用性；这些信息作为规划依据，不单独创建额外阶段。",
+      "已确认的时长、画幅、语言和 LEGO 视觉风格必须贯穿分镜、关键元素和视频阶段。",
+      "所有角色必须保持 LEGO Minifigure 比例和官方乐高小人风格；禁止真人写实比例、Anime 比例或非积木玩具风格。",
+      "所有场景必须遵循 LEGO building logic，避免真实有机曲面结构。",
+      "关键元素确认后成为全片外观锚点；后续所有镜头必须复用对应角色和场景元素，不能擅自改变发型、服装、配饰、脸部印刷和场景空间关系。",
+      "关键元素阶段不得只创建一个笼统的“视觉关键元素”节点。每个持续出现的主角或重要角色、每个主要复用场景、每个需要跨镜保持外观一致的核心道具/载具/生物，必须各自独立成节点；不要用一张总图替代多个独立元素。",
+      "如果用户已经上传匹配角色或场景素材，必须优先注册并绑定到对应 Key Element，不要重复生成。",
+      "Shot 设计必须采用 Sequence → Shot Group → Shot 三层结构；每个 Shot Group 围绕一个叙事目标。",
+      "每个 Shot 必须包含景别、运镜、可视化角色动作、完整原始对白和音效说明；禁止在 Shot 层设计屏幕字幕或浮动文字。",
+      "动作描述只能写可视化动作，不得用“陷入沉思”“感到痛苦”等不可见心理状态替代画面。",
+      "视频镜头必须绑定相关角色元素图和场景元素图；上一镜视频只在强连续动作场景中作为参考，通常跳过以避免风格漂移。",
+      "最终剪辑、混音和导出交给画布合成节点处理。"
+    ]
+  },
+  "evaluation": {
+    "rating_bands": [
+      {
+        "score": 5,
+        "description": "流程分阶段清楚、阶段边界完整，LEGO 小人比例、积木场景逻辑、关键元素一致性、三层分镜和最终质检都稳定落入产物。"
+      },
+      {
+        "score": 3,
+        "description": "流程基本完整，但部分阶段缺少素材分析、元素锁定、三层分镜、镜头字段或阶段边界。"
+      },
+      {
+        "score": 1,
+        "description": "跳过阶段、阶段边界混乱、使用真人/动漫比例、场景不符合积木逻辑，或忽略关键元素绑定和字幕规则。"
+      }
+    ],
+    "visual_review_items": [
+      {
+        "name": "LEGO 小人风格",
+        "weight": 1.5,
+        "description": "角色必须是官方 LEGO Minifigure 比例、ABS 塑料质感、脸部印刷、积木手部和短腿比例。"
+      },
+      {
+        "name": "积木场景逻辑",
+        "weight": 1.2,
+        "description": "场景、道具、车辆、道路和自然元素都符合 brick-built 几何结构，不出现写实有机结构。"
+      },
+      {
+        "name": "跨镜一致性",
+        "weight": 1.3,
+        "description": "发型、服装颜色、图案、配饰、脸部印刷和场景空间关系在全部镜头中保持一致。"
+      }
+    ],
+    "text_review_items": [
+      {
+        "name": "阶段边界",
+        "weight": 1.4,
+        "description": "每个主要阶段都有明确产物、输入依赖和下一步，便于画布工作流审阅和推进。"
+      },
+      {
+        "name": "分镜可执行性",
+        "weight": 1.2,
+        "description": "分镜具有 Sequence/Shot Group/Shot 层级，每个镜头字段完整、动作可视化、对白和音效可直接执行。"
+      }
+    ],
+    "quality_threshold": 4,
+    "domain_constraints": [
+      "遵循开始前选择的画幅、目标时长和对白语言。",
+      "角色必须为 LEGO Minifigure 风格，不得使用真人写实或 Anime 比例。",
+      "场景必须遵循 LEGO building logic。",
+      "关键元素确认后必须作为全片锚点复用。",
+      "Shot 层不设计字幕或浮动文字。",
+      "视频片段必须绑定相关角色元素图和场景元素图。"
+    ]
+  }
+}

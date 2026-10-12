@@ -26,12 +26,18 @@ describe("runtime-config", () => {
       ),
     );
 
-    const { authRequired, isCeRuntime, loadRuntimeConfig, phoneOtpEntryVisible } =
-      await import("@/lib/runtime-config");
+    const {
+      authRequired,
+      isCeRuntime,
+      loadRuntimeConfig,
+      mcpDirectCanvasApplyEnabled,
+      phoneOtpEntryVisible,
+    } = await import("@/lib/runtime-config");
     await loadRuntimeConfig();
 
     expect(isCeRuntime()).toBe(true);
     expect(authRequired()).toBe(false);
+    expect(mcpDirectCanvasApplyEnabled()).toBe(false);
     expect(phoneOtpEntryVisible()).toBe(false);
   });
 

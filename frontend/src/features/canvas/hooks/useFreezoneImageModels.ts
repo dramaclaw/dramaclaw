@@ -117,6 +117,16 @@ export function prefetchFreezoneImageModels(project: string): void {
   ensureLoaded(project);
 }
 
+export function getFreezoneImageModelsSnapshot(
+  projectOverride?: string | null,
+): UseFreezoneImageModelsResult {
+  const project =
+    projectOverride !== undefined ? projectOverride : readUrl().project;
+  if (!project) return getNoProjectState();
+  ensureLoaded(project);
+  return states.get(project) ?? getNoProjectState();
+}
+
 function refreshKnownImageModelCatalogs() {
   const projects = new Set(states.keys());
   const currentProject = readUrl().project;
