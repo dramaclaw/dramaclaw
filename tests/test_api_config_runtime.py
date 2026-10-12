@@ -64,6 +64,8 @@ def test_runtime_config_exposes_direct_mcp_canvas_apply(monkeypatch) -> None:
     ],
 )
 def test_runtime_config_exposes_browser_model_asset_base(monkeypatch, raw, expected) -> None:
+    monkeypatch.delenv("BROWSER_MODEL_HF_ENDPOINT", raising=False)
+    monkeypatch.delenv("BROWSER_ORT_WASM_BASE", raising=False)
     from novelvideo.api.routes import config
     from novelvideo.shared import runtime_env
 
@@ -79,3 +81,27 @@ def test_runtime_config_exposes_browser_model_asset_base(monkeypatch, raw, expec
 
     assert response.status_code == 200
     assert response.json()["data"]["browser_model_asset_base"] == expected
+
+
+def test_runtime_config_exposes_public_mirror_sources(monkeypatch) -> None:
+    from novelvideo.api.routes import config
+    from novelvideo.shared import runtime_env
+
+    monkeypatch.setattr(runtime_env, "load_project_dotenv", lambda override=False: None)
+    monkeypatch.delenv("BROWSER_MODEL_ASSET_BASE", raising=False)
+    monkeypatch.setenv("BROWSER_MODEL_HF_ENDPOINT", "https://www.modelscope.cn/models/")
+    monkeypatch.setenv(
+        "BROWSER_ORT_WASM_BASE",
+        "https://registry.npmmirror.com/onnxruntime-web/{version}/files/dist",
+    )
+
+    app = FastAPI()
+    app.include_router(config.router, prefix="/api/v1")
+    data = TestClient(app).get("/api/v1/config").json()["data"]
+
+    assert data["browser_model_asset_base"] is None
+    assert data["browser_model_hf_endpoint"] == "https://www.modelscope.cn/models"
+    assert (
+        data["browser_ort_wasm_base"]
+        == "https://registry.npmmirror.com/onnxruntime-web/{version}/files/dist"
+    )

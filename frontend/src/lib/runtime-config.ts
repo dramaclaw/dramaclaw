@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { z } from "zod";
+import type { BrowserModelSourceConfig } from "@/features/canvas/application/browserModelSource";
 
 export const RuntimeConfigResponse = z.object({
   ok: z.literal(true),
@@ -10,6 +11,8 @@ export const RuntimeConfigResponse = z.object({
     instance_id: z.string().optional(),
     mcp_direct_canvas_apply: z.boolean().optional(),
     browser_model_asset_base: z.string().nullable().optional(),
+    browser_model_hf_endpoint: z.string().nullable().optional(),
+    browser_ort_wasm_base: z.string().nullable().optional(),
   }),
 });
 
@@ -26,16 +29,22 @@ export interface RuntimeConfig {
   phoneOtpEntryVisible: boolean;
   instanceId?: string;
   mcpDirectCanvasApply: boolean;
-  /** 浏览器端推理模型的自托管前缀；null 表示走 transformers.js 默认源。 */
-  browserModelAssetBase: string | null;
+  /** 浏览器端推理模型与 wasm 的来源；全为 null 表示走 transformers.js 默认源。 */
+  browserModelSource: BrowserModelSourceConfig;
 }
+
+const DEFAULT_BROWSER_MODEL_SOURCE: BrowserModelSourceConfig = {
+  assetBase: null,
+  hfEndpoint: null,
+  ortWasmBase: null,
+};
 
 let runtimeConfig: RuntimeConfig = {
   edition: "ee",
   authRequired: true,
   mcpDirectCanvasApply: false,
   phoneOtpEntryVisible: false,
-  browserModelAssetBase: null,
+  browserModelSource: DEFAULT_BROWSER_MODEL_SOURCE,
 };
 
 function fallbackRuntimeConfig(): RuntimeConfig {
@@ -45,14 +54,14 @@ function fallbackRuntimeConfig(): RuntimeConfig {
         authRequired: false,
         phoneOtpEntryVisible: false,
         mcpDirectCanvasApply: false,
-        browserModelAssetBase: null,
+        browserModelSource: DEFAULT_BROWSER_MODEL_SOURCE,
       }
     : {
         edition: "ee",
         authRequired: true,
         phoneOtpEntryVisible: false,
         mcpDirectCanvasApply: false,
-        browserModelAssetBase: null,
+        browserModelSource: DEFAULT_BROWSER_MODEL_SOURCE,
       };
 }
 
@@ -87,7 +96,11 @@ export async function loadRuntimeConfig(): Promise<void> {
       phoneOtpEntryVisible,
       instanceId: parsed.data.instance_id,
       mcpDirectCanvasApply: parsed.data.mcp_direct_canvas_apply ?? false,
-      browserModelAssetBase: parsed.data.browser_model_asset_base || null,
+      browserModelSource: {
+        assetBase: parsed.data.browser_model_asset_base || null,
+        hfEndpoint: parsed.data.browser_model_hf_endpoint || null,
+        ortWasmBase: parsed.data.browser_ort_wasm_base || null,
+      },
     };
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -112,6 +125,6 @@ export function phoneOtpEntryVisible(): boolean {
   return runtimeConfig.phoneOtpEntryVisible;
 }
 
-export function browserModelAssetBase(): string | null {
-  return runtimeConfig.browserModelAssetBase;
+export function browserModelSource(): BrowserModelSourceConfig {
+  return runtimeConfig.browserModelSource;
 }

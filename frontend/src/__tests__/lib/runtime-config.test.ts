@@ -122,7 +122,7 @@ describe("runtime-config", () => {
     expect(phoneOtpEntryVisible()).toBe(false);
   });
 
-  it("exposes the browser model asset base and treats a missing one as null", async () => {
+  it("exposes the browser model sources and treats missing ones as null", async () => {
     const respond = (data: Record<string, unknown>) =>
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ ok: true, data: { edition: "ce", auth_required: false, ...data } }), {
@@ -130,23 +130,35 @@ describe("runtime-config", () => {
           headers: { "content-type": "application/json" },
         }),
       );
+    const none = { assetBase: null, hfEndpoint: null, ortWasmBase: null };
 
-    vi.stubGlobal("fetch", respond({ browser_model_asset_base: "https://cdn.example.com/browser-models" }));
+    vi.stubGlobal(
+      "fetch",
+      respond({
+        browser_model_asset_base: "https://cdn.example.com/browser-models",
+        browser_model_hf_endpoint: "https://www.modelscope.cn/models",
+        browser_ort_wasm_base: "https://registry.npmmirror.com/onnxruntime-web/{version}/files/dist",
+      }),
+    );
     const configured = await import("@/lib/runtime-config");
-    expect(configured.browserModelAssetBase()).toBeNull();
+    expect(configured.browserModelSource()).toEqual(none);
     await configured.loadRuntimeConfig();
-    expect(configured.browserModelAssetBase()).toBe("https://cdn.example.com/browser-models");
+    expect(configured.browserModelSource()).toEqual({
+      assetBase: "https://cdn.example.com/browser-models",
+      hfEndpoint: "https://www.modelscope.cn/models",
+      ortWasmBase: "https://registry.npmmirror.com/onnxruntime-web/{version}/files/dist",
+    });
 
     vi.resetModules();
     vi.stubGlobal("fetch", respond({ browser_model_asset_base: null }));
     const unset = await import("@/lib/runtime-config");
     await unset.loadRuntimeConfig();
-    expect(unset.browserModelAssetBase()).toBeNull();
+    expect(unset.browserModelSource()).toEqual(none);
 
     vi.resetModules();
     vi.stubGlobal("fetch", respond({}));
     const legacy = await import("@/lib/runtime-config");
     await legacy.loadRuntimeConfig();
-    expect(legacy.browserModelAssetBase()).toBeNull();
+    expect(legacy.browserModelSource()).toEqual(none);
   });
 });

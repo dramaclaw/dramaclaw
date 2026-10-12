@@ -23,6 +23,7 @@ import {
 } from "mediabunny";
 import {
   applyBrowserModelSource,
+  type BrowserModelSourceConfig,
   type TransformersEnvLike,
 } from "@/features/canvas/application/browserModelSource";
 import type { DepthCaptureErrorCode } from "@/features/canvas/domain/canvasNodes";
@@ -79,8 +80,8 @@ async function detectGpu(): Promise<boolean> {
   }
 }
 
-async function createEstimator(modelAssetBase: string | null): Promise<DepthEstimator> {
-  applyBrowserModelSource(env as unknown as TransformersEnvLike, modelAssetBase, ctx.navigator);
+async function createEstimator(modelSource: BrowserModelSourceConfig): Promise<DepthEstimator> {
+  applyBrowserModelSource(env as unknown as TransformersEnvLike, modelSource, ctx.navigator);
   const useGpu = await detectGpu();
   const estimator = await pipeline("depth-estimation", DEPTH_MODEL, {
     device: useGpu ? "webgpu" : "wasm",
@@ -101,7 +102,7 @@ function post(message: DepthWorkerOutbound): void {
   ctx.postMessage(message);
 }
 
-async function captureDepth(blob: Blob, modelAssetBase: string | null): Promise<void> {
+async function captureDepth(blob: Blob, modelSource: BrowserModelSourceConfig): Promise<void> {
   const input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
   try {
     const track = await input.getPrimaryVideoTrack();
@@ -144,7 +145,7 @@ async function captureDepth(blob: Blob, modelAssetBase: string | null): Promise<
     );
     await output.start();
 
-    const estimator = await createEstimator(modelAssetBase);
+    const estimator = await createEstimator(modelSource);
     post({ type: "progress", progress: 0 });
 
     let range: DepthRange | null = null;
@@ -197,7 +198,7 @@ ctx.onmessage = (event: MessageEvent<DepthWorkerInbound>) => {
   if (event.data.type !== "run") {
     return;
   }
-  captureDepth(event.data.blob, event.data.modelAssetBase).catch((err: unknown) => {
+  captureDepth(event.data.blob, event.data.modelSource).catch((err: unknown) => {
     post({
       type: "error",
       code: err instanceof WorkerJobError ? err.code : "failed",

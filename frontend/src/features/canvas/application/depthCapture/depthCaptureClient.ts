@@ -3,7 +3,7 @@
 // 深度动作捕捉 worker 的主线程客户端。与 matteClient 的单例不同，这里一个任务一个
 // worker：取消就是 terminate，不用在 worker 里做可中断的推理循环。
 import type { DepthCaptureErrorCode } from "@/features/canvas/domain/canvasNodes";
-import { browserModelAssetBase } from "@/lib/runtime-config";
+import { browserModelSource } from "@/lib/runtime-config";
 import type { DepthWorkerInbound, DepthWorkerOutbound } from "./depthCaptureProtocol";
 
 export class DepthCaptureError extends Error {
@@ -78,7 +78,7 @@ export function runDepthCaptureInWorker(
   worker.postMessage({
     type: "run",
     blob,
-    modelAssetBase: browserModelAssetBase(),
+    modelSource: browserModelSource(),
   } satisfies DepthWorkerInbound);
 
   return {

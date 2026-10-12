@@ -45,7 +45,7 @@ describe("runDepthCaptureInWorker", () => {
     const onProgress = vi.fn();
     const job = runDepthCaptureInWorker(source, onProgress);
     const worker = FakeWorker.instances[0];
-    expect(worker.posted).toEqual([{ type: "run", blob: source, modelAssetBase: null }]);
+    expect(worker.posted).toEqual([{ type: "run", blob: source, modelSource: { assetBase: null, hfEndpoint: null, ortWasmBase: null } }]);
 
     worker.emit({ type: "progress", progress: 0.4 });
     const out = new Blob(["depth"]);
