@@ -2,6 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { spyOnCanvasGetContext } from "@/__tests__/helpers/canvas-context";
+
 import { createPrevizObject } from "@/features/previz/domain/objects";
 import { createDefaultScene, type PrevizScene } from "@/features/previz/domain/scene";
 import { PREVIZ_OVERLAY_KEY } from "@/features/previz/engine/sceneGraph";
@@ -127,7 +129,7 @@ function stubCanvas2d() {
     fillRect: vi.fn(),
     fillText: vi.fn(),
   };
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+  spyOnCanvasGetContext().mockReturnValue(
     context as unknown as CanvasRenderingContext2D,
   );
   return context;

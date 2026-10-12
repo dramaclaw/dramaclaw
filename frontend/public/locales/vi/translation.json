@@ -81,7 +81,268 @@
       "tidal-discovery": {
         "title": "Khám phá vùng nước nông",
         "line": "Nhìn kỹ hơn, một thế giới nhỏ đang ẩn trong làn nước."
+      },
+      "welcome-courtyard": {
+        "title": "Sân Chào Đón",
+        "line": "Đài phun nước nâng nắng sớm, thị trấn đang chờ lần gặp đầu tiên với bạn."
+      },
+      "whispering-meadow": {
+        "title": "Đồng Cỏ Thì Thầm",
+        "line": "Gió lướt qua những đồi xanh, khẽ đưa phương xa đến trước mắt."
+      },
+      "whalesong-skyport": {
+        "title": "Thiên cảng Cá Voi",
+        "line": "Biển mây nâng chú cá voi viễn du, một khúc ca dài lướt qua cánh buồm."
+      },
+      "boundless-sea": {
+        "title": "Biển Vô Tận",
+        "line": "Giương buồm lên, để nắng và gió biển cùng bạn tiến về nơi nước trời giao nhau."
+      },
+      "amber-wilds": {
+        "title": "Đồng Hoang Hổ Phách",
+        "line": "Hoàng hôn tràn qua cổng vòm đá cũ, nhuộm cả cánh đồng thành màu hổ phách."
+      },
+      "startrace-coast": {
+        "title": "Bờ biển Dấu Sao",
+        "line": "Áp vỏ sò vào tai, nghe ráng chiều và con triều trao nhau bí mật."
+      },
+      "starlight-dock": {
+        "title": "Bến Đèn Sao",
+        "line": "Ánh đèn đung đưa trên mặt nước, lời chào từ phương xa đang cập bến."
+      },
+      "whispering-forest": {
+        "title": "Rừng Thì Thầm",
+        "line": "Tiếng sáo len qua kẽ lá, đến cơn gió ngủ trưa cũng bước thật khẽ."
       }
+    },
+    "translationAction": "Dịch",
+    "translationLoading": "Đang dịch…",
+    "translationHide": "Ẩn bản dịch",
+    "translationRetry": "Dịch lại",
+    "translationLanguage": "Dịch sang",
+    "translationLabel": "Bản dịch",
+    "translationError": "Hiện chưa dịch được. Vui lòng thử lại sau.",
+    "residentComingSoon": "Đang làm hoạt ảnh",
+    "playableResident_f01": "Nữ · F01",
+    "playableResident_m01": "Nam · M01",
+    "profileSaveFailed": "Chưa lưu được. Hãy kiểm tra bộ nhớ trình duyệt rồi thử lại.",
+    "profileDescription": "Để bạn bè trong thị trấn biết về bạn.",
+    "defaultNickname": "Lữ khách thị trấn",
+    "saveProfile": "Lưu",
+    "bio": "Giới thiệu",
+    "nickname": "Biệt danh",
+    "changeResident": "Đổi nhân vật",
+    "editProfile": "Sửa hồ sơ",
+    "settings": "Cài đặt",
+    "loadingTitle": "Đến Thị trấn Piko",
+    "loadingPreparing": "Đang chuẩn bị thị trấn, vui lòng chờ…",
+    "loadingReady": "Thị trấn đã sẵn sàng, lên đường thôi!",
+    "loadingFailed": "Chưa tải xong. Hãy kiểm tra mạng rồi thử lại.",
+    "loadingProgress": "Minh họa tiến độ tải thị trấn",
+    "loadingEnter": "Vào Thị trấn Piko",
+    "loadingBack": "Về không gian làm việc",
+    "loadingRetry": "Tải lại",
+    "worldControls": "Điều khiển Thế giới Piko Piko",
+    "returnToWorkbench": "Về không gian làm việc",
+    "chatToggle": "Mở hoặc thu gọn trò chuyện thế giới",
+    "chatToggleUnread": "Mở hoặc thu gọn trò chuyện thế giới. Tin chưa đọc: {{count}}.",
+    "chatTitle": "Trò chuyện thế giới",
+    "chatClose": "Đóng trò chuyện thế giới",
+    "chatEmptyTitle": "Gió chưa mang tin nào đến",
+    "chatEmptyDescription": "Khi thế giới chung mở cửa, lời chào từ thị trấn sẽ hiện ở đây.",
+    "chatMessagesLabel": "Tin nhắn trò chuyện",
+    "chatComposerPlaceholder": "Nói gì đó với mọi người trong thị trấn nhé…",
+    "openResidentSelector": "Chọn nhân vật cư dân",
+    "residentSelectorTitle": "Chọn cư dân của bạn",
+    "residentSelectorDescription": "Chọn nhân vật để chơi. Hoạt ảnh của các cư dân khác đang được chuẩn bị.",
+    "residentSelectorClose": "Đóng chọn cư dân",
+    "residentSelectorConfirm": "Chọn xong",
+    "residentOptionLabel": "Cư dân {{number}}",
+    "chatMockMayorName": "Thị trưởng Piko",
+    "chatMockResidentName": "Cư dân thị trấn",
+    "chatMockYouName": "Tôi",
+    "chatMockMayorWelcome": "Chào mừng đến Sân Chào Đón, gió hôm nay thật dễ chịu.",
+    "chatMockResidentLantern": "Bên đài phun nước vừa sáng lên một chiếc đèn nhắn tin mới.",
+    "chatMockVisitorReply": "Lát nữa mình qua xem nhé!",
+    "mapAriaLabel": "Sân Chào Đón, dùng phím mũi tên để di chuyển",
+    "talkToMayor": "Trò chuyện với thị trưởng",
+    "welcomeTitle": "Thị trưởng · Piko",
+    "welcomePage1": "Chào mừng đến Thị trấn Piko! Tôi là thị trưởng ở đây. Hãy đi chậm lại và tận hưởng thời gian trong sân nhé.",
+    "welcomePage2": "Bạn có thể dạo quanh và trò chuyện với cư dân. Góc trên bên phải cho phép đổi trang phục và biệt danh, muốn trò chuyện thì cứ tìm tôi.",
+    "welcomeNext": "Nghe tiếp",
+    "welcomeDone": "Dạo quanh sân",
+    "residentActions": "Tương tác với {{nickname}}",
+    "viewResidentInfo": "Xem thông tin",
+    "chatWithResident": "Trò chuyện",
+    "simulatedResidentLabel": "Cư dân mô phỏng tạm thời",
+    "emptyResidentBio": "Chưa có giới thiệu.",
+    "chatRequestSent": "Đã gửi lời mời trò chuyện. Vui lòng chờ phản hồi.",
+    "chatTooLong": "Tin nhắn tối đa 80 ký tự",
+    "chatCooldown": "Chờ {{seconds}} giây",
+    "chatSendHint": "Enter để gửi · Shift+Enter để xuống dòng",
+    "chatSend": "Gửi",
+    "privateRequestTitle": "Lời mời trò chuyện riêng",
+    "privateRequestFrom": "{{nickname}} muốn trò chuyện",
+    "privateAccept": "Chấp nhận",
+    "privateDecline": "Từ chối",
+    "privateReopen": "Trò chuyện với {{nickname}}",
+    "privateMessages": "Tin nhắn riêng",
+    "privateMessageInput": "Nhập tin nhắn riêng",
+    "privateReplying": "Đang trả lời…",
+    "privateSendHint": "Enter để gửi · tối đa 80 ký tự",
+    "privateMockGreeting": "Xin chào! Rất vui được gặp bạn ở thị trấn.",
+    "privateMockReply": "Nhận được rồi! Đây là câu trả lời mô phỏng của {{nickname}}, rất vui được trò chuyện với bạn.",
+    "privateUnread": "{{count}} tin chưa đọc",
+    "privateEndChat": "Đóng trò chuyện với {{nickname}}",
+    "privateYou": "Bạn",
+    "music": {
+      "albumTitle": "Nhạc phim gốc Thị trấn Piko",
+      "caption": "{{album}} – {{title}}",
+      "captionEmpty": "Chọn một giai điệu của thị trấn",
+      "followMap": "Phát nhạc theo bản đồ",
+      "playbackError": "Hiện chưa phát được. Hãy chọn một bài để thử lại.",
+      "trackList": "Danh sách nhạc bản đồ",
+      "playTrack": "Phát {{title}}",
+      "pauseTrack": "Tạm dừng {{title}}",
+      "close": "Đóng trình phát nhạc",
+      "nowPlaying": "Đang phát: {{title}}",
+      "nowPlayingMarquee": "Đang phát · {{title}}",
+      "tracks": {
+        "courtyard": "Sân Gió Đậu – Lần đầu gặp gỡ",
+        "courtyardWarm": "Sân Gió Đậu – Phút nghỉ ngơi",
+        "lanternWaterfront": "Bóng đèn trên triều tối",
+        "tidalSeas": "Khúc ca Xiluya",
+        "meadowGate": "Ảo mộng xứ vàng",
+        "forest": "Lời xưa nơi rừng thẳm",
+        "cloudtopFrostmoon": "Trăng sương cuối mây",
+        "amberCanyon": "Ánh tà hổ phách",
+        "skyport": "Khúc ca Lomir"
+      }
+    },
+    "maps": {
+      "town-hall-interior": {
+        "title": "Sảnh Nắng Ấm",
+        "subtitle": "Nắng bên cửa sổ, hơi ấm bên lò sưởi"
+      },
+      "welcome-courtyard": {
+        "title": "Sân Chào Đón",
+        "subtitle": "Gió mang lời chào từ bên suối"
+      },
+      "artisan-market": {
+        "title": "Chợ Thợ Thủ Công",
+        "subtitle": "Hương gỗ và tiếng cười đọng dưới bóng lều"
+      },
+      "lantern-canal-street": {
+        "title": "Phố Kênh Đèn Lồng",
+        "subtitle": "Ánh đèn thức giấc theo tiếng nước"
+      },
+      "wind-garden-gate": {
+        "title": "Cổng Vườn Gió",
+        "subtitle": "Gió từ giàn hoa thổi về phương xa"
+      },
+      "starlight-dock": {
+        "title": "Bến Đèn Sao",
+        "subtitle": "Ánh sáng mờ theo triều tối cập bến"
+      },
+      "whispering-meadow": {
+        "title": "Đồng Cỏ Thì Thầm",
+        "subtitle": "Tiếng gió lướt qua cỏ cao và trời rộng"
+      },
+      "starfall-tidal-wetland": {
+        "title": "Đầm Triều Sao Rơi",
+        "subtitle": "Ánh sao dừng lại giữa những vũng triều"
+      },
+      "cloudtop-slope": {
+        "title": "Đồi Đỉnh Mây",
+        "subtitle": "Bóng mây đi xa, ánh sao tìm đến"
+      },
+      "amber-wilds": {
+        "title": "Đồng Hoang Hổ Phách",
+        "subtitle": "Sóng cỏ vàng gìn giữ tháng năm xưa"
+      },
+      "startrace-coast": {
+        "title": "Bờ biển Dấu Sao",
+        "subtitle": "Triều rút đi, ánh sao còn ở lại"
+      },
+      "changfeng-sea": {
+        "title": "Biển Trường Phong",
+        "subtitle": "Gió dài xa dần, biển trời lặng tiếng"
+      },
+      "boundless-sea": {
+        "title": "Biển Vô Tận",
+        "subtitle": "Cánh buồm nhỏ hướng về nơi biển trời gặp nhau"
+      },
+      "whispering-forest": {
+        "title": "Rừng Thì Thầm",
+        "subtitle": "Tiếng gió nán lại giữa những vòng cây"
+      },
+      "frostmoon-tundra": {
+        "title": "Lãnh Nguyên Trăng Sương",
+        "subtitle": "Ánh trăng khiến băng nguyên lặng lẽ tỏa sáng"
+      },
+      "crimson-canyon": {
+        "title": "Hẻm Núi Ráng Đỏ",
+        "subtitle": "Nắng chiều men theo vách đá đi xa"
+      },
+      "whalesong-skyport": {
+        "title": "Thiên cảng Cá Voi",
+        "subtitle": "Tiếng cá voi vọng về từ sâu trong biển mây"
+      }
+    },
+    "townNpcs": {
+      "town-m01": {
+        "nickname": "A Nghiên",
+        "bio": "Sống ở khu chợ, thích đồ thủ công và nhịp sống láng giềng rộn ràng.",
+        "greeting": "Mình vừa làm xong một món đồ nhỏ. Bạn ghé xưởng xem nhé?"
+      },
+      "town-f01": {
+        "nickname": "Tiểu Đài",
+        "bio": "Yêu những bông hoa trong sân và thích làm quen bạn mới.",
+        "greeting": "Hoa hôm nay nở đẹp quá, ước gì chia cho bạn một làn hương."
+      },
+      "town-m02": {
+        "nickname": "A Xuyên",
+        "bio": "Sống ở Phố Kênh Đèn Lồng, lúc nào cũng mang theo đồ nghề sửa chữa.",
+        "greeting": "Bên sông gió lớn, mình đi xem lại đèn lồng đã treo chắc chưa."
+      },
+      "hall-bookkeeper": {
+        "nickname": "Thư Hòa",
+        "bio": "Trông coi giá sách của đại sảnh, thích sưu tầm chuyện xưa của thị trấn.",
+        "greeting": "Cuốn sách này cất giữ chuyện xưa của thị trấn. Mình cùng lật vài trang nhé?"
+      }
+    },
+    "pets": {
+      "fountain-path-dog": "Đồ Hộp",
+      "northwest-lawn-cat": "Trăng Nhỏ",
+      "hall-sleeping-cat": "Tròn"
+    },
+    "hallNotices": {
+      "hall-noticeboard": "Chào mừng đến thị trấn. Đi mỏi chân rồi thì ngồi bên lò sưởi một lát nhé.",
+      "hall-reading": "Giữa trang sách kẹp một chiếc lá khô, bên cửa sổ lúc này thật hợp để đọc sách.",
+      "hall-reception": "Sổ khách đang mở trên bàn, thị trưởng đang ở ngoài sân đón những người bạn mới."
+    },
+    "navEditor": {
+      "launch": "Gỡ lỗi cảnh",
+      "overlay": "Lớp chỉnh sửa vùng bản đồ",
+      "tools": "Công cụ gỡ lỗi cảnh",
+      "showTools": "Hiện công cụ gỡ lỗi",
+      "hideTools": "Ẩn công cụ gỡ lỗi",
+      "collision": "Vùng va chạm",
+      "occlusion": "Lớp che khuất",
+      "drawCollision": "Vẽ vùng",
+      "drawOcclusion": "Vẽ vùng che khuất",
+      "resume": "Tiếp tục chỉnh sửa",
+      "cancelDrawing": "Hủy vẽ",
+      "trial": "Đi thử",
+      "exportJson": "Xuất JSON",
+      "exit": "Thoát gỡ lỗi",
+      "draftHint": "Bản nháp chỉ dùng để gỡ lỗi. Xuất JSON rồi ghi vào tệp bản đồ thì mới được lưu.",
+      "occlusionHint": "Đường viền che khuất có thể chỉnh sửa và xuất, có hiệu lực sau khi nhập vào bản đồ.",
+      "needThreePoints": "Cần ít nhất ba điểm để khép kín.",
+      "invalidOutline": "Đường viền tự cắt, trùng điểm hoặc suy biến. Hãy hoàn tác điểm và chỉnh lại trước khi khép kín.",
+      "duplicatePoint": "Điểm bị trùng. Hãy chọn vị trí mới.",
+      "fixBeforeTrial": "Hãy sửa lỗi đường viền trước khi đi thử.",
+      "playerBlocked": "Bản nháp chặn vị trí hiện tại của nhân vật. Hãy dời hoặc xóa vùng va chạm đó rồi đi thử."
     }
   },
   "referenceValidation": {
@@ -580,6 +841,11 @@
         "error": "Tải ảnh đại diện thất bại, vui lòng thử lại"
       },
       "setPassword": "Đặt mật khẩu"
+    },
+    "pikoHub": {
+      "play": "Piko một chút",
+      "companion": "Bạn đồng hành",
+      "world": "Thị trấn Piko"
     }
   },
   "organization": {
@@ -2524,7 +2790,9 @@
       "editor": "Người sửa",
       "admin": "Quản trị",
       "owner": "Chủ sở hữu"
-    }
+    },
+    "pikoWorldEntry": "Vào Thế giới Piko Piko",
+    "pikoWorldEntryDragHint": "Nhấp để vào Thế giới Piko Piko; giữ và kéo để di chuyển"
   },
   "assets": {
     "common": {

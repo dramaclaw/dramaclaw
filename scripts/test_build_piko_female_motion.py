@@ -34,7 +34,8 @@ class FemaleMotionTests(unittest.TestCase):
                     for dx,dy in ((0,1),(0,-1),(1,0),(-1,0)):
                         p = x+dx,y+dy
                         if p in opaque and p not in reached:
-                            reached.add(p);queue.append(p)
+                            reached.add(p)
+                            queue.append(p)
                 self.assertTrue({p for p in opaque if p[1]>=32} <= reached, (direction,phase))
 
 

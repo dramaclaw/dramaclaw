@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { MapExit } from "./runtime/map-travel";
+import type { PikoPrivateChatRequest } from "./piko-world-client";
 import { PIKO_MAP_TRANSITION_TIMING } from "./PikoMapTransition";
 import { PikoWorldShell } from "./PikoWorldShell";
 import * as localStorageQuota from "@/lib/localStorageQuota";
@@ -19,6 +20,17 @@ vi.mock("./PikoWorldCanvas", () => ({
   },
 }));
 vi.mock("./PikoResidentSelectorDialog", () => ({ PikoResidentSelectorDialog: () => null }));
+// Private requests arrive over the world socket; the tray test supplies them here.
+const world = vi.hoisted(() => ({ requests: [] as PikoPrivateChatRequest[] }));
+vi.mock("./piko-world-client", async (original) => {
+  const actual = await original<typeof import("./piko-world-client")>();
+  return {
+    ...actual,
+    usePikoWorldConnection: (...args: Parameters<typeof actual.usePikoWorldConnection>) => ({
+      ...actual.usePikoWorldConnection(...args), chatRequests: world.requests,
+    }),
+  };
+});
 vi.mock("./piko-loading", async (original) => ({
   ...await original<typeof import("./piko-loading")>(),
   preloadLoadingImages: () => Promise.resolve(),
@@ -27,7 +39,7 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
   Link: ({ to, children, ...props }: { to: string; children: React.ReactNode }) => <a href={to} {...props}>{children}</a>,
 }));
-beforeEach(() => { vi.useFakeTimers(); map.mounts = 0; travel.prepare.mockReset(); });
+beforeEach(() => { vi.useFakeTimers(); map.mounts = 0; travel.prepare.mockReset(); world.requests = []; });
 afterEach(() => { vi.useRealTimers(); });
 
 it("keeps map inert until automatic entry and covers the viewport with the map title", async () => {
@@ -201,6 +213,8 @@ it("aborts preparation and clears its deadline on unmount", async () => {
 });
 
 it("preserves the same private request tray when switching maps repeatedly", async () => {
+  world.requests = ["m01", "f01"].map(id => ({ id: `request-${id}`, from_character_id: id,
+    from_nickname: id, sent_at: "2026-01-01T00:00:00.000Z" }));
   render(<PikoWorldShell />);
   await enterWorld();
   act(() => vi.advanceTimersByTime(8000));

@@ -46,7 +46,7 @@ function MessageTranslation({ owner, conversation, text, language, setLanguage, 
         <summary aria-label={t("pikoWorld.translationLanguage")}>▾</summary>
         <label>{t("pikoWorld.translationLanguage")}
           <select aria-label={t("pikoWorld.translationLanguage")} value={language} onChange={event => setLanguage(event.target.value as TranslationLanguage)}>
-            <option value="zh">简体中文</option><option value="en">English</option>
+            <option value="zh">简体中文</option><option value="en">English</option>{/* i18n-exempt: language endonyms */}
           </select>
         </label>
       </details>

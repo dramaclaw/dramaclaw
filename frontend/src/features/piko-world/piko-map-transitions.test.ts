@@ -3,9 +3,12 @@
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { enTranslation, zhT, zhTranslation } from "@/__tests__/helpers/i18n-fixtures";
 import {
   isPikoMapId,
   PIKO_MAP_TRANSITIONS,
+  pikoMapSubtitleKey,
+  pikoMapTitleKey,
 } from "./piko-map-transitions";
 
 describe("Piko map transition definitions", () => {
@@ -23,10 +26,19 @@ describe("Piko map transition definitions", () => {
   });
 
   it("keeps the approved Welcome Courtyard copy", () => {
-    expect(PIKO_MAP_TRANSITIONS["welcome-courtyard"]).toMatchObject({
-      title: "初遇庭院",
-      subtitle: "风从泉水边带来问候",
-    });
+    expect(zhT(pikoMapTitleKey("welcome-courtyard"))).toBe("初遇庭院");
+    expect(zhT(pikoMapSubtitleKey("welcome-courtyard"))).toBe("风从泉水边带来问候");
+  });
+
+  it("translates every map title and subtitle in each locale", () => {
+    for (const translation of [zhTranslation, enTranslation] as Array<Record<string, unknown>>) {
+      const maps = (translation.pikoWorld as { maps: Record<string, Record<string, string>> }).maps;
+      expect(Object.keys(maps).sort()).toEqual(Object.keys(PIKO_MAP_TRANSITIONS).sort());
+      for (const copy of Object.values(maps)) {
+        expect(copy.title).toBeTruthy();
+        expect(copy.subtitle).toBeTruthy();
+      }
+    }
   });
 
   it("narrows only known map ids", () => {

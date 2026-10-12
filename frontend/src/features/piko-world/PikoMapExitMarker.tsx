@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { PIKO_MAP_TRANSITIONS } from "./piko-map-transitions";
+import { pikoMapTitleKey } from "./piko-map-transitions";
 import type { PikoExitMarkerDefinition } from "./piko-map-connections";
 import type { PikoPoint } from "./runtime/navigation-geometry";
 import type { PikoViewportFit } from "./runtime/viewport-fit";
@@ -16,7 +16,7 @@ export function PikoMapExitMarker({ definition, fit, player, onActivate }: {
 }) {
   const { t } = useTranslation();
   if (fit.scale <= 0) return null;
-  const title = PIKO_MAP_TRANSITIONS[definition.targetMapId].title;
+  const title = t(pikoMapTitleKey(definition.targetMapId));
   const near = Math.hypot(player.x - definition.position.x, player.y - definition.position.y) <= (definition.labelDistance ?? 220);
 
   return (

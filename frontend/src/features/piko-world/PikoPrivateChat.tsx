@@ -66,7 +66,7 @@ function PrivateConversation({ peer, messages, ownCharacterId, ownNickname, onOp
   peer: PikoPrivateChatPeer;
   messages: PikoPrivateChatMessage[];
   ownCharacterId: string;
-  ownNickname: string;
+  ownNickname?: string;
   onOpenChange: (characterId: string, open: boolean) => void;
   onSend: (characterId: string, body: string) => boolean;
   onEnd: (characterId: string) => boolean;
@@ -142,7 +142,7 @@ function PrivateConversation({ peer, messages, ownCharacterId, ownNickname, onOp
             return <article key={message.id}
               className={`flex w-fit min-w-0 max-w-[88%] flex-col gap-1 ${mine ? "self-end items-end" : "self-start items-start"}`}>
               <div className="flex items-center gap-2 px-1 text-[10px] leading-4 text-amber-950/55">
-                <span className="font-medium">{mine ? ownNickname : peer.nickname}</span>
+                <span className="font-medium">{mine ? ownNickname ?? t("pikoWorld.privateYou") : peer.nickname}</span>
                 <time>{new Date(message.sent_at).toLocaleTimeString([], {
                   hour: "2-digit", minute: "2-digit", hour12: false,
                 })}</time>
@@ -173,7 +173,7 @@ function PrivateConversation({ peer, messages, ownCharacterId, ownNickname, onOp
   </>;
 }
 
-export function PikoPrivateChat({ active, onOpenChange, ownNickname = "你",
+export function PikoPrivateChat({ active, onOpenChange, ownNickname,
   ownCharacterId = "", requests = [], peers = [], messages = [], onRespond,
   onSend, onEnd }: {
   active: boolean;

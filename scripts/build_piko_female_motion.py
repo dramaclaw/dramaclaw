@@ -4,7 +4,7 @@
 from collections import deque
 from pathlib import Path
 import json
-from PIL import Image, ImageDraw
+from PIL import Image
 from piko_leg_rig import paint_walk
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -2571,6 +2571,156 @@
       "saveError": "Could not save. Please try again.",
       "accessories": "Accessories",
       "confirm": "Confirm"
+    },
+    "privateYou": "You",
+    "music": {
+      "albumTitle": "Piko Town Original Soundtrack",
+      "caption": "{{album}} – {{title}}",
+      "captionEmpty": "Pick a town melody",
+      "followMap": "Follow map music",
+      "playbackError": "Playback is unavailable right now. Select a track to try again.",
+      "trackList": "Map music tracks",
+      "playTrack": "Play {{title}}",
+      "pauseTrack": "Pause {{title}}",
+      "close": "Close music player",
+      "nowPlaying": "Now playing: {{title}}",
+      "nowPlayingMarquee": "Now playing · {{title}}",
+      "tracks": {
+        "courtyard": "Windrest Courtyard – First Meeting",
+        "courtyardWarm": "Windrest Courtyard – A Moment's Rest",
+        "lanternWaterfront": "Lantern Light on the Evening Tide",
+        "tidalSeas": "Song of Xiluya",
+        "meadowGate": "Fantasy of the Golden Land",
+        "forest": "Old Words of the Deep Forest",
+        "cloudtopFrostmoon": "Frost Moon Beyond the Clouds",
+        "amberCanyon": "Amber Afterglow",
+        "skyport": "Song of Lomir"
+      }
+    },
+    "maps": {
+      "town-hall-interior": {
+        "title": "Warmlight Hall",
+        "subtitle": "Sunlight by the window, warmth by the hearth"
+      },
+      "welcome-courtyard": {
+        "title": "Welcome Courtyard",
+        "subtitle": "The breeze carries greetings from the spring"
+      },
+      "artisan-market": {
+        "title": "Artisan Market",
+        "subtitle": "The scent of wood and laughter settle beneath the awnings"
+      },
+      "lantern-canal-street": {
+        "title": "Lantern Canal Street",
+        "subtitle": "Lamplight wakes along the sound of water"
+      },
+      "wind-garden-gate": {
+        "title": "Wind Garden Gate",
+        "subtitle": "The wind blows from the trellis toward faraway places"
+      },
+      "starlight-dock": {
+        "title": "Starlight Dock",
+        "subtitle": "Faint lights come ashore with the evening tide"
+      },
+      "whispering-meadow": {
+        "title": "Whispering Meadow",
+        "subtitle": "The wind sweeps over tall grass and endless sky"
+      },
+      "starfall-tidal-wetland": {
+        "title": "Starfall Tidal Wetland",
+        "subtitle": "Starlight rests among the tide pools"
+      },
+      "cloudtop-slope": {
+        "title": "Cloudtop Slope",
+        "subtitle": "Cloud shadows drift away as starlight arrives"
+      },
+      "amber-wilds": {
+        "title": "Amber Wilds",
+        "subtitle": "Golden waves of grass keep watch over old times"
+      },
+      "startrace-coast": {
+        "title": "Startrace Coast",
+        "subtitle": "The tide recedes; the starlight remains"
+      },
+      "changfeng-sea": {
+        "title": "Changfeng Sea",
+        "subtitle": "The long wind fades; sea and sky fall silent"
+      },
+      "boundless-sea": {
+        "title": "Boundless Sea",
+        "subtitle": "A small sail heads for the edge of sea and sky"
+      },
+      "whispering-forest": {
+        "title": "Whispering Forest",
+        "subtitle": "The wind lingers among the tree rings"
+      },
+      "frostmoon-tundra": {
+        "title": "Frostmoon Tundra",
+        "subtitle": "Moonlight sets the ice fields quietly aglow"
+      },
+      "crimson-canyon": {
+        "title": "Crimson Canyon",
+        "subtitle": "Evening light travels along the canyon walls"
+      },
+      "whalesong-skyport": {
+        "title": "Whalesong Skyport",
+        "subtitle": "Whale song rises from deep within the sea of clouds"
+      }
+    },
+    "townNpcs": {
+      "town-m01": {
+        "nickname": "Ayan",
+        "bio": "Lives in the market and loves handicrafts and the bustle of neighborhood life.",
+        "greeting": "I just finished a little trinket. Want to come see the workshop?"
+      },
+      "town-f01": {
+        "nickname": "Xiaotai",
+        "bio": "Loves the flowers in the courtyard and meeting new friends.",
+        "greeting": "The flowers are lovely today. I wish I could share a wisp of their scent with you."
+      },
+      "town-m02": {
+        "nickname": "Achuan",
+        "bio": "Lives on Lantern Canal Street and always carries a repair kit.",
+        "greeting": "It's windy by the river. I'd better check that the lanterns are hung securely."
+      },
+      "hall-bookkeeper": {
+        "nickname": "Shuhe",
+        "bio": "Looks after the hall's bookshelves and collects the town's old stories.",
+        "greeting": "This book holds the town's old stories. Shall we flip through a few pages together?"
+      }
+    },
+    "pets": {
+      "fountain-path-dog": "Tin Can",
+      "northwest-lawn-cat": "Little Moon",
+      "hall-sleeping-cat": "Roly"
+    },
+    "hallNotices": {
+      "hall-noticeboard": "Welcome to town. If your feet are tired, sit by the hearth for a while.",
+      "hall-reading": "A dried leaf is pressed between the pages. The window seat is perfect for reading right now.",
+      "hall-reception": "The guest book lies open on the desk. The mayor is out in the courtyard welcoming new friends."
+    },
+    "navEditor": {
+      "launch": "Scene debug",
+      "overlay": "Map region editing layer",
+      "tools": "Scene debug tools",
+      "showTools": "Show debug tools",
+      "hideTools": "Hide debug tools",
+      "collision": "Colliders",
+      "occlusion": "Occluders",
+      "drawCollision": "Draw region",
+      "drawOcclusion": "Draw occluder",
+      "resume": "Resume editing",
+      "cancelDrawing": "Cancel drawing",
+      "trial": "Test walk",
+      "exportJson": "Export JSON",
+      "exit": "Exit debug",
+      "draftHint": "Drafts are for debugging only. Export the JSON and write it into the map files to save.",
+      "occlusionHint": "Occluder outlines can be edited and exported. They take effect once imported into the map.",
+      "needThreePoints": "At least three points are needed to close the outline.",
+      "invalidOutline": "The outline crosses itself, repeats a point or is degenerate. Undo points and adjust before closing.",
+      "duplicatePoint": "That point already exists. Pick a new position.",
+      "fixBeforeTrial": "Fix the outline problems before the test walk.",
+      "playerBlocked": "The draft blocks the character's current position. Move or delete that collider before the test walk."
     }
   },
   "project": {

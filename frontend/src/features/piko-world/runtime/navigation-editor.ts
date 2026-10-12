@@ -4,10 +4,10 @@ export function navigationIssues(nav: PikoNavigation, width = 2048, height = 115
   const issues: string[] = [];
   const ids = new Set<string>();
   for (const region of [...nav.walkableAreas, ...nav.colliders]) {
-    if (ids.has(region.id)) issues.push(`${region.id}：名称重复`);
+    if (ids.has(region.id)) issues.push(`${region.id}: duplicate id`);
     ids.add(region.id);
     const p = region.points;
-    if (p.some(v => !Number.isFinite(v.x) || !Number.isFinite(v.y) || v.x < 0 || v.y < 0 || v.x > width || v.y > height)) issues.push(`${region.id}：节点超出地图`);
+    if (p.some(v => !Number.isFinite(v.x) || !Number.isFinite(v.y) || v.x < 0 || v.y < 0 || v.x > width || v.y > height)) issues.push(`${region.id}: point outside the map`);
     const cross = (a: typeof p[number], b: typeof p[number], c: typeof p[number]) => (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
     const on = (a: typeof p[number], b: typeof p[number], c: typeof p[number]) => cross(a,b,c) === 0 && c.x >= Math.min(a.x,b.x) && c.x <= Math.max(a.x,b.x) && c.y >= Math.min(a.y,b.y) && c.y <= Math.max(a.y,b.y);
     let invalid = false;
@@ -22,7 +22,7 @@ export function navigationIssues(nav: PikoNavigation, width = 2048, height = 115
         if ((cross(a,b,c)*cross(a,b,d)<0 && cross(c,d,a)*cross(c,d,b)<0) || on(a,b,c) || on(a,b,d) || on(c,d,a) || on(c,d,b)) invalid=true;
       }
     }
-    if(invalid || Math.abs(area)<1) issues.push(`${region.id}：轮廓自交、重叠或面积为零`);
+    if(invalid || Math.abs(area)<1) issues.push(`${region.id}: outline self-intersects, overlaps or has zero area`);
   }
   return issues;
 }

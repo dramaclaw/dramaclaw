@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import type { PikoNavigation, PikoOcclusion } from './runtime/map-package-schema';
 import { collisionOnlyDraft, translateRegion, navigationIssues } from './runtime/navigation-editor';
@@ -41,6 +42,7 @@ function createOccluderId(existing: Set<string>, base: string) {
 }
 
 export default function PikoNavigationEditor({ navigation, fit, player, onApply, onEditing, onPlay, occlusion, onOcclusionApply }: Props) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [panelHidden, setPanelHidden] = useState(false);
   const [mode, setMode] = useState<'collision' | 'occlusion'>('collision');
@@ -74,9 +76,9 @@ export default function PikoNavigationEditor({ navigation, fit, player, onApply,
   const cancelDrawing = useCallback(() => {setDrawing(false);setPath([]);setCursor(null);}, []);
 
   const closePath = useCallback(() => {
-    if(path.length<3){setMessage('至少需要三个节点才能闭合。');setPanelHidden(false);return;}
+    if(path.length<3){setMessage(t('pikoWorld.navEditor.needThreePoints'));setPanelHidden(false);return;}
     const errors = navigationIssues({ ...draft, walkableAreas: [], colliders: [{ id: 'outline', kind: 'prop', points: path }] });
-    if (errors.length) { setMessage('轮廓存在交叉、重复或退化，请撤回节点修改后再闭合。'); setPanelHidden(false); return; }
+    if (errors.length) { setMessage(t('pikoWorld.navEditor.invalidOutline')); setPanelHidden(false); return; }
     if (mode === 'collision') {
       const next=copy(draft),id=`prop-${crypto.randomUUID()}`;
       next.colliders.push({id,kind:'prop',points:structuredClone(path)});
@@ -107,12 +109,12 @@ export default function PikoNavigationEditor({ navigation, fit, player, onApply,
       setPanelHidden(true);
       setMessage('');
     }
-  }, [path, mode, draft, occluders, navigation.mapId, onApply, onOcclusionApply, cancelDrawing]);
+  }, [path, mode, draft, occluders, navigation.mapId, onApply, onOcclusionApply, cancelDrawing, t]);
 
   const apply = () => {
     const issues = navigationIssues(draft);
-    if(issues.length) { setMessage('请先修复轮廓问题，再试走。'); return; }
-    if(!canStand(player,draft)) { setMessage('当前角色位置被草稿阻挡。请移开或删除该处碰撞区后再试走。'); return; }
+    if(issues.length) { setMessage(t('pikoWorld.navEditor.fixBeforeTrial')); return; }
+    if(!canStand(player,draft)) { setMessage(t('pikoWorld.navEditor.playerBlocked')); return; }
     onApply(copy(draft)); setEditing(false); onEditing(false); onPlay();
   };
 
@@ -221,15 +223,15 @@ export default function PikoNavigationEditor({ navigation, fit, player, onApply,
   };
 
   return <>
-    {!open && <button className={styles.launch} onClick={openTools}>场景调试</button>}
+    {!open && <button className={styles.launch} onClick={openTools}>{t('pikoWorld.navEditor.launch')}</button>}
     {open && <>
-      <svg ref={svgRef} className={styles.overlay} viewBox="0 0 2048 1152" aria-label="地图区域编辑层"
+      <svg ref={svgRef} className={styles.overlay} viewBox="0 0 2048 1152" aria-label={t('pikoWorld.navEditor.overlay')}
         style={{left:fit.x,top:fit.y,width:2048*fit.scale,height:1152*fit.scale,pointerEvents:editing?'auto':'none',cursor:drawing?'crosshair':undefined}}
         onPointerDownCapture={e=>{
           if(!drawing || e.button!==0)return;
           e.stopPropagation();e.preventDefault();const p=point(e);
           if(path.length>=3 && Math.hypot(p.x-path[0].x,p.y-path[0].y)*fit.scale<=10){closePath();return;}
-          if(path.some(v=>v.x===p.x && v.y===p.y)){setMessage('节点重复，请选择新位置。');return;}
+          if(path.some(v=>v.x===p.x && v.y===p.y)){setMessage(t('pikoWorld.navEditor.duplicatePoint'));return;}
           setPath(v=>[...v,p]);setCursor(p);
         }}
         onPointerMove={e=>{
@@ -268,33 +270,33 @@ export default function PikoNavigationEditor({ navigation, fit, player, onApply,
         <circle cx={player.x} cy={player.y} r={8} fill="none" stroke="#ffe06b" strokeWidth={2/fit.scale}/>
         <circle cx={player.x} cy={player.y} r={2/fit.scale} fill="#ffe06b"/>
       </svg>
-      {panelHidden && <button className={styles.launch} aria-label="显示调试工具" title="显示调试工具" onClick={()=>setPanelHidden(false)}><PanelLeftOpen size={16} aria-hidden="true" /></button>}
-      <section className={styles.panel} aria-label="场景调试工具" hidden={panelHidden}>
+      {panelHidden && <button className={styles.launch} aria-label={t('pikoWorld.navEditor.showTools')} title={t('pikoWorld.navEditor.showTools')} onClick={()=>setPanelHidden(false)}><PanelLeftOpen size={16} aria-hidden="true" /></button>}
+      <section className={styles.panel} aria-label={t('pikoWorld.navEditor.tools')} hidden={panelHidden}>
         {/* Tab bar */}
         <div className={styles.row} style={{gap:4}}>
           <button
             onClick={() => switchMode('collision')} aria-pressed={mode === 'collision'}
             style={{background: mode === 'collision' ? '#0e333c' : undefined, borderColor: mode === 'collision' ? '#00bdcf' : undefined, flex:1}}
-          >碰撞区</button>
+          >{t('pikoWorld.navEditor.collision')}</button>
           <button
             onClick={() => switchMode('occlusion')} aria-pressed={mode === 'occlusion'}
             style={{background: mode === 'occlusion' ? '#0e333c' : undefined, borderColor: mode === 'occlusion' ? '#00bdcf' : undefined, flex:1}}
-          >遮挡层</button>
-          <button className={styles.hideButton} aria-label="隐藏调试工具" title="隐藏调试工具" onClick={()=>setPanelHidden(true)}><PanelLeftClose size={16} aria-hidden="true" /></button>
+          >{t('pikoWorld.navEditor.occlusion')}</button>
+          <button className={styles.hideButton} aria-label={t('pikoWorld.navEditor.hideTools')} title={t('pikoWorld.navEditor.hideTools')} onClick={()=>setPanelHidden(true)}><PanelLeftClose size={16} aria-hidden="true" /></button>
         </div>
 
         <div className={styles.row}>
-          <button className={styles.primary} disabled={drawing} onClick={startDrawing}>{mode === 'collision' ? '开始画区域' : '开始画遮挡区'}</button>
-          {!editing && <button onClick={resumeEditing}>继续编辑</button>}
-          {drawing && <button onClick={cancelDrawing}>取消绘制</button>}
+          <button className={styles.primary} disabled={drawing} onClick={startDrawing}>{t(mode === 'collision' ? 'pikoWorld.navEditor.drawCollision' : 'pikoWorld.navEditor.drawOcclusion')}</button>
+          {!editing && <button onClick={resumeEditing}>{t('pikoWorld.navEditor.resume')}</button>}
+          {drawing && <button onClick={cancelDrawing}>{t('pikoWorld.navEditor.cancelDrawing')}</button>}
         </div>
         <div className={styles.row}>
-          {mode === 'collision' && <button disabled={!editing || drawing} onClick={apply}>试走</button>}
-          <button disabled={drawing} onClick={handleExport}>导出 JSON</button>
-          <button onClick={close}>退出调试</button>
+          {mode === 'collision' && <button disabled={!editing || drawing} onClick={apply}>{t('pikoWorld.navEditor.trial')}</button>}
+          <button disabled={drawing} onClick={handleExport}>{t('pikoWorld.navEditor.exportJson')}</button>
+          <button onClick={close}>{t('pikoWorld.navEditor.exit')}</button>
         </div>
-        <p>草稿仅用于调试，导出 JSON 后写入地图文件才会保存。</p>
-        {mode === 'occlusion' && !onOcclusionApply && <p>遮挡轮廓可编辑和导出，导入地图后生效。</p>}
+        <p>{t('pikoWorld.navEditor.draftHint')}</p>
+        {mode === 'occlusion' && !onOcclusionApply && <p>{t('pikoWorld.navEditor.occlusionHint')}</p>}
 
         {/* Error message */}
         {message && <p role="status" className={styles.error}>{message}</p>}

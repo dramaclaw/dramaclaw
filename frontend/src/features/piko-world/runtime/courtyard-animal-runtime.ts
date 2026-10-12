@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
+import i18n from "i18next";
 import type { createDogWorld } from "./dog-world";
 import { isPetRestVisible } from "./pet-rest-visibility";
 import petAtlases from "./pet-atlases.json";
@@ -102,7 +103,7 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
       heart.visible = false;
       container.addChild(heart);
     }
-    const name = placement.name ? createCharacterName(placement.name, -placement.scale * 900 - 4) : null;
+    const name = placement.nameKey ? createCharacterName(i18n.t(placement.nameKey), -placement.scale * 900 - 4) : null;
     if (name) container.addChild(name);
     const externallyDriven = placement.kind === "dog" ? worldDog : undefined;
     const motion = externallyDriven ?? (placement.kind === "dog" || placement.kind === "cat" ? createPetMotion : createAnimalMotion)(

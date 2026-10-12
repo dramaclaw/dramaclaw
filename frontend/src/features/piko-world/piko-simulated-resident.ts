@@ -5,6 +5,8 @@ import type { PlayablePikoResidentId } from "./piko-residents";
 export const PIKO_SIMULATED_RESIDENT = {
   id: "local-simulation-f01",
   residentId: "f01" as PlayablePikoResidentId,
+  // i18n-exempt-start: test-only fixture, never rendered by the product
   nickname: "小苔",
   bio: "喜欢庭院里的花，也喜欢认识新朋友。",
+  // i18n-exempt-end
 } as const;

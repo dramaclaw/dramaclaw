@@ -34,7 +34,7 @@ it("moves the courtyard resident to the market without duplicates", () => {
   expect(PIKO_TOWN_NPCS.filter(npc => npc.residentId === "f01")).toHaveLength(1);
 });
 
-it.each(PIKO_TOWN_NPCS)("samples $nickname's HD blink directly and resets without destroying the shared atlas", npc => {
+it.each(PIKO_TOWN_NPCS)("samples $id's HD blink directly and resets without destroying the shared atlas", npc => {
   const motion = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() };
   vi.stubGlobal("matchMedia", () => motion);
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);

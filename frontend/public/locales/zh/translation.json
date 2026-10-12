@@ -2571,6 +2571,156 @@
       "saveError": "保存失败，请重试",
       "accessories": "配饰",
       "confirm": "确认"
+    },
+    "privateYou": "你",
+    "music": {
+      "albumTitle": "Piko小镇原声OST",
+      "caption": "《{{album}}》- {{title}}",
+      "captionEmpty": "选择一首小镇旋律",
+      "followMap": "跟随地图音乐",
+      "playbackError": "暂时无法播放，请点击曲目重试。",
+      "trackList": "地图音乐列表",
+      "playTrack": "播放{{title}}",
+      "pauseTrack": "暂停{{title}}",
+      "close": "关闭音乐播放器",
+      "nowPlaying": "正在播放：{{title}}",
+      "nowPlayingMarquee": "正在播放 · {{title}}",
+      "tracks": {
+        "courtyard": "风栖初逢之庭-初见",
+        "courtyardWarm": "风栖初逢之庭-时之憩",
+        "lanternWaterfront": "灯影泊晚潮",
+        "tidalSeas": "汐露娅之歌",
+        "meadowGate": "金色之国的幻想",
+        "forest": "林深旧语",
+        "cloudtopFrostmoon": "云尽霜月",
+        "amberCanyon": "琥珀余晖",
+        "skyport": "洛弥尔之歌"
+      }
+    },
+    "maps": {
+      "town-hall-interior": {
+        "title": "暖光会厅",
+        "subtitle": "窗边有阳光，炉边有暖意"
+      },
+      "welcome-courtyard": {
+        "title": "初遇庭院",
+        "subtitle": "风从泉水边带来问候"
+      },
+      "artisan-market": {
+        "title": "匠作市集",
+        "subtitle": "木香与笑声落在棚影间"
+      },
+      "lantern-canal-street": {
+        "title": "灯河街",
+        "subtitle": "灯火沿着水声醒来"
+      },
+      "wind-garden-gate": {
+        "title": "风庭门",
+        "subtitle": "风从花架吹向远方"
+      },
+      "starlight-dock": {
+        "title": "星灯码头",
+        "subtitle": "微光随晚潮靠岸"
+      },
+      "whispering-meadow": {
+        "title": "低语草甸",
+        "subtitle": "风声漫过高草与长天"
+      },
+      "starfall-tidal-wetland": {
+        "title": "星落潮汐湿地",
+        "subtitle": "星光停在潮池之间"
+      },
+      "cloudtop-slope": {
+        "title": "云顶坡",
+        "subtitle": "云影走远，星光抵达"
+      },
+      "amber-wilds": {
+        "title": "琥珀原野",
+        "subtitle": "金色草浪守着旧时光"
+      },
+      "startrace-coast": {
+        "title": "星痕海岸",
+        "subtitle": "潮水退去，星光仍在"
+      },
+      "changfeng-sea": {
+        "title": "长风海境",
+        "subtitle": "长风渐远，海天无声"
+      },
+      "boundless-sea": {
+        "title": "无垠海域",
+        "subtitle": "小帆驶向海天尽头"
+      },
+      "whispering-forest": {
+        "title": "低语森林",
+        "subtitle": "风声在树环间停留"
+      },
+      "frostmoon-tundra": {
+        "title": "霜月苔原",
+        "subtitle": "月光让冰原安静发亮"
+      },
+      "crimson-canyon": {
+        "title": "赤霞峡谷",
+        "subtitle": "夕光沿着岩壁远行"
+      },
+      "whalesong-skyport": {
+        "title": "鲸歌天港",
+        "subtitle": "鲸歌从云海深处传来"
+      }
+    },
+    "townNpcs": {
+      "town-m01": {
+        "nickname": "阿砚",
+        "bio": "住在市集，喜欢手作和热闹的街坊生活。",
+        "greeting": "刚做好一件小玩意儿，要来工坊看看吗？"
+      },
+      "town-f01": {
+        "nickname": "小苔",
+        "bio": "喜欢庭院里的花，也喜欢认识新朋友。",
+        "greeting": "今天的花开得真好，真想分你一缕花香。"
+      },
+      "town-m02": {
+        "nickname": "阿川",
+        "bio": "住在灯河街，随身带着修补工具。",
+        "greeting": "河边风大，我再去看看灯笼挂牢了没有。"
+      },
+      "hall-bookkeeper": {
+        "nickname": "书禾",
+        "bio": "照看大厅的书架，喜欢收集小镇的旧故事。",
+        "greeting": "这本书里藏着小镇的旧故事，要不要一起翻几页？"
+      }
+    },
+    "pets": {
+      "fountain-path-dog": "罐头",
+      "northwest-lawn-cat": "小月亮",
+      "hall-sleeping-cat": "圆儿"
+    },
+    "hallNotices": {
+      "hall-noticeboard": "欢迎来到小镇。走累了，就在炉边坐一会儿吧。",
+      "hall-reading": "书页里夹着一片干叶，窗边正是读书的好时候。",
+      "hall-reception": "来访簿摊在桌上，镇长正在庭院里迎接新朋友。"
+    },
+    "navEditor": {
+      "launch": "场景调试",
+      "overlay": "地图区域编辑层",
+      "tools": "场景调试工具",
+      "showTools": "显示调试工具",
+      "hideTools": "隐藏调试工具",
+      "collision": "碰撞区",
+      "occlusion": "遮挡层",
+      "drawCollision": "开始画区域",
+      "drawOcclusion": "开始画遮挡区",
+      "resume": "继续编辑",
+      "cancelDrawing": "取消绘制",
+      "trial": "试走",
+      "exportJson": "导出 JSON",
+      "exit": "退出调试",
+      "draftHint": "草稿仅用于调试，导出 JSON 后写入地图文件才会保存。",
+      "occlusionHint": "遮挡轮廓可编辑和导出，导入地图后生效。",
+      "needThreePoints": "至少需要三个节点才能闭合。",
+      "invalidOutline": "轮廓存在交叉、重复或退化，请撤回节点修改后再闭合。",
+      "duplicatePoint": "节点重复，请选择新位置。",
+      "fixBeforeTrial": "请先修复轮廓问题，再试走。",
+      "playerBlocked": "当前角色位置被草稿阻挡。请移开或删除该处碰撞区后再试走。"
     }
   },
   "project": {

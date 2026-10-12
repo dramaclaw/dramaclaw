@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
+import i18n from "i18next";
 import { createLamp } from "./courtyard-lamp";
 import { createCharacterName } from "./character-presentation";
 import { Container, Graphics, Rectangle, Sprite, Texture, type Ticker } from "pixi.js";
@@ -38,7 +39,7 @@ export function createTownHallAmbience(ticker: Ticker, clean: Texture, atlas: Te
   // All four generated frames share the cushion's centre and floor-contact anchor.
   cat.anchor.set(314.5 / 627, 498 / 627);
   cat.width = cat.height = 125;
-  catContainer.addChild(cat, createCharacterName("圆儿", -74));
+  catContainer.addChild(cat, createCharacterName(i18n.t("pikoWorld.pets.hall-sleeping-cat"), -74));
 
   // Foreground lantern cores sit inside the glass, below the metal shade.
   const lamps = [[245, 168], [1795, 177], [1390, 263], [44, 936], [2008, 936]].map(([x, y], index) => {

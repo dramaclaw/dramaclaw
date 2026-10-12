@@ -53,7 +53,8 @@ class ResidentMotionTests(unittest.TestCase):
                     for dx,dy in ((0,1),(0,-1),(1,0),(-1,0)):
                         p=(x+dx,y+dy)
                         if p in opaque and p not in reached:
-                            reached.add(p);queue.append(p)
+                            reached.add(p)
+                            queue.append(p)
                 self.assertTrue({p for p in opaque if p[1]>=hem} <= reached,(direction,phase))
                 self.assertTrue({p for p in opaque if p[1]>=32} <= reached,
                                 ("detached arm or leg",direction,phase))
@@ -79,4 +80,5 @@ class ResidentMotionTests(unittest.TestCase):
                 box=frames[0].crop((0,53,64,58)).getbbox()
                 self.assertGreaterEqual(box[2]-box[0],15)
 
-if __name__=="__main__":unittest.main()
+if __name__=="__main__":
+    unittest.main()

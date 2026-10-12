@@ -9,7 +9,7 @@ const RelativePackagePathSchema = z
   .refine((value) => {
     if (value.startsWith("/") || value.includes("://")) return false;
     return !value.split("/").includes("..");
-  }, "路径必须位于当前地图运行包内");
+  }, "path must stay inside the current map package");
 
 export const PikoPointSchema = z.strictObject({
   x: z.number().finite(),
@@ -89,11 +89,11 @@ export const PikoOccluderSchema = z.strictObject({
     return sum + point.x * next.y - next.x * point.y;
   }, 0);
   if (Math.abs(area) < 1) {
-    context.addIssue({ code: "custom", path: ["outline"], message: "遮挡轮廓不能退化" });
+    context.addIssue({ code: "custom", path: ["outline"], message: "occluder outline must not be degenerate" });
   }
   if (occluder.frame && points.some(point => point.x < 0 || point.y < 0
     || point.x > occluder.frame!.width || point.y > occluder.frame!.height)) {
-    context.addIssue({ code: "custom", path: ["outline"], message: "遮挡轮廓必须位于切片内" });
+    context.addIssue({ code: "custom", path: ["outline"], message: "occluder outline must stay inside its slice" });
   }
 });
 
@@ -105,7 +105,7 @@ export const PikoOcclusionSchema = z.strictObject({
   const ids = new Set<string>();
   occluders.forEach((occluder, index) => {
     if (ids.has(occluder.id)) {
-      context.addIssue({ code: "custom", path: ["occluders", index, "id"], message: "遮挡对象 ID 不能重复" });
+      context.addIssue({ code: "custom", path: ["occluders", index, "id"], message: "occluder IDs must be unique" });
     }
     ids.add(occluder.id);
   });
@@ -151,7 +151,7 @@ export const PikoEnvironmentSchema = z.strictObject({
         phaseSeconds: z.number().finite().optional(),
       }).superRefine((animation, context) => {
         if (animation.sequence?.some(frame => frame >= animation.frames)) {
-          context.addIssue({ code: "custom", path: ["sequence"], message: "序列帧索引不能超出图集帧数" });
+          context.addIssue({ code: "custom", path: ["sequence"], message: "sequence frame index exceeds the atlas frame count" });
         }
       }).optional(),
       reducedMotion: z.enum(["keep", "simplify", "disable"]),
@@ -192,7 +192,7 @@ export const PikoMapPackageSchema = z
       context.addIssue({
         code: "custom",
         path: [documentName, "mapId"],
-        message: `mapId 必须与 manifest 的 ${expectedMapId} 一致`,
+        message: `mapId must match the manifest's ${expectedMapId}`,
       });
     }
   });

@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import {
   PIKO_MAP_TRANSITIONS,
+  pikoMapTitleKey,
   type PikoMapId,
 } from "./piko-map-transitions";
 import type { PikoMapLoadState } from "./PikoWorldCanvas";
@@ -98,7 +99,7 @@ export function PikoMapTransition({
       role="status"
       aria-live="polite"
       aria-label={t("pikoWorld.mapTransitionAnnouncement", {
-        mapName: definition.title,
+        mapName: t(pikoMapTitleKey(mapId)),
       })}
       data-map-id={mapId}
       data-phase={phase}

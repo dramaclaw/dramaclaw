@@ -16,9 +16,9 @@ export const CAT_ROUTE = [
 const DOG_STRIDE_DISTANCE = 32;
 /** Explicit visible stops; route corners behind roofs/trees are transit only. */
 export const DOG_REST_STOPS = [
-  { x: 450, y: 780, name: '西侧钟楼旁开阔步道' },
-  { x: 1650, y: 1050, name: '东南侧开阔步道' },
-  { x: 1185, y: 684, name: '喷泉东南侧步道' },
+  { x: 450, y: 780, name: 'open path beside the west clock tower' },
+  { x: 1650, y: 1050, name: 'open southeast path' },
+  { x: 1185, y: 684, name: 'path southeast of the fountain' },
 ] as const;
 
 /** Directional animation and resting transitions share one clock; blocked steps never advance routes. */
