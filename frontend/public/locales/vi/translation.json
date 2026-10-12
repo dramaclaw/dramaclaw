@@ -6361,13 +6361,15 @@
         "interrupted": "Quá trình bị gián đoạn (trang đã tải lại hoặc đóng). Có thể bắt lại.",
         "retry": "Bắt lại",
         "noWebGpu": "Trình duyệt không hỗ trợ WebGPU nên xử lý sẽ chậm",
+        "queued": "Đang có tác vụ bắt chuyển động chiều sâu khác. Tác vụ này đã vào hàng chờ và sẽ tự bắt đầu",
         "errors": {
           "tooLong": "Không hỗ trợ video dài hơn {{seconds}} giây",
           "noVideoTrack": "Video nguồn không có khung hình dùng được",
           "cannotDecode": "Trình duyệt không giải mã được định dạng video này",
           "cancelled": "Đã hủy xử lý",
           "failed": "Lỗi xử lý",
-          "noProject": "Không tìm thấy dự án hiện tại nên không thể lưu kết quả"
+          "noProject": "Không tìm thấy dự án hiện tại nên không thể lưu kết quả",
+          "alreadyRunning": "Video này vẫn đang được bắt chuyển động chiều sâu. Hãy chờ hoàn tất"
         }
       }
     },

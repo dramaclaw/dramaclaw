@@ -6484,13 +6484,15 @@
         "interrupted": "Processing was interrupted (page reloaded or closed). You can capture again.",
         "retry": "Capture again",
         "noWebGpu": "This browser has no WebGPU, so depth capture will be slow",
+        "queued": "Another depth capture is running. This one is queued and will start automatically",
         "errors": {
           "tooLong": "Videos longer than {{seconds}} seconds are not supported",
           "noVideoTrack": "The source video has no usable frames",
           "cannotDecode": "This browser cannot decode the video format",
           "cancelled": "Processing was cancelled",
           "failed": "Processing error",
-          "noProject": "No current project found, so the result cannot be saved"
+          "noProject": "No current project found, so the result cannot be saved",
+          "alreadyRunning": "Depth capture for this video is still in progress. Wait for it to finish"
         }
       }
     },

@@ -6484,13 +6484,15 @@
         "interrupted": "处理已中断（页面刷新或关闭），可重新捕捉",
         "retry": "重新捕捉",
         "noWebGpu": "当前浏览器不支持 WebGPU，深度动作捕捉会比较慢",
+        "queued": "已有深度动作捕捉在处理，本次已排队，轮到后自动开始",
         "errors": {
           "tooLong": "视频超过 {{seconds}} 秒，暂不支持深度动作捕捉",
           "noVideoTrack": "源视频没有可用的画面",
           "cannotDecode": "浏览器无法解码该视频格式",
           "cancelled": "处理已取消",
           "failed": "处理出错",
-          "noProject": "未找到当前项目，无法保存结果"
+          "noProject": "未找到当前项目，无法保存结果",
+          "alreadyRunning": "这条视频的深度动作捕捉还在处理中，请等它完成"
         }
       }
     },

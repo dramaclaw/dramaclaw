@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { DEPTH_MAX_DURATION_SEC } from "@/features/canvas/application/depthCapture/depthMath";
 import {
+  findActiveDepthCaptureNodeId,
   isDepthCaptureActive,
   startDepthCapture,
 } from "@/features/canvas/application/depthCapture/runDepthCapture";
@@ -45,6 +46,10 @@ export function DepthCaptureBody({ nodeId, state }: { nodeId: string; state: Dep
     const projectId = readUrl().project;
     if (!projectId) {
       toast.error(t("node.videoNode.depthCapture.errors.noProject"));
+      return;
+    }
+    if (findActiveDepthCaptureNodeId(state.sourceVideoUrl)) {
+      toast.error(t("node.videoNode.depthCapture.errors.alreadyRunning"));
       return;
     }
     void startDepthCapture({ nodeId, projectId, sourceVideoUrl: state.sourceVideoUrl });

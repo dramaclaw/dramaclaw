@@ -37,6 +37,7 @@ import {
   runDepthCaptureInWorker,
 } from "@/features/canvas/application/depthCapture/depthCaptureClient";
 import {
+  findActiveDepthCaptureNodeId,
   isDepthCaptureActive,
   startDepthCapture,
 } from "@/features/canvas/application/depthCapture/runDepthCapture";
@@ -134,5 +135,88 @@ describe("startDepthCapture", () => {
     expect(cancel).toHaveBeenCalled();
     expect(uploadFreezoneVideo).not.toHaveBeenCalled();
     expect(isDepthCaptureActive("n1")).toBe(false);
+  });
+
+  it("runs one job at a time and starts the next when the slot frees up", async () => {
+    useCanvasStore.setState({
+      nodes: [
+        { id: "n1", data: {} },
+        { id: "n2", data: {} },
+      ],
+    } as never);
+    const resolvers: Array<() => void> = [];
+    vi.mocked(runDepthCaptureInWorker).mockImplementation(() => ({
+      promise: new Promise((resolve) => {
+        resolvers.push(() =>
+          resolve({ blob: new Blob(["depth"]), width: 2, height: 2, durationMs: 1000 }),
+        );
+      }),
+      cancel: vi.fn(),
+    }));
+    vi.mocked(uploadFreezoneVideo).mockResolvedValue({ url: "https://oss/depth.mp4" } as never);
+
+    const first = startDepthCapture(options);
+    const second = startDepthCapture({
+      nodeId: "n2",
+      projectId: "p1",
+      sourceVideoUrl: "https://oss/other.mp4",
+    });
+    await vi.waitFor(() => expect(runDepthCaptureInWorker).toHaveBeenCalledTimes(1));
+
+    // 排队的任务也算在途：节点不显示「已中断」，同源去重查得到它，但还没取源视频。
+    expect(isDepthCaptureActive("n2")).toBe(true);
+    expect(findActiveDepthCaptureNodeId("https://oss/other.mp4")).toBe("n2");
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    resolvers[0]();
+    await first;
+    await vi.waitFor(() => expect(runDepthCaptureInWorker).toHaveBeenCalledTimes(2));
+    resolvers[1]();
+    await second;
+
+    expect(findActiveDepthCaptureNodeId("https://oss/other.mp4")).toBeNull();
+    expect(isDepthCaptureActive("n2")).toBe(false);
+  });
+
+  it("drops a queued job when its node is deleted without ever starting a worker", async () => {
+    useCanvasStore.setState({
+      nodes: [
+        { id: "n1", data: {} },
+        { id: "n2", data: {} },
+      ],
+    } as never);
+    let finishFirst: () => void = () => {};
+    vi.mocked(runDepthCaptureInWorker).mockImplementation(() => ({
+      promise: new Promise((resolve) => {
+        finishFirst = () =>
+          resolve({ blob: new Blob(["depth"]), width: 2, height: 2, durationMs: 1000 });
+      }),
+      cancel: vi.fn(),
+    }));
+    vi.mocked(uploadFreezoneVideo).mockResolvedValue({ url: "https://oss/depth.mp4" } as never);
+
+    const first = startDepthCapture(options);
+    const queued = startDepthCapture({
+      nodeId: "n2",
+      projectId: "p1",
+      sourceVideoUrl: "https://oss/other.mp4",
+    });
+    await vi.waitFor(() => expect(runDepthCaptureInWorker).toHaveBeenCalledTimes(1));
+
+    useCanvasStore.setState({ nodes: [{ id: "n1", data: {} }] } as never);
+    await queued;
+    expect(isDepthCaptureActive("n2")).toBe(false);
+
+    finishFirst();
+    await first;
+    expect(runDepthCaptureInWorker).toHaveBeenCalledTimes(1);
+
+    // 名额已归还：后面的任务不用等，直接开跑。
+    vi.mocked(runDepthCaptureInWorker).mockReturnValue({
+      promise: Promise.reject(new DepthCaptureError("failed", "boom")),
+      cancel: vi.fn(),
+    });
+    await startDepthCapture(options);
+    expect(runDepthCaptureInWorker).toHaveBeenCalledTimes(2);
   });
 });

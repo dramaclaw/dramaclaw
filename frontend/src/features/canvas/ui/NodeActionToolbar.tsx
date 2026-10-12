@@ -141,7 +141,11 @@ import { separateVideoAudio } from "@/features/canvas/application/videoSeparateA
 import { openHtmlArtifact, readHtmlArtifact, exportHtmlArtifact } from "@/features/html-artifacts/api";
 import { readUrl } from "@/lib/url-params";
 import { DEPTH_MAX_DURATION_SEC } from "@/features/canvas/application/depthCapture/depthMath";
-import { startDepthCapture } from "@/features/canvas/application/depthCapture/runDepthCapture";
+import {
+  findActiveDepthCaptureNodeId,
+  hasActiveDepthCapture,
+  startDepthCapture,
+} from "@/features/canvas/application/depthCapture/runDepthCapture";
 import {
   isVideoCropInFlight,
   requestVideoCropFocus,
@@ -1222,7 +1226,13 @@ export const NodeActionToolbar = memo(
           }),
         );
       }
-      if (!("gpu" in navigator)) {
+      // 同一条源视频还在算就不再开一份：结果一样，只会多占一份排队名额。
+      if (findActiveDepthCaptureNodeId(url)) {
+        throw new Error(t("node.videoNode.depthCapture.errors.alreadyRunning"));
+      }
+      if (hasActiveDepthCapture()) {
+        toast.info(t("node.videoNode.depthCapture.queued"));
+      } else if (!("gpu" in navigator)) {
         toast.info(t("node.videoNode.depthCapture.noWebGpu"));
       }
       const label = t("nodeToolbar.video.motionCapture");
