@@ -1,4 +1,4 @@
-# 互动影游 HTML 导出
+# 互动影游离线 ZIP 导出
 
 试玩与导出共用 `../StoryExperience.tsx`（剧情探索、回溯、全屏）和 `../StoryPlayer.tsx`、`../storyPlayer.css`、`storyRuntimeStore` 和选择点状态机。
 `StoryPlayerOverlay` 只负责创作者外壳（返回画布、故事树、调试控制、统计）。不要再手写一套导出播放器。
@@ -16,4 +16,4 @@
 
 验证：`buildPlayerHtml.test.ts` 检查数据与注入边界；`exportPlayer.runtime.test.ts` 实际执行导出 HTML；`StoryPlayerOverlay.choicePhase.test.tsx` 和运行时测试覆盖共享播放行为。浏览器验证还需检查有声视频、横竖屏切换和热点点击。
 
-实时生成的“从此生成”定位并打开当前片段编辑态，复用节点提示词与视频生成操作；不会自动生成后续剧情。QTE、素材管理、发布运营与完整产品验收留待后续。
+实时生成的“从此生成”定位并打开当前片段编辑态，复用节点提示词与视频生成操作；不会自动生成后续剧情。在线分享发布与版本回滚已实现，见 [发布说明](../../../../../../docs/zh/interactive-story-publication.md)。QTE、完整素材版本平台、服务端运营统计与完整产品验收留待后续。

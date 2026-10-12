@@ -1,6 +1,6 @@
 # 互动影游创作确认、剧本可视化与进度引导实施计划
 
-> 状态：核心功能已实现，进入联调与边界收口；本文按当前工作区代码更新（2026-09-21）。
+> 状态：核心功能已实现，进入联调与边界收口；最近对账 2026-10-12。单元回归通过不代表真实 Agent、媒体或浏览器端到端验收完成。
 >
 > 适用范围：互动影游、互动短剧及互动广告。普通线性广告不进入互动故事流程。
 >
@@ -14,7 +14,7 @@
 | B 大纲落到画布并确认 | 已实现 | 大纲契约、保存/读取/确认、冲突处理、画布方案卡、确认门禁、确认后继续创作及创建关联均已落地 |
 | C 画布剧本总览 | 已实现 | 已提供只读剧本总览、角色/分支/结局展示及缺项提示，并有投影测试 |
 | D 可见创作流水线 | 已实现首版 | 影游与广告分别提供阶段导航，状态由画布证据推导；无可靠判据的阶段保留人工状态 |
-| E 联调与回归 | 进行中 | 后端、前端单元测试和构建已通过；真实 Agent 对话、完整媒体状态及可达性仍待验收 |
+| E 联调与回归 | 进行中 | 本次后端 164 项、前端 369 项定向测试通过；此前构建记录保留，下方区分当前未运行的检查；真实 Agent、完整媒体状态及可达性仍待验收 |
 
 确认门禁已经收口到 `InteractiveStoryService.create()` 的原子写入流程：标准虾导工具、REST 及其他 Service 调用方都不能绕过。存在 `pending`、`needs_revision` 或不可解析的大纲槽时返回 `outline_not_confirmed` 且不推进画布 revision；已确认大纲允许创建并关联为 `linked`。不存在大纲时继续允许兼容旧的直接创建流程。
 
@@ -69,6 +69,8 @@
 - [x] 确认后再修改故事，走现有 Get/Patch/Validate；大纲以 `linked` 状态保留为确认记录，不作为正式故事的第二事实源。
 
 **已修复回归点**：revision 冲突只刷新最新大纲，不再静默重试确认；短广告不足 60 秒时按秒显示；Create 确认门禁已下沉到 Service 原子写入层，标准 Agent、REST 及其他调用方对 `pending/needs_revision` 状态均无法绕过，损坏的大纲槽按 fail-closed 处理。
+
+聊天中针对当前大纲的明确确认也可推进确认流程；只读写当前项目/画布的大纲与关联记录，不将一般赞同或媒体制作授权当作发布授权。真实会话中的确认、修改偏好和失败恢复仍须按阶段 E 验收。
 
 **验收**：保存后刷新可恢复；两个客户端同时编辑不会静默丢改动；创建失败可继续修改并重试；成功创建只产生一棵正式剧情树，且不会触发收费生成。
 
@@ -125,6 +127,44 @@
 - `uv run pytest tests/test_dramaclaw_mcp_progressive.py -q`：71 个测试通过。与其他若干 MCP 文件按特定顺序组合运行时存在插件缓存污染，属于独立的测试隔离问题，不阻塞本次确认门禁验收。
 - `npm run build`：通过；仅保留现有的大 chunk 提示。
 - `git diff --check && git diff --cached --check`：通过。
+
+### 2026-10-12 定向回归记录
+
+本次在当前分支实际执行以下检查；不将历史通过记录视为当前分支的全量验证。
+
+后端命令（164 项通过，8 条依赖弃用警告）：
+
+```bash
+UV_CACHE_DIR=/private/tmp/dramaclaw-pr-uv-cache uv run --offline pytest \
+  tests/test_interactive_story_models.py \
+  tests/test_interactive_story_service.py \
+  tests/test_interactive_story_outline.py \
+  tests/test_interactive_story_stage_progress.py \
+  tests/test_interactive_story_semantics_contract.py \
+  tests/test_api_interactive_stories.py \
+  tests/test_story_publication.py \
+  tests/test_story_review_regressions.py -q
+```
+
+前端命令（在 `frontend/` 执行，38 个文件、369 项通过）：
+
+```bash
+node node_modules/vitest/vitest.mjs run \
+  src/__tests__/features/canvas/story \
+  src/__tests__/features/canvas/buildStoryZip.test.ts \
+  src/__tests__/features/canvas/pending-story-outline.test.ts \
+  src/__tests__/features/canvas/story-stages.test.ts \
+  src/__tests__/features/canvas/story-overview.test.ts \
+  src/__tests__/features/story-publication-panel.test.tsx \
+  src/__tests__/features/published-story-page.test.tsx \
+  src/__tests__/stores/storyRuntimeStore.test.ts \
+  src/__tests__/stores/storyRuntimeStore.save.test.ts \
+  src/__tests__/stores/storyRuntimeStore.exploration.test.ts
+```
+
+覆盖领域契约、大纲与阶段投影、故事 API、发布存储、分支编译/播放、存档、探索回溯和 ZIP 导出；`git diff --check upstream/staging...HEAD` 通过。
+
+尚未执行：全量 `uv run pytest`、完整前端单元测试、当前分支生产构建、远端 PR CI、真实 Agent 会话、真实视频生成及浏览器端到端验收。合并前仍需补齐 UI 截图/演示和上述阶段 E 验收记录。
 
 ## 4. 建议交付顺序与阶段门
 
