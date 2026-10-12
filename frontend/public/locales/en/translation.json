@@ -6872,7 +6872,7 @@
         "hasImageOrAudioRefs": "Unavailable while image/audio assets are referenced",
         "moreThanTwoImages": "Unavailable with more than 2 upstream images"
       },
-      "extendLockReason": "Smart extend only supports Seedance 2.5's all-reference mode",
+      "extendLockReason": "Smart extend always uses Seedance 2.5; the model and mode cannot be changed",
       "extendPlaceholder": "Enter what you want to extend with",
       "modeRestrictedDefault": "This node doesn't support switching generation mode"
     },

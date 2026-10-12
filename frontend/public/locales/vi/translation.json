@@ -6749,7 +6749,7 @@
         "hasImageOrAudioRefs": "Không dùng được khi đang tham chiếu asset ảnh/âm thanh",
         "moreThanTwoImages": "Không dùng được khi phía trên có hơn 2 ảnh"
       },
-      "extendLockReason": "Nối tiếp thông minh chỉ hỗ trợ chế độ tham chiếu toàn năng của Seedance 2.5",
+      "extendLockReason": "Nối tiếp thông minh luôn dùng Seedance 2.5, không thể đổi model hoặc chế độ",
       "extendPlaceholder": "Nhập nội dung cần nối tiếp",
       "modeRestrictedDefault": "Node này không hỗ trợ chuyển chế độ tạo"
     },

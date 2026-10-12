@@ -6872,7 +6872,7 @@
         "hasImageOrAudioRefs": "已引用图片/音频素材时不可用",
         "moreThanTwoImages": "上游图片超过 2 张时不可用"
       },
-      "extendLockReason": "智能续写仅支持 Seedance 2.5 的全能参考模式",
+      "extendLockReason": "智能续写固定使用 Seedance 2.5，不能切换模型或模式",
       "extendPlaceholder": "请输入需要续写的内容",
       "modeRestrictedDefault": "该节点不支持切换生成模式"
     },
