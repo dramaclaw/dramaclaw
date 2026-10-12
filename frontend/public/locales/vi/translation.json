@@ -8415,5 +8415,29 @@
     "confirm": "Xác nhận",
     "saving": "Đang lưu...",
     "resultTitle": "Kết quả cắt ảnh"
+  },
+  "promptPreview": {
+    "title": "Xem trước prompt",
+    "description": "Xem trước prompt mà từng bước pipeline sẽ gửi.",
+    "toggle": "Xem trước prompt",
+    "close": "Đóng xem trước prompt",
+    "resize": "Kéo để đổi độ rộng",
+    "refresh": "Làm mới",
+    "copy": "Sao chép",
+    "step": "Bước pipeline",
+    "target": "Đối tượng",
+    "soon": "chưa hỗ trợ",
+    "loading": "Đang tải…",
+    "loadFailed": "Không tải được bản xem trước prompt.",
+    "unsupported": "Bước này chưa hỗ trợ xem trước.",
+    "needsEpisode": "Hãy mở một tập để xem trước bước này.",
+    "noTargets": "Bước này chưa có gì để xem trước.",
+    "empty": "Chưa dựng được prompt.",
+    "noLastSent": "Bước này chưa gửi prompt nào.",
+    "tab": {
+      "preview": "Sẽ gửi",
+      "lastSent": "Đã gửi lần trước",
+      "inputs": "Nguyên liệu"
+    }
   }
 }

@@ -8416,5 +8416,29 @@
     "aligncenter": "居中",
     "alignright": "右对齐",
     "selectLeaf": "请选择最内层文字元素修改内容，避免覆盖内部排版。"
+  },
+  "promptPreview": {
+    "title": "提示词预览",
+    "description": "预览流水线各步骤将要发送的提示词。",
+    "toggle": "提示词预览",
+    "close": "关闭提示词预览",
+    "resize": "拖动调整宽度",
+    "refresh": "刷新",
+    "copy": "复制",
+    "step": "流水线步骤",
+    "target": "对象",
+    "soon": "暂不支持",
+    "loading": "加载中…",
+    "loadFailed": "无法加载提示词预览。",
+    "unsupported": "该步骤暂不支持预览。",
+    "needsEpisode": "请先打开某一集再预览此步骤。",
+    "noTargets": "该步骤暂无可预览内容。",
+    "empty": "暂时无法生成提示词。",
+    "noLastSent": "该步骤尚未发送过提示词。",
+    "tab": {
+      "preview": "将发送",
+      "lastSent": "上次发送",
+      "inputs": "输入"
+    }
   }
 }
