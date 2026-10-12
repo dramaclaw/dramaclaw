@@ -92,6 +92,18 @@ export function blockoutTone(object: PrevizObject): PrevizBlockoutTone | null {
   return STRUCTURE_SEMANTIC_TYPES.has(object.blockout.semanticType) ? 'structure' : 'piece';
 }
 
+/**
+ * 这件道具画成哪一档灰；null 表示颜色不归这里管（导入的模型带自己的材质）。
+ *
+ * 基础几何体不管是谁摆的都是灰的——「参考图里的颜色会被当成要保留的内容」对手摆的方块
+ * 一样成立。没有白模标记的算 `piece`：它没有语义类别，分不出是不是布景。
+ */
+export function propTone(object: PrevizObject): PrevizBlockoutTone | null {
+  const tone = blockoutTone(object);
+  if (tone !== null) return tone;
+  return object.kind === 'prop' && object.assetFormat === 'primitive' ? 'piece' : null;
+}
+
 export function isBlockoutObject(object: PrevizObject): boolean {
   return (object.kind === 'prop' || object.kind === 'camera') && object.blockout !== undefined;
 }

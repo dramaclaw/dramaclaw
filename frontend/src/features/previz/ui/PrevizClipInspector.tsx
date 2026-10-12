@@ -57,7 +57,16 @@ const AZIMUTH_RANGE = { min: -180, max: 180 } as const;
 
 /** 锚点从低到高。顺序照身体来，下拉里才好按「往上挪一格」读。 */
 const ANCHOR_PARTS = Object.keys(PREVIZ_RIG_ANCHOR_FRACTION) as RigAnchorPart[];
-const MOTIONS: RigMotion[] = ['static', 'orbit', 'push', 'pull'];
+const MOTIONS: RigMotion[] = [
+  'static',
+  'orbit',
+  'arcLeft',
+  'arcRight',
+  'push',
+  'pull',
+  'craneUp',
+  'craneDown',
+];
 const BEARINGS: RigBearing[] = ['front', 'custom'];
 
 /** `Vec3` 里三根姿态角的下标。屏幕上按水平、俯仰、横滚排——先转身再抬头，跟人调机位的顺序一致。 */

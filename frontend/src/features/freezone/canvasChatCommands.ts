@@ -61,6 +61,7 @@ import {
   normalizeCanvasEdgeSemanticKind,
   type CanvasEdgeSemanticKind,
 } from "@/features/freezone/canvasEdgeSemantics";
+import { landNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { deterministicNodeOutputIssue } from "@/features/freezone/workflowQualityGate";
 import {
@@ -4274,6 +4275,13 @@ function* applyCanvasChatCommandsInternal(
                 targetId,
                 normalizeBeatContextAgentPatch(targetNode.data as BeatContextNodeData, data),
               );
+            } else if (targetNode.type === CANVAS_NODE_TYPES.previz && "sceneEdit" in data) {
+              // sceneEdit 是一批操作而不是一个字段：换算成新场景再写，不把它本身存进节点。
+              const { sceneEdit, ...rest } = data as Record<string, unknown>;
+              useCanvasStore.getState().updateNodeData(targetId, {
+                ...rest,
+                ...landNodeAgentSceneEdit(targetId, targetNode.data as Record<string, unknown>, sceneEdit),
+              } as Partial<CanvasNodeData>);
             } else {
               useCanvasStore.getState().updateNodeData(targetId, data);
             }

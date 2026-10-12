@@ -123,12 +123,25 @@ const CLOSEUP_KEYS = [
   'motion',
   'motion_static',
   'motion_orbit',
+  'motion_arcLeft',
+  'motion_arcRight',
   'motion_push',
   'motion_pull',
+  'motion_craneUp',
+  'motion_craneDown',
   'bake',
 ] as const;
 
-const CLOSEUP_PART_KEYS = ['pelvis', 'body', 'chest', 'face', 'head'] as const;
+const CLOSEUP_PART_KEYS = [
+  'feet',
+  'knee',
+  'pelvis',
+  'body',
+  'chest',
+  'shoulder',
+  'face',
+  'head',
+] as const;
 
 /** 摄影机创建对话框。嵌套的四张小表单列，与顶层平铺的键分开比。 */
 const CAMERA_CREATE_KEYS = [

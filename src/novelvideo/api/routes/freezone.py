@@ -13614,6 +13614,7 @@ _NODE_DESIGN_SIZES: dict[str, tuple[float, float]] = {
     "videoStoryNode": (720.0, 360.0),
     "pano360ViewerNode": (900.0, 480.0),
     "threeDWorldNode": (480.0, 360.0),
+    "previzNode": (340.0, 210.0),
 }
 _DEFAULT_NODE_DESIGN_SIZE = (320.0, 200.0)
 

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import type * as THREE from 'three';
 
-import { blockoutTone, type PrevizBlockoutTone } from '../domain/blockout';
+import { propTone, type PrevizBlockoutTone } from '../domain/blockout';
 import { clampToRange, DEG_TO_RAD } from '../domain/camera';
 import type { EvaluatedMotion } from '../domain/evaluate';
 import { PREVIZ_HEIGHT_CM_RANGE } from '../domain/objects';
@@ -113,7 +113,7 @@ export const BLOCKOUT_COLOR: Record<PrevizBlockoutTone, number> = {
   piece: 0xe2e2e2,
 };
 
-/** 白模那一档灰的颜色；`tone` 为 null（手摆的道具）时是道具的分类色。 */
+/** 那一档灰的颜色；`tone` 为 null（模型还没换进来的道具）时是道具的分类色。 */
 export function propToneColor(tone: PrevizBlockoutTone | null): number {
   return tone === null ? KIND_COLOR.prop : BLOCKOUT_COLOR[tone];
 }
@@ -123,7 +123,7 @@ export function propToneColor(tone: PrevizBlockoutTone | null): number {
  * 各说各的。
  */
 export function propColor(prop: PrevizObject): number {
-  return propToneColor(blockoutTone(prop));
+  return propToneColor(propTone(prop));
 }
 
 /**

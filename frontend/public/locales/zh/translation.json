@@ -9027,9 +9027,12 @@
         "target": "目标",
         "anchor": "锚点",
         "part": {
+          "feet": "脚底",
+          "knee": "膝盖",
           "pelvis": "胯部",
           "body": "身体",
           "chest": "胸部",
+          "shoulder": "肩部",
           "face": "面部",
           "head": "头顶"
         },
@@ -9046,8 +9049,12 @@
         "motion": "运镜",
         "motion_static": "固定",
         "motion_orbit": "环绕",
+        "motion_arcLeft": "左弧线",
+        "motion_arcRight": "右弧线",
         "motion_push": "推近",
         "motion_pull": "拉远",
+        "motion_craneUp": "上升",
+        "motion_craneDown": "下降",
         "bake": "转为路径片段"
       },
       "cut": {

@@ -44,7 +44,8 @@ describe("PropLoader with primitive props", () => {
     const model = await loader.load(primitive("cube"));
 
     expect(model).not.toBeNull();
-    expect(deps.buildPrimitive).toHaveBeenCalledWith("cube", null);
+    // 没有白模标记的几何体也是灰的，和白模里摆的东西同一档。
+    expect(deps.buildPrimitive).toHaveBeenCalledWith("cube", "piece");
     expect(deps.loadGltf).not.toHaveBeenCalled();
     expect(deps.loadObj).not.toHaveBeenCalled();
   });
@@ -78,14 +79,13 @@ describe("PropLoader with primitive props", () => {
   it("builds the same shape once per blockout tone", async () => {
     const { loader, deps } = setup();
 
-    await loader.load(primitive("cube"));
     await loader.load(primitive("cube", "wall"));
+    await loader.load(primitive("cube"));
     await loader.load(primitive("cube", "table"));
     await loader.load(primitive("cube", "floor"));
     await loader.load(primitive("cube", "chair"));
 
     expect(deps.buildPrimitive.mock.calls).toEqual([
-      ["cube", null],
       ["cube", "structure"],
       ["cube", "piece"],
     ]);

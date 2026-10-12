@@ -698,7 +698,7 @@ describe('PrevizSceneGraph', () => {
   });
 
   // 白模出图后是给生成模型当参考的：参考图里带颜色，生成模型会把它当成要保留的内容。
-  // 所以白模是灰的，手摆的道具仍是分类色。
+  // 所以白模是灰的；手摆的基础几何体同理（见下一条），只有等模型的占位方块仍是分类色。
   it('paints a blockout prop grey from the first frame, set darker than pieces', () => {
     const three = fakeThree();
     const graph = new PrevizSceneGraph(three, new three.Group());
@@ -720,6 +720,15 @@ describe('PrevizSceneGraph', () => {
     expect(colourOf(wall.id)).toBe(BLOCKOUT_COLOR.structure);
     expect(colourOf(table.id)).toBe(BLOCKOUT_COLOR.piece);
     expect(colourOf(placed.id)).toBe(KIND_COLOR.prop);
+    // 手摆（或 Agent 摆）的基础几何体没有白模标记，也是灰的：占位方块先灰，换进来不跳色。
+    const cube: PrevizProp = {
+      ...(createPrevizObject('prop', scene.objects) as PrevizProp),
+      assetUrl: 'cube',
+      assetFormat: 'primitive',
+    };
+    scene.objects.push(cube);
+    graph.sync(scene);
+    expect(colourOf(cube.id)).toBe(BLOCKOUT_COLOR.piece);
     // 两档都是没有色相的灰，而且布景比里面的东西暗：物件才能从墙和地面上读出来。
     for (const colour of [BLOCKOUT_COLOR.structure, BLOCKOUT_COLOR.piece]) {
       const [red, green, blue] = [colour >> 16, (colour >> 8) & 0xff, colour & 0xff];

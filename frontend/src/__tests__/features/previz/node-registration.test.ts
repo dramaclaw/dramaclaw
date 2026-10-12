@@ -15,6 +15,18 @@ import {
   getMenuNodeDefinitions,
   getUpstreamSpawnTypes,
 } from "@/features/canvas/domain/nodeRegistry";
+import { isAgentCreatableCanvasNodeType } from "@/features/freezone/agentCreatableNodeTypes";
+import { normalizeCanvasCommandCreateNodeData } from "@/features/freezone/canvasCommandNodeData";
+import { buildCanvasNodeActionCatalog } from "@/features/freezone/canvasNodeActionCatalog";
+import {
+  CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+  type CanvasChatCommandEnvelope,
+} from "@/features/freezone/canvasChatCommands";
+import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
+import {
+  buildCommonNodeTypeGuidance,
+  getCanvasNodeSemanticSpec,
+} from "@/features/freezone/canvasNodeSemantics";
 
 describe("previz canvas node registration", () => {
   it("creates a previz node with an empty scene and the default title", () => {
@@ -93,5 +105,69 @@ describe("previz canvas node registration", () => {
       CANVAS_NODE_TYPES.imageGen,
       CANVAS_NODE_TYPES.video,
     ]);
+  });
+});
+
+describe("previz node as seen by the agent", () => {
+  it("lets the agent create one and tells it what the node is for", () => {
+    expect(isAgentCreatableCanvasNodeType(CANVAS_NODE_TYPES.previz)).toBe(true);
+    expect(getCanvasNodeSemanticSpec(CANVAS_NODE_TYPES.previz)?.role).toBe("viewer");
+    expect(buildCommonNodeTypeGuidance()).toContain("previzNode=");
+  });
+
+  it("drops an agent-written scene on create and keeps the display name", () => {
+    // 场景只有编辑器写得对；Agent 塞进来的那份没过校验，落进节点就打不开。
+    const data = normalizeCanvasCommandCreateNodeData(CANVAS_NODE_TYPES.previz, {
+      displayName: "第三场走位",
+      scene: { objects: [] },
+      summary: { objectCount: 9, durationFrames: 1 },
+    } as unknown as Partial<PrevizNodeData>);
+
+    expect(data).toEqual({ displayName: "第三场走位" });
+  });
+
+  it("drops a scene edit on create: there is no scene to edit yet", () => {
+    const data = normalizeCanvasCommandCreateNodeData(CANVAS_NODE_TYPES.previz, {
+      displayName: "迷宫",
+      sceneEdit: { add: [{ kind: "prop", shape: "cube", position: [0, 0, 0] }] },
+    } as unknown as Partial<PrevizNodeData>);
+
+    expect(data).toEqual({ displayName: "迷宫" });
+  });
+
+  it("lets the agent rename the node and edit its scene, and shows it the current objects", () => {
+    const node = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.previz, { x: 0, y: 0 });
+    const catalog = buildCanvasNodeActionCatalog(node);
+
+    expect(catalog.editable_fields).toEqual(["displayName", "sceneEdit"]);
+    expect(catalog.editable_schema.sceneEdit.current_value).toMatchObject({
+      objectCount: 0,
+      primitiveCount: 0,
+      objects: [],
+    });
+  });
+
+  it("rejects a bad scene edit before the user is asked to confirm it", () => {
+    const node = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.previz, { x: 0, y: 0 });
+    const validate = (sceneEdit: unknown) =>
+      validateCanvasChatCommandEnvelopes(
+        [
+          {
+            schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+            commands: [{ type: "update_node_data", node_id: node.id, data: { sceneEdit } }],
+          } as CanvasChatCommandEnvelope,
+        ],
+        [node],
+        [],
+      );
+
+    expect(validate({ add: [{ kind: "prop", shape: "cube", position: [0, 0, 0] }] })).toEqual({
+      ok: true,
+      issues: [],
+    });
+
+    const rejected = validate({ add: [{ kind: "prop", shape: "teapot", position: [0, 0, 0] }] });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.issues[0]?.message).toContain("sceneEdit rejected");
   });
 });

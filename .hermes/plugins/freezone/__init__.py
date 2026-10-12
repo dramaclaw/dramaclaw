@@ -10267,6 +10267,7 @@ _NODE_TYPE_VALUES = [
     "scriptNode",
     "pano360ViewerNode",
     "threeDWorldNode",
+    "previzNode",
     "skillNode",
     "htmlArtifactNode",
 ]
@@ -10282,6 +10283,7 @@ _AGENT_CREATABLE_NODE_TYPE_VALUES = [
     "scriptNode",
     "pano360ViewerNode",
     "threeDWorldNode",
+    "previzNode",
     "skillNode",
     "htmlArtifactNode",
 ]
@@ -10296,7 +10298,15 @@ _NODE_TYPE_DESCRIPTION = (
     "Use textAnnotationNode for ordinary briefs, copy, notes, "
     "prompts, and free-form text. Use scriptNode only for explicit structured script "
     "tables or script-generation workflows. Use threeDWorldNode for 导演世界; "
-    "directorWorldNode is not a valid node type."
+    "directorWorldNode is not a valid node type. Use previzNode for 预演台 "
+    "(3D blocking/previsualization stage); create it empty with at most displayName. "
+    "To read its scene call freezone_get_node_detail and look at "
+    "parameters.sceneEdit.current_value (objects, clips, cuts); to change it send "
+    "update_node_data with data.sceneEdit = {add, update, remove, timeline} as described by "
+    "parameters.sceneEdit.description (primitive props, cameras, characters, lights). "
+    "The same sceneEdit also takes a timeline section for walk paths, follow cameras, "
+    "character motions and cuts, and props may use built-in model library ids. "
+    "Reference-image-to-blockout generation stays with the user."
 )
 
 _NODE_TYPE_SCHEMA = {

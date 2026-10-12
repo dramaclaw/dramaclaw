@@ -522,13 +522,16 @@ describe("PrevizTopDownPicker", () => {
     const { arcs } = captureDraw();
     const tagged = (semanticType: string, x: number) =>
       ({ ...objectAt("prop", x, 0), blockout: { id: semanticType, semanticType } }) as PrevizObject;
-    const objects = [tagged("wall", -2), tagged("table", 2), objectAt("prop", 0, 3)];
+    const primitive = { ...objectAt("prop", 3, 3), assetUrl: "cube", assetFormat: "primitive" } as PrevizObject;
+    const objects = [tagged("wall", -2), tagged("table", 2), objectAt("prop", 0, 3), primitive];
     render(<PrevizTopDownPicker objects={objects} value={null} onPick={vi.fn()} />);
 
     expect(arcs.map((arc) => arc.fillStyle)).toEqual([
       cssHex(BLOCKOUT_COLOR.structure),
       cssHex(BLOCKOUT_COLOR.piece),
       cssHex(KIND_COLOR.prop),
+      // 没有白模标记的基础几何体也是灰的。
+      cssHex(BLOCKOUT_COLOR.piece),
     ]);
   });
 

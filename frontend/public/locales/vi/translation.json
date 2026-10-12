@@ -9000,9 +9000,12 @@
         "target": "Target",
         "anchor": "Anchor",
         "part": {
+          "feet": "Feet",
+          "knee": "Knees",
           "pelvis": "Pelvis",
           "body": "Body",
           "chest": "Chest",
+          "shoulder": "Shoulders",
           "face": "Face",
           "head": "Head"
         },
@@ -9019,8 +9022,12 @@
         "motion": "Move",
         "motion_static": "Static",
         "motion_orbit": "Orbit",
+        "motion_arcLeft": "Arc left",
+        "motion_arcRight": "Arc right",
         "motion_push": "Push in",
         "motion_pull": "Pull out",
+        "motion_craneUp": "Crane up",
+        "motion_craneDown": "Crane down",
         "bake": "Convert to path clip"
       },
       "cut": {

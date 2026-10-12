@@ -12,6 +12,7 @@ import {
 import { getDownstreamSpawnTypes, getNodeDefinition, nodeHasSourceHandle } from "@/features/canvas/domain/nodeRegistry";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import { isAgentExecutableNodeAction } from "@/features/freezone/canvasNodeActionCatalog";
+import { planNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
 import {
   isBeatContextAgentEditablePatch,
   normalizeCanvasCommandCreateNodeData,
@@ -329,6 +330,14 @@ export function validateCanvasChatCommandEnvelopes(
             ));
             if (invalid.length > 0) {
               addIssue(issues, path, `fields are not editable on this node: ${invalid.join(", ")}`);
+            }
+            if (target.type === CANVAS_NODE_TYPES.previz && "sceneEdit" in data) {
+              const plan = planNodeAgentSceneEdit(
+                target.id,
+                target.data as Record<string, unknown>,
+                (data as Record<string, unknown>).sceneEdit,
+              );
+              if (!plan.ok) addIssue(issues, path, `sceneEdit rejected: ${plan.error}`);
             }
             validateModelAndModeFields(
               issues,
