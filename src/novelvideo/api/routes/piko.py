@@ -1,6 +1,8 @@
 """Piko character, realtime world and translation routes."""
+import asyncio
 import inspect
 import logging
+from time import monotonic
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -77,8 +79,14 @@ async def _authenticate_piko_ws(websocket: WebSocket) -> dict[str, Any]:
     return await _verify_browser_session(websocket.cookies.get(AUTH_COOKIE_NAME))
 
 
-# Events that speak for the account or keep it online. Movement stays unchecked:
-# it arrives a dozen times a second and the next heartbeat ends a revoked session.
+# The session behind an open socket is re-checked on the server's clock, whatever
+# the client sends or withholds, and immediately before events that speak for the
+# account. A revoked client therefore cannot stay online by skipping its pings.
+SESSION_RECHECK_SECONDS = 30.0
+# While the auth backend cannot answer, retry this often and tolerate it this long.
+SESSION_RETRY_SECONDS = 5.0
+SESSION_MAX_UNVERIFIED_SECONDS = 120.0
+_MIN_RECEIVE_WAIT_SECONDS = 0.001
 _REVERIFIED_EVENTS = frozenset(
     {
         "ping",
@@ -162,15 +170,35 @@ async def piko_world_ws(websocket: WebSocket) -> None:
             character=character,
             public_task_status=await _public_task_status(user),
         )
+        verified_at = monotonic()
+        recheck_at = verified_at + SESSION_RECHECK_SECONDS
         while True:
-            payload = parse_client_payload(await websocket.receive_text())
+            try:
+                # Never a zero timeout: an overdue recheck must not starve the reads.
+                raw = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=max(recheck_at - monotonic(), _MIN_RECEIVE_WAIT_SECONDS),
+                )
+            except asyncio.TimeoutError:
+                raw = None  # nothing arrived: the recheck below still runs on time
+            payload = parse_client_payload(raw) if raw is not None else None
+            if payload is not None and payload.get("type") == "client.leave":
+                break
+            sensitive = payload is not None and payload.get("type") in _REVERIFIED_EVENTS
+            if sensitive or monotonic() >= recheck_at:
+                if await _session_still_valid(websocket, user_id):
+                    verified_at = monotonic()
+                    recheck_at = verified_at + SESSION_RECHECK_SECONDS
+                else:
+                    # Auth backend outage: nobody can be re-verified. Keep presence
+                    # and movement for a bounded time, but let nothing speak.
+                    if monotonic() - verified_at >= SESSION_MAX_UNVERIFIED_SECONDS:
+                        await websocket.close(code=1013)
+                        break
+                    recheck_at = monotonic() + SESSION_RETRY_SECONDS
+                    if sensitive:
+                        continue
             if payload is not None:
-                if payload.get("type") == "client.leave":
-                    break
-                if payload.get("type") in _REVERIFIED_EVENTS and not (
-                    await _session_still_valid(websocket, user_id)
-                ):
-                    continue
                 if payload.get("type") == "profile.refresh":
                     # The profile was saved over HTTP; the open connection re-reads it
                     # instead of reconnecting, which would end every private chat.

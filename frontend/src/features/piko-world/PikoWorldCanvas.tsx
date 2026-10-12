@@ -45,7 +45,7 @@ import { createTownNpcActor } from "./runtime/town-npc-actor";
 import { DOG_MAPS } from "./runtime/dog-world-routes";
 import { getWorldDog } from "./runtime/dog-world-session";
 import { PikoWelcomeDialog } from "./PikoWelcomeDialog";
-import { addCharacterPresentation } from "./runtime/character-presentation";
+import { addCharacterPresentation, syncCharacterName } from "./runtime/character-presentation";
 import { PIKO_CHARACTER_CURSOR, PIKO_DEFAULT_CURSOR } from "./piko-cursors";
 import { createClickFeedback } from "./runtime/click-feedback";
 import { PIKO_PLAYER_MOTION_COLUMNS, PIKO_PLAYER_WALK_COLUMNS, PIKO_FEMALE_PLAYER_MOTION_SRC, PIKO_MALE_PLAYER_MOTION_SRC, PIKO_PLAYER_SEATED_ART, PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS, PIKO_PLAYER_IDLE_CYCLE_MS, PIKO_PLAYER_SPEED, pikoPlayerIdleFrameAt, type PikoPlayerGender } from "./piko-player";
@@ -197,6 +197,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
       target: { x: number; y: number };
       occlusion: ReturnType<typeof createBakedActorOcclusion>;
       silhouette: ReturnType<typeof createResidentOcclusionSilhouette>;
+      nickname: string;
+      presentation: ReturnType<typeof addCharacterPresentation>;
     }>();
     let playerAccessory: ReturnType<typeof createPlayerAccessory> | null = null;
     let residentActor: ReturnType<typeof createResidentActor> | null = null;
@@ -647,6 +649,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
               if (existing) {
                 existing.target = { x: remote.x, y: remote.y };
                 existing.actor.setFacing(remote.facing);
+                // player.updated renames a character without recreating its actor.
+                syncCharacterName(existing, remote.nickname);
                 if (Math.hypot(existing.actor.container.x - remote.x, existing.actor.container.y - remote.y) > 400) {
                   existing.actor.container.position.set(remote.x, remote.y);
                 }
@@ -706,8 +710,9 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
                 target: state,
                 occlusion: remoteOcclusion,
                 silhouette: remoteSilhouette,
+                nickname: remote.nickname,
+                presentation: addCharacterPresentation(actor.container, remote.nickname, false, 6),
               });
-              addCharacterPresentation(actor.container, remote.nickname, false, 6);
               actor.container.zIndex = actor.container.y;
               world.addChild(
                 actor.container,

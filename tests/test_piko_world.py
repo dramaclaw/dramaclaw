@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -318,8 +319,9 @@ async def test_session_takeover_ends_private_chats_for_the_peer(tmp_path: Path) 
 class ScriptedWebSocket(FakeWebSocket):
     """A socket that replays client frames, running a hook before each one."""
 
-    def __init__(self, script: list) -> None:
+    def __init__(self, script: list, *, then_idle: bool = False) -> None:
         super().__init__()
+        self._then_idle = then_idle
         self.headers: dict[str, str] = {}
         self.query_params: dict[str, str] = {}
         self.cookies = {piko_routes.AUTH_COOKIE_NAME: "cookie"}
@@ -330,6 +332,9 @@ class ScriptedWebSocket(FakeWebSocket):
 
     async def receive_text(self) -> str:
         if not self._script:
+            if self._then_idle:
+                # Stay connected and silent, like a client that stops sending.
+                await asyncio.Event().wait()
             raise WebSocketDisconnect()
         step = self._script.pop(0)
         if callable(step):
@@ -507,3 +512,81 @@ async def test_profile_update_reaches_scene_peers_and_keeps_private_chats(
     assert second_socket.frames[-1]["message"]["from_nickname"] == "小花花"
     await hub.update_profile(sender, nickname="小花花", bio="换了名字")
     assert [frame["type"] for frame in second_socket.frames].count("player.updated") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["player.move", "scene.join"])
+async def test_revoked_client_cannot_stay_online_by_omitting_ping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event_type: str
+) -> None:
+    state = {"revoked": False}
+
+    async def verify(cookie):
+        if state["revoked"]:
+            raise HTTPException(status_code=401, detail="Invalid session")
+        return {"id": "user-a", "username": "alice"}
+
+    hub = install_world_route(monkeypatch, tmp_path, verify)
+    # The recheck is due on the server's clock, not when the client chooses to ping.
+    monkeypatch.setattr(piko_routes, "SESSION_RECHECK_SECONDS", 0.0)
+    frame = '{"type": "%s", "scene_id": "artisan-market", "x": 1, "y": 2}' % event_type
+    socket = ScriptedWebSocket([lambda: state.update(revoked=True), frame, frame])
+
+    await piko_routes.piko_world_ws(socket)  # type: ignore[arg-type]
+
+    assert hub.handled == []
+    assert socket.frames[-1] == {"type": "error", "code": "unauthorized"}
+    assert socket.close_code == 1008
+    assert hub.disconnected
+
+
+@pytest.mark.asyncio
+async def test_silent_connection_is_closed_once_its_session_is_revoked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = {"count": 0}
+
+    async def verify(cookie):
+        calls["count"] += 1
+        if calls["count"] > 2:
+            raise HTTPException(status_code=403, detail="Access denied")
+        return {"id": "user-a", "username": "alice"}
+
+    hub = install_world_route(monkeypatch, tmp_path, verify)
+    monkeypatch.setattr(piko_routes, "SESSION_RECHECK_SECONDS", 0.01)
+    socket = ScriptedWebSocket([], then_idle=True)
+
+    await asyncio.wait_for(piko_routes.piko_world_ws(socket), timeout=5)  # type: ignore[arg-type]
+
+    assert calls["count"] == 3
+    assert socket.close_code == 1008
+    assert hub.disconnected
+
+
+@pytest.mark.asyncio
+async def test_prolonged_auth_outage_ends_the_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = {"down": False}
+
+    async def verify(cookie):
+        if state["down"]:
+            raise HTTPException(status_code=503, detail="Authentication service unavailable")
+        return {"id": "user-a", "username": "alice"}
+
+    hub = install_world_route(monkeypatch, tmp_path, verify)
+    monkeypatch.setattr(piko_routes, "SESSION_RECHECK_SECONDS", 0.0)
+    monkeypatch.setattr(piko_routes, "SESSION_RETRY_SECONDS", 0.0)
+    monkeypatch.setattr(piko_routes, "SESSION_MAX_UNVERIFIED_SECONDS", 0.05)
+    move = '{"type": "player.move", "x": 1, "y": 2, "facing": "south"}'
+    socket = ScriptedWebSocket(
+        [lambda: state.update(down=True), move, move], then_idle=True
+    )
+
+    await asyncio.wait_for(piko_routes.piko_world_ws(socket), timeout=5)  # type: ignore[arg-type]
+
+    # Movement survives a short outage; the connection does not survive a long one.
+    assert [payload["type"] for payload in hub.handled] == ["player.move", "player.move"]
+    assert socket.close_code == 1013
+    assert all(frame.get("code") != "unauthorized" for frame in socket.frames)
+    assert hub.disconnected

@@ -46,6 +46,16 @@ export function addCharacterPresentation(container: Container, name?: string, in
   });
 }
 
+/** Keep an existing actor's label in step with the name its owner last saved. */
+export function syncCharacterName(
+  entry: { nickname: string; presentation: { setName(name: string): void } },
+  nickname: string,
+) {
+  if (entry.nickname === nickname) return;
+  entry.nickname = nickname;
+  entry.presentation.setName(nickname);
+}
+
 /** Shared passive name style for residents and named animals. */
 export function createCharacterName(name: string, y: number) {
   const label = new Text({ text: name, style: {

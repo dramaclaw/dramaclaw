@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { Container, Sprite, Texture } from "pixi.js";
 import { expect, it } from "vitest";
-import { addCharacterPresentation } from "./character-presentation";
+import { addCharacterPresentation, syncCharacterName } from "./character-presentation";
 import { PIKO_CHARACTER_CURSOR } from "../piko-cursors";
 it("reserves interaction hit targets and cursors for interactive characters", () => {
   for (const interactive of [false, true]) {
@@ -65,4 +65,23 @@ it("keeps the hover highlight aligned when sitting changes the body pivot and sc
   expect(highlight.scale.y).toBe(body.scale.y);
   expect(highlight.position.y).toBe(body.position.y);
   container.destroy({ children: true });
+});
+
+it("renames an existing actor's label when its owner saves a new nickname", () => {
+  const body = new Sprite(Texture.WHITE);
+  const container = new Container();
+  container.addChild(new Container(), body);
+  const entry = { nickname: "小叶", presentation: addCharacterPresentation(container, "小叶", false, 6) };
+  const label = container.children.find(child => "text" in child) as unknown as { text: string; visible: boolean };
+  expect(label.text).toBe("小叶");
+
+  syncCharacterName(entry, "改名的小叶");
+
+  expect(entry.nickname).toBe("改名的小叶");
+  expect(label.text).toBe("改名的小叶");
+  expect(label.visible).toBe(true);
+  // Unchanged names leave the label alone on every later frame.
+  label.text = "sentinel";
+  syncCharacterName(entry, "改名的小叶");
+  expect(label.text).toBe("sentinel");
 });
