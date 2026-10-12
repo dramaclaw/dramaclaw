@@ -11110,12 +11110,18 @@ async def freezone_video_omni_gen(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    if body.continuation and not any(
+        item["type"] == "video" for item in reference_items
+    ):
+        raise HTTPException(400, "continuation requires a video reference")
+
     final_prompt = build_freezone_omni_video_prompt(
         user_prompt=body.prompt,
         theme=body.theme,
         camera_template_id=body.camera_template_id,
         marks=[item.model_dump() for item in body.marks],
         reference_items=reference_items,
+        continuation=body.continuation,
     )
     job_id = _new_job_id()
 
@@ -11150,7 +11156,9 @@ async def freezone_video_omni_gen(
             generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode="all_reference",
+            # 智能续写按视频延长任务执行（任务类型发 extend）；计费、目录校验和节点
+            # 历史仍认 requested_gen_mode，也就是全能参考。
+            gen_mode="video_extend" if body.continuation else "all_reference",
             requested_gen_mode=body.gen_mode,
             model_params=model_params,
             request_schema=request_schema,

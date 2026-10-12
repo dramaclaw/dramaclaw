@@ -818,6 +818,11 @@ export interface FreezoneVideoOmniGenPayload extends FreezoneNodeContext {
   model?: string;
   /** 全能参考入口的固定业务模式。 */
   genMode: "allReference";
+  /**
+   * 画布「智能续写」：仍走全能参考入口，但后端按视频延长任务提交给模型
+   * （任务类型与提示词要求同视频延长）。
+   */
+  continuation?: boolean;
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -858,6 +863,7 @@ export async function submitFreezoneVideoOmniGen(
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
         gen_mode: payload.genMode,
+        ...(payload.continuation ? { continuation: true } : {}),
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),

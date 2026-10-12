@@ -516,6 +516,13 @@ def build_freezone_image_to_video_prompt(
     return "\n".join(part for part in parts if part)
 
 
+# 「视频延长」和画布「智能续写」共用同一句要求——两者对厂商来说是同一种任务。
+VIDEO_EXTEND_REQUIREMENT = (
+    "视频延长要求：从输入视频的结尾继续生成，保持主体身份、场景、光线、镜头运动、"
+    "声音与叙事连续，不要重做或编辑输入视频已有内容。"
+)
+
+
 def build_freezone_video_extend_prompt(
     *,
     user_prompt: str,
@@ -527,10 +534,7 @@ def build_freezone_video_extend_prompt(
     template = get_video_camera_template(camera_template_id)
     if template:
         parts.append(f"运镜模板：{template['name']}。{template['prompt']}")
-    parts.append(
-        "视频延长要求：从输入视频的结尾继续生成，保持主体身份、场景、光线、镜头运动、"
-        "声音与叙事连续，不要重做或编辑输入视频已有内容。"
-    )
+    parts.append(VIDEO_EXTEND_REQUIREMENT)
     return "\n".join(part for part in parts if part)
 
 
@@ -581,7 +585,11 @@ def build_freezone_omni_video_prompt(
     camera_template_id: str | None = None,
     marks: list[dict[str, Any]] | None = None,
     reference_items: list[dict[str, Any]] | None = None,
+    continuation: bool = False,
 ) -> str:
+    """continuation：画布「智能续写」。要求与「视频延长」一致，不带全能参考那套措辞
+    （其中「这是视频参考生成新的视频」与续写正相反）。"""
+
     parts = [str(user_prompt or "").strip()]
 
     if theme and theme.strip():
@@ -594,6 +602,10 @@ def build_freezone_omni_video_prompt(
     marks_block = format_video_marks(marks)
     if marks_block:
         parts.append(marks_block)
+
+    if continuation:
+        parts.append(VIDEO_EXTEND_REQUIREMENT)
+        return "\n".join(part for part in parts if part)
 
     parts.append(
         "全能参考模式要求：综合文本、图像、视频、音频、文件和网页链接参考进行统一建模，"

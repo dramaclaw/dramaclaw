@@ -2954,6 +2954,8 @@ export const VideoNode = memo(
               generateAudio,
               model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
+              // 智能续写：后端按视频延长任务提交（任务类型、提示词要求同视频延长）。
+              continuation: isExtendMode,
               modelParams: data.modelParams,
               humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
@@ -3200,6 +3202,7 @@ export const VideoNode = memo(
       durationBounds,
       durationSec,
       extendSubmitPrefix,
+      isExtendMode,
       extendTrimEndMs,
       extendTrimStartMs,
       generateAudio,

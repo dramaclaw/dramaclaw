@@ -1557,6 +1557,13 @@ class FreezoneVideoOmniGenRequest(FreezoneWorkflowMediaLink):
         default="allReference",
         description="全能参考入口的固定业务模式",
     )
+    continuation: bool = Field(
+        default=False,
+        description=(
+            "画布「智能续写」：仍按全能参考计费和校验，但按视频延长任务提交给模型"
+            "（任务类型与提示词要求同视频延长）。需要至少一条视频参考"
+        ),
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
