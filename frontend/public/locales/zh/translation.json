@@ -455,6 +455,11 @@
     }
   },
   "header": {
+    "pikoHub": {
+      "play": "Piko 一下",
+      "companion": "我的搭子",
+      "world": "Piko 小镇"
+    },
     "partyFounding105": "庆祝建党105周年",
     "settings": "设置",
     "settingsWithWarning": "设置，有未配置项",
@@ -2372,6 +2377,202 @@
       "aria": "下载桌面端"
     }
   },
+  "pikoWorld": {
+    "sitDown": "坐下",
+    "taskLabel": {
+      "running": "任务进行中",
+      "completed": "任务完成",
+      "failed": "任务失败",
+      "publicRunning": "作品创作中",
+      "open": "{{status}}，返回创作界面",
+      "unavailable": "原创作位置已不可用，已返回工作台",
+      "openError": "暂时无法打开创作界面，请稍后重试"
+    },
+    "translationAction": "翻译",
+    "translationLoading": "翻译中…",
+    "translationHide": "收起译文",
+    "translationRetry": "重试翻译",
+    "translationLanguage": "翻译为",
+    "translationLabel": "译文",
+    "translationError": "暂时无法翻译，请稍后重试。",
+    "musicToggle": "音乐",
+    "mapTravel": {
+      "retry": "重新加载",
+      "return": "返回上一张地图",
+      "dismiss": "关闭"
+    },
+    "residentComingSoon": "动作制作中",
+    "playableResident_f01": "女生 · F01",
+    "playableResident_m01": "男生 · M01",
+    "profileSaveFailed": "暂时无法保存，请检查浏览器存储空间后重试。",
+    "profileDescription": "让小镇里的朋友认识你。",
+    "defaultNickname": "小镇旅人",
+    "saveProfile": "保存",
+    "bio": "个人简介",
+    "nickname": "昵称",
+    "changeResident": "更换角色",
+    "editProfile": "修改个人信息",
+    "settings": "设置",
+    "loadingScenes": {
+      "welcome-courtyard": {
+        "title": "初遇庭院",
+        "line": "喷泉捧起晨光，小镇正等着与你初次相逢。"
+      },
+      "whispering-meadow": {
+        "title": "低语草甸",
+        "line": "风翻过青绿的山丘，把远方轻轻送到眼前。"
+      },
+      "whalesong-skyport": {
+        "title": "鲸歌空港",
+        "line": "云海托起远航的鲸，一声长歌掠过船帆。"
+      },
+      "boundless-sea": {
+        "title": "无垠海域",
+        "line": "扬起帆，让阳光与海风陪你驶向水天之间。"
+      },
+      "amber-wilds": {
+        "title": "琥珀原野",
+        "line": "夕阳漫过旧石拱门，把整片原野染成琥珀。"
+      },
+      "startrace-coast": {
+        "title": "星痕海岸",
+        "line": "把贝壳贴近耳边，听晚霞与潮汐交换秘密。"
+      },
+      "starlight-dock": {
+        "title": "星灯码头",
+        "line": "灯火在水面摇晃，远行的问候正靠岸。"
+      },
+      "whispering-forest": {
+        "title": "低语森林",
+        "line": "笛声穿过树隙，连午睡的风也放轻了脚步。"
+      },
+      "mountain-observatory": {
+        "title": "云端观测台",
+        "line": "把目光交给望远镜，云海之外还有新的发现。"
+      },
+      "amber-expedition": {
+        "title": "琥珀探险",
+        "line": "展开地图，和伙伴一起寻找下一段小路。"
+      },
+      "frozen-lake-rest": {
+        "title": "冰湖小憩",
+        "line": "捧一杯热饮，让星光陪我们歇歇脚。"
+      },
+      "tidal-discovery": {
+        "title": "浅滩发现",
+        "line": "俯下身看看，清浅的水里也藏着小小世界。"
+      }
+    },
+    "loadingTitle": "前往 Piko 小镇",
+    "loadingPreparing": "正在准备小镇，请稍候…",
+    "loadingReady": "小镇准备好了，出发吧！",
+    "loadingFailed": "加载未完成，请检查网络后重试。",
+    "loadingProgress": "小镇加载进度示意",
+    "loadingEnter": "进入 Piko 小镇",
+    "loadingBack": "返回工作台",
+    "loadingRetry": "重新加载",
+    "worldControls": "Piko Piko 世界控制",
+    "returnToWorkbench": "回到工作台",
+    "chatToggle": "打开或收起世界聊天",
+    "chatToggleUnread": "打开或收起世界聊天，未读消息：{{count}}",
+    "chatTitle": "世界聊天",
+    "chatClose": "关闭世界聊天",
+    "chatEmptyTitle": "风还没有捎来消息",
+    "chatEmptyDescription": "多人世界开放后，这里会出现来自小镇的问候",
+    "chatMessagesLabel": "聊天消息",
+    "chatComposerPlaceholder": "和小镇的大家说点什么吧…",
+    "openResidentSelector": "选择居民角色",
+    "residentSelectorTitle": "选择你的居民",
+    "residentSelectorDescription": "选择你的地图角色，其他居民的动作正在准备中。",
+    "residentSelectorClose": "关闭居民选择",
+    "residentSelectorConfirm": "选好了",
+    "residentOptionLabel": "居民 {{number}}",
+    "chatMockMayorName": "Piko 镇长",
+    "chatMockResidentName": "小镇居民",
+    "chatMockYouName": "我",
+    "chatMockMayorWelcome": "欢迎来到初遇庭院，今天的风很舒服。",
+    "chatMockResidentLantern": "喷泉旁边刚刚亮起了新的留言灯。",
+    "chatMockVisitorReply": "我一会儿过去看看！",
+    "mapAriaLabel": "初遇庭院，可使用方向键移动",
+    "talkToMayor": "与镇长交谈",
+    "welcomeTitle": "镇长 · Piko",
+    "welcomePage1": "欢迎来到 Piko 小镇！我是这里的镇长。放慢脚步，享受庭院里的好时光吧。",
+    "welcomePage2": "你可以四处逛逛，和居民聊聊天。右上角能更换装扮和昵称，想聊天时随时来找我。",
+    "welcomeNext": "继续听听",
+    "welcomeDone": "去庭院逛逛",
+    "mapLoading": "正在加载{{mapName}}…",
+    "mapLoadError": "{{mapName}}加载失败",
+    "mapTransitionAnnouncement": "正在进入{{mapName}}",
+    "residentActions": "与{{nickname}}互动",
+    "viewResidentInfo": "查看信息",
+    "chatWithResident": "聊一聊",
+    "simulatedResidentLabel": "临时模拟居民",
+    "emptyResidentBio": "还没有填写个人简介。",
+    "chatRequestSent": "已发送聊天申请，请等待对方回复",
+    "chatTooLong": "消息最多 80 字",
+    "chatCooldown": "请等待 {{seconds}} 秒",
+    "chatSendHint": "Enter 发送 · Shift+Enter 换行",
+    "chatSend": "发送",
+    "privateRequestTitle": "私聊申请",
+    "privateRequestFrom": "{{nickname}}申请聊天",
+    "privateAccept": "接受",
+    "privateDecline": "拒绝",
+    "privateReopen": "与{{nickname}}的聊天",
+    "privateMessages": "私聊消息",
+    "privateMessageInput": "输入私聊消息",
+    "privateReplying": "对方正在回复…",
+    "privateSendHint": "Enter 发送 · 最多 80 字",
+    "privateMockGreeting": "你好！很高兴在小镇遇见你。",
+    "privateMockReply": "收到啦！这是{{nickname}}的模拟回复，很高兴和你聊天。",
+    "privateUnread": "{{count}} 条未读消息",
+    "privateEndChat": "关闭与{{nickname}}的聊天",
+    "transport": {
+      "sail": "前往无垠海域",
+      "returnShore": "返回星痕海岸",
+      "ascend": "前往鲸歌天港",
+      "enterHall": "进入大厅",
+      "returnSlope": "返回云顶坡"
+    },
+    "onboarding": {
+      "title": "还差一个名字，就到齐啦。",
+      "description": "选一个喜欢的模样，让大家认识你。",
+      "newFriend": "新来的朋友",
+      "appearance": "你的模样",
+      "male": "男生",
+      "female": "女生",
+      "nickname": "昵称",
+      "namePlaceholder": "想让大家怎么称呼你？",
+      "nameHint": "最多 16 个字符，之后可在设置中修改。",
+      "nameError": "请输入 1–16 个字符的昵称。",
+      "saveError": "保存失败，请重试。你的填写内容已保留。",
+      "enter": "开始旅程",
+      "videoError": "邀请影片暂时无法播放，可以重试或跳过。",
+      "videoSlow": "影片加载较慢，你可以继续等待或跳过。",
+      "invitation": "有一封来自小镇的邀请，等你打开。",
+      "retry": "重试",
+      "play": "播放邀请影片",
+      "skipAnimation": "跳过动画",
+      "unmute": "开启声音",
+      "mute": "静音",
+      "join": "你也一起来吧",
+      "skip": "跳过动画",
+      "assetError": "角色画面加载失败，请重试。",
+      "preparing": "正在为你准备一个位置…",
+      "resume": "继续播放",
+      "resumeHint": "点击继续播放，或跳过动画。",
+      "createTitle": "创建角色"
+    },
+    "wardrobe": {
+      "title": "角色装扮",
+      "description": "在这里搭配你喜欢的衣服和配饰。",
+      "clothes": "服装",
+      "base": "当前基础服饰",
+      "unavailable": "服饰暂未开放",
+      "saveError": "保存失败，请重试",
+      "accessories": "配饰",
+      "confirm": "确认"
+    }
+  },
   "project": {
     "create": "创建项目",
     "createCard": "新建项目",
@@ -2388,6 +2589,8 @@
     "dashboardTitle": "项目管理中心",
     "dashboardReturn": "返回项目管理中心",
     "dashboardSubtitle": "管理你的短剧项目和脚本",
+    "pikoWorldEntry": "进入 Piko Piko 世界",
+    "pikoWorldEntryDragHint": "点击进入 Piko Piko 世界，按住可拖动",
     "emptyTitle": "开启你的第一个故事",
     "emptyDescription": "创建项目以开始撰写剧本、生成分镜、制作视频",
     "heroTitle": "开启你的创作之旅",

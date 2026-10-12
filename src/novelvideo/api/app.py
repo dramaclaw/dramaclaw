@@ -441,6 +441,12 @@ def create_app() -> FastAPI:
 
         await director_auto_coordinator.shutdown()
 
+        from novelvideo.piko.backend import world_hub as piko_world_hub
+
+        close_piko_world = getattr(piko_world_hub, "close", None)
+        if close_piko_world is not None:
+            await close_piko_world()
+
         try:
             lifecycle = get_port("lifecycle")
         except PortNotRegistered:

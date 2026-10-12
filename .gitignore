@@ -112,5 +112,9 @@ docs/superpowers/
 # 发布。scripts/build_style_gallery.py 仍会把产物写到这里，属本地中间物。
 /frontend/public/style-gallery/
 
+# Reproducible player art previews and local superseded exports
+/piko-world/art/review/player-*/
+/piko-world/art/archive/
+
 # 预演台模型库本地副本（正式走 CDN，见 previz/domain/modelLibrary.ts）。
 /frontend/public/previz/models/

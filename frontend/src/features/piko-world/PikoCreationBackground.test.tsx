@@ -1,0 +1,27 @@
+import { act, render } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { PikoCreationBackground } from "./PikoCreationBackground";
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+it("overlaps two silent players at the loop seam and pauses both when inactive", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+  const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  let callback: FrameRequestCallback = () => {};
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { callback = cb; return 1; });
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const { container, rerender } = render(<PikoCreationBackground active />);
+  const [a,b] = Array.from(container.querySelectorAll("video"));
+  await act(async () => {});
+  expect(a.muted).toBe(true); expect(b.muted).toBe(true); expect(a.style.opacity).toBe("1");
+  Object.defineProperty(a,"duration",{value:8,configurable:true}); a.currentTime = 6.9;
+  await act(async () => { callback(performance.now()); });
+  const start = performance.now();
+  act(() => callback(start + 600));
+  expect(Number(b.style.opacity)).toBeCloseTo(.5);
+  expect(a.style.opacity).toBe("1");
+  act(() => callback(start + 1200));
+  expect(a.style.opacity).toBe("0"); expect(b.style.opacity).toBe("1");
+  rerender(<PikoCreationBackground active={false} />);
+  expect(a.style.opacity).toBe("0"); expect(b.style.opacity).toBe("0");
+  expect(pause).toHaveBeenCalled(); expect(cancelAnimationFrame).toHaveBeenCalled();
+});

@@ -1,4 +1,89 @@
 {
+  "pikoWorld": {
+    "sitDown": "Ngồi xuống",
+    "taskLabel": {
+      "running": "Tác vụ đang chạy",
+      "completed": "Tác vụ hoàn tất",
+      "failed": "Tác vụ thất bại",
+      "publicRunning": "Đang sáng tạo",
+      "open": "{{status}}. Quay lại sáng tạo",
+      "unavailable": "Nơi sáng tạo ban đầu không còn khả dụng. Đã quay lại không gian làm việc.",
+      "openError": "Không mở được nơi sáng tạo. Vui lòng thử lại."
+    },
+    "musicToggle": "Nhạc",
+    "mapLoading": "Đang tải {{mapName}}…",
+    "mapLoadError": "Không thể tải {{mapName}}",
+    "mapTransitionAnnouncement": "Đang vào {{mapName}}",
+    "mapTravel": {
+      "retry": "Thử lại",
+      "return": "Quay lại bản đồ trước",
+      "dismiss": "Đóng"
+    },
+    "transport": {
+      "sail": "Khám phá biển khơi",
+      "returnShore": "Trở về Bờ biển Dấu Sao",
+      "ascend": "Đến Thiên cảng Cá Voi",
+      "enterHall": "Vào tòa thị chính",
+      "returnSlope": "Trở về Đồi Đỉnh Mây"
+    },
+    "onboarding": {
+      "title": "Chỉ còn thiếu tên bạn nữa thôi.",
+      "description": "Chọn diện mạo và làm quen với mọi người.",
+      "newFriend": "Người bạn mới",
+      "appearance": "Diện mạo của bạn",
+      "male": "Nam",
+      "female": "Nữ",
+      "nickname": "Biệt danh",
+      "namePlaceholder": "Mọi người nên gọi bạn là gì?",
+      "nameHint": "Tối đa 16 ký tự. Có thể đổi trong cài đặt.",
+      "nameError": "Nhập biệt danh từ 1–16 ký tự.",
+      "saveError": "Không thể lưu. Hãy thử lại; nội dung vẫn được giữ.",
+      "enter": "Bắt đầu hành trình",
+      "videoError": "Không thể phát lời mời. Hãy thử lại hoặc bỏ qua.",
+      "videoSlow": "Phim tải chậm. Bạn có thể chờ hoặc bỏ qua.",
+      "invitation": "Một lời mời từ thị trấn đang chờ bạn.",
+      "retry": "Thử lại",
+      "play": "Phát lời mời",
+      "skipAnimation": "Bỏ qua hoạt ảnh",
+      "unmute": "Bật âm thanh",
+      "mute": "Tắt âm thanh",
+      "join": "Cùng tham gia nhé",
+      "skip": "Bỏ qua hoạt ảnh",
+      "assetError": "Không thể tải hình nhân vật. Hãy thử lại.",
+      "preparing": "Đang chuẩn bị một chỗ cho bạn…",
+      "resume": "Tiếp tục phát",
+      "resumeHint": "Tiếp tục phát hoặc bỏ qua đoạn phim.",
+      "createTitle": "Tạo nhân vật"
+    },
+    "wardrobe": {
+      "title": "Trang phục nhân vật",
+      "description": "Chọn quần áo và phụ kiện tại đây.",
+      "clothes": "Quần áo",
+      "base": "Trang phục cơ bản",
+      "unavailable": "Trang phục chưa khả dụng",
+      "saveError": "Không lưu được. Vui lòng thử lại.",
+      "accessories": "Phụ kiện",
+      "confirm": "Xác nhận"
+    },
+    "loadingScenes": {
+      "mountain-observatory": {
+        "title": "Đài quan sát trên mây",
+        "line": "Bên kia biển mây, một khám phá mới đang chờ."
+      },
+      "amber-expedition": {
+        "title": "Chuyến đi hổ phách",
+        "line": "Mở bản đồ và cùng bạn bè tìm con đường tiếp theo."
+      },
+      "frozen-lake-rest": {
+        "title": "Nghỉ bên hồ băng",
+        "line": "Ôm một tách trà ấm và nghỉ chân dưới ánh sao."
+      },
+      "tidal-discovery": {
+        "title": "Khám phá vùng nước nông",
+        "line": "Nhìn kỹ hơn, một thế giới nhỏ đang ẩn trong làn nước."
+      }
+    }
+  },
   "referenceValidation": {
     "firstFrame": "Khung hình đầu", "lastFrame": "Khung hình cuối",
     "title": "Tư liệu tham chiếu không đáp ứng yêu cầu của mô hình", "hint": "Vui lòng sửa các tư liệu bên dưới trước khi tạo. Định vị để chọn nút tương ứng trên canvas.", "locate": "Định vị tư liệu",
