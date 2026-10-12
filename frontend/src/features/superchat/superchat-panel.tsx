@@ -3860,7 +3860,7 @@ function CanvasCommandApprovalCard({
         const storySegmentLabels = videoParam.storySegmentLabels ?? [];
         const storySegmentSummary = storySegmentLabels.join("、");
         const continuityLabel = videoParam.continuityMode
-          ? t(`freezone.story.continuity.${videoParam.continuityMode}`)
+          ? t(`canvas.story.continuity.${videoParam.continuityMode}`)
           : null;
         const storyDurationLabel = Number.isFinite(videoParam.durationSec)
           ? `${videoParam.durationSec}s`

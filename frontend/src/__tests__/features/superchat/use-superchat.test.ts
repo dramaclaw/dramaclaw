@@ -7183,3 +7183,41 @@ describe("pruneOldMessageCaches", () => {
     expect(localStorage.getItem(`${MESSAGE_CACHE_PREFIX}future`)).toBeNull();
   });
 });
+
+describe("story approval continuity translations", () => {
+  it.each(["zh", "en", "vi"])("renders continuity labels from the %s locale", async (language) => {
+    const { readFileSync } = await import("node:fs");
+    const { createInstance } = await import("i18next");
+    const { I18nextProvider } = await import("react-i18next");
+    const translations = JSON.parse(readFileSync(`public/locales/${language}/translation.json`, "utf8"));
+    const i18n = createInstance();
+    await i18n.init({ lng: language, fallbackLng: false,
+      resources: { [language]: { translation: translations } },
+      interpolation: { escapeValue: false }, react: { useSuspense: false },
+    });
+    const previous = useCanvasStore.getState();
+    const nodes = (["independent", "auto"] as const).map((continuityMode) => ({
+      id: `story-${continuityMode}`, type: "videoNode" as const, position: { x: 0, y: 0 },
+      data: { storySegmentId: continuityMode, storyRole: "scene", continuityMode,
+        displayName: `Clip ${continuityMode}`, prompt: "Story video", model: "video-model", durationSec: 5 },
+    }));
+    useCanvasStore.setState({ nodes, edges: [] });
+    const approval = { id: "continuity", key: "continuity", messageId: "assistant", receivedAt: 1,
+      commandCount: 1, plans: [], envelopes: [{ schema_version: "canvas_chat_commands.v1" as const,
+        commands: [{ type: "run_workflow" as const, scope: "canvas" as const }] }],
+    };
+    const view = render(createElement(I18nextProvider, { i18n },
+      createElement(CanvasCommandApprovalCardForTest, { approval, onApply: vi.fn(), onCancel: vi.fn() }),
+    ));
+    try {
+      for (const mode of ["independent", "auto"] as const) {
+        expect(view.getByText(translations.canvas.story.continuity[mode])).toBeTruthy();
+      }
+      expect(view.container.textContent).not.toContain("freezone.story.continuity.");
+      expect(view.container.textContent).not.toContain("canvas.story.continuity.");
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+});

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import re
+from contextlib import ExitStack
 from pathlib import Path
 
 from novelvideo.interactive_story.publication import PublicationError, PublicationStore
@@ -135,7 +137,22 @@ async def delete_project_and_unlist(project_id, state_dir, registry):
             project_id=project_id,
             index_root=PublicationStore().root,
         )
-        with store.locked():
+        with ExitStack() as stack:
+            try:
+                stack.enter_context(store.locked())
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EPERM, errno.EROFS}:
+                    raise
+                # If storage is unwritable and there is no publication data,
+                # nothing can be listed or activated. Keep normal deletion under
+                # the lock so concurrent publication writes remain coordinated.
+                try:
+                    has_publication_data = any(store.root.iterdir())
+                except FileNotFoundError:
+                    has_publication_data = False
+                if has_publication_data:
+                    raise
+                return commit()
             previous = store.unlist_all()
             try:
                 record = commit()
