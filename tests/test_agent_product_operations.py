@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -863,3 +865,36 @@ def test_product_task_timeout_preserves_pending_operation(tmp_path, monkeypatch)
 
     assert exc_info.value.operation_id == operation["operation_id"]
     assert exc_info.value.status == "submitted"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["recipe_result", "workflow_result", "recipe_generate"])
+async def test_non_voice_waiter_rejects_delivery_without_model_evidence(tmp_path, kind):
+    from novelvideo.task_backend.runners.freezone import _run_freezone_agent_product_async
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    # Simulate an invalid persisted row; the delivery API would reject it as well.
+    with sqlite3.connect(tmp_path / "data.db") as conn:
+        conn.execute(
+            "UPDATE freezone_agent_product_operations "
+            "SET status = 'delivered', result_ref_json = ? WHERE operation_id = ?",
+            (json.dumps({"kind": kind, "id": "result-a"}), operation["operation_id"]),
+        )
+    with pytest.raises(RuntimeError, match="lacks trusted delivery evidence"):
+        await _run_freezone_agent_product_async(
+            {
+                "task_type": operation["task_type"],
+                "__run_task_id": "task-a",
+                "payload": {
+                    "operation_id": operation["operation_id"],
+                    "product_kind": kind,
+                },
+            },
+            SimpleNamespace(state_dir=tmp_path),
+        )

@@ -50,6 +50,12 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
     "palm": {"label": "PaLM", "type": 11, "base_url": ""},
     "api2gpt": {"label": "API2GPT", "type": 12, "base_url": "https://api.api2gpt.com"},
     "aigc2d": {"label": "AIGC2D", "type": 13, "base_url": "https://api.aigc2d.com"},
+    # NewAPI metadata uses "claude"; keep "anthropic" for older CE settings.
+    "claude": {
+        "label": "Anthropic",
+        "type": 14,
+        "base_url": "https://api.anthropic.com",
+    },
     "anthropic": {
         "label": "Anthropic",
         "type": 14,
