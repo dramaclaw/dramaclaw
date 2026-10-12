@@ -83,6 +83,8 @@ resolve it, add `127.0.0.1 host.docker.internal` to `/etc/hosts` (or set
 
 ## Known gaps
 
+Tracked in [`docs/tech-debt.md`](../../tech-debt.md).
+
 - **Streaming responses** are logged with the request only; the body is not buffered.
 - **Not HTTP-interceptable:** edge-tts and the DashScope CosyVoice SDK (websocket/own
   transport), and the Hermes/Codex chat worker, which is a separate program.
