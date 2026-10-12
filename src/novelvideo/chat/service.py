@@ -60,6 +60,7 @@ from novelvideo.chat.display_fallback import (
     _DISPLAY_TOOL_NAMES as _DISPLAY_TOOL_NAMES,
 )
 from novelvideo.chat.execution_context import AgentExecutionContext
+from novelvideo.i18n_message import lmsg, message_payload, message_text
 from novelvideo.chat.presentation import (
     UI_SPEC_BLOCK_RE as _UI_SPEC_BLOCK_RE,  # noqa: F401 - compatibility export
     UI_SPEC_FENCE_RE as _UI_SPEC_FENCE_RE,  # noqa: F401 - compatibility export
@@ -4597,6 +4598,10 @@ async def _cancel_pending_clarifications_for_turn(
         project_state_dir=project_state_dir,
     )
     bridge_dir = canvas_bridge_dir_for_profile(hermes_home, agent_profile)
+    cancelled_message = lmsg(
+        "freezone.chat.clarification.cancelledRequest",
+        "用户已取消本轮请求",
+    )
     for key, event in pending_by_key.items():
         cancelled_event = {
             **event,
@@ -4625,9 +4630,10 @@ async def _cancel_pending_clarifications_for_turn(
                 "answers": {},
                 "skipped": False,
                 "used_recommended": False,
-                "errors": ["用户已取消本轮请求"],
+                "errors": [message_text(cancelled_message)],
                 "cancelled": True,
-                "message": "用户已取消本轮请求。",
+                "message": message_text(cancelled_message),
+                "message_i18n": message_payload(cancelled_message),
                 "agent_instruction": "Do not continue; the user cancelled this turn.",
             },
             bridge_dir=bridge_dir,

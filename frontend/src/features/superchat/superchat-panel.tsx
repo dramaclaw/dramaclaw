@@ -90,6 +90,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { apiCall } from "@/api/client";
 import {
+  getFreezoneWorkflowRun,
+  type FreezoneWorkflowRun,
+} from "@/api/canvas";
+import {
   Dialog,
   DialogClose,
   DialogContent,
@@ -183,7 +187,6 @@ import type {
 } from "@/features/freezone/canvasChatCommands";
 import {
   applyCanvasChatCommandsAsync,
-  canvasCommandEnvelopesRequireDurableAcceptance,
   canvasCommandEnvelopesRunInBackground,
   directGenerationTargetsForPreflight,
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
@@ -10956,6 +10959,9 @@ type CanvasCommandFeedback = Pick<CanvasChatCommandApplyResult, "applied" | "ope
   cancelReason?: CanvasCommandApprovalCancelReason;
   anchorTextPrefix?: string;
   surfaceOrder?: number;
+  workflowRunId?: string;
+  turnId?: string;
+  bridgeKey?: string;
 };
 
 const CANVAS_APPROVAL_IMAGE_SIZE_OPTIONS = ["1K", "2K", "4K"] as const;
@@ -11398,6 +11404,7 @@ function canvasCommandPlansFromEnvelopes(envelopes: CanvasChatCommandEnvelope[] 
 
 function backgroundCanvasCommandPendingResult(
   plans: CanvasCommandPlan[],
+  workflowRunId?: string | null,
 ): CanvasChatCommandApplyResult {
   const generationPlans = plans.filter((plan) =>
     plan.type === "run_workflow" || plan.type === "run_node_action");
@@ -11412,12 +11419,66 @@ function backgroundCanvasCommandPendingResult(
       type: plan.type,
       status: "pending",
       label: plan.label,
-      output: { pending: true, reason: "background_generation_running" },
+      output: {
+        pending: true,
+        reason: "background_generation_running",
+        ...(workflowRunId ? { workflow_run_id: workflowRunId } : {}),
+      },
     })),
   };
 }
 
 export const backgroundCanvasCommandPendingResultForTest = backgroundCanvasCommandPendingResult;
+
+function canvasCommandResultFromWorkflowRun(
+  feedback: CanvasCommandFeedback,
+  run: FreezoneWorkflowRun,
+  t: TFunction,
+): CanvasChatCommandApplyResult {
+  const terminalError = run.status === "failed"
+    ? t("freezone.chat.backgroundGenerationFailed", {
+        defaultValue: "后台生成失败，请检查任务详情后重试。",
+      })
+    : run.status === "cancelled"
+      ? t("freezone.chat.backgroundGenerationCancelled", {
+          defaultValue: "后台生成已取消。",
+        })
+      : run.status === "interrupted"
+        ? t("freezone.chat.backgroundGenerationInterrupted", {
+            defaultValue: "后台生成已中断，请恢复任务或重试。",
+          })
+        : null;
+  const commandResults = (feedback.commandResults ?? []).map((step, index) => {
+    const action = run.actions[index];
+    const actionSucceeded = action?.status === "completed" || action?.status === "skipped";
+    const actionError = action?.user_error || action?.error || terminalError || undefined;
+    return {
+      ...step,
+      status: actionSucceeded || run.status === "completed" ? "success" : "error",
+      ...(action?.node_id ? { nodeId: action.node_id } : {}),
+      ...(action?.action ? { action: action.action } : {}),
+      ...(actionError ? { error: actionError } : {}),
+      output: {
+        workflow_run_id: run.run_id,
+        workflow_run_status: run.status,
+      },
+    };
+  });
+  const errors = commandResults
+    .map((step) => step.error)
+    .filter((error): error is string => Boolean(error));
+  return {
+    applied: run.status === "completed"
+      ? run.actions.filter((action) => action.status === "completed").length
+      : 0,
+    openedUiActions: 0,
+    createdNodeIds: [],
+    errors: dedupeGenerationErrors(errors),
+    commandResults,
+  };
+}
+
+export const canvasCommandResultFromWorkflowRunForTest = canvasCommandResultFromWorkflowRun;
 
 function canvasContextLabelsFromTypes(types: string[]): string[] {
   return Array.from(new Set(types))
@@ -11982,6 +12043,11 @@ function canvasCommandFeedbacksFromUiEvents(events: unknown[] | undefined): Canv
     feedback.envelopes = envelopes;
     feedback.cancelled = value.cancelled === true;
     feedback.cancelReason = value.cancel_reason === "timeout" ? "timeout" : value.cancelled === true ? "user" : undefined;
+    feedback.workflowRunId = typeof value.workflow_run_id === "string"
+      ? value.workflow_run_id
+      : undefined;
+    feedback.turnId = typeof value.turn_id === "string" ? value.turn_id : undefined;
+    feedback.bridgeKey = typeof value.bridge_key === "string" ? value.bridge_key : undefined;
     const existingIndex = feedbacks.findIndex((item) => item.key === key);
     if (existingIndex >= 0) feedbacks[existingIndex] = feedback;
     else feedbacks.push(feedback);
@@ -12541,6 +12607,7 @@ export function SuperChatPanel({
   const appliedCanvasCommandApprovalKeysRef = useRef<Set<string>>(new Set());
   const resolvedCanvasCommandApprovalKeysRef = useRef<Set<string>>(new Set());
   const submittedAssistantClarificationKeysRef = useRef<Set<string>>(new Set());
+  const recoveringBackgroundWorkflowKeysRef = useRef<Set<string>>(new Set());
   const [canvasCommandExecutionMode, setCanvasCommandExecutionMode] = useState<CanvasCommandExecutionMode>(() => loadCanvasCommandExecutionMode());
   const [canvasCommandModeMenuOpen, setCanvasCommandModeMenuOpen] = useState(false);
   const directorRunProject = params.project?.trim() || "home";
@@ -13564,6 +13631,100 @@ export function SuperChatPanel({
       });
   }, [effectiveFreezoneCanvasId, params.project]);
 
+  useEffect(() => {
+    const projectId = params.project?.trim();
+    const canvasIdForRequest = effectiveFreezoneCanvasId?.trim();
+    if (variant !== "freezone" || !projectId || !canvasIdForRequest) return;
+
+    const pendingByRunId = new Map<string, { messageId: string; feedback: CanvasCommandFeedback }>();
+    for (const [messageId, feedbacks] of Object.entries(
+      persistedCanvasCommandFeedbackByMessageId,
+    )) {
+      for (const feedback of feedbacks) {
+        if (!feedback.workflowRunId || !canvasCommandFeedbackBackgroundRunning(feedback)) continue;
+        if (!pendingByRunId.has(feedback.workflowRunId)) {
+          pendingByRunId.set(feedback.workflowRunId, { messageId, feedback });
+        }
+      }
+    }
+    if (pendingByRunId.size === 0) return;
+
+    let disposed = false;
+    const recoveryKeys: string[] = [];
+    for (const [runId, { messageId, feedback }] of pendingByRunId) {
+      const recoveryKey = `${projectId}:${canvasIdForRequest}:${runId}`;
+      if (recoveringBackgroundWorkflowKeysRef.current.has(recoveryKey)) continue;
+      recoveringBackgroundWorkflowKeysRef.current.add(recoveryKey);
+      recoveryKeys.push(recoveryKey);
+      void (async () => {
+        try {
+          while (!disposed) {
+            let run: FreezoneWorkflowRun;
+            try {
+              run = await getFreezoneWorkflowRun(projectId, canvasIdForRequest, runId, 10);
+            } catch {
+              if (disposed) return;
+              await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+              continue;
+            }
+            if (disposed) return;
+            if (run.status === "running") continue;
+
+            const result = canvasCommandResultFromWorkflowRun(feedback, run, t);
+            replaceCanvasCommandFeedback(
+              messageId,
+              feedback.key,
+              result,
+              feedback.plans,
+              feedback.anchorTextPrefix,
+              feedback.surfaceOrder,
+            );
+            const terminalFeedback: CanvasCommandFeedback = {
+              ...feedback,
+              ...result,
+              commandResults: result.commandResults,
+            };
+            chat.upsertAssistantMessagePart(
+              { messageId, turnId: feedback.turnId },
+              {
+                id: canvasFeedbackPartId(terminalFeedback),
+                type: "canvas_feedback",
+                event: terminalFeedback,
+              },
+            );
+            await persistCanvasCommandUiEvent(feedback.turnId, {
+              schema_version: "canvas_command_result.v1",
+              type: "canvas_command_result",
+              canvas_id: canvasIdForRequest,
+              bridge_key: feedback.bridgeKey ?? null,
+              workflow_run_id: runId,
+              envelopes: feedback.envelopes,
+              result,
+              anchor_text_prefix: feedback.anchorTextPrefix ?? null,
+              received_at: Date.now(),
+            });
+            return;
+          }
+        } finally {
+          recoveringBackgroundWorkflowKeysRef.current.delete(recoveryKey);
+        }
+      })();
+    }
+    return () => {
+      disposed = true;
+      for (const key of recoveryKeys) recoveringBackgroundWorkflowKeysRef.current.delete(key);
+    };
+  }, [
+    chat,
+    effectiveFreezoneCanvasId,
+    params.project,
+    persistCanvasCommandUiEvent,
+    persistedCanvasCommandFeedbackByMessageId,
+    replaceCanvasCommandFeedback,
+    t,
+    variant,
+  ]);
+
   const persistSkillStudioUiEvent = useCallback((
     turnId: string | null | undefined,
     event: Record<string, unknown>,
@@ -13658,19 +13819,22 @@ export function SuperChatPanel({
 
         let result: CanvasChatCommandApplyResult;
         let backgroundAccepted = false;
+        let persistedWorkflowRunId: string | null = null;
         try {
           let resolveWorkflowRunPersisted: ((runId: string) => void) | undefined;
-          const workflowRunPersisted = canvasCommandEnvelopesRequireDurableAcceptance(
-            approval.envelopes,
-          )
+          const runsInBackground = canvasCommandEnvelopesRunInBackground(approval.envelopes);
+          const workflowRunPersisted = runsInBackground
             ? new Promise<string>((resolve) => { resolveWorkflowRunPersisted = resolve; })
             : undefined;
           const execution = applyCanvasChatCommandsAsync(approval.envelopes, {
             projectId: params.project,
             canvasId: effectiveFreezoneCanvasId,
-            onWorkflowRunPersisted: resolveWorkflowRunPersisted,
+            onWorkflowRunPersisted: (runId) => {
+              persistedWorkflowRunId = runId;
+              resolveWorkflowRunPersisted?.(runId);
+            },
           });
-          if (canvasCommandEnvelopesRunInBackground(approval.envelopes)) {
+          if (runsInBackground) {
             const immediateResult = await waitForImmediateCanvasCommandResult(
               execution,
               workflowRunPersisted,
@@ -13688,7 +13852,10 @@ export function SuperChatPanel({
                 agentId: approval.agentId ?? effectiveFreezoneAgentId,
                 accepted: true,
               });
-              const pendingResult = backgroundCanvasCommandPendingResult(approval.plans);
+              const pendingResult = backgroundCanvasCommandPendingResult(
+                approval.plans,
+                persistedWorkflowRunId,
+              );
               appendCanvasCommandFeedback(
                 approval.messageId,
                 feedbackKey,
@@ -13712,8 +13879,12 @@ export function SuperChatPanel({
                 commandResults: pendingResult.commandResults,
                 key: feedbackKey,
                 plans: approval.plans,
+                envelopes: approval.envelopes,
                 anchorTextPrefix: approval.anchorTextPrefix ?? undefined,
                 surfaceOrder: receivedAt,
+                workflowRunId: persistedWorkflowRunId ?? undefined,
+                turnId: approval.turnId ?? undefined,
+                bridgeKey: approval.bridgeKey ?? undefined,
               };
               chat.replaceAssistantMessagePart(
                 { messageId: approval.messageId, turnId: approval.turnId },
@@ -13728,7 +13899,9 @@ export function SuperChatPanel({
                 schema_version: "canvas_command_result.v1",
                 type: "canvas_command_result",
                 canvas_id: effectiveFreezoneCanvasId,
+                turn_id: approval.turnId ?? null,
                 bridge_key: approval.bridgeKey ?? null,
+                workflow_run_id: persistedWorkflowRunId,
                 envelopes: approval.envelopes,
                 result: pendingResult,
                 anchor_text_prefix: approval.anchorTextPrefix ?? null,
@@ -13828,7 +14001,9 @@ export function SuperChatPanel({
           schema_version: "canvas_command_result.v1",
           type: "canvas_command_result",
           canvas_id: effectiveFreezoneCanvasId,
+          turn_id: approval.turnId ?? null,
           bridge_key: approval.bridgeKey ?? null,
+          workflow_run_id: persistedWorkflowRunId,
           envelopes: approval.envelopes,
           result,
           anchor_text_prefix: approval.anchorTextPrefix ?? null,

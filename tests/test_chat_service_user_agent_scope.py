@@ -113,6 +113,10 @@ async def test_cancelled_canvas_turn_settles_pending_clarification(
     assert appended[0][1]["clarification_status"] == "cancelled"
     assert resolved[0][0] == "bridge-a"
     assert resolved[0][1]["cancelled"] is True
+    assert resolved[0][1]["message"] == "用户已取消本轮请求"
+    assert resolved[0][1]["message_i18n"] == {
+        "code": "freezone.chat.clarification.cancelledRequest",
+    }
     assert resolved[0][2]["bridge_dir"] == tmp_path / "bridge"
 
 

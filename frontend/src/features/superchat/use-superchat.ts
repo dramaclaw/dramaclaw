@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import i18next from "i18next";
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -3165,6 +3166,9 @@ export function useSuperChat({
           );
           return next;
         });
+        const cancelledMessage = i18next.t("freezone.chat.clarification.cancelledRequest", {
+          defaultValue: "用户已取消本轮请求",
+        });
         for (const event of pendingClarifications) {
           void api.post("api/v1/chat/clarification-tool-result", {
             json: {
@@ -3181,8 +3185,8 @@ export function useSuperChat({
               answers: {},
               skipped: false,
               used_recommended: false,
-              errors: ["用户已取消本轮请求"],
-              message: "用户已取消本轮请求。",
+              errors: [cancelledMessage],
+              message: cancelledMessage,
             },
           }).catch(() => undefined);
         }

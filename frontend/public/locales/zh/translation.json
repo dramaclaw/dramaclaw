@@ -944,6 +944,9 @@
       "canvasManuallyCancelled": "画布操作已手动取消，没有应用到画布。",
       "backgroundGenerationRunningLabel": "后台生成中",
       "backgroundGenerationRunningMessage": "任务已提交，正在后台生成。完成或失败后会自动更新这里的状态。",
+      "backgroundGenerationFailed": "后台生成失败，请检查任务详情后重试。",
+      "backgroundGenerationCancelled": "后台生成已取消。",
+      "backgroundGenerationInterrupted": "后台生成已中断，请恢复任务或重试。",
       "workflowOutputSyncPendingLabel": "产物待同步",
       "workflowRecipeAttemptEnded": "本次节点执行已结束，请重新运行该节点以开始新的执行（{{reason}}）",
       "workflowOutputSyncPendingMessage": "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。",
@@ -985,7 +988,8 @@
         "submittedAnswers": "已提交回答 · {{count}} 个",
         "noAnswersCancelled": "本轮请求已取消，未提交选项。",
         "noAnswersSkipped": "本次问题已跳过。",
-        "noAnswersSubmitted": "本次未提交具体选项。"
+        "noAnswersSubmitted": "本次未提交具体选项。",
+        "cancelledRequest": "用户已取消本轮请求。"
       }
     },
     "workflowRecovery": {

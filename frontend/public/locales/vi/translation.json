@@ -926,6 +926,9 @@
       "canvasManuallyCancelled": "Thao tác trên canvas đã bị huỷ thủ công, chưa áp dụng thay đổi.",
       "backgroundGenerationRunningLabel": "Đang tạo trong nền",
       "backgroundGenerationRunningMessage": "Tác vụ đã được gửi và đang tạo trong nền. Trạng thái này sẽ tự động cập nhật khi thành công hoặc thất bại.",
+      "backgroundGenerationFailed": "Tạo trong nền thất bại. Hãy kiểm tra chi tiết tác vụ rồi thử lại.",
+      "backgroundGenerationCancelled": "Đã hủy quá trình tạo trong nền.",
+      "backgroundGenerationInterrupted": "Quá trình tạo trong nền đã bị gián đoạn. Hãy tiếp tục tác vụ hoặc thử lại.",
       "workflowOutputSyncPendingLabel": "Đang đồng bộ kết quả",
       "workflowRecipeAttemptEnded": "Lượt chạy của nút này đã kết thúc. Hãy chạy lại nút để bắt đầu lượt mới ({{reason}})",
       "workflowOutputSyncPendingMessage": "Quy trình đã hoàn tất nhưng kết quả trên canvas vẫn đang đồng bộ. Hãy tải lại canvas sau để kiểm tra; tạm thời đừng tạo lại.",
@@ -968,21 +971,7 @@
         "noAnswersCancelled": "Lượt này đã bị hủy mà không gửi lựa chọn.",
         "noAnswersSkipped": "Đã bỏ qua các câu hỏi này.",
         "noAnswersSubmitted": "Chưa gửi lựa chọn cụ thể nào.",
-        "videoGenerationMode": {
-          "title": "Chọn chế độ tạo video",
-          "description": "Chọn cách nút video sử dụng văn bản và tài liệu tham chiếu.",
-          "recommended": "{{label}} (Đề xuất)",
-          "options": {
-            "textToVideo": "Chỉ tạo video từ mô tả văn bản, không dùng ảnh tham chiếu.",
-            "imageReference": "Dùng nhiều ảnh làm tham chiếu cho nhân vật, bối cảnh và phong cách hình ảnh.",
-            "allReference": "Dùng ảnh, video và âm thanh cùng nhau làm tài liệu tham chiếu tổng hợp.",
-            "firstFrame": "Khóa ảnh tham chiếu làm khung hình đầu rồi tiếp tục tạo video từ đó.",
-            "imageToVideo": "Dùng một ảnh làm nền tảng hình ảnh tổng thể để tạo video.",
-            "firstLastFrame": "Khóa cả khung hình đầu và cuối rồi tạo chuyển động ở giữa.",
-            "videoEdit": "Tạo bản chỉnh sửa dựa trên video hiện có.",
-            "videoExtend": "Mở rộng video hiện có bằng nội dung mới được tạo."
-          }
-        }
+        "cancelledRequest": "Người dùng đã hủy yêu cầu trong lượt này."
       }
     },
     "canvases": {

@@ -47,6 +47,10 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
 - `dramaclaw-workflows` is this Agent Skill package/server name, not a Workflow catalog `skill_id`.
   Never pass it to `workflow_skill_get`, `freezone_get_workflow_skill`, or an intent's `skill_id`.
   Select the matching production Workflow Skill returned by the catalog instead.
+- Route an ordinary pure-image workflow to `text-to-image`. Use `text-to-image-video` only when
+  the user asks for a video stage, and use `social-content-campaign` only for an explicit social
+  platform image-set request. Do not report a Skill conflict or ask the user to accept video merely
+  because the older general video Skill also contains an image stage.
 - Never implement a multi-node request by repeatedly calling `freezone_create_node`,
   `freezone_create_edge`, `freezone_group_nodes`, or other single-operation tools.
 - Never fall back to repeated single-operation writes after a workflow validation or schema error.

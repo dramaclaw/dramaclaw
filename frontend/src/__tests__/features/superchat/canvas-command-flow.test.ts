@@ -4,6 +4,7 @@ import {
   assistantCompletionPrefix,
   backgroundCanvasCommandPendingResultForTest,
   buildCanvasCommandFlowItemsForTest,
+  canvasCommandResultFromWorkflowRunForTest,
   canvasCommandFeedbackVisualToneForTest,
   canvasCommandFeedbackIsValidationOnlyForTest,
   canvasContextActivityVisualToneForTest,
@@ -63,6 +64,65 @@ describe("background canvas generation status", () => {
         output: { pending: true, reason: "background_generation_running" },
       }),
     ]);
+  });
+
+  it("persists the workflow run id in pending command results", () => {
+    const result = backgroundCanvasCommandPendingResultForTest(
+      [{ index: 0, type: "run_workflow", label: "运行工作流", details: [] }],
+      "run-1",
+    );
+
+    expect(result.commandResults[0]?.output).toEqual({
+      pending: true,
+      reason: "background_generation_running",
+      workflow_run_id: "run-1",
+    });
+  });
+
+  it.each([
+    ["completed", "success", []],
+    ["failed", "error", ["生成失败"]],
+    ["cancelled", "error", ["后台生成已取消。"]],
+    ["interrupted", "error", ["后台生成已中断，请恢复任务或重试。"]],
+  ] as const)("restores a %s workflow run as a terminal result", (status, stepStatus, errors) => {
+    const result = canvasCommandResultFromWorkflowRunForTest(
+      {
+        applied: 0,
+        openedUiActions: 0,
+        errors: [],
+        key: "feedback-1",
+        commandResults: [{
+          commandIndex: 0,
+          type: "run_workflow",
+          status: "pending",
+          label: "运行工作流",
+        }],
+      },
+      {
+        schema_version: "freezone_workflow_run.v1",
+        run_id: "run-1",
+        project_id: "project-1",
+        canvas_id: "canvas-1",
+        status,
+        resumable: status === "interrupted",
+        created_at: "2026-10-12T00:00:00Z",
+        started_at: "2026-10-12T00:00:00Z",
+        updated_at: "2026-10-12T00:00:01Z",
+        actions: [{
+          node_id: "node-1",
+          action: "generate",
+          status: status === "completed" ? "completed" : "failed",
+          ...(status === "failed" ? { user_error: "生成失败" } : {}),
+        }],
+      },
+      ((_key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? _key) as never,
+    );
+
+    expect(result.commandResults[0]).toEqual(expect.objectContaining({
+      status: stepStatus,
+      output: { workflow_run_id: "run-1", workflow_run_status: status },
+    }));
+    expect(result.errors).toEqual(errors);
   });
 });
 
