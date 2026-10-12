@@ -171,3 +171,88 @@ def test_script_and_optimizer_show_system_prompt_only(tmp_path):
         preview = _run(get_step(step).build_fn(scope, "system"))
         assert [p.role for p in preview.parts] == ["system"]
         assert marker in preview.parts[0].text and preview.note
+
+
+# --- keyframe video prompt ------------------------------------------------------------------------
+
+
+def _beat(n, mode="keyframe", **kw):
+    base = {
+        "beat_number": n,
+        "video_mode": mode,
+        "audio_type": "dialogue",
+        "speaker": "林默",
+        "narration_segment": f"台词{n}",
+        "visual_description": f"画面{n}",
+        "keyframe_prompt": "",
+        "video_prompt": "",
+    }
+    base.update(kw)
+    return base
+
+
+def _touch_frame(tmp_path: Path, episode: int, beat: int) -> None:
+    from novelvideo.utils.path_resolver import PathResolver
+
+    path = PathResolver(str(tmp_path), episode).frame(beat)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x")
+
+
+def test_keyframe_agent_receives_exactly_the_shared_task_builder_output(tmp_path):
+    from PIL import Image
+
+    from novelvideo.agents.keyframe_prompt_builder import KeyframePromptBuilder, build_keyframe_task
+
+    first, last = tmp_path / "a.png", tmp_path / "b.png"
+    Image.new("RGB", (8, 8), "red").save(first)
+    Image.new("RGB", (8, 8), "blue").save(last)
+    sent = []
+
+    class _Agent:
+        async def run(self, content):
+            sent.append(content[0])
+            return SimpleNamespace(output="ok")
+
+    builder = KeyframePromptBuilder()
+    builder._get_agent = lambda language="zh": _Agent()
+    kw = dict(
+        narration="N", next_narration="next", language="en", visual_description="hall",
+        next_visual_description="street", audio_type="dialogue", dialogue_line="hi",
+    )
+    _run(builder.build(str(first), str(last), **kw))
+    assert sent == [build_keyframe_task(**kw)]
+
+
+def test_keyframe_preview_builds_task_and_reports_frames(tmp_path):
+    beats = [_beat(1, keyframe_prompt="STORED"), _beat(2)]
+    scope = _scope(tmp_path, _FakeStore(beats=beats), episode=1)
+    spec = get_step("video_prompt")
+    assert [t.id for t in _run(spec.targets_fn(scope))] == ["1", "2"]
+
+    _touch_frame(tmp_path, 1, 1)  # only the first frame exists
+    preview = _run(spec.build_fn(scope, "1"))
+    roles = [p.role for p in preview.parts]
+    assert roles == ["system", "user", "image", "image"]
+    task = preview.parts[1].text
+    assert "【台词·林默】台词1" in task and "台词2" in task  # narration + next narration
+    # The real caller passes no colour map, and only the colour-map branch includes the visual
+    # descriptions, so they are (faithfully) absent from the prompt.
+    assert "画面1" not in task
+    assert preview.parts[2].text.endswith("beat_01.png") and "missing" in preview.parts[3].text
+    assert preview.inputs["has_both_frames"] is False
+    assert preview.last_sent.text == "STORED"
+
+
+def test_keyframe_preview_last_beat_and_first_frame_mode(tmp_path):
+    beats = [_beat(1, mode="first_frame", video_prompt="OPT"), _beat(2)]
+    scope = _scope(tmp_path, _FakeStore(beats=beats), episode=1)
+    spec = get_step("video_prompt")
+
+    last = _run(spec.build_fn(scope, "2"))
+    assert last.parts == [] and "最后一个" in last.note
+
+    first_frame = _run(spec.build_fn(scope, "1"))
+    assert [p.role for p in first_frame.parts] == ["system", "image"]
+    assert "Global Video Motion Director" in first_frame.parts[0].text
+    assert first_frame.last_sent.text == "OPT"

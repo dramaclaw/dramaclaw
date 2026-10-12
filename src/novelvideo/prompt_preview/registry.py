@@ -62,6 +62,7 @@ STEP_ORDER: list[tuple[str, str, ModelKind, bool]] = [
     ("coloring", "配色+身份检测 / Coloring", "llm", True),
     ("global_optimize", "全局视频优化 / Global optimize", "llm", True),
     ("first_frames", "首帧生成 / First frames", "image", True),
+    ("video_prompt", "视频提示词 / Video prompt", "llm", True),
     ("tts", "TTS 配音 / TTS", "tts", True),
     ("video", "视频生成 / Video", "video", True),
 ]

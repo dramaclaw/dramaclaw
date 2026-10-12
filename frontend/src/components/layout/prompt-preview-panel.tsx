@@ -160,9 +160,11 @@ function PromptPreviewBody({ project }: { project: string }) {
         {tab === "lastSent" &&
           (data.last_sent ? (
             <>
-              <p className="text-[11px] text-muted-foreground">
-                {new Date(data.last_sent.mtime * 1000).toLocaleString()}
-              </p>
+              {data.last_sent.mtime > 0 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  {new Date(data.last_sent.mtime * 1000).toLocaleString()}
+                </p>
+              ) : null}
               <PromptBlock
                 label={data.last_sent.path.split("/").slice(-2).join("/")}
                 text={data.last_sent.text}
