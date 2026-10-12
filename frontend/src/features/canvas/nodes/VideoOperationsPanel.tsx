@@ -46,6 +46,9 @@ import {
   videoModeForcesAutomaticAspectRatio,
   videoModelDefaultGenerateAudio,
   videoModelReferenceDisabledReason,
+  videoModeMissingInputReason,
+  videoModeForModel,
+  type VideoModeInputCounts,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
 import { VIDEO_FILE_ACCEPT } from "@/features/canvas/application/videoFileTypes";
@@ -813,9 +816,10 @@ export function VideoOperationsPanel({
                     supportedModes={selectedVideoModel?.supportedModes}
                     // HappyHorse 的可选模式由上游节点类型（含未填图的空节点）决定，
                     // 其余模型仍按已解析素材 URL 计数。
-                    upstreamCounts={
-                      isHappyHorseModel ? upstreamTypeCounts : upstreamCounts
-                    }
+                    upstreamCounts={{
+                      ...(isHappyHorseModel ? upstreamTypeCounts : upstreamCounts),
+                      hasOtherReference: Boolean(data.referenceFileUrl || data.referenceLink?.trim()),
+                    }}
                     onChange={(nextMode) =>
                       updateNodeData(id, {
                         genMode: nextMode,
@@ -974,23 +978,15 @@ export function VideoOperationsPanel({
                       const nextModel = availableVideoModels.find(
                         (item) => item.id === nextModelId,
                       );
-                      // 切换模型后，若当前 genMode 不被新模型支持（如 HappyHorse
-                      // 专属的 videoEdit 切到普通模型），重置为通用安全值 textToVideo，
-                      // 让状态机按新模型 + 上游重新推导；否则残留模式会在提交时打到
-                      // 不支持的端点被后端 400（界面还停在错误的 tab）。
-                      const resetGenMode =
-                        data.genMode != null &&
-                        !isVideoModeSupportedByModel(
-                          data.genMode,
-                          nextModel,
-                        );
+                      const nextMode = videoModeForModel(genMode, nextModel, {
+                        ...upstreamTypeCounts,
+                        hasOtherReference: Boolean(data.referenceFileUrl || data.referenceLink?.trim()),
+                      });
                       updateNodeData(id, {
                         model: nextModelId,
                         modelParams: {},
                         generateAudio: videoModelDefaultGenerateAudio(nextModel),
-                        ...(resetGenMode
-                          ? { genMode: "textToVideo" as VideoGenMode }
-                          : {}),
+                        genMode: nextMode,
                       });
                       // 记住这次选择，后续新建的视频节点将继承它。
                       writeLastVideoModel(nextModelId);
@@ -1154,14 +1150,14 @@ interface GenModeSelectProps {
   value: VideoGenMode;
   modelId: string | null | undefined;
   supportedModes?: string[];
-  upstreamCounts: { videos: number; images: number; audios: number };
+  upstreamCounts: VideoModeInputCounts;
   onChange: (next: VideoGenMode) => void;
 }
 
 export function videoModeDisabledReason(
   mode: VideoGenMode,
   modelId: string | null | undefined,
-  upstreamCounts: { videos: number; images: number; audios: number },
+  upstreamCounts: VideoModeInputCounts,
   t: TFn,
   supportedModes?: string[],
 ): string | null {
@@ -1248,7 +1244,8 @@ export function videoModeDisabledReason(
   if (mode === "firstLastFrame" && upstreamCounts.images > 2) {
     return t("node.videoOps.modeDisabled.moreThanTwoImages");
   }
-  return null;
+  const missingInputReason = videoModeMissingInputReason(mode, upstreamCounts);
+  return missingInputReason ? t(missingInputReason) : null;
 }
 
 function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChange }: GenModeSelectProps) {
@@ -1357,7 +1354,7 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
               t,
               supportedModes,
             );
-            const isDisabled = disabledReason != null && !isActive;
+            const isDisabled = disabledReason != null;
             // 禁用按钮在多数浏览器里不触发 mouse 事件，hover 提示挂在外层 div 上；
             // 提示气泡定位到菜单右侧，与设计稿一致。
             return (
@@ -1380,10 +1377,10 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
                     setIsOpen(false);
                   }}
                   className={`block w-full rounded-[6px] px-3 py-1.5 text-left text-xs transition-colors ${
-                    isActive
-                      ? VIDEO_PARAM_ACTIVE_BUTTON_CLASS
-                      : isDisabled
-                        ? "cursor-not-allowed text-text-muted/40"
+                    isDisabled
+                      ? "cursor-not-allowed text-text-muted/40"
+                      : isActive
+                        ? VIDEO_PARAM_ACTIVE_BUTTON_CLASS
                         : "text-text-muted/95 hover:bg-white/[0.11] hover:text-text-dark"
                   }`}
                 >

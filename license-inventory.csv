@@ -598,6 +598,7 @@ frontend/src/__tests__/features/canvas/prompt-mention-audio.test.tsx,Elastic-2.0
 frontend/src/__tests__/features/canvas/prompt-mention-material-replace.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/prompt-mention-replace.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/provider-model-picker-defaults.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/provider-model-picker-video-input.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/reference-mentions.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/reference-ordering.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/reference-pick.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
