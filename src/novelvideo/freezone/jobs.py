@@ -2397,7 +2397,8 @@ async def _extract_breakdown_frames(
 
     1. 场景检测这一趟不拿目标帧数当 ``-frames:v``。那个写法会在扫到第 N 个切点时
        就停止解码，长片只能看见开头一段，后面全靠模型脑补时间轴；这里扫完整片再
-       等距挑出目标张数，覆盖一直到片尾。
+       等距挑出目标张数，覆盖一直到片尾。``_BREAKDOWN_SCENE_SCAN_LIMIT`` 这个安全
+       上限同样会提前停止解码，所以撞到上限的那批帧不可信，改走等距抽帧。
     2. 帧统一缩到 ``_BREAKDOWN_FRAME_WIDTH`` 宽的 JPEG。视觉请求是把整帧原图
        base64 发出去的，几十张
        1080p PNG 能把网关打爆，缩完之后帧数翻倍反而更省。
@@ -2430,8 +2431,11 @@ async def _extract_breakdown_frames(
         ]
     )
     scene_files = sort_extracted_frames_by_pts(out_dir.glob("scene_*.jpg"))
+    # 写满上限说明 ffmpeg 是被 -frames:v 掐停的，后面的片子根本没解码；从这批帧里
+    # 挑只会覆盖开头一段。
+    scan_truncated = len(scene_files) >= _BREAKDOWN_SCENE_SCAN_LIMIT
 
-    if len(scene_files) >= target_frames:
+    if len(scene_files) >= target_frames and not scan_truncated:
         picked = _pick_evenly(scene_files, target_frames)
         keep = {path.name for path in picked}
         for path in scene_files:
@@ -2440,7 +2444,8 @@ async def _extract_breakdown_frames(
         return picked
 
     # 切点太少：长镜头、一镜到底的 AI 生成片都会走到这里。等距抽帧的密度只跟时长
-    # 有关，不受剪辑节奏影响，是这类素材唯一能拆细的办法。
+    # 有关，不受剪辑节奏影响，是这类素材唯一能拆细的办法。切点多到扫不完的快剪
+    # 素材也走这里，理由相同：等距抽帧一定覆盖到片尾。
     for path in scene_files:
         path.unlink(missing_ok=True)
 

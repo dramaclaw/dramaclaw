@@ -192,6 +192,51 @@ async def test_breakdown_frames_fall_back_to_even_sampling_for_one_take_clips(
     assert list((tmp_path / "frames").glob("scene_*.jpg")) == []
 
 
+@pytest.mark.asyncio
+async def test_breakdown_frames_fall_back_to_even_sampling_when_scene_scan_hits_the_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limit = freezone_jobs._BREAKDOWN_SCENE_SCAN_LIMIT
+    calls: list[list[str]] = []
+
+    async def fake_scene_cmd(cmd: list[str]) -> bool:
+        calls.append(cmd)
+        pattern = Path(cmd[-1])
+        pattern.parent.mkdir(parents=True, exist_ok=True)
+        # 每两帧切一刀的素材：-frames:v 写满上限就停了，最后一帧才到 16 秒，
+        # 而片子有 20 秒。
+        for index in range(limit):
+            (pattern.parent / f"scene_{index * 2:05d}.jpg").write_bytes(b"x")
+        return True
+
+    async def fake_even_cmd(cmd: list[str]) -> None:
+        calls.append(cmd)
+        pattern = Path(cmd[-1])
+        pattern.parent.mkdir(parents=True, exist_ok=True)
+        for index in range(1, 21):
+            (pattern.parent / f"even_{index:05d}.jpg").write_bytes(b"x")
+
+    monkeypatch.setattr(freezone_jobs, "_try_run_cmd", fake_scene_cmd)
+    monkeypatch.setattr(freezone_jobs, "_run_cmd", fake_even_cmd)
+
+    frames = await freezone_jobs._extract_breakdown_frames(
+        video_path=tmp_path / "clip.mp4",
+        out_dir=tmp_path / "frames",
+        target_frames=20,
+        scene_threshold=0.3,
+        duration_sec=20.0,
+    )
+
+    # 场景帧数量够，但它们只覆盖到 16 秒；必须换成覆盖全片的等距抽帧。
+    assert len(calls) == 2
+    even_cmd = calls[1]
+    assert "fps=1.000000" in even_cmd[even_cmd.index("-vf") + 1]
+    assert len(frames) == 20
+    assert all(path.name.startswith("even_") for path in frames)
+    assert list((tmp_path / "frames").glob("scene_*.jpg")) == []
+
+
 def test_normalize_shots_fills_missing_times_and_keeps_them_monotonic() -> None:
     shots = _normalize_breakdown_shots(
         [
