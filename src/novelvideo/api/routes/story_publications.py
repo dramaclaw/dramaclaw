@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from novelvideo.api.auth import get_api_user
+from novelvideo.api.auth import get_api_user, require_project_scope
 from novelvideo.api.routes._project_audit import emit_project_audit
 from novelvideo.api.deps import resolve_project_scope
 from novelvideo.interactive_story.publication import (
@@ -110,7 +110,7 @@ async def prepare(
     group: str,
     body: PrepareBody,
     background: BackgroundTasks,
-    user: dict = Depends(get_api_user),
+    user: dict = Depends(require_project_scope("projects:lifecycle")),
 ):
     if body.canvas_id != canvas or body.group_id != group or not body.title.strip():
         raise HTTPException(422, detail={"code": "invalid_request"})
@@ -191,7 +191,7 @@ async def activate(
     group: str,
     public_id: str,
     body: ActivateBody,
-    user: dict = Depends(get_api_user),
+    user: dict = Depends(require_project_scope("projects:lifecycle")),
 ):
     resolved, owner = await scope(project, canvas, group, user)
     store = await invoke(

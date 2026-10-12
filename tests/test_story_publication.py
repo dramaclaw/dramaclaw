@@ -246,6 +246,184 @@ def test_author_scope(source, monkeypatch):
     )
 
 
+@pytest.fixture
+def publication_api(source, monkeypatch):
+    """Real bearer authentication and publication storage in an isolated project."""
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from novelvideo.api.routes import story_publications
+    from novelvideo.interactive_story import publication_storage as storage
+    from novelvideo.ports import registry
+    from novelvideo.ports.auth_contract import DEFAULT_EXTERNAL_AGENT_SCOPES
+    from novelvideo.ports.local.auth import FileAuthPort, LocalAuthSession
+
+    index_store, output, _, body = source
+    state = output.parent / "state"
+    state.mkdir()
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(index_store.root))
+    monkeypatch.setenv("DRAMACLAW_LOCAL_AGENT_TRUST", "false")
+    auth = LocalAuthSession()
+    monkeypatch.setitem(registry._PORTS, "auth_session", auth)
+    monkeypatch.setitem(registry._PORTS, "auth", FileAuthPort())
+
+    async def resolve(project, user, required_role):
+        assert required_role == "editor"
+        if project != "p":
+            raise HTTPException(403)
+        return SimpleNamespace(
+            ctx=SimpleNamespace(state_dir=state, project_id="p"), project_dir=output
+        )
+
+    monkeypatch.setattr(story_publications, "resolve_project_scope", resolve)
+    record = SimpleNamespace(
+        id="p", state_dir=str(state), status="active", purged_at=None,
+        home_node_id="local",
+    )
+    monkeypatch.setattr(
+        storage, "get_project_registry",
+        lambda: SimpleNamespace(get_project=AsyncMock(return_value=record)),
+    )
+
+    def headers(scopes=DEFAULT_EXTERNAL_AGENT_SCOPES, project="p"):
+        token = asyncio.run(auth.create_agent_session(
+            username="local", scopes=scopes,
+            current_scope_kind="project", current_project_id=project,
+        ))
+        return {"Authorization": f"Bearer {token.value}"}
+
+    app = FastAPI()
+    app.include_router(story_publications.router, prefix="/api/v1")
+    with TestClient(app) as client:
+        yield SimpleNamespace(
+            client=client, headers=headers, body=body,
+            path=f"/api/v1/projects/p/canvases/c/stories/{body['group_id']}/publication",
+            state=state, index_root=index_store.root,
+        )
+
+
+@pytest.mark.parametrize("operation", ["prepare", "publish", "unlist", "relist", "rollback"])
+def test_default_agent_cannot_mutate_publication(publication_api, operation):
+    api = publication_api
+    # A precise lifecycle token creates two real releases for the denied actions.
+    authorized = api.headers(["projects:read", "projects:lifecycle"])
+    versions = []
+    for request_id in ("first", "second"):
+        response = api.client.post(
+            api.path + "/prepare", headers=authorized,
+            json={**api.body, "request_id": request_id},
+        )
+        assert response.status_code == 200, response.text
+        versions.append(response.json()["data"])
+        if request_id == "first":
+            # Keep the first version online so preparing an update retains it.
+            first = versions[0]
+            published = api.client.post(
+                f"{api.path}/{first['public_id']}/activate", headers=authorized,
+                json={"version": first["version"], "listed": True},
+            )
+            assert published.status_code == 200, published.text
+    public_id = versions[0]["public_id"]
+    activate_path = f"{api.path}/{public_id}/activate"
+    response = api.client.post(
+        activate_path, headers=authorized,
+        json={"version": versions[1]["version"], "listed": operation != "relist"},
+    )
+    assert response.status_code == 200, response.text
+    before = {
+        path: path.read_bytes()
+        for root in (api.state, api.index_root) for path in root.rglob("*.json")
+    }
+    headers = api.headers()
+    payload = {
+        "publish": {"version": versions[1]["version"], "listed": True},
+        "unlist": {"listed": False},
+        "relist": {"listed": True},
+        "rollback": {"version": versions[0]["version"], "listed": True},
+    }
+    response = api.client.post(
+        api.path + "/prepare" if operation == "prepare" else activate_path,
+        headers=headers,
+        json={**api.body, "request_id": "denied"} if operation == "prepare" else payload[operation],
+    )
+    assert response.status_code == 403, response.text
+    assert "projects:lifecycle" in response.json()["detail"]
+    after = {
+        path: path.read_bytes()
+        for root in (api.state, api.index_root) for path in root.rglob("*.json")
+    }
+    assert after == before
+    # Read/preview remains available to the default agent after the denied mutation.
+    response = api.client.get(api.path, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["active_version"] == versions[1]["version"]
+    preview = api.client.get(
+        f"{api.path}/{public_id}/versions/{versions[0]['version']}", headers=headers,
+    )
+    assert preview.status_code == 200, preview.text
+
+
+@pytest.mark.parametrize("credential", ["browser", "lifecycle_agent"])
+def test_authorized_publication_lifecycle(publication_api, credential):
+    api = publication_api
+    headers = {} if credential == "browser" else api.headers(["projects:read", "projects:lifecycle"])
+    releases = []
+    for request_id in ("first", "second"):
+        response = api.client.post(
+            api.path + "/prepare", headers=headers,
+            json={**api.body, "request_id": request_id},
+        )
+        assert response.status_code == 200, response.text
+        release = response.json()["data"]
+        preview = api.client.get(
+            f"{api.path}/{release['public_id']}/versions/{release['version']}", headers=headers,
+        )
+        assert preview.json()["data"]["status"] == "ready", preview.text
+        releases.append(release)
+        if request_id == "first":
+            published = api.client.post(
+                f"{api.path}/{release['public_id']}/activate", headers=headers,
+                json={"version": release["version"], "listed": True},
+            )
+            assert published.status_code == 200, published.text
+    public_id = releases[0]["public_id"]
+    first, second = (release["version"] for release in releases)
+    for version, listed, expected in (
+        (first, True, first),
+        (None, False, first),
+        (None, True, first),
+        (second, True, second),
+        (first, True, first),  # Roll back to an older release.
+    ):
+        response = api.client.post(
+            f"{api.path}/{public_id}/activate", headers=headers,
+            json={"version": version, "listed": listed},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["active_version"] == expected
+        assert response.json()["data"]["listed"] is listed
+        public = api.client.get(f"/api/v1/public-stories/{public_id}")
+        assert public.status_code == (200 if listed else 410), public.text
+        if listed:
+            assert public.json()["version"] == expected
+
+
+@pytest.mark.parametrize("operation", ["prepare", "activate"])
+def test_publication_lifecycle_token_cannot_write_other_project(publication_api, operation):
+    api = publication_api
+    headers = api.headers(["projects:read", "projects:lifecycle"], project="other")
+    path = api.path + ("/prepare" if operation == "prepare" else f"/{'a' * 32}/activate")
+    response = api.client.post(
+        path, headers=headers, json=api.body if operation == "prepare" else {"listed": True},
+    )
+    assert response.status_code == 403, response.text
+    assert "scope mismatch" in response.json()["detail"].lower()
+    assert not (api.state / "publications").exists()
+
+
 def test_update_keeps_old_version_and_rollback(source):
     store, output, first, _ = ready(source)
     store.activate(first["public_id"], "owner", first["version"], True)

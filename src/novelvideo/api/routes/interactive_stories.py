@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from novelvideo.api.auth import get_api_user
+from novelvideo.api.auth import get_api_user, require_project_scope
 from novelvideo.api.deps import resolve_project_scope
 from novelvideo.freezone.canvas_events import append_canvas_event, canvas_event_actor
 from novelvideo.interactive_story.models import (
@@ -133,7 +133,7 @@ async def _record_outline_save(service, body, result, user: dict, save_source: s
 async def create_interactive_story(
     project: str,
     body: CreateInteractiveStoryRequest,
-    user: dict = Depends(get_api_user),
+    user: dict = Depends(require_project_scope("projects:write")),
 ):
     service = await _service(project, user, required_role="editor")
     try:
@@ -170,7 +170,7 @@ async def patch_interactive_story(
     project: str,
     story_id: str,
     body: StoryPatchV2,
-    user: dict = Depends(get_api_user),
+    user: dict = Depends(require_project_scope("projects:write")),
 ):
     _require_story_id(story_id, body.story_id)
     service = await _service(project, user, required_role="editor")
@@ -239,7 +239,7 @@ async def confirm_interactive_story_stages(
     project: str,
     story_id: str,
     body: ConfirmInteractiveStoryStagesRequest,
-    user: dict = Depends(get_api_user),
+    user: dict = Depends(require_project_scope("projects:write")),
 ):
     """Persist an explicit user confirmation or reopen decision for manual stages."""
     _require_story_id(story_id, body.story_id)
@@ -260,7 +260,7 @@ async def confirm_interactive_story_stages(
 async def save_interactive_story_outline(
     project: str,
     body: SaveStoryOutlineRequest,
-    user: dict = Depends(get_api_user),
+    user: dict = Depends(require_project_scope("projects:write")),
 ):
     service = await _service(project, user, required_role="editor")
     try:
@@ -277,7 +277,7 @@ async def save_interactive_story_outline(
 async def confirm_interactive_story_outline(
     project: str,
     body: ConfirmStoryOutlineRequest,
-    user: dict = Depends(get_api_user),
+    user: dict = Depends(require_project_scope("projects:write")),
 ):
     service = await _service(project, user, required_role="editor")
     try:

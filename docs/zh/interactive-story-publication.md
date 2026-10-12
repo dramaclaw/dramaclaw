@@ -44,7 +44,9 @@
 
 ## 接口
 
-作者接口位于 `/api/v1/projects/{project}/canvases/{canvas}/stories/{group}/publication`，要求 editor 或更高权限：GET 管理信息、POST `/prepare` 准备、GET `/{publicId}/versions/{version}` 查询与预览、POST `/{publicId}/activate` 发布/下架/回退。预览媒体通过同一路径下的版本媒体接口鉴权读取。
+作者接口位于 `/api/v1/projects/{project}/canvases/{canvas}/stories/{group}/publication`，要求 editor 或更高权限：GET 管理信息、POST `/prepare` 准备、GET `/{publicId}/versions/{version}` 查询与预览、POST `/{publicId}/activate` 发布/下架/回退。Agent token 调用 `/prepare` 或 `/{publicId}/activate` 还必须持有 `projects:lifecycle`，且会话当前项目必须匹配请求项目；默认 Agent token 不含该 scope，调用返回 403。预览媒体通过同一路径下的版本媒体接口鉴权读取。
+
+影游创作接口中的故事创建、故事修改、大纲保存、大纲确认及制作阶段确认要求 editor 或更高权限；Agent token 还必须持有 `projects:write`，且会话当前项目必须匹配请求项目。只有 `tasks:submit`、`projects:lifecycle` 或 `projects:purge` 不能替代创作写权限。浏览器会话继续按项目角色授权。
 
 游客接口为 GET `/api/v1/public-stories/{publicId}`、GET `/versions/{version}` 和 GET `/versions/{version}/media/{asset}`；只允许已发布且作品未下架的版本，媒体提供 Range 支持和 no-store 缓存策略。
 
