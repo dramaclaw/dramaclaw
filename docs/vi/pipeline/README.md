@@ -14,6 +14,7 @@ không phải khái niệm trong code. Code chỉ có danh sách bước và dan
 | 2 | Plan | Phân tập, identity nhân vật, kế hoạch cảnh/đạo cụ, kịch bản | [02-plan.md](02-plan.md) |
 | 3 | Produce | Sketch, first frame, giọng đọc, video từng beat | [03-produce.md](03-produce.md) |
 | 4 | Deliver | Ghép tập phim, SRT, gói zip | [04-deliver.md](04-deliver.md) |
+| — | MCP | Điều khiển pipeline từ agent ngoài | [05-mcp.md](05-mcp.md) |
 
 ## Trạng thái và bước kế tiếp
 
@@ -54,4 +55,5 @@ các điều kiện tiên quyết của task, mô tả ở từng chặng.
 - **Xia Director** (`chat/`, trong code xuất hiện là 虾导): agent chat điều khiển pipeline qua
   công cụ MCP. `chat/director_auto.py` là bộ điều phối tự động theo `next_step`,
   lưu bền trong SQLite. Backend chat có adapter Claude, Codex và Hermes.
+- **MCP**: server stdio (`chat/dramaclaw_mcp.py`) bọc REST API cho agent ngoài, xem [05-mcp.md](05-mcp.md).
 - **Canvas (freezone)**: nhánh khám phá tự do bằng node graph, tách khỏi pipeline series.
