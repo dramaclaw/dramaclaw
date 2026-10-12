@@ -351,7 +351,7 @@ export function ProviderModelPicker({
             {effectiveModels.map((model) => {
               const isActive = selectedModel?.id === model.id;
               const disabledReason = getOptionDisabledReason?.(model) ?? null;
-              const isDisabled = disabledReason != null && !isActive;
+              const isDisabled = disabledReason != null && (!isActive || domain === "video");
               const optionInner = (
                 <>
                   {isActive ? (
@@ -363,10 +363,10 @@ export function ProviderModelPicker({
                 </>
               );
               const optionClass = `${MODEL_PICKER_OPTION_BASE_CLASS} ${
-                isActive
-                  ? 'bg-white/[0.13] text-text-dark ring-1 ring-white/24'
-                  : isDisabled
-                    ? 'cursor-not-allowed text-text-muted/40'
+                isDisabled
+                  ? 'cursor-not-allowed text-text-muted/40'
+                  : isActive
+                    ? 'bg-white/[0.13] text-text-dark ring-1 ring-white/24'
                     : 'text-text-muted/95 hover:bg-white/[0.11] hover:text-text-dark'
               }`;
               if (isDisabled) {

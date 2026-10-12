@@ -28,6 +28,8 @@ import {
   videoModelDefaultGenerateAudio,
   videoModelSupportsGenerateAudio,
   videoModelReferenceDisabledReason,
+  videoModeForModel,
+  videoModeMissingInputReason,
   videoMultiImageAutoSwitchMode,
   videoNoUpstreamResetMode,
   videoReferenceAutoSwitchAction,
@@ -58,6 +60,48 @@ const SEEDANCE10_PRO_FAST = "newapi_seedance-1.0-pro-fast";
 const SEEDANCE15_PRO = "newapi_seedance-1.5-pro";
 const HAPPYHORSE = "newapi_happyhorse-1.0";
 const SEEDANCE25 = "newapi_seedance-2.5";
+
+describe("catalog models requiring video input", () => {
+  const none = { images: 0, videos: 0, audios: 0 };
+  const depth = { id: "catalog-depth", apiModel: "Depth-Anything-Video", supportedModes: ["video_edit"] };
+
+  it("disables video-only models until a video node is connected", () => {
+    for (const supportedModes of [["video_edit"], ["video_extend"], ["video_edit", "video_extend"]]) {
+      expect(videoModelReferenceDisabledReason({ ...depth, supportedModes }, none))
+        .toBe("node.videoOps.modeDisabled.needOneVideo");
+      expect(videoModelReferenceDisabledReason({ ...depth, supportedModes }, { ...none, videos: 1 }))
+        .toBeNull();
+    }
+    expect(videoModelReferenceDisabledReason({ ...depth, supportedModes: ["text_to_video", "video_edit"] }, none))
+      .toBeNull();
+  });
+
+  it("switches to the supported mode and preserves it when the input is removed", () => {
+    expect(videoModeForModel("textToVideo", depth, { ...none, videos: 1 })).toBe("videoEdit");
+    expect(videoModeForModel("textToVideo", depth, none)).toBe("videoEdit");
+    expect(videoNoUpstreamResetMode("videoEdit", none, depth)).toBeNull();
+    expect(videoNoUpstreamResetMode("videoEdit", none, HAPPYHORSE)).toBe("textToVideo");
+  });
+
+  it("selects an input-compatible fallback without changing a supported explicit mode", () => {
+    const model = { supportedModes: ["text_to_video", "video_edit", "video_extend"] };
+    expect(videoModeForModel("firstFrame", model, none)).toBe("textToVideo");
+    expect(videoModeForModel("firstFrame", model, { ...none, videos: 1 })).toBe("videoEdit");
+    expect(videoModeForModel("textToVideo", model, { ...none, videos: 1 })).toBe("videoEdit");
+    expect(videoModeForModel("videoExtend", model, { ...none, videos: 1 })).toBe("videoExtend");
+  });
+
+  it("requires images for image modes without adding an all-reference restriction", () => {
+    for (const mode of ["firstFrame", "imageToVideo", "imageReference", "firstLastFrame"] as const) {
+      expect(videoModeMissingInputReason(mode, none)).toBe("node.videoOps.modeDisabled.needOneImage");
+      expect(videoModeMissingInputReason(mode, { ...none, images: 1 })).toBeNull();
+    }
+    expect(videoModeMissingInputReason("allReference", none)).toBeNull();
+    expect(videoModeMissingInputReason("allReference", { ...none, hasOtherReference: true })).toBeNull();
+    expect(videoNoUpstreamResetMode("allReference", { ...none, hasOtherReference: true }, SEEDANCE2_FAST)).toBeNull();
+    expect(videoModeMissingInputReason("textToVideo", none)).toBeNull();
+  });
+});
 
 describe("video model family detection", () => {
   it("classifies Seedance 2.0 variants (not 1.x)", () => {
@@ -1367,7 +1411,7 @@ describe("VideoNode 接线：素材撤空 → 文生视频", () => {
     // upstreamCounts（已解析 URL）会把空态 CTA 刚铺好、还没出图的图片节点算成 0 张，
     // 用它当场就会把三个 CTA 顶回文生视频。
     expect(source).toContain(
-      "videoNoUpstreamResetMode(genMode, upstreamTypeCounts)",
+      "videoNoUpstreamResetMode(compatibleMode, counts, selectedVideoModel)",
     );
   });
 

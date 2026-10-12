@@ -320,6 +320,45 @@ export function videoModeRequiresMedia(mode: VideoGenMode): boolean {
   return mode !== "textToVideo";
 }
 
+export interface VideoModeInputCounts {
+  images: number;
+  videos: number;
+  audios: number;
+  hasOtherReference?: boolean;
+}
+
+/** Required inputs, shared by mode availability and model switching. */
+export function videoModeMissingInputReason(
+  mode: VideoGenMode,
+  counts: VideoModeInputCounts,
+): string | null {
+  if (mode === "videoEdit" || mode === "videoExtend") {
+    return counts.videos === 0 ? "node.videoOps.modeDisabled.needOneVideo" : null;
+  }
+  // All-reference entry semantics are separate from input-required image/video modes.
+  if (mode !== "textToVideo" && mode !== "allReference" && counts.images === 0) {
+    return "node.videoOps.modeDisabled.needOneImage";
+  }
+  return null;
+}
+
+/** Preserve compatible explicit modes, including those waiting for their input. */
+export function videoModeForModel(
+  mode: VideoGenMode,
+  model: VideoModelRef,
+  counts: VideoModeInputCounts,
+): VideoGenMode {
+  if (!model) return mode;
+  const supportsCurrentMode = isVideoModeSupportedByModel(mode, model);
+  if (supportsCurrentMode && !videoSubmitMediaRejectionReason(mode, model, counts)) return mode;
+  const candidates = (Object.keys(GEN_MODE_TO_CATALOG_MODE) as VideoGenMode[])
+    .filter((candidate) => isVideoModeSupportedByModel(candidate, model));
+  return candidates.find((candidate) =>
+    !videoModeMissingInputReason(candidate, counts) &&
+    !videoSubmitMediaRejectionReason(candidate, model, counts)
+  ) ?? (supportsCurrentMode ? mode : candidates[0] ?? mode);
+}
+
 /**
  * 上游素材被全部撤走后该退回哪个模式：`"textToVideo"` = 退回文生视频，null = 不动。
  *
@@ -336,9 +375,11 @@ export function videoModeRequiresMedia(mode: VideoGenMode): boolean {
  */
 export function videoNoUpstreamResetMode(
   mode: VideoGenMode,
-  counts: { images: number; videos: number; audios: number },
+  counts: VideoModeInputCounts,
+  model?: VideoModelRef,
 ): VideoGenMode | null {
-  if (counts.images > 0 || counts.videos > 0 || counts.audios > 0) return null;
+  if (counts.images > 0 || counts.videos > 0 || counts.audios > 0 || counts.hasOtherReference) return null;
+  if (model && !isVideoModeSupportedByModel("textToVideo", model)) return null;
   return mode === "textToVideo" ? null : "textToVideo";
 }
 
@@ -750,6 +791,12 @@ export function videoModelReferenceDisabledReason(
   counts: { images: number; videos: number; audios: number },
 ): string | null {
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    if (
+      counts.videos === 0 &&
+      model.supportedModes?.every((mode) => mode === "video_edit" || mode === "video_extend")
+    ) {
+      return "node.videoOps.modeDisabled.needOneVideo";
+    }
     if (counts.images > 0 && videoEmptyStateCtaModes(model).length === 0) {
       return "node.videoModel.reason.imageUnsupported";
     }

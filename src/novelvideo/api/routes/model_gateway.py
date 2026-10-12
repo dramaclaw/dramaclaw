@@ -56,6 +56,7 @@ from novelvideo.newapi_provisioner import (
     delete_channel_by_name,
     ensure_newapi_setup,
     ensure_admin_access_token,
+    fetch_provider_channel_models,
     get_provisioner_config,
     list_channel_types,
     mask_token,
@@ -266,6 +267,13 @@ class SyncProviderChannelBody(BaseModel):
     provider: str
     upstream_key: str | None = Field(default=None, alias="upstreamKey")
     base_url: str | None = Field(default=None, alias="baseUrl")
+
+
+class ProviderChannelModelsBody(BaseModel):
+    new_api_base_url: str | None = Field(default=None, alias="newApiBaseUrl")
+    database: NewApiDatabaseBody | None = None
+    provider: str
+    type: int | None = None
 
 
 class MediaModelConfigBody(BaseModel):
@@ -1080,6 +1088,48 @@ async def get_custom_newapi_channel_types() -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"ok": True, "data": {"items": items}}
+
+
+@router.post("/custom/newapi/provider-channel/models")
+async def get_custom_newapi_provider_channel_models(
+    body: ProviderChannelModelsBody,
+) -> dict[str, Any]:
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from None
+    provider = body.provider.strip().lower()
+    if not provider:
+        raise HTTPException(status_code=400, detail="provider is required")
+    if body.type is not None and body.type <= 0:
+        raise HTTPException(status_code=400, detail="type must be positive")
+
+    def discover() -> dict[str, Any]:
+        cfg = _get_provisioner_config_from_request(body.new_api_base_url, body.database)
+        saved_channel = get_newapi_provider_channel(provider) or {}
+        channel_type = body.type or int(saved_channel.get("type") or 0) or None
+        admin = ensure_admin_access_token(cfg)
+        return fetch_provider_channel_models(
+            cfg, admin, provider=provider, channel_type=channel_type
+        )
+
+    try:
+        data = await asyncio.to_thread(discover)
+    except LookupError:
+        raise HTTPException(
+            status_code=404, detail="provider channel not found; save and sync it first"
+        ) from None
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504, detail="NewAPI provider model discovery timed out"
+        ) from None
+    except Exception:
+        # Configuration, admin-token checks and channel lookup can also contain
+        # credentials in their exceptions. Keep all management failures opaque.
+        raise HTTPException(
+            status_code=502, detail="NewAPI provider model discovery failed"
+        ) from None
+    return {"ok": True, "data": data}
 
 
 @router.post("/custom/newapi/provider-channel/sync")

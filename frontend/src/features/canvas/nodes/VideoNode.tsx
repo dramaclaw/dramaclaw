@@ -94,6 +94,7 @@ import {
   videoModelSupportsGenerateAudio,
   videoMultiImageAutoSwitchMode,
   videoNoUpstreamResetMode,
+  videoModeForModel,
   videoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
@@ -1975,10 +1976,23 @@ export const VideoNode = memo(
     // 看到素材还在便不再改写。
     useEffect(() => {
       if (isHappyHorseModel) return;
-      const target = videoNoUpstreamResetMode(genMode, upstreamTypeCounts);
-      if (!target) return;
+      if (videoModelsLoading) return;
+      const counts = {
+        ...upstreamTypeCounts,
+        hasOtherReference: Boolean(data.referenceFileUrl || data.referenceLink?.trim()),
+      };
+      const compatibleMode = selectedVideoModel?.supportedModes?.length
+        ? videoModeForModel(genMode, selectedVideoModel, counts)
+        : genMode;
+      const target = videoNoUpstreamResetMode(compatibleMode, counts, selectedVideoModel)
+        ?? compatibleMode;
+      if (target === genMode) return;
       updateNodeData(id, { genMode: target }, { recordHistory: false });
     }, [
+      data.referenceFileUrl,
+      data.referenceLink,
+      selectedVideoModel,
+      videoModelsLoading,
       genMode,
       isHappyHorseModel,
       upstreamTypeCounts,
