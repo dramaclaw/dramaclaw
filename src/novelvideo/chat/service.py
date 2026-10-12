@@ -265,7 +265,9 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "then copy exact user node totals into expected_node_count and expected_node_counts. Every "
     "complete Plan must carry "
     "top-level schema_version plus skill.id and skill.version copied from the selected production "
-    "Skill; generation_answers supplements that Plan and never replaces it. "
+    "Skill; use text-to-image for a pure image workflow and text-to-image-video only "
+    "when the user requests a video stage. generation_answers supplements that Plan and "
+    "never replaces it. "
     "Before authoring or submitting any workflow result, call "
     "freezone_begin_agent_product_generation and copy its returned operation_id exactly. Never "
     "invent, abbreviate, or reconstruct an operation_id, and never call a workflow prepare tool "
@@ -274,7 +276,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "identify recipe-less user "
     "resources. For episodic short-drama, Beat, "
     "voice-over, or background-music workflows, prefer the short-drama production Skill over the "
-    "generic text-to-image-video Skill. After any validation error, never submit a reduced sample, "
+    "generic text-to-image-video Skill. A pure image workflow must use text-to-image instead. "
+    "After any validation error, never submit a reduced sample, "
     "smoke test, or placeholder graph such as A/B or T1/T2 to the real canvas; diagnose with the "
     "read-only compiler only by compiling that same complete graph, preserving all nodes and "
     "dependency edges. Never compile reduced probe nodes or use edges=[] for a multi-node plan. "
@@ -626,7 +629,9 @@ Canvas write contract:
   path; on that path, copy exact node totals into expected_node_count and expected_node_counts and
   keep them unchanged during recovery. Episodic short-drama, Beat,
   voice-over, or background-music workflows should use the short-drama production Skill rather than
-  the generic text-to-image-video Skill.
+  the generic text-to-image-video Skill. A pure image workflow must use text-to-image; use
+  text-to-image-video only when the user requests video, and social-content-campaign only for an
+  explicit social-platform image set.
   Graph completeness is the Agent's responsibility. Before submission, verify that all Plan nodes
   form one connected component when edges are viewed as undirected. For independent Beat/shot
   branches that need failure isolation, add one non-executable common input root and fan it out to
@@ -655,8 +660,8 @@ Canvas write contract:
   freezone_update_node_data; do not call freezone_run_node_action.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never
   pass it to workflow_skill_get/freezone_get_workflow_skill or use it as intent.skill_id. Select the
-  matching production Workflow Skill returned by the catalog, such as text-to-image-video for a
-  general image/video pipeline.
+  matching production Workflow Skill returned by the catalog, such as text-to-image for a pure
+  image pipeline or text-to-image-video for an image/video pipeline.
 - Use freezone_create_node only for exactly one standalone textAnnotationNode when the user asks for
   one text node. Use one freezone_emit_canvas_command batch only for several ordinary non-workflow
   canvas edits. Use FREEZONE_CANVAS_CONTEXT's canvas_id. Do not precheck pipeline failure unless the

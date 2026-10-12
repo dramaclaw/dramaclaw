@@ -1584,6 +1584,7 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
         "freezone_confirm_workflow_draft does not accept run_after_create" in instructions
     )
     assert "not a Workflow catalog skill_id" in instructions
+    assert "text-to-image for a pure image workflow" in instructions
     assert "text-to-image-video" in instructions
     assert "Never ask for a duplicate 'create and run' confirmation" in instructions
     assert "the Freezone write tool creates that card" in instructions
@@ -1594,6 +1595,7 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "freezone_run_node_action" in instructions
 
     canvas_instructions = chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS
+    assert "pure image workflow must use text-to-image" in canvas_instructions
     assert "one-node workflow is still a workflow" in canvas_instructions
     assert "do not read node detail before starting it" in canvas_instructions
     assert "freezone_run_node_action" in canvas_instructions

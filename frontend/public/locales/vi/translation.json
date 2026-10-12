@@ -967,7 +967,22 @@
         "submittedAnswers": "Câu trả lời đã gửi · {{count}}",
         "noAnswersCancelled": "Lượt này đã bị hủy mà không gửi lựa chọn.",
         "noAnswersSkipped": "Đã bỏ qua các câu hỏi này.",
-        "noAnswersSubmitted": "Chưa gửi lựa chọn cụ thể nào."
+        "noAnswersSubmitted": "Chưa gửi lựa chọn cụ thể nào.",
+        "videoGenerationMode": {
+          "title": "Chọn chế độ tạo video",
+          "description": "Chọn cách nút video sử dụng văn bản và tài liệu tham chiếu.",
+          "recommended": "{{label}} (Đề xuất)",
+          "options": {
+            "textToVideo": "Chỉ tạo video từ mô tả văn bản, không dùng ảnh tham chiếu.",
+            "imageReference": "Dùng nhiều ảnh làm tham chiếu cho nhân vật, bối cảnh và phong cách hình ảnh.",
+            "allReference": "Dùng ảnh, video và âm thanh cùng nhau làm tài liệu tham chiếu tổng hợp.",
+            "firstFrame": "Khóa ảnh tham chiếu làm khung hình đầu rồi tiếp tục tạo video từ đó.",
+            "imageToVideo": "Dùng một ảnh làm nền tảng hình ảnh tổng thể để tạo video.",
+            "firstLastFrame": "Khóa cả khung hình đầu và cuối rồi tạo chuyển động ở giữa.",
+            "videoEdit": "Tạo bản chỉnh sửa dựa trên video hiện có.",
+            "videoExtend": "Mở rộng video hiện có bằng nội dung mới được tạo."
+          }
+        }
       }
     },
     "canvases": {
