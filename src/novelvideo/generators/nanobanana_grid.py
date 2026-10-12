@@ -5269,6 +5269,30 @@ class NanoBananaGridGenerator:
                     if newapi_error:
                         message = f"{message}: {newapi_error}"
                     return _usage_fail(message)
+            elif self.provider == "gemini_webai":
+                print(
+                    f"[NanoBananaPro] 调用 Gemini WebAI ({self.model}) 生成网格图 (比例: {aspect_ratio})..."
+                )
+                prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
+                    contents,
+                    include_mime=True,
+                )
+                reference_images = [
+                    (f"ref_{i}.png", data, mime)
+                    for i, (data, mime) in enumerate(ref_bytes)
+                ]
+                image_bytes, _text, webai_error = await _call_webai_chat_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt_text,
+                    reference_images=reference_images or None,
+                    base_url=self.base_url,
+                )
+                if not image_bytes:
+                    message = "Gemini WebAI 未返回图像数据"
+                    if webai_error:
+                        message = f"{message}: {webai_error}"
+                    return _usage_fail(message)
             else:
                 # ===== Google 直连分支 =====
                 # 根据模型选择配置：gemini-3 支持 image_size，gemini-2.5 不支持
@@ -7409,6 +7433,29 @@ CRITICAL: Keep exact composition from sketch. Only add color, texture, and light
                     return output_path
                 if error_detail:
                     print(f"[DramaClawAPI Render] 失败: {error_detail}")
+                return None
+            elif self.provider == "gemini_webai":
+                prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
+                    contents,
+                    include_mime=True,
+                )
+                reference_images = [
+                    (f"ref_{i}.png", data, mime)
+                    for i, (data, mime) in enumerate(ref_bytes)
+                ]
+                image_bytes, _text_response, error_detail = await _call_webai_chat_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt_text,
+                    reference_images=reference_images or None,
+                    base_url=self.base_url,
+                )
+                if image_bytes:
+                    with open(output_path, "wb") as f:
+                        f.write(image_bytes)
+                    return output_path
+                if error_detail:
+                    print(f"[Render] Gemini WebAI 失败详情: {error_detail}")
                 return None
             else:
                 # ===== Google 直连分支 =====
