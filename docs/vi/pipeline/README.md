@@ -14,7 +14,7 @@ không phải khái niệm trong code. Code chỉ có danh sách bước và dan
 | 2 | Plan | Phân tập, identity nhân vật, kế hoạch cảnh/đạo cụ, kịch bản | [02-plan.md](02-plan.md) |
 | 3 | Produce | Sketch, first frame, giọng đọc, video từng beat | [03-produce.md](03-produce.md) |
 | 4 | Deliver | Ghép tập phim, SRT, gói zip | [04-deliver.md](04-deliver.md) |
-| — | Xem nhanh | Bản HTML tương tác, xem từng bước: mở [index.html](index.html) bằng trình duyệt |
+| — | Xem nhanh | Bản HTML tương tác, xem từng bước | [index.html](index.html) (mở bằng trình duyệt) |
 | — | MCP | Điều khiển pipeline từ agent ngoài | [05-mcp.md](05-mcp.md) |
 
 ## Trạng thái và bước kế tiếp
