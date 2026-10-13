@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 // 抠图 Worker 的主线程客户端:懒加载单例 worker,做请求↔响应的 id 关联。
 // 见 ./matteWorker.ts 顶部注释:整段推理在 worker 内执行,主线程(画布)不被阻塞。
+import { browserModelSource } from "@/lib/runtime-config";
 
 type OutboundMessage =
   | { type: "ready"; id: number }
@@ -50,7 +51,7 @@ function ensureWorker(): Worker {
 
 /** 空闲预热:创建 worker 并预加载模型,把一次性初始化挪到用户点击之前。 */
 export function preloadMatteWorker(): void {
-  ensureWorker().postMessage({ type: "preload", id: 0 });
+  ensureWorker().postMessage({ type: "preload", id: 0, modelSource: browserModelSource() });
 }
 
 /** 在 worker 内抠图;主线程不阻塞。返回去背后的 PNG blob。 */
@@ -59,6 +60,6 @@ export function matteInWorker(blob: Blob): Promise<Blob> {
   const id = nextRequestId++;
   return new Promise<Blob>((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    target.postMessage({ type: "matte", id, blob });
+    target.postMessage({ type: "matte", id, blob, modelSource: browserModelSource() });
   });
 }

@@ -693,6 +693,13 @@ def _freezone_task_cases(client: TestClient, assets: SimpleNamespace):
             ),
         ),
         (
+            "freezone_video_breakdown",
+            client.post(
+                f"/api/v1/projects/{p}/freezone/video-breakdown",
+                json={"video_url": video, "max_frames": 3},
+            ),
+        ),
+        (
             "freezone_video_gen",
             client.post(
                 f"/api/v1/projects/{p}/freezone/video/gen",
@@ -814,7 +821,8 @@ def test_m06_freezone_task_backend_responses_are_ce_ee_isomorphic(
     client, task_backend, _task_manager, _project_dir, assets, _store = m06_client_factory(backend)
 
     cases = _freezone_task_cases(client, assets)
-    assert len(cases) == 30
+    # 两分支分别新增逐帧拉片与参考图转白模，合并后共有 31 个契约用例。
+    assert len(cases) == 31
     for task_type, response in cases:
         assert response.status_code == 200, response.text
         _assert_freezone_http_task_shape(response.json(), task_type=task_type)

@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "mapId": "changfeng-sea",
+  "walkableAreas": [
+    {
+      "id": "map-preview-bounds",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 1152
+        },
+        {
+          "x": 0,
+          "y": 1152
+        }
+      ]
+    }
+  ],
+  "colliders": [],
+  "spawnPoints": [
+    {
+      "id": "boundless-sea-arrival",
+      "position": {
+        "x": 360,
+        "y": 920
+      },
+      "facing": "east"
+    }
+  ],
+  "exits": [
+    {
+      "id": "to-boundless-sea",
+      "trigger": {
+        "id": "to-boundless-sea-trigger",
+        "points": [
+          {
+            "x": 120,
+            "y": 1018
+          },
+          {
+            "x": 180,
+            "y": 1018
+          },
+          {
+            "x": 180,
+            "y": 1062
+          },
+          {
+            "x": 120,
+            "y": 1062
+          }
+        ]
+      },
+      "targetMapId": "boundless-sea",
+      "targetSpawnId": "changfeng-sea-arrival"
+    }
+  ]
+}

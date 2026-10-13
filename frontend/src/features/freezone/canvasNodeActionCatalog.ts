@@ -2,6 +2,7 @@ import i18next from "i18next";
 import {
   CANVAS_NODE_TYPES,
   NODE_TOOL_TYPES,
+  VIDEO_BREAKDOWN_DIMENSIONS,
   resolveNodeSourceImageUrl,
   type CanvasNode,
   type CanvasEdge,
@@ -14,7 +15,11 @@ import {
 } from "@/features/canvas/domain/mainlineNodeFlags";
 import { getFreezoneImageModelsSnapshot } from "@/features/canvas/hooks/useFreezoneImageModels";
 import { getFreezoneVideoModelsSnapshot } from "@/features/canvas/hooks/useFreezoneVideoModels";
-import { isVideoModeSupportedByModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
+import {
+  findSeedance25VideoModel,
+  isVideoModeSupportedByModel,
+} from "@/features/canvas/nodes/shared/videoModelCapabilities";
+import { DEPTH_MAX_DURATION_SEC } from "@/features/canvas/application/depthCapture/depthMath";
 import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
 import {
   VIDEO_UPSCALE_RESOLUTIONS,
@@ -150,6 +155,12 @@ function nodeHasImageSource(node: CanvasNode): boolean {
   return Boolean(resolveNodeSourceImageUrl(node) || hasString((node.data as { previewImageUrl?: unknown }).previewImageUrl));
 }
 
+function isInteractiveStoryClipNode(node: CanvasNode): boolean {
+  if (node.type !== CANVAS_NODE_TYPES.video) return false;
+  const data = node.data as { storySegmentId?: unknown; storyRole?: unknown };
+  return hasString(data.storySegmentId) || data.storyRole === "start";
+}
+
 function imageModelParameterSchema(): CanvasEditableFieldSchema {
   const snapshot = getFreezoneImageModelsSnapshot();
   return {
@@ -219,6 +230,19 @@ const VIDEO_UPSCALE_PARAMETER_SCHEMA = {
     description: "默认 1080p。",
   },
 };
+
+const VIDEO_BREAKDOWN_DIMENSIONS_PARAMETER = {
+  type: "array",
+  label: "拆解维度",
+  options: [...VIDEO_BREAKDOWN_DIMENSIONS],
+  option_labels: {
+    storyboard: "分镜",
+    motion: "动态 / 运镜",
+    music: "音乐 / BGM",
+  },
+  description:
+    "Optional subset of breakdown dimensions. Omit to keep the node's current selection (all three by default).",
+} as const;
 
 function videoUpscaleEditableSchema(node: CanvasNode): Record<string, CanvasEditableFieldSchema> {
   const data = node.data as {
@@ -829,9 +853,52 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
       if ((node.data as { isUpscaleNode?: unknown }).isUpscaleNode === true) {
         return videoUpscaleEditableSchema(node);
       }
+      const storyClip = isInteractiveStoryClipNode(node);
       return {
         displayName: { type: "string", label: "显示名称" },
-        prompt: { type: "string", label: "提示词", description: GENERATOR_PROMPT_DESCRIPTION },
+        ...(storyClip
+          ? {
+              continuityMode: {
+                type: 'enum' as const, label: i18next.t("canvas.story.actionCatalog.continuityLabel"), options: ['auto', 'independent'],
+                description: i18next.t("canvas.story.actionCatalog.continuityDescription"),
+              },
+              continuitySourceNodeId: {
+                type: 'string' as const, label: i18next.t("canvas.story.actionCatalog.continuitySourceLabel"),
+                description: i18next.t("canvas.story.actionCatalog.continuitySourceDescription"),
+              },
+              narration: {
+                type: "string" as const,
+                label: i18next.t("canvas.story.actionCatalog.narrationLabel"),
+                current_value:
+                  typeof (node.data as { narration?: unknown }).narration === "string"
+                    ? (node.data as { narration: string }).narration
+                    : "",
+                description:
+                  i18next.t("canvas.story.actionCatalog.narrationDescription"),
+              },
+              storyProductionNotes: {
+                type: "string" as const,
+                label: i18next.t("canvas.story.actionCatalog.productionNotesLabel"),
+                current_value:
+                  typeof (node.data as { storyProductionNotes?: unknown }).storyProductionNotes === "string"
+                    ? (node.data as { storyProductionNotes: string }).storyProductionNotes
+                    : "",
+                description:
+                  i18next.t("canvas.story.actionCatalog.productionNotesDescription"),
+              },
+            }
+          : {}),
+        prompt: {
+          type: "string",
+          label: "提示词",
+          current_value:
+            typeof (node.data as { prompt?: unknown }).prompt === "string"
+              ? (node.data as { prompt: string }).prompt
+              : "",
+          description: storyClip
+            ? `${GENERATOR_PROMPT_DESCRIPTION} This is only the video-generation prompt and does not replace narration. When completing a story clip, update narration separately.`
+            : GENERATOR_PROMPT_DESCRIPTION,
+        },
         genMode: videoGenModeSchema(node),
         model: videoModelSchema(node),
         aspectRatio: videoAspectRatioSchema(node),
@@ -1001,6 +1068,7 @@ function addChatCommandActions(node: CanvasNode, actions: CanvasNodeActionCatalo
   }
 
   if (canUpdateNodeDataViaChat(node)) {
+    const storyClip = isInteractiveStoryClipNode(node);
     actions.push({
       action: "update_node_data",
       execution: "chat_command",
@@ -1008,7 +1076,9 @@ function addChatCommandActions(node: CanvasNode, actions: CanvasNodeActionCatalo
       description:
         node.type === CANVAS_NODE_TYPES.beatContext
           ? `更新镜头上下文节点草稿字段。只允许 data 包含 ${BEAT_CONTEXT_AGENT_EDITABLE_FIELDS.join(", ")}；出场身份和出场道具不开放给 agent 编辑。`
-          : "Update editable data fields on this node. Reserved mainline/projection fields are ignored.",
+          : storyClip
+            ? i18next.t("canvas.story.actionCatalog.updateDescription")
+            : "Update editable data fields on this node. Reserved mainline/projection fields are ignored.",
       parameters: {
         node_id: node.id,
         data: "object",
@@ -1476,8 +1546,28 @@ function downstreamSpawnTypesForNode(node: CanvasNode): CanvasNodeType[] {
   return getDownstreamSpawnTypes(node.type);
 }
 
-function addMediaActions(node: CanvasNode, actions: CanvasNodeActionCatalogEntry[]): void {
+function addMediaActions(
+  node: CanvasNode,
+  actions: CanvasNodeActionCatalogEntry[],
+  context?: CanvasNodeActionCatalogContext,
+): void {
   if (node.type === CANVAS_NODE_TYPES.video && hasString((node.data as { videoUrl?: unknown }).videoUrl)) {
+    actions.push({
+      action: "capture_video_first_frame",
+      execution: "frontend_node",
+      command_type: "run_node_action",
+      description: i18next.t("canvas.story.actionCatalog.captureFirstFrameDescription"),
+      parameters: { node_id: node.id },
+      result_effect: { target: "derived image node", next_step: "Read the returned createdNodeId and output and verify the source before using it as a reference; binding and generation require separate authorization." },
+    });
+    actions.push({
+      action: "capture_video_last_frame",
+      execution: "frontend_node",
+      command_type: "run_node_action",
+      description: i18next.t("canvas.story.actionCatalog.captureLastFrameDescription"),
+      parameters: { node_id: node.id },
+      result_effect: { target: "derived image node", next_step: "Read the returned createdNodeId and output before binding references; generation requires separate authorization and readiness checks." },
+    });
     actions.push({
       action: "open_video_viewer",
       execution: "manual_ui",
@@ -1524,6 +1614,62 @@ function addMediaActions(node: CanvasNode, actions: CanvasNodeActionCatalogEntry
       parameters: { node_id: node.id },
     });
     actions.push({
+      action: "run_video_breakdown",
+      execution: "frontend_node",
+      command_type: "run_node_action",
+      description:
+        "逐帧拉片 / frame-by-frame breakdown: create a downstream video breakdown node connected to this video, matching the toolbar 逐帧拉片 entry. By default it only creates the node. Pass auto_start=true when the user asked to actually run the breakdown now; it then submits the paid breakdown task (several minutes) and lands storyboard / motion / music result groups downstream of the new node.",
+      parameters: {
+        node_id: node.id,
+        parameter_schema: {
+          dimensions: VIDEO_BREAKDOWN_DIMENSIONS_PARAMETER,
+          auto_start: {
+            type: "boolean",
+            label: "立即开始拉片",
+            description: "true = start the breakdown on the new node right away; default false.",
+          },
+        },
+      },
+      result_effect: {
+        target: "downstream video breakdown node",
+        next_step:
+          "Without auto_start, find the new videoBreakdownNode downstream of this video and run start_video_breakdown on it.",
+      },
+    });
+    actions.push({
+      action: "open_video_crop_tool",
+      execution: "manual_ui",
+      command_type: "run_node_action",
+      description:
+        "画面裁切 / frame crop: enter crop mode for this video node. The user drags the crop box and confirms through the existing frontend crop UI; the cropped video lands as a new node.",
+      parameters: { node_id: node.id },
+    });
+    if (findSeedance25VideoModel(getFreezoneVideoModelsSnapshot().models)) {
+      actions.push({
+        action: "open_video_extend_tool",
+        execution: "manual_ui",
+        command_type: "run_node_action",
+        description:
+          "智能续写 / smart extend: enter the range-pick mode on this video node. The user picks the leading segment to continue from and confirms; the frontend then creates a downstream Seedance 2.5 video node for the continuation. It does not generate anything by itself.",
+        parameters: { node_id: node.id },
+      });
+    }
+    const durationMs = (node.data as { durationMs?: unknown }).durationMs;
+    const depthTooLong =
+      typeof durationMs === "number" && durationMs > DEPTH_MAX_DURATION_SEC * 1000;
+    actions.push({
+      action: "run_video_depth_capture",
+      execution: "frontend_node",
+      command_type: "run_node_action",
+      description:
+        `深度动作捕捉 / depth motion capture: compute a per-frame depth video in the browser and land it as a new downstream video node, matching the toolbar action. Runs locally (WebGPU preferred), takes a while, and only supports videos up to ${DEPTH_MAX_DURATION_SEC}s. The action returns once the task has started; progress shows on the new node.`,
+      can_run_now: !depthTooLong,
+      ...(depthTooLong
+        ? { blocked_reasons: [`video is longer than ${DEPTH_MAX_DURATION_SEC}s`] }
+        : {}),
+      parameters: { node_id: node.id },
+    });
+    actions.push({
       action: "run_audio_separate",
       execution: "frontend_node",
       command_type: "run_node_action",
@@ -1543,6 +1689,37 @@ function addMediaActions(node: CanvasNode, actions: CanvasNodeActionCatalogEntry
       command_type: "run_node_action",
       description: "Enter boxed subtitle erase mode for this video node. The user draws a box and confirms through the existing frontend erase UI.",
       parameters: { node_id: node.id, mode: "box" },
+    });
+  }
+
+  if (node.type === CANVAS_NODE_TYPES.videoBreakdown) {
+    const data = node.data as { sourceVideoUrl?: unknown; isBreakingDown?: unknown };
+    const hasUpstreamVideo = (context?.edges ?? []).some((edge) => {
+      if (edge.target !== node.id) return false;
+      const source = context?.nodes?.find((item) => item.id === edge.source);
+      return (
+        source?.type === CANVAS_NODE_TYPES.video &&
+        hasString((source.data as { videoUrl?: unknown }).videoUrl)
+      );
+    });
+    const blockedReasons = [
+      ...(hasUpstreamVideo || hasString(data.sourceVideoUrl)
+        ? []
+        : ["no source video: connect an upstream video node with media first"]),
+      ...(data.isBreakingDown ? ["a breakdown is already running on this node"] : []),
+    ];
+    actions.push({
+      action: "start_video_breakdown",
+      execution: "frontend_node",
+      command_type: "run_node_action",
+      description:
+        "开始拉片: submit the paid frame-by-frame breakdown for this node's source video, matching the node's 开始拉片 button. Takes several minutes; the action returns once the task is submitted and the storyboard / motion / music result groups land downstream of this node when it finishes.",
+      can_run_now: blockedReasons.length === 0,
+      ...(blockedReasons.length > 0 ? { blocked_reasons: blockedReasons } : {}),
+      parameters: {
+        node_id: node.id,
+        parameter_schema: { dimensions: VIDEO_BREAKDOWN_DIMENSIONS_PARAMETER },
+      },
     });
   }
 
@@ -1619,7 +1796,7 @@ export function buildCanvasNodeActionCatalog(
   addChatCommandActions(node, actions);
   addFrontendNodeActions(node, actions, context);
   addImageToolActions(node, actions);
-  addMediaActions(node, actions);
+  addMediaActions(node, actions, context);
   addCommitAction(node, actions);
   addHtmlArtifactActions(node, actions);
 

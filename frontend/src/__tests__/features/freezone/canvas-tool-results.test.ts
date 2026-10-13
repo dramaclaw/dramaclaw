@@ -62,11 +62,12 @@ describe("Freezone canvas tool result reporting", () => {
       json: expect.objectContaining({
         tool_call_status: "completed",
         canvas_apply_status: "accepted",
+        background_execution_status: "running",
         applied: true,
         cancelled: false,
         errors: [],
-        message: "Canvas command was submitted to the canvas.",
-        agent_hint: expect.stringContaining("submitted to the canvas"),
+        message: "Canvas command was submitted and is running in the background.",
+        agent_hint: expect.stringContaining("still running in the background"),
       }),
       timeout: 30_000,
     });
@@ -156,6 +157,7 @@ describe("Freezone canvas tool result reporting", () => {
         bridge_key: "bridge-background",
         followup: true,
         canvas_apply_status: "pending",
+        background_execution_status: "running",
         agent_hint: expect.stringContaining("Do not rerun generation"),
       }),
       timeout: 30_000,

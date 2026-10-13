@@ -11,6 +11,8 @@ node_modules/
 dist/
 dist-ssr
 *.local
+# tanstack router 插件的构建临时件，跑 dev/build 就会重新生成
+.tanstack/
 
 # Environment
 .env

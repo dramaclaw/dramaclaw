@@ -273,9 +273,44 @@ def _newapi_text_openai_model(
     from contextlib import asynccontextmanager
 
     from pydantic_ai.models.openai import OpenAIChatModel
+    from novelvideo.utils.model_context_budget import TextContextBudget
+
+    context_budget = TextContextBudget.from_env()
 
     class _AutoClosingOpenAIChatModel(OpenAIChatModel):
-        async def request(self, *args: Any, **kwargs: Any) -> Any:
+        async def _checked_settings(self, messages, settings, parameters):
+            if context_budget is None:
+                return settings
+            prepared_settings, prepared_parameters = self.prepare_request(
+                settings, parameters
+            )
+            payload = {
+                "messages": await self._map_messages(
+                    messages, prepared_parameters, model_settings=prepared_settings
+                ),
+                "tools": [
+                    self._map_tool_definition(tool, prepared_settings or {})
+                    for tool in [
+                        *prepared_parameters.function_tools,
+                        *prepared_parameters.output_tools,
+                    ]
+                ],
+            }
+            if prepared_parameters.output_object is not None:
+                payload["response_format"] = self._map_json_schema(
+                    prepared_parameters.output_object
+                )
+            if prepared_settings and prepared_settings.get("extra_body"):
+                payload["extra_body"] = prepared_settings["extra_body"]
+            checked = context_budget.checked_settings(payload, prepared_settings)
+            # Preparation can move options such as thinking into request
+            # parameters. Let the real request prepare the original options,
+            # carrying forward only our explicit output reservation.
+            return {**(settings or {}), "max_tokens": checked["max_tokens"]}
+
+        async def request(
+            self, messages, model_settings, model_request_parameters
+        ) -> Any:
             from novelvideo.brainclaw_outcome_runtime import (
                 begin_request_outcomes,
                 report_request_outcomes,
@@ -285,7 +320,12 @@ def _newapi_text_openai_model(
             token = begin_request_outcomes()
             try:
                 async with self:
-                    result = await super().request(*args, **kwargs)
+                    checked = await self._checked_settings(
+                        messages, model_settings, model_request_parameters
+                    )
+                    result = await super().request(
+                        messages, checked, model_request_parameters
+                    )
                 report_request_outcomes(passed=True)
                 return result
             except BaseException:
@@ -295,7 +335,14 @@ def _newapi_text_openai_model(
                 reset_request_outcomes(token)
 
         @asynccontextmanager
-        async def request_stream(self, *args: Any, **kwargs: Any):
+        async def request_stream(
+            self,
+            messages,
+            model_settings,
+            model_request_parameters,
+            *args: Any,
+            **kwargs: Any,
+        ):
             from novelvideo.brainclaw_outcome_runtime import (
                 begin_request_outcomes,
                 report_request_outcomes,
@@ -305,7 +352,12 @@ def _newapi_text_openai_model(
             token = begin_request_outcomes()
             try:
                 async with self:
-                    async with super().request_stream(*args, **kwargs) as response:
+                    checked = await self._checked_settings(
+                        messages, model_settings, model_request_parameters
+                    )
+                    async with super().request_stream(
+                        messages, checked, model_request_parameters, *args, **kwargs
+                    ) as response:
                         yield response
                 report_request_outcomes(passed=True)
             except BaseException:

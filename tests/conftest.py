@@ -12,6 +12,7 @@ def restore_ports_registry_globals():
 
     ports_snapshot = dict(registry._PORTS)
     bootstrapped_snapshot = registry._BOOTSTRAPPED
+    missing_port_error_snapshot = registry.PortNotRegistered
     if "product_surface_access" not in registry._PORTS:
         registry.register_port("product_surface_access", LocalProductSurfaceAccess())
     try:
@@ -20,6 +21,9 @@ def restore_ports_registry_globals():
         registry._PORTS.clear()
         registry._PORTS.update(ports_snapshot)
         registry._BOOTSTRAPPED = bootstrapped_snapshot
+        # Registry contract tests reload the module. Restore the exception's
+        # identity too, so consumers imported before the reload still catch it.
+        registry.PortNotRegistered = missing_port_error_snapshot
 
 
 @pytest.fixture(autouse=True)

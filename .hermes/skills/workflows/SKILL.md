@@ -14,18 +14,22 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 
 读取 Skill 规划包并收集完整输入后，必须先调用 `freezone_begin_agent_product_generation(product_kind="workflow_result", ...)` 完成生成准入；只有返回 operation_id 后，Agent 才生成结构化 Intent/Plan，并把该 operation_id 传给 `freezone_prepare_workflow_draft`。节点数据、稳定 ID、连线类型、分组、布局和成片合成由工具确定性完成。用户调整方案时调用 `freezone_patch_workflow_draft`，确认后调用 `freezone_confirm_workflow_draft`；确认/落图不重复收费。不得调用 `freezone_build_workflow_plan`，也不得用通用画布命令手写工作流。
 
+## 互动影游边界
+
+涉及分支故事、选择、结局或互动广告剧情时，先读取 `interactive-story` Skill。故事结构使用其业务工具；普通工作流只负责素材生产，不替代故事创建或修改。用户在制作阶段要求创建角色或场景参考图时，先读 `interactive-story` 的 `references/reference-images.md`，按完整范例和最新故事资产映射准备纯图片 Plan，创建结果以画布上的图片节点和生成状态为准，不能用阶段确认工具代替。已确认制作方案中的新分镜图复用 `text-to-image-video` Workflow Skill 的 `general-image` Recipe，以一份仅含图片生成节点的 Plan 成组创建；现有视频节点保持在 Plan 外，图片工作流结束后再接引用。剧情选择线表示播放路由，不是素材输入依赖。恢复已准备的生成任务仍复用现有执行器；仅在制作备注中写明等待上一镜头尾帧而尚未绑定真实尾帧素材或已支持的依赖时，先准备该输入，不能直接把该片段当作就绪任务运行。不要擅自为此重建整套工作流。
+
 用户未指定内部媒体参数或要求推荐时，在对应图片／视频节点的 `model` 中写 `recommended`，直接准备草稿；服务端用当前用户可见的同一 Catalog 快照解析具体模型和兼容参数，返回的预览供用户确认。不得把 `recommended` 写进 size、quality 或 resolution，也不得按 Catalog 列表顺序取第一个模型。推荐模型不可用或用户明确要求选择参数时，调用 `freezone_request_user_clarification(generation_media_types=[...])`，只列出本次涉及的 `image`/`video` 类型；工具负责生成完整字段问题和实时选项，不手写生成参数问题列表。首次准备草稿时，把问题卡返回的 `answers` 原样作为 `generation_answers` 传给准备工具，由工具映射到节点参数。已有草稿需要补问时，把 `draft_id`、`revision` 分别作为 `workflow_draft_id`、`workflow_expected_revision` 传给澄清工具；它校验答案并修订同一草稿，返回新的预览和 revision。若确认入口或画布写入返回 `generation_parameters_required`，还应将返回的 `required_choices` 原样传入 `generation_required_choices`，并把已确认的模型等选择放进 `answers`，服务端据此从同一 Catalog 条目给出推荐值。澄清结果里的 `node_data.<节点类型>` 就是可直接写入节点 `data` 的具体字段（如 `node_data.imageGenNode.aspectRatio`），只补入重试节点或 Plan 的缺失字段；保留各镜头已明确的参数，不要自行翻译问题 id。修订后必须展示新预览、等待用户确认。
 
 调用生成参数澄清卡时，将用户本轮明确给出的画幅、视频节点分辨率和是否需要镜头内声音写入 `generation_preferences`；例如有对白的镜头传 `video_generate_audio=true`。`无 BGM` 仅表示不创建背景音乐，不代表视频静音。用户逐镜头指定时长时传 `video_shot_durations_seconds`，并在每个视频 Plan 节点填写对应 `data.durationSec`；此时澄清卡不再问一个全局时长。`delivery_resolution` 是最终交付规格，只有用户明确要求视频生成节点的分辨率时才传 `video_resolution`。对白或需要可听声音的视频 Intent item 写 `requires_generated_audio=true`；完整 WorkflowPlan 的对应视频节点写 `data.workflowCatalog.requiresGeneratedAudio=true`。用户明确要求静音的镜头保留 `false`，逐镜头判断。卡片若提示当前模型无法满足这些要求，改为逐项选择兼容模型和参数，不自行沿用冲突的目录缺省值。
 
 ## 工具调用方式
 
-`freezone_*` 工具不在工具列表里，统一用 `tool_call(name="<工具名>", arguments={...})` 调用；JSON 里先写 `name` 再写 `arguments`（arguments 很大时后写的 `name` 容易被漏掉，缺 `name` 会直接报错）；`arguments` 必须传 JSON 对象——不要传转义后的 JSON 字符串，大型嵌套 intent 会因转义损坏而反复失败。**不要先跑 `tool_search` 或 `tool_describe`**——`tool_call` 不依赖它们。**顺序固定：读规划包 → 生成结构化 intent → 编译草稿 → 用户确认 → 创建**。`deliverable`、Recipe、字段枚举都来自规划包，跳过它自造字段会被校验反复打回。所需参数如下：
+`freezone_*` 工具不在工具列表里，统一用 `tool_call(name="<工具名>", arguments={...})` 调用；JSON 里先写 `name` 再写 `arguments`（arguments 很大时后写的 `name` 容易被漏掉，缺 `name` 会直接报错）；`arguments` 必须传 JSON 对象——不要传转义后的 JSON 字符串，大型嵌套 intent 会因转义损坏而反复失败。**不要先跑 `tool_search` 或 `tool_describe`**——`tool_call` 不依赖它们。**普通流程：读规划包 → 生成结构化 intent → 编译草稿 → 用户确认 → 创建**；已有故事图片批次按 `interactive-story` 参考图契约提交完整 Plan。`deliverable`、Recipe、字段枚举都来自规划包，跳过它自造字段会被校验反复打回。所需参数如下：
 
 - 读规划包：`tool_call(name="freezone_get_workflow_skill", arguments={"skill_id": ..., "inputs": {...}})`
 - 生成准入：`tool_call(name="freezone_begin_agent_product_generation", arguments={"product_kind": "workflow_result", "generation_session_id": ..., "artifact_id": "<skill_id>@<skill_version>", "skill_id": ..., "skill_version": ..., "normalized_inputs": {...}})`；`artifact_id`、`skill_id` 必须与随后提交的 `compiled.skill_id` 一致。
-- 规划草稿：`tool_call(name="freezone_prepare_workflow_draft", arguments={"canvas_id": ..., "operation_id": ..., "intent": {...}})`
-- 自定义拓扑草稿：`tool_call(name="freezone_prepare_workflow_plan_draft", arguments={"canvas_id": ..., "operation_id": ..., "plan": {"schema_version":"freezone_workflow_plan.v1","skill":{"id":...,"version":...},"nodes":[...],"edges":[...]}, "generation_answers": {...}})`；`generation_answers` 只能补充完整 Plan，不能替代 `plan`、`schema_version` 或 `skill`；Recipe 支持的文本执行节点不得使用仅供无 Recipe 用户资源节点使用的 `input`/`resource`/`asset` stage；返回精确预览而不直接写画布
+- 规划草稿：`tool_call(name="freezone_prepare_workflow_draft", arguments={"canvas_id": ..., "operation_id": ..., "intent": {...}, "run_after_create": true|false})`
+- 自定义拓扑草稿：`tool_call(name="freezone_prepare_workflow_plan_draft", arguments={"canvas_id": ..., "operation_id": ..., "plan": {"schema_version":"freezone_workflow_plan.v1","skill":{"id":...,"version":...},"nodes":[...],"edges":[...]}, "generation_answers": {...}, "run_after_create": true|false})`；`generation_answers` 只能补充完整 Plan，不能替代 `plan`、`schema_version` 或 `skill`；Recipe 支持的文本执行节点不得使用仅供无 Recipe 用户资源节点使用的 `input`/`resource`/`asset` stage；返回精确预览而不直接写画布
 - 修改草稿：`freezone_patch_workflow_draft`，arguments `{"draft_id": ..., "expected_revision": ..., "changes": {...}}`
 - 确认落图：`freezone_confirm_workflow_draft`，arguments `{"draft_id": ..., "revision": ...}`
 
@@ -34,7 +38,7 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 并在目标 item 的 `reference_inputs` 或 Plan 的 `media_input_for` 边中引用 `source_image`。
 不要把已有图片写进 `nodes`、复制源节点或手填图片 URL；服务端在准备和确认时校验源图。
 
-如果用户只是咨询或分析，只展示一般性说明，不创建草稿或写画布。用户提出具体创建需求后，先读取当前已选的唯一 Skill 紧凑规划包并生成结构化 `intent`，再调用 `freezone_prepare_workflow_draft`。只有用户明确要求 Skill 蓝图无法表达的自定义拓扑时，才使用 `freezone_prepare_workflow_plan_draft(plan=...)`，并继续走同一草稿确认入口。
+如果用户只是咨询或分析，只展示一般性说明，不创建草稿或写画布。用户提出具体创建需求后，先读取当前已选的唯一 Skill 紧凑规划包并生成结构化 `intent`，再调用 `freezone_prepare_workflow_draft`。只有用户明确要求 Skill 蓝图无法表达的自定义拓扑，或已有互动故事需要按已确认资产用途制作角色／场景图、按逐镜头映射制作分镜图时，才使用 `freezone_prepare_workflow_plan_draft(plan=...)`，并继续走同一草稿确认入口；后一种 Plan 只生成图片，不把现有视频节点纳入图中。
 
 “再创建一个 / 再来一个 / 再添加一个 / 重新建一个 / 复制一个同类型工作流”都属于创建请求。当前画布已经存在相同工作流时，不要改为查询列表、解释已有工作流、复用旧节点或等待用户重新选择，仍然创建一个新的工作流实例并走确认流程；不要复用旧 `draft_id`，也不要调用 `freezone_emit_canvas_command`。
 
@@ -50,11 +54,12 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 2. 调用一次 `freezone_get_workflow_skill` 读取该 Skill 的 Recipe 规划摘要、能力约束和 `input_contract`。
 3. 使用 `input_contract.resolved` 展示用户值、工具从原话确定性提取的值和默认值；`fields[].source=inferred` 表示工具已从时长、画幅、执行模式等明确措辞中提取，不要再次分析或追问。只追问 `missing_required` 或修正 `errors`，已有素材和明确参数不要重复询问。`requires_confirmation=true` 时，在方案确认中一并确认这些值，不创建 Skill Session。
 4. 生成精简 `freezone_workflow_intent.v1`：严格以 Intent Schema 为字段白名单，只写 `skill_id`、`user_goal`、当前 `inputs`、PlanItems 和必要选项。Recipe 查询中的 `requires_source_media` 等字段只用于选择 Recipe 和规划依赖，禁止复制到 `intent.items[]`；服务端会根据 `recipe_id` 推导权威约束。每个 item 使用语义化 `id`、`title`、`prompt`、一个来自 `available_recipes` 的 `recipe_id`，并用 `depends_on` 声明真实输入依赖；用户已提供实际朗读正文时写入 `narration`。短剧遵循 screenplay-first：旁白/对白将由上游剧本或镜头 Recipe 产生时，保留 `drama-shot-voice` item，并把对应文本 item 同时写入 `depends_on` 和 `reference_inputs`，由运行时 `prompt_for` 绑定正文；不要在草稿阶段虚构台词，也不能删除用户要求的配音节点来绕过校验。当图片或视频节点需要根据上游剧本、分镜或 Shot List 生成时，必须把对应文本 PlanItem 写入 `depends_on`；当它还需要角色、场景、道具等生成素材作为实际参考时，再把这些素材写入 `reference_inputs`。每个视频 item 的 `prompt` 必须说明所对应 Shot 或 Shot Group 的具体叙事、动作和目标，不能只写“开场日常”“镜头一”等泛化标题。不要把时间码、时长、语气、环境音、音效或配乐说明写入 `narration`。调用 `freezone_prepare_workflow_draft` 编译并保存，记录返回的 `draft_id` 和 `revision`。不要生成画布 nodes/edges、UUID、连线类型、布局或分组。
+   纯图片请求选择 `text-to-image`，不得因为 `text-to-image-video` 含图片阶段就强制添加视频节点；只有用户明确要求视频时才选择后者。社交平台套图模板只用于用户明确提出平台配图需求。
 5. 缺少素材但允许从文字创建时，把素材锚点作为第一个 PlanItem，选择同一 Skill 允许的、`requires_source_media=false` 且输出类型匹配的 Recipe；后续依赖项通过 `depends_on` 引用该语义 item id。
 6. 严格按草稿工具返回的 `preview` 展示节点数量、作品清单、阶段和执行方式，不展示内部 JSON、`draft_id` 或 `revision`。
 7. 用户调整方案时，只把发生变化的字段传给 `freezone_patch_workflow_draft(draft_id=..., expected_revision=..., changes=...)`；不要重建 Intent 或创建新草稿。按新预览展示结果并记录新 revision。
-8. 用户确认后调用一次 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`。执行方式默认使用草稿中已经确认的 `run_after_create`。
-9. 草稿校验失败时只修正返回的输入、item 或选项字段后重试；绝不原样重提。同一错误路径修正一次后仍失败，本轮停止重试并报告阻塞，避免累计“失败 ×N”。禁止改用单节点工具绕过校验，也不要退回生成整份 Plan。
+8. 用户确认后调用一次 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`。绑定影游目标（`source_context.targets` 或 `source_context.asset_targets`）的草稿必须显式传 `run_after_create`，常规工作流可省略并默认 `false`（仅创建）：用户要求创建并生成/运行时传 `true`；用户用“可以”“确认”等简短回复确认上一轮含生成的方案时，继承该方案并继续传 `true`；仅创建画布时传 `false`；影游绑定工作流不得依赖缺省值。确认时使用草稿中已经固定的执行策略。
+9. 草稿校验失败时只修正返回的输入、item、Plan 映射或选项字段后重试；绝不原样重提。同一错误路径修正一次后仍失败，本轮停止重试并报告阻塞，避免累计“失败 ×N”。已有故事图片批次报 `skill_stage_missing`（缺少策划／视频阶段）时，先检查 `story_id`、全部图片在 `asset_targets` / `targets` 的唯一映射及多余执行节点，不补可执行策划或视频、不更改图片用途。仍失败时准确报告自己的图片计划尚未符合契约；不能宣称平台不支持纯图片或建议放宽校验、附加视频。禁止改用单节点工具绕过校验；普通 Intent 不退回整份 Plan，已选择的图片 Plan 路径不改为完整视频 Intent。
 
 Plan 中的边只表示真实输入依赖，不表示时间顺序。节点 ID 必须稳定且唯一；禁止环、坏边、未知节点类型、未知 Recipe 和不兼容 Recipe。用户要求自动执行时才设置 `run_after_create=true`，否则只创建画布。
 

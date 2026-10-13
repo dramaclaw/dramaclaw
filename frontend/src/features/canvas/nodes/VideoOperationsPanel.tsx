@@ -42,11 +42,17 @@ import {
 import { formatResolutionLabel } from "@/features/canvas/domain/mediaModelOptions";
 import {
   isHappyHorseVideoModel,
+  isSeedance25VideoModel,
   isVideoModeSupportedByModel,
   videoModeForcesAutomaticAspectRatio,
   videoModelDefaultGenerateAudio,
   videoModelReferenceDisabledReason,
+  videoOutputFollowsSourceVideo,
+  videoModeMissingInputReason,
+  videoModeForModel,
+  type VideoModeInputCounts,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
+import { extendPromptPrefix } from "@/features/canvas/application/videoExtendClip";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
 import { VIDEO_FILE_ACCEPT } from "@/features/canvas/application/videoFileTypes";
 import { spawnExternalAssetNodes } from "@/features/canvas/application/spawnExternalAssets";
@@ -241,6 +247,11 @@ interface VideoOperationsPanelProps {
   selectedModelReferenceError: string | null;
   mediaRejectionReason: string | null;
   expanded: boolean;
+  /**
+   * 收起态面板额外下移的像素。节点底边和面板之间插了别的东西时（片段重拍的时间
+   * 轨道）由调用方传进来，免得两块叠在一起。放大态是居中弹窗，不受影响。
+   */
+  topOffset?: number;
   onExpandedChange: (expanded: boolean) => void;
   onSubmit: () => Promise<void>;
 }
@@ -284,6 +295,7 @@ export function VideoOperationsPanel({
   selectedModelReferenceError,
   mediaRejectionReason,
   expanded,
+  topOffset = 0,
   onExpandedChange,
   onSubmit,
 }: VideoOperationsPanelProps) {
@@ -456,6 +468,41 @@ export function VideoOperationsPanel({
       (videoBillingRuleMissing
         ? t("common.billingRuleNotConfiguredShort")
         : null);
+    // 「智能续写」的两条锁：模型只能是 Seedance 2.5、模式只能是全能参考。
+    //
+    // 跟片段重拍不一样，这里不把选择器藏起来 —— 续写节点是要接着往下编辑的
+    // （改提示词、再生成一版），把模型/模式整块藏了，用户会以为这节点是个死物。
+    // 所以照常露出来，只是把别的选项置灰 + 给出理由。
+    const isExtendMode = Boolean(data.isExtendMode);
+    const extendPrefixText =
+      isExtendMode &&
+      typeof data.extendStartMs === "number" &&
+      typeof data.extendEndMs === "number"
+        ? extendPromptPrefix(
+            typeof data.extendSourceName === "string" ? data.extendSourceName : "",
+            { startMs: data.extendStartMs, endMs: data.extendEndMs },
+          )
+        : null;
+    const extendPrefix = useMemo(() => {
+      if (!extendPrefixText) return null;
+      const sourceVideo = referenceMedia.find((item) => item.kind === "video");
+      return {
+        text: extendPrefixText,
+        // 两个地址都是后端原始地址，直接塞进 <img>/<video> 会打不开（OSS 默认域名
+        // 强制下载），跟旁边的引用素材缩略图走同一条 resolve。thumbUrl 是懒生成的，
+        // 常常为空 —— 那就退回视频本身画首帧，跟 ReferenceVideoChip 一个路子。
+        thumbnailUrl:
+          sourceVideo && sourceVideo.kind === "video" && sourceVideo.thumbUrl
+            ? resolveImageDisplayUrl(sourceVideo.thumbUrl)
+            : null,
+        videoUrl:
+          sourceVideo && sourceVideo.kind === "video"
+            ? resolveImageDisplayUrl(sourceVideo.videoUrl)
+            : null,
+        title: extendPrefixText,
+      };
+    }, [extendPrefixText, referenceMedia]);
+
     // 给每个 referenceMedia 条目补上「同类型序号 + 是否在当前模式上限内」。
     // 当前 genMode 在 REFERENCE_CAPS_BY_MODE 里没有条目（如 textToVideo /
     // imageToVideo / imageReference），统一按 within=true 处理；下游 chip /
@@ -768,7 +815,7 @@ export function VideoOperationsPanel({
               onCollapse={() => onExpandedChange(false)}
               inlineClassName={`nodrag absolute z-30 flex flex-col rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS}`}
               inlineStyle={{
-                top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
+                top: `calc(100% + ${OPERATIONS_PANEL_GAP + topOffset}px)`,
                 left: showReferenceDocumentControls
                   ? `calc((100% - ${adaptivePanelWidth}) / 2)`
                   : -panelOverhang,
@@ -786,7 +833,8 @@ export function VideoOperationsPanel({
                 onToggle={() => onExpandedChange(!expanded)}
                 className="absolute right-2 top-2 z-20"
               />
-              <div className="flex shrink-0 items-center overflow-x-auto px-3 pb-2 pr-10 pt-3">
+              <fieldset disabled={isGenerating} className="m-0 flex min-h-0 min-w-0 flex-1 flex-col border-0 p-0">
+              <div inert={isGenerating} aria-disabled={isGenerating} className="flex shrink-0 items-center overflow-x-auto px-3 pb-2 pr-10 pt-3">
                 <div ref={toolbarContentRef} className="flex w-max shrink-0 items-center">
                 <div className="flex shrink-0 items-center gap-2">
                   <ReferencePickChip
@@ -809,13 +857,19 @@ export function VideoOperationsPanel({
                 <div className="ml-3 flex shrink-0 items-center gap-3">
                   <GenModeSelect
                     value={genMode}
-                    modelId={selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId}
+                    modelId={
+                      selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId
+                    }
                     supportedModes={selectedVideoModel?.supportedModes}
                     // HappyHorse 的可选模式由上游节点类型（含未填图的空节点）决定，
                     // 其余模型仍按已解析素材 URL 计数。
-                    upstreamCounts={
-                      isHappyHorseModel ? upstreamTypeCounts : upstreamCounts
-                    }
+                    upstreamCounts={{
+                      ...(isHappyHorseModel ? upstreamTypeCounts : upstreamCounts),
+                      hasOtherReference: Boolean(data.referenceFileUrl || data.referenceLink?.trim()),
+                    }}
+                    restrictToMode={isExtendMode ? "allReference" : undefined}
+                    // 智能续写把模型 / 模式钉死时给出的统一理由，与下面模型选择器共用一句。
+                    restrictReason={t("node.videoOps.extendLockReason")}
                     onChange={(nextMode) =>
                       updateNodeData(id, {
                         genMode: nextMode,
@@ -907,7 +961,8 @@ export function VideoOperationsPanel({
               </div>
 
               {/* 引用素材单独占一行：顶排功能 chip 已经排满，素材再挤进去会顶掉输入区。 */}
-              {(upstreamTextContents.length > 0 || referenceMedia.length > 0) && (
+              {(upstreamTextContents.length > 0 ||
+                (!isExtendMode && referenceMedia.length > 0)) && (
                 <div className="nowheel flex shrink-0 items-center gap-3 overflow-x-auto px-3 pb-2">
                   {upstreamTextContents.map((content) => (
                     <ReferenceTextChip
@@ -919,7 +974,7 @@ export function VideoOperationsPanel({
                       onJump={handleJumpToReference}
                     />
                   ))}
-                  {referenceMedia.length > 0 && (
+                  {!isExtendMode && referenceMedia.length > 0 && (
                     <ReferenceMediaRow
                       items={referenceMediaCapInfo}
                       caps={referenceCaps}
@@ -937,7 +992,29 @@ export function VideoOperationsPanel({
                 </div>
               )}
 
+              {/* 智能续写的引用只有原片一个，挤在工具条尾巴上会被右边的
+                  展开按钮推得老远；单独起一行贴左放，跟下面的提示词对齐成一列。 */}
+              {isExtendMode && referenceMedia.length > 0 && (
+                <div className="flex shrink-0 items-center overflow-x-auto px-3 pb-2">
+                  <ReferenceMediaRow
+                    items={referenceMediaCapInfo}
+                    caps={referenceCaps}
+                    genMode={genMode}
+                    mentionNames={mentionNameByNodeId}
+                    onFocus={(nodeId) => setSelectedNode(nodeId)}
+                    onMention={handleMentionReference}
+                    onJump={handleJumpToReference}
+                    onDetach={handleDetachUpstream}
+                    onReorder={(ids) =>
+                      updateNodeData(id, { referenceOrder: ids })
+                    }
+                    containerClassName=""
+                  />
+                </div>
+              )}
+
               <PromptMentionEditor
+                readOnly={isGenerating}
                 ref={promptEditorRef}
                 value={promptDraft}
                 onChange={(next) => {
@@ -958,15 +1035,32 @@ export function VideoOperationsPanel({
                 candidates={mentionCandidates}
                 getMaterials={getMentionMaterials}
                 onAttachMaterial={handleAttachMaterial}
+                prefix={extendPrefix}
+                onPrefixRemove={
+                  extendPrefix
+                    ? () =>
+                        // 前缀就是这个节点的续写身份：删掉它，节点退回一个普通视频
+                        // 节点（模型 / 功能一并解锁），而不是留下一个锁死 2.5 + 全能
+                        // 参考、却没有任何续写指令的空壳。
+                        updateNodeData(id, {
+                          isExtendMode: false,
+                          extendSourceName: undefined,
+                          extendStartMs: undefined,
+                          extendEndMs: undefined,
+                        })
+                    : undefined
+                }
                 placeholder={
-                  upstreamTextJoined.length > 0
-                    ? t("node.videoOps.upstreamPlaceholder")
-                    : t("node.videoNode.placeholder")
+                  extendPrefix
+                    ? t("node.videoOps.extendPlaceholder")
+                    : upstreamTextJoined.length > 0
+                      ? t("node.videoOps.upstreamPlaceholder")
+                      : t("node.videoNode.placeholder")
                 }
                 className={`nodrag nowheel min-h-0 w-full flex-1 overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent px-3 py-2 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
               />
 
-              <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
+              <div inert={isGenerating} aria-disabled={isGenerating} className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <ProviderModelPicker
                     selectedModelId={modelId}
@@ -974,23 +1068,15 @@ export function VideoOperationsPanel({
                       const nextModel = availableVideoModels.find(
                         (item) => item.id === nextModelId,
                       );
-                      // 切换模型后，若当前 genMode 不被新模型支持（如 HappyHorse
-                      // 专属的 videoEdit 切到普通模型），重置为通用安全值 textToVideo，
-                      // 让状态机按新模型 + 上游重新推导；否则残留模式会在提交时打到
-                      // 不支持的端点被后端 400（界面还停在错误的 tab）。
-                      const resetGenMode =
-                        data.genMode != null &&
-                        !isVideoModeSupportedByModel(
-                          data.genMode,
-                          nextModel,
-                        );
+                      const nextMode = videoModeForModel(genMode, nextModel, {
+                        ...upstreamTypeCounts,
+                        hasOtherReference: Boolean(data.referenceFileUrl || data.referenceLink?.trim()),
+                      });
                       updateNodeData(id, {
                         model: nextModelId,
                         modelParams: {},
                         generateAudio: videoModelDefaultGenerateAudio(nextModel),
-                        ...(resetGenMode
-                          ? { genMode: "textToVideo" as VideoGenMode }
-                          : {}),
+                        genMode: nextMode,
                       });
                       // 记住这次选择，后续新建的视频节点将继承它。
                       writeLastVideoModel(nextModelId);
@@ -998,6 +1084,12 @@ export function VideoOperationsPanel({
                     domain="video"
                     popoverPlacement="top"
                     getOptionDisabledReason={(model) =>
+                      // 智能续写先过一道：时间码前缀是写给 2.5 的全能参考的，换任何
+                      // 一个模型这个节点都白做，所以其余项直接给出理由置灰。
+                      (isExtendMode &&
+                      !isSeedance25VideoModel(model.apiModel ?? model.id)
+                        ? t("node.videoOps.extendLockReason")
+                        : null) ??
                       // 传整个 ModelOption,不要塌成 id —— 能力口径以后台「媒体模型」
                       // 声明的 supportedModes 为准,只传 id 会退到启发式,把目录里的
                       // 改动整个丢掉(例如后台下掉 HappyHorse 的视频编辑后,它在这里
@@ -1026,6 +1118,10 @@ export function VideoOperationsPanel({
                     sceneOptimizeOptions={sceneOptimizeOptions}
                     supportsGenerateAudio={supportsGenerateAudio}
                     generateAudio={generateAudio}
+                    followsSourceVideo={videoOutputFollowsSourceVideo(
+                      genMode,
+                      selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId,
+                    )}
                     onChange={(patch) => updateNodeData(id, patch)}
                   />
                   <MediaModelParameterChip
@@ -1101,12 +1197,12 @@ export function VideoOperationsPanel({
                   <CreditCostPill
                     display={totalCreditCostDisplay}
                     promotion={videoCreditCost.data?.data.promotion}
-                    disabled={submitDisabled || videoBillingRuleMissing}
+                    disabled={isGenerating || submitDisabled || videoBillingRuleMissing}
                     className={NODE_CREDIT_PILL_FLAT_CLASS}
                   />
                   <button
                     type="button"
-                    disabled={submitDisabled || videoBillingRuleMissing}
+                    disabled={isGenerating || submitDisabled || videoBillingRuleMissing}
                     title={
                       selectedModelReferenceError ?? (isGenerating
                         ? t("node.videoNode.submitBusy")
@@ -1127,6 +1223,7 @@ export function VideoOperationsPanel({
                   </button>
                 </div>
               </div>
+              </fieldset>
             </OperationPanelShell>
         <input
           ref={externalAssetInputRef}
@@ -1154,14 +1251,21 @@ interface GenModeSelectProps {
   value: VideoGenMode;
   modelId: string | null | undefined;
   supportedModes?: string[];
-  upstreamCounts: { videos: number; images: number; audios: number };
+  upstreamCounts: VideoModeInputCounts;
+  /**
+   * 只允许这一个模式（智能续写用）。其余项一律置灰并给出 `restrictReason`，
+   * 而不是按上游素材现算——现算出来的理由说的是「素材不够」，跟真正的原因
+   * （这个节点本来就只走这一种模式）对不上。
+   */
+  restrictToMode?: VideoGenMode;
+  restrictReason?: string;
   onChange: (next: VideoGenMode) => void;
 }
 
 export function videoModeDisabledReason(
   mode: VideoGenMode,
   modelId: string | null | undefined,
-  upstreamCounts: { videos: number; images: number; audios: number },
+  upstreamCounts: VideoModeInputCounts,
   t: TFn,
   supportedModes?: string[],
 ): string | null {
@@ -1248,10 +1352,19 @@ export function videoModeDisabledReason(
   if (mode === "firstLastFrame" && upstreamCounts.images > 2) {
     return t("node.videoOps.modeDisabled.moreThanTwoImages");
   }
-  return null;
+  const missingInputReason = videoModeMissingInputReason(mode, upstreamCounts);
+  return missingInputReason ? t(missingInputReason) : null;
 }
 
-function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChange }: GenModeSelectProps) {
+function GenModeSelect({
+  value,
+  modelId,
+  supportedModes,
+  upstreamCounts,
+  restrictToMode,
+  restrictReason,
+  onChange,
+}: GenModeSelectProps) {
   const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -1350,14 +1463,17 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
         >
           {visibleTabs.map((tab) => {
             const isActive = tab.key === value;
-            const disabledReason = videoModeDisabledReason(
-              tab.key,
-              modelId,
-              upstreamCounts,
-              t,
-              supportedModes,
-            );
-            const isDisabled = disabledReason != null && !isActive;
+            const disabledReason =
+              restrictToMode && tab.key !== restrictToMode
+                ? (restrictReason ?? t("node.videoOps.modeRestrictedDefault"))
+                : videoModeDisabledReason(
+                    tab.key,
+                    modelId,
+                    upstreamCounts,
+                    t,
+                    supportedModes,
+                  );
+            const isDisabled = disabledReason != null;
             // 禁用按钮在多数浏览器里不触发 mouse 事件，hover 提示挂在外层 div 上；
             // 提示气泡定位到菜单右侧，与设计稿一致。
             return (
@@ -1380,10 +1496,10 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
                     setIsOpen(false);
                   }}
                   className={`block w-full rounded-[6px] px-3 py-1.5 text-left text-xs transition-colors ${
-                    isActive
-                      ? VIDEO_PARAM_ACTIVE_BUTTON_CLASS
-                      : isDisabled
-                        ? "cursor-not-allowed text-text-muted/40"
+                    isDisabled
+                      ? "cursor-not-allowed text-text-muted/40"
+                      : isActive
+                        ? VIDEO_PARAM_ACTIVE_BUTTON_CLASS
                         : "text-text-muted/95 hover:bg-white/[0.11] hover:text-text-dark"
                   }`}
                 >
@@ -1415,6 +1531,12 @@ interface VideoConfigChipProps {
   sceneOptimizeOptions: readonly Seedance2SceneOptimize[];
   supportsGenerateAudio: boolean;
   generateAudio: boolean;
+  /**
+   * 出片比例 / 时长跟随原片（Seedance 视频编辑）。为真时这两栏整个不出现 ——
+   * 厂商压根不收这两个参数，留着只会让人以为自己能定。见
+   * [[videoOutputFollowsSourceVideo]]。
+   */
+  followsSourceVideo?: boolean;
   onChange: (patch: Partial<VideoNodeData>) => void;
 }
 
@@ -1431,6 +1553,7 @@ function VideoConfigChip({
   sceneOptimizeOptions,
   supportsGenerateAudio,
   generateAudio,
+  followsSourceVideo = false,
   onChange,
 }: VideoConfigChipProps) {
   const { t } = useTranslation();
@@ -1498,11 +1621,15 @@ function VideoConfigChip({
         }}
         className={NODE_TEXT_CONTROL_TRIGGER_CLASS}
       >
-        <span>
-          {followInputAspectRatio || aspectRatio === "auto"
-            ? t("node.videoNode.aspect.auto")
-            : aspectRatio}
-        </span>
+        {followsSourceVideo ? (
+          <span>{t("node.videoNode.aspect.followsSource")}</span>
+        ) : (
+          <span>
+            {followInputAspectRatio || aspectRatio === "auto"
+              ? t("node.videoNode.aspect.auto")
+              : aspectRatio}
+          </span>
+        )}
         <span className="text-text-muted/80">·</span>
         <span>{formatResolutionLabel(quality)}</span>
         {!followInputDuration && (
@@ -1527,6 +1654,12 @@ function VideoConfigChip({
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
         >
+          {followsSourceVideo && (
+            <div className="mb-3 rounded-md bg-white/[0.045] px-2.5 py-1.5 text-[11px] leading-5 text-text-muted/85">
+              {t("node.videoNode.videoEdit.followsSourceHint")}
+            </div>
+          )}
+
           {!followInputAspectRatio && (
             <>
               <div className={VIDEO_PARAM_LABEL_CLASS}>
@@ -1946,6 +2079,8 @@ interface ReferenceMediaRowProps {
   onDetach: (nodeId: string) => void;
   // 拖动 chip 换位后，回传新的「按可视顺序排列的上游节点 id 列表」。
   onReorder: (orderedNodeIds: string[]) => void;
+  /** 额外的容器 class；引用行现在都单独占一行贴左，默认不留外边距。 */
+  containerClassName?: string;
 }
 
 function ReferenceMediaRow({
@@ -1958,6 +2093,7 @@ function ReferenceMediaRow({
   onJump,
   onDetach,
   onReorder,
+  containerClassName = '',
 }: ReferenceMediaRowProps) {
   const { t } = useTranslation();
   // 同时管理整行音频的「当前播放节点」—— 同一时间只允许一个 audio chip 在
@@ -1991,7 +2127,7 @@ function ReferenceMediaRow({
   );
 
   return (
-    <div className="flex shrink-0 items-center gap-1.5">
+    <div className={`flex shrink-0 items-center gap-1.5 ${containerClassName}`}>
       {items.map((entry) => {
         const { item, typeIndex, withinCap } = entry;
         // 「超出当前模式上限」只在 REFERENCE_CAPS_BY_MODE 里登记过的模式生效。

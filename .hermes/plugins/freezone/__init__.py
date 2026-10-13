@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import base64
 import hashlib
+import importlib.util
+from contextvars import ContextVar
 import math
 import os
 import re
@@ -24,6 +26,26 @@ from urllib.request import Request, urlopen
 
 from tools.registry import tool_error, tool_result
 
+# The MCP host supplies this before exec; native Hermes includes stories by default.
+_INCLUDE_INTERACTIVE_STORY = not bool(globals().get("_MCP_EXCLUDE_INTERACTIVE_STORY", False))
+
+
+
+_STRUCTURED_RESULT_INPUT_HASH: ContextVar[Any] = ContextVar(
+    "freezone_structured_result_input_hash", default=None
+)
+
+
+def _tool_input_hash(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
 
 def _record_structured_tool_result(tool_name: str, value: Any) -> None:
     result_dir = os.environ.get("DRAMACLAW_FREEZONE_TOOL_RESULT_DIR", "").strip()
@@ -38,6 +60,7 @@ def _record_structured_tool_result(tool_name: str, value: Any) -> None:
         payload = {
             "tool_name": tool_name,
             "created_at": time.time(),
+            "input_hash": _tool_input_hash(_STRUCTURED_RESULT_INPUT_HASH.get() or {}),
             "result": value,
         }
         target = base / f"{safe_name}-{time.time_ns()}-{os.getpid()}.json"
@@ -506,100 +529,10 @@ def _maybe_json(text: str) -> Any:
         return stripped
 
 
-def _safe_error_string(value: Any, limit: int) -> str:
-    if not isinstance(value, str):
-        return ""
-    cleaned = " ".join(value.split())[:limit]
-    if re.search(r"traceback|authorization|bearer\s|api[_-]?key|secret|password", cleaned, re.I):
-        return ""
-    return cleaned
-
-
 def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, Any]:
-    """Expose only bounded validation diagnostics from the project API."""
-    result: dict[str, Any] = {
-        "ok": False,
-        "status": "failed",
-        "status_code": status_code,
-        "error": _safe_error_string(reason, 300) or "HTTP request failed",
-    }
-    if len(text) > 65536:
-        return result
-    data = _maybe_json(text)
-    if 500 <= status_code < 600:
-        if isinstance(data, dict):
-            for field in ("error", "message", "detail"):
-                value = _safe_error_string(data.get(field), 300)
-                if value:
-                    result["error"] = value
-                    break
-        elif isinstance(data, str) and not data.lstrip().startswith("<"):
-            result["error"] = _safe_error_string(data, 300) or result["error"]
-        return result
-    if not 400 <= status_code < 500:
-        return result
-    if not isinstance(data, dict):
-        return result
-    detail = data.get("detail")
-    source = detail if isinstance(detail, dict) else data
-    for field in ("status", "code", "next_action"):
-        value = _safe_error_string(source.get(field), 80)
-        if value and re.fullmatch(r"[A-Za-z0-9_.-]+", value):
-            result[field] = value
-    for field in ("error", "message"):
-        value = _safe_error_string(source.get(field), 300)
-        if value:
-            result[field] = value
-    if isinstance(detail, str):
-        result["error"] = _safe_error_string(detail, 300) or result["error"]
-    if isinstance(source.get("retryable"), bool):
-        result["retryable"] = source["retryable"]
-    if result.get("code") == "generation_parameters_required":
-        # Bounded copy of the standard clarification request so the agent can
-        # answer it; anything malformed is dropped rather than forwarded.
-        missing = source.get("missing_parameters")
-        safe_missing: list[dict[str, Any]] = []
-        if isinstance(missing, list):
-            for item in missing[:50]:
-                if not isinstance(item, dict):
-                    continue
-                node_type = _safe_error_string(item.get("node_type"), 40)
-                node_id = _safe_error_string(item.get("node_id"), 160)
-                fields = item.get("fields")
-                if node_type not in {"imageGenNode", "videoNode"} or not isinstance(fields, list):
-                    continue
-                safe_fields = [
-                    value
-                    for value in (_safe_error_string(field, 40) for field in fields[:12])
-                    if value and re.fullmatch(r"[A-Za-z0-9_]+", value)
-                ]
-                if node_id and safe_fields:
-                    safe_missing.append(
-                        {"node_id": node_id, "node_type": node_type, "fields": safe_fields}
-                    )
-        if safe_missing:
-            result["missing_parameters"] = safe_missing
-    errors = source.get("errors")
-    if isinstance(errors, list):
-        safe_errors = []
-        for item in errors[:5]:
-            if not isinstance(item, dict):
-                continue
-            path = _safe_error_string(item.get("path"), 160)
-            if not path and type(item.get("index")) is int and 0 <= item["index"] <= 9999:
-                path = f"edges[{item['index']}]"
-            message = _safe_error_string(item.get("message") or item.get("reason"), 240)
-            if not path or not re.fullmatch(r"[A-Za-z0-9_.\[\]-]+", path):
-                continue
-            safe_errors.append({"path": path, **({"message": message} if message else {})})
-        if safe_errors:
-            result["errors"] = safe_errors
-    while (
-        len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 4096
-        and result.get("errors")
-    ):
-        result["errors"].pop()
-    return result
+    if _SHARED_API_ERRORS is None:
+        return {"ok": False, "status": "failed", "status_code": status_code, "error": "HTTP request failed"}
+    return _SHARED_API_ERRORS._http_error_result(status_code, text, reason)
 
 
 def _scope_meta(project: str, canvas: str | None = None) -> dict[str, Any]:
@@ -967,11 +900,11 @@ def _clarification_timeout_seconds() -> int:
         return max(
             1,
             int(
-                os.environ.get("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "240")
+                os.environ.get("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "600")
             ),
         )
     except ValueError:
-        return 240
+        return 600
 
 
 def _clarification_timeout_result(
@@ -1106,14 +1039,6 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     # An id the agent already holds may name a card that is still waiting (or
     # was answered late). Resolve it first so a bare resume call needs no questions.
     resumed = _resume_clarification(project, canvas, clarification_id)
-    if not clarification_id:
-        context_id = str(
-            args.get("skill_studio_session_id") or canvas or "default"
-        ).strip()
-        safe_context = "".join(
-            ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in context_id
-        ).strip("-")
-        clarification_id = f"clarify_{safe_context or 'default'}_{uuid.uuid4().hex[:8]}"
     questions = _safe_list(args.get("questions"))
     generation_media_types = args.get("generation_media_types")
     generation_required_choices = args.get("generation_required_choices")
@@ -1403,6 +1328,62 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             if not isinstance(question, dict)
             or question.get("id") != "video_duration_seconds"
         ]
+    question_ids = {
+        str(question.get("id") or "").strip().lower()
+        for question in questions
+        if isinstance(question, dict)
+    }
+    if "video_generate_audio" in question_ids and "video_model" not in question_ids:
+        try:
+            selected_model = _generation_answer_value("video_model", answers.get("video_model"))
+        except ValueError:
+            selected_model = None
+        if selected_model is None:
+            return tool_result({
+                "ok": False,
+                "status": "generation_model_context_required",
+                "error": "video_model is required to show video audio choices",
+                "agent_instruction": (
+                    "No clarification card was shown. If the user requested only storyboard "
+                    "images, continue with an image-only workflow and do not ask video "
+                    "generation questions. Otherwise include the model question or pass "
+                    "the user's confirmed model in answers before retrying."
+                ),
+            })
+    if not clarification_id:
+        context_id = str(
+            args.get("skill_studio_session_id") or canvas or "default"
+        ).strip()
+        safe_context = "".join(
+            ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in context_id
+        ).strip("-")
+        turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+        fingerprint_questions = (
+            [
+                str(question.get("id") or "").strip().lower()
+                for question in questions
+                if isinstance(question, dict)
+            ]
+            if generation_media_types is not None
+            or generation_required_choices is not None
+            else questions
+        )
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "turn_id": turn_id or uuid.uuid4().hex,
+                    "project_id": project or "",
+                    "canvas_id": canvas or "",
+                    "workflow_draft_id": str(args.get("workflow_draft_id") or ""),
+                    "questions": fingerprint_questions,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:8]
+        clarification_id = f"clarify_{safe_context or 'default'}_{fingerprint}"
+        resumed = _resume_clarification(project, canvas, clarification_id)
     if not questions and resumed is None:
         return tool_result(
             {
@@ -3508,6 +3489,87 @@ def _looks_like_handwritten_workflow_batch(commands: list[Any]) -> bool:
     return (not has_dependency_shape) or has_workflow_hint
 
 
+def _story_image_reference_batch_candidate(commands: list[Any]) -> bool:
+    if not commands or any(
+        not isinstance(command, dict)
+        or command.get("type") not in {"create_node", "create_edge", "update_node_data"}
+        for command in commands
+    ):
+        return False
+    creates = [command for command in commands if command["type"] == "create_node"]
+    edges = [command for command in commands if command["type"] == "create_edge"]
+    if not creates or not edges or any(
+        command.get("node_type") != "imageGenNode"
+        or not isinstance(command.get("client_id"), str)
+        or not command["client_id"].strip()
+        for command in creates
+    ):
+        return False
+    aliases = {command["client_id"] for command in creates}
+    if len(aliases) != len(creates) or any(
+        command.get("source") not in aliases
+        or command.get("link_type") != "media_input_for"
+        for command in edges
+    ):
+        return False
+    if {command["source"] for command in edges} != aliases:
+        return False
+    return True
+
+
+def _is_story_image_reference_batch(
+    project: str, canvas: str, commands: list[Any]
+) -> bool:
+    """Allow only image references attached to existing clips of one story."""
+    if not _story_image_reference_batch_candidate(commands):
+        return False
+    edges = [command for command in commands if command["type"] == "create_edge"]
+    edge_target_ids = {str(command.get("target") or "") for command in edges}
+    updates = [command for command in commands if command["type"] == "update_node_data"]
+    allowed_video_fields = {
+        "model", "genMode", "durationSec", "aspectRatio", "quality",
+        "generateAudio", "count", "continuityMode", "continuitySourceNodeId",
+    }
+    if any(
+        not isinstance(command.get("data"), dict)
+        or not set(command["data"]).issubset(allowed_video_fields)
+        for command in updates
+    ):
+        return False
+    target_ids = edge_target_ids | {
+        str(command.get("node_id") or "") for command in updates
+    }
+    response = _request(
+        "GET",
+        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}",
+    )
+    data = response.get("data") if response.get("ok", True) else None
+    if not isinstance(data, dict):
+        return False
+    nodes = {
+        str(node.get("id") or ""): node
+        for node in data.get("nodes") or []
+        if isinstance(node, dict)
+    }
+    story_ids = set()
+    for target_id in target_ids:
+        target = nodes.get(target_id)
+        if not isinstance(target, dict) or target.get("type") != "videoNode":
+            return False
+        target_data = target.get("data")
+        if not isinstance(target_data, dict) or not str(
+            target_data.get("storySegmentId") or ""
+        ).strip():
+            return False
+        group = nodes.get(str(target.get("parentId") or ""))
+        group_data = group.get("data") if isinstance(group, dict) else None
+        story_id = group_data.get("interactiveStoryId") if isinstance(group_data, dict) else None
+        if not group_data or group_data.get("storyGroup") is not True or not story_id:
+            return False
+        story_ids.add(str(story_id))
+    return len(story_ids) == 1
+
+
 def _validate_html_artifact_write(
     command: dict[str, Any], *, allow_workflow_prepare: bool = False
 ) -> None:
@@ -4537,42 +4599,77 @@ def _generation_parameters_required_result(
         }
     )
     required_choices: dict[str, list[str]] = {}
+    dynamic_story_duration_nodes: list[str] = []
     for item in missing:
         media_type = "image" if item["node_type"] == "imageGenNode" else "video"
-        choices = required_choices.setdefault(media_type, [])
         for field in item.get("fields") or []:
+            if (
+                field == "durationSec"
+                and item.get("interactive_story_segment") is True
+            ):
+                dynamic_story_duration_nodes.append(str(item["node_id"]))
+                continue
+            choices = required_choices.setdefault(media_type, [])
             portable = _GENERATION_PORTABLE_FIELDS.get(str(field), str(field))
             # Video stores its resolution in data.quality.
             if media_type == "video" and field == "quality":
                 portable = "resolution"
             if portable not in choices:
                 choices.append(portable)
-    return {
+    requires_user_choices = any(required_choices.values())
+    result = {
         "ok": False,
-        "status": "clarification_required",
-        "code": "generation_parameters_required",
-        "error": "image/video generation parameters require user clarification",
+        "status": (
+            "clarification_required"
+            if requires_user_choices
+            else "interactive_story_duration_plan_required"
+        ),
+        "code": (
+            "generation_parameters_required"
+            if requires_user_choices
+            else "interactive_story_duration_plan_required"
+        ),
+        "error": (
+            "image/video generation parameters require user clarification"
+            if requires_user_choices
+            else "interactive story segments require per-segment planned durations"
+        ),
         "media_types": media_types,
         "missing_parameters": missing,
         "required_choices": required_choices,
-        "clarification": {
-            "title": "确认图片和视频生成参数",
-            "allow_skip": False,
-        },
         "agent_instruction": (
-            "Stop before every canvas write. Call freezone_request_user_clarification "
-            "exactly once with generation_required_choices set to this result's "
-            "required_choices and pass every already confirmed choice (at least the "
-            "model) in answers so the server can offer a recommendation from the same "
-            "catalog entry. The server assembles every missing question. "
-            "The clarification result returns node_data keyed by node type: copy each "
-            "node_data.<node_type> field into missing matching node data without replacing "
-            "explicit per-shot values, then retry "
-            "the same operation. For a WorkflowPlan, put them in each image/video node "
-            "data. For a workflow draft, pass the draft id and revision so the tool "
-            "applies them. Do not claim success and do not silently choose defaults."
+            (
+                "Do not ask for one shared video_duration_seconds value for interactive "
+                "story segments. Derive each missing segment duration from its dialogue, "
+                "action and pacing, fit it to the selected model capability, and write "
+                "durationSec on that specific video node. "
+                if dynamic_story_duration_nodes
+                else ""
+            )
+            + (
+                "Stop before every canvas write. Call freezone_request_user_clarification "
+                "exactly once for the required image/video choices listed in required_choices, "
+                "passing them as generation_required_choices and every already confirmed choice (at least the model) "
+                "in answers. Do not add a duration question for interactive story segments. "
+                "After the user answers, copy each returned node_data.<node_type> field verbatim "
+                "into missing matching node fields without replacing explicit per-shot values, and retry with the per-segment durations. For a WorkflowPlan, "
+                "put them in each image/video node data. For a workflow draft, pass its id and "
+                "revision so the tool applies the choices. Do not claim success and do not "
+                "silently choose defaults."
+                if requires_user_choices
+                else "Retry the same operation only after every listed story segment has its "
+                "own durationSec; no user clarification card is needed for duration."
+            )
         ),
     }
+    if dynamic_story_duration_nodes:
+        result["dynamic_story_duration_node_ids"] = dynamic_story_duration_nodes
+    if requires_user_choices:
+        result["clarification"] = {
+            "title": "确认图片和视频生成参数",
+            "allow_skip": False,
+        }
+    return result
 
 
 def _external_generation_parameter_preflight(
@@ -4614,6 +4711,17 @@ def _external_generation_parameter_preflight(
         or command.get("type") == "run_node_action"
         and str(command.get("node_id") or "").strip() not in created_ids
         for command in execution_commands
+    ) or any(
+        isinstance(command, dict) and (
+            command.get("type") == "create_edge"
+            and (
+                str(command.get("source") or "").strip() not in created_ids
+                or str(command.get("target") or "").strip() not in created_ids
+            )
+            or command.get("type") == "add_next_node"
+            and str(command.get("source_node_id") or "").strip() not in created_ids
+        )
+        for command in commands
     )
     if needs_canvas_read:
         nodes, edges, read_error = _canvas_generation_preflight_state(project, canvas)
@@ -4622,6 +4730,7 @@ def _external_generation_parameter_preflight(
     else:
         nodes, edges = {}, []
     missing_by_node: dict[str, dict[str, Any]] = {}
+    story_video_ids: set[str] = set()
     catalog_cache: dict[str, list[dict[str, Any]] | None] = {}
     for raw_command in commands:
         if not isinstance(raw_command, dict):
@@ -4639,9 +4748,13 @@ def _external_generation_parameter_preflight(
                     source_node_id = str(
                         raw_command.get("source_node_id") or ""
                     ).strip()
-                    if source_node_id:
+                    if source_node_id and raw_command.get("connect"):
                         edges.append(
-                            {"source": source_node_id, "target": node_id}
+                            {"source": source_node_id, "target": node_id,
+                             "data": {"link_type": _default_link_type(
+                                 str((nodes.get(source_node_id) or {}).get("type") or ""),
+                                 str(raw_command.get("node_type") or ""),
+                             )}}
                         )
         elif command_type == "update_node_data":
             node_id = str(raw_command.get("node_id") or "").strip()
@@ -4655,6 +4768,7 @@ def _external_generation_parameter_preflight(
                 {
                     "source": str(raw_command.get("source") or "").strip(),
                     "target": str(raw_command.get("target") or "").strip(),
+                    "data": {"link_type": raw_command.get("link_type")},
                 }
             )
         if command_type == "run_node_action":
@@ -4689,6 +4803,12 @@ def _external_generation_parameter_preflight(
                 output_key = "imageUrl" if node_type == "imageGenNode" else "videoUrl"
                 if isinstance(data.get(output_key), str) and data[output_key].strip():
                     continue
+            if (
+                node_type == "videoNode"
+                and isinstance(data.get("storySegmentId"), str)
+                and data["storySegmentId"].strip()
+            ):
+                story_video_ids.add(node_id)
             missing_fields = [
                 field
                 for field in required_fields
@@ -4702,8 +4822,100 @@ def _external_generation_parameter_preflight(
                         data.get("displayName") or data.get("title") or node_id
                     )[:120],
                     "fields": missing_fields,
+                    **(
+                        {"interactive_story_segment": True}
+                        if node_type == "videoNode"
+                        and isinstance(data.get("storySegmentId"), str)
+                        and data["storySegmentId"].strip()
+                        else {}
+                    ),
                 }
     if not missing_by_node:
+        from novelvideo.freezone.workflow_preflight import _workflow_node_capability_blockers
+
+        blockers: list[dict[str, Any]] = []
+        for node_id in sorted(story_video_ids):
+            node = nodes[node_id]
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            entry = _generation_catalog_entry(
+                project, "videoNode", data.get("model"), catalog_cache
+            )
+            if entry is None:
+                blockers.append({
+                    "node_id": node_id,
+                    "code": "model_catalog_unavailable",
+                    "message": "Cannot verify this story clip's selected video model.",
+                })
+                continue
+            for issue in _workflow_node_capability_blockers(
+                {"id": node_id, "node_type": "videoNode", "data": data}, entry
+            ):
+                blockers.append({"node_id": node_id, **issue})
+            incoming_images = [
+                nodes.get(str(edge.get("source") or ""))
+                for edge in edges
+                if str(edge.get("target") or "") == node_id
+                and (not isinstance(edge.get("data"), dict)
+                     or edge["data"].get("link_type") != "dependency_for")
+            ]
+            incoming_images = [
+                source for source in incoming_images
+                if isinstance(source, dict)
+                and source.get("type") in {
+                    "imageGenNode", "uploadNode", "imageNode",
+                    "exportImageNode", "storyboardGenNode",
+                }
+            ]
+            if (
+                data.get("genMode") in {
+                    "firstFrame", "firstLastFrame", "imageToVideo",
+                    "imageReference", "allReference",
+                }
+                and not incoming_images
+                and data.get("continuityMode") != "auto"
+            ):
+                blockers.append({
+                    "node_id": node_id,
+                    "code": "story_reference_missing",
+                    "message": "This story clip's generation mode requires a linked image reference.",
+                })
+            maximum = entry.get("referenceImageMax")
+            if type(maximum) is int and len(incoming_images) > maximum:
+                blockers.append({
+                    "node_id": node_id,
+                    "code": "reference_image_limit_exceeded",
+                    "message": f"Model accepts at most {maximum} image references; found {len(incoming_images)}.",
+                })
+            for source in incoming_images:
+                source_data = source.get("data") if isinstance(source.get("data"), dict) else {}
+                source_running = source_data.get("isGenerating") is True or str(
+                    source_data.get("execution_state") or ""
+                ).lower() in {"queued", "pending", "running"}
+                image_url = source_data.get("imageUrl")
+                if source.get("type") == "imageGenNode":
+                    image_url = image_url or source_data.get("referenceImageUrl")
+                if source_running or not isinstance(image_url, str) or not image_url.strip():
+                    blockers.append({
+                        "node_id": node_id,
+                        "source_node_id": str(source.get("id") or ""),
+                        "code": "story_reference_not_ready",
+                        "message": "A linked storyboard image has no generated image yet.",
+                    })
+        if blockers:
+            blocked_ids = {str(item.get("node_id") or "") for item in blockers}
+            return {
+                "ok": False,
+                "status": "interactive_story_generation_not_ready",
+                "code": "interactive_story_generation_not_ready",
+                "error": blockers[0]["message"],
+                "blockers": blockers,
+                "ready_node_ids": sorted(story_video_ids - blocked_ids),
+                "agent_instruction": (
+                    "Keep each blocked story clip pending. Fix its model capability or wait for "
+                    "the linked image result, then read the current canvas before submitting "
+                    "only ready video nodes. Do not replay an accepted generation command."
+                ),
+            }
         return None
     return _generation_parameters_required_result(list(missing_by_node.values()))
 
@@ -5580,6 +5792,9 @@ def _direct_apply_canvas_commands(
             break
 
     if errors:
+        for outcome in command_results:
+            if outcome.get("status") == "applied":
+                outcome["status"] = "not_applied"
         return tool_result(
             {
                 "ok": False,
@@ -5614,6 +5829,9 @@ def _direct_apply_canvas_commands(
         body=payload,
     )
     if not saved.get("ok", True):
+        for outcome in command_results:
+            if outcome.get("status") == "applied":
+                outcome["status"] = "not_applied"
         return tool_result(
             {
                 "ok": False,
@@ -5625,6 +5843,11 @@ def _direct_apply_canvas_commands(
                 "canvas_id": canvas,
                 "errors": [saved.get("error") or "failed to save canvas"],
                 "command_results": command_results,
+                **({"code": saved["code"]}
+                   if saved.get("code") in {"revision_conflict", "canvas_revision_conflict"}
+                   else {}),
+                **({"current_revision": saved["current_revision"]}
+                   if type(saved.get("current_revision")) is int else {}),
             }
         )
     resolved = {
@@ -5672,20 +5895,23 @@ def _emit_canvas_commands(
         return _emit_command_error(
             project, canvas, "empty_commands", "commands must be a non-empty array"
         )
-    if not allow_dynamic_workflow_batch and _looks_like_handwritten_workflow_batch(
-        commands
-    ):
+    handwritten_batch = (
+        not allow_dynamic_workflow_batch
+        and _looks_like_handwritten_workflow_batch(commands)
+    )
+    story_candidate = _story_image_reference_batch_candidate(commands) if handwritten_batch else False
+    if handwritten_batch and not story_candidate:
         return tool_result(
             {
                 "ok": False,
                 "status": "wrong_tool_dynamic_workflow",
                 "code": "wrong_tool_dynamic_workflow",
                 "error": (
-                "This looks like a workflow being hand-written as canvas commands. "
-                "Do not use canvas commands to bypass dynamic WorkflowPlan validation. Select "
-                "one native Hermes Skill, load it with freezone_get_workflow_skill, "
-                "author a complete freezone_workflow_plan.v1 with explicit Recipe ids, then call "
-                "freezone_prepare_workflow_plan_draft(plan=...)."
+                    "This looks like a workflow being hand-written as canvas commands. "
+                    "Do not use canvas commands to bypass dynamic WorkflowPlan validation. Select "
+                    "one native Hermes Skill, load it with freezone_get_workflow_skill, "
+                    "author a complete freezone_workflow_plan.v1 with explicit Recipe ids, then call "
+                    "freezone_prepare_workflow_plan_draft(plan=...)."
                 ),
                 "retryable": False,
                 "next_action": "correct_same_workflow_plan",
@@ -5704,6 +5930,12 @@ def _emit_canvas_commands(
     blocked = _revision_conflict_write_error(project, canvas)
     if blocked is not None:
         return tool_result(blocked)
+    if handwritten_batch and not _is_story_image_reference_batch(project, canvas, commands):
+        return _emit_command_error(
+            project, canvas, "wrong_tool_dynamic_workflow",
+            "Only storyboard image references for existing clips of one interactive story "
+            "may use this canvas batch. Use the validated WorkflowPlan for other workflows.",
+        )
     shape_error = (
         _validate_write_commands_shape(project, canvas, commands, allow_workflow_prepare=True)
         if allow_dynamic_workflow_batch and any(
@@ -5770,6 +6002,29 @@ def _summarize_canvas_command_result(
 ) -> dict[str, Any]:
     command_summary = _command_summary(commands)
     errors = resolved.get("errors") if isinstance(resolved.get("errors"), list) else []
+    warnings = resolved.get("warnings") if isinstance(resolved.get("warnings"), list) else []
+    raw_outcomes = (
+        resolved.get("command_results")
+        if isinstance(resolved.get("command_results"), list)
+        else []
+    )
+    command_outcomes = []
+    for outcome in raw_outcomes[:100]:
+        if not isinstance(outcome, dict):
+            continue
+        summary = {
+            key: value[:240] if key == "error" and isinstance(value, str) else value
+            for key, value in outcome.items()
+            if key in {"commandIndex", "type", "status", "nodeId", "createdNodeId", "error"}
+            and isinstance(value, (str, int))
+        }
+        if summary:
+            command_outcomes.append(summary)
+    raw_created_ids = resolved.get("created_node_ids")
+    created_ids = [
+        node_id for node_id in (raw_created_ids if isinstance(raw_created_ids, list) else [])
+        if isinstance(node_id, str) and node_id.strip()
+    ][:100]
     agent_instruction = resolved.get("agent_instruction") or (
         "Canvas command result has been summarized. Do not ask for or print the full commands."
     )
@@ -5788,6 +6043,18 @@ def _summarize_canvas_command_result(
                 "claim generation is complete, do not report a timeout, do not say a tool was opened, "
                 "and do not ask the user to operate it manually."
             )
+    elif errors or any(outcome.get("status") == "error" for outcome in command_outcomes):
+        agent_instruction = (
+            "The canvas batch did not fully apply. Report the successful and failed command "
+            "outcomes separately. Read the latest canvas before retrying only missing writes; "
+            "never replay a generation command after an uncertain result."
+        )
+    elif warnings:
+        agent_instruction = (
+            "Media generation completed, but a story-frame attachment needs attention. "
+            "Report the warning separately from generation status. Read the latest canvas "
+            "before linking only the missing references; do not regenerate completed media."
+        )
     elif resolved.get("ok"):
         if _commands_include_open_node_action(commands):
             agent_instruction = (
@@ -5802,18 +6069,34 @@ def _summarize_canvas_command_result(
                 "canvas action has been submitted to the canvas; do not say a panel was opened. "
                 "Do not ask for or print the full commands."
             )
+    if resolved.get("requires_canvas_refresh") is True:
+        # Status-specific summaries must not erase the bridge's revision handoff.
+        refresh_instruction = resolved.get("agent_instruction")
+        agent_instruction += " " + (
+            refresh_instruction
+            if isinstance(refresh_instruction, str) and refresh_instruction.strip()
+            else "Before the next revision-based write, re-read the current persisted canvas/story "
+                 "and recheck the intended changes. Do not reuse earlier revisions or replay generation."
+        )
     return {
         "ok": bool(resolved.get("ok")),
         "tool_call_status": resolved.get("tool_call_status") or "completed",
         "canvas_apply_status": resolved.get("canvas_apply_status"),
         "applied": bool(resolved.get("applied")),
         "cancelled": bool(resolved.get("cancelled")),
+        "requires_canvas_refresh": resolved.get("requires_canvas_refresh") is True,
         "bridge_key": bridge_key,
         "project_id": resolved.get("project_id"),
         "canvas_id": resolved.get("canvas_id"),
+        **({"code": resolved["code"]} if isinstance(resolved.get("code"), str) else {}),
+        **({"current_revision": resolved["current_revision"]}
+           if type(resolved.get("current_revision")) is int else {}),
         "applied_count": resolved.get("applied_count"),
         "opened_ui_actions": resolved.get("opened_ui_actions"),
-        "created_node_count": len(resolved.get("created_node_ids") or []),
+        "created_node_count": len(created_ids),
+        "created_node_ids": created_ids,
+        "command_results": command_outcomes,
+        "warnings": [str(item)[:240] for item in warnings[:20] if isinstance(item, str)],
         "command_count": len(commands),
         "command_counts": command_summary["command_counts"],
         "created_nodes": command_summary["created_nodes"],
@@ -6040,7 +6323,6 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
         if mode_clarification is not None:
             return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
-    run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
     if not operation_id and _available():
         return tool_result(
@@ -6062,7 +6344,8 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             body={
                 "intent": source,
                 "compiled": validated,
-                "run_after_create": bool(run_after_create),
+                **({"run_after_create": args["run_after_create"]}
+                   if "run_after_create" in args else {}),
                 "operation_id": operation_id,
             },
         )
@@ -6936,7 +7219,6 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
         if mode_clarification is not None:
             return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
-    run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
     if not operation_id and _available():
         return tool_result(
@@ -6954,7 +7236,8 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             body={
                 "intent": intent,
                 "compiled": compiled,
-                "run_after_create": bool(run_after_create),
+                **({"run_after_create": args["run_after_create"]}
+                   if "run_after_create" in args else {}),
                 "operation_id": operation_id,
             },
         )
@@ -8545,6 +8828,10 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
     "code": {"type": ["string", "null"]},
     "error": {"type": ["string", "object", "array", "null"]},
     "message": {"type": ["string", "null"]},
+    "details": {"type": ["array", "object", "string", "null"]},
+    "tool_name": {"type": ["string", "null"]},
+    "path": {"type": ["string", "null"]},
+    "phase": {"type": ["string", "null"]},
     "user_message": {"type": ["string", "null"]},
     "retryable": {"type": "boolean"},
     "next_action": {"type": ["string", "null"]},
@@ -8562,10 +8849,18 @@ _CANVAS_RESULT_FIELDS = (
     "canvas_apply_status",
     "applied",
     "cancelled",
+    "requires_canvas_refresh",
     "revision",
     "receipt",
     "durable_receipt",
     "errors",
+    "warnings",
+    "code",
+    "current_revision",
+    "created_node_ids",
+    "command_results",
+    "blockers",
+    "ready_node_ids",
     "summary",
 )
 
@@ -8584,6 +8879,8 @@ _WORKFLOW_RESULT_FIELDS = (
     "skipped_edges",
     "media_types",
     "missing_parameters",
+    "blockers",
+    "ready_node_ids",
     "required_choices",
     "clarification",
     "draft_created",
@@ -8593,13 +8890,18 @@ _WORKFLOW_RESULT_FIELDS = (
 
 _RESULT_ARRAY_FIELDS = frozenset(
     {
+        "issues",
         "progress",
         "problems",
         "actions",
         "assets",
+        "blockers",
         "available_ids",
         "candidates",
         "commands",
+        "command_results",
+        "confirmed_stages",
+        "created_node_ids",
         "edge_ids",
         "edges",
         "errors",
@@ -8611,15 +8913,21 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "nodes",
         "questions",
         "recipes",
+        "ready_node_ids",
         "saved_recipe_ids",
         "saved_skill_ids",
         "skipped_edges",
+        "stages",
         "voices",
         "warnings",
     }
 )
 _RESULT_BOOLEAN_FIELDS = frozenset(
     {
+        "refresh_canvas",
+        "requires_canvas_refresh",
+        "idempotent",
+        "valid",
         "terminal",
         "automatic_retry",
         "changed",
@@ -8655,9 +8963,12 @@ _RESULT_INTEGER_FIELDS = frozenset(
 )
 _RESULT_OBJECT_FIELDS = frozenset(
     {
+        "story",
+        "outline",
         "counts",
         "answers",
         "client_debug",
+        "evidence",
         "clarification",
         "generation_choices",
         "node_data",
@@ -8668,6 +8979,8 @@ _RESULT_OBJECT_FIELDS = frozenset(
 )
 _RESULT_STRING_FIELDS = frozenset(
     {
+        "story_id",
+        "current_stage_id",
         "run_status",
         "observation_token",
         "action",
@@ -8738,6 +9051,8 @@ def _result_field_schema(field: str) -> dict[str, Any]:
         return {"type": "boolean"}
     if field in _RESULT_INTEGER_FIELDS:
         return {"type": ["integer", "null"]}
+    if field == "outline":
+        return {"type": ["object", "null"]}
     if field in _RESULT_OBJECT_FIELDS:
         return {"type": "object"}
     if field in {"draft", "draft_ref"}:
@@ -8749,7 +9064,47 @@ def _result_field_schema(field: str) -> dict[str, Any]:
     return {"type": ["object", "array", "string", "number", "boolean", "null"]}
 
 
+def _load_stdlib_tool_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load agent tool module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_STORY_TOOL_MODULE_ERROR: Exception | None = None
+_SHARED_STORY_TOOLS = None
+if _INCLUDE_INTERACTIVE_STORY:
+    try:
+        _SHARED_STORY_TOOLS = _load_stdlib_tool_module(
+            "_freezone_interactive_story_tools", _PLUGIN_DIR.parent / "dramaclaw" / "interactive_story.py"
+        )
+    except Exception as exc:
+        _STORY_TOOL_MODULE_ERROR = exc
+        _SHARED_STORY_TOOLS = None
+try:
+    _SHARED_API_ERRORS = _load_stdlib_tool_module(
+        "_freezone_agent_api_errors", _PLUGIN_DIR / "_agent_api_errors.py"
+    )
+except Exception:
+    _SHARED_API_ERRORS = None
+
+# A partial native deployment without the optional story sibling must still
+# load ordinary canvas tools. The one persisted-canvas read reports the missing
+# dependency; story mutations are omitted by the guarded loader below.
+_STORY_RESULT_FIELDS = (
+    _SHARED_STORY_TOOLS.STORY_RESULT_FIELDS if _SHARED_STORY_TOOLS is not None
+    else ({"dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision")} if _INCLUDE_INTERACTIVE_STORY else {})
+)
+_STORY_SUCCESS_REQUIRED = (
+    _SHARED_STORY_TOOLS.STORY_SUCCESS_REQUIRED if _SHARED_STORY_TOOLS is not None
+    else _STORY_RESULT_FIELDS
+)
+
+
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    **_STORY_RESULT_FIELDS,
     "freezone_observe_workflow_run": (
         "run_id",
         "run_status",
@@ -9033,6 +9388,7 @@ _SKILL_STUDIO_FRONTEND_REQUIRED = (
 )
 
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
+    **_STORY_SUCCESS_REQUIRED,
     "freezone_observe_workflow_run": (
         "run_id",
         "run_status",
@@ -9321,6 +9677,8 @@ _CANVAS_CONTEXT_RESPONSE_TYPES = {
 
 
 def _output_schema(name: str) -> dict[str, Any]:
+    if _SHARED_STORY_TOOLS is not None and name in _SHARED_STORY_TOOLS.STORY_TOOL_NAMES:
+        return _SHARED_STORY_TOOLS.output_schema(name)
     fields = _RESULT_FIELDS.get(name)
     if fields is None:
         raise RuntimeError(f"missing output contract for {name}")
@@ -9764,10 +10122,11 @@ _WORKFLOW_RUN_AFTER_CREATE_PROPS = {
     "run_after_create": {
         "type": "boolean",
         "description": (
-            "Append deterministic workflow execution after graph creation. Decide this "
-            "when preparing or patching the draft: pass true when the user asked to start "
-            "generation right after approving the plan. freezone_confirm_workflow_draft "
-            "does not accept it."
+            "Execution decision: required for workflows bound to story targets through "
+            "source_context.targets or source_context.asset_targets. Ordinary workflows may omit "
+            "it and default to false (create only). Set true when the approved request includes "
+            "generation/run; a terse confirmation inherits the preceding proposal's policy. "
+            "Decide it when preparing or patching the draft; freezone_confirm_workflow_draft does not accept it."
         ),
     },
 }
@@ -10571,7 +10930,85 @@ _CANVAS_COMMAND_TOOL_SCOPE_PROPS = {
 }
 
 
+def _bound_story_args(args: dict[str, Any]) -> dict[str, Any]:
+    if _SHARED_STORY_TOOLS is None:
+        raise RuntimeError("interactive-story tool definitions are unavailable")
+    return _SHARED_STORY_TOOLS.bound_story_args(args)
+
+
+def _handle_get_story_canvas(args: dict[str, Any], **_: Any) -> Any:
+    try:
+        if _SHARED_STORY_TOOLS is None:
+            raise RuntimeError("interactive-story tool definitions are unavailable")
+        result = _SHARED_STORY_TOOLS.get_bound_canvas(args, _request)
+    except Exception as exc:
+        result = {"ok": False, "error": str(exc)}
+    return _structured_tool_result(result, tool_name="dramaclaw_get_freezone_canvas")
+
+
+def _load_interactive_story_tools():
+    # Resolve the repo-pinned sibling even when Hermes symlinks only Freezone
+    # into its workspace. Do not load/register the director's generic REST tools.
+    module = _SHARED_STORY_TOOLS
+    if module is None:
+        raise _STORY_TOOL_MODULE_ERROR or RuntimeError("interactive-story tools are unavailable")
+
+    def schema(
+        name, description, properties, required=None, *, additional_properties=False
+    ):
+        return _schema(
+            name, description, properties, required,
+            reject_unknown=not additional_properties,
+        )
+
+    def scoped_handler(name, handler):
+        def handle(args, **kwargs):
+            try:
+                result = handler(_bound_story_args(args), **kwargs)
+            except Exception as exc:
+                result = {"ok": False, "error": str(exc)}
+            return _structured_tool_result(result, tool_name=name)
+
+        return handle
+
+    entries = module.build_tools(
+        schema=schema,
+        request=lambda *args, **kwargs: _request(*args, **kwargs),
+        project_from_args=lambda args: _project_from_args(args),
+        tool_result=lambda value: value,
+        tool_error=lambda message: {"ok": False, "error": str(message)},
+    )
+    return tuple(
+        (name, schema, scoped_handler(name, handler))
+        for name, schema, handler in entries
+    )
+
+
+_INTERACTIVE_STORY_IMPORT_ERROR: Exception | None = None
+_INTERACTIVE_STORY_TOOLS = ()
+if _INCLUDE_INTERACTIVE_STORY:
+    try:
+        _INTERACTIVE_STORY_TOOLS = _load_interactive_story_tools()
+    except Exception as exc:
+        _INTERACTIVE_STORY_IMPORT_ERROR = exc
+        _INTERACTIVE_STORY_TOOLS = ()
+
+_STORY_CANVAS_TOOLS = (
+    (
+        "dramaclaw_get_freezone_canvas",
+        _schema(
+            "dramaclaw_get_freezone_canvas",
+            "Read the bound persisted canvas, including its revision, before creating an interactive story.",
+            _CANVAS_COMMAND_TOOL_SCOPE_PROPS,
+        ),
+        _handle_get_story_canvas,
+    ),
+) if _INCLUDE_INTERACTIVE_STORY else ()
+
+
 TOOLS = (
+    *_INTERACTIVE_STORY_TOOLS,
+    *_STORY_CANVAS_TOOLS,
     (
         "freezone_import_external_skill",
         _schema("freezone_import_external_skill", "Convert user-provided external Skill Markdown into native Skill JSON plus Recipes in a background task. Only submit when the user asks to import/convert. Provide the complete Markdown; for ZIP packages with references use the settings upload. Does not install or modify the canvas.", {
@@ -11517,10 +11954,11 @@ TOOLS = (
                 "run_after_create": {
                     "type": "boolean",
                     "description": (
-                        "When true, append run_workflow after graph creation in the same approved "
-                        "frontend batch after the user has approved the WorkflowPlan. Decide it "
-                        "here: pass true when the user asked to start generation right after "
-                        "approving the plan. freezone_confirm_workflow_draft does not accept it."
+                        "Execution decision: required when source_context.targets or "
+                        "source_context.asset_targets binds this plan to a story. Ordinary plans "
+                        "may omit it and default to false (create only). Set true to run after "
+                        "creation when the approved proposal includes generation; otherwise set "
+                        "false. Decide it here; freezone_confirm_workflow_draft does not accept it."
                     ),
                 },
             },
@@ -11947,6 +12385,23 @@ TOOLS = (
         ),
         _handle_run_node_action,
     ),
+)
+
+
+def _bind_structured_result_input(handler):
+    def bound(args, *handler_args, **handler_kwargs):
+        token = _STRUCTURED_RESULT_INPUT_HASH.set(args)
+        try:
+            return handler(args, *handler_args, **handler_kwargs)
+        finally:
+            _STRUCTURED_RESULT_INPUT_HASH.reset(token)
+
+    return bound
+
+
+TOOLS = tuple(
+    (name, schema, _bind_structured_result_input(handler))
+    for name, schema, handler in TOOLS
 )
 
 

@@ -205,6 +205,9 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
   });
 
   const dataRecord = recordValue(data);
+  // 影游片段的未选中素材参考线：常显但减弱（见 storyReferenceVisibleEdges 派生标记），
+  // 悬停/选中/连到选中节点时恢复正常样式，命中与断开交互不变。
+  const referenceDimmed = dataRecord.referenceDimmed === true;
   const bindingRole =
     ['candidate_binding', 'role_binding'].includes(String(dataRecord.edgeKind || '')) &&
     typeof dataRecord.role === 'string'
@@ -216,20 +219,24 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
   const baseStrokeWidth = isProcessingEdge ? (selected ? 2.7 : 2.2) : 2;
 
   // 处理中的连线始终保持自己的 accent 高亮样式，不参与选中态调光。
-  // hover/选中相连连线轻微点亮；常态灰色半透明；选中后无关连线再压暗一档。
+  // hover/选中相连连线轻微点亮；常态灰色半透明；选中后无关连线再压暗一档；
+  // 减弱的参考线无交互时恒定压暗，不再隐藏。
   const highlightStroke = 'rgba(205, 209, 216, 0.64)';
   const bindingStroke = 'rgba(34,211,238,0.66)';
   const bindingHighlightStroke = 'rgba(172, 226, 236, 0.72)';
   const baseStroke = 'rgba(176, 176, 183, 0.45)';
   const dimStroke = 'rgba(176, 176, 183, 0.22)';
+  const edgeIsActive = isConnectedToSelected || selected || isHovered;
   const resolvedStroke = isProcessingEdge
     ? processingStroke
-    : isConnectedToSelected || selected || isHovered
+    : edgeIsActive
       ? (bindingRole ? bindingHighlightStroke : highlightStroke)
-      : hasSelection
+      : hasSelection || referenceDimmed
         ? dimStroke
         : (bindingRole ? bindingStroke : baseStroke);
-  const resolvedStrokeWidth = baseStrokeWidth;
+  const resolvedStrokeWidth = referenceDimmed && !isProcessingEdge && !edgeIsActive
+    ? 1.2
+    : baseStrokeWidth;
   const shouldShowDataFlow =
     !isProcessingEdge && (isHovered || selected || isConnectedToSelected);
   const flowPathId = `canvas-data-flow-path-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;

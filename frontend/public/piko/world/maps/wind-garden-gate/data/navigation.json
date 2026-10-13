@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "mapId": "wind-garden-gate",
+  "walkableAreas": [
+    {
+      "id": "map-preview-bounds",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 1152
+        },
+        {
+          "x": 0,
+          "y": 1152
+        }
+      ]
+    }
+  ],
+  "colliders": [],
+  "spawnPoints": [
+    {
+      "id": "artisan-market-arrival",
+      "position": {
+        "x": 1820,
+        "y": 640
+      },
+      "facing": "west"
+    },
+    {
+      "id": "whispering-meadow-arrival",
+      "position": {
+        "x": 745,
+        "y": 400
+      },
+      "facing": "south"
+    }
+  ],
+  "exits": [
+    {
+      "id": "to-artisan-market",
+      "trigger": {
+        "id": "to-artisan-market-trigger",
+        "points": [
+          {
+            "x": 1950,
+            "y": 590
+          },
+          {
+            "x": 2020,
+            "y": 590
+          },
+          {
+            "x": 2020,
+            "y": 675
+          },
+          {
+            "x": 1950,
+            "y": 675
+          }
+        ]
+      },
+      "targetMapId": "artisan-market",
+      "targetSpawnId": "wind-garden-gate-arrival"
+    },
+    {
+      "id": "to-whispering-meadow",
+      "trigger": {
+        "id": "to-whispering-meadow-trigger",
+        "points": [
+          {
+            "x": 580,
+            "y": 258
+          },
+          {
+            "x": 640,
+            "y": 258
+          },
+          {
+            "x": 640,
+            "y": 302
+          },
+          {
+            "x": 580,
+            "y": 302
+          }
+        ]
+      },
+      "targetMapId": "whispering-meadow",
+      "targetSpawnId": "wind-garden-gate-arrival"
+    }
+  ]
+}

@@ -80,6 +80,11 @@ vi.mock("@/api/skills", () => ({
   getSkillRegistry: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("@/api/client", async (original) => ({
+  ...(await original<typeof import("@/api/client")>()),
+  apiCall: vi.fn().mockResolvedValue({ public_id: "work", active_version: null, listed: false, versions: [] }),
+}));
+
 vi.mock("@/features/canvas/nodes", () => ({ nodeTypes: {} }));
 vi.mock("@/features/canvas/edges", () => ({ edgeTypes: {} }));
 vi.mock("@/features/canvas/NodeSelectionMenu", () => ({ NodeSelectionMenu: () => null }));
@@ -122,13 +127,57 @@ function renderCanvas() {
   );
 }
 
-describe("Canvas 小地图拖动期间保持挂载", () => {
+describe("Canvas 小地图与弹窗输入隔离", () => {
   beforeEach(() => {
     capturedPanOptions = null;
     capturedFlowProps = null;
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     useCanvasStore.getState().setCanvasData([], []);
     useCanvasStore.setState({ currentViewport: { x: 0, y: 0, zoom: 1 } });
+  });
+
+  it.each([false, true])("发布弹窗保护选中节点，关闭后恢复快捷键（下架确认框：%s）", async (confirmTakeDown) => {
+    if (confirmTakeDown) {
+      const { apiCall } = await import("@/api/client");
+      vi.mocked(apiCall).mockResolvedValueOnce({ public_id: "work", active_version: "v1", listed: true,
+        versions: [{ public_id: "work", version: "v1", title: "Story", description: "", published: true, status: "ready", number: 1 }],
+      });
+    }
+    useCanvasStore.getState().setCanvasData([
+      { id: "g", type: "groupNode", position: { x: 0, y: 0 }, data: { storyGroup: true, label: "Story" } },
+      { id: "v", type: "videoNode", parentId: "g", selected: true, position: { x: 0, y: 0 }, data: {} },
+    ], []);
+    useCanvasStore.getState().setSelectedNode("v");
+    renderCanvas();
+    fireEvent.click(screen.getByRole("button", { name: "storyPublication.publish" }));
+    const close = await screen.findByRole("button", { name: "storyPublication.close" });
+    let target = close;
+    if (confirmTakeDown) {
+      fireEvent.click(await screen.findByRole("button", { name: "storyPublication.takeDown" }));
+      target = await screen.findByRole("button", { name: "storyPublication.cancel" });
+    }
+    const before = useCanvasStore.getState().nodes;
+    const originalUndo = useCanvasStore.getState().undo;
+    const undo = vi.fn(() => false);
+    act(() => useCanvasStore.setState({ undo }));
+    try {
+      fireEvent.keyDown(target, { key: "Delete" });
+      fireEvent.keyDown(target, { key: "Backspace" });
+      fireEvent.keyDown(target, { key: "z", metaKey: true });
+      fireEvent.keyDown(target, { key: "z", ctrlKey: true });
+      // Capture-phase space handling must not clear the selection either.
+      fireEvent.keyDown(target, { key: " ", code: "Space" });
+      fireEvent.keyUp(target, { key: " ", code: "Space" });
+      expect(useCanvasStore.getState().nodes).toEqual(before);
+      expect(useCanvasStore.getState().selectedNodeId).toBe("v");
+      expect(undo).not.toHaveBeenCalled();
+      if (confirmTakeDown) fireEvent.click(target);
+      fireEvent.click(close);
+      fireEvent.keyDown(document.body, { key: "Delete" });
+      expect(useCanvasStore.getState().nodes.some(node => node.id === "v")).toBe(false);
+    } finally {
+      act(() => useCanvasStore.setState({ undo: originalUndo }));
+    }
   });
 
   it("未固定时，拖动中划出小地图不会把它卸载；结束后才恢复自动隐藏", () => {

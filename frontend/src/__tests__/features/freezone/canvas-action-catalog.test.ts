@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import i18next from "i18next";
+import { enTranslation } from "@/__tests__/helpers/i18n-fixtures";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { buildCanvasActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
   extractCanvasChatCommandEnvelopes,
+  isCanvasChatRunNodeAction,
 } from "@/features/freezone/canvasChatCommands";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/canvasNodeActionCatalog";
 import {
@@ -22,6 +26,39 @@ function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["typ
 }
 
 describe("canvas action catalog", () => {
+  it("localizes story fields and frame capture instructions when the language changes", async () => {
+    i18next.addResourceBundle("en", "translation", enTranslation, true, true);
+    i18next.addResourceBundle("vi", "translation", JSON.parse(
+      readFileSync("public/locales/vi/translation.json", "utf8"),
+    ), true, true);
+    const originalLanguage = i18next.language;
+    const clip = node({
+      id: "story-i18n", type: CANVAS_NODE_TYPES.video,
+      data: { storySegmentId: "segment-i18n", videoUrl: "/clip.mp4" },
+    });
+    try {
+      for (const [language, label] of [["en", "Story content"], ["vi", "Nội dung cốt truyện"], ["zh", "剧情内容"]]) {
+        await i18next.changeLanguage(language);
+        const catalog = buildCanvasNodeActionCatalog(clip);
+        expect(catalog.editable_schema.narration.label).toBe(label);
+        const values = [
+          ...["continuityMode", "continuitySourceNodeId", "narration", "storyProductionNotes"]
+            .flatMap((field) => [catalog.editable_schema[field].label, catalog.editable_schema[field].description]),
+          ...["update_node_data", "capture_video_first_frame", "capture_video_last_frame"]
+            .map((action) => catalog.actions.find((entry) => entry.action === action)?.description),
+        ];
+        for (const value of values) {
+          expect(value).toBeTruthy();
+          expect(value).not.toContain("canvas.story.actionCatalog.");
+          if (language !== "zh") expect(value).not.toMatch(/[\u4e00-\u9fff]/);
+        }
+        expect(catalog.editable_schema.continuityMode.options).toEqual(["auto", "independent"]);
+      }
+    } finally {
+      await i18next.changeLanguage(originalLanguage);
+    }
+  });
+
   it("keeps mainline writes in manual UI but out of Agent discovery", async () => {
     const beatContext = node({
       id: "beat-context-a",
@@ -410,6 +447,49 @@ describe("canvas action catalog", () => {
     });
   });
 
+  it("exposes story content and production notes for interactive-story video clips", () => {
+    const storyClip = node({
+      id: "story-video-a",
+      type: CANVAS_NODE_TYPES.video,
+      data: {
+        storySegmentId: "segment-story-video-a",
+        narration: "林晚锁上便利店的门。",
+        storyProductionNotes: "雪夜，监控屏闪过人脸。",
+        prompt: "便利店雪夜收尾镜头",
+      },
+    });
+    const regularVideo = node({
+      id: "regular-video-a",
+      type: CANVAS_NODE_TYPES.video,
+      data: { prompt: "普通视频提示词" },
+    });
+
+    const storyCatalog = buildCanvasNodeActionCatalog(storyClip);
+    const regularCatalog = buildCanvasNodeActionCatalog(regularVideo);
+
+    expect(storyCatalog.editable_fields).toEqual(
+      expect.arrayContaining(["narration", "storyProductionNotes", "prompt", "continuityMode", "continuitySourceNodeId"]),
+    );
+    expect(storyCatalog.editable_schema.narration).toMatchObject({
+      type: "string",
+      label: "剧情内容",
+      current_value: "林晚锁上便利店的门。",
+      description: expect.stringContaining("prompt"),
+    });
+    expect(storyCatalog.editable_schema.storyProductionNotes).toMatchObject({
+      type: "string",
+      label: "制作备注",
+      current_value: "雪夜，监控屏闪过人脸。",
+    });
+    expect(
+      storyCatalog.actions.find((action) => action.action === "update_node_data")?.description,
+    ).toContain("narration");
+    expect(regularCatalog.editable_fields).not.toContain("narration");
+    expect(regularCatalog.editable_fields).not.toContain("storyProductionNotes");
+    expect(regularCatalog.editable_fields).not.toContain("continuityMode");
+    expect(regularCatalog.editable_fields).not.toContain("continuitySourceNodeId");
+  });
+
   it("explains generator prompt fields are combined with upstream prompt text and reference mentions", () => {
     const image = node({
       id: "image-prompt-a",
@@ -483,6 +563,134 @@ describe("canvas action catalog", () => {
         description: expect.stringContaining("Trigger a browser download"),
         parameters: { node_id: "video-download-a" },
       }),
+    );
+  });
+
+  it("exposes breakdown, crop and depth capture on a video node with media", () => {
+    const video = node({
+      id: "video-tools-a",
+      type: CANVAS_NODE_TYPES.video,
+      data: { videoUrl: "/static/projects/demo/freezone/video.mp4", durationMs: 12_000 },
+    });
+
+    const actions = buildCanvasNodeActionCatalog(video).actions;
+
+    expect(actions).toContainEqual(
+      expect.objectContaining({
+        action: "run_video_breakdown",
+        execution: "frontend_node",
+        command_type: "run_node_action",
+        parameters: expect.objectContaining({
+          node_id: "video-tools-a",
+          parameter_schema: expect.objectContaining({
+            dimensions: expect.objectContaining({ options: ["storyboard", "motion", "music"] }),
+            auto_start: expect.objectContaining({ type: "boolean" }),
+          }),
+        }),
+      }),
+    );
+    expect(actions).toContainEqual(
+      expect.objectContaining({ action: "open_video_crop_tool", execution: "manual_ui" }),
+    );
+    expect(actions).toContainEqual(
+      expect.objectContaining({
+        action: "run_video_depth_capture",
+        execution: "frontend_node",
+        can_run_now: true,
+      }),
+    );
+    // 智能续写要 Seedance 2.5；测试环境没有模型目录，所以不该出现在清单里。
+    expect(actions.map((item) => item.action)).not.toContain("open_video_extend_tool");
+  });
+
+  it("blocks depth capture for videos longer than the browser limit", () => {
+    const video = node({
+      id: "video-long-a",
+      type: CANVAS_NODE_TYPES.video,
+      data: { videoUrl: "/static/projects/demo/freezone/video.mp4", durationMs: 61_000 },
+    });
+
+    const depth = buildCanvasNodeActionCatalog(video).actions.find(
+      (item) => item.action === "run_video_depth_capture",
+    );
+
+    expect(depth?.can_run_now).toBe(false);
+    expect(depth?.blocked_reasons).toEqual(["video is longer than 60s"]);
+  });
+
+  it("hides video toolbar actions when the video node has no media", () => {
+    const empty = node({ id: "video-empty-a", type: CANVAS_NODE_TYPES.video, data: {} });
+
+    const names = buildCanvasNodeActionCatalog(empty).actions.map((item) => item.action);
+
+    expect(names).not.toContain("run_video_breakdown");
+    expect(names).not.toContain("open_video_crop_tool");
+    expect(names).not.toContain("run_video_depth_capture");
+  });
+
+  it("exposes start_video_breakdown on a breakdown node and gates it on a source video", () => {
+    const video = node({
+      id: "video-source-a",
+      type: CANVAS_NODE_TYPES.video,
+      data: { videoUrl: "/static/projects/demo/freezone/video.mp4" },
+    });
+    const breakdown = node({
+      id: "breakdown-a",
+      type: CANVAS_NODE_TYPES.videoBreakdown,
+      data: { sourceNodeId: "video-source-a" },
+    });
+    const edge = { id: "e1", source: "video-source-a", target: "breakdown-a" };
+
+    const connected = buildCanvasNodeActionCatalog(breakdown, {
+      nodes: [video, breakdown],
+      edges: [edge] as never,
+    }).actions.find((item) => item.action === "start_video_breakdown");
+    expect(connected).toEqual(
+      expect.objectContaining({
+        execution: "frontend_node",
+        command_type: "run_node_action",
+        can_run_now: true,
+      }),
+    );
+    expect(connected?.blocked_reasons).toBeUndefined();
+
+    const orphan = buildCanvasNodeActionCatalog(breakdown).actions.find(
+      (item) => item.action === "start_video_breakdown",
+    );
+    expect(orphan?.can_run_now).toBe(false);
+    expect(orphan?.blocked_reasons?.[0]).toContain("no source video");
+
+    const running = buildCanvasNodeActionCatalog(
+      node({
+        id: "breakdown-b",
+        type: CANVAS_NODE_TYPES.videoBreakdown,
+        data: { sourceVideoUrl: "/static/projects/demo/freezone/video.mp4", isBreakingDown: true },
+      }),
+    ).actions.find((item) => item.action === "start_video_breakdown");
+    expect(running?.can_run_now).toBe(false);
+    expect(running?.blocked_reasons).toEqual(["a breakdown is already running on this node"]);
+  });
+
+  it("registers the new video actions as executable chat node actions", () => {
+    for (const action of [
+      "run_video_breakdown",
+      "start_video_breakdown",
+      "open_video_crop_tool",
+      "open_video_extend_tool",
+      "run_video_depth_capture",
+    ]) {
+      expect(isCanvasChatRunNodeAction(action)).toBe(true);
+    }
+    const capabilityActions = buildCanvasActionCatalog([]).canvas_action_catalog.map(
+      (item) => item.frontend_mapping?.action,
+    );
+    expect(capabilityActions).toEqual(
+      expect.arrayContaining([
+        "run_video_breakdown",
+        "open_video_crop_tool",
+        "open_video_extend_tool",
+        "run_video_depth_capture",
+      ]),
     );
   });
 

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   assistantCompletionPrefix,
+  backgroundCanvasCommandPendingResultForTest,
   buildCanvasCommandFlowItemsForTest,
+  canvasCommandResultFromWorkflowRunForTest,
   canvasCommandFeedbackVisualToneForTest,
   canvasCommandFeedbackIsValidationOnlyForTest,
   canvasContextActivityVisualToneForTest,
@@ -39,6 +41,88 @@ describe("assistant success summary", () => {
       .toBeNull();
     expect(assistantCompletionPrefix("当前任务没有生成完成。"))
       .toBeNull();
+  });
+});
+
+describe("background canvas generation status", () => {
+  it("marks media and workflow commands as running instead of completed", () => {
+    const result = backgroundCanvasCommandPendingResultForTest([
+      { index: 0, type: "run_node_action", label: "生成音频", details: [] },
+      { index: 1, type: "run_workflow", label: "运行工作流", details: [] },
+    ]);
+
+    expect(result.applied).toBe(0);
+    expect(result.commandResults).toEqual([
+      expect.objectContaining({
+        commandIndex: 0,
+        status: "pending",
+        output: { pending: true, reason: "background_generation_running" },
+      }),
+      expect.objectContaining({
+        commandIndex: 1,
+        status: "pending",
+        output: { pending: true, reason: "background_generation_running" },
+      }),
+    ]);
+  });
+
+  it("persists the workflow run id in pending command results", () => {
+    const result = backgroundCanvasCommandPendingResultForTest(
+      [{ index: 0, type: "run_workflow", label: "运行工作流", details: [] }],
+      "run-1",
+    );
+
+    expect(result.commandResults[0]?.output).toEqual({
+      pending: true,
+      reason: "background_generation_running",
+      workflow_run_id: "run-1",
+    });
+  });
+
+  it.each([
+    ["completed", "success", []],
+    ["failed", "error", ["生成失败"]],
+    ["cancelled", "error", ["后台生成已取消。"]],
+    ["interrupted", "error", ["后台生成已中断，请恢复任务或重试。"]],
+  ] as const)("restores a %s workflow run as a terminal result", (status, stepStatus, errors) => {
+    const result = canvasCommandResultFromWorkflowRunForTest(
+      {
+        applied: 0,
+        openedUiActions: 0,
+        errors: [],
+        key: "feedback-1",
+        commandResults: [{
+          commandIndex: 0,
+          type: "run_workflow",
+          status: "pending",
+          label: "运行工作流",
+        }],
+      },
+      {
+        schema_version: "freezone_workflow_run.v1",
+        run_id: "run-1",
+        project_id: "project-1",
+        canvas_id: "canvas-1",
+        status,
+        resumable: status === "interrupted",
+        created_at: "2026-10-12T00:00:00Z",
+        started_at: "2026-10-12T00:00:00Z",
+        updated_at: "2026-10-12T00:00:01Z",
+        actions: [{
+          node_id: "node-1",
+          action: "generate",
+          status: status === "completed" ? "completed" : "failed",
+          ...(status === "failed" ? { user_error: "生成失败" } : {}),
+        }],
+      },
+      ((_key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? _key) as never,
+    );
+
+    expect(result.commandResults[0]).toEqual(expect.objectContaining({
+      status: stepStatus,
+      output: { workflow_run_id: "run-1", workflow_run_status: status },
+    }));
+    expect(result.errors).toEqual(errors);
   });
 });
 
@@ -490,6 +574,20 @@ describe("canvas command flow placement", () => {
         },
       ],
     })).toBe("destructive");
+
+    expect(canvasCommandFeedbackVisualToneForTest({
+      key: "bridge:attachment-warning",
+      applied: 0,
+      openedUiActions: 1,
+      errors: [],
+      warnings: ["图片已生成，但分镜目标已变化"],
+      commandResults: [{
+        commandIndex: 0,
+        type: "run_node_action",
+        status: "success",
+        label: "生成图片",
+      }],
+    })).toBe("warning");
   });
 
   it("dedupes the same pending approval when one event resolves the turn later", () => {

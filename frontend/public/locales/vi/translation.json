@@ -1,4 +1,350 @@
 {
+  "pikoWorld": {
+    "sitDown": "Ngồi xuống",
+    "taskLabel": {
+      "running": "Tác vụ đang chạy",
+      "completed": "Tác vụ hoàn tất",
+      "failed": "Tác vụ thất bại",
+      "publicRunning": "Đang sáng tạo",
+      "open": "{{status}}. Quay lại sáng tạo",
+      "unavailable": "Nơi sáng tạo ban đầu không còn khả dụng. Đã quay lại không gian làm việc.",
+      "openError": "Không mở được nơi sáng tạo. Vui lòng thử lại."
+    },
+    "musicToggle": "Nhạc",
+    "mapLoading": "Đang tải {{mapName}}…",
+    "mapLoadError": "Không thể tải {{mapName}}",
+    "mapTransitionAnnouncement": "Đang vào {{mapName}}",
+    "mapTravel": {
+      "retry": "Thử lại",
+      "return": "Quay lại bản đồ trước",
+      "dismiss": "Đóng"
+    },
+    "transport": {
+      "sail": "Khám phá biển khơi",
+      "returnShore": "Trở về Bờ biển Dấu Sao",
+      "ascend": "Đến Thiên cảng Cá Voi",
+      "enterHall": "Vào tòa thị chính",
+      "returnSlope": "Trở về Đồi Đỉnh Mây"
+    },
+    "onboarding": {
+      "title": "Chỉ còn thiếu tên bạn nữa thôi.",
+      "description": "Chọn diện mạo và làm quen với mọi người.",
+      "newFriend": "Người bạn mới",
+      "appearance": "Diện mạo của bạn",
+      "male": "Nam",
+      "female": "Nữ",
+      "nickname": "Biệt danh",
+      "namePlaceholder": "Mọi người nên gọi bạn là gì?",
+      "nameHint": "Tối đa 16 ký tự. Có thể đổi trong cài đặt.",
+      "nameError": "Nhập biệt danh từ 1–16 ký tự.",
+      "saveError": "Không thể lưu. Hãy thử lại; nội dung vẫn được giữ.",
+      "enter": "Bắt đầu hành trình",
+      "videoError": "Không thể phát lời mời. Hãy thử lại hoặc bỏ qua.",
+      "videoSlow": "Phim tải chậm. Bạn có thể chờ hoặc bỏ qua.",
+      "invitation": "Một lời mời từ thị trấn đang chờ bạn.",
+      "retry": "Thử lại",
+      "play": "Phát lời mời",
+      "skipAnimation": "Bỏ qua hoạt ảnh",
+      "unmute": "Bật âm thanh",
+      "mute": "Tắt âm thanh",
+      "join": "Cùng tham gia nhé",
+      "skip": "Bỏ qua hoạt ảnh",
+      "assetError": "Không thể tải hình nhân vật. Hãy thử lại.",
+      "preparing": "Đang chuẩn bị một chỗ cho bạn…",
+      "resume": "Tiếp tục phát",
+      "resumeHint": "Tiếp tục phát hoặc bỏ qua đoạn phim.",
+      "createTitle": "Tạo nhân vật"
+    },
+    "wardrobe": {
+      "title": "Trang phục nhân vật",
+      "description": "Chọn quần áo và phụ kiện tại đây.",
+      "clothes": "Quần áo",
+      "base": "Trang phục cơ bản",
+      "unavailable": "Trang phục chưa khả dụng",
+      "saveError": "Không lưu được. Vui lòng thử lại.",
+      "accessories": "Phụ kiện",
+      "confirm": "Xác nhận"
+    },
+    "loadingScenes": {
+      "mountain-observatory": {
+        "title": "Đài quan sát trên mây",
+        "line": "Bên kia biển mây, một khám phá mới đang chờ."
+      },
+      "amber-expedition": {
+        "title": "Chuyến đi hổ phách",
+        "line": "Mở bản đồ và cùng bạn bè tìm con đường tiếp theo."
+      },
+      "frozen-lake-rest": {
+        "title": "Nghỉ bên hồ băng",
+        "line": "Ôm một tách trà ấm và nghỉ chân dưới ánh sao."
+      },
+      "tidal-discovery": {
+        "title": "Khám phá vùng nước nông",
+        "line": "Nhìn kỹ hơn, một thế giới nhỏ đang ẩn trong làn nước."
+      },
+      "welcome-courtyard": {
+        "title": "Sân Chào Đón",
+        "line": "Đài phun nước nâng nắng sớm, thị trấn đang chờ lần gặp đầu tiên với bạn."
+      },
+      "whispering-meadow": {
+        "title": "Đồng Cỏ Thì Thầm",
+        "line": "Gió lướt qua những đồi xanh, khẽ đưa phương xa đến trước mắt."
+      },
+      "whalesong-skyport": {
+        "title": "Thiên cảng Cá Voi",
+        "line": "Biển mây nâng chú cá voi viễn du, một khúc ca dài lướt qua cánh buồm."
+      },
+      "boundless-sea": {
+        "title": "Biển Vô Tận",
+        "line": "Giương buồm lên, để nắng và gió biển cùng bạn tiến về nơi nước trời giao nhau."
+      },
+      "amber-wilds": {
+        "title": "Đồng Hoang Hổ Phách",
+        "line": "Hoàng hôn tràn qua cổng vòm đá cũ, nhuộm cả cánh đồng thành màu hổ phách."
+      },
+      "startrace-coast": {
+        "title": "Bờ biển Dấu Sao",
+        "line": "Áp vỏ sò vào tai, nghe ráng chiều và con triều trao nhau bí mật."
+      },
+      "starlight-dock": {
+        "title": "Bến Đèn Sao",
+        "line": "Ánh đèn đung đưa trên mặt nước, lời chào từ phương xa đang cập bến."
+      },
+      "whispering-forest": {
+        "title": "Rừng Thì Thầm",
+        "line": "Tiếng sáo len qua kẽ lá, đến cơn gió ngủ trưa cũng bước thật khẽ."
+      }
+    },
+    "translationAction": "Dịch",
+    "translationLoading": "Đang dịch…",
+    "translationHide": "Ẩn bản dịch",
+    "translationRetry": "Dịch lại",
+    "translationLanguage": "Dịch sang",
+    "translationLabel": "Bản dịch",
+    "translationError": "Hiện chưa dịch được. Vui lòng thử lại sau.",
+    "residentComingSoon": "Đang làm hoạt ảnh",
+    "playableResident_f01": "Nữ · F01",
+    "playableResident_m01": "Nam · M01",
+    "profileSaveFailed": "Chưa lưu được. Hãy kiểm tra bộ nhớ trình duyệt rồi thử lại.",
+    "profileDescription": "Để bạn bè trong thị trấn biết về bạn.",
+    "defaultNickname": "Lữ khách thị trấn",
+    "saveProfile": "Lưu",
+    "bio": "Giới thiệu",
+    "nickname": "Biệt danh",
+    "changeResident": "Đổi nhân vật",
+    "editProfile": "Sửa hồ sơ",
+    "settings": "Cài đặt",
+    "loadingTitle": "Đến Thị trấn Piko",
+    "loadingPreparing": "Đang chuẩn bị thị trấn, vui lòng chờ…",
+    "loadingReady": "Thị trấn đã sẵn sàng, lên đường thôi!",
+    "loadingFailed": "Chưa tải xong. Hãy kiểm tra mạng rồi thử lại.",
+    "loadingProgress": "Minh họa tiến độ tải thị trấn",
+    "loadingEnter": "Vào Thị trấn Piko",
+    "loadingBack": "Về không gian làm việc",
+    "loadingRetry": "Tải lại",
+    "worldControls": "Điều khiển Thế giới Piko Piko",
+    "returnToWorkbench": "Về không gian làm việc",
+    "chatToggle": "Mở hoặc thu gọn trò chuyện thế giới",
+    "chatToggleUnread": "Mở hoặc thu gọn trò chuyện thế giới. Tin chưa đọc: {{count}}.",
+    "chatTitle": "Trò chuyện thế giới",
+    "chatClose": "Đóng trò chuyện thế giới",
+    "chatEmptyTitle": "Gió chưa mang tin nào đến",
+    "chatEmptyDescription": "Khi thế giới chung mở cửa, lời chào từ thị trấn sẽ hiện ở đây.",
+    "chatMessagesLabel": "Tin nhắn trò chuyện",
+    "chatComposerPlaceholder": "Nói gì đó với mọi người trong thị trấn nhé…",
+    "openResidentSelector": "Chọn nhân vật cư dân",
+    "residentSelectorTitle": "Chọn cư dân của bạn",
+    "residentSelectorDescription": "Chọn nhân vật để chơi. Hoạt ảnh của các cư dân khác đang được chuẩn bị.",
+    "residentSelectorClose": "Đóng chọn cư dân",
+    "residentSelectorConfirm": "Chọn xong",
+    "residentOptionLabel": "Cư dân {{number}}",
+    "chatMockMayorName": "Thị trưởng Piko",
+    "chatMockResidentName": "Cư dân thị trấn",
+    "chatMockYouName": "Tôi",
+    "chatMockMayorWelcome": "Chào mừng đến Sân Chào Đón, gió hôm nay thật dễ chịu.",
+    "chatMockResidentLantern": "Bên đài phun nước vừa sáng lên một chiếc đèn nhắn tin mới.",
+    "chatMockVisitorReply": "Lát nữa mình qua xem nhé!",
+    "mapAriaLabel": "Sân Chào Đón, dùng phím mũi tên để di chuyển",
+    "talkToMayor": "Trò chuyện với thị trưởng",
+    "welcomeTitle": "Thị trưởng · Piko",
+    "welcomePage1": "Chào mừng đến Thị trấn Piko! Tôi là thị trưởng ở đây. Hãy đi chậm lại và tận hưởng thời gian trong sân nhé.",
+    "welcomePage2": "Bạn có thể dạo quanh và trò chuyện với cư dân. Góc trên bên phải cho phép đổi trang phục và biệt danh, muốn trò chuyện thì cứ tìm tôi.",
+    "welcomeNext": "Nghe tiếp",
+    "welcomeDone": "Dạo quanh sân",
+    "residentActions": "Tương tác với {{nickname}}",
+    "viewResidentInfo": "Xem thông tin",
+    "chatWithResident": "Trò chuyện",
+    "simulatedResidentLabel": "Cư dân mô phỏng tạm thời",
+    "emptyResidentBio": "Chưa có giới thiệu.",
+    "chatRequestSent": "Đã gửi lời mời trò chuyện. Vui lòng chờ phản hồi.",
+    "chatTooLong": "Tin nhắn tối đa 80 ký tự",
+    "chatCooldown": "Chờ {{seconds}} giây",
+    "chatSendHint": "Enter để gửi · Shift+Enter để xuống dòng",
+    "chatSend": "Gửi",
+    "privateRequestTitle": "Lời mời trò chuyện riêng",
+    "privateRequestFrom": "{{nickname}} muốn trò chuyện",
+    "privateAccept": "Chấp nhận",
+    "privateDecline": "Từ chối",
+    "privateReopen": "Trò chuyện với {{nickname}}",
+    "privateMessages": "Tin nhắn riêng",
+    "privateMessageInput": "Nhập tin nhắn riêng",
+    "privateReplying": "Đang trả lời…",
+    "privateSendHint": "Enter để gửi · tối đa 80 ký tự",
+    "privateMockGreeting": "Xin chào! Rất vui được gặp bạn ở thị trấn.",
+    "privateMockReply": "Nhận được rồi! Đây là câu trả lời mô phỏng của {{nickname}}, rất vui được trò chuyện với bạn.",
+    "privateUnread": "{{count}} tin chưa đọc",
+    "privateEndChat": "Đóng trò chuyện với {{nickname}}",
+    "privateYou": "Bạn",
+    "music": {
+      "albumTitle": "Nhạc phim gốc Thị trấn Piko",
+      "caption": "{{album}} – {{title}}",
+      "captionEmpty": "Chọn một giai điệu của thị trấn",
+      "followMap": "Phát nhạc theo bản đồ",
+      "playbackError": "Hiện chưa phát được. Hãy chọn một bài để thử lại.",
+      "trackList": "Danh sách nhạc bản đồ",
+      "playTrack": "Phát {{title}}",
+      "pauseTrack": "Tạm dừng {{title}}",
+      "close": "Đóng trình phát nhạc",
+      "nowPlaying": "Đang phát: {{title}}",
+      "nowPlayingMarquee": "Đang phát · {{title}}",
+      "tracks": {
+        "courtyard": "Sân Gió Đậu – Lần đầu gặp gỡ",
+        "courtyardWarm": "Sân Gió Đậu – Phút nghỉ ngơi",
+        "lanternWaterfront": "Bóng đèn trên triều tối",
+        "tidalSeas": "Khúc ca Xiluya",
+        "meadowGate": "Ảo mộng xứ vàng",
+        "forest": "Lời xưa nơi rừng thẳm",
+        "cloudtopFrostmoon": "Trăng sương cuối mây",
+        "amberCanyon": "Ánh tà hổ phách",
+        "skyport": "Khúc ca Lomir"
+      }
+    },
+    "maps": {
+      "town-hall-interior": {
+        "title": "Sảnh Nắng Ấm",
+        "subtitle": "Nắng bên cửa sổ, hơi ấm bên lò sưởi"
+      },
+      "welcome-courtyard": {
+        "title": "Sân Chào Đón",
+        "subtitle": "Gió mang lời chào từ bên suối"
+      },
+      "artisan-market": {
+        "title": "Chợ Thợ Thủ Công",
+        "subtitle": "Hương gỗ và tiếng cười đọng dưới bóng lều"
+      },
+      "lantern-canal-street": {
+        "title": "Phố Kênh Đèn Lồng",
+        "subtitle": "Ánh đèn thức giấc theo tiếng nước"
+      },
+      "wind-garden-gate": {
+        "title": "Cổng Vườn Gió",
+        "subtitle": "Gió từ giàn hoa thổi về phương xa"
+      },
+      "starlight-dock": {
+        "title": "Bến Đèn Sao",
+        "subtitle": "Ánh sáng mờ theo triều tối cập bến"
+      },
+      "whispering-meadow": {
+        "title": "Đồng Cỏ Thì Thầm",
+        "subtitle": "Tiếng gió lướt qua cỏ cao và trời rộng"
+      },
+      "starfall-tidal-wetland": {
+        "title": "Đầm Triều Sao Rơi",
+        "subtitle": "Ánh sao dừng lại giữa những vũng triều"
+      },
+      "cloudtop-slope": {
+        "title": "Đồi Đỉnh Mây",
+        "subtitle": "Bóng mây đi xa, ánh sao tìm đến"
+      },
+      "amber-wilds": {
+        "title": "Đồng Hoang Hổ Phách",
+        "subtitle": "Sóng cỏ vàng gìn giữ tháng năm xưa"
+      },
+      "startrace-coast": {
+        "title": "Bờ biển Dấu Sao",
+        "subtitle": "Triều rút đi, ánh sao còn ở lại"
+      },
+      "changfeng-sea": {
+        "title": "Biển Trường Phong",
+        "subtitle": "Gió dài xa dần, biển trời lặng tiếng"
+      },
+      "boundless-sea": {
+        "title": "Biển Vô Tận",
+        "subtitle": "Cánh buồm nhỏ hướng về nơi biển trời gặp nhau"
+      },
+      "whispering-forest": {
+        "title": "Rừng Thì Thầm",
+        "subtitle": "Tiếng gió nán lại giữa những vòng cây"
+      },
+      "frostmoon-tundra": {
+        "title": "Lãnh Nguyên Trăng Sương",
+        "subtitle": "Ánh trăng khiến băng nguyên lặng lẽ tỏa sáng"
+      },
+      "crimson-canyon": {
+        "title": "Hẻm Núi Ráng Đỏ",
+        "subtitle": "Nắng chiều men theo vách đá đi xa"
+      },
+      "whalesong-skyport": {
+        "title": "Thiên cảng Cá Voi",
+        "subtitle": "Tiếng cá voi vọng về từ sâu trong biển mây"
+      }
+    },
+    "townNpcs": {
+      "town-m01": {
+        "nickname": "A Nghiên",
+        "bio": "Sống ở khu chợ, thích đồ thủ công và nhịp sống láng giềng rộn ràng.",
+        "greeting": "Mình vừa làm xong một món đồ nhỏ. Bạn ghé xưởng xem nhé?"
+      },
+      "town-f01": {
+        "nickname": "Tiểu Đài",
+        "bio": "Yêu những bông hoa trong sân và thích làm quen bạn mới.",
+        "greeting": "Hoa hôm nay nở đẹp quá, ước gì chia cho bạn một làn hương."
+      },
+      "town-m02": {
+        "nickname": "A Xuyên",
+        "bio": "Sống ở Phố Kênh Đèn Lồng, lúc nào cũng mang theo đồ nghề sửa chữa.",
+        "greeting": "Bên sông gió lớn, mình đi xem lại đèn lồng đã treo chắc chưa."
+      },
+      "hall-bookkeeper": {
+        "nickname": "Thư Hòa",
+        "bio": "Trông coi giá sách của đại sảnh, thích sưu tầm chuyện xưa của thị trấn.",
+        "greeting": "Cuốn sách này cất giữ chuyện xưa của thị trấn. Mình cùng lật vài trang nhé?"
+      }
+    },
+    "pets": {
+      "fountain-path-dog": "Đồ Hộp",
+      "northwest-lawn-cat": "Trăng Nhỏ",
+      "hall-sleeping-cat": "Tròn"
+    },
+    "hallNotices": {
+      "hall-noticeboard": "Chào mừng đến thị trấn. Đi mỏi chân rồi thì ngồi bên lò sưởi một lát nhé.",
+      "hall-reading": "Giữa trang sách kẹp một chiếc lá khô, bên cửa sổ lúc này thật hợp để đọc sách.",
+      "hall-reception": "Sổ khách đang mở trên bàn, thị trưởng đang ở ngoài sân đón những người bạn mới."
+    },
+    "navEditor": {
+      "launch": "Gỡ lỗi cảnh",
+      "overlay": "Lớp chỉnh sửa vùng bản đồ",
+      "tools": "Công cụ gỡ lỗi cảnh",
+      "showTools": "Hiện công cụ gỡ lỗi",
+      "hideTools": "Ẩn công cụ gỡ lỗi",
+      "collision": "Vùng va chạm",
+      "occlusion": "Lớp che khuất",
+      "drawCollision": "Vẽ vùng",
+      "drawOcclusion": "Vẽ vùng che khuất",
+      "resume": "Tiếp tục chỉnh sửa",
+      "cancelDrawing": "Hủy vẽ",
+      "trial": "Đi thử",
+      "exportJson": "Xuất JSON",
+      "exit": "Thoát gỡ lỗi",
+      "draftHint": "Bản nháp chỉ dùng để gỡ lỗi. Xuất JSON rồi ghi vào tệp bản đồ thì mới được lưu.",
+      "occlusionHint": "Đường viền che khuất có thể chỉnh sửa và xuất, có hiệu lực sau khi nhập vào bản đồ.",
+      "needThreePoints": "Cần ít nhất ba điểm để khép kín.",
+      "invalidOutline": "Đường viền tự cắt, trùng điểm hoặc suy biến. Hãy hoàn tác điểm và chỉnh lại trước khi khép kín.",
+      "duplicatePoint": "Điểm bị trùng. Hãy chọn vị trí mới.",
+      "fixBeforeTrial": "Hãy sửa lỗi đường viền trước khi đi thử.",
+      "playerBlocked": "Bản nháp chặn vị trí hiện tại của nhân vật. Hãy dời hoặc xóa vùng va chạm đó rồi đi thử."
+    }
+  },
   "referenceValidation": {
     "firstFrame": "Khung hình đầu", "lastFrame": "Khung hình cuối",
     "title": "Tư liệu tham chiếu không đáp ứng yêu cầu của mô hình", "hint": "Vui lòng sửa các tư liệu bên dưới trước khi tạo. Định vị để chọn nút tương ứng trên canvas.", "locate": "Định vị tư liệu",
@@ -495,6 +841,11 @@
         "error": "Tải ảnh đại diện thất bại, vui lòng thử lại"
       },
       "setPassword": "Đặt mật khẩu"
+    },
+    "pikoHub": {
+      "play": "Piko một chút",
+      "companion": "Bạn đồng hành",
+      "world": "Thị trấn Piko"
     }
   },
   "organization": {
@@ -924,6 +1275,11 @@
       "canvasConfirmExecution": "Xác nhận thực hiện",
       "canvasTimeoutCancelled": "Thao tác trên canvas đã hết thời gian chờ và bị huỷ, chưa áp dụng thay đổi.",
       "canvasManuallyCancelled": "Thao tác trên canvas đã bị huỷ thủ công, chưa áp dụng thay đổi.",
+      "backgroundGenerationRunningLabel": "Đang tạo trong nền",
+      "backgroundGenerationRunningMessage": "Tác vụ đã được gửi và đang tạo trong nền. Trạng thái này sẽ tự động cập nhật khi thành công hoặc thất bại.",
+      "backgroundGenerationFailed": "Tạo trong nền thất bại. Hãy kiểm tra chi tiết tác vụ rồi thử lại.",
+      "backgroundGenerationCancelled": "Đã hủy quá trình tạo trong nền.",
+      "backgroundGenerationInterrupted": "Quá trình tạo trong nền đã bị gián đoạn. Hãy tiếp tục tác vụ hoặc thử lại.",
       "workflowOutputSyncPendingLabel": "Đang đồng bộ kết quả",
       "workflowRecipeAttemptEnded": "Lượt chạy của nút này đã kết thúc. Hãy chạy lại nút để bắt đầu lượt mới ({{reason}})",
       "workflowOutputSyncPendingMessage": "Quy trình đã hoàn tất nhưng kết quả trên canvas vẫn đang đồng bộ. Hãy tải lại canvas sau để kiểm tra; tạm thời đừng tạo lại.",
@@ -957,12 +1313,17 @@
         "audioOff": "Tắt tiếng"
       },
       "clarification": {
+        "submitFailed": "Không thể gửi thông tin bổ sung. Vui lòng thử lại.",
+        "cancelled": "Đã hủy",
         "skipped": "Đã bỏ qua",
         "submitted": "Đã gửi",
+        "cancelledQuestions": "Các câu hỏi trong lượt này đã bị hủy",
         "skippedQuestions": "Các câu hỏi đã bỏ qua",
         "submittedAnswers": "Câu trả lời đã gửi · {{count}}",
+        "noAnswersCancelled": "Lượt này đã bị hủy mà không gửi lựa chọn.",
         "noAnswersSkipped": "Đã bỏ qua các câu hỏi này.",
-        "noAnswersSubmitted": "Chưa gửi lựa chọn cụ thể nào."
+        "noAnswersSubmitted": "Chưa gửi lựa chọn cụ thể nào.",
+        "cancelledRequest": "Người dùng đã hủy yêu cầu trong lượt này."
       }
     },
     "canvases": {
@@ -1059,7 +1420,7 @@
         "text": "Văn bản",
         "image": "Ảnh",
         "video": "Video",
-        "storyboard": "Storyboard",
+        "storyboard": "Bảng phân cảnh",
         "beat": "Ngữ cảnh cú máy",
         "audio": "Âm thanh",
         "script": "Kịch bản",
@@ -1454,6 +1815,59 @@
       "safetyReviewFailed": "Một số node không vượt qua kiểm duyệt an toàn",
       "editPrompt": "Sửa câu lệnh",
       "skipNode": "Bỏ qua node"
+    },
+    "outline": {
+      "kindStory": "Phim tương tác",
+      "kindAd": "Quảng cáo tương tác",
+      "status": {
+        "pending": "Chờ xác nhận",
+        "needs_revision": "Cần chỉnh sửa",
+        "confirmed": "Đã xác nhận",
+        "linked": "Đã gắn với kịch bản"
+      },
+      "confirm": "Xác nhận dàn ý",
+      "needsRevision": "Cần chỉnh sửa",
+      "dismiss": "Ẩn",
+      "reopen": "Xem đề xuất dàn ý",
+      "duration": "Thời lượng mục tiêu: {{minutes}} phút",
+      "durationSeconds": "Thời lượng mục tiêu: {{seconds}} giây",
+      "continueMessageStory": "Dàn ý đã được xác nhận, hãy tiếp tục dựng kịch bản tương tác chính thức.",
+      "continueMessageAd": "Dàn ý đã được xác nhận, hãy tiếp tục tạo kịch bản chính thức.",
+      "revisionDraft": "Dàn ý cần chỉnh sửa: ",
+      "superseded": "Trợ lý đã cập nhật dàn ý. Hãy xem phiên bản mới nhất rồi xác nhận lại.",
+      "refreshBlocked": "Quyết định đã được lưu nhưng canvas vẫn còn thay đổi cục bộ chưa lưu. Hãy xử lý xung đột canvas và tải phiên bản mới nhất trước khi tiếp tục.",
+      "failed": "Không lưu được xác nhận, vui lòng thử lại."
+    },
+    "stages": {
+      "navLabel": "Các giai đoạn sáng tạo",
+      "current": "Giai đoạn hiện tại: {{stage}}",
+      "completedSummary": "{{count}} đã hoàn thành",
+      "upcomingSummary": "{{count}} sắp tới",
+      "showHidden": "Hiển thị {{summary}}",
+      "proposal": "Ý tưởng",
+      "outline": "Dàn ý",
+      "script": "Kịch bản",
+      "characters": "Nhân vật",
+      "scenes": "Bối cảnh",
+      "storyboard": "Phân cảnh",
+      "video": "Video",
+      "complete": "Hoàn tất",
+      "status": {
+        "todo": "Chưa bắt đầu",
+        "active": "Đang tiến hành",
+        "done": "Hoàn thành",
+        "manual": "Chưa có đánh giá tự động"
+      },
+      "hint": {
+        "proposal": "Chốt hướng sáng tạo với trợ lý trong chat; dàn ý sẽ lưu dạng chờ xác nhận trên canvas",
+        "outline": "Xác nhận dàn ý trên thẻ kế hoạch trước khi trợ lý dựng cây truyện chính thức",
+        "script": "Dùng “Xem kịch bản” để đối chiếu lời thoại và nhánh; để trợ lý Patch khi cần sửa",
+        "characters": "Danh sách nhân vật không phải tài sản nhân vật; hãy kiểm tra thẻ, thiết kế hoặc ảnh tham chiếu trước",
+        "scenes": "Chưa có tiêu chí tự động thống nhất; hãy chuẩn bị tư liệu bối cảnh trên canvas",
+        "storyboard": "Chưa có tiêu chí tự động thống nhất",
+        "video": "Chỉ hoàn thành khi video của mọi phân cảnh đã sẵn sàng; đang tạo không tính",
+        "complete": "Hoàn tất cần chơi thử thực tế và nghiệm thu sản phẩm, không tự động"
+      }
     }
   },
   "theme": {
@@ -2439,7 +2853,9 @@
       "editor": "Người sửa",
       "admin": "Quản trị",
       "owner": "Chủ sở hữu"
-    }
+    },
+    "pikoWorldEntry": "Vào Thế giới Piko Piko",
+    "pikoWorldEntryDragHint": "Nhấp để vào Thế giới Piko Piko; giữ và kéo để di chuyển"
   },
   "assets": {
     "common": {
@@ -4651,6 +5067,382 @@
       "audioToVideo": "Audio to Video",
       "templates": "Mẫu dựng sẵn"
     },
+    "story": {
+      "actionCatalog": {
+        "continuityLabel": "Nối cảnh",
+        "continuityDescription": "Sau khi phương án sản xuất được phê duyệt, đặt hàng loạt các nút video của những đoạn truyện liên tiếp sang chế độ auto (tự động nối cảnh). Khi tạo video, hệ thống tự chụp hoặc dùng lại rồi gắn khung hình cuối của video nguồn hiện tại; không cần chụp và nối riêng, các nhánh dùng chung khung hình cuối đó. Dùng independent (mở cảnh độc lập) khi đổi cảnh, nhảy thời gian hoặc có nhiều nguồn hội tụ mà chưa chọn nguồn. Chuyển sang independent sẽ xóa ngay các kết nối nối cảnh tự động cũ và phần prompt tương ứng. Hệ thống không tự đổi mô hình hoặc chế độ tạo đã chọn.",
+        "continuitySourceLabel": "Nguồn nối cảnh",
+        "continuitySourceDescription": "Chỉ định ID nút video nguồn khi nhiều nhánh phía trước hội tụ; để trống nếu chỉ có một nguồn.",
+        "narrationLabel": "Nội dung cốt truyện",
+        "narrationDescription": "Nội dung cốt truyện hiển thị cho người sáng tạo trong đoạn truyện tương tác. Khi người dùng yêu cầu bổ sung, hoàn thiện hoặc viết tiếp đoạn này, phải cập nhật narration. Trường này độc lập với prompt dùng để tạo video; chỉ cập nhật prompt là không đủ.",
+        "productionNotesLabel": "Ghi chú sản xuất",
+        "productionNotesDescription": "Ghi chú về cảnh quay, diễn xuất, âm thanh và tính liên tục để quay phim và sản xuất video. Không ghi nội dung cốt truyện vào trường này.",
+        "updateDescription": "Cập nhật đoạn truyện tương tác. Khi bổ sung hoặc hoàn thiện cốt truyện, phải ghi vào narration; prompt chỉ dùng để tạo video và không thể thay thế narration. Ghi hướng dẫn quay phim, diễn xuất, âm thanh và tính liên tục vào storyProductionNotes.",
+        "captureFirstFrameDescription": "Chụp khung hình đầu của video đang chọn và tải lên thành nút ảnh phái sinh, trả về nút ảnh cùng thông tin nguồn. Có thể dùng làm tham chiếu mở cảnh hoặc đối chiếu nhân vật, đạo cụ và bố cục với khung hình cuối của đoạn trước. Thao tác này chỉ chuẩn bị tư liệu, không tự gắn tham chiếu hoặc tạo video.",
+        "captureLastFrameDescription": "Chụp khung hình cuối của video đang chọn và tải lên thành nút ảnh phái sinh, trả về nút ảnh cùng thông tin nguồn. Thao tác này chỉ chuẩn bị tư liệu, không tạo video. Sau khi hoàn tất, đọc lại ảnh trước khi gắn vào đoạn cần nối cảnh."
+      },
+      "htmlExport": {
+        "label": "Xuất ZIP ngoại tuyến",
+        "hint": "Bao gồm trình phát, khám phá cốt truyện và video. Giải nén ZIP rồi mở index.html.",
+        "progress": "Đang xuất {{progress}}",
+        "success": "Đã xuất ZIP. Giải nén rồi mở index.html.",
+        "failed": "Xuất thất bại. Kiểm tra video rồi thử lại."
+      },
+      "messages": {
+        "previousLastFrame": "Khung hình cuối của cảnh trước",
+        "videoFirstFrame": "Khung hình đầu của video",
+        "previousVideoMissing": "Cảnh trước chưa có video. Hãy hoàn thành cảnh đó trước.",
+        "captureSourceChanged": "Canvas hoặc video nguồn đã thay đổi. Hãy chụp lại khung hình.",
+        "assetPlanChanged": "Kế hoạch chủ thể hoặc bối cảnh đã thay đổi. Tài nguyên chưa được kết nối tự động.",
+        "segmentPlanMismatch": "Tài nguyên không khớp với kế hoạch hiện tại của đoạn {{segmentId}} nên chưa được kết nối tự động.",
+        "referenceLimit": "Đoạn {{segmentId}} đã đạt giới hạn ảnh tham chiếu. Tài nguyên chưa được kết nối tự động.",
+        "assetConnectionFailed": "Tài nguyên đã được tạo nhưng không thể kết nối với đoạn {{segmentId}}.",
+        "storyboardTargetChanged": "Đích của storyboard đã thay đổi. Chưa tự động kết nối với nút video câu chuyện.",
+        "referencesUnavailable": "Storyboard đã được tạo nhưng ảnh tham chiếu nhân vật hoặc bối cảnh chưa sẵn sàng. Tài nguyên video chưa được kết nối.",
+        "referencesConnectionFailed": "Storyboard đã được tạo nhưng không thể kết nối ảnh tham chiếu nhân vật hoặc bối cảnh với video đích.",
+        "storyboardConnectionFailed": "Ảnh storyboard đã được tạo nhưng video đích không thể nhận ảnh này làm tham chiếu.",
+        "continuitySourceInvalid": "Nguồn nối cảnh đã chọn không còn ở phía trước. Hãy chọn lại.",
+        "continuitySourceRequired": "Cảnh này có nhiều cảnh phía trước. Hãy chọn nguồn nối cảnh hoặc dùng mở đầu độc lập.",
+        "previousShotIncomplete": "Hãy hoàn thành cảnh trước rồi mới tạo cảnh nối tiếp.",
+        "imageInputRequired": "Cảnh nối tiếp yêu cầu đầu vào hình ảnh. Hãy chọn chế độ khung hình đầu hoặc ảnh tham chiếu.",
+        "previousFrameFailed": "Không thể chụp khung hình cuối của cảnh trước.",
+        "continuitySourceChanged": "Nguồn nối cảnh đã thay đổi. Hãy tạo lại.",
+        "frameBindingFailed": "Không thể liên kết tham chiếu khung hình cuối. Chưa bắt đầu tạo video.",
+        "frameReferenceMissing": "Tham chiếu khung hình cuối không có trong danh sách ảnh. Đã dừng tạo video.",
+        "experienceEnded": "Trải nghiệm kết thúc",
+        "choiceLoopDescription": "Hoạt ảnh lặp của màn hình lựa chọn",
+        "unreachableVisit": "Điều kiện truy cập tham chiếu đến đoạn không thể tới hoặc nằm ngoài nhóm nên đã bị bỏ qua.",
+        "startRequired": "Hãy đặt điểm bắt đầu câu chuyện hoặc đảm bảo chỉ có một đoạn gốc.",
+        "noVideos": "Không có nút video trên canvas.",
+        "unknownConditionFlag": "Điều kiện tham chiếu đến cờ chưa đăng ký “{{name}}” nên đã bị bỏ qua.",
+        "unknownConditionVariable": "Điều kiện tham chiếu đến biến chưa đăng ký “{{name}}” nên đã bị bỏ qua.",
+        "unknownEffectFlag": "Hiệu ứng tham chiếu đến cờ chưa đăng ký “{{name}}” nên đã bị bỏ qua.",
+        "unknownEffectVariable": "Hiệu ứng tham chiếu đến biến chưa đăng ký “{{name}}” nên đã bị bỏ qua.",
+        "segmentUnavailable": "Đoạn đã chọn không còn tồn tại hoặc không thuộc câu chuyện hiện tại.",
+        "validationErrors": "Câu chuyện có {{total}} lỗi nghiêm trọng. Hãy mở Kiểm tra để sửa trước.",
+        "otherwise": "Nếu không",
+        "continue": "Tiếp tục",
+        "importedStory": "Câu chuyện tương tác (đã nhập)",
+        "manualReview": "Cần kiểm tra thủ công",
+        "conditionalBranch": "Nhánh điều kiện (else/tự động)",
+        "unknownInitialValues": "Không rõ giá trị ban đầu của biến; mặc định là 0 (không có global decl).",
+        "invalidDefaultChoice": "{{name}}: # default {{index}} vượt quá số lựa chọn nên đã bị bỏ qua.",
+        "agentRefreshConflict": "Agent đã cập nhật canvas nhưng bạn còn thay đổi cục bộ chưa lưu. Hãy lưu bản sao hoặc làm mới để tiếp tục.",
+        "refreshConflict": "Canvas đã được cập nhật trong nền nhưng bạn còn thay đổi cục bộ chưa lưu. Hãy lưu bản sao hoặc làm mới để tiếp tục.",
+        "storyGroup": "Câu chuyện tương tác",
+        "segmentTitle": "Đoạn {{index}}",
+        "firstFrame": "khung hình đầu",
+        "lastFrame": "khung hình cuối",
+        "captureFrame": "Chụp {{frameName}} của video",
+        "sourceVideoMissing": "Thiếu video nguồn. Không thể chụp {{frameName}}.",
+        "videoFrame": "Video: {{frameName}}",
+        "captureFailed": "Không thể chụp {{frameName}}.",
+        "storyGroupCreated": "Đã tạo nhóm câu chuyện tương tác. Hãy đặt điểm bắt đầu và các lựa chọn để chơi thử.",
+        "createStoryGroup": "Tạo nhóm câu chuyện tương tác",
+        "storyGroupMinimum": "Nhóm câu chuyện tương tác cần ít nhất hai nút video.",
+        "endingBadge": "Kết thúc",
+        "loadError": "Không thể tải câu chuyện"
+      },
+      "overview": {
+        "open": "Xem kịch bản",
+        "title": "Tổng quan kịch bản",
+        "resize": "Điều chỉnh chiều rộng bảng kịch bản",
+        "empty": "Canvas chưa có phân cảnh kịch bản",
+        "synopsis": "Bối cảnh",
+        "synopsisEmpty": "Chưa lưu tóm tắt",
+        "characters": "Nhân vật",
+        "branches": "Nhánh truyện",
+        "scriptReady": "{{ready}}/{{total}} có lời thoại",
+        "noStart": "Không xác định được điểm bắt đầu duy nhất",
+        "orphans": "Phân cảnh không thể tới từ điểm bắt đầu",
+        "merge": "↩ hội tụ",
+        "loop": "↩ vòng lặp",
+        "conditional": "có điều kiện",
+        "ending": "Kết thúc",
+        "endings": "Các kết thúc",
+        "missingScript": "thiếu lời thoại",
+        "productionNotes": "Ghi chú sản xuất"
+      },
+      "gesture": "Thao tác kích hoạt",
+      "gestureClick": "Nhấp",
+      "gestureHold": "Nhấn giữ",
+      "ctaTitle": "Nút ở cuối trải nghiệm",
+      "ctaLabel": "Nhãn nút",
+      "ctaUrl": "URL đích (HTTPS)",
+      "ctaUnconfigured": "Chưa thiết lập đích đến",
+      "ctaInvalidUrl": "Nhập URL HTTPS đầy đủ. URL không hợp lệ sẽ không được lưu.",
+      "authorPreview": "Xem trước tương tác",
+      "editPosition": "Chỉnh sửa vị trí",
+      "testInteraction": "Thử tương tác",
+      "portraitVideo": "Video dọc",
+      "landscapeVideo": "Video ngang",
+      "testInteractionHint": "Chỉ thử phản hồi; không chuyển cảnh hay ghi nhận sự kiện của người xem.",
+      "editPositionHint": "Kéo các lựa chọn để đặt vị trí. Toàn bộ khung hình video giữ nguyên tỷ lệ gốc.",
+      "appearanceAndMotion": "Giao diện và chuyển động",
+      "holdSeconds": "Thời gian nhấn giữ (giây)",
+      "continuity": {
+        "label": "Nối tiếp cảnh quay",
+        "independent": "Mở đầu độc lập",
+        "auto": "Tự động nối tiếp",
+        "source": "Nối tiếp từ",
+        "chooseSource": "Chọn cảnh quay trước đó",
+        "untitled": "Đoạn phim chưa có tên",
+        "noSource": "Không có cảnh quay trước đó để nối tiếp. Đoạn phim này mở đầu độc lập.",
+        "sourceHint": "Mở đầu bằng khung hình cuối của “{{name}}”.",
+        "independentHint": "Không dùng khung hình cuối của cảnh trước."
+      },
+      "waitingBehavior": "Trong khi chờ lựa chọn",
+      "freezeFrame": "Giữ khung hình cuối",
+      "loopVideo": "Lặp video",
+      "disconnect": "Ngắt liên kết",
+      "toolbar": "Thanh công cụ câu chuyện",
+      "moreActions": "Thêm",
+      "play": "Phát",
+      "playMode": {
+        "entertainment": "Chế độ chơi thử",
+        "live": "Xem trước trực tiếp",
+        "backToCanvas": "Quay lại canvas",
+        "liveHint": "Nhấp vào nút câu chuyện bên trái để chuyển trình phát và bắt đầu từ cảnh đó.",
+        "generateFromHere": "Tạo từ đây",
+        "generateFromHereHint": "Mở đoạn phim này để chỉnh sửa lời nhắc và tạo video",
+        "autoPlay": "Bật/tắt tự động phát",
+        "autoPlayShort": "Tự động phát",
+        "playbackRate": "Tốc độ phát {{value}}x",
+        "playCurrent": "Phát cảnh hiện tại",
+        "pauseCurrent": "Tạm dừng cảnh hiện tại",
+        "seek": "Tiến trình phát",
+        "editStructure": "Chỉnh sửa cấu trúc",
+        "noSelection": "Chọn một cảnh trong câu chuyện"
+      },
+      "export": "Xuất",
+      "exportPreparing": "Đang tạo HTML…",
+      "exportFailed": "Xuất HTML thất bại. Vui lòng thử lại.",
+      "mediaError": "Không thể tải video. Vui lòng thử lại.",
+      "retryMedia": "Thử phát lại",
+      "exportDone": "Đã xuất HTML có thể chơi",
+      "restart": "Bắt đầu lại",
+      "resume": {
+        "title": "Bạn đã dừng giữa chừng — tiếp tục nhé?",
+        "continue": "Tiếp tục",
+        "fresh": "Chơi lại từ đầu",
+        "invalid": "Bản lưu không còn hợp lệ; đã bắt đầu lại"
+      },
+      "error": "Biên dịch câu chuyện thất bại",
+      "import": "Nhập câu chuyện tương tác",
+      "importDone": "Đã nhập câu chuyện tương tác",
+      "importPartial": "Đã nhập; một số phần cần kiểm tra thủ công (xem ⚠)",
+      "importFailed": "Nhập thất bại: không thể phân tích tệp",
+      "importSyntaxError": "Lỗi cú pháp Ink; đã hủy nhập",
+      "importClipHint": "Đang chờ video: {{file}}",
+      "importClipPending": "Đang chờ video",
+      "editNarrationHint": "Nhấp đúp để chỉnh sửa lời kể",
+      "editNarrationEmpty": "Nhấp đúp để thêm lời kể",
+      "addSegment": "Thêm phân đoạn",
+      "segmentDetails": "Chi tiết phân đoạn câu chuyện",
+      "narrationLabel": "Câu chuyện",
+      "narrationPlaceholder": "Viết những gì người chơi nhìn thấy hoặc nghe thấy trong phân đoạn này…",
+      "productionNotesLabel": "Ghi chú sản xuất",
+      "productionNotesPlaceholder": "Góc máy, tính liên tục, âm thanh và các hướng dẫn sản xuất khác…",
+      "choiceLoop": {
+        "label": "Video lặp khi chọn",
+        "freezeTail": "Không lặp (giữ khung hình cuối)",
+        "boundExternal": "Đã gắn video bên ngoài",
+        "hint": "Chọn video đã tạo trên canvas để lặp trong khi người chơi quyết định.",
+        "empty": "Chưa có video trên canvas để gắn. Hãy tạo một video rồi chọn tại đây."
+      },
+      "reviewRequired": "Cần kiểm tra",
+      "mediaState": {
+        "missing": "Chưa tạo video",
+        "uploading": "Đang tải video lên",
+        "generating": "Đang tạo video",
+        "ready": "Video đã sẵn sàng",
+        "failed": "Tạo video thất bại"
+      },
+      "editClip": "Chỉnh sửa (cắt / nâng độ phân giải / tạo lại)",
+      "editClipDone": "Hoàn tất chỉnh sửa, quay lại trình phát",
+      "setStart": "Đặt làm điểm bắt đầu câu chuyện",
+      "choicePlaceholder": "+ Lựa chọn",
+      "choicePrompt": "Nội dung lựa chọn (nút người chơi nhìn thấy)",
+      "choiceFeedbackLabel": "Phản hồi câu chuyện",
+      "choiceFeedbackPlaceholder": "Ví dụ: Cô ấy có vẻ bớt đề phòng hơn.",
+      "choiceFeedbackHint": "Hiển thị ngắn sau khi chọn; không tạo hay thay thế video.",
+      "interactionPresentation": "Cách hiển thị tương tác",
+      "interactionOverlay": "Lựa chọn ở phía dưới",
+      "interactionObjectAnchor": "Neo vào đối tượng",
+      "interactionBakedVideo": "Vùng tương tác",
+      "alignAnchors": "Căn chỉnh theo chiều ngang",
+      "alignAnchorsHint": "Căn các lựa chọn được neo khác của đoạn phim này ngang với lựa chọn hiện tại, giữ nguyên vị trí theo chiều ngang của chúng",
+      "editAnchorChoice": "Chỉnh sửa lựa chọn: {{choice}}",
+      "interactionAnchorHint": "Đây là khung hình cuối của video. Kéo để đặt lựa chọn; trình phát sẽ hiển thị các lựa chọn có thể nhấp tại đây.",
+      "interactionBakedHint": "Kéo trên khung hình để vẽ vùng nhấp. Kéo vùng để di chuyển hoặc kéo góc để đổi kích thước.",
+      "interactionAnchorNoVideo": "Đoạn phim này chưa có video. Bạn vẫn có thể đặt neo theo tỷ lệ.",
+      "interactionPickAnchor": "Đặt neo tương tác trên khung hình cuối của video",
+      "interactionHotspotArea": "Vùng nhấp",
+      "interactionDrawHotspot": "Kéo để vẽ vùng nhấp trên video",
+      "interactionMoveHotspot": "Di chuyển vùng nhấp",
+      "interactionResizeHotspot": "Đổi kích thước vùng nhấp",
+      "interactionStyle": "Kiểu nút",
+      "interactionStyleGlass": "Thẻ kính",
+      "interactionStyleTag": "Nhãn công nghệ",
+      "interactionStyleWarning": "Cảnh báo nguy hiểm",
+      "interactionMotion": "Hiệu ứng xuất hiện",
+      "interactionMotionFade": "Hiện dần",
+      "interactionMotionPop": "Bật lên",
+      "interactionMotionPulse": "Nhấp nháy",
+      "choiceEditorTitle": "Chỉnh sửa lựa chọn",
+      "choiceAdvanced": "Nâng cao: quy tắc, trạng thái và thời gian",
+      "choiceDefault": "Tiếp tục",
+      "defaultChoice": "Mặc định",
+      "endingBadge": "Kết thúc · {{label}}",
+      "replayExperience": "Trải nghiệm lại",
+      "endingFallback": "Hết",
+      "placeholderBadge": "Đoạn phim giữ chỗ",
+      "placeholderHint": "Đoạn phim này chưa có video — chọn một phương án bên dưới để tiếp tục chơi thử",
+      "automaticPlaceholderHint": "Đoạn này chưa có video",
+      "automaticPlaceholderNext": "Sẽ tự động chuyển sang đoạn tiếp theo",
+      "stats": {
+        "open": "Thống kê chơi thử",
+        "title": "Thống kê chơi thử",
+        "totalRuns": "{{count}} lượt chơi hoàn chỉnh",
+        "endings": "Kết thúc đã đạt được",
+        "choicePoints": "Phân bố lựa chọn",
+        "choicePoint": "Điểm lựa chọn",
+        "empty": "Chưa có dữ liệu chơi thử — hãy hoàn thành một lượt để xem thống kê",
+        "clear": "Xóa thống kê"
+      },
+      "choiceCountdown": "Đếm ngược lựa chọn",
+      "choiceTimeLimit": "Giới hạn thời gian",
+      "choiceTimeLimitUnit": "giây (0 = không giới hạn)",
+      "defaultChoiceToggle": "Mặc định (tự chọn khi hết giờ)",
+      "exploration": {
+        "mapHint": "Kéo để khám phá · Chọn cảnh đã mở khóa để chơi lại · Đường xanh là lộ trình hiện tại",
+        "previousChoice": "Về lựa chọn trước",
+        "skipSeen": "Bỏ qua đoạn đã xem",
+        "endingProgress": "Đã đạt {{done}}/{{total}} kết thúc · Khám phá {{percent}}%",
+        "exploreMore": "Khám phá lộ trình khác",
+        "returnToDecision": "Về điểm lựa chọn",
+        "zoomOut": "Thu nhỏ bản đồ cốt truyện",
+        "zoomIn": "Phóng to bản đồ cốt truyện",
+        "zoom": "Tỷ lệ bản đồ",
+        "fitGraph": "Hiển thị toàn bộ bản đồ",
+        "locateCurrent": "Định vị đoạn hiện tại",
+        "currentRoute": "Lộ trình hiện tại",
+        "title": "Khám phá cốt truyện",
+        "open": "Mở khám phá cốt truyện",
+        "close": "Đóng khám phá cốt truyện",
+        "back": "Về trang bìa",
+        "fullscreen": "Trải nghiệm toàn màn hình",
+        "exitFullscreen": "Thoát toàn màn hình",
+        "fullscreenFallback": "Trình duyệt không hỗ trợ toàn màn hình. Đã chuyển sang chế độ đắm chìm.",
+        "progress": "Tiến độ khám phá",
+        "explored": "Mức độ khám phá",
+        "counts": "Đã mở {{done}}/{{total}} đoạn · {{endings}}/{{totalEndings}} kết thúc",
+        "runs": "Đã hoàn thành {{count}} lượt",
+        "route": "Lộ trình hiện tại",
+        "map": "Bản đồ cốt truyện",
+        "segment": "Đoạn {{number}}",
+        "unknown": "Đoạn cốt truyện",
+        "locked": "Đoạn chưa khám phá",
+        "current": "Đang trải nghiệm",
+        "unlocked": "Đã mở",
+        "unexplored": "Chưa khám phá",
+        "replay": "Chơi lại",
+        "rewind": "Chọn lại từ đây",
+        "rewindHint": "Khôi phục trạng thái khi đến gần nhất. Tiến độ khám phá được giữ lại.",
+        "rewindError": "Không thể khôi phục điểm này. Hãy tiếp tục hoặc bắt đầu lại.",
+        "clear": "Xóa tiến độ khám phá",
+        "clearConfirm": "Xóa bản lưu, các đoạn đã mở và thống kê của phiên bản này rồi bắt đầu lại? Không thể hoàn tác.",
+        "cancel": "Hủy"
+      },
+      "map": {
+        "open": "Bản đồ lộ trình",
+        "title": "Xem lại lộ trình",
+        "explored": "Nút đã khám phá",
+        "endings": "Kết thúc đã đạt được",
+        "totalRuns": "{{count}} lượt chơi đến nay"
+      },
+      "tree": {
+        "open": "Cây câu chuyện",
+        "title": "Cây câu chuyện",
+        "orphans": "Không thể tới / không kết nối",
+        "noStart": "Không có điểm bắt đầu duy nhất",
+        "empty": "Nhóm câu chuyện trống",
+        "repeated": "đã xem",
+        "expand": "Mở nhánh",
+        "collapse": "Thu gọn nhánh",
+        "expandAll": "Mở tất cả",
+        "collapseAll": "Thu gọn tất cả",
+        "addNodeComingSoon": "Thêm cảnh (sắp ra mắt)",
+        "addNode": "Thêm cảnh mới",
+        "issuesOnly": "Chỉ hiển thị cảnh có vấn đề",
+        "search": "Tìm cảnh hoặc lựa chọn…",
+        "referenceVia": "Quay lại đây qua: ",
+        "mergeVia": "Hợp nhánh tại đây qua: ",
+        "choiceVia": "Lựa chọn: ",
+        "ending": "Kết thúc",
+        "hasIssue": "Cảnh này cần kiểm tra",
+        "noResults": "Không có cảnh phù hợp"
+      },
+      "lint": {
+        "open": "Kiểm tra sẵn sàng",
+        "title": "Mức độ sẵn sàng sản xuất",
+        "empty": "Không phát hiện vấn đề",
+        "videoReady": "Các video",
+        "promptReady": "Lời nhắc",
+        "loopReady": "Video lặp khi chọn (không bắt buộc)",
+        "playDuration": "Mỗi lượt chơi (không tính thời gian chờ lựa chọn)",
+        "durationRange": "{{min}}–{{max}} giây{{suffix}}",
+        "durationIncomplete": " (một số đoạn phim chưa hoàn tất)",
+        "durationUnavailable": "Chưa có dữ liệu",
+        "codes": {
+          "no_start": "Chưa đặt điểm bắt đầu câu chuyện (hoặc có nhiều điểm bắt đầu)",
+          "unreachable": "Không thể tới từ đoạn phim bắt đầu",
+          "missing_video": "Đoạn phim chưa có video",
+          "undefined_variable": "Tham chiếu biến chưa được định nghĩa \"{{detail}}\"",
+          "undefined_flag": "Tham chiếu cờ chưa được định nghĩa \"{{detail}}\"",
+          "dangling_edge": "Lựa chọn dẫn tới nút ngoài nhóm",
+          "dangling_visit": "Điều kiện tham chiếu đoạn phim ngoài nhóm này",
+          "leaf_no_ending": "Đoạn phim cuối chưa có nhãn kết thúc (có thể chưa hoàn thiện)",
+          "needs_review": "Cấu trúc đã nhập cần kiểm tra",
+          "automatic_no_fallback": "Nhánh tự động không có nhánh dự phòng; câu chuyện có thể dừng khi không nhánh nào khớp",
+          "automatic_fallback_order": "Nhánh tự động vô điều kiện phải là nhánh dự phòng duy nhất và nằm cuối cùng",
+          "runtime_dead_end": "Không có nhánh nào có thể thực hiện trong trạng thái truyện có thể đạt tới; người chơi không thể tiếp tục",
+          "runtime_unreachable": "Có kết nối trên đồ thị nhưng không thể tới ở bất kỳ trạng thái hiện tại nào của câu chuyện",
+          "condition_unreachable": "Nhánh này không thể kích hoạt với các thay đổi trạng thái hiện tại",
+          "variable_out_of_bounds": "Nhánh này đẩy \"{{detail}}\" ra ngoài phạm vi đã khai báo",
+          "automatic_cycle": "Các chuyển cảnh tự động tạo vòng lặp khiến người chơi không thể thao tác",
+          "path_analysis_incomplete": "Có quá nhiều tổ hợp trạng thái để kiểm tra mọi lộ trình câu chuyện"
+        }
+      },
+      "variables": "Các biến",
+      "states": "Trạng thái câu chuyện",
+      "numberStates": "Số (tăng / giảm)",
+      "flagStates": "Cờ (có / không)",
+      "initiallyOn": "Bật từ đầu",
+      "newFlagPlaceholder": "Cờ (ví dụ: Đã có chìa khóa)",
+      "addFlag": "Thêm cờ",
+      "transitionType": "Kiểu chuyển cảnh",
+      "transitionVisible": "Lựa chọn của người chơi",
+      "transitionAutomatic": "Quy tắc tự động",
+      "automaticTransition": "Chuyển cảnh tự động",
+      "automaticTransitionHint": "Sau khi đoạn phim kết thúc, quy tắc được kiểm tra từ trên xuống dưới và câu chuyện tiếp tục mà không cần người chơi nhấp.",
+      "newVariablePlaceholder": "Tên (ví dụ: Thiện cảm của Lin)",
+      "condition": "Điều kiện",
+      "addCondition": "Thêm điều kiện",
+      "condVar": "Biến",
+      "condFlag": "Cờ câu chuyện",
+      "condVisit": "Đoạn phim đã xem",
+      "conditionJoinAll": "Khớp tất cả",
+      "conditionJoinAny": "Khớp bất kỳ",
+      "effects": "Hiệu ứng",
+      "addEffect": "Hiệu ứng",
+      "addNumberEffect": "Thay đổi số",
+      "addFlagEffect": "Đặt cờ",
+      "flagOn": "Bật",
+      "flagOff": "Tắt",
+      "makeStory": "Tạo câu chuyện tương tác",
+      "noVariablesHint": "Thêm biến trong mục 'Các biến' (ở đầu nhóm) trước khi thiết lập điều kiện / hiệu ứng"
+    },
     "toolbar": {
       "zoomIn": "Phóng to",
       "zoomOut": "Thu nhỏ",
@@ -4903,7 +5695,8 @@
         "placeholder": "Nhập tên thư mục",
         "createHint": "Tạo xong là dùng ngay được để xếp và tải asset vào",
         "renameHint": "Tên mới hiện ra khắp thư viện asset"
-      }
+      },
+      "commitDragHint": "Giữ và kéo sang thư viện tư liệu bên trái để thay thế tư liệu cùng loại"
     },
     "referencePick": {
       "kind": {
@@ -5347,16 +6140,19 @@
       "gray": "Xám"
     },
     "videoClip": {
-      "exit": "Thoát cắt video",
+      "exit": "Thoát trích đoạn",
       "subtitleTodo": "Phụ đề (chưa hỗ trợ)",
       "extractingFrames": "Đang trích khung hình…",
       "framesFailed": "Tải khung hình thất bại",
-      "dragStart": "Kéo để chỉnh điểm vào",
-      "dragEnd": "Kéo để chỉnh điểm ra",
+      "dragStart": "Kéo hoặc dùng phím mũi tên để chỉnh điểm vào",
+      "dragEnd": "Kéo hoặc dùng phím mũi tên để chỉnh điểm ra",
       "muteTodo": "Tắt tiếng (chưa hỗ trợ)",
       "loopTodo": "Lặp lại (chưa hỗ trợ)",
-      "submitting": "Đang cắt…",
-      "submit": "Áp dụng đoạn cắt"
+      "submitting": "Đang trích…",
+      "submit": "Trích đoạn",
+      "retryExtract": "Trích xuất lại khung hình",
+      "startHandle": "Điểm bắt đầu cắt",
+      "endHandle": "Điểm kết thúc cắt"
     },
     "mentionReplace": {
       "empty": "Không có asset nào để thay vào",
@@ -5441,7 +6237,8 @@
     "mentionChip": {
       "doubleClickReplace": "Bấm đúp để thay tham chiếu này",
       "clickToPlay": "{{label}} · bấm để phát",
-      "replace": "Thay tham chiếu"
+      "replace": "Thay tham chiếu",
+      "removePrefix": "Xóa tiền tố"
     },
     "naming": {
       "copySuffix": "{{name}} - Bản sao",
@@ -5546,6 +6343,21 @@
       "close": "Đóng",
       "free": "Miễn phí",
       "generate": "Tạo"
+    },
+    "videoExtend": {
+      "boundMin": "Đoạn video đã chọn phải dài ít nhất {{seconds}} giây",
+      "boundMax": "Đoạn video đã chọn không được dài quá {{seconds}} giây",
+      "defaultSourceName": "video gốc",
+      "defaultLabel": "video",
+      "promptPrefix": "Nối tiếp đoạn {{start}}-{{end}} của {{name}}: ",
+      "promptPrefixTrimmed": "Nối tiếp {{name}}: ",
+      "nodeDisplayName": "Nối tiếp {{name}}",
+      "durationSeconds": "{{seconds}} giây",
+      "exit": "Thoát chọn đoạn nối tiếp",
+      "startHandle": "Điểm bắt đầu đoạn nối tiếp",
+      "endHandle": "Điểm kết thúc đoạn nối tiếp",
+      "tooShort": "Video ngắn hơn {{seconds}} giây nên không thể nối tiếp",
+      "confirm": "Xác nhận nối tiếp"
     }
   },
   "tool": {
@@ -5626,17 +6438,28 @@
       "sceneSettingSheet": "Bảng thiết kế bối cảnh"
     },
     "video": {
-      "clip": "Cắt đoạn",
       "hd": "HD",
       "analyze": "Phân tích",
+      "frameAnalysis": "Phân tích từng khung hình",
+      "segmentExtract": "Trích đoạn",
+      "frameCrop": "Cắt khung hình",
+      "motionCapture": "Bắt chuyển động chuyên sâu",
+      "extend": "Viết tiếp thông minh",
       "separateAudioVideo": "Tách tiếng/hình",
+      "frameEdit": "Chỉnh sửa khung hình",
+      "frameEditSubjectRemove": "Xóa chủ thể",
+      "frameEditSubjectModify": "Sửa chủ thể",
+      "frameEditSubjectReplace": "Thay chủ thể",
+      "frameEditMatte": "Tách nền thông minh",
       "subtitleRemoval": "Xoá phụ đề",
       "subtitleRemovalTip": "Xoá phụ đề bằng AI — chỉ hỗ trợ tiếng Trung & tiếng Anh",
       "subtitleRemovalSmart": "Xoá thông minh",
       "subtitleRemovalBox": "Xoá theo vùng chọn",
       "fullscreen": "Toàn màn hình",
       "notImplementedYet": "Sắp có",
-      "requiresVideo": "Hãy tải video lên trước"
+      "requiresVideo": "Hãy tải video lên trước",
+      "extendRequiresSeedance25": "Viết tiếp thông minh chỉ hỗ trợ Seedance 2.5, dự án hiện chưa bật model này",
+      "extendPickHint": "Hãy chọn đoạn video làm phần mở đầu để viết tiếp"
     },
     "audio": {
       "requiresAudio": "Chưa có âm thanh nào để tải về",
@@ -5857,10 +6680,14 @@
       "textAnnotation": "Văn bản",
       "video": "Video",
       "audio": "Âm thanh",
-      "videoStory": "Video Story",
+      "videoStory": "Câu chuyện video",
       "script": "Kịch bản",
       "pano360Viewer": "Góc nhìn 360°",
       "threeDWorld": "Thế giới 3D",
+      "interactiveStory": "Truyện tương tác",
+      "interactiveAd": "Quảng cáo tương tác",
+      "interactiveStoryDraft": "Tôi muốn tạo truyện tương tác. Hãy giúp tôi phát triển dàn ý trước. Ý tưởng của tôi là: ",
+      "interactiveAdDraft": "Tôi muốn tạo quảng cáo tương tác. Hãy giúp tôi phát triển dàn ý trước. Sản phẩm và điểm nổi bật là: ",
       "sectionAddNode": "Thêm node",
       "sectionAddResource": "Thêm tài nguyên",
       "sectionSkillNode": "Node kỹ năng",
@@ -5871,6 +6698,7 @@
       "betaTag": "Beta",
       "videoCompose": "Dựng video",
       "previz": "Previz Stage",
+      "videoBreakdown": "Phân tích từng khung hình",
       "htmlArtifact": "Trang web"
     },
     "imageNode": {
@@ -5891,7 +6719,10 @@
       "requestId": "Request ID",
       "copyRequestId": "Sao chép Request ID",
       "requestIdCopied": "Đã sao chép",
-      "resolution": "Độ phân giải ảnh"
+      "resolution": "Độ phân giải ảnh",
+      "replace": "Thay ảnh",
+      "replaceTypeError": "Vui lòng tải lên tệp ảnh",
+      "replaceFailed": "Thay ảnh thất bại"
     },
     "directorControlBundle": {
       "badge": "Bộ Director tổng hợp",
@@ -6141,6 +6972,7 @@
       "noVideo": "Chưa có video",
       "upload": "Tải lên",
       "clickToUpload": "Bấm hoặc kéo thả để tải video lên",
+      "replace": "Thay video",
       "resolution": "Độ phân giải video",
       "tabs": {
         "textToVideo": "Text to Video",
@@ -6177,7 +7009,8 @@
       },
       "aspect": {
         "title": "Tỉ lệ khung hình",
-        "auto": "Tự động"
+        "auto": "Tự động",
+        "followsSource": "Theo video gốc"
       },
       "quality": {
         "title": "Chất lượng"
@@ -6256,13 +7089,38 @@
         "allReferenceGroup": "Nhóm tham chiếu đa năng",
         "firstLastFrameGroup": "Nhóm video từ khung đầu & khung cuối"
       },
+      "crop": {
+        "displayName": "{{name}}_Cắt khung",
+        "cancel": "Thoát cắt khung",
+        "abort": "Hủy cắt khung",
+        "submit": "Tạo bản cắt",
+        "ratioGroup": "Tỷ lệ cắt",
+        "ratio": {
+          "free": "Tự do",
+          "original": "Gốc"
+        },
+        "boxLabel": "Khung cắt. Phím mũi tên để di chuyển, giữ Shift để nhanh hơn, Alt+mũi tên để đổi kích thước, Esc để thoát",
+        "processing": "Đang cắt video, vui lòng chờ…",
+        "success": "Đã cắt xong",
+        "canceled": "Đã hủy cắt khung",
+        "busy": "Video đang được cắt khung — hãy hủy ở thanh bên dưới trước",
+        "errors": {
+          "noProject": "Không tìm thấy dự án hiện tại, không thể lưu kết quả",
+          "fetchFailed": "Không tải được video nguồn ({{detail}})",
+          "cannotDecode": "Trình duyệt không giải mã được video này (thường gặp với nguồn HEVC). Hãy dùng Chrome hoặc chuyển mã trước",
+          "noVideoTrack": "Video nguồn không có hình ảnh dùng được",
+          "tooLarge": "Video quá lớn ({{detail}}), chưa hỗ trợ cắt",
+          "failed": "Cắt thất bại: {{detail}}"
+        }
+      },
       "clip": {
-        "displayName": "Cắt đoạn",
-        "noUrl": "Cắt xong nhưng không trả về URL video",
-        "failed": "Cắt thất bại: {{detail}}"
+        "displayName": "Trích đoạn",
+        "noUrl": "Trích xong nhưng không trả về URL video",
+        "failed": "Trích đoạn thất bại: {{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "Sửa video hỗ trợ tối đa {{limit}} ảnh tham chiếu; đã dùng {{limit}} ảnh đầu ({{ignored}} ảnh bị bỏ qua)"
+        "imageLimit": "Sửa video hỗ trợ tối đa {{limit}} ảnh tham chiếu; đã dùng {{limit}} ảnh đầu ({{ignored}} ảnh bị bỏ qua)",
+        "followsSourceHint": "Tỷ lệ khung hình và thời lượng của chỉnh sửa video theo video gốc và không thể tùy chỉnh."
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse không hỗ trợ tham chiếu đa năng. Chuyển sang chữ-sang-video hoặc ảnh-sang-video.",
@@ -6272,7 +7130,8 @@
         "noResult": "Lượt tạo video không trả về kết quả nào",
         "failed": "Tạo video thất bại",
         "faceBlockedMessage": "Asset có mặt người thật và bị chính sách an toàn nội dung chặn. Bật “Kiểm duyệt asset người thật” bên dưới rồi thử lại (kiểm duyệt có thể lâu hơn và không chắc qua).",
-        "faceBlockedTitle": "Asset bị chặn"
+        "faceBlockedTitle": "Asset bị chặn",
+        "missingKeyframe": "Không tìm thấy ảnh khung hình đầu hoặc cuối có thể sử dụng. Hãy kiểm tra các kết nối ảnh của nút video."
       },
       "album": {
         "expand": "Mở album",
@@ -6295,7 +7154,23 @@
       "emptyState": {
         "tryLabel": "Thử:"
       },
-      "videoLoadFailed": "Tải video thất bại"
+      "videoLoadFailed": "Tải video thất bại",
+      "depthCapture": {
+        "failed": "Bắt chuyển động chiều sâu thất bại",
+        "interrupted": "Quá trình bị gián đoạn (trang đã tải lại hoặc đóng). Có thể bắt lại.",
+        "retry": "Bắt lại",
+        "noWebGpu": "Trình duyệt không hỗ trợ WebGPU nên xử lý sẽ chậm",
+        "queued": "Đang có tác vụ bắt chuyển động chiều sâu khác. Tác vụ này đã vào hàng chờ và sẽ tự bắt đầu",
+        "errors": {
+          "tooLong": "Không hỗ trợ video dài hơn {{seconds}} giây",
+          "noVideoTrack": "Video nguồn không có khung hình dùng được",
+          "cannotDecode": "Trình duyệt không giải mã được định dạng video này",
+          "cancelled": "Đã hủy xử lý",
+          "failed": "Lỗi xử lý",
+          "noProject": "Không tìm thấy dự án hiện tại nên không thể lưu kết quả",
+          "alreadyRunning": "Video này vẫn đang được bắt chuyển động chiều sâu. Hãy chờ hoàn tất"
+        }
+      }
     },
     "pano360": {
       "captureGroup2x2": "Bộ ảnh chụp toàn cảnh (4)",
@@ -6601,7 +7476,7 @@
         "voiceAndSfx": "Giọng / SFX",
         "imagePrompt": "Prompt ảnh",
         "videoMotionPrompt": "Prompt chuyển động video",
-        "keyframeUrl": "Keyframe"
+        "keyframeUrl": "Khung hình chính"
       },
       "emptyTitle": "Không phát hiện cú máy nào",
       "emptyDetail": "Phản hồi không chứa dòng cú máy nào dùng được. Phản hồi thô được giữ bên dưới để bạn xem API trả về những gì.",
@@ -6674,7 +7549,10 @@
         "videoUpstreamAllRefOnly": "Khi phía trên là video, chỉ dùng được “Tham chiếu đa năng”",
         "hasImageOrAudioRefs": "Không dùng được khi đang tham chiếu asset ảnh/âm thanh",
         "moreThanTwoImages": "Không dùng được khi phía trên có hơn 2 ảnh"
-      }
+      },
+      "extendLockReason": "Nối tiếp thông minh luôn dùng Seedance 2.5, không thể đổi model hoặc chế độ",
+      "extendPlaceholder": "Nhập nội dung cần nối tiếp",
+      "modeRestrictedDefault": "Node này không hỗ trợ chuyển chế độ tạo"
     },
     "threeDWorld": {
       "upstreamNodeFallback": "Node phía trên",
@@ -7268,6 +8146,16 @@
           "embedding": "Lưu embedding",
           "media": "Lưu model media"
         }
+      },
+      "channelModels": {
+        "fetch": "Lấy danh sách model",
+        "select": "Chọn model của kênh",
+        "inputLabel": "Tên model phía nhà cung cấp",
+        "loading": "Đang lấy danh sách model…",
+        "manualHint": "Nhập để tìm kiếm hoặc nhập tên model thủ công.",
+        "empty": "Không có model phù hợp. Bạn vẫn có thể nhập tên thủ công.",
+        "fetchFailed": "Không thể lấy danh sách model. Hãy đồng bộ kênh và kiểm tra hỗ trợ của nhà cung cấp, hoặc nhập tên thủ công.",
+        "syncFirst": "Đồng bộ key và Base URL của kênh trước khi lấy danh sách model."
       },
       "featureModels": {
         "title": "Ánh xạ model theo nghiệp vụ",
@@ -7890,6 +8778,38 @@
     "stillRunningTitle": "Vẫn đang tạo",
     "stillRunningMessage": "Lần tạo này lâu hơn bình thường. Trang đã ngừng chờ, nhưng tác vụ vẫn chạy ngầm — hãy tải lại sau để lấy kết quả, hoặc xem tiến độ trong Trung tâm tác vụ."
   },
+  "canvasPick": {
+    "title": "Chọn tham chiếu từ canvas",
+    "hint": "Bấm vào một node video trên canvas",
+    "backToNode": "Quay lại node",
+    "cancel": "Hủy chọn",
+    "selectNode": "Chọn “{{name}}”"
+  },
+  "videoBreakdown": {
+    "sourceLabel": "Video nguồn",
+    "emptyHint": "Thêm video để bắt đầu",
+    "uploading": "Đang tải lên…",
+    "uploadFailed": "Tải video lên thất bại",
+    "uploadVideo": "Tải video lên",
+    "pickFromCanvas": "Chọn từ canvas",
+    "replace": "Thay",
+    "attached": "Đoạn đã chọn",
+    "dimensionsLabel": "Chiều phân tích",
+    "dimension": {
+      "storyboard": "Phân cảnh",
+      "motion": "Chuyển động",
+      "music": "Âm nhạc"
+    },
+    "start": "Bắt đầu phân tích",
+    "running": "Đang phân tích…",
+    "failed": "Phân tích thất bại",
+    "emptyResult": "Không tách được nội dung nào dùng được từ video này",
+    "groups": {
+      "storyboard": "Nhóm phân cảnh {{index}}",
+      "motion": "Chuyển động | tham chiếu máy quay",
+      "music": "Âm nhạc | đoạn BGM tham chiếu"
+    }
+  },
   "videoCompose": {
     "title": "Dựng video",
     "export": "Xuất file",
@@ -8136,6 +9056,10 @@
     }
   },
   "superchat": {
+    "runtime": {
+      "waitingForGenerationParameters": "Đang chờ chọn thông số tạo",
+      "clarificationPaused": "Đã tạm dừng chờ câu trả lời"
+    },
     "spec": {
       "characterFallback": "Nhân vật {{index}}",
       "roleLabel": "Vai",
@@ -9376,5 +10300,162 @@
     "confirm": "Xác nhận",
     "saving": "Đang lưu...",
     "resultTitle": "Kết quả cắt ảnh"
+  },
+  "storyPublication": {
+    "publish": "Xuất bản câu chuyện",
+    "close": "Đóng",
+    "back": "Quay lại chỉnh sửa",
+    "title": "Tiêu đề",
+    "description": "Mô tả",
+    "cover": "Ảnh bìa (không bắt buộc)",
+    "coverHint": "Dùng ảnh đã lưu trong dự án này hoặc để trống để dùng ảnh bìa mặc định.",
+    "prepare": "Chuẩn bị phiên bản",
+    "preparing": "Đang chuẩn bị tư liệu và câu chuyện…",
+    "ready": "Phiên bản đã sẵn sàng",
+    "failed": "Thao tác thất bại. Vui lòng thử lại.",
+    "snapshotNotice": "Bản xuất bản sử dụng nội dung xem trước này, bao gồm ảnh bìa, mô tả và câu chuyện.",
+    "preview": "Xem trước câu chuyện",
+    "confirm": "Xác nhận xuất bản",
+    "online": "Câu chuyện đang mở",
+    "offline": "Câu chuyện đã đóng",
+    "copy": "Sao chép liên kết",
+    "takeDown": "Gỡ xuống",
+    "restore": "Mở lại câu chuyện",
+    "history": "Lịch sử phiên bản",
+    "rollback": "Đặt làm phiên bản hiện tại",
+    "saveFailed": "Lưu canvas thất bại. Hãy lưu các thay đổi rồi thử lại.",
+    "copyFailed": "Sao chép thất bại. Vui lòng sao chép liên kết thủ công.",
+    "unavailable": "Câu chuyện không khả dụng",
+    "tryAgain": "Câu chuyện có thể đã đóng hoặc mạng không khả dụng.",
+    "retry": "Tải lại",
+    "loading": "Đang tải câu chuyện…",
+    "continue": "Tiếp tục tiến trình",
+    "start": "Bắt đầu trải nghiệm",
+    "startFresh": "Chơi lại từ đầu",
+    "uploadCover": "Tải ảnh bìa lên",
+    "errors": {
+      "invalid_story": "Không thể xuất bản câu chuyện. Quay lại canvas để kiểm tra điểm bắt đầu, các nhánh, biến trạng thái, kết thúc và liên kết.",
+      "missing_video": "Một phân đoạn câu chuyện chưa có video.",
+      "dangling_edge": "Một lựa chọn dẫn tới phân đoạn bị thiếu hoặc nằm bên ngoài câu chuyện.",
+      "multiple_start": "Câu chuyện có nhiều nút bắt đầu.",
+      "empty_story": "Câu chuyện chưa có phân đoạn.",
+      "media_not_available": "Tư liệu không khả dụng hoặc nằm ngoài dự án này.",
+      "media_requires_local_archive": "Lưu tư liệu vào dự án này và dùng URL tư liệu nội bộ của dự án.",
+      "publication_busy": "Hệ thống xuất bản đang bận. Vui lòng thử lại sau ít phút.",
+      "media_changed_retry": "Tư liệu đã thay đổi trong khi chuẩn bị. Hãy chuẩn bị lại.",
+      "needs_review": "Một nhánh đã nhập vẫn cần kiểm tra.",
+      "unreachable": "Không thể tới phân đoạn này từ điểm bắt đầu.",
+      "leaf_no_ending": "Một phân đoạn cuối chưa được thiết lập kết thúc.",
+      "automatic_no_fallback": "Một nhánh tự động không có nhánh dự phòng.",
+      "automatic_fallback_order": "Thứ tự nhánh dự phòng tự động không hợp lệ.",
+      "choice_area_outside_left": "Vùng lựa chọn vượt quá mép trái. Hãy đưa vào trong khung hình hoặc thu nhỏ.",
+      "choice_area_outside_right": "Vùng lựa chọn vượt quá mép phải. Hãy đưa vào trong khung hình hoặc thu nhỏ.",
+      "choice_area_outside_top": "Vùng lựa chọn vượt quá mép trên. Hãy đưa vào trong khung hình hoặc thu nhỏ.",
+      "choice_area_outside_bottom": "Vùng lựa chọn vượt quá mép dưới. Hãy đưa vào trong khung hình hoặc thu nhỏ.",
+      "draft_superseded": "Bản nháp này đã được thay thế bằng lần kiểm tra mới hơn. Đóng và mở lại bảng xuất bản.",
+      "publication_data_invalid": "Dữ liệu xuất bản không hợp lệ. Thử lại hoặc liên hệ quản trị viên.",
+      "publication_interrupted": "Lần chuẩn bị trước đã bị gián đoạn. Vui lòng thử lại. Phiên bản đã xuất bản không bị ảnh hưởng.",
+      "publication_check_failed": "Lỗi hệ thống đã làm gián đoạn kiểm tra. Vui lòng thử lại."
+    },
+    "openChecks": "Kiểm tra trên canvas",
+    "returnToCover": "Quay lại câu chuyện",
+    "networkError": "Không thể tải câu chuyện",
+    "networkHint": "Kiểm tra kết nối mạng rồi thử lại.",
+    "unavailableHint": "Câu chuyện này không khả dụng. Vui lòng liên hệ tác giả.",
+    "resumeFailed": "Tải thất bại. Hãy thử tiếp tục hoặc chơi lại từ đầu.",
+    "statusRetry": "Không thể tải tiến trình. Đang thử lại…",
+    "authorHint": "Chuẩn bị một phiên bản, xem trước rồi chia sẻ với người chơi.",
+    "workInfo": "Chi tiết câu chuyện",
+    "removeCover": "Xóa",
+    "advanced": "Tùy chọn nâng cao",
+    "coverUrl": "URL ảnh bìa (trong dự án này)",
+    "revision": "Bản sửa đổi canvas {{revision}}",
+    "mediaProgress": "Đang lưu trữ tư liệu",
+    "blockingIssue": "Cần sửa",
+    "warningIssue": "Cảnh báo",
+    "draftChanged": "Chi tiết đã thay đổi. Chuẩn bị phiên bản mới để xuất bản các thay đổi này.",
+    "playerPreview": "Xem trước giao diện người chơi",
+    "preparedSnapshot": "Bản chụp đã chuẩn bị",
+    "currentDraft": "Bản nháp hiện tại",
+    "untitled": "Câu chuyện chưa có tên",
+    "anonymousPlay": "Câu chuyện tương tác · Không cần đăng nhập",
+    "previewRequired": "Xem trước bản chụp này trước khi xuất bản.",
+    "saveBeforePrepare": "Xem trước và xác nhận xuất bản sau khi kiểm tra.",
+    "prepareUpdate": "Chuẩn bị bản cập nhật",
+    "shareHint": "Liên kết không đổi khi cập nhật. Bất kỳ ai có liên kết đều có thể chơi.",
+    "offlineHint": "Liên kết được giữ lại và sẽ hoạt động khi câu chuyện được mở lại.",
+    "shareLink": "Liên kết chia sẻ câu chuyện",
+    "copied": "Đã sao chép liên kết",
+    "openPlay": "Mở trang câu chuyện",
+    "cancel": "Hủy",
+    "takeDownTitle": "Đóng câu chuyện này?",
+    "confirmTakeDown": "Đóng câu chuyện",
+    "takeDownConfirm": "Người chơi sẽ không thể truy cập câu chuyện qua liên kết chia sẻ. Câu chuyện, lịch sử phiên bản và liên kết vẫn được giữ lại. Bạn có thể mở lại bất cứ lúc nào.",
+    "rollbackConfirm": "Đặt v{{version}} làm phiên bản hiện tại? Liên kết và trạng thái mở giữ nguyên.",
+    "currentVersion": "Phiên bản hiện tại",
+    "fullscreen": "Bật/tắt toàn màn hình",
+    "fullscreenFailed": "Không thể mở toàn màn hình. Bạn vẫn có thể chơi tại đây.",
+    "interactiveStory": "Câu chuyện tương tác",
+    "starting": "Đang bắt đầu…",
+    "localSaveHint": "Tiến trình được lưu trong trình duyệt này. Xóa dữ liệu trình duyệt sẽ xóa các bản lưu.",
+    "headphonesHint": "Nên dùng tai nghe",
+    "choiceHint": "Lựa chọn của bạn quyết định diễn biến tiếp theo",
+    "required": "Bắt buộc",
+    "optional": "Không bắt buộc",
+    "changeCover": "Đổi ảnh bìa",
+    "viewSharing": "Quay lại xuất bản",
+    "managePublication": "Thiết lập xuất bản",
+    "publishUpdate": "Chuẩn bị bản cập nhật",
+    "previewAgain": "Xem trước lại",
+    "publicationPreview": "Xem trước bản xuất bản",
+    "publishThisVersion": "Xác nhận xuất bản",
+    "prepareLatest": "Kiểm tra lại",
+    "previewUnavailable": "Nội dung xem trước chưa đầy đủ. Hãy kiểm tra lại.",
+    "checkAndPreview": "Kiểm tra câu chuyện",
+    "checking": "Đang kiểm tra…",
+    "checkingMedia": "Đang kiểm tra tư liệu",
+    "shareWithPlayers": "Chia sẻ liên kết",
+    "playerWillSee": "Người chơi sẽ nhìn thấy",
+    "versionHistory": "Lịch sử phiên bản",
+    "playerAccessSummary": "Không cần đăng nhập · Liên kết chia sẻ cố định",
+    "liveVersion": "Đang mở v{{version}}",
+    "onlineDescription": "Người chơi có thể mở câu chuyện qua liên kết cố định mà không cần đăng nhập.",
+    "offlineDescription": "Người chơi tạm thời không thể truy cập. Phiên bản và mục chia sẻ vẫn được giữ lại.",
+    "publishAndRestore": "Xuất bản và mở truy cập",
+    "coverMode": "Hướng ảnh bìa",
+    "landscape": "Ngang 16:9",
+    "portrait": "Dọc 9:16",
+    "coverHorizontal": "Căn khung theo chiều ngang",
+    "coverVertical": "Căn khung theo chiều dọc",
+    "coverFramingHint": "Điều chỉnh khung ảnh. Người chơi sẽ thấy ảnh bìa giống bản xem trước này.",
+    "pendingUpdate": "Bản cập nhật chưa xuất bản",
+    "continuePreview": "Tiếp tục xem trước",
+    "continuePreparation": "Tiếp tục chuẩn bị",
+    "pendingPreview": "Bản xem trước chưa xuất bản · Nội dung này chưa được mở cho người chơi",
+    "previewVersion": "Xem trước phiên bản này",
+    "historyPreview": "Xem trước lịch sử · v{{version}}. Phiên bản hiện tại giữ nguyên.",
+    "publishSuccess": "Phiên bản mới đã được mở cho người chơi. Liên kết chia sẻ không đổi.",
+    "publishedAt": "Đã xuất bản {{time}}",
+    "currentOnline": "Đang mở cho người chơi",
+    "currentOffline": "Phiên bản hiện tại · Không khả dụng",
+    "updateSafety": "Chuẩn bị bản cập nhật không thay đổi câu chuyện đang mở. Ảnh bìa, mô tả và câu chuyện được cập nhật cùng nhau sau khi xác nhận.",
+    "readyHint": "Nội dung này đã được cố định. Hãy xem trước trang câu chuyện và chơi thử trước khi xác nhận xuất bản.",
+    "preparingHint": "Đang kiểm tra câu chuyện và tư liệu…",
+    "failedHint": "Chuẩn bị thất bại. Phiên bản đang mở không đổi. Hãy sửa vấn đề rồi kiểm tra lại.",
+    "taskStatus": {
+      "preparing": "Đang kiểm tra",
+      "ready": "Kiểm tra hoàn tất",
+      "failed": "Kiểm tra thất bại"
+    },
+    "onlineVersion": "v{{version}} · Đang mở",
+    "offlineVersion": "v{{version}} · Đã đóng",
+    "needsRecheck": "Nội dung đã thay đổi. Hãy kiểm tra lại.",
+    "publicationChecks": "Kiểm tra xuất bản",
+    "retryPreparation": "Thử chuẩn bị lại",
+    "retryChecks": "Thử kiểm tra lại",
+    "checkIncomplete": "Kiểm tra bị gián đoạn",
+    "locateIssue": "Tìm vị trí có vấn đề",
+    "issueTargetMissing": "Lựa chọn hoặc phân đoạn gốc đã bị xóa. Hãy kiểm tra lại.",
+    "choiceAreaOutside": "Vùng lựa chọn vượt quá khung hình. Hãy đưa vào trong khung hoặc thu nhỏ."
   }
 }

@@ -399,6 +399,7 @@ def test_canvas_command_tool_result_accepts_background_workflow(
         canvas_id="canvas-a",
         tool_call_status="completed",
         canvas_apply_status="accepted",
+        background_execution_status="running",
         applied=True,
     )
 
@@ -408,7 +409,9 @@ def test_canvas_command_tool_result_accepts_background_workflow(
     assert isinstance(result, dict)
     assert result["ok"] is True
     assert result["canvas_apply_status"] == "accepted"
-    assert "submitted to the canvas" in result["agent_instruction"]
+    assert result["background_execution_status"] == "running"
+    assert "running in the background" in result["agent_instruction"]
+    assert "update automatically" in result["agent_instruction"]
     assert "tool was opened" in result["agent_instruction"]
     assert "operate it manually" in result["agent_instruction"]
     assert "Do not claim" in result["agent_instruction"]
@@ -2388,3 +2391,37 @@ def test_catalog_save_error_overrides_frontend_success(
     )
     assert result["draft"] == payload.draft
     assert result["errors"]
+
+
+@pytest.mark.parametrize(
+    ("status", "applied", "applied_count", "cancelled", "needs_refresh"),
+    [
+        ("applied", True, 4, False, True),
+        ("accepted", True, 0, False, True),
+        ("pending", False, 0, False, True),
+        ("partially_applied", False, 1, False, True),
+        ("failed", False, 1, False, True),
+        ("failed", False, 0, False, False),
+        ("cancelled_by_user", False, 0, True, False),
+        ("cancelled_by_user", False, 1, True, True),
+    ],
+)
+def test_canvas_command_receipt_invalidates_revision_after_possible_write(
+    monkeypatch, tmp_path, status, applied, applied_count, cancelled, needs_refresh,
+):
+    monkeypatch.setattr(chat_route, "_bridge_dir_for_pending_key", lambda *_a, **_k: tmp_path)
+    monkeypatch.setattr(chat_route, "resolve_canvas_command", lambda _key, result, **_k: result)
+    result = chat_route._resolve_canvas_command_tool_result_payload(
+        chat_route.CanvasCommandToolResultIn(
+            bridge_key="revision-refresh", project_id="project-a", canvas_id="canvas-a",
+            canvas_apply_status=status, applied=applied, applied_count=applied_count,
+            cancelled=cancelled,
+        ),
+        username="alice",
+    )
+    assert result["requires_canvas_refresh"] is needs_refresh
+    # A receipt is not a fresh canvas snapshot; it must not invent a revision.
+    assert "revision" not in result and "base_revision" not in result
+    if needs_refresh:
+        assert "read its current persisted state" in result["agent_instruction"]
+        assert "replay generation" in result["agent_instruction"]

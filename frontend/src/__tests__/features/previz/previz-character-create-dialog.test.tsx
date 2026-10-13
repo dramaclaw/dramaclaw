@@ -5,6 +5,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { spyOnCanvasGetContext } from "@/__tests__/helpers/canvas-context";
+
 import {
   createPrevizObject,
   PREVIZ_CHARACTER_COLORS,
@@ -260,7 +262,7 @@ describe("PrevizCharacterCreateDialog", () => {
       fill: vi.fn(),
       stroke: vi.fn(),
     };
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+    spyOnCanvasGetContext().mockReturnValue(
       context as unknown as CanvasRenderingContext2D,
     );
 

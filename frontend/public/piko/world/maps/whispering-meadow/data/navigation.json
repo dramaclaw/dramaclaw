@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "mapId": "whispering-meadow",
+  "walkableAreas": [
+    {
+      "id": "map-preview-bounds",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 1152
+        },
+        {
+          "x": 0,
+          "y": 1152
+        }
+      ]
+    }
+  ],
+  "colliders": [],
+  "spawnPoints": [
+    {
+      "id": "wind-garden-gate-arrival",
+      "position": {
+        "x": 1820,
+        "y": 790
+      },
+      "facing": "west"
+    },
+    {
+      "id": "whispering-forest-arrival",
+      "position": {
+        "x": 365,
+        "y": 345
+      },
+      "facing": "east"
+    }
+  ],
+  "exits": [
+    {
+      "id": "to-wind-garden-gate",
+      "trigger": {
+        "id": "to-wind-garden-gate-trigger",
+        "points": [
+          {
+            "x": 1950,
+            "y": 728
+          },
+          {
+            "x": 2010,
+            "y": 728
+          },
+          {
+            "x": 2010,
+            "y": 772
+          },
+          {
+            "x": 1950,
+            "y": 772
+          }
+        ]
+      },
+      "targetMapId": "wind-garden-gate",
+      "targetSpawnId": "whispering-meadow-arrival"
+    },
+    {
+      "id": "to-whispering-forest",
+      "trigger": {
+        "id": "to-whispering-forest-trigger",
+        "points": [
+          {
+            "x": 200,
+            "y": 278
+          },
+          {
+            "x": 260,
+            "y": 278
+          },
+          {
+            "x": 260,
+            "y": 322
+          },
+          {
+            "x": 200,
+            "y": 322
+          }
+        ]
+      },
+      "targetMapId": "whispering-forest",
+      "targetSpawnId": "whispering-meadow-arrival"
+    }
+  ]
+}

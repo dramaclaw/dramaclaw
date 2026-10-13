@@ -73,6 +73,10 @@
   --text-rgb: 0 0 0;
   --text-muted-rgb: 102 102 102;
   --accent-rgb: 59 130 246;
+  --notification-dot: #e77e73;
+  --feature-new-background: #e8f3ed;
+  --feature-new-foreground: #28674e;
+  --feature-new-border: #a3c7b4;
   --ui-surface-panel: rgba(255, 255, 255, 0.96);
   --ui-surface-modal: rgba(255, 255, 255, 0.98);
   --ui-surface-field: rgba(248, 250, 252, 0.95);
@@ -80,6 +84,10 @@
   --ui-border-strong: rgba(15, 23, 42, 0.2);
   --canvas-node-input-placeholder: rgba(96, 96, 104, 0.72);
   --canvas-node-input-helper: rgba(104, 104, 112, 0.76);
+  /* 分组默认底色：没有配色的组光靠一圈描边根本看不出边界，垫一层灰把「这是一
+     个组」讲清楚。画布本身接近纯黑，想让灰更明显只能往亮里加 —— 往暗里调在这个
+     底色上根本拉不开差别。 */
+  --group-node-bg: rgba(15, 23, 42, 0.09);
   --ui-shadow-panel: 0 14px 34px rgba(15, 23, 42, 0.18);
   --ui-radius-lg: 12px;
   --ui-radius-xl: 16px;
@@ -146,6 +154,9 @@
   --text-rgb: 232 234 240;
   --text-muted-rgb: 111 112 121;
   --accent-rgb: 91 160 255;
+  --feature-new-background: #203c36;
+  --feature-new-foreground: #a6dac3;
+  --feature-new-border: #416a5b;
   --ui-surface-panel: rgba(21, 22, 29, 0.78);
   --ui-surface-modal: rgba(27, 28, 35, 0.98);
   --ui-surface-field: rgba(13, 14, 20, 0.85);
@@ -153,6 +164,7 @@
   --ui-border-strong: rgba(255, 255, 255, 0.12);
   --canvas-node-input-placeholder: rgba(196, 196, 202, 0.68);
   --canvas-node-input-helper: rgba(184, 184, 192, 0.62);
+  --group-node-bg: rgba(255, 255, 255, 0.1);
   --ui-shadow-panel: 0 14px 34px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.03) inset;
   --ui-glow-accent: 0 0 24px rgba(var(--accent-rgb) / 0.25);
   --ui-radius-lg: 12px;
@@ -568,6 +580,98 @@
   content: attr(data-placeholder);
 }
 
+/* 智能续写的固定引子：`[缩略图] 对 视频 (2) 的 00:00-00:04 片段进行续写：`。
+   比 mention chip 收敛得多 —— 它是这个节点的题面，不是用户插进去的一块引用，
+   做得跟 chip 一样醒目会喧宾夺主，反倒看不清自己写了什么。 */
+/* 续写前缀：一枚「缩略图 + 文案」的胶囊，跟用户正文在同一行流下去。
+   给底/描边是为了让它一眼看出来「这段不是我打的字」——纯文本混在正文里，
+   用户会当成可以随手改的开头。 */
+.prompt-prefix-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 6px;
+  padding: 1px 9px 1px 3px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgb(var(--text-rgb));
+  font-size: 14px;
+  line-height: 22px;
+  vertical-align: baseline;
+  cursor: default;
+  user-select: none;
+}
+
+/* 缩略图和删除按钮叠在同一格里：平时露图，hover 换成 ×。两者都绝对定位撑满
+   这一格，切换只改 opacity —— 用 display 切会让 chip 宽度在 hover 时抖一下。 */
+.prompt-prefix-chip-slot {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.prompt-prefix-chip-slot > img,
+.prompt-prefix-chip-slot > video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  transition: opacity 0.12s ease;
+}
+
+.prompt-prefix-chip-remove {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.6);
+  color: rgb(var(--text-rgb));
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.prompt-prefix-chip-remove > svg {
+  width: 11px;
+  height: 11px;
+}
+
+.prompt-prefix-chip:hover .prompt-prefix-chip-slot > img,
+.prompt-prefix-chip:hover .prompt-prefix-chip-slot > video {
+  opacity: 0;
+}
+
+.prompt-prefix-chip:hover .prompt-prefix-chip-remove {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.prompt-prefix-chip-label {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 挂了前缀之后编辑器不再是 :empty，占位符改从 ::after 出，接在前缀右边。
+   非空时属性是空串，伪元素自然什么都不画。 */
+.prompt-mention-editor::after {
+  content: attr(data-prefix-placeholder);
+  color: rgba(160, 160, 170, 0.7);
+  pointer-events: none;
+}
+
+.canvas-node-input-placeholder::after {
+  color: var(--canvas-node-input-placeholder);
+}
+
 .canvas-node-input-placeholder:empty::before {
   color: var(--canvas-node-input-placeholder);
 }
@@ -766,6 +870,13 @@ body.canvas-node-drag-focus [role="listbox"] {
    的 pane 当祖先就能盖住节点自己的 grab。 */
 [data-canvas-tool='hand'] .react-flow__pane.dragging .react-flow__node {
   cursor: grabbing;
+}
+
+/* 剧情边标签为 1002（高于分组边的 SVG 命中层 1001）。视频操作面板
+   位于节点的 stacking context 内，仅提高面板自身 z-index 无效。
+   只在影游片段的内联操作面板打开时提高节点，普通视频节点保持原有层级。 */
+.react-flow .react-flow__node-videoNode:has([data-story-edit-frame]):has([data-slot='node-operation-panel']) {
+  z-index: 1003 !important;
 }
 
 .react-flow__handle {
@@ -1672,83 +1783,6 @@ button:hover .st-keyframe-video-play {
     border-radius: 999px;
     background: transparent;
     box-shadow: 0 1px 5px rgb(0 0 0 / 0.42);
-  }
-
-  .companion-capsule-entry {
-    position: relative;
-    overflow: visible;
-  }
-
-  .companion-capsule-entry__icon {
-    transition:
-      filter 150ms ease,
-      transform 150ms ease;
-  }
-
-  .companion-capsule-entry::after {
-    content: "";
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    width: 2px;
-    height: 2px;
-    opacity: 0;
-    background: rgb(255 255 255 / 0.96);
-    box-shadow:
-      2px 0 0 rgb(103 232 249 / 0.88),
-      -2px 0 0 rgb(255 255 255 / 0.54),
-      0 2px 0 rgb(255 255 255 / 0.62),
-      0 -2px 0 rgb(103 232 249 / 0.72);
-    image-rendering: pixelated;
-    pointer-events: none;
-  }
-
-  .companion-capsule-entry:hover .companion-capsule-entry__icon {
-    filter: brightness(1.22) saturate(1.12) drop-shadow(0 0 4px rgb(34 211 238 / 0.32));
-    transform: translateY(-1px);
-  }
-
-  .companion-capsule-entry--reward-hit .companion-capsule-entry__icon {
-    animation: companion-capsule-reward-hit 520ms cubic-bezier(0.2, 1.24, 0.26, 1) both;
-  }
-
-  .companion-capsule-entry:hover::after {
-    animation: companion-capsule-sparkle 620ms steps(3, end) both;
-  }
-
-  .companion-capsule-entry--reward-hit::after {
-    animation: companion-capsule-sparkle 520ms steps(3, end) both;
-  }
-
-  @keyframes companion-capsule-reward-hit {
-    0%,
-    100% {
-      filter: brightness(1) saturate(1);
-      transform: translateY(0) scale(1);
-    }
-    42% {
-      filter: brightness(1.32) saturate(1.18) drop-shadow(0 0 7px rgb(34 211 238 / 0.42));
-      transform: translateY(-1px) scale(1.18);
-    }
-    68% {
-      transform: translateY(0) scale(0.94);
-    }
-  }
-
-  @keyframes companion-capsule-sparkle {
-    0%,
-    100% {
-      opacity: 0;
-      transform: translate(0, 0);
-    }
-    34% {
-      opacity: 1;
-      transform: translate(-2px, -1px);
-    }
-    68% {
-      opacity: 0.55;
-      transform: translate(1px, -3px);
-    }
   }
 
   @keyframes piko-mini-feedback {

@@ -1260,6 +1260,42 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     expect(screen.getByLabelText("视频数量")).toHaveValue("2");
   });
 
+  it("keeps story clip approval read-only with its planned duration", async () => {
+    const node = {
+      id: "story-video-1", type: "videoNode", position: { x: 0, y: 0 }, selected: false,
+      data: { storySegmentId: "segment-1", displayName: "雨夜开场", model: "newapi_seedance-2.0",
+        aspectRatio: "16:9", quality: "720P", durationSec: 17, generateAudio: false, count: 1 },
+    } satisfies Partial<CanvasNode> as CanvasNode;
+    useCanvasStore.getState().setCanvasData([node], []);
+    superChatMocks.messages = [{ id: "assistant-story", role: "assistant", text: "准备生成影游镜头",
+      displayName: "Agent", timestamp: Date.now(), turnId: "turn-story", attachments: [] }];
+    render(<SuperChatPanel variant="freezone" canvasId="canvas-a"
+      currentCanvasSelection={[]}
+      currentCanvasOntologyContext={buildCanvasOntologyContext([node], [], {
+        canvasId: "canvas-a", selectedNodeIds: [],
+      })}
+      pendingAttachments={[]}
+    />);
+    act(() => window.dispatchEvent(new CustomEvent("freezone/canvas-command-approval", {
+      detail: { canvasId: "canvas-a", turnId: "turn-story", bridgeKey: "bridge-story",
+        envelopes: [{ schema_version: "canvas_chat_commands.v1", commands: [
+          { type: "run_node_action", node_id: node.id, action: "generate_video" },
+        ] }], receivedAt: Date.now() },
+    })));
+
+    expect(await screen.findByText("雨夜开场")).toBeInTheDocument();
+    expect(screen.getByLabelText(/镜头参数：.*17s/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("视频模型")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("视频时长")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => expect(apiMocks.post).toHaveBeenCalledWith("api/v1/chat/ui-events",
+      expect.objectContaining({ json: expect.objectContaining({ event: expect.objectContaining({
+        bridge_key: "bridge-story",
+        envelopes: [expect.objectContaining({ commands: [{ type: "run_node_action",
+          node_id: node.id, action: "generate_video" }] })],
+      }) }) })));
+  });
+
   it("does not restore a persisted canvas command approval after it was confirmed", async () => {
     superChatMocks.messages = [
       {

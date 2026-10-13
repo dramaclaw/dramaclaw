@@ -36,6 +36,34 @@ jobs:
         run: uv run ruff check --output-format=github .
       - name: Verify Workflow MCP contracts
         run: uv run python scripts/check_workflow_agent_contracts.py --json
+      # Ladybug 0.16.0 的 JSON 扩展已被上游下载站下架（extension.ladybugdb.com 只保留
+      # v0.17.0 及以后）。用真实 Ladybug 的用例加载不到扩展就会去下载并 404。这里把
+      # 官方原件预置到 Ladybug 的本地缓存目录，LOAD 直接命中，不再联网。文件与许可
+      # 声明见 github.com/dramaclaw/ci-assets。升级 ladybug 时本步骤会先失败：届时
+      # 换成新版本的文件，或在上游仍托管新版本时删掉本步骤。
+      - name: Seed Ladybug JSON extension
+        env:
+          LBUG_VERSION: "0.16.0"
+          LBUG_JSON_URL: https://github.com/dramaclaw/ci-assets/releases/download/ladybug-json-0.16.0/libjson-linux_amd64.lbug_extension
+          LBUG_JSON_SHA256: 0767a3326207849596669810166cf10f843b6985ebbfcd917a05b8e8359ee028
+        run: |
+          set -euo pipefail
+          installed="$(uv run python -c 'import ladybug; print(ladybug.__version__)')"
+          if [ "$installed" != "$LBUG_VERSION" ]; then
+            echo "::error::ladybug is $installed but the seeded JSON extension is for $LBUG_VERSION"
+            exit 1
+          fi
+          dest="$HOME/.lbdb/extension/$LBUG_VERSION/linux_amd64/json"
+          mkdir -p "$dest"
+          curl -fsSL --retry 5 --retry-all-errors -o "$dest/libjson.lbug_extension" "$LBUG_JSON_URL"
+          echo "$LBUG_JSON_SHA256  $dest/libjson.lbug_extension" | sha256sum -c -
+          uv run python - <<'EOF'
+          import os, tempfile, ladybug
+          with tempfile.TemporaryDirectory() as d:
+              con = ladybug.Connection(ladybug.Database(os.path.join(d, "db")))
+              con.execute("LOAD EXTENSION JSON;")
+              print("ladybug json ok:", con.execute("RETURN to_json({a: 1}) AS j;").get_next())
+          EOF
       # 单元测试：pytest 默认 addopts 已排除 ee/e2e；-n auto 走 xdist 并行。
       - name: Run tests
         run: uv run pytest -n auto

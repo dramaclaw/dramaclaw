@@ -221,6 +221,7 @@ export function openTaskStream(handler: TaskStreamHandler): SseHandle {
 // and the underlying SSE stream resolves the promise on completion / failure.
 
 interface PendingResolver {
+  promise: Promise<TaskState>;
   resolve: (task: TaskState) => void;
   reject: (err: Error) => void;
   projectId: string;
@@ -465,6 +466,10 @@ export function awaitTaskCompletion(
   options?: { timeoutMs?: number; taskType?: string | null },
 ): Promise<TaskState> {
   const resolved = resolveTaskProjectId(projectId);
+  const existing = pendingByTaskKey.get(taskKey);
+  if (existing) {
+    return existing.promise;
+  }
   ensureProjectPoller(resolved);
   const startedAt = Date.now();
   const budgetMs =
@@ -472,21 +477,31 @@ export function awaitTaskCompletion(
     (options && "taskType" in options
       ? pollTimeoutForTaskType(options.taskType)
       : DEFAULT_MAX_POLL_MS);
-  const promise = new Promise<TaskState>((resolve, reject) => {
-    pendingByTaskKey.set(taskKey, {
-      resolve,
-      reject,
-      projectId: resolved,
-      startedAt,
-      budgetMs,
-      lastSeenAt: startedAt,
-      lastStatus: null,
-    });
+  let entry: PendingResolver;
+  let resolveTask!: (task: TaskState) => void;
+  let rejectTask!: (error: Error) => void;
+  const pending = new Promise<TaskState>((resolve, reject) => {
+    resolveTask = resolve;
+    rejectTask = reject;
   });
-  return promise.finally(() => {
-    pendingByTaskKey.delete(taskKey);
+  const promise = pending.finally(() => {
+    if (pendingByTaskKey.get(taskKey) === entry) {
+      pendingByTaskKey.delete(taskKey);
+    }
     maybeStopProjectMonitoring(resolved);
   });
+  entry = {
+    promise,
+    resolve: resolveTask,
+    reject: rejectTask,
+    projectId: resolved,
+    startedAt,
+    budgetMs,
+    lastSeenAt: startedAt,
+    lastStatus: null,
+  };
+  pendingByTaskKey.set(taskKey, entry);
+  return promise;
 }
 
 if (import.meta.hot) {

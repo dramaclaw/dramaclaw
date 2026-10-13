@@ -151,7 +151,10 @@ Click **Manage Channels** to open the provider catalog supported by the current 
 Provider selectors for feature, embedding, and media models are filtered by their purpose. For example, video models list video-capable providers, while text features list text-capable providers. Existing selections and providers with temporarily unavailable capability metadata remain visible for inspection and correction instead of disappearing after an upgrade.
 
 - **Save Channels** stores CE’s local channel presets.
-- **Update NewAPI Channel** immediately replaces the matching NewAPI channel key and Base URL.
+- **Update NewAPI Channel** creates the channel on first use, then updates its key and Base URL while preserving model mappings.
+- **Fetch models** retrieves upstream model names after the channel is synced and displays the count. Feature, embedding, media, and bulk model inputs offer searchable dropdown selection; save the mapping after choosing a model. Updating channel configuration clears the cached list; reopen a model dropdown or click the fetch button to refresh it.
+- Manual entry remains available when the upstream has no model-list endpoint, returns an empty list, or discovery fails. The list does not identify model capabilities; choose a model suitable for the task. ComfyUI continues to use Workflow configuration.
+- OpenAI channels request `GET {Base URL}/v1/models` with the saved upstream key. Do not repeat the trailing `/v1` in the Base URL. Other channels use NewAPI's provider-specific adapter.
 - **Base URL Override** is normally empty. Set it only for a custom proxy or when required by the provider.
 
 Before removing a regular provider, the confirmation shows how many feature-model, media-model, and embedding mappings are affected. Removing a saved provider immediately persists the remaining provider list. If that request fails, the local configuration is retained. Removing the final regular provider persists an empty list, so it does not return after refresh. ComfyUI keeps its dedicated cleanup confirmation described below.

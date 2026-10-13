@@ -659,6 +659,9 @@ class HermesPool:
             canvas_id=canvas_id,
             authorization=authorization,
         )
+        env["DRAMACLAW_FREEZONE_TOOL_RESULT_DIR"] = str(
+            home / "tmp" / "freezone-tool-results" / worker_id
+        )
         client = HermesSdkClient(
             cli_path=cli_path,
             cwd=home,
@@ -1033,7 +1036,7 @@ class HermesPool:
                 "SUPERTALE_AGENT_TOKEN_SESSION_ID": token.session_id,
                 "SUPERTALE_AGENT_TOKEN_EXPIRES_AT": str(token.exp),
             }
-            return build_hermes_child_env(
+            env = build_hermes_child_env(
                 home=home,
                 username=username,
                 requester_user_id=requester_user_id,
@@ -1044,6 +1047,9 @@ class HermesPool:
                 project_env=project_env,
                 authorization=authorization,
             )
+            if canvas_id:
+                env["DRAMACLAW_CANVAS_ID"] = canvas_id
+            return env
         env = {
             "PATH": "/usr/local/bin:/usr/bin:/bin",
             "LANG": os.environ.get("LANG", "C.UTF-8"),

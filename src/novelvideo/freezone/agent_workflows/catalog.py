@@ -224,6 +224,22 @@ _DETERMINISTIC_SKILL_PLANNERS = {
         ],
         "edges": [["planning", "images"], ["images", "video"]],
     },
+    "text-to-image": {
+        "default_item_count": 1,
+        "deliverables": ["images"],
+        "default_deliverable": "images",
+        "default_include_audio": False,
+        "stages": [
+            _stage(
+                "planning",
+                "textAnnotationNode",
+                ["general-text"],
+                required=True,
+            ),
+            _stage("images", "imageGenNode", ["general-image"], required=True),
+        ],
+        "edges": [["planning", "images"]],
+    },
     "video-tutorial": {
         "default_item_count": 3,
         "deliverables": ["video"],
@@ -499,7 +515,11 @@ def skill_stage_blockers(
 
 def _attach_skill_stage_blockers(result: dict[str, Any], skill_id: str) -> None:
     """Fold stage blockers into ``result['preflight']`` (status → blocked)."""
+    from novelvideo.freezone.workflow_story_targets import is_story_image_production_plan
+
     plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
+    if is_story_image_production_plan(plan):
+        return
     _attach_preflight_blockers(
         result,
         skill_stage_blockers(skill_id, plan.get("nodes") or [], plan.get("edges") or []),
@@ -2083,6 +2103,7 @@ def _standard_skill_items(
         return items
 
     outline_recipe = {
+        "text-to-image": "general-text",
         "text-to-image-video": "video-creative-outline",
         "video-tutorial": "general-text",
         "short-drama-quick": "drama-plot-outline",
@@ -2214,36 +2235,41 @@ def _standard_skill_items(
                     depends_on=["outline"],
                     reference_inputs=(
                         ["outline"]
-                        if skill_id in {"text-to-image-video", "video-tutorial"}
+                        if skill_id in {
+                            "text-to-image",
+                            "text-to-image-video",
+                            "video-tutorial",
+                        }
                         else None
                     ),
                     stage="images",
                 )
             )
             video_source_id = source_id
-        video_dependencies = [video_source_id]
-        if video_dependency == "sequential" and index > 1:
-            video_dependencies.append(f"clip_{index - 1}")
-        items.append(
-            _planned_item(
-                item_id=f"clip_{index}",
-                title=f"{unit['title']}视频",
-                prompt=unit["prompt"],
-                recipe_id="general-video",
-                depends_on=video_dependencies,
-                stage="video",
-                # The shot plan is what the clip renders, not a gate ahead of
-                # it: reference it so the edge is prompt_for and the runtime
-                # feeds the shot text into the video prompt (issue #677).
-                reference_inputs=(
-                    [video_source_id, source_id]
-                    if skill_id == "short-drama-quick"
-                    else None
-                ),
-                timeline_role="visual",
-                duration_seconds=unit.get("duration_seconds"),
+        if deliverable != "images":
+            video_dependencies = [video_source_id]
+            if video_dependency == "sequential" and index > 1:
+                video_dependencies.append(f"clip_{index - 1}")
+            items.append(
+                _planned_item(
+                    item_id=f"clip_{index}",
+                    title=f"{unit['title']}视频",
+                    prompt=unit["prompt"],
+                    recipe_id="general-video",
+                    depends_on=video_dependencies,
+                    stage="video",
+                    # The shot plan is what the clip renders, not a gate ahead of
+                    # it: reference it so the edge is prompt_for and the runtime
+                    # feeds the shot text into the video prompt (issue #677).
+                    reference_inputs=(
+                        [video_source_id, source_id]
+                        if skill_id == "short-drama-quick"
+                        else None
+                    ),
+                    timeline_role="visual",
+                    duration_seconds=unit.get("duration_seconds"),
+                )
             )
-        )
         if include_audio and skill_id in {"video-tutorial", "short-drama-quick"}:
             narration = _text(unit.get("narration"))
             deferred_short_drama_speech = (

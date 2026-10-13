@@ -2892,6 +2892,102 @@ def test_clear_comfyui_removes_channel_and_media_models(monkeypatch, tmp_path):
     assert set(get_newapi_media_model_mappings()) == {"seedance-2.0"}
 
 
+@pytest.mark.parametrize("provider", ["claude", "anthropic"])
+@respx.mock
+def test_anthropic_provider_sync_without_saved_channel_type(
+    monkeypatch, tmp_path, provider
+):
+    """Canonical NewAPI provider names work before local presets are saved."""
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    cfg = NewApiProvisionerConfig(
+        admin_base_url="http://new-api:3000",
+        sql_dsn="local",
+        sqlite_path="/tmp/one-api.db",
+        admin_username="root",
+        init_timeout_ms=1000,
+        relay_token_name="dramaclaw-ce-runtime",
+    )
+    admin = AdminToken(1, "root", "admin-secret", False)
+    monkeypatch.setattr(model_gateway, "get_provisioner_config", lambda *_a, **_kw: cfg)
+    monkeypatch.setattr(model_gateway, "ensure_admin_access_token", lambda _cfg: admin)
+    channel_name = f"DC-{provider}"
+    respx.get("http://new-api:3000/api/channel/").mock(
+        return_value=Response(
+            200,
+            json={
+                "success": True,
+                "data": {"items": [{"id": 2, "name": channel_name, "type": 14}]},
+            },
+        )
+    )
+    respx.get("http://new-api:3000/api/channel/2").mock(
+        return_value=Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "id": 2,
+                    "name": channel_name,
+                    "type": 14,
+                    "key": "sk-old-upstream",
+                    "base_url": "https://old.example",
+                    "models": "op-5-5",
+                    "model_mapping": '{"op-5-5":"op-5-5"}',
+                    "group": ",default,",
+                    "priority": 2,
+                    "test_model": "op-5-5",
+                },
+            },
+        )
+    )
+    update = respx.put("http://new-api:3000/api/channel/").mock(
+        return_value=Response(200, json={"success": True})
+    )
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+    assert get_newapi_provider_channels() == []
+
+    for _ in range(2):
+        response = client.post(
+            "/model-gateway/custom/newapi/provider-channel/sync",
+            json={
+                "newApiBaseUrl": "http://new-api:3000",
+                "provider": provider,
+                "upstreamKey": "sk-new-upstream",
+                "baseUrl": "https://relay.example",
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["ok"] is True
+        assert response.json()["data"]["channelId"] == 2
+        sent = json.loads(update.calls.last.request.content)
+        assert sent["name"] == channel_name
+        assert sent["type"] == 14
+        assert sent["key"] == "sk-new-upstream"
+        assert sent["models"] == "op-5-5"
+        assert json.loads(sent["model_mapping"]) == {"op-5-5": "op-5-5"}
+        assert sent["priority"] == 2
+        assert "status" not in sent
+        saved = get_newapi_provider_channels()
+        assert saved[0]["provider"] == provider
+        assert saved[0]["upstreamKey"] == "sk-new-upstream"
+        assert saved[0]["baseUrl"] == "https://relay.example"
+
+
+@pytest.mark.parametrize("provider", ["claude", "anthropic"])
+def test_anthropic_channel_creation_without_explicit_type(provider):
+    payload = build_channel_payload(
+        provider=provider,
+        upstream_key="sk-new-upstream",
+        model_mapping={"op-5-5": "op-5-5"},
+    )
+    assert payload["channel"]["name"] == f"DC-{provider}"
+    assert payload["channel"]["type"] == 14
+    assert payload["channel"]["base_url"] == "https://api.anthropic.com"
+
+
 def test_custom_newapi_provider_channel_sync_updates_newapi_and_local_config(
     monkeypatch,
     tmp_path,

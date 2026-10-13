@@ -9,6 +9,7 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
 
 ## Required behavior
 
+- For interactive short dramas, branching stories, choices or multiple endings, route story structure to the `interactive-story` Skill and its dedicated tools first. This workflow Skill applies only to the requested media production. For new character, product, scene or storyboard reference images in an approved production plan, use the existing `text-to-image-video` catalog Skill with `general-image` in one image-only WorkflowPlan; keep existing story video nodes outside that Plan and connect images after its run finishes. Never replace an unavailable story tool with ordinary canvas commands or a WorkflowPlan.
 - Planning authors topology, Recipe selection, dependencies, confirmed parameters, and short
   node task briefs. Each node prompt should state its task, scope, upstream outputs, and reference
   roles in one or two concise sentences. Preserve user-provided story facts and source material.
@@ -47,10 +48,15 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
 - `dramaclaw-workflows` is this Agent Skill package/server name, not a Workflow catalog `skill_id`.
   Never pass it to `workflow_skill_get`, `freezone_get_workflow_skill`, or an intent's `skill_id`.
   Select the matching production Workflow Skill returned by the catalog instead.
+- Route an ordinary pure-image workflow to `text-to-image`. Use `text-to-image-video` only when
+  the user asks for a video stage, and use `social-content-campaign` only for an explicit social
+  platform image-set request. Do not report a Skill conflict or ask the user to accept video merely
+  because the older general video Skill also contains an image stage.
 - Never implement a multi-node request by repeatedly calling `freezone_create_node`,
   `freezone_create_edge`, `freezone_group_nodes`, or other single-operation tools.
 - Never fall back to repeated single-operation writes after a workflow validation or schema error.
   Correct the workflow intent/plan or report the blocking error.
+- Follow the selected Skill's current planning contract. A request for a finished result does not authorize collapsing required stages or marking prerequisites complete. When the requested operation cannot run yet, explain the missing prerequisite in creation terms and guide the user to the next supported step. Agent-authored schema/topology errors are the Agent's responsibility to correct, not user mistakes; never ask the user to design internal nodes or links.
 - Never offer direct canvas commands or standalone node writes as a clarification choice for
   bypassing WorkflowPlan validation. A user selection cannot authorize that bypass. When a Skill's
   required stage conflicts with an exact node-only constraint, report the conflict or ask whether
@@ -78,6 +84,11 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   Do not ask for a duplicate create/run confirmation and do not claim that the host cannot display
   the approval surface; the write tool emits it. In `auto_execute`, the host applies the ordinary
   approval event after required image/video parameters are known.
+- Workflows bound to story targets through `source_context.targets` or `source_context.asset_targets`
+  must explicitly include `run_after_create` when preparing. Ordinary workflows may omit it and
+  retain the default `false` (create only), even on a canvas containing a story. Set it to `true`
+  when the user asks to create and generate/run. A terse confirmation such as “可以” or “确认”
+  inherits the preceding proposal's execution policy. Use `false` for an approved create-only request.
 - Use `freezone_request_user_clarification` for structured questions. Never substitute a host's
   built-in `request_user_input`, `update_plan`, or `create_goal` for canvas work.
 - For Skill/Recipe authoring, read and follow
@@ -223,9 +234,9 @@ including `480P` whenever the schema lists it.
    and the normalized inputs before authoring the result. These Skill identities must match the
    later compiled result. Copy the returned `operation_id` exactly; never invent, abbreviate, or
    reconstruct one, and never call a prepare tool before this admission succeeds.
-4. For a normal workflow, submit one compact `freezone_workflow_intent.v1` and the admitted
-   `operation_id` to `freezone_prepare_workflow`. The backend compiles and validates it; do not
-   run a separate compile first.
+4. For a normal workflow, submit one compact `freezone_workflow_intent.v1`, the admitted
+   `operation_id`, and the `run_after_create` decision to `freezone_prepare_workflow` (required for story-bound targets).
+   The backend compiles and validates it; do not run a separate compile first.
 5. Present the returned preview. Adjust it with `freezone_revise_workflow`, sending the same
    `draft_id`, `expected_revision`, and only changed fields.
 6. After explicit user confirmation, call `freezone_confirm_workflow_draft` once with the exact
@@ -244,7 +255,8 @@ Route between the normal draft flow and the exact topology path in this priority
    `items`, nodes, or edges for that pattern. The compiler adds execution-only `dependency_for`
    edges between consecutive clips, so earlier clips are not sent as media references.
 2. Otherwise, when the user explicitly names required nodes and their dependency order that
-   deviate from the matching Skill's template, use the exact topology path in
+   deviate from the matching Skill's template, or requests images for an existing interactive story
+   with exact asset or shot-to-existing-video mappings, use the exact topology path in
    [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan as
    a persisted draft even when a production Skill also matches. The Plan must include top-level
    `schema_version` and `skill.id`/`skill.version` copied from the selected production Skill;

@@ -106,6 +106,7 @@ _PROJECT_TASK_RESOURCE_KINDS = {
     "freezone_image_vectorize": "ffmpeg",
     "freezone_analyze": "video",
     "freezone_video_story": "video",
+    "freezone_video_breakdown": "video",
     "freezone_image_reverse_prompt": "script",
     "freezone_image_to_blockout": "script",
     "freezone_text_generate": "script",

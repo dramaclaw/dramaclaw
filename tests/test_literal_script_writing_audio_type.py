@@ -335,8 +335,8 @@ class _LiteralRunStore:
             title="第一集",
             identity_ids=[],
             identity_default_map={},
-            scene_menu=[],
-            prop_menu=[],
+            scene_menu=[SimpleNamespace(scene_id="Room", base_scene_id="", variant_id="", time_of_day="")],
+            prop_menu=[SimpleNamespace(prop_id="灯笼")],
         )
         self.persisted = None
 

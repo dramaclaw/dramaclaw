@@ -21,3 +21,8 @@ interface ImportMeta {
 
 declare const __APP_VERSION__: string;
 declare const __BUILD_ID__: string;
+
+declare module 'virtual:story-player-assets' {
+  export const PLAYER_SCRIPT: string;
+  export const PLAYER_STYLE: string;
+}

@@ -503,7 +503,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       if (nodeId !== id || action !== 'generate_image') return;
       publishNodeActionAccepted(requestId, id, action);
       void handleSubmit({
-        completionMode: executionMode === 'single' ? 'submitted' : 'completed',
+        // 虾导外层会在任务受理后立即进入后台态；节点动作本身必须等真实产物
+        // 终态再回报成功，否则对话会把“已提交”误显示成“图片已完成”。
+        completionMode: 'completed',
+        attachStoryFrame: executionMode !== 'workflow',
       })
         .then((output) => publishNodeActionSuccess(requestId, id, action, output))
         .catch((error) => publishNodeActionError(requestId, id, action, error));

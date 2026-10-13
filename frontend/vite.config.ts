@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { storyPlayerPlugin } from './build/storyPlayerPlugin';
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -71,6 +72,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [
+      storyPlayerPlugin(),
       TanStackRouterVite(),
       react(),
       tailwindcss(),
@@ -111,6 +113,7 @@ export default defineConfig(({ mode }) => {
             if (id.includes("react-hook-form") || id.includes("@hookform") || id.includes("/zod/")) return "forms";
             if (id.includes("i18next") || id.includes("react-i18next")) return "i18n";
             if (id.includes("lucide-react")) return "icons";
+            if (id.includes("pixi.js") || id.includes("@pixi")) return "pixi";
             // three 在本仓有两份且永不去重：预演台 pin 的 0.185.1，以及
             // @photo-sphere-viewer/core 硬依赖的 0.179.1（^0.179.0 收不下 0.185）。
             // 按 pnpm 解析出的版本目录分流，否则两份会挤进同一个 chunk，

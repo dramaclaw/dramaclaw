@@ -1,0 +1,31 @@
+{
+  "frameSize": 256,
+  "logicalFrameSize": 64,
+  "pivot": [
+    128,
+    128
+  ],
+  "footY": 216,
+  "measurements": {
+    "male": {
+      "sourceHeadWidths": [
+        321,
+        322
+      ],
+      "scale": 0.2347417840375587
+    },
+    "female": {
+      "sourceHeadWidths": [
+        387,
+        386
+      ],
+      "scale": 0.21119324181626187
+    }
+  },
+  "outputs": [
+    "player-male-sit-front-v2.png",
+    "player-male-sit-idle-v2.png",
+    "player-female-sit-front-v2.png",
+    "player-female-sit-idle-v2.png"
+  ]
+}

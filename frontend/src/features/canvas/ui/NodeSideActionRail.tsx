@@ -18,6 +18,12 @@ interface NodeSideActionRailProps {
   autoHide?: boolean;
   /** 节点是否被选中（autoHide 时用于「选中也显示」）。 */
   selected?: boolean;
+  /**
+   * 贴住节点的角向下展开，而不是抬到顶边之上。右栏默认抬起是为了避开右边缘居中的
+   * spawn「+」，但抬起后会撞上同样悬在节点上方、且比节点更宽的顶部操作工具条 ——
+   * 只在选中态出现的按钮（如替换素材把手）必须贴角，否则一选中就和工具条叠在一起。
+   */
+  anchorAtCorner?: boolean;
 }
 
 // NodeToolbar 默认恒定屏幕尺寸（不随缩放变化），于是整理画布缩小后节点变成缩略图、
@@ -28,6 +34,10 @@ interface NodeSideActionRailProps {
 export const NODE_SIDE_ACTION_BUTTON_CLASS =
   'nodrag inline-flex h-8 items-center gap-1.5 rounded-[12px] border border-white/10 bg-[#242426]/95 px-3 text-xs font-medium text-text-dark backdrop-blur-xl transition-colors hover:border-white/18 hover:bg-[#29292b]/95 hover:text-white disabled:cursor-not-allowed disabled:opacity-50';
 
+/** 无文案版本：正方形、去掉给标签留的 px-3/gap，只放一个图标。 */
+export const NODE_SIDE_ACTION_ICON_BUTTON_CLASS =
+  'nodrag inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-white/10 bg-[#242426]/95 text-text-dark backdrop-blur-xl transition-colors hover:border-white/18 hover:bg-[#29292b]/95 hover:text-white disabled:cursor-not-allowed disabled:opacity-50';
+
 export const NODE_SIDE_ACTION_ICON_CLASS = 'h-3.5 w-3.5 text-text-muted/90';
 
 export function NodeSideActionRail({
@@ -36,8 +46,11 @@ export function NodeSideActionRail({
   children,
   autoHide = false,
   selected = false,
+  anchorAtCorner = false,
 }: NodeSideActionRailProps) {
   const isLeft = position === Position.Left;
+  // 左栏从来不抬（见下方注释）；右栏默认抬起避开居中的「+」，anchorAtCorner 关掉它。
+  const lifted = !isLeft && !anchorAtCorner;
   // Canvas 维护的节点 hover（离开带 400ms 延迟，桥接「从节点移到上方按钮」的
   // 空隙）；railHovered 进一步保证鼠标停在按钮栏上时不被那个延迟清掉而隐藏。
   const nodeHovered = useCanvasStore((state) => state.hoveredNodeId === nodeId);
@@ -66,22 +79,30 @@ export function NodeSideActionRail({
         nodes (audio) — worse now that the "+" scales with zoom. Anchoring above
         the top edge keeps it clear of the centered "+" at any zoom/height.
 
-        Left rail (替换素材): do NOT lift above the top edge. This rail AND the
-        centered top action toolbar both now scale with zoom, so a lifted left
-        rail grows up into the toolbar's band and overlaps it at high zoom (the
-        toolbar's left end reaches the rail's column). Anchoring at the node's
-        top-left corner and growing downward keeps the rail below the toolbar —
-        which sits entirely above the node's top edge — at any zoom.
+        Left rail: never lifted. This rail AND the centered top action toolbar
+        both scale with zoom, so a lifted rail grows up into the toolbar's band
+        and overlaps it at high zoom (the toolbar is wider than the node, so its
+        ends reach past both side columns). Anchoring at the node's corner and
+        growing downward keeps the rail below the toolbar — which sits entirely
+        above the node's top edge — at any zoom.
+
+        anchorAtCorner opts a right rail out of the lift for that same reason —
+        used by the 替换素材 handle, which only appears on selection, i.e. exactly
+        when the toolbar is on screen. Safe only where the node is taller than
+        the rail (the centered "+" is what the lift exists to dodge).
       */}
       <div
-        style={isLeft ? undefined : { transform: "translateY(calc(-100% - 2px))" }}
+        style={lifted ? { transform: "translateY(calc(-100% - 2px))" } : undefined}
         onMouseEnter={() => setRailHovered(true)}
         onMouseLeave={() => setRailHovered(false)}
       >
         {/* 跟随画布缩放，与顶部操作工具条同一套逻辑。锚点贴住靠节点的那个角
-            （右栏 bottom-left 抬起后朝上、左栏 top-right 朝下），缩放时朝远离
-            节点方向展开，始终贴在节点角上。 */}
-        <ZoomScaledToolbar origin={isLeft ? 'top right' : 'bottom left'} min={0.6}>
+            （抬起的右栏 bottom-left 朝上，贴角的左/右栏 top-* 朝下），缩放时
+            朝远离节点方向展开，始终贴在节点角上。 */}
+        <ZoomScaledToolbar
+          origin={isLeft ? 'top right' : lifted ? 'bottom left' : 'top left'}
+          min={0.6}
+        >
           <div className={`flex flex-col gap-2 ${isLeft ? 'items-end' : 'items-start'}`}>
             {children}
           </div>
