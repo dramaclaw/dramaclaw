@@ -20,6 +20,7 @@ import { Canvas } from "@/features/canvas/Canvas";
 import { NodeReplaceDragPreview } from "@/features/canvas/ui/NodeReplaceDragPreview";
 import { AssetBoardView } from "@/features/canvas/ui/asset-board/AssetBoardView";
 import { CANVAS_PANEL_SURFACE_CLASS } from "@/features/canvas/ui/canvasControlStyles";
+import { APP_HEADER_HEIGHT, TASK_STATUS_BAR_HEIGHT } from "@/components/layout/layout-metrics";
 import {
   listCharacters,
   listFreezoneProjectAssets,
@@ -221,8 +222,8 @@ const FREEZONE_CHAT_FLOAT_POS_STORAGE_KEY = "freezone.chatDock.floatPos";
 const FREEZONE_CHAT_FLOAT_HEIGHT = 720;
 const FREEZONE_CHAT_FLOAT_MARGIN = 12;
 /** 上下各让开顶栏（48px）与底部任务状态条（36px），浮窗不被它们压住。 */
-const FREEZONE_CHAT_FLOAT_MIN_TOP = 56;
-const FREEZONE_CHAT_FLOAT_BOTTOM_RESERVE = 44;
+const FREEZONE_CHAT_FLOAT_MIN_TOP = APP_HEADER_HEIGHT + 8;
+const FREEZONE_CHAT_FLOAT_BOTTOM_RESERVE = TASK_STATUS_BAR_HEIGHT + 8;
 const FREEZONE_CHAT_FLOAT_DEFAULT_POS = { right: 24, top: FREEZONE_CHAT_FLOAT_MIN_TOP + 8 };
 const EXTERNAL_CANVAS_COMMAND_POLL_MS = 800;
 const EXTERNAL_CANVAS_REVISION_POLL_MS = 2_000;

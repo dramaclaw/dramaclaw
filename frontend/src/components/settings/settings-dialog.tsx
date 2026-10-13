@@ -110,8 +110,8 @@ import {
   type MediaModelType,
 } from "@/lib/media-model-catalog-types";
 import { isCeRuntime } from "@/lib/runtime-config";
-import { AvatarUploadForm } from "@/components/account/avatar-upload-dialog";
-import { PasswordChangeForm } from "@/components/account/password-change-dialog";
+import { AvatarUploadForm } from "@/components/account/avatar-upload-form";
+import { PasswordChangeForm } from "@/components/account/password-change-form";
 import { normalize, SUPPORTED, type Supported } from "@/i18n/languages";
 import { useAppStore } from "@/stores/app-store";
 import { FreezoneSkillRecipeSettings } from "./freezone-skill-recipe-settings";

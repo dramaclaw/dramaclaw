@@ -63,6 +63,7 @@ import {
   ProjectXiahuaMenu,
 } from "@/components/layout/project-header-navigation";
 import entryStyles from "./header-entry.module.css";
+import { APP_HEADER_HEIGHT } from "./layout-metrics";
 const ACCOUNT_PANEL_TRANSITION_MS = 150;
 
 export function Header({ ambientBackground = false }: { ambientBackground?: boolean }) {
@@ -320,7 +321,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
 
   return (
     <div className="relative shrink-0 text-sidebar-foreground">
-      <header className={`relative z-20 flex h-[48px] items-center justify-between gap-3 px-4 ${ambientBackground ? "bg-transparent" : "bg-background/58 backdrop-blur-xl"}`}>
+      <header style={{ height: APP_HEADER_HEIGHT }} className={`relative z-20 flex items-center justify-between gap-3 px-4 ${ambientBackground ? "bg-transparent" : "bg-background/58 backdrop-blur-xl"}`}>
         <div className="flex min-w-0 flex-1 items-center">
           <TooltipProvider delay={80}>
             <Tooltip>

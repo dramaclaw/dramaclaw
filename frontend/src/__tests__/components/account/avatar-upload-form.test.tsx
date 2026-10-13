@@ -3,7 +3,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AvatarUploadDialog } from "@/components/account/avatar-upload-dialog";
+import { AvatarUploadForm } from "@/components/account/avatar-upload-form";
 
 const authState = vi.hoisted(() => ({
   avatarUrl: null as string | null,
@@ -44,7 +44,7 @@ function selectFile() {
   fireEvent.change(input);
 }
 
-describe("AvatarUploadDialog", () => {
+describe("AvatarUploadForm", () => {
   beforeEach(() => {
     authState.avatarUrl = null;
     authState.setAvatarUrl.mockReset();
@@ -64,7 +64,7 @@ describe("AvatarUploadDialog", () => {
   });
 
   it("save is disabled until a file is chosen", () => {
-    render(<AvatarUploadDialog avatarInitial="A" displayName="admin" open onOpenChange={vi.fn()} />);
+    render(<AvatarUploadForm avatarInitial="A" displayName="admin" onOpenChange={vi.fn()} />);
     const save = screen.getByText("header.account.avatarDialog.save").closest("button")!;
     expect(save).toBeDisabled();
   });
@@ -72,7 +72,7 @@ describe("AvatarUploadDialog", () => {
   it("uploads the selected file and updates the store", async () => {
     const onOpenChange = vi.fn();
     render(
-      <AvatarUploadDialog avatarInitial="A" displayName="admin" open onOpenChange={onOpenChange} />,
+      <AvatarUploadForm avatarInitial="A" displayName="admin" onOpenChange={onOpenChange} />,
     );
 
     selectFile();

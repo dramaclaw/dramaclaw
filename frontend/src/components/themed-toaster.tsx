@@ -5,10 +5,7 @@ import { useRouterState } from "@tanstack/react-router";
 import { Toaster } from "sonner";
 
 import { projectSectionFromPath } from "@/components/layout/project-navigation-routes";
-
-const APP_HEADER_HEIGHT = 48;
-const XIAJI_SUBNAV_ROW_HEIGHT = 42;
-const XIAHUA_SUBNAV_ROW_HEIGHT = 34;
+import { APP_HEADER_HEIGHT, PROJECT_SUBMENU_ROW_HEIGHT, PROJECT_SUBMENU_OVERLAY_HEIGHT } from "@/components/layout/layout-metrics";
 const TOAST_SAFE_GAP = 12;
 
 export function ThemedToaster() {
@@ -16,8 +13,8 @@ export function ThemedToaster() {
   const projectSection = projectSectionFromPath(pathname);
   const isAppRoute = pathname === "/" || pathname.startsWith("/projects/");
   const hasXiajiSubnav = projectSection !== null && projectSection !== "freezone";
-  const subnavHeight = hasXiajiSubnav ? XIAJI_SUBNAV_ROW_HEIGHT
-    : projectSection === "freezone" ? XIAHUA_SUBNAV_ROW_HEIGHT : 0;
+  const subnavHeight = hasXiajiSubnav ? PROJECT_SUBMENU_ROW_HEIGHT
+    : projectSection === "freezone" ? PROJECT_SUBMENU_OVERLAY_HEIGHT : 0;
   const topOffset = isAppRoute
     ? APP_HEADER_HEIGHT + subnavHeight + TOAST_SAFE_GAP
     : 24;

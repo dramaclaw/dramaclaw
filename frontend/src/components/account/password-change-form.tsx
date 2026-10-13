@@ -7,12 +7,8 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 
@@ -22,49 +18,14 @@ type PasswordErrorBody = {
   detail?: string | { code?: string; message?: string };
 };
 
-export function PasswordChangeDialog({
-  open,
-  onOpenChange,
-  onPasswordChanged,
-  passwordConfigured = true,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onPasswordChanged: () => void;
-  passwordConfigured?: boolean;
-}) {
-  const [busy, setBusy] = useState(false);
-
-  return (
-    <Dialog open={open} onOpenChange={(nextOpen) => {
-      if (!busy) onOpenChange(nextOpen);
-    }}>
-      <DialogContent
-        className="w-[380px] gap-0 rounded-xl border border-border bg-popover p-0 text-popover-foreground shadow-lg"
-        overlayClassName="bg-black/55"
-      >
-        {open ? <PasswordChangeForm
-          onPasswordChanged={onPasswordChanged}
-          passwordConfigured={passwordConfigured}
-          onOpenChange={onOpenChange}
-          onBusyChange={setBusy}
-          standalone
-        /> : null}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 export function PasswordChangeForm({
   onOpenChange,
   onBusyChange,
-  standalone = false,
   onPasswordChanged,
   passwordConfigured = true,
 }: {
   onOpenChange: (open: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
-  standalone?: boolean;
   onPasswordChanged: () => void;
   passwordConfigured?: boolean;
 }) {
@@ -178,26 +139,23 @@ export function PasswordChangeForm({
     }
   };
 
-  const Title = standalone ? DialogTitle : "h2";
-  const Description = standalone ? DialogDescription : "p";
-
   return (
     <>
       <DialogHeader className="px-5 pb-3 pt-5">
-        <Title className="font-heading text-base leading-none font-medium">
+        <h2 className="font-heading text-base leading-none font-medium">
           {t(
             passwordConfigured
               ? "header.account.passwordDialog.title"
               : "header.account.passwordDialog.initializeTitle",
           )}
-        </Title>
-        <Description className="text-xs leading-5 text-muted-foreground">
+        </h2>
+        <p className="text-xs leading-5 text-muted-foreground">
           {t(
             passwordConfigured
               ? "header.account.passwordDialog.description"
               : "header.account.passwordDialog.initializeDescription",
           )}
-        </Description>
+        </p>
       </DialogHeader>
 
       <form onSubmit={handleSubmit}>

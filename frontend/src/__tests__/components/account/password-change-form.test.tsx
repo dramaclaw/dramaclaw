@@ -3,7 +3,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { PasswordChangeDialog } from "@/components/account/password-change-dialog";
+import { PasswordChangeForm } from "@/components/account/password-change-form";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), warning: vi.fn() }));
 
@@ -13,7 +13,7 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
-describe("PasswordChangeDialog", () => {
+describe("PasswordChangeForm", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     toast.success.mockReset();
@@ -45,8 +45,8 @@ describe("PasswordChangeDialog", () => {
     const onPasswordChanged = vi.fn();
     const onOpenChange = vi.fn();
     render(
-      <PasswordChangeDialog
-        open
+      <PasswordChangeForm
+
         onOpenChange={onOpenChange}
         onPasswordChanged={onPasswordChanged}
       />,
@@ -71,7 +71,7 @@ describe("PasswordChangeDialog", () => {
     expect(toast.success).toHaveBeenCalledWith("header.account.passwordDialog.success");
   });
 
-  it("keeps the dialog open when the current password is incorrect", async () => {
+  it("preserves the form when the current password is incorrect", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ detail: "current password incorrect" }), {
         status: 401,
@@ -81,8 +81,8 @@ describe("PasswordChangeDialog", () => {
     const onPasswordChanged = vi.fn();
     const onOpenChange = vi.fn();
     render(
-      <PasswordChangeDialog
-        open
+      <PasswordChangeForm
+
         onOpenChange={onOpenChange}
         onPasswordChanged={onPasswordChanged}
       />,
@@ -101,7 +101,7 @@ describe("PasswordChangeDialog", () => {
   it("blocks mismatched confirmation before making a request", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     render(
-      <PasswordChangeDialog open onOpenChange={vi.fn()} onPasswordChanged={vi.fn()} />,
+      <PasswordChangeForm onOpenChange={vi.fn()} onPasswordChanged={vi.fn()} />,
     );
 
     fireEvent.change(screen.getByLabelText("header.account.passwordDialog.current"), {
@@ -130,7 +130,7 @@ describe("PasswordChangeDialog", () => {
     );
     const onPasswordChanged = vi.fn();
     render(
-      <PasswordChangeDialog open onOpenChange={vi.fn()} onPasswordChanged={onPasswordChanged} />,
+      <PasswordChangeForm onOpenChange={vi.fn()} onPasswordChanged={onPasswordChanged} />,
     );
 
     fillValidForm();
@@ -154,8 +154,8 @@ describe("PasswordChangeDialog", () => {
     );
     const onPasswordChanged = vi.fn();
     render(
-      <PasswordChangeDialog
-        open
+      <PasswordChangeForm
+
         passwordConfigured={false}
         onOpenChange={vi.fn()}
         onPasswordChanged={onPasswordChanged}

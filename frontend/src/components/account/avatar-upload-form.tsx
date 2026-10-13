@@ -6,60 +6,20 @@ import { ImagePlus, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/stores/auth-store";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogTitle,
 } from "@/components/ui/dialog";
-
-export function AvatarUploadDialog({
-  avatarInitial,
-  displayName,
-  open,
-  onOpenChange,
-}: {
-  avatarInitial: string;
-  displayName: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const [busy, setBusy] = useState(false);
-
-  return (
-    <Dialog open={open} onOpenChange={(nextOpen) => {
-      if (!busy) onOpenChange(nextOpen);
-    }}>
-      <DialogContent
-        className="w-[380px] gap-0 rounded-[18px] border border-white/[0.08] bg-[#171719]/86 p-0 text-slate-100 shadow-[0_22px_70px_rgba(0,0,0,0.42)] backdrop-blur-xl"
-        closeButtonClassName="top-3 right-3 text-slate-300 hover:bg-white/[0.06] hover:text-white"
-        overlayClassName="bg-black/55 backdrop-blur-sm"
-      >
-        {open ? <AvatarUploadForm
-          avatarInitial={avatarInitial}
-          displayName={displayName}
-          onOpenChange={onOpenChange}
-          onBusyChange={setBusy}
-          standalone
-        /> : null}
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 export function AvatarUploadForm({
   avatarInitial,
   displayName,
   onOpenChange,
   onBusyChange,
-  standalone = false,
 }: {
   avatarInitial: string;
   displayName: string;
   onOpenChange: (open: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
-  standalone?: boolean;
 }) {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -88,18 +48,12 @@ export function AvatarUploadForm({
 
     setError(null);
     setSelectedFile(file);
-    setPreviewUrl((current) => {
-      if (current) URL.revokeObjectURL(current);
-      return URL.createObjectURL(file);
-    });
+    setPreviewUrl(URL.createObjectURL(file));
     setFileName(file.name);
   };
 
   const resetState = () => {
-    setPreviewUrl((current) => {
-      if (current) URL.revokeObjectURL(current);
-      return null;
-    });
+    setPreviewUrl(null);
     setFileName(null);
     setSelectedFile(null);
     setSaving(false);
@@ -139,18 +93,15 @@ export function AvatarUploadForm({
     }
   };
 
-  const Title = standalone ? DialogTitle : "h2";
-  const Description = standalone ? DialogDescription : "p";
-
   return (
     <>
       <DialogHeader className="px-5 pb-3 pt-5">
-        <Title className="text-[17px] font-medium tracking-normal text-white">
+        <h2 className="text-[17px] font-medium tracking-normal text-white">
           {t("header.account.avatarDialog.title")}
-        </Title>
-        <Description className="text-[12px] leading-5 text-slate-400">
+        </h2>
+        <p className="text-[12px] leading-5 text-slate-400">
           {t("header.account.avatarDialog.description")}
-        </Description>
+        </p>
       </DialogHeader>
 
       <div className="px-5 pb-5">
