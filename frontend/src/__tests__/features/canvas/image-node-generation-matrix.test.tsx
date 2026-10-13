@@ -137,6 +137,7 @@ async function submitAndSettle(options?: { onGenerationSettled?: () => void }) {
 beforeEach(() => {
   submitSeq = 0;
   vi.mocked(submitFreezoneGen).mockClear();
+  vi.mocked(compileWorkflowNodePrompt).mockClear();
 });
 
 describe("图片节点：三种参考图形态的提交载荷", () => {
@@ -234,6 +235,10 @@ describe("图片节点：多结果画册", () => {
     expect(payloads()).toHaveLength(2);
     expect(payloads()[0]?.prompt).toBe("一只在窗台上的猫");
     expect(payloads()[1]?.prompt).toBe("一只在窗台上的猫");
+    expect(compileWorkflowNodePrompt).toHaveBeenCalledTimes(2);
+    for (const [input] of vi.mocked(compileWorkflowNodePrompt).mock.calls) {
+      expect(input).toEqual(expect.objectContaining({ executionSource: "manual" }));
+    }
   });
 
   it("生成数量 3 → 并发提交 3 次，三张全落进同一个节点的画册", async () => {
