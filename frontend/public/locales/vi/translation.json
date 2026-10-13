@@ -6345,6 +6345,7 @@
       },
       "assetReferenceGroup": "Nhóm tham chiếu asset",
       "missingContext": "Thiếu dự án hoặc ngữ cảnh cú máy",
+      "submitMissingProject": "Thiếu ngữ cảnh dự án; không thể gửi yêu cầu tạo ảnh",
       "album": {
         "expand": "Mở album",
         "expandCount": "Mở {{count}} ảnh đã tạo",

@@ -6468,6 +6468,7 @@
       },
       "assetReferenceGroup": "资产参考组",
       "missingContext": "缺少项目或镜头上下文",
+      "submitMissingProject": "缺少项目上下文，无法提交图片生成",
       "album": {
         "expand": "展开画册",
         "expandCount": "展开 {{count}} 张生成结果",

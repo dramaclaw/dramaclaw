@@ -115,7 +115,10 @@ export interface UseImageGenerationFormResult {
    * 回填（工作流配方按单节点执行时用）；默认 'completed' 等产物落地后再返回。
    */
   submit: (
-    options?: { completionMode?: 'submitted' | 'completed' },
+    options?: {
+      completionMode?: 'submitted' | 'completed';
+      executionSource?: 'manual' | 'workflow';
+    },
   ) => Promise<Record<string, unknown> | undefined>;
   canAutoCommitOnGenerate: boolean;
   referenceImageUrl: string | null;
@@ -475,9 +478,13 @@ export function useImageGenerationForm(
   }, []);
 
   const handleSubmit = useCallback(async (
-    options: { completionMode?: 'submitted' | 'completed' } = {},
+    options: {
+      completionMode?: 'submitted' | 'completed';
+      executionSource?: 'manual' | 'workflow';
+    } = {},
   ) => {
     const completionMode = options.completionMode ?? 'completed';
+    const executionSource = options.executionSource ?? 'manual';
     if (submittingRef.current) {
       return await new Promise<Record<string, unknown> | undefined>((resolve) => {
         submitWaitersRef.current.push(resolve);
@@ -499,13 +506,33 @@ export function useImageGenerationForm(
     try {
     const projectId = readUrl().project;
     if (!projectId) {
-      console.error('[image-gen] no project in URL');
-      return;
+      const message = t('canvas.imageGen.submitMissingProject');
+      updateNodeData(id, {
+        isGenerating: false,
+        generationStartedAt: null,
+        generationTaskKey: null,
+        generationTaskType: null,
+        generationTaskJobId: null,
+        generationError: message,
+        generationErrorDetails: message,
+        generationErrorRequestId: null,
+      });
+      throw new Error(message);
     }
     const generationAttempt = generationAttemptRef.current + 1;
     generationAttemptRef.current = generationAttempt;
     const isCurrentGenerationAttempt = () =>
       generationAttemptRef.current === generationAttempt;
+
+    // Recipe 节点在真正提交图片任务前还要先编译提示词。编译可能需要数秒，必须
+    // 从点击这一刻就给出反馈；编译失败由下方的窄 catch 恢复按钮并展示错误。
+    updateNodeData(id, {
+      isGenerating: true,
+      generationStartedAt: Date.now(),
+      generationError: null,
+      generationErrorDetails: null,
+      generationErrorRequestId: null,
+    });
 
     // apiModel comes from the SAME reconciled model the picker displays, so the
     // backend always receives the model the user actually sees.
@@ -538,26 +565,47 @@ export function useImageGenerationForm(
         .filter((s) => s.length > 0)
         .join('\n\n');
     // 工作流配方节点用配方编译出的最终 prompt；非配方节点回落上面这段拼接。
-    const effectivePrompt = await compileWorkflowNodePrompt({
-      nodeId: id,
-      nodeData: data,
-      nodeKind: 'image',
-      nodePrompt: ownPrompt,
-      upstreamText: upstreamTextJoined,
-      upstreamContents,
-      fallbackPrompt,
-      referenceMedia: referenceUrls.map((_, index) => ({
-        kind: 'image',
-        label: `reference-${index + 1}`,
-      })),
-      onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(id, {
-        workflowRecipeCompileMode: mode,
-        workflowRecipeCompiledAt: new Date().toISOString(),
-        workflowRecipeCompiledPrompt: compiledPrompt,
-        prompt: compiledPrompt,
-        workflowRecipeIds: recipeIds,
-      }),
-    });
+    let effectivePrompt: string;
+    try {
+      effectivePrompt = await compileWorkflowNodePrompt({
+        nodeId: id,
+        nodeData: data,
+        nodeKind: 'image',
+        nodePrompt: ownPrompt,
+        upstreamText: upstreamTextJoined,
+        upstreamContents,
+        fallbackPrompt,
+        executionSource,
+        referenceMedia: referenceUrls.map((_, index) => ({
+          kind: 'image',
+          label: `reference-${index + 1}`,
+        })),
+        onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(id, {
+          workflowRecipeCompileMode: mode,
+          workflowRecipeCompiledAt: new Date().toISOString(),
+          workflowRecipeCompiledPrompt: compiledPrompt,
+          prompt: compiledPrompt,
+          workflowRecipeIds: recipeIds,
+        }),
+      });
+    } catch (error) {
+      console.error('[image-gen] image Recipe compilation failed', error);
+      const rawErrorMessage =
+        error instanceof Error && error.message
+          ? error.message
+          : String(error || t('common.error'));
+      updateNodeData(id, {
+        isGenerating: false,
+        generationStartedAt: null,
+        generationTaskKey: null,
+        generationTaskType: null,
+        generationTaskJobId: null,
+        generationError: backendErrorToastMessage(error, t),
+        generationErrorDetails: rawErrorMessage,
+        generationErrorRequestId: extractRequestId(rawErrorMessage),
+      });
+      throw error;
+    }
     const genPayload = {
       prompt: effectivePrompt,
       // 后端只接受固定的几个比例；节点上的 aspectRatio 可能是图片自然尺寸约分出的
@@ -591,14 +639,7 @@ export function useImageGenerationForm(
     const resolvedCompletionMode = resolveImageGenerationCompletionMode(completionMode, total);
     // Clear any prior failure / album on resubmit — the on-node error banner
     // should only reflect the most recent attempt.
-    updateNodeData(id, {
-      isGenerating: true,
-      generationStartedAt: Date.now(),
-      generationError: null,
-      generationErrorDetails: null,
-      generationErrorRequestId: null,
-      generationBatch: null,
-    });
+    updateNodeData(id, { generationBatch: null });
     // 先完成的图立即入册展示，未完成的在画册里渲染占位骨架。
     setAlbumPendingTotal(id, total > 1 ? total : 0);
 
@@ -805,7 +846,18 @@ export function useImageGenerationForm(
       };
       return actionOutput;
     }
-    throw new Error('图片生成未提交任务，也没有返回图片地址');
+    const noResultError = new Error('图片生成未提交任务，也没有返回图片地址');
+    updateNodeData(id, {
+      isGenerating: false,
+      generationStartedAt: null,
+      generationTaskKey: null,
+      generationTaskType: null,
+      generationTaskJobId: null,
+      generationError: backendErrorToastMessage(noResultError, t),
+      generationErrorDetails: noResultError.message,
+      generationErrorRequestId: null,
+    });
+    throw noResultError;
     } finally {
       submittingRef.current = false;
       const waiters = submitWaitersRef.current;
@@ -907,7 +959,9 @@ export function useImageGenerationForm(
       totalCreditCostDisplay,
       creditPromotion,
       submitDisabled,
-      onSubmit: () => void handleSubmit(),
+      // 手动点击的错误已经写回节点；这里吞掉 rejected Promise，避免浏览器只留下
+      // 一条 unhandled rejection。工作流调用的是上面的 submit，仍能收到 reject。
+      onSubmit: () => void handleSubmit().catch(() => undefined),
     },
     isGenerating,
     submitDisabled,
