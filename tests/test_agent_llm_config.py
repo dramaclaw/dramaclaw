@@ -240,3 +240,59 @@ def test_codex_rotation_stops_owner_recorded_by_another_worker(
     assert signals == [(424242, 15)]
     assert not drain_path.exists()
     assert not owner_path.exists()
+
+
+def test_old_owner_worker_accepts_peer_replacement(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_bin = tmp_path / "codex"
+    socket_path, _lock_path, signature_path = codex_app_server._control_paths(
+        codex_home
+    )
+    owner_path, _drain_path, _leases_dir = codex_app_server._coordination_paths(
+        codex_home
+    )
+    new_overrides = ('model="new-model"',)
+    new_signature = (
+        str(codex_bin),
+        str(codex_home),
+        new_overrides,
+        "https://new.example/v1",
+    )
+    new_digest = codex_app_server._signature_digest(new_signature)
+    signature_path.write_text(new_digest, encoding="ascii")
+    owner_path.write_text(
+        json.dumps({"pid": 222222, "signature": new_digest}),
+        encoding="utf-8",
+    )
+    socket_path.touch()
+
+    class ExitedOwnerProcess:
+        pid = 111111
+
+        @staticmethod
+        def poll() -> int:
+            return 0
+
+    old_owner_runtime = codex_app_server._SharedCodexRuntime()
+    old_owner_runtime._process = ExitedOwnerProcess()  # type: ignore[assignment]
+    old_owner_runtime._signature = ("old-route",)
+    old_owner_runtime._socket_path = socket_path
+    old_owner_runtime._signature_path = signature_path
+    monkeypatch.setattr(
+        old_owner_runtime,
+        "_socket_accepting",
+        lambda _path: True,
+    )
+
+    resolved_socket = old_owner_runtime.ensure(
+        codex_bin=codex_bin,
+        codex_home=codex_home,
+        env={"DRAMACLAW_CODEX_GATEWAY_BASE_URL": "https://new.example/v1"},
+        config_overrides=new_overrides,
+    )
+
+    assert resolved_socket == socket_path
+    assert old_owner_runtime._process is None
+    assert old_owner_runtime._signature is None

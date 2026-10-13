@@ -306,26 +306,45 @@ class _SharedCodexRuntime:
                             "Agent configuration"
                         )
                     drain_path.unlink(missing_ok=True)
+
+                # A peer worker may have stopped this worker's child and already
+                # replaced it while this Python worker stayed alive. Discard the
+                # exited child's process-local identity before inspecting the
+                # shared socket; the replacement is identified by node state.
+                if self._process is not None and self._process.poll() is not None:
+                    self._process = None
+                    self._signature = None
+                    self._socket_path = None
+                    self._signature_path = None
                 if self._socket_accepting(socket_path):
                     existing_digest = ""
+                    owner_pid = 0
                     try:
                         existing_digest = signature_path.read_text(
                             encoding="ascii"
                         ).strip()
                     except OSError:
                         pass
+                    try:
+                        owner = json.loads(owner_path.read_text(encoding="utf-8"))
+                        owner_pid = int(owner.get("pid", 0))
+                    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                        pass
+                    local_owns_runtime = (
+                        self._process is not None
+                        and self._process.poll() is None
+                        and self._process.pid == owner_pid
+                    )
                     if (
-                        self._signature is not None and self._signature != signature
+                        local_owns_runtime
+                        and self._signature is not None
+                        and self._signature != signature
                     ) or (existing_digest and existing_digest != signature_digest):
                         raise RuntimeError(
                             "Codex App Server is already running with different node-level "
                             "gateway configuration; restart the API before using the new configuration"
                         )
                     return socket_path
-
-                if self._process is not None and self._process.poll() is not None:
-                    self._process = None
-                    self._signature = None
 
                 # A crashed App Server can leave its socket inode behind. The
                 # process-wide lock above prevents deleting a peer that is still
