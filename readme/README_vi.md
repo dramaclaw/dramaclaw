@@ -186,7 +186,7 @@ Các tính năng agent dưới đây đã có trên nhánh mã nguồn `main`; i
 <p align="center"><sub>Giao diện thử nghiệm kín: ảnh tham chiếu nối với node Previz và bối cảnh blockout 3D được tạo từ ảnh đó.</sub></p>
 
 <p align="center">
-  <img src="../assets/readme/previz-canvas-node.gif" width="720" alt="Previz — character motion and camera preview"/>
+  <img src="../assets/readme/previz-canvas-node.gif" width="800" alt="Previz — stage editing and canvas output"/>
 </p>
 
 <br/>
