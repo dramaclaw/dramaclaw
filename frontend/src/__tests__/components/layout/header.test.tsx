@@ -13,6 +13,7 @@ const runtimeState = vi.hoisted(() => ({ authRequired: true, isCe: false, phoneV
 const authState = vi.hoisted(() => ({ username: "local", logout: vi.fn() }));
 const resetUserSessionStateMock = vi.hoisted(() => vi.fn());
 const settingsAccount = vi.hoisted(() => ({ current: undefined as Record<string, unknown> | undefined }));
+const settingsPage = vi.hoisted(() => ({ current: undefined as string | undefined }));
 const securityState = vi.hoisted(() => ({
   data: undefined as
     | undefined
@@ -42,8 +43,9 @@ vi.mock("@/lib/queries/model-gateway", () => ({
 }));
 
 vi.mock("@/components/settings/settings-dialog", () => ({
-  SettingsDialog: ({ open, account }: { open: boolean; account: Record<string, unknown> }) => {
+  SettingsDialog: ({ open, account, initialPage }: { open: boolean; account: Record<string, unknown>; initialPage?: string }) => {
     settingsAccount.current = account;
+    settingsPage.current = initialPage;
     return open ? <div role="dialog">Settings dialog</div> : null;
   },
 }));
@@ -295,6 +297,17 @@ describe("Header runtime gating", () => {
     expect(
       await screen.findByRole("button", { name: "Announcement Center" }),
     ).toBeInTheDocument();
+  });
+
+  it("opens the requested settings page from a cross-region entry", async () => {
+    renderHeader();
+
+    window.dispatchEvent(new CustomEvent("dramaclaw-open-settings-dialog", {
+      detail: { page: "freezone-skills" },
+    }));
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(settingsPage.current).toBe("freezone-skills");
   });
 
   it("opens with the keyboard, lands focus inside the panel and closes on Escape", async () => {

@@ -34,7 +34,11 @@ import {
 import { CreditBalanceBadge } from "@/components/layout/credit-balance-badge";
 import { BrandLockup } from "@/components/layout/brand-lockup";
 import { NotificationDrawer } from "@/components/notifications/notification-drawer";
-import { SettingsDialog } from "@/components/settings/settings-dialog";
+import { SettingsDialog, type SettingsPage } from "@/components/settings/settings-dialog";
+import {
+  OPEN_SETTINGS_DIALOG_EVENT,
+  type OpenSettingsDialogDetail,
+} from "@/components/settings/settings-dialog-events";
 import {
   PetGalleryDialog,
   type CompanionSelection,
@@ -72,6 +76,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   const params = useParams({ strict: false }) as { project?: string };
   const [companionOpen, setCompanionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialPage, setSettingsInitialPage] = useState<SettingsPage>();
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [releaseNotificationStateVersion, setReleaseNotificationStateVersion] = useState(0);
   const [phoneBindingOpen, setPhoneBindingOpen] = useState(false);
@@ -92,6 +97,16 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   // 面板由点击/键盘打开时「钉住」：此时鼠标移开不再收走它。悬停打开的面板不钉。
   const accountPanelPinnedRef = useRef(false);
   const { username, displayName: storedDisplayName, logout } = useAuthStore();
+
+  useEffect(() => {
+    const handleOpenSettings = (event: Event) => {
+      const page = (event as CustomEvent<OpenSettingsDialogDetail>).detail?.page;
+      setSettingsInitialPage(page);
+      setSettingsOpen(true);
+    };
+    window.addEventListener(OPEN_SETTINGS_DIALOG_EVENT, handleOpenSettings);
+    return () => window.removeEventListener(OPEN_SETTINGS_DIALOG_EVENT, handleOpenSettings);
+  }, []);
   const { seen: pikoEntrySeen, markSeen: markPikoEntrySeen } =
     useFeatureEntrySeen("piko-hub-v1", username);
   const queryClient = useQueryClient();
@@ -440,6 +455,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               hasSettingsWarning={hasSettingsWarning}
               onSettings={() => {
                 closeAccountPanelNow();
+                setSettingsInitialPage(undefined);
                 setSettingsOpen(true);
               }}
               onBindPhone={canBindPhone ? () => {
@@ -479,7 +495,11 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
       /> : null}
       <SettingsDialog
         open={settingsOpen}
-        onOpenChange={setSettingsOpen}
+        initialPage={settingsInitialPage}
+        onOpenChange={(open) => {
+          setSettingsOpen(open);
+          if (!open) setSettingsInitialPage(undefined);
+        }}
         account={{
           avatarInitial,
           displayName,

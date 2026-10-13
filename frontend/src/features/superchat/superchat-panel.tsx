@@ -75,6 +75,7 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { openSettingsDialog } from "@/components/settings/settings-dialog-events";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -16693,6 +16694,21 @@ export function SuperChatPanel({
               Skill
             </div>
             <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                className="inline-flex h-7 items-center gap-1 rounded-full border border-white/[0.10] bg-white/[0.08] px-2.5 text-xs font-medium text-foreground/88 shadow-[0_8px_18px_rgba(0,0,0,0.28)] transition hover:border-white/[0.16] hover:bg-white/[0.12] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                }}
+                onClick={() => {
+                  setFreezoneSkillMenuExplicitOpen(false);
+                  setFreezoneSkillCreateMenuOpen(false);
+                  openSettingsDialog("freezone-skills");
+                }}
+              >
+                <SlidersHorizontal className="size-3.5" />
+                {t("aiAssistant.settings")}
+              </button>
               <div className="relative">
                 <button
                   type="button"

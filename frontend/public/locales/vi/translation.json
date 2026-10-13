@@ -5745,6 +5745,7 @@
       "rows": "Số hàng"
     },
     "nodeHistory": {
+      "compactTitle": "Lịch sử",
       "current": "Hiện tại",
       "daysAgo": "{{count}} ngày trước",
       "hoursAgo": "{{count}} giờ trước",
@@ -5840,6 +5841,7 @@
       "handleLabel": "Thay asset"
     },
     "reference": {
+      "preview": "Xem trước nội dung tham chiếu",
       "detach": "Gỡ tham chiếu này",
       "mention": "Nhắc tới \"{{name}}\" trong prompt"
     },
@@ -7158,6 +7160,9 @@
     }
   },
   "viewer": {
+    "imageDetails": "Xem chi tiết hình ảnh",
+    "imageIndex": "Xem hình ảnh {{index}}",
+    "videoIndex": "Xem video {{index}}",
     "imageAlt": "Ảnh",
     "prev": "Trước",
     "next": "Sau",

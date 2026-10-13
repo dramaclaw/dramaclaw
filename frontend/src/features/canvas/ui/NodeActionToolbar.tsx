@@ -135,6 +135,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { findSeedance25VideoModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
+import { openNodeImageViewer } from '../application/nodeMediaViewer';
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { analyzeVideoStory } from "@/features/canvas/application/videoAnalyzeStory";
 import { separateVideoAudio } from "@/features/canvas/application/videoSeparateAudio";
@@ -2116,6 +2117,18 @@ export const NodeActionToolbar = memo(
                 }}
               />
             )}
+            {!isImageEdit && canHandleImage && (
+              <ToolbarIconChip
+                key="image-fullscreen"
+                label={t("viewer.imageDetails")}
+                icon={Maximize2}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  const batch = (node.data as { generationBatch?: string[] | null }).generationBatch;
+                  void openNodeImageViewer(imageSource!, node.id, batch ?? []);
+                }}
+              />
+            )}
             {isVideoNode(node) &&
               (() => {
                 const videoData = node.data;
@@ -2195,6 +2208,8 @@ export const NodeActionToolbar = memo(
                   }
                   canvasEventBus.publish("video-viewer/open", {
                     videoUrl,
+                    nodeId: node.id,
+                    videoList: videoData.generationBatch ?? undefined,
                     title:
                       typeof videoData.displayName === "string"
                         ? videoData.displayName

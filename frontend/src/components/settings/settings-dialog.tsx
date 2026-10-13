@@ -119,6 +119,7 @@ import { FreezoneSkillRecipeSettings } from "./freezone-skill-recipe-settings";
 interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialPage?: SettingsPage;
   account?: {
     avatarInitial: string;
     displayName: string;
@@ -127,7 +128,7 @@ interface SettingsDialogProps {
   };
 }
 
-type SettingsPage =
+export type SettingsPage =
   | "models"
   | "storage"
   | "freezone-skills"
@@ -152,14 +153,14 @@ const MODEL_CONFIGURATION_GUIDE_URL =
   "https://github.com/dramaclaw/dramaclaw/blob/main/docs/en/getting-started/configuring-models.md";
 const COMFY_WORKFLOW_MANAGED_CONFIG_KEY = "_dcManagedByWorkflow";
 
-export function SettingsDialog({ open, onOpenChange, account }: SettingsDialogProps) {
+export function SettingsDialog({ open, onOpenChange, initialPage, account }: SettingsDialogProps) {
   const { t, i18n } = useTranslation();
   const setLanguage = useAppStore((state) => state.setLanguage);
   const activeLanguage = normalize(i18n.resolvedLanguage ?? i18n.language);
   const [accountActionPending, setAccountActionPending] = useState(false);
   const ceRuntime = isCeRuntime();
   const [page, setPage] = useState<SettingsPage>(
-    () => (ceRuntime ? "models" : "freezone-skills"),
+    () => initialPage ?? (ceRuntime ? "models" : "freezone-skills"),
   );
   const statusQuery = useModelGatewayConfig(open && ceRuntime);
   const settingsStatus = statusQuery.data?.data;
@@ -167,6 +168,10 @@ export function SettingsDialog({ open, onOpenChange, account }: SettingsDialogPr
   const mediaStorageConfigured = Boolean(
     settingsStatus?.mediaRelay?.configured,
   );
+
+  useEffect(() => {
+    if (open && initialPage) setPage(initialPage);
+  }, [initialPage, open]);
 
   useEffect(() => {
     if (!ceRuntime && (page === "models" || page === "storage")) {

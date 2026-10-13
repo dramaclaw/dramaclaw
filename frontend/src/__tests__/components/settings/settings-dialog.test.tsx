@@ -346,10 +346,14 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-function renderSettingsDialog(account?: Parameters<typeof SettingsDialog>[0]["account"], onOpenChange = vi.fn()) {
+function renderSettingsDialog(
+  account?: Parameters<typeof SettingsDialog>[0]["account"],
+  onOpenChange = vi.fn(),
+  initialPage?: Parameters<typeof SettingsDialog>[0]["initialPage"],
+) {
   return render(
     <QueryClientProvider client={new QueryClient()}>
-      <SettingsDialog open onOpenChange={onOpenChange} account={account} />
+      <SettingsDialog open onOpenChange={onOpenChange} initialPage={initialPage} account={account} />
     </QueryClientProvider>,
   );
 }
@@ -383,6 +387,16 @@ beforeEach(() => {
 });
 
 describe("SettingsDialog pages", () => {
+  it("opens directly on a requested page", () => {
+    renderSettingsDialog(undefined, vi.fn(), "freezone-skills");
+
+    expect(screen.getByRole("button", { name: "虾画 Skills" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByText("暂无虾画 Skills")).toBeInTheDocument();
+  });
+
   it("integrates account forms and language beside Skills in one dialog", () => {
     renderSettingsDialog({ avatarInitial: "A", displayName: "Admin", passwordConfigured: true, onPasswordChanged: vi.fn() });
     expect(screen.getByRole("dialog")).toHaveAccessibleName("功能设置");
