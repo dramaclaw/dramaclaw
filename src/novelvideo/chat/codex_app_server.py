@@ -17,6 +17,7 @@ import stat
 import subprocess
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -115,6 +116,51 @@ def _control_paths(codex_home: Path) -> tuple[Path, Path, Path]:
     )
 
 
+def _coordination_paths(codex_home: Path) -> tuple[Path, Path, Path]:
+    """Return owner, drain, and active-lease paths shared by API workers."""
+
+    socket_path, _lock_path, _signature_path = _control_paths(codex_home)
+    control_dir = socket_path.parent
+    leases_dir = control_dir / "active-clients"
+    leases_dir.mkdir(mode=0o700, exist_ok=True)
+    leases_dir.chmod(0o700)
+    return (
+        control_dir / "app-server.owner.json",
+        control_dir / "app-server.drain",
+        leases_dir,
+    )
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _remove_stale_client_leases(leases_dir: Path) -> list[Path]:
+    active: list[Path] = []
+    for lease_path in leases_dir.glob("*.json"):
+        try:
+            payload = json.loads(lease_path.read_text(encoding="utf-8"))
+            worker_pid = int(payload.get("workerPid", 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            worker_pid = 0
+        if _pid_alive(worker_pid):
+            active.append(lease_path)
+            continue
+        try:
+            lease_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return active
+
+
 def _app_server_log_path(codex_home: Path) -> Path:
     identity = hashlib.sha256(str(codex_home.resolve()).encode("utf-8")).hexdigest()[
         :16
@@ -200,8 +246,6 @@ class _SharedCodexRuntime:
         self._signature: tuple[object, ...] | None = None
         self._socket_path: Path | None = None
         self._signature_path: Path | None = None
-        self._active_clients = 0
-        self._restart_pending = False
 
     @staticmethod
     def _socket_accepting(socket_path: Path) -> bool:
@@ -236,6 +280,7 @@ class _SharedCodexRuntime:
         from portalocker import Lock
 
         socket_path, lock_path, signature_path = _control_paths(codex_home)
+        owner_path, drain_path, leases_dir = _coordination_paths(codex_home)
         signature = (
             str(codex_bin),
             str(codex_home),
@@ -245,6 +290,22 @@ class _SharedCodexRuntime:
         signature_digest = _signature_digest(signature)
         with self._lock:
             with Lock(str(lock_path), mode="a", timeout=_CONNECT_TIMEOUT_SECONDS):
+                active_leases = _remove_stale_client_leases(leases_dir)
+                if drain_path.exists():
+                    if active_leases:
+                        raise RuntimeError(
+                            "Codex App Server is applying new Agent configuration; retry shortly"
+                        )
+                    if not self._stop_node_runtime_locked(
+                        socket_path=socket_path,
+                        signature_path=signature_path,
+                        owner_path=owner_path,
+                    ):
+                        raise RuntimeError(
+                            "Codex App Server requires an API restart to apply the new "
+                            "Agent configuration"
+                        )
+                    drain_path.unlink(missing_ok=True)
                 if self._socket_accepting(socket_path):
                     existing_digest = ""
                     try:
@@ -272,6 +333,7 @@ class _SharedCodexRuntime:
                 try:
                     socket_path.unlink(missing_ok=True)
                     signature_path.unlink(missing_ok=True)
+                    owner_path.unlink(missing_ok=True)
                 except OSError as exc:
                     raise RuntimeError(
                         f"Cannot clear stale Codex App Server control state: {exc}"
@@ -303,6 +365,17 @@ class _SharedCodexRuntime:
                 self._signature = signature
                 self._socket_path = socket_path
                 self._signature_path = signature_path
+                owner_path.write_text(
+                    json.dumps(
+                        {
+                            "pid": self._process.pid,
+                            "signature": signature_digest,
+                        },
+                        separators=(",", ":"),
+                    ),
+                    encoding="utf-8",
+                )
+                owner_path.chmod(0o600)
 
                 deadline = time.monotonic() + _CONNECT_TIMEOUT_SECONDS
                 while time.monotonic() < deadline:
@@ -314,6 +387,7 @@ class _SharedCodexRuntime:
                         self._signature = None
                         self._socket_path = None
                         self._signature_path = None
+                        owner_path.unlink(missing_ok=True)
                         detail = ""
                         try:
                             detail = log_path.read_text(
@@ -337,38 +411,157 @@ class _SharedCodexRuntime:
         codex_home: Path,
         env: dict[str, str],
         config_overrides: tuple[str, ...],
-    ) -> Path:
-        """Lease the current runtime without crossing a pending reconfiguration."""
+    ) -> tuple[Path, Path]:
+        """Lease the node runtime without crossing a cross-worker drain."""
+        from portalocker import Lock
+
         with self._lock:
-            if self._restart_pending:
-                raise RuntimeError(
-                    "Codex App Server is applying new Agent configuration; retry shortly"
+            _socket_path, lock_path, _signature_path = _control_paths(codex_home)
+            _owner_path, drain_path, leases_dir = _coordination_paths(codex_home)
+            with Lock(str(lock_path), mode="a", timeout=_CONNECT_TIMEOUT_SECONDS):
+                _remove_stale_client_leases(leases_dir)
+                if drain_path.exists():
+                    raise RuntimeError(
+                        "Codex App Server is applying new Agent configuration; retry shortly"
+                    )
+                lease_path = leases_dir / f"{os.getpid()}-{uuid.uuid4().hex}.json"
+                lease_path.write_text(
+                    json.dumps(
+                        {
+                            "workerPid": os.getpid(),
+                            "threadId": threading.get_ident(),
+                        },
+                        separators=(",", ":"),
+                    ),
+                    encoding="utf-8",
                 )
-            socket_path = self.ensure(
-                codex_bin=codex_bin,
-                codex_home=codex_home,
-                env=env,
-                config_overrides=config_overrides,
-            )
-            self._active_clients += 1
-            return socket_path
+                lease_path.chmod(0o600)
+            try:
+                socket_path = self.ensure(
+                    codex_bin=codex_bin,
+                    codex_home=codex_home,
+                    env=env,
+                    config_overrides=config_overrides,
+                )
+            except Exception:
+                self.release(codex_home, lease_path)
+                raise
+            else:
+                return socket_path, lease_path
 
-    def release(self) -> None:
-        """Release one client and finish a deferred restart at the turn boundary."""
-        with self._lock:
-            if self._active_clients > 0:
-                self._active_clients -= 1
-            if self._active_clients == 0 and self._restart_pending:
-                self.stop()
+    def release(self, codex_home: Path, lease_path: Path) -> None:
+        """Release a cross-worker lease and finish a pending node drain."""
+        from portalocker import Lock
 
-    def request_restart(self) -> str:
-        """Stop when idle or defer the stop until all active clients drain."""
         with self._lock:
-            if self._active_clients > 0:
-                self._restart_pending = True
-                return "draining"
-            self.stop()
-            return "stopped"
+            socket_path, lock_path, signature_path = _control_paths(codex_home)
+            owner_path, drain_path, leases_dir = _coordination_paths(codex_home)
+            with Lock(str(lock_path), mode="a", timeout=_CONNECT_TIMEOUT_SECONDS):
+                lease_path.unlink(missing_ok=True)
+                active_leases = _remove_stale_client_leases(leases_dir)
+                if drain_path.exists() and not active_leases:
+                    if self._stop_node_runtime_locked(
+                        socket_path=socket_path,
+                        signature_path=signature_path,
+                        owner_path=owner_path,
+                    ):
+                        drain_path.unlink(missing_ok=True)
+
+    def request_restart(self, codex_home: Path) -> str:
+        """Drain and stop the shared node runtime across API workers."""
+        from portalocker import Lock
+
+        with self._lock:
+            socket_path, lock_path, signature_path = _control_paths(codex_home)
+            owner_path, drain_path, leases_dir = _coordination_paths(codex_home)
+            with Lock(str(lock_path), mode="a", timeout=_CONNECT_TIMEOUT_SECONDS):
+                drain_path.touch(mode=0o600, exist_ok=True)
+                drain_path.chmod(0o600)
+                if _remove_stale_client_leases(leases_dir):
+                    return "draining"
+                if self._stop_node_runtime_locked(
+                    socket_path=socket_path,
+                    signature_path=signature_path,
+                    owner_path=owner_path,
+                ):
+                    drain_path.unlink(missing_ok=True)
+                    return "stopped"
+                return "restart_required"
+
+    def _stop_node_runtime_locked(
+        self,
+        *,
+        socket_path: Path,
+        signature_path: Path,
+        owner_path: Path,
+    ) -> bool:
+        """Stop the recorded App Server owner while holding the node lock."""
+        if not self._socket_accepting(socket_path):
+            for path in (socket_path, signature_path, owner_path):
+                path.unlink(missing_ok=True)
+            return True
+
+        owner_pid = 0
+        owner_signature = ""
+        try:
+            owner = json.loads(owner_path.read_text(encoding="utf-8"))
+            owner_pid = int(owner.get("pid", 0))
+            owner_signature = str(owner.get("signature", ""))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+        try:
+            current_signature = signature_path.read_text(encoding="ascii").strip()
+        except OSError:
+            current_signature = ""
+        if (
+            owner_pid <= 0
+            or not owner_signature
+            or owner_signature != current_signature
+        ):
+            return False
+
+        local_process = self._process
+        if local_process is not None and local_process.pid == owner_pid:
+            local_process.terminate()
+        else:
+            try:
+                os.kill(owner_pid, 15)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                return False
+
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and self._socket_accepting(socket_path):
+            time.sleep(0.05)
+        if self._socket_accepting(socket_path):
+            try:
+                if local_process is not None and local_process.pid == owner_pid:
+                    local_process.kill()
+                else:
+                    os.kill(owner_pid, 9)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                return False
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline and self._socket_accepting(socket_path):
+                time.sleep(0.05)
+        if self._socket_accepting(socket_path):
+            return False
+
+        if local_process is not None and local_process.pid == owner_pid:
+            try:
+                local_process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            self._process = None
+            self._signature = None
+            self._socket_path = None
+            self._signature_path = None
+        for path in (socket_path, signature_path, owner_path):
+            path.unlink(missing_ok=True)
+        return True
 
     def stop(self) -> None:
         with self._lock:
@@ -379,17 +572,19 @@ class _SharedCodexRuntime:
             signature_path = self._signature_path
             self._socket_path = None
             self._signature_path = None
-            self._active_clients = 0
-            self._restart_pending = False
-        if process is None or process.poll() is not None:
-            return
-        process.terminate()
-        try:
-            process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=1)
-        for path in (socket_path, signature_path):
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1)
+        owner_path = (
+            socket_path.parent / "app-server.owner.json"
+            if socket_path is not None
+            else None
+        )
+        for path in (socket_path, signature_path, owner_path):
             if path is not None:
                 try:
                     path.unlink(missing_ok=True)
@@ -406,10 +601,19 @@ def stop_shared_codex_runtime() -> None:
     _RUNTIME.stop()
 
 
-def restart_shared_codex_runtime_when_idle() -> str:
+def restart_shared_codex_runtime_when_idle(codex_home: Path | None = None) -> str:
     """Apply new node-level configuration without interrupting active turns."""
 
-    return _RUNTIME.request_restart()
+    if codex_home is None:
+        from novelvideo import config as app_config
+
+        configured = os.environ.get("DRAMACLAW_CODEX_HOME", "").strip()
+        codex_home = (
+            Path(configured).expanduser()
+            if configured
+            else Path(app_config.STATE_DIR) / ".codex-app-server"
+        )
+    return _RUNTIME.request_restart(codex_home)
 
 
 def _resolve_codex_bin(config) -> Path:
@@ -528,7 +732,7 @@ def shared_codex(config) -> Iterator[object]:
     codex_home = Path(codex_home_raw)
     if not codex_home.is_absolute():
         raise RuntimeError("Shared Codex App Server requires an absolute CODEX_HOME")
-    socket_path = _RUNTIME.acquire(
+    socket_path, lease_path = _RUNTIME.acquire(
         codex_bin=_resolve_codex_bin(config),
         codex_home=codex_home,
         env=env,
@@ -547,4 +751,4 @@ def shared_codex(config) -> Iterator[object]:
             if client is not None:
                 client.close()
         finally:
-            _RUNTIME.release()
+            _RUNTIME.release(codex_home, lease_path)

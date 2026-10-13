@@ -18,7 +18,9 @@ from novelvideo.model_gateway_settings import (
     get_effective_llm_config,
     get_effective_newapi_config,
     save_agent_llm_config,
+    save_custom_newapi_gateway,
     save_official_newapi_key,
+    set_model_gateway_mode,
 )
 
 
@@ -102,31 +104,20 @@ def test_agent_config_api_masks_secret_and_requires_key_for_new_host(
         "refresh_model_gateway_runtime",
         lambda: {"refreshed": True},
     )
-
-    class FakeCodexProcess:
-        def __init__(self) -> None:
-            self.returncode: int | None = None
-            self.terminated = False
-
-        def poll(self) -> int | None:
-            return self.returncode
-
-        def terminate(self) -> None:
-            self.terminated = True
-            self.returncode = 0
-
-        def wait(self, timeout: float) -> int:
-            del timeout
-            return int(self.returncode or 0)
-
-        def kill(self) -> None:
-            self.returncode = -9
-
-    codex_runtime = codex_app_server._SharedCodexRuntime()
-    codex_process = FakeCodexProcess()
-    codex_runtime._process = codex_process  # type: ignore[assignment]
-    codex_runtime._active_clients = 1
-    monkeypatch.setattr(codex_app_server, "_RUNTIME", codex_runtime)
+    codex_home = tmp_path / "state" / ".codex-app-server"
+    monkeypatch.setenv("DRAMACLAW_CODEX_HOME", str(codex_home))
+    socket_path = codex_app_server._control_paths(codex_home)[0]
+    owner_runtime = codex_app_server._SharedCodexRuntime()
+    api_runtime = codex_app_server._SharedCodexRuntime()
+    monkeypatch.setattr(owner_runtime, "ensure", lambda **_kwargs: socket_path)
+    monkeypatch.setattr(api_runtime, "ensure", lambda **_kwargs: socket_path)
+    _, lease_path = owner_runtime.acquire(
+        codex_bin=tmp_path / "codex",
+        codex_home=codex_home,
+        env={},
+        config_overrides=(),
+    )
+    monkeypatch.setattr(codex_app_server, "_RUNTIME", api_runtime)
 
     app = FastAPI()
     app.include_router(model_gateway.router)
@@ -143,7 +134,7 @@ def test_agent_config_api_masks_secret_and_requires_key_for_new_host(
     )
     assert response.status_code == 200
     assert response.json()["runtime"]["codexAppServer"] == "draining"
-    assert codex_process.terminated is False
+    assert lease_path.exists()
     assert response.json()["data"]["agent"] == {
         "mode": "third_party",
         "baseUrl": "https://agent.example/v1",
@@ -154,15 +145,15 @@ def test_agent_config_api_masks_secret_and_requires_key_for_new_host(
     assert "sk-agent-secret" not in response.text
 
     with pytest.raises(RuntimeError, match="applying new Agent configuration"):
-        codex_runtime.acquire(
+        api_runtime.acquire(
             codex_bin=tmp_path / "codex",
-            codex_home=tmp_path / "codex-home",
+            codex_home=codex_home,
             env={},
             config_overrides=(),
         )
-    codex_runtime.release()
-    assert codex_process.terminated is True
-    assert codex_runtime._restart_pending is False
+    owner_runtime.release(codex_home, lease_path)
+    drain_path = codex_app_server._coordination_paths(codex_home)[1]
+    assert not drain_path.exists()
 
     response = client.post(
         "/model-gateway/agent/config",
@@ -174,3 +165,78 @@ def test_agent_config_api_masks_secret_and_requires_key_for_new_host(
     )
     assert response.status_code == 400
     assert response.json()["detail"] == "apiKey is required"
+
+
+def test_inherited_agent_route_rotates_when_gateway_mode_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    save_official_newapi_key(api_key="sk-official-secret")
+    save_custom_newapi_gateway(
+        api_key="sk-custom-secret",
+        base_url="https://custom.example",
+        activate=False,
+    )
+    set_model_gateway_mode("official")
+    save_agent_llm_config(mode=AGENT_LLM_MODE_INHERIT)
+
+    rotations: list[bool] = []
+    monkeypatch.setattr(
+        model_gateway,
+        "refresh_model_gateway_runtime",
+        lambda: {"refreshed": True},
+    )
+    monkeypatch.setattr(
+        model_gateway,
+        "restart_shared_codex_runtime_when_idle",
+        lambda: rotations.append(True) or "stopped",
+    )
+
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    response = TestClient(app).post("/model-gateway/custom/enable")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["mode"] == "custom"
+    assert response.json()["runtime"]["codexAppServer"] == "stopped"
+    assert rotations == [True]
+
+
+def test_codex_rotation_stops_owner_recorded_by_another_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    socket_path, _lock_path, signature_path = codex_app_server._control_paths(
+        codex_home
+    )
+    owner_path, drain_path, _leases_dir = codex_app_server._coordination_paths(
+        codex_home
+    )
+    signature_path.write_text("route-signature", encoding="ascii")
+    owner_path.write_text(
+        json.dumps({"pid": 424242, "signature": "route-signature"}),
+        encoding="utf-8",
+    )
+    socket_path.touch()
+
+    socket_state = {"accepting": True}
+    requester_runtime = codex_app_server._SharedCodexRuntime()
+    monkeypatch.setattr(
+        requester_runtime,
+        "_socket_accepting",
+        lambda _path: socket_state["accepting"],
+    )
+    signals: list[tuple[int, int]] = []
+
+    def fake_kill(pid: int, signal_number: int) -> None:
+        signals.append((pid, signal_number))
+        if signal_number == 15:
+            socket_state["accepting"] = False
+
+    monkeypatch.setattr(codex_app_server.os, "kill", fake_kill)
+
+    assert requester_runtime.request_restart(codex_home) == "stopped"
+    assert signals == [(424242, 15)]
+    assert not drain_path.exists()
+    assert not owner_path.exists()
