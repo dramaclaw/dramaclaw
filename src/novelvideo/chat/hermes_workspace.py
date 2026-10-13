@@ -360,8 +360,12 @@ def _hermes_model_default() -> str:
     # Only CE resolves the route from its gateway settings database. EE keeps
     # the deployment environment in charge, so HERMES_MODEL selects the alias
     # and BrainClaw is reached by pointing it at the BrainClaw alias.
-    if is_ce_effective() and get_effective_llm_config().is_brainclaw:
-        return "brainclaw"
+    if is_ce_effective():
+        gateway = get_effective_llm_config()
+        if gateway.is_brainclaw:
+            return "brainclaw"
+        if gateway.model:
+            return gateway.model
     return (
         _root_value(
             "HERMES_MODEL",

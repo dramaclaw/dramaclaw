@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 
 from novelvideo import config as app_config
 from novelvideo.model_gateway_settings import (
+    AGENT_LLM_MODE_INHERIT,
+    AGENT_LLM_MODE_THIRD_PARTY,
     MODE_CUSTOM,
     CUSTOM_LLM_MODE_ADVANCED,
     CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
@@ -18,12 +20,14 @@ from novelvideo.model_gateway_settings import (
     MODE_HYBRID,
     build_media_relay_status,
     build_model_gateway_status,
+    get_model_gateway_settings,
     get_effective_media_relay_config,
     get_official_media_catalog_update_status,
     normalize_relay_base_url,
     normalize_api_key,
     parse_comfyui_channel_workflows,
     save_media_relay_config,
+    save_agent_llm_config,
     save_official_media_catalog_auto_update,
     save_official_newapi_key,
     save_relayclaw_brainclaw_key,
@@ -174,6 +178,13 @@ class BrainClawGatewayBody(BaseModel):
 
 class CustomLlmModeBody(BaseModel):
     mode: str
+
+
+class AgentLlmConfigBody(BaseModel):
+    mode: str
+    base_url: str | None = Field(default=None, alias="baseUrl")
+    api_key: str | None = Field(default=None, alias="apiKey")
+    model: str | None = None
 
 
 class MediaRelayConfigBody(BaseModel):
@@ -659,6 +670,52 @@ async def save_official_gateway_config(body: OfficialGatewayBody) -> dict[str, A
     if not api_key:
         raise HTTPException(status_code=400, detail="newApiApiKey is required")
     save_official_newapi_key(api_key=api_key, activate=True)
+    runtime = refresh_model_gateway_runtime()
+    return {
+        "ok": True,
+        "data": build_model_gateway_status(
+            official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+            official_api_key=app_config.NEWAPI_API_KEY,
+        ),
+        "runtime": runtime,
+    }
+
+
+@router.post("/agent/config")
+async def save_agent_gateway_config(body: AgentLlmConfigBody) -> dict[str, Any]:
+    """Save the CE Agent route independently from media gateway selection."""
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    if body.mode not in {AGENT_LLM_MODE_INHERIT, AGENT_LLM_MODE_THIRD_PARTY}:
+        raise HTTPException(status_code=400, detail="unsupported Agent LLM mode")
+
+    if body.mode == AGENT_LLM_MODE_THIRD_PARTY:
+        settings = get_model_gateway_settings()
+        saved_base_url = normalize_relay_base_url(
+            settings.get("agent_llm_base_url", "")
+        )
+        base_url = normalize_relay_base_url(body.base_url or saved_base_url)
+        api_key = normalize_api_key(body.api_key)
+        model = str(body.model or settings.get("agent_llm_model", "")).strip()
+        endpoint_changed = bool(body.base_url) and base_url != saved_base_url
+        has_saved_key = bool(normalize_api_key(settings.get("agent_llm_api_key", "")))
+        if not base_url:
+            raise HTTPException(status_code=400, detail="baseUrl is required")
+        if not model:
+            raise HTTPException(status_code=400, detail="model is required")
+        if not api_key and (not has_saved_key or endpoint_changed):
+            raise HTTPException(status_code=400, detail="apiKey is required")
+        save_agent_llm_config(
+            mode=body.mode,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+        )
+    else:
+        save_agent_llm_config(mode=body.mode)
+
     runtime = refresh_model_gateway_runtime()
     return {
         "ok": True,

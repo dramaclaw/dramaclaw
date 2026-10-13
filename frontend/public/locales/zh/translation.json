@@ -7645,6 +7645,16 @@
         "missingEndpoint": "请填写 BrainClaw NewAPI 地址。",
         "advancedEnabled": "已切换为高级自定义 LLM。"
       },
+      "agent": {
+        "title": "Agent 模型",
+        "description": "单独配置虾导使用的模型，不影响图片、视频、音频和 Embedding 渠道。",
+        "inherit": "跟随当前渠道",
+        "thirdParty": "第三方",
+        "model": "模型名称",
+        "thirdPartyHint": "第三方服务需兼容 OpenAI Responses API 和工具调用；切换地址时需要重新输入 API Key。",
+        "save": "保存 Agent 配置",
+        "saved": "Agent 模型配置已保存，新会话将使用最新配置。"
+      },
       "custom": {
         "description": "CE 使用本机 SQLite NewAPI。DramaClaw 会自动连接数据库、创建运行令牌并启用本地渠道。",
         "init": "初始化本地 NewAPI",

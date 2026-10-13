@@ -7578,6 +7578,16 @@
         "enabled": "Đã chọn BrainClaw; lựa chọn này có hiệu lực khi chế độ Tuỳ chỉnh đang bật.",
         "missingEndpoint": "Nhập URL NewAPI của BrainClaw.",
         "advancedEnabled": "Đã bật LLM tuỳ chỉnh nâng cao."
+      },
+      "agent": {
+        "title": "Mô hình Agent",
+        "description": "Cấu hình riêng mô hình dùng cho Xia Director, không ảnh hưởng đến kênh hình ảnh, video, âm thanh và embedding.",
+        "inherit": "Theo kênh hiện tại",
+        "thirdParty": "Bên thứ ba",
+        "model": "Tên mô hình",
+        "thirdPartyHint": "Dịch vụ phải tương thích với OpenAI Responses API và gọi công cụ. Hãy nhập lại API Key khi đổi endpoint.",
+        "save": "Lưu cấu hình Agent",
+        "saved": "Đã lưu cấu hình mô hình Agent. Phiên mới sẽ dùng cấu hình mới nhất."
       }
     },
     "mediaStorage": {
