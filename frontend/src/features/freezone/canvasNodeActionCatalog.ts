@@ -153,6 +153,12 @@ function nodeHasImageSource(node: CanvasNode): boolean {
   return Boolean(resolveNodeSourceImageUrl(node) || hasString((node.data as { previewImageUrl?: unknown }).previewImageUrl));
 }
 
+function isInteractiveStoryClipNode(node: CanvasNode): boolean {
+  if (node.type !== CANVAS_NODE_TYPES.video) return false;
+  const data = node.data as { storySegmentId?: unknown; storyRole?: unknown };
+  return hasString(data.storySegmentId) || data.storyRole === "start";
+}
+
 function imageModelParameterSchema(): CanvasEditableFieldSchema {
   const snapshot = getFreezoneImageModelsSnapshot();
   return {
@@ -818,9 +824,52 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
       if ((node.data as { isUpscaleNode?: unknown }).isUpscaleNode === true) {
         return videoUpscaleEditableSchema(node);
       }
+      const storyClip = isInteractiveStoryClipNode(node);
       return {
         displayName: { type: "string", label: "显示名称" },
-        prompt: { type: "string", label: "提示词", description: GENERATOR_PROMPT_DESCRIPTION },
+        ...(storyClip
+          ? {
+              continuityMode: {
+                type: 'enum' as const, label: i18next.t("canvas.story.actionCatalog.continuityLabel"), options: ['auto', 'independent'],
+                description: i18next.t("canvas.story.actionCatalog.continuityDescription"),
+              },
+              continuitySourceNodeId: {
+                type: 'string' as const, label: i18next.t("canvas.story.actionCatalog.continuitySourceLabel"),
+                description: i18next.t("canvas.story.actionCatalog.continuitySourceDescription"),
+              },
+              narration: {
+                type: "string" as const,
+                label: i18next.t("canvas.story.actionCatalog.narrationLabel"),
+                current_value:
+                  typeof (node.data as { narration?: unknown }).narration === "string"
+                    ? (node.data as { narration: string }).narration
+                    : "",
+                description:
+                  i18next.t("canvas.story.actionCatalog.narrationDescription"),
+              },
+              storyProductionNotes: {
+                type: "string" as const,
+                label: i18next.t("canvas.story.actionCatalog.productionNotesLabel"),
+                current_value:
+                  typeof (node.data as { storyProductionNotes?: unknown }).storyProductionNotes === "string"
+                    ? (node.data as { storyProductionNotes: string }).storyProductionNotes
+                    : "",
+                description:
+                  i18next.t("canvas.story.actionCatalog.productionNotesDescription"),
+              },
+            }
+          : {}),
+        prompt: {
+          type: "string",
+          label: "提示词",
+          current_value:
+            typeof (node.data as { prompt?: unknown }).prompt === "string"
+              ? (node.data as { prompt: string }).prompt
+              : "",
+          description: storyClip
+            ? `${GENERATOR_PROMPT_DESCRIPTION} This is only the video-generation prompt and does not replace narration. When completing a story clip, update narration separately.`
+            : GENERATOR_PROMPT_DESCRIPTION,
+        },
         genMode: videoGenModeSchema(node),
         model: videoModelSchema(node),
         aspectRatio: videoAspectRatioSchema(node),
@@ -980,6 +1029,7 @@ function addChatCommandActions(node: CanvasNode, actions: CanvasNodeActionCatalo
   }
 
   if (canUpdateNodeDataViaChat(node)) {
+    const storyClip = isInteractiveStoryClipNode(node);
     actions.push({
       action: "update_node_data",
       execution: "chat_command",
@@ -987,7 +1037,9 @@ function addChatCommandActions(node: CanvasNode, actions: CanvasNodeActionCatalo
       description:
         node.type === CANVAS_NODE_TYPES.beatContext
           ? `更新镜头上下文节点草稿字段。只允许 data 包含 ${BEAT_CONTEXT_AGENT_EDITABLE_FIELDS.join(", ")}；出场身份和出场道具不开放给 agent 编辑。`
-          : "Update editable data fields on this node. Reserved mainline/projection fields are ignored.",
+          : storyClip
+            ? i18next.t("canvas.story.actionCatalog.updateDescription")
+            : "Update editable data fields on this node. Reserved mainline/projection fields are ignored.",
       parameters: {
         node_id: node.id,
         data: "object",
@@ -1461,6 +1513,22 @@ function addMediaActions(
   context?: CanvasNodeActionCatalogContext,
 ): void {
   if (node.type === CANVAS_NODE_TYPES.video && hasString((node.data as { videoUrl?: unknown }).videoUrl)) {
+    actions.push({
+      action: "capture_video_first_frame",
+      execution: "frontend_node",
+      command_type: "run_node_action",
+      description: i18next.t("canvas.story.actionCatalog.captureFirstFrameDescription"),
+      parameters: { node_id: node.id },
+      result_effect: { target: "derived image node", next_step: "Read the returned createdNodeId and output and verify the source before using it as a reference; binding and generation require separate authorization." },
+    });
+    actions.push({
+      action: "capture_video_last_frame",
+      execution: "frontend_node",
+      command_type: "run_node_action",
+      description: i18next.t("canvas.story.actionCatalog.captureLastFrameDescription"),
+      parameters: { node_id: node.id },
+      result_effect: { target: "derived image node", next_step: "Read the returned createdNodeId and output before binding references; generation requires separate authorization and readiness checks." },
+    });
     actions.push({
       action: "open_video_viewer",
       execution: "manual_ui",

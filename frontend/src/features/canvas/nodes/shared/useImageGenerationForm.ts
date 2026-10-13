@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 import type {
   ImageGenCameraSelection,
@@ -58,6 +59,7 @@ import { hasImageGenPromptOverride } from '@/features/canvas/nodes/imageGenPromp
 import { orderedReferenceUrlsWithOwnFirst, upstreamNodesInEdgeOrder } from '@/features/canvas/nodes/referenceOrdering';
 import { matchesReference, referenceIssueName, referenceIssues, type ReferenceIssue } from '@/features/canvas/nodes/shared/ReferenceValidationDialog';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
+import { attachCompletedStoryAsset, attachCompletedStoryFrame } from '@/features/canvas/application/videoContinuity';
 import type { ImageGenerationFormProps } from '@/features/canvas/nodes/shared/ImageGenerationForm';
 
 const DEFAULT_IMAGE_QUALITY: ImageQuality = 'medium';
@@ -118,6 +120,7 @@ export interface UseImageGenerationFormResult {
     options?: {
       completionMode?: 'submitted' | 'completed';
       executionSource?: 'manual' | 'workflow';
+      attachStoryFrame?: boolean;
     },
   ) => Promise<Record<string, unknown> | undefined>;
   canAutoCommitOnGenerate: boolean;
@@ -481,6 +484,7 @@ export function useImageGenerationForm(
     options: {
       completionMode?: 'submitted' | 'completed';
       executionSource?: 'manual' | 'workflow';
+      attachStoryFrame?: boolean;
     } = {},
   ) => {
     const completionMode = options.completionMode ?? 'completed';
@@ -651,7 +655,8 @@ export function useImageGenerationForm(
       task_type: string;
       job_id: string;
     }> = [];
-    const runOne = async (runIndex: number) => {
+    type GenerationRunOutcome = 'completed' | 'submitted' | 'ignored' | 'handled';
+    const runOne = async (runIndex: number): Promise<GenerationRunOutcome> => {
       let taskKey: string | null = null;
       try {
         const ref = await submitFreezoneGen(projectId, {
@@ -671,7 +676,7 @@ export function useImageGenerationForm(
           task_type: ref.task_type,
           job_id: ref.job_id,
         });
-        const completeTask = async () => {
+        const completeTask = async (): Promise<'completed' | 'ignored'> => {
           const completed = await awaitTaskCompletion(ref.task_key, projectId);
           let url = resolveOutputUrl(completed.result as Record<string, unknown> | null);
           if (!url) {
@@ -683,7 +688,7 @@ export function useImageGenerationForm(
             }
           }
           if (url) {
-            if (!isCurrentGenerationAttempt()) return;
+            if (!isCurrentGenerationAttempt()) return 'ignored';
             completedUrls.push(url);
             const isFirstCompleted = completedUrls.length === 1;
             updateNodeData(id, {
@@ -691,14 +696,21 @@ export function useImageGenerationForm(
               ...(isFirstCompleted ? buildImageGenerationSuccessPatch(url) : {}),
               ...(total > 1 ? { generationBatch: [...completedUrls] } : {}),
             });
+            if (isFirstCompleted && options.attachStoryFrame !== false) {
+              const attachmentError = attachCompletedStoryFrame(id);
+              if (attachmentError) toast.warning(attachmentError);
+              const assetError = attachCompletedStoryAsset(id);
+              if (assetError) toast.warning(assetError);
+            }
             if (canAutoCommitOnGenerate && isFirstCompleted) {
               canvasEventBus.publish('freezone/commit-node', {
                 nodeId: id,
                 auto: true,
               });
             }
+            return 'completed';
           } else {
-            if (!isCurrentGenerationAttempt()) return;
+            if (!isCurrentGenerationAttempt()) return 'ignored';
             console.warn('[image-gen] generation completed without output url', completed);
             // 只有 run 0（任务句柄的归属者）且尚无任何成功时才终结 loading——
             // 非首个任务先「无 URL 完成」不能把还在跑的整体 loading 提前掐掉。
@@ -727,15 +739,15 @@ export function useImageGenerationForm(
               generationErrorRequestId: extractRequestId(rawErrorMessage),
             });
           });
-          return;
+          return 'submitted';
         }
-        await completeTask();
+        return await completeTask();
       } catch (error) {
-        if (!isCurrentGenerationAttempt()) return;
+        if (!isCurrentGenerationAttempt()) return 'ignored';
         console.error('[image-gen] generation failed', error);
         // 已有同批其它图完成（主图已落）时不覆盖成功态为错误——部分失败只
         // 影响画册张数。
-        if (completedUrls.length > 0) return;
+        if (completedUrls.length > 0) return 'handled';
         const issues = referenceIssues(error);
         if (issues.length > 0 && runIndex === 0) {
           setReferenceErrors(issues.map((issue) => {
@@ -776,13 +788,13 @@ export function useImageGenerationForm(
           if (
             taskKey
             && isStaleGenerationTask({ nodeData: latestNodeData, taskKey })
-          ) return;
+          ) return 'ignored';
           if (
             taskKey
             && !shouldWriteGenerationError({ nodeData: latestNodeData, taskKey, error })
           ) {
             updateNodeData(id, { isGenerating: false, generationStartedAt: null });
-            return;
+            return 'ignored';
           }
         }
         // Persist the failure on the node so it stays visible until the next
@@ -846,6 +858,10 @@ export function useImageGenerationForm(
       };
       return actionOutput;
     }
+    const allRunsIgnored = settledRuns.length > 0 && settledRuns.every(
+      (result) => result.status === 'fulfilled' && result.value === 'ignored',
+    );
+    if (allRunsIgnored) return undefined;
     const noResultError = new Error('图片生成未提交任务，也没有返回图片地址');
     updateNodeData(id, {
       isGenerating: false,

@@ -515,7 +515,11 @@ def skill_stage_blockers(
 
 def _attach_skill_stage_blockers(result: dict[str, Any], skill_id: str) -> None:
     """Fold stage blockers into ``result['preflight']`` (status → blocked)."""
+    from novelvideo.freezone.workflow_story_targets import is_story_image_production_plan
+
     plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
+    if is_story_image_production_plan(plan):
+        return
     _attach_preflight_blockers(
         result,
         skill_stage_blockers(skill_id, plan.get("nodes") or [], plan.get("edges") or []),

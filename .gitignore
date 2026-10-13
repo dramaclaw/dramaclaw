@@ -13,6 +13,7 @@ __pycache__/
 logs/
 jr_error.log
 /launchd/
+.idea
 
 # 测试数据与产物，勿提交
 /data/
@@ -43,6 +44,7 @@ frontend/.tanstack/
 /docs/issues
 scripts/incident_drills/.drill.local.env
 .obsidian/
+.superdesign
 
 # 验收日志（证据归档在本地/CI 工件，不进 git）
 /acceptance-logs/

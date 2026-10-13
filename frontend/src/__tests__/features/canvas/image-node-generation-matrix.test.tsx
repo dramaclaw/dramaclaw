@@ -15,6 +15,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { submitFreezoneGen } from "@/api/ops";
+import { TaskCompletionError } from "@/api/tasks";
 import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { useImageGenerationForm } from "@/features/canvas/nodes/shared/useImageGenerationForm";
@@ -46,6 +47,7 @@ vi.mock("@/lib/url-params", async (importOriginal) => ({
 }));
 
 let submitSeq = 0;
+const awaitTaskCompletion = vi.hoisted(() => vi.fn());
 
 vi.mock("@/api/ops", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/ops")>()),
@@ -75,9 +77,7 @@ vi.mock("@/api/ops", async (importOriginal) => ({
 vi.mock("@/api/tasks", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/tasks")>()),
   // 每个任务回一张与自己 task_key 对应的图，方便断言画册收齐了几张。
-  awaitTaskCompletion: vi.fn(async (taskKey: string) => ({
-    result: { output_url: `/static/${taskKey}.png` },
-  })),
+  awaitTaskCompletion,
 }));
 
 vi.mock("@/features/canvas/application/errorDialog", async (importOriginal) => ({
@@ -138,6 +138,10 @@ beforeEach(() => {
   submitSeq = 0;
   vi.mocked(submitFreezoneGen).mockClear();
   vi.mocked(compileWorkflowNodePrompt).mockClear();
+  awaitTaskCompletion.mockReset();
+  awaitTaskCompletion.mockImplementation(async (taskKey: string) => ({
+    result: { output_url: `/static/${taskKey}.png` },
+  }));
 });
 
 describe("图片节点：三种参考图形态的提交载荷", () => {
@@ -311,6 +315,67 @@ describe("图片节点：提交前置失败反馈", () => {
 });
 
 describe("图片节点：恢复与历史", () => {
+  it("取消已有图片的重生成时保留旧图且不写错误", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [imageGenNode({
+        imageUrl: "/static/old.png",
+        previewImageUrl: "/static/old.png",
+      })],
+      [],
+    );
+    awaitTaskCompletion.mockRejectedValueOnce(
+      new TaskCompletionError("task cancelled", "cancelled", "task-1"),
+    );
+
+    const { result } = renderHook(() => useImageGenerationForm("img-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    await expect(result.current.submit()).resolves.toBeUndefined();
+
+    expect(nodeData()).toMatchObject({
+      imageUrl: "/static/old.png",
+      previewImageUrl: "/static/old.png",
+      isGenerating: false,
+      generationError: null,
+      generationErrorDetails: null,
+    });
+  });
+
+  it("旧任务结算时不清除新任务句柄", async () => {
+    let rejectOldTask!: (error: Error) => void;
+    awaitTaskCompletion.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => {
+        rejectOldTask = reject;
+      }),
+    );
+    useCanvasStore.getState().setCanvasData([imageGenNode()], []);
+
+    const { result } = renderHook(() => useImageGenerationForm("img-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    let submission!: Promise<Record<string, unknown> | undefined>;
+    act(() => {
+      submission = result.current.submit();
+    });
+    await waitFor(() => expect(nodeData().generationTaskKey).toBe("task-1"));
+
+    act(() => {
+      useCanvasStore.getState().updateNodeData("img-1", {
+        generationTaskKey: "task-new",
+        generationTaskType: "freezone_gen",
+        generationTaskJobId: "job-new",
+      });
+    });
+    rejectOldTask(new Error("old task failed"));
+    await expect(submission).resolves.toBeUndefined();
+
+    expect(nodeData()).toMatchObject({
+      generationTaskKey: "task-new",
+      generationTaskType: "freezone_gen",
+      generationTaskJobId: "job-new",
+      generationError: null,
+      generationErrorDetails: null,
+    });
+  });
+
   it("任务完成后清除任务句柄，旧任务状态不能阻塞再次发送", async () => {
     useCanvasStore.getState().setCanvasData([imageGenNode()], []);
 

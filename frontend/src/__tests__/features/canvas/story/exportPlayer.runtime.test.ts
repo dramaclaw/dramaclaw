@@ -1,0 +1,290 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { createRequire } from 'node:module';
+import { Compiler } from 'inkjs/full';
+import type { BuildPlayerHtmlOptions } from '@/features/canvas/story/export/buildPlayerHtml';
+import { buildPlayerHtml } from '@/features/canvas/story/export/buildPlayerHtml';
+import type { CompiledStory } from '@/features/canvas/story/storyTypes';
+import type { CanvasEdge, CanvasNode } from '@/features/canvas/domain/canvasNodes';
+import { compileGraphToInk } from '@/features/canvas/story/compileGraphToInk';
+
+// Execute the actual exported inline bundle as file://, independently of the app.
+const { JSDOM, VirtualConsole } = createRequire(import.meta.url)('jsdom');
+const windows: Window[] = [];
+const pause = (ms = 80) => new Promise((resolve) => setTimeout(resolve, ms));
+function compiled(overrides: Partial<CompiledStory> = {}): CompiledStory {
+  return {
+    ink: '-> intro\n=== intro ===\n# clip:intro\n开场\n* [继续] -> ending\n=== ending ===\n# clip:ending\n结局\n-> END',
+    clipByNodeId: {}, choiceLoopClipByNodeId: {}, knotByNodeId: {},
+    choiceTimeByNodeId: {}, defaultChoiceIndexByNodeId: {},
+    endingByNodeId: { ending: { title: '抵达结局' } },
+    placeholderByNodeId: { intro: { text: '故事开始' } },
+    choiceFeedbackById: {}, choiceStateChangesById: {}, choiceInteractionById: {},
+    variables: [], warnings: [], ...overrides,
+  };
+}
+async function openExport(story = compiled(), rejectPlay = false, options: BuildPlayerHtmlOptions = {}) {
+  const errors: string[] = [];
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', (error: Error) => errors.push(error.message));
+  const html = buildPlayerHtml(story, new Compiler(story.ink).Compile().ToJson()!, { origin: 'https://editor.example', ...options });
+  const dom = new JSDOM(html, {
+    url: 'file:///offline/story.html', runScripts: 'dangerously', pretendToBeVisual: true, virtualConsole,
+    beforeParse(window: Window & typeof globalThis) {
+      Object.defineProperties(window.HTMLMediaElement.prototype, {
+        play: { configurable: true, value: () => rejectPlay ? Promise.reject(new Error('NotAllowedError')) : Promise.resolve() },
+        pause: { configurable: true, value() {} },
+        load: { configurable: true, value() {} },
+      });
+    },
+  });
+  windows.push(dom.window);
+  await pause();
+  return { window: dom.window as Window & typeof globalThis, document: dom.window.document as Document, errors, html };
+}
+afterEach(() => { windows.splice(0).forEach((window) => window.close()); });
+
+describe('exported HTML using the shared player', () => {
+  it('plays a compiled story with state names that collide with knots', async () => {
+    const nodes = ['start', 'gate', 'end'].map(id => ({
+      id, type: 'videoNode', position: { x: 0, y: 0 }, data: {
+        narration: id, ...(id === 'start' ? { storyRole: 'start' } : {}),
+        ...(id === 'end' ? { endingLabel: 'END' } : {}),
+      },
+    })) as CanvasNode[];
+    const edges = [
+      { id: 'take', type: 'storyChoiceEdge', source: 'start', target: 'gate', data: {
+        choiceText: 'Take key', order: 0,
+        effects: [{ var: 'clip_start', delta: 1 }, { flag: 'clip_end', value: true }],
+      } },
+      { id: 'use', type: 'storyChoiceEdge', source: 'gate', target: 'end', data: {
+        choiceText: 'Use key', order: 0, condition: { join: 'and', items: [
+          { var: 'clip_start', op: '>=', value: 1 }, { flag: 'clip_end', value: true },
+        ] },
+      } },
+    ] as CanvasEdge[];
+    const story = compileGraphToInk(nodes, edges,
+      [{ name: 'clip_start', label: 'Score', initial: 0 }],
+      [{ name: 'clip_end', label: 'Key', initial: false }]);
+    const { document, errors } = await openExport(story);
+    const take = document.querySelector('[data-choice-stage] button') as HTMLButtonElement;
+    expect(take.textContent).toContain('Take key');
+    take.click();
+    await pause(550);
+    const use = document.querySelector('[data-choice-stage] button') as HTMLButtonElement;
+    expect(use.textContent).toContain('Use key');
+    use.click();
+    await pause(550);
+    expect(document.querySelector('[data-story-ending]')).not.toBeNull();
+    expect(errors).toEqual([]);
+  });
+
+  it('exports the exploration map, progress, rewind and clear controls without app services', async () => {
+    const { document, errors, html } = await openExport(compiled({
+      explorationNodes: [
+        { id: 'intro', label: '开场', successors: ['ending'], choices: [{ target: 'ending', text: '继续' }], isEnding: false },
+        { id: 'ending', label: '终章', successors: [], isEnding: true },
+      ],
+    }));
+    const click = async (selector: string) => {
+      const button = document.querySelector(selector) as HTMLButtonElement;
+      expect(button).not.toBeNull();
+      button.click();
+      await pause();
+    };
+    await click('button[aria-label="打开剧情探索"]');
+    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('剧情探索');
+    expect(document.querySelector('.story-exploration-summary')?.textContent).toBe('已解锁 1/2 个片段 · 结局 0/1');
+    expect(document.querySelectorAll('.story-graph-node')).toHaveLength(2);
+    expect(document.querySelectorAll('[data-story-graph-edge]')).toHaveLength(1);
+    expect(document.querySelector('.story-graph-choice')?.textContent).toBe('继续');
+    expect(document.querySelector('.story-graph-node[data-current="false"] button')?.hasAttribute('disabled')).toBe(true);
+    await click('button[aria-label="关闭剧情探索"]');
+    await click('[data-choice-stage] button');
+    await pause(550);
+    expect(document.querySelector('.story-ending-progress')?.textContent).toBe('已达成 1/1 个结局 · 探索 100%');
+    await click('button[aria-label="打开剧情探索"]');
+    await click('.story-graph-node[data-current="false"] button');
+    await click('.story-graph-replay');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[data-choice-stage]')).not.toBeNull();
+    await click('button[aria-label="打开剧情探索"]');
+    expect(document.querySelector('.story-exploration-summary')?.textContent).toBe('已解锁 2/2 个片段 · 结局 1/1');
+    await click('button[aria-label="清除探索进度"]');
+    await click('.story-exploration-confirm-buttons button:last-child');
+    await click('button[aria-label="打开剧情探索"]');
+    expect(document.querySelector('.story-exploration-summary')?.textContent).toBe('已解锁 1/2 个片段 · 结局 0/1');
+    expect(document.querySelector('script[src]')).toBeNull();
+    expect(html).toContain('.story-exploration-panel');
+    expect(document.querySelector('#app')?.textContent).not.toContain('canvas.story.exploration.');
+    expect(errors).toEqual([]);
+  });
+
+  it('keeps ZIP relative video paths playable from file:// through choices and restart', async () => {
+    const media = 'videos/0001.mp4';
+    const { document, window, errors } = await openExport(compiled({ clipByNodeId: { intro: media } }), false, { mediaPaths: 'relative' });
+    expect(document.querySelector('video')?.getAttribute('src')).toBe(media);
+    document.querySelector('video')!.dispatchEvent(new window.Event('ended', { bubbles: true }));
+    await pause();
+    (document.querySelector('[data-choice-stage] button') as HTMLButtonElement).click();
+    await pause(550);
+    expect(document.querySelector('[data-story-ending]')?.textContent).toContain('抵达结局');
+    (Array.from(document.querySelectorAll('[data-story-ending] button')).find((button) => button.textContent === '重新开始') as HTMLButtonElement).click();
+    await pause();
+    expect(document.querySelector('video')?.getAttribute('src')).toBe(media);
+    expect(errors).toEqual([]);
+  });
+
+  it('uses supplied English labels for CTA endings in the exported runtime', async () => {
+    const { document } = await openExport(compiled({
+      ink: '-> ending\n=== ending ===\n# clip:ending\nDone\n-> END',
+      endingByNodeId: { ending: { title: 'Done', cta: { label: 'Book a test drive', url: '' } } },
+    }), false, { labels: {
+      defaultChoice: 'Default', endingBadge: 'Ending', endingFallback: 'The End',
+      restart: 'Restart', loadError: 'Failed to load', placeholderBadge: 'Placeholder',
+      placeholderHint: 'Choose to continue', replayExperience: 'Experience again',
+      ctaUnconfigured: 'Destination not configured',
+    } });
+    const ending = document.querySelector('[data-story-ending]')!;
+    expect(Array.from(ending.querySelectorAll('button')).some((button) => button.textContent === 'Experience again')).toBe(true);
+    expect(ending.querySelector('[role="status"]')?.textContent).toBe('Book a test drive · Destination not configured');
+  });
+
+  it('video CTA ending hides story labels and keeps replay secondary', async () => {
+    const { document, window } = await openExport(compiled({
+      ink: '-> ending\n=== ending ===\n# clip:ending\n结局\n-> END',
+      clipByNodeId: { ending: 'https://editor.example/ending.mp4' },
+      endingByNodeId: { ending: { title: '重复标题', label: '预约试驾', cta: { label: '预约试驾', url: 'https://example.com/book' } } },
+    }));
+    expect(document.querySelector('[data-story-ending]')).toBeNull();
+    document.querySelector('video')!.dispatchEvent(new window.Event('ended', { bubbles: true }));
+    await pause();
+    const ending = document.querySelector('[data-story-ending]')!;
+    expect(ending.querySelector('h2')).toBeNull();
+    expect(ending.textContent?.match(/预约试驾/g)).toHaveLength(1);
+    expect(Array.from(ending.querySelectorAll('button')).some((button) => button.textContent === '重新体验')).toBe(true);
+    expect(ending.className).toContain('safe-area-inset-bottom');
+  });
+  it('exports functional HTTPS CTA and emits a click event without claiming a lead', async () => {
+    const { document, window } = await openExport(compiled({
+      ink: '-> ending\n=== ending ===\n# clip:ending\n结局\n-> END',
+      endingByNodeId: { ending: { title: '试驾', cta: { label: '预约试驾', url: 'https://example.com/book' } } },
+    }));
+    const events: string[] = [];
+    window.addEventListener('dramaclaw:story', (event) => events.push((event as CustomEvent).detail.type));
+    const link = document.querySelector('a')!;
+    expect(link.href).toBe('https://example.com/book');
+    link.addEventListener('click', (event) => event.preventDefault());
+    link.click();
+    expect(events).toEqual(['cta_click']);
+  });
+  it('file:// 下真正运行：占位剧情、选项、结局、重玩，无外部脚本', async () => {
+    const { document, errors } = await openExport();
+    expect(document.querySelector('script[src]')).toBeNull();
+    expect(document.querySelector('[data-story-placeholder]')?.textContent).toContain('故事开始');
+    (document.querySelector('[data-choice-stage] button') as HTMLButtonElement).click();
+    await pause(550);
+    expect(document.querySelector('[data-story-ending]')?.textContent).toContain('抵达结局');
+    (Array.from(document.querySelectorAll('[data-story-ending] button')).find((button) => button.textContent === '重新开始') as HTMLButtonElement).click();
+    await pause();
+    expect(document.querySelector('[data-story-placeholder]')).not.toBeNull();
+    expect(errors).toEqual([]);
+  });
+
+  it('带视频的结局等待 ended；自动播放被拒绝后可手动播放', async () => {
+    const { document, window, errors } = await openExport(compiled({
+      ink: '-> ending\n=== ending ===\n# clip:ending\n结局\n-> END',
+      clipByNodeId: { ending: 'https://editor.example/static/projects/p/videos/main.mp4' },
+    }), true);
+    const video = document.querySelector('video')!;
+    expect(video.getAttribute('src')).toBe('https://editor.example/static/projects/p/videos/main.mp4');
+    expect(video.classList.contains('object-contain')).toBe(true);
+    expect(document.querySelector('[data-story-ending]')).toBeNull();
+    video.dispatchEvent(new window.Event('canplay', { bubbles: true }));
+    await pause();
+    expect(document.querySelector('button[aria-label="播放当前片段"]')).not.toBeNull();
+    video.dispatchEvent(new window.Event('ended', { bubbles: true }));
+    await pause();
+    expect(document.querySelector('[data-story-ending]')?.textContent).toContain('抵达结局');
+    expect(errors).toEqual([]);
+  });
+
+  it('媒体失败显示重试入口，不静默卡死', async () => {
+    const { document, window, errors } = await openExport(compiled({ clipByNodeId: { intro: 'https://editor.example/static/projects/p/videos/main.mp4' } }));
+    document.querySelector('video')!.dispatchEvent(new window.Event('error'));
+    await pause();
+    expect(document.querySelector('[role=alert]')?.textContent).toContain('视频加载失败');
+    expect(document.querySelector('[role=alert] button')?.textContent).toBe('重试播放');
+    expect(errors).toEqual([]);
+  });
+  it('预编译 JSON 的自动跳转等待媒体结束，限时默认分支沿同一运行时推进', async () => {
+    const { document, window, errors } = await openExport(compiled({
+      ink: '-> intro\n=== intro ===\n# clip:intro\n开场\n-> choice\n=== choice ===\n# clip:choice\n选择\n+ [继续] -> ending\n=== ending ===\n# clip:ending\n结局\n-> END',
+      clipByNodeId: { intro: 'https://editor.example/static/projects/p/videos/main.mp4' },
+      choiceTimeByNodeId: { choice: 0.1 }, defaultChoiceIndexByNodeId: { choice: 0 },
+    }));
+    expect(document.querySelector('[data-choice-stage]')).toBeNull();
+    document.querySelector('video')!.dispatchEvent(new window.Event('ended'));
+    await pause(350);
+    expect(document.querySelector('[data-choice-stage]')?.getAttribute('data-choice-stage')).toBe('timeout');
+    await pause(550);
+    expect(document.querySelector('[data-story-ending]')?.textContent).toContain('抵达结局');
+    expect(errors).toEqual([]);
+  });
+
+  it('独立循环加载失败回退主视频尾帧，选择仍然可用', async () => {
+    const { document, window, errors } = await openExport(compiled({
+      clipByNodeId: { intro: 'https://editor.example/static/projects/p/videos/main.mp4' },
+      choiceLoopClipByNodeId: { intro: 'https://editor.example/static/projects/p/videos/loop.mp4' },
+    }));
+    const [main, preload] = Array.from(document.querySelectorAll('video'));
+    preload.dispatchEvent(new window.Event('canplay'));
+    await pause();
+    main.dispatchEvent(new window.Event('ended'));
+    await pause();
+    expect(document.querySelector('video')!.loop).toBe(true);
+    document.querySelector('video')!.dispatchEvent(new window.Event('error'));
+    await pause();
+    expect(document.querySelector('video')!.getAttribute('src')).toBe('https://editor.example/static/projects/p/videos/main.mp4');
+    expect(document.querySelector('video')!.loop).toBe(false);
+    expect(document.querySelector('[data-choice-stage] button')).not.toBeNull();
+    expect(document.querySelector('[role=alert]')).toBeNull();
+    expect(errors).toEqual([]);
+  });
+
+  it('导出连续自动转场时，每段视频都等待自己的结束事件', async () => {
+    const { document, window } = await openExport(compiled({
+      ink: '-> a\n=== a ===\nclip # clip:a\n-> b\n=== b ===\nclip # clip:b\n-> c\n=== c ===\nclip # clip:c\n-> END',
+      clipByNodeId: { a: '/a.mp4', b: '/b.mp4', c: '/c.mp4' },
+    }));
+    document.querySelector('video')!.dispatchEvent(new window.Event('ended'));
+    await pause();
+    expect(document.querySelector('video')!.src).toBe('https://editor.example/b.mp4');
+    document.querySelector('video')!.dispatchEvent(new window.Event('ended'));
+    await pause();
+    expect(document.querySelector('video')!.src).toBe('https://editor.example/c.mp4');
+    expect(document.querySelector('[data-story-ending]')).toBeNull();
+  });
+
+  it('导出连续空片段自动推进到可播放视频', async () => {
+    const { document } = await openExport(compiled({
+      ink: '-> a\n=== a ===\nclip # clip:a\n-> b\n=== b ===\nclip # clip:b\n-> c\n=== c ===\nclip # clip:c\n-> END',
+      clipByNodeId: { c: '/c.mp4' },
+    }));
+    expect(document.querySelector('video')!.src).toBe('https://editor.example/c.mp4');
+    expect(document.querySelector('[data-story-ending]')).toBeNull();
+  });
+
+  it('导出支持主视频兼作选择等待循环', async () => {
+    const { document, window } = await openExport(compiled({
+      clipByNodeId: { intro: '/main.mp4' }, choiceLoopClipByNodeId: { intro: '/main.mp4' },
+    }));
+    const video = document.querySelector('video')!;
+    video.dispatchEvent(new window.Event('canplay'));
+    await pause();
+    video.dispatchEvent(new window.Event('ended'));
+    await pause();
+    expect(document.querySelector('video')!.loop).toBe(true);
+    expect(document.querySelector('[data-choice-stage] button')).not.toBeNull();
+  });
+
+});

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { CanvasCreationActionId } from './nodeCatalog';
 import type { XYPosition } from '@xyflow/react';
 
 import type { FreezoneJobRef } from '@/api/ops';
@@ -148,6 +149,9 @@ export interface ToolProcessor {
 }
 
 export interface CanvasEventMap {
+  'freezone/start-creation': {
+    actionId: CanvasCreationActionId;
+  };
   'tool-dialog/open': {
     nodeId: string;
     toolType: NodeToolType;

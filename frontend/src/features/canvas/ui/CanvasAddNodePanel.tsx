@@ -141,7 +141,7 @@ export function CanvasAddNodePanel({
       >
         <div className="ui-scrollbar max-h-[min(560px,70vh)] overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
           <CanvasMenuSectionHeader label={t('node.menu.sectionAddNode')} className="pb-4" />
-          <CanvasAddNodeGrid onSelectNode={handlePickNode} />
+          <CanvasAddNodeGrid onSelectNode={handlePickNode} onActionSelected={onClose} />
 
           {skillGroups.length > 0 && (
             <>

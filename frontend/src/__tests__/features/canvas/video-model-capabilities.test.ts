@@ -1378,6 +1378,16 @@ describe("videoModeRequiresMedia — 该模式是否必须有上游素材", () =
 describe("videoNoUpstreamResetMode — 素材撤空后退回文生视频", () => {
   const EMPTY = { images: 0, videos: 0, audios: 0 };
 
+  it("keeps the pending continuity frame mode until generation captures it", () => {
+    const model = { supportedModes: ["text_to_video", "first_frame", "all_reference"] };
+    for (const mode of ["firstFrame", "allReference"] as const) {
+      const compatibleMode = videoModeForModel(mode, model, EMPTY);
+      expect(compatibleMode).toBe(mode);
+      expect(videoNoUpstreamResetMode(compatibleMode, EMPTY, model, true)).toBeNull();
+      expect(videoNoUpstreamResetMode(compatibleMode, EMPTY, model, false)).toBe("textToVideo");
+    }
+  });
+
   it("上游清空后，任何素材模式都退回文生视频", () => {
     for (const mode of [
       "allReference",
@@ -1411,7 +1421,7 @@ describe("VideoNode 接线：素材撤空 → 文生视频", () => {
     // upstreamCounts（已解析 URL）会把空态 CTA 刚铺好、还没出图的图片节点算成 0 张，
     // 用它当场就会把三个 CTA 顶回文生视频。
     expect(source).toContain(
-      "videoNoUpstreamResetMode(compatibleMode, counts, selectedVideoModel)",
+      "videoNoUpstreamResetMode(compatibleMode, counts, selectedVideoModel, fmvAutoContinuity)",
     );
   });
 
@@ -1425,7 +1435,7 @@ describe("VideoNode 接线：素材撤空 → 文生视频", () => {
 
   it("提交闸门把提示词与素材拆成两条并列判定", () => {
     expect(source).toContain(
-      "(videoModeRequiresPrompt(genMode) && !hasPromptText) ||\n      (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode);",
+      "(videoModeRequiresPrompt(genMode) && !hasPromptText) ||\n      (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode && !canPrepareContinuity);",
     );
     // 旧的三元写法：要提示词的模式就不再看素材 —— 全能参考因此漏网。
     expect(source).not.toContain(

@@ -499,7 +499,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const submitDisabled = formSubmitDisabled || modelTaskAccess.blocked;
 
   useEffect(() => {
-    return subscribeNodeAction(({ nodeId, action, requestId }) => {
+    return subscribeNodeAction(({ nodeId, action, executionMode, requestId }) => {
       if (nodeId !== id || action !== 'generate_image') return;
       publishNodeActionAccepted(requestId, id, action);
       void handleSubmit({
@@ -507,6 +507,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         // 终态再回报成功，否则对话会把“已提交”误显示成“图片已完成”。
         completionMode: 'completed',
         executionSource: 'workflow',
+        attachStoryFrame: executionMode !== 'workflow',
       })
         .then((output) => publishNodeActionSuccess(requestId, id, action, output))
         .catch((error) => publishNodeActionError(requestId, id, action, error));

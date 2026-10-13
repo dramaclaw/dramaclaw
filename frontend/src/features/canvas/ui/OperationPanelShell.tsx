@@ -64,6 +64,7 @@ export function OperationPanelShell({
   if (!expanded) {
     return (
       <div
+        data-slot="node-operation-panel"
         className={`${inlineClassName} ${INLINE_ENTER_CLASS}`}
         style={inlineStyle}
         onClick={stopPropagation}

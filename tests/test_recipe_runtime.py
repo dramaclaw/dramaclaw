@@ -677,6 +677,7 @@ async def test_generate_recipe_text_rejects_display_copy_that_drops_product_subj
 
 @pytest.mark.asyncio
 async def test_generate_recipe_text_executes_compiled_instruction(monkeypatch):
+    monkeypatch.delenv("FREEZONE_RECIPE_TEXT_TIMEOUT_SECONDS", raising=False)
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         recipe_runtime,

@@ -28,7 +28,15 @@ order) stays an agent-authored draft with the difference recorded in
    identities from the loaded production Workflow Skill and keep them identical to the admitted
    operation. `generation_answers` supplements this complete Plan; it never replaces the Plan or
    either required identity field.
-   When the Skill has a standard planner, `planning_contract.standard_planner.stages` lists its
+   Existing-story image batches are a supported exception: with `text-to-image-video`, a real
+   `source_context.story_id`, and every image mapped exactly once across `asset_targets` and
+   `targets`, the saved story supplies planning and video destinations. Include only new images
+   and optional recipe-less input briefs; keep video nodes outside the Plan. For character,
+   product or scene references, read the `interactive-story` Skill's
+   `references/reference-images.md` for a complete example and live-asset checks. If this image
+   batch reports `skill_stage_missing`, repair its mapping or extraneous executable nodes;
+   never add planning/video stages to satisfy that error.
+   For other workflows, when the Skill has a standard planner, `planning_contract.standard_planner.stages` lists its
    stages; every stage marked `required` must appear in a custom plan too (for example the
    shot-planning stage of a short drama). A node fills a stage when it has that stage's
    `node_type` and either sets `stage` to the stage id or uses one of the stage's `recipes`.
@@ -123,13 +131,15 @@ order) stays an agent-authored draft with the difference recorded in
    Never ask the user to choose a direct-canvas or standalone-node fallback after Plan validation
    fails. Such a choice cannot authorize bypassing the validator. Add the required Skill stages to
    the same Plan once, or report that they conflict with the user's exact topology.
-7. Call `freezone_prepare_workflow(plan=...)` once. It strictly validates the complete Plan,
+7. Choose `run_after_create=true` for an approved create-and-run request or `false` for create-only.
+   Story-bound plans must pass this choice; ordinary plans may omit it and default to `false`.
+   Call `freezone_prepare_workflow(operation_id=..., plan=..., run_after_create=...)` once. It strictly validates the complete Plan,
    obtains an operation-bound planning quote and server receipt, then persists an exact preview
    without writing canvas nodes. After the user reviews that preview, call
    `freezone_confirm_workflow_draft` with its exact `draft_id` and `revision`. Do not call
    `workflow_graph_compile` as a routine preflight before preparing the first draft. Use the read-only compiler
    only to diagnose and correct a validation failure. After a recovery compile succeeds, immediately
-   prepare that exact corrected Plan with `freezone_prepare_workflow(plan=...)`; do not stop after
+   prepare that exact corrected Plan with `freezone_prepare_workflow(operation_id=..., plan=..., run_after_create=...)`; do not stop after
    reporting that compilation passed.
 
 The user's imperative does not replace an exact billing confirmation receipt. Follow the quote

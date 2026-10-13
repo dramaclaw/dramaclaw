@@ -40,6 +40,10 @@ import {
   type CanvasContextToolResultPayload,
 } from "@/features/freezone/canvasContextToolResult";
 import { FREEZONE_CANVAS_WRITE_TOOL_NAME_SET } from "@/features/freezone/canvasCommandTools";
+import {
+  interactiveStoryRefreshTarget,
+  refreshInteractiveStoryCanvasFromToolFrame,
+} from "@/features/freezone/interactiveStoryCanvasRefresh";
 import { CANVAS_NODE_REFERENCE_ATTACHMENT_TYPE } from "@/features/freezone/chatNodeReferences";
 import { api } from "@/lib/api";
 import {
@@ -2574,6 +2578,12 @@ export function useSuperChat({
           : activeTurnIdRef.current;
         if (!turnId || cancelledTurnIdsRef.current.has(turnId)) break;
         updatePendingSkillStudioDraftChunksFromToolFrame(pendingSkillStudioDraftChunksRef.current, frame);
+        const storyRefresh = interactiveStoryRefreshTarget(frame);
+        if (storyRefresh && frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
+          void refreshInteractiveStoryCanvasFromToolFrame(frame).catch((error) => {
+            console.warn("[interactive-story] failed to refresh canvas after agent write", error);
+          });
+        }
         if (frame.type === "agent.tool.started") {
           dispatchCanvasContextRequestFrame(frame);
         }

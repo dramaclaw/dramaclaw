@@ -383,7 +383,10 @@ async function restoreCurrentMainlinePresetCanvas(
         localEdges,
       ),
   );
-  if (!appliedBySyncRuntime) {
+  if (appliedBySyncRuntime === false) {
+    return false;
+  }
+  if (appliedBySyncRuntime === null) {
     const setCanvasData = useCanvasStore.getState().setCanvasData;
     const merged = mergeRestoredCanvasWithLocalUserWork(
       (remote.nodes ?? []) as CanvasNode[],

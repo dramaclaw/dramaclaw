@@ -2099,15 +2099,16 @@ function workflowDraftOperationId(toolMessage: ChatMessage): string {
 }
 
 function toolStatusRuntimeText(params: {
+  t: TFunction;
   status: "running" | "done" | "failed";
   title: string;
   toolMessage: ChatMessage;
 }): string {
-  const { status, title, toolMessage } = params;
+  const { status, title, toolMessage, t } = params;
   const raw = toolRawRecord(toolMessage);
   const businessStatus = toolBusinessStatus(toolMessage);
-  if (businessStatus === "clarification_required") return "等待选择生成参数";
-  if (businessStatus === "clarification_frontend_timeout") return "等待回答已暂停";
+  if (businessStatus === "clarification_required") return t("superchat.runtime.waitingForGenerationParameters");
+  if (businessStatus === "clarification_frontend_timeout") return t("superchat.runtime.clarificationPaused");
   if (
     status === "failed" &&
     (raw?.name === "freezone_put_agent_catalog_draft_outline" ||
@@ -2290,6 +2291,7 @@ function AgentRuntimeTimeline({
   streaming: boolean;
   hideSettledToolStatus?: boolean;
 }) {
+  const { t } = useTranslation();
   const runtimeParts = agentRuntimeDisplayParts(parts, { streaming, hideSettledToolStatus });
   if (runtimeParts.length === 0) return null;
   return (
@@ -2307,7 +2309,7 @@ function AgentRuntimeTimeline({
           const detail = status === "failed" && error ? error : "";
           const title = display?.title ?? genericToolTitle(toolMessage);
           const repeatText = toolPart.repeatCount && toolPart.repeatCount > 1 ? ` × ${toolPart.repeatCount}` : "";
-          const statusText = toolStatusRuntimeText({ status, title, toolMessage });
+          const statusText = toolStatusRuntimeText({ status, title, toolMessage, t });
           return (
             <div
               key={part.id}
@@ -2826,8 +2828,10 @@ function videoApprovalParamGroups(
     const nodeData = approvalNodeData(approval, canvasNodes, nodeId);
     if (nodeData.isUpscaleNode === true) continue;
     const rawModel = textValue(nodeData?.model, fallbackModel);
+    const isStorySegment = typeof nodeData.storySegmentId === "string"
+      && Boolean(nodeData.storySegmentId.trim());
     const selectedModel = models.find((item) => item.id === rawModel) ?? models[0];
-    const model = selectedModel?.id ?? rawModel;
+    const model = isStorySegment ? rawModel : selectedModel?.id ?? rawModel;
     const qualityOptions = videoQualityOptionsForApproval(selectedModel);
     const durationBounds = videoDurationBoundsForApproval(selectedModel);
     const aspectOptions = clarificationCapabilityOptions(
@@ -2839,19 +2843,41 @@ function videoApprovalParamGroups(
       && approvalVideoHasImageInput(approval, canvasNodes, canvasEdges, nodeId, nodeData)
       && nodeData.humanReview !== true
     );
+    const continuityMode = isStorySegment
+      ? nodeData.storyRole === "start"
+        ? "independent"
+        : nodeData.continuityMode === "auto" || nodeData.continuityMode === "independent"
+          ? nodeData.continuityMode
+          : null
+      : null;
+    const storySegmentLabel = isStorySegment
+      ? textValue(nodeData.displayName ?? nodeData.title, nodeId)
+      : null;
     const params: CanvasApprovalVideoParams = {
       nodeId,
       nodeIds: [nodeId],
       model,
-      aspectRatio: normalizeApprovalStringOption(nodeData?.aspectRatio, aspectOptions, "16:9"),
-      quality: normalizeVideoQualityForApproval(nodeData?.quality, qualityOptions),
-      durationSec: clampVideoDurationForApproval(nodeData?.durationSec, durationBounds),
-      generateAudio: selectedModel?.supportsGenerateAudio === false
-        ? false
-        : Boolean(nodeData?.generateAudio),
+      aspectRatio: isStorySegment
+        ? textValue(nodeData?.aspectRatio, "")
+        : normalizeApprovalStringOption(nodeData?.aspectRatio, aspectOptions, "16:9"),
+      quality: isStorySegment
+        ? textValue(nodeData?.quality, "")
+        : normalizeVideoQualityForApproval(nodeData?.quality, qualityOptions),
+      durationSec: isStorySegment
+        ? typeof nodeData.durationSec === "number" && nodeData.durationSec > 0
+          ? nodeData.durationSec
+          : Number.NaN
+        : clampVideoDurationForApproval(nodeData?.durationSec, durationBounds),
+      generateAudio: isStorySegment
+        ? Boolean(nodeData?.generateAudio)
+        : selectedModel?.supportsGenerateAudio === false
+          ? false
+          : Boolean(nodeData?.generateAudio),
       humanReview: requiresHumanReviewConfirmation || Boolean(nodeData?.humanReview),
       requiresHumanReviewConfirmation,
       count: isCanvasApprovalVideoCount(nodeData?.count) ? nodeData.count : 1,
+      storySegmentLabels: storySegmentLabel ? [storySegmentLabel] : [],
+      continuityMode,
     };
     const signature = JSON.stringify({
       model: params.model,
@@ -2861,9 +2887,21 @@ function videoApprovalParamGroups(
       generateAudio: params.generateAudio,
       humanReview: params.humanReview,
       count: params.count,
+      continuityMode: params.continuityMode,
+      // 互动故事必须逐片段审核；即使两个片段当前参数相同，也不能合并成一行后
+      // 让一次时长调整同时覆盖两段剧情。
+      storySegmentNodeId: isStorySegment ? nodeId : null,
     });
     const existing = groups.get(signature);
-    if (existing) existing.nodeIds = [...(existing.nodeIds ?? []), nodeId];
+    if (existing) {
+      existing.nodeIds = [...(existing.nodeIds ?? []), nodeId];
+      if (storySegmentLabel) {
+        existing.storySegmentLabels = [
+          ...(existing.storySegmentLabels ?? []),
+          storySegmentLabel,
+        ];
+      }
+    }
     else groups.set(signature, params);
   }
   return [...groups.values()];
@@ -3581,7 +3619,9 @@ function CanvasCommandApprovalCard({
       approval,
     );
     const withVideoParams = videoParams.reduce(
-      (current, params) => amendCanvasApprovalWithVideoParams(current, params),
+      (current, params) => params.storySegmentLabels?.length
+        ? current
+        : amendCanvasApprovalWithVideoParams(current, params),
       withImageParams,
     );
     const withVideoUpscaleParams = amendCanvasApprovalWithVideoUpscaleParams(
@@ -3703,7 +3743,9 @@ function CanvasCommandApprovalCard({
         <div className="flex items-center gap-2 border-t border-amber-400/10 bg-white/[0.025] px-3 py-1.5 text-[11px] font-medium text-foreground/90">
           <SlidersHorizontal className="size-3.5 text-muted-foreground" />
           生成设置
-          <span className="ml-auto text-[10px] font-normal text-muted-foreground">确认后统一写入节点</span>
+          <span className="ml-auto text-[10px] font-normal text-muted-foreground">
+            {videoParams.some((params) => params.storySegmentLabels?.length) ? "影游参数按镜头规划" : "确认后统一写入节点"}
+          </span>
         </div>
       )}
       {humanReviewNodeIds.length > 0 && (
@@ -3815,14 +3857,49 @@ function CanvasCommandApprovalCard({
           selectedVideoModel?.ratioOptions,
           VIDEO_GENERATION_ASPECT_RATIOS,
         );
+        const storySegmentLabels = videoParam.storySegmentLabels ?? [];
+        const storySegmentSummary = storySegmentLabels.join("、");
+        const continuityLabel = videoParam.continuityMode
+          ? t(`canvas.story.continuity.${videoParam.continuityMode}`)
+          : null;
+        const storyDurationLabel = Number.isFinite(videoParam.durationSec)
+          ? `${videoParam.durationSec}s`
+          : "时长未规划";
+        const storyParamLabel = [
+          videoParam.model, videoParam.aspectRatio, videoParam.quality,
+          storyDurationLabel, `${videoParam.count} 个`,
+        ].filter(Boolean).join(" · ");
         return (
         <div key={`${videoParam.nodeId}:${videoParam.model}`} className="border-t border-amber-400/10 px-3 py-1">
+          {storySegmentLabels.length > 0 && (
+            <div className="mb-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span
+                className="min-w-0 truncate text-foreground/85"
+                title={storySegmentSummary}
+              >
+                {storySegmentSummary}
+              </span>
+              {continuityLabel && (
+                <span className="shrink-0 rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {continuityLabel}
+                </span>
+              )}
+            </div>
+          )}
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground">
               <Play className="size-3" />视频
               {(videoParam.nodeIds?.length ?? 1) > 1 ? ` ×${videoParam.nodeIds?.length}` : ""}
             </span>
             <span className="h-3.5 w-px bg-white/[0.12]" />
+            {storySegmentLabels.length > 0 ? (
+              <span
+                className="text-[11px] text-foreground/90"
+                aria-label={`镜头参数：${storyParamLabel}`}
+              >
+                {storyParamLabel}
+              </span>
+            ) : (<>
             <CanvasApprovalImageParamSelect
               ariaLabel="视频模型"
               disabled={isExecuting}
@@ -3848,6 +3925,7 @@ function CanvasCommandApprovalCard({
               onChange={(value) => updateVideoParams(videoParamIndex, { count: Number(value) as 1 | 2 | 4 })}
               options={CANVAS_APPROVAL_VIDEO_COUNT_OPTIONS.map((option) => ({ value: String(option), label: `${option} 个` }))}
             />
+            </>)}
           </div>
         </div>
         );
@@ -4010,7 +4088,7 @@ export const canvasContextActivityVisualToneForTest = canvasContextActivityVisua
 
 function canvasCommandFeedbackVisualTone(feedback: CanvasCommandFeedback): CanvasFeedbackVisualTone {
   const failed = canvasCommandFeedbackHasFailure(feedback);
-  if (!failed) return "success";
+  if (!failed) return feedback.warnings?.length ? "warning" : "success";
   if (canvasCommandFeedbackHasPending(feedback)) return "warning";
   if (canvasCommandFeedbackIsUserCancelled(feedback)) return "muted";
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "warning";
@@ -4076,16 +4154,18 @@ function CanvasCommandFeedbackCard({
   // so the user can see and retry the operation without an extra click.
   const [expanded, setExpanded] = useState(() => canvasCommandFeedbackIsTimeoutCancelled(feedback));
   const steps = feedback.commandResults ?? [];
+  const warnings = feedback.warnings ?? [];
   const successfulCount = feedback.applied + feedback.openedUiActions;
-  if (steps.length === 0 && successfulCount === 0 && feedback.errors.length === 0) return null;
+  if (steps.length === 0 && successfulCount === 0 && feedback.errors.length === 0 && warnings.length === 0) return null;
   const failed = canvasCommandFeedbackHasFailure(feedback);
   const pending = canvasCommandFeedbackHasPending(feedback);
   const invalidCommand = canvasCommandFeedbackIsInvalidCommand(feedback);
   const visualTone = canvasCommandFeedbackVisualTone(feedback);
   const mutedFailure = failed && visualTone === "muted";
   const warningFailure = failed && visualTone === "warning";
+  const warningOnly = !failed && warnings.length > 0;
   const initiallyCompact = failed && successfulCount === 0;
-  const collapseSuccessfulDetails = !failed && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
+  const collapseSuccessfulDetails = !failed && !warningOnly && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
   const compactTitle = canvasCommandFeedbackCompactTitle(feedback, t);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
   const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
@@ -4146,7 +4226,7 @@ function CanvasCommandFeedbackCard({
         "mt-3 w-full min-w-0 overflow-hidden rounded-xl border text-xs text-muted-foreground",
         mutedFailure
           ? "border-white/[0.10] bg-background/80 backdrop-blur-sm"
-          : invalidCommand || warningFailure
+          : invalidCommand || warningFailure || warningOnly
             ? "border-amber-400/20 bg-amber-400/[0.035]"
             : failed
               ? "border-destructive/20 bg-destructive/[0.035]"
@@ -4165,6 +4245,11 @@ function CanvasCommandFeedbackCard({
       </div>
       {expanded && <CanvasCommandPlanList plans={feedback.plans} />}
       <div className="space-y-1 px-3 py-2">
+        {warnings.length > 0 && (
+          <div className="rounded-md bg-warning/[0.06] px-2 py-1.5 leading-5 text-foreground/90">
+            图片生成已完成，素材回接待处理：{warnings.join("；")}
+          </div>
+        )}
         {userFailureMessage && (
           <div className={cn(
             "mb-1 rounded-md px-2 py-1.5 leading-5",
@@ -10951,6 +11036,7 @@ type CanvasCommandFeedbackStep = {
 };
 
 type CanvasCommandFeedback = Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
+  warnings?: string[];
   commandResults: CanvasCommandFeedbackStep[];
   key: string;
   plans?: CanvasCommandPlan[];
@@ -11018,12 +11104,14 @@ type CanvasApprovalVideoParams = {
   nodeIds?: string[];
   model: string;
   aspectRatio: string;
-  quality: VideoGenQuality;
+  quality: string;
   durationSec: number;
   generateAudio: boolean;
   humanReview: boolean;
   requiresHumanReviewConfirmation: boolean;
   count: 1 | 2 | 4;
+  storySegmentLabels?: string[];
+  continuityMode?: "auto" | "independent" | null;
 };
 
 type CanvasApprovalVideoUpscaleParams = {
@@ -11749,6 +11837,7 @@ function canvasCommandFeedbackDedupeKey(feedback: CanvasCommandFeedback): string
     applied: feedback.applied,
     openedUiActions: feedback.openedUiActions,
     errors: feedback.errors,
+    warnings: feedback.warnings,
     commandResults: (feedback.commandResults ?? []).map((step) => ({
       commandIndex: step.commandIndex,
       type: step.type,
@@ -11923,6 +12012,7 @@ function mergeCanvasCommandFeedbackValue(
   previous: CanvasCommandFeedback | undefined,
   key: string,
   result: Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
+    warnings?: string[];
     commandResults: CanvasCommandFeedbackStep[];
   },
   plans: CanvasCommandPlan[] = [],
@@ -11935,6 +12025,7 @@ function mergeCanvasCommandFeedbackValue(
     applied: (previous?.applied ?? 0) + result.applied,
     openedUiActions: (previous?.openedUiActions ?? 0) + result.openedUiActions,
     errors: dedupeGenerationErrors([...(previous?.errors ?? []), ...result.errors]),
+    warnings: dedupeGenerationErrors([...(previous?.warnings ?? []), ...(result.warnings ?? [])]),
     commandResults: mergeCanvasCommandResults(previous?.commandResults, result.commandResults),
     plans: [...(previous?.plans ?? []), ...plans],
     anchorTextPrefix: previous?.anchorTextPrefix ?? nextAnchorTextPrefix,
@@ -11972,6 +12063,7 @@ function appendCanvasCommandFeedbackCard(
   current: CanvasCommandFeedback[] | undefined,
   key: string,
   result: Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
+    warnings?: string[];
     commandResults: CanvasCommandFeedbackStep[];
   },
   plans: CanvasCommandPlan[] = [],
@@ -12004,6 +12096,9 @@ function canvasCommandApplyResultFromUnknown(value: unknown): CanvasChatCommandA
       : [],
     errors: Array.isArray(result.errors)
       ? dedupeGenerationErrors(result.errors.map((item) => String(item)))
+      : [],
+    warnings: Array.isArray(result.warnings)
+      ? dedupeGenerationErrors(result.warnings.map((item) => String(item)))
       : [],
     commandResults: commandResults.filter(
       (item): item is CanvasChatCommandApplyStep =>
@@ -12460,6 +12555,11 @@ interface SuperChatPanelProps {
   /** 「添加到对话」落地：一批 nodeId,面板挂载后 drain 成 draft 里的行内 mention chip。 */
   pendingNodeMentions?: string[];
   onPendingNodeMentionsConsumed?: () => void;
+  /** 面板外的「提交并继续」：外壳决策落定（如确认大纲）后代投一条用户消息，
+   * 面板 drain 进发送队列，与手动发送同管道（忙时排队、空闲即发）。
+   * mode="draft" 则不发送，只把文本预填进输入框并聚焦（如「需要修改」等用户补意见）。 */
+  pendingExternalSubmit?: { id: string; text: string; mode?: "send" | "draft" } | null;
+  onPendingExternalSubmitConsumed?: () => void;
   onRequestClose?: () => void;
   freezoneHeaderActions?: ReactNode;
   onFreezoneUserMessage?: (message: string, timestamp: number) => void;
@@ -12494,6 +12594,8 @@ export function SuperChatPanel({
   onPendingAttachmentsConsumed,
   pendingNodeMentions = [],
   onPendingNodeMentionsConsumed,
+  pendingExternalSubmit = null,
+  onPendingExternalSubmitConsumed,
   onRequestClose,
   freezoneHeaderActions,
   onFreezoneUserMessage,
@@ -12584,6 +12686,7 @@ export function SuperChatPanel({
   const onConnectionStateChangeRef = useRef(onConnectionStateChange);
   const consumedPendingAttachmentsKeyRef = useRef<string | null>(null);
   const consumedPendingNodeMentionsKeyRef = useRef<string | null>(null);
+  const consumedPendingExternalSubmitIdRef = useRef<string | null>(null);
   const notifiedTaskKeysRef = useRef<Set<string>>(new Set());
   const directorAutoTerminalTaskIdsRef = useRef<Set<string>>(new Set());
   const taskEventBus = useEventBus();
@@ -14624,6 +14727,35 @@ export function SuperChatPanel({
     restoreDraftFocusRef.current = true;
   }, [pendingNodeMentions, canvasNodes, canvasEdges, onPendingNodeMentionsConsumed]);
 
+  // 「提交并继续」drain：send 直接进发送队列，和手动忙时排队共用同一条 flush 路径——
+  // 空闲且已连接就立即发出，Agent 忙则排队，用户全程能在队列里看到将要发送的内容。
+  // draft 只预填输入框并聚焦，把要不要发、发什么留给用户（「需要修改」后的意见补写）。
+  useEffect(() => {
+    if (!pendingExternalSubmit) {
+      consumedPendingExternalSubmitIdRef.current = null;
+      return;
+    }
+    if (consumedPendingExternalSubmitIdRef.current === pendingExternalSubmit.id) return;
+    consumedPendingExternalSubmitIdRef.current = pendingExternalSubmit.id;
+    if (pendingExternalSubmit.mode === "draft") {
+      setDraft((current) =>
+        current.trim() ? `${current}\n${pendingExternalSubmit.text}` : pendingExternalSubmit.text,
+      );
+      restoreDraftFocusRef.current = true;
+    } else {
+      setQueuedMessages((current) => [
+        ...current,
+        {
+          id: `external-${pendingExternalSubmit.id}`,
+          text: pendingExternalSubmit.text,
+          attachments: [],
+          createdAt: Date.now(),
+        },
+      ]);
+    }
+    onPendingExternalSubmitConsumed?.();
+  }, [pendingExternalSubmit, onPendingExternalSubmitConsumed]);
+
   useEffect(() => {
     if (variant !== "freezone" || currentCanvasSelection.length > 0) return;
     setAttachments((current) => {
@@ -15345,7 +15477,7 @@ export function SuperChatPanel({
       });
       if (result.ok === false) {
         submittedAssistantClarificationKeysRef.current.delete(submissionKey);
-        toast.error(result.errors?.find(Boolean) || result.message || "提交补充信息失败，请重试");
+        toast.error(result.errors?.find(Boolean) || result.message || t("freezone.chat.clarification.submitFailed"));
         return false;
       }
       if (event.turn_id) {
@@ -15394,10 +15526,10 @@ export function SuperChatPanel({
     } catch (error) {
       submittedAssistantClarificationKeysRef.current.delete(submissionKey);
       console.error("[superchat] clarification result submit failed", error);
-      toast.error("提交补充信息失败，请重试");
+      toast.error(t("freezone.chat.clarification.submitFailed"));
       return false;
     }
-	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages]);
+	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages, t]);
 
   const submitSkillStudioDraftResponse = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,

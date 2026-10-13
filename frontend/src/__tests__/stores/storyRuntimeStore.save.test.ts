@@ -1,0 +1,243 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { compileGraphToInk } from '@/features/canvas/story/compileGraphToInk';
+import { CANVAS_NODE_TYPES, type CanvasEdge, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
+import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
+import { storySaveKey, readStorySave, writeStorySave } from '@/features/canvas/story/storySave';
+import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
+
+function v(id: string, url: string, start?: 'start'): CanvasNode {
+  return { id, type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 },
+    data: { videoUrl: url, aspectRatio: '16:9', ...(start ? { storyRole: start } : {}) } } as CanvasNode;
+}
+function e(s: string, t: string, text: string, order: number): CanvasEdge {
+  return { id: `${s}->${t}`, source: s, target: t, type: STORY_CHOICE_EDGE_TYPE,
+    data: { choiceText: text, order } } as CanvasEdge;
+}
+function fixture() {
+  return compileGraphToInk(
+    [v('intro', 'intro.mp4', 'start'), v('meet', 'meet.mp4')],
+    [e('intro', 'meet', '去见面', 0)],
+  );
+}
+
+const KEY = storySaveKey('cv1', 'g1');
+
+describe('storyRuntimeStore 存档/续玩', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useStoryRuntimeStore.getState().exitPlay();
+  });
+
+  it('无 saveKey 时退化为现状:直接 advance、不存档', () => {
+    useStoryRuntimeStore.getState().enterPlay(fixture());
+    const s = useStoryRuntimeStore.getState();
+    expect(s.saveKey).toBeNull();
+    expect(s.resumeAvailable).toBe(false);
+    expect(s.currentClipUrl).toBe('intro.mp4');
+  });
+
+  it('带 saveKey 首次进入:无存档则直接 advance 并写入初始存档', () => {
+    useStoryRuntimeStore.getState().enterPlay(fixture(), { saveKey: KEY });
+    const s = useStoryRuntimeStore.getState();
+    expect(s.saveKey).toBe(KEY);
+    expect(s.resumeAvailable).toBe(false);
+    expect(s.currentClipUrl).toBe('intro.mp4');
+    expect(readStorySave(KEY)).toBeTruthy();
+  });
+
+  it('choose 后自动更新存档', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    const initial = readStorySave(KEY);
+    store.choose(0);
+    const afterChoose = readStorySave(KEY);
+    expect(afterChoose).toBeTruthy();
+    expect(afterChoose).not.toBe(initial);
+  });
+
+  it('再次进入若有存档:不 advance,resumeAvailable=true,等玩家决定', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    store.choose(0); // 存档推进到 meet
+    store.exitPlay();
+
+    store.enterPlay(fixture(), { saveKey: KEY });
+    const s = useStoryRuntimeStore.getState();
+    expect(s.mode).toBe('play');
+    expect(s.resumeAvailable).toBe(true);
+    expect(s.phase).toBe('idle');
+    expect(s.currentClipUrl).toBeNull();
+  });
+
+  it('resumeSaved 恢复到存档点并返回 true', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    store.choose(0); // 走到 meet(结局)
+    store.exitPlay();
+    store.enterPlay(fixture(), { saveKey: KEY });
+
+    const ok = useStoryRuntimeStore.getState().resumeSaved();
+    const s = useStoryRuntimeStore.getState();
+    expect(ok).toBe(true);
+    expect(s.resumeAvailable).toBe(false);
+    expect(s.currentClipUrl).toBe('meet.mp4');
+    expect(s.phase).toBe('ended');
+  });
+
+  it('补上锚定后试玩丢弃旧选项存档，使用与实时模式一致的最新互动规格', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    store.exitPlay();
+
+    const edge = e('intro', 'meet', '去见面', 0);
+    edge.data = {
+      ...edge.data,
+      interaction: {
+        presentation: 'object-anchor',
+        anchor: { x: 0.3, y: 0.6 },
+        uiStyle: 'tag',
+        motion: 'pulse',
+      },
+    };
+    const compiled = compileGraphToInk(
+      [v('intro', 'intro.mp4', 'start'), v('meet', 'meet.mp4')], [edge],
+    );
+    store.enterPlay(compiled, { playKind: 'live' });
+    const liveChoices = useStoryRuntimeStore.getState().currentChoices;
+    store.exitPlay();
+    store.enterPlay(compiled, { saveKey: KEY });
+
+    const resumed = store.resumeSaved();
+    expect(useStoryRuntimeStore.getState().currentChoices).toEqual(liveChoices);
+    expect(resumed).toBe(false);
+    store.choose(0);
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('meet');
+  });
+
+  it('只调整锚点位置时保留续玩进度，并读取最新位置', () => {
+    const nodes = [v('intro', 'intro.mp4', 'start'), v('meet', 'meet.mp4'), v('end', 'end.mp4')];
+    const edge = e('meet', 'end', '继续', 0);
+    edge.data = { ...edge.data, interaction: { presentation: 'object-anchor', anchor: { x: 0.3, y: 0.6 } } };
+    const edges = [e('intro', 'meet', '去见面', 0), edge];
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(compileGraphToInk(nodes, edges), { saveKey: KEY });
+    store.choose(0);
+    store.exitPlay();
+
+    edge.data = { ...edge.data, interaction: { presentation: 'object-anchor', anchor: { x: 0.7, y: 0.4 } } };
+    store.enterPlay(compileGraphToInk(nodes, edges), { saveKey: KEY });
+    expect(store.resumeSaved()).toBe(true);
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('meet');
+    expect(useStoryRuntimeStore.getState().currentChoices[0].interaction?.anchor).toEqual({ x: 0.7, y: 0.4 });
+    store.choose(0);
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('end');
+  });
+
+  it('没有故事指纹的历史存档安全回到起点，不恢复旧选项标签', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture());
+    store.choose(0);
+    writeStorySave(KEY, useStoryRuntimeStore.getState().story!.state.toJson());
+    store.exitPlay();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    expect(store.resumeSaved()).toBe(false);
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('intro');
+    store.exitPlay();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    expect(store.resumeSaved()).toBe(true);
+  });
+
+  it('续玩自动跳转片段时停在存档片段，等待该片段播放完成', () => {
+    const compiled = compileGraphToInk(
+      [v('intro', '', 'start'), v('middle', ''), v('end', '')],
+      [
+        { id: 'intro->middle', source: 'intro', target: 'middle', type: STORY_CHOICE_EDGE_TYPE,
+          data: { choiceText: '', order: 0, transitionMode: 'automatic' } } as CanvasEdge,
+        { id: 'middle->end', source: 'middle', target: 'end', type: STORY_CHOICE_EDGE_TYPE,
+          data: { choiceText: '', order: 0, transitionMode: 'automatic' } } as CanvasEdge,
+      ],
+    );
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(compiled, { saveKey: KEY });
+    store.advanceAutomatic();
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('middle');
+    store.exitPlay();
+    store.enterPlay(compiled, { saveKey: KEY });
+    expect(store.resumeSaved()).toBe(true);
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('middle');
+    expect(useStoryRuntimeStore.getState().phase).toBe('playing');
+    store.advanceAutomatic();
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('end');
+  });
+
+  it('startFresh 忽略存档回到起点并覆盖存档', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    store.choose(0);
+    store.exitPlay();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    expect(useStoryRuntimeStore.getState().resumeAvailable).toBe(true);
+
+    store.startFresh();
+    const s = useStoryRuntimeStore.getState();
+    expect(s.resumeAvailable).toBe(false);
+    expect(s.currentClipUrl).toBe('intro.mp4');
+    expect(s.phase).toBe('playing');
+  });
+
+  it('损坏存档:resumeSaved 不抛、清档、回起点并返回 false', () => {
+    writeStorySave(KEY, 'not-json{');
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    expect(useStoryRuntimeStore.getState().resumeAvailable).toBe(true);
+
+    let ok: boolean | undefined;
+    expect(() => { ok = store.resumeSaved(); }).not.toThrow();
+    const s = useStoryRuntimeStore.getState();
+    expect(ok).toBe(false);
+    expect(s.resumeAvailable).toBe(false);
+    expect(s.currentClipUrl).toBe('intro.mp4');
+  });
+
+  it('存档加载成功但继续执行失败时回到起点，且后续选择仍可用', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    store.exitPlay();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    const story = useStoryRuntimeStore.getState().story!;
+    // Ink 可接受旧存档，但直到继续执行旧指针才报告不兼容。
+    const continuation = vi.spyOn(story, 'Continue').mockImplementationOnce(() => {
+      throw new Error('obj is null or undefined');
+    });
+    try {
+      expect(store.resumeSaved()).toBe(false);
+      expect(useStoryRuntimeStore.getState()).toMatchObject({
+        resumeAvailable: false,
+        currentClipUrl: 'intro.mp4',
+        phase: 'playing',
+      });
+      store.choose(0);
+      expect(useStoryRuntimeStore.getState().currentClipUrl).toBe('meet.mp4');
+    } finally {
+      continuation.mockRestore();
+    }
+  });
+
+  it('exitPlay 保留存档(下次可续玩)', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    store.choose(0);
+    store.exitPlay();
+    expect(readStorySave(KEY)).toBeTruthy();
+  });
+
+  it('restart 覆盖存档为起点', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    store.choose(0);
+    store.restart();
+    expect(useStoryRuntimeStore.getState().currentClipUrl).toBe('intro.mp4');
+    // 覆盖后再退出重进应直接续到起点态(此处仅验证存档仍存在且可被后续 resume 读到)
+    expect(readStorySave(KEY)).toBeTruthy();
+  });
+});

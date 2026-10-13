@@ -115,6 +115,15 @@ def repo_skills(isolated_workspace):
     ):
         (skills / name).mkdir()
         (skills / name / "SKILL.md").write_text(f"# {name}\n")
+    shared_story = (
+        isolated_workspace
+        / "src"
+        / "novelvideo"
+        / "agent_skills"
+        / "interactive-story"
+    )
+    shared_story.mkdir(parents=True)
+    (shared_story / "SKILL.md").write_text("# shared interactive story\n")
     return skills
 
 
@@ -185,6 +194,13 @@ def test_freezone_profile_uses_isolated_workspace(
 
     assert home == isolated_workspace / "state" / "admin" / ".hermes-freezone"
     assert (home / "skills" / "freezone").is_symlink()
+    assert (home / "skills" / "interactive-story").resolve() == (
+        isolated_workspace
+        / "src"
+        / "novelvideo"
+        / "agent_skills"
+        / "interactive-story"
+    )
     assert (home / "skills" / "workflows").is_symlink()
     assert not (home / "skills" / "dramaclaw").exists()
     assert (home / "plugins" / "freezone").is_symlink()
@@ -369,7 +385,12 @@ def test_freezone_profile_materializes_native_workflow_skills(
 
     assert "name: ecommerce-ad" in content
     assert 'skill_id="ecommerce-ad"' in content
+    assert 'freezone_begin_agent_product_generation(product_kind="workflow_result"' in content
+    assert 'skill_id="ecommerce-ad"' in content
+    assert "skill_version=规划包版本" in content
     assert "freezone_prepare_workflow_draft" in content
+    assert "freezone_prepare_workflow_plan_draft" in content
+    assert "显式传入 `run_after_create`" in content
     assert "freezone_patch_workflow_draft" in content
     assert "freezone_confirm_workflow_draft" in content
     assert "freezone_create_workflow_from_intent" not in content

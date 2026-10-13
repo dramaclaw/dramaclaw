@@ -2141,6 +2141,8 @@ class CanvasPayload(BaseModel):
         "from_preset",
         "projection_remove",
         "import",
+        "agent_create",
+        "agent_patch",
     ] = "autosave"
     allow_empty_overwrite: bool = False
     nodes: list[dict] = Field(default_factory=list)
