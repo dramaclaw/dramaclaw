@@ -2825,7 +2825,7 @@
     "title": "Story Source",
     "subtitle": "Upload a script and start your creative journey.",
     "dropzoneHint": "Click or drop your novel file here",
-    "supportedFormats": "Supports .txt / .md / .docx · File up to 512KB · Text up to 100,000 characters",
+    "supportedFormats": "Supports .txt / .md / .docx · Structured import: 8 MiB / 1,000,000 characters; other pipelines: 512 KiB / 100,000 characters",
     "uploadingTitle": "Uploading novel…",
     "uploadingHint": "Please stay on this page until the upload finishes. It may take a moment on a slow connection.",
     "inputMode": {
