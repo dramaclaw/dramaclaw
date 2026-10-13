@@ -2041,6 +2041,51 @@ def test_metered_workflow_result_is_delivered_once_before_canvas_confirmation(
     assert after_confirm["status"] == "delivered"
 
 
+def test_metered_workflow_result_with_bindings_replays_delivered_draft(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+    )
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    operation = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+        json={
+            "product_kind": "workflow_result",
+            "generation_session_id": "generation-with-bindings",
+            "canvas_id": "default",
+            "artifact_id": "video-ad@1.0.0",
+            "normalized_inputs_hash": "inputs-with-bindings",
+            "metadata": {"skill_id": "video-ad", "skill_version": "1.0.0"},
+        },
+    ).json()["data"]
+    bind_agent_product_model_execution(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation["operation_id"],
+        model_call_id="agent-turn:turn-bindings:tool:call-bindings",
+        executed_at=1.0,
+        source="server_observed_agent_turn",
+        turn_id="turn-bindings",
+        tool_call_id="call-bindings",
+    )
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-drafts"
+    request = {
+        "operation_id": operation["operation_id"],
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+        "compiled": _valid_draft_compiled(),
+        "bindings": [],
+    }
+
+    first = workflow_run_client.post(base, json=request)
+    retry = workflow_run_client.post(base, json=request)
+
+    assert first.status_code == 200, first.text
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["data"]["draft_id"] == first.json()["data"]["draft_id"]
+
+
 def test_workflow_result_rejects_operation_for_another_compiled_skill(
     workflow_run_client: TestClient,
 ) -> None:

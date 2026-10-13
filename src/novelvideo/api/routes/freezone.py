@@ -15024,8 +15024,10 @@ async def _prepare_workflow_source(body: dict, user: dict) -> dict:
 
 def _workflow_draft_source_kind(source: dict) -> str:
     intent = source.get("intent")
-    if isinstance(source.get("plan"), dict) or (
-        isinstance(intent, dict) and isinstance(intent.get("plan"), dict)
+    if (
+        "bindings" in source
+        or isinstance(source.get("plan"), dict)
+        or (isinstance(intent, dict) and isinstance(intent.get("plan"), dict))
     ):
         return "exact_plan"
     return "compact_intent"
