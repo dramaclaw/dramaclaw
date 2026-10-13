@@ -93,9 +93,11 @@ _REVERIFIED_EVENTS = frozenset(
         "ping",
         "chat.send",
         "chat.request",
+        "chat.request.message",
         "chat.request.respond",
         "chat.private.send",
         "profile.refresh",
+        "profile.update",
     }
 )
 

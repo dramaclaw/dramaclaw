@@ -3,6 +3,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   upsertRemotePlayer,
+  updateRemotePlayerTaskStatus,
   usePikoWorldConnection,
   type PikoCharacter,
   type PikoRemotePlayer,
@@ -78,6 +79,36 @@ it("drops an expired speech bubble on the next player update", () => {
   const result = upsertRemotePlayer(players, remotePlayer({ x: 140 }), 20_000);
 
   expect(result[0].speech).toBeUndefined();
+});
+
+it("updates only the matching remote player's public task status", () => {
+  const players = [
+    remotePlayer({ character_id: "player-1" }),
+    remotePlayer({ character_id: "player-2", task_status: "running" }),
+  ];
+
+  const result = updateRemotePlayerTaskStatus(players, "player-1", "running");
+
+  expect(result[0].task_status).toBe("running");
+  expect(result[1]).toBe(players[1]);
+});
+
+it("accepts task status in snapshots and consumes live task status events", () => {
+  const hook = renderHook(() => usePikoWorldConnection(localCharacter, localCharacter.scene_id));
+  act(() => sockets[0].open());
+  act(() => sockets[0].receive({
+    type: "world.snapshot",
+    players: [remotePlayer({ task_status: "running" })],
+  }));
+  expect(hook.result.current.remotePlayers[0].task_status).toBe("running");
+
+  act(() => sockets[0].receive({
+    type: "player.task_status",
+    character_id: "player-1",
+    task_status: null,
+  }));
+  expect(hook.result.current.remotePlayers[0].task_status).toBeNull();
+  hook.unmount();
 });
 
 it("sends heartbeats and leaves explicitly when the page is hidden", () => {

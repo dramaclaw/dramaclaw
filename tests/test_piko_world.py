@@ -406,7 +406,10 @@ def install_world_route(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("event_type", ["chat.send", "chat.private.send", "ping"])
+@pytest.mark.parametrize(
+    "event_type",
+    ["chat.send", "chat.private.send", "chat.request.message", "profile.update", "ping"],
+)
 async def test_revoked_session_is_disconnected_before_its_next_event(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event_type: str
 ) -> None:
@@ -456,8 +459,12 @@ async def test_session_handed_to_another_account_is_disconnected(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event_type",
+    ["chat.send", "chat.request.message", "profile.update"],
+)
 async def test_auth_outage_drops_the_event_but_keeps_the_connection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event_type: str
 ) -> None:
     state = {"down": False}
 
@@ -470,7 +477,7 @@ async def test_auth_outage_drops_the_event_but_keeps_the_connection(
     socket = ScriptedWebSocket(
         [
             lambda: state.update(down=True),
-            '{"type": "chat.send", "body": "鉴权不可用"}',
+            '{"type": "%s", "body": "鉴权不可用"}' % event_type,
             lambda: state.update(down=False),
             '{"type": "chat.send", "body": "恢复"}',
         ]

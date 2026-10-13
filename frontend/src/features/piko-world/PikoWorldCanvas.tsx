@@ -3,7 +3,7 @@
 import { createTownHallAmbience } from "./runtime/town-hall-ambience";
 import { TOWN_HALL_NOTICES } from "./runtime/town-hall-interactions";
 import { mapPerspectiveScale } from "./runtime/map-perspective";
-import { PikoTaskLabel } from "./PikoTaskLabel";
+import { PikoPublicTaskLabel, PikoTaskLabel } from "./PikoTaskLabel";
 import type { PikoOwnTaskStatus } from "./use-piko-task-status";
 import { PIKO_MAP_TRAVEL_TIMING } from "./piko-map-timing";
 import { PikoSpeechBubble } from "./PikoSpeechBubble";
@@ -880,6 +880,14 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
       {taskStatus && <PikoTaskLabel task={taskStatus} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 81 : 136) * mapPerspectiveScale(mapId, playerPosition.y) + playerNameGap}
         available={loadState === "ready" && showMayorHint && !movementBlocked && !welcomeOpen && !speech}
         onInteract={() => stopPlayerRef.current()} />}
+      {loadState === "ready" && showMayorHint && remotePlayers.map(player => player.task_status === "running" ? (
+        <PikoPublicTaskLabel key={`task:${player.character_id}`}
+          position={{ x: player.x, y: player.y }} fit={worldFit}
+          headOffset={(player.seat_id ? 81 : 136) * mapPerspectiveScale(mapId, player.y)
+            + playerAccessoryNameGap(player.accessory_id ?? null,
+              playerWorldScale(mapId, player.y, Boolean(player.seat_id)))}
+          available={!movementBlocked && !welcomeOpen && !player.speech} />
+      ) : null)}
       {loadState === "ready" && showMayorHint && speech && !playerHeadOccluded && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 73 : 128) * mapPerspectiveScale(mapId, playerPosition.y) + playerNameGap} />}
       {loadState === "ready" && showMayorHint && remotePlayers.map(player => player.speech
         && player.speech.expiresAt > Date.now()

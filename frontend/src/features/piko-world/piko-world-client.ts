@@ -31,6 +31,7 @@ export type PikoRemotePlayer = {
   facing: PikoFacing;
   seat_id?: string | null;
   accessory_id?: PlayerAccessorySelection;
+  task_status?: "running" | null;
   speech?: { id: string; body: string; expiresAt: number };
 };
 export type PikoWorldChatMessage = {
@@ -94,6 +95,8 @@ function validPlayer(value: unknown): value is PikoRemotePlayer {
     && typeof player.y === "number" && Number.isFinite(player.y)
     && (player.seat_id === undefined || player.seat_id === null || typeof player.seat_id === "string")
     && (player.accessory_id === undefined || isPlayerAccessorySelection(player.accessory_id))
+    && (player.task_status === undefined || player.task_status === null
+      || player.task_status === "running")
     && ["north", "south", "east", "west"].includes(String(player.facing));
 }
 
@@ -138,6 +141,16 @@ export function upsertRemotePlayer(
     ...players.filter(player => player.character_id !== next.character_id),
     speech ? { ...next, speech } : next,
   ];
+}
+
+export function updateRemotePlayerTaskStatus(
+  players: PikoRemotePlayer[],
+  characterId: string,
+  status: "running" | null,
+): PikoRemotePlayer[] {
+  return players.map(player => player.character_id === characterId
+    ? { ...player, task_status: status }
+    : player);
 }
 
 export function usePikoWorldConnection(character: PikoCharacter | null, sceneId: string, accessory: PlayerAccessorySelection = null) {
@@ -288,6 +301,15 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
         }
         if (frame.type === "player.left" && typeof frame.character_id === "string") {
           setRemotePlayers(players => players.filter(player => player.character_id !== frame.character_id));
+          return;
+        }
+        if (frame.type === "player.task_status" && typeof frame.character_id === "string"
+          && (frame.task_status === "running" || frame.task_status === null)) {
+          setRemotePlayers(players => updateRemotePlayerTaskStatus(
+            players,
+            frame.character_id as string,
+            frame.task_status as "running" | null,
+          ));
           return;
         }
         if (frame.type === "chat.message" && frame.message && typeof frame.message === "object") {
