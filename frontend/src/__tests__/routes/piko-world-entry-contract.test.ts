@@ -67,14 +67,12 @@ describe("Piko World 项目中心入口", () => {
     expect(worldShell).toContain("flex items-center gap-5");
     expect(worldShell).toContain("inline-flex size-9 items-center justify-center");
     expect(worldShell).toContain("unreadChatCount");
-    expect(worldShell).toContain("!message.mine && message.unread ? 1 : 0");
     expect(worldShell).toContain("unreadChatCount > 99 ? \"99+\" : unreadChatCount");
     expect(worldShell).toContain("border-amber-950/45 bg-amber-400");
     expect(worldShell).toContain("absolute -right-[3px] -top-[3px]");
     expect(worldShell).not.toContain("text-amber-950 shadow-sm");
     expect(worldShell).toContain('t("pikoWorld.chatToggleUnread", { count: unreadChatCount })');
-    expect(worldShell).toContain("if (message.mine || !message.unread) return message");
-    expect(worldShell).toContain("return changed ? nextMessages : messages");
+    // The extracted history hook's behavior is covered by piko-chat-history.test.ts.
     expect(worldShell).not.toContain("CONTROL_TOOLTIP_CLASS");
     expect(worldShell).not.toContain("<TooltipProvider");
     expect(worldShell).not.toContain("<Tooltip");

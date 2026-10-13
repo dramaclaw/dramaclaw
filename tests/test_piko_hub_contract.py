@@ -94,6 +94,16 @@ async def test_disconnect_ends_the_peers_private_session(world) -> None:
         )
 
 
+async def test_shutdown_ends_private_sessions_and_clears_connected_players(world) -> None:
+    await world.hub.close()
+    assert not world.hub._players
+    if isinstance(world.hub, DistributedPikoWorldHub):
+        for character in world.characters:
+            assert not await world.hub.redis.smembers(world.hub._active_chat_key(character.id))
+    else:
+        assert not world.hub._private_peers
+
+
 async def test_replacement_ends_the_peers_private_session(world) -> None:
     replacement = Socket()
     await world.hub.join(replacement, user_id="alice", character=world.characters[0])

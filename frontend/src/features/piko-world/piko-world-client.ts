@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "@/api/client";
 import type { PikoPlayerGender } from "./piko-player";
 import { PIKO_CHAT_BUBBLE_MS } from "./piko-public-chat";
+import { PRIVATE_CHAT_HISTORY_LIMIT, PUBLIC_CHAT_HISTORY_LIMIT } from "./piko-chat-history";
 
 const PIKO_HEARTBEAT_MS = 15_000;
 const MESSAGE_CONFIRMATION_TIMEOUT_MS = 8_000;
@@ -239,7 +240,8 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
           const message = frame.message as PikoWorldChatMessage;
           if (!message.id || !message.character_id || !message.body) return;
           if (message.character_id === character.id && message.client_message_id) finishSend(message.client_message_id, true);
-          setChatMessages(messages => [...messages.slice(-99), message]);
+          setChatMessages(messages => messages.some(item => item.id === message.id)
+            ? messages : [...messages.slice(-(PUBLIC_CHAT_HISTORY_LIMIT - 1)), message]);
           if (message.character_id !== character.id) {
             setRemotePlayers(players => players.map(player => player.character_id === message.character_id
               ? { ...player, speech: {
@@ -284,7 +286,7 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
           if (message.from_character_id === character.id && message.client_message_id) finishSend(message.client_message_id, true);
           setPrivateChatMessages(messages => messages.some(item => item.id === message.id)
             ? messages
-            : [...messages.slice(-199), message]);
+            : [...messages.slice(-(PRIVATE_CHAT_HISTORY_LIMIT - 1)), message]);
           return;
         }
         if (frame.type === "chat.private.ended" && typeof frame.character_id === "string") {
@@ -328,7 +330,6 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
       window.removeEventListener("pageshow", resumeWorld);
       stopHeartbeat();
       if (reconnectRef.current !== undefined) window.clearTimeout(reconnectRef.current);
-      socketRef.current?.close();
       socketRef.current = null;
     };
   }, [characterId, failPendingSends, finishSend, send, syncProfile]);

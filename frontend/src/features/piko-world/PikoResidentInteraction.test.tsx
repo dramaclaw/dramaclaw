@@ -32,7 +32,7 @@ it("shows the clicked resident profile and releases movement after closing", asy
   await waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
   expect(input.onBusyChange).toHaveBeenLastCalledWith(false);
 });
-it("closes with Escape and shows a non-modal local chat request notice", async () => {
+it("closes with Escape and explains NPC chat support in a non-modal notice", async () => {
   const user = userEvent.setup(), input = props();
   render(<PikoResidentInteraction {...input} />);
   const trigger = screen.getByRole("button", { name: "与小苔互动" });
@@ -43,10 +43,25 @@ it("closes with Escape and shows a non-modal local chat request notice", async (
   expect(input.onBusyChange).toHaveBeenLastCalledWith(false);
   await user.click(trigger);
   await user.click(await screen.findByRole("menuitem", { name: "聊一聊" }));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("已发送聊天申请，请等待对方回复"));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("小镇居民暂不接收私聊申请"));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(playPikoUiSound).toHaveBeenLastCalledWith("open");
   expect(input.onBusyChange).toHaveBeenLastCalledWith(false);
+});
+
+it("shows a request notice only when the online request callback succeeds", async () => {
+  const user = userEvent.setup();
+  const onChatRequest = vi.fn(() => false);
+  render(<PikoResidentInteraction {...props()} onChatRequest={onChatRequest} />);
+  const trigger = screen.getByRole("button", { name: "与小苔互动" });
+  await user.click(trigger);
+  await user.click(await screen.findByRole("menuitem", { name: "聊一聊" }));
+  expect(onChatRequest).toHaveBeenCalledOnce();
+  expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  onChatRequest.mockReturnValue(true);
+  await user.click(trigger);
+  await user.click(await screen.findByRole("menuitem", { name: "聊一聊" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("已发送聊天申请"));
 });
 it("tracks position and viewport changes and clears interaction state on removal", () => {
   const input = props();

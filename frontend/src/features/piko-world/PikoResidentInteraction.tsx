@@ -15,7 +15,7 @@ export type PikoInteractionTarget = {
   id: string; nickname: string; bio: string; residentId?: PikoResidentId;
 };
 
-/** Local resident interaction; no network request is sent by the chat preview. */
+/** Shared interaction surface for NPC information and online player requests. */
 export function PikoResidentInteraction({ target, position, fit, onBusyChange, onHover, onChatRequest }: {
   target: PikoInteractionTarget; position: Point; fit: PikoViewportFit;
   onBusyChange: (busy: boolean) => void; onHover: (hovered: boolean) => void;
@@ -58,7 +58,7 @@ export function PikoResidentInteraction({ target, position, fit, onBusyChange, o
       </DropdownMenuContent>
     </DropdownMenu>
     <div role="status" aria-live="polite" className="pointer-events-none absolute inset-x-4 bottom-6 z-30 flex justify-center">
-      {requestNotice > 0 && <p className={`${popupStyles.surface} m-0 px-4 py-2 text-center text-sm`}>{t("pikoWorld.chatRequestSent")}</p>}
+      {requestNotice > 0 && <p className={`${popupStyles.surface} m-0 px-4 py-2 text-center text-sm`}>{t(onChatRequest ? "pikoWorld.chatRequestSent" : "pikoWorld.localResidentChatNotice")}</p>}
     </div>
     <Dialog open={panel !== null} onOpenChange={open => { if (!open) setPanel(null); }}>
       <DialogContent showCloseButton={false} finalFocus={() => document.getElementById(triggerId)}

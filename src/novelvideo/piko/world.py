@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 import math
 import sqlite3
 import threading
@@ -93,7 +94,7 @@ class PikoCharacterStore:
         return PikoCharacter(**dict(row)) if row is not None else None
 
     def get(self, user_id: str) -> PikoCharacter | None:
-        with self._lock, self._connect() as connection:
+        with self._lock, closing(self._connect()) as connection, connection:
             row = connection.execute(
                 "SELECT * FROM piko_characters WHERE user_id = ?", (user_id,)
             ).fetchone()
@@ -103,7 +104,7 @@ class PikoCharacterStore:
         self, user_id: str, *, nickname: str, gender: str, bio: str = ""
     ) -> PikoCharacter:
         now = _utc_now()
-        with self._lock, self._connect() as connection:
+        with self._lock, closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO piko_characters (
@@ -134,7 +135,7 @@ class PikoCharacterStore:
     ) -> None:
         if not _valid_coordinate(x) or not _valid_coordinate(y):
             return
-        with self._lock, self._connect() as connection:
+        with self._lock, closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 UPDATE piko_characters
@@ -278,6 +279,13 @@ class PikoWorldHub:
             player.scene_id,
             {"type": "player.left", "character_id": player.character_id},
         )
+
+    async def close(self) -> None:
+        """Persist locations and terminate private sessions during API shutdown."""
+        async with self._lock:
+            sockets = list(self._players)
+        for websocket in sockets:
+            await self.disconnect(websocket)
 
     def _detach_connection(self, websocket: WebSocket) -> tuple[OnlinePlayer | None, set[WebSocket]]:
         """Remove a connection and its relationships while holding ``_lock``."""

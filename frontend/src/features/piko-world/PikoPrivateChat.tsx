@@ -95,9 +95,9 @@ function PrivateConversation({ active, peer, messages, ownCharacterId, ownNickna
     let incoming = 0;
     for (const message of messages) {
       if (seenMessages.current.has(message.id)) continue;
-      seenMessages.current.add(message.id);
       if (message.from_character_id !== ownCharacterId) incoming += 1;
     }
+    seenMessages.current = new Set(messages.map(message => message.id));
     if (incoming && !openRef.current) {
       setUnread(count => count + incoming);
       playPikoUiSound("notification");
