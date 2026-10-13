@@ -20,7 +20,6 @@ deployment this should move behind the task worker/runtime boundary.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -46,6 +45,7 @@ from novelvideo.chat.hermes_workspace import (
     FREEZONE_HERMES_TOOL_DENY,
     effective_gateway_credentials,
     effective_gateway_fingerprint,
+    effective_gateway_runtime_fingerprint,
     ensure_user_hermes_workspace,
     freezone_python_hook_dir,
 )
@@ -211,21 +211,19 @@ def _origin_of(url: str | None) -> tuple[str, str]:
 
 
 def gateway_origin_fingerprint() -> str:
-    """Fingerprint the gateway a worker talks to, deliberately excluding the key.
+    """Fingerprint worker-bound model routing, deliberately excluding the key.
 
     Rotating a worker is expensive — a new subprocess, a fresh ACP session, a
     cold connection pool — and the key is no longer a property of the worker.
     It now arrives with each turn, so two turns that differ only by credential
-    can share one worker; only a change of endpoint requires a new one.
+    can share one worker. Endpoint, model, and API protocol are written into the
+    worker config and therefore require a rotation when any of them changes.
 
     ``hermes_workspace.effective_gateway_fingerprint`` still hashes the key and
     is left untouched: that module is frozen pending a recovery review, and this
     is the one call site that needed the narrower key.
     """
-    _, base_url = effective_gateway_credentials()
-    parts = urlsplit((base_url or "").strip())
-    origin = f"{parts.scheme.lower()}://{parts.netloc.lower()}"
-    return hashlib.sha256(origin.encode("utf-8")).hexdigest()
+    return effective_gateway_runtime_fingerprint()
 
 
 class _ManagedHermesThread:

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from novelvideo import config
 from novelvideo.api.routes import model_gateway
+from novelvideo.chat import hermes_pool, hermes_workspace
 from novelvideo.chat import service as chat_service
 from novelvideo.model_gateway_settings import (
     AGENT_LLM_MODE_INHERIT,
@@ -56,6 +57,18 @@ def test_third_party_agent_route_is_independent_from_media_gateway(
     catalog_path = Path(json.loads(catalog_setting.split("=", 1)[1]))
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     assert any(item.get("slug") == "vendor-agent-model" for item in catalog["models"])
+
+    assert hermes_workspace._hermes_model_default() == "vendor-agent-model"
+    assert hermes_workspace._hermes_model_api_mode() == "codex_responses"
+
+    first_fingerprint = hermes_pool.gateway_origin_fingerprint()
+    save_agent_llm_config(
+        mode=AGENT_LLM_MODE_THIRD_PARTY,
+        base_url="https://agent.example",
+        api_key="sk-agent-secret",
+        model="vendor-agent-model-v2",
+    )
+    assert hermes_pool.gateway_origin_fingerprint() != first_fingerprint
 
     save_agent_llm_config(mode=AGENT_LLM_MODE_INHERIT)
     assert get_effective_llm_config().mode == "official"
