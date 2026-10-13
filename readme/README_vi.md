@@ -199,6 +199,11 @@ Công cụ previz 3D trong trình duyệt để bố trí bối cảnh, dàn c�
 
 Đặt lựa chọn phân nhánh và biến truyện trên canvas, biên dịch thành truyện ink và xuất trình phát HTML độc lập, kèm thống kê playtest và độ phủ đường đi.
 
+<p align="center">
+  <img src="../assets/readme/interactive-story.gif" width="900" alt="Interactive stories — branching workflow and player"/>
+</p>
+<p align="center"><sub>Tạo truyện phân nhánh, biên tập trên canvas, phát tương tác và trải nghiệm nhiều kết thúc.</sub></p>
+
 <br/>
 
 ### XiaHua — bảng vẽ vô hạn

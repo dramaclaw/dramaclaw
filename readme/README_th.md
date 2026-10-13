@@ -199,6 +199,11 @@ Xia Director แปลงบรีฟสร้างสรรค์ด้วย�
 
 กำหนดตัวเลือกแบบแตกแขนงและตัวแปรเรื่องราวบน canvas คอมไพล์เป็น ink story และส่งออก HTML player แบบ self-contained พร้อมสถิติ playtest และ path coverage
 
+<p align="center">
+  <img src="../assets/readme/interactive-story.gif" width="900" alt="Interactive stories — branching workflow and player"/>
+</p>
+<p align="center"><sub>สร้างเรื่องแบบแตกแขนง เรียบเรียงบน canvas เล่นแบบอินเทอร์แอคทีฟ และสัมผัสหลายตอนจบ</sub></p>
+
 <br/>
 
 ### XiaHua — canvas ไร้ขอบเขต

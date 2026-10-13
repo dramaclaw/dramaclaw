@@ -199,6 +199,11 @@ An in-browser 3D previs tool for scene layout, character blocking and camera des
 
 Set branching choices and story variables on the canvas, compile to an ink story and export a self-contained HTML player, with playtest stats and path coverage.
 
+<p align="center">
+  <img src="./assets/readme/interactive-story.gif" width="900" alt="Interactive stories — branching workflow and player"/>
+</p>
+<p align="center"><sub>Branching story generation, canvas authoring, interactive playback and multiple endings.</sub></p>
+
 <br/>
 
 ### XiaHua — infinite canvas

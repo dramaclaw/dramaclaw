@@ -198,6 +198,11 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 
 在画布上设置分支选择点与剧情变量，编译成 ink 故事并导出为独立 HTML 播放器，带试玩统计与路径覆盖。
 
+<p align="center">
+  <img src="../assets/readme/interactive-story.gif" width="900" alt="Interactive stories — branching workflow and player"/>
+</p>
+<p align="center"><sub>分支剧情生成、画布编排、交互播放与多结局体验。</sub></p>
+
 <br/>
 
 ### 虾画 —— 无限画布
