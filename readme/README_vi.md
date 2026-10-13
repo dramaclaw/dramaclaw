@@ -189,8 +189,6 @@ Các tính năng agent dưới đây đã có trên nhánh mã nguồn `main`; i
   <img src="../assets/readme/previz-canvas-node.gif" width="720" alt="Previz — character motion and camera preview"/>
 </p>
 
-[▶ Xem demo sân khấu 3D (6 giây)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
-
 <br/>
 
 ### Truyện tương tác

@@ -188,8 +188,6 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
   <img src="../assets/readme/previz-canvas-node.gif" width="720" alt="Previz — character motion and camera preview"/>
 </p>
 
-[▶ 观看 3D 导演台演示（6 秒）](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
-
 <br/>
 
 ### 互动剧
