@@ -157,9 +157,9 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 ### 虾导 —— 智能体
 
 <p align="center">
-  <img src="../assets/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
+  <img src="../assets/readme/freezone-agent.gif" width="900" alt="Xia Director — canvas workflow"/>
 </p>
-<p align="center"><sub>虾导创建并启动了 17 个节点、32 条连线的工作流；画布成果与确认、执行记录同时可见。</sub></p>
+<p align="center"><sub>虾导演示：描述需求、确认工作流，在画布上完成节点创建、素材生成与成片合成。</sub></p>
 
 **现在**
 

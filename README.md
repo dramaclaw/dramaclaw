@@ -158,9 +158,9 @@ It's built for creators, indie studios and creative engineers — run the whole 
 ### Xia Director — the agent
 
 <p align="center">
-  <img src="./assets/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
+  <img src="./assets/readme/freezone-agent.gif" width="900" alt="Xia Director — canvas workflow"/>
 </p>
-<p align="center"><sub>Xia Director created and started a 17-node, 32-edge workflow; the canvas and confirmation history remain visible together.</sub></p>
+<p align="center"><sub>Xia Director demo: describe the task, confirm the workflow, then follow node creation, generation and composition on the canvas.</sub></p>
 
 **Today**
 

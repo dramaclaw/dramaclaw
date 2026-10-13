@@ -158,9 +158,9 @@ Nó được xây cho người sáng tạo, studio độc lập và kỹ sư sá
 ### Xia Director — agent
 
 <p align="center">
-  <img src="../assets/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
+  <img src="../assets/readme/freezone-agent.gif" width="900" alt="Xia Director — canvas workflow"/>
 </p>
-<p align="center"><sub>Xia Director đã tạo và khởi chạy workflow gồm 17 node và 32 cạnh; canvas và lịch sử xác nhận được hiển thị cùng nhau.</sub></p>
+<p align="center"><sub>Demo Xia Director: mô tả yêu cầu, xác nhận workflow, rồi theo dõi việc tạo node, sinh nội dung và ghép video trên canvas.</sub></p>
 
 **Hiện tại**
 

@@ -158,9 +158,9 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 ### Xia Director — agent
 
 <p align="center">
-  <img src="../assets/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
+  <img src="../assets/readme/freezone-agent.gif" width="900" alt="Xia Director — canvas workflow"/>
 </p>
-<p align="center"><sub>Xia Director สร้างและเริ่ม workflow ที่มี 17 node และ 32 เส้นเชื่อม โดยแสดง canvas และประวัติการยืนยันร่วมกัน</sub></p>
+<p align="center"><sub>Demo Xia Director: บรรยายงาน ยืนยัน workflow แล้วติดตามการสร้าง node สร้างสื่อ และรวมวิดีโอบน canvas</sub></p>
 
 **วันนี้**
 
