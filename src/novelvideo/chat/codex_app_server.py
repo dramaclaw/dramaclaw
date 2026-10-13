@@ -200,6 +200,8 @@ class _SharedCodexRuntime:
         self._signature: tuple[object, ...] | None = None
         self._socket_path: Path | None = None
         self._signature_path: Path | None = None
+        self._active_clients = 0
+        self._restart_pending = False
 
     @staticmethod
     def _socket_accepting(socket_path: Path) -> bool:
@@ -328,6 +330,46 @@ class _SharedCodexRuntime:
                 self.stop()
                 raise RuntimeError("Timed out waiting for the shared Codex App Server")
 
+    def acquire(
+        self,
+        *,
+        codex_bin: Path,
+        codex_home: Path,
+        env: dict[str, str],
+        config_overrides: tuple[str, ...],
+    ) -> Path:
+        """Lease the current runtime without crossing a pending reconfiguration."""
+        with self._lock:
+            if self._restart_pending:
+                raise RuntimeError(
+                    "Codex App Server is applying new Agent configuration; retry shortly"
+                )
+            socket_path = self.ensure(
+                codex_bin=codex_bin,
+                codex_home=codex_home,
+                env=env,
+                config_overrides=config_overrides,
+            )
+            self._active_clients += 1
+            return socket_path
+
+    def release(self) -> None:
+        """Release one client and finish a deferred restart at the turn boundary."""
+        with self._lock:
+            if self._active_clients > 0:
+                self._active_clients -= 1
+            if self._active_clients == 0 and self._restart_pending:
+                self.stop()
+
+    def request_restart(self) -> str:
+        """Stop when idle or defer the stop until all active clients drain."""
+        with self._lock:
+            if self._active_clients > 0:
+                self._restart_pending = True
+                return "draining"
+            self.stop()
+            return "stopped"
+
     def stop(self) -> None:
         with self._lock:
             process = self._process
@@ -337,6 +379,8 @@ class _SharedCodexRuntime:
             signature_path = self._signature_path
             self._socket_path = None
             self._signature_path = None
+            self._active_clients = 0
+            self._restart_pending = False
         if process is None or process.poll() is not None:
             return
         process.terminate()
@@ -360,6 +404,12 @@ def stop_shared_codex_runtime() -> None:
     """Drop the node runtime when turn-secret cleanup cannot be proven."""
 
     _RUNTIME.stop()
+
+
+def restart_shared_codex_runtime_when_idle() -> str:
+    """Apply new node-level configuration without interrupting active turns."""
+
+    return _RUNTIME.request_restart()
 
 
 def _resolve_codex_bin(config) -> Path:
@@ -478,18 +528,23 @@ def shared_codex(config) -> Iterator[object]:
     codex_home = Path(codex_home_raw)
     if not codex_home.is_absolute():
         raise RuntimeError("Shared Codex App Server requires an absolute CODEX_HOME")
-    socket_path = _RUNTIME.ensure(
+    socket_path = _RUNTIME.acquire(
         codex_bin=_resolve_codex_bin(config),
         codex_home=codex_home,
         env=env,
         config_overrides=tuple(config.config_overrides),
     )
-    client = _UnixSocketCodexClient.create(config, socket_path)
-    codex = object.__new__(Codex)
-    codex._client = client
+    client = None
     try:
+        client = _UnixSocketCodexClient.create(config, socket_path)
+        codex = object.__new__(Codex)
+        codex._client = client
         client.start()
         codex._init = validate_initialize_metadata(client.initialize())
         yield codex
     finally:
-        client.close()
+        try:
+            if client is not None:
+                client.close()
+        finally:
+            _RUNTIME.release()

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from novelvideo import config
 from novelvideo.api.routes import model_gateway
-from novelvideo.chat import hermes_pool, hermes_workspace
+from novelvideo.chat import codex_app_server, hermes_pool, hermes_workspace
 from novelvideo.chat import service as chat_service
 from novelvideo.model_gateway_settings import (
     AGENT_LLM_MODE_INHERIT,
@@ -102,6 +102,32 @@ def test_agent_config_api_masks_secret_and_requires_key_for_new_host(
         "refresh_model_gateway_runtime",
         lambda: {"refreshed": True},
     )
+
+    class FakeCodexProcess:
+        def __init__(self) -> None:
+            self.returncode: int | None = None
+            self.terminated = False
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = 0
+
+        def wait(self, timeout: float) -> int:
+            del timeout
+            return int(self.returncode or 0)
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    codex_runtime = codex_app_server._SharedCodexRuntime()
+    codex_process = FakeCodexProcess()
+    codex_runtime._process = codex_process  # type: ignore[assignment]
+    codex_runtime._active_clients = 1
+    monkeypatch.setattr(codex_app_server, "_RUNTIME", codex_runtime)
+
     app = FastAPI()
     app.include_router(model_gateway.router)
     client = TestClient(app)
@@ -116,6 +142,8 @@ def test_agent_config_api_masks_secret_and_requires_key_for_new_host(
         },
     )
     assert response.status_code == 200
+    assert response.json()["runtime"]["codexAppServer"] == "draining"
+    assert codex_process.terminated is False
     assert response.json()["data"]["agent"] == {
         "mode": "third_party",
         "baseUrl": "https://agent.example/v1",
@@ -124,6 +152,17 @@ def test_agent_config_api_masks_secret_and_requires_key_for_new_host(
         "configured": True,
     }
     assert "sk-agent-secret" not in response.text
+
+    with pytest.raises(RuntimeError, match="applying new Agent configuration"):
+        codex_runtime.acquire(
+            codex_bin=tmp_path / "codex",
+            codex_home=tmp_path / "codex-home",
+            env={},
+            config_overrides=(),
+        )
+    codex_runtime.release()
+    assert codex_process.terminated is True
+    assert codex_runtime._restart_pending is False
 
     response = client.post(
         "/model-gateway/agent/config",

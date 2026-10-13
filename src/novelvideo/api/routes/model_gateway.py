@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from novelvideo import config as app_config
+from novelvideo.chat.codex_app_server import restart_shared_codex_runtime_when_idle
 from novelvideo.model_gateway_settings import (
     AGENT_LLM_MODE_INHERIT,
     AGENT_LLM_MODE_THIRD_PARTY,
@@ -717,6 +718,7 @@ async def save_agent_gateway_config(body: AgentLlmConfigBody) -> dict[str, Any]:
         save_agent_llm_config(mode=body.mode)
 
     runtime = refresh_model_gateway_runtime()
+    runtime["codexAppServer"] = restart_shared_codex_runtime_when_idle()
     return {
         "ok": True,
         "data": build_model_gateway_status(
