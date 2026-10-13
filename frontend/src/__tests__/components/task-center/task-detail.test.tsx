@@ -195,3 +195,14 @@ describe("TaskDetail", () => {
     ).toBeInTheDocument();
   });
 });
+
+it.each(["svg", "gif"])("keeps %s results consistent with other task JSON results", async (format) => {
+  useTaskCenterStore.getState().hydrate([sampleTask({
+    task_key: "media", task_type: format === "svg" ? "freezone_image_vectorize" : "freezone_image_animate_gif",
+    status: "completed", result: { [format + "_url"]: "/static/projects/p/result." + format },
+  })]);
+  useTaskCenterStore.getState().setSelected("media");
+  const { findByText, queryByRole } = renderDetail();
+  expect(await findByText(new RegExp(format + "_url"))).toBeInTheDocument();
+  expect(queryByRole("img")).toBeNull();
+});

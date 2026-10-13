@@ -6,15 +6,16 @@ import json
 import io
 import random
 from typing import Literal
+from types import SimpleNamespace
 
 import httpx
 import pytest
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+from pydantic import BaseModel, Field, create_model
+from pydantic_ai import Agent, NativeOutput
 
 
 def _model(monkeypatch, handler):
-    from novelvideo import config
+    from novelvideo import config, brainclaw_outcome_runtime
 
     monkeypatch.setenv("NEWAPI_TEXT_CONTEXT_TOKENS", "4096")
     monkeypatch.setenv("NEWAPI_TEXT_OUTPUT_TOKENS", "512")
@@ -23,7 +24,11 @@ def _model(monkeypatch, handler):
         "_newapi_text_http_client_factory",
         lambda *, timeout_seconds: (
             lambda: httpx.AsyncClient(
-                transport=httpx.MockTransport(handler), timeout=timeout_seconds
+                transport=httpx.MockTransport(handler),
+                timeout=timeout_seconds,
+                event_hooks={
+                    "response": [brainclaw_outcome_runtime.capture_brainclaw_receipt]
+                },
             )
         ),
     )
@@ -93,6 +98,50 @@ async def test_context_budget_blocks_before_network(monkeypatch, oversized_part)
     )
     with pytest.raises(ValueError, match="MODEL_CONTEXT_BUDGET_EXCEEDED"):
         await agent.run("正文" * 2000 if oversized_part == "user" else "short")
+    assert requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("description_source", ["override", "docstring"])
+async def test_context_budget_counts_native_output_description(
+    monkeypatch, description_source
+):
+    requests = []
+    description = "正文 " * 5000
+    result_type = create_model(
+        "DescribedResult",
+        __doc__=description if description_source == "docstring" else None,
+        value=(Literal["ok"], ...),
+    )
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "native-budget-test",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "DC-budget-test",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": '{"value":"ok"}'},
+                    }
+                ],
+            },
+        )
+
+    agent = Agent(
+        _model(monkeypatch, handler),
+        output_type=NativeOutput(
+            result_type,
+            description=description if description_source == "override" else None,
+        ),
+    )
+    with pytest.raises(ValueError, match="MODEL_CONTEXT_BUDGET_EXCEEDED"):
+        await agent.run("short")
     assert requests == []
 
 
@@ -253,3 +302,167 @@ async def test_context_budget_counts_data_uri_when_sent_as_text(monkeypatch):
         await Agent(_model(monkeypatch, forbidden), output_type=Result).run(
             "data:image/jpeg;base64," + "a" * 5000
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [False, True])
+async def test_budgeted_request_reports_outcome_and_restores_outer_receipts(
+    monkeypatch, failure
+):
+    from pydantic_ai.exceptions import ModelHTTPError
+    from novelvideo import brainclaw_outcome_runtime as runtime
+
+    recorded = []
+    requests = []
+    monkeypatch.setattr(
+        runtime,
+        "outcome_runtime",
+        lambda: SimpleNamespace(
+            enqueue=lambda receipt, passed: recorded.append((receipt, passed))
+        ),
+    )
+
+    def handler(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        response = (
+            httpx.Response(500, json={"error": {"message": "fixture failure"}})
+            if failure
+            else _response(payload)
+        )
+        response.headers["x-brainclaw-outcome-receipt"] = "v1.current.sig"
+        return response
+
+    outer = runtime._receipts.set(("v1.outer.sig",))
+    try:
+        agent = Agent(_model(monkeypatch, handler), output_type=Result)
+        if failure:
+            with pytest.raises(ModelHTTPError):
+                await agent.run("short")
+        else:
+            assert (await agent.run("short")).output == Result(value="ok")
+        assert runtime._receipts.get() == ("v1.outer.sig",)
+    finally:
+        runtime._receipts.reset(outer)
+    assert len(requests) == 1
+    assert requests[0]["max_completion_tokens"] == 512
+    assert recorded == [("v1.current.sig", not failure)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_budget_rejection_does_not_report_an_outer_request(
+    monkeypatch, streaming
+):
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models import ModelRequestParameters
+    from novelvideo import brainclaw_outcome_runtime as runtime
+
+    recorded = []
+    monkeypatch.setattr(
+        runtime,
+        "outcome_runtime",
+        lambda: SimpleNamespace(
+            enqueue=lambda receipt, passed: recorded.append((receipt, passed))
+        ),
+    )
+
+    def forbidden(_request):
+        pytest.fail("over-budget request must not reach transport")
+
+    outer = runtime._receipts.set(("v1.outer.sig",))
+    try:
+        model = _model(monkeypatch, forbidden)
+        with pytest.raises(ValueError, match="MODEL_CONTEXT_BUDGET_EXCEEDED"):
+            if streaming:
+                async with model.request_stream(
+                    [ModelRequest(parts=[UserPromptPart(content="正文" * 2000)])],
+                    None,
+                    ModelRequestParameters(),
+                ):
+                    pytest.fail("stream must not start")
+            else:
+                await Agent(model, output_type=Result).run("正文" * 2000)
+        assert runtime._receipts.get() == ("v1.outer.sig",)
+    finally:
+        runtime._receipts.reset(outer)
+    assert recorded == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_budgeted_stream_reports_outcome_and_restores_outer_receipts(
+    monkeypatch, cancelled
+):
+    import asyncio
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.models import ModelRequestParameters
+    from novelvideo import brainclaw_outcome_runtime as runtime
+
+    recorded = []
+    requests = []
+    monkeypatch.setattr(
+        runtime,
+        "outcome_runtime",
+        lambda: SimpleNamespace(
+            enqueue=lambda receipt, passed: recorded.append((receipt, passed))
+        ),
+    )
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        chunks = [
+            {"delta": {"content": "ok"}, "finish_reason": None},
+            {"delta": {}, "finish_reason": "stop"},
+        ]
+        body = (
+            "".join(
+                "data: "
+                + json.dumps(
+                    {
+                        "id": "stream-budget-test",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "DC-budget-test",
+                        "choices": [{"index": 0, **choice}],
+                    }
+                )
+                + "\n\n"
+                for choice in chunks
+            )
+            + "data: [DONE]\n\n"
+        )
+        return httpx.Response(
+            200,
+            content=body,
+            headers={
+                "content-type": "text/event-stream",
+                "x-brainclaw-outcome-receipt": "v1.stream.sig",
+            },
+        )
+
+    outer = runtime._receipts.set(("v1.outer.sig",))
+    try:
+        model = _model(monkeypatch, handler)
+
+        async def consume():
+            async with model.request_stream(
+                [ModelRequest(parts=[UserPromptPart(content="short")])],
+                None,
+                ModelRequestParameters(),
+            ) as response:
+                if cancelled:
+                    raise asyncio.CancelledError()
+                async for _ in response:
+                    pass
+
+        if cancelled:
+            with pytest.raises(asyncio.CancelledError):
+                await consume()
+        else:
+            await consume()
+        assert runtime._receipts.get() == ("v1.outer.sig",)
+    finally:
+        runtime._receipts.reset(outer)
+    assert requests[0]["max_completion_tokens"] == 512
+    assert recorded == [("v1.stream.sig", not cancelled)]

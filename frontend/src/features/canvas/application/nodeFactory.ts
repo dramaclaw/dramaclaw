@@ -2,7 +2,9 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { XYPosition } from '@xyflow/react';
 
-import type { CanvasNode, CanvasNodeData, CanvasNodeType } from '../domain/canvasNodes';
+import {
+  CANVAS_NODE_TYPES, type CanvasNode, type CanvasNodeData, type CanvasNodeType,
+} from '../domain/canvasNodes';
 import type { IdGenerator, NodeCatalog, NodeFactory } from './ports';
 
 export class CanvasNodeFactory implements NodeFactory {
@@ -24,6 +26,7 @@ export class CanvasNodeFactory implements NodeFactory {
     const nodeData = {
       ...definition.createDefaultData(),
       ...data,
+      ...(type === CANVAS_NODE_TYPES.audio ? { voicePolicyConfirmed: true } : {}),
       createdAt: Date.now(),
     } as CanvasNodeData;
 

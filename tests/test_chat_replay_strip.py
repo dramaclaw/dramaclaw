@@ -1,6 +1,15 @@
 from novelvideo.chat import service as chat_service
 
 
+def test_merge_stream_text_keeps_repeated_delta_chunks():
+    assert chat_service._merge_stream_text("已完成", "完成") == "已完成完成"
+    assert chat_service._merge_stream_text("好。", "。") == "好。。"
+
+
+def test_merge_stream_text_accepts_cumulative_updates():
+    assert chat_service._merge_stream_text("首帧已", "首帧已完成") == "首帧已完成"
+
+
 def test_suppresses_partial_labeled_transcript_replay_before_current_prompt():
     replay = "User: 之前的问题\nAssistant: 之前的回答\nUser: 另一条旧问题"
 
@@ -84,6 +93,72 @@ def test_suppresses_complete_repeated_short_reply_during_streaming():
             suppress_partial_replay=True,
         )
         == ""
+    )
+
+
+def test_suppresses_truncated_unlabeled_assistant_replay():
+    previous = [
+        "上一批（Beat 10、11、12）的首帧已全部完成。"
+        "已继续第 3 集下一批：Beat 13、14、15 的首帧已进入生成队列。\n\n"
+        "首帧完成后我会继续剩余批次。需要推进时再说一声即可。"
+    ]
+    replay = (
+        "上一批（Beat 10、11、12）的首帧已全部完成。"
+        "已继续第 3 集下一批：Beat 13、14、15 的首帧已进入生成队列。\n\n首帧完"
+    )
+
+    assert (
+        chat_service._strip_replayed_chat_response(
+            replay,
+            previous_assistant=previous,
+            current_prompt="继续下一步",
+        )
+        == ""
+    )
+    assert (
+        chat_service._strip_replayed_chat_response(
+            replay,
+            previous_assistant=previous,
+            current_prompt="继续下一步",
+            suppress_partial_replay=True,
+        )
+        == ""
+    )
+
+
+def test_keeps_short_reply_that_matches_start_of_previous_assistant_text():
+    assert (
+        chat_service._strip_replayed_chat_response(
+            "上一批首帧完成",
+            previous_assistant=["上一批首帧完成后，我会继续生成剩余批次。"],
+            current_prompt="进度",
+        )
+        == "上一批首帧完成"
+    )
+
+
+def test_hermes_replay_history_is_bounded_to_latest_message_and_character_budget():
+    contents = ["old", "latest" + "x" * chat_service._HERMES_REPLAY_HISTORY_MAX_CHARS]
+
+    bounded = chat_service._bounded_replay_history(contents)
+
+    assert len(bounded) == 1
+    assert bounded[0].startswith("latest")
+    assert len(bounded[0]) == chat_service._HERMES_REPLAY_HISTORY_MAX_CHARS
+
+
+def test_replay_strip_accepts_precomputed_prefix_candidates():
+    previous = ["上一轮回复"]
+    candidates = chat_service._assistant_prefix_candidates(previous)
+
+    assert (
+        chat_service._strip_replayed_chat_response(
+            "上一轮回复这是本轮回复",
+            previous,
+            "继续",
+            assistant_prefix_candidates=candidates,
+        )
+        == "这是本轮回复"
     )
 
 

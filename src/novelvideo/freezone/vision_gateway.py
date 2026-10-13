@@ -12,8 +12,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
-from novelvideo.official_defaults import DEFAULT_FREEZONE_VISION_MODEL
-
 FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS = 300.0
 FREEZONE_IMAGE_REVERSE_PROMPT_TIMEOUT_SECONDS = 180.0
 FREEZONE_MARK_TIMEOUT_SECONDS = 90.0
@@ -200,14 +198,11 @@ def image_media_type(path: str) -> str:
 def resolve_freezone_vision_model(model_override: str | None = None) -> str:
     """Return the logical NewAPI model shared by Freezone vision tasks."""
     clean_override = str(model_override or "").strip()
-    if clean_override:
-        return clean_override
+    from novelvideo.config import get_effective_newapi_text_model_name
 
-    from novelvideo.config import get_newapi_text_model_name
-
-    return get_newapi_text_model_name(
+    return get_effective_newapi_text_model_name(
         "FREEZONE_VISION_MODEL",
-        DEFAULT_FREEZONE_VISION_MODEL,
+        model_name_override=clean_override or None,
     )
 
 
@@ -225,6 +220,8 @@ async def call_freezone_vision_model(
 
     from pydantic_ai import Agent, BinaryContent
 
+    from novelvideo.brainclaw_contract import BrainClawProfile
+
     if (
         transport_context is not None
         and type(transport_context) is not VisionTransportContext
@@ -237,9 +234,10 @@ async def call_freezone_vision_model(
         model = resolve_freezone_vision_model(model_override)
         transport_model = get_newapi_text_pydantic_model(
             "FREEZONE_VISION_MODEL",
-            DEFAULT_FREEZONE_VISION_MODEL,
             model_name_override=model,
             timeout_seconds_override=timeout_seconds,
+            brainclaw_profile=BrainClawProfile.FREEZONE_VISION_ANALYSIS,
+            capability="vision.analyze",
         )
     else:
         clean_override = str(model_override or "").strip()

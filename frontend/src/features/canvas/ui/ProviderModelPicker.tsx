@@ -44,7 +44,6 @@ export interface ProviderOption {
 }
 
 export interface ModelOption {
-  /** Opaque database identity used by new billing and task records. */
   catalogId?: string;
   id: string;
   providerId: ProviderId;
@@ -81,7 +80,7 @@ export interface ModelOption {
 // 服务商品牌名，不跟界面语言走。
 // i18n-exempt-start
 export const SHARED_PROVIDERS: ProviderOption[] = [
-  { id: 'newapi', label: '虾驿 / NewAPI' },
+  { id: 'newapi', label: 'DramaClawAPI' },
   { id: 'huimeng', label: '绘梦 / HuiMeng' },
 // i18n-exempt-end
   { id: 'openrouter', label: 'OpenRouter' },
@@ -92,6 +91,18 @@ export const SHARED_PROVIDERS: ProviderOption[] = [
 // 及其能力全部来自后台「媒体模型」配置。这里的能力字段跟着一起给，是为了让
 // 兜底状态下的尺寸 / 比例选择器仍有可用档位，而不是散落回各个面板里去硬编码。
 export const SHARED_MODELS: ModelOption[] = [
+  {
+    id: 'newapi_gpt_image2',
+    providerId: 'newapi',
+    apiModel: 'newapi_gpt_image2',
+    label: 'LingShan-G2',
+  },
+  {
+    id: 'newapi_nanobanana2',
+    providerId: 'newapi',
+    apiModel: 'newapi_nanobanana2',
+    label: 'LingShan-NB-2',
+  },
   {
     id: 'huimeng/gpt-image-2',
     providerId: 'huimeng',
@@ -119,7 +130,8 @@ export const SHARED_MODELS: ModelOption[] = [
   },
 ];
 
-export const DEFAULT_SHARED_MODEL_ID = 'huimeng/gpt-image-2';
+export const DEFAULT_SHARED_MODEL_ID = 'newapi_gpt_image2';
+export const DEFAULT_UPSCALE_MODEL_ID = 'newapi_gpt_image2';
 
 // Video generation models. `id` is the raw backend model id sent to
 // /freezone/video/gen so we don't need a separate apiModel mapping.
@@ -339,7 +351,7 @@ export function ProviderModelPicker({
             {effectiveModels.map((model) => {
               const isActive = selectedModel?.id === model.id;
               const disabledReason = getOptionDisabledReason?.(model) ?? null;
-              const isDisabled = disabledReason != null && !isActive;
+              const isDisabled = disabledReason != null && (!isActive || domain === "video");
               const optionInner = (
                 <>
                   {isActive ? (
@@ -351,10 +363,10 @@ export function ProviderModelPicker({
                 </>
               );
               const optionClass = `${MODEL_PICKER_OPTION_BASE_CLASS} ${
-                isActive
-                  ? 'bg-white/[0.13] text-text-dark ring-1 ring-white/24'
-                  : isDisabled
-                    ? 'cursor-not-allowed text-text-muted/40'
+                isDisabled
+                  ? 'cursor-not-allowed text-text-muted/40'
+                  : isActive
+                    ? 'bg-white/[0.13] text-text-dark ring-1 ring-white/24'
                     : 'text-text-muted/95 hover:bg-white/[0.11] hover:text-text-dark'
               }`;
               if (isDisabled) {

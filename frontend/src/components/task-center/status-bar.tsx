@@ -12,6 +12,7 @@ import {
 import { useAppStore } from "@/stores/app-store";
 import { displayLabel } from "@/task-center/derivations";
 import { RegionBadge } from "@/components/layout/region-badge";
+import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from "@/features/freezone/dockOffset";
 import { APP_VERSION } from "@/lib/app-version";
 import { cn } from "@/lib/utils";
 import type { StreamHealth, TaskState } from "@/task-center/types";
@@ -102,6 +103,9 @@ export function TaskStatusBar({ onOpenPikoStation }: TaskStatusBarProps) {
   return (
     <footer
       className="relative z-50 flex h-9 shrink-0 cursor-pointer select-none items-center justify-between border-t border-white/[0.05] bg-background/82 px-3 text-[11px] backdrop-blur-xl transition-colors hover:bg-muted/15"
+      // 自由画布的虾导抽屉是通屏高浮层，会盖住这条状态条的右段：整条往左收，
+      // 两端内容都还看得见（抽屉没开时变量不存在 → 0px）。
+      style={FREEZONE_DOCK_OFFSET_ANIMATED_STYLE}
       role="button"
       tabIndex={0}
       aria-label={t("taskCenter.title")}

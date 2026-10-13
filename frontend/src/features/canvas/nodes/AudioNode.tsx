@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useState,
 } from 'react';
 import {
   Handle,
@@ -18,6 +19,7 @@ import { toast } from 'sonner';
 
 import {
   CANVAS_NODE_TYPES,
+  hasInlineMediaReplaceButton,
   type AudioNodeData,
   type AudioVoiceRef,
 } from '@/features/canvas/domain/canvasNodes';
@@ -28,16 +30,28 @@ import {
   NodeHeader,
   NODE_HEADER_FLOATING_POSITION_CLASS,
 } from '@/features/canvas/ui/NodeHeader';
+import { AddNodeToChatButton } from '@/features/canvas/ui/AddNodeToChatButton';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { NodeGenerationOverlay } from '@/features/canvas/ui/NodeGenerationOverlay';
 import { AudioWaveformPlayer } from '@/features/canvas/ui/AudioWaveformPlayer';
+import { NodeMediaReplaceButton } from '@/features/canvas/ui/NodeMediaReplaceButton';
+import {
+  useAssetCommitDragById,
+} from '@/features/canvas/ui/useAssetCommitDrag';
 import { setNodeMediaActive } from '@/features/canvas/application/canvasLod';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import { CANVAS_NODE_PANEL_SURFACE_CLASS, canvasNodeFrameClass } from '@/features/canvas/ui/nodeFrameStyles';
 import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
 import { AudioOperationsPanel } from '@/features/canvas/nodes/AudioOperationsPanel';
-import { useAudioGeneration } from '@/features/canvas/nodes/useAudioGeneration';
+import { deriveAudioText, useAudioGeneration } from '@/features/canvas/nodes/useAudioGeneration';
 import { createInFlightRequestCache } from '@/features/canvas/nodes/inFlightRequestCache';
+import { translateNodeText } from '@/features/canvas/application/translateText';
+import {
+  publishNodeActionAccepted,
+  publishNodeActionError,
+  publishNodeActionSuccess,
+  subscribeNodeAction,
+} from '@/features/canvas/application/nodeActionResult';
 import { RegenerateButton } from '@/features/canvas/ui/RegenerateButton';
 import {
   hasMainlineContexts,
@@ -45,6 +59,7 @@ import {
 } from '@/features/freezone/context/NodeContextBadges';
 import { fetchFreezoneAudioReferences, uploadFreezoneImage } from '@/api/ops';
 import { readUrl } from '@/lib/url-params';
+import { VoiceSelectionModal } from './VoiceSelectionModal';
 
 type AudioNodeProps = NodeProps & {
   id: string;
@@ -73,6 +88,11 @@ function isAudioFile(file: File): boolean {
   return AUDIO_UPLOAD_EXTENSIONS.has(ext);
 }
 
+function isVoicePrerequisiteError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:声线未配置|缺少.*声线|请先配置或选择声线|上传或录制.*音频)/u.test(message); // i18n-exempt -- backend errors
+}
+
 // 只合并同时发生的请求；settled 后立即失效，避免空结果在上传声线后仍被复用。
 const getCachedAudioReferences = createInFlightRequestCache(
   fetchFreezoneAudioReferences,
@@ -85,8 +105,80 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
   const isBoxSelecting = useIsBoxSelecting();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const { isGenerating, task } = useNodeGenerationTaskState(data);
+  const [voicePickerOpen, setVoicePickerOpen] = useState(false);
+  const [voicePickerInitialTab, setVoicePickerInitialTab] = useState<'library' | 'mine'>('library');
   // 重试用与面板提交同一套生成逻辑（hook）。
   const { generate } = useAudioGeneration(id, data);
+  useEffect(() => {
+    return subscribeNodeAction(({ nodeId, action, parameters, requestId }) => {
+      if (nodeId !== id) return;
+      if (action === 'generate_audio') {
+        publishNodeActionAccepted(requestId, id, action);
+        void generate()
+          .then((output) => {
+            if (output.skipped) {
+              publishNodeActionSuccess(requestId, id, action, output);
+              return;
+            }
+            const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
+            const latestAudioUrl = latest?.type === CANVAS_NODE_TYPES.audio
+              && typeof latest.data.audioUrl === 'string'
+              ? latest.data.audioUrl
+              : undefined;
+            publishNodeActionSuccess(requestId, id, action, {
+              ...(output.audioUrl ? { audioUrl: output.audioUrl } : {}),
+              ...(latestAudioUrl ? { audioUrl: latestAudioUrl } : {}),
+            });
+          })
+          .catch((error) => {
+            if (isVoicePrerequisiteError(error)) {
+              updateNodeData(id, {
+                isGenerating: false,
+                generationStartedAt: null,
+                voiceAvailable: false,
+                generationError: '未选择可用自定义声线，已跳过生成', // i18n-exempt -- workflow payload
+              });
+              publishNodeActionSuccess(requestId, id, action, {
+                skipped: true,
+                reason: 'missing_custom_voice',
+                agent_instruction: '未选择自定义声线，本音频节点已跳过，继续其它工作流节点。', // i18n-exempt -- agent protocol
+              });
+              return;
+            }
+            publishNodeActionError(requestId, id, action, error);
+          });
+        return;
+      }
+      if (action === 'translate_text') {
+        publishNodeActionAccepted(requestId, id, action);
+        void (async () => {
+          const project = readUrl().project;
+          if (!project) throw new Error('缺少项目 ID，无法翻译音频文本');
+          const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
+          if (latest?.type !== CANVAS_NODE_TYPES.audio) {
+            throw new Error('音频节点不存在');
+          }
+          const text = deriveAudioText(latest.data as AudioNodeData).trim();
+          if (!text) throw new Error('音频节点没有可翻译文本');
+          const translated = await translateNodeText(project, {
+            text,
+            nodeId: id,
+            nodeType: 'audio',
+          });
+          updateNodeData(id, { text: translated });
+          publishNodeActionSuccess(requestId, id, action, { text: translated });
+        })().catch((error) => publishNodeActionError(requestId, id, action, error));
+        return;
+      }
+      if (action === 'open_voice_picker') {
+        publishNodeActionAccepted(requestId, id, action);
+        setVoicePickerInitialTab(parameters?.initialTab === 'mine' ? 'mine' : 'library');
+        setVoicePickerOpen(true);
+        publishNodeActionSuccess(requestId, id, action, { openedUiAction: true });
+      }
+    });
+  }, [generate, id, updateNodeData]);
+
 
   // 任务流(SSE)回报失败时把错误持久化进节点数据 + 清 isGenerating——覆盖刷新后、
   // 节点未选中、handleSubmit promise 已随旧页面销毁等 catch 没跑到的情况。
@@ -121,6 +213,12 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
   const hasMainlineContext = hasMainlineContexts(
     (data as { mainline_context?: unknown }).mainline_context,
   );
+  const currentVoiceRef: AudioVoiceRef = data.voiceRef ?? { scope: 'project_narrator' };
+  const speechMode = data.speechMode ?? 'clone';
+
+  // 卡片内那颗替换按钮同时兼「按住拖到左侧素材库」（原 AssetCommitHandle 的手势）。
+  const { canCommit: canCommitAsset, startDrag: startAssetCommitDrag } =
+    useAssetCommitDragById(id);
 
   // 上传一份本地音频到后端 freezone — 复用通用 upload 端点（后端不区分 mime）。
   // 上传成功后落 audioUrl/sourceFileName 进 store，AudioOperationsPanel 那边
@@ -184,6 +282,7 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
   // 闭包等回来又被 cancelled 挡住，结果谁都写不进 store。请求级去重交给
   // `getCachedAudioReferences` 的 promise cache。
   useEffect(() => {
+    if (data.audioKind === 'music' || speechMode !== 'clone') return;
     const v = data.voiceRef;
     const isFactoryFallback =
       v != null &&
@@ -258,8 +357,7 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
     return () => {
       cancelled = true;
     };
-  }, [data.voiceRef, id, updateNodeData]);
-
+  }, [data.audioKind, data.voiceRef, id, speechMode, updateNodeData]);
   const cardToneClass = canvasNodeFrameClass({
     selected,
     mainline: hasMainlineContext,
@@ -291,6 +389,7 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         editable
         onTitleChange={(nextTitle) => updateNodeData(id, { displayName: nextTitle })}
       />
+      <AddNodeToChatButton nodeId={id} />
       <NodeContextBadges
         contexts={(data as { mainline_context?: unknown }).mainline_context}
       />
@@ -303,7 +402,9 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
       />
 
       {/* 音频节点不再作为上传入口（空状态/替换均移除）：上传音频请通过「上传节点」
-          或把音频文件拖入画布；外部投递仍走 canvasEventBus 'audio-node/external-file'。 */}
+          或把音频文件拖入画布；外部投递仍走 canvasEventBus 'audio-node/external-file'。
+          唯一例外是 allowLocalReplace（逐帧拉片产出的 BGM 参考）—— 那是一条参考
+          素材，用户换成自己的曲子是正常用法，见下方右上角的替换按钮。 */}
 
       <div
         className={`relative flex h-full w-full items-center justify-center ${audioSource ? 'overflow-hidden' : 'overflow-visible'} rounded-[var(--node-radius)] border ${CANVAS_NODE_PANEL_SURFACE_CLASS} transition-colors ${cardToneClass}`}
@@ -351,6 +452,22 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
             <span className="text-[12px]">{t('node.audioNode.empty')}</span>
           </div>
         )}
+
+        {/* 卡片内右上角的「替换」入口：点击换本地文件，按住拖则丢进左侧素材库。
+            只给 allowLocalReplace 的卡片（逐帧拉片产出的 BGM 参考）—— 其余音频节点
+            本来就不是上传入口（见上），替换手势走浮在节点外侧的 AssetCommitHandle，
+            见 SelectedNodeOverlay。 */}
+        {canCommitAsset &&
+          !isGenerating &&
+          hasInlineMediaReplaceButton(data) && (
+            <NodeMediaReplaceButton
+              accept="audio/*"
+              busy={Boolean(data.isUploading)}
+              title={t('node.audio.replaceAudioTitle')}
+              onPick={processFile}
+              onCommitDragStart={startAssetCommitDrag}
+            />
+          )}
       </div>
 
       {/* 节点一旦有音频内容（手动上传 or TTS 合成），就不再展示底部操作区 ——
@@ -358,6 +475,25 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
           想要重新合成只能先清掉音频（暂时通过删节点重建）。 */}
       {selected && !isBoxSelecting && !data.audioUrl && (
         <AudioOperationsPanel nodeId={id} data={data} />
+      )}
+      {data.audioKind !== 'music' && (
+        <VoiceSelectionModal
+          open={voicePickerOpen}
+          onClose={() => setVoicePickerOpen(false)}
+          currentRef={currentVoiceRef}
+          initialTab={voicePickerInitialTab}
+          onPick={({ ref, label, language }) => {
+            updateNodeData(id, {
+              speechMode: 'clone',
+              voiceRef: ref,
+              voiceAvailable: true,
+              voiceLabel: label,
+              voiceLanguage: language ?? '',
+              generationError: null,
+            });
+            setVoicePickerOpen(false);
+          }}
+        />
       )}
     </div>
   );

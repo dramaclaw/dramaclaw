@@ -18,6 +18,7 @@ def test_importing_runners_registers_builtin_project_task_runners():
         "sketch_grid_generation",
         "director_control_to_sketch",
         "audio_generation_indextts2",
+        "system_voice_setup",
         "build_scenes",
     }:
         assert task_type in names

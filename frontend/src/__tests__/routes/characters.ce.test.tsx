@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { ComponentType, ReactNode } from "react";
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
@@ -13,6 +13,8 @@ const toastErrorMock = vi.hoisted(() => vi.fn());
 const mutation = vi.hoisted(() => () => ({ mutateAsync: vi.fn(), isPending: false }));
 const buildCharactersMutationMock = vi.hoisted(() => vi.fn());
 const taskStreamOptionsMock = vi.hoisted(() => vi.fn());
+const updateCharacterMutationMock = vi.hoisted(() => vi.fn());
+const updateIdentityMutationMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runtime-config", () => ({
   isCeRuntime: () => runtimeState.isCeRuntime,
@@ -169,7 +171,7 @@ vi.mock("@/lib/queries/characters", () => ({
     isPending: false,
   }),
   useCreateCharacter: mutation,
-  useUpdateCharacter: mutation,
+  useUpdateCharacter: () => ({ mutateAsync: updateCharacterMutationMock, isPending: false }),
   useDeleteCharacter: mutation,
   useCharacterAssetHistory: () => ({ data: undefined, isLoading: false }),
   useRestoreCharacterAsset: mutation,
@@ -192,7 +194,7 @@ vi.mock("@/lib/queries/characters", () => ({
     },
   }),
   useCreateIdentity: mutation,
-  useUpdateIdentity: mutation,
+  useUpdateIdentity: () => ({ mutateAsync: updateIdentityMutationMock, isPending: false }),
   useDeleteIdentity: mutation,
   useDeleteIdentityImage: mutation,
   useDeleteIdentityCostume: mutation,
@@ -231,6 +233,9 @@ vi.mock("@/components/assets/narrator-voice-panel", () => ({
 }));
 
 import { Route } from "@/routes/_app/projects.$project/characters.lazy";
+import { ConfirmDialogHost } from "@/components/confirm-dialog-host";
+import { useSaveStatusStore } from "@/stores/save-status-store";
+import { enTranslation, zhTranslation } from "../helpers/i18n-fixtures";
 
 const i18n = i18next.createInstance();
 
@@ -258,6 +263,7 @@ function renderCharactersPage() {
   const Component = Route.options.component as ComponentType;
   return render(
     <I18nextProvider i18n={i18n}>
+      <ConfirmDialogHost />
       <Component />
     </I18nextProvider>,
   );
@@ -344,4 +350,179 @@ describe("characters page CE generation credit gating", () => {
       ).toBe(false);
     },
   );
+});
+
+describe("character and identity rename confirmation", () => {
+  const warning = "Changing the name changes the asset ID. Existing plans, storyboards, and generated results will not migrate automatically. You may need to plan and generate again after saving. Continue?";
+
+  beforeEach(async () => {
+    i18n.addResourceBundle("en", "translation", enTranslation, true, true);
+    i18n.addResourceBundle("zh", "translation", zhTranslation, true, true);
+    await i18n.changeLanguage("en");
+    runtimeState.isCeRuntime = true;
+    window.localStorage.clear();
+    Element.prototype.scrollTo = vi.fn();
+    updateCharacterMutationMock.mockReset().mockResolvedValue({ ok: true });
+    updateIdentityMutationMock.mockReset().mockResolvedValue({ ok: true });
+    toastErrorMock.mockClear();
+    useSaveStatusStore.getState().reset();
+  });
+
+  it.each(["cancel", "escape"])("keeps a character rename on %s without saving or refocusing into a loop, then allows retry", async (dismiss) => {
+    const user = userEvent.setup();
+    renderCharactersPage();
+    const input = await screen.findByDisplayValue("Li Qing");
+    const role = screen.getByDisplayValue("主角");
+    await user.click(input);
+    await user.clear(input);
+    await user.type(input, "  Li Qing New  ");
+    // Real focus movement invokes onBlur and the real host then takes focus.
+    await user.tab();
+    const confirmation = await screen.findByRole("alertdialog");
+    expect(within(confirmation).getByText(warning)).toBeInTheDocument();
+    expect(updateCharacterMutationMock).not.toHaveBeenCalled();
+    expect(useSaveStatusStore.getState().scopes).toEqual({});
+    await waitFor(() => expect(within(confirmation).getByRole("button", { name: "Cancel" })).toHaveFocus());
+    if (dismiss === "cancel") await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+    else await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(input).toHaveValue("  Li Qing New  ");
+    await waitFor(() => expect(role).toHaveFocus());
+    await user.click(role);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(updateCharacterMutationMock).not.toHaveBeenCalled();
+    expect(useSaveStatusStore.getState().scopes).toEqual({});
+
+    await user.click(input);
+    await user.tab();
+    const retry = await screen.findByRole("alertdialog");
+    await user.click(within(retry).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateCharacterMutationMock).toHaveBeenCalledTimes(1));
+    expect(updateCharacterMutationMock).toHaveBeenCalledWith({ name: "Li Qing New" });
+  });
+
+  it.each(["Li Qing", "  Li Qing  "])("does not warn or mutate for unchanged character name %s", async (value) => {
+    const user = userEvent.setup();
+    renderCharactersPage();
+    const input = await screen.findByDisplayValue("Li Qing");
+    await user.click(input);
+    fireEvent.change(input, { target: { value } });
+    await user.tab();
+    expect(input).toHaveValue("Li Qing");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(updateCharacterMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("saves other character fields without the rename warning", async () => {
+    const user = userEvent.setup();
+    renderCharactersPage();
+    const description = await screen.findByDisplayValue("Lead character");
+    await user.click(description);
+    await user.clear(description);
+    await user.type(description, "Changed description");
+    await user.tab();
+    await waitFor(() => expect(updateCharacterMutationMock).toHaveBeenCalledWith({ description: "Changed description" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("holds the character guard through confirmation and mutation, and releases it after failure", async () => {
+    let reject!: (reason: Error) => void;
+    updateCharacterMutationMock.mockImplementationOnce(() => new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
+    renderCharactersPage();
+    const input = await screen.findByDisplayValue("Li Qing");
+    fireEvent.change(input, { target: { value: "New" } });
+    fireEvent.blur(input);
+    fireEvent.blur(input);
+    const confirmation = await screen.findByRole("alertdialog");
+    expect(updateCharacterMutationMock).not.toHaveBeenCalled();
+    await userEvent.click(within(confirmation).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateCharacterMutationMock).toHaveBeenCalledTimes(1));
+    fireEvent.blur(input);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    reject(new Error("save failed"));
+    await waitFor(() => expect(toastErrorMock).toHaveBeenCalled());
+    expect(input).toHaveValue("Li Qing");
+    fireEvent.change(input, { target: { value: "New again" } });
+    fireEvent.blur(input);
+    const retry = await screen.findByRole("alertdialog");
+    await userEvent.click(within(retry).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateCharacterMutationMock).toHaveBeenCalledTimes(2));
+  });
+
+  async function openIdentityRename() {
+    renderCharactersPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Edit identity name" }));
+    const form = screen.getByRole("dialog");
+    return { form, input: within(form).getByRole("textbox"), save: within(form).getByRole("button", { name: "Save" }) };
+  }
+
+  it.each(["cancel", "escape"])("preserves the identity editor on %s; Enter and clicks share one guarded save", async (dismiss) => {
+    const user = userEvent.setup();
+    const { form, input, save } = await openIdentityRename();
+    await user.clear(input);
+    await user.type(input, "  New identity  ");
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(save);
+    const confirmation = await screen.findByRole("alertdialog");
+    expect(within(confirmation).getByText(warning)).toBeInTheDocument();
+    expect(updateIdentityMutationMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(within(confirmation).getByRole("button", { name: "Cancel" })).toHaveFocus());
+    if (dismiss === "cancel") await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+    else await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("dialog")).toBe(form);
+    expect(input).toHaveValue("  New identity  ");
+    expect(updateIdentityMutationMock).not.toHaveBeenCalled();
+    await user.click(input);
+    await user.keyboard("{Enter}");
+    const retry = await screen.findByRole("alertdialog");
+    await user.click(within(retry).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateIdentityMutationMock).toHaveBeenCalledTimes(1));
+    expect(updateIdentityMutationMock).toHaveBeenCalledWith({ identityId: "id-middle", data: { identity_name: "New identity" } });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it.each(["Middle", "  Middle  "])("does not warn or update an unchanged identity name %s", async (value) => {
+    const { input, save } = await openIdentityRename();
+    fireEvent.change(input, { target: { value } });
+    expect(save).toBeDisabled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(updateIdentityMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("holds the identity guard through a pending mutation and unlocks after failure", async () => {
+    let reject!: (reason: Error) => void;
+    updateIdentityMutationMock.mockImplementationOnce(() => new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
+    const { form, input, save } = await openIdentityRename();
+    fireEvent.change(input, { target: { value: "New identity" } });
+    fireEvent.click(save);
+    const confirmation = await screen.findByRole("alertdialog");
+    await userEvent.click(within(confirmation).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateIdentityMutationMock).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(save);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    reject(new Error("save failed"));
+    await waitFor(() => expect(toastErrorMock).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBe(form);
+    expect(input).toHaveValue("New identity");
+    await userEvent.click(save);
+    const retry = await screen.findByRole("alertdialog");
+    await userEvent.click(within(retry).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateIdentityMutationMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("uses the exact issue warning in Chinese", async () => {
+    await i18n.changeLanguage("zh");
+    renderCharactersPage();
+    const input = await screen.findByDisplayValue("Li Qing");
+    fireEvent.change(input, { target: { value: "New" } });
+    fireEvent.blur(input);
+    const confirmation = await screen.findByRole("alertdialog");
+    expect(within(confirmation).getByText("修改名称会改变资产 ID。已有规划、分镜及生成结果不会自动迁移，保存后可能需要重新规划并生成。是否继续？")).toBeInTheDocument();
+    expect(updateCharacterMutationMock).not.toHaveBeenCalled();
+    await userEvent.click(within(confirmation).getByRole("button", { name: "取消" }));
+  });
 });

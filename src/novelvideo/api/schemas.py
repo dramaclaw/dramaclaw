@@ -307,6 +307,8 @@ class BeatsRegenerateRequest(BaseModel):
     mode_key: str = "1x1_2-3"
     image_generation_selection: Optional[str] = None
     sketch_aspect_padding: Optional[bool] = None
+    batch_id: Optional[str] = Field(default=None, max_length=100)
+    batch_size: Optional[int] = Field(default=None, ge=1, le=9)
 
 
 class SketchRegenerateRequest(BaseModel):
@@ -365,6 +367,8 @@ class SingleVideoRequest(BaseModel):
     audio_setting: Optional[str] = None
     prompt_guidance: Optional[str] = None
     text_overlay: Optional[dict[str, Any]] = None
+    batch_id: Optional[str] = Field(default=None, max_length=100)
+    batch_size: Optional[int] = Field(default=None, ge=1, le=9)
 
 
 # ── 风格 ──────────────────────────────────────────────────────────────────────
@@ -431,7 +435,14 @@ class FreezoneImageStyleConfig(BaseModel):
     template_id: str = Field(description="风格模板 id")
 
 
-class FreezoneGenRequest(BaseModel):
+class FreezoneWorkflowMediaLink(BaseModel):
+    canvas_id: str = Field(default="", max_length=200)
+    node_id: str = Field(default="", max_length=200)
+    product_operation_id: str = Field(default="", max_length=128)
+    generation_attempt_id: str = Field(default="", max_length=256)
+
+
+class FreezoneGenRequest(FreezoneWorkflowMediaLink):
     prompt: str
     aspect_ratio: str = "1:1"
     image_size: str = "2K"
@@ -779,13 +790,14 @@ class FreezoneTemplateEditRequest(BaseModel):
         "storyboard_25_grid",
         "cinematic_light_correction",
         "character_three_view_generation",
+        "scene_setting_sheet",
         "image_projection_after_3s",
         "image_projection_before_5s",
     ] = Field(
         description=(
             "模板模式。分别对应：多机位九宫格 / 剧情推演四宫格 / 角色脸部三视图 / "
             "产品三视图 / 25宫格连贯分镜 / 电影级光影校正 / 角色三视图生成 / "
-            "画面推演-3秒后 / 画面推演-5秒前"
+            "场景设定图 / 画面推演-3秒后 / 画面推演-5秒前"
         )
     )
     prompt: str = Field(default="", description="用户补充提示词，可为空")
@@ -850,6 +862,74 @@ class FreezoneAnalyzeVideoStoryRequest(BaseModel):
             "视频总时长，单位秒。可选；" "传入后视频故事表的 start_time/end_time 会更准确"
         ),
         examples=[15],
+    )
+
+
+class FreezoneVideoBreakdownRequest(BaseModel):
+    """逐帧拉片请求：把一条视频拆成分镜 / 动态 / 音乐三个维度的参考素材。
+
+    与 `analyze-video-story` 的区别：那个只产一张表（文字），拉片会真的把片段切
+    出来 —— 分镜是抽帧图、动态是按运镜切出的视频片段、音乐是分离出的 BGM 片段。
+    """
+
+    video_url: str = Field(
+        description="视频静态地址。必须是当前项目下真实存在的 /static/... 视频 URL",
+        examples=["/static/admin/58/freezone/_uploads/example.mp4"],
+    )
+    dimensions: list[Literal["storyboard", "motion", "music"]] = Field(
+        default_factory=lambda: ["storyboard", "motion", "music"],
+        description=(
+            "要拆解的维度。storyboard=分镜（抽帧图组）、motion=动态（运镜参考片段）、"
+            "music=音乐（BGM 参考片段）。留空等同于三个全开"
+        ),
+    )
+    max_frames: int = Field(
+        default=40,
+        ge=3,
+        le=80,
+        description=(
+            "关键帧抽取上限。实际帧数按视频时长算（约每秒一帧），这里只封顶；"
+            "帧越密拆出来的镜头越细，同时视觉调用也越贵"
+        ),
+    )
+    scene_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="ffmpeg 场景切换阈值，范围 0-1。长镜头建议 0.2-0.3，快剪建议 0.4-0.5",
+    )
+    duration_sec: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="视频总时长（秒）。可选；传入后镜头时间轴更准确",
+        examples=[15],
+    )
+    storyboard_group_size: int = Field(
+        default=4,
+        ge=1,
+        le=12,
+        description=(
+            "分镜分组的每组镜头数上限。模型给出叙事段落（segment）时按段落分组，"
+            "没给才按这个大小等分兜底"
+        ),
+    )
+    max_motion_clips: int = Field(
+        default=3,
+        ge=1,
+        le=8,
+        description="动态维度最多切几段运镜参考片段",
+    )
+    motion_clip_max_sec: float = Field(
+        default=6.0,
+        gt=0,
+        le=30,
+        description="单段运镜参考片段的时长上限（秒），超出的镜头会被截断",
+    )
+    music_clip_sec: float = Field(
+        default=15.0,
+        gt=0,
+        le=120,
+        description="BGM 参考片段时长（秒）。视频短于这个值时取全长",
     )
 
 
@@ -1058,7 +1138,7 @@ class FreezoneAssetLibraryFolderPatchRequest(BaseModel):
     )
 
 
-class FreezoneVideoGenRequest(BaseModel):
+class FreezoneVideoGenRequest(FreezoneWorkflowMediaLink):
     """文生视频请求。
 
     运镜通过模板库和补充提示词控制；角色库通过 `character_ids` 引用已上传的人物参考图。
@@ -1112,7 +1192,7 @@ class FreezoneVideoGenRequest(BaseModel):
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
-class FreezoneImageToVideoRequest(BaseModel):
+class FreezoneImageToVideoRequest(FreezoneWorkflowMediaLink):
     """图片参考视频请求。
 
     统一承接图生视频和图片参考视频：
@@ -1170,7 +1250,7 @@ class FreezoneImageToVideoRequest(BaseModel):
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
-class FreezoneKeyframeVideoRequest(BaseModel):
+class FreezoneKeyframeVideoRequest(FreezoneWorkflowMediaLink):
     """关键帧视频请求。
 
     接受仅首帧、首帧+尾帧或仅尾帧，至少需要提供一个槽位。
@@ -1227,7 +1307,7 @@ class FreezoneKeyframeVideoRequest(BaseModel):
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
-class FreezoneVideoEditRequest(BaseModel):
+class FreezoneVideoEditRequest(FreezoneWorkflowMediaLink):
     """视频编辑请求。
 
     输入 1 个源视频，并按媒体模型目录配置接收参考图片和独立参考音频。
@@ -1422,7 +1502,7 @@ class FreezoneImageReversePromptResponse(BaseModel):
     data: FreezoneImageReversePromptData
 
 
-class FreezoneVideoOmniGenRequest(BaseModel):
+class FreezoneVideoOmniGenRequest(FreezoneWorkflowMediaLink):
     """全能参考视频请求。
 
     支持文本、图像、视频、音频、文件和公开网页链接混合输入。
@@ -1476,6 +1556,13 @@ class FreezoneVideoOmniGenRequest(BaseModel):
     gen_mode: Literal["allReference"] = Field(
         default="allReference",
         description="全能参考入口的固定业务模式",
+    )
+    continuation: bool = Field(
+        default=False,
+        description=(
+            "画布「智能续写」：仍按全能参考计费和校验，但按视频延长任务提交给模型"
+            "（任务类型与提示词要求同视频延长）。需要至少一条视频参考"
+        ),
     )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
@@ -1624,9 +1711,24 @@ class FreezoneAudioVoiceRef(BaseModel):
     )
 
 
-class FreezoneAudioSpeechRequest(BaseModel):
+class FreezoneAudioSpeechRequest(FreezoneWorkflowMediaLink):
     """Freezone 音频节点：文本生成语音请求。"""
 
+    speech_mode: Literal["preset", "clone"] = Field(
+        default="clone",
+        description=(
+            "语音生成模式。preset 使用系统预设音色且不需要参考音频；"
+            "clone 使用项目、角色或账号级参考声线。"
+        ),
+    )
+    preset_model: str = Field(
+        default="edge-tts",
+        description="speech_mode=preset 时使用的预设语音模型。",
+    )
+    preset_voice: str = Field(
+        default="Serena",
+        description="speech_mode=preset 时使用的系统音色。",
+    )
     text: str = Field(
         description=("要合成的台词/旁白文本。"),
         examples=["她低声说：终于等到这一天了。"],
@@ -1658,7 +1760,7 @@ class FreezoneAudioSpeechRequest(BaseModel):
     )
 
 
-class FreezoneAudioMusicRequest(BaseModel):
+class FreezoneAudioMusicRequest(FreezoneWorkflowMediaLink):
     """Freezone 音频节点：文本生成音乐请求。"""
 
     input: str = Field(
@@ -1698,6 +1800,7 @@ class FreezoneVideoComposeItem(BaseModel):
     source_end: float = Field(gt=0.0, description="源媒体裁剪结束秒，必须大于 source_start")
     volume: float = Field(default=1.0, ge=0.0, le=2.0, description="音量倍率")
     muted: bool = Field(default=False, description="是否静音")
+    speed: float = Field(default=1.0, gt=0.0, le=4.0, description="播放倍速")
 
 
 class FreezoneVideoComposeTrack(BaseModel):
@@ -1709,10 +1812,16 @@ class FreezoneVideoComposeTrack(BaseModel):
 class FreezoneVideoComposeRequest(BaseModel):
     title: str = Field(default="", description="合成任务标题，可为空")
     canvas_id: str = Field(default="", description="来源画布 id，可为空")
+    node_id: str = Field(default="", description="来源合成节点 id，用于生成历史")
     resolution: Literal["720p", "1080p"] = Field(default="1080p", description="目标输出分辨率")
     fps: int = Field(default=30, ge=1, le=60, description="输出帧率")
     background_color: str = Field(default="#000000", description="补边或空隙使用的背景色")
     keep_original_audio: bool = Field(default=True, description="是否保留视频片段自带音频")
+    cover_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("cover_url", "coverUrl"),
+        description="合成封面图 URL，可为空。仅作为成片封面元信息返回，不改变视频内容。",
+    )
     tracks: list[FreezoneVideoComposeTrack] = Field(
         default_factory=list, description="时间线轨道列表"
     )
@@ -1735,6 +1844,95 @@ class FreezoneTextTranslateRequest(BaseModel):
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
 
+
+class FreezoneRecipeCompileReference(BaseModel):
+    """Recipe 编译时可用的媒体引用摘要，不包含内部文件路径。"""
+
+    kind: Literal["image", "video", "audio"]
+    label: str = Field(default="", max_length=200)
+
+
+class FreezoneRecipePipelineEntry(BaseModel):
+    id: str = Field(min_length=1, max_length=128)
+    version: str = Field(default="", max_length=64)
+
+
+class FreezoneRecipeCompileRequest(BaseModel):
+    """将节点意图与可信 Recipe 编译为最终执行提示词。"""
+
+    recipe_id: str = Field(min_length=1, max_length=128)
+    project_id: str = Field(default="", max_length=128)
+    product_operation_id: str = Field(default="", max_length=128)
+    recipe_version: str = Field(default="", max_length=64)
+    recipe_pipeline: list[FreezoneRecipePipelineEntry] = Field(
+        default_factory=list,
+        max_length=6,
+    )
+    skill_id: str = Field(default="", max_length=128)
+    skill_version: str = Field(default="", max_length=64)
+    confirmed_inputs: dict[str, Any] = Field(default_factory=dict)
+    node_kind: Literal["image", "video", "audio", "text"]
+    prompt_strategy: Literal["template", "user_message", "previous_output", "llm_refine"] = (
+        "llm_refine"
+    )
+    node_prompt: str = Field(default="", max_length=20000)
+    user_goal: str = Field(default="", max_length=20000)
+    upstream_text: str = Field(default="", max_length=40000)
+    reference_media: list[FreezoneRecipeCompileReference] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+
+
+class FreezoneRecipeCompileData(BaseModel):
+    prompt: str
+    compile_mode: Literal[
+        "deterministic",
+        "memory_cache",
+        "persistent_cache",
+        "model",
+        "timeout_fallback",
+    ]
+    recipe_ids: list[str] = Field(default_factory=list)
+
+
+class FreezoneRecipeCompileResponse(BaseModel):
+    ok: Literal[True] = True
+    data: FreezoneRecipeCompileData
+
+
+class FreezoneRecipeCompileBatchItem(FreezoneRecipeCompileRequest):
+    request_id: str = Field(min_length=1, max_length=128)
+
+
+class FreezoneRecipeCompileBatchRequest(BaseModel):
+    items: list[FreezoneRecipeCompileBatchItem] = Field(min_length=1, max_length=12)
+
+
+class FreezoneRecipeCompileBatchResult(BaseModel):
+    request_id: str
+    ok: bool
+    data: FreezoneRecipeCompileData | None = None
+    error: str = ""
+    retryable: bool = False
+
+
+class FreezoneRecipeCompileBatchData(BaseModel):
+    items: list[FreezoneRecipeCompileBatchResult]
+
+
+class FreezoneRecipeCompileBatchResponse(BaseModel):
+    ok: Literal[True] = True
+    data: FreezoneRecipeCompileBatchData
+
+
+class FreezoneRecipeTextGenerateData(BaseModel):
+    content: str
+
+
+class FreezoneRecipeTextGenerateResponse(BaseModel):
+    ok: Literal[True] = True
+    data: FreezoneRecipeTextGenerateData
 
 class FreezoneTextGenerateRequest(BaseModel):
     """Freezone 文本节点：根据创作要求生成自由文本。"""
@@ -2133,6 +2331,10 @@ class CharacterVoiceRecordRequest(BaseModel):
     data_url: str
 
 
+class SystemVoicePrepareRequest(BaseModel):
+    confirmed: bool = False
+
+
 class NarratorVoiceCopyRequest(BaseModel):
     source_path: str
 
@@ -2242,3 +2444,19 @@ class StylePreviewRequest(BaseModel):
     project: Optional[str] = None
     prompt: str = "A beautiful woman standing in a garden"
     model: str = "nanobanana"
+
+
+class FreezoneImageAnimateRequest(FreezoneWorkflowMediaLink):
+    image_url: str = Field(min_length=1)
+    canvas_id: str = Field(default="", max_length=200)
+    node_id: str = Field(default="", max_length=200)
+
+
+class FreezoneImageVectorizeRequest(FreezoneImageAnimateRequest):
+    pass
+
+
+class FreezoneImageAnimateGifRequest(BaseModel):
+    video_url: str = Field(min_length=1)
+    canvas_id: str = Field(default="", max_length=200)
+    node_id: str = Field(default="", max_length=200)

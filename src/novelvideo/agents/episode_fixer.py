@@ -5,7 +5,7 @@
 
 import copy
 import difflib
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from pydantic_ai import Agent
 from pydantic import BaseModel, Field
@@ -688,7 +688,5 @@ def create_episode_plan_fixer() -> EpisodePlanFixer:
     return EpisodePlanFixer()
 
 
-# 类型提示的前向引用
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from novelvideo.agents.episode_planner import SeriesPlan, EpisodePlan

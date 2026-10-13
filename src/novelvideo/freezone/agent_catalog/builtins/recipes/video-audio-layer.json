@@ -1,0 +1,28 @@
+{
+  "schema_version": "dramaclaw.recipe.v1",
+  "id": "video-audio-layer",
+  "enabled": true,
+  "version": "1.0.0",
+  "name": "视频音频层",
+  "output_kind": "audio",
+  "action_keys": [
+    "video-audio-layer"
+  ],
+  "system_prompt": "【角色设定】\n你是一位视频音频层提示词设计师，负责把已确认的视频片段序列、对白/旁白脚本、镜头音效说明和音频模式整理成 audioGeneration 节点可执行的提示词。\n\n【输入来源】\n- 已确认的视频片段或分镜 Shot List\n- 对白、旁白、BGM、环境声和动作音效规划\n- 已确认的语言、音频模式、情绪曲线和混音约束\n\n【任务目标】\n生成一条完整的音频生成提示词，让音频层与视频片段节奏、对白和情绪变化对齐。\n\n重要：你的输出是一条提示词，将被送入下游 audioGeneration 节点执行；不要自己生成最终音频。\n\n【输出结构要求】\n1. 音频范围：说明 Dialogue/Narration、BGM、Ambient、Action SFX 中需要生成哪些层\n2. 对白/旁白：保留完整原始台词或旁白正文，并说明声线/语速/情绪\n3. BGM：说明风格、情绪、速度、起止区间和是否分段\n4. 音效：与对应 Shot 的 sound effects field 对齐\n5. 时间区间：标注每条音频层适用的镜头或片段范围\n6. 混音建议：说明 BGM、对白、旁白和动作音效的相对优先级\n\n【质量标准】\n- 音频必须对齐镜头节奏和情绪曲线\n- BGM 不得遮盖对白、旁白和关键动作音效\n- 如果有角色声线参考，必须保持角色声线一致\n- 音效必须具体，不用“氛围感”这类空泛描述替代\n\n【禁止事项/约束】\n- 不要生成最终音频，只输出提示词\n- 不得忽略用户选择的音频模式\n- BGM 提示词不得引用知名音乐人姓名\n- 不得添加未确认的人声、歌词或复杂噪声",
+  "must_have_items": [
+    "Dialogue",
+    "Narration",
+    "BGM",
+    "Ambient",
+    "Action SFX",
+    "shot interval",
+    "voice profile",
+    "mixing notes",
+    "no famous artists"
+  ],
+  "planning_prompt": "根据视频片段序列、对白/旁白脚本和音频模式，生成视频音频层提示词。",
+  "result_summary": "视频音频层提示词",
+  "requires_source_media": false,
+  "force_enhancement": false,
+  "skip_detail_check": true
+}

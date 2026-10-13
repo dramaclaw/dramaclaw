@@ -43,6 +43,7 @@ export interface UpstreamContent {
   nodeId: string;
   nodeType: CanvasNodeType;
   displayName?: string;
+  workflowStepId?: string;
   text?: string;
   imageUrl?: string;
   videoUrl?: string;
@@ -212,6 +213,33 @@ export interface CanvasEventMap {
   'freezone/projection-remove': {
     projectionKey: string;
   };
+  /** 画布 toolbar 触发：把当前选中节点作为引用加入 Freezone 聊天输入框。 */
+  'freezone/add-nodes-to-chat': {
+    nodeIds: string[];
+  };
+  /** 聊天触发低风险节点 UI 动作；实际执行由 Canvas/SelectedNodeOverlay 复用现有 toolbar handler。 */
+  'freezone/run-node-action': {
+    nodeId: string;
+    action: string;
+    parameters?: Record<string, unknown>;
+    executionMode?: 'single' | 'workflow';
+    requestId?: string;
+  };
+  /** 带 requestId 的节点动作执行完成后回报给聊天命令调度器。 */
+  'freezone/node-action-result': {
+    requestId: string;
+    nodeId: string;
+    action: string;
+    status: 'success' | 'error';
+    error?: string;
+    output?: Record<string, unknown>;
+  };
+  /** 节点已接手带 requestId 的动作；用于区分“正在生成”和“事件无人处理”。 */
+  'freezone/node-action-accepted': {
+    requestId: string;
+    nodeId: string;
+    action: string;
+  };
   /** 主线资产已在节点内部直接写入，通知素材库重拉。 */
   'freezone/assets-updated': undefined;
 }
@@ -220,7 +248,7 @@ export interface CanvasEventBus {
   publish: <TType extends keyof CanvasEventMap>(
     type: TType,
     payload: CanvasEventMap[TType]
-  ) => void;
+  ) => number;
   subscribe: <TType extends keyof CanvasEventMap>(
     type: TType,
     handler: (payload: CanvasEventMap[TType]) => void

@@ -16,6 +16,7 @@ from novelvideo.api.schemas import (
     FreezoneVideoGenRequest,
     FreezoneVideoOmniGenRequest,
 )
+from novelvideo.freezone.video_node import VIDEO_EXTEND_REQUIREMENT
 
 
 def _catalog(*modes: str) -> dict:
@@ -179,6 +180,79 @@ async def test_video_extend_uses_source_video_auto_ratio_and_requested_duration(
         }
     ]
     assert "视频延长要求" in captured["start"]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_omni_video_continuation_runs_as_video_extend(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured = await _install_route_fakes(monkeypatch, tmp_path, _wan_catalog())
+
+    await freezone_routes.freezone_video_omni_gen(
+        "project",
+        FreezoneVideoOmniGenRequest(
+            prompt="滑板少年继续向前滑行",
+            references=[
+                {"type": "video", "url": "https://example.com/source.mp4"},
+                {"type": "image", "url": "https://example.com/hero.png"},
+            ],
+            aspect_ratio="auto",
+            model="catalog-video",
+            continuation=True,
+        ),
+        {"username": "admin"},
+    )
+
+    start = captured["start"]
+    # 执行按视频延长（任务类型 extend），计费 / 目录 / 历史仍是全能参考。
+    assert start["gen_mode"] == "video_extend"
+    assert start["requested_gen_mode"] == "allReference"
+    assert captured["request_mode"] == "allReference"
+    assert VIDEO_EXTEND_REQUIREMENT in start["prompt"]
+    assert "全能参考模式要求" not in start["prompt"]
+    assert "不是视频编辑" not in start["prompt"]
+    # 续写仍可带视频以外的参考素材。
+    assert [item["type"] for item in start["reference_items"]] == ["video", "image"]
+
+
+@pytest.mark.asyncio
+async def test_omni_video_without_continuation_stays_all_reference(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured = await _install_route_fakes(monkeypatch, tmp_path, _wan_catalog())
+
+    await freezone_routes.freezone_video_omni_gen(
+        "project",
+        FreezoneVideoOmniGenRequest(
+            prompt="参考这段视频生成新镜头",
+            references=[{"type": "video", "url": "https://example.com/source.mp4"}],
+            model="catalog-video",
+        ),
+        {"username": "admin"},
+    )
+
+    assert captured["start"]["gen_mode"] == "all_reference"
+    assert "全能参考模式要求" in captured["start"]["prompt"]
+    assert VIDEO_EXTEND_REQUIREMENT not in captured["start"]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_omni_video_continuation_requires_a_video_reference(
+    monkeypatch, tmp_path: Path
+) -> None:
+    await _install_route_fakes(monkeypatch, tmp_path, _wan_catalog())
+
+    with pytest.raises(HTTPException, match="continuation requires a video reference"):
+        await freezone_routes.freezone_video_omni_gen(
+            "project",
+            FreezoneVideoOmniGenRequest(
+                prompt="继续",
+                references=[{"type": "image", "url": "https://example.com/hero.png"}],
+                model="catalog-video",
+                continuation=True,
+            ),
+            {"username": "admin"},
+        )
 
 
 @pytest.mark.asyncio

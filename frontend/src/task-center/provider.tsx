@@ -20,6 +20,10 @@ import { isTerminal, displayLabel } from "./derivations";
 import { taskErrorMessage } from "./task-errors";
 import type { TaskState } from "./types";
 import type { OkResponse } from "@/types/api";
+import {
+  publishTaskSnapshot,
+  publishTaskState,
+} from "@/api/tasks";
 
 const PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 const POLLING_FALLBACK_INTERVAL_MS = 5000;
@@ -63,6 +67,11 @@ function invalidateCompletedAssetQueries(
       queryClient.invalidateQueries({
         queryKey: queryKeys.beats(projectId, task.episode),
       });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.episodeDetail(projectId, task.episode),
+      });
+      queryClient.invalidateQueries({ queryKey: queryKeys.scenes(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.props(projectId) });
       // 拆镜是 beat_count 从 0 变成 N 的那一步，分集列表的镜头数角标读它。
       queryClient.invalidateQueries({ queryKey: queryKeys.episodes(projectId) });
       // 拆镜整集重写 beats，身份/场景/道具的引用关系随之改变。资产索引挂在项目级
@@ -152,6 +161,11 @@ function invalidateCompletedAssetQueries(
 
   if (task.task_type === "episode_scene_planner") {
     queryClient.invalidateQueries({ queryKey: queryKeys.scenes(projectId) });
+    if (task.episode > 0) {
+      queryClient.invalidateQueries({ queryKey: queryKeys.beats(projectId, task.episode) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.script(projectId, task.episode) });
+      invalidateAssetReferences(queryClient, projectId);
+    }
   } else {
     queryClient.invalidateQueries({ queryKey: queryKeys.props(projectId) });
   }
@@ -255,6 +269,7 @@ export function TaskCenterProvider({
         });
         if (!cancelled) {
           useTaskCenterStore.getState().hydrate(res.data);
+          publishTaskSnapshot(res.data);
         }
       } catch (err) {
         if (isHydrateCancelledError(err)) return;
@@ -307,6 +322,7 @@ export function TaskCenterProvider({
         },
         onEvent: (task, source) => {
           const prev = useTaskCenterStore.getState().upsert(task);
+          publishTaskState(task);
 
           // Push-through cache update (not invalidate) to keep legacy `useTasks()` consumers
           // in sync without hammering the backend.

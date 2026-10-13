@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreditCenterDialog } from "@/components/credits/CreditCenterDialog";
 
 const rechargeOrdersQuery = vi.hoisted(() => vi.fn());
-const creditState = vi.hoisted(() => ({ summary: undefined as Record<string, unknown> | undefined }));
+const creditState = vi.hoisted(() => ({ summary: undefined as Record<string, unknown> | undefined, transactions: [] as Record<string, unknown>[] }));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -31,7 +31,7 @@ vi.mock("@/lib/queries/credits", () => ({
   useCreditSummary: () => ({ data: creditState.summary ? { data: creditState.summary } : undefined }),
   useCreditPromotions: () => ({ data: undefined, isPending: false }),
   useCreditFilterOptions: () => ({ data: undefined }),
-  useCreditTransactions: () => ({ data: undefined, isPending: false }),
+  useCreditTransactions: () => ({ data: { data: { items: creditState.transactions, total: creditState.transactions.length } }, isPending: false }),
 }));
 
 vi.mock("@/lib/queries/payments", () => ({
@@ -57,6 +57,7 @@ function renderDialog(
 describe("CreditCenterDialog payment visibility", () => {
   beforeEach(() => {
     creditState.summary = undefined;
+    creditState.transactions = [];
     rechargeOrdersQuery.mockReset();
     rechargeOrdersQuery.mockReturnValue({ data: undefined, isPending: false });
   });
@@ -101,5 +102,60 @@ describe("CreditCenterDialog payment visibility", () => {
     expect(screen.getAllByText("3,999").length).toBeGreaterThan(0);
     expect(screen.queryByText("12,345")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "credits.centerModal.tabs.usage" })).toBeInTheDocument();
+  });
+});
+
+
+describe("credit transaction source", () => {
+  it.each([
+    ["payment_org_member_recharge", "credits.transactionSource.orgRecharge"],
+    ["payment_personal_recharge", "credits.transactionSource.personalRecharge"],
+  ])("labels %s instead of missing feature and model", (reason, label) => {
+    creditState.transactions = [{ id: "recharge", reason, occurred_at: null, category: "earned",
+      status: "completed", delta: 495, balance_after: 18398, feature_label: "", model: "", project_name: "" }];
+    renderDialog(false, "orders");
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByText("credits.transactionSource.paymentReceived")).toBeInTheDocument();
+    expect(screen.getByText("+495")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["org_credit_allocate", "orgAllocate", 100],
+    ["org_credit_reduce", "orgReduce", -20],
+    ["org_credit_departure_sweep", "orgDepartureSweep", -80],
+    ["org_credit_refund_sweep", "orgRefundSweep", -5],
+  ])("explains %s without inventing a historical balance", (reason, title, delta) => {
+    creditState.transactions = [{ id: "transfer", reason, occurred_at: null,
+      category: delta > 0 ? "earned" : "spent", status: "completed", delta,
+      balance_after: null, feature_label: "", model: "", project_name: "" }];
+    renderDialog(false, "orders");
+    expect(screen.getByText(`credits.transactionSource.${title}`)).toBeInTheDocument();
+    expect(screen.getByText("credits.transactionSource.orgTransfer")).toBeInTheDocument();
+    expect(screen.getByText(`${delta > 0 ? "+" : ""}${delta}`)).toBeInTheDocument();
+    expect(screen.queryByText("credits.transactionSource.paymentReceived")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["admin_credit_increase", "adminIncrease", "adminAdjustment", 1],
+    ["admin_credit_decrease", "adminDecrease", "adminAdjustment", -300],
+    ["admin_recharge", "adminRecharge", "adminRechargeReceived", 100],
+  ])("explains %s without claiming an online payment", (reason, title, detail, delta) => {
+    creditState.transactions = [{ id: "manual", reason, occurred_at: null, category: "earned",
+      status: "completed", delta, balance_after: 18398, feature_label: "", model: "", project_name: "" }];
+    renderDialog(false, "orders");
+    expect(screen.getByText(`credits.transactionSource.${title}`)).toBeInTheDocument();
+    expect(screen.getByText(`credits.transactionSource.${detail}`)).toBeInTheDocument();
+    expect(screen.getByText(`${Number(delta) > 0 ? "+" : ""}${delta}`)).toBeInTheDocument();
+    expect(screen.queryByText("credits.transactionSource.paymentReceived")).not.toBeInTheDocument();
+  });
+
+  it.each([undefined, "promotion_grant", "model_call_refund"])("does not call %s a recharge", (reason) => {
+    creditState.transactions = [{ id: "other", reason, occurred_at: null, category: "earned",
+      status: "completed", delta: 495, balance_after: 18398, feature_label: "Image generation",
+      model: "Model A", project_name: "Project A" }];
+    renderDialog(false, "orders");
+    expect(screen.getByText("Image generation")).toBeInTheDocument();
+    expect(screen.getByText("Model A")).toBeInTheDocument();
+    expect(screen.queryByText("credits.transactionSource.paymentReceived")).not.toBeInTheDocument();
   });
 });

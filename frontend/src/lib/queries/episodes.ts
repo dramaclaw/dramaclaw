@@ -241,6 +241,9 @@ function usePlanEpisodeAssets(project: string, kind: "scene" | "prop") {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks(project) });
       if (kind === "scene") {
         queryClient.invalidateQueries({ queryKey: queryKeys.scenes(project) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.beats(project, episodeNum) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.script(project, episodeNum) });
+        invalidateAssetReferences(queryClient, project);
       } else {
         queryClient.invalidateQueries({ queryKey: queryKeys.props(project) });
       }

@@ -92,3 +92,72 @@ def test_scene_360_runs_catalog_model_with_verified_authority(monkeypatch, tmp_p
 
     assert result["ok"] is True
     assert result["model"] == model
+
+
+def test_scene_360_newapi_model_defaults_to_lingshan_without_env(monkeypatch):
+    from novelvideo import stage_asset_tasks
+
+    monkeypatch.delenv("SCENE_360_IMAGE_MODEL", raising=False)
+    monkeypatch.delenv("NEWAPI_IMAGE_MODEL", raising=False)
+
+    assert stage_asset_tasks.resolve_scene_360_image_model(provider="newapi") == "LingShan-G2"
+
+
+@pytest.mark.parametrize(
+    ("scene_model", "gateway_model", "expected"),
+    [
+        ("", "", "LingShan-G2"),
+        ("", "gateway-custom-model", "gateway-custom-model"),
+        ("pano-custom-model", "gateway-custom-model", "pano-custom-model"),
+    ],
+)
+def test_scene_360_newapi_model_keeps_env_override_priority(
+    monkeypatch, scene_model, gateway_model, expected
+):
+    from novelvideo import stage_asset_tasks
+
+    monkeypatch.setenv("SCENE_360_IMAGE_MODEL", scene_model)
+    monkeypatch.setenv("NEWAPI_IMAGE_MODEL", gateway_model)
+
+    assert stage_asset_tasks.resolve_scene_360_image_model(provider="newapi") == expected
+
+
+def test_scene_360_openai_model_keeps_native_default(monkeypatch):
+    from novelvideo import stage_asset_tasks
+
+    monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
+    monkeypatch.setenv("SCENE_360_IMAGE_MODEL", "LingShan-G2")
+    monkeypatch.setenv("NEWAPI_IMAGE_MODEL", "LingShan-G2")
+
+    assert stage_asset_tasks.resolve_scene_360_image_model(provider="openai") == "gpt-image-2"
+
+
+def test_scene_360_default_model_reaches_builder_with_panorama_parameters(monkeypatch, tmp_path):
+    from novelvideo import stage_asset_tasks
+
+    for name in (
+        "SCENE_360_IMAGE_MODEL", "NEWAPI_IMAGE_MODEL", "SCENE_360_IMAGE_SIZE",
+        "SCENE_360_IMAGE_QUALITY", "HUIMENG_IMAGE_QUALITY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    def fake_run(cmd, **_kwargs):
+        assert cmd[cmd.index("--model") + 1] == "LingShan-G2"
+        assert cmd[cmd.index("--image-size") + 1] == "2K"
+        assert cmd[cmd.index("--quality") + 1] == "medium"
+        output_dir = stage_asset_tasks.Path(cmd[cmd.index("--output-dir") + 1])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "scene_panorama_2to1.png").write_bytes(b"png")
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(stage_asset_tasks, "run_project_subprocess", fake_run)
+    result = stage_asset_tasks.run_scene_360_feature_billed(
+        tmp_path / "project",
+        "Hall",
+        source="text",
+        provider="newapi",
+        artifact_dir=tmp_path / "candidate",
+        update_manifest=False,
+    )
+    assert result["ok"] is True
+    assert result["model"] == "LingShan-G2"

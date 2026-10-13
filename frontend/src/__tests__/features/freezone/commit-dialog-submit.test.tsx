@@ -80,4 +80,27 @@ describe("CommitDialog submit", () => {
       committed_target_label: "公寓楼电梯间 / 背面世界",
     });
   });
+
+  it("keeps the manual commit open and does not report success when persistence fails", async () => {
+    const failure = new Error("主线写入失败");
+    vi.mocked(promoteToAsset).mockRejectedValue(failure);
+    const onClose = vi.fn();
+    const onSuccess = vi.fn();
+
+    render(
+      <CommitDialog
+        project="proj"
+        sourceUrl="/static/admin/proj/freezone/generated/frame.png"
+        defaultTarget={{ kind: "frame", episode: 1, beat: 2 }}
+        onClose={onClose}
+        onSuccess={onSuccess}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+
+    expect(await screen.findByText("主线写入失败")).toBeInTheDocument();
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

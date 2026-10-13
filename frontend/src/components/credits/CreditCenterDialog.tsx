@@ -57,6 +57,18 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 import { businessWechatQrUrl } from "@/components/login/cinematic/media";
 
+const TRANSACTION_SOURCE_COPY = new Map<string, [string, string]>([
+  ["payment_org_member_recharge", ["orgRecharge", "paymentReceived"]],
+  ["payment_personal_recharge", ["personalRecharge", "paymentReceived"]],
+  ["admin_credit_increase", ["adminIncrease", "adminAdjustment"]],
+  ["admin_credit_decrease", ["adminDecrease", "adminAdjustment"]],
+  ["org_credit_allocate", ["orgAllocate", "orgTransfer"]],
+  ["org_credit_reduce", ["orgReduce", "orgTransfer"]],
+  ["org_credit_departure_sweep", ["orgDepartureSweep", "orgTransfer"]],
+  ["org_credit_refund_sweep", ["orgRefundSweep", "orgTransfer"]],
+  ["admin_recharge", ["adminRecharge", "adminRechargeReceived"]],
+]);
+
 export type CreditCenterTab =
   | "packages"
   | "custom"
@@ -1088,8 +1100,16 @@ function UsageTab({ summary, language }: { summary: CreditSummary | undefined; l
                     {item.occurred_at ? formatDateTime(item.occurred_at, language) : "--"}
                   </td>
                   <td className="max-w-64 px-4 py-3">
-                    <div className="truncate font-medium">{item.feature_label || "--"}</div>
-                    <div className="mt-1 truncate text-xs text-white/38">{item.model || "--"}</div>
+                    <div className="truncate font-medium">{
+                      TRANSACTION_SOURCE_COPY.has(item.reason ?? "")
+                        ? t(`credits.transactionSource.${TRANSACTION_SOURCE_COPY.get(item.reason ?? "")![0]}`)
+                        : item.feature_label || "--"
+                    }</div>
+                    <div className="mt-1 truncate text-xs text-white/38">{
+                      TRANSACTION_SOURCE_COPY.has(item.reason ?? "")
+                        ? t(`credits.transactionSource.${TRANSACTION_SOURCE_COPY.get(item.reason ?? "")![1]}`)
+                        : item.model || "--"
+                    }</div>
                   </td>
                   <td className="max-w-48 truncate px-4 py-3 text-white/58">{item.project_name || "--"}</td>
                   <td className="px-4 py-3">
@@ -1105,7 +1125,7 @@ function UsageTab({ summary, language }: { summary: CreditSummary | undefined; l
                   <td className={cn("px-4 py-3 text-right font-medium tabular-nums", item.delta < 0 ? "text-red-400" : "text-emerald-400")}>
                     {item.delta > 0 ? "+" : ""}{formatNumber(item.delta, language)}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-white/58">{formatNumber(item.balance_after, language)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-white/58">{item.balance_after == null ? "--" : formatNumber(item.balance_after, language)}</td>
                 </tr>
               ))}
             </tbody>

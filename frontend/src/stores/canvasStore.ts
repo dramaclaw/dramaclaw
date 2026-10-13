@@ -51,12 +51,35 @@ import {
   nodeHasTargetHandle,
   isUpstreamConnectionAllowed,
 } from '@/features/canvas/domain/nodeRegistry';
-import { EXPORT_RESULT_DISPLAY_NAME } from '@/features/canvas/domain/nodeDisplay';
+import {
+  EXPORT_RESULT_DISPLAY_NAME,
+  isNodeUsingDefaultDisplayName,
+  withAutoTitleIndex,
+} from '@/features/canvas/domain/nodeDisplay';
+
+/**
+ * 副本发号：源节点用的还是默认名（含带序号的「文本1」）→ 丢掉标题重新发号，避免
+ * 副本与源节点同名；用户已自定义过标题则原样保留（复制出来同名是预期行为）。
+ */
+function withAutoTitleIndexForClone(
+  type: CanvasNodeType,
+  data: Partial<CanvasNodeData>,
+  existingNodes: ReadonlyArray<{ type?: string | null; data?: unknown }>,
+): Partial<CanvasNodeData> {
+  if (!isNodeUsingDefaultDisplayName(type, data)) return data;
+  const { displayName: _replacedByAutoTitle, ...rest } = data;
+  return withAutoTitleIndex(type, rest, existingNodes);
+}
 import {
   overflowingVideoReferenceEdgeIds,
   videoReferenceConnectionRejection,
 } from '@/features/canvas/domain/videoReferenceLimits';
 import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
+import {
+  planVideoBreakdownGroups,
+  type PlanVideoBreakdownGroupsOptions,
+  type VideoBreakdownResultLike,
+} from '@/features/canvas/application/videoBreakdownGroups';
 import {
   type ViewportBookmark,
   type ViewportBookmarks,
@@ -67,6 +90,7 @@ import {
 import { nodeCatalog } from '@/features/canvas/application/nodeCatalog';
 import { canvasNodeFactory } from '@/features/canvas/application/canvasServices';
 import { resetStyleNodeSyncStates } from '@/features/canvas/application/styleNodeSync';
+import { cancelVideoCrop } from '@/features/canvas/application/videoCrop/videoCropInFlight';
 import {
   aspectRatioFromImageDimensions,
   ensureAtLeastOneMinEdge,
@@ -159,6 +183,8 @@ interface CanvasState {
    * 会在节点下方重叠。功能浮层优先级更高。
    */
   activeOverlayNodeId: string | null;
+  /** 当前打开的打光编辑器目标节点 id。独立于节点选中态，点击聊天面板时不应关闭。 */
+  activeLightEditorNodeId: string | null;
   /**
    * 当前鼠标悬停的节点 id（由 Canvas 的 onNodeMouseEnter/Leave 维护，离开带短
    * 延迟，避免鼠标移到节点上方的浮动按钮栏时按钮提前消失）。供 NodeSpawnPlusOverlay
@@ -280,6 +306,18 @@ interface CanvasState {
     options?: { cols?: number; groupName?: string }
   ) => string | null;
 
+  /**
+   * 把一次「逐帧拉片」的产出落到画布：分镜组 01/02/03、动态｜运镜动作参考、
+   * 音乐｜BGM参考片段各自成组，摆在拉片节点右侧的一列里，成员逐一连回拉片节点
+   * （组节点自身没有 handle，连不了边）。整批算一个 undo 步；返回创建的组节点
+   * id 列表，源节点不存在或这次拉片没有任何可落盘产出时返回 null。
+   */
+  addVideoBreakdownGroups: (
+    sourceNodeId: string,
+    result: VideoBreakdownResultLike,
+    options?: Omit<PlanVideoBreakdownGroupsOptions, 'origin'>
+  ) => string[] | null;
+
   updateNodeData: (
     nodeId: string,
     data: Partial<CanvasNodeData>,
@@ -334,7 +372,11 @@ interface CanvasState {
   deleteNodes: (nodeIds: string[]) => void;
   groupNodes: (
     nodeIds: string[],
-    opts?: { label?: string; extraPadding?: number }
+    opts?: {
+      label?: string;
+      extraPadding?: number;
+      padding?: { side: number; top: number; bottom: number };
+    }
   ) => string | null;
   /**
    * 快捷派生（spawn）后的自动打组：源节点未在组内 → 与新节点一起新建组；已在
@@ -381,6 +423,7 @@ interface CanvasState {
   deleteEdge: (edgeId: string) => void;
   setSelectedNode: (nodeId: string | null) => void;
   setActiveOverlayNodeId: (nodeId: string | null) => void;
+  setActiveLightEditorNodeId: (nodeId: string | null) => void;
   setHoveredNodeId: (nodeId: string | null) => void;
   /** 请求将视口聚焦到目标节点；Canvas 处理完会通过 clearPendingFocus 复位。 */
   requestFocusNode: (nodeId: string) => void;
@@ -708,6 +751,24 @@ function normalizeNodes(rawNodes: CanvasNode[]): CanvasNode[] {
             mergedData.generationStartedAt = null;
           }
         }
+      }
+
+      // 拉片没有对应的续跑机制（提交时不落 task_key），所以进行态一律复位 ——
+      // 「开始拉片」按钮以 isBreakingDown 判禁用，存下来的 true 没有任何东西会
+      // 把它翻回 false，节点就只能删掉重建。
+      if ('isBreakingDown' in mergedData && mergedData.isBreakingDown) {
+        mergedData.isBreakingDown = false;
+        if ('breakdownStartedAt' in mergedData) {
+          mergedData.breakdownStartedAt = null;
+        }
+      }
+
+      // 画面裁切也一样没有续跑机制，框/比例本来就只在组件本地 state（见
+      // VideoNode 的注释），存图里的 isCropMode: true 重新打开后既没有框也接不
+      // 回在途请求，一律复位成关闭；isClipMode / subtitleEraseMode /
+      // isExtendPickMode 不受影响。
+      if ('isCropMode' in mergedData && mergedData.isCropMode) {
+        mergedData.isCropMode = false;
       }
 
       const normalizedNode = {
@@ -1145,6 +1206,39 @@ function maybeApplyImageAutoResize(node: CanvasNode, patch: Partial<CanvasNodeDa
   };
 }
 
+
+function pruneEmptyGroupNodes(nodes: CanvasNode[], protectedIds: Set<string>): CanvasNode[] {
+  let nextNodes = nodes;
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    const parentIds = new Set(
+      nextNodes
+        .map((node) => node.parentId)
+        .filter((parentId): parentId is string => Boolean(parentId))
+    );
+    const emptyGroupIds = new Set(
+      nextNodes
+        .filter(
+          (node) =>
+            node.type === CANVAS_NODE_TYPES.group &&
+            !protectedIds.has(node.id) &&
+            !isPresetManagedNode(node) &&
+            !parentIds.has(node.id)
+        )
+        .map((node) => node.id)
+    );
+
+    if (emptyGroupIds.size > 0) {
+      changed = true;
+      nextNodes = nextNodes.filter((node) => !emptyGroupIds.has(node.id));
+    }
+  }
+
+  return nextNodes;
+}
+
 export function resolveAbsolutePosition(
   node: CanvasNode,
   nodeMap: Map<string, CanvasNode>
@@ -1265,6 +1359,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   pendingClearIntent: false,
   selectedNodeId: null,
   activeOverlayNodeId: null,
+  activeLightEditorNodeId: null,
   hoveredNodeId: null,
   pendingFocusNodeId: null,
   activeToolDialog: null,
@@ -1620,9 +1715,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   addNode: (type, position, data = {}) => {
     const state = get();
+    // 没带标题的新节点补一个自动序号，标题写成「文本1」「图片节点2」这样，避免同类型
+    // 节点重名分不清（带了 displayName 的——如各类结果节点——不动）。
+    //
+    // 注意 displayName 必须一起写：各节点定义的 createDefaultData() 本来就把默认名
+    // 预填进 displayName 了，只塞 autoTitleIndex 不会改变渲染结果。同时写入 index 是
+    // 为了让 getDefaultNodeDisplayName 也算出带序号的默认名——isNodeUsingDefaultDisplayName
+    // 据此仍判定为「用的是默认名」（UploadNode 的自动改名依赖这一点）。
+    const dataWithAutoTitle = withAutoTitleIndex(type, data, state.nodes);
     const createdNode = maybeApplyImageAutoResize(
-      canvasNodeFactory.createNode(type, position, data),
-      data,
+      canvasNodeFactory.createNode(type, position, dataWithAutoTitle),
+      dataWithAutoTitle,
     );
     const newNode =
       createdNode.type === CANVAS_NODE_TYPES.skill && !createdNode.measured
@@ -1654,10 +1757,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       x: source.position.x,
       y: source.position.y + (sourceHeight + 24) * index,
     };
-    const newNode = canvasNodeFactory.createNode(source.type, position, {
-      ...(source.data as Partial<CanvasNodeData>),
-      ...dataOverrides,
-    });
+    // 副本不能沿用源节点的标题/序号（会重号）：源节点用的是默认名时给副本重新发号。
+    const clonedData = withAutoTitleIndexForClone(
+      source.type,
+      { ...(source.data as Partial<CanvasNodeData>), ...dataOverrides },
+      state.nodes,
+    );
+    const newNode = canvasNodeFactory.createNode(source.type, position, clonedData);
 
     // Mirror the source's upstream connections so the clone resolves the same
     // references (上游图/文本) as the original generation. 风格节点除外 ——
@@ -1731,6 +1837,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }
       }
 
+      // 这条路径上面已经把标题改成「… - 副本」，天然不会与源节点重名，无需重新发号。
       const newNode = canvasNodeFactory.createNode(source.type, position, {
         ...(source.data as Partial<CanvasNodeData>),
         ...(nameOverrides as Partial<CanvasNodeData>),
@@ -2005,6 +2112,91 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     return groupNode.id;
+  },
+
+  addVideoBreakdownGroups: (sourceNodeId, result, options) => {
+    const state = get();
+    const source = state.nodes.find((node) => node.id === sourceNodeId);
+    if (!source) {
+      return null;
+    }
+
+    const nodeMap = new Map(state.nodes.map((node) => [node.id, node] as const));
+    const sourceAbs = resolveAbsolutePosition(source, nodeMap);
+    const sourceSize = getNodeSize(source);
+
+    const plans = planVideoBreakdownGroups(result, {
+      ...options,
+      origin: { x: sourceAbs.x + sourceSize.width + 120, y: sourceAbs.y },
+    });
+    if (plans.length === 0) {
+      return null;
+    }
+
+    // Parent group must precede its own children in the array for React Flow —
+    // 逐组 push（组、组的成员、下一组…）天然满足。
+    const orderedNodes: CanvasNode[] = [];
+    const newEdges: CanvasEdge[] = [];
+    const groupIds: string[] = [];
+
+    for (const plan of plans) {
+      const groupNode = canvasNodeFactory.createNode(
+        CANVAS_NODE_TYPES.group,
+        plan.position,
+        { label: plan.label, displayName: plan.label }
+      );
+      groupNode.width = plan.width;
+      groupNode.height = plan.height;
+      groupNode.style = { width: plan.width, height: plan.height };
+      groupNode.selected = false;
+      orderedNodes.push(groupNode);
+      groupIds.push(groupNode.id);
+
+      for (const child of plan.children) {
+        const childNode = canvasNodeFactory.createNode(
+          child.type,
+          child.position,
+          child.data as Partial<CanvasNodeData>
+        );
+        childNode.parentId = groupNode.id;
+        childNode.width = child.width;
+        childNode.height = child.height;
+        childNode.style = {
+          ...(childNode.style ?? {}),
+          width: child.width,
+          height: child.height,
+        };
+        childNode.selected = false;
+        orderedNodes.push(childNode);
+        newEdges.push({
+          id: `e-${sourceNodeId}-${childNode.id}`,
+          source: sourceNodeId,
+          target: childNode.id,
+          sourceHandle: 'source',
+          targetHandle: 'target',
+          type: 'disconnectableEdge',
+        });
+      }
+    }
+
+    set({
+      nodes: [
+        ...state.nodes.map((node) =>
+          node.selected ? { ...node, selected: false } : node
+        ),
+        ...orderedNodes,
+      ],
+      edges: [...state.edges, ...newEdges],
+      selectedNodeId: groupIds[0] ?? null,
+      history: {
+        past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
+        future: [],
+      },
+      dragHistorySnapshot: null,
+      ...trackEdit(state),
+    });
+
+    return groupIds;
   },
 
   addEdge: (source, target) => {
@@ -2427,6 +2619,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const mergedData = {
       ...definition.createDefaultData(),
       ...dataOverrides,
+      ...(newType === CANVAS_NODE_TYPES.audio ? { voicePolicyConfirmed: true } : {}),
     } as CanvasNodeData;
     const nextNodes = state.nodes.map((node) =>
       node.id === nodeId
@@ -2810,7 +3003,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           deleteSet.delete(node.id);
         }
       }
-      const nextNodes = state.nodes
+      // 源节点被删了，挂在它身上的画面裁切也得跟着断——不然那次裁剪（下载 /
+      // 裁剪 / 上传的某一步）还在跑，跑完才后知后觉发现节点没了。cancelVideoCrop
+      // 对没在裁的节点是空操作，批量删除时全量调一遍没有额外代价。
+      for (const nodeId of deleteSet) {
+        cancelVideoCrop(nodeId);
+      }
+      const nodesAfterDelete = state.nodes
         .filter((node) => !deleteSet.has(node.id))
         .map((node) => {
           if (!node.parentId || !deleteSet.has(node.parentId)) {
@@ -2827,8 +3026,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             },
           };
         });
+      const protectedGroupIds = new Set(
+        existingIds.filter((nodeId) => state.nodes.some((node) => node.id === nodeId))
+      );
+      const nextNodes = pruneEmptyGroupNodes(nodesAfterDelete, protectedGroupIds);
+      const nextNodeIds = new Set(nextNodes.map((node) => node.id));
       const nextEdges = state.edges.filter(
-        (edge) => !deleteSet.has(edge.source) && !deleteSet.has(edge.target)
+        (edge) =>
+          !deleteSet.has(edge.source) &&
+          !deleteSet.has(edge.target) &&
+          nextNodeIds.has(edge.source) &&
+          nextNodeIds.has(edge.target)
       );
 
       const editSource: CanvasMutationSource = isDeleteToEmpty(
@@ -2916,9 +3124,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
 
     const extraPadding = Math.max(0, opts?.extraPadding ?? 0);
-    const SIDE_PADDING = 20 + extraPadding;
-    const TOP_PADDING = 34 + extraPadding;
-    const BOTTOM_PADDING = 20 + extraPadding;
+    const SIDE_PADDING = opts?.padding?.side ?? 20 + extraPadding;
+    const TOP_PADDING = opts?.padding?.top ?? 34 + extraPadding;
+    const BOTTOM_PADDING = opts?.padding?.bottom ?? 20 + extraPadding;
     const groupX = Math.round(absoluteBounds.minX - SIDE_PADDING);
     const groupY = Math.round(absoluteBounds.minY - TOP_PADDING);
     const groupWidth = Math.round(
@@ -3728,15 +3936,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         cursorY += item.size.height + GAP;
       }
     } else {
-      const cols = Math.ceil(Math.sqrt(ordered.length));
-      const cellW = Math.max(...ordered.map((item) => item.size.width)) + GAP;
-      const cellH = Math.max(...ordered.map((item) => item.size.height)) + GAP;
+      // 与 Hermes 的 grid 语义保持一致：按节点数量取接近平方的列数，再按行优先
+      // 放入等宽、等高单元格。连线只描述工作流关系，不应把「宫格」退化成单行。
+      const columns = Math.max(1, Math.ceil(Math.sqrt(ordered.length)));
+      const cellWidth = Math.max(...ordered.map((item) => item.size.width)) + GAP;
+      const cellHeight = Math.max(...ordered.map((item) => item.size.height)) + GAP;
       ordered.forEach((item, index) => {
-        const row = Math.floor(index / cols);
-        const col = index % cols;
         targets.set(item.node.id, {
-          x: SIDE_PAD + col * cellW,
-          y: TOP_PAD + row * cellH,
+          x: SIDE_PAD + (index % columns) * cellWidth,
+          y: TOP_PAD + Math.floor(index / columns) * cellHeight,
         });
       });
     }
@@ -3873,6 +4081,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   setActiveOverlayNodeId: (nodeId) => {
     set((state) =>
       state.activeOverlayNodeId === nodeId ? state : { activeOverlayNodeId: nodeId }
+    );
+  },
+
+  setActiveLightEditorNodeId: (nodeId) => {
+    set((state) =>
+      state.activeLightEditorNodeId === nodeId
+        ? state
+        : { activeLightEditorNodeId: nodeId }
     );
   },
 

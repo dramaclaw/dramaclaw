@@ -12,6 +12,7 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 // 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。chip 是脱离 React 的
@@ -43,25 +44,48 @@ export interface MentionCandidate {
   displayName?: string | null;
 }
 
+/**
+ * 输入框最前面那枚不可编辑的引子（目前只有「智能续写」用）。
+ *
+ * 它不是 `value` 的一部分：前缀是节点的**身份**（对哪条素材的哪一段续写），混进
+ * 正文里用户一个退格就能删掉半句，模型收到的就是残句。所以它只渲染、不序列化，
+ * 由调用方在提交时拼到最终 prompt 的最前面。
+ */
+export interface PromptEditorPrefix {
+  text: string;
+  thumbnailUrl?: string | null;
+  /** 没有静态缩略图时的兜底：拿它当首帧画（与引用素材 chip 同一套做法）。 */
+  videoUrl?: string | null;
+  title?: string;
+}
+
 interface PromptMentionEditorProps {
   value: string;
   onChange: (next: string) => void;
   candidates: MentionCandidate[];
   placeholder?: string;
+  prefix?: PromptEditorPrefix | null;
+  /** 传了就在前缀 chip 左边挂一枚删除按钮（hover 时替掉缩略图）；不传则前缀只读。 */
+  onPrefixRemove?: () => void;
   className?: string;
   onCompositionStart?: () => void;
   onCompositionEnd?: (next: string) => void;
   onKeyDown?: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
   /**
-   * 「素材引用」清单：画布上还没被引用、但可以引用的素材。替换选单里选中一条会先
-   * 走 onAttachMaterial 建立引用，再把这处 @ 换成它。不传则替换选单只有「已引用」。
-   *
-   * 传的是取数函数而不是数组：这份清单要遍历整个画布才能算出来，而它只在选单打开
-   * 的那一刻有用。做成 prop 数组会逼着每个宿主节点常年订阅整个 nodes 数组，画布上
-   * 随便拖一个节点就让所有图片节点重算一遍——代价按节点数平方涨。
+   * 钉在正文最前面的**内联原子块**（故事板的功能 chip）。渲染进 contenteditable
+   * 里一个 `contenteditable=false` 的宿主 span（React portal），因此它在视觉和光标
+   * 行为上就是输入框里的一个「字符」：文字接在它后面同一行流动，光标能越过它，
+   * 在它后面按退格就把它删掉——删除动作本身不改 prompt 文本，只回调
+   * `onLeadingChipDelete` 让宿主去改自己的状态。不传则整套逻辑不生效。
+   */
+  leadingChip?: ReactNode;
+  onLeadingChipDelete?: () => void;
+  /**
+   * 打开替换选单时按需读取当前画布中尚未引用的素材，避免所有宿主节点长期订阅
+   * 整个 nodes 数组。
    */
   getMaterials?: () => readonly ReferenceMaterialOption[];
-  /** 把某个画布素材接成本节点的引用（宿主建边）；返回 false 表示没建成。 */
+  /** 把画布素材接成本节点引用；返回 false 表示未建立引用。 */
   onAttachMaterial?: (nodeId: string) => boolean;
 }
 
@@ -99,12 +123,12 @@ export function mentionDisplayLabel(name: string): string {
   return name.replace(/\d+$/, '') || name;
 }
 
-// 音频 chip 展示为「音频_文件名」（图片/视频有缩略图，无需文件名）。序列化不受
-// 影响（仍走 dataset.name）。这是「完整」标签，用于 title / 候选列表。
+// 音频和文本 chip 带上文件/节点显示名（图片/视频有缩略图，无需名称辅助识别）。
+// 序列化不受影响（仍走 dataset.name）。这是「完整」标签，用于 title / 候选列表。
 export function mentionChipLabel(candidate: MentionCandidate): string {
   const base = mentionDisplayLabel(candidate.name);
   const file = candidate.displayName?.trim();
-  if (candidate.audioUrl && file) {
+  if ((candidate.audioUrl || candidate.name.startsWith('文本')) && file) { // i18n-exempt -- canonical @mention protocol token
     return `${base}_${file}`;
   }
   return base;
@@ -179,6 +203,76 @@ function buildChipElement(candidate: MentionCandidate): HTMLElement {
   return span;
 }
 
+function buildPrefixElement(prefix: PromptEditorPrefix, removable: boolean): HTMLElement {
+  const span = document.createElement('span');
+  span.contentEditable = 'false';
+  span.dataset.promptPrefix = '';
+  span.className = 'prompt-prefix-chip';
+  if (prefix.title) span.title = prefix.title;
+
+  // 缩略图和删除按钮共用左边这一格：平时露缩略图，hover 时换成 ×（设计稿口径）。
+  // 缩略图优先用静态图；没有就挂一个 muted 静止 <video> 画首帧 —— 视频节点的
+  // thumbUrl 是懒生成的，常常为空，缺图会让这枚 chip 看着只剩半截文字。
+  const slot = document.createElement('span');
+  slot.className = 'prompt-prefix-chip-slot';
+  if (prefix.thumbnailUrl) {
+    const img = document.createElement('img');
+    img.src = prefix.thumbnailUrl;
+    img.alt = '';
+    img.draggable = false;
+    slot.appendChild(img);
+  } else if (prefix.videoUrl) {
+    const video = document.createElement('video');
+    video.src = prefix.videoUrl;
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.draggable = false;
+    slot.appendChild(video);
+  }
+  if (removable) {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.contentEditable = 'false';
+    remove.dataset.promptPrefixRemove = '';
+    remove.className = 'prompt-prefix-chip-remove';
+    remove.setAttribute('aria-label', i18n.t('canvas.mentionChip.removePrefix'));
+    remove.title = i18n.t('common.delete');
+    remove.innerHTML =
+      '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+      '<path d="M3.2 3.2 8.8 8.8M8.8 3.2 3.2 8.8" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.5" stroke-linecap="round"/></svg>';
+    slot.appendChild(remove);
+  }
+  // 既没缩略图又不可删时这一格是空的，别占位。
+  if (slot.childElementCount > 0) span.appendChild(slot);
+
+  const labelEl = document.createElement('span');
+  labelEl.className = 'prompt-prefix-chip-label';
+  labelEl.textContent = prefix.text;
+  span.appendChild(labelEl);
+  return span;
+}
+
+/** 光标是不是就贴在前缀 chip 后面。 */
+function adjacentPrefixChip(): HTMLElement | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const node = range.startContainer;
+  const offset = range.startOffset;
+  let target: Node | null = null;
+  if (node.nodeType === Node.TEXT_NODE) {
+    if (offset !== 0) return null;
+    target = node.previousSibling;
+  } else {
+    target = node.childNodes[offset - 1] ?? null;
+  }
+  return target instanceof HTMLElement && target.dataset.promptPrefix !== undefined
+    ? target
+    : null;
+}
+
 function appendTextWithLineBreaks(root: HTMLElement, text: string): void {
   const parts = text.split('\n');
   parts.forEach((part, idx) => {
@@ -239,10 +333,17 @@ function insertPlainTextAtRange(range: Range, text: string): Range {
   return after;
 }
 
-function rebuildDOM(root: HTMLElement, text: string, candidates: MentionCandidate[]): void {
+function rebuildDOM(
+  root: HTMLElement,
+  text: string,
+  candidates: MentionCandidate[],
+  prefix?: PromptEditorPrefix | null,
+  prefixRemovable = false,
+): void {
   while (root.firstChild) {
     root.removeChild(root.firstChild);
   }
+  if (prefix) root.appendChild(buildPrefixElement(prefix, prefixRemovable));
   if (!text) return;
   const names = candidates
     .map((c) => c.name)
@@ -282,10 +383,15 @@ function serialize(root: HTMLElement): string {
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const el = node as HTMLElement;
+    // 前置 chip 宿主：只是挂在 DOM 里的一个展示节点，不属于 prompt 文本。
+    if (el.dataset.leadChip !== undefined) return;
     if (el.dataset.mention) {
       out += '@' + (el.dataset.name ?? '');
       return;
     }
+    // 前缀只渲染不入库：它由调用方在提交时拼，序列化进 value 会被当成用户输入
+    // 存回节点，然后跟渲染出来的那枚叠成两份。
+    if (el.dataset.promptPrefix !== undefined) return;
     if (el.tagName === 'BR') {
       out += '\n';
       return;
@@ -299,6 +405,35 @@ function serialize(root: HTMLElement): string {
   };
   for (const child of Array.from(root.childNodes)) walk(child);
   return out;
+}
+
+/**
+ * 这一下按键是不是「删掉前置 chip」：
+ * - 光标塌缩在 chip 之后、且中间没有任何字符/元素 → 退格删 chip；
+ * - 光标塌缩在 chip 之前 → Delete 删 chip；
+ * - 有选区时一律返回 false，交给浏览器整段删，`handleInput` 里再兜底通知宿主。
+ */
+function isLeadChipDeletion(root: HTMLElement, host: HTMLElement, key: string): boolean {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return false;
+  const range = sel.getRangeAt(0);
+  if (!range.collapsed) return false;
+  if (!root.contains(range.startContainer) || !root.contains(host)) return false;
+
+  const beforeHost = document.createRange();
+  beforeHost.setStartBefore(host);
+  beforeHost.collapse(true);
+  if (range.compareBoundaryPoints(Range.START_TO_START, beforeHost) <= 0) {
+    return key === 'Delete';
+  }
+  if (key !== 'Backspace') return false;
+
+  const probe = document.createRange();
+  probe.setStartAfter(host);
+  probe.setEnd(range.startContainer, range.startOffset);
+  const between = probe.cloneContents();
+  // 中间只剩空文本节点才算「紧挨着」；有字符或有 <br> 都说明该删的是那个东西。
+  return (between.textContent ?? '') === '' && between.childElementCount === 0;
 }
 
 interface MentionContext {
@@ -351,10 +486,14 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
       onChange,
       candidates,
       placeholder,
+      prefix,
+      onPrefixRemove,
       className,
       onCompositionStart,
       onCompositionEnd,
       onKeyDown,
+      leadingChip,
+      onLeadingChipDelete,
       getMaterials,
       onAttachMaterial,
     },
@@ -382,16 +521,54 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
     const pendingAttachRef = useRef<{ el: HTMLElement; key: string } | null>(null);
     const popoverRef = useRef<HTMLDivElement | null>(null);
 
+    // 前置 chip 的宿主节点：DOM 节点自己造、自己保管（React 只往里 portal 内容），
+    // 这样 `rebuildDOM` 清空重建后把同一个节点插回去即可，portal 目标始终不变。
+    const leadHostRef = useRef<HTMLSpanElement | null>(null);
+    const [leadHost, setLeadHost] = useState<HTMLSpanElement | null>(null);
+    const hasLeadingChip = leadingChip !== undefined && leadingChip !== null;
+
+    const ensureLeadHost = useCallback((): HTMLSpanElement | null => {
+      const el = editorRef.current;
+      if (!el) return null;
+      if (!hasLeadingChip) {
+        leadHostRef.current?.remove();
+        return null;
+      }
+      let host = leadHostRef.current;
+      if (!host) {
+        host = document.createElement('span');
+        host.contentEditable = 'false';
+        host.dataset.leadChip = '';
+        host.className = 'prompt-lead-chip';
+        leadHostRef.current = host;
+      }
+      if (el.firstChild !== host) el.insertBefore(host, el.firstChild);
+      return host;
+    }, [hasLeadingChip]);
+
     // External value → DOM sync. Only re-render if the incoming value
     // differs from our own last-emitted serialization, otherwise we'd
     // wipe the caret on every keystroke.
+    // 前缀换了也要重建（改名 / 换区间），哪怕 value 一个字都没动 —— 否则输入框里
+    // 还挂着上一段的时间码，跟提交时拼出去的那句对不上。
+    const lastPrefixRef = useRef<string | null>(null);
+    const prefixRemovable = Boolean(onPrefixRemove);
+    const prefixKey = prefix
+      ? `${prefix.thumbnailUrl ?? ''}|${prefix.videoUrl ?? ''}|${prefixRemovable}|${prefix.text}`
+      : null;
     useLayoutEffect(() => {
       const el = editorRef.current;
       if (!el) return;
-      if (value === lastSerializedRef.current) return;
-      rebuildDOM(el, value, candidates);
+      if (value === lastSerializedRef.current && prefixKey === lastPrefixRef.current) return;
+      rebuildDOM(el, value, candidates, prefix, prefixRemovable);
       lastSerializedRef.current = value;
-    }, [value, candidates]);
+      lastPrefixRef.current = prefixKey;
+      ensureLeadHost(); // 重建把宿主一起清掉了，插回正文最前面
+    }, [value, candidates, prefix, prefixKey, prefixRemovable, ensureLeadHost]);
+
+    useLayoutEffect(() => {
+      setLeadHost(ensureLeadHost());
+    }, [ensureLeadHost]);
 
     const commitChange = useCallback(() => {
       const el = editorRef.current;
@@ -528,7 +705,14 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
       setReplaceTarget(null);
       commitChange();
       setMention(detectMention());
-    }, [commitChange]);
+      // 全选删除之类的整段删除由浏览器执行，宿主节点会被一起带走——这里兜底通知，
+      // 否则 chip 从视觉上没了，节点上的功能却还挂着。
+      const el = editorRef.current;
+      const host = leadHostRef.current;
+      if (hasLeadingChip && el && host && !el.contains(host)) {
+        onLeadingChipDelete?.();
+      }
+    }, [commitChange, hasLeadingChip, onLeadingChipDelete]);
 
     // contentEditable's default paste injects the source's rich HTML, which
     // drags along inline color/font styling — e.g. black text copied from
@@ -680,10 +864,18 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
     const handleKeyDown = useCallback(
       (event: ReactKeyboardEvent<HTMLDivElement>) => {
         event.stopPropagation();
-        // 替换选单自带搜索框和鼠标操作，键盘（含 Escape）归它自己处理——它一打开
-        // 焦点就落在自己的搜索框上，这个 handler 根本收不到键。这里只管 @ 输入
-        // 触发的候选列表。
-        const popoverOpen = Boolean(mention) && filtered.length > 0;
+        // 前置 chip 像个字符一样被退格删掉：拦下这一下按键，自己通知宿主，别让
+        // 浏览器去动 DOM（它删的是宿主 span，React portal 会跟着失去落点）。
+        if (hasLeadingChip && (event.key === 'Backspace' || event.key === 'Delete')) {
+          const el = editorRef.current;
+          const host = leadHostRef.current;
+          if (el && host && isLeadChipDeletion(el, host, event.key)) {
+            event.preventDefault();
+            onLeadingChipDelete?.();
+            return;
+          }
+        }
+        const popoverOpen = (Boolean(mention) || Boolean(replaceTarget)) && filtered.length > 0;
         if (popoverOpen) {
           if (event.key === 'ArrowDown') {
             event.preventDefault();
@@ -710,9 +902,26 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
         if (event.key === 'Escape') {
           setHover(null);
         }
+        // 前缀不可删：它在 DOM 里就是个 contenteditable=false 的行内块，各家浏览器
+        // 对退格吃掉这种块的处理并不一致，删掉之后 value 又不含它，重建时补不回来。
+        if (event.key === 'Backspace' && adjacentPrefixChip()) {
+          event.preventDefault();
+          return;
+        }
         onKeyDown?.(event);
       },
-      [mention, filtered, activeIdx, insertChip, onKeyDown],
+      [
+        mention,
+        replaceTarget,
+        filtered,
+        activeIdx,
+        insertChip,
+        replaceChip,
+        commitChange,
+        onKeyDown,
+        hasLeadingChip,
+        onLeadingChipDelete,
+      ],
     );
 
     const handleClick = useCallback(
@@ -727,7 +936,15 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           }
           return;
         }
-        const playEl = (event.target as HTMLElement | null)?.closest('[data-audio-play]');
+        const target = event.target as HTMLElement | null;
+        if (target?.closest('[data-prompt-prefix-remove]')) {
+          // preventDefault：这枚按钮长在 contenteditable=false 的 chip 里，放任
+          // 默认行为会把光标塞进 chip 内部，删完还留个跑偏的插入点。
+          event.preventDefault();
+          onPrefixRemove?.();
+          return;
+        }
+        const playEl = target?.closest('[data-audio-play]');
         if (!playEl) return;
         const chip = playEl.closest('.mention-chip');
         if (chip instanceof HTMLElement) {
@@ -735,7 +952,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           toggleAudio(chip);
         }
       },
-      [openReplaceFor, toggleAudio],
+      [openReplaceFor, onPrefixRemove, toggleAudio],
     );
 
     const handleMouseOver = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
@@ -795,6 +1012,12 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           suppressContentEditableWarning
           className={`prompt-mention-editor cursor-text ${className ?? ''}`}
           data-placeholder={placeholder ?? ''}
+          // 有前置 chip 时编辑器不再是 :empty，占位符那条 CSS 失效——补一个标记，
+          // 让占位文案改由 ::after 接在 chip 后面同一行显示（对标 liblib）。
+          {...(hasLeadingChip && value.length === 0 ? { 'data-text-empty': '' } : {})}
+          // 挂了前缀之后 root 永远不是 :empty，原来那条占位规则失效。空文本时把
+          // 占位符走 ::after 补在前缀右边，与设计稿里「前缀 + 灰字提示」同一行。
+          data-prefix-placeholder={prefix && value.length === 0 ? (placeholder ?? '') : ''}
           spellCheck={false}
           onInput={handleInput}
           onPaste={handlePaste}
@@ -816,7 +1039,11 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           onMouseOver={handleMouseOver}
           onMouseOut={handleMouseOut}
         />
-        {mention && popoverStyle && filtered.length > 0
+        {/* chip 内容用 portal 渲进 contenteditable 里的宿主 span：DOM 上它在输入框
+            内部（所以跟着文字排版、能被光标越过），React 树上它是编辑器的兄弟节点
+            （所以点击/悬停不会误触编辑器自己的那几个 handler）。 */}
+        {leadHost && leadingChip ? createPortal(leadingChip, leadHost) : null}
+        {(mention || replaceTarget) && popoverStyle && filtered.length > 0
           && createPortal(
             <div
               ref={popoverRef}
@@ -862,11 +1089,11 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
                     />
                   ) : (
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-white/[0.06] text-[13px] text-accent">
-                      ♪
+                      {candidate.name.startsWith('文本') ? 'T' : '♪'} {/* i18n-exempt -- canonical @mention protocol token */}
                     </span>
                   )}
                   <span className="flex-1 truncate">{mentionChipLabel(candidate)}</span>
-                  <span className="text-[10px] text-text-muted/70">@{candidate.index}</span>
+                  <span className="text-[10px] text-text-muted/70">@{candidate.name}</span>
                 </button>
               ))}
             </div>,

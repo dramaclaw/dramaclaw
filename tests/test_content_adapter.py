@@ -201,7 +201,9 @@ async def test_generate_rewrite_applies_output_to_beat_source_text(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_generate_rewrite_uses_evidence_settlement_on_failure(monkeypatch) -> None:
+async def test_generate_rewrite_uses_evidence_settlement_on_failure(
+    monkeypatch,
+) -> None:
     from novelvideo.agents import content_rewriter
     from novelvideo.api.routes import content
     from novelvideo.api.schemas import RewriteGenerateRequest
@@ -315,7 +317,11 @@ async def test_content_rewriter_uses_newapi_text_model(monkeypatch) -> None:
             )()
 
     def fake_newapi_model(
-        model_env: str, default_model: str, *, capability: str = "text.generate"
+        model_env: str,
+        default_model: str | None = None,
+        *,
+        capability: str = "text.generate",
+        **_kwargs,
     ):
         calls["model_env"] = model_env
         calls["default_model"] = default_model
@@ -352,6 +358,6 @@ async def test_content_rewriter_uses_newapi_text_model(monkeypatch) -> None:
     assert rewritten == "改写第一行\n改写第二行"
     assert calls["model"] == "newapi-model"
     assert calls["model_env"] == "CONTENT_REWRITER_MODEL"
-    assert calls["default_model"] == "gpt-5.4-mini"
+    assert calls["default_model"] is None
     assert calls["capability"] == "text.generate"
     assert calls["structured_settings_called"] is True

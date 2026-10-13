@@ -116,8 +116,11 @@ function firstStr(...values: unknown[]): string | null {
  * Best-effort creation timestamp. Image nodes carry an ISO `committed_at`;
  * generative nodes keep a numeric `generationStartedAt`. Returns null when the
  * node has neither so the caller can bucket it under an "unknown date" group.
+ *
+ * Exported so other domain modules (e.g. `assetBoard.ts`) can reuse the exact
+ * same rule instead of maintaining a copy.
  */
-function timestampOf(data: Record<string, unknown>): number | null {
+export function timestampOf(data: Record<string, unknown>): number | null {
   const committed = str(data.committed_at);
   if (committed) {
     const parsed = Date.parse(committed);
@@ -193,6 +196,10 @@ export function resolveNodeAssets(node: CanvasNode): CanvasNodeAsset[] {
       );
     case CANVAS_NODE_TYPES.videoCompose:
       return one('video', firstStr(data.resultVideoUrl), str(data.previewImageUrl));
+    case CANVAS_NODE_TYPES.videoBreakdown:
+      // 拉片节点自己不产片，但本地上传进来的源片只存在这儿——不登记的话历史面板
+      // 拿不到它。
+      return one('video', firstStr(data.sourceVideoUrl), str(data.previewImageUrl));
     case CANVAS_NODE_TYPES.audio:
       return one('audio', firstStr(data.audioUrl));
     case CANVAS_NODE_TYPES.threeDWorld:

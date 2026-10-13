@@ -13,17 +13,23 @@ useDefault = true
 # "3gs_combined" 是 freezone「3GS 导演合成图」输入项的 UI 标识符（key: "3gs_combined"），
 # 非密钥；generic-api-key 因低熵 key:"..." 模式误判。详见 verification-ledger 2026-06-29。
 # "clarify-ws-key" 是 chat route prewarm 测试夹具的 bridge_key 桩值，非密钥。
+# "happyhorse-1.0" 是视频模型的公开 API 模型名，非密钥。
 # 前端测试夹具同理：下方自定义规则的 paths 按 Python 约定写（tests/、*.py），
 # TS/JS 侧的 __tests__/ 与 *.test.tsx 一条都不匹配，于是同样的合成夹具
 # 「在 Python 里安静、在 TypeScript 里报警」。这里补齐前端测试目录约定。
 # `P0_GRAY_DISABLED` 是授权端口的稳定错误码；只放行与本地变量比较的完整表达式，
 # 不按裸值或历史指纹放行，避免同一文本出现在其它上下文时被静默忽略。
 [allowlist]
-description = "全局放行：确认的 generic-api-key 误报（前端 UI 输入项标识符、前端测试夹具），非密钥"
-stopwords = ["3gs_combined", "clarify-ws-key"]
+description = "全局放行：确认的 generic-api-key 误报（前端 UI 输入项标识符、前端测试夹具、冻结的跨语言签名向量），非密钥"
+
+# control-context-vectors.json 必须带 signing_key_hex：两端要用同一个密钥对同一
+# 条消息算出同一个签名，向量才有意义，去掉它这个文件就什么也证明不了。值是人为
+# 构造的递降序列与递增字节，从未用于任何真实签名。
+stopwords = ["3gs_combined", "clarify-ws-key", "happyhorse-1.0"]
 paths = [
   '''(^|/)__tests__/''',
   '''\.(test|spec)\.[jt]sx?$''',
+  '''(^|/)tests/data/control-context-vectors\.json$''',
 ]
 regexTarget = "match"
 regexes = [

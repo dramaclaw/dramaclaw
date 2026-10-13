@@ -574,6 +574,37 @@ def build_template_edit_prompt(body: FreezoneTemplateEditRequest) -> str:
             "- Keep the presentation clean and reference-friendly.\n"
             "- Final output must be a three-view character sheet.",
         ),
+        "scene_setting_sheet": (
+            "16:9",
+            "Generate a libtv-style scene setting sheet (environment design sheet) from the source image.\n\n"
+            "Output requirements:\n"
+            "- Final output must be one single landscape design sheet, not several separate images.\n"
+            "- Use a dark neutral background with thin light dividers; keep it flat, clean, "
+            "and readable like a production art bible page.\n"
+            "- Keep the scene identity from the source image: architecture, materials, color tone, "
+            "lighting mood, scale, and art style must stay consistent in every block.\n"
+            "- Do not invent a different location, and do not add characters as the subject "
+            "unless they already exist in the source image.\n"
+            "- Put a short title block in the upper-left corner: the scene name on one line, "
+            "and two or three lines of scene background notes under it.\n"
+            "- Lay out exactly these eight numbered blocks, each with a small heading label:\n"
+            "  1 scene key visual: the largest panel, a finished wide establishing view of the scene,\n"
+            "  2 mood concept sketches: two or three loose thumbnail sketches of the same scene,\n"
+            "  3 color and material reference: color swatches plus close-up material/texture chips,\n"
+            "  4 scene viewpoint reference: the same scene from other angles, such as aerial, "
+            "eye level, and low angle,\n"
+            "  5 architecture and structure design: structural breakdown of the main building or "
+            "terrain, with plan or section style callouts,\n"
+            "  6 set prop design: four to six isolated props that belong to this scene,\n"
+            "  7 vegetation and nature design: isolated plants, rocks, water, or terrain elements "
+            "of this scene,\n"
+            "  8 atmosphere variants: the same scene at different times of day or weather, "
+            "such as day, dusk, night, rain or fog.\n"
+            "- Number the blocks visibly and keep the reading order stable.\n"
+            "- Write the title, headings, and captions in the same language as the user prompt; "
+            "use Chinese when the user prompt is empty.\n"
+            "- Fill the whole output canvas; do not add black bars, letterboxing, UI, or watermark.",
+        ),
         "image_projection_after_3s": (
             "original",
             "Create a future keyframe from the source image, as if this is a libtv-style "
@@ -627,6 +658,7 @@ def template_edit_aspect_ratio(mode: str) -> str:
         "storyboard_25_grid": "original",
         "cinematic_light_correction": "original",
         "character_three_view_generation": "16:9",
+        "scene_setting_sheet": "16:9",
         "image_projection_after_3s": "original",
         "image_projection_before_5s": "original",
     }

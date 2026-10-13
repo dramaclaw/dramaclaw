@@ -8,15 +8,16 @@ export class InMemoryCanvasEventBus implements CanvasEventBus {
   publish<TType extends keyof CanvasEventMap>(
     type: TType,
     payload: CanvasEventMap[TType]
-  ): void {
+  ): number {
     const handlers = this.listeners.get(type);
     if (!handlers) {
-      return;
+      return 0;
     }
 
     for (const handler of handlers) {
       handler(payload);
     }
+    return handlers.size;
   }
 
   subscribe<TType extends keyof CanvasEventMap>(

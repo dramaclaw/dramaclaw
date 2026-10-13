@@ -54,7 +54,7 @@
 - 持续观察时，单轮最多 4 次状态查询；一旦拿到 `completed` / `failed` / `cancelled` 就立即停止
 - 面向用户只展示自然语言进度，不展示原始 JSON
 - 任务完成后收口到结果状态，不继续复述整个观察过程，不启动下一步
-- 不要用 `python - <<'PY'` 这类 heredoc 方式解析 piped JSON；优先用 `jq -r '.data.status // empty'` 或等价的非 heredoc 解析
+- 状态查询只使用 DramaClaw 插件工具，不调用 shell、curl 或本地脚本解析响应。
 
 ## 恢复与冲突
 

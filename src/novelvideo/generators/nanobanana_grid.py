@@ -307,7 +307,7 @@ def _newapi_safe_request_context(
     payload: dict[str, object],
     prompt: str,
 ) -> dict[str, object]:
-    reference_images = payload.get("image")
+    reference_images = payload.get("image") or payload.get("images")
     reference_image_count = len(reference_images) if isinstance(reference_images, list) else 0
     raw_metadata = payload.get("metadata")
     metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -3623,6 +3623,13 @@ async def _call_newapi_image_api(
         return None, "", "DramaClawAPI API key is missing"
 
     image_config = image_config or {}
+    reference_image_format = str(
+        image_config.get("reference_image_format")
+        or os.environ.get("NEWAPI_IMAGE_EDIT_REFERENCE_FORMAT")
+        or "dc-media"
+    ).strip().lower()
+    if reference_images and reference_image_format not in {"dc-media", "images"}:
+        return None, "", "Unsupported reference image format; use dc-media or images"
     aspect_ratio = str(image_config.get("aspect_ratio") or "1:1").strip().lower() or "1:1"
     image_size = normalize_image_size(str(image_config.get("image_size") or "1K"), "newapi")
     request_schema = image_config.get("request_schema") or {}
@@ -3681,12 +3688,18 @@ async def _call_newapi_image_api(
         try:
             relay_helper = _relay_reference_images_for_newapi
             if relay_helper is _ORIGINAL_RELAY_REFERENCE_IMAGES_FOR_NEWAPI:
-                payload["image"] = await relay_helper(
+                relayed_images = await relay_helper(
                     reference_images,
                     egress_context=context,
                 )
             else:
-                payload["image"] = await relay_helper(reference_images)
+                relayed_images = await relay_helper(reference_images)
+            # DC-Media uses image: [URL]; Cockpit's JSON edit parser accepts
+            # images: [{image_url: URL}]. Select explicitly per deployment.
+            if reference_image_format == "images":
+                payload["images"] = [{"image_url": url} for url in relayed_images]
+            else:
+                payload["image"] = relayed_images
         except Exception as exc:
             if context is not None and context.is_organization:
                 # The organization path hides `exc` because an arbitrary
@@ -4708,7 +4721,8 @@ class NanoBananaGridGenerator:
                     else:
                         temp_dir = Path("output")
                     temp_dir.mkdir(parents=True, exist_ok=True)
-                    sub_sketch_path = str(temp_dir / "temp_sub_sketch.jpg")
+                    temp_stem = Path(output_path).stem if output_path else uuid.uuid4().hex[:12]
+                    sub_sketch_path = str(temp_dir / f"temp_sub_sketch_{temp_stem}.jpg")
 
                     target_aspect = None
                     if sketch_aspect_padding and mode_key:
@@ -7820,6 +7834,7 @@ async def regenerate_selected_beats(
     sketch_aspect_padding: bool = False,
     force_image_size: Optional[str] = None,
     generator_config: Optional[dict] = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> List[GridGenerationResult]:
     """再生选中的 beats（支持 render 和 sketch 模式）。
 
@@ -7852,8 +7867,9 @@ async def regenerate_selected_beats(
         f"splits={grid_splits}, aspect_ratio={aspect_ratio}"
     )
 
-    generator = create_grid_generator(api_key, config=generator_config)
-    results = []
+    jobs: list[
+        tuple[int, str, list[dict], list[int], str, int, int, int, dict[int, str] | None]
+    ] = []
     beat_offset = 0
     regen_id = uuid.uuid4().hex
 
@@ -7885,37 +7901,81 @@ async def regenerate_selected_beats(
                 if int(beat_num) in {int(value) for value in beat_numbers}
             }
 
-        result = await generator.generate_grid(
-            beats=grid_beats,
-            character_map=character_map,
-            scene_menu=scene_menu,
-            prop_menu=prop_menu,
-            sketch_colors=sketch_colors,
-            style=style,
-            output_path=output_path,
-            ethnicity=ethnicity,
-            rows=g_rows,
-            cols=g_cols,
-            sketch=is_sketch,
-            sketch_dir=sketch_dir if not is_sketch else "",
-            location_beat_numbers=beat_numbers,
-            mode_key=split_mk,
-            beat_sketch_paths=grid_beat_sketch_paths,
-            scene_refs_override=scene_refs_override,
-            prop_refs_override=prop_refs_override,
-            sketch_aspect_padding=sketch_aspect_padding,
-            force_image_size=force_image_size,
+        jobs.append(
+            (
+                grid_idx,
+                split_mk,
+                grid_beats,
+                beat_numbers,
+                output_path,
+                beat_offset - grid_beat_count,
+                g_rows,
+                g_cols,
+                grid_beat_sketch_paths,
+            )
         )
-        result.beat_start_index = beat_offset - grid_beat_count
+
+    async def generate_job(
+        job: tuple[int, str, list[dict], list[int], str, int, int, int, dict | None],
+    ) -> tuple[int, GridGenerationResult]:
+        (
+            grid_idx,
+            split_mk,
+            grid_beats,
+            beat_numbers,
+            output_path,
+            beat_start_index,
+            g_rows,
+            g_cols,
+            grid_beat_sketch_paths,
+        ) = job
+        generator = create_grid_generator(api_key, config=generator_config)
+        temp_sketch_path = (
+            Path(output_path).parent / f"temp_sub_sketch_{Path(output_path).stem}.jpg"
+        )
+        try:
+            result = await generator.generate_grid(
+                beats=grid_beats,
+                character_map=character_map,
+                scene_menu=scene_menu,
+                prop_menu=prop_menu,
+                sketch_colors=sketch_colors,
+                style=style,
+                output_path=output_path,
+                ethnicity=ethnicity,
+                rows=g_rows,
+                cols=g_cols,
+                sketch=is_sketch,
+                sketch_dir=sketch_dir if not is_sketch else "",
+                location_beat_numbers=beat_numbers,
+                mode_key=split_mk,
+                beat_sketch_paths=grid_beat_sketch_paths,
+                scene_refs_override=scene_refs_override,
+                prop_refs_override=prop_refs_override,
+                sketch_aspect_padding=sketch_aspect_padding,
+                force_image_size=force_image_size,
+            )
+        finally:
+            temp_sketch_path.unlink(missing_ok=True)
+        result.beat_start_index = beat_start_index
         result.beat_count = len(grid_beats)
         result.grid_rows = g_rows
         result.grid_cols = g_cols
-        results.append(result)
 
         if result.success:
             print(f"[RegenBeats] Grid {grid_idx} 成功: {result.grid_image_path}")
         else:
             print(f"[RegenBeats] Grid {grid_idx} 失败: {result.error}")
+        return grid_idx, result
+
+    indexed_results: list[tuple[int, GridGenerationResult]] = []
+    for completed, job in enumerate(jobs, start=1):
+        indexed_results.append(await generate_job(job))
+        if progress_callback:
+            progress_callback(completed, len(jobs))
+
+    indexed_results.sort(key=lambda item: item[0])
+    results = [result for _grid_idx, result in indexed_results]
 
     return results
 

@@ -292,18 +292,11 @@ export const ModelParamsControls = memo(({
     ? 'text-[10px] leading-none text-text-muted/80'
     : 'text-text-muted/80';
   const extraParamSchema = selectedModel.extraParamsSchema ?? [];
-  const inlineExtraParamSchema = useMemo(
-    () =>
-      extraParamSchema.filter(
-        (definition) => definition.key === 'thinking_level' && definition.type === 'enum'
-      ),
-    [extraParamSchema]
-  );
   const panelExtraParamSchema = useMemo(
     () => extraParamSchema.filter((definition) => definition.key !== 'thinking_level'),
     [extraParamSchema]
   );
-  const hasOtherParamsPanel = showWebSearchToggle || inlineExtraParamSchema.length > 0;
+  const hasOtherParamsPanel = showWebSearchToggle;
 
   useEffect(() => {
     const animationDurationMs = 200;
@@ -806,50 +799,6 @@ export const ModelParamsControls = memo(({
                   </div>
                 </label>
               )}
-
-              {inlineExtraParamSchema.map((definition) => {
-                const translatedLabel = resolveTranslatedText(t, definition.labelKey, definition.label);
-                const translatedDescription = definition.description || definition.descriptionKey
-                  ? resolveTranslatedText(
-                    t,
-                    definition.descriptionKey,
-                    definition.description
-                  )
-                  : '';
-                const resolvedValue = resolveExtraParamValue(
-                  definition.key,
-                  extraParams,
-                  selectedModel.defaultExtraParams,
-                  definition.defaultValue
-                );
-
-                return (
-                  <div
-                    key={definition.key}
-                    className="space-y-2 rounded-lg border border-[rgba(255,255,255,0.08)] bg-bg-dark/65 p-3"
-                  >
-                    <div>
-                      <div className="text-xs font-medium text-text-dark">{translatedLabel}</div>
-                      {translatedDescription && (
-                        <div className="mt-0.5 text-[11px] leading-4 text-text-muted">
-                          {translatedDescription}
-                        </div>
-                      )}
-                    </div>
-                    <UiSelect
-                      value={String(resolvedValue ?? '')}
-                      onChange={(event) => onExtraParamChange?.(definition.key, event.target.value)}
-                      className="h-9 text-sm"
-                    >
-                      {(definition.options ?? []).map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {resolveTranslatedText(t, option.labelKey, option.label)}
-                        </option>
-                      ))}
-                    </UiSelect>
-                  </div>
-                );
-              })}
             </div>
           </UiPanel>
         )

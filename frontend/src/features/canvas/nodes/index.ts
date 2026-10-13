@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { DerivedMediaNode } from './DerivedMediaNode';
+import { HtmlArtifactNode } from '@/features/html-artifacts/HtmlArtifactNode';
 import type { NodeTypes } from '@xyflow/react';
 
 import { withLodShell } from './LodShellNode';
@@ -18,6 +20,7 @@ import { StyleNode } from './StyleNode';
 import { TextAnnotationNode } from './TextAnnotationNode';
 import { ThreeDWorldNode } from './ThreeDWorldNode';
 import { UploadNode } from './UploadNode';
+import { VideoBreakdownNode } from './VideoBreakdownNode';
 import { VideoComposeNode } from './VideoComposeNode';
 import { VideoNode } from './VideoNode';
 import { VideoStoryNode } from './VideoStoryNode';
@@ -25,6 +28,9 @@ import { VideoStoryNode } from './VideoStoryNode';
 // 全部经 withLodShell 包装：低缩放档渲染轻量外壳（豁免类型在包装器内部判断，
 // 保持这张表均质）。包装发生在模块加载期，引用稳定，不会造成节点重挂。
 export const nodeTypes: NodeTypes = {
+  vectorSvgNode: DerivedMediaNode,
+  animatedGifNode: DerivedMediaNode,
+  htmlArtifactNode: HtmlArtifactNode,
   audioNode: withLodShell('audioNode', AudioNode),
   beatContextNode: withLodShell('beatContextNode', BeatContextNode),
   exportImageNode: withLodShell('exportImageNode', ImageNode),
@@ -40,9 +46,10 @@ export const nodeTypes: NodeTypes = {
   textAnnotationNode: withLodShell('textAnnotationNode', TextAnnotationNode),
   threeDWorldNode: withLodShell('threeDWorldNode', ThreeDWorldNode),
   uploadNode: withLodShell('uploadNode', UploadNode),
+  videoBreakdownNode: withLodShell('videoBreakdownNode', VideoBreakdownNode),
   videoComposeNode: withLodShell('videoComposeNode', VideoComposeNode),
   videoNode: withLodShell('videoNode', VideoNode),
   videoStoryNode: withLodShell('videoStoryNode', VideoStoryNode),
 };
 
-export { AudioNode, BeatContextNode, GroupNode, ImageEditNode, ImageGenNode, ImageNode, Pano360ViewerNode, ScriptNode, SkillNode, StoryboardGenNode, StoryboardNode, StyleNode, TextAnnotationNode, ThreeDWorldNode, UploadNode, VideoComposeNode, VideoNode, VideoStoryNode };
+export { AudioNode, BeatContextNode, GroupNode, ImageEditNode, ImageGenNode, ImageNode, Pano360ViewerNode, ScriptNode, SkillNode, StoryboardGenNode, StoryboardNode, StyleNode, TextAnnotationNode, ThreeDWorldNode, UploadNode, VideoBreakdownNode, VideoComposeNode, VideoNode, VideoStoryNode };

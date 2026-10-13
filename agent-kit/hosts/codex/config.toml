@@ -1,0 +1,14 @@
+# Merge these tables into ~/.codex/config.toml or a trusted project's .codex/config.toml.
+[mcp_servers.dramaclaw_workflows]
+command = "__PYTHON__"
+args = ["__LAUNCHER__", "workflows"]
+env = { DRAMACLAW_CE_DIR = "__DRAMACLAW_CE_DIR__", DRAMACLAW_USERNAME = "__DRAMACLAW_USERNAME__" }
+required = true
+default_tools_approval_mode = "approve"
+
+[mcp_servers.dramaclaw]
+command = "__PYTHON__"
+args = ["__LAUNCHER__", "tools"]
+env = { DRAMACLAW_CE_DIR = "__DRAMACLAW_CE_DIR__", DRAMACLAW_API_URL = "__DRAMACLAW_API_URL__", DRAMACLAW_USERNAME = "__DRAMACLAW_USERNAME__", DRAMACLAW_PROJECT_ID = "__DRAMACLAW_PROJECT_ID__", DRAMACLAW_CANVAS_ID = "__DRAMACLAW_CANVAS_ID__" }
+required = true
+default_tools_approval_mode = "approve"
