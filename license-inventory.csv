@@ -2713,6 +2713,7 @@ tests/test_freezone_canvas_route_home_node_guard.py,Elastic-2.0,2026 SuperTale c
 tests/test_freezone_canvas_route_to_thread.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_canvas_save_to_thread.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_canvas_store.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_freezone_exact_plan_patch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_generation_history_prompt.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_html_artifact_tools.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_image_backend.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2952,6 +2953,7 @@ tests/test_workflow_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml ag
 tests/test_workflow_observation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_plan.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_preflight.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_workflow_run_failure_guard.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_semantics.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_stable_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_transactions.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
