@@ -153,27 +153,6 @@ Nó được xây cho người sáng tạo, studio độc lập và kỹ sư sá
 
 <br/>
 
-## <a name="in-development"></a>Đang phát triển
-
-Sân khấu 3D và truyện tương tác đang chuẩn bị thử nghiệm kín, chưa được mở rộng rãi. Quảng cáo tương tác vẫn là hướng phát triển tiếp theo.
-
-- **Sân khấu đạo diễn 3D (Previz)** &mdash; đã merge vào `staging`, chuẩn bị thử nghiệm kín. Tạo bối cảnh blockout từ ảnh tham chiếu, sắp xếp nhân vật và đạo cụ, xem trước chuyển động và đường đi trên timeline đa track, điều chỉnh camera bằng thông số ống kính / cảm biến. Chụp ảnh hoặc ghi hình rồi đưa kết quả về các node canvas được kết nối.
-
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
-</p>
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
-</p>
-<p align="center"><sub>Giao diện thử nghiệm kín: ảnh tham chiếu nối với node Previz và bối cảnh blockout 3D được tạo từ ảnh đó.</sub></p>
-
-[▶ Xem demo sân khấu 3D (6 giây)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
-
-- **Truyện tương tác** &mdash; chuẩn bị thử nghiệm kín. Đặt lựa chọn phân nhánh và biến truyện trên canvas, biên dịch thành truyện ink và xuất trình phát HTML độc lập, kèm thống kê playtest và độ phủ đường đi. Nhánh phát triển: `feat/canvas-fmv`.
-- **Quảng cáo tương tác** &mdash; các skill và recipe quảng cáo ở trên kết hợp với phát lại phân nhánh, cho video sản phẩm mà người xem tự điều hướng.
-
-<br/>
-
 ## Năng lực cốt lõi
 
 ### Xia Director — agent
@@ -191,6 +170,28 @@ Các tính năng agent dưới đây đã có trên nhánh mã nguồn `main`; i
 - **Danh mục workflow và skill cộng đồng** &mdash; 11 workflow skill và 60 recipe cho phim ngắn, quảng cáo thương mại điện tử, nhân vật IP, nội dung mạng xã hội và nhiều hơn nữa; cài đặt, xuất và chia sẻ bundle skill / recipe.
 - **Mở cho các agent khác** &mdash; [Agent Kit](../agent-kit/README.md) mang cùng workflow tới Codex, Claude Code, OpenClaw, Hermes, WorkBuddy và các stdio MCP client khác. Agent tích hợp xác nhận workflow trong trình duyệt; agent bên ngoài xác nhận trong chat của mình, còn canvas đang mở thực thi thay đổi.
 - **Hiểu dự án của bạn** &mdash; kiểm tra tiến độ, đẩy các tác vụ kịch bản / cảnh quay, rà soát mức độ hoàn chỉnh của sản phẩm bàn giao và gợi ý bước tiếp theo
+
+<br/>
+
+### Sân khấu đạo diễn 3D (Previz)
+
+đã merge vào `staging`, đang thử nghiệm kín. Tạo bối cảnh blockout từ ảnh tham chiếu, sắp xếp nhân vật và đạo cụ, xem trước chuyển động và đường đi trên timeline đa track, điều chỉnh camera bằng thông số ống kính / cảm biến. Chụp ảnh hoặc ghi hình rồi đưa kết quả về các node canvas được kết nối.
+
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
+</p>
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
+</p>
+<p align="center"><sub>Giao diện thử nghiệm kín: ảnh tham chiếu nối với node Previz và bối cảnh blockout 3D được tạo từ ảnh đó.</sub></p>
+
+[▶ Xem demo sân khấu 3D (6 giây)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
+
+<br/>
+
+### Truyện tương tác
+
+đang thử nghiệm kín. Đặt lựa chọn phân nhánh và biến truyện trên canvas, biên dịch thành truyện ink và xuất trình phát HTML độc lập, kèm thống kê playtest và độ phủ đường đi. Nhánh phát triển: `feat/canvas-fmv`.
 
 <br/>
 
@@ -271,8 +272,8 @@ Lợi thế không phải là "sinh nội dung nhiều hơn" — mà là tổ ch
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Agent tích hợp (lập kế hoạch workflow, điều phối canvas, thực thi) | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
 | Workflow skill và recipe (tái sử dụng, cài đặt, xuất, chia sẻ) | — | — | — | — | — | — | — | ✅ |
-| Sân khấu đạo diễn 3D (dàn cảnh, chuyển động, timeline, ghi hình) | — | — | — | — | — | — | — | Chuẩn bị thử nghiệm kín |
-| Series tương tác (đa tập, phân nhánh, IP) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | Chuẩn bị thử nghiệm kín |
+| Sân khấu đạo diễn 3D (dàn cảnh, chuyển động, timeline, ghi hình) | — | — | — | — | — | — | — | Đang thử nghiệm kín |
+| Series tương tác (đa tập, phân nhánh, IP) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | Đang thử nghiệm kín |
 | Xem trước storyboard (kịch bản→cảnh quay, bảng phân cảnh) | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
 | Thư viện tài sản (nhân vật/bối cảnh/đạo cụ/giọng nói) | ◐ | ❌ | ◐ | ✅ | ◐ | ○ | ❌ | ✅ |
 | Nhất quán bối cảnh (biến thể, 360°, đa trạng thái) | ✅ | ◐ | ❌ | ❌ | ○ | ❌ | ❌ | ✅ |
@@ -285,7 +286,7 @@ Lợi thế không phải là "sinh nội dung nhiều hơn" — mà là tổ ch
 | Bạn đồng hành sáng tạo (nhân cách, nhắc nhở, phản hồi) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Mã nguồn công khai (tự lưu trữ, fork, tùy biến) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
-<sub>Trong cột DramaClaw, ✅ chỉ tính năng đã có trên nhánh mã nguồn main; tính năng chuẩn bị thử nghiệm kín chưa được mở rộng rãi. — nghĩa là chưa xác minh tính năng của đối thủ ở các hàng mới.</sub>
+<sub>Trong cột DramaClaw, ✅ chỉ tính năng đã có trên nhánh mã nguồn main; tính năng đang thử nghiệm kín chưa được mở rộng rãi. — nghĩa là chưa xác minh tính năng của đối thủ ở các hàng mới.</sub>
 
 <br/>
 
@@ -399,6 +400,14 @@ Các adapter nhà cung cấp có sẵn trong gateway hiện nay (xem [ma trận 
 | **Story graph**      | Cognee (`DC-cognee-embedding`)                     | bất kỳ kênh embedding nào                                 |
 | **Runtime tác vụ**   | inline trong tiến trình (không Ray / Redis / Celery) | như trên                                                |
 | **Lưu trữ**          | hệ thống file cục bộ                               | như trên                                                  |
+
+<br/>
+
+## <a name="in-development"></a>Đang phát triển
+
+Quảng cáo tương tác vẫn là hướng phát triển tiếp theo.
+
+- **Quảng cáo tương tác** &mdash; các skill và recipe quảng cáo ở trên kết hợp với phát lại phân nhánh, cho video sản phẩm mà người xem tự điều hướng.
 
 <br/>
 

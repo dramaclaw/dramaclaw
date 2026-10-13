@@ -153,27 +153,6 @@ It's built for creators, indie studios and creative engineers — run the whole 
 
 <br/>
 
-## <a name="in-development"></a>In Development
-
-The 3D stage and interactive stories are preparing for closed beta; they are not yet generally available. Interactive ads remain a development direction.
-
-- **3D director stage (Previz)** &mdash; merged into `staging`, preparing for closed beta. Generate a blockout scene from a reference image, arrange characters and props, preview motion and paths on a multi-track timeline, and frame shots with lens / sensor controls. Capture images or record the preview back into connected canvas nodes.
-
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
-</p>
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
-</p>
-<p align="center"><sub>Closed-beta preview: a reference image connected to the Previz node, followed by its generated 3D blockout scene.</sub></p>
-
-[▶ Watch the 3D stage demo (6 seconds)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
-
-- **Interactive stories** &mdash; preparing for closed beta. Set branching choices and story variables on the canvas, compile to an ink story and export a self-contained HTML player, with playtest stats and path coverage. Development branch: `feat/canvas-fmv`.
-- **Interactive ads** &mdash; the ad skills and recipes above, combined with branching playback, for product videos viewers can steer.
-
-<br/>
-
 ## Core Capabilities
 
 ### Xia Director — the agent
@@ -191,6 +170,28 @@ The agent capabilities below are available in the `main` source branch; publishe
 - **Workflow catalog and community skills** &mdash; 11 workflow skills and 60 recipes for short drama, e-commerce ads, IP character ads, social campaigns and more; install, export and share skill / recipe bundles.
 - **Open to other agents** &mdash; [Agent Kit](agent-kit/README.md) brings the same workflows to Codex, Claude Code, OpenClaw, Hermes, WorkBuddy and other stdio MCP clients. Confirm built-in agent workflows in the browser; external agents confirm in their own chat while the open canvas executes the changes.
 - **Knows your project** &mdash; checks progress, advances script / shot tasks, audits deliverable completeness and suggests next steps
+
+<br/>
+
+### 3D director stage (Previz)
+
+merged into `staging`, in closed beta. Generate a blockout scene from a reference image, arrange characters and props, preview motion and paths on a multi-track timeline, and frame shots with lens / sensor controls. Capture images or record the preview back into connected canvas nodes.
+
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
+</p>
+<p align="center">
+  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
+</p>
+<p align="center"><sub>Closed-beta preview: a reference image connected to the Previz node, followed by its generated 3D blockout scene.</sub></p>
+
+[▶ Watch the 3D stage demo (6 seconds)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
+
+<br/>
+
+### Interactive stories
+
+in closed beta. Set branching choices and story variables on the canvas, compile to an ink story and export a self-contained HTML player, with playtest stats and path coverage. Development branch: `feat/canvas-fmv`.
 
 <br/>
 
@@ -271,8 +272,8 @@ The edge isn't "more generation" — it's organizing the whole short-drama produ
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Built-in agent (workflow planning, canvas orchestration, execution) | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
 | Workflow skills and recipes (reuse, install, export, share) | — | — | — | — | — | — | — | ✅ |
-| 3D director stage (blocking, motion, timeline, recording) | — | — | — | — | — | — | — | Preparing for closed beta |
-| Interactive series (multi-episode, branching, IP) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | Preparing for closed beta |
+| 3D director stage (blocking, motion, timeline, recording) | — | — | — | — | — | — | — | In closed beta |
+| Interactive series (multi-episode, branching, IP) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | In closed beta |
 | Storyboard preview (script→shots, boards) | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
 | Asset library (characters/scenes/props/voices) | ◐ | ❌ | ◐ | ✅ | ◐ | ○ | ❌ | ✅ |
 | Scene consistency (variants, 360°, multi-state) | ✅ | ◐ | ❌ | ❌ | ○ | ❌ | ❌ | ✅ |
@@ -285,7 +286,7 @@ The edge isn't "more generation" — it's organizing the whole short-drama produ
 | Creative companion (persona, nudges, feedback) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Source-available (self-host, fork, customize) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
-<sub>For DramaClaw, ✅ refers to capabilities in the `main` source branch; closed-beta features are not yet generally available. — means the competitor capability has not been verified for the new rows.</sub>
+<sub>For DramaClaw, ✅ refers to capabilities in the `main` source branch; features in closed beta are not yet generally available. — means the competitor capability has not been verified for the new rows.</sub>
 
 <br/>
 
@@ -404,6 +405,14 @@ Provider adapters shipped in the gateway today (see the [channel support matrix]
 | **Story graph**      | Cognee (`DC-cognee-embedding`)                     | any embedding channel                                     |
 | **Task runtime**     | in-process inline (no Ray / Redis / Celery)        | same                                                      |
 | **Storage**          | local filesystem                                   | same                                                      |
+
+<br/>
+
+## <a name="in-development"></a>In Development
+
+Interactive ads remain a development direction.
+
+- **Interactive ads** &mdash; the ad skills and recipes above, combined with branching playback, for product videos viewers can steer.
 
 <br/>
 
