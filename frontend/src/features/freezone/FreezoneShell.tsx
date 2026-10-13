@@ -3161,9 +3161,8 @@ function formatAgentHistoryTime(timestamp: number): string {
  * localStorage 清扫误删；这只是个 UI 位置偏好，跨区域保留没问题。
  */
 const CHAT_LAUNCHER_POS_STORAGE_KEY = "st.freezone.chatLauncherPos";
-const CHAT_LAUNCHER_VISUAL_WIDTH = 96;
-const CHAT_LAUNCHER_VISUAL_HEIGHT = 35;
-const CHAT_LAUNCHER_HIT_HEIGHT = 44;
+const CHAT_LAUNCHER_VISUAL_WIDTH = 81.648;
+const CHAT_LAUNCHER_VISUAL_HEIGHT = (CHAT_LAUNCHER_VISUAL_WIDTH * 647) / 743;
 const CHAT_LAUNCHER_MARGIN = 8;
 /** 默认抬到 MiniMap 上方并留出间距，避免挡住画布缩略图。 */
 const CHAT_LAUNCHER_DEFAULT_POS = { right: 16, bottom: 260 };
@@ -3192,7 +3191,6 @@ function FreezoneChatToggleButton({
   expanded: boolean;
   onClick: () => void;
 }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const [entered, setEntered] = useState(false);
   const [pos, setPos] = useState(loadChatLauncherPos);
@@ -3216,7 +3214,7 @@ function FreezoneChatToggleButton({
     );
     const maxBottom = Math.max(
       CHAT_LAUNCHER_MARGIN,
-      rect.height - CHAT_LAUNCHER_HIT_HEIGHT - CHAT_LAUNCHER_MARGIN,
+      rect.height - CHAT_LAUNCHER_VISUAL_HEIGHT - CHAT_LAUNCHER_MARGIN,
     );
     setPos((current) => {
       const clamped = {
@@ -3260,7 +3258,7 @@ function FreezoneChatToggleButton({
         const maxBottom = parentRect
           ? Math.max(
               CHAT_LAUNCHER_MARGIN,
-              parentRect.height - CHAT_LAUNCHER_HIT_HEIGHT - CHAT_LAUNCHER_MARGIN,
+              parentRect.height - CHAT_LAUNCHER_VISUAL_HEIGHT - CHAT_LAUNCHER_MARGIN,
             )
           : Number.MAX_SAFE_INTEGER;
         latest = {
@@ -3298,21 +3296,6 @@ function FreezoneChatToggleButton({
     onClick();
   }, [onClick]);
 
-  const playMotion = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.currentTime = 0;
-    void video.play().catch(() => undefined);
-  }, []);
-
-  const stopMotion = useCallback(() => {
-    const video = videoRef.current;
-    if (video) {
-      video.pause();
-      video.currentTime = 0;
-    }
-  }, []);
-
   return (
     <Button
       ref={buttonRef}
@@ -3327,27 +3310,20 @@ function FreezoneChatToggleButton({
         right: pos.right,
         bottom: pos.bottom,
         width: CHAT_LAUNCHER_VISUAL_WIDTH,
-        height: CHAT_LAUNCHER_HIT_HEIGHT,
+        height: CHAT_LAUNCHER_VISUAL_HEIGHT,
       }}
       aria-label={label}
       aria-expanded={expanded}
-      onMouseEnter={playMotion}
-      onMouseLeave={stopMotion}
-      onFocus={playMotion}
-      onBlur={stopMotion}
       onPointerDown={handlePointerDown}
       onClick={handleClick}
     >
-      <video
-        ref={videoRef}
-        src="/images/xia-dao-launcher.mp4"
-        muted
-        loop
-        playsInline
-        preload="auto"
-        className="pointer-events-none absolute left-0 top-1/2 w-full -translate-y-1/2 rounded-[6px] object-cover brightness-[1.08] saturate-[1.02] shadow-[0_4px_10px_rgba(0,0,0,0.2)] transition-[filter] duration-200 ease-out group-hover/xia-dao:brightness-[1.16] group-focus-visible/xia-dao:brightness-[1.16]"
-        style={{ height: CHAT_LAUNCHER_VISUAL_HEIGHT }}
-        aria-hidden="true"
+      <img
+        src="/images/xia-dao-launcher.png"
+        alt=""
+        width={743}
+        height={647}
+        draggable={false}
+        className="pointer-events-none h-full w-full object-contain transition-[filter,scale] duration-[var(--duration-fast)] ease-[var(--ease-out-quint)] group-hover/xia-dao:brightness-[1.12] group-focus-visible/xia-dao:brightness-[1.12] motion-safe:group-hover/xia-dao:scale-105 motion-safe:group-focus-visible/xia-dao:scale-105 motion-reduce:transition-none"
       />
     </Button>
   );
