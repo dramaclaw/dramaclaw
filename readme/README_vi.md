@@ -158,7 +158,7 @@ Nó được xây cho người sáng tạo, studio độc lập và kỹ sư sá
 ### Xia Director — agent
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
+  <img src="../assets/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
 </p>
 <p align="center"><sub>Xia Director đã tạo và khởi chạy workflow gồm 17 node và 32 cạnh; canvas và lịch sử xác nhận được hiển thị cùng nhau.</sub></p>
 
@@ -178,10 +178,10 @@ Các tính năng agent dưới đây đã có trên nhánh mã nguồn `main`; i
 đã merge vào `staging`, đang thử nghiệm kín. Tạo bối cảnh blockout từ ảnh tham chiếu, sắp xếp nhân vật và đạo cụ, xem trước chuyển động và đường đi trên timeline đa track, điều chỉnh camera bằng thông số ống kính / cảm biến. Chụp ảnh hoặc ghi hình rồi đưa kết quả về các node canvas được kết nối.
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
+  <img src="../assets/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
 </p>
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
+  <img src="../assets/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
 </p>
 <p align="center"><sub>Giao diện thử nghiệm kín: ảnh tham chiếu nối với node Previz và bối cảnh blockout 3D được tạo từ ảnh đó.</sub></p>
 
@@ -400,14 +400,6 @@ Các adapter nhà cung cấp có sẵn trong gateway hiện nay (xem [ma trận 
 | **Story graph**      | Cognee (`DC-cognee-embedding`)                     | bất kỳ kênh embedding nào                                 |
 | **Runtime tác vụ**   | inline trong tiến trình (không Ray / Redis / Celery) | như trên                                                |
 | **Lưu trữ**          | hệ thống file cục bộ                               | như trên                                                  |
-
-<br/>
-
-## <a name="in-development"></a>Đang phát triển
-
-Quảng cáo tương tác vẫn là hướng phát triển tiếp theo.
-
-- **Quảng cáo tương tác** &mdash; các skill và recipe quảng cáo ở trên kết hợp với phát lại phân nhánh, cho video sản phẩm mà người xem tự điều hướng.
 
 <br/>
 

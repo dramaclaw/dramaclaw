@@ -158,7 +158,7 @@ It's built for creators, indie studios and creative engineers — run the whole 
 ### Xia Director — the agent
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
+  <img src="./assets/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
 </p>
 <p align="center"><sub>Xia Director created and started a 17-node, 32-edge workflow; the canvas and confirmation history remain visible together.</sub></p>
 
@@ -178,10 +178,10 @@ The agent capabilities below are available in the `main` source branch; publishe
 merged into `staging`, in closed beta. Generate a blockout scene from a reference image, arrange characters and props, preview motion and paths on a multi-track timeline, and frame shots with lens / sensor controls. Capture images or record the preview back into connected canvas nodes.
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
+  <img src="./assets/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
 </p>
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
+  <img src="./assets/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
 </p>
 <p align="center"><sub>Closed-beta preview: a reference image connected to the Previz node, followed by its generated 3D blockout scene.</sub></p>
 
@@ -405,14 +405,6 @@ Provider adapters shipped in the gateway today (see the [channel support matrix]
 | **Story graph**      | Cognee (`DC-cognee-embedding`)                     | any embedding channel                                     |
 | **Task runtime**     | in-process inline (no Ray / Redis / Celery)        | same                                                      |
 | **Storage**          | local filesystem                                   | same                                                      |
-
-<br/>
-
-## <a name="in-development"></a>In Development
-
-Interactive ads remain a development direction.
-
-- **Interactive ads** &mdash; the ad skills and recipes above, combined with branching playback, for product videos viewers can steer.
 
 <br/>
 

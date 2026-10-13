@@ -158,7 +158,7 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 ### Xia Director — agent
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
+  <img src="../assets/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
 </p>
 <p align="center"><sub>Xia Director สร้างและเริ่ม workflow ที่มี 17 node และ 32 เส้นเชื่อม โดยแสดง canvas และประวัติการยืนยันร่วมกัน</sub></p>
 
@@ -178,10 +178,10 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 รวมเข้า `staging` แล้ว อยู่ระหว่างการทดสอบแบบปิด สร้างฉาก blockout จากภาพอ้างอิง จัดวางตัวละครและพร็อพ ดูตัวอย่างการเคลื่อนไหวและเส้นทางบน timeline หลายแทร็ก และปรับกล้องด้วยค่าของเลนส์ / เซ็นเซอร์ จับภาพหรือบันทึกวิดีโอแล้วส่งกลับไปยัง node ที่เชื่อมต่อบน canvas
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
+  <img src="../assets/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
 </p>
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
+  <img src="../assets/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
 </p>
 <p align="center"><sub>หน้าจอทดสอบแบบปิด: ภาพอ้างอิงที่เชื่อมกับ node Previz และฉาก blockout 3D ที่สร้างจากภาพนั้น</sub></p>
 
@@ -400,14 +400,6 @@ adapter ของผู้ให้บริการที่มากับ ga
 | **Story graph**      | Cognee (`DC-cognee-embedding`)                     | embedding channel ใดก็ได้                                     |
 | **Task runtime**     | inline ใน process (ไม่มี Ray / Redis / Celery)        | เหมือนกัน                                                      |
 | **Storage**          | ระบบไฟล์ในเครื่อง                                   | เหมือนกัน                                                      |
-
-<br/>
-
-## <a name="in-development"></a>กำลังพัฒนา
-
-โฆษณาแบบอินเทอร์แอคทีฟยังเป็นทิศทางการพัฒนาต่อไป
-
-- **โฆษณาแบบอินเทอร์แอคทีฟ** &mdash; ad skill และ recipe ด้านบนผสมกับการเล่นแบบแตกแขนง สำหรับวิดีโอสินค้าที่ผู้ชมเลือกทางเองได้
 
 <br/>
 

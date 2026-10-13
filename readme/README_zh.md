@@ -157,7 +157,7 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 ### 虾导 —— 智能体
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
+  <img src="../assets/readme/freezone-agent.jpg" width="900" alt="Xia Director — canvas workflow"/>
 </p>
 <p align="center"><sub>虾导创建并启动了 17 个节点、32 条连线的工作流；画布成果与确认、执行记录同时可见。</sub></p>
 
@@ -177,10 +177,10 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 已合入 `staging`，内测中。从参考图生成 3D 场景，安排角色与道具，通过多轨时间线预演动作和走位，使用镜头 / 传感器参数控制机位；截图或录制结果直接接回画布节点
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
+  <img src="../assets/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
 </p>
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
+  <img src="../assets/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
 </p>
 <p align="center"><sub>内测界面：参考图连接预演台节点，生成对应的 3D 场景。</sub></p>
 
@@ -399,14 +399,6 @@ DramaClaw 对模型侧保持中立 —— 所有文本 / 图片 / 视频 / 音�
 | **故事图谱**      | Cognee（`DC-cognee-embedding`）                | 任意 embedding 渠道                                       |
 | **任务运行时**    | 进程内 inline（无需 Ray / Redis / Celery）      | 同左                                                      |
 | **存储**          | 本地文件系统                                   | 同左                                                      |
-
-<br/>
-
-## <a name="in-development"></a>正在开发
-
-互动广告仍为后续开发方向。
-
-- **互动广告** &mdash; 把上面的广告技能与配方和分支播放结合，做观众能自己选的产品视频
 
 <br/>
 
