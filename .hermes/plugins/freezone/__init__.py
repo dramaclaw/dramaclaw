@@ -7092,7 +7092,7 @@ def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     problems = []
     if not isinstance(changes, dict):
         problems.append(
-            "changes must be an object holding only the changed intent fields"
+            "changes must be an object holding only the changed workflow fields"
         )
     if raw_revision is None:
         problems.append(
@@ -7114,12 +7114,12 @@ def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 "expected_arguments": {
                     "draft_id": "<current draft_id>",
                     "expected_revision": "<current revision integer>",
-                    "changes": {"<changed intent field>": "<new value>"},
+                    "changes": {"<changed workflow field>": "<new value>"},
                 },
                 "agent_instruction": (
                     "Retry freezone_patch_workflow_draft exactly once with ALL of: "
                     "draft_id, integer expected_revision matching the current draft "
-                    "revision and changes as an object holding only the changed intent "
+                    "revision and changes as an object holding only the changed workflow "
                     "fields. Apply every "
                     "requested change in this single call."
                 ),
@@ -7146,14 +7146,32 @@ def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 "current_revision": current_revision,
             }
         )
-    patch_body, error = build_workflow_draft_patch(
-        payload=payload,
-        changes=changes,
-        compile_intent=compile_workflow_intent,
-        run_after_create=_run_after_create_arg(args),
-    )
-    if patch_body is None:
-        return tool_result(error)
+    if isinstance((payload.get("intent") or {}).get("plan"), dict) or {
+        "step_updates", "bindings"
+    } & set(changes):
+        # The server owns exact-plan validation, settings and binding revisions.
+        # Forward the existing changes contract instead of compiling it as Intent.
+        policy = _run_after_create_arg(args)
+        if policy is not None and "run_after_create" in changes and (
+            not isinstance(changes["run_after_create"], bool)
+            or changes["run_after_create"] != policy
+        ):
+            return tool_result({
+                "ok": False, "status": "invalid_workflow_draft_patch",
+                "error": "run_after_create must match the explicit policy",
+            })
+        patch_body = {"changes": dict(changes)}
+        if policy is not None:
+            patch_body["changes"]["run_after_create"] = policy
+    else:
+        patch_body, error = build_workflow_draft_patch(
+            payload=payload,
+            changes=changes,
+            compile_intent=compile_workflow_intent,
+            run_after_create=_run_after_create_arg(args),
+        )
+        if patch_body is None:
+            return tool_result(error)
     payload, error = _workflow_draft_response(
         _request(
             "PATCH",
@@ -11524,9 +11542,10 @@ TOOLS = (
         _schema(
             "freezone_patch_workflow_draft",
             (
-                "Apply a small user-requested change to an existing workflow draft, recompile it, "
-                "and return the exact updated preview. Keep the selected skill_id unchanged and "
-                "send only changed intent fields."
+                "Apply a small user-requested change to an existing workflow draft and return "
+                "the updated preview. Keep the selected skill_id unchanged. For an exact Plan, "
+                "send changes.step_updates and/or changes.bindings; for compact Intent, send "
+                "only changed intent fields. Do not prepare a replacement draft."
             ),
             {
                 **_SCOPE_PROPS,
@@ -11538,10 +11557,16 @@ TOOLS = (
                 "changes": {
                     "type": "object",
                     "description": (
-                        "Changed compact-intent fields only. Supported fields: user_goal, title, "
+                        "Exact Plan: step_updates (array of objects with node_id, optional prompt "
+                        "and settings) and/or bindings (array of source, target, usage objects). "
+                        "Settings: model, aspect_ratio, quality, resolution, duration_seconds, "
+                        "generate_audio, variants, voice_ref, generation_mode, as supported by "
+                        "the node type. Do not mix these with compact-intent fields. "
+                        "Compact Intent fields: user_goal, title, "
                         "summary, inputs, planner, items, include_audio, include_compose, "
                         "assumptions. "
-                        "Null removes an optional field; inputs are merged."
+                        "Null removes an optional intent field; inputs are merged. "
+                        "run_after_create changes execution policy for either source."
                     ),
                 },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,

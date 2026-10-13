@@ -258,8 +258,11 @@ def test_external_mcp_plan_draft_keeps_custom_topology_in_the_draft_flow():
         "call freezone_confirm_workflow_draft exactly once"
         in adapted["agent_instruction"]
     )
-    assert "prepare a new complete Plan draft" in adapted["agent_instruction"]
-    assert "patch this draft" not in adapted["agent_instruction"]
+    assert "freezone_patch_workflow_draft" in adapted["agent_instruction"]
+    assert "changes.step_updates" in adapted["agent_instruction"]
+    assert "changes.bindings" in adapted["agent_instruction"]
+    assert "expected_revision" in adapted["agent_instruction"]
+    assert "prepare a new complete Plan draft" not in adapted["agent_instruction"]
 
 
 def test_plugin_reads_turn_token_file_lazily(monkeypatch, tmp_path):
