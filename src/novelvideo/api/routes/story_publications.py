@@ -5,11 +5,12 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from novelvideo.api.auth import get_api_user, require_project_scope
 from novelvideo.api.routes._project_audit import emit_project_audit
+from novelvideo.api.routes.files import _serve_or_redirect_to_oss
 from novelvideo.api.deps import resolve_project_scope
 from novelvideo.interactive_story.publication import (
     PublicationError,
@@ -96,6 +97,7 @@ async def get_publication(
         project_store,
         getattr(resolved.ctx, "project_id", project),
         Path(resolved.ctx.state_dir),
+        resolved.project_dir,
     )
     work = await invoke(store.work, owner, getattr(resolved.ctx, "project_id", project))
     return {"ok": True, "data": await invoke(presentation, store, work)}
@@ -119,6 +121,7 @@ async def prepare(
         project_store,
         getattr(resolved.ctx, "project_id", project),
         Path(resolved.ctx.state_dir),
+        resolved.project_dir,
     )
     result = await invoke_mutation(
         store,
@@ -151,6 +154,7 @@ async def preview(
         project_store,
         getattr(resolved.ctx, "project_id", project),
         Path(resolved.ctx.state_dir),
+        resolved.project_dir,
     )
     await invoke(store.owned, public_id, owner)
     return {
@@ -176,10 +180,11 @@ async def preview_media(
         project_store,
         getattr(resolved.ctx, "project_id", project),
         Path(resolved.ctx.state_dir),
+        resolved.project_dir,
     )
     await invoke(store.owned, public_id, owner)
     release = await invoke(store.version, public_id, version)
-    return media_response(store, release, asset)
+    return await invoke(media_response, store, release, asset)
 
 
 @router.post(
@@ -198,6 +203,7 @@ async def activate(
         project_store,
         getattr(resolved.ctx, "project_id", project),
         Path(resolved.ctx.state_dir),
+        resolved.project_dir,
     )
     work = await invoke_mutation(
         store, store.activate, public_id, owner, body.version, body.listed
@@ -229,16 +235,17 @@ async def public_story(public_id: str, version: str | None = None):
 def media_response(store, release, asset):
     if asset not in release.get("assets", {}):
         raise HTTPException(404)
-    path = store.directory(release["public_id"]) / release["version"] / "media" / asset
+    path = store.media_directory(release["public_id"], release["version"]) / asset
     if not path.is_file():
         raise HTTPException(404)
-    return FileResponse(
-        path, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
-    )
+    response = _serve_or_redirect_to_oss(path, as_download=False)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @router.get("/public-stories/{public_id}/versions/{version}/media/{asset}")
 async def public_media(public_id: str, version: str, asset: str):
     store = await resolve_public_store(public_id)
     release = await invoke(store.public, public_id, version)
-    return media_response(store, release, asset)
+    return await invoke(media_response, store, release, asset)

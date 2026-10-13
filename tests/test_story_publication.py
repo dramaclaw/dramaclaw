@@ -44,7 +44,7 @@ def source(tmp_path, monkeypatch):
         "description": "",
         "cover": None,
     }
-    return PublicationStore(tmp_path / "publications"), output, canvas, body
+    return PublicationStore(tmp_path / "publications", output_dir=output), output, canvas, body
 
 
 def ready(source):
@@ -66,7 +66,7 @@ def test_snapshot_media_and_lifecycle(source):
     (output / "clip.mp4").unlink()
     asset = next(iter(version["assets"]))
     assert (
-        store.directory(prepared["public_id"]) / prepared["version"] / "media" / asset
+        store.media_directory(prepared["public_id"], prepared["version"]) / asset
     ).read_bytes() == b"original media"
     store.activate(prepared["public_id"], "owner", None, False)
     with pytest.raises(PublicationError) as exc:
@@ -140,11 +140,12 @@ def test_anonymous_api_manifest_range_and_take_down(source, monkeypatch):
 
     state = output.parent / "state"
     state.mkdir()
-    store = storage.project_store("p", state)
+    store = storage.project_store("p", state, output)
     store, output, prepared, version = ready((store, output, canvas, body))
     record = SimpleNamespace(
         id="p",
         state_dir=str(state),
+        output_dir=str(output),
         status="active",
         purged_at=None,
         home_node_id="local",
@@ -225,7 +226,7 @@ def test_author_scope(source, monkeypatch):
     )
     assert response.status_code == 200
     assert "share_url" not in response.json()["data"]
-    store = PublicationStore(output.parent / "state" / "publications")
+    store = PublicationStore(output.parent / "state" / "publications", output_dir=output)
     record_path = store.directory(work["public_id"]) / "work.json"
     original_record = json.loads(record_path.read_text())
     invalid_record = {
@@ -280,7 +281,7 @@ def publication_api(source, monkeypatch):
 
     monkeypatch.setattr(story_publications, "resolve_project_scope", resolve)
     record = SimpleNamespace(
-        id="p", state_dir=str(state), status="active", purged_at=None,
+        id="p", state_dir=str(state), output_dir=str(output), status="active", purged_at=None,
         home_node_id="local",
     )
     monkeypatch.setattr(
@@ -301,7 +302,7 @@ def publication_api(source, monkeypatch):
         yield SimpleNamespace(
             client=client, headers=headers, body=body,
             path=f"/api/v1/projects/p/canvases/c/stories/{body['group_id']}/publication",
-            state=state, index_root=index_store.root,
+            state=state, output=output, index_root=index_store.root, record=record,
         )
 
 
@@ -517,7 +518,7 @@ def test_two_branch_two_ending_publication(source):
     snapshot = store.public(prepared["public_id"])["snapshot"]
     assert len(snapshot["edges"]) == 2
     assert sum(bool(n["data"].get("endingLabel")) for n in snapshot["nodes"]) == 2
-    assert len(list(store.root.glob("*/*/media/*.mp4"))) == 1
+    assert len(list((output / "publications").glob("*/*/media/*.mp4"))) == 1
 
 
 def test_preparation_persists_only_playback_inputs(source):
@@ -591,7 +592,7 @@ def test_media_changed_before_background_copy_requires_new_preparation(source):
     assert failed["status"] == "failed"
     assert failed["error"] == "media_changed_retry"
     assert not (
-        store.directory(pending["public_id"]) / pending["version"] / "media"
+        store.media_directory(pending["public_id"], pending["version"])
     ).exists()
     assert store.public(first["public_id"])["version"] == first["version"]
     retried = store.prepare(
@@ -687,7 +688,7 @@ def test_media_changed_during_copy_is_rejected(source, monkeypatch):
     assert version["status"] == "failed"
     assert version["error"] == "media_changed_retry"
     assert not (
-        store.directory(pending["public_id"]) / pending["version"] / "media"
+        store.media_directory(pending["public_id"], pending["version"])
     ).exists()
 
 
@@ -816,7 +817,7 @@ async def test_activation_emits_project_audit(source, monkeypatch):
     store, _, prepared, _ = ready(source)
     ctx = SimpleNamespace(requester_user_id="author", project_id="p", state_dir=".")
     monkeypatch.setattr(
-        routes, "scope", AsyncMock(return_value=(SimpleNamespace(ctx=ctx), "owner"))
+        routes, "scope", AsyncMock(return_value=(SimpleNamespace(ctx=ctx, project_dir=source[1]), "owner"))
     )
     monkeypatch.setattr(routes, "project_store", lambda *_: store)
     from novelvideo.interactive_story import publication_storage as storage
@@ -891,7 +892,7 @@ def test_author_validation_failure_preserves_online_version(source, defect):
     assert release["error"] == "invalid_story"
     assert store.public(first["public_id"])["version"] == first["version"]
     assert not (
-        store.directory(prepared["public_id"]) / prepared["version"] / "media"
+        store.media_directory(prepared["public_id"], prepared["version"])
     ).exists()
 
 
@@ -936,6 +937,7 @@ def test_superseded_drafts_remove_media_and_do_not_reappear_on_retry(source):
     store.finish(second)
     directory = store.directory(first["public_id"])
     assert not (directory / first["version"]).exists()
+    assert not store.media_directory(first["public_id"], first["version"]).exists()
     assert store.read(first["public_id"])["versions"] == [second["version"]]
     with pytest.raises(PublicationError, match="version_not_ready"):
         store.prepare("owner", Path("."), output, "p", source[3])
@@ -959,7 +961,7 @@ def test_failed_new_draft_preserves_last_ready_and_bounds_failed_history(source)
         first["version"],
         failed["version"],
     ]
-    assert (store.directory(first["public_id"]) / first["version"] / "media").is_dir()
+    assert (store.media_directory(first["public_id"], first["version"])).is_dir()
     (output / "clip.mp4").write_bytes(b"fixed")
     newest = store.prepare(
         "owner", Path("."), output, "p", {**source[3], "request_id": "fixed"}
@@ -997,7 +999,7 @@ def test_pending_jobs_protect_archived_sources_and_finish_order(source):
     )
     store.finish(newer)
     assert (
-        store.directory(covered["public_id"]) / covered["version"] / "media"
+        store.media_directory(covered["public_id"], covered["version"])
     ).exists()
     store.finish(older)
     # Creation order, not completion order, decides which draft survives.
@@ -1024,9 +1026,11 @@ def test_cleanup_retries_disk_failure_without_breaking_index(source, monkeypatch
     work = store.read(first["public_id"])
     assert work["versions"] == [second["version"]]
     assert work["pending_cleanup"] == [first["version"]]
+    assert store.media_directory(first["public_id"], first["version"]).is_dir()
     monkeypatch.setattr(shutil, "rmtree", original)
     store.recover()
     assert not (store.directory(first["public_id"]) / first["version"]).exists()
+    assert not store.media_directory(first["public_id"], first["version"]).exists()
     assert store.read(first["public_id"])["pending_cleanup"] == []
 
 
@@ -1062,7 +1066,7 @@ def test_repeated_video_and_loop_share_one_archived_file(source):
     store, _, prepared, version = ready(source)
     files = list(
         (
-            store.directory(prepared["public_id"]) / prepared["version"] / "media"
+            store.media_directory(prepared["public_id"], prepared["version"])
         ).iterdir()
     )
     assert len(files) == 1
@@ -1074,7 +1078,8 @@ def test_repeated_video_and_loop_share_one_archived_file(source):
 
 
 @pytest.mark.asyncio
-async def test_project_delete_blocks_prepare_and_republication_restore_stays_offline(source, monkeypatch):
+@pytest.mark.parametrize("status", ["deleted", "archived"])
+async def test_project_delete_blocks_prepare_and_republication_restore_stays_offline(source, monkeypatch, status):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from novelvideo.interactive_story import publication_storage as storage
@@ -1085,7 +1090,7 @@ async def test_project_delete_blocks_prepare_and_republication_restore_stays_off
     store.activate(first["public_id"], "owner", first["version"], True)
     with store.locked():
         store.unlist_all()
-    record.status = "deleted"
+    record.status = status
     with pytest.raises(PublicationError, match="unavailable"):
         await storage.invoke_active(store, store.activate, first["public_id"], "owner", first["version"], True)
     with pytest.raises(PublicationError, match="unavailable"):
@@ -1105,7 +1110,7 @@ async def test_global_publication_data_is_ignored(source, monkeypatch):
     monkeypatch.setenv("ST_PUBLICATION_DIR", str(old_store.root))
     state = output.parent / "state"
     state.mkdir()
-    store = storage.project_store("p", state)
+    store = storage.project_store("p", state, output)
     assert store.root == state / "publications"
     assert not list(store.root.glob("*/work.json"))
     assert old_store.directory(first["public_id"]).is_dir()
@@ -1127,7 +1132,7 @@ def test_project_move_includes_pending_job_and_late_worker_cannot_recreate_files
     monkeypatch.setenv("ST_PUBLICATION_DIR", str(legacy.root))
     state = output.parent / "state"
     state.mkdir()
-    store = project_store("p", state)
+    store = project_store("p", state, output)
     pending = store.prepare("owner", state, output, "p", body)
     detached = state.with_name("state-purging")
     with store.locked():
@@ -1163,7 +1168,7 @@ def test_background_finish_retries_lock_timeout(source, monkeypatch, contention)
     monkeypatch.setenv("ST_PUBLICATION_DIR", str(legacy.root))
     state = output.parent / "state"
     state.mkdir()
-    store = project_store("p", state)
+    store = project_store("p", state, output)
     pending = store.prepare("owner", state, output, "p", body)
     directory = store.directory(pending["public_id"]) / pending["version"]
     timed_out = Event()
@@ -1199,7 +1204,7 @@ def test_background_finish_retries_lock_timeout(source, monkeypatch, contention)
     else:
         assert store.version(pending["public_id"], pending["version"])["status"] == "ready"
         assert not (directory / "job.json").exists()
-        assert list((directory / "media").iterdir())
+        assert list(store.media_directory(pending["public_id"], pending["version"]).iterdir())
 
 
 def test_project_lock_blocks_cleanup_during_copy(source, monkeypatch):
@@ -1210,7 +1215,7 @@ def test_project_lock_blocks_cleanup_during_copy(source, monkeypatch):
     monkeypatch.setenv("ST_PUBLICATION_DIR", str(legacy.root))
     state = output.parent / "state"
     state.mkdir()
-    store = project_store("p", state)
+    store = project_store("p", state, output)
 
     def competing_operation():
         with store.locked():
@@ -1225,7 +1230,7 @@ def test_project_lock_blocks_cleanup_during_copy(source, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "status,purged,exists",
-    [("deleted", None, True), ("active", "now", True), ("active", None, False)],
+    [("deleted", None, True), ("archived", None, True), ("active", "now", True), ("active", None, False)],
 )
 async def test_public_index_never_bypasses_project_lifecycle(
     source, monkeypatch, status, purged, exists
@@ -1238,12 +1243,13 @@ async def test_public_index_never_bypasses_project_lifecycle(
     monkeypatch.setenv("ST_PUBLICATION_DIR", str(index_store.root))
     state = output.parent / "state"
     state.mkdir()
-    store = storage.project_store("p", state)
+    store = storage.project_store("p", state, output)
     store, output, first, _ = ready((store, output, canvas, body))
     store.activate(first["public_id"], "owner", first["version"], True)
     record = SimpleNamespace(
         id="p",
         state_dir=str(state),
+        output_dir=str(output),
         status=status,
         purged_at=purged,
         home_node_id="local",
@@ -1263,7 +1269,8 @@ async def test_public_index_never_bypasses_project_lifecycle(
 
 
 @pytest.mark.asyncio
-async def test_ce_restart_rebuilds_index_from_project_owned_data(source, monkeypatch):
+@pytest.mark.parametrize("status", ["active", "archived"])
+async def test_ce_restart_rebuilds_index_from_project_owned_data(source, monkeypatch, status):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from novelvideo.interactive_story import publication_storage as storage
@@ -1273,7 +1280,7 @@ async def test_ce_restart_rebuilds_index_from_project_owned_data(source, monkeyp
     monkeypatch.setenv("ST_PUBLICATION_DIR", str(index_store.root))
     state = output.parent / "state"
     state.mkdir()
-    store = storage.project_store("p", state)
+    store = storage.project_store("p", state, output)
     store, output, first, _ = ready((store, output, canvas, body))
     store.activate(first["public_id"], "owner", first["version"], True)
     index = index_store.root / "index" / f"{first['public_id']}.json"
@@ -1281,7 +1288,8 @@ async def test_ce_restart_rebuilds_index_from_project_owned_data(source, monkeyp
     record = SimpleNamespace(
         id="p",
         state_dir=str(state),
-        status="active",
+        output_dir=str(output),
+        status=status,
         purged_at=None,
         home_node_id="local",
     )
@@ -1296,9 +1304,14 @@ async def test_ce_restart_rebuilds_index_from_project_owned_data(source, monkeyp
     monkeypatch.setattr(runtime_env, "is_ce_effective", lambda: True)
     await storage.recover_project_publications()
     assert index.is_file()
-    assert (await storage.public_store(first["public_id"])).public(first["public_id"])[
-        "version"
-    ] == first["version"]
+    if status == "active":
+        assert (await storage.public_store(first["public_id"])).public(first["public_id"])[
+            "version"
+        ] == first["version"]
+    else:
+        assert not store.read(first["public_id"])["listed"]
+        with pytest.raises(PublicationError, match="unavailable"):
+            await storage.public_store(first["public_id"])
 
 
 def test_interrupted_preparation_is_retryable_without_changing_online_version(source):
@@ -1310,17 +1323,18 @@ def test_interrupted_preparation_is_retryable_without_changing_online_version(so
     body = {**source[3], 'request_id': 'interrupted', 'cover': '/api/v1/projects/p/media/cover.png'}
     pending = store.prepare('owner', Path('.'), output, 'p', body)
     directory = store.directory(pending['public_id']) / pending['version']
-    (directory / 'media').mkdir()
-    (directory / 'media' / 'partial.mp4').write_bytes(b'partial')
+    media = store.media_directory(pending['public_id'], pending['version'])
+    media.mkdir(parents=True)
+    (media / 'partial.mp4').write_bytes(b'partial')
     # A queued job is alive even before finish() acquires its execution lock.
-    observer = PublicationStore(store.root)
+    observer = PublicationStore(store.root, output_dir=output)
     assert observer.version(pending['public_id'], pending['version'])['status'] == 'preparing'
     preparation_lease.release(directory)  # Same OS effect as the owning process exiting.
     failed = observer.version(pending['public_id'], pending['version'])
     assert failed['status'] == 'failed'
     assert failed['error'] == 'publication_interrupted'
     assert failed['cover'] == body['cover']
-    assert not (directory / 'media').exists()
+    assert not media.exists()
     assert not (directory / 'job.json').exists()
     assert store.public(published['public_id'])['version'] == published['version']
     # A lost-response retry stays idempotent; an explicit retry gets a new request ID.
@@ -1391,7 +1405,7 @@ def test_interruption_write_holds_project_lock(source, monkeypatch):
 
     monkeypatch.setattr(store, "write", observed_write)
     assert store.version(pending["public_id"], pending["version"])["error"] == "publication_interrupted"
-    assert checked == [True]
+    assert checked and all(checked)
 
 
 @pytest.mark.parametrize("change", ["detach", "retire"])
@@ -1403,7 +1417,7 @@ def test_interruption_rechecks_project_and_membership_under_lock(source, monkeyp
     store, output, _, body = source
     state = output.parent / "state"
     state.mkdir()
-    store = PublicationStore(state / "publications", index_root=output.parent / "index")
+    store = PublicationStore(state / "publications", index_root=output.parent / "index", output_dir=output)
     pending = store.prepare("owner", state, output, "p", body)
     directory = store.directory(pending["public_id"]) / pending["version"]
     preparation_lease.release(directory)
@@ -1417,7 +1431,7 @@ def test_interruption_rechecks_project_and_membership_under_lock(source, monkeyp
             changed = True
             # A lifecycle operation finishes between the optimistic read and
             # acquisition of the project lock.
-            other = PublicationStore(store.root, index_root=store.index_root)
+            other = PublicationStore(store.root, index_root=store.index_root, output_dir=output)
             with other.locked():
                 if change == "detach":
                     state.rename(state.with_name("detached"))
@@ -1472,3 +1486,295 @@ def test_publication_rejects_reachable_conditional_dead_end(source, partial):
     assert any(i["code"] == "runtime_dead_end" and i["severity"] == "error" for i in version["issues"])
     with pytest.raises(PublicationError, match="version_not_ready"):
         store.activate(prepared["public_id"], "owner", prepared["version"], True)
+
+
+def test_publication_separates_media_from_state(source):
+    store, output, _, body = source
+    prepared = store.prepare("owner", Path("."), output, "p", body)
+    directory = store.directory(prepared["public_id"]) / prepared["version"]
+    assert (directory / "job.json").is_file()
+    store.finish(prepared)
+    media = store.media_directory(prepared["public_id"], prepared["version"])
+    assert media == output / "publications" / prepared["public_id"] / prepared["version"] / "media"
+    assert list(media.glob("*.mp4"))
+    assert (directory / "version.json").is_file()
+    assert not list(store.root.rglob("*.mp4"))
+    assert not list((output / "publications").rglob("*.json"))
+    assert not list((output / "publications").rglob(".*lock"))
+
+
+@pytest.mark.parametrize("legacy_archive", [False, True])
+def test_archive_unlists_all_works_and_unarchive_requires_manual_listing(
+    publication_api, monkeypatch, legacy_archive
+):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from novelvideo.api.routes import projects
+
+    api = publication_api
+    prepared = api.client.post(api.path + "/prepare", json=api.body).json()["data"]
+    public_id, version = prepared["public_id"], prepared["version"]
+    activate = f"{api.path}/{public_id}/activate"
+    assert api.client.post(activate, json={"version": version, "listed": True}).status_code == 200
+    store = PublicationStore(api.state / "publications", output_dir=api.output)
+    other = store.work("another-owner", "p")
+    other["listed"] = True
+    store.write(store.directory(other["public_id"]) / "work.json", other)
+    asset = next(iter(store.version(public_id, version)["assets"]))
+    public = f"/api/v1/public-stories/{public_id}"
+    urls = [public, f"{public}/versions/{version}", f"{public}/versions/{version}/media/{asset}"]
+    ctx = SimpleNamespace(
+        project_id="p", state_dir=api.state, is_home_node=True, effective_role="owner"
+    )
+
+    async def update(project_id, status):
+        api.record.status = status
+        return api.record
+
+    registry = SimpleNamespace(get_project=AsyncMock(return_value=api.record), update_project_status=update)
+    monkeypatch.setattr(projects, "get_project_registry", lambda: registry)
+    monkeypatch.setattr(projects, "resolve_project_context", AsyncMock(return_value=ctx))
+    monkeypatch.setattr(projects, "_summary_for_record", AsyncMock(return_value=SimpleNamespace(model_dump=lambda: {})))
+    monkeypatch.setattr(projects, "emit_project_audit", AsyncMock())
+    if legacy_archive:
+        # Old releases archived projects without clearing their public flags.
+        api.record.status = "archived"
+        assert store.read(public_id)["listed"]
+    else:
+        asyncio.run(projects.archive_project("p", user={}))
+        assert not store.read(public_id)["listed"]
+        assert not store.read(other["public_id"])["listed"]
+    assert api.record.status == "archived"
+    for url in urls:
+        assert api.client.get(url, follow_redirects=False).status_code == 410
+    assert api.client.post(activate, json={"version": version, "listed": True}).status_code == 410
+    assert api.client.post(api.path + "/prepare", json={**api.body, "request_id": "while-archived"}).status_code == 410
+    asyncio.run(projects.unarchive_project("p", user={}))
+    assert api.record.status == "active"
+    assert not store.read(public_id)["listed"]
+    assert not store.read(other["public_id"])["listed"]
+    for url in urls:
+        assert api.client.get(url, follow_redirects=False).status_code == 410
+    assert api.client.post(activate, json={"version": version, "listed": True}).status_code == 200
+    for url in urls:
+        assert api.client.get(url, follow_redirects=False).status_code == 200
+    assert not store.read(other["public_id"])["listed"]
+
+
+@pytest.mark.parametrize("delivery", ["oss", "not_ready", "disabled", "error"])
+def test_publication_media_reuses_oss_delivery_after_authorization(publication_api, monkeypatch, delivery):
+    from types import SimpleNamespace
+    from novelvideo import config
+    from novelvideo.utils import oss_client
+
+    api = publication_api
+    prepared = api.client.post(api.path + "/prepare", json=api.body).json()["data"]
+    public_id, version = prepared["public_id"], prepared["version"]
+    store = PublicationStore(api.state / "publications", output_dir=api.output)
+    release = store.version(public_id, version)
+    asset = next(iter(release["assets"]))
+    media_path = store.media_directory(public_id, version) / asset
+    expected_key = f"output/publications/{public_id}/{version}/media/{asset}"
+    signed = []
+    probes = []
+
+    class Bucket:
+        def head_object(self, key):
+            probes.append(key)
+            if delivery in {"not_ready", "error"}:
+                raise OSError("object not readable")
+            return SimpleNamespace(content_length=media_path.stat().st_size, last_modified=media_path.stat().st_mtime)
+
+        def sign_url(self, method, key, expires, **kwargs):
+            signed.append(key)
+            return "https://media.example.test/signed-video"
+
+    monkeypatch.setattr(config, "OUTPUT_DIR", api.output)
+    monkeypatch.setattr(config, "OSS_OBJECT_PREFIX", "output")
+    monkeypatch.setattr(config, "STATIC_VIA_OSS", delivery != "disabled")
+    monkeypatch.setattr(config, "OSS_STATIC_REQUIRE_READY", True)
+    monkeypatch.setattr(config, "OSS_STATIC_READY_PROBE_ATTEMPTS", 1)
+    monkeypatch.setattr(oss_client, "get_bucket", lambda: Bucket())
+    monkeypatch.setattr(oss_client, "_static_ready_cache", set())
+    monkeypatch.setattr(oss_client, "_presign_cache", {})
+    if delivery == "error":
+        def unavailable():
+            raise OSError("OSS unavailable")
+        monkeypatch.setattr(oss_client, "get_bucket", unavailable)
+
+    public = f"/api/v1/public-stories/{public_id}/versions/{version}/media/{asset}"
+    preview = f"{api.path}/{public_id}/versions/{version}/media/{asset}"
+    assert api.client.get(public, follow_redirects=False).status_code == 410
+    assert not probes and not signed
+    for url in (preview, public):
+        if url == public:
+            result = api.client.post(f"{api.path}/{public_id}/activate", json={"version": version})
+            assert result.status_code == 200
+        response = api.client.get(url, headers={"Range": "bytes=0-3"}, follow_redirects=False)
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        if delivery == "oss":
+            assert response.status_code == 302
+            assert response.headers["location"] == "https://media.example.test/signed-video"
+            assert signed == [expected_key]  # Existing signature cache is shared.
+        else:
+            assert response.status_code == 206
+            assert response.content == b"orig"
+    before = (len(probes), len(signed))
+    assert api.client.get(public.rsplit("/", 1)[0] + "/unknown.mp4", follow_redirects=False).status_code == 404
+    api.client.post(f"{api.path}/{public_id}/activate", json={"listed": False})
+    assert api.client.get(public, follow_redirects=False).status_code == 410
+    assert (len(probes), len(signed)) == before
+
+
+def test_terminal_job_after_crash_does_not_block_future_draft_cleanup(source):
+    from novelvideo.interactive_story import preparation_lease
+
+    store, output, _, body = source
+    first = store.prepare("owner", Path("."), output, "p", body)
+    directory = store.directory(first["public_id"]) / first["version"]
+    store._finish(first)  # Process exits after saving ready, before removing job.json.
+    preparation_lease.release(directory)
+    restarted = PublicationStore(store.root, output_dir=output)
+    restarted.recover()
+    assert not (directory / "job.json").exists()
+    assert restarted.version(first["public_id"], first["version"])["status"] == "ready"
+    for i in range(3):
+        latest = restarted.prepare("owner", Path("."), output, "p", {**body, "request_id": f"next-{i}"})
+        restarted.finish(latest)
+    assert restarted.read(first["public_id"])["versions"] == [latest["version"]]
+    assert len(list((output / "publications").glob("*/*/media/*.mp4"))) == 1
+
+
+def test_uncommitted_job_is_collected_without_blocking_other_drafts(source, monkeypatch):
+    import errno
+
+    store, output, _, body = source
+    original = store.write
+    def fail_commit(path, value):
+        if path.name == "work.json" and value["versions"]:
+            raise OSError(errno.ENOSPC, "index write failed")
+        original(path, value)
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "write", fail_commit)
+        with pytest.raises(OSError):
+            store.prepare("owner", Path("."), output, "p", body)
+    orphan = next(store.root.glob("*/*/job.json")).parent
+    store.recover()
+    assert not orphan.exists()
+    # The failed request was never committed; its request ID remains retryable.
+    first = store.prepare("owner", Path("."), output, "p", body)
+    store.finish(first)
+    second = store.prepare("owner", Path("."), output, "p", {**body, "request_id": "second"})
+    store.finish(second)
+    assert store.read(second["public_id"])["versions"] == [second["version"]]
+    assert not store.media_directory(first["public_id"], first["version"]).exists()
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_failed_media_cleanup_retries_after_restart(source, monkeypatch, interrupted):
+    import shutil
+    from novelvideo.interactive_story import preparation_lease
+
+    store, output, published, _ = ready(source)
+    store.activate(published["public_id"], "owner", published["version"], True)
+    pending = store.prepare("owner", Path("."), output, "p", {**source[3], "request_id": "fail"})
+    directory = store.directory(pending["public_id"]) / pending["version"]
+    media = store.media_directory(pending["public_id"], pending["version"])
+    original = shutil.rmtree
+    def fail_removal(path, *args, **kwargs):
+        if Path(path) == media.parent:
+            raise OSError("temporary storage error")
+        return original(path, *args, **kwargs)
+    def fail_copy(src, dst):
+        Path(dst).write_bytes(b"partial")
+        raise OSError("interrupted copy")
+    with monkeypatch.context() as patch:
+        patch.setattr(shutil, "rmtree", fail_removal)
+        if interrupted:
+            media.mkdir(parents=True)
+            (media / "partial.mp4").write_bytes(b"partial")
+            preparation_lease.release(directory)
+            store.version(pending["public_id"], pending["version"])
+        else:
+            patch.setattr(shutil, "copyfile", fail_copy)
+            store.finish(pending)
+        release = store.version(pending["public_id"], pending["version"])
+        assert release["status"] == "failed"
+        assert release["media_cleanup_pending"] is True
+        assert media.exists()
+    restarted = PublicationStore(store.root, output_dir=output)
+    restarted.recover()
+    release = restarted.version(pending["public_id"], pending["version"])
+    assert release["status"] == "failed"
+    assert not release.get("media_cleanup_pending")
+    assert not media.exists()
+    assert restarted.public(published["public_id"])["version"] == published["version"]
+    assert restarted.media_directory(published["public_id"], published["version"]).exists()
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_disk_full_reclaims_partial_media_before_writing_failure(source, monkeypatch, interrupted):
+    import errno
+    import shutil
+    from novelvideo.interactive_story import preparation_lease
+
+    store, output, _, body = source
+    prepared = store.prepare("owner", Path("."), output, "p", body)
+    directory = store.directory(prepared["public_id"]) / prepared["version"]
+    media = store.media_directory(prepared["public_id"], prepared["version"])
+    original_write = store.write
+
+    def disk_full_write(path, value):
+        # CE state and output may share a full filesystem. Removing the partial
+        # copy must free space before the atomic metadata write can succeed.
+        if media.exists():
+            raise OSError(errno.ENOSPC, "no space for metadata")
+        original_write(path, value)
+
+    def disk_full_copy(src, dst):
+        Path(dst).write_bytes(b"partial")
+        raise OSError(errno.ENOSPC, "no space for media")
+
+    monkeypatch.setattr(store, "write", disk_full_write)
+    if interrupted:
+        media.mkdir(parents=True)
+        (media / "partial.mp4").write_bytes(b"partial")
+        preparation_lease.release(directory)
+    else:
+        monkeypatch.setattr(shutil, "copyfile", disk_full_copy)
+        store.finish(prepared)
+    release = store.version(prepared["public_id"], prepared["version"])
+    assert release["status"] == "failed"
+    assert not release.get("media_cleanup_pending")
+    assert not media.exists()
+    assert not (directory / "job.json").exists()
+    assert json.loads((directory / "version.json").read_text())["status"] == "failed"
+
+
+def test_terminal_job_unlink_failure_is_retried_without_losing_media(source, monkeypatch):
+    from novelvideo.interactive_story import preparation_lease
+
+    store, output, _, body = source
+    prepared = store.prepare("owner", Path("."), output, "p", body)
+    store._finish(prepared)
+    directory = store.directory(prepared["public_id"]) / prepared["version"]
+    preparation_lease.release(directory)
+    job = directory / "job.json"
+    original = Path.unlink
+
+    def fail_unlink(path, *args, **kwargs):
+        if path == job:
+            raise OSError("temporary unlink error")
+        return original(path, *args, **kwargs)
+
+    restarted = PublicationStore(store.root, output_dir=output)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", fail_unlink)
+        restarted.recover()
+        assert job.exists()
+        assert restarted.version(prepared["public_id"], prepared["version"])["status"] == "ready"
+    restarted.recover()
+    assert not job.exists()
+    assert restarted.media_directory(prepared["public_id"], prepared["version"]).is_dir()

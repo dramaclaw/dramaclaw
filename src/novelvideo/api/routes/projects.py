@@ -33,7 +33,7 @@ from novelvideo.api.schemas import (
 )
 from novelvideo.config import ensure_project_dirs_at_paths
 from novelvideo.api.story_publication_lifecycle import (
-    delete_project_with_publications,
+    set_project_status_with_publications,
     detach_project_with_publications,
 )
 from novelvideo.chat import service as chat_service
@@ -1058,10 +1058,9 @@ async def _set_project_status(
     if status == "active":
         updates["archived_at"] = ""
         updates["deleted_at"] = ""
-    if status == "deleted":
-        record = await delete_project_with_publications(ctx, registry)
-    else:
-        record = await registry.update_project_status(ctx.project_id, status)
+    # Restores share the publication lock too, and clear stale listings from
+    # older releases. Restoring a project never implicitly republishes it.
+    record = await set_project_status_with_publications(ctx, registry, status)
     if record is None:
         existing = await registry.get_project(ctx.project_id)
         if existing is not None and existing.purged_at:

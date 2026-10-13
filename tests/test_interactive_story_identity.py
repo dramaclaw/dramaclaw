@@ -155,7 +155,7 @@ def test_long_manual_choices_can_be_published(
         if node["type"] == "videoNode":
             node["data"]["videoUrl"] = "/api/v1/projects/p/media/clip.mp4"
     _save_manual_canvas(service, canvas)
-    store = PublicationStore(tmp_path / "publications")
+    store = PublicationStore(tmp_path / "publications", output_dir=output)
     prepared = store.prepare("author", service.project_dir, output, "p", {
         "canvas_id": "default", "group_id": group_id, "revision": 3,
         "request_id": "long-id-publication", "title": "Long ID publication", "cover": None,

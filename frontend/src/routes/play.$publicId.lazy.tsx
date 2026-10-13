@@ -117,12 +117,14 @@ export function PublishedStoryPage({ publicId }: { publicId: string }) {
   return (
     <main className="publication-surface min-h-dvh">
       {error && !release ? (
-        <div className="published-story-empty">
-          <AlertCircle size={24} aria-hidden="true" />
-          <h1>
-            {t(
-              `storyPublication.${error === "unavailable" ? "unavailable" : "networkError"}`,
-            )}
+        <div className="published-story-empty published-story-error">
+          <h1 className="flex items-center gap-2">
+            <AlertCircle size={24} className="shrink-0" aria-hidden="true" />
+            <span>
+              {t(
+                `storyPublication.${error === "unavailable" ? "unavailable" : "networkError"}`,
+              )}
+            </span>
           </h1>
           <p className="publication-muted">
             {t(

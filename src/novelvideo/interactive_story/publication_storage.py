@@ -23,11 +23,12 @@ from novelvideo.utils.async_ops import (
 logger = logging.getLogger(__name__)
 
 
-def project_store(project_id: str, state_dir: Path) -> PublicationStore:
+def project_store(project_id: str, state_dir: Path, output_dir: Path) -> PublicationStore:
     store = PublicationStore(
         Path(state_dir) / "publications",
         project_id=project_id,
         index_root=PublicationStore().root,
+        output_dir=output_dir,
     )
     with store.locked():
         for path in store.root.glob("*/work.json"):
@@ -47,12 +48,15 @@ async def public_store(public_id: str) -> PublicationStore:
         raise PublicationError("not_found", 404)
     project_id = json.loads(index.read_text())["project_id"]
     record = await get_project_registry().get_project(project_id)
-    if record is None or record.status == "deleted" or record.purged_at:
+    if record is None or record.status != "active" or record.purged_at:
         raise PublicationError("unavailable", 410)
     if not is_record_home_node(record):
         raise PublicationError("unavailable", 503)
     store = PublicationStore(
-        Path(record.state_dir) / "publications", project_id=record.id, index_root=root
+        Path(record.state_dir) / "publications",
+        project_id=record.id,
+        index_root=root,
+        output_dir=Path(record.output_dir),
     )
     if store.read(public_id).get("project_id") != record.id:
         raise PublicationError("not_found", 404)
@@ -81,9 +85,9 @@ async def recover_project_publications():
             continue
         try:
             store = await call_blocking(
-                project_store, record.id, Path(record.state_dir)
+                project_store, record.id, Path(record.state_dir), Path(record.output_dir)
             )
-            if record.status == "deleted":
+            if record.status != "active":
                 await call_blocking(_unlist, store)
             await call_blocking(store.recover)
         except Exception:
@@ -104,7 +108,7 @@ async def invoke_active(store, operation, *args):
         record = asyncio.run_coroutine_threadsafe(
             registry.get_project(store.project_id), loop
         ).result()
-        if record is None or record.status == "deleted" or record.purged_at:
+        if record is None or record.status != "active" or record.purged_at:
             raise PublicationError("unavailable", 410)
         if not is_record_home_node(record):
             raise PublicationError("unavailable", 503)
@@ -120,12 +124,18 @@ async def invoke_active(store, operation, *args):
 
 
 async def delete_project_and_unlist(project_id, state_dir, registry):
+    return await set_project_status_and_unlist(
+        project_id, state_dir, registry, "deleted"
+    )
+
+
+async def set_project_status_and_unlist(project_id, state_dir, registry, status):
     """Compensate unlisting if the registry update fails, under the copy lock."""
     loop = asyncio.get_running_loop()
 
     def commit():
         return asyncio.run_coroutine_threadsafe(
-            registry.update_project_status(project_id, "deleted"), loop
+            registry.update_project_status(project_id, status), loop
         ).result()
 
     def execute():

@@ -4,14 +4,16 @@ from fastapi import HTTPException
 
 from novelvideo.interactive_story.publication import PublicationError
 from novelvideo.interactive_story.publication_storage import (
-    delete_project_and_unlist,
+    set_project_status_and_unlist,
     detach_project_publications,
 )
 
 
-async def delete_project_with_publications(ctx, registry):
+async def set_project_status_with_publications(ctx, registry, status):
     try:
-        return await delete_project_and_unlist(ctx.project_id, ctx.state_dir, registry)
+        return await set_project_status_and_unlist(
+            ctx.project_id, ctx.state_dir, registry, status
+        )
     except PublicationError as exc:
         raise HTTPException(exc.status, detail={"code": exc.code}) from exc
 

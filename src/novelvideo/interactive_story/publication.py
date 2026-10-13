@@ -124,6 +124,7 @@ class PublicationStore:
         *,
         project_id: str | None = None,
         index_root: Path | None = None,
+        output_dir: Path | None = None,
     ):
         self.root = root or Path(
             os.environ.get(
@@ -132,6 +133,7 @@ class PublicationStore:
         )
         self.project_id = project_id
         self.index_root = index_root
+        self.output_dir = Path(output_dir) if output_dir is not None else None
         self.check_project: Callable[[], None] | None = None
         self._lock_state = local()
 
@@ -205,6 +207,50 @@ class PublicationStore:
         if not re.fullmatch(r"[a-f0-9]{32}", public_id):
             raise PublicationError("not_found", 404)
         return self.root / public_id
+
+    def media_directory(self, public_id: str, version: str) -> Path:
+        self.directory(public_id)  # Validate the work ID before constructing a path.
+        if not re.fullmatch(r"[a-f0-9]{32}", version):
+            raise PublicationError("not_found", 404)
+        if self.output_dir is None:
+            raise PublicationError("publication_storage_unavailable", 503)
+        return self.output_dir / "publications" / public_id / version / "media"
+
+    @staticmethod
+    def _remove_tree(path: Path) -> None:
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            if path.exists():
+                raise
+
+    def _remove_job(self, directory: Path) -> None:
+        try:
+            (directory / "job.json").unlink(missing_ok=True)
+        except OSError:
+            logger.exception("Unable to remove completed publication job %s", directory)
+
+    def _retry_media_cleanup(self, release: dict) -> None:
+        """Keep the durable marker until deletion succeeds, including across restarts."""
+        if not release.get("media_cleanup_pending"):
+            return
+        # Free partial copies before writing metadata: CE state and output may
+        # share a full disk. Until this write commits, preparing + job.json still
+        # lets recovery repeat cleanup safely after a crash.
+        try:
+            self._remove_tree(
+                self.media_directory(release["public_id"], release["version"]).parent
+            )
+        except OSError:
+            logger.exception(
+                "Unable to remove failed publication media %s", release["version"]
+            )
+        else:
+            release.pop("media_cleanup_pending", None)
+        self.write(
+            self.directory(release["public_id"]) / release["version"] / "version.json",
+            release,
+        )
 
     def read(self, public_id: str) -> dict:
         try:
@@ -289,9 +335,9 @@ class PublicationStore:
                                 release["error"] = "publication_interrupted"
                                 # Retain the author's original cover selection for retry.
                                 release["cover"] = release.get("request", {}).get("cover")
-                                self.write(directory / "version.json", release)
-                                (directory / "job.json").unlink(missing_ok=True)
-                                shutil.rmtree(directory / "media", ignore_errors=True)
+                                release["media_cleanup_pending"] = True
+                                self._retry_media_cleanup(release)
+                                self._remove_job(directory)
             release["published"] = version in work["published_versions"]
             if not isinstance(work.get("publication_details"), dict):
                 raise PublicationError("publication_data_invalid", 500)
@@ -321,7 +367,7 @@ class PublicationStore:
             prior = self.version(match[1], match[2])
             if match[3] not in prior.get("assets", {}):
                 raise PublicationError("media_not_available")
-            source = self.directory(match[1]) / match[2] / "media" / match[3]
+            source = self.media_directory(match[1], match[2]) / match[3]
             media_root = source.parent.resolve()
         else:
             source = (output / path[len(prefix) :]).resolve()
@@ -366,10 +412,27 @@ class PublicationStore:
             work = self.read(public_id)
             directory = self.directory(public_id)
             versions = [self.version(public_id, vid) for vid in work["versions"]]
-            if any(v["status"] == "preparing" for v in versions) or any(
-                directory.glob("*/job.json")
-            ):
+            preparing = {v["version"] for v in versions if v["status"] == "preparing"}
+            pending = set(work.get("pending_cleanup", []))
+            # A crash can leave a terminal job or a job not yet committed to work.json.
+            # Only a live owner may block cleanup; a stale file alone must not do so.
+            for job in directory.glob("*/job.json"):
+                vid = job.parent.name
+                if not re.fullmatch(r"[a-f0-9]{32}", vid):
+                    continue
+                with preparation_lease.abandoned(job.parent) as abandoned:
+                    if not abandoned:
+                        return
+                    with self.file_lock(job.parent / ".job-lock"):
+                        if vid not in work["versions"]:
+                            pending.add(vid)
+                        elif vid not in preparing:
+                            self._remove_job(job.parent)
+            if preparing:
                 return
+            for release in versions:
+                if release["status"] == "failed":
+                    self._retry_media_cleanup(release)
             keep = set(work["published_versions"])
             if work.get("active_version"):
                 keep.add(work["active_version"])
@@ -381,7 +444,6 @@ class PublicationStore:
             if latest_ready:
                 keep.add(latest_ready["version"])
             retired = [v for v in versions if v["version"] not in keep]
-            pending = set(work.get("pending_cleanup", []))
             for version in retired:
                 # Retain only a digest, so a late retry cannot recreate old media.
                 work.setdefault("retired_requests", {})[version["request_id"]] = (
@@ -399,8 +461,8 @@ class PublicationStore:
                     raise PublicationError("publication_data_invalid", 500)
                 target = directory / vid
                 try:
-                    if target.exists():
-                        shutil.rmtree(target)
+                    self._remove_tree(self.media_directory(public_id, vid).parent)
+                    self._remove_tree(target)
                 except OSError:
                     logger.exception(
                         "Unable to remove obsolete publication draft %s", vid
@@ -675,9 +737,9 @@ class PublicationStore:
                         if isinstance(exc, PublicationError)
                         else "publication_check_failed"
                     )
-                    self.write(directory / "version.json", release)
-                    shutil.rmtree(directory / "media", ignore_errors=True)
-            (directory / "job.json").unlink(missing_ok=True)
+                    release["media_cleanup_pending"] = True
+                    self._retry_media_cleanup(release)
+            self._remove_job(directory)
 
     def _finish(self, prepared: dict):
         version = {k: v for k, v in prepared.items() if not k.startswith("_")}
@@ -827,8 +889,9 @@ class PublicationStore:
                     version["progress"]["completed"] += 1
                     return archived_sources[source_key]
                 asset = secrets.token_hex(16) + source.suffix.lower()
-                (directory / "media").mkdir(exist_ok=True)
-                shutil.copyfile(source, directory / "media" / asset)
+                media_dir = self.media_directory(version["public_id"], version["version"])
+                media_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, media_dir / asset)
                 if expected != self.media_fingerprint(source):
                     raise PublicationError("media_changed_retry")
                 version["progress"]["completed"] += 1
@@ -913,8 +976,11 @@ class PublicationStore:
                 if isinstance(exc, PublicationError)
                 else "publication_check_failed"
             )
-            shutil.rmtree(directory / "media", ignore_errors=True)
-        self.write(directory / "version.json", version)
+            version["media_cleanup_pending"] = True
+        if version.get("media_cleanup_pending"):
+            self._retry_media_cleanup(version)
+        else:
+            self.write(directory / "version.json", version)
 
     def activate(
         self, public_id: str, owner: str, version: str | None, listed: bool

@@ -737,6 +737,10 @@
   margin: 0;
   font-size: 20px;
 }
+.published-story-error {
+  justify-items: center;
+  text-align: center;
+}
 .published-story-empty p {
   max-width: 420px;
 }
