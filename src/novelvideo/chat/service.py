@@ -60,6 +60,7 @@ from novelvideo.chat.display_fallback import (
     _DISPLAY_TOOL_NAMES as _DISPLAY_TOOL_NAMES,
 )
 from novelvideo.chat.execution_context import AgentExecutionContext
+from novelvideo.i18n_message import lmsg, message_payload, message_text
 from novelvideo.chat.presentation import (
     UI_SPEC_BLOCK_RE as _UI_SPEC_BLOCK_RE,  # noqa: F401 - compatibility export
     UI_SPEC_FENCE_RE as _UI_SPEC_FENCE_RE,  # noqa: F401 - compatibility export
@@ -265,7 +266,9 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "then copy exact user node totals into expected_node_count and expected_node_counts. Every "
     "complete Plan must carry "
     "top-level schema_version plus skill.id and skill.version copied from the selected production "
-    "Skill; generation_answers supplements that Plan and never replaces it. "
+    "Skill; use text-to-image for a pure image workflow and text-to-image-video only "
+    "when the user requests a video stage. generation_answers supplements that Plan and "
+    "never replaces it. "
     "Before authoring or submitting any workflow result, call "
     "freezone_begin_agent_product_generation and copy its returned operation_id exactly. Never "
     "invent, abbreviate, or reconstruct an operation_id, and never call a workflow prepare tool "
@@ -274,7 +277,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "identify recipe-less user "
     "resources. For episodic short-drama, Beat, "
     "voice-over, or background-music workflows, prefer the short-drama production Skill over the "
-    "generic text-to-image-video Skill. After any validation error, never submit a reduced sample, "
+    "generic text-to-image-video Skill. A pure image workflow must use text-to-image instead. "
+    "After any validation error, never submit a reduced sample, "
     "smoke test, or placeholder graph such as A/B or T1/T2 to the real canvas; diagnose with the "
     "read-only compiler only by compiling that same complete graph, preserving all nodes and "
     "dependency edges. Never compile reduced probe nodes or use edges=[] for a multi-node plan. "
@@ -626,7 +630,9 @@ Canvas write contract:
   path; on that path, copy exact node totals into expected_node_count and expected_node_counts and
   keep them unchanged during recovery. Episodic short-drama, Beat,
   voice-over, or background-music workflows should use the short-drama production Skill rather than
-  the generic text-to-image-video Skill.
+  the generic text-to-image-video Skill. A pure image workflow must use text-to-image; use
+  text-to-image-video only when the user requests video, and social-content-campaign only for an
+  explicit social-platform image set.
   Graph completeness is the Agent's responsibility. Before submission, verify that all Plan nodes
   form one connected component when edges are viewed as undirected. For independent Beat/shot
   branches that need failure isolation, add one non-executable common input root and fan it out to
@@ -655,8 +661,8 @@ Canvas write contract:
   freezone_update_node_data; do not call freezone_run_node_action.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never
   pass it to workflow_skill_get/freezone_get_workflow_skill or use it as intent.skill_id. Select the
-  matching production Workflow Skill returned by the catalog, such as text-to-image-video for a
-  general image/video pipeline.
+  matching production Workflow Skill returned by the catalog, such as text-to-image for a pure
+  image pipeline or text-to-image-video for an image/video pipeline.
 - Use freezone_create_node only for exactly one standalone textAnnotationNode when the user asks for
   one text node. Use one freezone_emit_canvas_command batch only for several ordinary non-workflow
   canvas edits. Use FREEZONE_CANVAS_CONTEXT's canvas_id. Do not precheck pipeline failure unless the
@@ -4544,6 +4550,96 @@ async def _stream_assistant_reply_claude(
         raise
 
 
+async def _cancel_pending_clarifications_for_turn(
+    *,
+    username: str,
+    store_scope: Any,
+    turn_id: str,
+    project_state_dir: str | Path | None,
+    agent_profile: str,
+) -> None:
+    """Settle clarification bridges when a canvas turn is interrupted."""
+    from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
+    from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
+    from novelvideo.chat.store import chat_store
+    from novelvideo.freezone.canvas_command_bridge import resolve_clarification_result
+
+    messages = await chat_store.list_messages_async(username, store_scope)
+    pending_by_key: dict[str, dict[str, Any]] = {}
+    settled_keys: set[str] = set()
+    for message in messages:
+        if str(message.get("turn_id") or "") != turn_id:
+            continue
+        events = list(message.get("ui_events") or [])
+        events.extend(
+            part.get("event")
+            for part in message.get("parts") or []
+            if isinstance(part, dict) and part.get("type") != "text"
+        )
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") != "assistant.clarification.request":
+                continue
+            key = str(event.get("bridge_key") or "").strip()
+            if not key:
+                continue
+            if event.get("submitted") is True or event.get("cancelled") is True:
+                settled_keys.add(key)
+                pending_by_key.pop(key, None)
+            elif key not in settled_keys:
+                pending_by_key[key] = event
+    if not pending_by_key:
+        return
+
+    hermes_home = ensure_user_hermes_workspace(
+        username,
+        profile="freezone",
+        project_state_dir=project_state_dir,
+    )
+    bridge_dir = canvas_bridge_dir_for_profile(hermes_home, agent_profile)
+    cancelled_message = lmsg(
+        "freezone.chat.clarification.cancelledRequest",
+        "用户已取消本轮请求",
+    )
+    for key, event in pending_by_key.items():
+        cancelled_event = {
+            **event,
+            "submitted": True,
+            "cancelled": True,
+            "action": "cancel",
+            "clarification_status": "cancelled",
+            "answers": {},
+        }
+        await chat_store.append_ui_event_async(
+            username,
+            store_scope,
+            turn_id,
+            cancelled_event,
+        )
+        await asyncio.to_thread(
+            resolve_clarification_result,
+            key,
+            {
+                "ok": False,
+                "status": "clarification_frontend_result",
+                "turn_id": turn_id,
+                "tool_call_status": "completed",
+                "clarification_status": "cancelled",
+                "action": "cancel",
+                "answers": {},
+                "skipped": False,
+                "used_recommended": False,
+                "errors": [message_text(cancelled_message)],
+                "cancelled": True,
+                "message": message_text(cancelled_message),
+                "message_i18n": message_payload(cancelled_message),
+                "agent_instruction": "Do not continue; the user cancelled this turn.",
+            },
+            bridge_dir=bridge_dir,
+        )
+
+
 async def _stream_assistant_reply_codex(
     username: str,
     project: str,
@@ -4952,6 +5048,20 @@ async def _stream_assistant_reply_codex(
         # Interrupted turns can complete with partial structured JSON. None of
         # that unvalidated payload may reach presentation or persisted history.
         assistant_text = "已取消本轮请求。"
+        if store_scope is not None:
+            try:
+                await _cancel_pending_clarifications_for_turn(
+                    username=username,
+                    store_scope=store_scope,
+                    turn_id=business_turn_id,
+                    project_state_dir=project_state_dir,
+                    agent_profile=agent_profile,
+                )
+            except Exception:
+                logger.exception(
+                    "failed to settle clarification cards for cancelled turn %s",
+                    business_turn_id,
+                )
     elif structured_canvas_reply and canvas_postcondition_applies:
         assistant_text = finalize_canvas_reply(
             assistant_text,

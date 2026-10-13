@@ -3274,10 +3274,15 @@ def _clarification_handler(plugin):
 
 def test_clarification_timeout_result_tells_agent_how_to_resume(monkeypatch):
     plugin = _load_plugin_module()
+    observed_timeout = []
     monkeypatch.setattr(plugin, "clarification_bridge_key", lambda **_kw: "clarify-key-1")
     monkeypatch.setattr(plugin, "put_pending_clarification_event", lambda **_kw: None)
     monkeypatch.setattr(plugin, "find_clarification_bridge_message", lambda **_kw: None)
-    monkeypatch.setattr(plugin, "wait_clarification_result", lambda _key, timeout_seconds: None)
+    monkeypatch.setattr(
+        plugin,
+        "wait_clarification_result",
+        lambda _key, timeout_seconds: observed_timeout.append(timeout_seconds),
+    )
 
     result = _clarification_handler(plugin)({
         "project_id": "project-a", "canvas_id": "canvas-a",
@@ -3290,11 +3295,61 @@ def test_clarification_timeout_result_tells_agent_how_to_resume(monkeypatch):
     assert result["status"] == "clarification_frontend_timeout"
     assert result["clarification_id"] == "clarify_timeout"
     assert result["bridge_key"] == "clarify-key-1"
+    assert observed_timeout == [600]
     assert "clarification_id" in result["agent_instruction"]
     assert "do not build a new card" in result["agent_instruction"]
     Draft202012Validator(
         plugin._output_schema("freezone_request_user_clarification")
     ).validate(result)
+
+
+def test_same_turn_repeated_clarification_without_id_reuses_existing_card(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-a")
+    stored = {}
+    emitted = []
+
+    def find_message(**kwargs):
+        return stored.get(kwargs["clarification_id"])
+
+    def put_message(*, key, project_id, canvas_id, event):
+        emitted.append(event)
+        stored[event["clarification_id"]] = {
+            "key": key,
+            "kind": "clarification_event",
+            "event": event,
+            "result": {
+                "ok": True,
+                "status": "clarification_frontend_result",
+                "tool_call_status": "completed",
+                "clarification_status": "answered",
+                "bridge_key": key,
+                "answers": {"scope": {"option_ids": ["workflow"]}},
+            },
+        }
+
+    monkeypatch.setattr(plugin, "find_clarification_bridge_message", find_message)
+    monkeypatch.setattr(plugin, "clarification_bridge_key", lambda **_kw: "bridge-a")
+    monkeypatch.setattr(plugin, "put_pending_clarification_event", put_message)
+    monkeypatch.setattr(plugin, "wait_clarification_result", lambda key, timeout_seconds: stored[next(iter(stored))]["result"])
+    args = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "title": "先确认方向",
+        "questions": [{
+            "id": "scope",
+            "title": "主要做什么？",
+            "options": [{"id": "workflow", "label": "工作流"}],
+        }],
+    }
+
+    first = _clarification_handler(plugin)(args)
+    second = _clarification_handler(plugin)(args)
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert len(emitted) == 1
+    assert emitted[0]["clarification_id"].startswith("clarify_canvas-a_")
 
 
 def test_clarification_resume_collects_late_answer_without_second_card(monkeypatch):
