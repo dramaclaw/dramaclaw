@@ -5068,6 +5068,19 @@
       "templates": "Mẫu dựng sẵn"
     },
     "story": {
+      "actionCatalog": {
+        "continuityLabel": "Nối cảnh",
+        "continuityDescription": "Sau khi phương án sản xuất được phê duyệt, đặt hàng loạt các nút video của những đoạn truyện liên tiếp sang chế độ auto (tự động nối cảnh). Khi tạo video, hệ thống tự chụp hoặc dùng lại rồi gắn khung hình cuối của video nguồn hiện tại; không cần chụp và nối riêng, các nhánh dùng chung khung hình cuối đó. Dùng independent (mở cảnh độc lập) khi đổi cảnh, nhảy thời gian hoặc có nhiều nguồn hội tụ mà chưa chọn nguồn. Chuyển sang independent sẽ xóa ngay các kết nối nối cảnh tự động cũ và phần prompt tương ứng. Hệ thống không tự đổi mô hình hoặc chế độ tạo đã chọn.",
+        "continuitySourceLabel": "Nguồn nối cảnh",
+        "continuitySourceDescription": "Chỉ định ID nút video nguồn khi nhiều nhánh phía trước hội tụ; để trống nếu chỉ có một nguồn.",
+        "narrationLabel": "Nội dung cốt truyện",
+        "narrationDescription": "Nội dung cốt truyện hiển thị cho người sáng tạo trong đoạn truyện tương tác. Khi người dùng yêu cầu bổ sung, hoàn thiện hoặc viết tiếp đoạn này, phải cập nhật narration. Trường này độc lập với prompt dùng để tạo video; chỉ cập nhật prompt là không đủ.",
+        "productionNotesLabel": "Ghi chú sản xuất",
+        "productionNotesDescription": "Ghi chú về cảnh quay, diễn xuất, âm thanh và tính liên tục để quay phim và sản xuất video. Không ghi nội dung cốt truyện vào trường này.",
+        "updateDescription": "Cập nhật đoạn truyện tương tác. Khi bổ sung hoặc hoàn thiện cốt truyện, phải ghi vào narration; prompt chỉ dùng để tạo video và không thể thay thế narration. Ghi hướng dẫn quay phim, diễn xuất, âm thanh và tính liên tục vào storyProductionNotes.",
+        "captureFirstFrameDescription": "Chụp khung hình đầu của video đang chọn và tải lên thành nút ảnh phái sinh, trả về nút ảnh cùng thông tin nguồn. Có thể dùng làm tham chiếu mở cảnh hoặc đối chiếu nhân vật, đạo cụ và bố cục với khung hình cuối của đoạn trước. Thao tác này chỉ chuẩn bị tư liệu, không tự gắn tham chiếu hoặc tạo video.",
+        "captureLastFrameDescription": "Chụp khung hình cuối của video đang chọn và tải lên thành nút ảnh phái sinh, trả về nút ảnh cùng thông tin nguồn. Thao tác này chỉ chuẩn bị tư liệu, không tạo video. Sau khi hoàn tất, đọc lại ảnh trước khi gắn vào đoạn cần nối cảnh."
+      },
       "htmlExport": {
         "label": "Xuất ZIP ngoại tuyến",
         "hint": "Bao gồm trình phát, khám phá cốt truyện và video. Giải nén ZIP rồi mở index.html.",

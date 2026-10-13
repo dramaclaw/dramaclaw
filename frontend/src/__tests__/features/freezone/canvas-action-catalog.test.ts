@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import i18next from "i18next";
 import { enTranslation } from "@/__tests__/helpers/i18n-fixtures";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
@@ -27,13 +28,16 @@ function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["typ
 describe("canvas action catalog", () => {
   it("localizes story fields and frame capture instructions when the language changes", async () => {
     i18next.addResourceBundle("en", "translation", enTranslation, true, true);
+    i18next.addResourceBundle("vi", "translation", JSON.parse(
+      readFileSync("public/locales/vi/translation.json", "utf8"),
+    ), true, true);
     const originalLanguage = i18next.language;
     const clip = node({
       id: "story-i18n", type: CANVAS_NODE_TYPES.video,
       data: { storySegmentId: "segment-i18n", videoUrl: "/clip.mp4" },
     });
     try {
-      for (const [language, label] of [["en", "Story content"], ["zh", "剧情内容"]]) {
+      for (const [language, label] of [["en", "Story content"], ["vi", "Nội dung cốt truyện"], ["zh", "剧情内容"]]) {
         await i18next.changeLanguage(language);
         const catalog = buildCanvasNodeActionCatalog(clip);
         expect(catalog.editable_schema.narration.label).toBe(label);
@@ -46,7 +50,7 @@ describe("canvas action catalog", () => {
         for (const value of values) {
           expect(value).toBeTruthy();
           expect(value).not.toContain("canvas.story.actionCatalog.");
-          if (language === "en") expect(value).not.toMatch(/[\u4e00-\u9fff]/);
+          if (language !== "zh") expect(value).not.toMatch(/[\u4e00-\u9fff]/);
         }
         expect(catalog.editable_schema.continuityMode.options).toEqual(["auto", "independent"]);
       }
