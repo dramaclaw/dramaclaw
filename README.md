@@ -185,6 +185,10 @@ merged into `staging`, in closed beta. Generate a blockout scene from a referenc
 </p>
 <p align="center"><sub>Closed-beta preview: a reference image connected to the Previz node, followed by its generated 3D blockout scene.</sub></p>
 
+<p align="center">
+  <img src="./assets/readme/previz-canvas-node.gif" width="720" alt="Previz — character motion and camera preview"/>
+</p>
+
 [▶ Watch the 3D stage demo (6 seconds)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
 
 <br/>

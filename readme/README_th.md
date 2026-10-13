@@ -185,6 +185,10 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 </p>
 <p align="center"><sub>หน้าจอทดสอบแบบปิด: ภาพอ้างอิงที่เชื่อมกับ node Previz และฉาก blockout 3D ที่สร้างจากภาพนั้น</sub></p>
 
+<p align="center">
+  <img src="../assets/readme/previz-canvas-node.gif" width="720" alt="Previz — character motion and camera preview"/>
+</p>
+
 [▶ ดู demo เวที 3D (6 วินาที)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
 
 <br/>

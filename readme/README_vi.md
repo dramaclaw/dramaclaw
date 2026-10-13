@@ -185,6 +185,10 @@ Các tính năng agent dưới đây đã có trên nhánh mã nguồn `main`; i
 </p>
 <p align="center"><sub>Giao diện thử nghiệm kín: ảnh tham chiếu nối với node Previz và bối cảnh blockout 3D được tạo từ ảnh đó.</sub></p>
 
+<p align="center">
+  <img src="../assets/readme/previz-canvas-node.gif" width="720" alt="Previz — character motion and camera preview"/>
+</p>
+
 [▶ Xem demo sân khấu 3D (6 giây)](https://nfg-web-assets.cdnfg.com/dramaclaw/readme/previz-canvas-node.mp4)
 
 <br/>
