@@ -34,11 +34,15 @@ import {
   type StoryboardExportOptions,
   type StoryboardFrameItem,
   type GroupNodeData,
+  type StoryMediaMetadata,
+  type StoryVariableDefinition,
   isGroupNode,
   isProtectedProjectionGroupNode,
+  isStoryGroupNode,
   isStoryboardGroupNode,
   isStoryboardSplitNode,
   isStyleNode,
+  STORY_CHOICE_EDGE_TYPE,
 } from '@/features/canvas/domain/canvasNodes';
 import {
   DEFAULT_STORYBOARD_ASPECT,
@@ -106,7 +110,27 @@ import {
   isPresetManagedEdge,
   isPresetManagedNode,
 } from '@/features/canvas/domain/mainlineNodeFlags';
+import {
+  fmvIndependentCleanup,
+  isWorkflowContinuityTailFrameEdge,
+  withoutFmvContinuityNote,
+} from '@/features/canvas/domain/fmvContinuity';
 import { scopeProjectionGraphIds } from '@/features/freezone/projectionGraphIds';
+import { placeGroupsOutsideStory } from '@/features/canvas/application/storyGroupPlacement';
+import { slugifyName } from '@/features/canvas/story/variableName';
+import { storyFlagsOfNode, storyVariablesOfNode } from '@/features/canvas/story/storyVariableSelectors';
+import {
+  defaultStoryChoiceAnchor,
+  normalizeStoryChoiceInteraction,
+  type StoryChoiceInteraction,
+  type StoryChoicePresentation,
+  type StoryFlag,
+} from '@/features/canvas/story/storyTypes';
+import {
+  STORY_CLIP_NODE_HEIGHT,
+  STORY_CLIP_NODE_WIDTH,
+  resolveStoryGroupForChoiceConnection,
+} from '@/features/canvas/story/storyClipLayout';
 
 export type {
   ActiveToolDialog,
@@ -178,6 +202,11 @@ interface CanvasState {
   pendingClearIntent: boolean;
   selectedNodeId: string | null;
   /**
+   * 当前进入「编辑态」的故事片段(故事组内视频节点)id。临时 UI 态,不持久化、不进 undo。
+   * null = 全部故事片段为播放器形态。切换选中节点(setSelectedNode 到别的 id)时自动清空。
+   */
+  storyEditNodeId: string | null;
+  /**
    * 当前由顶部工具栏打开了二级功能浮层（全景 / 多角度 / 打光 / 重绘 / 扩图 /
    * 旋转 / 九宫格）的目标节点 id。浮层打开时，节点自身依赖 `selected` 显示的
    * 操作面板（如 ImageGenNode 底部的生成面板）必须让位给浮层——否则两块操作区
@@ -204,6 +233,11 @@ interface CanvasState {
   viewportBookmarks: ViewportBookmarks;
   imageViewer: ImageViewerState;
   videoViewer: VideoViewerState;
+  /** 当前打开变量面板的故事组 id；null 表示面板关闭。 */
+  openStoryVariablesGroupId: string | null;
+  /** 当前打开校验(lint)面板的故事组 id；null 表示关闭。 */
+  openStoryLintGroupId: string | null;
+  openStoryTreeGroupId: string | null;
 
   onNodesChange: (changes: NodeChange<CanvasNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<CanvasEdge>[]) => void;
@@ -396,6 +430,38 @@ interface CanvasState {
       padding?: { side: number; top: number; bottom: number };
     }
   ) => string | null;
+  /** 把选中节点打成「故事组」并初始化剧情状态。返回组 id。 */
+  createStoryGroup: (nodeIds: string[]) => string | null;
+  /** 向既有故事组追加一个空白剧情片段并聚焦。返回新视频节点 id。 */
+  addStorySegment: (
+    groupNodeId: string,
+    options?: {
+      /** 故事组内的相对坐标；未传时自动追加在现有片段右侧。 */
+      position?: { x: number; y: number };
+      data?: Partial<CanvasNodeData>;
+    },
+  ) => string | null;
+  /** 把一份导入的故事(节点+边)整体追加进画布,作为一个 undo 步。 */
+  addStoryImport: (nodes: CanvasNode[], edges: CanvasEdge[]) => void;
+  /** 向故事组添加一个数值变量,自动生成 ink 合法 name(组内唯一)。返回 name。 */
+  addStoryVariable: (groupId: string, label: string) => string;
+  /** Patch 故事组某变量的 label / initial。 */
+  updateStoryVariable: (groupId: string, name: string, patch: { label?: string; initial?: number }) => void;
+  /** 从故事组删除某变量。 */
+  removeStoryVariable: (groupId: string, name: string) => void;
+  addStoryFlag: (groupId: string, label: string) => string;
+  updateStoryFlag: (groupId: string, name: string, patch: { label?: string; initial?: boolean }) => void;
+  removeStoryFlag: (groupId: string, name: string) => void;
+  /** 打开某故事组的变量面板。 */
+  openStoryVariables: (groupId: string) => void;
+  /** 关闭变量面板。 */
+  closeStoryVariables: () => void;
+  /** 打开/关闭某故事组的校验面板。 */
+  openStoryLint: (groupId: string) => void;
+  closeStoryLint: () => void;
+  /** 打开/关闭某故事组的剧情树面板。 */
+  openStoryTree: (groupId: string) => void;
+  closeStoryTree: () => void;
   /**
    * 快捷派生（spawn）后的自动打组：源节点未在组内 → 与新节点一起新建组；已在
    * 普通组内 → 把新节点并入该组并撑大边界；在分镜组/投影保护组内 → 不打组。
@@ -439,7 +505,24 @@ interface CanvasState {
   ) => void;
   ungroupNode: (groupNodeId: string) => boolean;
   deleteEdge: (edgeId: string) => void;
+  /** 故事模式:在两个视频节点间建一条选项边,order 自动取该源现有选项边数。返回边 id。 */
+  addStoryChoiceEdge: (source: string, target: string, choiceText: string) => string | null;
+  /** 故事模式:patch 一条选项边的 data(文案/剧情反馈/互动呈现/条件/效果)。 */
+  updateStoryChoiceEdgeData: (
+    edgeId: string,
+    patch: Partial<{ choiceText: string; feedbackText: string; interaction: unknown; condition: unknown; effects: unknown; transitionMode: 'visible' | 'automatic' }>,
+  ) => void;
+  /** 选择点级互动呈现:同一源节点的所有选项统一使用底部/锚定/视频热区；锚点位置仍各自保留。 */
+  setStoryChoicePresentation: (edgeId: string, presentation: StoryChoicePresentation) => void;
+  alignStoryChoiceAnchors: (edgeId: string) => void;
+  setStoryChoiceAppearance: (edgeId: string, patch: Partial<Pick<StoryChoiceInteraction, 'uiStyle' | 'motion'>>) => void;
+  /** 限时选项:把某条选项边设为/取消默认(同源至多一条默认,设一个清同源其它)。 */
+  setStoryDefaultChoice: (edgeId: string, isDefault: boolean) => void;
+  /** 故事模式:把某视频节点设为唯一起点(清掉其它节点的 storyRole)。 */
+  setStoryStartNode: (nodeId: string) => void;
   setSelectedNode: (nodeId: string | null) => void;
+  /** 进入/退出某故事片段的编辑态。null = 退出(全部回到播放器形态)。 */
+  setStoryEditNode: (nodeId: string | null) => void;
   setActiveOverlayNodeId: (nodeId: string | null) => void;
   setActiveLightEditorNodeId: (nodeId: string | null) => void;
   setHoveredNodeId: (nodeId: string | null) => void;
@@ -594,6 +677,63 @@ function edgeDataRecord(edge: CanvasEdge): Record<string, unknown> {
     : {};
 }
 
+function nextStoryChoiceOrder(edges: CanvasEdge[], source: string): number {
+  let greatestOrder = -1;
+  for (const edge of edges) {
+    if (edge.source !== source || edge.type !== STORY_CHOICE_EDGE_TYPE) continue;
+    const order = edgeDataRecord(edge).order;
+    if (typeof order !== 'number' || !Number.isFinite(order)) continue;
+    greatestOrder = Math.max(greatestOrder, Math.max(0, Math.trunc(order)));
+  }
+  return greatestOrder + 1;
+}
+
+function uniqueStoryChoiceEdgeId(
+  edges: CanvasEdge[],
+  source: string,
+  target: string,
+  order: number,
+): string {
+  const baseId = `story-${source}-${target}-${order}`;
+  let id = baseId;
+  let suffix = 1;
+  while (edges.some((edge) => edge.id === id)) {
+    id = `${baseId}-${suffix++}`;
+  }
+  return id;
+}
+
+function findUnconfiguredStoryChoiceEdge(
+  edges: CanvasEdge[],
+  source: string,
+  target: string,
+): CanvasEdge | undefined {
+  return edges.find((edge) => {
+    if (
+      edge.type !== STORY_CHOICE_EDGE_TYPE
+      || edge.source !== source
+      || edge.target !== target
+    ) {
+      return false;
+    }
+    const data = edgeDataRecord(edge);
+    const storyChoiceId = typeof data.storyChoiceId === 'string'
+      ? data.storyChoiceId.trim()
+      : '';
+    const choiceText = typeof data.choiceText === 'string' ? data.choiceText.trim() : '';
+    const effects = Array.isArray(data.effects) ? data.effects : [];
+    return !storyChoiceId
+      && !choiceText
+      && data.condition == null
+      && effects.length === 0
+      && data.isDefault !== true;
+  });
+}
+
+function selectOnlyEdge(edges: CanvasEdge[], edgeId: string): CanvasEdge[] {
+  return edges.map((edge) => ({ ...edge, selected: edge.id === edgeId }));
+}
+
 function sourceRolePriority(node: CanvasNode | undefined): number {
   const data = node?.data as { __freezone_source?: unknown } | undefined;
   const source =
@@ -656,9 +796,49 @@ function dedupeReferenceInputEdges(edges: CanvasEdge[], nodeMap: ReadonlyMap<str
 
 function normalizeEdgesWithNodes(rawEdges: CanvasEdge[], nodes: CanvasNode[]): CanvasEdge[] {
   const nodeMap = new Map(nodes.map((node) => [node.id, node] as const));
+  const nextStoryOrderBySource = new Map<string, number>();
+  for (const edge of rawEdges) {
+    if (edge.type !== STORY_CHOICE_EDGE_TYPE) continue;
+    const order = edgeDataRecord(edge).order;
+    const nextOrder = typeof order === 'number' && Number.isFinite(order)
+      ? Math.max(0, Math.trunc(order) + 1)
+      : 1;
+    nextStoryOrderBySource.set(
+      edge.source,
+      Math.max(nextStoryOrderBySource.get(edge.source) ?? 0, nextOrder),
+    );
+  }
 
-  const normalizedEdges = rawEdges
+  // 兼容修复上线前已经保存的连线：当两端都是同一故事组的片段时，普通边没有
+  // 条件/效果编辑能力。加载时保留原 edge id 与已有 data，只补成剧情选项语义。
+  const semanticEdges = rawEdges.map((edge) => {
+    if (
+      edge.type === STORY_CHOICE_EDGE_TYPE
+      || !resolveStoryGroupForChoiceConnection(nodes, edge.source, edge.target)
+    ) {
+      return edge;
+    }
+    const data = edgeDataRecord(edge);
+    const order = nextStoryOrderBySource.get(edge.source) ?? 0;
+    nextStoryOrderBySource.set(edge.source, order + 1);
+    return {
+      ...edge,
+      type: STORY_CHOICE_EDGE_TYPE,
+      data: {
+        ...data,
+        choiceText: typeof data.choiceText === 'string' ? data.choiceText : '',
+        order,
+      },
+    } as CanvasEdge;
+  });
+
+  const normalizedEdges = semanticEdges
     .filter((edge) => {
+      // 故事选项边走自己的语义(videoNode -> videoNode),不参与上游类型规则;
+      // 只要求两端节点存在即保留。
+      if (edge.type === STORY_CHOICE_EDGE_TYPE) {
+        return Boolean(nodeMap.get(edge.source)) && Boolean(nodeMap.get(edge.target));
+      }
       if (isNoReferenceEdge(edge)) {
         return false;
       }
@@ -697,6 +877,222 @@ function normalizeEdgesWithNodes(rawEdges: CanvasEdge[], nodes: CanvasNode[]): C
     dedupedEdges[existingIndex] = edge;
   }
   return dedupedEdges;
+}
+
+function isStoryClipNodeInCanvas(node: CanvasNode, nodes: CanvasNode[]): boolean {
+  if (node.type !== CANVAS_NODE_TYPES.video || !node.parentId) return false;
+  return isStoryGroupNode(nodes.find((candidate) => candidate.id === node.parentId));
+}
+
+function storyMediaMetadata(value: unknown): StoryMediaMetadata {
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Partial<StoryMediaMetadata>)
+    : {};
+  const source = raw.source === 'imported' || raw.source === 'generated'
+    ? raw.source
+    : 'placeholder';
+  const status = raw.status === 'pending' || raw.status === 'ready' || raw.status === 'failed'
+    ? raw.status
+    : 'missing';
+  const version = typeof raw.version === 'number' && Number.isFinite(raw.version)
+    ? Math.max(1, Math.trunc(raw.version))
+    : 1;
+  return {
+    source,
+    status,
+    ...(typeof raw.asset_id === 'string' || raw.asset_id === null
+      ? { asset_id: raw.asset_id }
+      : {}),
+    ...(typeof raw.url === 'string' || raw.url === null ? { url: raw.url } : {}),
+    version,
+  };
+}
+
+function synchronizeStoryMediaMetadata(
+  node: CanvasNode,
+  patch: Partial<CanvasNodeData>,
+  mergedData: CanvasNodeData,
+): CanvasNodeData {
+  if (Object.prototype.hasOwnProperty.call(patch, 'storyMedia')) {
+    return mergedData;
+  }
+  const mediaKeys = [
+    'videoUrl',
+    'isUploading',
+    'isGenerating',
+    'generationError',
+    'sourceFileName',
+  ];
+  if (!mediaKeys.some((key) => Object.prototype.hasOwnProperty.call(patch, key))) {
+    return mergedData;
+  }
+
+  const current = storyMediaMetadata((node.data as { storyMedia?: unknown }).storyMedia);
+  const previousVideoUrl = typeof (node.data as { videoUrl?: unknown }).videoUrl === 'string'
+    && (node.data as { videoUrl: string }).videoUrl.trim()
+    ? (node.data as { videoUrl: string }).videoUrl
+    : null;
+  const nextVideoUrl = typeof (mergedData as { videoUrl?: unknown }).videoUrl === 'string'
+    && (mergedData as { videoUrl: string }).videoUrl.trim()
+    ? (mergedData as { videoUrl: string }).videoUrl
+    : null;
+  const previousMediaUrl = typeof current.url === 'string' && current.url.trim()
+    ? current.url
+    : previousVideoUrl;
+  const isUploading = (mergedData as { isUploading?: unknown }).isUploading === true;
+  const isGenerating = (mergedData as { isGenerating?: unknown }).isGenerating === true;
+  const generationError = (mergedData as { generationError?: unknown }).generationError;
+  const hasGenerationError = typeof generationError === 'string' && generationError.trim().length > 0;
+
+  let source = current.source;
+  if (isUploading || typeof (patch as { sourceFileName?: unknown }).sourceFileName === 'string') {
+    source = 'imported';
+  } else if (
+    isGenerating
+    || (
+      Object.prototype.hasOwnProperty.call(patch, 'sourceFileName')
+      && (patch as { sourceFileName?: unknown }).sourceFileName === null
+    )
+  ) {
+    source = 'generated';
+  } else if (nextVideoUrl && source === 'placeholder') {
+    source = 'imported';
+  }
+
+  const status: StoryMediaMetadata['status'] = isUploading || isGenerating
+    ? 'pending'
+    : hasGenerationError
+      ? 'failed'
+      : nextVideoUrl
+        ? 'ready'
+        : 'missing';
+  const keepsPreviousUrl = status === 'pending' || status === 'failed';
+  const url = nextVideoUrl ?? (keepsPreviousUrl ? previousMediaUrl : null);
+  const version = nextVideoUrl && previousMediaUrl && nextVideoUrl !== previousMediaUrl
+    ? current.version + 1
+    : current.version;
+
+  return {
+    ...mergedData,
+    storyMedia: {
+      ...current,
+      source,
+      status,
+      url,
+      version,
+    },
+  } as CanvasNodeData;
+}
+
+// AI-created story graphs persisted before the composite story-clip card used
+// a 460×300 layout.  The current card is wider so merely normalizing its size
+// makes adjacent legacy columns overlap.  Keep the geometry contract mirrored
+// in interactive_story/canvas_mapper.py until it can be shared across runtimes.
+const LEGACY_AI_STORY_CLIP_WIDTH = 460;
+const LEGACY_AI_STORY_CLIP_HEIGHT = 300;
+const STORY_CLIP_GROUP_PADDING = 60;
+const STORY_CLIP_COLUMN_GAP = 160;
+const STORY_CLIP_ROW_GAP = 120;
+
+function isLegacyAiStoryClip(node: CanvasNode): boolean {
+  if ((node.data as { isSizeManuallyAdjusted?: boolean }).isSizeManuallyAdjusted === true) {
+    return false;
+  }
+  return node.width === LEGACY_AI_STORY_CLIP_WIDTH
+    && node.height === LEGACY_AI_STORY_CLIP_HEIGHT;
+}
+
+function withStoryClipLayoutSize(node: CanvasNode): CanvasNode {
+  if ((node.data as { isSizeManuallyAdjusted?: boolean }).isSizeManuallyAdjusted === true) {
+    return node;
+  }
+  if (
+    node.width === STORY_CLIP_NODE_WIDTH
+    && node.height === STORY_CLIP_NODE_HEIGHT
+    && node.style?.width === STORY_CLIP_NODE_WIDTH
+    && node.style?.height === STORY_CLIP_NODE_HEIGHT
+  ) {
+    return node;
+  }
+  return {
+    ...node,
+    width: STORY_CLIP_NODE_WIDTH,
+    height: STORY_CLIP_NODE_HEIGHT,
+    measured: undefined,
+    style: {
+      ...(node.style ?? {}),
+      width: STORY_CLIP_NODE_WIDTH,
+      height: STORY_CLIP_NODE_HEIGHT,
+    },
+  };
+}
+
+function normalizeStoryClipLayouts(nodes: CanvasNode[]): CanvasNode[] {
+  const legacyClipsByGroup = new Map<string, CanvasNode[]>();
+  for (const node of nodes) {
+    if (!isStoryClipNodeInCanvas(node, nodes) || !node.parentId || !isLegacyAiStoryClip(node)) {
+      continue;
+    }
+    const clips = legacyClipsByGroup.get(node.parentId) ?? [];
+    clips.push(node);
+    legacyClipsByGroup.set(node.parentId, clips);
+  }
+
+  const migratedPositions = new Map<string, { x: number; y: number }>();
+  for (const clips of legacyClipsByGroup.values()) {
+    // The backend's legacy projection places each graph depth in one x column
+    // and siblings in y rows.  Reconstruct those ranks instead of scaling raw
+    // pixels, so the old reading order survives while every composite card gets
+    // intentional breathing room.
+    const columns = [...new Set(clips.map((clip) => clip.position.x))].sort((a, b) => a - b);
+    for (const columnX of columns) {
+      const column = clips
+        .filter((clip) => clip.position.x === columnX)
+        .sort((left, right) => left.position.y - right.position.y);
+      for (const [row, clip] of column.entries()) {
+        migratedPositions.set(clip.id, {
+          x: STORY_CLIP_GROUP_PADDING + columns.indexOf(columnX) * (STORY_CLIP_NODE_WIDTH + STORY_CLIP_COLUMN_GAP),
+          y: STORY_CLIP_GROUP_PADDING + row * (STORY_CLIP_NODE_HEIGHT + STORY_CLIP_ROW_GAP),
+        });
+      }
+    }
+  }
+
+  const normalized = nodes.map((node) => {
+    const migratedPosition = migratedPositions.get(node.id);
+    if (migratedPosition) {
+      return withStoryClipLayoutSize({ ...node, position: migratedPosition });
+    }
+    return isStoryClipNodeInCanvas(node, nodes) ? withStoryClipLayoutSize(node) : node;
+  });
+
+  if (legacyClipsByGroup.size === 0) {
+    return normalized;
+  }
+
+  return normalized.map((node) => {
+    if (!isStoryGroupNode(node) || !legacyClipsByGroup.has(node.id)) {
+      return node;
+    }
+    const clips = normalized.filter((candidate) => candidate.parentId === node.id);
+    const requiredWidth = Math.max(
+      220,
+      ...clips.map((clip) => clip.position.x + STORY_CLIP_NODE_WIDTH + STORY_CLIP_GROUP_PADDING),
+    );
+    const requiredHeight = Math.max(
+      140,
+      ...clips.map((clip) => clip.position.y + STORY_CLIP_NODE_HEIGHT + STORY_CLIP_GROUP_PADDING),
+    );
+    const width = Math.max(typeof node.width === 'number' ? node.width : 0, requiredWidth);
+    const height = Math.max(typeof node.height === 'number' ? node.height : 0, requiredHeight);
+    return {
+      ...node,
+      width,
+      height,
+      measured: undefined,
+      style: { ...(node.style ?? {}), width, height },
+    };
+  });
 }
 
 function normalizeNodes(rawNodes: CanvasNode[]): CanvasNode[] {
@@ -812,7 +1208,10 @@ function normalizeNodes(rawNodes: CanvasNode[]): CanvasNode[] {
       return isNoReferenceNode(normalizedNode) ? null : normalizedNode;
     })
     .filter((node): node is CanvasNode => Boolean(node));
-  return sortParentNodesBeforeChildren(detachMissingParents(dedupeNodesById(normalizedNodes)));
+  const structurallyNormalized = sortParentNodesBeforeChildren(
+    detachMissingParents(dedupeNodesById(normalizedNodes)),
+  );
+  return normalizeStoryClipLayouts(structurallyNormalized);
 }
 
 function nodeHydratePriority(node: CanvasNode): number {
@@ -911,6 +1310,25 @@ function normalizeCanvasData(
   };
 }
 
+/**
+ * `selected` 是 React Flow 的瞬时交互状态，不是画布内容。新建剧情选项边会先选中
+ * 以打开编辑器；若把这个标记随草稿或远端数据恢复，刷新后会错误重开编辑器。
+ */
+function clearHydratedSelection(canvas: CanvasHistorySnapshot): CanvasHistorySnapshot {
+  return {
+    nodes: canvas.nodes.map((node) => node.selected ? { ...node, selected: false } : node),
+    edges: canvas.edges.map((edge) => edge.selected ? { ...edge, selected: false } : edge),
+  };
+}
+
+/** `setCanvasData` 也供当前会话同步选中节点；仅边选中态会触发剧情编辑器，不能保留。 */
+function clearTransientEdgeSelection(canvas: CanvasHistorySnapshot): CanvasHistorySnapshot {
+  return {
+    nodes: canvas.nodes,
+    edges: canvas.edges.map((edge) => edge.selected ? { ...edge, selected: false } : edge),
+  };
+}
+
 function normalizeHistory(history?: CanvasHistoryState): CanvasHistoryState {
   if (!history) {
     return { past: [], future: [] };
@@ -986,11 +1404,25 @@ function isImageAutoResizableType(type: CanvasNodeType): boolean {
     || type === CANVAS_NODE_TYPES.video;
 }
 
-function withManualSizeLock(node: CanvasNode): CanvasNode {
+function withManualSizeLock(
+  node: CanvasNode,
+  options?: { preserveCompositeAspect?: boolean },
+): CanvasNode {
   const nodeData = node.data as CanvasNodeData & {
     isSizeManuallyAdjusted?: boolean;
     aspectRatio?: string;
   };
+
+  // 故事片段的容器比例由「媒体 + 剧情栏」共同决定，不能吸附回素材比例。
+  if (options?.preserveCompositeAspect) {
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        isSizeManuallyAdjusted: true,
+      } as CanvasNodeData,
+    };
+  }
 
   // 缩放结束时把节点框吸附回图片真实比例：图片用 object-contain 显示，一旦节点
   // 宽高比偏离图片比例（自由缩放、或历史上被拉歪并保存的旧节点）就会露出容器
@@ -1140,7 +1572,11 @@ function resolveDerivedAspectRatio(
   return imageLikeAspect || fallbackAspectRatio;
 }
 
-function maybeApplyImageAutoResize(node: CanvasNode, patch: Partial<CanvasNodeData>): CanvasNode {
+function maybeApplyImageAutoResize(
+  node: CanvasNode,
+  patch: Partial<CanvasNodeData>,
+  options?: { storyClipLayout?: boolean },
+): CanvasNode {
   if (!isImageAutoResizableType(node.type)) {
     return node;
   }
@@ -1176,6 +1612,10 @@ function maybeApplyImageAutoResize(node: CanvasNode, patch: Partial<CanvasNodeDa
   const isSizeManuallyAdjusted = patchData.isSizeManuallyAdjusted ?? nodeData.isSizeManuallyAdjusted ?? false;
   if (isSizeManuallyAdjusted) {
     return node;
+  }
+
+  if (isVideo && options?.storyClipLayout) {
+    return withStoryClipLayoutSize(node);
   }
 
   // 没有实际媒体内容时不要乱改尺寸 —— 视频以 videoUrl、图片以 imageUrl 作为「已加载」信号。
@@ -1377,6 +1817,10 @@ function createDefaultStoryboardExportOptions(): StoryboardExportOptions {
   };
 }
 
+function synchronizedStoryVariableData(variables: StoryVariableDefinition[]) {
+  return { storyVariableDefinitions: variables };
+}
+
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   nodes: [],
   edges: [],
@@ -1384,6 +1828,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   lastMutationSource: null,
   pendingClearIntent: false,
   selectedNodeId: null,
+  storyEditNodeId: null,
   activeOverlayNodeId: null,
   activeLightEditorNodeId: null,
   hoveredNodeId: null,
@@ -1396,6 +1841,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   viewportBookmarks: createEmptyBookmarks(),
   videoViewer: closedVideoViewer(),
   imageViewer: closedImageViewer(),
+  openStoryVariablesGroupId: null,
+  openStoryLintGroupId: null,
+  openStoryTreeGroupId: null,
 
   onNodesChange: (changes) => {
     set((state) => {
@@ -1417,7 +1865,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           if (!resizedNodeIds.has(node.id) || !isImageAutoResizableType(node.type)) {
             return node;
           }
-          return withManualSizeLock(node);
+          return withManualSizeLock(node, {
+            preserveCompositeAspect: isStoryClipNodeInCanvas(node, nextNodes),
+          });
         });
       }
       // 'dimensions' changes are either ReactFlow auto-measurement (pure
@@ -1546,6 +1996,57 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ) {
         return {};
       }
+      // 同一互动故事组内的视频连线永远是「剧情选项边」。这层必须放在 store 的
+      // 统一入口，而不能只依赖 Canvas 的拖线处理：从节点「+」新建视频、批量连线、
+      // 以及其它复用 onConnect 的入口都会直接落到这里。新边默认选中，让边上的
+      // StoryChoiceEditor 立即展示选项文案、故事变量条件和变量效果。
+      if (
+        sourceNode &&
+        targetNode &&
+        resolveStoryGroupForChoiceConnection(
+          state.nodes,
+          sourceNode.id,
+          targetNode.id,
+        )
+      ) {
+        const existingDraft = findUnconfiguredStoryChoiceEdge(
+          state.edges,
+          sourceNode.id,
+          targetNode.id,
+        );
+        if (existingDraft) {
+          return { edges: selectOnlyEdge(state.edges, existingDraft.id) };
+        }
+        const order = nextStoryChoiceOrder(state.edges, sourceNode.id);
+        const id = uniqueStoryChoiceEdgeId(
+          state.edges,
+          sourceNode.id,
+          targetNode.id,
+          order,
+        );
+        const storyEdge = {
+          id,
+          source: sourceNode.id,
+          target: targetNode.id,
+          sourceHandle,
+          targetHandle,
+          type: STORY_CHOICE_EDGE_TYPE,
+          selected: true,
+          data: { choiceText: '', order },
+        } as CanvasEdge;
+        return {
+          edges: [
+            ...state.edges.map((edge) => ({ ...edge, selected: false })),
+            storyEdge,
+          ],
+          history: {
+            past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
+            future: [],
+          },
+          dragHistorySnapshot: null,
+          ...trackEdit(state),
+        };
+      }
       // 视频节点素材上限收口：素材已满到能力包络（图 9 / 视频 3 / 音频 3 /
       // 总数 12）时拒绝新连接。手动拖线在 isValidConnection 就变灰了，这里兜住
       // 拖到空白生成节点等其它建边路径。
@@ -1596,10 +2097,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 换画布/清空后，上一份画布留下的风格对账记账必须作废，否则重新 hydrate
     // 出来的图片节点会被当成「同一个节点接着算」，该补建的判成用户删了节点。
     resetStyleNodeSyncStates();
-    const normalizedCanvas = normalizeCanvasData(nodes, edges);
+    const normalizedCanvas = clearTransientEdgeSelection(normalizeCanvasData(nodes, edges));
 
     set({
-      nodes: normalizedCanvas.nodes,
+      nodes: placeGroupsOutsideStory(normalizedCanvas.nodes),
       edges: normalizedCanvas.edges,
       selectedNodeId: null,
       activeToolDialog: null,
@@ -1624,7 +2125,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ? "delete_to_empty"
         : "user_edit";
       return {
-        nodes: normalizedCanvas.nodes,
+        nodes: placeGroupsOutsideStory(normalizedCanvas.nodes),
         edges: normalizedCanvas.edges,
         selectedNodeId: null,
         activeToolDialog: null,
@@ -1642,10 +2143,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 换画布/清空后，上一份画布留下的风格对账记账必须作废，否则重新 hydrate
     // 出来的图片节点会被当成「同一个节点接着算」，该补建的判成用户删了节点。
     resetStyleNodeSyncStates();
-    const normalizedCanvas = normalizeCanvasData(draft.nodes, draft.edges);
+    const normalizedCanvas = clearHydratedSelection(normalizeCanvasData(draft.nodes, draft.edges));
 
     set({
-      nodes: normalizedCanvas.nodes,
+      nodes: placeGroupsOutsideStory(normalizedCanvas.nodes),
       edges: normalizedCanvas.edges,
       selectedNodeId: null,
       activeToolDialog: null,
@@ -2850,6 +3351,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   updateNodeData: (nodeId, data, options) => {
     set((state) => {
       let changed = false;
+      let fmvContinuityCleared = false;
       const nextNodes = state.nodes.map((node) => {
         if (node.id !== nodeId) {
           return node;
@@ -2867,12 +3369,35 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           ...node.data,
           ...data,
         } as CanvasNodeData;
+        // 切到「独立开场」即刻清理上次自动承接的残留：删自动绑定的尾帧参考边、剥离
+        // [FMV自动承接] 提示词段，而不是拖到下次生成入口（ensureVideoContinuity 的
+        // independent 分支仍作幂等兑底）。手动参考边与已截帧图片节点保留。
+        let preparedData = mergedData;
+        if (
+          fmvIndependentCleanup(
+            node,
+            (node.data as { continuityMode?: unknown }).continuityMode,
+            (mergedData as { continuityMode?: unknown }).continuityMode,
+            state.edges,
+          )
+        ) {
+          fmvContinuityCleared = true;
+          preparedData = {
+            ...mergedData,
+            prompt: withoutFmvContinuityNote((mergedData as { prompt?: unknown }).prompt),
+          } as CanvasNodeData;
+        }
+        const storyClipLayout = isStoryClipNodeInCanvas(node, state.nodes);
+        const synchronizedData = storyClipLayout
+          ? synchronizeStoryMediaMetadata(node, data, preparedData)
+          : preparedData;
         const resizedNode = maybeApplyImageAutoResize(
           {
             ...node,
-            data: mergedData,
+            data: synchronizedData,
           },
-          data
+          data,
+          { storyClipLayout },
         );
 
         changed = true;
@@ -2883,12 +3408,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         return {};
       }
 
+      const nextEdges = fmvContinuityCleared
+        ? state.edges.filter((edge) => !(edge.target === nodeId && isWorkflowContinuityTailFrameEdge(edge)))
+        : state.edges;
+
       if (options?.recordHistory === false) {
-        return { nodes: nextNodes, ...trackEdit(state) };
+        return { nodes: nextNodes, edges: nextEdges, ...trackEdit(state) };
       }
 
       return {
         nodes: nextNodes,
+        edges: nextEdges,
         history: {
           past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
           future: [],
@@ -3376,6 +3906,240 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     return groupNode.id;
   },
+
+  createStoryGroup: (nodeIds) => {
+    const groupId = get().groupNodes(nodeIds, { label: i18n.t('canvas.story.messages.storyGroup') });
+    if (!groupId) return null;
+    set((state) => ({
+      nodes: state.nodes.map((node) =>
+        node.id === groupId
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                storyGroup: true,
+                interactiveStoryId:
+                  (node.data as { interactiveStoryId?: string }).interactiveStoryId
+                  ?? `story-${groupId}`,
+                interactiveStorySchemaVersion: 'story_draft.v2',
+                ...synchronizedStoryVariableData([]),
+                storyFlags: [],
+              },
+            }
+          : node.parentId === groupId && node.type === CANVAS_NODE_TYPES.video
+            ? withStoryClipLayoutSize({
+                ...node,
+                data: {
+                  ...node.data,
+                  storySegmentId:
+                    (node.data as { storySegmentId?: string }).storySegmentId
+                    ?? `segment-${node.id}`,
+                },
+              })
+          : node,
+      ),
+      ...trackEdit(state),
+    }));
+    get().fitGroupToChildren(groupId);
+    return groupId;
+  },
+
+  addStorySegment: (groupNodeId, options) => {
+    const state = get();
+    const group = state.nodes.find((node) => node.id === groupNodeId);
+    if (!isGroupNode(group) || group.data.storyGroup !== true) {
+      return null;
+    }
+
+    const members = state.nodes.filter(
+      (node) => node.parentId === groupNodeId && node.type === CANVAS_NODE_TYPES.video,
+    );
+    const usedTitles = new Set(
+      members.map((node) => String((node.data as { displayName?: string }).displayName ?? '')),
+    );
+    let titleIndex = 1;
+    while (usedTitles.has(i18n.t('canvas.story.messages.segmentTitle', { index: titleIndex }))) titleIndex += 1;
+
+    const rightmost = members.reduce(
+      (max, node) => Math.max(max, node.position.x + getNodeSize(node).width),
+      36,
+    );
+    const top = members.length > 0
+      ? Math.min(...members.map((node) => node.position.y))
+      : 52;
+    const created = canvasNodeFactory.createNode(
+      CANVAS_NODE_TYPES.video,
+      options?.position ?? { x: members.length > 0 ? rightmost + 28 : 36, y: top },
+      {
+        displayName: i18n.t('canvas.story.messages.segmentTitle', { index: titleIndex }),
+        narration: '',
+        storyProductionNotes: '',
+        storyMedia: { source: 'placeholder', status: 'missing', version: 1 },
+        ...(options?.data ?? {}),
+      },
+    );
+    created.parentId = groupNodeId;
+    created.extent = undefined;
+    created.selected = true;
+    created.data = {
+      ...created.data,
+      storySegmentId: `segment-${created.id}`,
+    };
+    const storySegment = withStoryClipLayoutSize(created);
+
+    set({
+      nodes: [
+        ...state.nodes.map((node) => ({ ...node, selected: false })),
+        storySegment,
+      ],
+      selectedNodeId: storySegment.id,
+      storyEditNodeId: null,
+      activeToolDialog: null,
+      history: {
+        past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
+        future: [],
+      },
+      dragHistorySnapshot: null,
+      ...trackEdit(state),
+    });
+    get().fitGroupToChildren(groupNodeId);
+    get().requestFocusNode(storySegment.id);
+    return storySegment.id;
+  },
+
+  addStoryImport: (importNodes, importEdges) => {
+    set((state) => ({
+      nodes: [...state.nodes, ...importNodes],
+      edges: [...state.edges, ...importEdges],
+      history: {
+        past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
+        future: [],
+      },
+      dragHistorySnapshot: null,
+      ...trackEdit(state),
+    }));
+  },
+
+  addStoryVariable: (groupId, label) => {
+    let createdName = '';
+    set((state) => {
+      const nodes = state.nodes.map((node) => {
+        if (node.id !== groupId) return node;
+        const existing = storyVariablesOfNode(node);
+        const taken = new Set([...existing.map((v) => v.name), ...storyFlagsOfNode(node).map((v) => v.name)]);
+        const base = slugifyName(label || 'var');
+        let name = base;
+        let i = 1;
+        while (taken.has(name)) name = `${base}_${i++}`;
+        createdName = name;
+        const variable: StoryVariableDefinition = { name, label: label || name, initial: 0 };
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            ...synchronizedStoryVariableData([...existing, variable]),
+          },
+        };
+      });
+      return { nodes, ...trackEdit(state) };
+    });
+    return createdName;
+  },
+
+  updateStoryVariable: (groupId, name, patch) => {
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id !== groupId) return node;
+        const existing = storyVariablesOfNode(node);
+        const updated = existing.map((v) =>
+          v.name === name
+            ? {
+                ...v,
+                ...(patch.label !== undefined ? { label: patch.label } : {}),
+                ...(patch.initial !== undefined ? { initial: Math.trunc(patch.initial) } : {}),
+              }
+            : v,
+        );
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            ...synchronizedStoryVariableData(updated),
+          },
+        };
+      }),
+      ...trackEdit(state),
+    }));
+  },
+
+  removeStoryVariable: (groupId, name) => {
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id !== groupId) return node;
+        const existing = storyVariablesOfNode(node);
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            ...synchronizedStoryVariableData(existing.filter((v) => v.name !== name)),
+          },
+        };
+      }),
+      ...trackEdit(state),
+    }));
+  },
+
+  addStoryFlag: (groupId, label) => {
+    let createdName = '';
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id !== groupId) return node;
+        const existing = storyFlagsOfNode(node);
+        const taken = new Set([...existing.map((v) => v.name), ...storyVariablesOfNode(node).map((v) => v.name)]);
+        const base = slugifyName(label || 'flag');
+        let name = base;
+        let i = 1;
+        while (taken.has(name)) name = `${base}_${i++}`;
+        createdName = name;
+        const flag: StoryFlag = { name, label: label || name, initial: false };
+        return { ...node, data: { ...node.data, storyFlags: [...existing, flag] } };
+      }),
+      ...trackEdit(state),
+    }));
+    return createdName;
+  },
+
+  updateStoryFlag: (groupId, name, patch) => {
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (node.id !== groupId) return node;
+        const flags = storyFlagsOfNode(node).map((flag) => flag.name === name
+          ? { ...flag, ...patch }
+          : flag);
+        return { ...node, data: { ...node.data, storyFlags: flags } };
+      }),
+      ...trackEdit(state),
+    }));
+  },
+
+  removeStoryFlag: (groupId, name) => {
+    set((state) => ({
+      nodes: state.nodes.map((node) => node.id === groupId
+        ? { ...node, data: { ...node.data, storyFlags: storyFlagsOfNode(node).filter((flag) => flag.name !== name) } }
+        : node),
+      ...trackEdit(state),
+    }));
+  },
+
+  openStoryVariables: (groupId) => set({ openStoryVariablesGroupId: groupId }),
+  closeStoryVariables: () => set({ openStoryVariablesGroupId: null }),
+
+  openStoryLint: (groupId) => set({ openStoryLintGroupId: groupId }),
+  closeStoryLint: () => set({ openStoryLintGroupId: null }),
+
+
+  openStoryTree: (groupId) => set({ openStoryTreeGroupId: groupId }),
+  closeStoryTree: () => set({ openStoryTreeGroupId: null }),
 
   autoGroupSpawn: (sourceNodeId, spawnedNodeIds, opts) => {
     const state = get();
@@ -4052,7 +4816,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     // Pure layout correction — no history push / trackEdit so it doesn't spam
     // undo or autosave; it re-derives on next mount anyway.
-    set({ nodes: nextNodes });
+    set({ nodes: placeGroupsOutsideStory(nextNodes) });
   },
 
   arrangeGroupChildren: (groupNodeId, mode) => {
@@ -4137,7 +4901,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     set({
-      nodes: nextNodes,
+      nodes: placeGroupsOutsideStory(nextNodes),
       // 用户从工具栏主动触发的重排会永久移动子节点（不像 fitGroupToChildren 那样可
       // 重新推导），必须入 undo 历史，否则排乱后 ⌘Z 无法还原。
       history: {
@@ -4232,8 +4996,234 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
+  addStoryChoiceEdge: (source, target, choiceText) => {
+    if (source === target) return null;
+    let createdId: string | null = null;
+    set((state) => {
+      const sourceNode = state.nodes.find((n) => n.id === source);
+      const targetNode = state.nodes.find((n) => n.id === target);
+      if (
+        !sourceNode
+        || !targetNode
+        || !resolveStoryGroupForChoiceConnection(state.nodes, sourceNode.id, targetNode.id)
+      ) {
+        return {};
+      }
+      const existingDraft = choiceText.trim()
+        ? undefined
+        : findUnconfiguredStoryChoiceEdge(state.edges, source, target);
+      if (existingDraft) {
+        createdId = existingDraft.id;
+        return { edges: selectOnlyEdge(state.edges, existingDraft.id) };
+      }
+      const order = nextStoryChoiceOrder(state.edges, source);
+      const id = uniqueStoryChoiceEdgeId(state.edges, source, target, order);
+      createdId = id;
+      const sourceChoice = state.edges.find(
+        (candidate) => candidate.type === STORY_CHOICE_EDGE_TYPE && candidate.source === source,
+      );
+      const inheritedInteraction = normalizeStoryChoiceInteraction(
+        (sourceChoice?.data as { interaction?: StoryChoiceInteraction } | undefined)?.interaction,
+      );
+      const inheritedPresentation = inheritedInteraction.presentation;
+      const edge = {
+        id,
+        source,
+        target,
+        sourceHandle: 'source',
+        targetHandle: 'target',
+        type: STORY_CHOICE_EDGE_TYPE,
+        data: {
+          choiceText,
+          order,
+          ...(inheritedPresentation !== 'overlay'
+            ? { interaction: { presentation: inheritedPresentation, uiStyle: inheritedInteraction.uiStyle, motion: inheritedInteraction.motion, anchor: defaultStoryChoiceAnchor(inheritedPresentation) } }
+            : {}),
+        },
+      } as CanvasEdge;
+      return {
+        edges: [...state.edges, edge],
+        history: { past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)), future: [] },
+        dragHistorySnapshot: null,
+        ...trackEdit(state),
+      };
+    });
+    return createdId;
+  },
+
+  updateStoryChoiceEdgeData: (edgeId, patch) => {
+    set((state) => {
+      let changed = false;
+      const edges = state.edges.map((edge) => {
+        if (edge.id !== edgeId) return edge;
+        changed = true;
+        return { ...edge, data: { ...(edge.data as object), ...patch } } as CanvasEdge;
+      });
+      if (!changed) return {};
+      return {
+        edges,
+        history: { past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)), future: [] },
+        dragHistorySnapshot: null,
+        ...trackEdit(state),
+      };
+    });
+  },
+
+  setStoryChoiceAppearance: (edgeId, patch) => {
+    set((state) => {
+      const selected = state.edges.find((edge) => edge.id === edgeId && edge.type === STORY_CHOICE_EDGE_TYPE);
+      if (!selected) return {};
+      let changed = false;
+      const edges = state.edges.map((edge) => {
+        if (edge.type !== STORY_CHOICE_EDGE_TYPE || edge.source !== selected.source) return edge;
+        const data = edge.data as { interaction?: StoryChoiceInteraction } | undefined;
+        const current = normalizeStoryChoiceInteraction(data?.interaction);
+        if (current.presentation !== 'object-anchor') return edge;
+        const next = normalizeStoryChoiceInteraction({ ...current, ...patch });
+        if (next.uiStyle === current.uiStyle && next.motion === current.motion) return edge;
+        changed = true;
+        return { ...edge, data: { ...edge.data, interaction: next } } as CanvasEdge;
+      });
+      if (!changed) return {};
+      return {
+        edges,
+        history: { past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)), future: [] },
+        dragHistorySnapshot: null,
+        ...trackEdit(state),
+      };
+    });
+  },
+
+  alignStoryChoiceAnchors: (edgeId) => {
+    set((state) => {
+      const selected = state.edges.find((edge) => edge.id === edgeId && edge.type === STORY_CHOICE_EDGE_TYPE);
+      const selectedData = selected?.data as { interaction?: StoryChoiceInteraction; transitionMode?: string } | undefined;
+      const reference = normalizeStoryChoiceInteraction(selectedData?.interaction);
+      if (!selected || selectedData?.transitionMode === 'automatic' || reference.presentation !== 'object-anchor' || !reference.anchor) return {};
+      const y = reference.anchor.y;
+      let changed = false;
+      const edges = state.edges.map((edge) => {
+        if (edge.type !== STORY_CHOICE_EDGE_TYPE || edge.source !== selected.source) return edge;
+        const data = edge.data as { interaction?: StoryChoiceInteraction; transitionMode?: string } | undefined;
+        const interaction = normalizeStoryChoiceInteraction(data?.interaction);
+        if (data?.transitionMode === 'automatic' || interaction.presentation !== 'object-anchor' || !interaction.anchor || interaction.anchor.y === y) return edge;
+        changed = true;
+        return { ...edge, data: { ...edge.data, interaction: { ...interaction, anchor: { ...interaction.anchor, y } } } } as CanvasEdge;
+      });
+      if (!changed) return {};
+      return {
+        edges,
+        history: { past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)), future: [] },
+        dragHistorySnapshot: null,
+        ...trackEdit(state),
+      };
+    });
+  },
+
+  setStoryChoicePresentation: (edgeId, presentation) => {
+    set((state) => {
+      const selected = state.edges.find((edge) => edge.id === edgeId);
+      if (!selected || selected.type !== STORY_CHOICE_EDGE_TYPE) return {};
+      let changed = false;
+      const edges = state.edges.map((edge) => {
+        if (edge.type !== STORY_CHOICE_EDGE_TYPE || edge.source !== selected.source) return edge;
+        const data = edge.data as { interaction?: StoryChoiceInteraction } | undefined;
+        const current = normalizeStoryChoiceInteraction(data?.interaction);
+        const needsDefaultAnchor = presentation !== 'overlay' && !current.anchor;
+        const needsBakedDimensions = presentation === 'baked-video'
+          && (!current.anchor?.width || !current.anchor?.height);
+        const nextAnchor = needsDefaultAnchor
+          ? defaultStoryChoiceAnchor(presentation)
+          : presentation === 'baked-video' && current.anchor
+            ? {
+                ...current.anchor,
+                width: current.anchor.width ?? defaultStoryChoiceAnchor('baked-video').width,
+                height: current.anchor.height ?? defaultStoryChoiceAnchor('baked-video').height,
+              }
+            : current.anchor;
+        const next = normalizeStoryChoiceInteraction({
+          ...current,
+          presentation,
+          ...(nextAnchor ? { anchor: nextAnchor } : {}),
+        });
+        if (
+          current.presentation === presentation
+          && (data?.interaction ? !needsDefaultAnchor && !needsBakedDimensions : presentation === 'overlay')
+        ) return edge;
+        changed = true;
+        return { ...edge, data: { ...(edge.data as object), interaction: next } } as CanvasEdge;
+      });
+      if (!changed) return {};
+      return {
+        edges,
+        history: { past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)), future: [] },
+        dragHistorySnapshot: null,
+        ...trackEdit(state),
+      };
+    });
+  },
+
+  setStoryDefaultChoice: (edgeId, isDefault) => {
+    set((state) => {
+      const target = state.edges.find((e) => e.id === edgeId);
+      if (!target || target.type !== STORY_CHOICE_EDGE_TYPE) return {};
+      const source = target.source;
+      const edges = state.edges.map((edge) => {
+        if (edge.type !== STORY_CHOICE_EDGE_TYPE || edge.source !== source) return edge;
+        // 设默认 = 排他:目标边取 isDefault,同源其它边一律清 false。
+        const next = edge.id === edgeId ? isDefault : false;
+        if (((edge.data as { isDefault?: boolean })?.isDefault ?? false) === next) return edge;
+        return { ...edge, data: { ...(edge.data as object), isDefault: next } } as CanvasEdge;
+      });
+      return {
+        edges,
+        history: { past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)), future: [] },
+        dragHistorySnapshot: null,
+        ...trackEdit(state),
+      };
+    });
+  },
+
+  setStoryStartNode: (nodeId) => {
+    set((state) => {
+      const target = state.nodes.find((node) => node.id === nodeId && node.type === CANVAS_NODE_TYPES.video);
+      if (!target) return {};
+      const newNodes = state.nodes.map((node) => {
+        if (node.type !== CANVAS_NODE_TYPES.video || node.parentId !== target.parentId) return node;
+        const isTarget = node.id === nodeId;
+        const currentRole = (node.data as { storyRole?: string }).storyRole;
+        if (isTarget && currentRole === 'start') return node;
+        if (!isTarget && currentRole !== 'start') return node;
+        const nextData = { ...node.data } as Record<string, unknown>;
+        if (isTarget) nextData.storyRole = 'start';
+        else delete nextData.storyRole;
+        return { ...node, data: nextData } as CanvasNode;
+      });
+      if (newNodes.every((n, i) => n === state.nodes[i])) return {};
+      return {
+        nodes: newNodes,
+        history: { past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)), future: [] },
+        dragHistorySnapshot: null,
+        ...trackEdit(state),
+      };
+    });
+  },
+
   setSelectedNode: (nodeId) => {
-    set({ selectedNodeId: nodeId });
+    set((state) => ({
+      selectedNodeId: nodeId,
+      // 切到别的节点(含取消选中)→ 自动退出故事片段编辑态,回到播放器形态。
+      storyEditNodeId:
+        state.storyEditNodeId && state.storyEditNodeId !== nodeId
+          ? null
+          : state.storyEditNodeId,
+    }));
+  },
+
+  setStoryEditNode: (nodeId) => {
+    set((state) =>
+      state.storyEditNodeId === nodeId ? state : { storyEditNodeId: nodeId },
+    );
   },
 
   setActiveOverlayNodeId: (nodeId) => {

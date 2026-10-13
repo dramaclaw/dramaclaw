@@ -17,16 +17,20 @@ import type { PrevizObject, PrevizRigClip, RigAnchorPart, Vec3 } from './scene';
  */
 
 /**
- * 各部位离地高度占身高的比例。取的是常见人体比例：髋关节约半身高，重心略高于它，
- * 胸口在四分之三上下，眼睛与头顶之间还有约半个头。
+ * 各部位离地高度占身高的比例。取的是常见人体比例：膝盖在四分之一出头，髋关节约半身高，
+ * 重心略高于它，胸口在四分之三上下，肩线再高一截，眼睛与头顶之间还有约半个头。
+ * 脚底取 0，就是对象站的那个点：俯拍跟走位时要盯的是人踩在哪，不是他的上半身。
  *
  * 用比例而不是固定的厘米数：120 cm 的孩子和 200 cm 的人，脸的高度差了 60 cm，
  * 固定偏移会让其中一个的「面部特写」拍到胸口或者头顶的空气。
  */
 export const PREVIZ_RIG_ANCHOR_FRACTION: Readonly<Record<RigAnchorPart, number>> = {
+  feet: 0,
+  knee: 0.28,
   pelvis: 0.5,
   body: 0.55,
   chest: 0.72,
+  shoulder: 0.82,
   face: 0.93,
   head: 0.96,
 };
@@ -51,6 +55,15 @@ export const PREVIZ_RIG_HEIGHT_RANGE = { min: -5, max: 5, default: 0 } as const;
 
 /** 环绕运镜在整条片段里绕的角度。整整一圈——半圈会停在人物背后。 */
 export const PREVIZ_RIG_ORBIT_DEG = 360;
+
+/**
+ * 弧线运镜在整条片段里绕的角度。四分之一圈：从正面绕到正侧，是不想绕满一圈时
+ * 最常要的那一段。
+ */
+export const PREVIZ_RIG_ARC_DEG = 90;
+
+/** 升降运镜在整条片段里改变的俯仰，单位度。 */
+export const PREVIZ_RIG_CRANE_DEG = 30;
 
 /** 推镜头收到起始距离的这个比例。 */
 export const PREVIZ_RIG_PUSH_RATIO = 0.45;
@@ -109,6 +122,22 @@ export function rigFramingAt(clip: PrevizRigClip, u: number): RigFraming {
 
   if (clip.motion === 'orbit') {
     return { ...base, azimuth: clip.azimuth + PREVIZ_RIG_ORBIT_DEG * progress };
+  }
+  if (clip.motion === 'arcLeft' || clip.motion === 'arcRight') {
+    // 水平角增大时机位往自己的右手边走，与环绕同向；左弧取反。
+    const sweep = clip.motion === 'arcRight' ? PREVIZ_RIG_ARC_DEG : -PREVIZ_RIG_ARC_DEG;
+    return { ...base, azimuth: clip.azimuth + sweep * progress };
+  }
+  if (clip.motion === 'craneUp' || clip.motion === 'craneDown') {
+    const lift = clip.motion === 'craneUp' ? PREVIZ_RIG_CRANE_DEG : -PREVIZ_RIG_CRANE_DEG;
+    return {
+      ...base,
+      // 夹回区间：从 70° 再升 30° 会越过天顶，水平角在那里失去意义。
+      elevation: Math.min(
+        PREVIZ_RIG_ELEVATION_RANGE.max,
+        Math.max(PREVIZ_RIG_ELEVATION_RANGE.min, clip.elevation + lift * progress),
+      ),
+    };
   }
   if (clip.motion === 'push' || clip.motion === 'pull') {
     const ratio = clip.motion === 'push' ? PREVIZ_RIG_PUSH_RATIO : PREVIZ_RIG_PULL_RATIO;

@@ -1,3 +1,4 @@
+import { enT, zhT } from "@/__tests__/helpers/i18n-fixtures";
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { act, render, renderHook, waitFor } from "@testing-library/react";
@@ -4166,6 +4167,102 @@ describe("Canvas command approval image params", () => {
       "video-model",
     )).toHaveLength(2);
   });
+
+  it("keeps interactive-story durations dynamic and exposes segment continuity", () => {
+    const approval = {
+      id: "story-dynamic-duration", key: "story-dynamic-duration", messageId: "assistant",
+      receivedAt: 1, commandCount: 4, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "update_node_data" as const, node_id: "story-a", data: { durationSec: 6, continuityMode: "independent" } },
+          { type: "update_node_data" as const, node_id: "story-b", data: { durationSec: 11, continuityMode: "auto" } },
+          { type: "run_node_action" as const, node_id: "story-a", action: "generate_video" },
+          { type: "run_node_action" as const, node_id: "story-b", action: "generate_video" },
+        ],
+      }],
+    };
+    const canvasNodes = [
+      {
+        id: "story-a", type: "videoNode" as const, position: { x: 0, y: 0 },
+        data: { storySegmentId: "a", storyRole: "start", displayName: "开场", model: "video-model" },
+      },
+      {
+        id: "story-b", type: "videoNode" as const, position: { x: 0, y: 0 },
+        data: { storySegmentId: "b", displayName: "追问", model: "video-model" },
+      },
+    ];
+    const groups = videoApprovalParamGroupsForTest(
+      approval as never,
+      canvasNodes as never,
+      [],
+      [{ id: "video-model", minDuration: 5, maxDuration: 15 }],
+      "video-model",
+    );
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => ({
+      durationSec: group.durationSec,
+      labels: group.storySegmentLabels,
+      continuityMode: group.continuityMode,
+    }))).toEqual([
+      { durationSec: 6, labels: ["开场"], continuityMode: "independent" },
+      { durationSec: 11, labels: ["追问"], continuityMode: "auto" },
+    ]);
+  });
+
+  it("shows an unsupported story duration verbatim instead of silently clamping it", () => {
+    const approval = {
+      id: "story-long-shot", key: "story-long-shot", messageId: "assistant",
+      receivedAt: 1, commandCount: 1, plans: [],
+      envelopes: [{ schema_version: "canvas_chat_commands.v1" as const, commands: [
+        { type: "run_node_action" as const, node_id: "story-a", action: "generate_video" },
+      ] }],
+    };
+    const canvasNodes = [{ id: "story-a", type: "videoNode" as const,
+      position: { x: 0, y: 0 }, data: {
+        storySegmentId: "a", displayName: "长镜头", model: "video-model",
+        durationSec: 30, aspectRatio: "16:9", quality: "720P",
+      } }];
+    const groups = videoApprovalParamGroupsForTest(
+      approval as never, canvasNodes as never, [],
+      [{ id: "video-model", minDuration: 5, maxDuration: 15 }], "video-model",
+    );
+    expect(groups[0].durationSec).toBe(30);
+    expect(groups[0].storySegmentLabels).toEqual(["长镜头"]);
+  });
+
+  it("keeps equal-duration interactive-story segments independently editable", () => {
+    const approval = {
+      id: "story-independent-rows", key: "story-independent-rows", messageId: "assistant",
+      receivedAt: 1, commandCount: 4, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "update_node_data" as const, node_id: "story-a", data: { durationSec: 8, continuityMode: "auto" } },
+          { type: "update_node_data" as const, node_id: "story-b", data: { durationSec: 8, continuityMode: "auto" } },
+          { type: "run_node_action" as const, node_id: "story-a", action: "generate_video" },
+          { type: "run_node_action" as const, node_id: "story-b", action: "generate_video" },
+        ],
+      }],
+    };
+    const canvasNodes = ["a", "b"].map((id) => ({
+      id: `story-${id}`,
+      type: "videoNode" as const,
+      position: { x: 0, y: 0 },
+      data: { storySegmentId: id, displayName: `片段${id}`, model: "video-model" },
+    }));
+
+    const groups = videoApprovalParamGroupsForTest(
+      approval as never,
+      canvasNodes as never,
+      [],
+      [{ id: "video-model", minDuration: 5, maxDuration: 15 }],
+      "video-model",
+    );
+
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.storySegmentLabels)).toEqual([["片段a"], ["片段b"]]);
+  });
 });
 
 describe("Canvas command approval audio params", () => {
@@ -6268,6 +6365,7 @@ describe("tool status parts", () => {
     const toolMessage = (part as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "failed",
       title: genericToolTitleForTest(toolMessage),
       toolMessage,
@@ -6298,16 +6396,19 @@ describe("tool status parts", () => {
     }, "turn-a") as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "done",
       title: genericToolTitleForTest(prepareCompleted),
       toolMessage: prepareCompleted,
     })).toBe("已生成工作流草稿");
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "failed",
       title: genericToolTitleForTest(prepareFailed),
       toolMessage: prepareFailed,
     })).toBe("待重新生成工作流草稿");
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "done",
       title: genericToolTitleForTest(confirmCompleted),
       toolMessage: confirmCompleted,
@@ -6330,10 +6431,32 @@ describe("tool status parts", () => {
     }, "turn-a") as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "failed",
       title: genericToolTitleForTest(waiting),
       toolMessage: waiting,
     })).toBe("等待选择生成参数");
+  });
+
+  it.each([
+    ["clarification_required", "Waiting for generation parameters"],
+    ["clarification_frontend_timeout", "Waiting for an answer is paused"],
+  ])("translates %s in the English interface", (businessStatus, expected) => {
+    const toolMessage = (toolStatusPartForTest("agent.tool.updated", {
+      type: "agent.tool.updated",
+      turn_id: "turn-a",
+      call_id: "call-clarification",
+      name: "freezone_prepare_workflow_draft",
+      status: "failed",
+      result: { ok: false, status: businessStatus },
+    }, "turn-a") as { event: ChatMessage }).event;
+
+    expect(toolStatusRuntimeTextForTest({
+      t: enT,
+      status: "failed",
+      title: genericToolTitleForTest(toolMessage),
+      toolMessage,
+    })).toBe(expected);
   });
 
   it("hides a superseded parameter handoff after the same draft operation succeeds", () => {
@@ -7058,5 +7181,43 @@ describe("pruneOldMessageCaches", () => {
     );
     pruneOldMessageCaches(now);
     expect(localStorage.getItem(`${MESSAGE_CACHE_PREFIX}future`)).toBeNull();
+  });
+});
+
+describe("story approval continuity translations", () => {
+  it.each(["zh", "en", "vi"])("renders continuity labels from the %s locale", async (language) => {
+    const { readFileSync } = await import("node:fs");
+    const { createInstance } = await import("i18next");
+    const { I18nextProvider } = await import("react-i18next");
+    const translations = JSON.parse(readFileSync(`public/locales/${language}/translation.json`, "utf8"));
+    const i18n = createInstance();
+    await i18n.init({ lng: language, fallbackLng: false,
+      resources: { [language]: { translation: translations } },
+      interpolation: { escapeValue: false }, react: { useSuspense: false },
+    });
+    const previous = useCanvasStore.getState();
+    const nodes = (["independent", "auto"] as const).map((continuityMode) => ({
+      id: `story-${continuityMode}`, type: "videoNode" as const, position: { x: 0, y: 0 },
+      data: { storySegmentId: continuityMode, storyRole: "scene", continuityMode,
+        displayName: `Clip ${continuityMode}`, prompt: "Story video", model: "video-model", durationSec: 5 },
+    }));
+    useCanvasStore.setState({ nodes, edges: [] });
+    const approval = { id: "continuity", key: "continuity", messageId: "assistant", receivedAt: 1,
+      commandCount: 1, plans: [], envelopes: [{ schema_version: "canvas_chat_commands.v1" as const,
+        commands: [{ type: "run_workflow" as const, scope: "canvas" as const }] }],
+    };
+    const view = render(createElement(I18nextProvider, { i18n },
+      createElement(CanvasCommandApprovalCardForTest, { approval, onApply: vi.fn(), onCancel: vi.fn() }),
+    ));
+    try {
+      for (const mode of ["independent", "auto"] as const) {
+        expect(view.getByText(translations.canvas.story.continuity[mode])).toBeTruthy();
+      }
+      expect(view.container.textContent).not.toContain("freezone.story.continuity.");
+      expect(view.container.textContent).not.toContain("canvas.story.continuity.");
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
   });
 });

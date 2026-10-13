@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import type * as THREE from 'three';
 
-import { blockoutTone, type PrevizBlockoutTone } from '../domain/blockout';
+import { propTone, type PrevizBlockoutTone } from '../domain/blockout';
 import { isPrevizPrimitiveShape, type PrevizPrimitiveShape } from '../domain/primitives';
 import { propUnitScale } from '../domain/propUnits';
 import type { PrevizProp } from '../domain/scene';
@@ -38,7 +38,7 @@ export interface PropLoaderDeps {
    * 按形状名现造一件基础几何体（`assetFormat: 'primitive'`）。渲染器用
    * `primitiveBuilder.ts` 实现。做成注入的理由同 `measure`：这一层只 import three 的类型。
    *
-   * `tone` 是白模物件的明暗档，手摆的道具为 null。
+   * `tone` 是这件几何体的明暗档（见 `domain/blockout.ts` 的 `propTone`）。
    */
   buildPrimitive: (shape: PrevizPrimitiveShape, tone: PrevizBlockoutTone | null) => THREE.Object3D;
 }
@@ -51,7 +51,7 @@ export interface PropLoaderDeps {
 function cacheKey(prop: PrevizProp): string {
   const key = `${prop.assetFormat}:${prop.assetUrl}`;
   if (prop.assetFormat !== 'primitive') return key;
-  const tone = blockoutTone(prop);
+  const tone = propTone(prop);
   return tone === null ? key : `${key}#${tone}`;
 }
 
@@ -112,7 +112,7 @@ export class PropLoader {
         if (!isPrevizPrimitiveShape(prop.assetUrl)) {
           throw new Error(`unknown primitive shape: ${prop.assetUrl}`);
         }
-        return this.deps.buildPrimitive(prop.assetUrl, blockoutTone(prop));
+        return this.deps.buildPrimitive(prop.assetUrl, propTone(prop));
       case 'obj':
         return this.deps.loadObj(prop.assetUrl);
       default:

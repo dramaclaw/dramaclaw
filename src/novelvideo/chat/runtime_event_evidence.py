@@ -89,6 +89,30 @@ def _codex_freezone_write_receipt(
                 continue
             bridge_key = str(payload.get("bridge_key") or "").strip()
             revision = payload.get("revision")
+            story_tool = _codex_freezone_tool_name(event)
+            if story_tool in {
+                "dramaclaw_create_interactive_story",
+                "dramaclaw_patch_interactive_story",
+                "dramaclaw_save_interactive_story_outline",
+                "dramaclaw_confirm_interactive_story_outline",
+                "dramaclaw_confirm_interactive_story_stages",
+            }:
+                identity_field = (
+                    "outline_id"
+                    if story_tool in {"dramaclaw_save_interactive_story_outline", "dramaclaw_confirm_interactive_story_outline"}
+                    else "story_id"
+                )
+                if (
+                    payload.get("refresh_canvas") is True
+                    and isinstance(payload.get(identity_field), str)
+                    and payload[identity_field].strip()
+                    and project_id
+                    and canvas_id
+                    and type(revision) is int
+                    and revision >= 0
+                ):
+                    return payload
+                continue
             # A transport/tool status is not proof that the canvas mutation
             # was persisted. Browser-applied results are durable only when
             # they carry the bridge receipt identity; direct applies must

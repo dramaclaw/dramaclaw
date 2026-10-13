@@ -97,13 +97,29 @@ export type DisplayMode = 'solid' | 'translucent' | 'clay';
  */
 export type OutputAspect = `${number}:${number}`;
 export type PresetOutputAspect = '16:9' | '9:16' | '1:1' | '4:3';
-export type RigMotion = 'static' | 'orbit' | 'push' | 'pull';
+export type RigMotion =
+  | 'static'
+  | 'orbit'
+  | 'arcLeft'
+  | 'arcRight'
+  | 'push'
+  | 'pull'
+  | 'craneUp'
+  | 'craneDown';
 
 /**
  * 特写片段挂在被跟踪对象身上的哪一处。比例见 `domain/closeup.ts`——那里是几何，
  * 这里只声明有哪几处。
  */
-export type RigAnchorPart = 'pelvis' | 'body' | 'chest' | 'face' | 'head';
+export type RigAnchorPart =
+  | 'feet'
+  | 'knee'
+  | 'pelvis'
+  | 'body'
+  | 'chest'
+  | 'shoulder'
+  | 'face'
+  | 'head';
 
 /**
  * 水平角是从哪儿量起的。`front` 从被跟踪对象的正面量（人一转身机位跟着转到他脸前），

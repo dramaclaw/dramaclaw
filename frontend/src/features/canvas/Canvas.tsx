@@ -117,9 +117,16 @@ import { applySkillRoleBindingConnection } from '@/features/canvas/domain/skillC
 import { videoReferenceConnectionRejection } from '@/features/canvas/domain/videoReferenceLimits';
 import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
 import { embedStoryboardImageMetadata } from '@/commands/image';
+import {
+  resolveStoryGroupAtCanvasPoint,
+  resolveStoryGroupForNewVideo,
+  storySegmentPositionInGroup,
+} from '@/features/canvas/story/storyClipLayout';
 import { nodeTypes as canvasNodeTypes } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
 import { NodeSelectionMenu } from './NodeSelectionMenu';
+import { isNodeStoryClip } from './story/storySelectors';
+import { storyReferenceVisibleEdges } from './story/storyReferenceVisibility';
 import { CanvasPickBanner } from './ui/CanvasPickBanner';
 import { SelectedNodeOverlay } from './ui/SelectedNodeOverlay';
 import { LightEditorCanvasOverlay } from './ui/LightEditorCanvasOverlay';
@@ -156,6 +163,11 @@ import {
   type SnapAlignDragSession,
 } from './snap-align/resolveSnapAlignDrag';
 import { computeAutoLayout } from './application/autoLayout';
+import { StoryPlayerOverlay } from '@/components/canvas/StoryPlayerOverlay';
+import { StoryGroupToolbar } from './ui/StoryGroupToolbar';
+import { StoryVariablesPanel } from '@/components/canvas/StoryVariablesPanel';
+import { StoryLintPanel } from '@/components/canvas/StoryLintPanel';
+import { StoryTreePanel } from '@/components/canvas/StoryTreePanel';
 import { holdCanvasAutosave } from '@/features/freezone/canvasAutosaveHold';
 import {
   migratePastedNodeAssets,
@@ -452,6 +464,11 @@ function cloneNodeData<T>(value: T): T {
     return structuredClone(value);
   }
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/** Portalled modals also own keyboard/paste events from their nested dialogs. */
+function isCanvasInputSuspended(suspended: boolean): boolean {
+  return suspended || document.querySelector('[data-canvas-input-modal]') !== null;
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -792,6 +809,12 @@ export function Canvas({
   // 拖动小地图期间保持其挂载，否则移出区域时会中断平移。
   const [minimapPanning, setMinimapPanning] = useState(false);
   const minimapVisible = minimapPinned || minimapHovered || minimapPanning;
+  const openStoryVariablesGroupId = useCanvasStore((s) => s.openStoryVariablesGroupId);
+  const closeStoryVariables = useCanvasStore((s) => s.closeStoryVariables);
+  const openStoryLintGroupId = useCanvasStore((s) => s.openStoryLintGroupId);
+  const closeStoryLint = useCanvasStore((s) => s.closeStoryLint);
+  const openStoryTreeGroupId = useCanvasStore((s) => s.openStoryTreeGroupId);
+  const closeStoryTree = useCanvasStore((s) => s.closeStoryTree);
   useEffect(() => {
     const handleWorkflowRunUpdated = (event: Event) => {
       const detail = (event as CustomEvent<WorkflowRunUpdatedDetail>).detail;
@@ -892,6 +915,7 @@ export function Canvas({
     canUndo: boolean;
     canRedo: boolean;
     canPaste: boolean;
+    storyNodeId?: string;
   } | null>(null);
   const [previewConnectionVisual, setPreviewConnectionVisual] =
     useState<PreviewConnectionVisual | null>(null);
@@ -1133,6 +1157,8 @@ export function Canvas({
   const replaceEdges = useCanvasStore((state) => state.replaceEdges);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const addNode = useCanvasStore((state) => state.addNode);
+  const addStorySegment = useCanvasStore((state) => state.addStorySegment);
+  const addStoryImport = useCanvasStore((state) => state.addStoryImport);
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const pendingFocusNodeId = useCanvasStore((state) => state.pendingFocusNodeId);
@@ -1186,12 +1212,11 @@ export function Canvas({
     });
   }, [nodes, placementConfirmNodeId]);
 
-  // 隐藏连线时给每条边补 `hidden: true`——ReactFlow 会跳过渲染但边仍在图里，
-  // 连接、reconnect、持久化都不受影响。显示时直接透传真实 edges，零额外分配。
-  const renderedEdges = useMemo(() => {
-    if (!edgesHidden) return edges;
-    return edges.map((edge) => (edge.hidden ? edge : { ...edge, hidden: true }));
-  }, [edges, edgesHidden]);
+  // 影游素材线按端点选中状态显示；隐藏仅用于渲染，不写回画布关系。
+  const renderedEdges = useMemo(
+    () => storyReferenceVisibleEdges(nodes, edges, edgesHidden),
+    [nodes, edges, edgesHidden],
+  );
 
   const clearMarqueeSelection = useCallback(() => {
     marqueeSelectionRef.current = null;
@@ -1216,7 +1241,7 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (!isSpacePanKey(event) || isTypingTarget(event.target) || isImmersiveViewerActive()
@@ -1798,13 +1823,17 @@ export function Canvas({
     (event: ReactMouseEvent, edge: CanvasEdge) => {
       event.preventDefault();
       event.stopPropagation();
+      if (edge.type === 'storyChoiceEdge') {
+        applyEdgesChange([{ type: 'select', id: edge.id, selected: true }]);
+        return;
+      }
       if (isPresetManagedEdge(edge)) {
         return;
       }
       deleteEdge(edge.id);
       scheduleCanvasPersist(0);
     },
-    [deleteEdge, scheduleCanvasPersist]
+    [applyEdgesChange, deleteEdge, scheduleCanvasPersist]
   );
 
   const handleEdgeClick = useCallback((event: ReactMouseEvent) => {
@@ -1907,6 +1936,7 @@ export function Canvas({
       if (!canNodeBeManualConnectionSource(connection.source, nodes, connection.target)) {
         return;
       }
+      // 同一故事组的视频连线由 store 统一转换成剧情选项边；其它节点仍走常规边。
       connectGraphNodes(connection);
       scheduleCanvasPersist(0);
     },
@@ -2237,14 +2267,29 @@ export function Canvas({
         return false;
       }
 
-      const newNodeId = addNode(
-        pendingNodePlacement.type,
-        reactFlowInstance.screenToFlowPosition({
+      const placementCenter = reactFlowInstance.screenToFlowPosition(clientPosition);
+      const storyGroupId = pendingNodePlacement.type === CANVAS_NODE_TYPES.video
+        ? (
+            resolveStoryGroupAtCanvasPoint(nodes, placementCenter)
+            ?? resolveStoryGroupForNewVideo(nodes, selectedNodeId)
+          )
+        : null;
+      const storyPosition = storyGroupId
+        ? storySegmentPositionInGroup(nodes, storyGroupId, placementCenter)
+        : null;
+      const newNodeId = storyGroupId && storyPosition
+        ? addStorySegment(storyGroupId, {
+            position: storyPosition,
+            data: pendingNodePlacement.initialData as Partial<CanvasNodeData> | undefined,
+          })!
+        : addNode(
+            pendingNodePlacement.type,
+            reactFlowInstance.screenToFlowPosition({
           x: clientPosition.x - NODE_PLACEMENT_PREVIEW_WIDTH / 2,
           y: clientPosition.y - NODE_PLACEMENT_PREVIEW_HEIGHT / 2,
-        }),
-        pendingNodePlacement.initialData,
-      );
+            }),
+            pendingNodePlacement.initialData,
+          );
       setSelectedNode(newNodeId);
       focusNewNodeIfLowZoom(newNodeId);
       if (pendingNodePlacement.skill) {
@@ -2259,11 +2304,14 @@ export function Canvas({
     },
     [
       addNode,
+      addStorySegment,
       bindSingleBeatContextInput,
       focusNewNodeIfLowZoom,
+      nodes,
       pendingNodePlacement,
       reactFlowInstance,
       scheduleCanvasPersist,
+      selectedNodeId,
       setSelectedNode,
       triggerPlacementConfirm,
     ],
@@ -2299,7 +2347,7 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (
@@ -2344,7 +2392,7 @@ export function Canvas({
   // a bare digit jumps to it, and ⌘/Ctrl+Shift+E clears them all.
   useEffect(() => {
     const handleBookmarkKeys = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (isTypingTarget(event.target) || isImmersiveViewerActive()) {
@@ -2389,7 +2437,7 @@ export function Canvas({
   // collides with ⌘M (minimize) or text input.
   useEffect(() => {
     const handleMinimapKey = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
@@ -2414,7 +2462,7 @@ export function Canvas({
   // keyup that fires off-window (e.g. after an alt-tab) can't leave it stuck on.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (event.code !== 'Space' || isTypingTarget(event.target)) {
@@ -2739,7 +2787,7 @@ export function Canvas({
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       pasteImageHandledRef.current = false;
@@ -2848,7 +2896,7 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (isTypingTarget(event.target)) {
@@ -3337,11 +3385,23 @@ export function Canvas({
         return;
       }
 
-      const newNodeId = addNode(type, flowPosition, initialData);
+      const connectedStoryGroupId = type === CANVAS_NODE_TYPES.video && pendingConnectStart
+        ? resolveStoryGroupForNewVideo(nodes, pendingConnectStart.nodeId)
+        : null;
+      const storySegmentId = connectedStoryGroupId
+        ? addStorySegment(connectedStoryGroupId, {
+            position: storySegmentPositionInGroup(nodes, connectedStoryGroupId, flowPosition)
+              ?? undefined,
+            data: initialData as Partial<CanvasNodeData> | undefined,
+          })
+        : null;
+      // 组若在菜单打开期间被移除，退化为普通节点，避免把 null 传入后续连线流程。
+      const newNodeId = storySegmentId ?? addNode(type, flowPosition, initialData);
       finalizeNodeSpawn(newNodeId);
     },
     [
       addNode,
+      addStorySegment,
       finalizeNodeSpawn,
       flowPosition,
       menuAllowedTypes,
@@ -3402,12 +3462,79 @@ export function Canvas({
 
   const handleQuickAddNode = useCallback(
     (type: CanvasNodeType) => {
+      if (type === CANVAS_NODE_TYPES.video) {
+        const storyGroupId = resolveStoryGroupForNewVideo(nodes, selectedNodeId);
+        if (storyGroupId) {
+          const storySegmentId = addStorySegment(storyGroupId);
+          if (storySegmentId) {
+            focusNewNodeIfLowZoom(storySegmentId);
+            scheduleCanvasPersist(0);
+            return;
+          }
+        }
+      }
       const newNodeId = addNode(type, spawnAtViewportCenter());
       setSelectedNode(newNodeId);
       focusNewNodeIfLowZoom(newNodeId);
       scheduleCanvasPersist(0);
     },
-    [addNode, focusNewNodeIfLowZoom, scheduleCanvasPersist, setSelectedNode, spawnAtViewportCenter],
+    [
+      addNode,
+      addStorySegment,
+      focusNewNodeIfLowZoom,
+      nodes,
+      scheduleCanvasPersist,
+      selectedNodeId,
+      setSelectedNode,
+      spawnAtViewportCenter,
+    ],
+  );
+
+  const importStoryFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleImportStory = useCallback(() => {
+    importStoryFileInputRef.current?.click();
+  }, []);
+
+  const handleImportStoryFileChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file) return;
+      try {
+        const { parseStory, buildStoryGroupFromImport } = await import(
+          '@/features/canvas/story/import'
+        );
+        const text = await file.text();
+        const imported = parseStory(text, file.name);
+        const { nodes, edges } = buildStoryGroupFromImport(imported, {
+          center: spawnAtViewportCenter(),
+        });
+        addStoryImport(nodes, edges);
+        scheduleCanvasPersist(0);
+        const hasReview =
+          imported.warnings.length > 0 ||
+          nodes.some((node) => (node.data as { importNeedsReview?: boolean }).importNeedsReview) ||
+          edges.some((edge) => (edge.data as { needsReview?: boolean } | undefined)?.needsReview);
+        if (hasReview) {
+          toast.warning(t('canvas.story.importPartial'));
+        } else {
+          toast.success(t('canvas.story.importDone'));
+        }
+      } catch (error) {
+        console.error('[canvas] import story failed', error);
+        // ink 源码由 inkjs 编译,语法错误带 inklecate 的行号,直接透给用户比笼统提示有用。
+        const compileErrors = (error as { errors?: unknown })?.errors;
+        if (Array.isArray(compileErrors) && compileErrors.length) {
+          toast.error(t('canvas.story.importSyntaxError'), {
+            description: compileErrors.slice(0, 3).join('\n'),
+          });
+        } else {
+          toast.error(t('canvas.story.importFailed'));
+        }
+      }
+    },
+    [addStoryImport, scheduleCanvasPersist, spawnAtViewportCenter, t],
   );
 
   const handleQuickAddSkill = useCallback(
@@ -4222,12 +4349,8 @@ export function Canvas({
                   clientPosition,
                 }) ?? 'target'
               : pendingConnectStart.handleId ?? 'target';
-          connectGraphNodes({
-            source: sourceNode.id,
-            target: targetNode.id,
-            sourceHandle,
-            targetHandle,
-          });
+          const conn = { source: sourceNode.id, target: targetNode.id, sourceHandle, targetHandle };
+          connectGraphNodes(conn);
           scheduleCanvasPersist(0);
           setPendingConnectStart(null);
           setPreviewConnectionVisual(null);
@@ -4595,12 +4718,8 @@ export function Canvas({
                   clientPosition: params.clientPosition,
                 }) ?? 'target'
               : pending.handleId ?? 'target';
-          connectGraphNodes({
-            source: sourceNode.id,
-            target: targetNode.id,
-            sourceHandle,
-            targetHandle,
-          });
+          const conn = { source: sourceNode.id, target: targetNode.id, sourceHandle, targetHandle };
+          connectGraphNodes(conn);
           scheduleCanvasPersist(0);
           setPendingConnectStart(null);
           setPreviewConnectionVisual(null);
@@ -4908,12 +5027,14 @@ export function Canvas({
 
   return (
     <CreditDisplayHiddenProvider value={isCeRuntime()}>
+    <div className="relative flex h-full min-h-0 w-full flex-col">
+      {!taskPanelOpen && !suspended && <StoryGroupToolbar />}
     <div
       ref={wrapperRef}
       data-canvas-tool={handToolActive ? 'hand' : 'move'}
       data-node-drag-focus={isNodeDragFocusActive ? 'true' : undefined}
       data-assistant-selection-focus={assistantActive && selectedNodeIds.length > 0 ? 'true' : undefined}
-      className="dc-canvas relative h-full w-full bg-background"
+      className="dc-canvas relative min-h-0 w-full flex-1 bg-background"
       onDragEnter={handleCanvasDragEnter}
       onDragOver={handleCanvasDragOver}
       onDragLeave={handleCanvasDragLeave}
@@ -4934,6 +5055,22 @@ export function Canvas({
         onNodeMouseEnter={handleNodeMouseEnter}
         onNodeMouseLeave={handleNodeMouseLeave}
         onNodeClick={handleNodeClick}
+        onNodeContextMenu={(event, node) => {
+          const state = useCanvasStore.getState();
+          if (!isNodeStoryClip(state.nodes, node.id)) return;
+          if ((event.target as Element).closest('input, textarea, [contenteditable="true"]')) return;
+          event.preventDefault();
+          const rect = wrapperRef.current?.getBoundingClientRect();
+          if (!rect) return;
+          setContextMenu({
+            x: event.clientX - rect.left, y: event.clientY - rect.top,
+            clientX: event.clientX, clientY: event.clientY,
+            canUndo: state.history.past.length > 0,
+            canRedo: state.history.future.length > 0,
+            canPaste: (copiedSnapshotRef.current?.nodes.length ?? 0) > 0,
+            storyNodeId: node.id,
+          });
+        }}
         onNodeDragStart={handleNodeDragStart}
         onNodeDrag={handleNodeDrag}
         onNodeDragStop={handleNodeDragStop}
@@ -4992,6 +5129,19 @@ export function Canvas({
         )}
         {minimapVisible && <CanvasMinimapBookmarksOverlay onHoverChange={setMinimapHover} />}
 
+        {openStoryVariablesGroupId && (
+          <StoryVariablesPanel groupId={openStoryVariablesGroupId} onClose={closeStoryVariables} />
+        )}
+
+        {openStoryLintGroupId && (
+          <StoryLintPanel groupId={openStoryLintGroupId} onClose={closeStoryLint} />
+        )}
+
+        {openStoryTreeGroupId && (
+          <StoryTreePanel groupId={openStoryTreeGroupId} onClose={closeStoryTree} />
+        )}
+
+        <StoryPlayerOverlay />
         <SelectedNodeOverlay />
         <LightEditorCanvasOverlay />
         <MultiSelectionToolbar projectId={projectId} canvasId={canvasId} />
@@ -5067,6 +5217,17 @@ export function Canvas({
           position={{ x: contextMenu.x, y: contextMenu.y }}
           onClose={() => setContextMenu(null)}
           sections={[
+            ...(contextMenu.storyNodeId ? [[{
+              key: 'story-start',
+              label: t('canvas.story.setStart'),
+              disabled: nodes.find((node) => node.id === contextMenu.storyNodeId)?.data.storyRole === 'start',
+              onSelect: () => {
+                const state = useCanvasStore.getState();
+                if (!contextMenu.storyNodeId || !isNodeStoryClip(state.nodes, contextMenu.storyNodeId)) return;
+                state.setStoryStartNode(contextMenu.storyNodeId);
+                scheduleCanvasPersist(0);
+              },
+            }]] : []),
             [
               {
                 key: 'upload',
@@ -5169,8 +5330,17 @@ export function Canvas({
           onAddSkill={handleQuickAddSkill}
           onUseAsset={handleUseHistoryAsset}
           onDeleteNode={handleDeleteHistoryNode}
+          onImportStory={handleImportStory}
         />
       )}
+
+      <input
+        ref={importStoryFileInputRef}
+        type="file"
+        accept=".ink,.json,text/plain,application/json"
+        className="hidden"
+        onChange={handleImportStoryFileChange}
+      />
 
       {previewConnectionVisual && (
         <svg
@@ -5230,6 +5400,7 @@ export function Canvas({
         onNavigate={navigateVideoViewer}
         onClose={closeVideoViewer}
       />
+    </div>
     </div>
     </CreditDisplayHiddenProvider>
   );

@@ -15,7 +15,7 @@ import { propToneColor, type ThreeModule } from './sceneGraph';
  * 尺寸与分段数只写在这里；面数写在 `domain/primitives.ts` 的清单里，两边是否一致由
  * `primitive-builder.test.ts` 拿真 three 核对。改分段数时两边一起改。
  *
- * `tone` 是白模物件的明暗档，手摆的道具为 null。
+ * `tone` 是这件几何体的明暗档（见 `domain/blockout.ts` 的 `propTone`）。
  */
 export function buildPrimitive(
   three: ThreeModule,

@@ -48,6 +48,7 @@ import {
   type CanvasNode,
   type ExportImageNodeResultKind,
 } from '@/features/canvas/domain/canvasNodes';
+import { isNodeStoryClip } from '@/features/canvas/story/storySelectors';
 import { createUpscaleResultNode } from '@/features/canvas/application/imageUpscale';
 import {
   createRotateResultNode,
@@ -984,6 +985,14 @@ export const SelectedNodeOverlay = memo(() => {
   const externalOverlayNodeId = useCanvasStore((state) => state.activeOverlayNodeId);
   const effectiveOverlayNodeId = activeOverlayNodeId ?? externalOverlayNodeId;
 
+  // 故事片段「播放器形态」(故事组内视频节点且未进入编辑态):抑制顶部视频工具条
+  // (剪辑/高清/去字幕/...) 与智能素材把手 —— 这些是画布创作能力,故事语境下收起。
+  const storyEditNodeId = useCanvasStore((state) => state.storyEditNodeId);
+  const selectedIsStoryPlayer =
+    selectedNode != null &&
+    isNodeStoryClip(nodes, selectedNodeId) &&
+    storyEditNodeId !== selectedNodeId;
+
   return (
     <>
       {selectedNode
@@ -1004,6 +1013,7 @@ export const SelectedNodeOverlay = memo(() => {
       {selectedNode
         && !rotateNodeId
         && !effectiveOverlayNodeId
+        && !selectedIsStoryPlayer
         && nodeHasResourceForToolbar(selectedNode) && (
         <NodeActionToolbar
           // 按节点 id 重挂载，确保每次「激活某个节点」都重放顶部菜单的入场动画
@@ -1029,6 +1039,7 @@ export const SelectedNodeOverlay = memo(() => {
       {selectedNode &&
         !rotateNodeId &&
         !effectiveOverlayNodeId &&
+        !selectedIsStoryPlayer &&
         !hasInlineCommitButton(selectedNode) && (
           <AssetCommitHandle node={selectedNode} />
         )}

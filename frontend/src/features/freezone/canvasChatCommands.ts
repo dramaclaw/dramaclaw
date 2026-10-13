@@ -1,3 +1,4 @@
+import { STORY_CHOICE_EDGE_TYPE } from "@/features/canvas/story/storyTypes";
 import i18next from "i18next";
 import { executeWorkflowHtmlNode } from "@/features/canvas/application/workflowHtmlRuntime";
 import { extractUpstreamContent } from "@/features/canvas/application/graphContentResolver";
@@ -61,7 +62,9 @@ import {
   normalizeCanvasEdgeSemanticKind,
   type CanvasEdgeSemanticKind,
 } from "@/features/freezone/canvasEdgeSemantics";
+import { landNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { placeGroupsOutsideStory } from "@/features/canvas/application/storyGroupPlacement";
 import { deterministicNodeOutputIssue } from "@/features/freezone/workflowQualityGate";
 import {
   bindWorkflowProductOperation,
@@ -75,6 +78,14 @@ import {
   captureVideoFrameToNode,
   resolveCaptureSeekSec,
 } from "@/features/canvas/application/videoCaptureFrame";
+import {
+  attachCompletedStoryFrame,
+  attachCompletedStoryAsset,
+  ensureVideoContinuity,
+  isFmvVideoNode,
+  syncStoryVideoReferencePrompt,
+  videoContinuitySources,
+} from "@/features/canvas/application/videoContinuity";
 import { dedupeGenerationErrors } from "@/features/canvas/application/generationErrorReport";
 
 export const CANVAS_CHAT_COMMANDS_SCHEMA_VERSION = "canvas_chat_commands.v1";
@@ -216,6 +227,7 @@ export type CanvasChatCommandApplyResult = {
   openedUiActions: number;
   createdNodeIds: string[];
   errors: string[];
+  warnings?: string[];
   commandResults: CanvasChatCommandApplyStep[];
 };
 
@@ -265,6 +277,17 @@ type ApplyCanvasChatCommandsOptions = {
   actionResultFieldTimeoutMs?: number;
   actionRetryDelayMs?: number;
   onWorkflowRunPersisted?: (runId: string) => void;
+};
+
+type PendingVideoFrameCapture = {
+  nodeId: string;
+  commandIndex: number;
+  action: "capture_video_first_frame" | "capture_video_last_frame";
+};
+
+export type CanvasChatCommandPartition = {
+  immediate: CanvasChatCommandEnvelope[];
+  requiresApproval: CanvasChatCommandEnvelope[];
 };
 
 type CanvasCommandApprovalSubscriber = (detail: CanvasCommandApprovalEventDetail) => boolean | void;
@@ -370,6 +393,8 @@ const RUN_NODE_ACTIONS = new Set([
   "run_grid_frame_projection_5s_earlier",
   "open_grid_frame_projection_5s_earlier",
   "open_video_viewer",
+  "capture_video_last_frame",
+  "capture_video_first_frame",
   "download_image",
   "download_video",
   "open_video_clip_tool",
@@ -681,6 +706,7 @@ function workflowGraphSignature(actions: PendingNodeAction[]): string {
     .map((node) => ({ id: node.id, type: node.type ?? "" }))
     .sort((left, right) => left.id.localeCompare(right.id));
   const edges = state.edges
+    .filter((edge) => edge.type !== STORY_CHOICE_EDGE_TYPE)
     .filter((edge) => actionNodeIds.has(edge.source) && actionNodeIds.has(edge.target))
     .map((edge) => ({
       source: edge.source,
@@ -1325,7 +1351,7 @@ async function ensureVideoContinuityTailFrames(
         fallbackDurationSec: durationMs !== null ? durationMs / 1000 : null,
       }),
       projectId,
-      displayName: "上一镜尾帧",
+      displayName: i18next.t('canvas.story.messages.previousLastFrame'),
     });
     if (!result.nodeId) {
       throw new Error(result.error ?? "上一镜尾帧抽取失败，已停止启动下一镜视频。");
@@ -1405,6 +1431,24 @@ function invalidConnectionReason(source: string, target: string): string | null 
   if (!isUpstreamConnectionAllowed(sourceNode.type, targetNode.type)) {
     return `${sourceNode.type} cannot directly connect to ${targetNode.type}`;
   }
+  const binding = (sourceNode.data as { storyAssetTarget?: {
+    storyId?: unknown; kind?: unknown; entityId?: unknown; segmentIds?: unknown;
+  } }).storyAssetTarget;
+  if (binding && targetNode.type === CANVAS_NODE_TYPES.video && targetNode.data.storySegmentId) {
+    const group = useCanvasStore.getState().nodes.find((node) => node.id === targetNode.parentId);
+    const segmentId = targetNode.data.storySegmentId;
+    const planned = binding.kind === 'subject'
+      ? Array.isArray(targetNode.data.storyCharacterIds) &&
+        targetNode.data.storyCharacterIds.includes(binding.entityId as string)
+      : binding.kind === 'scene' &&
+        Array.isArray((targetNode.data as { storySceneRefs?: unknown }).storySceneRefs) &&
+        ((targetNode.data as { storySceneRefs?: Array<{ scene_id?: string }> }).storySceneRefs ?? [])
+          .some((ref) => ref.scene_id === binding.entityId);
+    if (group?.data.interactiveStoryId !== binding.storyId ||
+        !Array.isArray(binding.segmentIds) || !binding.segmentIds.includes(segmentId) || !planned) {
+      return `story asset ${source} is not planned for segment ${segmentId}`;
+    }
+  }
   return null;
 }
 
@@ -1412,6 +1456,7 @@ function isMissingOrFatalConnectionReason(reason: string | null): boolean {
   return Boolean(
     reason?.startsWith("source node not found:") ||
     reason?.startsWith("target node not found:") ||
+    reason?.startsWith("story asset ") ||
     reason === "connection requires two different nodes",
   );
 }
@@ -1543,7 +1588,7 @@ function scheduleMeasuredLayout(
   });
 }
 
-function layoutNodes(
+function layoutNodesInternal(
   nodeIds: string[],
   mode: "horizontal" | "vertical" | "grid",
   refineAfterMeasurement = true,
@@ -1633,6 +1678,38 @@ function layoutNodes(
   if (needsMeasuredRefinement) {
     scheduleMeasuredLayout(nodeIds, mode, hermesLegacy);
   }
+}
+
+function placeWorkflowGroups(groupIds: ReadonlySet<string>): void {
+  const store = useCanvasStore.getState();
+  const placed = placeGroupsOutsideStory(store.nodes, groupIds);
+  if (placed === store.nodes) return;
+  const positions: Record<string, { x: number; y: number }> = {};
+  placed.forEach((node, index) => {
+    if (node.position !== store.nodes[index].position) positions[node.id] = node.position;
+  });
+  store.setNodePositions(positions);
+}
+
+function layoutNodes(
+  nodeIds: string[],
+  mode: "horizontal" | "vertical" | "grid",
+  refineAfterMeasurement = true,
+  hermesLegacy = false,
+): void {
+  layoutNodesInternal(nodeIds, mode, refineAfterMeasurement, hermesLegacy);
+  const nodesById = new Map(useCanvasStore.getState().nodes.map((node) => [node.id, node]));
+  const rootIds = new Set<string>();
+  for (const nodeId of nodeIds) {
+    let node = nodesById.get(nodeId);
+    const visited = new Set<string>();
+    while (node?.parentId && !visited.has(node.id)) {
+      visited.add(node.id);
+      node = nodesById.get(node.parentId);
+    }
+    if (node && !node.parentId) rootIds.add(node.id);
+  }
+  placeWorkflowGroups(rootIds);
 }
 
 function moveNodes(
@@ -2002,8 +2079,10 @@ function workflowNodeActions(
     expandedNodeIds,
     initialNodeIds,
   );
-  const composeNodeIdsToOpen = relatedSatisfiedVideoComposeNodeIds(expandedNodeIds, scopedNodeIds)
-    .filter((nodeId) => !expandedNodeIds.includes(nodeId));
+  const composeNodeIdsToOpen = command.direction === "node"
+    ? []
+    : relatedSatisfiedVideoComposeNodeIds(expandedNodeIds, scopedNodeIds)
+      .filter((nodeId) => !expandedNodeIds.includes(nodeId));
 
   return [
     ...expandedNodeIds,
@@ -2684,6 +2763,8 @@ function orderedNodeActionsByCanvasEdges(actions: PendingNodeAction[]): {
   const dependenciesByNodeId = new Map<string, Set<string>>();
   const graph = new Map<string, string[]>();
   for (const edge of state.edges) {
+    // Only explicitly continuous story shots impose generation dependencies.
+    if (edge.type === STORY_CHOICE_EDGE_TYPE && !videoContinuitySources(edge.target, state.nodes, state.edges).some((node) => node.id === edge.source)) continue;
     const targets = graph.get(edge.source) ?? [];
     targets.push(edge.target);
     graph.set(edge.source, targets);
@@ -2790,6 +2871,24 @@ function workflowRunDedupKey(
   return `${canvasId || "default"}::${actionFingerprint}`;
 }
 
+function syncCompletedStoryFrames(
+  imageNodeIds: Iterable<string>,
+  result: CanvasChatCommandApplyResult,
+): void {
+  for (const imageNodeId of imageNodeIds) {
+    const attachmentError = attachCompletedStoryFrame(imageNodeId);
+    const assetError = attachCompletedStoryAsset(imageNodeId);
+    if (attachmentError) {
+      result.warnings = [...(result.warnings ?? []), attachmentError];
+    }
+    if (assetError) result.warnings = [...(result.warnings ?? []), assetError];
+    const state = useCanvasStore.getState();
+    for (const edge of state.edges.filter((item) => item.source === imageNodeId)) {
+      syncStoryVideoReferencePrompt(edge.target);
+    }
+  }
+}
+
 async function executeQueuedNodeActions(
   pendingActions: PendingNodeAction[],
   result: CanvasChatCommandApplyResult,
@@ -2828,6 +2927,10 @@ async function executeQueuedNodeActions(
       action.executionMode === "workflow"
       && !action.invalidationReason
       && hasGeneratedResult(action.nodeId, action.action));
+    const completedImageNodeIds = new Set(
+      completedWhileQueued.filter((action) => action.action === "generate_image")
+        .map((action) => action.nodeId),
+    );
     if (completedWhileQueued.length > 0) {
       const completedKeys = new Set(
         completedWhileQueued.map((action) => `${action.nodeId}:${action.action}`),
@@ -2850,7 +2953,10 @@ async function executeQueuedNodeActions(
         });
       }
     }
-    if (pendingActions.length === 0) return;
+    if (pendingActions.length === 0) {
+      syncCompletedStoryFrames(completedImageNodeIds, result);
+      return;
+    }
     const projectId = options.projectId?.trim();
     const canvasId = options.canvasId?.trim();
     let workflowRunId: string | null = null;
@@ -3393,7 +3499,19 @@ async function executeQueuedNodeActions(
               }
             }
 
-            await ensureVideoContinuityTailFrames(action, projectId);
+            try {
+              if (action.action === "generate_video") {
+                const target = nodeById(action.nodeId);
+                if (target && isFmvVideoNode(target, useCanvasStore.getState().edges) &&
+                    (target.data.continuityMode === "auto" || target.data.continuityMode === "independent")) {
+                  await ensureVideoContinuity(action.nodeId, projectId);
+                } else {
+                  await ensureVideoContinuityTailFrames(action, projectId);
+                }
+              }
+            } catch (error) {
+              return { action, failed: errorMessage(error), retryCount };
+            }
 
             if (action.action === "generate_audio" && !hydrateWorkflowAudioInput(action.nodeId)) {
               return {
@@ -3713,6 +3831,7 @@ async function executeQueuedNodeActions(
 
         selectAndFocusNode(action.nodeId);
         markWorkflowActionResultCurrent(action.nodeId, action.action);
+        if (action.action === "generate_image") completedImageNodeIds.add(action.nodeId);
         result.openedUiActions += 1;
         result.commandResults.push({
           commandIndex: action.commandIndex,
@@ -3740,6 +3859,9 @@ async function executeQueuedNodeActions(
           error,
         });
       }
+      // The image batch ends before story video generation. Connect only real
+      // finished frames, then rebuild prompt references from the live edge order.
+      syncCompletedStoryFrames(completedImageNodeIds, result);
       stopWorkflowHeartbeat();
       await workflowHeartbeatQueue;
       await persistRunUpdate(
@@ -3787,6 +3909,71 @@ async function executeQueuedNodeActions(
   } finally {
     if (hasWorkflowRun) activeOrQueuedWorkflowRunKeys.delete(workflowRunKey);
   }
+}
+
+// Stop on the first capture failure so dependent actions are not executed.
+async function executePendingVideoFrameCaptures(
+  pendingCaptures: PendingVideoFrameCapture[],
+  result: CanvasChatCommandApplyResult,
+  options: ApplyCanvasChatCommandsOptions,
+): Promise<boolean> {
+  for (const capture of pendingCaptures) {
+    const mode = capture.action === "capture_video_first_frame" ? "first" : "last";
+    const frameName = mode === "first" ? i18next.t('canvas.story.messages.firstFrame') : i18next.t('canvas.story.messages.lastFrame');
+    const label = i18next.t('canvas.story.messages.captureFrame', { frameName });
+    const source = nodeById(capture.nodeId);
+    const data = source?.data as JsonRecord | undefined;
+    const videoUrl = nonEmptyString(data?.videoUrl);
+    try {
+      if (!videoUrl) throw new Error(i18next.t('canvas.story.messages.sourceVideoMissing', { frameName }));
+      const seekSec = resolveCaptureSeekSec(mode, {
+        fallbackDurationSec: isFiniteNumber(data?.durationMs) ? data.durationMs / 1000 : null,
+      });
+      const captured = await captureVideoFrameToNode(capture.nodeId, {
+        videoUrl,
+        seekSec,
+        projectId: options.projectId,
+        displayName: i18next.t('canvas.story.messages.videoFrame', { frameName }),
+      });
+      if (!captured.nodeId) throw new Error(captured.error ?? i18next.t('canvas.story.messages.captureFailed', { frameName }));
+      const provenance = {
+        sourceVideoNodeId: capture.nodeId,
+        sourceVideoUrl: videoUrl,
+        sourceMediaVersion: isRecord(data?.storyMedia) ? data.storyMedia.version ?? null : null,
+        sourceTaskJobId: data?.generationTaskJobId ?? null,
+        captureMode: mode,
+        seekSec,
+        capturedAt: new Date().toISOString(),
+      };
+      useCanvasStore.getState().updateNodeData(captured.nodeId, { videoFrameSource: provenance });
+      result.createdNodeIds.push(captured.nodeId);
+      result.applied += 1;
+      result.commandResults.push({
+        commandIndex: capture.commandIndex,
+        type: "run_node_action",
+        status: "success",
+        label,
+        nodeId: capture.nodeId,
+        action: capture.action,
+        createdNodeId: captured.nodeId,
+        output: { imageUrl: nodeById(captured.nodeId)?.data.imageUrl, ...provenance },
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+      result.errors.push(message);
+      result.commandResults.push({
+        commandIndex: capture.commandIndex,
+        type: "run_node_action",
+        status: "error",
+        label,
+        nodeId: capture.nodeId,
+        action: capture.action,
+        error: message,
+      });
+      return false;
+    }
+  }
+  return true;
 }
 
 async function executePendingMainlineProjections(
@@ -4114,6 +4301,43 @@ function workflowEnvelopeAlreadyApplied(envelope: CanvasChatCommandEnvelope): bo
   );
 }
 
+function isStoryImageReferenceEnvelope(envelope: CanvasChatCommandEnvelope): boolean {
+  const creates = envelope.commands.filter((command) => command.type === "create_node");
+  const edges = envelope.commands.filter((command) => command.type === "create_edge");
+  if (!creates.length || !edges.length || creates.some((command) =>
+    command.node_type !== CANVAS_NODE_TYPES.imageGen || !command.client_id
+  )) return false;
+  const aliases = new Set(creates.map((command) => command.client_id));
+  if (aliases.size !== creates.length) return false;
+  const nodes = useCanvasStore.getState().nodes;
+  const storyIds = new Set<string>();
+  for (const edge of edges) {
+    if (edge.link_type !== "media_input_for" || !aliases.has(edge.source)) return false;
+    const target = nodes.find((node) => node.id === edge.target);
+    if (target?.type !== CANVAS_NODE_TYPES.video ||
+      typeof target.data.storySegmentId !== "string" || !target.data.storySegmentId.trim()
+    ) return false;
+    const group = nodes.find((node) => node.id === target.parentId);
+    if (group?.data.storyGroup !== true ||
+      typeof group.data.interactiveStoryId !== "string" || !group.data.interactiveStoryId.trim()
+    ) return false;
+    storyIds.add(group.data.interactiveStoryId);
+  }
+  for (const command of envelope.commands) {
+    if (command.type !== "update_node_data") continue;
+    const target = nodes.find((node) => node.id === command.node_id);
+    const group = nodes.find((node) => node.id === target?.parentId);
+    if (target?.type !== CANVAS_NODE_TYPES.video ||
+      typeof target.data.storySegmentId !== "string" ||
+      group?.data.storyGroup !== true ||
+      !storyIds.has(String(group.data.interactiveStoryId ?? ""))
+    ) return false;
+  }
+  return storyIds.size === 1 && creates.every((command) =>
+    edges.some((edge) => edge.source === command.client_id)
+  );
+}
+
 function* applyCanvasChatCommandsInternal(
   envelopes: CanvasChatCommandEnvelope[],
   options: ApplyCanvasChatCommandsOptions & { queueNodeActions: boolean },
@@ -4126,6 +4350,7 @@ function* applyCanvasChatCommandsInternal(
     commandResults: [],
   };
   const pendingNodeActions: PendingNodeAction[] = [];
+  const pendingVideoFrameCaptures: PendingVideoFrameCapture[] = [];
   const pendingMainlineProjections: PendingMainlineProjection[] = [];
   const queuedNodeActionKeys = new Set<string>();
   const normalizedEnvelopes = normalizeCanvasChatCommandEnvelopesForValidation(envelopes);
@@ -4167,7 +4392,9 @@ function* applyCanvasChatCommandsInternal(
       }
       continue;
     }
+    const existingEnvelopeNodeIds = new Set(useCanvasStore.getState().nodes.map((node) => node.id));
     const envelopeCreatedNodeIds: string[] = [];
+    const storyImageReferenceEnvelope = isStoryImageReferenceEnvelope(envelope);
     const envelopeSourceNodeIds = new Set<string>();
     const envelopeErrorStart = result.errors.length;
     let envelopeHasAddNextNode = false;
@@ -4288,8 +4515,18 @@ function* applyCanvasChatCommandsInternal(
                 targetId,
                 normalizeBeatContextAgentPatch(targetNode.data as BeatContextNodeData, data),
               );
+            } else if (targetNode.type === CANVAS_NODE_TYPES.previz && "sceneEdit" in data) {
+              // sceneEdit 是一批操作而不是一个字段：换算成新场景再写，不把它本身存进节点。
+              const { sceneEdit, ...rest } = data as Record<string, unknown>;
+              useCanvasStore.getState().updateNodeData(targetId, {
+                ...rest,
+                ...landNodeAgentSceneEdit(targetId, targetNode.data as Record<string, unknown>, sceneEdit),
+              } as Partial<CanvasNodeData>);
             } else {
               useCanvasStore.getState().updateNodeData(targetId, data);
+            }
+            if (targetNode.type === CANVAS_NODE_TYPES.video) {
+              syncStoryVideoReferencePrompt(targetId);
             }
             invalidateWorkflowResultsAfterNodeUpdate(targetId, data);
             selectAndFocusNode(targetId);
@@ -4304,10 +4541,16 @@ function* applyCanvasChatCommandsInternal(
             break;
           }
           case "delete_nodes": {
+            const previousEdges = useCanvasStore.getState().edges;
             const deletion = deleteNodesOrEdges(
               command.node_ids.map((nodeId) => resolveNodeId(nodeId, clientIdMap)),
               clientIdMap,
             );
+            const remainingIds = new Set(useCanvasStore.getState().edges.map((edge) => edge.id));
+            for (const targetId of new Set(previousEdges
+              .filter((edge) => !remainingIds.has(edge.id)).map((edge) => edge.target))) {
+              syncStoryVideoReferencePrompt(targetId);
+            }
             result.applied += 1;
             result.commandResults.push({
               commandIndex: currentCommandIndex,
@@ -4343,7 +4586,13 @@ function* applyCanvasChatCommandsInternal(
             break;
           }
           case "delete_edges": {
+            const previousEdges = useCanvasStore.getState().edges;
             deleteEdges(command, clientIdMap);
+            const remainingIds = new Set(useCanvasStore.getState().edges.map((edge) => edge.id));
+            for (const targetId of new Set(previousEdges
+              .filter((edge) => !remainingIds.has(edge.id)).map((edge) => edge.target))) {
+              syncStoryVideoReferencePrompt(targetId);
+            }
             result.applied += 1;
             result.commandResults.push({
               commandIndex: currentCommandIndex,
@@ -4382,6 +4631,7 @@ function* applyCanvasChatCommandsInternal(
               external_input_image_url: command.expected_source_image_url,
             });
             if (!edgeId) throw new Error(`edge rejected: ${command.source} -> ${command.target}`);
+            syncStoryVideoReferencePrompt(target);
             envelopeConnectionCount += 1;
             result.applied += 1;
             result.commandResults.push({
@@ -4466,6 +4716,11 @@ function* applyCanvasChatCommandsInternal(
           case "run_node_action": {
             const targetId = resolveNodeId(command.node_id, clientIdMap);
             assertNodeActionAvailable(targetId, command.action);
+            if (command.action === "capture_video_last_frame" || command.action === "capture_video_first_frame") {
+              if (!options.queueNodeActions) throw new Error("截取视频帧需要异步执行入口。");
+              pendingVideoFrameCaptures.push({ nodeId: targetId, commandIndex: currentCommandIndex, action: command.action });
+              break;
+            }
             const targetNode = nodeById(targetId);
             if (
               targetNode?.type === CANVAS_NODE_TYPES.htmlArtifact &&
@@ -4586,6 +4841,11 @@ function* applyCanvasChatCommandsInternal(
               if (allActions.length === 0) {
                 throw new Error("工作流中没有可执行的生成节点。");
               }
+              syncCompletedStoryFrames(
+                allActions.filter((action) => action.action === "generate_image" &&
+                  hasGeneratedResult(action.nodeId, action.action)).map((action) => action.nodeId),
+                result,
+              );
               result.commandResults.push({
                 commandIndex: currentCommandIndex,
                 type: command.type,
@@ -4695,6 +4955,7 @@ function* applyCanvasChatCommandsInternal(
     if (
       !envelopeHasExplicitGroupNodes &&
       !envelopeHasAddNextNode &&
+      !storyImageReferenceEnvelope &&
       result.errors.length === envelopeErrorStart &&
       envelopeCreatedNodeIds.length >= 2 &&
       envelope.commands.some((command) =>
@@ -4720,10 +4981,16 @@ function* applyCanvasChatCommandsInternal(
         commandIndex += 1;
       }
     }
+    // Grouping and layout can enlarge a workflow far beyond its initial node
+    // positions. Reserve space using the final group bounds before generation.
+    placeWorkflowGroups(new Set(useCanvasStore.getState().nodes
+      .filter((node) => !existingEnvelopeNodeIds.has(node.id) && isGroupNode(node))
+      .map((node) => node.id)));
   }
 
   if (options.queueNodeActions) {
     yield (async () => {
+      if (!(await executePendingVideoFrameCaptures(pendingVideoFrameCaptures, result, options))) return;
       await executePendingMainlineProjections(pendingMainlineProjections, result);
       await executeQueuedNodeActions(pendingNodeActions, result, options);
     })();

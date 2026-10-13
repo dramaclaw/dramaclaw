@@ -10,10 +10,14 @@ import {
   uploadFreezoneImage,
 } from '@/api/ops';
 import { aspectRatioFromImageDimensions } from '@/features/canvas/application/imageNodeSizing';
-import { extractUpstreamImages } from '@/features/canvas/application/graphImageResolver';
-import { useUpstreamImages } from '@/features/canvas/application/useUpstreamGraph';
+import { extractUpstreamContent } from '@/features/canvas/application/graphContentResolver';
+import { useUpstreamNodes } from '@/features/canvas/application/useUpstreamGraph';
 import { handedOffGenerationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
-import { CANVAS_NODE_TYPES, DEFAULT_ASPECT_RATIO } from '@/features/canvas/domain/canvasNodes';
+import {
+  CANVAS_NODE_TYPES,
+  DEFAULT_ASPECT_RATIO,
+  type CanvasNode,
+} from '@/features/canvas/domain/canvasNodes';
 import { upstreamNodesInEdgeOrder } from '@/features/canvas/nodes/referenceOrdering';
 import { backendErrorToastMessage } from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
@@ -66,6 +70,19 @@ const readNodeData = (nodeId: string) =>
   >;
 
 /**
+ * 上游里最后接上的那张图，连同它所在的节点。上传图、生成图、改图、分镜、导出图都算——
+ * 接在预演台上的图片节点不管是哪一种，对话框都该带出来。
+ */
+function lastUpstreamImage(upstream: CanvasNode[]): { node: CanvasNode; url: string } | null {
+  for (let index = upstream.length - 1; index >= 0; index -= 1) {
+    const node = upstream[index];
+    const url = extractUpstreamContent(node).imageUrl;
+    if (url) return { node, url };
+  }
+  return null;
+}
+
+/**
  * 把这次用的参考图留在画布上：预演台左边接一个上传图节点。编辑器里看不到这张图，
  * 退出去以后它还在，下次想对照、想换一张再生成都找得到。
  *
@@ -84,7 +101,7 @@ function keepReferenceOnCanvas(
     (size && aspectRatioFromImageDimensions(size.width, size.height)) || DEFAULT_ASPECT_RATIO;
   const upstream = upstreamNodesInEdgeOrder(store.nodes, store.edges, nodeId);
   // 跟对话框打开时带出来的是同一张：最后接上的那张图。
-  const shown = upstream.filter((node) => extractUpstreamImages(node).length > 0).pop();
+  const shown = lastUpstreamImage(upstream)?.node;
   if (shown?.type === CANVAS_NODE_TYPES.upload) {
     store.updateNodeData(shown.id, { imageUrl, previewImageUrl: imageUrl, aspectRatio });
     return;
@@ -114,8 +131,7 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
   const generating =
     nodeData?.isGenerating === true && nodeData.generationTaskType === 'freezone_image_to_blockout';
   const held = (nodeData?.blockoutHeld ?? null) as PrevizHeldBlockout | null;
-  const upstreamImages = useUpstreamImages(nodeId);
-  const referenceUrl = upstreamImages[upstreamImages.length - 1] ?? null;
+  const referenceUrl = lastUpstreamImage(useUpstreamNodes(nodeId))?.url ?? null;
 
   const start = useCallback(
     async ({

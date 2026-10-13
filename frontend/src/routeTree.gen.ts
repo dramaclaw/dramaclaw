@@ -28,6 +28,7 @@ import { Route as AppProjectsProjectEpisodesRouteImport } from './routes/_app/pr
 import { Route as AppProjectsProjectAssistantRouteImport } from './routes/_app/projects.$project/assistant'
 
 const DownloadLazyRouteImport = createFileRoute('/download')()
+const PlayPublicIdLazyRouteImport = createFileRoute('/play/$publicId')()
 const AppProjectsProjectFreezoneLazyRouteImport = createFileRoute(
   '/_app/projects/$project/freezone',
 )()
@@ -91,6 +92,13 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const PlayPublicIdLazyRoute = PlayPublicIdLazyRouteImport.update({
+  id: '/play/$publicId',
+  path: '/play/$publicId',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() =>
+  import('./routes/play.$publicId.lazy').then((d) => d.Route),
+)
 const WatchWorkRoute = WatchWorkRouteImport.update({
   id: '/watch/$work',
   path: '/watch/$work',
@@ -252,6 +260,7 @@ export interface FileRoutesByFullPath {
   '/credits': typeof AppCreditsRoute
   '/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
+  '/play/$publicId': typeof PlayPublicIdLazyRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
   '/projects/$project/ingest': typeof AppProjectsProjectIngestRoute
@@ -278,6 +287,7 @@ export interface FileRoutesByTo {
   '/credits': typeof AppCreditsRoute
   '/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
+  '/play/$publicId': typeof PlayPublicIdLazyRoute
   '/': typeof AppIndexRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
@@ -307,6 +317,7 @@ export interface FileRoutesById {
   '/_app/credits': typeof AppCreditsRoute
   '/_app/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
+  '/play/$publicId': typeof PlayPublicIdLazyRoute
   '/_app/': typeof AppIndexRoute
   '/_app/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/_app/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
@@ -337,6 +348,7 @@ export interface FileRouteTypes {
     | '/credits'
     | '/payment-return'
     | '/watch/$work'
+    | '/play/$publicId'
     | '/projects/$project/assistant'
     | '/projects/$project/episodes'
     | '/projects/$project/ingest'
@@ -363,6 +375,7 @@ export interface FileRouteTypes {
     | '/credits'
     | '/payment-return'
     | '/watch/$work'
+    | '/play/$publicId'
     | '/'
     | '/projects/$project/assistant'
     | '/projects/$project/episodes'
@@ -391,6 +404,7 @@ export interface FileRouteTypes {
     | '/_app/credits'
     | '/_app/payment-return'
     | '/watch/$work'
+    | '/play/$publicId'
     | '/_app/'
     | '/_app/projects/$project/assistant'
     | '/_app/projects/$project/episodes'
@@ -417,6 +431,7 @@ export interface RootRouteChildren {
   RechargeRoute: typeof RechargeRoute
   DownloadLazyRoute: typeof DownloadLazyRoute
   WatchWorkRoute: typeof WatchWorkRoute
+  PlayPublicIdLazyRoute: typeof PlayPublicIdLazyRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -469,6 +484,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/play/$publicId': {
+      id: '/play/$publicId'
+      path: '/play/$publicId'
+      fullPath: '/play/$publicId'
+      preLoaderRoute: typeof PlayPublicIdLazyRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/watch/$work': {
       id: '/watch/$work'
@@ -680,6 +702,7 @@ const rootRouteChildren: RootRouteChildren = {
   RechargeRoute: RechargeRoute,
   DownloadLazyRoute: DownloadLazyRoute,
   WatchWorkRoute: WatchWorkRoute,
+  PlayPublicIdLazyRoute: PlayPublicIdLazyRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from "vitest";
 
-import { blockoutTone } from "@/features/previz/domain/blockout";
+import { blockoutTone, propTone } from "@/features/previz/domain/blockout";
 import type { PrevizObject } from "@/features/previz/domain/scene";
 
 function prop(semanticType?: string): PrevizObject {
@@ -39,5 +39,22 @@ describe("blockoutTone", () => {
     } as PrevizObject;
 
     expect(blockoutTone(camera)).toBeNull();
+  });
+});
+
+describe("propTone", () => {
+  it("keeps the blockout tone when there is one", () => {
+    expect(propTone(prop("wall"))).toBe("structure");
+    expect(propTone(prop("table"))).toBe("piece");
+  });
+
+  // 手摆的、Agent 摆的基础几何体都没有白模标记，照样是灰的。
+  it("greys a primitive that carries no blockout tag", () => {
+    expect(propTone(prop())).toBe("piece");
+  });
+
+  // 导入的模型带自己的材质；它那块占位方块仍是道具的分类色。
+  it("leaves an imported model alone", () => {
+    expect(propTone({ kind: "prop", assetUrl: "/a.glb", assetFormat: "glb" } as PrevizObject)).toBeNull();
   });
 });

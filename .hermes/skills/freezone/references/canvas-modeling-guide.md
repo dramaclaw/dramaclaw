@@ -66,6 +66,24 @@
 ### 2.4 展示/工具节点
 
 - `threeDWorldNode`、`pano360ViewerNode` 等更偏展示、查看或特定工具能力
+- `previzNode`
+  - 预演台：用户在里面摆人物、机位、走位，预演一场戏的 3D 调度
+  - 可以创建空节点、改显示名、连线；创建时不能带场景内容，先建空节点再编辑
+  - 读场景：`freezone_get_node_detail` 返回的 `parameters.sceneEdit.current_value` 是当前场景
+    （对象的 id、类型、名字、位置、旋转、缩放，每个对象身上的片段，镜头轨的切镜，时间轴总帧数）
+  - 改场景：`update_node_data`，`data.sceneEdit = { add, update, remove, timeline }`；格式、单位、上限
+    和可用的动作名、模型库 id 以 `parameters.sceneEdit.description` 为准。一次编辑要么全部生效要么
+    全部不生效，被拒绝时按报错修正后重发
+    - 对象：基础几何体道具（搭墙、地台、迷宫这类白模）、模型库里的现成模型（桌椅、车、树等，只能用
+      description 里列出的 id，不能给地址）、机位、人物、灯光
+    - 时间轴 `timeline`：`paths` 走位（人或机位沿一串点移动）、`follows` 跟拍（机位挂在某个对象身上，
+      可环绕/推拉/升降）、`actions` 人物动作（走、跑、坐、挥拳等内置动作）、`cuts` 切镜、
+      `removeClips` 删片段、`durationFrames` 总时长
+    - 同一批 `add` 的对象可以起 `ref`，`timeline` 里直接用它当 id：加人、画走位、加跟拍机位一次发完
+  - 人物「走过去」要同时给 `paths`（位移）和 `actions`（如 `Walk_Loop`，身体动作），只给走位人会滑着走
+  - 改之前先读一次场景，`update` / `remove` / `removeClips` 只能用读到的 id；用户锁定的对象改不了也动不了
+  - 时间轴最长 360 帧（30 fps，12 秒），走位装不下时调高 `speedMps` 或缩短路线
+  - 「参考图转白模」、音频、导入外部模型或动作文件仍然只能由用户在预演台编辑器里做
 - 不要把这类节点当成通用媒体生成节点
 
 ## 3. 连线语义

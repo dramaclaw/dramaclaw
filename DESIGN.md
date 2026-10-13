@@ -303,6 +303,8 @@ DramaClaw（虾导）是一个专业 AIGC 视频工作台：节点画布、故�
   另见 Do's and Don'ts。
 - 静止表面上彩度必须低。shadcn 的 `secondary` / `accent` 是带青调的灰
   （暗色 #0e333c、亮色 #def6fa），正是为了让下拉和 Tab 的 hover 态足够安静。
+- 分组默认填充使用 `--group-node-bg`：暗色 `rgba(255,255,255,0.1)`，亮色
+  `rgba(15,23,42,0.09)`，让未设置配色的组也有可见边界。
 - 亮色模式把 `background` 翻成纯白、`text` 翻成纯黑，强调色换 `light-accent` #3b82f6；
   `card` 变纯白，衬在 #f0f2f5 的页面底上。
 - `chart-1` … `chart-5` 是唯一批准的数据序列色，走「青 → 蓝绿 → 天蓝 → 湖蓝 → 绿」，

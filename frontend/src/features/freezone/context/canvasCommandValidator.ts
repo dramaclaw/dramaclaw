@@ -12,6 +12,8 @@ import {
 import { getDownstreamSpawnTypes, getNodeDefinition, nodeHasSourceHandle } from "@/features/canvas/domain/nodeRegistry";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import { isAgentExecutableNodeAction } from "@/features/freezone/canvasNodeActionCatalog";
+import { planNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
+import type { PrevizScene } from "@/features/previz/domain/scene";
 import {
   isBeatContextAgentEditablePatch,
   normalizeCanvasCommandCreateNodeData,
@@ -186,6 +188,8 @@ export function validateCanvasChatCommandEnvelopes(
   const edgeIds = new Set(edges.map((edge) => edge.id));
   const nodeById = new Map<string, CanvasNode>(nodes.map((node) => [node.id, node] as const));
   const clientIds = new Set<string>();
+  // 预演台节点在这一批里已经规划出来的场景：后面的 sceneEdit 接着它算，不回头读原始场景。
+  const plannedPrevizScenes = new Map<string, PrevizScene>();
   const issues: CanvasCommandValidationIssue[] = [];
 
   const isKnownNodeRef = (id: string): boolean => nodeIds.has(id) || clientIds.has(id);
@@ -329,6 +333,16 @@ export function validateCanvasChatCommandEnvelopes(
             ));
             if (invalid.length > 0) {
               addIssue(issues, path, `fields are not editable on this node: ${invalid.join(", ")}`);
+            }
+            if (target.type === CANVAS_NODE_TYPES.previz && "sceneEdit" in data) {
+              const plan = planNodeAgentSceneEdit(
+                target.id,
+                target.data as Record<string, unknown>,
+                (data as Record<string, unknown>).sceneEdit,
+                plannedPrevizScenes.get(target.id),
+              );
+              if (plan.ok) plannedPrevizScenes.set(target.id, plan.scene);
+              else addIssue(issues, path, `sceneEdit rejected: ${plan.error}`);
             }
             validateModelAndModeFields(
               issues,

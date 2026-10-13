@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { FreezoneCanvasPayload } from "@/api/canvas";
+import { getFreezoneCanvas, type FreezoneCanvasPayload } from "@/api/canvas";
 import type { CanvasEdge, CanvasNode } from "@/stores/canvasStore";
 
 export type RemoteCanvasMerge = (
@@ -10,10 +10,22 @@ export type RemoteCanvasMerge = (
   localEdges: CanvasEdge[],
 ) => { nodes: CanvasNode[]; edges: CanvasEdge[] };
 
+export interface RemoteCanvasApplyOptions {
+  /**
+   * Refuse to replace the open canvas when it contains edits that have not
+   * reached the server yet. Remote writes initiated by the current Agent use
+   * this guard: a clean canvas can adopt the Agent's new revision silently,
+   * while genuine concurrent local work still gets the recovery overlay.
+   */
+  protectUnsavedLocalEdits?: boolean;
+  conflictMessage?: string;
+}
+
 type RemoteCanvasApplier = (
   remote: FreezoneCanvasPayload,
   merge?: RemoteCanvasMerge,
-) => void;
+  options?: RemoteCanvasApplyOptions,
+) => boolean;
 
 type CanvasFlush = () => Promise<boolean>;
 
@@ -36,6 +48,9 @@ interface RemoteCanvasRuntime {
   flush?: CanvasFlush;
   applyLocalProjection?: LocalProjectionApplier;
   removeLocalProjection?: LocalProjectionRemover;
+  /** Include hydration and local saves in the revision barrier. */
+  getRevision?: () => number | null;
+  appliedRevision: number | null;
 }
 
 let currentRuntime: RemoteCanvasRuntime | null = null;
@@ -52,8 +67,12 @@ export function registerFreezoneCanvasRuntime(
   flush?: CanvasFlush,
   applyLocalProjection?: LocalProjectionApplier,
   removeLocalProjection?: LocalProjectionRemover,
+  getRevision?: () => number | null,
 ): () => void {
-  const runtime = { project, canvasId, apply, flush, applyLocalProjection, removeLocalProjection };
+  const runtime: RemoteCanvasRuntime = {
+    project, canvasId, apply, flush, applyLocalProjection, removeLocalProjection,
+    getRevision, appliedRevision: null,
+  };
   currentRuntime = runtime;
   return () => {
     if (currentRuntime === runtime) {
@@ -62,17 +81,46 @@ export function registerFreezoneCanvasRuntime(
   };
 }
 
+/** null means no runtime is registered; false means an active runtime refused the data.
+ * Callers may use a direct-store fallback only for null, never for a refusal.
+ */
 export function applyRemoteFreezoneCanvas(
   project: string,
   canvasId: string,
   remote: FreezoneCanvasPayload,
   merge?: RemoteCanvasMerge,
-): boolean {
-  if (!currentRuntime || currentRuntime.project !== project || currentRuntime.canvasId !== canvasId) {
+  options?: RemoteCanvasApplyOptions,
+): boolean | null {
+  const runtime = currentRuntime;
+  if (!runtime) return null;
+  if (runtime.project !== project || runtime.canvasId !== canvasId) {
     return false;
   }
-  currentRuntime.apply(remote, merge);
-  return true;
+  const revision = typeof remote.revision === "number" && Number.isFinite(remote.revision)
+    ? remote.revision : null;
+  const latestRevision = Math.max(runtime.appliedRevision ?? 0, runtime.getRevision?.() ?? 0);
+  // Reject stale snapshots before the applier can touch drafts, save sessions,
+  // or conflict state. Missing revisions cannot replace a known version either.
+  if (latestRevision > 0 && (revision === null || revision < latestRevision)) {
+    return false;
+  }
+  const applied = runtime.apply(remote, merge, options);
+  if (applied && revision !== null) runtime.appliedRevision = revision;
+  return applied;
+}
+
+export async function refreshRemoteFreezoneCanvas(
+  project: string,
+  canvasId: string,
+  options?: RemoteCanvasApplyOptions,
+): Promise<boolean> {
+  const runtime = currentRuntime;
+  if (!runtime || runtime.project !== project || runtime.canvasId !== canvasId) return false;
+  const remote = await getFreezoneCanvas(project, canvasId);
+  // A response belongs to the registration that requested it, even if the
+  // user leaves and later opens the same project/canvas URL again.
+  if (currentRuntime !== runtime) return false;
+  return applyRemoteFreezoneCanvas(project, canvasId, remote, undefined, options) === true;
 }
 
 export async function flushFreezoneCanvasRuntime(

@@ -4,7 +4,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PREVIZ_RIG_ANCHOR_FRACTION,
+  PREVIZ_RIG_ARC_DEG,
+  PREVIZ_RIG_CRANE_DEG,
   PREVIZ_RIG_DISTANCE_RANGE,
+  PREVIZ_RIG_ELEVATION_RANGE,
   PREVIZ_RIG_ORBIT_DEG,
   PREVIZ_RIG_PULL_RATIO,
   PREVIZ_RIG_PUSH_RATIO,
@@ -38,14 +41,16 @@ function rigClip(patch: Partial<PrevizRigClip> = {}): PrevizRigClip {
 
 describe('rig anchor', () => {
   it('orders the body parts bottom to top, all inside the body', () => {
-    const { pelvis, body, chest, face, head } = PREVIZ_RIG_ANCHOR_FRACTION;
-    expect(pelvis).toBeLessThan(body);
-    expect(body).toBeLessThan(chest);
-    expect(chest).toBeLessThan(face);
-    expect(face).toBeLessThan(head);
+    // 声明顺序就是属性面板下拉的顺序，所以要求整张表自下而上严格递增。
+    const fractions = Object.values(PREVIZ_RIG_ANCHOR_FRACTION);
+    for (let index = 1; index < fractions.length; index += 1) {
+      expect(fractions[index]).toBeGreaterThan(fractions[index - 1]!);
+    }
+    // 脚底就是对象站的那个点，不抬高。
+    expect(PREVIZ_RIG_ANCHOR_FRACTION.feet).toBe(0);
     // 全部落在身体之内：超过 1 的比例会把「头部」特写架到人物头顶的空气里。
-    for (const fraction of Object.values(PREVIZ_RIG_ANCHOR_FRACTION)) {
-      expect(fraction).toBeGreaterThan(0);
+    for (const fraction of fractions) {
+      expect(fraction).toBeGreaterThanOrEqual(0);
       expect(fraction).toBeLessThanOrEqual(1);
     }
   });
@@ -127,6 +132,34 @@ describe('rigFramingAt', () => {
     const clip = rigClip({ motion: 'orbit', azimuth: 10 });
     expect(rigFramingAt(clip, 0).azimuth).toBeCloseTo(10, 6);
     expect(rigFramingAt(clip, 0.5).azimuth).toBeCloseTo(10 + PREVIZ_RIG_ORBIT_DEG / 2, 6);
+  });
+
+  it('sweeps a quarter turn either way for an arc', () => {
+    expect(rigFramingAt(rigClip({ motion: 'arcRight', azimuth: 10 }), 1).azimuth).toBeCloseTo(
+      10 + PREVIZ_RIG_ARC_DEG,
+      6,
+    );
+    expect(rigFramingAt(rigClip({ motion: 'arcLeft', azimuth: 10 }), 1).azimuth).toBeCloseTo(
+      10 - PREVIZ_RIG_ARC_DEG,
+      6,
+    );
+  });
+
+  it('tilts the camera up or down for a crane without leaving the range', () => {
+    expect(rigFramingAt(rigClip({ motion: 'craneUp', elevation: 5 }), 1).elevation).toBeCloseTo(
+      5 + PREVIZ_RIG_CRANE_DEG,
+      6,
+    );
+    expect(rigFramingAt(rigClip({ motion: 'craneDown', elevation: 5 }), 0.5).elevation).toBeCloseTo(
+      5 - PREVIZ_RIG_CRANE_DEG / 2,
+      6,
+    );
+    // 夹在上界：越过天顶之后水平角失去意义，机位会突然打转。
+    const top = rigFramingAt(
+      rigClip({ motion: 'craneUp', elevation: PREVIZ_RIG_ELEVATION_RANGE.max }),
+      1,
+    );
+    expect(top.elevation).toBe(PREVIZ_RIG_ELEVATION_RANGE.max);
   });
 
   it('closes in on a push and backs off on a pull', () => {

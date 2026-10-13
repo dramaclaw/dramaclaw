@@ -200,6 +200,10 @@ export function normalizeCanvasCommandNodeData(
     case CANVAS_NODE_TYPES.videoCompose:
       deleteFields(next, ["prompt", "content", "text", "body", "description"]);
       break;
+    case CANVAS_NODE_TYPES.previz:
+      // 场景只能经 sceneEdit 改；整份 scene / summary 没过编辑器的校验，不收。
+      deleteFields(next, ["scene", "summary"]);
+      break;
     case CANVAS_NODE_TYPES.htmlArtifact:
       if (!hasNonEmptyStringField(next, "prompt")) {
         const prompt = firstStringField(next, PROMPT_INPUT_ALIASES);
@@ -236,6 +240,11 @@ export function normalizeCanvasCommandCreateNodeData(
   data: Partial<CanvasNodeData> | undefined,
 ): Partial<CanvasNodeData> {
   const next = normalizeCanvasCommandNodeData(nodeType, data);
+  if (nodeType === CANVAS_NODE_TYPES.previz) {
+    // sceneEdit 是对已有场景的一批操作，新建时没有场景可改：先建空的，再用 update_node_data。
+    delete (next as Record<string, unknown>).sceneEdit;
+    return next;
+  }
   if (nodeType !== CANVAS_NODE_TYPES.audio || next.audioKind === "music") {
     return next;
   }

@@ -257,6 +257,17 @@ describe("useBlockoutGeneration reuses the image already connected on the canvas
     expect(hook.current.referenceUrl).toBe("/static/ref.png");
   });
 
+  it("offers the picture of a connected image-generation node", () => {
+    const id = addPrevizNode();
+    const generated = useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.imageGen, { x: -600, y: 0 }, { imageUrl: "/static/arena.png" })!;
+    useCanvasStore.getState().addEdge(generated, id);
+    const { result: hook } = setup(id);
+
+    expect(hook.current.referenceUrl).toBe("/static/arena.png");
+  });
+
   it("offers nothing while no image is connected", () => {
     const { result: hook } = setup(addPrevizNode());
 

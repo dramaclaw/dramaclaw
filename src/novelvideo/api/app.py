@@ -93,6 +93,8 @@ def _is_freezone_audio_voice_upload(request: Request) -> bool:
 
 
 def _resource_request_key(path: str) -> str | None:
+    if path.startswith("/api/v1/public-stories/") and "/media/" in path:
+        return path
     if path.startswith("/static/"):
         return path
 

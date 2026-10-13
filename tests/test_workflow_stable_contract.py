@@ -1,4 +1,6 @@
 import json
+import sys
+import types
 from pathlib import Path
 
 from novelvideo.chat import backend_sdk
@@ -42,6 +44,21 @@ def test_stable_contract_aliases_are_scoped_to_creatable_nodes() -> None:
         for aliases in MODEL_ALIASES_BY_NODE_TYPE.values()
         for alias, target in aliases.items()
     )
+
+
+def test_agent_plugin_creatable_node_types_match_contract(monkeypatch) -> None:
+    from test_freezone_plugin import _load_plugin_module
+
+    # The loader installs stub `tools` modules; restore them so later tests see the real ones.
+    for name in ("tools", "tools.registry"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    plugin = _load_plugin_module()
+    assert plugin._AGENT_CREATABLE_NODE_TYPE_VALUES == AGENT_CREATABLE_NODE_TYPES
+    assert "previzNode" in AGENT_CREATABLE_NODE_TYPES
+    error = plugin._validate_write_commands_shape(
+        "p", "c", [{"type": "create_node", "node_type": "previzNode"}]
+    )
+    assert error is None
 
 
 def test_generated_mcp_fragment_matches_backend_contract() -> None:

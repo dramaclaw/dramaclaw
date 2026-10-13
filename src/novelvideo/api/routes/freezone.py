@@ -13695,6 +13695,7 @@ _NODE_DESIGN_SIZES: dict[str, tuple[float, float]] = {
     "videoStoryNode": (720.0, 360.0),
     "pano360ViewerNode": (900.0, 480.0),
     "threeDWorldNode": (480.0, 360.0),
+    "previzNode": (340.0, 210.0),
 }
 _DEFAULT_NODE_DESIGN_SIZE = (320.0, 200.0)
 
@@ -15223,6 +15224,27 @@ async def _resolve_workflow_draft_external_inputs(
         raise HTTPException(409, str(exc)) from exc
 
 
+async def _validate_workflow_draft_story_targets(
+    compiled: dict, *, state_dir: Path, canvas_id: str
+) -> bool:
+    from novelvideo.freezone.workflow_story_targets import (
+        validate_story_asset_targets,
+        validate_story_frame_targets,
+    )
+
+    plan = compiled.get("plan") or {}
+    context = plan.get("source_context")
+    if not isinstance(context, dict) or not ({"story_id", "targets", "asset_targets"} & context.keys()):
+        return False
+    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+    try:
+        validate_story_frame_targets(plan, canvas)
+        validate_story_asset_targets(plan, canvas)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return bool(context.get("targets") or context.get("asset_targets"))
+
+
 @router.post(
     "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts",
     tags=[TAG_FREEZONE_CANVAS],
@@ -15359,6 +15381,17 @@ async def create_canvas_workflow_draft(
         )
     prepared = await _prepare_workflow_source(body, user)
     validated = prepared["compiled"]
+    has_story_targets = await _validate_workflow_draft_story_targets(
+        validated, state_dir=state_dir, canvas_id=canvas_id,
+    )
+    if has_story_targets and "run_after_create" not in body:
+        raise HTTPException(400, {
+            "ok": False,
+            "code": "story_execution_policy_required",
+            "error": "Story-bound workflows require an explicit run_after_create boolean.",
+            "retryable": True,
+            "next_action": "prepare_with_explicit_execution_policy",
+        })
     validated["external_inputs_verified"] = await _resolve_workflow_draft_external_inputs(
         validated, state_dir=state_dir, canvas_id=canvas_id, project_id=ctx.project_id,
     )
@@ -15604,6 +15637,9 @@ async def patch_canvas_workflow_draft(
     else:
         prepared = await _prepare_workflow_source(body, user)
     validated = prepared["compiled"]
+    await _validate_workflow_draft_story_targets(
+        validated, state_dir=state_dir, canvas_id=canvas_id,
+    )
     validated["external_inputs_verified"] = await _resolve_workflow_draft_external_inputs(
         validated, state_dir=state_dir, canvas_id=canvas_id, project_id=ctx.project_id,
     )
@@ -16156,6 +16192,9 @@ async def claim_canvas_workflow_draft(
         }
     # Revalidate old drafts and catalog revocations before admitting a task.
     validated = await _validate_workflow_draft_submission(current_draft, user)
+    await _validate_workflow_draft_story_targets(
+        validated, state_dir=state_dir, canvas_id=canvas_id,
+    )
     await _resolve_workflow_draft_external_inputs(
         current_draft["compiled"], state_dir=state_dir, canvas_id=canvas_id,
         project_id=ctx.project_id,
