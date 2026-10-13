@@ -830,32 +830,32 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
         ...(storyClip
           ? {
               continuityMode: {
-                type: 'enum' as const, label: '镜头承接', options: ['auto', 'independent'],
-                description: '镜头承接：审制作方案获批后，批量将连续片段的相应视频节点设为 auto（自动承接）。生成时自动截取或复用上游当前视频尾帧并绑定，无需另行截图和连线；分支共用同一尾帧。换场、跳时间或多上游汇合未指定来源时设 independent（独立开场）；切换为独立开场时立即清理旧自动承接连线与提示词段。不会自动切换已选模型或生成模式。',
+                type: 'enum' as const, label: i18next.t("canvas.story.actionCatalog.continuityLabel"), options: ['auto', 'independent'],
+                description: i18next.t("canvas.story.actionCatalog.continuityDescription"),
               },
               continuitySourceNodeId: {
-                type: 'string' as const, label: '承接来源',
-                description: '多个上游汇合时指定要承接的视频节点 ID；唯一上游时留空。',
+                type: 'string' as const, label: i18next.t("canvas.story.actionCatalog.continuitySourceLabel"),
+                description: i18next.t("canvas.story.actionCatalog.continuitySourceDescription"),
               },
               narration: {
                 type: "string" as const,
-                label: "剧情内容",
+                label: i18next.t("canvas.story.actionCatalog.narrationLabel"),
                 current_value:
                   typeof (node.data as { narration?: unknown }).narration === "string"
                     ? (node.data as { narration: string }).narration
                     : "",
                 description:
-                  "互动剧情片段中展示给创作者的剧情正文。用户要求补充、完善或续写该剧情节点时必须更新 narration；它与用于生成视频的 prompt 是两个独立字段，不能只更新 prompt。",
+                  i18next.t("canvas.story.actionCatalog.narrationDescription"),
               },
               storyProductionNotes: {
                 type: "string" as const,
-                label: "制作备注",
+                label: i18next.t("canvas.story.actionCatalog.productionNotesLabel"),
                 current_value:
                   typeof (node.data as { storyProductionNotes?: unknown }).storyProductionNotes === "string"
                     ? (node.data as { storyProductionNotes: string }).storyProductionNotes
                     : "",
                 description:
-                  "供拍摄和视频生产使用的镜头、表演、声音与连续性备注；不要把剧情正文写入此字段。",
+                  i18next.t("canvas.story.actionCatalog.productionNotesDescription"),
               },
             }
           : {}),
@@ -1038,7 +1038,7 @@ function addChatCommandActions(node: CanvasNode, actions: CanvasNodeActionCatalo
         node.type === CANVAS_NODE_TYPES.beatContext
           ? `更新镜头上下文节点草稿字段。只允许 data 包含 ${BEAT_CONTEXT_AGENT_EDITABLE_FIELDS.join(", ")}；出场身份和出场道具不开放给 agent 编辑。`
           : storyClip
-            ? "更新互动剧情片段。补充或完善剧情时必须写 narration（剧情内容）；prompt 只用于视频生成，不能代替 narration。拍摄、表演、声音与连续性说明写入 storyProductionNotes。"
+            ? i18next.t("canvas.story.actionCatalog.updateDescription")
             : "Update editable data fields on this node. Reserved mainline/projection fields are ignored.",
       parameters: {
         node_id: node.id,
@@ -1517,7 +1517,7 @@ function addMediaActions(
       action: "capture_video_first_frame",
       execution: "frontend_node",
       command_type: "run_node_action",
-      description: "截取当前选用视频的首帧并上传为派生图片节点，返回图片节点及来源信息。可用于开场参考或与前片尾帧对照人物、道具和构图；只准备素材，不自动绑定参考或生成视频。",
+      description: i18next.t("canvas.story.actionCatalog.captureFirstFrameDescription"),
       parameters: { node_id: node.id },
       result_effect: { target: "derived image node", next_step: "Read the returned createdNodeId and output and verify the source before using it as a reference; binding and generation require separate authorization." },
     });
@@ -1525,7 +1525,7 @@ function addMediaActions(
       action: "capture_video_last_frame",
       execution: "frontend_node",
       command_type: "run_node_action",
-      description: "截取当前选用视频的尾帧并上传为派生图片节点，返回图片节点及来源信息。只准备素材，不生成视频；完成后回读图片并绑定到需要承接的片段。",
+      description: i18next.t("canvas.story.actionCatalog.captureLastFrameDescription"),
       parameters: { node_id: node.id },
       result_effect: { target: "derived image node", next_step: "Read the returned createdNodeId and output before binding references; generation requires separate authorization and readiness checks." },
     });

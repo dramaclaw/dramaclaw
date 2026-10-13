@@ -5293,6 +5293,19 @@
       }
     },
     "story": {
+      "actionCatalog": {
+        "continuityLabel": "镜头承接",
+        "continuityDescription": "镜头承接：审制作方案获批后，批量将连续片段的相应视频节点设为 auto（自动承接）。生成时自动截取或复用上游当前视频尾帧并绑定，无需另行截图和连线；分支共用同一尾帧。换场、跳时间或多上游汇合未指定来源时设 independent（独立开场）；切换为独立开场时立即清理旧自动承接连线与提示词段。不会自动切换已选模型或生成模式。",
+        "continuitySourceLabel": "承接来源",
+        "continuitySourceDescription": "多个上游汇合时指定要承接的视频节点 ID；唯一上游时留空。",
+        "narrationLabel": "剧情内容",
+        "narrationDescription": "互动剧情片段中展示给创作者的剧情正文。用户要求补充、完善或续写该剧情节点时必须更新 narration；它与用于生成视频的 prompt 是两个独立字段，不能只更新 prompt。",
+        "productionNotesLabel": "制作备注",
+        "productionNotesDescription": "供拍摄和视频生产使用的镜头、表演、声音与连续性备注；不要把剧情正文写入此字段。",
+        "updateDescription": "更新互动剧情片段。补充或完善剧情时必须写 narration（剧情内容）；prompt 只用于视频生成，不能代替 narration。拍摄、表演、声音与连续性说明写入 storyProductionNotes。",
+        "captureFirstFrameDescription": "截取当前选用视频的首帧并上传为派生图片节点，返回图片节点及来源信息。可用于开场参考或与前片尾帧对照人物、道具和构图；只准备素材，不自动绑定参考或生成视频。",
+        "captureLastFrameDescription": "截取当前选用视频的尾帧并上传为派生图片节点，返回图片节点及来源信息。只准备素材，不生成视频；完成后回读图片并绑定到需要承接的片段。"
+      },
       "htmlExport": {
         "label": "导出离线包",
         "hint": "包含播放器、剧情探索和视频。完整解压 ZIP 后打开 index.html",

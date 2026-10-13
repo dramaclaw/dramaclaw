@@ -5293,6 +5293,19 @@
       }
     },
     "story": {
+      "actionCatalog": {
+        "continuityLabel": "Shot continuity",
+        "continuityDescription": "After the production plan is approved, set consecutive story video nodes to auto continuity in batches. Generation automatically captures or reuses and binds the current upstream video’s last frame; no separate capture or connection is needed, and branches share that frame. Use independent for scene changes, time jumps, or multiple upstream nodes without a selected source. Switching to independent immediately clears old automatic continuity connections and prompt sections. The selected model and generation mode do not change automatically.",
+        "continuitySourceLabel": "Continuity source",
+        "continuitySourceDescription": "Specify the source video node ID when multiple upstream paths converge; leave empty for a single upstream node.",
+        "narrationLabel": "Story content",
+        "narrationDescription": "The story text shown to creators for this interactive clip. When asked to expand, improve, or continue the clip, update narration. It is separate from the video-generation prompt; updating prompt alone is insufficient.",
+        "productionNotesLabel": "Production notes",
+        "productionNotesDescription": "Shot, performance, audio, and continuity notes for filming and video production. Do not put the story text in this field.",
+        "updateDescription": "Update the interactive story clip. Expanding or improving the story requires narration; prompt is only for video generation and cannot replace narration. Put filming, performance, audio, and continuity notes in storyProductionNotes.",
+        "captureFirstFrameDescription": "Capture the selected video’s first frame and upload it as a derived image node, returning the node and source information. Use it as an opening reference or compare characters, props, and composition with the previous clip’s last frame. This only prepares media; it does not automatically bind references or generate video.",
+        "captureLastFrameDescription": "Capture the selected video’s last frame and upload it as a derived image node, returning the node and source information. This only prepares media, without generating video. Read back the image before binding it to the clip that needs continuity."
+      },
       "htmlExport": {
         "label": "Export offline ZIP",
         "hint": "Includes player, exploration and videos. Extract the ZIP and open index.html.",

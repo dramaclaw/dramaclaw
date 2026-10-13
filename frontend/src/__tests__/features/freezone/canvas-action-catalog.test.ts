@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import i18next from "i18next";
+import { enTranslation } from "@/__tests__/helpers/i18n-fixtures";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { buildCanvasActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import {
@@ -23,6 +25,36 @@ function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["typ
 }
 
 describe("canvas action catalog", () => {
+  it("localizes story fields and frame capture instructions when the language changes", async () => {
+    i18next.addResourceBundle("en", "translation", enTranslation, true, true);
+    const originalLanguage = i18next.language;
+    const clip = node({
+      id: "story-i18n", type: CANVAS_NODE_TYPES.video,
+      data: { storySegmentId: "segment-i18n", videoUrl: "/clip.mp4" },
+    });
+    try {
+      for (const [language, label] of [["en", "Story content"], ["zh", "剧情内容"]]) {
+        await i18next.changeLanguage(language);
+        const catalog = buildCanvasNodeActionCatalog(clip);
+        expect(catalog.editable_schema.narration.label).toBe(label);
+        const values = [
+          ...["continuityMode", "continuitySourceNodeId", "narration", "storyProductionNotes"]
+            .flatMap((field) => [catalog.editable_schema[field].label, catalog.editable_schema[field].description]),
+          ...["update_node_data", "capture_video_first_frame", "capture_video_last_frame"]
+            .map((action) => catalog.actions.find((entry) => entry.action === action)?.description),
+        ];
+        for (const value of values) {
+          expect(value).toBeTruthy();
+          expect(value).not.toContain("canvas.story.actionCatalog.");
+          if (language === "en") expect(value).not.toMatch(/[\u4e00-\u9fff]/);
+        }
+        expect(catalog.editable_schema.continuityMode.options).toEqual(["auto", "independent"]);
+      }
+    } finally {
+      await i18next.changeLanguage(originalLanguage);
+    }
+  });
+
   it("keeps mainline writes in manual UI but out of Agent discovery", async () => {
     const beatContext = node({
       id: "beat-context-a",
