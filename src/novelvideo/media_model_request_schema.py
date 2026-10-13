@@ -47,10 +47,11 @@ MEDIA_MODEL_MODES = {
     "video_upscale",
     "video_frame_rate",
 }
-PARAMETER_MODES = MEDIA_MODEL_MODES | {
+IMAGE_MODEL_MODES = {
     "text_to_image",
     "image_to_image",
 }
+PARAMETER_MODES = MEDIA_MODEL_MODES | IMAGE_MODEL_MODES
 STRING_LIST_CONFIG_FIELDS = {
     "resolutionOptions",
     "ratioOptions",
@@ -444,7 +445,6 @@ def validate_media_model_catalog_config(
         {
             "minDuration",
             "maxDuration",
-            "supportedModes",
             "referenceVideoMax",
             "referenceAudioMax",
             "referenceFileMax",
@@ -488,10 +488,11 @@ def validate_media_model_catalog_config(
             raise MediaModelSchemaError(f"{field} must contain unique non-empty strings")
 
     modes = config.get("supportedModes")
+    supported_model_modes = IMAGE_MODEL_MODES if media_type == "image" else MEDIA_MODEL_MODES
     if modes is not None and (
         not isinstance(modes, list)
         or any(not isinstance(mode, str) for mode in modes)
-        or any(mode not in MEDIA_MODEL_MODES for mode in modes)
+        or any(mode not in supported_model_modes for mode in modes)
         or len(set(modes)) != len(modes)
     ):
         raise MediaModelSchemaError("supportedModes contains an invalid or duplicate mode")

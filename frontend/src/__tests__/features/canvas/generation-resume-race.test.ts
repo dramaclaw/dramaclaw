@@ -38,7 +38,8 @@ vi.mock("@/api/ops", () => ({
   fetchFreezoneJobResult: vi.fn().mockResolvedValue({ url: "out.png" }),
   fetchFreezoneReversePromptResult: vi.fn(),
   fetchFreezoneStoryScriptResult: vi.fn(),
-  fetchFreezoneTextGenerateResult: (...args: unknown[]) => fetchFreezoneTextGenerateResult(...args),
+  fetchFreezoneTextGenerateResult: (...args: unknown[]) =>
+    fetchFreezoneTextGenerateResult(...args),
 }));
 
 vi.mock("@/features/canvas/application/workflowHtmlRuntime", () => ({
@@ -102,6 +103,61 @@ beforeEach(() => {
 });
 
 describe("恢复路径：列表漏项不等于任务不存在", () => {
+  it.each(["imagine", "blend"])(
+    "restores the %s grid's source task and buttons after refresh",
+    async (operation) => {
+      listTasks.mockResolvedValue([{ task_key: TASK_KEY, status: "running" }]);
+      const task = {
+        task_id: "mj-source",
+        operation,
+        buttons: [{ custom_id: "one", label: "U1" }],
+      };
+      awaitTaskCompletion.mockResolvedValue({
+        status: "completed",
+        result: { output_url: "grid.png", midjourney: task },
+      });
+      const updateNodeData = vi.fn();
+      await resumeNodeGeneration({
+        node: resumableNode(),
+        projectId: "demo",
+        updateNodeData,
+      });
+      expect(updateNodeData).toHaveBeenLastCalledWith(
+        "n1",
+        expect.objectContaining({
+          midjourneyGridSource: { imageUrl: "grid.png", task },
+          midjourneyUpscaleResults: {},
+        }),
+      );
+    },
+  );
+
+  it("restores an upscale result without replacing its original grid context", async () => {
+    listTasks.mockResolvedValue([{ task_key: TASK_KEY, status: "running" }]);
+    awaitTaskCompletion.mockResolvedValue({
+      status: "completed",
+      result: {
+        output_url: "hd.png",
+        midjourney_action: {
+          task_id: "mj-source",
+          custom_id: "one",
+          operation: "upscale",
+        },
+      },
+    });
+    const updateNodeData = vi.fn();
+    await resumeNodeGeneration({
+      node: resumableNode({ midjourneyUpscaleResults: { two: "hd-two.png" } }),
+      projectId: "demo",
+      updateNodeData,
+    });
+    const patch = updateNodeData.mock.calls[updateNodeData.mock.calls.length - 1]?.[1];
+    expect(patch.midjourneyUpscaleResults).toEqual({
+      two: "hd-two.png",
+      one: "hd.png",
+    });
+    expect(patch.midjourneyGridSource).toBeUndefined();
+  });
   it("第一次列表为空、随后出现时，照常等到结果，不写失败", async () => {
     vi.useFakeTimers();
     try {
@@ -202,7 +258,10 @@ describe("恢复路径：文本任务按任务类型取回结果", () => {
       updateNodeData,
     });
 
-    expect(fetchFreezoneTextGenerateResult).toHaveBeenCalledWith("demo", "text-job-1");
+    expect(fetchFreezoneTextGenerateResult).toHaveBeenCalledWith(
+      "demo",
+      "text-job-1",
+    );
     const calls = updateNodeData.mock.calls;
     const patch = calls[calls.length - 1]?.[1] as Record<string, unknown>;
     expect(patch.content).toBe("雨落在旧车站的铁轨上。");
@@ -240,7 +299,9 @@ describe("恢复路径：HTML 文本任务保存为 Artifact", () => {
       }),
     );
     expect(fetchFreezoneTextGenerateResult).not.toHaveBeenCalled();
-    expect(updateNodeData.mock.calls.some(([, value]) => "content" in value)).toBe(false);
+    expect(
+      updateNodeData.mock.calls.some(([, value]) => "content" in value),
+    ).toBe(false);
   });
 });
 
@@ -322,9 +383,12 @@ describe("恢复路径：旧任务不能覆盖同一节点的新任务", () => {
     const currentData = { ...node.data } as Record<string, unknown>;
     listTasks.mockResolvedValue([{ task_key: oldTaskKey, status: "running" }]);
     let finishOldTask!: (value: unknown) => void;
-    awaitTaskCompletion.mockImplementation(() => new Promise((resolve) => {
-      finishOldTask = resolve;
-    }));
+    awaitTaskCompletion.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishOldTask = resolve;
+        }),
+    );
     const updateNodeData = vi.fn();
 
     const pending = resumeNodeGeneration({

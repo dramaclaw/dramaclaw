@@ -562,11 +562,16 @@ def freezone_image_feature_billing_params(feature_key: str, params: dict) -> dic
             pricing_quantity = 1
         pricing_params = params.get("pricing_params")
         if not isinstance(pricing_params, dict):
-            pricing_params = {
-                key: str(params.get(key) or "").strip()
-                for key in ("size", "quality")
-                if str(params.get(key) or "").strip()
-            }
+            operation = str(params.get("operation") or "").strip().lower()
+            pricing_params = (
+                {"operation": operation}
+                if operation
+                else {
+                    key: str(params.get(key) or "").strip()
+                    for key in ("size", "quality")
+                    if str(params.get(key) or "").strip()
+                }
+            )
         return {
             **params,
             "catalog_id": catalog_id,
@@ -590,10 +595,15 @@ def freezone_image_feature_billing_params(feature_key: str, params: dict) -> dic
             pricing_quantity = 1
         pricing_params = params.get("pricing_params")
         if not isinstance(pricing_params, dict):
-            pricing_params = _image_billing_params(
-                model=explicit_pricing_model,
-                image_size=str(params.get("size") or ""),
-                quality=str(params.get("quality") or ""),
+            operation = str(params.get("operation") or "").strip().lower()
+            pricing_params = (
+                {"operation": operation}
+                if operation
+                else _image_billing_params(
+                    model=explicit_pricing_model,
+                    image_size=str(params.get("size") or ""),
+                    quality=str(params.get("quality") or ""),
+                )
             )
         return {
             **params,
