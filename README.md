@@ -1,4 +1,37 @@
-<div align="center">
+# Dramaclaw: A Precognitive Mystery Anime
+
+## Synopsis
+
+Seventeen-year-old **Aanya** has always felt like something about her life is slightly… wrong. She remembers conversations before they happen, recognizes places she has never visited, and sometimes wakes up knowing exactly what someone is about to say.
+
+One ordinary Monday, she writes a sentence in the back of her notebook without knowing why:
+
+> *"On Friday, someone will disappear."*
+
+She forgets about it—until Friday arrives and one of her closest friends vanishes.
+
+As Aanya tries to find her, she discovers that the strange visions aren't random. Someone has been leaving clues specifically for her, leading her toward a secret that her own family has kept hidden for years.
+
+### The Twist
+
+But there's one terrifying problem:
+**Every time Aanya changes something she saw in the future, she loses one memory from her past.**
+
+Now she has to decide how much of herself she's willing to forget to save the person she loves most.
+
+## Anime Details
+
+**Genre:** Mystery • Fantasy • Teen Drama • Psychological Thriller
+
+**Tone:** Emotional, suspenseful, atmospheric, with unexpected twists
+
+**Main Themes:** Friendship, secrets, memory, family, choices, and the consequences of changing the future
+
+**Target Audience:** Teens & Young Adults
+
+---
+
+*A story about sacrifice, identity, and the cost of rewriting destiny.*<div align="center">
 
 <!-- TBD: replace with official logo assets/logo.svg -->
 <h1>DramaClaw</h1>
