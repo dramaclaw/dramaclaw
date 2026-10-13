@@ -4897,6 +4897,43 @@ def _create_mcp_canvas_approval(
     )
 
 
+def _workflow_run_turn_key(project: str, canvas: str) -> str | None:
+    """Reuse the durable bridge receipt for the sole run request in this turn."""
+    turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+    if not turn_id or canvas_command_idempotency_key is None:
+        return None
+    return canvas_command_idempotency_key(
+        project_id=project,
+        canvas_id=canvas,
+        commands=[{"workflow_run_turn": turn_id}],
+    )
+
+
+def _workflow_run_timeout_result(result: dict[str, Any]) -> dict[str, Any]:
+    # A missing receipt cannot prove that persistence or execution did not happen.
+    return {
+        **result,
+        "cancelled": False,
+        "user_message": "工作流提交结果尚未确认，请查看画布状态。",
+        "agent_instruction": (
+            "Stop this turn; do not call freezone_run_workflow again. The original request "
+            "may already be running. Inspect its existing canvas status before "
+            "any user-requested recovery."
+        ),
+    }
+
+
+def _workflow_run_missing_turn_result() -> str:
+    return tool_result({
+        "ok": False,
+        "tool_call_status": "failed",
+        "canvas_apply_status": "failed",
+        "applied": False,
+        "message": "Workflow run requires a stable turn identity; nothing was submitted.",
+        "agent_instruction": "Stop this turn and report the workflow submission failure.",
+    })
+
+
 def _dispatch_mcp_approved_frontend_commands(
     *,
     project: str,
@@ -4947,7 +4984,12 @@ def _dispatch_mcp_approved_frontend_commands(
         and str(command["data"].get("workflowInstanceId") or "").strip()
         for command in commands
     )
-    if is_workflow_batch and canvas_command_idempotency_key is not None:
+    is_workflow_run = _commands_include_type(commands, "run_workflow")
+    if is_workflow_run:
+        key = _workflow_run_turn_key(project, canvas)
+        if key is None:
+            return _workflow_run_missing_turn_result()
+    elif is_workflow_batch and canvas_command_idempotency_key is not None:
         key = canvas_command_idempotency_key(
             project_id=project,
             canvas_id=canvas,
@@ -5008,13 +5050,15 @@ def _dispatch_mcp_approved_frontend_commands(
             "them to keep the Freezone page open or retry."
         ),
     }
+    if is_workflow_run:
+        timeout_result = _workflow_run_timeout_result(timeout_result)
     resolved = wait_canvas_command_result(
         key,
         timeout_seconds=timeout_seconds,
         # A workflow confirmation is a durable project task. A tool-level wait
         # timeout is not its business outcome; keep the bridge pending so a late
         # browser result can still complete that task safely.
-        timeout_result=None if is_workflow_batch else timeout_result,
+        timeout_result=None if is_workflow_batch or is_workflow_run else timeout_result,
         bridge_dir=bridge_dir,
     )
     if resolved is not None:
@@ -5055,9 +5099,15 @@ def _dispatch_frontend_canvas_commands(
         "canvas_id": canvas,
         "commands": commands,
     }
-    key = canvas_command_bridge_key(
-        project_id=project, canvas_id=canvas, commands=commands
-    )
+    is_workflow_run = _commands_include_type(commands, "run_workflow")
+    if is_workflow_run:
+        key = _workflow_run_turn_key(project, canvas)
+        if key is None:
+            return _workflow_run_missing_turn_result()
+    else:
+        key = canvas_command_bridge_key(
+            project_id=project, canvas_id=canvas, commands=commands
+        )
     is_workflow_batch = any(
         isinstance(command, dict)
         and command.get("type") == "create_node"
@@ -5065,13 +5115,23 @@ def _dispatch_frontend_canvas_commands(
         and str(command["data"].get("workflowInstanceId") or "").strip()
         for command in commands
     )
-    put_pending_canvas_command(
+    immediate_result = put_pending_canvas_command(
         key=key,
         project_id=project,
         canvas_id=canvas,
         commands=commands,
         envelope=envelope,
     )
+    if immediate_result is not None:
+        return tool_result(
+            _summarize_canvas_command_result(
+                immediate_result,
+                bridge_key=key,
+                commands=commands,
+            )
+            if slim_result
+            else immediate_result
+        )
     try:
         timeout_seconds = max(
             1,
@@ -5098,10 +5158,12 @@ def _dispatch_frontend_canvas_commands(
             "them to retry after checking the canvas connection."
         ),
     }
+    if is_workflow_run:
+        timeout_result = _workflow_run_timeout_result(timeout_result)
     resolved = wait_canvas_command_result(
         key,
         timeout_seconds=timeout_seconds,
-        timeout_result=None if is_workflow_batch else timeout_result,
+        timeout_result=None if is_workflow_batch or is_workflow_run else timeout_result,
     )
     if resolved is not None:
         return tool_result(
@@ -5799,7 +5861,14 @@ def _summarize_canvas_command_result(
     agent_instruction = resolved.get("agent_instruction") or (
         "Canvas command result has been summarized. Do not ask for or print the full commands."
     )
-    if resolved.get("ok") and resolved.get("canvas_apply_status") == "accepted":
+    if not resolved.get("ok") and _commands_include_type(commands, "run_workflow"):
+        agent_instruction = (
+            "Stop this turn and report the workflow submission failure; "
+            "do not call freezone_run_workflow again or resubmit through another canvas tool. "
+            "When the user explicitly requests recovery, inspect the existing run first "
+            "if its submission outcome is uncertain."
+        )
+    elif resolved.get("ok") and resolved.get("canvas_apply_status") == "accepted":
         if _commands_include_type(commands, "run_workflow"):
             agent_instruction = (
                 "Report briefly that the workflow was accepted and is continuing on the canvas. "
