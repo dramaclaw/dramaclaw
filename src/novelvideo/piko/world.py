@@ -180,6 +180,7 @@ class OnlinePlayer:
     y: float
     facing: str
     websocket: WebSocket
+    public_task_status: str | None = None
     instance_id: str = ""
     connection_token: str = ""
     last_chat_at: float = 0.0
@@ -212,6 +213,7 @@ class OnlinePlayer:
             "x": self.x,
             "y": self.y,
             "facing": self.facing,
+            "task_status": self.public_task_status,
             "seat_id": self.seat_id,
             "accessory_id": self.accessory_id,
         }
@@ -245,7 +247,12 @@ class PikoWorldHub:
         }
 
     async def join(
-        self, websocket: WebSocket, *, user_id: str, character: PikoCharacter
+        self,
+        websocket: WebSocket,
+        *,
+        user_id: str,
+        character: PikoCharacter,
+        public_task_status: str | None = None,
     ) -> OnlinePlayer:
         character = normalize_character_location(character)
         player = OnlinePlayer(
@@ -259,6 +266,7 @@ class PikoWorldHub:
             y=character.position_y,
             facing=character.facing,
             websocket=websocket,
+            public_task_status="running" if public_task_status == "running" else None,
             last_persist_at=monotonic(),
         )
         async with self._lock:
@@ -287,6 +295,32 @@ class PikoWorldHub:
         )
         return player
 
+    async def update_public_task_status(
+        self, player: OnlinePlayer, status: str | None
+    ) -> None:
+        normalized = "running" if status == "running" else None
+        if player.public_task_status == normalized:
+            return
+        player.public_task_status = normalized
+        await self._broadcast_scene(
+            player.scene_id,
+            {
+                "type": "player.task_status",
+                "character_id": player.character_id,
+                "task_status": normalized,
+            },
+            exclude=player.websocket,
+        )
+
+    async def update_profile(self, player: OnlinePlayer, *, nickname: str, bio: str) -> None:
+        if (player.nickname, player.bio) == (nickname, bio):
+            return
+        player.nickname, player.bio = nickname, bio
+        await self._broadcast_scene(
+            player.scene_id,
+            {"type": "player.updated", "player": player.public_dict()},
+            exclude=player.websocket,
+        )
     async def handle(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
         async with self._lock:
             if self._players.get(player.websocket) is not player:

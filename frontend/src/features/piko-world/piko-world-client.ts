@@ -170,6 +170,8 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
     seat_id: null as string | null,
   });
   sceneRef.current = sceneId;
+  // The connection belongs to the character id; profile and equipment updates
+  // are synchronized over the existing socket without reopening private chats.
 
   const send = useCallback((payload: Record<string, unknown>) => {
     const socket = socketRef.current;
@@ -403,6 +405,12 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
       stopHeartbeat();
       if (reconnectRef.current !== undefined) window.clearTimeout(reconnectRef.current);
       socketRef.current = null;
+      // onclose ignores a socket this cleanup already detached, so drop what it owned here.
+      setConnected(false);
+      setRemotePlayers([]);
+      setChatRequests([]);
+      setPrivateChatPeers([]);
+      setPrivateChatMessages([]);
     };
   }, [characterId, failPendingSends, finishSend, send, syncProfile]);
 

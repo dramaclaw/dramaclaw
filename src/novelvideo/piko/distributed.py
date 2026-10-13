@@ -300,7 +300,12 @@ class DistributedPikoWorldHub:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def join(
-        self, websocket: WebSocket, *, user_id: str, character: PikoCharacter
+        self,
+        websocket: WebSocket,
+        *,
+        user_id: str,
+        character: PikoCharacter,
+        public_task_status: str | None = None,
     ) -> OnlinePlayer:
         character = normalize_character_location(character)
         await self._ensure_tasks()
@@ -317,6 +322,7 @@ class DistributedPikoWorldHub:
             y=character.position_y,
             facing=character.facing,
             websocket=websocket,
+            public_task_status="running" if public_task_status == "running" else None,
             instance_id=room_id,
             connection_token=connection_token,
             last_persist_at=monotonic(),
@@ -336,6 +342,11 @@ class DistributedPikoWorldHub:
         if previous:
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 old = json.loads(previous)
+                old_room = old.get("room_id")
+                if old_room and old_room != room_id:
+                    # The replaced connection no longer owns the route, so its
+                    # disconnect() cannot take the character out of the old shard.
+                    await self._leave_room(old_room, character.id)
                 old_instance = old.get("server_instance")
                 if old_instance and previous_token:
                     await self._publish(
@@ -358,6 +369,36 @@ class DistributedPikoWorldHub:
         )
         return player
 
+    async def update_public_task_status(
+        self, player: OnlinePlayer, status: str | None
+    ) -> None:
+        normalized = "running" if status == "running" else None
+        if player.public_task_status == normalized:
+            return
+        player.public_task_status = normalized
+        await self._refresh_player(player)
+        await self._publish(
+            "room",
+            {
+                "type": "player.task_status",
+                "character_id": player.character_id,
+                "task_status": normalized,
+            },
+            room_id=player.instance_id,
+            exclude_character_id=player.character_id,
+        )
+
+    async def update_profile(self, player: OnlinePlayer, *, nickname: str, bio: str) -> None:
+        if (player.nickname, player.bio) == (nickname, bio):
+            return
+        player.nickname, player.bio = nickname, bio
+        await self._refresh_player(player)
+        await self._publish(
+            "room",
+            {"type": "player.updated", "player": player.public_dict()},
+            room_id=player.instance_id,
+            exclude_character_id=player.character_id,
+        )
     async def handle(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
         if await self.redis.get(self._route_key(player.character_id)) != player.connection_token:
             await self._retire_connection(player)
@@ -443,6 +484,7 @@ class DistributedPikoWorldHub:
                 y=saved_y,
                 facing=player.facing,
             )
+            await self._end_private_chats(player.character_id)
             await self._publish(
                 "room",
                 {"type": "player.left", "character_id": player.character_id},
@@ -832,6 +874,10 @@ class DistributedPikoWorldHub:
         if not await self.redis.sismember(self._active_chat_key(player.character_id), target_id):
             await self._safe_send(player.websocket, message_error(payload, "private_chat_unavailable"))
             return
+        if not await self.redis.exists(self._route_key(target_id)):
+            # The peer's server died in a room nobody is left to sweep.
+            await self._end_private_chats(target_id)
+            return
         if await self._redis_player(target_id) is None:
             await self._safe_send(player.websocket, message_error(payload, "private_chat_unavailable"))
             return
@@ -879,6 +925,25 @@ class DistributedPikoWorldHub:
             target_character_id=target_id,
         )
 
+    async def _end_private_chats(self, character_id: str) -> None:
+        """Drop every private chat of a departed character and tell the online peers."""
+        key = self._active_chat_key(character_id)
+        pipe = self.redis.pipeline(transaction=True)
+        pipe.smembers(key)
+        pipe.delete(key)
+        peer_ids = sorted((await pipe.execute())[0])
+        if not peer_ids:
+            return
+        pipe = self.redis.pipeline(transaction=True)
+        for peer_id in peer_ids:
+            pipe.srem(self._active_chat_key(peer_id), character_id)
+        await pipe.execute()
+        await self._publish(
+            "direct",
+            {"type": "chat.private.ended", "character_id": character_id},
+            target_character_ids=peer_ids,
+        )
+
     async def _allocate_room(self, scene_id: str, character_id: str) -> str:
         cutoff = time() - PRESENCE_TTL_SECONDS
         for shard in range(1, self.max_scene_instances + 1):
@@ -886,13 +951,14 @@ class DistributedPikoWorldHub:
             key = self._room_key(room_id)
             allocated = await self.redis.eval(
                 """
-                redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[2])
                 if redis.call('ZSCORE', KEYS[1], ARGV[1]) then
                     redis.call('ZADD', KEYS[1], ARGV[3], ARGV[1])
                     redis.call('EXPIRE', KEYS[1], ARGV[5])
                     return 1
                 end
-                if redis.call('ZCARD', KEYS[1]) < tonumber(ARGV[4]) then
+                -- Expired members stay for _evict_expired, which announces their exit.
+                local live = redis.call('ZCOUNT', KEYS[1], '(' .. ARGV[2], '+inf')
+                if live < tonumber(ARGV[4]) then
                     redis.call('ZADD', KEYS[1], ARGV[3], ARGV[1])
                     redis.call('EXPIRE', KEYS[1], ARGV[5])
                     return 1
@@ -948,12 +1014,6 @@ class DistributedPikoWorldHub:
                     redis.call('SREM', ARGV[9] .. peer, ARGV[2])
                 end
                 redis.call('DEL', KEYS[5])
-                if previous ~= '' then
-                    local ok, old = pcall(cjson.decode, previous)
-                    if ok and old.room_id and ARGV[10] .. old.room_id .. ':players' ~= KEYS[4] then
-                        redis.call('ZREM', ARGV[10] .. old.room_id .. ':players', ARGV[2])
-                    end
-                end
             end
             redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[5])
             redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[5])
@@ -977,16 +1037,14 @@ class DistributedPikoWorldHub:
             ROOM_TTL_SECONDS,
             "1" if claim else "0",
             f"{KEY_PREFIX}chat:active:",
-            f"{KEY_PREFIX}room:",
         )
 
     async def _room_snapshot(
         self, room_id: str, *, exclude: str | None = None
     ) -> list[dict[str, Any]]:
         key = self._room_key(room_id)
-        cutoff = time() - PRESENCE_TTL_SECONDS
-        await self.redis.zremrangebyscore(key, "-inf", cutoff)
-        character_ids = await self.redis.zrangebyscore(key, cutoff, "+inf")
+        await self._evict_expired(room_id)
+        character_ids = await self.redis.zrange(key, 0, -1)
         character_ids = [value for value in character_ids if value != exclude]
         if not character_ids:
             return []
@@ -1000,6 +1058,7 @@ class DistributedPikoWorldHub:
                 if player.get("room_id") == room_id:
                     players.append(
                         {
+                            "task_status": player.get("task_status"),
                             "seat_id": player.get("seat_id"),
                             "accessory_id": player.get("accessory_id"),
                             **{
@@ -1018,6 +1077,61 @@ class DistributedPikoWorldHub:
                         }
                     )
         return players
+
+    async def _leave_room(
+        self, room_id: str, character_id: str, *, stale_before: float | None = None
+    ) -> bool:
+        """Take a character out of a room and announce it, once across all servers.
+
+        With stale_before the member is only removed while its score is still that
+        old, so a refresh racing with the sweep keeps the player in the room.
+        """
+        removed = await self.redis.eval(
+            """
+            local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+            if not score or (ARGV[2] ~= '' and tonumber(score) > tonumber(ARGV[2])) then
+                return 0
+            end
+            return redis.call('ZREM', KEYS[1], ARGV[1])
+            """,
+            1,
+            self._room_key(room_id),
+            character_id,
+            "" if stale_before is None else stale_before,
+        )
+        if removed:
+            await self._publish(
+                "room",
+                {"type": "player.left", "character_id": character_id},
+                room_id=room_id,
+            )
+        return bool(removed)
+
+    async def _evict_expired(self, room_id: str) -> None:
+        """Remove room members that stopped being refreshed here and announce it.
+
+        A crashed API process never runs disconnect() for its players, and a session
+        taken over on another shard leaves its old membership behind. Whichever
+        surviving process claims such a member publishes the missing player.left.
+        """
+        cutoff = time() - PRESENCE_TTL_SECONDS
+        stale_ids = await self.redis.zrangebyscore(self._room_key(room_id), "-inf", cutoff)
+        if not stale_ids:
+            return
+        records = await self.redis.mget([self._player_key(value) for value in stale_ids])
+        for character_id, raw in zip(stale_ids, records):
+            current_room = None
+            if raw:
+                with contextlib.suppress(json.JSONDecodeError, TypeError, AttributeError):
+                    current_room = json.loads(raw).get("room_id")
+            if current_room == room_id:
+                # Still online in this room: its server refreshes on a skewed clock.
+                continue
+            if not await self._leave_room(room_id, character_id, stale_before=cutoff):
+                continue
+            if current_room is None:
+                # Offline everywhere. A character that only moved shards keeps its chats.
+                await self._end_private_chats(character_id)
 
     async def _redis_player(self, character_id: str) -> dict[str, Any] | None:
         raw = await self.redis.get(self._player_key(character_id))
@@ -1118,7 +1232,7 @@ class DistributedPikoWorldHub:
             raise
 
     async def _heartbeat_once(self) -> None:
-        """Refresh active clients and evict connections that stopped talking to us."""
+        """Refresh active clients, then evict stale connections and expired room members."""
         async with self._lock:
             players = list(self._players.values())
         cutoff = monotonic() - CLIENT_STALE_SECONDS
@@ -1134,6 +1248,11 @@ class DistributedPikoWorldHub:
             with contextlib.suppress(Exception):
                 if not await self._refresh_player(player):
                     await self._retire_connection(player)
+        async with self._lock:
+            rooms = {player.instance_id for player in self._players.values()}
+        for room_id in rooms:
+            with contextlib.suppress(Exception):
+                await self._evict_expired(room_id)
 
     async def _safe_send(self, websocket: WebSocket, payload: dict[str, Any]) -> None:
         lock = self._send_locks.get(websocket)

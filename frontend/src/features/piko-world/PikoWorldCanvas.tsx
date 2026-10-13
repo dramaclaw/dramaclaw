@@ -14,6 +14,7 @@ import { createMapExitMarker } from "./runtime/map-exit-marker";
 import type { PikoSpeech } from "./piko-public-chat";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Application, Container, Sprite, type Texture } from "pixi.js";
+import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 
 import { loadPikoMapEnvironment, loadPikoMapInteractions, loadPikoMapManifest, loadPikoMapNavigation, loadPikoMapOcclusion, resolvePikoMapAssetUrl } from "./runtime/map-package-loader";
@@ -39,12 +40,12 @@ import { createMayorActor } from "./runtime/mayor-actor";
 import { createResidentActor, RESIDENT_INITIAL_POSITION, RESIDENT_WORLD_SCALE } from "./runtime/resident-actor";
 import { PikoTownNpcInteraction } from "./PikoTownNpcInteraction";
 import { PikoResidentInteraction } from "./PikoResidentInteraction";
-import { townNpcsForMap, townNpcIdleSrc } from "./piko-town-npcs";
+import { townNpcsForMap, townNpcIdleSrc, townNpcTextKey } from "./piko-town-npcs";
 import { createTownNpcActor } from "./runtime/town-npc-actor";
 import { DOG_MAPS } from "./runtime/dog-world-routes";
 import { getWorldDog } from "./runtime/dog-world-session";
 import { PikoWelcomeDialog } from "./PikoWelcomeDialog";
-import { addCharacterPresentation } from "./runtime/character-presentation";
+import { addCharacterPresentation, syncCharacterName } from "./runtime/character-presentation";
 import { PIKO_CHARACTER_CURSOR, PIKO_DEFAULT_CURSOR } from "./piko-cursors";
 import { createClickFeedback } from "./runtime/click-feedback";
 import { PIKO_PLAYER_MOTION_COLUMNS, PIKO_PLAYER_WALK_COLUMNS, PIKO_FEMALE_PLAYER_MOTION_SRC, PIKO_MALE_PLAYER_MOTION_SRC, PIKO_PLAYER_SEATED_ART, PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS, PIKO_PLAYER_IDLE_CYCLE_MS, PIKO_PLAYER_SPEED, pikoPlayerIdleFrameAt, type PikoPlayerGender } from "./piko-player";
@@ -56,7 +57,7 @@ import type { PikoFacing, PikoRemotePlayer } from "./piko-world-client";
 
 import { canStand } from "./runtime/character-movement";
 import { canActivateTransport, createExitGate, enabledMapExits, type MapExit } from "./runtime/map-travel";
-import { PIKO_MAP_TRANSITIONS, isPikoMapId } from "./piko-map-transitions";
+import { isPikoMapId, pikoMapTitleKey } from "./piko-map-transitions";
 import type { PikoNavigation, PikoOcclusion } from "./runtime/map-package-schema";
 const NavigationEditor = lazy(() => import("./PikoNavigationEditor"));
 
@@ -207,6 +208,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
       occlusion: ReturnType<typeof createBakedActorOcclusion>;
       silhouette: ReturnType<typeof createResidentOcclusionSilhouette>;
       seatId: string | null;
+      nickname: string;
       presentation: ReturnType<typeof addCharacterPresentation>;
       accessory: ReturnType<typeof createPlayerAccessory>;
       accessoryId: PlayerAccessorySelection;
@@ -365,7 +367,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             const show = () => {
               if (disposed) return;
               clearTimeout(hallNoticeTimer);
-              setHallNotice({ body: noticeAction.message, position: noticeAction.approach });
+              setHallNotice({ body: i18n.t(noticeAction.messageKey), position: noticeAction.approach });
               hallNoticeTimer = setTimeout(() => setHallNotice(null), 3500);
             };
             if (residentActor.walkTo(noticeAction.approach, show)) clickFeedback?.show(noticeAction.approach);
@@ -645,7 +647,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             const actor = createTownNpcActor(sheet, nextApp.ticker,
               () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !debugEditingRef.current, npc);
             npcActors.push(actor);
-            npcHoverRef.current.set(npc.id, addCharacterPresentation(actor.container, npc.nickname));
+            npcHoverRef.current.set(npc.id, addCharacterPresentation(actor.container, i18n.t(townNpcTextKey(npc, "nickname"))));
             world.addChild(actor.container);
           }
           let playerX = residentActor.container.x, playerY = residentActor.container.y;
@@ -673,9 +675,10 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
               if (existing) {
                 existing.target = { x: remote.x, y: remote.y };
                 existing.accessoryId = remote.accessory_id ?? null;
-                existing.presentation.setName(remote.nickname);
                 updateRemoteSeat(existing, remote);
                 existing.actor.setFacing(remote.facing);
+                // player.updated renames a character without recreating its actor.
+                syncCharacterName(existing, remote.nickname);
                 if (Math.hypot(existing.actor.container.x - remote.x, existing.actor.container.y - remote.y) > 400) {
                   existing.actor.container.position.set(remote.x, remote.y);
                 }
@@ -699,6 +702,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
                     const dx = target.x - actor.container.x, dy = target.y - actor.container.y;
                     return Math.hypot(dx, dy) < 2 ? { x: 0, y: 0 } : { x: dx, y: dy };
                   },
+                  followsRemote: true,
                   footsteps: false,
                   motionColumns: PIKO_PLAYER_MOTION_COLUMNS,
                   walkColumns: PIKO_PLAYER_WALK_COLUMNS,
@@ -743,6 +747,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
                 occlusion: remoteOcclusion,
                 silhouette: remoteSilhouette,
                 seatId: null,
+                nickname: remote.nickname,
                 presentation: addCharacterPresentation(actor.container, remote.nickname, false, 6),
                 accessoryId: remote.accessory_id ?? null,
                 accessory: createPlayerAccessory(actor.body, accessoryTextures,
@@ -915,8 +920,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           role="status"
         >
           {loadState === "loading"
-            ? t("pikoWorld.mapLoading", { mapName: isPikoMapId(mapId) ? PIKO_MAP_TRANSITIONS[mapId].title : mapId })
-            : t("pikoWorld.mapLoadError", { mapName: isPikoMapId(mapId) ? PIKO_MAP_TRANSITIONS[mapId].title : mapId })}
+            ? t("pikoWorld.mapLoading", { mapName: isPikoMapId(mapId) ? t(pikoMapTitleKey(mapId)) : mapId })
+            : t("pikoWorld.mapLoadError", { mapName: isPikoMapId(mapId) ? t(pikoMapTitleKey(mapId)) : mapId })}
         </div>
       ) : null}
     </div>

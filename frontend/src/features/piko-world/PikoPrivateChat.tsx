@@ -78,15 +78,17 @@ function PrivateConversation({ active, peer, messages, ownCharacterId, ownNickna
   peer: PikoPrivateChatPeer;
   messages: PikoPrivateChatMessage[];
   ownCharacterId: string;
-  ownNickname: string;
+  ownNickname?: string;
   onOpenChange: (characterId: string, open: boolean) => void;
   onSend: (characterId: string, body: string) => boolean | Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const [dismissed, setDismissed] = useState(false);
+  // The dialog portals out of the hidden tray, so it has to honour `active` itself.
+  const visible = active && open && !dismissed;
   const openRef = useRef(true);
-  openRef.current = open;
+  openRef.current = visible;
   const [unread, setUnread] = useState(0);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -98,9 +100,10 @@ function PrivateConversation({ active, peer, messages, ownCharacterId, ownNickna
   const log = useRef<HTMLDivElement>(null);
   useEffect(() => { playPikoUiSound("open"); }, []);
   useEffect(() => {
-    onOpenChange(peer.character_id, active && open);
+    onOpenChange(peer.character_id, visible);
     return () => onOpenChange(peer.character_id, false);
-  }, [active, onOpenChange, open, peer.character_id]);
+  }, [onOpenChange, visible, peer.character_id]);
+  useEffect(() => { if (visible) setUnread(0); }, [visible]);
   useEffect(() => {
     let incoming = 0;
     for (const message of messages) {
@@ -116,7 +119,7 @@ function PrivateConversation({ active, peer, messages, ownCharacterId, ownNickna
   }, [messages, ownCharacterId]);
   useEffect(() => {
     if (log.current) log.current.scrollTop = log.current.scrollHeight;
-  }, [messages, open]);
+  }, [messages, visible]);
   const send = () => {
     const body = draft.trim();
     if (sendingRef.current || !body || Array.from(body).length > PIKO_CHAT_MAX_LENGTH) return;
@@ -162,7 +165,7 @@ function PrivateConversation({ active, peer, messages, ownCharacterId, ownNickna
         </button>
       </div>
     </RequestSkin>
-    <Dialog open={active && open} onOpenChange={value => {
+    <Dialog open={visible} onOpenChange={value => {
       setOpen(value);
       if (!value) playPikoUiSound("close");
     }}>
@@ -178,7 +181,7 @@ function PrivateConversation({ active, peer, messages, ownCharacterId, ownNickna
             return <article key={message.id}
               className={`flex w-fit min-w-0 max-w-[88%] flex-col gap-1 ${mine ? "self-end items-end" : "self-start items-start"}`}>
               <div className="flex items-center gap-2 px-1 text-[10px] leading-4 text-amber-950/55">
-                <span className="font-medium">{mine ? ownNickname : peer.nickname}</span>
+                <span className="font-medium">{mine ? ownNickname ?? t("pikoWorld.privateYou") : peer.nickname}</span>
                 <time>{new Date(message.sent_at).toLocaleTimeString([], {
                   hour: "2-digit", minute: "2-digit", hour12: false,
                 })}</time>
@@ -210,7 +213,7 @@ function PrivateConversation({ active, peer, messages, ownCharacterId, ownNickna
   </>;
 }
 
-export function PikoPrivateChat({ active, onOpenChange, ownNickname = "你",
+export function PikoPrivateChat({ active, onOpenChange, ownNickname,
   ownCharacterId = "", requests = [], peers = [], messages = [], onRespond,
   onSend }: {
   active: boolean;

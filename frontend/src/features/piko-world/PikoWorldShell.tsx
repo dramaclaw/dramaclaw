@@ -30,7 +30,7 @@ import { usePikoProfile } from "./piko-profile";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { safeLocalStorageSet } from "@/lib/localStorageQuota";
-import { PIKO_MAP_TRANSITIONS, isPikoMapId, isPikoMapOpen } from "./piko-map-transitions";
+import { isPikoMapId, isPikoMapOpen, pikoMapTitleKey } from "./piko-map-transitions";
 import { prepareMapTravel, type MapExit, type MapLocation } from "./runtime/map-travel";
 import type { PikoOwnTaskStatus } from "./use-piko-task-status";
 import { PikoWorldCanvas } from "./PikoWorldCanvas";
@@ -168,7 +168,7 @@ export function PikoWorldShell({ character = null, playerGender, onMusicMapChang
   const handleExit = useCallback(async (exit: MapExit) => {
     if (travelRequest.current || !isPikoMapId(exit.targetMapId)) return;
     if (!isPikoMapOpen(exit.targetMapId)) {
-      setClosedMapNotice({ mapName: PIKO_MAP_TRANSITIONS[exit.targetMapId].title });
+      setClosedMapNotice({ mapName: t(pikoMapTitleKey(exit.targetMapId)) });
       return;
     }
     const controller = new AbortController();
@@ -198,7 +198,7 @@ export function PikoWorldShell({ character = null, playerGender, onMusicMapChang
     } finally {
       window.clearTimeout(timeout);
     }
-  }, [location.mapId]);
+  }, [location.mapId, t]);
 
   const reloadMap = (destination: MapLocation) => {
     if (travelRequest.current || travelPending) return;
@@ -674,7 +674,9 @@ export function PikoWorldShell({ character = null, playerGender, onMusicMapChang
       {entered && <PikoMapTransition key={`${location.mapId}:${loadAttempt}`} mapId={location.mapId} loadState={mapLoadState} paused={travelPending} onComplete={handleMapTitleComplete} />}
       {entered && ((travelPending && slowTravel && travelFade !== "in") || travelError || mapLoadState === "error") && (
         <div className={`fixed bottom-12 left-1/2 z-[65] -translate-x-1/2 px-4 py-3 text-sm ${popupStyles.surface}`} role="status">
-          {travelPending && !travelError && mapLoadState !== "error" ? t("pikoWorld.mapLoading", { mapName: PIKO_MAP_TRANSITIONS[travelTarget].title }) : t("pikoWorld.mapLoadError", { mapName: PIKO_MAP_TRANSITIONS[travelError ? travelTarget : location.mapId].title })}
+          {travelPending && !travelError && mapLoadState !== "error"
+            ? t("pikoWorld.mapLoading", { mapName: t(pikoMapTitleKey(travelTarget)) })
+            : t("pikoWorld.mapLoadError", { mapName: t(pikoMapTitleKey(travelError ? travelTarget : location.mapId)) })}
           {!travelPending && mapLoadState === "error" && <button className={popupStyles.item} onClick={() => {
             reloadMap(location);
           }}>{t("pikoWorld.mapTravel.retry")}</button>}
