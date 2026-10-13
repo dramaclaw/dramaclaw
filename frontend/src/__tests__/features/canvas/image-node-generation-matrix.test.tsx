@@ -340,6 +340,34 @@ describe("图片节点：恢复与历史", () => {
     });
   });
 
+  it("批量重生成全部取消时保留旧图且非首任务不写错误", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [imageGenNode({
+        count: 2,
+        imageUrl: "/static/old.png",
+        previewImageUrl: "/static/old.png",
+      })],
+      [],
+    );
+    awaitTaskCompletion.mockImplementation(async (taskKey: string) => {
+      throw new TaskCompletionError("task cancelled", "cancelled", taskKey);
+    });
+
+    const { result } = renderHook(() => useImageGenerationForm("img-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    await expect(result.current.submit()).resolves.toBeUndefined();
+
+    expect(submitFreezoneGen).toHaveBeenCalledTimes(2);
+    expect(nodeData()).toMatchObject({
+      imageUrl: "/static/old.png",
+      previewImageUrl: "/static/old.png",
+      isGenerating: false,
+      generationTaskKey: "task-1",
+      generationError: null,
+      generationErrorDetails: null,
+    });
+  });
+
   it("旧任务结算时不清除新任务句柄", async () => {
     let rejectOldTask!: (error: Error) => void;
     awaitTaskCompletion.mockImplementationOnce(

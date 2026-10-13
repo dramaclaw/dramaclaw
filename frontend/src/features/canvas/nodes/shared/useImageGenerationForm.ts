@@ -44,7 +44,9 @@ import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImage
 import { describeCameraSelection } from '@/features/canvas/nodes/CameraPickerPopover';
 import {
   buildImageGenerationSuccessPatch,
+  hasGeneratedMedia,
   isStaleGenerationTask,
+  isTaskCancelledError,
   shouldWriteGenerationError,
 } from '@/features/canvas/application/generationTaskArbitration';
 import { useFreezoneCameraOptions } from '@/features/canvas/hooks/useFreezoneCameraOptions';
@@ -777,14 +779,27 @@ export function useImageGenerationForm(
           });
           throw error;
         }
+        const latestNodeData = (useCanvasStore
+          .getState()
+          .nodes
+          .find((node) => node.id === id)?.data ?? {}) as Record<string, unknown>;
+        // 每个并发任务都要独立识别取消：节点已有旧图时，取消重生成不应给旧图
+        // 覆盖失败横幅。只有 run 0 代表节点的整体任务状态，非首任务不能结束
+        // loading 或改写节点上持久化的任务句柄。
+        if (
+          taskKey
+          && isTaskCancelledError(error)
+          && hasGeneratedMedia(latestNodeData)
+        ) {
+          if (runIndex === 0) {
+            updateNodeData(id, { isGenerating: false, generationStartedAt: null });
+          }
+          return 'ignored';
+        }
         // 任务仲裁（stale / shouldWrite）只对 run 0 有意义：节点上只持久化了
         // run 0 的任务句柄，其余 run 的 taskKey 必然对不上，套用仲裁会把
         // 它们的失败全部误判为「过期任务」而静默吞掉。
         if (runIndex === 0) {
-          const latestNodeData = (useCanvasStore
-            .getState()
-            .nodes
-            .find((node) => node.id === id)?.data ?? {}) as Record<string, unknown>;
           if (
             taskKey
             && isStaleGenerationTask({ nodeData: latestNodeData, taskKey })
