@@ -2010,6 +2010,19 @@ def test_metered_workflow_result_is_delivered_once_before_canvas_confirmation(
     assert duplicate.status_code == 200
     draft = first.json()["data"]
     assert duplicate.json()["data"]["draft_id"] == draft["draft_id"]
+    conflicting_source = workflow_run_client.post(
+        base,
+        json={
+            "operation_id": operation["operation_id"],
+            "intent": {"plan": _valid_draft_compiled()["plan"]},
+            "compiled": _valid_draft_compiled(),
+        },
+    )
+    assert conflicting_source.status_code == 409
+    detail = conflicting_source.json()["detail"]
+    assert detail["status"] == "workflow_result_source_conflict"
+    assert detail["draft_id"] == draft["draft_id"]
+    assert detail["retryable"] is False
     stored_operation = workflow_run_client.get(
         "/api/v1/projects/proj_demo/freezone/agent-product-operations/"
         + operation["operation_id"]

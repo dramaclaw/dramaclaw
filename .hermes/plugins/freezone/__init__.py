@@ -6188,9 +6188,12 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
         preview_instruction
         + "Do not call freezone_get_workflow: this result is the durable draft receipt. "
         "Do not mention credits, billing, pricing, or editions. "
-        "Wait for user confirmation, then call freezone_confirm_workflow_draft with the exact "
-        "draft_id and revision. To change the topology, prepare a new complete Plan draft; never "
-        "fall back to direct canvas commands."
+        "Wait for user confirmation and end this turn without another workflow write. "
+        "Only after a later user message explicitly requests a change, call "
+        "freezone_patch_workflow_draft on this draft with changes.step_updates and/or "
+        "changes.bindings and its expected_revision. Confirm the exact draft_id and revision "
+        "only after confirmation; never prepare a replacement draft or fall back to direct "
+        "canvas commands."
     )
     return tool_result(result)
 
@@ -6229,10 +6232,9 @@ def _delivered_workflow_draft_for_operation(
         _request(
             "GET",
             _workflow_draft_api_path(project_id, canvas_id, draft_id),
-            query={"view": "summary"},
         )
     )
-    if payload is None:
+    if payload is None or not isinstance((payload.get("intent") or {}).get("plan"), dict):
         return None
     result = public_workflow_draft(payload, compact_preview=True)
     result["next_action"] = "review_and_confirm"
@@ -11446,7 +11448,7 @@ TOOLS = (
         "freezone_prepare_workflow",
         _schema(
             "freezone_prepare_workflow",
-            "Prepare a persisted workflow using server-owned compilation. Provide exactly one of intent or plan; user_goal belongs in intent, while a plan can use summary for the user goal and does not accept user_goal. Optional bindings declare prompt/context/reference/dependency/composition usage. A planning-to-generator prompt binding requires actual prompt text and preserves the original planning role. Returns compact preview; does not create canvas nodes or execute. Follow normal product admission and confirm the returned revision via freezone_confirm_workflow_draft.",
+            "Prepare a persisted workflow using server-owned compilation. Provide exactly one of intent or plan; user_goal belongs in intent, while a plan can use summary for the user goal and does not accept user_goal. Use plan when the user requires an exact node count, exact node set, or exact dependency graph; use intent for the selected Skill's standard topology. Optional bindings declare prompt/context/reference/dependency/composition usage. A planning-to-generator prompt binding requires actual prompt text and preserves the original planning role. Returns compact preview; does not create canvas nodes or execute. Follow normal product admission and confirm the returned revision via freezone_confirm_workflow_draft.",
             {
                 **_SCOPE_PROPS,
                 "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
@@ -11512,6 +11514,9 @@ TOOLS = (
                 "Do not invent low/medium quality or a recommended model id. On preflight "
                 "failure, fix all returned blockers together using allowed_values or "
                 "available_models. Ask the user before changing an explicit requirement. "
+                "Use this compact Intent entry point only for the Skill's standard topology. "
+                "When the user requires an exact node count, node set, or dependency graph, use "
+                "freezone_prepare_workflow_plan_draft with one complete Plan instead. "
                 "Do not pass draft_id, do not pass intent as a string, and "
                 "do not use execute_code. Use freezone_patch_workflow_draft for an existing draft."
             ),
@@ -11607,7 +11612,9 @@ TOOLS = (
             "freezone_prepare_workflow_plan_draft",
             "Validate and prepare one complete agent-authored freezone_workflow_plan.v1 as a "
             "persisted draft. This is the only custom-topology entry point and returns an exact "
-            "preview. It never writes canvas nodes directly. After the user reviews the "
+            "preview. Use it when the user requires an exact node count, exact node set, or "
+            "exact dependency graph, even when its stages resemble the standard template. "
+            "It never writes canvas nodes directly. After the user reviews the "
             "preview, use freezone_confirm_workflow_draft with its draft_id and revision.",
             {
                 **_SCOPE_PROPS,

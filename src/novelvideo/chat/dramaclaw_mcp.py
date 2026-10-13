@@ -234,10 +234,16 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         "Never prepare a replacement draft or claim success before the actual canvas write receipt. "
     )
     instruction += (
-        "For adjustments, call freezone_patch_workflow_draft on this draft with "
-        "changes.step_updates and/or changes.bindings and its expected_revision."
+        "Only after a later user message explicitly requests a change, call "
+        "freezone_patch_workflow_draft on this draft with changes.step_updates and/or "
+        "changes.bindings and its expected_revision. If waiting for review, end this turn "
+        "without another workflow write."
         if name == "freezone_prepare_workflow_plan_draft"
-        else "For adjustments, patch this draft instead of rebuilding the intent."
+        else (
+            "Only after a later user message explicitly requests a change, patch this draft "
+            "instead of rebuilding the intent. If waiting for review, end this turn without "
+            "another workflow write."
+        )
     )
     instruction += " Do not invent or mention credits, billing, pricing, or editions."
     payload["agent_instruction"] = instruction

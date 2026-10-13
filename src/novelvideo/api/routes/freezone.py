@@ -15022,6 +15022,15 @@ async def _prepare_workflow_source(body: dict, user: dict) -> dict:
         raise HTTPException(400, str(exc)) from exc
 
 
+def _workflow_draft_source_kind(source: dict) -> str:
+    intent = source.get("intent")
+    if isinstance(source.get("plan"), dict) or (
+        isinstance(intent, dict) and isinstance(intent.get("plan"), dict)
+    ):
+        return "exact_plan"
+    return "compact_intent"
+
+
 async def _validate_workflow_draft_submission(body: dict, user: dict) -> dict:
     """Rebuild validation evidence at the HTTP boundary, not in the agent."""
     from novelvideo.freezone.agent_workflows.catalog import validate_agent_workflow_plan
@@ -15193,6 +15202,22 @@ async def create_canvas_workflow_draft(
             draft_id=existing_id,
         )
         if existing is not None:
+            if _workflow_draft_source_kind(body) != _workflow_draft_source_kind(existing):
+                raise HTTPException(
+                    409,
+                    {
+                        "ok": False,
+                        "status": "workflow_result_source_conflict",
+                        "error": (
+                            "workflow result operation already delivered a draft from a "
+                            "different workflow source kind"
+                        ),
+                        "draft_id": existing_id,
+                        "revision": existing.get("revision"),
+                        "retryable": False,
+                        "next_action": "use_existing_draft",
+                    },
+                )
             await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
             return {
                 "ok": True,

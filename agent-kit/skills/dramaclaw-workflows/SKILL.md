@@ -247,16 +247,20 @@ Route between the normal draft flow and the exact topology path in this priority
    planner: set `planner.item_count=N` and `planner.video_dependency="sequential"`. Do not author
    `items`, nodes, or edges for that pattern. The compiler adds execution-only `dependency_for`
    edges between consecutive clips, so earlier clips are not sent as media references.
-2. Otherwise, when the user explicitly names required nodes and their dependency order that
-   deviate from the matching Skill's template, use the exact topology path in
+2. Otherwise, when the user explicitly requires an exact canvas node count or node set, or names
+   required nodes and a dependency order that deviates from the matching Skill's template, use the
+   exact topology path in
    [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan as
-   a persisted draft even when a production Skill also matches. The Plan must include top-level
+   a persisted draft even when its stages resemble the standard template or a production Skill
+   matches. Exact cardinality words such as "exactly", "only", and "唯一" are topology
+   requirements when they refer to canvas nodes; do not reinterpret them as a compact planner item
+   count. The Plan must include top-level
    `schema_version` and `skill.id`/`skill.version` copied from the selected production Skill;
    `generation_answers` never substitutes for the complete Plan.
    Episode totals, Beat totals, shot totals, duration, and other business counts alone do not enter
    this path. Keep them in compact Intent inputs or the standard planner. Only treat them as exact
    topology when the user explicitly requires those items to exist as individual canvas nodes and
-   specifies a dependency graph that differs from the standard template.
+   specifies their exact set or a dependency graph that differs from the standard template.
 3. When an explicit planner instruction and the listed topology genuinely conflict (for example
    the standard planner is named but a mandatory template stage is dropped), ask one
    single-question clarification with `freezone_request_user_clarification` before choosing a

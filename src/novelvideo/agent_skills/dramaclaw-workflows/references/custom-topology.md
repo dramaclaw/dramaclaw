@@ -1,8 +1,10 @@
 # Exact custom workflow topology
 
-Use this path when the user explicitly names required nodes and dependencies that deviate from the
-matching Skill's standard template. A matching production Skill does not turn a genuinely custom
-topology request into the normal draft flow. An explicit planner instruction takes priority over
+Use this path when the user explicitly requires an exact canvas node count or node set, or names
+required nodes and dependencies that deviate from the matching Skill's standard template. Exact
+node cardinality remains on this path even when its stages resemble the standard template. A
+matching production Skill does not turn a genuinely custom topology request into the normal draft
+flow. An explicit planner instruction takes priority over
 this heuristic: when the user names the standard planner or the Skill's standard flow and the
 listed nodes merely restate that template (same stages, order, and dependencies), stay on the
 normal Intent path; when the instruction and the listed topology conflict, ask one single-question

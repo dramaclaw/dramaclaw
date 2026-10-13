@@ -263,6 +263,8 @@ def test_external_mcp_plan_draft_keeps_custom_topology_in_the_draft_flow():
     assert "changes.bindings" in adapted["agent_instruction"]
     assert "expected_revision" in adapted["agent_instruction"]
     assert "prepare a new complete Plan draft" not in adapted["agent_instruction"]
+    assert "later user message explicitly requests a change" in adapted["agent_instruction"]
+    assert "end this turn" in adapted["agent_instruction"]
 
 
 def test_plugin_reads_turn_token_file_lazily(monkeypatch, tmp_path):
