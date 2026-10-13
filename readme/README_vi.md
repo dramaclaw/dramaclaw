@@ -157,43 +157,47 @@ Nó được xây cho người sáng tạo, studio độc lập và kỹ sư sá
 
 ### Xia Director — agent
 
+Xia Director chuyển yêu cầu sáng tạo bằng ngôn ngữ tự nhiên thành workflow thực thi trên canvas, kết nối phát triển kịch bản, tạo tài sản và ghép video.
+
 <p align="center">
   <img src="../assets/readme/freezone-agent.gif" width="900" alt="Xia Director — canvas workflow"/>
 </p>
-<p align="center"><sub>Demo Xia Director: mô tả yêu cầu, xác nhận workflow, rồi theo dõi việc tạo node, sinh nội dung và ghép video trên canvas.</sub></p>
+<p align="center"><sub>Lập kế hoạch workflow, điều phối node, tạo tài sản và ghép video từ yêu cầu bằng ngôn ngữ tự nhiên.</sub></p>
 
-**Hiện tại**
-
-Các tính năng agent dưới đây đã có trên nhánh mã nguồn `main`; image đã phát hành có thể vẫn dùng phiên bản cũ hơn.
-
-- **Làm việc trên canvas** &mdash; mô tả bộ phim, xác nhận workflow, rồi Xia Director tạo, kết nối, bố trí và chạy các node. Theo dõi tiến độ và dùng công cụ workflow để khôi phục các bước thất bại.
-- **Danh mục workflow và skill cộng đồng** &mdash; 11 workflow skill và 60 recipe cho phim ngắn, quảng cáo thương mại điện tử, nhân vật IP, nội dung mạng xã hội và nhiều hơn nữa; cài đặt, xuất và chia sẻ bundle skill / recipe.
-- **Mở cho các agent khác** &mdash; [Agent Kit](../agent-kit/README.md) mang cùng workflow tới Codex, Claude Code, OpenClaw, Hermes, WorkBuddy và các stdio MCP client khác. Agent tích hợp xác nhận workflow trong trình duyệt; agent bên ngoài xác nhận trong chat của mình, còn canvas đang mở thực thi thay đổi.
-- **Hiểu dự án của bạn** &mdash; kiểm tra tiến độ, đẩy các tác vụ kịch bản / cảnh quay, rà soát mức độ hoàn chỉnh của sản phẩm bàn giao và gợi ý bước tiếp theo
+- **Điều phối workflow trên canvas** &mdash; lập kế hoạch, tạo, kết nối và bố trí node theo yêu cầu sáng tạo; thực thi workflow đã xác nhận, theo dõi tiến độ và khôi phục khi thất bại.
+- **Danh mục workflow và mở rộng skill** &mdash; 11 workflow skill và 60 recipe cho phim ngắn, quảng cáo thương mại điện tử, nhân vật IP và nội dung mạng xã hội; cài đặt, xuất và chia sẻ bundle skill / recipe.
+- **Tích hợp agent bên ngoài** &mdash; [Agent Kit](../agent-kit/README.md) cung cấp cùng workflow sản xuất cho Codex, Claude Code, OpenClaw, Hermes, WorkBuddy và các MCP client khác.
+- **Ngữ cảnh dự án và quản lý tác vụ** &mdash; kiểm tra tiến độ dự án, triển khai tác vụ kịch bản và cảnh quay, kiểm tra sản phẩm bàn giao và đề xuất bước sản xuất tiếp theo.
 
 <br/>
 
 ### Sân khấu đạo diễn 3D (Previz)
 
-đã merge vào `staging`, đang thử nghiệm kín. Tạo bối cảnh blockout từ ảnh tham chiếu, sắp xếp nhân vật và đạo cụ, xem trước chuyển động và đường đi trên timeline đa track, điều chỉnh camera bằng thông số ống kính / cảm biến. Chụp ảnh hoặc ghi hình rồi đưa kết quả về các node canvas được kết nối.
+**Đang thử nghiệm kín**
+
+Công cụ previz 3D trong trình duyệt để bố trí bối cảnh, dàn cảnh nhân vật và thiết kế camera, tích hợp vào canvas dưới dạng node có thể tái sử dụng.
 
 <p align="center">
   <img src="../assets/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
 </p>
-<p align="center">
-  <img src="../assets/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
-</p>
-<p align="center"><sub>Giao diện thử nghiệm kín: ảnh tham chiếu nối với node Previz và bối cảnh blockout 3D được tạo từ ảnh đó.</sub></p>
+<p align="center"><sub>Ảnh tham chiếu và node Previz được kết nối.</sub></p>
 
 <p align="center">
   <img src="../assets/readme/previz-canvas-node.gif" width="800" alt="Previz — stage editing and canvas output"/>
 </p>
 
+- **Dựng bối cảnh blockout** &mdash; tạo bối cảnh 3D từ ảnh tham chiếu và bố trí đạo cụ để xác định cấu trúc không gian.
+- **Dàn cảnh và chuyển động nhân vật** &mdash; phối hợp nhân vật, clip chuyển động và đường đi trên timeline đa track.
+- **Điều khiển camera và ống kính** &mdash; điều chỉnh tiêu cự, kích thước cảm biến và vị trí camera để xem trước khung hình và theo dõi cận cảnh.
+- **Đầu ra canvas** &mdash; chụp khung hình hoặc ghi hình vào các node được kết nối để tham chiếu khi tạo ảnh và video tiếp theo.
+
 <br/>
 
 ### Truyện tương tác
 
-đang thử nghiệm kín. Đặt lựa chọn phân nhánh và biến truyện trên canvas, biên dịch thành truyện ink và xuất trình phát HTML độc lập, kèm thống kê playtest và độ phủ đường đi. Nhánh phát triển: `feat/canvas-fmv`.
+**Đang thử nghiệm kín**
+
+Đặt lựa chọn phân nhánh và biến truyện trên canvas, biên dịch thành truyện ink và xuất trình phát HTML độc lập, kèm thống kê playtest và độ phủ đường đi.
 
 <br/>
 

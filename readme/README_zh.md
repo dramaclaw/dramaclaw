@@ -156,43 +156,47 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 
 ### 虾导 —— 智能体
 
+虾导将自然语言创作需求转化为可执行的画布工作流，串联剧本开发、素材生成与视频合成。
+
 <p align="center">
   <img src="../assets/readme/freezone-agent.gif" width="900" alt="Xia Director — canvas workflow"/>
 </p>
-<p align="center"><sub>虾导演示：描述需求、确认工作流，在画布上完成节点创建、素材生成与成片合成。</sub></p>
+<p align="center"><sub>自然语言需求驱动的工作流规划、节点编排、素材生成与视频合成。</sub></p>
 
-**现在**
-
-以下智能体能力已进入 `main` 源码分支；已发布镜像可能仍对应较早版本。
-
-- **直接上画布干活** &mdash; 描述创作需求，确认工作流后，虾导创建并连接节点、排版、运行；可以查看执行进度，并通过工作流工具恢复失败步骤
-- **工作流目录与社区技能** &mdash; 11 个工作流技能 + 60 个配方，覆盖快速漫剧、电商广告、IP 角色广告、社媒内容等；技能与配方支持安装、导出和分享
-- **对其它 agent 开放** &mdash; [Agent Kit](../agent-kit/README.md) 将同一套工作流带给 Codex、Claude Code、OpenClaw、Hermes、WorkBuddy 及其它 stdio MCP 客户端。内置智能体在浏览器里确认工作流；外部 Agent 在自己的聊天中确认，由打开的画布执行写入
-- **懂你的项目** &mdash; 查询进度、推进脚本 / 镜头任务、检查交付完整性并给出下一步建议
+- **画布工作流编排** &mdash; 根据创作需求规划、创建、连接与布局节点；确认后执行工作流，支持进度追踪与失败恢复
+- **工作流目录与技能扩展** &mdash; 内置 11 个工作流技能与 60 个配方，覆盖快速漫剧、电商广告、IP 角色广告、社媒内容等场景；支持技能与配方包的安装、导出和分享
+- **外部智能体集成** &mdash; 通过 [Agent Kit](../agent-kit/README.md)，为 Codex、Claude Code、OpenClaw、Hermes、WorkBuddy 及其它 MCP 客户端提供统一的生产工作流接入
+- **项目上下文与任务管理** &mdash; 查询项目进度、推进剧本与镜头任务、检查交付完整性，并提供后续生产步骤建议
 
 <br/>
 
 ### 3D 导演台（预演台）
 
-已合入 `staging`，内测中。从参考图生成 3D 场景，安排角色与道具，通过多轨时间线预演动作和走位，使用镜头 / 传感器参数控制机位；截图或录制结果直接接回画布节点
+**内测中**
+
+浏览器内的 3D 镜头预演工具，以画布节点组织场景、角色与相机，支持空间布局、动作调度和镜头设计。
 
 <p align="center">
   <img src="../assets/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
 </p>
-<p align="center">
-  <img src="../assets/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
-</p>
-<p align="center"><sub>内测界面：参考图连接预演台节点，生成对应的 3D 场景。</sub></p>
+<p align="center"><sub>参考图与关联的预演台节点。</sub></p>
 
 <p align="center">
   <img src="../assets/readme/previz-canvas-node.gif" width="800" alt="Previz — stage editing and canvas output"/>
 </p>
 
+- **场景构建** &mdash; 从参考图生成 3D 场景，配置道具与空间布局
+- **角色调度与动作预演** &mdash; 在多轨时间线上编排角色动作、运动路径与走位
+- **机位与镜头控制** &mdash; 调整焦距、传感器尺寸与相机位置，预览镜头构图和特写跟踪
+- **画布输出** &mdash; 将截帧与预演录制输出至关联节点，作为后续图像与视频生成的参考
+
 <br/>
 
 ### 互动剧
 
-内测中。在画布上设置分支选择点与剧情变量，编译成 ink 故事并导出为独立 HTML 播放器，带试玩统计与路径覆盖。开发分支：`feat/canvas-fmv`
+**内测中**
+
+在画布上设置分支选择点与剧情变量，编译成 ink 故事并导出为独立 HTML 播放器，带试玩统计与路径覆盖。
 
 <br/>
 

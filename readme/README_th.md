@@ -157,43 +157,47 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 
 ### Xia Director — agent
 
+Xia Director แปลงบรีฟสร้างสรรค์ด้วยภาษาธรรมชาติเป็น workflow ที่ทำงานบน canvas เชื่อมการพัฒนาบท การสร้างแอสเซ็ต และการรวมวิดีโอเข้าด้วยกัน
+
 <p align="center">
   <img src="../assets/readme/freezone-agent.gif" width="900" alt="Xia Director — canvas workflow"/>
 </p>
-<p align="center"><sub>Demo Xia Director: บรรยายงาน ยืนยัน workflow แล้วติดตามการสร้าง node สร้างสื่อ และรวมวิดีโอบน canvas</sub></p>
+<p align="center"><sub>วางแผน workflow จัดการ node สร้างแอสเซ็ต และรวมวิดีโอจากบรีฟภาษาธรรมชาติ</sub></p>
 
-**วันนี้**
-
-ความสามารถของ agent ด้านล่างมีแล้วในซอร์ส branch `main`; image ที่เผยแพร่อาจยังเป็นเวอร์ชันก่อนหน้า
-
-- **ทำงานบน canvas** &mdash; บรรยายหนังที่ต้องการ ยืนยัน workflow แล้ว Xia Director จะสร้าง เชื่อม จัดวาง และรัน node ติดตามความคืบหน้าและใช้เครื่องมือ workflow เพื่อกู้คืนขั้นตอนที่ล้มเหลว
-- **แคตตาล็อก workflow และ skill จากชุมชน** &mdash; workflow skill 11 รายการและ recipe 60 รายการสำหรับละครสั้น โฆษณาอีคอมเมิร์ซ ตัวละคร IP เนื้อหาโซเชียล และอื่น ๆ พร้อมติดตั้ง ส่งออก และแชร์ bundle ของ skill / recipe
-- **เปิดให้ agent อื่น** &mdash; [Agent Kit](../agent-kit/README.md) นำ workflow เดียวกันไปใช้กับ Codex, Claude Code, OpenClaw, Hermes, WorkBuddy และ stdio MCP client อื่น ๆ agent ในตัวยืนยัน workflow ในเบราว์เซอร์ ส่วน agent ภายนอกยืนยันในแชตของตนเอง แล้ว canvas ที่เปิดอยู่จะดำเนินการเปลี่ยนแปลง
-- **รู้จักโปรเจกต์ของคุณ** &mdash; ตรวจความคืบหน้า เดินหน้างานบท / ช็อต ตรวจสอบความครบถ้วนของงานส่งมอบ และแนะนำขั้นตอนถัดไป
+- **การจัดการ workflow บน canvas** &mdash; วางแผน สร้าง เชื่อมต่อ และจัดวาง node ตามบรีฟสร้างสรรค์ รัน workflow หลังยืนยัน พร้อมติดตามความคืบหน้าและกู้คืนเมื่อขั้นตอนล้มเหลว
+- **แคตตาล็อก workflow และส่วนขยาย skill** &mdash; workflow skill 11 รายการและ recipe 60 รายการสำหรับละครสั้น โฆษณาอีคอมเมิร์ซ ตัวละคร IP และเนื้อหาโซเชียล พร้อมติดตั้ง ส่งออก และแชร์ bundle ของ skill / recipe
+- **การเชื่อมต่อ agent ภายนอก** &mdash; [Agent Kit](../agent-kit/README.md) เปิด workflow การผลิตเดียวกันให้ Codex, Claude Code, OpenClaw, Hermes, WorkBuddy และ MCP client อื่น ๆ
+- **บริบทโปรเจกต์และการจัดการงาน** &mdash; ตรวจความคืบหน้าโปรเจกต์ ดำเนินงานบทและช็อต ตรวจความครบถ้วนของงานส่งมอบ และแนะนำขั้นตอนการผลิตถัดไป
 
 <br/>
 
 ### เวทีผู้กำกับ 3D (Previz)
 
-รวมเข้า `staging` แล้ว อยู่ระหว่างการทดสอบแบบปิด สร้างฉาก blockout จากภาพอ้างอิง จัดวางตัวละครและพร็อพ ดูตัวอย่างการเคลื่อนไหวและเส้นทางบน timeline หลายแทร็ก และปรับกล้องด้วยค่าของเลนส์ / เซ็นเซอร์ จับภาพหรือบันทึกวิดีโอแล้วส่งกลับไปยัง node ที่เชื่อมต่อบน canvas
+**อยู่ระหว่างการทดสอบแบบปิด**
+
+เครื่องมือ previz 3D ในเบราว์เซอร์สำหรับจัดวางฉาก กำหนดตำแหน่งตัวละคร และออกแบบกล้อง เชื่อมเข้ากับ canvas เป็น node ที่ใช้ซ้ำได้
 
 <p align="center">
   <img src="../assets/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
 </p>
-<p align="center">
-  <img src="../assets/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
-</p>
-<p align="center"><sub>หน้าจอทดสอบแบบปิด: ภาพอ้างอิงที่เชื่อมกับ node Previz และฉาก blockout 3D ที่สร้างจากภาพนั้น</sub></p>
+<p align="center"><sub>ภาพอ้างอิงและ node Previz ที่เชื่อมต่อกัน</sub></p>
 
 <p align="center">
   <img src="../assets/readme/previz-canvas-node.gif" width="800" alt="Previz — stage editing and canvas output"/>
 </p>
 
+- **การสร้างฉาก blockout** &mdash; สร้างฉาก 3D จากภาพอ้างอิงและจัดวางพร็อพเพื่อกำหนดโครงสร้างพื้นที่
+- **การจัดตำแหน่งและการเคลื่อนไหวตัวละคร** &mdash; จัดตัวละคร คลิปการเคลื่อนไหว และเส้นทางบน timeline หลายแทร็ก
+- **การควบคุมกล้องและเลนส์** &mdash; ปรับทางยาวโฟกัส ขนาดเซ็นเซอร์ และตำแหน่งกล้อง เพื่อดูตัวอย่างการจัดเฟรมและการติดตามภาพระยะใกล้
+- **เอาต์พุตบน canvas** &mdash; จับเฟรมหรือบันทึกภาพตัวอย่างไปยัง node ที่เชื่อมต่อ เพื่อใช้เป็นภาพอ้างอิงในการสร้างภาพและวิดีโอต่อไป
+
 <br/>
 
 ### เรื่องราวแบบอินเทอร์แอคทีฟ
 
-อยู่ระหว่างการทดสอบแบบปิด กำหนดตัวเลือกแบบแตกแขนงและตัวแปรเรื่องราวบน canvas คอมไพล์เป็น ink story และส่งออก HTML player แบบ self-contained พร้อมสถิติ playtest และ path coverage Branch สำหรับพัฒนา: `feat/canvas-fmv`
+**อยู่ระหว่างการทดสอบแบบปิด**
+
+กำหนดตัวเลือกแบบแตกแขนงและตัวแปรเรื่องราวบน canvas คอมไพล์เป็น ink story และส่งออก HTML player แบบ self-contained พร้อมสถิติ playtest และ path coverage
 
 <br/>
 

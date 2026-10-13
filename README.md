@@ -157,43 +157,47 @@ It's built for creators, indie studios and creative engineers — run the whole 
 
 ### Xia Director — the agent
 
+Xia Director turns natural-language creative briefs into executable canvas workflows, connecting script development, asset generation and video composition.
+
 <p align="center">
   <img src="./assets/readme/freezone-agent.gif" width="900" alt="Xia Director — canvas workflow"/>
 </p>
-<p align="center"><sub>Xia Director demo: describe the task, confirm the workflow, then follow node creation, generation and composition on the canvas.</sub></p>
+<p align="center"><sub>Workflow planning, node orchestration, asset generation and video composition from a natural-language brief.</sub></p>
 
-**Today**
-
-The agent capabilities below are available in the `main` source branch; published images may contain an earlier version.
-
-- **Works on the canvas** &mdash; describe your film, confirm the workflow, and Xia Director creates, connects, lays out and runs the nodes. Follow execution progress and recover failed steps with the workflow tools.
-- **Workflow catalog and community skills** &mdash; 11 workflow skills and 60 recipes for short drama, e-commerce ads, IP character ads, social campaigns and more; install, export and share skill / recipe bundles.
-- **Open to other agents** &mdash; [Agent Kit](agent-kit/README.md) brings the same workflows to Codex, Claude Code, OpenClaw, Hermes, WorkBuddy and other stdio MCP clients. Confirm built-in agent workflows in the browser; external agents confirm in their own chat while the open canvas executes the changes.
-- **Knows your project** &mdash; checks progress, advances script / shot tasks, audits deliverable completeness and suggests next steps
+- **Canvas workflow orchestration** &mdash; plan, create, connect and arrange nodes from a creative brief; execute confirmed workflows with progress tracking and failure recovery.
+- **Workflow catalog and skill extensions** &mdash; 11 workflow skills and 60 recipes covering short drama, e-commerce ads, IP character ads and social content; install, export and share skill / recipe bundles.
+- **External agent integration** &mdash; [Agent Kit](agent-kit/README.md) exposes the same production workflows to Codex, Claude Code, OpenClaw, Hermes, WorkBuddy and other MCP clients.
+- **Project context and task management** &mdash; inspect project progress, advance script and shot tasks, check deliverable completeness and identify the next production steps.
 
 <br/>
 
 ### 3D director stage (Previz)
 
-merged into `staging`, in closed beta. Generate a blockout scene from a reference image, arrange characters and props, preview motion and paths on a multi-track timeline, and frame shots with lens / sensor controls. Capture images or record the preview back into connected canvas nodes.
+**In closed beta**
+
+An in-browser 3D previs tool for scene layout, character blocking and camera design, integrated into the canvas as a reusable node.
 
 <p align="center">
   <img src="./assets/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
 </p>
-<p align="center">
-  <img src="./assets/readme/previz-canvas-node-1.jpg" width="900" alt="Previz — generated 3D blockout scene"/>
-</p>
-<p align="center"><sub>Closed-beta preview: a reference image connected to the Previz node, followed by its generated 3D blockout scene.</sub></p>
+<p align="center"><sub>Reference image and its connected Previz node.</sub></p>
 
 <p align="center">
   <img src="./assets/readme/previz-canvas-node.gif" width="800" alt="Previz — stage editing and canvas output"/>
 </p>
 
+- **Scene blockout** &mdash; generate a 3D scene from a reference image and arrange props to establish the spatial layout.
+- **Character blocking and motion** &mdash; coordinate characters, motion clips and movement paths on a multi-track timeline.
+- **Camera and lens controls** &mdash; adjust focal length, sensor size and camera placement to preview framing and close-up tracking.
+- **Canvas output** &mdash; capture frames or record previews into connected canvas nodes for subsequent image and video generation.
+
 <br/>
 
 ### Interactive stories
 
-in closed beta. Set branching choices and story variables on the canvas, compile to an ink story and export a self-contained HTML player, with playtest stats and path coverage. Development branch: `feat/canvas-fmv`.
+**In closed beta**
+
+Set branching choices and story variables on the canvas, compile to an ink story and export a self-contained HTML player, with playtest stats and path coverage.
 
 <br/>
 
