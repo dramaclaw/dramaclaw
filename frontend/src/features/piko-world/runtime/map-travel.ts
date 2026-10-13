@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { MAP_EXIT_MARKERS, type PikoExitMarkerDefinition } from "../piko-map-connections";
-import { isPikoMapId, type PikoMapId } from "../piko-map-transitions";
+import { isPikoMapId, isPikoMapOpen, type PikoMapId } from "../piko-map-transitions";
 import { canStand } from "./character-movement";
 import { pointInPolygon, type PikoPoint } from "./navigation-geometry";
 import type { PikoNavigation } from "./map-package-schema";
@@ -39,6 +39,7 @@ export function createExitGate(exits: readonly MapExit[]) {
 export async function prepareMapTravel(source: PikoMapId, exit: MapExit, signal: AbortSignal) {
   if (!isPikoMapId(exit.targetMapId)) throw new Error("Unknown destination");
   const target = exit.targetMapId;
+  if (!isPikoMapOpen(source) || !isPikoMapOpen(target)) throw new Error("This scene is not open yet");
   if (!MAP_EXIT_MARKERS[source]?.some(marker => marker.exitId === exit.id && marker.targetMapId === target)) {
     throw new Error("This connection is not open");
   }

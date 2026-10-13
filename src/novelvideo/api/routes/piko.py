@@ -22,6 +22,7 @@ from novelvideo.project_context import resolve_project_context, user_id_from_api
 from novelvideo.ports.authz import AuthzError
 from novelvideo.piko.backend import character_store, world_hub
 from novelvideo.piko.protocol import parse_client_payload
+from novelvideo.piko.world import normalize_character_location
 from novelvideo.task_backend.subprocesses import EgressBoundaryError
 from novelvideo.task_state import get_task_manager
 
@@ -55,7 +56,7 @@ class CharacterUpsertRequest(BaseModel):
 async def get_character(user: dict = Depends(get_api_user)) -> dict[str, Any]:
     user_id = await user_id_from_api_user(user)
     character = await _store_call(character_store.get, user_id)
-    return {"character": character.public_dict() if character else None}
+    return {"character": normalize_character_location(character).public_dict() if character else None}
 
 
 @router.put("/character")
@@ -67,7 +68,7 @@ async def put_character(
         character_store.create_or_update,
         user_id, nickname=body.nickname, gender=body.gender, bio=body.bio.strip()
     )
-    return {"character": character.public_dict()}
+    return {"character": normalize_character_location(character).public_dict()}
 
 
 async def _authenticate_piko_ws(websocket: WebSocket) -> dict[str, Any]:
@@ -228,7 +229,7 @@ async def piko_world_ws(websocket: WebSocket) -> None:
 class TranslateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=80)
-    target_language: Language
+    target_language: Language = Field(description="Current interface language; non-English messages translate to English")
     conversation: str = Field(min_length=1, max_length=120)
 
     @field_validator("text")

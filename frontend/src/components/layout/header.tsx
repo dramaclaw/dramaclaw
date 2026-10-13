@@ -412,7 +412,15 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
             }
           }}>
             <DropdownMenuTrigger openOnHover delay={100} closeDelay={180} onClick={markPikoEntrySeen}
-              render={<Button id="piko-hub-entry" variant="ghost" size="sm" className={`${entryStyles.trigger} px-2 text-xs font-medium`} />}>
+              render={<Button id="piko-hub-entry" variant="ghost" size="sm" className={`${entryStyles.trigger} ${entryStyles.pikoTrigger} gap-1.5 px-2 text-xs font-medium`} />}>
+              <span className={entryStyles.pikoCapsule} aria-hidden="true">
+                <img
+                  src="/piko/entry/companion-capsule.png"
+                  alt=""
+                  draggable={false}
+                  className={entryStyles.pikoCapsuleIcon}
+                />
+              </span>
               <span className={entryStyles.pikoLabel}>
                 Piko Piko
                 {!pikoEntrySeen ? <NotificationDot className={entryStyles.pikoDot} /> : null}

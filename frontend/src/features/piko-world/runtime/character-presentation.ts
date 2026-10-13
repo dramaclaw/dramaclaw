@@ -1,13 +1,30 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { Container, Sprite, Text } from "pixi.js";
+import { Container, Graphics, Sprite, Text } from "pixi.js";
 import { PIKO_CHARACTER_CURSOR } from "../piko-cursors";
 
 /** Shared, non-transforming feedback keeps feet and contact shadows anchored. */
-export function addCharacterPresentation(container: Container, name?: string, interactive = true, nameGap = 4) {
+export function addCharacterPresentation(container: Container, name?: string, interactive = true, nameGap = 4, own = false) {
   const body = container.children[1] as Sprite;
+  const shadow = container.children[0] as Sprite;
   // Texture bounds keep the name stable when head accessories change child bounds.
   const label = createCharacterName(name ?? "", -body.anchor.y * body.texture.height * Math.abs(body.scale.y) - nameGap);
   container.addChild(label);
+  label.label = "character-nickname";
+  if (own) label.style.fill = "#dcf5ee";
+  const ring = own ? new Graphics({ label: "local-player-identity-ring", eventMode: "none" })
+    .ellipse(0, 0, 15, 5).stroke({ color: 0xb8e5e2, width: 1.2, alpha: 0.8 }) : null;
+  if (ring) container.addChildAt(ring, 0);
+  let gap = nameGap;
+  const updatePose = () => {
+    label.y = -body.anchor.y * body.texture.height * Math.abs(body.scale.y) - gap;
+    if (ring) {
+      ring.scale.copyFrom(body.scale);
+      ring.position.copyFrom(shadow.position);
+    }
+  };
+  // Scale and pivot can change indoors or when sitting, even without a new name.
+  label.onRender = updatePose;
+  updatePose();
   // Add a faint copy of the same nearest-sampled frame, without a filter
   // render target that can soften the pixel edges at fractional world scales.
   const highlight = new Sprite({ texture: body.texture, roundPixels: true });
@@ -36,8 +53,10 @@ export function addCharacterPresentation(container: Container, name?: string, in
     body.on("pointerout", () => setHovered(false));
   }
   return Object.assign(setHovered, {
-    setNameGap(gap: number) {
-      label.y = -body.anchor.y * body.texture.height * Math.abs(body.scale.y) - gap;
+    updatePose,
+    setNameGap(nextGap: number) {
+      gap = nextGap;
+      updatePose();
     },
     setName(name: string) {
       label.text = name;

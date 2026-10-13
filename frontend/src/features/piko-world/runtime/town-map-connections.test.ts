@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
 import { MAP_EXIT_MARKERS } from "../piko-map-connections";
-import { PIKO_MAP_TRANSITIONS, type PikoMapId } from "../piko-map-transitions";
+import { PIKO_MAP_TRANSITIONS, isPikoMapOpen, type PikoMapId } from "../piko-map-transitions";
 import { PikoMapPackageSchema } from "./map-package-schema";
 import { canStand } from "./character-movement";
 import { clearWalkSegment, findClickPath } from "./click-path";
@@ -61,13 +61,17 @@ for (const map of maps) {
   });
 }
 
-it("prepares all thirty-four directions with the correct source fallback in maps with multiple exits", async () => {
+it("prepares all ten open directions with safe source fallbacks and rejects the other connections", async () => {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok: true, json: async () => {
     const [, map, file] = url.match(/\/maps\/([^/]+)\/(.*)/)!;
     return read(map, file);
   } })));
   let directions = 0;
   for (const map of maps) for (const exit of enabledMapExits(packages.get(map)!.navigation)) {
+    if (!isPikoMapOpen(map) || !isPikoMapOpen(exit.targetMapId)) {
+      await expect(prepareMapTravel(map, exit, new AbortController().signal)).rejects.toThrow("not open yet");
+      continue;
+    }
     const result = await prepareMapTravel(map, exit, new AbortController().signal);
     expect(result.destination).toEqual({ mapId: exit.targetMapId, spawnId: exit.targetSpawnId });
     expect(result.fallback.mapId).toBe(map);
@@ -77,7 +81,7 @@ it("prepares all thirty-four directions with the correct source fallback in maps
       packages.get(map)!.navigation)).toBe(true);
     directions++;
   }
-  expect(directions).toBe(34);
+  expect(directions).toBe(10);
 });
 
 it("arms each courtyard exit independently", () => {

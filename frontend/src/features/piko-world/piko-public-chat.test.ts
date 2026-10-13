@@ -8,8 +8,8 @@ it("rejects bursts per account, accepts the exact cooldown boundary and isolates
   expect(gate.send("alice", "你好", 10000).ok).toBe(true);
   expect(gate.send("alice", "重复", 10000)).toEqual({ ok: false, reason: "cooldown" });
   expect(gate.send("bob", "你好", 10001).ok).toBe(true);
-  expect(gate.send("alice", "还没到", 12999).ok).toBe(false);
-  expect(gate.send("alice", "到时间了", 13000).ok).toBe(true);
+  expect(gate.send("alice", "还没到", 15999).ok).toBe(false);
+  expect(gate.send("alice", "到时间了", 16000).ok).toBe(true);
 });
 it("counts unicode characters and does not consume cooldown on invalid input", () => {
   const gate = createPikoChatGate();
@@ -22,17 +22,17 @@ it("replaces the bubble, expires from the latest send and hides it for other acc
   const { result, rerender, unmount } = renderHook(({ owner }) => usePikoPublicChat(owner), { initialProps: { owner: "bubble-test" } });
   act(() => { result.current.send("第一句"); });
   expect(result.current.speech?.body).toBe("第一句");
-  expect(result.current.remaining).toBe(3);
+  expect(result.current.remaining).toBe(6);
   act(() => { result.current.send("刷屏"); });
   expect(result.current.speech?.body).toBe("第一句");
-  act(() => vi.advanceTimersByTime(3000));
+  act(() => vi.advanceTimersByTime(6000));
   act(() => { result.current.send("第二句"); });
   act(() => vi.advanceTimersByTime(2000));
   expect(result.current.speech?.body).toBe("第二句");
   rerender({ owner: "someone-else" });
   expect(result.current.speech).toBeNull();
   rerender({ owner: "bubble-test" });
-  act(() => vi.advanceTimersByTime(8000));
+  act(() => vi.advanceTimersByTime(4000));
   expect(result.current.speech).toBeNull();
   unmount(); expect(vi.getTimerCount()).toBe(0);
 });

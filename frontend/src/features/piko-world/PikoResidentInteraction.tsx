@@ -8,6 +8,7 @@ import { RESIDENT_WORLD_SCALE } from "./runtime/resident-actor";
 import type { PikoViewportFit } from "./runtime/viewport-fit";
 import type { Point } from "./runtime/character-movement";
 import { playPikoUiSound } from "./piko-audio";
+import { SEATED_POSE } from "./runtime/seated-pose";
 import popupStyles from "./piko-popup.module.css";
 import iconStyles from "./piko-icon-button.module.css";
 
@@ -16,10 +17,12 @@ export type PikoInteractionTarget = {
 };
 
 /** Shared interaction surface for NPC information and online player requests. */
-export function PikoResidentInteraction({ target, position, fit, onBusyChange, onHover, onChatRequest }: {
+export function PikoResidentInteraction({ target, position, fit, onBusyChange, onHover, onOpenPrivateChat, worldScale = RESIDENT_WORLD_SCALE, seated = false }: {
   target: PikoInteractionTarget; position: Point; fit: PikoViewportFit;
   onBusyChange: (busy: boolean) => void; onHover: (hovered: boolean) => void;
-  onChatRequest?: () => boolean;
+  onOpenPrivateChat?: () => boolean;
+  worldScale?: number;
+  seated?: boolean;
 }) {
   const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -34,7 +37,7 @@ export function PikoResidentInteraction({ target, position, fit, onBusyChange, o
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
   useEffect(() => () => { onBusyChange(false); onHover(false); }, [onBusyChange, onHover]);
   const triggerId = `piko-resident-${target.id}`;
-  const scale = fit.scale * RESIDENT_WORLD_SCALE;
+  const scale = fit.scale * worldScale;
   return <>
     <DropdownMenu open={menuOpen} onOpenChange={open => {
       setMenuOpen(open);
@@ -44,21 +47,23 @@ export function PikoResidentInteraction({ target, position, fit, onBusyChange, o
         onPointerEnter={() => onHover(true)} onPointerLeave={() => onHover(false)}
         className="absolute cursor-pointer bg-transparent focus-visible:outline-2 focus-visible:outline-ring"
         style={{ left: fit.x + position.x * fit.scale - 16 * scale,
-          top: fit.y + position.y * fit.scale - 56 * scale, width: 32 * scale, height: 56 * scale }} />
+          top: fit.y + position.y * fit.scale - (seated ? SEATED_POSE.pivot.y : 56) * scale,
+          width: 32 * scale, height: (seated ? SEATED_POSE.footY : 56) * scale }} />
       <DropdownMenuContent side="right" align="start" sideOffset={8}
         finalFocus={panel ? false : undefined}
         className={`${popupStyles.surface} w-32 min-w-0 max-w-[calc(100vw-1rem)] p-1`}>
         <DropdownMenuItem className={popupStyles.item} onClick={() => { setMenuOpen(false); setPanel("profile"); playPikoUiSound("open"); }}>{t("pikoWorld.viewResidentInfo")}</DropdownMenuItem>
         <DropdownMenuItem className={popupStyles.item} onClick={() => {
           setMenuOpen(false);
-          if (onChatRequest?.() ?? true) setRequestNotice(previous => previous + 1);
+          if (onOpenPrivateChat) onOpenPrivateChat();
+          else setRequestNotice(previous => previous + 1);
           playPikoUiSound("open");
         }}>{t("pikoWorld.chatWithResident")}</DropdownMenuItem>
         <DropdownMenuItem className={popupStyles.item} onClick={() => playPikoUiSound("close")}>{t("common.close")}</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
     <div role="status" aria-live="polite" className="pointer-events-none absolute inset-x-4 bottom-6 z-30 flex justify-center">
-      {requestNotice > 0 && <p className={`${popupStyles.surface} m-0 px-4 py-2 text-center text-sm`}>{t(onChatRequest ? "pikoWorld.chatRequestSent" : "pikoWorld.localResidentChatNotice")}</p>}
+      {requestNotice > 0 && <p className={`${popupStyles.surface} m-0 px-4 py-2 text-center text-sm`}>{t("pikoWorld.localResidentChatNotice")}</p>}
     </div>
     <Dialog open={panel !== null} onOpenChange={open => { if (!open) setPanel(null); }}>
       <DialogContent showCloseButton={false} finalFocus={() => document.getElementById(triggerId)}

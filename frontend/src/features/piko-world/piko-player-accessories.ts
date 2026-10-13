@@ -13,7 +13,12 @@ export const PLAYER_ACCESSORIES = [
 ] as const;
 export type PlayerAccessoryId = typeof PLAYER_ACCESSORIES[number]["id"];
 export type PlayerAccessorySelection = PlayerAccessoryId | null;
+export function isPlayerAccessorySelection(value: unknown): value is PlayerAccessorySelection {
+  return value === null || PLAYER_ACCESSORIES.some(item => item.id === value);
+}
 export const accessoryDefinition = (id: PlayerAccessorySelection) => PLAYER_ACCESSORIES.find(item => item.id === id);
+export const playerAccessoryNameGap = (id: PlayerAccessorySelection, scale: number) =>
+  6 + Math.max(0, -(accessoryDefinition(id)?.y ?? 0)) * scale;
 export const accessorySrc = (item: typeof PLAYER_ACCESSORIES[number]) => `/piko/accessories/${item.file}.png`;
 export function accessoryPose(id: PlayerAccessoryId, facing: Facing) {
   const item = accessoryDefinition(id)!;

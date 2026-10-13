@@ -1,5 +1,7 @@
 import asyncio
+import json
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -11,6 +13,35 @@ from novelvideo.piko import translation
 
 def result(text="你好", target="zh"):
     return translation.Translation(translated_text=text, source_language="en", target_language=target)
+
+
+@pytest.mark.parametrize("source,interface,target", [
+    ("zh", "zh", "en"), ("ja", "zh", "en"), ("fr", "en", "en"),
+    ("en", "zh", "zh"), ("en-US", "zh", "zh"), ("en", "en", "en"),
+    ("en", "vi", "vi"), ("vi", "vi", "en"),
+])
+async def test_detected_language_controls_translation_direction(monkeypatch, source, interface, target):
+    import pydantic_ai
+    from novelvideo import config
+    prompts = []
+    output = translation.Translation(translated_text="translated", source_language=source, target_language=target)
+
+    class Agent:
+        def __init__(self, *args, **kwargs):
+            assert "always translate into English" in kwargs["system_prompt"]
+
+        async def run(self, prompt):
+            prompts.append(json.loads(prompt))
+            return SimpleNamespace(output=output)
+
+    monkeypatch.setattr(pydantic_ai, "Agent", Agent)
+    monkeypatch.setattr(config, "get_newapi_text_pydantic_model", lambda *args, **kwargs: "test-model")
+    monkeypatch.setattr(config, "get_newapi_structured_output_model_settings", lambda: {})
+    assert await translation.translate_message("source text", interface) == output
+    assert prompts == [{"interface_language": interface, "source_text": "source text"}]
+    output.target_language = "zh" if target == "en" else "en"
+    with pytest.raises(ValueError, match="Invalid translation"):
+        await translation.translate_message("source text", interface)
 
 
 @pytest.mark.asyncio

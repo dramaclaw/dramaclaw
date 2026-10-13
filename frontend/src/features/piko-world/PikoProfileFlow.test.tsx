@@ -118,7 +118,7 @@ it("sends public chat to the player bubble and blocks repeated Enter without los
   await user.type(input, "大家好{Enter}");
   expect(screen.getByTestId("map")).toHaveAttribute("data-speech", "大家好");
   expect(screen.queryByRole("button", { name: "发送" })).toBeNull();
-  expect(screen.getByText(/请等待 [123] 秒/)).toBeVisible();
+  expect(screen.getByText(/请等待 [1-6] 秒/)).toBeVisible();
   await user.type(input, "再说一句{Enter}");
   expect(input).toHaveValue("再说一句");
   expect(screen.getByTestId("map")).toHaveAttribute("data-speech", "大家好");

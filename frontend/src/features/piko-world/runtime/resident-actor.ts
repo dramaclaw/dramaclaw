@@ -154,6 +154,21 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     // A seated body's map anchor is its hips, not the feet used while walking.
     actor.setStaticTexture(texture, SEATED_POSE.pivot); actor.setFrame(FACINGS.indexOf(facing) * columns);
     return true;
+  }, setRemoteSeat(texture: Texture | null, position: Point, idleTexture?: Texture | null, depthY?: number) {
+    if (keyboardControlled) return false;
+    clear();
+    if (texture) {
+      seated = true; seatDepthY = depthY; seatExit = null; facing = "south";
+      seatedTextures = idleTexture ? [texture, idleTexture] : [texture];
+      seatedElapsed = 0; seatedFrame = 0;
+      actor.setStaticTexture(texture, SEATED_POSE.pivot);
+    } else leaveSeat();
+    actor.container.position.set(position.x, position.y);
+    actor.container.zIndex = seated
+      ? depthY ?? position.y + SEATED_FOOT_OFFSET * RESIDENT_WORLD_SCALE * SEATED_POSE.scale
+      : position.y;
+    controls.onPose?.(facing, 0, null);
+    return true;
   }, isSeated: () => seated, walkTo(target: Point, onArrival?: () => void) {
     arrival = undefined;
     if (!keyboardControlled || !isActive() || document.hidden) return false;

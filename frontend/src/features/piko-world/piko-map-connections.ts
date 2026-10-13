@@ -35,7 +35,7 @@ export const MAP_EXIT_MARKERS: Record<PikoMapId, readonly PikoExitMarkerDefiniti
     COURTYARD_EXIT_MARKER,
     { exitId: "to-town-hall-interior", targetMapId: "town-hall-interior",
       position: { x: 1054, y: 388 }, direction: "north", action: "enterHall", labelOffsetY: -70,
-      labelDistance: 135, interactionDistance: 110, groundPosition: { x: 1158, y: 408 }, groundSize: 88 },
+      labelDistance: 135, interactionDistance: 110, groundPosition: { x: 1064, y: 300 }, groundSize: 88 },
     { exitId: "to-lantern-canal-street", targetMapId: "lantern-canal-street",
       position: { x: 1995, y: 505 }, direction: "east" },
     { exitId: "to-cloudtop-slope", targetMapId: "cloudtop-slope",

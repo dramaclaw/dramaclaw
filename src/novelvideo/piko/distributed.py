@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import math
 import os
 import uuid
@@ -22,22 +23,33 @@ from novelvideo.piko.world import (
     DEFAULT_Y,
     OnlinePlayer,
     PikoCharacter,
+    normalize_character_location,
 )
 from novelvideo.piko.protocol import (
-    CHAT_COOLDOWN_SECONDS, PRIVATE_CHAT_COOLDOWN_SECONDS,
-    message_body, message_correlation, message_error, message_receipt, private_session_ended,
+    CHAT_COOLDOWN_SECONDS,
+    CHAT_REQUEST_TTL_SECONDS,
+    OPEN_SCENE_IDS,
+    PRIVATE_CHAT_COOLDOWN_SECONDS,
+    message_body,
+    message_correlation,
+    message_error,
+    message_receipt,
+    private_message,
+    private_session_ended,
+    valid_accessory_id,
+    valid_seat_id,
 )
 
 KEY_PREFIX = "piko:v1:"
 EVENT_CHANNEL = f"{KEY_PREFIX}events"
 PRESENCE_TTL_SECONDS = 30
 ROOM_TTL_SECONDS = 60
-CHAT_REQUEST_TTL_SECONDS = 300
 ACTIVE_CHAT_TTL_SECONDS = 86400
 HEARTBEAT_SECONDS = 10
 CLIENT_STALE_SECONDS = 75
 LOCATION_PERSIST_SECONDS = 10
 MOVE_MIN_INTERVAL_SECONDS = 0.08
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> str:
@@ -211,23 +223,25 @@ class DistributedCharacterStore:
         return str(value)
 
     async def append_message(
-        self, conversation_id: str, sender_id: str, body: str
+        self, conversation_id: str, sender_id: str, body: str, *,
+        message_id: str | None = None, sent_at: str | None = None,
     ) -> dict[str, str]:
-        message_id = str(uuid.uuid4())
-        sent_at = datetime.now(timezone.utc)
+        message_id = message_id or str(uuid.uuid4())
+        timestamp = datetime.fromisoformat(sent_at) if sent_at else datetime.now(timezone.utc)
         pool = await self._get_pool()
         await pool.execute(
             """
             INSERT INTO piko_chat_messages (id, conversation_id, sender_character_id, body, sent_at)
             VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5)
+            ON CONFLICT (id) DO NOTHING
             """,
             message_id,
             conversation_id,
             sender_id,
             body,
-            sent_at,
+            timestamp,
         )
-        return {"id": message_id, "sent_at": sent_at.isoformat()}
+        return {"id": message_id, "sent_at": timestamp.isoformat()}
 
 
 class DistributedPikoWorldHub:
@@ -288,6 +302,7 @@ class DistributedPikoWorldHub:
     async def join(
         self, websocket: WebSocket, *, user_id: str, character: PikoCharacter
     ) -> OnlinePlayer:
+        character = normalize_character_location(character)
         await self._ensure_tasks()
         connection_token = f"{self.instance_id}:{uuid.uuid4().hex}"
         room_id = await self._allocate_room(character.scene_id, character.id)
@@ -357,6 +372,8 @@ class DistributedPikoWorldHub:
             await self._chat(player, payload)
         elif event_type == "chat.request":
             await self._chat_request(player, payload)
+        elif event_type == "chat.request.message":
+            await self._chat_request_message(player, payload)
         elif event_type == "chat.request.respond":
             await self._chat_request_response(player, payload)
         elif event_type == "chat.private.send":
@@ -369,9 +386,14 @@ class DistributedPikoWorldHub:
             else:
                 await self._retire_connection(player)
         elif event_type == "profile.update":
-            await self._update_profile(player)
+            await self._update_profile(player, payload)
 
-    async def _update_profile(self, player: OnlinePlayer) -> None:
+    async def _update_profile(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        if "accessory_id" in payload:
+            if not valid_accessory_id(payload["accessory_id"]):
+                await self._safe_send(player.websocket, {"type": "error", "code": "invalid_accessory"})
+                return
+            player.accessory_id = payload["accessory_id"]
         character = await self.store.get(player.user_id)
         if character is not None:
             player.nickname, player.bio, player.gender = character.nickname, character.bio, character.gender
@@ -413,11 +435,12 @@ class DistributedPikoWorldHub:
         )
         if result[0]:
             await self._notify_private_end(player.character_id, result[1])
+            saved_x, saved_y = player.persistence_position()
             await self.store.update_location(
                 player.user_id,
                 scene_id=player.scene_id,
-                x=player.x,
-                y=player.y,
+                x=saved_x,
+                y=saved_y,
                 facing=player.facing,
             )
             await self._publish(
@@ -473,8 +496,11 @@ class DistributedPikoWorldHub:
             return
         if facing not in {"north", "south", "east", "west"}:
             return
+        seat_id = payload.get("seat_id")
+        if not valid_seat_id(player.scene_id, seat_id):
+            return
         player.last_move_at = now
-        player.x, player.y, player.facing = x, y, facing
+        player.set_position(x, y, facing, seat_id)
         if not await self._refresh_player(player):
             await self._retire_connection(player)
             return
@@ -486,13 +512,17 @@ class DistributedPikoWorldHub:
         )
         if now - player.last_persist_at >= LOCATION_PERSIST_SECONDS:
             player.last_persist_at = now
+            saved_x, saved_y = player.persistence_position()
             await self.store.update_location(
-                player.user_id, scene_id=player.scene_id, x=x, y=y, facing=facing
+                player.user_id, scene_id=player.scene_id, x=saved_x, y=saved_y, facing=facing
             )
 
     async def _change_scene(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
         scene_id = str(payload.get("scene_id") or "").strip()
         if not scene_id or len(scene_id) > 80 or scene_id == player.scene_id:
+            return
+        if scene_id not in OPEN_SCENE_IDS:
+            await self._safe_send(player.websocket, {"type": "error", "code": "scene_not_open"})
             return
         old_room = player.instance_id
         await self.redis.zrem(self._room_key(old_room), player.character_id)
@@ -512,6 +542,7 @@ class DistributedPikoWorldHub:
         facing = str(payload.get("facing") or player.facing)
         if facing in {"north", "south", "east", "west"}:
             player.facing = facing
+        player.set_position(player.x, player.y, player.facing)
         player.instance_id = await self._allocate_room(scene_id, player.character_id)
         if not await self._refresh_player(player):
             await self._retire_connection(player)
@@ -569,7 +600,12 @@ class DistributedPikoWorldHub:
 
     async def _chat_request(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
         target_id = str(payload.get("target_character_id") or "").strip()
+        body = message_body(payload)
+        if "body" in payload and body is None:
+            await self._safe_send(player.websocket, message_error(payload, "invalid_message"))
+            return
         if not target_id or target_id == player.character_id:
+            await self._safe_send(player.websocket, message_error(payload, "chat_request_target_unavailable"))
             return
         allowed = await self.redis.set(
             f"{KEY_PREFIX}rate:chat-request:{player.character_id}",
@@ -579,14 +615,14 @@ class DistributedPikoWorldHub:
         )
         if not allowed:
             await self._safe_send(
-                player.websocket, {"type": "error", "code": "chat_request_cooldown"}
+                player.websocket, message_error(payload, "chat_request_cooldown")
             )
             return
         target = await self._redis_player(target_id)
         if target is None or target.get("room_id") != player.instance_id:
             await self._safe_send(
                 player.websocket,
-                {"type": "error", "code": "chat_request_target_unavailable"},
+                message_error(payload, "chat_request_target_unavailable"),
             )
             return
         request_id = str(uuid.uuid4())
@@ -596,15 +632,21 @@ class DistributedPikoWorldHub:
             "from_nickname": player.nickname,
             "to_character_id": target_id,
             "sent_at": _utc_now(),
+            **({"body": body} if body else {}),
         }
-        await self.redis.set(
-            f"{KEY_PREFIX}chat:request:{request_id}",
-            json.dumps(request, ensure_ascii=False),
-            ex=CHAT_REQUEST_TTL_SECONDS,
-        )
+        message = private_message(
+            player.character_id, target_id, player.nickname, body,
+            message_id=request_id, sent_at=request["sent_at"],
+        ) if body else None
+        pipe = self.redis.pipeline(transaction=True)
+        pipe.set(f"{KEY_PREFIX}chat:request:{request_id}", json.dumps(request, ensure_ascii=False), ex=CHAT_REQUEST_TTL_SECONDS)
+        if message:
+            pipe.rpush(f"{KEY_PREFIX}chat:request:messages:{request_id}", json.dumps(message, ensure_ascii=False))
+            pipe.expire(f"{KEY_PREFIX}chat:request:messages:{request_id}", CHAT_REQUEST_TTL_SECONDS)
+        await pipe.execute()
         await self._publish(
             "direct",
-            {"type": "chat.request", "request": {k: v for k, v in request.items() if k != "to_character_id"}},
+            {"type": "chat.request", "request": {k: v for k, v in request.items() if k not in {"to_character_id", "body"}}},
             target_character_id=target_id,
         )
         await self._safe_send(
@@ -613,73 +655,173 @@ class DistributedPikoWorldHub:
                 "type": "chat.request.sent",
                 "request_id": request_id,
                 "target_character_id": target_id,
+                **message_correlation(payload),
+                **({"message": message} if message else {}),
             },
         )
 
-    async def _chat_request_response(
-        self, player: OnlinePlayer, payload: dict[str, Any]
-    ) -> None:
+    async def _chat_request_message(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        request_id = str(payload.get("request_id") or "").strip()
+        target_id = str(payload.get("target_character_id") or "").strip()
+        body = message_body(payload)
+        if not request_id or not target_id or body is None:
+            await self._safe_send(player.websocket, message_error(payload, "invalid_message"))
+            return
+        if await self._redis_player(target_id) is None:
+            await self._safe_send(player.websocket, {**message_error(payload, "chat_request_unavailable"), "request_id": request_id})
+            return
+        message = private_message(player.character_id, target_id, player.nickname, body)
+        queued = await self.redis.eval(
+            """
+            local raw = redis.call('GET', KEYS[1])
+            if not raw then return 0 end
+            local request = cjson.decode(raw)
+            if request.from_character_id ~= ARGV[1] or request.to_character_id ~= ARGV[2] then return -1 end
+            if not redis.call('SET', KEYS[3], '1', 'PX', ARGV[5], 'NX') then return -2 end
+            redis.call('RPUSH', KEYS[2], ARGV[3])
+            redis.call('EXPIRE', KEYS[1], ARGV[4])
+            redis.call('EXPIRE', KEYS[2], ARGV[4])
+            return 1
+            """, 3, f"{KEY_PREFIX}chat:request:{request_id}", f"{KEY_PREFIX}chat:request:messages:{request_id}",
+            f"{KEY_PREFIX}rate:private-chat:{player.character_id}",
+            player.character_id, target_id, json.dumps(message, ensure_ascii=False), CHAT_REQUEST_TTL_SECONDS,
+            max(100, int(PRIVATE_CHAT_COOLDOWN_SECONDS * 1000)),
+        )
+        if queued == 1:
+            await self._safe_send(player.websocket, {
+                "type": "chat.request.message.sent", "request_id": request_id,
+                "target_character_id": target_id, "message": message,
+                **message_correlation(payload),
+            })
+        elif queued == -2:
+            await self._safe_send(player.websocket, message_error(payload, "private_chat_cooldown"))
+        elif queued == 0 and await self.redis.sismember(self._active_chat_key(player.character_id), target_id):
+            # Active peer links are established before the pending queue is removed.
+            await self._private_chat(player, payload)
+        else:
+            await self._safe_send(player.websocket, {**message_error(payload, "chat_request_unavailable"), "request_id": request_id})
+
+    async def _chat_request_response(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
         request_id = str(payload.get("request_id") or "").strip()
         request_key = f"{KEY_PREFIX}chat:request:{request_id}"
+        queue_key = f"{KEY_PREFIX}chat:request:messages:{request_id}"
         raw = await self.redis.get(request_key)
         if not raw:
+            await self._safe_send(player.websocket, {
+                **message_error(payload, "chat_request_unavailable"), "request_id": request_id,
+            })
             return
         try:
             request = json.loads(raw)
         except json.JSONDecodeError:
             return
-        if request.get("to_character_id") != player.character_id:
+        if request.get("to_character_id") != player.character_id or request.get("responding"):
             return
+        # Keep accepting queued messages while storage and peer setup complete.
         claimed = await self.redis.eval(
             """
-            if redis.call('GET', KEYS[1]) ~= ARGV[1] then
-                return 0
-            end
-            redis.call('DEL', KEYS[1])
+            if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+            local request = cjson.decode(ARGV[1])
+            request.responding = true
+            redis.call('SET', KEYS[1], cjson.encode(request), 'EX', ARGV[2])
+            redis.call('EXPIRE', KEYS[2], ARGV[2])
             return 1
-            """,
-            1,
-            request_key,
-            raw,
+            """, 2, request_key, queue_key, raw, CHAT_REQUEST_TTL_SECONDS,
         )
         if not claimed:
             return
         sender_id = str(request.get("from_character_id") or "")
         accepted = payload.get("accepted") is True
-        sender = await self._redis_player(sender_id)
-        if sender is None:
-            return
         conversation_id = None
-        if accepted:
-            conversation_id = await self.store.open_conversation(sender_id, player.character_id)
-            pipe = self.redis.pipeline(transaction=True)
-            pipe.sadd(self._active_chat_key(sender_id), player.character_id)
-            pipe.expire(self._active_chat_key(sender_id), ACTIVE_CHAT_TTL_SECONDS)
-            pipe.sadd(self._active_chat_key(player.character_id), sender_id)
-            pipe.expire(self._active_chat_key(player.character_id), ACTIVE_CHAT_TTL_SECONDS)
-            await pipe.execute()
+        messages = []
+        try:
+            sender = await self._redis_player(sender_id)
+            if sender is None:
+                await self.redis.delete(request_key, queue_key)
+                return
+            if accepted:
+                conversation_id, messages = await self._accept_chat_request(player, request)
+            else:
+                await self.redis.delete(request_key, queue_key)
+        except Exception:
+            # Preserve the queue and release the claim if durable storage fails.
+            # Retrying uses the same message ids, so completed inserts are safe.
+            logger.exception("Could not accept Piko private chat request")
+            with contextlib.suppress(Exception):
+                await self.redis.eval(
+                    """
+                    local raw = redis.call('GET', KEYS[1])
+                    if not raw then return 0 end
+                    local request = cjson.decode(raw)
+                    request.responding = nil
+                    redis.call('SET', KEYS[1], cjson.encode(request), 'EX', ARGV[1])
+                    redis.call('EXPIRE', KEYS[2], ARGV[1])
+                    return 1
+                    """, 2, request_key, queue_key, CHAT_REQUEST_TTL_SECONDS,
+                )
+            await self._safe_send(player.websocket, {
+                **message_error(payload, "chat_request_failed"), "request_id": request_id,
+            })
+            return
         common = {
-            "type": "chat.request.responded",
-            "request_id": request_id,
-            "accepted": accepted,
-            "conversation_id": conversation_id,
+            "type": "chat.request.responded", "request_id": request_id,
+            "accepted": accepted, "conversation_id": conversation_id,
+            **message_correlation(payload),
         }
-        await self._publish(
-            "direct",
-            {**common, "peer": {"character_id": player.character_id, "nickname": player.nickname}},
-            target_character_id=sender_id,
-        )
-        await self._publish(
-            "direct",
-            {
-                **common,
-                "peer": {
-                    "character_id": sender_id,
-                    "nickname": str(sender.get("nickname") or ""),
-                },
-            },
-            target_character_id=player.character_id,
-        )
+        if accepted and messages:
+            common.update(message=messages[0], messages=messages)
+        await self._publish("direct", {
+            **common, "peer": {"character_id": player.character_id, "nickname": player.nickname},
+        }, target_character_id=sender_id)
+        await self._publish("direct", {
+            **common, "peer": {"character_id": sender_id, "nickname": str(sender.get("nickname") or "")},
+        }, target_character_id=player.character_id)
+
+    async def _accept_chat_request(
+        self, player: OnlinePlayer, request: dict[str, Any],
+    ) -> tuple[str, list[dict[str, str]]]:
+        """Persist queued sends before atomically enabling the live conversation."""
+        request_key = f"{KEY_PREFIX}chat:request:{request['id']}"
+        queue_key = f"{KEY_PREFIX}chat:request:messages:{request['id']}"
+        sender_id = request["from_character_id"]
+        conversation_id = await self.store.open_conversation(sender_id, player.character_id)
+        messages: list[dict[str, str]] = []
+        queued_count = 0
+        while True:
+            pending = await self.redis.lrange(queue_key, queued_count, -1)
+            batch = [json.loads(value) for value in pending]
+            # Requests created during a rolling upgrade may only have a body.
+            if not messages and not batch and request.get("body"):
+                batch = [private_message(
+                    sender_id, player.character_id, request["from_nickname"], request["body"],
+                    message_id=request["id"], sent_at=request["sent_at"],
+                )]
+            for message in batch:
+                await self.store.append_message(
+                    conversation_id, sender_id, message["body"],
+                    message_id=message["id"], sent_at=message["sent_at"],
+                )
+                messages.append({**message, "conversation_id": conversation_id})
+            queued_count += len(pending)
+            activated = await self.redis.eval(
+                """
+                if not redis.call('GET', KEYS[1]) then return -1 end
+                if redis.call('LLEN', KEYS[2]) ~= tonumber(ARGV[1]) then return 0 end
+                redis.call('SADD', KEYS[3], ARGV[2])
+                redis.call('SADD', KEYS[4], ARGV[3])
+                redis.call('EXPIRE', KEYS[3], ARGV[4])
+                redis.call('EXPIRE', KEYS[4], ARGV[4])
+                redis.call('DEL', KEYS[1], KEYS[2])
+                return 1
+                """, 4, request_key, queue_key,
+                self._active_chat_key(sender_id), self._active_chat_key(player.character_id),
+                queued_count, player.character_id, sender_id, ACTIVE_CHAT_TTL_SECONDS,
+            )
+            if activated == 1:
+                return conversation_id, messages
+            if activated == -1:
+                raise RuntimeError("Pending chat request expired before acceptance")
+            # A send arrived during persistence; save the new tail before retrying.
 
     async def _private_chat(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
         target_id = str(payload.get("target_character_id") or "").strip()
@@ -707,14 +849,12 @@ class DistributedPikoWorldHub:
         frame = {
             "type": "chat.private.message",
             "message": {
-                "id": stored["id"],
+                **private_message(
+                    player.character_id, target_id, player.nickname, body,
+                    message_id=stored["id"], sent_at=stored["sent_at"],
+                ),
                 **message_correlation(payload),
                 "conversation_id": conversation_id,
-                "from_character_id": player.character_id,
-                "to_character_id": target_id,
-                "from_nickname": player.nickname,
-                "body": body,
-                "sent_at": stored["sent_at"],
             },
         }
         await self._publish(
@@ -860,17 +1000,21 @@ class DistributedPikoWorldHub:
                 if player.get("room_id") == room_id:
                     players.append(
                         {
-                            key: player[key]
-                            for key in (
-                                "character_id",
-                                "nickname",
-                                "bio",
-                                "gender",
-                                "scene_id",
-                                "x",
-                                "y",
-                                "facing",
-                            )
+                            "seat_id": player.get("seat_id"),
+                            "accessory_id": player.get("accessory_id"),
+                            **{
+                                key: player[key]
+                                for key in (
+                                    "character_id",
+                                    "nickname",
+                                    "bio",
+                                    "gender",
+                                    "scene_id",
+                                    "x",
+                                    "y",
+                                    "facing",
+                                )
+                            },
                         }
                     )
         return players

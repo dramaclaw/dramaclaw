@@ -12,6 +12,13 @@ const read = (map: string, file: string) => JSON.parse(readFileSync(`public/piko
 const courtyard = PikoNavigationSchema.parse(read("welcome-courtyard", "data/navigation.json"));
 const market = PikoNavigationSchema.parse(read("artisan-market", "data/navigation.json"));
 afterEach(() => vi.unstubAllGlobals());
+it("rejects closed scenes before loading their map assets", async () => {
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const exit = enabledMapExits(market).find(candidate => candidate.targetMapId === "wind-garden-gate")!;
+  await expect(prepareMapTravel("artisan-market", exit, new AbortController().signal)).rejects.toThrow("not open yet");
+  expect(fetch).not.toHaveBeenCalled();
+});
 it("keeps both arrivals outside triggers, with walkable routes to their exits and map centres", () => {
   for (const [navigation, centre] of [[courtyard, {x:1190,y:485}], [market, {x:1130,y:650}]] as const) {
     const exit = enabledMapExits(navigation)[0];

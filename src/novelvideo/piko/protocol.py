@@ -2,12 +2,35 @@
 from __future__ import annotations
 
 import json
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 
-CHAT_COOLDOWN_SECONDS = 3.0
+CHAT_COOLDOWN_SECONDS = 6.0
 CHAT_MAX_LENGTH = 80
+CHAT_REQUEST_TTL_SECONDS = 300
 PRIVATE_CHAT_COOLDOWN_SECONDS = 0.5
 MAX_CLIENT_PAYLOAD_LENGTH = 2048
+OPEN_SCENE_IDS = frozenset({
+    "welcome-courtyard", "artisan-market", "town-hall-interior",
+    "amber-wilds", "cloudtop-slope", "lantern-canal-street",
+})
+SCENE_SEATS = {
+    "town-hall-interior": {"hall-west-seat", "hall-east-seat"},
+    "welcome-courtyard": {"welcome-east-bench"},
+    "artisan-market": {"market-west-bench", "market-east-bench"},
+}
+ACCESSORY_IDS = frozenset({
+    "dark-knight-mask", "red-bow", "diver-goggles", "bamboo-hat", "gary-snail", "wizard-hat",
+})
+
+
+def valid_accessory_id(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and value in ACCESSORY_IDS)
+
+
+def valid_seat_id(scene_id: str, value: Any) -> bool:
+    return value is None or (isinstance(value, str) and value in SCENE_SEATS.get(scene_id, ()))
 
 
 def message_body(payload: dict[str, Any]) -> str | None:
@@ -40,6 +63,25 @@ def message_receipt(payload: dict[str, Any], message_id: str) -> dict[str, Any] 
 def message_correlation(payload: dict[str, Any]) -> dict[str, str]:
     identifier = client_message_id(payload)
     return {"client_message_id": identifier} if identifier else {}
+
+
+def private_message(
+    sender_id: str,
+    target_id: str,
+    nickname: str,
+    body: str,
+    *,
+    message_id: str | None = None,
+    sent_at: str | None = None,
+) -> dict[str, str]:
+    return {
+        "id": message_id or str(uuid.uuid4()),
+        "from_character_id": sender_id,
+        "to_character_id": target_id,
+        "from_nickname": nickname,
+        "body": body,
+        "sent_at": sent_at or datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def private_session_ended(character_id: str) -> dict[str, str]:

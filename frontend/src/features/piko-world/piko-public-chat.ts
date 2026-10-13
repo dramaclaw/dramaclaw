@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { useEffect, useRef, useState } from "react";
-export const PIKO_CHAT_COOLDOWN_MS = 3000;
+export const PIKO_CHAT_COOLDOWN_MS = 6000;
 export const PIKO_CHAT_MAX_LENGTH = 80;
-export const PIKO_CHAT_BUBBLE_MS = 10000;
+export const PIKO_CHAT_BUBBLE_MS = 6000;
 export type PikoSpeech = { id: number; body: string; expiresAt: number; owner: string | null };
 
 /** Local validation and cooldown mirror server checks without consuming failed sends. */

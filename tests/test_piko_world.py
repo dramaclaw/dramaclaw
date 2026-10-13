@@ -105,6 +105,29 @@ async def test_character_api_returns_the_authenticated_accounts_character(
 
 
 @pytest.mark.asyncio
+async def test_closed_scene_is_normalized_in_character_reads_and_profile_updates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = PikoCharacterStore(tmp_path / "world.db")
+    character = store.create_or_update("user-a", nickname="小花", gender="female")
+    store.update_location("user-a", scene_id="whispering-forest", x=20, y=30, facing="west")
+    monkeypatch.setattr(piko_routes, "character_store", store)
+    user = {"id": "user-a", "username": "alice"}
+    read = await piko_routes.get_character(user)
+    updated = await piko_routes.put_character(
+        piko_routes.CharacterUpsertRequest(nickname="新昵称", gender="female"), user,
+    )
+    for result in (read, updated):
+        value = result["character"]
+        assert value["id"] == character.id
+        assert (value["scene_id"], value["position_x"], value["position_y"], value["facing"]) == (
+            "welcome-courtyard", 1270, 480, "south",
+        )
+        assert "user_id" not in value
+    assert updated["character"]["nickname"] == "新昵称"
+
+
+@pytest.mark.asyncio
 async def test_scene_chat_and_presence_are_broadcast_only_inside_scene(tmp_path: Path) -> None:
     store = PikoCharacterStore(tmp_path / "world.db")
     first = store.create_or_update("user-a", nickname="小花", gender="female")

@@ -79,9 +79,83 @@
 .panel.panel[data-closed] { animation: header-panel-out var(--duration-fast) var(--ease-out-quint) both; }
 @keyframes header-panel-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes header-panel-out { from { opacity: 1; } to { opacity: 0; } }
+.pikoCapsule {
+  position: relative;
+  display: block;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.pikoCapsuleIcon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  transition:
+    filter var(--duration-fast) var(--ease-out-quint),
+    transform var(--duration-fast) var(--ease-out-quint);
+}
+/* Restore the original capsule artwork's cyan sparkle and reward bounce.
+   These scene-specific values are documented in DESIGN.md's Piko entry menu. */
+.pikoCapsule::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 2px;
+  height: 2px;
+  opacity: 0;
+  background: rgb(255 255 255 / 0.96);
+  box-shadow:
+    2px 0 0 rgb(103 232 249 / 0.88),
+    -2px 0 0 rgb(255 255 255 / 0.54),
+    0 2px 0 rgb(255 255 255 / 0.62),
+    0 -2px 0 rgb(103 232 249 / 0.72);
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+.pikoTrigger:hover .pikoCapsuleIcon,
+.pikoTrigger:focus-visible .pikoCapsuleIcon {
+  filter: brightness(1.22) saturate(1.12) drop-shadow(0 0 4px rgb(34 211 238 / 0.32));
+  transform: translateY(-1px);
+}
+.pikoTrigger:hover .pikoCapsule::after,
+.pikoTrigger:focus-visible .pikoCapsule::after {
+  animation: piko-capsule-sparkle 620ms steps(3, end) both;
+}
+.pikoTrigger[data-reward-hit="true"] .pikoCapsuleIcon {
+  animation: piko-capsule-reward-hit 520ms cubic-bezier(0.2, 1.24, 0.26, 1) both;
+}
+.pikoTrigger[data-reward-hit="true"] .pikoCapsule::after {
+  animation: piko-capsule-sparkle 520ms steps(3, end) both;
+}
+@keyframes piko-capsule-reward-hit {
+  0%, 100% {
+    filter: brightness(1) saturate(1);
+    transform: translateY(0) scale(1);
+  }
+  42% {
+    filter: brightness(1.32) saturate(1.18) drop-shadow(0 0 7px rgb(34 211 238 / 0.42));
+    transform: translateY(-1px) scale(1.18);
+  }
+  68% { transform: translateY(0) scale(0.94); }
+}
+@keyframes piko-capsule-sparkle {
+  0%, 100% { opacity: 0; transform: translate(0, 0); }
+  34% { opacity: 1; transform: translate(-2px, -1px); }
+  68% { opacity: 0.55; transform: translate(1px, -3px); }
+}
 @media (prefers-reduced-motion: reduce) {
   .trigger.trigger, .trigger.trigger stop, .menuRow.menuRow, .actionHover { transition: none; }
   .panel.panel[data-open], .panel.panel[data-closed] { animation: none; }
+  .pikoCapsuleIcon { transition: none; }
+  .pikoTrigger:hover .pikoCapsuleIcon,
+  .pikoTrigger:focus-visible .pikoCapsuleIcon,
+  .pikoTrigger[data-reward-hit="true"] .pikoCapsuleIcon { animation: none; transform: none; }
+  .pikoTrigger:hover .pikoCapsule::after,
+  .pikoTrigger:focus-visible .pikoCapsule::after,
+  .pikoTrigger[data-reward-hit="true"] .pikoCapsule::after { animation: none; }
 }
 
 .pikoLabel { position: relative; display: block; width: 60px; white-space: nowrap; font-weight: 400; }

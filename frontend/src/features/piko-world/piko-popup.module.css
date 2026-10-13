@@ -20,6 +20,30 @@
   background: var(--color-amber-200);
   color: var(--color-amber-950);
 }
+.recoveryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  min-height: 44px;
+  border-radius: var(--radius-md);
+  padding: 10px 20px;
+  background: var(--color-amber-300);
+  color: var(--color-amber-950);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-out-quint);
+}
+.recoveryButton:hover, .recoveryButton:active { background: var(--color-amber-400); }
+.recoveryButton:focus-visible {
+  outline: 2px solid var(--color-amber-800);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .recoveryButton { transition: none; }
+}
 .close {
   position: absolute;
   right: -28px;

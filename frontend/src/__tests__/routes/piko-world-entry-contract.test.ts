@@ -106,8 +106,6 @@ describe("Piko World 项目中心入口", () => {
     expect(worldShell).toContain('t("pikoWorld.chatEmptyTitle")');
     expect(worldShell).toContain('t("pikoWorld.chatEmptyDescription")');
     expect(worldShell).toContain("chatMockMayorWelcome");
-    expect(worldShell).toContain("chatMockResidentLantern");
-    expect(worldShell).toContain("chatMockVisitorReply");
     expect(worldShell).toContain("overflow-y-auto px-4 py-2");
     expect(worldShell).toContain('role="log"');
     expect(worldShell).toContain('aria-live="polite"');

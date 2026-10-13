@@ -14,6 +14,27 @@ vi.mock("./character-actor",()=>({createCharacterActor:()=>({
   setFrame:mock.setFrame,setStaticTexture:mock.setStaticTexture,destroy:mock.destroy,
 })}));
 afterEach(()=>{document.body.innerHTML="";vi.restoreAllMocks();vi.unstubAllGlobals();vi.clearAllMocks();});
+it("applies remote seated art without taking focus and returns to standing movement", () => {
+  const input = document.createElement("input"); document.body.append(input); input.focus();
+  const host = document.createElement("div");
+  const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
+  const ticker = { add: vi.fn(), remove: vi.fn() };
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => true, { host, navigation, simulatedInput: () => ({ x: 1, y: 0 }) });
+  const texture = {} as Texture;
+  actor.setRemoteSeat(texture, { x: 1572, y: 680 }, null, 765);
+  expect(input).toHaveFocus();
+  expect(actor.isSeated()).toBe(true);
+  const tick = ticker.add.mock.calls[0][0]; tick({ deltaMS: 16 });
+  expect(actor.container.position.x).toBe(1572);
+  expect(actor.container.zIndex).toBe(765);
+  expect(mock.setStaticTexture).toHaveBeenLastCalledWith(texture, { x: 32, y: 32 });
+  actor.setRemoteSeat(null, { x: 1572, y: 815 });
+  expect(actor.isSeated()).toBe(false);
+  tick({ deltaMS: 16 });
+  expect(actor.container.position.x).toBeGreaterThan(1572);
+  expect(mock.setStaticTexture).toHaveBeenLastCalledWith(null);
+  actor.destroy();
+});
 it("moves only with map focus, stops on pause/blur, retains facing and cleans listeners",()=>{
   const host=document.createElement("div");host.tabIndex=0;document.body.append(host);host.focus();
   const motion={matches:false};vi.stubGlobal("matchMedia",()=>motion);

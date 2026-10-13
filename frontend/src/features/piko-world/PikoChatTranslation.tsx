@@ -3,24 +3,26 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Languages } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
-import { translateChat, useTranslationLanguage, type TranslationLanguage } from "./piko-chat-translation";
+import { normalize } from "@/i18n/languages";
+import { translateChat, type TranslationLanguage } from "./piko-chat-translation";
 import styles from "./piko-chat-translation.module.css";
 
 export function PikoChatTranslation({ text, conversation, children }: { text: string; conversation: string; children: ReactNode }) {
   const { i18n } = useTranslation();
   const owner = useAuthStore(state => state.username) ?? "";
-  const [language, setLanguage] = useTranslationLanguage(owner, i18n?.resolvedLanguage ?? i18n?.language ?? "en");
+  const language = normalize(i18n.resolvedLanguage ?? i18n.language);
   return <MessageTranslation key={JSON.stringify([owner, conversation, text, language])}
-    owner={owner} conversation={conversation} text={text} language={language} setLanguage={setLanguage}>{children}</MessageTranslation>;
+    owner={owner} conversation={conversation} text={text} language={language}>{children}</MessageTranslation>;
 }
 
-function MessageTranslation({ owner, conversation, text, language, setLanguage, children }: {
+function MessageTranslation({ owner, conversation, text, language, children }: {
   owner: string; conversation: string; text: string; language: TranslationLanguage;
-  setLanguage: (language: TranslationLanguage) => void; children: ReactNode;
+  children: ReactNode;
 }) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [result, setResult] = useState("");
+  const [targetLanguage, setTargetLanguage] = useState<TranslationLanguage>(language);
   const [expanded, setExpanded] = useState(false);
   const alive = useRef(true);
   const busy = useRef(false);
@@ -31,7 +33,7 @@ function MessageTranslation({ owner, conversation, text, language, setLanguage, 
     busy.current = true; setStatus("loading"); setExpanded(true);
     try {
       const response = await translateChat(owner, conversation, text, language);
-      if (alive.current) { setResult(response.translated_text); setStatus("done"); }
+      if (alive.current) { setResult(response.translated_text); setTargetLanguage(response.target_language); setStatus("done"); }
     } catch { if (alive.current) setStatus("error"); }
     finally { busy.current = false; }
   };
@@ -42,16 +44,8 @@ function MessageTranslation({ owner, conversation, text, language, setLanguage, 
         <Languages size={12} aria-hidden="true" />
         {t(status === "loading" ? "pikoWorld.translationLoading" : status === "done" && expanded ? "pikoWorld.translationHide" : status === "error" ? "pikoWorld.translationRetry" : "pikoWorld.translationAction")}
       </button>
-      <details className={styles.settings}>
-        <summary aria-label={t("pikoWorld.translationLanguage")}>▾</summary>
-        <label>{t("pikoWorld.translationLanguage")}
-          <select aria-label={t("pikoWorld.translationLanguage")} value={language} onChange={event => setLanguage(event.target.value as TranslationLanguage)}>
-            <option value="zh">简体中文</option><option value="en">English</option>{/* i18n-exempt: language endonyms */}
-          </select>
-        </label>
-      </details>
     </div>
-    {expanded && <div className={styles.result} role="status" aria-live="polite" lang={status === "done" ? language : undefined}>
+    {expanded && <div className={styles.result} role="status" aria-live="polite" lang={status === "done" ? targetLanguage : undefined}>
       {status === "loading" ? t("pikoWorld.translationLoading") : status === "error" ? t("pikoWorld.translationError") : <><span className={styles.label}>{t("pikoWorld.translationLabel")}</span><p>{result}</p></>}
     </div>}
   </div>;

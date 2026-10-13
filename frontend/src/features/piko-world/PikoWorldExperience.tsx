@@ -47,7 +47,7 @@ function AccountExperience({ owner }: { owner: string | null }) {
   if (loadFailed) return <main id="main-content" className="fixed inset-0 flex items-center justify-center bg-black p-5">
     <div className={`${popupStyles.surface} max-w-sm px-6 py-5 text-center text-amber-950`}>
       <p role="alert" className="text-sm">{t("pikoWorld.characterLoadFailed")}</p>
-      <button type="button" className={`${popupStyles.item} mt-4`} onClick={() => setLoadAttempt(attempt => attempt + 1)}>
+      <button type="button" className={`${popupStyles.recoveryButton} mt-4`} onClick={() => setLoadAttempt(attempt => attempt + 1)}>
         {t("pikoWorld.mapTravel.retry")}
       </button>
     </div>

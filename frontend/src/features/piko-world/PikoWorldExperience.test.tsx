@@ -79,7 +79,7 @@ it("offers a retry after a loading error without showing creation or changing th
   vi.mocked(fetchPikoCharacter).mockRejectedValueOnce(new Error("offline"));
   worldApi.character = { id: "existing", nickname: "小叶", gender: "male", bio: "", scene_id: "welcome-courtyard", position_x: 900, position_y: 500, facing: "south" };
   render(<PikoWorldExperience />);
-  expect(await screen.findByRole("alert")).toHaveTextContent("暂时无法加载角色");
+  expect(await screen.findByRole("alert")).toHaveTextContent("角色加载失败，请重试。");
   expect(screen.queryByText("create")).toBeNull();
   expect(readPikoPlayer("alice")?.nickname).toBe("小叶");
   fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
