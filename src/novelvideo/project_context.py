@@ -110,6 +110,7 @@ async def resolve_project_context(
     project_name: str | None = None,
     required_role: str = "viewer",
     media_read: bool = False,
+    allow_purging: bool = False,
 ) -> ProjectContext:
     if media_read and required_role != "viewer":
         raise ValueError("media read authorization is viewer-only")
@@ -131,6 +132,8 @@ async def resolve_project_context(
         record = await registry.get_project_by_owner_name(requester_user_id, project_name)
     if record is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    if getattr(record, "purge_started_at", None) and not allow_purging:
+        raise HTTPException(status_code=409, detail="Project purge is in progress")
 
     # Optional capability: old EE providers remain compatible and fully check
     # authorization. Only media-serving callers may opt into this read cache.

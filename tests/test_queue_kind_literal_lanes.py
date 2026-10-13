@@ -162,6 +162,11 @@ async def test_start_sketch_edit_execute_reaches_a_real_lane(tmp_path, monkeypat
     monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
     ports_registry.register_port("task_backend", backend)
     ports_registry.register_port("cancellation_store", InMemoryCancellationStore())
+    class ActiveProjectRegistry:
+        async def get_project(self, _project_id):
+            return None
+
+    ports_registry.register_port("project_registry", ActiveProjectRegistry())
 
     result = await routes.start_sketch_edit_execute(
         "proj_sketch_edit",

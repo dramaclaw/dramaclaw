@@ -5,9 +5,11 @@ import json
 import logging
 import time
 import traceback
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 from novelvideo.project_context import ProjectContext
 from novelvideo.ports import registry
@@ -159,6 +161,25 @@ def _restore_task_ports(monkeypatch):
     monkeypatch.setattr(registry, "_PORTS", dict(registry._PORTS))
     monkeypatch.setattr(registry, "_BOOTSTRAPPED", registry._BOOTSTRAPPED)
     registry.register_port("cancellation_store", InMemoryCancellationStore())
+    class ActiveProjectRegistry:
+        async def get_project(self, _project_id):
+            return SimpleNamespace(status="active", purged_at=None)
+
+    registry.register_port("project_registry", ActiveProjectRegistry())
+
+
+@pytest.mark.asyncio
+async def test_deleted_project_rejects_inline_task_before_reservation(tmp_path):
+    class DeletedProjectRegistry:
+        async def get_project(self, _project_id):
+            return SimpleNamespace(status="deleted", purged_at=None)
+
+    registry.register_port("project_registry", DeletedProjectRegistry())
+    with pytest.raises(HTTPException) as exc:
+        await InlineTaskBackend().enqueue_project_task(
+            _ctx(tmp_path), task_type="script_writer", product_surface="mainline"
+        )
+    assert exc.value.status_code == 409
 
 
 async def _wait_for_status(

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
+from hashlib import sha256
 import os
 import sqlite3
 from dataclasses import replace
@@ -10,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
+import anyio
 from ulid import ULID
 
 from novelvideo.ports.project import Principal, ProjectRecord
@@ -39,6 +42,7 @@ def _row_to_record(row: aiosqlite.Row) -> ProjectRecord:
         created_at=str(row["created_at"] or ""),
         updated_at=str(row["updated_at"] or ""),
         purged_at=str(row["purged_at"]) if row["purged_at"] else None,
+        purge_started_at=str(row["purge_started_at"]) if row["purge_started_at"] else None,
     )
 
 
@@ -69,6 +73,24 @@ class SQLiteProjectRegistry:
         from novelvideo import config
 
         return Path(config.STATE_DIR) / "local" / "projects.db"
+
+    @asynccontextmanager
+    async def purge_lock(self, project_id: str):
+        import portalocker
+
+        lock_dir = self._db_path().parent / "purge_locks"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        name = sha256(project_id.encode("utf-8")).hexdigest()
+        lock = portalocker.Lock(lock_dir / f"{name}.lock", timeout=0, fail_when_locked=True)
+        try:
+            await anyio.to_thread.run_sync(lock.acquire)
+        except portalocker.exceptions.AlreadyLocked:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            lock.release()
 
     async def _connect(self) -> aiosqlite.Connection:
         await self._ensure_schema()
@@ -107,6 +129,7 @@ class SQLiteProjectRegistry:
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL,
                         purged_at TEXT,
+                        purge_started_at TEXT,
                         UNIQUE(owner_type, owner_id, name)
                     );
 
@@ -118,6 +141,9 @@ class SQLiteProjectRegistry:
                         ON projects(home_node_id);
                     """
                 )
+                columns = await db.execute_fetchall("PRAGMA table_info(projects)")
+                if "purge_started_at" not in {row[1] for row in columns}:
+                    await db.execute("ALTER TABLE projects ADD COLUMN purge_started_at TEXT")
                 await db.execute(
                     """
                     INSERT OR IGNORE INTO schema_migrations(version, applied_at)
@@ -252,8 +278,9 @@ class SQLiteProjectRegistry:
                 UPDATE projects
                 SET status = ?, updated_at = ?
                 WHERE id = ? AND purged_at IS NULL
+                  AND (? = 'deleted' OR purge_started_at IS NULL)
                 """,
-                (status, _now_iso(), project_id),
+                (status, _now_iso(), project_id, status),
             )
             await db.commit()
             row = await _fetchone(db, "SELECT * FROM projects WHERE id = ?", (project_id,))
@@ -271,11 +298,29 @@ class SQLiteProjectRegistry:
             if row is None:
                 return None
             record = _row_to_record(row)
+            if record.status != "deleted" or not record.purge_started_at:
+                return None
             await db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
             await db.commit()
         finally:
             await db.close()
         return replace(record, status="deleted", updated_at=now, purged_at=now)
+
+    async def begin_project_purge(self, project_id: str) -> ProjectRecord | None:
+        db = await self._connect()
+        try:
+            await db.execute(
+                """UPDATE projects
+                   SET purge_started_at = COALESCE(purge_started_at, ?), updated_at = ?
+                   WHERE id = ? AND status = 'deleted' AND purged_at IS NULL""",
+                (_now_iso(), _now_iso(), project_id),
+            )
+            await db.commit()
+            row = await _fetchone(db, "SELECT * FROM projects WHERE id = ?", (project_id,))
+        finally:
+            await db.close()
+        record = _row_to_record(row) if row else None
+        return record if record and record.status == "deleted" and record.purge_started_at else None
 
     async def delete_uncommitted_project(self, project_id: str) -> None:
         if not project_id:
