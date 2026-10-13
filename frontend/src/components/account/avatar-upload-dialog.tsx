@@ -25,6 +25,42 @@ export function AvatarUploadDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!busy) onOpenChange(nextOpen);
+    }}>
+      <DialogContent
+        className="w-[380px] gap-0 rounded-[18px] border border-white/[0.08] bg-[#171719]/86 p-0 text-slate-100 shadow-[0_22px_70px_rgba(0,0,0,0.42)] backdrop-blur-xl"
+        closeButtonClassName="top-3 right-3 text-slate-300 hover:bg-white/[0.06] hover:text-white"
+        overlayClassName="bg-black/55 backdrop-blur-sm"
+      >
+        {open ? <AvatarUploadForm
+          avatarInitial={avatarInitial}
+          displayName={displayName}
+          onOpenChange={onOpenChange}
+          onBusyChange={setBusy}
+          standalone
+        /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function AvatarUploadForm({
+  avatarInitial,
+  displayName,
+  onOpenChange,
+  onBusyChange,
+  standalone = false,
+}: {
+  avatarInitial: string;
+  displayName: string;
+  onOpenChange: (open: boolean) => void;
+  onBusyChange?: (busy: boolean) => void;
+  standalone?: boolean;
+}) {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -32,6 +68,11 @@ export function AvatarUploadDialog({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onBusyChange?.(saving);
+    return () => onBusyChange?.(false);
+  }, [onBusyChange, saving]);
   const currentAvatarUrl = useAuthStore((s) => s.avatarUrl);
   const setAvatarUrl = useAuthStore((s) => s.setAvatarUrl);
 
@@ -98,105 +139,102 @@ export function AvatarUploadDialog({
     }
   };
 
+  const Title = standalone ? DialogTitle : "h2";
+  const Description = standalone ? DialogDescription : "p";
+
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent
-        className="w-[380px] gap-0 rounded-[18px] border border-white/[0.08] bg-[#171719]/86 p-0 text-slate-100 shadow-[0_22px_70px_rgba(0,0,0,0.42)] backdrop-blur-xl"
-        closeButtonClassName="top-3 right-3 text-slate-300 hover:bg-white/[0.06] hover:text-white"
-        overlayClassName="bg-black/55 backdrop-blur-sm"
-      >
-        <DialogHeader className="px-5 pb-3 pt-5">
-          <DialogTitle className="text-[17px] font-medium tracking-normal text-white">
-            {t("header.account.avatarDialog.title")}
-          </DialogTitle>
-          <DialogDescription className="text-[12px] leading-5 text-slate-400">
-            {t("header.account.avatarDialog.description")}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <DialogHeader className="px-5 pb-3 pt-5">
+        <Title className="text-[17px] font-medium tracking-normal text-white">
+          {t("header.account.avatarDialog.title")}
+        </Title>
+        <Description className="text-[12px] leading-5 text-slate-400">
+          {t("header.account.avatarDialog.description")}
+        </Description>
+      </DialogHeader>
 
-        <div className="px-5 pb-5">
-          <div className="flex items-center gap-4 rounded-[14px] border border-white/[0.07] bg-white/[0.035] p-4">
-            <div className="flex size-[84px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[26px] font-normal text-white/72">
-              {previewUrl ? (
-                <img
-                  src={previewUrl}
-                  alt=""
-                  className="size-full object-cover"
-                />
-              ) : currentAvatarUrl ? (
-                <img
-                  src={currentAvatarUrl}
-                  alt=""
-                  className="size-full object-cover"
-                />
-              ) : (
-                avatarInitial
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[14px] font-medium text-white">
-                {displayName}
-              </p>
-              <p
-                className={`mt-1 line-clamp-2 break-all text-[12px] leading-5 ${
-                  error ? "text-red-400" : "text-slate-400"
-                }`}
-              >
-                {error ?? fileName ?? t("header.account.avatarDialog.previewHint")}
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            className="mt-3 flex h-[96px] w-full flex-col items-center justify-center rounded-[14px] border border-dashed border-white/[0.14] bg-white/[0.025] text-center transition-colors duration-150 hover:border-cyan-200/35 hover:bg-white/[0.045]"
-            onClick={() => inputRef.current?.click()}
-          >
+      <div className="px-5 pb-5">
+        <div className="flex items-center gap-4 rounded-[14px] border border-white/[0.07] bg-white/[0.035] p-4">
+          <div className="flex size-[84px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[26px] font-normal text-white/72">
             {previewUrl ? (
-              <Upload className="size-5 text-white" />
+              <img
+                src={previewUrl}
+                alt=""
+                className="size-full object-cover"
+              />
+            ) : currentAvatarUrl ? (
+              <img
+                src={currentAvatarUrl}
+                alt=""
+                className="size-full object-cover"
+              />
             ) : (
-              <ImagePlus className="size-5 text-white" />
+              avatarInitial
             )}
-            <span className="mt-2 text-[13px] font-medium text-slate-100">
-              {previewUrl
-                ? t("header.account.avatarDialog.replace")
-                : t("header.account.avatarDialog.choose")}
-            </span>
-            <span className="mt-1 text-[11px] text-slate-500">
-              {t("header.account.avatarDialog.fileHint")}
-            </span>
-          </button>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            className="hidden"
-            onChange={(event) => handleFile(event.currentTarget.files?.[0])}
-          />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[14px] font-medium text-white">
+              {displayName}
+            </p>
+            <p
+              className={`mt-1 line-clamp-2 break-all text-[12px] leading-5 ${
+                error ? "text-red-400" : "text-slate-400"
+              }`}
+            >
+              {error ?? fileName ?? t("header.account.avatarDialog.previewHint")}
+            </p>
+          </div>
         </div>
 
-        <DialogFooter className="p-4 pt-0">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 rounded-[9px] border-white/[0.10] bg-white/[0.03] px-4 text-[13px] font-normal text-slate-200 hover:bg-white/[0.06] hover:text-white"
-            onClick={() => handleOpenChange(false)}
-          >
-            {t("common.cancel")}
-          </Button>
-          <Button
-            type="button"
-            disabled={!selectedFile || saving}
-            onClick={handleSave}
-            className="h-9 rounded-[9px] px-4 text-[13px] font-normal"
-          >
-            {saving && <Loader2 className="size-4 animate-spin" />}
-            {saving
-              ? t("header.account.avatarDialog.saving")
-              : t("header.account.avatarDialog.save")}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <button
+          type="button"
+          className="mt-3 flex h-[96px] w-full flex-col items-center justify-center rounded-[14px] border border-dashed border-white/[0.14] bg-white/[0.025] text-center transition-colors duration-150 hover:border-cyan-200/35 hover:bg-white/[0.045]"
+          onClick={() => inputRef.current?.click()}
+        >
+          {previewUrl ? (
+            <Upload className="size-5 text-white" />
+          ) : (
+            <ImagePlus className="size-5 text-white" />
+          )}
+          <span className="mt-2 text-[13px] font-medium text-slate-100">
+            {previewUrl
+              ? t("header.account.avatarDialog.replace")
+              : t("header.account.avatarDialog.choose")}
+          </span>
+          <span className="mt-1 text-[11px] text-slate-500">
+            {t("header.account.avatarDialog.fileHint")}
+          </span>
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className="hidden"
+          onChange={(event) => handleFile(event.currentTarget.files?.[0])}
+        />
+      </div>
+
+      <DialogFooter className="p-4 pt-0">
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 rounded-[9px] border-white/[0.10] bg-white/[0.03] px-4 text-[13px] font-normal text-slate-200 hover:bg-white/[0.06] hover:text-white"
+          onClick={() => handleOpenChange(false)}
+        >
+          {t("common.cancel")}
+        </Button>
+        <Button
+          type="button"
+          disabled={!selectedFile || saving}
+          onClick={handleSave}
+          className="h-9 rounded-[9px] px-4 text-[13px] font-normal"
+        >
+          {saving && <Loader2 className="size-4 animate-spin" />}
+          {saving
+            ? t("header.account.avatarDialog.saving")
+            : t("header.account.avatarDialog.save")}
+        </Button>
+      </DialogFooter>
+    </>
   );
 }

@@ -249,6 +249,56 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     expect(screen.getByText("想画什么、改哪里，直接告诉虾画")).toBeInTheDocument();
   });
 
+  it("keeps a node chip and its send reference when typing immediately before it", async () => {
+    const node = {
+      id: "587ff3b1-1cb6-4d79-8f6a-b5594cc8aba",
+      type: "imageNode",
+      position: { x: 0, y: 0 },
+      data: { displayName: "22", imageUrl: "https://example.test/image.png" },
+    } as CanvasNode;
+    useCanvasStore.getState().setCanvasData([node], []);
+    render(
+      <SuperChatPanel variant="freezone" canvasId="canvas-a" currentCanvasSelection={[]}
+        currentCanvasOntologyContext={buildCanvasOntologyContext([node], [], { canvasId: "canvas-a", selectedNodeIds: [] })}
+        pendingAttachments={[]} pendingNodeMentions={[node.id]} onPendingNodeMentionsConsumed={vi.fn()} />,
+    );
+    const input = getFreezoneComposerTextbox();
+    expect(input.querySelector('[data-freezone-node-id]')).toHaveAttribute('data-freezone-node-id', node.id);
+    act(() => {
+      input.focus();
+      input.insertBefore(document.createTextNode('q'), input.firstChild);
+      fireEvent.input(input);
+    });
+    expect(input.querySelector('[data-freezone-node-id]')).toHaveAttribute('data-freezone-node-id', node.id);
+    expect(input.textContent).not.toContain(node.id);
+    fireEvent.click(screen.getByLabelText('发送'));
+    await waitFor(() => expect(superChatMocks.send).toHaveBeenCalledTimes(1));
+    const [text, attachments] = superChatMocks.send.mock.calls[0] as unknown as [string, ChatAttachment[]];
+    expect(text).toBe('q[22]');
+    expect(canvasNodeReferenceAttachmentNodes(attachments[0])).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: node.id }),
+    ]));
+  });
+
+  it("opens message search with focus, filters messages and clears it with Escape", () => {
+    superChatMocks.messages = [
+      { id: 'search-a', role: 'user', text: '查找金色宫殿', displayName: 'User', timestamp: Date.now(), attachments: [] },
+      { id: 'search-b', role: 'user', text: '查找山间木屋', displayName: 'User', timestamp: Date.now() + 1, attachments: [] },
+    ];
+    render(<SuperChatPanel variant="freezone" canvasId="canvas-a" currentCanvasSelection={[]}
+      currentCanvasOntologyContext={buildCanvasOntologyContext([], [], { canvasId: 'canvas-a', selectedNodeIds: [] })}
+      pendingAttachments={[]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'aiAssistant.search' }));
+    const search = screen.getByRole('textbox', { name: 'aiAssistant.search' });
+    expect(search).toHaveFocus();
+    fireEvent.change(search, { target: { value: '宫殿' } });
+    expect(screen.getByText('查找金色宫殿')).toBeInTheDocument();
+    expect(screen.queryByText('查找山间木屋')).not.toBeInTheDocument();
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(screen.queryByRole('search')).not.toBeInTheDocument();
+    expect(screen.getByText('查找山间木屋')).toBeInTheDocument();
+  });
+
   it("renders Freezone-only header actions when provided", () => {
     render(
       <SuperChatPanel

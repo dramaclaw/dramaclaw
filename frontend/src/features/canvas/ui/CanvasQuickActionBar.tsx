@@ -13,6 +13,7 @@ import { CanvasShortcutsPanel } from './CanvasShortcutsPanel';
 import { CanvasHistoryAssetsModal } from './CanvasHistoryAssetsModal';
 import { CanvasToolMenu } from './CanvasToolMenu';
 import { useCanvasToolStore } from './canvasToolStore';
+import { CANVAS_PANEL_SURFACE_CLASS, canvasControlPositionStyle } from './canvasControlStyles';
 
 type QuickPanel = 'add' | 'tool' | 'history' | 'shortcuts' | 'help';
 
@@ -151,9 +152,8 @@ export function CanvasQuickActionBar({
       )}
 
       <div
-        className={`pointer-events-none absolute inset-x-0 z-[41] flex justify-center ${
-          isTop ? 'top-3' : 'bottom-3'
-        }`}
+        className="pointer-events-none absolute inset-x-0 z-[41] flex justify-center"
+        style={canvasControlPositionStyle(placement)}
       >
         <div
           className="nopan nowheel pointer-events-auto relative"
@@ -190,7 +190,7 @@ export function CanvasQuickActionBar({
             </div>
           )}
 
-          <div className="flex h-12 items-center gap-2.5 rounded-[12px] border border-white/[0.08] bg-[#11151d]/95 px-1.5 shadow-[0_14px_36px_rgba(0,0,0,0.42)] backdrop-blur-md">
+          <div className={`flex h-[43.2px] items-center gap-[9px] rounded-[10.8px] border border-white/[0.08] px-[5.4px] shadow-[0_14px_36px_rgba(0,0,0,0.42)] ${CANVAS_PANEL_SURFACE_CLASS}`}>
             {ACTIONS.map((action) => {
               const { key, labelKey, tooltipKey, primary } = action;
               const active = openPanel === key;
@@ -217,14 +217,14 @@ export function CanvasQuickActionBar({
                     onClick={() => handleActionClick(action)}
                     aria-label={t(labelKey)}
                     aria-pressed={active}
-                    className={`flex h-9 w-9 items-center justify-center rounded-[10px] transition-colors ${
+                    className={`flex h-[32.4px] w-[32.4px] items-center justify-center rounded-[9px] transition-colors ${
                       filled
                         ? 'bg-white text-[#15171c] shadow-[0_2px_8px_rgba(0,0,0,0.22)]'
                         : 'text-white/52 hover:bg-white/[0.09] hover:text-white/82'
                     }`}
                   >
                     <Icon
-                      className={`h-[18px] w-[18px] ${
+                      className={`h-[16.2px] w-[16.2px] ${
                         primary
                           ? 'transition-transform duration-200 ease-out motion-reduce:transition-none group-hover:rotate-45 group-hover:scale-110 motion-reduce:group-hover:rotate-0 motion-reduce:group-hover:scale-100'
                           : ''

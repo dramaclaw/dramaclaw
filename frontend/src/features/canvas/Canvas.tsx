@@ -742,6 +742,8 @@ interface CanvasProps {
    * 故事板自己隐藏掉（见 src/index.css 的 viewer-immersive 规则）。
    */
   suspended?: boolean;
+  /** Keep selected-node drafts mounted while the assistant is in use. */
+  assistantActive?: boolean;
 }
 
 export function Canvas({
@@ -750,6 +752,7 @@ export function Canvas({
   onBlankPaneClick,
   controlsPlacement = 'bottom-right',
   suspended = false,
+  assistantActive = false,
 }: CanvasProps = {}) {
   const { t } = useTranslation();
   const reactFlowInstance = useReactFlow();
@@ -4908,6 +4911,7 @@ export function Canvas({
       ref={wrapperRef}
       data-canvas-tool={handToolActive ? 'hand' : 'move'}
       data-node-drag-focus={isNodeDragFocusActive ? 'true' : undefined}
+      data-assistant-selection-focus={assistantActive && selectedNodeIds.length > 0 ? 'true' : undefined}
       className="dc-canvas relative h-full w-full bg-background"
       onDragEnter={handleCanvasDragEnter}
       onDragOver={handleCanvasDragOver}

@@ -8,6 +8,11 @@ import { toast } from "sonner";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: true }));
+const languageMocks = vi.hoisted(() => ({ changeLanguage: vi.fn(), setLanguage: vi.fn() }));
+vi.mock("@/stores/app-store", () => ({
+  useAppStore: (select: (state: { setLanguage: typeof languageMocks.setLanguage }) => unknown) =>
+    select({ setLanguage: languageMocks.setLanguage }),
+}));
 const modelGatewayMocks = vi.hoisted(() => ({
   config: undefined as Record<string, unknown> | undefined,
   saveBrainClaw: vi.fn(),
@@ -107,6 +112,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
+    i18n: { resolvedLanguage: "en", changeLanguage: languageMocks.changeLanguage },
     t: (
       key: string,
       options?: {
@@ -120,7 +126,14 @@ vi.mock("react-i18next", () => ({
       },
     ) =>
       ({
-        "settings.title": "设置",
+        "settings.title": "功能设置",
+        "header.account.changeAvatar": "更换头像",
+        "header.account.changePassword": "修改密码",
+        "header.account.setPassword": "设置密码",
+        "header.account.selectLanguage": "选择语言",
+        "header.account.languageChinese": "中文",
+        "header.account.languageEnglish": "English",
+        "header.account.languageVietnamese": "Tiếng Việt",
         "settings.close": "关闭",
         "settings.navigationLabel": "设置导航",
         "settings.pages.models": "模型配置",
@@ -333,10 +346,10 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-function renderSettingsDialog() {
+function renderSettingsDialog(account?: Parameters<typeof SettingsDialog>[0]["account"], onOpenChange = vi.fn()) {
   return render(
     <QueryClientProvider client={new QueryClient()}>
-      <SettingsDialog open onOpenChange={vi.fn()} />
+      <SettingsDialog open onOpenChange={onOpenChange} account={account} />
     </QueryClientProvider>,
   );
 }
@@ -370,6 +383,56 @@ beforeEach(() => {
 });
 
 describe("SettingsDialog pages", () => {
+  it("integrates account forms and language beside Skills in one dialog", () => {
+    renderSettingsDialog({ avatarInitial: "A", displayName: "Admin", passwordConfigured: true, onPasswordChanged: vi.fn() });
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("功能设置");
+    fireEvent.click(screen.getByRole("button", { name: "更换头像" }));
+    expect(document.querySelector('input[type="file"]')).not.toBeNull();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
+    expect(screen.getByLabelText("header.account.passwordDialog.current")).toBeInTheDocument();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "选择语言" }));
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(languageMocks.changeLanguage).toHaveBeenCalledWith("zh");
+    expect(languageMocks.setLanguage).toHaveBeenCalledWith("zh");
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
+    expect(screen.getByText("暂无虾画 Skills")).toBeInTheDocument();
+  });
+
+  it("keeps local settings available without offering an account password action", () => {
+    renderSettingsDialog({ avatarInitial: "L", displayName: "Local", passwordConfigured: true });
+    expect(screen.queryByRole("button", { name: "修改密码" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "更换头像" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择语言" })).toBeInTheDocument();
+  });
+
+  it("locks navigation while saving a password and clears secrets when leaving the form", async () => {
+    let finish!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>((resolve) => { finish = resolve; }));
+    const onOpenChange = vi.fn();
+    const onPasswordChanged = vi.fn();
+    renderSettingsDialog({ avatarInitial: "A", displayName: "Admin", passwordConfigured: true, onPasswordChanged }, onOpenChange);
+    fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
+    fireEvent.change(screen.getByLabelText("header.account.passwordDialog.current"), { target: { value: "old-password" } });
+    fireEvent.change(screen.getByLabelText("header.account.passwordDialog.new"), { target: { value: "new-password" } });
+    fireEvent.change(screen.getByLabelText("header.account.passwordDialog.confirm"), { target: { value: "new-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "header.account.passwordDialog.submit" }));
+    expect(screen.getByRole("button", { name: "选择语言" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeDisabled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    finish(new Response(JSON.stringify({ detail: "incorrect password" }), { status: 401 }));
+    await screen.findByText("header.account.passwordDialog.currentIncorrect");
+    expect(onPasswordChanged).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "选择语言" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "选择语言" }));
+    fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
+    expect(screen.getByLabelText("header.account.passwordDialog.current")).toHaveValue("");
+    expect(screen.getByLabelText("header.account.passwordDialog.new")).toHaveValue("");
+    fetchMock.mockRestore();
+  });
+
   it("opens on the model settings page", () => {
     renderSettingsDialog();
 

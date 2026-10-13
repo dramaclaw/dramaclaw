@@ -7,6 +7,8 @@ interface CanvasNodeFrameOptions {
 }
 
 export const CANVAS_NODE_PANEL_SURFACE_CLASS = "bg-[#242426]/95";
+/** Border overlays media instead of shrinking its aspect-ratio content box. */
+export const CANVAS_NODE_MEDIA_FRAME_CLASS = "canvas-node-media-frame";
 export const CANVAS_NODE_INPUT_SURFACE_CLASS = "bg-[#282828]";
 export const CANVAS_NODE_INPUT_BODY_FRAME_CLASS =
   "border-white/12 shadow-[0_8px_20px_rgba(0,0,0,0.24)] hover:border-white/18 focus-within:border-white/24";

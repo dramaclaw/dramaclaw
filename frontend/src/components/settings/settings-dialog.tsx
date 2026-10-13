@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { confirmDialog } from "@/components/confirm-dialog-host";
 import {
   AlertTriangle,
+  Camera,
+  Check,
   ChevronDown,
   Cpu,
   Eye,
@@ -13,6 +15,8 @@ import {
   ExternalLink,
   HardDrive,
   Loader2,
+  Languages,
+  KeyRound,
   Package,
   Maximize2,
   Minimize2,
@@ -106,12 +110,36 @@ import {
   type MediaModelType,
 } from "@/lib/media-model-catalog-types";
 import { isCeRuntime } from "@/lib/runtime-config";
+import { AvatarUploadForm } from "@/components/account/avatar-upload-dialog";
+import { PasswordChangeForm } from "@/components/account/password-change-dialog";
+import { normalize, SUPPORTED, type Supported } from "@/i18n/languages";
+import { useAppStore } from "@/stores/app-store";
 import { FreezoneSkillRecipeSettings } from "./freezone-skill-recipe-settings";
 
 interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  account?: {
+    avatarInitial: string;
+    displayName: string;
+    passwordConfigured: boolean;
+    onPasswordChanged?: () => void;
+  };
 }
+
+type SettingsPage =
+  | "models"
+  | "storage"
+  | "freezone-skills"
+  | "freezone-recipes"
+  | "avatar"
+  | "password"
+  | "language";
+const LANGUAGE_LABEL_KEYS: Record<Supported, string> = {
+  zh: "header.account.languageChinese",
+  en: "header.account.languageEnglish",
+  vi: "header.account.languageVietnamese",
+};
 
 const MEDIA_STORAGE_PROVIDERS: MediaStorageProvider[] = [
   "aliyun_oss",
@@ -124,10 +152,13 @@ const MODEL_CONFIGURATION_GUIDE_URL =
   "https://github.com/dramaclaw/dramaclaw/blob/main/docs/en/getting-started/configuring-models.md";
 const COMFY_WORKFLOW_MANAGED_CONFIG_KEY = "_dcManagedByWorkflow";
 
-export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const { t } = useTranslation();
+export function SettingsDialog({ open, onOpenChange, account }: SettingsDialogProps) {
+  const { t, i18n } = useTranslation();
+  const setLanguage = useAppStore((state) => state.setLanguage);
+  const activeLanguage = normalize(i18n.resolvedLanguage ?? i18n.language);
+  const [accountActionPending, setAccountActionPending] = useState(false);
   const ceRuntime = isCeRuntime();
-  const [page, setPage] = useState<"models" | "storage" | "freezone-skills" | "freezone-recipes">(
+  const [page, setPage] = useState<SettingsPage>(
     () => (ceRuntime ? "models" : "freezone-skills"),
   );
   const statusQuery = useModelGatewayConfig(open && ceRuntime);
@@ -142,6 +173,25 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       setPage("freezone-skills");
     }
   }, [ceRuntime, page]);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!accountActionPending) onOpenChange(nextOpen);
+  };
+  const navigationPages = [
+    ...(account ? [
+      { page: "avatar" as const, icon: Camera, label: "header.account.changeAvatar" },
+      ...(account.onPasswordChanged ? [{
+        page: "password" as const, icon: KeyRound,
+        label: account.passwordConfigured ? "header.account.changePassword" : "header.account.setPassword",
+      }] : []),
+      { page: "language" as const, icon: Languages, label: "header.account.selectLanguage" },
+    ] : []),
+    ...(ceRuntime ? [
+      { page: "models" as const, icon: Cpu, label: "settings.pages.models" },
+      { page: "storage" as const, icon: HardDrive, label: "settings.pages.storage" },
+    ] : []),
+    { page: "freezone-skills" as const, icon: Package, label: "settings.pages.freezoneSkills" },
+  ];
 
   const pageStatus = (configured: boolean, label: string) => {
     if (statusQuery.isLoading) {
@@ -170,9 +220,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        showCloseButton
+        showCloseButton={!accountActionPending}
         className="flex h-[min(82vh,760px)] max-w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-lg border border-border bg-black p-0 ring-0 sm:max-w-[1120px]"
       >
         <DialogHeader className="border-b border-border px-5 py-4">
@@ -182,59 +232,67 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         <div className="flex min-h-0 flex-1">
           <nav
             aria-label={t("settings.navigationLabel")}
-            className="flex w-14 shrink-0 flex-col gap-1 border-r border-border px-2 py-4 sm:w-44 sm:px-3"
+            className="flex w-14 shrink-0 flex-col gap-1 border-r border-border px-2 py-4 sm:w-52 sm:px-3"
           >
-            {ceRuntime ? (
-              <>
-                <button
-                  type="button"
-                  aria-current={page === "models" ? "page" : undefined}
-                  onClick={() => setPage("models")}
-                  className={cn(
-                    "relative flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
-                    page === "models"
-                      ? "bg-white/[0.09] text-foreground"
-                      : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
-                  )}
-                >
-                  <Cpu className="size-4" aria-hidden />
-                  <span className="hidden sm:inline">{t("settings.pages.models")}</span>
-                  {pageStatus(modelConfigured, t("settings.pages.models"))}
-                </button>
-                <button
-                  type="button"
-                  aria-current={page === "storage" ? "page" : undefined}
-                  onClick={() => setPage("storage")}
-                  className={cn(
-                    "relative flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
-                    page === "storage"
-                      ? "bg-white/[0.09] text-foreground"
-                      : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
-                  )}
-                >
-                  <HardDrive className="size-4" aria-hidden />
-                  <span className="hidden sm:inline">{t("settings.pages.storage")}</span>
-                  {pageStatus(mediaStorageConfigured, t("settings.pages.storage"))}
-                </button>
-              </>
-            ) : null}
-            <button
-              type="button"
-              aria-current={page === "freezone-skills" || page === "freezone-recipes" ? "page" : undefined}
-              onClick={() => setPage("freezone-skills")}
-              className={cn(
-                "relative flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
-                page === "freezone-skills" || page === "freezone-recipes"
-                  ? "bg-white/[0.09] text-foreground"
-                  : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
-              )}
-            >
-              <Package className="size-4" aria-hidden />
-              <span className="hidden sm:inline">{t("settings.pages.freezoneSkills")}</span>
-            </button>
+            {navigationPages.map(({ page: target, icon: Icon, label }) => (
+              <button
+                key={target}
+                type="button"
+                title={t(label)}
+                aria-label={t(label)}
+                aria-current={page === target || (target === "freezone-skills" && page === "freezone-recipes") ? "page" : undefined}
+                disabled={accountActionPending}
+                onClick={() => setPage(target)}
+                className={cn(
+                  "relative flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 sm:justify-start sm:px-3",
+                  (page === target || (target === "freezone-skills" && page === "freezone-recipes")) ? "bg-white/[0.09] text-foreground" : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
+                )}
+              >
+                <Icon className="size-4" aria-hidden />
+                <span className="hidden min-w-0 flex-1 truncate text-left sm:inline">{t(label)}</span>
+                {target === "models" ? pageStatus(modelConfigured, t(label)) : target === "storage" ? pageStatus(mediaStorageConfigured, t(label)) : null}
+              </button>
+            ))}
           </nav>
 
-          {page === "models" ? (
+          {account && (page === "avatar" || page === "password") ? (
+            <ScrollArea className="min-w-0 flex-1">
+              <div className="mx-auto max-w-[480px] py-3">
+                {page === "avatar" ? <AvatarUploadForm
+                  avatarInitial={account.avatarInitial}
+                  displayName={account.displayName}
+                  onOpenChange={onOpenChange}
+                  onBusyChange={setAccountActionPending}
+                /> : account.onPasswordChanged ? <PasswordChangeForm
+                  passwordConfigured={account.passwordConfigured}
+                  onOpenChange={onOpenChange}
+                  onPasswordChanged={account.onPasswordChanged}
+                  onBusyChange={setAccountActionPending}
+                /> : null}
+              </div>
+            </ScrollArea>
+          ) : page === "language" ? (
+            <section className="min-w-0 flex-1 px-5 py-5">
+              <h2 className="font-heading text-sm font-medium">{t("header.account.selectLanguage")}</h2>
+              <div className="mt-4 grid max-w-[380px] gap-2" role="group" aria-label={t("header.account.selectLanguage")}>
+                {SUPPORTED.map((language) => (
+                  <Button
+                    key={language}
+                    variant="outline"
+                    aria-pressed={activeLanguage === language}
+                    className="justify-between"
+                    onClick={() => {
+                      void i18n.changeLanguage(language);
+                      setLanguage(language);
+                    }}
+                  >
+                    {t(LANGUAGE_LABEL_KEYS[language])}
+                    {activeLanguage === language ? <Check className="size-4" aria-hidden /> : null}
+                  </Button>
+                ))}
+              </div>
+            </section>
+          ) : page === "models" ? (
             <div className="min-w-0 flex-1">
               <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
                 <ModelConfigSection open={open && page === "models"} />
@@ -262,7 +320,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </div>
 
         <div className="flex justify-end border-t border-border px-5 py-3.5">
-          <DialogClose render={<Button variant="outline" size="sm" />}>
+          <DialogClose render={<Button variant="outline" size="sm" disabled={accountActionPending} />}>
             {t("settings.close")}
           </DialogClose>
         </div>

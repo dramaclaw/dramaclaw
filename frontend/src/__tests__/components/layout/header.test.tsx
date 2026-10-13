@@ -12,6 +12,7 @@ import { featureEntrySeenKey } from "@/lib/feature-entry-state";
 const runtimeState = vi.hoisted(() => ({ authRequired: true, isCe: false, phoneVisible: false }));
 const authState = vi.hoisted(() => ({ username: "local", logout: vi.fn() }));
 const resetUserSessionStateMock = vi.hoisted(() => vi.fn());
+const settingsAccount = vi.hoisted(() => ({ current: undefined as Record<string, unknown> | undefined }));
 const securityState = vi.hoisted(() => ({
   data: undefined as
     | undefined
@@ -41,8 +42,10 @@ vi.mock("@/lib/queries/model-gateway", () => ({
 }));
 
 vi.mock("@/components/settings/settings-dialog", () => ({
-  SettingsDialog: ({ open }: { open: boolean }) =>
-    open ? <div role="dialog">Settings dialog</div> : null,
+  SettingsDialog: ({ open, account }: { open: boolean; account: Record<string, unknown> }) => {
+    settingsAccount.current = account;
+    return open ? <div role="dialog">Settings dialog</div> : null;
+  },
 }));
 
 vi.mock("@/lib/queries/auth", () => ({
@@ -75,7 +78,7 @@ vi.mock("react-i18next", () => ({
     t: (key: string) =>
       ({
         "app.logoHomeTooltip": "Home",
-        "header.settings": "Settings",
+        "header.settings": "Feature Settings",
         "header.account.open": "Open account",
         "header.notifications": "Announcement Center",
         "header.account.changeAvatar": "Change avatar",
@@ -210,14 +213,17 @@ describe("Header runtime gating", () => {
     expect(brandingState.enabled).toBe(false);
   });
 
-  it("keeps the settings entry available in EE runtime", () => {
+  it("keeps settings available in the avatar menu in EE runtime", async () => {
     runtimeState.isCe = false;
 
     renderHeader();
 
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.queryByRole("button", { name: "Feature Settings" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Open account"));
+    fireEvent.click(await screen.findByRole("button", { name: "Feature Settings" }));
 
     expect(screen.getByRole("dialog")).toHaveTextContent("Settings dialog");
+    expect(screen.queryByText("Change avatar")).not.toBeInTheDocument();
   });
 
   it("renders logout in the account panel when runtime requires auth", async () => {
@@ -226,7 +232,8 @@ describe("Header runtime gating", () => {
     fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
 
     expect(await screen.findByText("Log out")).toBeInTheDocument();
-    expect(screen.getByText("Change password")).toBeInTheDocument();
+    expect(screen.queryByText("Change password")).not.toBeInTheDocument();
+    expect(settingsAccount.current?.onPasswordChanged).toBeTypeOf("function");
   });
 
   it("shows a masked phone and first-password action for a passwordless account", async () => {
@@ -240,7 +247,7 @@ describe("Header runtime gating", () => {
     fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
 
     expect(await screen.findByText("138****8000")).toBeInTheDocument();
-    expect(screen.getByText("Set password")).toBeInTheDocument();
+    expect(settingsAccount.current?.passwordConfigured).toBe(false);
   });
 
   it.each([false, true])("gates first phone binding on phone entry visibility (%s)", async (visible) => {
@@ -299,7 +306,7 @@ describe("Header runtime gating", () => {
     await user.keyboard("{Enter}");
 
     // 面板 portal 到 body 末尾，Tab 走不进去，所以打开时必须主动把焦点送进第一项。
-    expect(await screen.findByRole("button", { name: "Announcement Center" })).toHaveFocus();
+    expect(await screen.findByRole("button", { name: "Feature Settings" })).toHaveFocus();
 
     await user.keyboard("{Escape}");
 
@@ -365,6 +372,7 @@ describe("Header runtime gating", () => {
     });
     expect(screen.queryByText("Log out")).not.toBeInTheDocument();
     expect(screen.queryByText("Change password")).not.toBeInTheDocument();
+    expect(settingsAccount.current?.onPasswordChanged).toBeUndefined();
   });
 
   it("purges user-scoped caches after logout so the next account can't see stale data", async () => {

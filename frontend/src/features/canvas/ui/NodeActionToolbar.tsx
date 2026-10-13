@@ -2307,14 +2307,17 @@ export const NodeActionToolbar = memo(
                       ) : (
                         <Wand2 className="h-3.5 w-3.5" />
                       )}
-                      {t("nodeToolbar.video.analyze")}
-                      <CreditCostPill
-                        display={videoAnalyzeCreditCostDisplay}
-                        promotion={videoAnalyzeCreditCost.data?.data.promotion}
-                        disabled={
-                          !hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing
-                        }
-                      />
+                      <span className="inline-flex items-center gap-1">
+                        {t("nodeToolbar.video.analyze")}
+                        <CreditCostPill
+                          display={videoAnalyzeCreditCostDisplay}
+                          promotion={videoAnalyzeCreditCost.data?.data.promotion}
+                          disabled={
+                            !hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing
+                          }
+                          className="h-auto rounded-none bg-transparent px-0"
+                        />
+                      </span>
                     </UiChipButton>
                     {/* 拉片族工具共用一个下拉。「片段截取」就是原来独立的「剪辑」
                         按钮（isClipMode），画面裁切 / 深度动作捕捉都已接上真实

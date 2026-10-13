@@ -783,8 +783,8 @@
   },
   "header": {
     "partyFounding105": "庆祝建党105周年",
-    "settings": "Cài đặt",
-    "settingsWithWarning": "Cài đặt — thiếu cấu hình",
+    "settings": "Cài đặt chức năng",
+    "settingsWithWarning": "Cài đặt chức năng, cấu hình chưa hoàn tất",
     "settingsWarningBubble": "Thiếu thiết lập",
     "dismissSettingsWarningBubble": "Bỏ qua nhắc nhở thiếu thiết lập",
     "notifications": "Thông báo",
@@ -1246,6 +1246,11 @@
     "canvasReferenceOnlyPrompt": "Hãy tiếp tục từ node đã chọn trên canvas."
   },
   "freezone": {
+    "viewMode": {
+      "label": "Chế độ xem canvas",
+      "workflow": "Quy trình",
+      "board": "Bảng phân cảnh"
+    },
     "chat": {
       "title": "Xia Director",
       "description": "Mở Xia Director bên cạnh canvas Freezone.",
@@ -5946,6 +5951,8 @@
     "annotateResultTitle": "Kết quả chú thích"
   },
   "nodeToolbar": {
+    "nodeId": "ID nút",
+    "copyNodeId": "Sao chép ID nút",
     "aiEdit": "Sửa bằng AI",
     "panorama": "Panorama",
     "generateDirectorWorld": "Tạo thế giới 3DGS",
@@ -7586,9 +7593,9 @@
     "error": "Tạo thất bại"
   },
   "settings": {
-    "title": "Cài đặt",
+    "title": "Cài đặt chức năng",
     "close": "Đóng",
-    "navigationLabel": "Nhóm cài đặt",
+    "navigationLabel": "Điều hướng cài đặt chức năng",
     "statusConfigured": "{{page}} đã được cấu hình",
     "statusNotConfigured": "{{page}} chưa được cấu hình",
     "secretSavedBadge": "Đã lưu",
@@ -7596,7 +7603,7 @@
     "pages": {
       "models": "Model & Kênh",
       "storage": "Lưu trữ media",
-      "freezoneSkills": "Skill Freezone",
+      "freezoneSkills": "Skill Xiahua",
       "freezoneRecipes": "Recipe Freezone"
     },
     "modelConfig": {

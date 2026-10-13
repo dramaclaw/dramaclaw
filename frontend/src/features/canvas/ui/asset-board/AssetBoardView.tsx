@@ -49,6 +49,8 @@ interface DetailEntry {
 interface AssetBoardViewProps {
   /** false 时保持挂载但不可见（Shell 用 visibility 隐藏），数据源同时冻结。 */
   visible: boolean;
+  /** Space reserved for a docked assistant; workflow canvas stays full width. */
+  rightInset?: string;
   /** 「在画布中定位」：由 Shell 切回工作流并 requestFocusNode。 */
   onLocateNode: (nodeId: string) => void;
 }
@@ -69,7 +71,7 @@ const VIDEO_FILTERS: ReadonlyArray<{ value: VideoFilter; label: string }> = [
 // 冻结时 item 引用稳定，memo 让隐藏→显示切换外的重渲染跳过整卡子树。
 const MemoAssetBoardCard = memo(AssetBoardCard);
 
-export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): ReactElement {
+export function AssetBoardView({ visible, rightInset, onLocateNode }: AssetBoardViewProps): ReactElement {
   // 隐藏时 selector 恒返回 null（Object.is 相等）→ 画布拖拽/生成进度不会重渲染隐藏的故事板。
   const liveNodes = useCanvasStore((state) => (visible ? state.nodes : null));
   const liveEdges = useCanvasStore((state) => (visible ? state.edges : null));
@@ -425,15 +427,15 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
     <div
       aria-hidden={!visible}
       className={cn(
-        // pt-12: 给 Shell 顶部居中的视图切换开关(top-1.5, h-8 → 底沿距根顶 38px)留空间。
-        // 取 48px 让内容与开关只隔 ~10px（原 pt-16=64px 会空出 26px，用户嫌太远）。
+        // pt-12 leaves room for the header's floating workflow/storyboard tabs.
         // pb-0: 三栏面板贴到底部、与任务中心状态栏之间不留空隙（对标 liblib，
         // 栏壳底部配 rounded-b-none 直角贴边，见 AssetBoardColumn）。
         // 根背景保持语义 token bg-background：比 #262626 面板更暗，让三栏/音频条
         // 呈现"浮起"的层次（面板色见 AssetBoardColumn 与下方音频条）。
-        'absolute inset-0 z-30 flex flex-col gap-3 bg-background px-4 pt-12 pb-0',
+        'freezone-asset-board absolute inset-0 z-30 flex flex-col gap-3 overflow-x-auto bg-background px-4 pt-12 pb-0',
         visible ? 'visible' : 'invisible',
       )}
+      style={{ right: rightInset }}
     >
       {/* 三栏总览态：关键元素栏横在最上方通栏（对标 liblib「关键元素 · 全部 ▾ 音频」）。
           详情态/放大态它改挂到左列里，把右半边整个让给详情面板或宽幅网格。 */}

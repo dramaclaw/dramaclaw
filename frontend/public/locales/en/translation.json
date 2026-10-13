@@ -461,8 +461,8 @@
       "world": "Piko Town"
     },
     "partyFounding105": "庆祝建党105周年",
-    "settings": "Settings",
-    "settingsWithWarning": "Settings, missing configuration",
+    "settings": "Feature Settings",
+    "settingsWithWarning": "Feature Settings, incomplete configuration",
     "settingsWarningBubble": "Missing setup",
     "dismissSettingsWarningBubble": "Dismiss missing setup reminder",
     "notifications": "Announcement Center",
@@ -919,6 +919,11 @@
     "taskFailedUnknownReason": "no specific reason was returned"
   },
   "freezone": {
+    "viewMode": {
+      "label": "Canvas view",
+      "workflow": "Workflow",
+      "board": "Storyboard"
+    },
     "chat": {
       "title": "Xia Director",
       "description": "Open Xia Director beside the Freezone canvas.",
@@ -6060,6 +6065,8 @@
     "annotateResultTitle": "Annotation Result"
   },
   "nodeToolbar": {
+    "nodeId": "Node ID",
+    "copyNodeId": "Copy node ID",
     "aiEdit": "AI Edit",
     "panorama": "Panorama",
     "generateDirectorWorld": "Generate 3DGS World",
@@ -7709,9 +7716,9 @@
     "error": "Generation failed"
   },
   "settings": {
-    "title": "Settings",
+    "title": "Feature Settings",
     "close": "Close",
-    "navigationLabel": "Settings categories",
+    "navigationLabel": "Feature settings navigation",
     "statusConfigured": "{{page}} is configured",
     "statusNotConfigured": "{{page}} is not configured",
     "secretSavedBadge": "Saved",
@@ -7719,7 +7726,7 @@
     "pages": {
       "models": "Models & Channels",
       "storage": "Media Storage",
-      "freezoneSkills": "Freezone Skills",
+      "freezoneSkills": "Xiahua Skill",
       "freezoneRecipes": "Freezone Recipes"
     },
     "freezoneCatalog": {

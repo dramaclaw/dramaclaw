@@ -56,6 +56,7 @@ import { useModelTaskAccess } from '@/lib/model-task-access';
 import {
   CANVAS_NODE_INPUT_BODY_FRAME_CLASS,
   CANVAS_NODE_INPUT_SURFACE_CLASS,
+  CANVAS_NODE_MEDIA_FRAME_CLASS,
   CANVAS_NODE_OPS_PANEL_CLASS,
   CANVAS_NODE_PANEL_SURFACE_CLASS,
   canvasNodeFrameClass,
@@ -751,7 +752,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       )}
 
       <div
-        className={`relative flex h-full w-full items-center justify-center ${visiblePreviewUrl ? 'overflow-hidden' : 'overflow-visible'} rounded-[var(--node-radius)] border transition-colors ${visiblePreviewUrl ? CANVAS_NODE_PANEL_SURFACE_CLASS : CANVAS_NODE_INPUT_SURFACE_CLASS} ${cardToneClass} ${visiblePreviewUrl ? '' : CANVAS_NODE_INPUT_BODY_FRAME_CLASS} ${
+        className={`relative flex h-full w-full items-center justify-center ${visiblePreviewUrl ? 'overflow-hidden' : 'overflow-visible'} rounded-[var(--node-radius)] ${visiblePreviewUrl ? CANVAS_NODE_MEDIA_FRAME_CLASS : 'border'} transition-colors ${visiblePreviewUrl ? CANVAS_NODE_PANEL_SURFACE_CLASS : CANVAS_NODE_INPUT_SURFACE_CLASS} ${cardToneClass} ${visiblePreviewUrl ? '' : CANVAS_NODE_INPUT_BODY_FRAME_CLASS} ${
           // 画册展开时藏起节点本体的图片卡——半透明的画册容器盖不严，
           // 底下的主图会透出来叠在宫格头部。
           albumExpanded && hasAlbum ? 'invisible' : ''

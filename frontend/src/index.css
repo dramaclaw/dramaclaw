@@ -273,6 +273,36 @@
   -webkit-backdrop-filter: saturate(180%) blur(18px);
 }
 
+[data-freezone-chat-layout-motion="enter"] .freezone-asset-board {
+  transition: right var(--duration-slow) var(--ease-in-out);
+}
+
+[data-freezone-chat-layout-motion="exit"] .freezone-asset-board {
+  transition: right var(--duration-base) var(--ease-out-quint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-freezone-chat-layout-motion] .freezone-asset-board {
+    transition: none;
+  }
+}
+
+.canvas-node-media-frame {
+  border-width: 0;
+}
+
+.canvas-node-media-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border: 1px solid;
+  border-color: inherit;
+  border-style: inherit;
+  border-radius: inherit;
+}
+
 .tap-panel,
 .ui-panel {
   border: 1px solid var(--ui-border-soft);
@@ -531,8 +561,8 @@
   color: #fff;
 }
 
-.mention-chip:hover > img,
-.mention-chip:hover > video {
+.mention-chip:has(> .mention-chip-swap):hover > img,
+.mention-chip:has(> .mention-chip-swap):hover > video {
   display: none;
 }
 
@@ -761,6 +791,16 @@
    抬高优先级，避免被 .selection 等同特异性规则盖掉，与上面平移的处理一致。 */
 .react-flow .react-flow__node.dragging {
   cursor: grabbing;
+}
+
+/* 虾导专注模式：临时隐藏节点面板，保留布局、挂载与输入草稿。 */
+.dc-canvas[data-assistant-selection-focus="true"] .react-flow__node-toolbar,
+.dc-canvas[data-assistant-selection-focus="true"] .react-flow__node-toolbar *,
+.dc-canvas[data-assistant-selection-focus="true"] .canvas-node-transient-ui,
+.dc-canvas[data-assistant-selection-focus="true"] .canvas-node-transient-ui * {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
 /* 节点拖动专注模式：只隐藏临时操作 chrome，不卸载组件、不清空 selection，

@@ -8,6 +8,7 @@ import { projectSectionFromPath } from "@/components/layout/project-navigation-r
 
 const APP_HEADER_HEIGHT = 48;
 const XIAJI_SUBNAV_ROW_HEIGHT = 42;
+const XIAHUA_SUBNAV_ROW_HEIGHT = 34;
 const TOAST_SAFE_GAP = 12;
 
 export function ThemedToaster() {
@@ -15,22 +16,25 @@ export function ThemedToaster() {
   const projectSection = projectSectionFromPath(pathname);
   const isAppRoute = pathname === "/" || pathname.startsWith("/projects/");
   const hasXiajiSubnav = projectSection !== null && projectSection !== "freezone";
+  const subnavHeight = hasXiajiSubnav ? XIAJI_SUBNAV_ROW_HEIGHT
+    : projectSection === "freezone" ? XIAHUA_SUBNAV_ROW_HEIGHT : 0;
   const topOffset = isAppRoute
-    ? APP_HEADER_HEIGHT + (hasXiajiSubnav ? XIAJI_SUBNAV_ROW_HEIGHT : 0) + TOAST_SAFE_GAP
+    ? APP_HEADER_HEIGHT + subnavHeight + TOAST_SAFE_GAP
     : 24;
 
   return (
     <Toaster
-      position="top-center"
+      position="top-left"
       theme="dark"
       closeButton={false}
       duration={2200}
       visibleToasts={1}
-      offset={topOffset}
+      offset={{ top: topOffset, left: 20, right: 20 }}
       toastOptions={{
         style: {
           "--width": "auto",
           minWidth: 0,
+          maxWidth: "min(356px, calc(100vw - 40px))",
         } as CSSProperties,
         className:
           "!min-h-0 !rounded-sm !border !border-white/10 !bg-zinc-900/90 !px-4 !py-2 !text-sm !text-white/90 !shadow-none !backdrop-blur-xl",

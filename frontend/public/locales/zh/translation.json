@@ -461,8 +461,8 @@
       "world": "Piko 小镇"
     },
     "partyFounding105": "庆祝建党105周年",
-    "settings": "设置",
-    "settingsWithWarning": "设置，有未配置项",
+    "settings": "功能设置",
+    "settingsWithWarning": "功能设置，有未配置项",
     "settingsWarningBubble": "有未配置项",
     "dismissSettingsWarningBubble": "关闭未配置提醒",
     "notifications": "公告中心",
@@ -919,6 +919,11 @@
     "taskFailedUnknownReason": "未提供具体错误原因"
   },
   "freezone": {
+    "viewMode": {
+      "label": "画布视图切换",
+      "workflow": "工作流",
+      "board": "故事板"
+    },
     "chat": {
       "title": "虾导",
       "description": "在虾画画布旁打开虾导。",
@@ -6060,6 +6065,8 @@
     "annotateResultTitle": "标注结果"
   },
   "nodeToolbar": {
+    "nodeId": "节点 ID",
+    "copyNodeId": "复制节点 ID",
     "aiEdit": "AI 改图",
     "panorama": "全景",
     "generateDirectorWorld": "生成3DGS世界",
@@ -7709,9 +7716,9 @@
     "error": "生成失败"
   },
   "settings": {
-    "title": "设置",
+    "title": "功能设置",
     "close": "关闭",
-    "navigationLabel": "设置分类",
+    "navigationLabel": "功能设置导航",
     "statusConfigured": "{{page}}已配置",
     "statusNotConfigured": "{{page}}未配置",
     "secretSavedBadge": "已保存",
@@ -7719,7 +7726,7 @@
     "pages": {
       "models": "模型与渠道",
       "storage": "媒体存储",
-      "freezoneSkills": "虾画 Skills",
+      "freezoneSkills": "虾画 Skill",
       "freezoneRecipes": "虾画 Recipes"
     },
     "freezoneCatalog": {

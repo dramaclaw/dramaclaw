@@ -180,6 +180,7 @@ import {
   CANVAS_NODE_INPUT_BODY_SELECTED_FRAME_CLASS,
   CANVAS_NODE_INPUT_SURFACE_CLASS,
   CANVAS_NODE_OPS_PANEL_CLASS,
+  CANVAS_NODE_MEDIA_FRAME_CLASS,
   CANVAS_NODE_PANEL_SURFACE_CLASS,
   CANVAS_NODE_TOOLBAR_PILL_CLASS,
   canvasNodeFrameClass,
@@ -3550,7 +3551,7 @@ export const VideoNode = memo(
         )}
 
         <div
-          className={`relative flex h-full w-full items-center justify-center ${videoSource ? "overflow-hidden" : "overflow-visible"} rounded-[var(--node-radius)] border ${bodySurfaceClass} transition-colors ${bodyFrameClass} ${
+          className={`relative flex h-full w-full items-center justify-center ${videoSource ? "overflow-hidden" : "overflow-visible"} rounded-[var(--node-radius)] ${videoSource || historyPreviewUrl ? CANVAS_NODE_MEDIA_FRAME_CLASS : "border"} ${bodySurfaceClass} transition-colors ${bodyFrameClass} ${
             // 画册展开时藏起节点本体——半透明的画册容器盖不严，底下的视频会透出来。
             albumExpanded && hasAlbum ? "invisible" : ""
           }`}

@@ -47,7 +47,7 @@ import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canv
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import { DirectorControlBundleBadge } from '@/features/canvas/ui/DirectorControlBundleBadge';
-import { CANVAS_NODE_PANEL_SURFACE_CLASS, canvasNodeFrameClass } from '@/features/canvas/ui/nodeFrameStyles';
+import { CANVAS_NODE_MEDIA_FRAME_CLASS, CANVAS_NODE_PANEL_SURFACE_CLASS, canvasNodeFrameClass } from '@/features/canvas/ui/nodeFrameStyles';
 import { NodeGenerationOverlay } from '@/features/canvas/ui/NodeGenerationOverlay';
 import { NodeMediaReplaceButton } from '@/features/canvas/ui/NodeMediaReplaceButton';
 import {
@@ -280,7 +280,7 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
   return (
     <div
       className={`
-        group relative overflow-visible rounded-[var(--node-radius)] border ${CANVAS_NODE_PANEL_SURFACE_CLASS} p-0 transition-colors duration-150
+        group relative overflow-visible rounded-[var(--node-radius)] ${data.imageUrl ? CANVAS_NODE_MEDIA_FRAME_CLASS : 'border'} ${CANVAS_NODE_PANEL_SURFACE_CLASS} p-0 transition-colors duration-150
         ${hasGenerationError
           ? (selected
             ? 'border-red-400 shadow-[0_0_0_1px_rgba(248,113,113,0.42)]'

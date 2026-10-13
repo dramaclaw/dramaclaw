@@ -163,6 +163,21 @@ describe("insertFreezoneNodeMention", () => {
 });
 
 describe("parseFreezoneNodeMentions", () => {
+  it.each([
+    ["q@[22](node22)", "q[22]"],
+    ["请参考@[22](node22)的构图", "请参考[22]的构图"],
+  ])("keeps complete references next to text: %s", (value, readable) => {
+    const parsed = parseFreezoneNodeMentions(value);
+    expect(parsed).toHaveLength(1);
+    expect(value.slice(parsed[0].start, parsed[0].end)).toBe("@[22](node22)");
+    expect(freezoneNodeMentionIds(value)).toEqual(["node22"]);
+    expect(freezoneNodeMentionText(value)).toBe(readable);
+  });
+
+  it("recognizes adjacent references without requiring a separator", () => {
+    expect(freezoneNodeMentionIds("@[A](n1)@[B](n2)")).toEqual(["n1", "n2"]);
+    expect(freezoneNodeMentionText("@[A](n1)@[B](n2)")).toBe("[A][B]");
+  });
   it("parses multiple tokens with correct nodeId/label/positions", () => {
     const value = "看 @[图片节点50](node50) 和 @[分镜表](t1) 对比";
     const parsed = parseFreezoneNodeMentions(value);

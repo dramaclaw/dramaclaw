@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -33,12 +33,52 @@ export function PasswordChangeDialog({
   onPasswordChanged: () => void;
   passwordConfigured?: boolean;
 }) {
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!busy) onOpenChange(nextOpen);
+    }}>
+      <DialogContent
+        className="w-[380px] gap-0 rounded-xl border border-border bg-popover p-0 text-popover-foreground shadow-lg"
+        overlayClassName="bg-black/55"
+      >
+        {open ? <PasswordChangeForm
+          onPasswordChanged={onPasswordChanged}
+          passwordConfigured={passwordConfigured}
+          onOpenChange={onOpenChange}
+          onBusyChange={setBusy}
+          standalone
+        /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function PasswordChangeForm({
+  onOpenChange,
+  onBusyChange,
+  standalone = false,
+  onPasswordChanged,
+  passwordConfigured = true,
+}: {
+  onOpenChange: (open: boolean) => void;
+  onBusyChange?: (busy: boolean) => void;
+  standalone?: boolean;
+  onPasswordChanged: () => void;
+  passwordConfigured?: boolean;
+}) {
   const { t } = useTranslation();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onBusyChange?.(saving);
+    return () => onBusyChange?.(false);
+  }, [onBusyChange, saving]);
 
   const mismatch = confirmPassword.length > 0 && newPassword !== confirmPassword;
   const unchanged =
@@ -138,98 +178,96 @@ export function PasswordChangeDialog({
     }
   };
 
+  const Title = standalone ? DialogTitle : "h2";
+  const Description = standalone ? DialogDescription : "p";
+
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent
-        className="w-[380px] gap-0 rounded-xl border border-border bg-popover p-0 text-popover-foreground shadow-lg"
-        overlayClassName="bg-black/55"
-      >
-        <DialogHeader className="px-5 pb-3 pt-5">
-          <DialogTitle>
-            {t(
-              passwordConfigured
-                ? "header.account.passwordDialog.title"
-                : "header.account.passwordDialog.initializeTitle",
-            )}
-          </DialogTitle>
-          <DialogDescription className="text-xs leading-5">
-            {t(
-              passwordConfigured
-                ? "header.account.passwordDialog.description"
-                : "header.account.passwordDialog.initializeDescription",
-            )}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <DialogHeader className="px-5 pb-3 pt-5">
+        <Title className="font-heading text-base leading-none font-medium">
+          {t(
+            passwordConfigured
+              ? "header.account.passwordDialog.title"
+              : "header.account.passwordDialog.initializeTitle",
+          )}
+        </Title>
+        <Description className="text-xs leading-5 text-muted-foreground">
+          {t(
+            passwordConfigured
+              ? "header.account.passwordDialog.description"
+              : "header.account.passwordDialog.initializeDescription",
+          )}
+        </Description>
+      </DialogHeader>
 
-        <form onSubmit={handleSubmit}>
-          <div className="space-y-3 px-5 pb-5">
-            {passwordConfigured ? (
-              <PasswordField
-                autoComplete="current-password"
-                label={t("header.account.passwordDialog.current")}
-                value={currentPassword}
-                onChange={setCurrentPassword}
-              />
-            ) : null}
+      <form onSubmit={handleSubmit}>
+        <div className="space-y-3 px-5 pb-5">
+          {passwordConfigured ? (
             <PasswordField
-              autoComplete="new-password"
-              label={t("header.account.passwordDialog.new")}
-              value={newPassword}
-              onChange={setNewPassword}
+              autoComplete="current-password"
+              label={t("header.account.passwordDialog.current")}
+              value={currentPassword}
+              onChange={setCurrentPassword}
             />
-            <PasswordField
-              autoComplete="new-password"
-              label={t("header.account.passwordDialog.confirm")}
-              value={confirmPassword}
-              onChange={setConfirmPassword}
-            />
+          ) : null}
+          <PasswordField
+            autoComplete="new-password"
+            label={t("header.account.passwordDialog.new")}
+            value={newPassword}
+            onChange={setNewPassword}
+          />
+          <PasswordField
+            autoComplete="new-password"
+            label={t("header.account.passwordDialog.confirm")}
+            value={confirmPassword}
+            onChange={setConfirmPassword}
+          />
 
-            {mismatch ? (
-              <p className="text-xs text-destructive" role="alert">
-                {t("header.account.passwordDialog.mismatch")}
-              </p>
-            ) : unchanged ? (
-              <p className="text-xs text-destructive" role="alert">
-                {t("header.account.passwordDialog.unchanged")}
-              </p>
-            ) : error ? (
-              <p className="text-xs text-destructive" role="alert">
-                {error}
-              </p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                {t(
+          {mismatch ? (
+            <p className="text-xs text-destructive" role="alert">
+              {t("header.account.passwordDialog.mismatch")}
+            </p>
+          ) : unchanged ? (
+            <p className="text-xs text-destructive" role="alert">
+              {t("header.account.passwordDialog.unchanged")}
+            </p>
+          ) : error ? (
+            <p className="text-xs text-destructive" role="alert">
+              {error}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {t(
+                passwordConfigured
+                  ? "header.account.passwordDialog.requirement"
+                  : "header.account.passwordDialog.initializeRequirement",
+              )}
+            </p>
+          )}
+        </div>
+
+        <DialogFooter className="p-4 pt-0">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => handleOpenChange(false)}
+            disabled={saving}
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button type="submit" disabled={submitDisabled}>
+            {saving ? <Loader2 className="size-4 animate-spin" /> : null}
+            {saving
+              ? t("header.account.passwordDialog.saving")
+              : t(
                   passwordConfigured
-                    ? "header.account.passwordDialog.requirement"
-                    : "header.account.passwordDialog.initializeRequirement",
+                    ? "header.account.passwordDialog.submit"
+                    : "header.account.passwordDialog.initializeSubmit",
                 )}
-              </p>
-            )}
-          </div>
-
-          <DialogFooter className="p-4 pt-0">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => handleOpenChange(false)}
-              disabled={saving}
-            >
-              {t("common.cancel")}
-            </Button>
-            <Button type="submit" disabled={submitDisabled}>
-              {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-              {saving
-                ? t("header.account.passwordDialog.saving")
-                : t(
-                    passwordConfigured
-                      ? "header.account.passwordDialog.submit"
-                      : "header.account.passwordDialog.initializeSubmit",
-                  )}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+          </Button>
+        </DialogFooter>
+      </form>
+    </>
   );
 }
 
