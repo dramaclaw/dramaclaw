@@ -9,6 +9,7 @@ import {
   LayoutGrid,
   Music,
   Orbit,
+  ScanSearch,
   Sparkles,
   Type,
   Upload,
@@ -34,6 +35,7 @@ export const canvasMenuIconMap: Record<MenuIconKey, LucideIcon> = {
   pano360: Globe,
   threeDWorld: Orbit,
   videoCompose: Film,
+  videoBreakdown: ScanSearch,
 };
 
 export const CANVAS_ADD_NODE_TYPES: readonly CanvasNodeType[] = [
@@ -42,6 +44,7 @@ export const CANVAS_ADD_NODE_TYPES: readonly CanvasNodeType[] = [
   CANVAS_NODE_TYPES.imageGen,
   CANVAS_NODE_TYPES.video,
   CANVAS_NODE_TYPES.videoCompose,
+  CANVAS_NODE_TYPES.videoBreakdown,
   CANVAS_NODE_TYPES.audio,
   CANVAS_NODE_TYPES.script,
   CANVAS_NODE_TYPES.upload,

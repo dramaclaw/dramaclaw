@@ -818,6 +818,11 @@ export interface FreezoneVideoOmniGenPayload extends FreezoneNodeContext {
   model?: string;
   /** 全能参考入口的固定业务模式。 */
   genMode: "allReference";
+  /**
+   * 画布「智能续写」：仍走全能参考入口，但后端按视频延长任务提交给模型
+   * （任务类型与提示词要求同视频延长）。
+   */
+  continuation?: boolean;
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -858,6 +863,7 @@ export async function submitFreezoneVideoOmniGen(
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
         gen_mode: payload.genMode,
+        ...(payload.continuation ? { continuation: true } : {}),
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -2854,6 +2860,8 @@ export interface FreezoneUploadOptions {
    * the in-flight request and DevTools shows the row as `canceled`.
    */
   timeoutMs?: number | false;
+  /** ky 直接透传给底层 fetch；不传就是不可取消（历史行为）。 */
+  signal?: AbortSignal;
 }
 
 export async function uploadFreezoneImage(
@@ -2871,6 +2879,7 @@ export async function uploadFreezoneImage(
       method: "POST",
       body: fd,
       timeout: options?.timeoutMs ?? false,
+      signal: options?.signal,
     },
   ).json<{ ok: boolean; data?: FreezoneUploadResult; error?: string }>();
   if (!resp.ok || !resp.data) {
@@ -2932,11 +2941,12 @@ export async function uploadFreezoneVideo(
   project: string,
   file: File | Blob,
   filename?: string,
+  options?: FreezoneUploadOptions,
 ): Promise<FreezoneUploadResult> {
   // Disable the 30s default timeout: video files routinely run into the tens
   // of MB and the upload streams the body, so a short timeout cancels the
   // request before the server ever sees the end of the body.
-  return await uploadFreezoneImage(project, file, filename, { timeoutMs: false });
+  return await uploadFreezoneImage(project, file, filename, { timeoutMs: false, ...options });
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
@@ -3070,6 +3080,122 @@ export async function submitFreezoneAnalyzeVideoStory(
   if (payload.durationSec != null) body.duration_sec = payload.durationSec;
   return await apiCall<FreezoneJobRef>(
     `projects/${encodeURIComponent(project)}/freezone/analyze-video-story`,
+    { method: "POST", json: body },
+  );
+}
+
+// /freezone/video-breakdown ---------------------------------------------- //
+
+export type FreezoneVideoBreakdownDimension = "storyboard" | "motion" | "music";
+
+export interface FreezoneVideoBreakdownPayload {
+  /** /static/... URL inside the project. */
+  videoUrl: string;
+  /** Omit to run all three dimensions. */
+  dimensions?: FreezoneVideoBreakdownDimension[];
+  /** Keyframe cap, 3..80; defaults to 40 backend-side (actual count tracks duration). */
+  maxFrames?: number;
+  /** 0..1 ffmpeg scene threshold; defaults to 0.3 backend-side. */
+  sceneThreshold?: number;
+  /** Optional total duration (seconds) — improves shot timestamp accuracy. */
+  durationSec?: number;
+  /** Shots per storyboard group when the model gives no segments; default 4. */
+  storyboardGroupSize?: number;
+  /** Max motion reference clips; default 3. */
+  maxMotionClips?: number;
+  /** Per-clip cap in seconds; default 6. */
+  motionClipMaxSec?: number;
+  /** BGM reference length in seconds; default 15. */
+  musicClipSec?: number;
+}
+
+export interface FreezoneVideoBreakdownShot {
+  code: string;
+  shot: number;
+  segment: number;
+  start_time: number;
+  end_time: number;
+  duration: number;
+  shot_size: string;
+  lighting: string;
+  camera_angle: string;
+  camera_movement: string;
+  description: string;
+  narrative: string;
+  image_prompt: string;
+  motion_prompt: string;
+  image_url: string | null;
+}
+
+export interface FreezoneVideoBreakdownGroup {
+  group_index: number;
+  segment: number;
+  label: string;
+  shots: FreezoneVideoBreakdownShot[];
+}
+
+export interface FreezoneVideoBreakdownMotionClip {
+  code: string;
+  shot: number;
+  start_time: number;
+  end_time: number;
+  duration_sec: number;
+  camera_movement: string;
+  camera_angle: string;
+  description: string;
+  motion_prompt: string;
+  video_url: string | null;
+  preview_image_url: string | null;
+}
+
+export interface FreezoneVideoBreakdownMusicClip {
+  code: string;
+  start_time: number;
+  end_time: number;
+  duration_sec: number;
+  description: string;
+  mood: string;
+  instruments: string[];
+  bpm: number | null;
+  audio_url: string | null;
+}
+
+/** Shape of `completed.result` for the `freezone_video_breakdown` task. */
+export interface FreezoneVideoBreakdownResult {
+  job_id: string;
+  source_video_url?: string | null;
+  duration_sec?: number | null;
+  model?: string | null;
+  title?: string | null;
+  summary?: string | null;
+  dimensions?: FreezoneVideoBreakdownDimension[];
+  storyboard?: { label: string; groups: FreezoneVideoBreakdownGroup[] } | null;
+  motion?: { label: string; clips: FreezoneVideoBreakdownMotionClip[] } | null;
+  /** `clip` is null when the source video has no audio track. */
+  music?: { label: string; clip: FreezoneVideoBreakdownMusicClip | null } | null;
+  frame_urls?: (string | null)[];
+  output_url?: string | null;
+}
+
+export async function submitFreezoneVideoBreakdown(
+  project: string,
+  payload: FreezoneVideoBreakdownPayload,
+): Promise<FreezoneJobRef> {
+  const body: Record<string, unknown> = {
+    video_url: payload.videoUrl,
+  };
+  if (payload.dimensions?.length) body.dimensions = payload.dimensions;
+  if (payload.maxFrames != null) body.max_frames = payload.maxFrames;
+  if (payload.sceneThreshold != null) body.scene_threshold = payload.sceneThreshold;
+  if (payload.durationSec != null) body.duration_sec = payload.durationSec;
+  if (payload.storyboardGroupSize != null) {
+    body.storyboard_group_size = payload.storyboardGroupSize;
+  }
+  if (payload.maxMotionClips != null) body.max_motion_clips = payload.maxMotionClips;
+  if (payload.motionClipMaxSec != null) body.motion_clip_max_sec = payload.motionClipMaxSec;
+  if (payload.musicClipSec != null) body.music_clip_sec = payload.musicClipSec;
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video-breakdown`,
     { method: "POST", json: body },
   );
 }

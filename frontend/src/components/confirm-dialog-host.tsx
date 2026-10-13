@@ -5,6 +5,7 @@
  * non-component code (mutations, stores) can await a styled AlertDialog.
  * Mount `<ConfirmDialogHost />` once in the root layout.
  */
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { create } from "zustand";
 import {
@@ -67,10 +68,37 @@ function settle(confirmed: boolean) {
 export function ConfirmDialogHost() {
   const pending = useConfirmDialogStore((s) => s.pending);
   const { t } = useTranslation();
+  const popupRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing || !useConfirmDialogStore.getState().pending) return;
+      const popup = popupRef.current;
+      if (popup?.contains(event.target as Node)) return;
+      // Route through Base UI so its composition-end protection still applies before autofocus.
+      event.stopPropagation();
+      if (popup) {
+        const redirected = new KeyboardEvent("keydown", event);
+        popup.dispatchEvent(redirected);
+        if (redirected.defaultPrevented) event.preventDefault();
+      } else {
+        event.preventDefault();
+        settle(false);
+      }
+    };
+    document.addEventListener("keydown", handleEscape, true);
+    return () => document.removeEventListener("keydown", handleEscape, true);
+  }, []);
 
   return (
     <AlertDialog open={pending !== null} onOpenChange={(open) => !open && settle(false)}>
-      <AlertDialogContent className="w-[min(calc(100vw-2rem),440px)]">
+      <AlertDialogContent
+        ref={popupRef}
+        className="w-[min(calc(100vw-2rem),440px)]"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") event.stopPropagation();
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{pending?.title ?? t("common.confirm")}</AlertDialogTitle>
           <AlertDialogDescription>{pending?.description}</AlertDialogDescription>

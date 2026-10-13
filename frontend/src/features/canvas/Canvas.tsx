@@ -120,6 +120,7 @@ import { embedStoryboardImageMetadata } from '@/commands/image';
 import { nodeTypes as canvasNodeTypes } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
 import { NodeSelectionMenu } from './NodeSelectionMenu';
+import { CanvasPickBanner } from './ui/CanvasPickBanner';
 import { SelectedNodeOverlay } from './ui/SelectedNodeOverlay';
 import { LightEditorCanvasOverlay } from './ui/LightEditorCanvasOverlay';
 import { MultiSelectionToolbar } from './ui/MultiSelectionToolbar';
@@ -5188,6 +5189,8 @@ export function Canvas({
           />
         </svg>
       )}
+
+      <CanvasPickBanner />
 
       {showNodeMenu && (
         <NodeSelectionMenu

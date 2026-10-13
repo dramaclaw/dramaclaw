@@ -106,6 +106,7 @@ import {
 } from "@/lib/queries/scenes";
 import { useProject } from "@/lib/queries/projects";
 import { queryKeys } from "@/lib/query-keys";
+import { confirmAssetRename } from "@/lib/confirm-asset-rename";
 import type { ErrorResponse } from "@/types/api";
 import type {
   SceneAsset,
@@ -1196,6 +1197,7 @@ export function ScenesPanel({
   const createScene = useCreateScene(project);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<SceneAsset | null>(null);
+  const saveInFlight = useRef(false);
   const [draftSeed, setDraftSeed] = useState<Partial<ScenePayload> | null>(null);
   const [selectedBaseName, setSelectedBaseName] = useState<string | null>(() =>
     readStoredSceneGroupSelection(project),
@@ -1329,17 +1331,28 @@ export function ScenesPanel({
   );
 
   async function handleSave(data: ScenePayload) {
-    const payload = { ...data, name: data.name.trim() };
-    const res = editing
-      ? await updateScene.mutateAsync(payload)
-      : await createScene.mutateAsync(payload);
-    if (isErrorResponse(res)) {
-      toast.error(res.error);
-      return;
+    if (saveInFlight.current) return;
+    saveInFlight.current = true;
+    try {
+      // SceneDialog has already composed plate names from base/variant/time.
+      const payload = { ...data, name: data.name.trim() };
+      if (editing && payload.name !== editing.name) {
+        const confirmed = await confirmAssetRename(t);
+        if (!confirmed) return;
+      }
+      const res = editing
+        ? await updateScene.mutateAsync(payload)
+        : await createScene.mutateAsync(payload);
+      if (isErrorResponse(res)) {
+        toast.error(res.error);
+        return;
+      }
+      setDialogOpen(false);
+      setEditing(null);
+      setDraftSeed(null);
+    } finally {
+      saveInFlight.current = false;
     }
-    setDialogOpen(false);
-    setEditing(null);
-    setDraftSeed(null);
   }
 
   async function handleBuildScenes() {

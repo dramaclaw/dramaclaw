@@ -38,6 +38,7 @@ PLACEMENT_FREE_TASKS = {
     "freezone_story_script",
     "freezone_text_generate",
     "freezone_text_translate",
+    "freezone_video_breakdown",
     "freezone_video_compose",
     "freezone_video_erase",
     "freezone_video_gen",
