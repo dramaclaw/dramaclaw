@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
@@ -196,6 +197,7 @@ export function CanvasHistoryAssetsModal({
   assetSource = 'generation-history',
 }: CanvasHistoryAssetsModalProps) {
   const { t, i18n } = useTranslation();
+  const modalRef = useRef<HTMLDivElement>(null);
   const nodes = useCanvasStore((state) => state.nodes);
   const useHistory = assetSource === 'generation-history';
 
@@ -429,8 +431,9 @@ export function CanvasHistoryAssetsModal({
     onClose();
   };
 
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+  // 脱离画布自身的 stacking context，让遮罩真正覆盖项目导航和整个视口。
+  return createPortal(
+    <div ref={modalRef} className="fixed inset-0 z-[300] flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-black/55 backdrop-blur-sm"
         onClick={onClose}
@@ -440,6 +443,7 @@ export function CanvasHistoryAssetsModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="canvas-history-assets-title"
+        onClick={(event) => event.stopPropagation()}
         className="relative z-10 flex h-[min(780px,88vh)] w-[min(1200px,94vw)] flex-col overflow-hidden rounded-xl border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.96)] shadow-[0_18px_48px_rgba(0,0,0,0.45)]"
       >
         {/* Header */}
@@ -719,6 +723,7 @@ export function CanvasHistoryAssetsModal({
       {/* 世界模型「查看」：进虾境（导演台）只读浏览。历史产物没有可保存的源节点，
           故不接 onSaveScene / onCapture* 回调（纯查看）。 */}
       <ThreeDDirectorDialog
+        portalContainer={modalRef}
         open={Boolean(worldManifest)}
         onOpenChange={(open) => {
           if (!open) setWorldManifest(null);
@@ -764,7 +769,8 @@ export function CanvasHistoryAssetsModal({
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

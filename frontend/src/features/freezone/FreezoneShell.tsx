@@ -986,6 +986,9 @@ export function FreezoneShell({
   // ——「卸旧的」和「挂新的」并进同一次提交，这正是切换卡顿的主因。按画布记之后，
   // 换画布这一帧立刻回到全屏 loading，卸载与挂载被拆成两次提交。
   const currentCanvasKey = canvasKey(projectId, canvasId);
+  useEffect(() => {
+    useCanvasStore.getState().closeMediaViewers();
+  }, [currentCanvasKey]);
   const [renderedCanvasKey, setRenderedCanvasKey] = useState<string | null>(() =>
     lastRenderedCanvasKey === currentCanvasKey &&
     useCanvasStore.getState().nodes.length > 0
