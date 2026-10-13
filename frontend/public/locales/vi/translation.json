@@ -2443,6 +2443,8 @@
   },
   "assets": {
     "common": {
+      "renameTitle": "Đổi tên asset",
+      "confirmRename": "Đổi tên sẽ thay đổi ID asset. Các kế hoạch, bảng phân cảnh và kết quả đã tạo sẽ không được chuyển tự động. Sau khi lưu, bạn có thể cần lập kế hoạch và tạo lại. Bạn có muốn tiếp tục không?",
       "edit": "Sửa",
       "delete": "Xoá",
       "generated": "đã tạo",
@@ -4902,7 +4904,8 @@
         "placeholder": "Nhập tên thư mục",
         "createHint": "Tạo xong là dùng ngay được để xếp và tải asset vào",
         "renameHint": "Tên mới hiện ra khắp thư viện asset"
-      }
+      },
+      "commitDragHint": "Giữ và kéo sang thư viện tư liệu bên trái để thay thế tư liệu cùng loại"
     },
     "referencePick": {
       "kind": {
@@ -5346,16 +5349,19 @@
       "gray": "Xám"
     },
     "videoClip": {
-      "exit": "Thoát cắt video",
+      "exit": "Thoát trích đoạn",
       "subtitleTodo": "Phụ đề (chưa hỗ trợ)",
       "extractingFrames": "Đang trích khung hình…",
       "framesFailed": "Tải khung hình thất bại",
-      "dragStart": "Kéo để chỉnh điểm vào",
-      "dragEnd": "Kéo để chỉnh điểm ra",
+      "dragStart": "Kéo hoặc dùng phím mũi tên để chỉnh điểm vào",
+      "dragEnd": "Kéo hoặc dùng phím mũi tên để chỉnh điểm ra",
       "muteTodo": "Tắt tiếng (chưa hỗ trợ)",
       "loopTodo": "Lặp lại (chưa hỗ trợ)",
-      "submitting": "Đang cắt…",
-      "submit": "Áp dụng đoạn cắt"
+      "submitting": "Đang trích…",
+      "submit": "Trích đoạn",
+      "retryExtract": "Trích xuất lại khung hình",
+      "startHandle": "Điểm bắt đầu cắt",
+      "endHandle": "Điểm kết thúc cắt"
     },
     "mentionReplace": {
       "empty": "Không có asset nào để thay vào",
@@ -5440,7 +5446,8 @@
     "mentionChip": {
       "doubleClickReplace": "Bấm đúp để thay tham chiếu này",
       "clickToPlay": "{{label}} · bấm để phát",
-      "replace": "Thay tham chiếu"
+      "replace": "Thay tham chiếu",
+      "removePrefix": "Xóa tiền tố"
     },
     "naming": {
       "copySuffix": "{{name}} - Bản sao",
@@ -5545,6 +5552,21 @@
       "close": "Đóng",
       "free": "Miễn phí",
       "generate": "Tạo"
+    },
+    "videoExtend": {
+      "boundMin": "Đoạn video đã chọn phải dài ít nhất {{seconds}} giây",
+      "boundMax": "Đoạn video đã chọn không được dài quá {{seconds}} giây",
+      "defaultSourceName": "video gốc",
+      "defaultLabel": "video",
+      "promptPrefix": "Nối tiếp đoạn {{start}}-{{end}} của {{name}}: ",
+      "promptPrefixTrimmed": "Nối tiếp {{name}}: ",
+      "nodeDisplayName": "Nối tiếp {{name}}",
+      "durationSeconds": "{{seconds}} giây",
+      "exit": "Thoát chọn đoạn nối tiếp",
+      "startHandle": "Điểm bắt đầu đoạn nối tiếp",
+      "endHandle": "Điểm kết thúc đoạn nối tiếp",
+      "tooShort": "Video ngắn hơn {{seconds}} giây nên không thể nối tiếp",
+      "confirm": "Xác nhận nối tiếp"
     }
   },
   "tool": {
@@ -5625,17 +5647,28 @@
       "sceneSettingSheet": "Bảng thiết kế bối cảnh"
     },
     "video": {
-      "clip": "Cắt đoạn",
       "hd": "HD",
       "analyze": "Phân tích",
+      "frameAnalysis": "Phân tích từng khung hình",
+      "segmentExtract": "Trích đoạn",
+      "frameCrop": "Cắt khung hình",
+      "motionCapture": "Bắt chuyển động chuyên sâu",
+      "extend": "Viết tiếp thông minh",
       "separateAudioVideo": "Tách tiếng/hình",
+      "frameEdit": "Chỉnh sửa khung hình",
+      "frameEditSubjectRemove": "Xóa chủ thể",
+      "frameEditSubjectModify": "Sửa chủ thể",
+      "frameEditSubjectReplace": "Thay chủ thể",
+      "frameEditMatte": "Tách nền thông minh",
       "subtitleRemoval": "Xoá phụ đề",
       "subtitleRemovalTip": "Xoá phụ đề bằng AI — chỉ hỗ trợ tiếng Trung & tiếng Anh",
       "subtitleRemovalSmart": "Xoá thông minh",
       "subtitleRemovalBox": "Xoá theo vùng chọn",
       "fullscreen": "Toàn màn hình",
       "notImplementedYet": "Sắp có",
-      "requiresVideo": "Hãy tải video lên trước"
+      "requiresVideo": "Hãy tải video lên trước",
+      "extendRequiresSeedance25": "Viết tiếp thông minh chỉ hỗ trợ Seedance 2.5, dự án hiện chưa bật model này",
+      "extendPickHint": "Hãy chọn đoạn video làm phần mở đầu để viết tiếp"
     },
     "audio": {
       "requiresAudio": "Chưa có âm thanh nào để tải về",
@@ -5869,7 +5902,8 @@
       "placeholderScript": "Kịch bản",
       "betaTag": "Beta",
       "videoCompose": "Dựng video",
-      "htmlArtifact": "Trang web"
+      "htmlArtifact": "Trang web",
+      "videoBreakdown": "Phân tích từng khung hình"
     },
     "imageNode": {
       "title": "Node ảnh",
@@ -5889,7 +5923,10 @@
       "requestId": "Request ID",
       "copyRequestId": "Sao chép Request ID",
       "requestIdCopied": "Đã sao chép",
-      "resolution": "Độ phân giải ảnh"
+      "resolution": "Độ phân giải ảnh",
+      "replace": "Thay ảnh",
+      "replaceTypeError": "Vui lòng tải lên tệp ảnh",
+      "replaceFailed": "Thay ảnh thất bại"
     },
     "directorControlBundle": {
       "badge": "Bộ Director tổng hợp",
@@ -6139,6 +6176,7 @@
       "noVideo": "Chưa có video",
       "upload": "Tải lên",
       "clickToUpload": "Bấm hoặc kéo thả để tải video lên",
+      "replace": "Thay video",
       "resolution": "Độ phân giải video",
       "tabs": {
         "textToVideo": "Text to Video",
@@ -6175,7 +6213,8 @@
       },
       "aspect": {
         "title": "Tỉ lệ khung hình",
-        "auto": "Tự động"
+        "auto": "Tự động",
+        "followsSource": "Theo video gốc"
       },
       "quality": {
         "title": "Chất lượng"
@@ -6254,13 +6293,38 @@
         "allReferenceGroup": "Nhóm tham chiếu đa năng",
         "firstLastFrameGroup": "Nhóm video từ khung đầu & khung cuối"
       },
+      "crop": {
+        "displayName": "{{name}}_Cắt khung",
+        "cancel": "Thoát cắt khung",
+        "abort": "Hủy cắt khung",
+        "submit": "Tạo bản cắt",
+        "ratioGroup": "Tỷ lệ cắt",
+        "ratio": {
+          "free": "Tự do",
+          "original": "Gốc"
+        },
+        "boxLabel": "Khung cắt. Phím mũi tên để di chuyển, giữ Shift để nhanh hơn, Alt+mũi tên để đổi kích thước, Esc để thoát",
+        "processing": "Đang cắt video, vui lòng chờ…",
+        "success": "Đã cắt xong",
+        "canceled": "Đã hủy cắt khung",
+        "busy": "Video đang được cắt khung — hãy hủy ở thanh bên dưới trước",
+        "errors": {
+          "noProject": "Không tìm thấy dự án hiện tại, không thể lưu kết quả",
+          "fetchFailed": "Không tải được video nguồn ({{detail}})",
+          "cannotDecode": "Trình duyệt không giải mã được video này (thường gặp với nguồn HEVC). Hãy dùng Chrome hoặc chuyển mã trước",
+          "noVideoTrack": "Video nguồn không có hình ảnh dùng được",
+          "tooLarge": "Video quá lớn ({{detail}}), chưa hỗ trợ cắt",
+          "failed": "Cắt thất bại: {{detail}}"
+        }
+      },
       "clip": {
-        "displayName": "Cắt đoạn",
-        "noUrl": "Cắt xong nhưng không trả về URL video",
-        "failed": "Cắt thất bại: {{detail}}"
+        "displayName": "Trích đoạn",
+        "noUrl": "Trích xong nhưng không trả về URL video",
+        "failed": "Trích đoạn thất bại: {{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "Sửa video hỗ trợ tối đa {{limit}} ảnh tham chiếu; đã dùng {{limit}} ảnh đầu ({{ignored}} ảnh bị bỏ qua)"
+        "imageLimit": "Sửa video hỗ trợ tối đa {{limit}} ảnh tham chiếu; đã dùng {{limit}} ảnh đầu ({{ignored}} ảnh bị bỏ qua)",
+        "followsSourceHint": "Tỷ lệ khung hình và thời lượng của chỉnh sửa video theo video gốc và không thể tùy chỉnh."
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse không hỗ trợ tham chiếu đa năng. Chuyển sang chữ-sang-video hoặc ảnh-sang-video.",
@@ -6293,7 +6357,23 @@
       "emptyState": {
         "tryLabel": "Thử:"
       },
-      "videoLoadFailed": "Tải video thất bại"
+      "videoLoadFailed": "Tải video thất bại",
+      "depthCapture": {
+        "failed": "Bắt chuyển động chiều sâu thất bại",
+        "interrupted": "Quá trình bị gián đoạn (trang đã tải lại hoặc đóng). Có thể bắt lại.",
+        "retry": "Bắt lại",
+        "noWebGpu": "Trình duyệt không hỗ trợ WebGPU nên xử lý sẽ chậm",
+        "queued": "Đang có tác vụ bắt chuyển động chiều sâu khác. Tác vụ này đã vào hàng chờ và sẽ tự bắt đầu",
+        "errors": {
+          "tooLong": "Không hỗ trợ video dài hơn {{seconds}} giây",
+          "noVideoTrack": "Video nguồn không có khung hình dùng được",
+          "cannotDecode": "Trình duyệt không giải mã được định dạng video này",
+          "cancelled": "Đã hủy xử lý",
+          "failed": "Lỗi xử lý",
+          "noProject": "Không tìm thấy dự án hiện tại nên không thể lưu kết quả",
+          "alreadyRunning": "Video này vẫn đang được bắt chuyển động chiều sâu. Hãy chờ hoàn tất"
+        }
+      }
     },
     "pano360": {
       "captureGroup2x2": "Bộ ảnh chụp toàn cảnh (4)",
@@ -6672,7 +6752,10 @@
         "videoUpstreamAllRefOnly": "Khi phía trên là video, chỉ dùng được “Tham chiếu đa năng”",
         "hasImageOrAudioRefs": "Không dùng được khi đang tham chiếu asset ảnh/âm thanh",
         "moreThanTwoImages": "Không dùng được khi phía trên có hơn 2 ảnh"
-      }
+      },
+      "extendLockReason": "Nối tiếp thông minh luôn dùng Seedance 2.5, không thể đổi model hoặc chế độ",
+      "extendPlaceholder": "Nhập nội dung cần nối tiếp",
+      "modeRestrictedDefault": "Node này không hỗ trợ chuyển chế độ tạo"
     },
     "threeDWorld": {
       "upstreamNodeFallback": "Node phía trên",
@@ -7895,6 +7978,38 @@
     "openRouterConfigMessage": "Model này cần OpenRouter, nhưng API key phía backend chưa được cấu hình. Vui lòng liên hệ quản trị viên.",
     "stillRunningTitle": "Vẫn đang tạo",
     "stillRunningMessage": "Lần tạo này lâu hơn bình thường. Trang đã ngừng chờ, nhưng tác vụ vẫn chạy ngầm — hãy tải lại sau để lấy kết quả, hoặc xem tiến độ trong Trung tâm tác vụ."
+  },
+  "canvasPick": {
+    "title": "Chọn tham chiếu từ canvas",
+    "hint": "Bấm vào một node video trên canvas",
+    "backToNode": "Quay lại node",
+    "cancel": "Hủy chọn",
+    "selectNode": "Chọn “{{name}}”"
+  },
+  "videoBreakdown": {
+    "sourceLabel": "Video nguồn",
+    "emptyHint": "Thêm video để bắt đầu",
+    "uploading": "Đang tải lên…",
+    "uploadFailed": "Tải video lên thất bại",
+    "uploadVideo": "Tải video lên",
+    "pickFromCanvas": "Chọn từ canvas",
+    "replace": "Thay",
+    "attached": "Đoạn đã chọn",
+    "dimensionsLabel": "Chiều phân tích",
+    "dimension": {
+      "storyboard": "Phân cảnh",
+      "motion": "Chuyển động",
+      "music": "Âm nhạc"
+    },
+    "start": "Bắt đầu phân tích",
+    "running": "Đang phân tích…",
+    "failed": "Phân tích thất bại",
+    "emptyResult": "Không tách được nội dung nào dùng được từ video này",
+    "groups": {
+      "storyboard": "Nhóm phân cảnh {{index}}",
+      "motion": "Chuyển động | tham chiếu máy quay",
+      "music": "Âm nhạc | đoạn BGM tham chiếu"
+    }
   },
   "videoCompose": {
     "title": "Dựng video",

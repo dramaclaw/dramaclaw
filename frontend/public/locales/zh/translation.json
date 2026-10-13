@@ -2557,6 +2557,8 @@
   },
   "assets": {
     "common": {
+      "renameTitle": "资产改名",
+      "confirmRename": "修改名称会改变资产 ID。已有规划、分镜及生成结果不会自动迁移，保存后可能需要重新规划并生成。是否继续？",
       "edit": "编辑",
       "delete": "删除",
       "generated": "已生成",
@@ -5016,7 +5018,8 @@
         "placeholder": "请输入文件夹名称",
         "createHint": "创建后可立即用于归档和上传资产",
         "renameHint": "修改后会同步更新资产库中的显示名称"
-      }
+      },
+      "commitDragHint": "按住拖到左侧素材库,替换同类型素材"
     },
     "referencePick": {
       "kind": {
@@ -5460,16 +5463,19 @@
       "gray": "灰"
     },
     "videoClip": {
-      "exit": "退出剪辑",
+      "exit": "退出片段截取",
       "subtitleTodo": "字幕（待实现）",
       "extractingFrames": "提取画面帧中…",
       "framesFailed": "画面帧加载失败",
-      "dragStart": "拖动以调整起点",
-      "dragEnd": "拖动以调整终点",
+      "dragStart": "拖动或用方向键调整起点",
+      "dragEnd": "拖动或用方向键调整终点",
       "muteTodo": "静音（待实现）",
       "loopTodo": "循环（待实现）",
-      "submitting": "剪辑中…",
-      "submit": "提交剪辑"
+      "submitting": "截取中…",
+      "submit": "提交截取",
+      "retryExtract": "重新提取画面帧",
+      "startHandle": "截取起点",
+      "endHandle": "截取终点"
     },
     "mentionReplace": {
       "empty": "没有可替换的素材",
@@ -5554,7 +5560,8 @@
     "mentionChip": {
       "doubleClickReplace": "双击替换引用",
       "clickToPlay": "{{label}} · 点击播放",
-      "replace": "替换引用"
+      "replace": "替换引用",
+      "removePrefix": "删除前缀"
     },
     "naming": {
       "copySuffix": "{{name}} - 副本",
@@ -5659,6 +5666,21 @@
       "close": "关闭",
       "free": "免费",
       "generate": "生成"
+    },
+    "videoExtend": {
+      "boundMin": "所选视频最短不小于 {{seconds}} 秒",
+      "boundMax": "所选视频最长不大于 {{seconds}} 秒",
+      "defaultSourceName": "原视频",
+      "defaultLabel": "视频",
+      "promptPrefix": "对 {{name}} 的 {{start}}-{{end}} 片段进行续写：",
+      "promptPrefixTrimmed": "对 {{name}} 进行续写：",
+      "nodeDisplayName": "续写 {{name}}",
+      "durationSeconds": "{{seconds}} 秒",
+      "exit": "退出续写截取",
+      "startHandle": "续写片段起点",
+      "endHandle": "续写片段终点",
+      "tooShort": "视频不足 {{seconds}} 秒，无法续写",
+      "confirm": "确认续写"
     }
   },
   "tool": {
@@ -5739,17 +5761,28 @@
       }
     },
     "video": {
-      "clip": "剪辑",
       "hd": "高清",
       "analyze": "解析",
+      "frameAnalysis": "逐帧拉片",
+      "segmentExtract": "片段截取",
+      "frameCrop": "画面裁切",
+      "motionCapture": "深度动作捕捉",
+      "extend": "智能续写",
       "separateAudioVideo": "分离音视频",
+      "frameEdit": "画面编辑",
+      "frameEditSubjectRemove": "主体消除",
+      "frameEditSubjectModify": "主体修改",
+      "frameEditSubjectReplace": "主体替换",
+      "frameEditMatte": "智能抠像",
       "subtitleRemoval": "智能去字幕",
       "subtitleRemovalTip": "AI一键去除视频字幕，仅只支持中英文字幕",
       "subtitleRemovalSmart": "智能擦除",
       "subtitleRemovalBox": "框选擦除",
       "fullscreen": "全屏播放",
       "notImplementedYet": "该功能暂未上线",
-      "requiresVideo": "请先上传视频"
+      "requiresVideo": "请先上传视频",
+      "extendRequiresSeedance25": "智能续写仅支持 Seedance 2.5，当前项目未开放该模型",
+      "extendPickHint": "请截取续写前置视频"
     },
     "audio": {
       "requiresAudio": "请先准备音频",
@@ -5992,7 +6025,8 @@
       "placeholderScript": "脚本",
       "betaTag": "Beta",
       "videoCompose": "视频合成",
-      "htmlArtifact": "网页"
+      "htmlArtifact": "网页",
+      "videoBreakdown": "逐帧拉片"
     },
     "imageNode": {
       "title": "图片节点",
@@ -6012,7 +6046,10 @@
       "requestId": "请求ID",
       "copyRequestId": "复制请求ID",
       "requestIdCopied": "已复制",
-      "resolution": "图片分辨率"
+      "resolution": "图片分辨率",
+      "replace": "替换图片",
+      "replaceTypeError": "请上传图片文件",
+      "replaceFailed": "图片替换失败"
     },
     "directorControlBundle": {
       "badge": "导演合成",
@@ -6262,6 +6299,7 @@
       "noVideo": "暂无视频",
       "upload": "上传视频",
       "clickToUpload": "点击或拖拽上传视频",
+      "replace": "替换视频",
       "resolution": "视频分辨率",
       "tabs": {
         "textToVideo": "文生视频",
@@ -6287,7 +6325,8 @@
       },
       "aspect": {
         "title": "比例",
-        "auto": "Auto"
+        "auto": "Auto",
+        "followsSource": "跟随原片"
       },
       "quality": {
         "title": "清晰度"
@@ -6377,13 +6416,38 @@
         "allReferenceGroup": "全能参考组",
         "firstLastFrameGroup": "首尾帧生成视频组"
       },
+      "crop": {
+        "displayName": "{{name}}_裁剪",
+        "cancel": "退出裁剪",
+        "abort": "取消裁剪",
+        "submit": "生成裁剪",
+        "ratioGroup": "裁剪比例",
+        "ratio": {
+          "free": "自由",
+          "original": "原始"
+        },
+        "boxLabel": "裁剪框，方向键移动，Shift 加速，Alt 加方向键调整大小，Esc 退出",
+        "processing": "正在裁剪视频，请稍候…",
+        "success": "裁剪完成",
+        "canceled": "已取消裁剪",
+        "busy": "视频正在裁剪中，可在底部浮条上取消",
+        "errors": {
+          "noProject": "未找到当前项目，无法保存结果",
+          "fetchFailed": "读取源视频失败（{{detail}}）",
+          "cannotDecode": "当前浏览器无法解码此视频（常见于 HEVC 源视频），请换用 Chrome 或先转码",
+          "noVideoTrack": "源视频没有可用的画面",
+          "tooLarge": "视频过大（{{detail}}），暂不支持裁剪",
+          "failed": "裁剪失败：{{detail}}"
+        }
+      },
       "clip": {
-        "displayName": "剪辑",
-        "noUrl": "剪辑完成但未返回视频地址",
-        "failed": "剪辑失败：{{detail}}"
+        "displayName": "片段截取",
+        "noUrl": "截取完成但未返回视频地址",
+        "failed": "截取失败：{{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "视频编辑最多支持 {{limit}} 张参考图，已使用前 {{limit}} 张（忽略其余 {{ignored}} 张）"
+        "imageLimit": "视频编辑最多支持 {{limit}} 张参考图，已使用前 {{limit}} 张（忽略其余 {{ignored}} 张）",
+        "followsSourceHint": "视频编辑的画面比例与时长由原片决定，不可指定。"
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse 不支持全能参考模式，请切换为文生视频或图生视频。",
@@ -6416,7 +6480,23 @@
       "emptyState": {
         "tryLabel": "试试："
       },
-      "videoLoadFailed": "视频加载失败"
+      "videoLoadFailed": "视频加载失败",
+      "depthCapture": {
+        "failed": "深度动作捕捉失败",
+        "interrupted": "处理已中断（页面刷新或关闭），可重新捕捉",
+        "retry": "重新捕捉",
+        "noWebGpu": "当前浏览器不支持 WebGPU，深度动作捕捉会比较慢",
+        "queued": "已有深度动作捕捉在处理，本次已排队，轮到后自动开始",
+        "errors": {
+          "tooLong": "视频超过 {{seconds}} 秒，暂不支持深度动作捕捉",
+          "noVideoTrack": "源视频没有可用的画面",
+          "cannotDecode": "浏览器无法解码该视频格式",
+          "cancelled": "处理已取消",
+          "failed": "处理出错",
+          "noProject": "未找到当前项目，无法保存结果",
+          "alreadyRunning": "这条视频的深度动作捕捉还在处理中，请等它完成"
+        }
+      }
     },
     "pano360": {
       "captureGroup2x2": "全景截图组 (4 张)",
@@ -6795,7 +6875,10 @@
         "videoUpstreamAllRefOnly": "上游含视频素材时只能用「全能参考」",
         "hasImageOrAudioRefs": "已引用图片/音频素材时不可用",
         "moreThanTwoImages": "上游图片超过 2 张时不可用"
-      }
+      },
+      "extendLockReason": "智能续写固定使用 Seedance 2.5，不能切换模型或模式",
+      "extendPlaceholder": "请输入需要续写的内容",
+      "modeRestrictedDefault": "该节点不支持切换生成模式"
     },
     "threeDWorld": {
       "upstreamNodeFallback": "上游节点",
@@ -8018,6 +8101,38 @@
     "openRouterConfigMessage": "当前模型需要 OpenRouter 服务，但后端还没有配置 API Key。请联系管理员处理。",
     "stillRunningTitle": "仍在生成中",
     "stillRunningMessage": "本次生成耗时较长，页面已停止等待，但任务仍在后台继续。可稍后刷新页面查看结果，或到任务中心查看进度。"
+  },
+  "canvasPick": {
+    "title": "从画布选择参考",
+    "hint": "点击画布中的视频节点",
+    "backToNode": "返回节点",
+    "cancel": "取消选择",
+    "selectNode": "选择【{{name}}】"
+  },
+  "videoBreakdown": {
+    "sourceLabel": "视频素材",
+    "emptyHint": "上传视频后开始",
+    "uploading": "上传中…",
+    "uploadFailed": "视频上传失败",
+    "uploadVideo": "上传视频",
+    "pickFromCanvas": "从画布选择",
+    "replace": "更换",
+    "attached": "已选素材",
+    "dimensionsLabel": "拆解维度",
+    "dimension": {
+      "storyboard": "分镜",
+      "motion": "动态",
+      "music": "音乐"
+    },
+    "start": "开始拉片",
+    "running": "拉片中…",
+    "failed": "拉片失败",
+    "emptyResult": "这条视频没有拆出任何可用内容",
+    "groups": {
+      "storyboard": "分镜组{{index}}",
+      "motion": "动态｜运镜动作参考",
+      "music": "音乐｜BGM参考片段"
+    }
   },
   "videoCompose": {
     "title": "视频合成",

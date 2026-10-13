@@ -21,6 +21,7 @@ import {
   AlertTriangle,
   Boxes,
   ChevronDown,
+  ClockPlus,
   Copy,
   Crop,
   Download,
@@ -44,9 +45,11 @@ import {
   Package,
   Palette,
   PenLine,
+  PersonStanding,
   RefreshCw,
   Rewind,
   RotateCw,
+  ScanSearch,
   Scissors,
   Send,
   Sparkles,
@@ -82,6 +85,7 @@ import {
 import { deriveNodeDropInfo } from "@/stores/assetDropStore";
 
 import {
+  VIDEO_BREAKDOWN_DIMENSIONS,
   NODE_TOOL_TYPES,
   CANVAS_NODE_TYPES,
   DEFAULT_NODE_WIDTH,
@@ -105,6 +109,7 @@ import { GROUP_COLOR_PRESETS } from "@/features/canvas/domain/groupColors";
 import { StoryboardGroupToolbar } from "@/features/canvas/ui/StoryboardGroupToolbar";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import {
+  dispatchNodeAction,
   publishNodeActionAccepted,
   publishNodeActionError,
   publishNodeActionSuccess,
@@ -128,11 +133,23 @@ import { copyImageSourceToClipboard } from "@/commands/image";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
+import { findSeedance25VideoModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { analyzeVideoStory } from "@/features/canvas/application/videoAnalyzeStory";
 import { separateVideoAudio } from "@/features/canvas/application/videoSeparateAudio";
 import { openHtmlArtifact, readHtmlArtifact, exportHtmlArtifact } from "@/features/html-artifacts/api";
 import { readUrl } from "@/lib/url-params";
+import { DEPTH_MAX_DURATION_SEC } from "@/features/canvas/application/depthCapture/depthMath";
+import {
+  findActiveDepthCaptureNodeId,
+  hasActiveDepthCapture,
+  startDepthCapture,
+} from "@/features/canvas/application/depthCapture/runDepthCapture";
+import {
+  isVideoCropInFlight,
+  requestVideoCropFocus,
+} from "@/features/canvas/application/videoCrop/videoCropInFlight";
 import { sanitizeStoryboardText } from "@/features/canvas/application/storyboardText";
 import { buildGenerationErrorReport } from "@/features/canvas/application/generationErrorReport";
 import { workflowGroupState } from "@/features/canvas/domain/workflowGroupState";
@@ -488,6 +505,20 @@ export const NodeActionToolbar = memo(
     onOpenRotate,
   }: NodeActionToolbarProps) => {
     const { t, i18n } = useTranslation();
+    // Radix 下拉关闭时默认把焦点收回触发按钮；「画面裁切」这一项选中后我们要让
+    // 浮层的裁剪框抢到焦点，所以关闭这次要让路。这个 ref 只在选中裁切项那一刻置
+    // true，DropdownMenuContent 的 onCloseAutoFocus 读到就 preventDefault，读完立刻
+    // 复位——不然别的入口关闭下拉也会被误伤地拦住默认回焦点行为。
+    const cropItemSelectedRef = useRef(false);
+    // 画面裁切在途时，工具栏里跟它抢 isCropMode/浮层的几个入口都得拦下来。以前是
+    // 静默 return，用户点了没反应容易以为卡住了；现在拦的同时提一句「正在裁剪」。
+    const guardVideoCropInFlight = (nodeId: string): boolean => {
+      if (!isVideoCropInFlight(nodeId)) return false;
+      // info 而不是 error：这不是失败，只是「正在裁，等它跑完」的状态提示，跟本
+      // 文件里其它状态提示（如裁剪 canceled）同一个口径。带 id 是让连点也只占一条。
+      toast.info(t("node.videoNode.crop.busy"), { id: `video-crop-busy-${nodeId}` });
+      return true;
+    };
     const videoAnalyzeCreditCost = useGenerationCreditCost(
       "feature",
       isVideoNode(node) ? "freezone.video_analyze" : null,
@@ -503,6 +534,14 @@ export const NodeActionToolbar = memo(
       (videoAnalyzeBillingRuleMissing
         ? t("common.billingRuleNotConfiguredShort")
         : null);
+    // 片段重拍是 Seedance 2.5 独占能力（时间码要交给它的视频编辑消费），所以入口
+    // 的可用性直接由「这个项目的模型目录里有没有 2.5」决定。目录是 module 级共享
+    // store，这里多订一份不会多发请求。
+    const { models: videoModelsForExtend } = useFreezoneVideoModels();
+    const extendModel = useMemo(
+      () => findSeedance25VideoModel(videoModelsForExtend),
+      [videoModelsForExtend],
+    );
     const isImageEdit = isImageEditNode(node);
     // Plain (non-protected) group → eligible for ungroup. Captured up here as a
     // boolean + a plain id while `node` still has its full type: over-broad node
@@ -536,6 +575,7 @@ export const NodeActionToolbar = memo(
     );
     const deleteNode = useCanvasStore((state) => state.deleteNode);
     const addNode = useCanvasStore((state) => state.addNode);
+    const findNodePosition = useCanvasStore((state) => state.findNodePosition);
     const addEdge = useCanvasStore((state) => state.addEdge);
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const onNodesChange = useCanvasStore((state) => state.onNodesChange);
@@ -1096,6 +1136,158 @@ export const NodeActionToolbar = memo(
       [node.id, requireVideoUrl, setSelectedNode, updateNodeData],
     );
 
+    // 逐帧拉片：在下游落一个空的拉片节点并连边就完事 —— 节点自己会顺着
+    // 这根上游边认素材（VideoBreakdownNode 里 upstreamVideo 优先于
+    // data.sourceVideoUrl），所以这里不必再把 URL 抄一份进去，抄了反而
+    // 会让「断开边退回空态」失效。工具条入口只建节点，拆什么维度、什么时候
+    // 开跑交给用户在那个节点上决定；agent 入口可以带 dimensions / auto_start，
+    // 开跑仍然走拉片节点自己的 start_video_breakdown 动作。
+    const handleCreateVideoBreakdown = useCallback(
+      (parameters?: Record<string, unknown>) => {
+        requireVideoUrl();
+        const requested = Array.isArray(parameters?.dimensions)
+          ? VIDEO_BREAKDOWN_DIMENSIONS.filter((dimension) =>
+              (parameters.dimensions as unknown[]).includes(dimension),
+            )
+          : [];
+        const position = findNodePosition(node.id, 300, 292);
+        const breakdownNodeId = addNode(
+          CANVAS_NODE_TYPES.videoBreakdown,
+          position,
+          {
+            sourceNodeId: node.id,
+            ...(requested.length > 0 ? { dimensions: requested } : {}),
+          },
+        );
+        addEdge(node.id, breakdownNodeId);
+        const autoStart = parameters?.auto_start === true;
+        if (autoStart) {
+          // 新节点这一拍还没挂载；带 requestId 派发会进待投递表，节点挂载订阅时补投。
+          dispatchNodeAction({
+            nodeId: breakdownNodeId,
+            action: "start_video_breakdown",
+            requestId: `video-breakdown-autostart:${breakdownNodeId}`,
+          });
+        }
+        return { nodeId: breakdownNodeId, started: autoStart };
+      },
+      [addEdge, addNode, findNodePosition, node.id, requireVideoUrl],
+    );
+
+    // 画面裁切：进入裁剪模式并让浮层的裁剪框抢一次焦点。裁切正在传的这几十秒里
+    // 不许切走：结果落地时会把 isCropMode 拍回 false，中途改道会跟那次收尾打架。
+    const handleOpenVideoCrop = useCallback(() => {
+      requireVideoUrl();
+      if (isVideoCropInFlight(node.id)) {
+        throw new Error(t("node.videoNode.crop.busy"));
+      }
+      updateNodeData(node.id, {
+        isCropMode: true,
+        isClipMode: false,
+        isExtendPickMode: false,
+        subtitleEraseMode: null,
+      });
+      requestVideoCropFocus(node.id);
+      setSelectedNode(node.id);
+    }, [node.id, requireVideoUrl, setSelectedNode, t, updateNodeData]);
+
+    // 智能续写：入口不建节点，只是把源节点切进「截前置视频」态 ——
+    // 底下浮出一条只能选一段的轨道，用户确认区间后才由 VideoNode 建
+    // 下游节点（区间是新节点 prompt 前缀的一部分，得先有区间）。
+    const handleOpenVideoExtend = useCallback(() => {
+      requireVideoUrl();
+      if (!extendModel) {
+        throw new Error(t("nodeToolbar.video.extendRequiresSeedance25"));
+      }
+      if (isVideoCropInFlight(node.id)) {
+        throw new Error(t("node.videoNode.crop.busy"));
+      }
+      updateNodeData(node.id, { isExtendPickMode: true, isCropMode: false });
+      setSelectedNode(node.id);
+    }, [extendModel, node.id, requireVideoUrl, setSelectedNode, t, updateNodeData]);
+
+    // 深度动作捕捉：浏览器里逐帧算深度，产物是一条新视频，所以先在下游落一个
+    // 处理态视频节点（referenceOnly，不挂生成面板），任务在节点上显示进度，
+    // 算完上传写回 videoUrl。时长上限在这里先挡一次，免得白建节点。
+    const handleStartVideoDepthCapture = useCallback(() => {
+      const url = requireVideoUrl();
+      const videoData = node.data as Record<string, unknown>;
+      const projectId = readUrl().project;
+      if (!projectId) {
+        throw new Error(t("node.videoNode.depthCapture.errors.noProject"));
+      }
+      if (
+        typeof videoData.durationMs === "number" &&
+        videoData.durationMs > DEPTH_MAX_DURATION_SEC * 1000
+      ) {
+        throw new Error(
+          t("node.videoNode.depthCapture.errors.tooLong", {
+            seconds: DEPTH_MAX_DURATION_SEC,
+          }),
+        );
+      }
+      // 同一条源视频还在算就不再开一份：结果一样，只会多占一份排队名额。
+      if (findActiveDepthCaptureNodeId(url)) {
+        throw new Error(t("node.videoNode.depthCapture.errors.alreadyRunning"));
+      }
+      if (hasActiveDepthCapture()) {
+        toast.info(t("node.videoNode.depthCapture.queued"));
+      } else if (!("gpu" in navigator)) {
+        toast.info(t("node.videoNode.depthCapture.noWebGpu"));
+      }
+      const label = t("nodeToolbar.video.motionCapture");
+      const sourceName =
+        typeof videoData.displayName === "string" &&
+        videoData.displayName.trim().length > 0
+          ? videoData.displayName.trim()
+          : label;
+      const position = findNodePosition(node.id, 580, 380);
+      const depthNodeId = addNode(
+        CANVAS_NODE_TYPES.video,
+        position,
+        {
+          displayName: `${sourceName}-${label}`,
+          videoUrl: null,
+          previewImageUrl: null,
+          aspectRatio:
+            typeof videoData.aspectRatio === "string"
+              ? videoData.aspectRatio
+              : "16:9",
+          referenceOnly: true,
+          isGenerating: false,
+          depthCapture: {
+            status: "running",
+            progress: 0,
+            sourceVideoUrl: url,
+            errorCode: null,
+            errorDetail: null,
+          },
+        } as unknown as Parameters<typeof addNode>[2],
+      );
+      addEdge(node.id, depthNodeId);
+      onNodesChange([
+        { id: node.id, type: "select", selected: false },
+        { id: depthNodeId, type: "select", selected: true },
+      ]);
+      setSelectedNode(depthNodeId);
+      void startDepthCapture({
+        nodeId: depthNodeId,
+        projectId,
+        sourceVideoUrl: url,
+      });
+      return { nodeId: depthNodeId, started: true };
+    }, [
+      addEdge,
+      addNode,
+      findNodePosition,
+      node.data,
+      node.id,
+      onNodesChange,
+      requireVideoUrl,
+      setSelectedNode,
+      t,
+    ]);
+
     // 以下符号被暂时隐藏的 toolbar 按钮使用，保留代码不删除：
     // - Sparkles 图标用于 AI 改图按钮
     // - Copy 图标用于复制按钮
@@ -1300,6 +1492,30 @@ export const NodeActionToolbar = memo(
             .catch((error) => publishNodeActionError(requestId, node.id, action, error));
           return;
         }
+        if (action === "open_video_crop_tool" || action === "open_video_extend_tool") {
+          try {
+            publishNodeActionAccepted(requestId, node.id, action);
+            if (action === "open_video_crop_tool") handleOpenVideoCrop();
+            else handleOpenVideoExtend();
+            publishNodeActionSuccess(requestId, node.id, action, { openedUiAction: true });
+          } catch (error) {
+            publishNodeActionError(requestId, node.id, action, error);
+          }
+          return;
+        }
+        if (action === "run_video_breakdown" || action === "run_video_depth_capture") {
+          try {
+            publishNodeActionAccepted(requestId, node.id, action);
+            const output =
+              action === "run_video_breakdown"
+                ? handleCreateVideoBreakdown(parameters)
+                : handleStartVideoDepthCapture();
+            publishNodeActionSuccess(requestId, node.id, action, output);
+          } catch (error) {
+            publishNodeActionError(requestId, node.id, action, error);
+          }
+          return;
+        }
         if (action === "open_video_subtitle_erase_smart" || action === "open_video_subtitle_erase_box") {
           try {
             publishNodeActionAccepted(requestId, node.id, action);
@@ -1312,11 +1528,15 @@ export const NodeActionToolbar = memo(
       });
     }, [
       handleAnalyzeVideo,
+      handleCreateVideoBreakdown,
       handleDownloadAudioNode,
       handleDownloadSaveAs,
       handleDownloadVideo,
       handleMatteImage,
       handleOpenVideoClip,
+      handleOpenVideoCrop,
+      handleOpenVideoExtend,
+      handleStartVideoDepthCapture,
       handleOpenVideoSubtitleErase,
       handleOpenVideoUpscale,
       handleOpenVideoViewer,
@@ -1913,6 +2133,29 @@ export const NodeActionToolbar = memo(
                   );
                 };
 
+                // 这几个入口的实现提在组件层（agent 的节点动作也走同一份），这里只
+                // 负责把抛出来的原因变成 toast。
+                const handleVideoMotionCapture = () => {
+                  if (!hasVideo) return;
+                  try {
+                    handleStartVideoDepthCapture();
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : String(error));
+                  }
+                };
+
+                const handleVideoBreakdown = () => {
+                  if (!hasVideo) return;
+                  handleCreateVideoBreakdown();
+                };
+
+                const handleVideoExtendPick = () => {
+                  if (!hasVideo || !extendModel) return;
+                  if (guardVideoCropInFlight(node.id)) return;
+                  handleOpenVideoExtend();
+                  toast.info(t("nodeToolbar.video.extendPickHint"));
+                };
+
                 const handleVideoAnalyze = () => {
                   if (!hasVideo || !videoUrl || isAnalyzing) {
                     return;
@@ -1996,24 +2239,32 @@ export const NodeActionToolbar = memo(
 
                 return (
                   <>
+                    {/* 智能续写同样要一个能改视频的 Seedance 2.5 模型，没有视频或
+                        没有模型时置灰，原因挂在 title 上。片段重拍已下线（整片编辑
+                        改不到指定区间），等按「裁剪→分段编辑→拼接」重做后再挂回来，
+                        所以这里不再是下拉，退回单颗按钮。 */}
                     <UiChipButton
-                      key="video-clip"
-                      className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
+                      key="video-extend"
+                      className={`${stubButtonClass} ${
+                        !hasVideo || !extendModel
+                          ? "opacity-50 cursor-not-allowed"
+                          : ""
+                      }`}
                       title={
                         !hasVideo
                           ? t("nodeToolbar.video.requiresVideo")
-                          : undefined
+                          : !extendModel
+                            ? t("nodeToolbar.video.extendRequiresSeedance25")
+                            : undefined
                       }
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (!hasVideo) return;
-                        updateNodeData(node.id, {
-                          isClipMode: !videoData.isClipMode,
-                        });
+                        if (!hasVideo || !extendModel) return;
+                        handleVideoExtendPick();
                       }}
                     >
-                      <Scissors className="h-3.5 w-3.5" />
-                      {t("nodeToolbar.video.clip")}
+                      <ClockPlus className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.extend")}
                     </UiChipButton>
                     <UiChipButton
                       key="video-hd"
@@ -2065,6 +2316,97 @@ export const NodeActionToolbar = memo(
                         }
                       />
                     </UiChipButton>
+                    {/* 拉片族工具共用一个下拉。「片段截取」就是原来独立的「剪辑」
+                        按钮（isClipMode），画面裁切 / 深度动作捕捉都已接上真实
+                        逻辑；handleVideoStub 只在没有视频时给两条去字幕入口兜
+                        个日志，不代表功能本身是占位。 */}
+                    <DropdownMenu
+                      onOpenChange={(open) => {
+                        if (open) closeDownloadMenu();
+                      }}
+                    >
+                      <DropdownMenuTrigger asChild>
+                        <UiChipButton
+                          key="video-frame-analysis"
+                          className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
+                          title={
+                            !hasVideo
+                              ? t("nodeToolbar.video.requiresVideo")
+                              : undefined
+                          }
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <ScanSearch className="h-3.5 w-3.5" />
+                          {t("nodeToolbar.video.frameAnalysis")}
+                          <ChevronDown className="h-3 w-3" />
+                        </UiChipButton>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="start"
+                        sideOffset={6}
+                        className={`${TOOLBAR_MENU_CONTENT_CLASS} min-w-[180px]`}
+                        onClick={(event) => event.stopPropagation()}
+                        onCloseAutoFocus={(event) => {
+                          // 这次关闭是因为选中了「画面裁切」：让浮层的裁剪框去抢
+                          // 焦点，不让 Radix 把焦点收回触发这个下拉的按钮。
+                          if (!cropItemSelectedRef.current) return;
+                          cropItemSelectedRef.current = false;
+                          event.preventDefault();
+                        }}
+                      >
+                        <DropdownMenuItem
+                          className={TOOLBAR_MENU_ITEM_CLASS}
+                          disabled={!hasVideo}
+                          onSelect={() => handleVideoBreakdown()}
+                        >
+                          <ScanSearch className="h-4 w-4" />
+                          {t("nodeToolbar.video.frameAnalysis")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className={TOOLBAR_MENU_ITEM_CLASS}
+                          disabled={!hasVideo}
+                          onSelect={() => {
+                            // 裁切正在传的这几十秒里不许切走：结果落地时会把
+                            // isCropMode 拍回 false，中途改道会跟那次收尾打架。
+                            if (guardVideoCropInFlight(node.id)) return;
+                            updateNodeData(node.id, {
+                              isClipMode: !videoData.isClipMode,
+                              isCropMode: false,
+                            });
+                          }}
+                        >
+                          <Scissors className="h-4 w-4" />
+                          {t("nodeToolbar.video.segmentExtract")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className={TOOLBAR_MENU_ITEM_CLASS}
+                          disabled={!hasVideo}
+                          onSelect={() => {
+                            if (guardVideoCropInFlight(node.id)) return;
+                            cropItemSelectedRef.current = true;
+                            // 只有「进入」裁剪模式才挂号抢一次焦点（在
+                            // handleOpenVideoCrop 里）；退出时浮层根本不会再渲染，
+                            // 挂号也没人消费，白白占着挂号表。
+                            if (videoData.isCropMode) {
+                              updateNodeData(node.id, { isCropMode: false });
+                            } else {
+                              handleOpenVideoCrop();
+                            }
+                          }}
+                        >
+                          <Crop className="h-4 w-4" />
+                          {t("nodeToolbar.video.frameCrop")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className={TOOLBAR_MENU_ITEM_CLASS}
+                          disabled={!hasVideo}
+                          onSelect={handleVideoMotionCapture}
+                        >
+                          <PersonStanding className="h-4 w-4" />
+                          {t("nodeToolbar.video.motionCapture")}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     <DropdownMenu
                       onOpenChange={(open) => {
                         if (open) closeDownloadMenu();
@@ -2095,10 +2437,12 @@ export const NodeActionToolbar = memo(
                               handleVideoStub("subtitle-smart-erase");
                               return;
                             }
+                            if (guardVideoCropInFlight(node.id)) return;
                             updateNodeData(node.id, {
                               subtitleEraseMode: 'smart',
                               subtitleEraseBox: null,
                               isClipMode: false,
+                              isCropMode: false,
                             });
                             setSelectedNode(node.id);
                           }}
@@ -2113,10 +2457,12 @@ export const NodeActionToolbar = memo(
                               handleVideoStub("subtitle-box-erase");
                               return;
                             }
+                            if (guardVideoCropInFlight(node.id)) return;
                             updateNodeData(node.id, {
                               subtitleEraseMode: 'box',
                               subtitleEraseBox: null,
                               isClipMode: false,
+                              isCropMode: false,
                             });
                             setSelectedNode(node.id);
                           }}

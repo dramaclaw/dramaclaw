@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Package, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -64,6 +64,7 @@ import {
 } from "@/lib/queries/props";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { queryKeys } from "@/lib/query-keys";
+import { confirmAssetRename } from "@/lib/confirm-asset-rename";
 import type { ErrorResponse } from "@/types/api";
 import type { PropAsset } from "@/types/prop";
 
@@ -335,6 +336,7 @@ export function PropsPanel({
   const createProp = useCreateProp(project);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<PropAsset | null>(null);
+  const saveInFlight = useRef(false);
   const updateProp = useUpdateProp(project, editing?.name ?? "");
   const deleteProp = useDeleteProp(project);
   // Beat references are edit-only: opening the asset page must not scan every
@@ -364,16 +366,27 @@ export function PropsPanel({
   const gridRef = useAssetFocus(focusId, !props.isLoading && items.length > 0);
 
   async function handleSave(data: PropPayload) {
-    const payload = { ...data, name: data.name.trim() };
-    const res = editing
-      ? await updateProp.mutateAsync(payload)
-      : await createProp.mutateAsync(payload);
-    if (isErrorResponse(res)) {
-      toast.error(res.error);
-      return;
+    // isPending only starts after confirmation; guard the entire save attempt.
+    if (saveInFlight.current) return;
+    saveInFlight.current = true;
+    try {
+      const payload = { ...data, name: data.name.trim() };
+      if (editing && payload.name !== editing.name) {
+        const confirmed = await confirmAssetRename(t);
+        if (!confirmed) return;
+      }
+      const res = editing
+        ? await updateProp.mutateAsync(payload)
+        : await createProp.mutateAsync(payload);
+      if (isErrorResponse(res)) {
+        toast.error(res.error);
+        return;
+      }
+      setDialogOpen(false);
+      setEditing(null);
+    } finally {
+      saveInFlight.current = false;
     }
-    setDialogOpen(false);
-    setEditing(null);
   }
 
   async function handleDelete(prop: PropAsset) {

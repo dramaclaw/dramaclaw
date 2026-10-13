@@ -395,6 +395,15 @@ Plan id 不是画布节点 id。如果确认后的自定义方案需要变成多
 - `open_rotate_tool`
 - `open_video_viewer`
 
+视频节点（已有 `videoUrl`）的工具条动作同样通过 `run_node_action` 调用，用户说法与动作的对应关系：
+
+- 「逐帧拉片」→ `run_video_breakdown`：在下游创建拉片节点（`videoBreakdownNode`）。默认只建节点；用户明确要求现在就拉片时传 `parameters.auto_start=true`，可选 `parameters.dimensions`（`storyboard` / `motion` / `music` 的子集）。拉片是计费任务，要跑几分钟，结果以分镜组 / 动态运镜 / 音乐片段的形式落在拉片节点下游。
+- 拉片节点上的「开始拉片」→ `start_video_breakdown`：对已存在的拉片节点开跑，可选 `parameters.dimensions`。动作在任务提交后即返回，不等结果。
+- 「片段截取」→ `open_video_clip_tool`：进入截取模式，由用户调整区间并确认。
+- 「画面裁切」→ `open_video_crop_tool`：进入裁切模式，由用户拖动裁切框并确认。
+- 「智能续写」→ `open_video_extend_tool`：进入选区间模式，由用户选定前置片段并确认后才创建续写节点。仅在项目开放 Seedance 2.5 时出现。
+- 「深度动作捕捉」→ `run_video_depth_capture`：在浏览器本地计算深度视频并落为下游新视频节点；只支持 60 秒以内的视频，`can_run_now=false` 时不要调用。
+
 对于 `execution="manual_ui"`，`run_node_action` 会打开 UI 或确认入口。对于 `execution="frontend_node"`，它会运行节点自己的前端行为，例如在 `imageGenNode` 上运行 `generate_image`。
 
 主线写回是例外：`commit_node` 和 `sync_beat_context_to_mainline` 不属于 Agent 可发现或可执行动作。即使用户在对话中要求、提供手写命令或重放旧命令，也不得调用；只能请用户使用画布中的手动 Commit/同步入口。

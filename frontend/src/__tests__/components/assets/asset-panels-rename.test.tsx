@@ -102,6 +102,7 @@ function renderWithProviders(ui: ReactNode) {
       <QueryClientProvider client={qc}>
         <AssetHeaderActionsSlotProvider>
           <AssetHeaderActionsTarget />
+          <ConfirmDialogHost />
           {ui}
         </AssetHeaderActionsSlotProvider>
       </QueryClientProvider>
@@ -110,36 +111,143 @@ function renderWithProviders(ui: ReactNode) {
 }
 
 describe("asset panel rename behavior", () => {
-  it("sends the edited scene name in PATCH payload", async () => {
-    let patchBody: unknown = null;
+  const renameWarning =
+    "Changing the name changes the asset ID. Existing plans, storyboards, and generated results will not migrate automatically. You may need to plan and generate again after saving. Continue?";
+
+  async function editAsset(kind: "scenes" | "props") {
+    const original = kind === "scenes" ? "Hall" : "Sword";
+    const requests = vi.fn();
     server.use(
-      http.get("http://localhost:3000/api/v1/projects/demo/scenes", () =>
+      http.get(`http://localhost:3000/api/v1/projects/demo/${kind}`, () =>
         HttpResponse.json({
           ok: true,
-          data: [{ name: "Hall", scene_type: "interior", environment_prompt: "wide hall" }],
+          data: [{ name: original, scene_type: "interior", prop_type: "weapon", description: "original description", visual_prompt: "silver sword" }],
         }),
       ),
-      http.patch("http://localhost:3000/api/v1/projects/demo/scenes/Hall", async ({ request }) => {
-        patchBody = await request.json();
-        return HttpResponse.json({
-          ok: true,
-          data: { name: "GrandHall", scene_type: "interior", environment_prompt: "wide hall" },
-        });
+      http.patch(`http://localhost:3000/api/v1/projects/demo/${kind}/${original}`, async ({ request }) => {
+        const payload = await request.json();
+        requests(payload);
+        return HttpResponse.json({ ok: true, data: payload });
       }),
     );
+    renderWithProviders(kind === "scenes" ? <ScenesPanel project="demo" /> : <PropsPanel project="demo" />);
+    await screen.findAllByText(original);
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    return { original, requests, name: screen.getByDisplayValue(original), form: screen.getByRole("dialog") };
+  }
 
-    renderWithProviders(<ScenesPanel project="demo" />);
-
-    expect(await screen.findAllByText("Hall")).not.toHaveLength(0);
-    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    fireEvent.change(screen.getByDisplayValue("Hall"), {
-      target: { value: "GrandHall" },
+  describe.each(["scenes", "props"] as const)("%s rename confirmation", (kind) => {
+    it("confirms a changed name before sending one update", async () => {
+      const { original, requests, name, form } = await editAsset(kind);
+      fireEvent.change(name, { target: { value: `${original}New` } });
+      fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+      const confirmation = await screen.findByRole("alertdialog");
+      expect(within(confirmation).getByText(renameWarning)).toBeInTheDocument();
+      expect(requests).not.toHaveBeenCalled();
+      fireEvent.click(within(confirmation).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+      expect(requests).toHaveBeenCalledWith(expect.objectContaining({ name: `${original}New` }));
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(patchBody).toBeDefined());
-    expect(patchBody).toMatchObject({ name: "GrandHall" });
+    it.each(["cancel", "escape"])("preserves all inputs on %s, sends no update, and allows retry even with zero references", async (dismiss) => {
+      const user = userEvent.setup();
+      const { original, requests, name, form } = await editAsset(kind);
+      fireEvent.change(name, { target: { value: `  ${original}New  ` } });
+      const other = kind === "scenes" ? within(form).getByDisplayValue("original description") : within(form).getByDisplayValue("silver sword");
+      fireEvent.change(other, { target: { value: "edited prompt or description" } });
+      const save = within(form).getByRole("button", { name: "Save" });
+      // These land in the same event turn, while mutation.isPending is false.
+      fireEvent.click(save);
+      fireEvent.click(save);
+      const confirmation = await screen.findByRole("alertdialog");
+      expect(within(confirmation).getByText(renameWarning)).toBeInTheDocument();
+      expect(requests).not.toHaveBeenCalled();
+      await waitFor(() => expect(within(confirmation).getByRole("button", { name: "Cancel" })).toHaveFocus());
+      if (dismiss === "cancel") await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+      else await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+      expect(screen.getByRole("dialog")).toBe(form);
+      expect(name).toHaveValue(`  ${original}New  `);
+      expect(other).toHaveValue("edited prompt or description");
+      expect(requests).not.toHaveBeenCalled();
+
+      await user.click(save);
+      const retry = await screen.findByRole("alertdialog");
+      expect(requests).not.toHaveBeenCalled();
+      await user.click(within(retry).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+      expect(requests).toHaveBeenCalledWith(expect.objectContaining({
+        name: `${original}New`,
+        [kind === "scenes" ? "description" : "visual_prompt"]: "edited prompt or description",
+      }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    });
+
+    it.each([false, true])("saves non-name edits without confirmation when surrounding whitespace=%s", async (spaces) => {
+      const { original, requests, name, form } = await editAsset(kind);
+      if (spaces) fireEvent.change(name, { target: { value: `  ${original}  ` } });
+      const other = kind === "scenes" ? within(form).getByDisplayValue("original description") : within(form).getByDisplayValue("silver sword");
+      fireEvent.change(other, { target: { value: "new details" } });
+      fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+      expect(requests).toHaveBeenCalledWith(expect.objectContaining({ name: original }));
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+
+    it("unlocks a failed update so the user can retry confirmation", async () => {
+      const { original, requests, name, form } = await editAsset(kind);
+      let attempts = 0;
+      server.use(http.patch(`http://localhost:3000/api/v1/projects/demo/${kind}/${original}`, async ({ request }) => {
+        const payload = await request.json();
+        requests(payload);
+        return HttpResponse.json(++attempts === 1 ? { ok: false, error: "try again" } : { ok: true, data: payload });
+      }));
+      fireEvent.change(name, { target: { value: `${original}New` } });
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        await userEvent.click(within(form).getByRole("button", { name: "Save" }));
+        const confirmation = await screen.findByRole("alertdialog");
+        await userEvent.click(within(confirmation).getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(requests).toHaveBeenCalledTimes(attempt));
+        if (attempt === 1) await waitFor(() => expect(within(form).getByRole("button", { name: "Save" })).not.toBeDisabled());
+      }
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    });
   });
+
+  it("confirms the composed scene variant name, retaining variant inputs after cancellation", async () => {
+    const user = userEvent.setup();
+    const requests = vi.fn();
+    server.use(
+      http.get("http://localhost:3000/api/v1/projects/demo/scenes", () => HttpResponse.json({ ok: true, data: [
+        { name: "Hall", scene_type: "interior" },
+        { name: "Hall_漏水_夜晚", scene_type: "interior", base_scene_id: "Hall", variant_id: "漏水", time_of_day: "夜晚", variant_prompt: "water" },
+      ] })),
+      http.patch("http://localhost:3000/api/v1/projects/demo/scenes/:name", async ({ request, params }) => {
+        expect(decodeURIComponent(String(params.name))).toBe("Hall_漏水_夜晚");
+        const payload = await request.json(); requests(payload);
+        return HttpResponse.json({ ok: true, data: payload });
+      }),
+    );
+    renderWithProviders(<ScenesPanel project="demo" />);
+    await screen.findByText("Hall_漏水_夜晚");
+    const edits = screen.getAllByRole("button", { name: "Edit" });
+    await user.click(edits[edits.length - 1]);
+    const form = screen.getByRole("dialog");
+    fireEvent.change(within(form).getByLabelText("Variant"), { target: { value: "  积雪  " } });
+    await user.click(within(form).getByRole("button", { name: "Save" }));
+    let confirmation = await screen.findByRole("alertdialog");
+    expect(within(confirmation).getByText(renameWarning)).toBeInTheDocument();
+    expect(requests).not.toHaveBeenCalled();
+    await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+    expect(within(form).getByLabelText("Variant")).toHaveValue("  积雪  ");
+    expect(within(form).getByText("Hall_积雪_夜晚")).toBeInTheDocument();
+    await user.click(within(form).getByRole("button", { name: "Save" }));
+    confirmation = await screen.findByRole("alertdialog");
+    await user.click(within(confirmation).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+    expect(requests).toHaveBeenCalledWith(expect.objectContaining({ name: "Hall_积雪_夜晚", variant_id: "积雪", base_scene_id: "Hall", time_of_day: "夜晚" }));
+  });
+
 
   it("confirms scene deletion through the styled dialog instead of window.confirm", async () => {
     const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -159,7 +267,6 @@ describe("asset panel rename behavior", () => {
 
     renderWithProviders(
       <>
-        <ConfirmDialogHost />
         <ScenesPanel project="demo" />
       </>,
     );
@@ -460,36 +567,6 @@ describe("asset panel rename behavior", () => {
     expect(buildButton).not.toHaveAttribute("title");
   });
 
-  it("sends the edited prop name in PATCH payload", async () => {
-    let patchBody: unknown = null;
-    server.use(
-      http.get("http://localhost:3000/api/v1/projects/demo/props", () =>
-        HttpResponse.json({
-          ok: true,
-          data: [{ name: "Sword", prop_type: "weapon", visual_prompt: "silver sword" }],
-        }),
-      ),
-      http.patch("http://localhost:3000/api/v1/projects/demo/props/Sword", async ({ request }) => {
-        patchBody = await request.json();
-        return HttpResponse.json({
-          ok: true,
-          data: { name: "MoonSword", prop_type: "weapon", visual_prompt: "moonlit sword" },
-        });
-      }),
-    );
-
-    renderWithProviders(<PropsPanel project="demo" />);
-
-    await screen.findByText("Sword");
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    fireEvent.change(screen.getByDisplayValue("Sword"), {
-      target: { value: "MoonSword" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() => expect(patchBody).toBeDefined());
-    expect(patchBody).toMatchObject({ name: "MoonSword" });
-  });
 
   it("shows the NiceGUI prop type select label in the edit dialog", async () => {
     server.use(
