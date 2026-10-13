@@ -331,7 +331,7 @@ const CHANNELS = [
    {alias:"DC-content-rewriter-LLM", model:"deepseek-chat", state:"active", note:"script — rewrite nội dung (tùy chọn)"},
    {alias:"DC-episode-scene-planner-LLM", model:"deepseek-chat", state:"active", note:"scene_prop — menu cảnh"},
    {alias:"DC-episode-scene-reconciler-LLM", model:"deepseek-chat", state:"active", note:"scene_prop — reconcile base scene"},
-   {alias:"DC-narrated-scene-asset-planner-LLM", model:"deepseek-chat", state:"active", note:"scene_prop — bản narrated"},
+   {alias:"DC-narrated-scene-asset-planner-LLM", model:"deepseek-chat", state:"active", note:"scene_prop — bản narrated. Đã verify thực tế qua tesla_pov_short ep1 (2026-10-13, xem Langfuse): model tự sửa lỗi 2 lần (bọc sai object, đặt tên cảnh không khớp nguyên văn) trước khi trả đúng schema — bình thường, không phải lỗi hệ thống."},
    {alias:"DC-episode-prop-planner-LLM", model:"deepseek-chat", state:"active", note:"scene_prop — menu đạo cụ"},
    {alias:"DC-style-analyzer-LLM", model:"deepseek-chat", state:"active", note:"configure — /styles/analyze (cần đọc ảnh, xem cảnh báo)"},
    {alias:"DC-seedance2-prompt-composer-LLM", model:"deepseek-chat", state:"active", note:"video — soạn final_prompt cho Seedance 2"},
@@ -430,6 +430,7 @@ const MWARNINGS = [
  "<code>CHARACTER_BUILD_MODEL</code> và <code>CODEX_MODEL</code> không nằm trong map mặc định của code (<code>official_defaults.py</code>); máy này set thẳng trong <code>.env</code> nên vẫn chạy đúng, nhưng máy khác clone repo mà không copy <code>.env</code> sẽ thiếu 2 key này.",
  "Chưa có channel NewAPI \"custom\" nào cho video (seedance-*) hay TTS (index-tts-2) — 2 bước này đi qua <b>gateway NewAPI chính</b> (đã có sẵn trong image <code>claymorelab/dramaclaw-gateway</code>), không qua 4 channel DC-* ở trên. <code>DC-comfyui</code> trong code chỉ là tên dùng khi xoá channel, chưa có kênh ComfyUI nào được tạo.",
  "3 alias identity_planner gốc trên DC-custom (<code>DC-identity-cast/analysis/appearance-*</code>) và <code>DC-ollama-identity-LLM</code> trên DC-ollama là orphan — không còn env nào trỏ tới, vô hại, có thể dọn sau.",
+ "Response thật từ DeepSeek qua channel <code>DC-deepseek</code> có thể trả field <code>\"model\"</code> khác với tên gửi đi (ví dụ gửi <code>deepseek-chat</code> nhưng response ghi <code>\"model\": \"deepseek-flash\"</code>) — đó là tên checkpoint vật lý nội bộ DeepSeek trả về sau request, <b>không phải lỗi mapping</b>; đã xác nhận <code>model_mapping</code> của channel vẫn đúng là <code>deepseek-chat</code> qua NewAPI admin API.",
 ];
 
 const MHOWTO = [
