@@ -61,6 +61,16 @@ Máy này đã cài và cấu hình sẵn. Đọc file này trước khi cài/c�
 - Bản tải lên hiện gồm cả bảng ghi chú kiểm chứng; nên tải bản chỉ có lời dẫn nếu muốn trích xuất sạch.
 - `identity_plan` đã chạy xong cho tập 1 (qua DeepSeek, xem bullet `DC-deepseek-identity-LLM` ở trên): 5 identity cho Nikola Tesla (`青年时期` mặc định + 4 identity theo từng thời kỳ 1876–77 Graz/1882 Budapest/1884 New York/1893 Chicago), cả 5 đều có `appearance_details` và đã sinh ảnh identity xong qua `gemini_webai`. Bước kế tiếp theo pipeline doc: `scene_prop`/`script`.
 
+## LLM call log (Langfuse, dev-only)
+
+Đã bật trên máy này theo `docs/en/guides/llm-call-log.md` (2026-10-13). Chi tiết:
+
+- `.env` đã có đủ `LLM_CALL_LOG_ENABLED=1` + `LANGFUSE_HOST/PUBLIC_KEY/SECRET_KEY` + các secret của stack (`LANGFUSE_NEXTAUTH_SECRET`/`SALT`/`ENCRYPTION_KEY`/`INIT_USER_PASSWORD`/`POSTGRES`/`CLICKHOUSE`/`REDIS`/`MINIO_PASSWORD`). Đừng generate lại, chỉ cần `docker compose -f docker-compose.langfuse.yml --env-file .env up -d` khi cần khởi động lại stack.
+- UI Langfuse: `http://localhost:3100`, login `admin@dramaclaw.local` / mật khẩu ở `LANGFUSE_INIT_USER_PASSWORD` trong `.env`.
+- **`minio/mc` đã bị gỡ khỏi Docker Hub** (MinIO đổi license 2024); `quay.io/minio/mc` và `cgr.dev/chainguard/mc` đều từ chối pull ẩn danh. Service `minio-retention` (chỉ dùng để set rule tự xoá media cũ sau `LLM_LOG_RETENTION_DAYS`) **không chạy được** trên máy này — bỏ qua nó, chỉ `up -d` các service: `langfuse-web langfuse-worker clickhouse minio redis postgres`. Không ảnh hưởng tính năng log, chỉ thiếu auto-cleanup; dọn `scripts/llm_call_log_cleanup.py` bằng tay hoặc cron nếu cần.
+- Image `dramaclaw/api` (prebuilt) chưa có `module novelvideo.llm_call_log` và chưa cài `langfuse` — đã `docker cp src/novelvideo dramaclaw-api-1:/app/src/` và cài package. **Lưu ý: app chạy bằng venv ở `/app/.venv` (uv-managed, không có `pip` trong venv)**, `pip install langfuse` thường (global pip) sẽ cài nhầm vào `/usr/local/lib/python3.12/site-packages` — venv không thấy. Cách đúng: `docker exec dramaclaw-api-1 sh -c 'cd /app && uv pip install --python /app/.venv/bin/python langfuse'`, rồi `docker restart dramaclaw-api-1`. Giống các lần vá code khác: nếu phải `docker compose -f docker-compose.release.yml up -d` (recreate), nhớ `docker cp src/novelvideo` lại rồi cài `langfuse` lại bằng `uv pip` như trên trước khi restart.
+- Đã verify end-to-end bằng cách gọi thật `http://host.docker.internal:6969/v1/chat/completions` (gemini-auto, không tốn phí NewAPI) từ bên trong container rồi check `GET http://localhost:3100/api/public/traces` (basic auth bằng `LANGFUSE_PUBLIC_KEY:LANGFUSE_SECRET_KEY`) — trace hiện ra đầy đủ input/output/latency. Không nên tự gọi NewAPI trực tiếp để test vì app dùng cơ chế auth per-turn (placeholder key + latch), không có static token tĩnh để tái dùng ngoài flow thật.
+
 ## Đừng làm
 
 - Đừng tìm hay in `settings.db` / token chạy của DramaClaw (hệ thống chặn thao tác dò thông tin xác thực).
