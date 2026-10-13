@@ -17,6 +17,12 @@ After startup, open `http://localhost:8080` and go to **Settings → Models & Ch
 
 Enable the intended mode after configuring it. New jobs read the latest mode, key, and mappings. Jobs already running do not switch gateways midway.
 
+## Agent model
+
+The Xia Director Agent can either follow the active gateway mode or use an independent third-party endpoint. Under **Agent model**, select **Third party** and provide an OpenAI-compatible Base URL, API Key, and model name. The endpoint must support the OpenAI Responses API and tool calls. This setting affects the Agent only; image, video, audio, embedding, and other feature-model routes continue to use the selected gateway mode.
+
+Secrets remain in the local CE settings database and are returned to the browser only as a masked preview. Changing the third-party endpoint requires entering the API Key again, which prevents a saved credential from being sent to a different host accidentally. Select **Follow current channel** to restore the existing Official, Custom, or Hybrid routing behavior.
+
 ## Official mode
 
 Official mode is the shortest setup path:

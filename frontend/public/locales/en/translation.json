@@ -7654,6 +7654,16 @@
         "missingEndpoint": "Enter the BrainClaw NewAPI URL.",
         "advancedEnabled": "Advanced custom LLM is enabled."
       },
+      "agent": {
+        "title": "Agent model",
+        "description": "Configure the model used by Xia Director independently from image, video, audio, and embedding channels.",
+        "inherit": "Follow current channel",
+        "thirdParty": "Third party",
+        "model": "Model name",
+        "thirdPartyHint": "The service must support the OpenAI Responses API and tool calls. Re-enter the API key when changing the endpoint.",
+        "save": "Save Agent settings",
+        "saved": "Agent model settings saved. New sessions use the latest configuration."
+      },
       "custom": {
         "description": "CE uses a local SQLite-backed NewAPI. DramaClaw connects the database, creates a runtime token, and enables the local channel automatically.",
         "init": "Initialize Local NewAPI",

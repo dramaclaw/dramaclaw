@@ -1460,7 +1460,7 @@ def _codex_model() -> str:
     from novelvideo.shared.runtime_env import is_ce_effective
 
     if is_ce_effective():
-        from novelvideo.model_gateway_settings import get_effective_llm_config
+        from novelvideo.model_gateway_settings import get_effective_agent_llm_config
 
         # CE is configured interactively and SQLite is authoritative. Only the
         # explicit Custom + BrainClaw choice sends the literal ``brainclaw``
@@ -1468,10 +1468,13 @@ def _codex_model() -> str:
         # let RelayClaw decide what serves it, and Advanced mode sends the same
         # alias to the user-selected NewAPI gateway.
         from novelvideo.model_gateway_settings import (
+            AGENT_LLM_MODE_THIRD_PARTY,
             CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
         )
 
-        gateway = get_effective_llm_config()
+        gateway = get_effective_agent_llm_config()
+        if gateway.mode == AGENT_LLM_MODE_THIRD_PARTY:
+            return gateway.model or _DEFAULT_CODEX_MODEL
         if gateway.mode == CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW:
             return "brainclaw"
         return _DEFAULT_CODEX_MODEL
@@ -3253,6 +3256,54 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         ),
         None,
     )
+    if entry is None:
+        from novelvideo.model_gateway_settings import (
+            AGENT_LLM_MODE_THIRD_PARTY,
+            get_effective_agent_llm_config,
+        )
+        from novelvideo.shared.runtime_env import is_ce_effective
+
+        gateway = get_effective_agent_llm_config() if is_ce_effective() else None
+        if gateway is not None and gateway.mode == AGENT_LLM_MODE_THIRD_PARTY:
+            template = next(
+                (
+                    item
+                    for item in models
+                    if isinstance(item, dict)
+                    and item.get("slug") == _DEFAULT_CODEX_MODEL
+                ),
+                None,
+            )
+            if template is not None:
+                entry = json.loads(json.dumps(template))
+                entry.update(
+                    {
+                        "slug": configured_model,
+                        "display_name": configured_model,
+                        "description": "User-configured third-party Agent model.",
+                        "supports_search_tool": False,
+                    }
+                )
+                catalog = {**catalog, "models": [*models, entry]}
+                from novelvideo import config as app_config
+
+                digest = hashlib.sha256(
+                    configured_model.encode("utf-8")
+                ).hexdigest()[:16]
+                path = (
+                    Path(app_config.STATE_DIR)
+                    / "local"
+                    / f"codex-agent-model-catalog-{digest}.json"
+                )
+                path.parent.mkdir(parents=True, exist_ok=True)
+                temporary_path = path.with_name(
+                    f".{path.name}.{uuid.uuid4().hex}.tmp"
+                )
+                temporary_path.write_text(
+                    json.dumps(catalog, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                temporary_path.replace(path)
     required_fields = {
         "base_instructions",
         "display_name",

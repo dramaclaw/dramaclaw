@@ -10,6 +10,7 @@ import { SettingsDialog } from "@/components/settings/settings-dialog";
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: true }));
 const modelGatewayMocks = vi.hoisted(() => ({
   config: undefined as Record<string, unknown> | undefined,
+  saveAgent: vi.fn(),
   saveBrainClaw: vi.fn(),
   setCustomLlmMode: vi.fn(),
 }));
@@ -73,6 +74,10 @@ vi.mock("@/lib/queries/model-gateway", () => ({
   useEnableHybrid: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useEnableBrainClaw: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveOfficialConfig: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSaveAgentLlmConfig: () => ({
+    mutateAsync: modelGatewayMocks.saveAgent,
+    isPending: false,
+  }),
   useSaveBrainClawConfig: () => ({
     mutateAsync: modelGatewayMocks.saveBrainClaw,
     isPending: false,
@@ -144,6 +149,14 @@ vi.mock("react-i18next", () => ({
         "settings.modelConfig.brainclaw.description": "虾脑仅通过虾驿提供",
         "settings.modelConfig.brainclaw.model": "固定模型",
         "settings.modelConfig.brainclaw.save": "保存并启用 BrainClaw",
+        "settings.modelConfig.agent.title": "Agent 模型",
+        "settings.modelConfig.agent.description": "Agent 模型说明",
+        "settings.modelConfig.agent.inherit": "跟随当前渠道",
+        "settings.modelConfig.agent.thirdParty": "第三方",
+        "settings.modelConfig.agent.model": "模型名称",
+        "settings.modelConfig.agent.thirdPartyHint": "需要兼容 Responses API",
+        "settings.modelConfig.agent.save": "保存 Agent 配置",
+        "settings.modelConfig.agent.saved": "Agent 模型配置已保存",
         "settings.modelConfig.featureModels.title": "业务模型映射",
         "settings.modelConfig.embeddingModel.title": "Embedding 模型",
         "settings.modelConfig.mediaModels.title": "媒体模型",
@@ -349,6 +362,7 @@ function openRecipesManagement() {
 beforeEach(() => {
   runtimeState.isCeRuntime = true;
   modelGatewayMocks.config = undefined;
+  modelGatewayMocks.saveAgent.mockReset();
   modelGatewayMocks.saveBrainClaw.mockReset();
   modelGatewayMocks.setCustomLlmMode.mockReset();
   modelGatewayMocks.setCustomLlmMode.mockResolvedValue({ ok: true });
@@ -378,6 +392,45 @@ describe("SettingsDialog pages", () => {
       "page",
     );
     expect(screen.getByText("选择模型网关渠道")).toBeInTheDocument();
+    expect(screen.getByText("Agent 模型")).toBeInTheDocument();
+  });
+
+  it("saves an independent third-party Agent model", async () => {
+    modelGatewayMocks.config = {
+      mode: "official",
+      effective: { source: "official", baseUrl: "https://relay.example/v1", apiKeyPreview: "", configured: false },
+      llmEffective: { mode: "official", source: "official", baseUrl: "https://relay.example/v1", apiKeyPreview: "", configured: false, model: "brainclaw", brainclaw: true },
+      agent: { mode: "inherit", baseUrl: "", apiKeyPreview: "", configured: false, model: "" },
+      official: { source: "database", baseUrl: "https://relay.example/v1", apiKeyPreview: "", configured: false, environment: { baseUrl: "https://relay.example/v1", apiKeyPreview: "", configured: false } },
+      custom: { llmMode: "advanced", baseUrl: "", apiKeyPreview: "", configured: false, adminBaseUrl: "", tokenName: "", tokenId: "" },
+    };
+    modelGatewayMocks.saveAgent.mockResolvedValue({ ok: true, data: modelGatewayMocks.config });
+
+    renderSettingsDialog();
+    fireEvent.click(screen.getByRole("tab", { name: "第三方" }));
+    fireEvent.change(screen.getByPlaceholderText("https://api.example.com/v1"), {
+      target: { value: "https://agent.example/v1" },
+    });
+    const agentApiKey = document.querySelector(
+      'input[name="agent-third-party-api-key"]',
+    );
+    expect(agentApiKey).not.toBeNull();
+    fireEvent.change(agentApiKey!, {
+      target: { value: "sk-agent-secret" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("gpt-5.2-codex"), {
+      target: { value: "vendor-agent-model" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存 Agent 配置" }));
+
+    await waitFor(() => {
+      expect(modelGatewayMocks.saveAgent).toHaveBeenCalledWith({
+        mode: "third_party",
+        baseUrl: "https://agent.example/v1",
+        apiKey: "sk-agent-secret",
+        model: "vendor-agent-model",
+      });
+    });
   });
 
   it("lets BrainClaw use an editable NewAPI endpoint in custom mode", async () => {

@@ -64,6 +64,7 @@ import {
   useEnableCustom,
   useEnableHybrid,
   useEnableBrainClaw,
+  useSaveAgentLlmConfig,
   useSaveOfficialConfig,
   useSaveBrainClawConfig,
   useSetCustomLlmMode,
@@ -77,6 +78,7 @@ import {
   useSaveMediaRelayConfig,
   useSyncProviderChannel,
   type GatewayMode,
+  type AgentLlmMode,
   type CustomLlmMode,
   type ModelGatewayConfig,
   type CustomChannelInput,
@@ -507,6 +509,8 @@ function ModelConfigSection({ open }: { open: boolean }) {
         </div>
       ) : null}
 
+      <AgentLlmPanel config={config} loading={loading} />
+
       <Tabs
         className="mt-4"
         value={mode}
@@ -659,6 +663,194 @@ function ModelConfigSection({ open }: { open: boolean }) {
         </>
       ) : null}
     </section>
+  );
+}
+
+function AgentLlmPanel({
+  config,
+  loading,
+}: {
+  config: ModelGatewayConfig | undefined;
+  loading: boolean;
+}) {
+  const { t } = useTranslation();
+  const saveAgent = useSaveAgentLlmConfig();
+  const saved = config?.agent;
+  const [mode, setMode] = useState<AgentLlmMode>(saved?.mode ?? "inherit");
+  const [baseUrl, setBaseUrl] = useState(saved?.baseUrl ?? "");
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState(saved?.model ?? "");
+  const [revealKey, setRevealKey] = useState(false);
+
+  useEffect(() => {
+    if (!saved) return;
+    setMode(saved.mode);
+    setBaseUrl(saved.baseUrl);
+    setModel(saved.model);
+  }, [saved]);
+
+  const endpointChanged = Boolean(
+    saved?.baseUrl && baseUrl.trim() && baseUrl.trim().replace(/\/$/, "") !== saved.baseUrl.replace(/\/$/, ""),
+  );
+  const thirdPartyReady = Boolean(
+    baseUrl.trim() &&
+      model.trim() &&
+      (apiKey.trim() || (saved?.apiKeyPreview && !endpointChanged)),
+  );
+
+  const handleSave = async () => {
+    try {
+      const response = await saveAgent.mutateAsync(
+        mode === "inherit"
+          ? { mode }
+          : {
+              mode,
+              baseUrl: baseUrl.trim(),
+              model: model.trim(),
+              ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+            },
+      );
+      if (!response.ok) {
+        toast.error(
+          getResponseErrorMessage(response, t("settings.modelConfig.requestFailed")),
+        );
+        return;
+      }
+      setApiKey("");
+      setRevealKey(false);
+      toast.success(t("settings.modelConfig.agent.saved"));
+    } catch (error) {
+      toast.error(
+        await getRequestErrorMessage(error, t("settings.modelConfig.requestFailed")),
+      );
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-md border border-border/70 px-3 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h4 className="text-xs font-medium text-foreground">
+            {t("settings.modelConfig.agent.title")}
+          </h4>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            {t("settings.modelConfig.agent.description")}
+          </p>
+        </div>
+        <Tabs value={mode} onValueChange={(value) => setMode(value as AgentLlmMode)}>
+          <TabsList>
+            <TabsTrigger value="inherit">
+              {t("settings.modelConfig.agent.inherit")}
+            </TabsTrigger>
+            <TabsTrigger value="third_party">
+              {t("settings.modelConfig.agent.thirdParty")}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
+      {mode === "third_party" ? (
+        <div className="mt-3 space-y-2.5">
+          <div className="grid grid-cols-[120px_1fr] items-center gap-3">
+            <Label className="justify-start text-[11px] font-normal tracking-wide text-muted-foreground uppercase">
+              {t("settings.modelConfig.fields.gatewayBaseUrl")}
+            </Label>
+            <Input
+              name="agent-third-party-base-url"
+              value={baseUrl}
+              onChange={(event) => setBaseUrl(event.target.value)}
+              placeholder="https://api.example.com/v1"
+              autoCapitalize="none"
+              spellCheck={false}
+              className="h-9"
+            />
+          </div>
+          <div className="grid grid-cols-[120px_1fr] items-center gap-3">
+            <Label className="justify-start text-[11px] font-normal tracking-wide text-muted-foreground uppercase">
+              {t("settings.modelConfig.fields.apiKey")}
+            </Label>
+            <div className="relative">
+              <Input
+                name="agent-third-party-api-key"
+                autoComplete="new-password"
+                data-1p-ignore="true"
+                data-lpignore="true"
+                type={revealKey ? "text" : "password"}
+                value={apiKey}
+                onChange={(event) => {
+                  setApiKey(event.target.value);
+                  if (!event.target.value) setRevealKey(false);
+                }}
+                placeholder={
+                  saved?.apiKeyPreview
+                    ? t("settings.secretSavedPlaceholder", {
+                        preview: saved.apiKeyPreview,
+                      })
+                    : "sk-..."
+                }
+                autoCapitalize="none"
+                spellCheck={false}
+                className={cn(
+                  "h-9",
+                  apiKey ? "pr-9" : saved?.apiKeyPreview ? "pr-16" : "",
+                )}
+              />
+              {apiKey ? (
+                <button
+                  type="button"
+                  onClick={() => setRevealKey((value) => !value)}
+                  aria-label={
+                    revealKey
+                      ? t("settings.mediaStorage.hideSecret")
+                      : t("settings.mediaStorage.showSecret")
+                  }
+                  className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {revealKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              ) : saved?.apiKeyPreview ? (
+                <span className="absolute top-1/2 right-2 -translate-y-1/2 rounded bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+                  {t("settings.secretSavedBadge")}
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <div className="grid grid-cols-[120px_1fr] items-center gap-3">
+            <Label className="justify-start text-[11px] font-normal tracking-wide text-muted-foreground uppercase">
+              {t("settings.modelConfig.agent.model")}
+            </Label>
+            <Input
+              name="agent-third-party-model"
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              placeholder="gpt-5.2-codex"
+              autoCapitalize="none"
+              spellCheck={false}
+              className="h-9"
+            />
+          </div>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {t("settings.modelConfig.agent.thirdPartyHint")}
+          </p>
+        </div>
+      ) : null}
+
+      <div className="mt-3 flex justify-end">
+        <Button
+          type="button"
+          size="sm"
+          onClick={handleSave}
+          disabled={
+            loading ||
+            saveAgent.isPending ||
+            (mode === "third_party" && !thirdPartyReady)
+          }
+        >
+          {saveAgent.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+          {t("settings.modelConfig.agent.save")}
+        </Button>
+      </div>
+    </div>
   );
 }
 

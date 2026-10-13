@@ -43,6 +43,9 @@ VALID_CUSTOM_LLM_MODES = {
     CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
     CUSTOM_LLM_MODE_ADVANCED,
 }
+AGENT_LLM_MODE_INHERIT = "inherit"
+AGENT_LLM_MODE_THIRD_PARTY = "third_party"
+VALID_AGENT_LLM_MODES = {AGENT_LLM_MODE_INHERIT, AGENT_LLM_MODE_THIRD_PARTY}
 PLACEHOLDER_API_KEYS = {
     "your_newapi_token",
     "your_model_api_key",
@@ -133,6 +136,11 @@ def normalize_gateway_mode(value: str | None) -> str:
 def normalize_custom_llm_mode(value: str | None) -> str:
     mode = str(value or "").strip().lower()
     return mode if mode in VALID_CUSTOM_LLM_MODES else CUSTOM_LLM_MODE_ADVANCED
+
+
+def normalize_agent_llm_mode(value: str | None) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode in VALID_AGENT_LLM_MODES else AGENT_LLM_MODE_INHERIT
 
 
 def normalize_relay_base_url(value: str | None) -> str:
@@ -262,6 +270,25 @@ def save_relayclaw_brainclaw_key(
         values["brainclaw_newapi_api_key"] = clean_api_key
     if clean_base_url:
         values["brainclaw_newapi_base_url"] = clean_base_url
+    _write_many(values)
+
+
+def save_agent_llm_config(
+    *, mode: str, base_url: str = "", api_key: str = "", model: str = ""
+) -> None:
+    """Persist an Agent-only LLM route without changing media gateway mode."""
+    normalized_mode = normalize_agent_llm_mode(mode)
+    values = {"agent_llm_mode": normalized_mode}
+    if normalized_mode == AGENT_LLM_MODE_THIRD_PARTY:
+        clean_base_url = normalize_relay_base_url(base_url)
+        clean_api_key = normalize_api_key(api_key)
+        clean_model = str(model or "").strip()
+        if clean_base_url:
+            values["agent_llm_base_url"] = clean_base_url
+        if clean_api_key:
+            values["agent_llm_api_key"] = clean_api_key
+        if clean_model:
+            values["agent_llm_model"] = clean_model
     _write_many(values)
 
 
@@ -1166,6 +1193,25 @@ def get_effective_llm_config() -> EffectiveLlmConfig:
     )
 
 
+def get_effective_agent_llm_config() -> EffectiveLlmConfig:
+    """Resolve the Agent-only LLM route without affecting business text models."""
+    if not _uses_ce_gateway_settings():
+        return get_effective_llm_config()
+
+    settings = get_model_gateway_settings()
+    agent_llm_mode = normalize_agent_llm_mode(settings.get("agent_llm_mode"))
+    if agent_llm_mode != AGENT_LLM_MODE_THIRD_PARTY:
+        return get_effective_llm_config()
+    return EffectiveLlmConfig(
+        mode=AGENT_LLM_MODE_THIRD_PARTY,
+        source=AGENT_LLM_MODE_THIRD_PARTY,
+        base_url=normalize_relay_base_url(settings.get("agent_llm_base_url", "")),
+        api_key=normalize_api_key(settings.get("agent_llm_api_key", "")),
+        model=str(settings.get("agent_llm_model", "")).strip(),
+        is_brainclaw=False,
+    )
+
+
 def _int_setting(value: str | None, default: int) -> int:
     try:
         return int(str(value or "").strip())
@@ -1395,6 +1441,12 @@ def build_model_gateway_status(
         official_api_key=official_api_key,
     )
     effective_llm = get_effective_llm_config()
+    agent_llm_mode = normalize_agent_llm_mode(settings.get("agent_llm_mode"))
+    agent_llm_base_url = normalize_relay_base_url(
+        settings.get("agent_llm_base_url", "")
+    )
+    agent_llm_api_key = normalize_api_key(settings.get("agent_llm_api_key", ""))
+    agent_llm_model = str(settings.get("agent_llm_model", "")).strip()
     custom_llm_mode = normalize_custom_llm_mode(settings.get("custom_llm_mode"))
     brainclaw_base_url = normalize_relay_base_url(
         settings.get("brainclaw_newapi_base_url", "") or OFFICIAL_NEWAPI_BASE_URL
@@ -1423,6 +1475,15 @@ def build_model_gateway_status(
             "configured": bool(effective_llm.base_url and effective_llm.api_key),
             "model": effective_llm.model,
             "brainclaw": effective_llm.is_brainclaw,
+        },
+        "agent": {
+            "mode": agent_llm_mode,
+            "baseUrl": agent_llm_base_url,
+            "apiKeyPreview": mask_secret(agent_llm_api_key),
+            "model": agent_llm_model,
+            "configured": bool(
+                agent_llm_base_url and agent_llm_api_key and agent_llm_model
+            ),
         },
         "official": {
             "baseUrl": official_base_url_value,

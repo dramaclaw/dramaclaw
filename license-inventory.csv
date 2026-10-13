@@ -2547,6 +2547,7 @@ tests/test_agent_canvas_revision_contract.py,Elastic-2.0,2026 SuperTale contribu
 tests/test_agent_catalog_search.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_agent_execution_context.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_agent_kit.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_agent_llm_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_agent_product_operations.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ai_identity_detector.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_asset_upload_offload.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
