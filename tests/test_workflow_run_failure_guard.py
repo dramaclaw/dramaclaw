@@ -128,6 +128,42 @@ def test_pending_run_timeout_keeps_receipt_queryable(run_bridge, monkeypatch):
     assert second["ok"] is True
 
 
+def test_next_turn_reuses_identical_pending_run(run_bridge, monkeypatch):
+    plugin, _, _, _, tmp_path = run_bridge
+
+    def lost(_key, **kwargs):
+        assert kwargs["timeout_result"] is None
+        return None
+
+    monkeypatch.setattr(
+        plugin, "_resolve_canvas_generation_recommendations", lambda *_: None
+    )
+    monkeypatch.setattr(
+        plugin, "_external_generation_parameter_preflight", lambda *_: None
+    )
+    monkeypatch.setattr(plugin, "wait_canvas_command_result", lost)
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    arguments = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "node_ids": ["image"],
+    }
+
+    first = handlers["freezone_run_workflow"](arguments)
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-2")
+    second = handlers["freezone_run_workflow"](arguments)
+    pending = bridge.list_pending_bridge_messages(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        bridge_dir=tmp_path,
+    )
+
+    assert first["canvas_apply_status"] == "timeout"
+    assert second["canvas_apply_status"] == "timeout"
+    assert first["bridge_key"] == second["bridge_key"]
+    assert len(pending) == 1
+
+
 def test_regular_node_action_is_not_subject_to_run_turn_guard(run_bridge, monkeypatch):
     _, dispatch, delivered, _, _ = run_bridge
     monkeypatch.delenv("DRAMACLAW_TURN_ID")

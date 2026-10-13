@@ -124,6 +124,7 @@ try:
         find_clarification_bridge_message,
         put_pending_clarification_event,
         put_pending_canvas_command,
+        put_or_reuse_pending_canvas_command,
         put_pending_canvas_context,
         put_pending_skill_studio_event,
         wait_clarification_result,
@@ -141,6 +142,7 @@ except Exception as exc:
     find_clarification_bridge_message = None
     put_pending_clarification_event = None
     put_pending_canvas_command = None
+    put_or_reuse_pending_canvas_command = None
     put_pending_canvas_context = None
     put_pending_skill_studio_event = None
     wait_clarification_result = None
@@ -4934,6 +4936,29 @@ def _workflow_run_missing_turn_result() -> str:
     })
 
 
+def _put_frontend_canvas_command(
+    *,
+    key: str,
+    project: str,
+    canvas: str,
+    commands: list[Any],
+    envelope: dict[str, Any],
+    reuse_live_request: bool,
+    bridge_dir: Path | None = None,
+) -> tuple[str, dict[str, Any] | None]:
+    arguments = {
+        "key": key,
+        "project_id": project,
+        "canvas_id": canvas,
+        "commands": commands,
+        "envelope": envelope,
+        "bridge_dir": bridge_dir,
+    }
+    if reuse_live_request:
+        return put_or_reuse_pending_canvas_command(**arguments)
+    return key, put_pending_canvas_command(**arguments)
+
+
 def _dispatch_mcp_approved_frontend_commands(
     *,
     project: str,
@@ -4944,6 +4969,7 @@ def _dispatch_mcp_approved_frontend_commands(
     if (
         canvas_command_bridge_key is None
         or put_pending_canvas_command is None
+        or put_or_reuse_pending_canvas_command is None
         or wait_canvas_command_result is None
     ):
         return tool_error(
@@ -5006,12 +5032,13 @@ def _dispatch_mcp_approved_frontend_commands(
     # which the API's candidate-path resolver never polls, so the approval card
     # and the browser refresh both disappear.
     bridge_dir = Path(bridge_root) if bridge_root else None
-    immediate_result = put_pending_canvas_command(
+    key, immediate_result = _put_frontend_canvas_command(
         key=key,
-        project_id=project,
-        canvas_id=canvas,
+        project=project,
+        canvas=canvas,
         commands=commands,
         envelope=envelope,
+        reuse_live_request=is_workflow_run,
         bridge_dir=bridge_dir,
     )
     if immediate_result is not None:
@@ -5084,6 +5111,7 @@ def _dispatch_frontend_canvas_commands(
     if (
         canvas_command_bridge_key is None
         or put_pending_canvas_command is None
+        or put_or_reuse_pending_canvas_command is None
         or wait_canvas_command_result is None
     ):
         return tool_error(
@@ -5115,12 +5143,13 @@ def _dispatch_frontend_canvas_commands(
         and str(command["data"].get("workflowInstanceId") or "").strip()
         for command in commands
     )
-    immediate_result = put_pending_canvas_command(
+    key, immediate_result = _put_frontend_canvas_command(
         key=key,
-        project_id=project,
-        canvas_id=canvas,
+        project=project,
+        canvas=canvas,
         commands=commands,
         envelope=envelope,
+        reuse_live_request=is_workflow_run,
     )
     if immediate_result is not None:
         return tool_result(
