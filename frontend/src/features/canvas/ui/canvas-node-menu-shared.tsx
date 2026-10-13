@@ -12,6 +12,7 @@ import {
   LayoutGrid,
   Music,
   Orbit,
+  ScanSearch,
   Sparkles,
   Type,
   Upload,
@@ -41,6 +42,7 @@ export const canvasMenuIconMap: Record<MenuIconKey | "gamepad" | "megaphone", Lu
   threeDWorld: Orbit,
   videoCompose: Film,
   previz: Camera,
+  videoBreakdown: ScanSearch,
 };
 
 // 可直接创建画布节点的类型及其菜单顺序。新增普通节点仍在这里登记。
@@ -52,6 +54,7 @@ export const CANVAS_ADD_NODE_TYPES: readonly CanvasNodeType[] = [
   CANVAS_NODE_TYPES.imageGen,
   CANVAS_NODE_TYPES.video,
   CANVAS_NODE_TYPES.videoCompose,
+  CANVAS_NODE_TYPES.videoBreakdown,
   CANVAS_NODE_TYPES.audio,
   CANVAS_NODE_TYPES.script,
   CANVAS_NODE_TYPES.upload,

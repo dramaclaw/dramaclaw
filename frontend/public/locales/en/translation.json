@@ -5796,7 +5796,8 @@
         "placeholder": "Enter a folder name",
         "createHint": "Ready to use for filing and uploading assets as soon as it exists",
         "renameHint": "The new name shows up across the asset library"
-      }
+      },
+      "commitDragHint": "Hold and drag to the asset library on the left to replace assets of the same type"
     },
     "referencePick": {
       "kind": {
@@ -6240,16 +6241,19 @@
       "gray": "Gray"
     },
     "videoClip": {
-      "exit": "Exit trimming",
+      "exit": "Exit segment extract",
       "subtitleTodo": "Subtitles (not implemented yet)",
       "extractingFrames": "Extracting frames…",
       "framesFailed": "Failed to load frames",
-      "dragStart": "Drag to move the in point",
-      "dragEnd": "Drag to move the out point",
+      "dragStart": "Drag or use arrow keys to move the in point",
+      "dragEnd": "Drag or use arrow keys to move the out point",
       "muteTodo": "Mute (not implemented yet)",
       "loopTodo": "Loop (not implemented yet)",
-      "submitting": "Trimming…",
-      "submit": "Apply trim"
+      "submitting": "Extracting…",
+      "submit": "Extract segment",
+      "retryExtract": "Retry extracting frames",
+      "startHandle": "Clip start",
+      "endHandle": "Clip end"
     },
     "mentionReplace": {
       "empty": "No assets available to swap in",
@@ -6334,7 +6338,8 @@
     "mentionChip": {
       "doubleClickReplace": "Double-click to replace this reference",
       "clickToPlay": "{{label}} · click to play",
-      "replace": "Replace reference"
+      "replace": "Replace reference",
+      "removePrefix": "Remove prefix"
     },
     "naming": {
       "copySuffix": "{{name}} - Copy",
@@ -6439,6 +6444,21 @@
       "close": "Close",
       "free": "Free",
       "generate": "Generate"
+    },
+    "videoExtend": {
+      "boundMin": "The selected clip must be at least {{seconds}}s",
+      "boundMax": "The selected clip can't exceed {{seconds}}s",
+      "defaultSourceName": "the source video",
+      "defaultLabel": "video",
+      "promptPrefix": "Extend the {{start}}-{{end}} clip of {{name}}: ",
+      "promptPrefixTrimmed": "Extend {{name}}: ",
+      "nodeDisplayName": "Extend {{name}}",
+      "durationSeconds": "{{seconds}}s",
+      "exit": "Exit extend clip selection",
+      "startHandle": "Extend clip start",
+      "endHandle": "Extend clip end",
+      "tooShort": "Video is shorter than {{seconds}}s and can't be extended",
+      "confirm": "Confirm extend"
     }
   },
   "tool": {
@@ -6519,17 +6539,28 @@
       }
     },
     "video": {
-      "clip": "Clip",
       "hd": "HD",
       "analyze": "Analyze",
+      "frameAnalysis": "Frame-by-Frame",
+      "segmentExtract": "Segment Extract",
+      "frameCrop": "Frame Crop",
+      "motionCapture": "Deep Motion Capture",
+      "extend": "Smart Extend",
       "separateAudioVideo": "Separate A/V",
+      "frameEdit": "Frame Editing",
+      "frameEditSubjectRemove": "Remove Subject",
+      "frameEditSubjectModify": "Modify Subject",
+      "frameEditSubjectReplace": "Replace Subject",
+      "frameEditMatte": "Smart Matting",
       "subtitleRemoval": "Remove Subtitles",
       "subtitleRemovalTip": "AI-powered subtitle removal — Chinese & English only",
       "subtitleRemovalSmart": "Smart erase",
       "subtitleRemovalBox": "Box-select erase",
       "fullscreen": "Fullscreen",
       "notImplementedYet": "Coming soon",
-      "requiresVideo": "Upload a video first"
+      "requiresVideo": "Upload a video first",
+      "extendRequiresSeedance25": "Smart Extend requires Seedance 2.5, which is not enabled for this project",
+      "extendPickHint": "Select the clip to extend from"
     },
     "audio": {
       "requiresAudio": "No audio to download yet",
@@ -6777,6 +6808,7 @@
       "betaTag": "Beta",
       "videoCompose": "Video Compose",
       "previz": "Previz Stage",
+      "videoBreakdown": "Frame-by-Frame",
       "htmlArtifact": "Webpage"
     },
     "imageNode": {
@@ -6797,7 +6829,10 @@
       "requestId": "Request ID",
       "copyRequestId": "Copy request ID",
       "requestIdCopied": "Copied",
-      "resolution": "Image resolution"
+      "resolution": "Image resolution",
+      "replace": "Replace image",
+      "replaceTypeError": "Please upload an image file",
+      "replaceFailed": "Failed to replace image"
     },
     "directorControlBundle": {
       "badge": "Director composite",
@@ -7047,6 +7082,7 @@
       "noVideo": "No video",
       "upload": "Upload",
       "clickToUpload": "Click or drag to upload video",
+      "replace": "Replace video",
       "resolution": "Video resolution",
       "tabs": {
         "textToVideo": "Text to Video",
@@ -7072,7 +7108,8 @@
       },
       "aspect": {
         "title": "Aspect Ratio",
-        "auto": "Auto"
+        "auto": "Auto",
+        "followsSource": "Follows source"
       },
       "quality": {
         "title": "Quality"
@@ -7162,13 +7199,38 @@
         "allReferenceGroup": "Omni reference group",
         "firstLastFrameGroup": "First & last frame video group"
       },
+      "crop": {
+        "displayName": "{{name}}_Cropped",
+        "cancel": "Exit crop",
+        "abort": "Cancel crop",
+        "submit": "Generate crop",
+        "ratioGroup": "Crop ratio",
+        "ratio": {
+          "free": "Free",
+          "original": "Original"
+        },
+        "boxLabel": "Crop box. Arrow keys to move, Shift to move faster, Alt+Arrow to resize, Esc to exit",
+        "processing": "Cropping video, please wait…",
+        "success": "Crop complete",
+        "canceled": "Crop canceled",
+        "busy": "This video is being cropped — cancel it from the bar below first",
+        "errors": {
+          "noProject": "No current project found; cannot save the result",
+          "fetchFailed": "Failed to load the source video ({{detail}})",
+          "cannotDecode": "This browser cannot decode the video (common with HEVC sources). Try Chrome or transcode it first",
+          "noVideoTrack": "The source video has no usable picture",
+          "tooLarge": "The video is too large ({{detail}}) to crop",
+          "failed": "Crop failed: {{detail}}"
+        }
+      },
       "clip": {
-        "displayName": "Clip",
-        "noUrl": "Clip finished but returned no video URL",
-        "failed": "Clip failed: {{detail}}"
+        "displayName": "Segment Extract",
+        "noUrl": "Extraction finished but returned no video URL",
+        "failed": "Extraction failed: {{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "Video editing supports at most {{limit}} reference images; the first {{limit}} were used ({{ignored}} ignored)"
+        "imageLimit": "Video editing supports at most {{limit}} reference images; the first {{limit}} were used ({{ignored}} ignored)",
+        "followsSourceHint": "Video edit's aspect ratio and duration follow the source video and can't be set manually."
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse doesn’t support omni reference. Switch to text-to-video or image-to-video.",
@@ -7202,7 +7264,23 @@
       "emptyState": {
         "tryLabel": "Try:"
       },
-      "videoLoadFailed": "Video failed to load"
+      "videoLoadFailed": "Video failed to load",
+      "depthCapture": {
+        "failed": "Depth capture failed",
+        "interrupted": "Processing was interrupted (page reloaded or closed). You can capture again.",
+        "retry": "Capture again",
+        "noWebGpu": "This browser has no WebGPU, so depth capture will be slow",
+        "queued": "Another depth capture is running. This one is queued and will start automatically",
+        "errors": {
+          "tooLong": "Videos longer than {{seconds}} seconds are not supported",
+          "noVideoTrack": "The source video has no usable frames",
+          "cannotDecode": "This browser cannot decode the video format",
+          "cancelled": "Processing was cancelled",
+          "failed": "Processing error",
+          "noProject": "No current project found, so the result cannot be saved",
+          "alreadyRunning": "Depth capture for this video is still in progress. Wait for it to finish"
+        }
+      }
     },
     "pano360": {
       "captureGroup2x2": "Panorama capture set (4)",
@@ -7581,7 +7659,10 @@
         "videoUpstreamAllRefOnly": "With video upstream, only “All reference” is available",
         "hasImageOrAudioRefs": "Unavailable while image/audio assets are referenced",
         "moreThanTwoImages": "Unavailable with more than 2 upstream images"
-      }
+      },
+      "extendLockReason": "Smart extend always uses Seedance 2.5; the model and mode cannot be changed",
+      "extendPlaceholder": "Enter what you want to extend with",
+      "modeRestrictedDefault": "This node doesn't support switching generation mode"
     },
     "threeDWorld": {
       "upstreamNodeFallback": "Upstream node",
@@ -8410,6 +8491,16 @@
           "media": "Save media models"
         }
       },
+      "channelModels": {
+        "fetch": "Fetch models",
+        "select": "Select channel model",
+        "inputLabel": "Upstream model name",
+        "loading": "Fetching channel models…",
+        "manualHint": "Type to search or enter a model name manually.",
+        "empty": "No matching models. You can enter a name manually.",
+        "fetchFailed": "Could not fetch models. Sync the channel and check upstream model-list support, or enter a name manually.",
+        "syncFirst": "Sync the channel key and Base URL before fetching models."
+      },
       "featureModels": {
         "title": "Business Model Mapping",
         "description": "Assign upstream models to text understanding, content generation, and vision understanding features. Unset features use backend defaults.",
@@ -8796,6 +8887,38 @@
     "openRouterConfigMessage": "This model requires OpenRouter, but the backend API key is not configured. Please contact an administrator.",
     "stillRunningTitle": "Still generating",
     "stillRunningMessage": "This generation is taking longer than usual. The page stopped waiting, but the job is still running in the background — refresh later to pick up the result, or check its progress in the task center."
+  },
+  "canvasPick": {
+    "title": "Pick a reference from the canvas",
+    "hint": "Click a video node on the canvas",
+    "backToNode": "Back to node",
+    "cancel": "Cancel selection",
+    "selectNode": "Select \"{{name}}\""
+  },
+  "videoBreakdown": {
+    "sourceLabel": "Source video",
+    "emptyHint": "Add a video to start",
+    "uploading": "Uploading…",
+    "uploadFailed": "Video upload failed",
+    "uploadVideo": "Upload video",
+    "pickFromCanvas": "Pick from canvas",
+    "replace": "Replace",
+    "attached": "Selected clip",
+    "dimensionsLabel": "Breakdown dimensions",
+    "dimension": {
+      "storyboard": "Shots",
+      "motion": "Motion",
+      "music": "Music"
+    },
+    "start": "Start breakdown",
+    "running": "Breaking down…",
+    "failed": "Breakdown failed",
+    "emptyResult": "Nothing usable came out of this video",
+    "groups": {
+      "storyboard": "Shot group {{index}}",
+      "motion": "Motion | camera reference",
+      "music": "Music | BGM reference"
+    }
   },
   "videoCompose": {
     "title": "Video Compose",

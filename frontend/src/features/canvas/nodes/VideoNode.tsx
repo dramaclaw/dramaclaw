@@ -58,6 +58,7 @@ import {
   isAudioNode,
   isExportImageNode,
   isImageEditNode,
+  hasInlineMediaReplaceButton,
   isImageGenNode,
   isStoryboardGenNode,
   isUploadNode,
@@ -83,8 +84,10 @@ import {
   MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
   referenceDurationLimitsMs,
+  findSeedance25VideoModel,
   isHappyHorseVideoModel,
   isSeedance2VideoModel,
+  isSeedance25VideoModel,
   isVideoModeSupportedByModel,
   resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
@@ -96,6 +99,7 @@ import {
   videoModelSupportsGenerateAudio,
   videoMultiImageAutoSwitchMode,
   videoNoUpstreamResetMode,
+  videoModeForModel,
   videoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
@@ -117,6 +121,25 @@ import {
   FALLBACK_VIDEO_RESOLUTION_OPTIONS,
 } from "@/features/canvas/domain/mediaModelOptions";
 import { ensureWebSafeVideo } from "@/features/canvas/application/videoTranscode";
+import {
+  fitRatioBox,
+  initialCropBox,
+  resolveCropRatio,
+  toEvenSourceRect,
+  type CropBox,
+  type CropRatioId,
+} from "@/features/canvas/application/videoCrop/cropMath";
+import { VideoCropError, type VideoCropErrorCode } from "@/features/canvas/application/videoCrop/cropVideo";
+import { cropAndUploadVideo } from "@/features/canvas/application/videoCrop/runVideoCrop";
+import {
+  cancelVideoCrop,
+  clearVideoCropInFlight,
+  isVideoCropInFlight,
+  markVideoCropInFlight,
+  useVideoCropInFlight,
+} from "@/features/canvas/application/videoCrop/videoCropInFlight";
+import { VideoCropOverlay } from "@/features/canvas/nodes/VideoCropOverlay";
+import { VideoCropPanel } from "@/features/canvas/nodes/VideoCropPanel";
 import { isVideoFile, VIDEO_FILE_ACCEPT } from "@/features/canvas/application/videoFileTypes";
 import { localizeNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { toast } from "sonner";
@@ -171,6 +194,7 @@ import {
   NodeContextBadges,
 } from "@/features/freezone/context/NodeContextBadges";
 import { RegenerateButton } from "@/features/canvas/ui/RegenerateButton";
+import { DepthCaptureBody } from "@/features/canvas/nodes/DepthCaptureBody";
 import {
   NODE_CREDIT_PILL_FLAT_CLASS,
   NODE_GENERATE_BUTTON_BASE_CLASS,
@@ -182,7 +206,20 @@ import {
   NODE_SIDE_ACTION_ICON_CLASS,
   NodeSideActionRail,
 } from "@/features/canvas/ui/NodeSideActionRail";
+import { NodeMediaReplaceButton } from "@/features/canvas/ui/NodeMediaReplaceButton";
+import {
+  useAssetCommitDragById,
+} from "@/features/canvas/ui/useAssetCommitDrag";
 import { VideoClipPanel } from "@/features/canvas/nodes/VideoClipPanel";
+import { VideoExtendPanel } from "@/features/canvas/nodes/VideoExtendPanel";
+import {
+  extendNodeDisplayName,
+  extendPromptPrefix,
+  extendPromptPrefixTrimmed,
+  extendRangeNeedsTrim,
+  type ExtendClipRange,
+} from "@/features/canvas/application/videoExtendClip";
+import { trimAndUploadExtendClip } from "@/features/canvas/application/videoExtendTrim";
 import {
   submitVideoUpscale,
   VIDEO_UPSCALE_RESOLUTIONS,
@@ -196,6 +233,8 @@ import { useFreezoneVideoCameraTemplates } from "@/features/canvas/hooks/useFree
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { useCanvasStore, useIsBoxSelecting } from "@/stores/canvasStore";
 import { ReferenceValidationDialog, referenceDurationIssues, referenceIssues, matchesReference, referenceIssueName, type ReferenceIssue } from "./shared/ReferenceValidationDialog";
+import { useCanvasPickStore } from "@/stores/canvasPickStore";
+import { commitVideoPickToNode } from "@/features/canvas/application/videoBreakdownLanding";
 import {
   fetchFreezoneJobResult,
   submitFreezoneVideoCompose,
@@ -246,6 +285,15 @@ type VideoNodeProps = NodeProps & {
 
 const DEFAULT_WIDTH = 580;
 export const DEFAULT_HEIGHT = 380;
+
+// "canceled" 不进这张表：它是用户主动取消，走单独的 info 提示，不当错误处理。
+const VIDEO_CROP_ERROR_KEYS: Record<Exclude<VideoCropErrorCode, "canceled">, string> = {
+  tooLarge: "node.videoNode.crop.errors.tooLarge",
+  noVideoTrack: "node.videoNode.crop.errors.noVideoTrack",
+  cannotDecode: "node.videoNode.crop.errors.cannotDecode",
+  fetchFailed: "node.videoNode.crop.errors.fetchFailed",
+  failed: "node.videoNode.crop.errors.failed",
+};
 /**
  * 视频生成的计费 feature key。主体（错误态重试的计费探针）与操作面板（估价
  * 展示 + 提交置灰）共用，必须同一口径——放主体导出、面板 import。
@@ -728,7 +776,12 @@ export const VideoNode = memo(
             VIDEO_GENERATION_ASPECT_RATIOS,
             "16:9",
           );
-    const followsInputAspectRatio = videoModeForcesAutomaticAspectRatio(genMode);
+    // 智能续写虽然是全能参考模式，但 Seedance 会按提示词把它识别成「视频延长」，
+    // 这类任务硬校验比例必须跟随原片（`ratio` must be `adaptive`），指定具体比例
+    // 整单打回。时长不受此约束，照常用用户所选。isExtendMode 在下方才声明，这里
+    // 直接读 data，避免暂时性死区。
+    const followsInputAspectRatio =
+      videoModeForcesAutomaticAspectRatio(genMode) || Boolean(data.isExtendMode);
     // 关键帧/视频编辑的画幅跟随输入素材；只改变本次请求值，不覆盖节点保存的比例。
     // 其它模式在 Admin 配置存在时原样提交，未配置时保留旧版 auto 推导逻辑。
     const submitAspectRatio: FreezoneVideoAspectRatio =
@@ -829,6 +882,18 @@ export const VideoNode = memo(
           ? node.data.durationMs
           : null,
       );
+      // 续写提交前会把选区真截出来顶替第一条视频素材，估价按截出来的那段算。
+      if (
+        data.isExtendMode &&
+        typeof data.extendStartMs === "number" &&
+        typeof data.extendEndMs === "number" &&
+        extendRangeNeedsTrim(
+          { startMs: data.extendStartMs, endMs: data.extendEndMs },
+          durations[0],
+        )
+      ) {
+        durations[0] = data.extendEndMs - data.extendStartMs;
+      }
       const ready = durations.every((duration) => duration != null);
       return {
         present: true,
@@ -837,7 +902,15 @@ export const VideoNode = memo(
           ? durations.reduce((sum, duration) => sum + (duration ?? 0), 0) / 1000
           : 0,
       };
-    }, [data.referenceOrder, genMode, selectedVideoModel, upstreamNodes]);
+    }, [
+      data.extendEndMs,
+      data.extendStartMs,
+      data.isExtendMode,
+      data.referenceOrder,
+      genMode,
+      selectedVideoModel,
+      upstreamNodes,
+    ]);
     useEffect(() => {
       const patch: Partial<VideoNodeData> = {};
       if (data.quality !== quality) {
@@ -1137,6 +1210,159 @@ export const VideoNode = memo(
       () => localizeNodeDisplayName(CANVAS_NODE_TYPES.video, data, t),
       [data, t],
     );
+
+    // 智能续写 --------------------------------------------------------------
+    // 一个功能两个身份：源节点上 isExtendPickMode 是临时态（正在截「续写前置
+    // 视频」，底下浮出一条只能选一段的轨道）；产出的下游节点上 isExtendMode 是
+    // 常驻态（钉死 2.5 + 全能参考，并给 prompt 挂一段只读前缀）。
+    const isExtendPickMode = Boolean(data.isExtendPickMode);
+    const isExtendMode = Boolean(data.isExtendMode);
+    // 前缀只用于渲染和提交时拼接，**不写进 data.prompt**：写进去的话用户一个退格
+    // 就能把「对 X 的 00:00-00:04 片段进行续写：」啃掉半句，模型收到的指令就残了。
+    const extendPrefixText =
+      isExtendMode &&
+      typeof data.extendStartMs === "number" &&
+      typeof data.extendEndMs === "number"
+        ? extendPromptPrefix(
+            typeof data.extendSourceName === "string"
+              ? data.extendSourceName
+              : "",
+            { startMs: data.extendStartMs, endMs: data.extendEndMs },
+          )
+        : null;
+
+    // 提交时真正拼进 prompt 的前缀。选区只是源视频的一部分时，提交前会把这一段
+    // 截出来当素材（见 handleSubmit），模型看到的片段从 0 秒起，时间码不再成立。
+    const extendRange: ExtendClipRange | null =
+      isExtendMode &&
+      typeof data.extendStartMs === "number" &&
+      typeof data.extendEndMs === "number"
+        ? { startMs: data.extendStartMs, endMs: data.extendEndMs }
+        : null;
+    const extendSourceDurationMs = useMemo(() => {
+      if (!extendRange) return null;
+      const source = sortUpstreamByReferenceOrder(
+        upstreamNodes,
+        data.referenceOrder,
+      ).find((node) => Boolean(referenceVideoUrl(node)));
+      const duration = source?.data.durationMs;
+      return typeof duration === "number" && duration > 0 ? duration : null;
+      // extendRange 每次渲染都是新对象，这里只关心它有没有。
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [Boolean(extendRange), data.referenceOrder, upstreamNodes]);
+    const extendTrimRange =
+      extendRange && extendRangeNeedsTrim(extendRange, extendSourceDurationMs)
+        ? extendRange
+        : null;
+    const extendTrimStartMs = extendTrimRange?.startMs ?? null;
+    const extendTrimEndMs = extendTrimRange?.endMs ?? null;
+    const extendSubmitPrefix =
+      extendPrefixText !== null && extendTrimRange
+        ? extendPromptPrefixTrimmed(
+            typeof data.extendSourceName === "string" ? data.extendSourceName : "",
+          )
+        : extendPrefixText;
+
+    const handleExtendExit = useCallback(() => {
+      updateNodeData(id, { isExtendPickMode: false });
+    }, [id, updateNodeData]);
+
+    const handleExtendConfirm = useCallback(
+      (range: ExtendClipRange) => {
+        const store = useCanvasStore.getState();
+        const position = store.findNodePosition(
+          id,
+          DEFAULT_WIDTH,
+          DEFAULT_HEIGHT,
+        );
+        const extendModel = findSeedance25VideoModel(availableVideoModels);
+        const newNodeId = addNode(CANVAS_NODE_TYPES.video, position, {
+          displayName: extendNodeDisplayName(resolvedTitle),
+          isExtendMode: true,
+          extendSourceName: resolvedTitle,
+          extendStartMs: range.startMs,
+          extendEndMs: range.endMs,
+          // 建节点时就把这两个钉好，省得先落到目录第一个模型上、再被下面那条
+          // effect 纠正一次（每次纠正都要多压一份画布历史）。
+          genMode: "allReference",
+          ...(extendModel ? { model: extendModel.id } : {}),
+        });
+        // 源视频顺着这根边成为新节点的上游参考素材——全能参考就是靠它拿到前情。
+        addEdge(id, newNodeId);
+        updateNodeData(id, { isExtendPickMode: false });
+        // 选中态要同时改 React Flow 自己那份，否则新节点的操作面板不浮出来。
+        store.onNodesChange([
+          { id, type: "select", selected: false },
+          { id: newNodeId, type: "select", selected: true },
+        ]);
+        setSelectedNode(newNodeId);
+      },
+      [
+        addEdge,
+        addNode,
+        availableVideoModels,
+        id,
+        resolvedTitle,
+        setSelectedNode,
+        updateNodeData,
+      ],
+    );
+
+    // 续写节点上模型 / 模式的**唯一作者**：面板里
+    // 其他模型和其他模式只是灰掉、不是不存在，而目录换版或这条被下架时解析会
+    // 回退成列表第一个模型，得在这里纠回来。
+    useEffect(() => {
+      if (!isExtendMode) return;
+      if (videoModelsLoading) return;
+      const patch: Record<string, unknown> = {};
+      if (genMode !== "allReference") patch.genMode = "allReference";
+      const extendModel = findSeedance25VideoModel(availableVideoModels);
+      if (extendModel && !isSeedance25VideoModel(selectedVideoModelId)) {
+        patch.model = extendModel.id;
+      }
+      if (Object.keys(patch).length === 0) return;
+      updateNodeData(id, patch);
+    }, [
+      availableVideoModels,
+      genMode,
+      id,
+      isExtendMode,
+      selectedVideoModelId,
+      updateNodeData,
+      videoModelsLoading,
+    ]);
+
+    // 「从画布选择」拾取模式：某个节点（逐帧拉片）正在等一段视频素材时，本节点浮出
+    // 一层可点选的覆盖层，点中就把自己回填给发起方并连一根边。
+    const pickRequest = useCanvasPickStore((state) => state.request);
+    const cancelPick = useCanvasPickStore((state) => state.cancelPick);
+    const isPickTarget =
+      pickRequest?.kind === "video" &&
+      pickRequest.requesterNodeId !== id &&
+      Boolean(data.videoUrl);
+
+    const handlePickSelect = useCallback(() => {
+      const requesterId = pickRequest?.requesterNodeId;
+      if (!requesterId || !data.videoUrl) return;
+      // 连边即事实来源，不再往对方节点抄一份 URL —— 抄了「断开边退回空态」就失效。
+      commitVideoPickToNode({
+        sourceNodeId: id,
+        requesterNodeId: requesterId,
+        videoUrl: data.videoUrl,
+        label: resolvedTitle,
+      });
+      const store = useCanvasStore.getState();
+      store.setSelectedNode(requesterId);
+      store.requestFocusNode(requesterId);
+      cancelPick();
+    }, [
+      cancelPick,
+      data.videoUrl,
+      id,
+      pickRequest?.requesterNodeId,
+      resolvedTitle,
+    ]);
+
     const resolvedWidth = Math.max(
       MIN_WIDTH,
       Math.round(width ?? DEFAULT_WIDTH),
@@ -1682,6 +1908,12 @@ export const VideoNode = memo(
     // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
     // 是否可消费视频由媒体目录的 all_reference 能力决定；未声明该能力的模型不强推，
     // 以免顶进提交必 400 的模式。
+    //
+    // 片段重拍节点整个跳过（不看模型能力）：它的模式由上面那条 effect 单独钉在
+    // videoEdit 上，这里但凡还有条件能落到 `updateNodeData` 就会和它对着改 ——
+    // 实测一个模型解析成 2.0-fast（目录里没这条 id，回退成列表第一个）的旧重拍节点，
+    // supportsVideoEdit=false 让上面那道能力判断失效，两条 effect 每帧互写一次，
+    // 直接把整页顶成 Maximum update depth。同一份数据只能有一个作者。
     useEffect(() => {
       if (upstreamCounts.videos === 0) return;
       if (isHappyHorseModel) return;
@@ -1786,11 +2018,24 @@ export const VideoNode = memo(
     // 看到素材还在便不再改写。
     useEffect(() => {
       if (isHappyHorseModel) return;
-      const target = videoNoUpstreamResetMode(genMode, upstreamTypeCounts, fmvAutoContinuity);
-      if (!target) return;
+      if (videoModelsLoading) return;
+      const counts = {
+        ...upstreamTypeCounts,
+        hasOtherReference: Boolean(data.referenceFileUrl || data.referenceLink?.trim()),
+      };
+      const compatibleMode = selectedVideoModel?.supportedModes?.length
+        ? videoModeForModel(genMode, selectedVideoModel, counts)
+        : genMode;
+      const target = videoNoUpstreamResetMode(compatibleMode, counts, selectedVideoModel, fmvAutoContinuity)
+        ?? compatibleMode;
+      if (target === genMode) return;
       updateNodeData(id, { genMode: target }, { recordHistory: false });
     }, [
       fmvAutoContinuity,
+      data.referenceFileUrl,
+      data.referenceLink,
+      selectedVideoModel,
+      videoModelsLoading,
       genMode,
       isHappyHorseModel,
       upstreamTypeCounts,
@@ -1844,6 +2089,143 @@ export const VideoNode = memo(
       setHasMetadata(false);
       setVideoLoadError(false);
     }, [videoSource]);
+
+    // ---- frame crop (画面裁切) ----------------------------------------------
+    // 框和比例只放组件里：拖动频率写 store 会冲掉撤销栈；退出 / 刷新后重新初始化。
+    const isCropMode = Boolean(data.isCropMode);
+    const [cropBox, setCropBox] = useState<CropBox | null>(null);
+    const [cropRatioId, setCropRatioId] = useState<CropRatioId>("free");
+    // 在途状态放模块级登记表而非本地 state：节点被 onlyRenderVisibleElements
+    // 卸载重挂、或工具栏切到别的模式时都不会丢，见 videoCropInFlight.ts。
+    const isCropping = useVideoCropInFlight(id);
+    // <video> 元数据比 widthPx/heightPx 更可信：后者是上传时探出来的静态值，
+    // 元数据加载完之后优先用实际帧尺寸；没加载完或老节点缺字段时再退回它。
+    const hasLiveVideoDimensions = hasMetadata && (videoEl?.videoWidth ?? 0) > 0;
+    const cropSourceWidth = hasLiveVideoDimensions ? videoEl?.videoWidth ?? 0 : data.widthPx || 0;
+    const cropSourceHeight = hasLiveVideoDimensions ? videoEl?.videoHeight ?? 0 : data.heightPx || 0;
+    const cropRatio = resolveCropRatio(cropRatioId, cropSourceWidth, cropSourceHeight);
+    const cropRect = useMemo(
+      () =>
+        cropBox && cropSourceWidth > 0 && cropSourceHeight > 0
+          ? toEvenSourceRect(cropBox, cropSourceWidth, cropSourceHeight)
+          : null,
+      [cropBox, cropSourceHeight, cropSourceWidth],
+    );
+
+    useEffect(() => {
+      setCropRatioId("free");
+      if (!isCropMode || cropSourceWidth <= 0 || cropSourceHeight <= 0) {
+        setCropBox(null);
+        return;
+      }
+      setCropBox(initialCropBox(cropSourceWidth, cropSourceHeight));
+    }, [cropSourceHeight, cropSourceWidth, isCropMode]);
+
+    const handleCropRatioChange = useCallback(
+      (next: CropRatioId) => {
+        setCropRatioId(next);
+        const ratio = resolveCropRatio(next, cropSourceWidth, cropSourceHeight);
+        if (ratio === null) return;
+        setCropBox((prev) => (prev ? fitRatioBox(prev, ratio, cropSourceWidth, cropSourceHeight) : prev));
+      },
+      [cropSourceHeight, cropSourceWidth],
+    );
+
+    const handleCropExit = useCallback(() => {
+      if (isCropping) return;
+      updateNodeData(id, { isCropMode: false });
+    }, [id, isCropping, updateNodeData]);
+
+    const handleCropSubmit = useCallback(async () => {
+      // 读模块级登记表而不是 isCropping：卸载重挂之间的一瞬间 React state 可能
+      // 还没追上，登记表是唯一不会丢的事实来源，防止裁两份。
+      if (isVideoCropInFlight(id) || !cropBox || !cropRect || !data.videoUrl) return;
+      const projectId = readUrl().project;
+      if (!projectId) {
+        toast.error(t("node.videoNode.crop.errors.noProject"));
+        return;
+      }
+      const toastId = toast.loading(t("node.videoNode.crop.processing"));
+      const signal = markVideoCropInFlight(id);
+      if (!signal) {
+        // 理论上到不了：上面已经用 isVideoCropInFlight 挡过一次。留着这道检查是
+        // 不信任两次读表之间还能插进别的调用抢注册——抢注册失败就别占着这个
+        // loading toast。
+        toast.dismiss(toastId);
+        return;
+      }
+      try {
+        const result = await cropAndUploadVideo({
+          projectId,
+          videoUrl: data.videoUrl,
+          box: cropBox,
+          sourceWidth: cropSourceWidth,
+          sourceHeight: cropSourceHeight,
+          signal,
+        });
+        const state = useCanvasStore.getState();
+        // 裁的这几十秒里源节点可能被删了：结果没地方挂，别凭空冒出一个孤儿节点。
+        if (!state.nodes.some((node) => node.id === id)) {
+          toast.dismiss(toastId);
+          return;
+        }
+        const position = state.findNodePosition(id, DEFAULT_WIDTH, DEFAULT_HEIGHT);
+        const newNodeId = addNode(CANVAS_NODE_TYPES.video, position, {
+          videoUrl: result.url,
+          widthPx: result.width,
+          heightPx: result.height,
+          durationMs: result.durationMs,
+          displayName: t("node.videoNode.crop.displayName", { name: resolvedTitle }),
+        });
+        addEdge(id, newNodeId);
+        updateNodeData(id, { isCropMode: false });
+        toast.success(t("node.videoNode.crop.success"), { id: toastId });
+      } catch (error) {
+        if (signal.aborted) {
+          // 先看 signal 本身，不看 error 的类型/码：下载 / 上传阶段的取消未必都能
+          // 稳定映射成 VideoCropError("canceled")（比如 ky 包过一层的 AbortError），
+          // 按类型判会把「用户点了取消」误报成「裁剪失败」。
+          // 源节点可能是被删除触发的取消（见 canvasStore.deleteNodes 里调用的
+          // cancelVideoCrop）——这种情况下节点已经没了，提示无处可挂，悄悄收掉
+          // loading toast，不弹「已取消裁剪」。
+          if (!useCanvasStore.getState().nodes.some((node) => node.id === id)) {
+            toast.dismiss(toastId);
+            return;
+          }
+          // 用户主动取消，不算失败：中性提示，且不退出裁剪模式，框留着方便改了再提交。
+          toast.info(t("node.videoNode.crop.canceled"), { id: toastId });
+          return;
+        }
+        console.error("[video-crop] crop failed", error);
+        const detail = error instanceof Error ? error.message : String(error);
+        // code !== "canceled" 分支理论上到不了（canceled 只会在 signal.aborted 时
+        // 抛出，上面已经处理），这里只是配合 TS 把 error.code 窄化掉 "canceled"，
+        // 好对上 VIDEO_CROP_ERROR_KEYS 缩窄后的键类型。
+        const key =
+          error instanceof VideoCropError && error.code !== "canceled"
+            ? VIDEO_CROP_ERROR_KEYS[error.code]
+            : VIDEO_CROP_ERROR_KEYS.failed;
+        toast.error(t(key, { detail }), { id: toastId });
+      } finally {
+        clearVideoCropInFlight(id);
+      }
+    }, [
+      addEdge,
+      addNode,
+      cropBox,
+      cropRect,
+      cropSourceHeight,
+      cropSourceWidth,
+      data.videoUrl,
+      id,
+      resolvedTitle,
+      t,
+      updateNodeData,
+    ]);
+
+    const handleCropAbort = useCallback(() => {
+      cancelVideoCrop(id);
+    }, [id]);
 
     // ---- subtitle erase mode (libtv-style 智能去字幕) ------------------------
     const subtitleEraseMode = data.subtitleEraseMode ?? null;
@@ -2030,7 +2412,10 @@ export const VideoNode = memo(
     //   全能参考图/视频/音频任意一类 ≥1）—— 对齐 handleSubmit 各分支的空素材早退。
     // 全能参考是唯一两条都要的模式，所以这里不能写成「要提示词的就只看提示词」。
     const hasPromptText =
-      prompt.trim().length > 0 || upstreamTextJoined.length > 0;
+      prompt.trim().length > 0 ||
+      upstreamTextJoined.length > 0 ||
+      // 续写节点的只读前缀本身就是一句完整指令，正文留空也能提交。
+      extendPrefixText !== null;
     const canPrepareContinuity = useCanvasStore((state) => {
       const sources = videoContinuitySources(id, state.nodes, state.edges);
       return sources.length === 1 && Boolean(sources[0]?.data.videoUrl) && !sources[0]?.data.isGenerating;
@@ -2163,11 +2548,16 @@ export const VideoNode = memo(
       const userPrompt = [upstreamTextJoined, trimmedPrompt]
         .filter((s) => s.length > 0)
         .join("\n\n");
-      const fallbackPrompt = fragment
+      const composedPromptBody = fragment
         ? userPrompt
           ? `${fragment}，${userPrompt}`
           : fragment
         : userPrompt;
+      // 续写的时间码指令是渲染层挂在输入框里的只读前缀（不在 data.prompt 里，
+      // 免得一个退格就啃掉半句），提交时才拼到最前面，模型才知道从哪一段往后接。
+      const fallbackPrompt = extendSubmitPrefix
+        ? `${extendSubmitPrefix}${composedPromptBody}`
+        : composedPromptBody;
       try {
         let submitFallbackPrompt = fallbackPrompt;
         if (usesFmvContinuity) {
@@ -2619,6 +3009,20 @@ export const VideoNode = memo(
             });
             return;
           }
+          // 智能续写：选区只是源视频的一部分时，把这一段真截出来顶替整条源视频。
+          // 源视频是连进来的第一条视频素材（建续写节点时连的那根边）。放在时长校验
+          // 之前——校验该看的是截出来的这段，不是整条源视频。
+          if (extendTrimStartMs !== null && extendTrimEndMs !== null && videoRefs.length > 0) {
+            const sourceRef = videoRefs[0];
+            const trimmed = await trimAndUploadExtendClip({
+              projectId,
+              videoUrl: sourceRef.url,
+              range: { startMs: extendTrimStartMs, endMs: extendTrimEndMs },
+            });
+            const reference = references.find((item) => item.type === "video");
+            if (reference) reference.url = trimmed.url;
+            videoRefs[0] = { ...sourceRef, url: trimmed.url, durationMs: trimmed.durationMs };
+          }
           if (!(await validateReferenceDurations("audio", audioRefs))) return;
           if (!(await validateReferenceDurations("video", videoRefs))) return;
           doSubmit = (targetId) =>
@@ -2632,6 +3036,8 @@ export const VideoNode = memo(
               generateAudio,
               model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
+              // 智能续写：后端按视频延长任务提交（任务类型、提示词要求同视频延长）。
+              continuation: isExtendMode,
               modelParams: data.modelParams,
               humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
@@ -2880,6 +3286,10 @@ export const VideoNode = memo(
       data.referenceOrder,
       durationBounds,
       durationSec,
+      extendSubmitPrefix,
+      isExtendMode,
+      extendTrimEndMs,
+      extendTrimStartMs,
       generateAudio,
       genMode,
       humanReview,
@@ -2969,7 +3379,22 @@ export const VideoNode = memo(
     });
 
     const isUploading = Boolean(data.isUploading);
-    const isEmptyVideoBody = !videoSource && !isUploading && !isGenerating && !hasGenerationError;
+    // 裁切浮层的兜底判断：工具栏理论上已经保证 isCropMode 跟其他模式互斥，这里
+    // 再挡一次，免得某个入口漏清 isCropMode 时跟别的浮层叠在一起。
+    const showCropUi =
+      isCropMode &&
+      !isClipMode &&
+      !subtitleEraseMode &&
+      !isExtendPickMode &&
+      !isGenerating &&
+      !isUploading;
+    // 深度动作捕捉产出节点：拿到 videoUrl 之前由 DepthCaptureBody 接管节点体。
+    const depthCaptureState = data.videoUrl ? null : (data.depthCapture ?? null);
+    // 卡片内那颗替换按钮同时兼「按住拖到左侧素材库」（原 AssetCommitHandle 的手势）。
+    const { canCommit: canCommitAsset, startDrag: startAssetCommitDrag } =
+      useAssetCommitDragById(id);
+    const isEmptyVideoBody =
+      !videoSource && !isUploading && !isGenerating && !hasGenerationError && !depthCaptureState;
     const bodySurfaceClass = isEmptyVideoBody
       ? CANVAS_NODE_INPUT_SURFACE_CLASS
       : CANVAS_NODE_PANEL_SURFACE_CLASS;
@@ -2992,6 +3417,9 @@ export const VideoNode = memo(
       !isBoxSelecting &&
       !albumExpanded &&
       !isClipMode &&
+      !isCropMode &&
+      // 截「续写前置视频」时底下那块位置让给续写轨道，跟剪辑条一个道理。
+      !isExtendPickMode &&
       !subtitleEraseMode &&
       !data.referenceOnly &&
       // 故事片段播放器形态:隐藏生成面板,点「编辑」进编辑态才显示。
@@ -3139,6 +3567,21 @@ export const VideoNode = memo(
           className="!h-2 !w-2 !border-0 !bg-[rgb(148,163,184)]"
         />
 
+        {isPickTarget && (
+          <div
+            className="group/pick absolute inset-0 z-[46] flex cursor-pointer items-center justify-center rounded-[var(--node-radius)] ring-2 ring-inset ring-cyan-300/60 transition-colors hover:bg-black/45"
+            onClick={(event) => {
+              event.stopPropagation();
+              handlePickSelect();
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <span className="rounded-full border border-white/20 bg-black/75 px-3 py-1.5 text-[13px] font-medium text-white opacity-0 shadow-[0_8px_20px_rgba(0,0,0,0.45)] transition-opacity group-hover/pick:opacity-100">
+              {t("canvasPick.selectNode", { name: resolvedTitle })}
+            </span>
+          </div>
+        )}
+
         {/* 画册展开时隐藏浮动标题和分辨率角标——画册容器自带头部（与图片节点一致）。 */}
         {!albumExpanded && (
           <>
@@ -3180,7 +3623,7 @@ export const VideoNode = memo(
           keepAspectRatio
         />
 
-        {!videoSource && !isUploading && !isGenerating && !data.isUpscaleNode && (
+        {!videoSource && !isUploading && !isGenerating && !data.isUpscaleNode && !depthCaptureState && (
           <NodeSideActionRail nodeId={id} autoHide selected={Boolean(selected)}>
             <button
               type="button"
@@ -3232,6 +3675,26 @@ export const VideoNode = memo(
           }`}
           style={isStoryClip ? { paddingRight: `${STORY_CLIP_DETAILS_WIDTH_PERCENT}%` } : undefined}
         >
+          {/* 卡片内右上角的「替换」入口：点击换本地文件 —— 复用节点自己那条
+              上传路径（processFile，含 HEVC 转码 + uploadFreezoneVideo 落 OSS），
+              换完 onLoadedMetadata 会重算时长/像素；按住拖则丢进左侧素材库。
+              只给 allowLocalReplace 的卡片（逐帧拉片产出的参考素材）—— 其余视频节点
+              的替换手势走浮在节点外侧的 AssetCommitHandle，见 SelectedNodeOverlay。
+              空态不给：那时本来就有 NodeSideActionRail 那颗上传按钮。 */}
+          {canCommitAsset &&
+            videoSource &&
+            !isGenerating &&
+            !albumExpanded &&
+            hasInlineMediaReplaceButton(data) && (
+              <NodeMediaReplaceButton
+                accept={VIDEO_FILE_ACCEPT}
+                busy={isUploading}
+                title={t("node.videoNode.replace")}
+                onPick={processFile}
+                onCommitDragStart={startAssetCommitDrag}
+              />
+            )}
+
           {/* 生成/上传中优先显示 loading：原地重新生成时 videoUrl 仍是上一条结果，
               若不加这层 guard，旧视频会一直占位、isGenerating 分支永远到不了。
               失败时 isGenerating 归 false，旧视频自动复现（videoUrl 未被清空）。 */}
@@ -3307,6 +3770,8 @@ export const VideoNode = memo(
                 setVideoLoadError(true);
               }}
             />
+          ) : depthCaptureState ? (
+            <DepthCaptureBody nodeId={id} state={depthCaptureState} />
           ) : isUploading ? (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-text-muted/85">
               <Loader2 className="h-7 w-7 animate-spin opacity-70" />
@@ -3517,6 +3982,7 @@ export const VideoNode = memo(
             !videoLoadError &&
             !isGenerating &&
             !isUploading &&
+            !isCropMode &&
             !subtitleEraseMode && (
               <VideoPlayerControls
                 videoEl={videoEl}
@@ -3616,6 +4082,18 @@ export const VideoNode = memo(
               onChange={(patch) => updateNodeData(id, patch)}
             />
           ) : null}
+          {videoSource && showCropUi && cropBox && cropSourceWidth > 0 && cropSourceHeight > 0 && (
+            <VideoCropOverlay
+              nodeId={id}
+              box={cropBox}
+              ratio={cropRatio}
+              sourceWidth={cropSourceWidth}
+              sourceHeight={cropSourceHeight}
+              disabled={isCropping}
+              onChange={setCropBox}
+              onEscape={handleCropExit}
+            />
+          )}
         </div>
 
         {/* 展开的画册宫格：与图片节点同构——「组」式轮廓 + 2 列宫格；点视频设为
@@ -3725,8 +4203,14 @@ export const VideoNode = memo(
 
         {isClipMode && videoSource && (
           <div
-            className="absolute left-0 right-0 z-10 flex flex-col gap-1"
-            style={{ top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)` }}
+            // 剪辑条宽度由素材时长决定（见 VideoClipPanel 的 trackMinWidth），
+            // 所以这里不能锁死 left-0/right-0：用 w-max 让面板自己顶开，居中挂在
+            // 节点下方，再用 min-width 兜到和操作面板同宽（两边各外挑一截）。
+            className="absolute left-1/2 z-10 flex w-max -translate-x-1/2 flex-col gap-1"
+            style={{
+              top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
+              minWidth: `calc(100% + ${panelOverhang * 2}px)`,
+            }}
           >
             <VideoClipPanel
               videoUrl={videoSource}
@@ -3749,6 +4233,55 @@ export const VideoNode = memo(
                 {t("node.videoNode.clip.failed", { detail: clipError })}
               </div>
             )}
+          </div>
+        )}
+
+        {showCropUi && videoSource && (
+          <div
+            className="absolute left-1/2 z-10 flex w-max -translate-x-1/2"
+            style={{ top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)` }}
+          >
+            <VideoCropPanel
+              ratioId={cropRatioId}
+              width={cropRect?.width ?? 0}
+              height={cropRect?.height ?? 0}
+              isSubmitting={isCropping}
+              canSubmit={Boolean(cropRect && data.videoUrl && hasLiveVideoDimensions)}
+              onRatioChange={handleCropRatioChange}
+              onCancel={handleCropExit}
+              onSubmit={() => {
+                void handleCropSubmit();
+              }}
+              onAbort={handleCropAbort}
+            />
+          </div>
+        )}
+
+        {/* 只在选中时挂出来：跟重拍轨道同理，一排视频节点各拖一条轨道会互相压叠。
+            退出截取只认 X（isExtendPickMode 不随取消选中清掉），重新点回来轨道还在。 */}
+        {isExtendPickMode &&
+          selected &&
+          !isBoxSelecting &&
+          videoSource &&
+          !isClipMode &&
+          !isCropMode &&
+          !subtitleEraseMode &&
+          !albumExpanded && (
+          <div
+            // 与剪辑条同一套定位：宽度由素材时长决定，所以用 w-max 让它自己顶开，
+            // 居中挂在节点下方，再用 min-width 兜到跟操作面板一样宽。
+            className="absolute left-1/2 z-10 flex w-max -translate-x-1/2 flex-col gap-1"
+            style={{
+              top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
+              minWidth: `calc(100% + ${panelOverhang * 2}px)`,
+            }}
+          >
+            <VideoExtendPanel
+              videoUrl={videoSource}
+              durationMs={durationMs}
+              onExit={handleExtendExit}
+              onConfirm={handleExtendConfirm}
+            />
           </div>
         )}
 
@@ -3801,6 +4334,10 @@ export const VideoNode = memo(
           !isBoxSelecting &&
           !albumExpanded &&
           !isClipMode &&
+          !isCropMode &&
+          // 截「续写前置视频」时轨道占着节点底下那块，历史面板跟着操作面板一起
+          // 让位——它是按 panelHeight 往下推的，操作面板不在时会浮在半空。
+          !isExtendPickMode &&
           !subtitleEraseMode &&
           !data.referenceOnly &&
           !storyPlayerMode &&

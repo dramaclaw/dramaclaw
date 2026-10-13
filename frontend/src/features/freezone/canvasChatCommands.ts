@@ -408,6 +408,11 @@ const RUN_NODE_ACTIONS = new Set([
   "reset_pano_view",
   "open_video_subtitle_erase_smart",
   "open_video_subtitle_erase_box",
+  "run_video_breakdown",
+  "open_video_crop_tool",
+  "open_video_extend_tool",
+  "run_video_depth_capture",
+  "start_video_breakdown",
 ]);
 
 export function isCanvasChatRunNodeAction(action: string): boolean {
@@ -515,6 +520,10 @@ const CURRENT_MEDIA_NODE_ACTIONS = new Set([
   "reset_pano_view",
   "open_video_subtitle_erase_smart",
   "open_video_subtitle_erase_box",
+  "run_video_breakdown",
+  "open_video_crop_tool",
+  "open_video_extend_tool",
+  "run_video_depth_capture",
 ]);
 
 const RESULT_SPAWNING_NODE_ACTIONS = new Set([
@@ -4063,6 +4072,11 @@ function commandLabel(command: CanvasChatCommand): string {
       if (command.action === "download_audio") return "下载音频";
       if (command.action === "open_video_subtitle_erase_smart") return "智能去字幕";
       if (command.action === "open_video_subtitle_erase_box") return "框选去字幕";
+      if (command.action === "run_video_breakdown") return i18next.t("nodeToolbar.video.frameAnalysis");
+      if (command.action === "start_video_breakdown") return i18next.t("videoBreakdown.start");
+      if (command.action === "open_video_crop_tool") return i18next.t("nodeToolbar.video.frameCrop");
+      if (command.action === "open_video_extend_tool") return i18next.t("nodeToolbar.video.extend");
+      if (command.action === "run_video_depth_capture") return i18next.t("nodeToolbar.video.motionCapture");
       if (command.action === "capture_pano_current_view") return "截取当前 360 视角";
       if (command.action === "capture_pano_2x2_views") return "截取 360 四视角";
       if (command.action === "capture_pano_4x3_views") return "截取 360 十二视角";

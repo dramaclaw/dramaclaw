@@ -23,7 +23,7 @@ describe('automatic continuity generation mode', () => {
       useVideoContinuityMode('clip', { ...data, continuityMode: enabled ? 'auto' : 'independent' },
         'newapi_seedance-2.0-fast', (_id, patch) => setData(current => ({ ...current, ...patch })));
       useEffect(() => {
-        const next = videoNoUpstreamResetMode(mode, { images: 0, videos: 0, audios: 0 }, enabled);
+        const next = videoNoUpstreamResetMode(mode, { images: 0, videos: 0, audios: 0 }, 'newapi_seedance-2.0-fast', enabled);
         if (next) setData(current => ({ ...current, genMode: next }));
       }, [mode, enabled]);
       return mode;

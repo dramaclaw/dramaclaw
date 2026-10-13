@@ -95,6 +95,7 @@ from novelvideo.api.schemas import (
     FreezoneTextTranslateRequest,
     FreezoneThreeDViewerScreenshotRequest,
     FreezoneUpscaleRequest,
+    FreezoneVideoBreakdownRequest,
     FreezoneVideoCharacterLibraryItemRequest,
     FreezoneVideoComposeRequest,
     FreezoneVideoEditRequest,
@@ -3082,19 +3083,25 @@ async def _enqueue_or_start_freezone_video_analysis(
     project: str,
     project_dir: Path,
     output_dir: str,
-    task_type: Literal["freezone_extract", "freezone_analyze", "freezone_video_story"],
+    task_type: Literal[
+        "freezone_extract",
+        "freezone_analyze",
+        "freezone_video_story",
+        "freezone_video_breakdown",
+    ],
     job_id: str,
     payload: dict,
 ) -> dict:
     if ctx is not None:
+        # freezone_extract 只是本地 ffmpeg 抽帧，不过模型，不计费。
+        billing_operation = {
+            "freezone_analyze": "shots",
+            "freezone_video_story": "video_story",
+            "freezone_video_breakdown": "video_breakdown",
+        }.get(task_type)
         billing = (
-            {
-                "feature_key": "freezone.video_analyze",
-                "operation": (
-                    "video_story" if task_type == "freezone_video_story" else "shots"
-                ),
-            }
-            if task_type in {"freezone_analyze", "freezone_video_story"}
+            {"feature_key": "freezone.video_analyze", "operation": billing_operation}
+            if billing_operation
             else {}
         )
         queued = await get_task_backend().enqueue_project_task(
@@ -7535,6 +7542,48 @@ async def freezone_analyze_video_story(
     )
 
 
+@router.post("/projects/{project}/freezone/video-breakdown", tags=[TAG_FREEZONE_VIDEO])
+async def freezone_video_breakdown(
+    project: str,
+    body: FreezoneVideoBreakdownRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：逐帧拉片，把一条视频拆成分镜 / 动态 / 音乐参考，返回任务 `task_key`。"""
+    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
+        project, user
+    )
+
+    try:
+        video_path = resolve_static_url_to_path(body.video_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not video_path.exists():
+        raise HTTPException(404, f"video not found: {video_path}")
+
+    job_id = _new_job_id()
+    return await _enqueue_or_start_freezone_video_analysis(
+        ctx=ctx,
+        username=username,
+        project=project_name,
+        project_dir=project_dir,
+        output_dir=output_dir,
+        task_type="freezone_video_breakdown",
+        job_id=job_id,
+        payload={
+            "video_path": video_path.as_posix(),
+            "video_url": body.video_url,
+            "dimensions": list(body.dimensions),
+            "max_frames": body.max_frames,
+            "scene_threshold": body.scene_threshold,
+            "duration_sec": body.duration_sec,
+            "storyboard_group_size": body.storyboard_group_size,
+            "max_motion_clips": body.max_motion_clips,
+            "motion_clip_max_sec": body.motion_clip_max_sec,
+            "music_clip_sec": body.music_clip_sec,
+        },
+    )
+
+
 # ============================================================
 # 文本工具：中英互译
 # ============================================================
@@ -11192,12 +11241,18 @@ async def freezone_video_omni_gen(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    if body.continuation and not any(
+        item["type"] == "video" for item in reference_items
+    ):
+        raise HTTPException(400, "continuation requires a video reference")
+
     final_prompt = build_freezone_omni_video_prompt(
         user_prompt=body.prompt,
         theme=body.theme,
         camera_template_id=body.camera_template_id,
         marks=[item.model_dump() for item in body.marks],
         reference_items=reference_items,
+        continuation=body.continuation,
     )
     job_id = _new_job_id()
 
@@ -11232,7 +11287,9 @@ async def freezone_video_omni_gen(
             generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode="all_reference",
+            # 智能续写按视频延长任务执行（任务类型发 extend）；计费、目录校验和节点
+            # 历史仍认 requested_gen_mode，也就是全能参考。
+            gen_mode="video_extend" if body.continuation else "all_reference",
             requested_gen_mode=body.gen_mode,
             model_params=model_params,
             request_schema=request_schema,
@@ -12241,6 +12298,7 @@ async def freezone_job_result(
         "freezone_extract",
         "freezone_analyze",
         "freezone_video_story",
+        "freezone_video_breakdown",
         "freezone_video_gen",
         "freezone_mask_edit",
         "freezone_video_erase",
@@ -12434,6 +12492,29 @@ async def freezone_job_result(
         out = _text_generate_output_path(project_dir, job_id)
     if task_type == "freezone_story_script":
         out = _story_script_output_path(project_dir, job_id)
+    if task_type == "freezone_video_breakdown":
+        # 拉片没有「磁盘兜底」：breakdown.json 里存的是绝对路径（runner 拿到后才
+        # 换成 static URL），直接回给前端既没用又漏了服务器目录结构。所以只认
+        # 任务结果，任务还没完成就如实说没完成。
+        if task is not None:
+            if task.status == "failed":
+                return {
+                    "ok": False,
+                    "error": task.error or "job failed",
+                    "status": task.status,
+                    "logs": task.logs[-10:],
+                }
+            if task.status != "completed":
+                return {
+                    "ok": False,
+                    "info": "job result not yet available",
+                    "status": task.status,
+                    "current_task": task.current_task,
+                }
+        task_result = getattr(task, "result", None) if task is not None else None
+        if isinstance(task_result, dict):
+            return {"ok": True, "data": task_result}
+        return {"ok": False, "info": "job result not yet available", "status": "unknown"}
     if task_type in {"freezone_analyze", "freezone_video_story"}:
         if task is not None:
             if task.status == "failed":

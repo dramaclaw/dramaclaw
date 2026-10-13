@@ -86,6 +86,15 @@ vi.mock("@/api/ops", async (importOriginal) => {
     ...(await importOriginal<typeof import("@/api/ops")>()),
     fetchFreezoneVideoModels: vi.fn(async () => [
       {
+        id: "seedance-edit", providerId: "newapi", label: "Seedance edit",
+        apiModel: "seedance-2.0-mini", supportedModes: ["text_to_video", "all_reference", "video_edit"],
+      },
+      {
+        id: "depth-model", providerId: "newapi", label: "Depth Anything Video",
+        apiModel: "Depth-Anything-Video", supportedModes: ["video_edit"],
+        referenceVideoMax: 1, referenceImageMax: 0, referenceAudioMax: 0,
+      },
+      {
         id: "text-only", providerId: "newapi", label: "Text only",
         apiModel: "text-only", supportedModes: ["text_to_video"],
       },
@@ -239,6 +248,70 @@ beforeEach(() => {
   inflight.snapshots = [];
   for (const endpoint of ALL_ENDPOINTS) vi.mocked(endpoint).mockClear();
   vi.mocked(showErrorDialog).mockClear();
+});
+
+describe("video-only catalog mode state", () => {
+  it("keeps automatic FMV continuity while its tail frame is still pending", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [
+        videoNode({ model: "seedance-edit", storySegmentId: "shot-2", continuityMode: "auto", genMode: "allReference" }),
+        upstreamVideoNode("previous", "/static/previous.mp4"),
+      ],
+      [{ ...edge("choice", "previous"), type: "storyChoiceEdge" }],
+    );
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+    await waitFor(() => expect(result.current.formProps.genModeSupportedModes).toContain("all_reference"));
+    expect(result.current.formProps.genMode).toBe("allReference");
+    expect(result.current.submitDisabled).toBe(false);
+
+    act(() => useCanvasStore.getState().updateNodeData("vid-1", { continuityMode: "independent" }));
+    await waitFor(() => expect(result.current.formProps.genMode).toBe("textToVideo"));
+  });
+
+  it("preserves explicitly selected edit mode on models also supporting all-reference", async () => {
+    useCanvasStore.setState({
+      nodes: [videoNode({ model: "seedance-edit", genMode: "videoEdit", prompt: "" }), upstreamVideoNode("source", "/static/source.mp4")],
+      edges: [edge("source-edge", "source")],
+    });
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+    await waitFor(() => expect(result.current.formProps.genModeSupportedModes).toContain("video_edit"));
+    expect(result.current.formProps.genMode).toBe("videoEdit");
+    expect(result.current.submitDisabled).toBe(false);
+  });
+  it("repairs persisted text mode and waits for video, including after disconnect", async () => {
+    useCanvasStore.setState({ nodes: [videoNode({ model: "depth-model", genMode: "textToVideo" })], edges: [] });
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+    await waitFor(() => expect(result.current.formProps.genMode).toBe("videoEdit"));
+    expect(result.current.submitDisabled).toBe(true);
+    act(() => useCanvasStore.setState({
+      nodes: [videoNode({ model: "depth-model", genMode: "videoEdit", prompt: "" }), upstreamVideoNode("source", "/static/source.mp4")],
+      edges: [edge("source-edge", "source")],
+    }));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    act(() => useCanvasStore.setState({ edges: [] }));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(true));
+    expect(result.current.formProps.genMode).toBe("videoEdit");
+    expect(nodeData().model).toBe("depth-model");
+  });
+
+  it("switches into video edit immediately and submits to the edit endpoint", async () => {
+    useCanvasStore.setState({
+      nodes: [videoNode({ model: MODEL_SD2, genMode: "allReference", prompt: "" }), upstreamVideoNode("source", "/static/source.mp4")],
+      edges: [edge("source-edge", "source")],
+    });
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+    await waitFor(() => expect(result.current.formProps.genModeSupportedModes).toBeUndefined());
+    await waitFor(() => expect(getFreezoneVideoModelsSnapshot().models.some((model) => model.id === "depth-model")).toBe(true));
+    act(() => result.current.formProps.onModelChange("depth-model"));
+    await waitFor(() => expect(result.current.formProps.genMode).toBe("videoEdit"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    await act(async () => { await result.current.submit(); });
+    expectOnlyEndpointCalled(submitFreezoneVideoEdit);
+    // Submit catalog identity; the server resolves its configured gateway alias.
+    expect(payloadOf(submitFreezoneVideoEdit)).toMatchObject({
+      model: "depth-model", prompt: "", genMode: "videoEdit", videoUrl: "/static/source.mp4",
+    });
+  });
 });
 
 describe("视频节点：genMode → 提交端点的分派", () => {

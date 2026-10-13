@@ -14,8 +14,11 @@ import {
   isGrokVideoChannelModel,
   isHappyHorseVideoModel,
   isSeedance1xVideoModel,
+  isSeedance25VideoModel,
   isSeedance2VideoModel,
   isVideoModeSupportedByModel,
+  findSeedance25VideoModel,
+  videoOutputFollowsSourceVideo,
   referenceDurationLimitsMs,
   resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
@@ -25,6 +28,8 @@ import {
   videoModelDefaultGenerateAudio,
   videoModelSupportsGenerateAudio,
   videoModelReferenceDisabledReason,
+  videoModeForModel,
+  videoModeMissingInputReason,
   videoMultiImageAutoSwitchMode,
   videoNoUpstreamResetMode,
   videoReferenceAutoSwitchAction,
@@ -54,6 +59,49 @@ const SEEDANCE2_VALUE = "newapi_seedance-2.0-fast-value";
 const SEEDANCE10_PRO_FAST = "newapi_seedance-1.0-pro-fast";
 const SEEDANCE15_PRO = "newapi_seedance-1.5-pro";
 const HAPPYHORSE = "newapi_happyhorse-1.0";
+const SEEDANCE25 = "newapi_seedance-2.5";
+
+describe("catalog models requiring video input", () => {
+  const none = { images: 0, videos: 0, audios: 0 };
+  const depth = { id: "catalog-depth", apiModel: "Depth-Anything-Video", supportedModes: ["video_edit"] };
+
+  it("disables video-only models until a video node is connected", () => {
+    for (const supportedModes of [["video_edit"], ["video_extend"], ["video_edit", "video_extend"]]) {
+      expect(videoModelReferenceDisabledReason({ ...depth, supportedModes }, none))
+        .toBe("node.videoOps.modeDisabled.needOneVideo");
+      expect(videoModelReferenceDisabledReason({ ...depth, supportedModes }, { ...none, videos: 1 }))
+        .toBeNull();
+    }
+    expect(videoModelReferenceDisabledReason({ ...depth, supportedModes: ["text_to_video", "video_edit"] }, none))
+      .toBeNull();
+  });
+
+  it("switches to the supported mode and preserves it when the input is removed", () => {
+    expect(videoModeForModel("textToVideo", depth, { ...none, videos: 1 })).toBe("videoEdit");
+    expect(videoModeForModel("textToVideo", depth, none)).toBe("videoEdit");
+    expect(videoNoUpstreamResetMode("videoEdit", none, depth)).toBeNull();
+    expect(videoNoUpstreamResetMode("videoEdit", none, HAPPYHORSE)).toBe("textToVideo");
+  });
+
+  it("selects an input-compatible fallback without changing a supported explicit mode", () => {
+    const model = { supportedModes: ["text_to_video", "video_edit", "video_extend"] };
+    expect(videoModeForModel("firstFrame", model, none)).toBe("textToVideo");
+    expect(videoModeForModel("firstFrame", model, { ...none, videos: 1 })).toBe("videoEdit");
+    expect(videoModeForModel("textToVideo", model, { ...none, videos: 1 })).toBe("videoEdit");
+    expect(videoModeForModel("videoExtend", model, { ...none, videos: 1 })).toBe("videoExtend");
+  });
+
+  it("requires images for image modes without adding an all-reference restriction", () => {
+    for (const mode of ["firstFrame", "imageToVideo", "imageReference", "firstLastFrame"] as const) {
+      expect(videoModeMissingInputReason(mode, none)).toBe("node.videoOps.modeDisabled.needOneImage");
+      expect(videoModeMissingInputReason(mode, { ...none, images: 1 })).toBeNull();
+    }
+    expect(videoModeMissingInputReason("allReference", none)).toBeNull();
+    expect(videoModeMissingInputReason("allReference", { ...none, hasOtherReference: true })).toBeNull();
+    expect(videoNoUpstreamResetMode("allReference", { ...none, hasOtherReference: true }, SEEDANCE2_FAST)).toBeNull();
+    expect(videoModeMissingInputReason("textToVideo", none)).toBeNull();
+  });
+});
 
 describe("video model family detection", () => {
   it("classifies Seedance 2.0 variants (not 1.x)", () => {
@@ -85,6 +133,66 @@ describe("video model family detection", () => {
     }
     // 分隔符不敏感：normalize 后 `seedance20` 仍是 2.0，不会漏成 1.x。
     expect(isSeedance2VideoModel("SEEDANCE 2.0 FAST")).toBe(true);
+  });
+
+  it("singles out Seedance 2.5 without unsettling the 2.x family verdict", () => {
+    expect(isSeedance25VideoModel(SEEDANCE25)).toBe(true);
+    // 2.5 仍属 2.x 族（多图 / 视频 / 音频能力同源），这条粗口径不能因为它被收窄。
+    expect(isSeedance2VideoModel(SEEDANCE25)).toBe(true);
+    expect(isSeedance1xVideoModel(SEEDANCE25)).toBe(false);
+    // 2.0 全家不能被误判成 2.5 —— 片段重拍入口就是靠这条区分开的。
+    for (const id of [SEEDANCE2_FAST, SEEDANCE2_VALUE, "seedance-2.0", HAPPYHORSE]) {
+      expect(isSeedance25VideoModel(id)).toBe(false);
+    }
+  });
+});
+
+describe("findSeedance25VideoModel — 智能续写只认 Seedance 2.5", () => {
+  it("picks the 2.5 entry out of a mixed catalog by apiModel", () => {
+    const models = [
+      { id: "cat-fast", apiModel: SEEDANCE2_FAST },
+      { id: "cat-25", apiModel: SEEDANCE25 },
+      { id: "cat-hh", apiModel: HAPPYHORSE },
+    ];
+    // 返回的是目录条目本身（`id` 才是要写进 VideoNodeData.model 的值，不是 apiModel）。
+    expect(findSeedance25VideoModel(models)?.id).toBe("cat-25");
+  });
+
+  it("falls back to id when the catalog entry carries no apiModel", () => {
+    expect(findSeedance25VideoModel([{ id: "seedance-2.5" }])?.id).toBe("seedance-2.5");
+  });
+
+  it("returns null when the project catalog has no 2.5 at all", () => {
+    // 目录里没上 2.5 → 入口该置灰，而不是随便挑个 2.0 顶上。
+    expect(
+      findSeedance25VideoModel([
+        { id: "cat-fast", apiModel: SEEDANCE2_FAST },
+        { id: "cat-hh", apiModel: HAPPYHORSE },
+      ]),
+    ).toBeNull();
+    expect(findSeedance25VideoModel([])).toBeNull();
+  });
+});
+
+// 厂商硬校验：Seedance 视频编辑的 ratio 必须 adaptive、duration 必须 -1，指定具体值
+// 整单打回。界面据此隐藏比例/时长两个旋钮，后端据此改写下发值 —— 两边同一条判断。
+describe("videoOutputFollowsSourceVideo — 视频编辑不许带比例和时长", () => {
+  it("holds for Seedance video edit", () => {
+    expect(videoOutputFollowsSourceVideo("videoEdit", SEEDANCE25)).toBe(true);
+    expect(videoOutputFollowsSourceVideo("videoEdit", "seedance-2.0")).toBe(true);
+  });
+
+  it("leaves every other mode of the same model alone", () => {
+    // 全能参考带视频素材也照常出比例和时长 —— 只有视频编辑这一档跟随原片。
+    for (const mode of ["allReference", "textToVideo", "imageToVideo"] as const) {
+      expect(videoOutputFollowsSourceVideo(mode, SEEDANCE25)).toBe(false);
+    }
+    expect(videoOutputFollowsSourceVideo(null, SEEDANCE25)).toBe(false);
+  });
+
+  it("excludes HappyHorse video edit — 它那套参数照常收比例和时长", () => {
+    expect(videoOutputFollowsSourceVideo("videoEdit", HAPPYHORSE)).toBe(false);
+    expect(videoOutputFollowsSourceVideo("videoEdit", null)).toBe(false);
   });
 });
 
@@ -1270,6 +1378,16 @@ describe("videoModeRequiresMedia — 该模式是否必须有上游素材", () =
 describe("videoNoUpstreamResetMode — 素材撤空后退回文生视频", () => {
   const EMPTY = { images: 0, videos: 0, audios: 0 };
 
+  it("keeps the pending continuity frame mode until generation captures it", () => {
+    const model = { supportedModes: ["text_to_video", "first_frame", "all_reference"] };
+    for (const mode of ["firstFrame", "allReference"] as const) {
+      const compatibleMode = videoModeForModel(mode, model, EMPTY);
+      expect(compatibleMode).toBe(mode);
+      expect(videoNoUpstreamResetMode(compatibleMode, EMPTY, model, true)).toBeNull();
+      expect(videoNoUpstreamResetMode(compatibleMode, EMPTY, model, false)).toBe("textToVideo");
+    }
+  });
+
   it("上游清空后，任何素材模式都退回文生视频", () => {
     for (const mode of [
       "allReference",
@@ -1303,7 +1421,7 @@ describe("VideoNode 接线：素材撤空 → 文生视频", () => {
     // upstreamCounts（已解析 URL）会把空态 CTA 刚铺好、还没出图的图片节点算成 0 张，
     // 用它当场就会把三个 CTA 顶回文生视频。
     expect(source).toContain(
-      "videoNoUpstreamResetMode(genMode, upstreamTypeCounts,",
+      "videoNoUpstreamResetMode(compatibleMode, counts, selectedVideoModel, fmvAutoContinuity)",
     );
   });
 

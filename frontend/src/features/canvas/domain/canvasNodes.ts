@@ -28,6 +28,7 @@ export const CANVAS_NODE_TYPES = {
   audio: 'audioNode',
   videoStory: 'videoStoryNode',
   videoCompose: 'videoComposeNode',
+  videoBreakdown: 'videoBreakdownNode',
   script: 'scriptNode',
   pano360Viewer: 'pano360ViewerNode',
   threeDWorld: 'threeDWorldNode',
@@ -107,6 +108,13 @@ export interface NodeImageData extends NodeDisplayData {
   previewImageUrl?: string | null;
   aspectRatio: string;
   isSizeManuallyAdjusted?: boolean;
+  /**
+   * 卡片右上角那颗「替换素材」按钮**常驻**（不必先选中节点）。点击换本地文件
+   * 是所有有内容的卡片都有的能力，这个开关只管按钮的可见时机：逐帧拉片的产出组
+   * （分镜/动态/音乐）是参考素材、换图是高频动作，所以一直露出来；其余节点仍然
+   * 选中才出现，免得满画布挂着一排上传图标。
+   */
+  allowLocalReplace?: boolean;
   candidate_origin?: Record<string, unknown>;
   output_role?: string;
   committed_at?: string | null;
@@ -160,6 +168,25 @@ export interface StoryVariableDefinition extends StoryVariable {
   maximum?: number | null;
 }
 
+/** 深度动作捕捉失败原因；`failed` 是兜底，原始报错放在 errorDetail。 */
+export type DepthCaptureErrorCode =
+  | 'tooLong'
+  | 'noVideoTrack'
+  | 'cannotDecode'
+  | 'cancelled'
+  | 'failed';
+
+/** 深度动作捕捉（浏览器端计算）的处理态；成功后写回 videoUrl 并清成 null。 */
+export interface DepthCaptureState {
+  status: 'running' | 'failed';
+  /** 0–100 的整数百分比。 */
+  progress: number;
+  /** 重试时重跑的源视频地址。 */
+  sourceVideoUrl: string;
+  errorCode: DepthCaptureErrorCode | null;
+  errorDetail: string | null;
+}
+
 export interface VideoNodeData extends NodeDisplayData {
   videoUrl: string | null;
   previewImageUrl?: string | null;
@@ -169,6 +196,8 @@ export interface VideoNodeData extends NodeDisplayData {
    * 不渲染底部生成操作面板（Mode tabs / prompt / 提交）。
    */
   referenceOnly?: boolean;
+  /** 见 NodeImageData.allowLocalReplace。 */
+  allowLocalReplace?: boolean;
   aspectRatio: string;
   isSizeManuallyAdjusted?: boolean;
   sourceFileName?: string | null;
@@ -176,6 +205,8 @@ export interface VideoNodeData extends NodeDisplayData {
   heightPx?: number | null;
   durationMs?: number | null;
   isUploading?: boolean;
+  /** 深度动作捕捉产出节点的处理态，见 DepthCaptureState。 */
+  depthCapture?: DepthCaptureState | null;
   isAnalyzing?: boolean;
   analysisResult?: string | null;
   analysisError?: string | null;
@@ -184,6 +215,30 @@ export interface VideoNodeData extends NodeDisplayData {
   isClipMode?: boolean;
   clipStartMs?: number | null;
   clipEndMs?: number | null;
+  // frame crop (画面裁切) ------------------------------------------------------
+  /**
+   * **源**视频节点上的临时态：画面上叠裁剪框、底下挂比例浮条。框本身不落盘
+   * （按 pointermove 频率写 store 会冲掉撤销栈），只有这个开关是节点数据。
+   * 与 isClipMode / isExtendPickMode / subtitleEraseMode 互斥。
+   */
+  isCropMode?: boolean;
+  // smart extend (libtv-style 智能续写) --------------------------------------
+  /**
+   * **源**视频节点上的临时态：正在截「续写前置视频」，卡片底下挂选段轨道。
+   * 选区不落盘（拖十几次才拍板，每次都写 store 会冲掉撤销栈），只有点了
+   * 「确认续写」才把区间带进新建的下游节点。与 isClipMode 互斥。
+   */
+  isExtendPickMode?: boolean;
+  /**
+   * 「智能续写」产出的下游节点：模型锁 Seedance 2.5、模式锁全能参考，prompt 前面
+   * 挂一句固定的「对 X 的 mm:ss-mm:ss 片段进行续写：」。前缀不写进 prompt 本身
+   * （见 [[videoExtendClip]] 的 extendPromptPrefix），只在提交时拼进去。
+   */
+  isExtendMode?: boolean;
+  /** 前缀里的素材名，取自源节点的 displayName。源节点改名不回溯——指令已经发出去了。 */
+  extendSourceName?: string;
+  extendStartMs?: number;
+  extendEndMs?: number;
   // subtitle erase (libtv-style 智能去字幕) ----------------------------------
   /** `smart` = auto-estimate bottom subtitle band; `box` = user-drawn region. */
   subtitleEraseMode?: 'smart' | 'box' | null;
@@ -613,6 +668,8 @@ export interface AudioNodeData extends NodeDisplayData {
   sourceFileName?: string | null;
   durationMs?: number | null;
   isUploading?: boolean;
+  /** 见 NodeImageData.allowLocalReplace。 */
+  allowLocalReplace?: boolean;
   /**
    * 音频节点的生成类型：
    * - 'speech'(默认/缺省)：克隆音频,文本转语音(/freezone/audio/speech),用 voiceRef/语气词。
@@ -712,6 +769,40 @@ export interface VideoStoryNodeData extends NodeDisplayData {
   /** 解析开始时间戳,用于 loading 遮罩的进度百分比模拟。 */
   analysisStartedAt?: number | null;
   analysisError?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * 逐帧拉片的拆解维度。一次拉片可以同时选多个维度，每个维度在下游产出
+ * 一个独立的结果组（分镜组 / 动态·运镜动作参考 / 音乐·BGM 参考片段）。
+ */
+export const VIDEO_BREAKDOWN_DIMENSIONS = ['storyboard', 'motion', 'music'] as const;
+export type VideoBreakdownDimension = (typeof VIDEO_BREAKDOWN_DIMENSIONS)[number];
+
+/**
+ * 逐帧拉片节点：把一个视频从分镜 / 动态 / 音乐三个维度拆开。
+ *
+ * 视频素材有两个来源——本地上传（走 /freezone/upload 落 OSS）和「从画布选择」
+ * （在画布上点一个已有视频节点，连边并回填 URL）。两条路最终都只写
+ * `sourceVideoUrl`，节点本身不区分来源。
+ */
+export interface VideoBreakdownNodeData extends NodeDisplayData {
+  /** 待拆解的视频地址；为空时节点处于「上传视频后开始」空态。 */
+  sourceVideoUrl?: string | null;
+  /** 素材区缩略图（从画布选择时继承上游视频节点的封面）。 */
+  previewImageUrl?: string | null;
+  /** 上传文件名 / 上游节点标题，用于素材区标签。 */
+  sourceFileName?: string | null;
+  /** 「从画布选择」选中的上游视频节点 id，仅用于 audit。 */
+  sourceNodeId?: string | null;
+  /** 勾选的拆解维度，至少保留一个。 */
+  dimensions?: VideoBreakdownDimension[];
+  /** 本地上传进行中——素材区显示 loading，禁止重复触发。 */
+  isUploading?: boolean;
+  /** 拉片任务进行中。 */
+  isBreakingDown?: boolean;
+  breakdownStartedAt?: number | null;
+  breakdownError?: string | null;
   [key: string]: unknown;
 }
 
@@ -904,6 +995,7 @@ export type CanvasNodeData =
   | AudioNodeData
   | VideoStoryNodeData
   | VideoComposeNodeData
+  | VideoBreakdownNodeData
   | ScriptNodeData
   | Pano360ViewerNodeData
   | ThreeDWorldNodeData
@@ -946,6 +1038,21 @@ export type NodeToolType = (typeof NODE_TOOL_TYPES)[keyof typeof NODE_TOOL_TYPES
 export interface ActiveToolDialog {
   nodeId: string;
   toolType: NodeToolType;
+}
+
+/**
+ * 卡片内右上角那颗「替换素材」按钮（NodeMediaReplaceButton）的唯一开关。
+ *
+ * 只有逐帧拉片的产出组（分镜 / 动态 / 音乐）带 allowLocalReplace —— 那是一组参考
+ * 素材，换成自己的图/曲子是高频动作，所以按钮常驻在卡片上。其余节点一律不给卡内
+ * 按钮（否则满画布挂着一排上传图标，还容易误点把生成结果换掉），它们的「拖到素材库
+ * 替换」手势走浮在节点外侧的 AssetCommitHandle —— 两条入口互斥，见
+ * SelectedNodeOverlay。
+ */
+export function hasInlineMediaReplaceButton(
+  data: { allowLocalReplace?: boolean } | null | undefined
+): boolean {
+  return data?.allowLocalReplace === true;
 }
 
 export function isUploadNode(
@@ -1081,6 +1188,12 @@ export function isVideoComposeNode(
   node: CanvasNode | null | undefined
 ): node is Node<VideoComposeNodeData, typeof CANVAS_NODE_TYPES.videoCompose> {
   return node?.type === CANVAS_NODE_TYPES.videoCompose;
+}
+
+export function isVideoBreakdownNode(
+  node: CanvasNode | null | undefined
+): node is Node<VideoBreakdownNodeData, typeof CANVAS_NODE_TYPES.videoBreakdown> {
+  return node?.type === CANVAS_NODE_TYPES.videoBreakdown;
 }
 
 export function isPano360ViewerNode(

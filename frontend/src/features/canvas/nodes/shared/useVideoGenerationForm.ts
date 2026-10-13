@@ -64,6 +64,8 @@ import {
   referenceDurationLimitsMs,
   resolveVideoKeyframeUrls,
   videoModeRequiresPrompt,
+  videoModeForModel,
+  videoNoUpstreamResetMode,
   videoModelReferenceDisabledReason,
   videoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
@@ -1107,16 +1109,16 @@ export function useVideoGenerationForm(
     updateNodeData,
   ]);
 
-  // 上游接入视频素材时，只有「全能参考」能消费视频；其它模式（文生 / 图生 /
-  // 首尾帧 / 图片参考）都会把视频丢弃。所以只要上游存在视频就强制切到
-  // allReference 并锁死——下面的 tab 禁用规则会把其它 tab 一并禁用。
-  // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
+  // 上游视频可由全能参考、视频编辑或视频延长消费；保留用户已选的合法视频模式。
+  // 模型声明全能参考能力时，其它不消费视频的模式自动切到全能参考。
   useEffect(() => {
     if (upstreamCounts.videos === 0) return;
     if (videoModelsLoading) return;
     if (isHappyHorseModel) return;
-    if (!isSeedance20Model) return;
-    if (genMode === "allReference" || (genMode === "videoExtend" && isVideoModeSupportedByModel("videoExtend", selectedVideoModel))) return;
+    if (genMode === "videoEdit" && isVideoModeSupportedByModel("videoEdit", selectedVideoModel)) return;
+    if (genMode === "videoExtend" && isVideoModeSupportedByModel("videoExtend", selectedVideoModel)) return;
+    if (!isVideoModeSupportedByModel("allReference", selectedVideoModel)) return;
+    if (genMode === "allReference") return;
     updateNodeData(id, { genMode: "allReference" });
   }, [
     upstreamCounts.videos,
@@ -1163,8 +1165,23 @@ export function useVideoGenerationForm(
     if (isHappyHorseModel) return;
     if (genMode !== "firstLastFrame") return;
     if (upstreamCounts.images <= 2) return;
+    if (!isVideoModeSupportedByModel("allReference", selectedVideoModel)) return;
     updateNodeData(id, { genMode: "allReference" });
-  }, [genMode, isHappyHorseModel, upstreamCounts.images, id, updateNodeData]);
+  }, [genMode, isHappyHorseModel, selectedVideoModel, upstreamCounts.images, id, updateNodeData]);
+
+  // Restore catalog modes using their capabilities and connected inputs.
+  useEffect(() => {
+    if (videoModelsLoading || isHappyHorseModel || !selectedVideoModel?.supportedModes?.length) return;
+    const counts = {
+      ...upstreamTypeCounts,
+      hasOtherReference: Boolean(data.referenceFileUrl || data.referenceLink?.trim()),
+    };
+    const compatibleMode = videoModeForModel(genMode, selectedVideoModel, counts);
+    const target = videoNoUpstreamResetMode(compatibleMode, counts, selectedVideoModel, fmvAutoContinuity)
+      ?? compatibleMode;
+    if (target !== genMode) updateNodeData(id, { genMode: target }, { recordHistory: false });
+  }, [data.referenceFileUrl, data.referenceLink, fmvAutoContinuity, genMode, id, isHappyHorseModel,
+    selectedVideoModel, upstreamTypeCounts, updateNodeData, videoModelsLoading]);
 
   const hasPromptText = prompt.trim().length > 0 || upstreamTextJoined.length > 0;
   const canPrepareContinuity = useCanvasStore((state) => {
@@ -1914,31 +1931,28 @@ export function useVideoGenerationForm(
     upstreamTextJoined,
   ]);
 
-  // 换模型不是一次纯 patch，故不下沉到表单组件：新模型不支持当前 genMode 时
-  // （如 HappyHorse 专属的 videoEdit 切到普通模型）要重置为通用安全值
-  // textToVideo，让状态机按新模型 + 上游重新推导；否则残留模式会在提交时打到
-  // 不支持的端点被后端 400（界面还停在错误的 tab）。顺带记住这次选择，后续新建
-  // 的视频节点将继承它。
+  // 换模型时同步选择兼容输入的模式，不能假定每个模型都支持文生视频。
+  // 记住用户选择，供后续新建的视频节点继承。
   const handleModelChange = useCallback(
     (nextModelId: string) => {
       // 传模型对象而非裸 id：媒体目录声明了 supportedModes 时以它为准，
       // 落回能力推断只是没配置时的兜底。
-      const resetGenMode =
-        data.genMode != null &&
-        !isVideoModeSupportedByModel(
-          data.genMode,
-          availableVideoModels.find((item) => item.id === nextModelId),
-        );
+      const nextMode = videoModeForModel(
+        genMode,
+        availableVideoModels.find((item) => item.id === nextModelId),
+        { ...upstreamTypeCounts,
+          hasOtherReference: Boolean(data.referenceFileUrl || data.referenceLink?.trim()) },
+      );
       updateNodeData(id, {
         model: nextModelId,
         // 换模型必须清空 modelParams：参数表是按模型声明的，留着上一个模型的键
         // 会原样发给后端，轻则被忽略重则报参数不合法。
         modelParams: {},
-        ...(resetGenMode ? { genMode: "textToVideo" as VideoGenMode } : {}),
+        genMode: nextMode,
       });
       writeLastVideoModel(nextModelId);
     },
-    [availableVideoModels, data.genMode, id, updateNodeData],
+    [availableVideoModels, data.referenceFileUrl, data.referenceLink, genMode, id, updateNodeData, upstreamTypeCounts],
   );
 
   // 表单按钮只需要 `() => void`；异步编排仍在本 hook 里。
@@ -1960,7 +1974,10 @@ export function useVideoGenerationForm(
       genModeSupportedModes: selectedVideoModel?.supportedModes,
       // HappyHorse 的可选模式由上游节点类型（含未填图的空节点）决定，
       // 其余模型仍按已解析素材 URL 计数。
-      genModeUpstreamCounts: isHappyHorseModel ? upstreamTypeCounts : upstreamCounts,
+      genModeUpstreamCounts: {
+        ...(isHappyHorseModel ? upstreamTypeCounts : upstreamCounts),
+        hasOtherReference: Boolean(data.referenceFileUrl || data.referenceLink?.trim()),
+      },
       upstreamTextContents,
       onDetachUpstream: handleDetachUpstream,
       referenceMediaItems: referenceMediaCapInfo,

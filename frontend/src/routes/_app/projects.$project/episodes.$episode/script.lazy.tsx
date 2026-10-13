@@ -276,6 +276,8 @@ function ScriptTabContent() {
       queryKeys.episodes(project),
       queryKeys.episodeDetail(project, epNum),
       queryKeys.scenes(project),
+      queryKeys.beats(project, epNum),
+      queryKeys.script(project, epNum),
       queryKeys.pipelineStatus(project),
     ],
     showCompleteToast: false,
