@@ -2256,6 +2256,7 @@ frontend/src/features/freezone/context/skillI18n.ts,Elastic-2.0,2026 SuperTale c
 frontend/src/features/freezone/context/skillNodeInputs.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/context/skillNodeOutputs.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/context/skillRoles.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/freezone/dockOffset.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/externalCanvasCommandDedupe.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/generated/workflowContract.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/interactiveStoryCanvasRefresh.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
