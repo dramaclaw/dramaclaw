@@ -1241,3 +1241,75 @@ async def test_structured_import_limits_match_upload_and_start(
     )
     assert response["error_type"] == expected_type
     assert response["data"] == expected_limit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry_count", [1, 2])
+@pytest.mark.parametrize("structured", [False, True])
+async def test_upload_docx_rejects_total_expanded_size_and_preserves_original(
+    tmp_path, monkeypatch, entry_count, structured
+):
+    from novelvideo.api.routes import ingest
+
+    if structured:
+        _structured_config(tmp_path)
+    monkeypatch.setattr(
+        ingest, "resolve_project_scope", _project_scope_resolver(tmp_path)
+    )
+    original = _docx_bytes(["第一章 启程", "原文必须保留。"])
+    first = await ingest.upload_novel(
+        project="demo",
+        file=UploadFile(file=io.BytesIO(original), filename="novel.docx"),
+        user={"username": "admin"},
+    )
+    assert first["ok"] is True
+    buffer = io.BytesIO(original)
+    block = b"x" * (1024 * 1024)
+    with zipfile.ZipFile(buffer, "a", compression=zipfile.ZIP_DEFLATED) as archive:
+        for index in range(entry_count):
+            with archive.open(f"word/media/padding{index}.bin", "w") as entry:
+                for _ in range(50 // entry_count):
+                    entry.write(block)
+                entry.write(b"x")
+    raw = buffer.getvalue()
+    assert len(raw) < 8 * 1024 * 1024
+    response = await ingest.upload_novel(
+        project="demo",
+        file=UploadFile(file=io.BytesIO(raw), filename="novel.docx"),
+        user={"username": "admin"},
+    )
+    assert response["ok"] is False
+    assert response["error_type"] == "parse"
+    assert "50 MiB" in response["detail"]
+    files = list(tmp_path.rglob("novel.docx"))
+    assert len(files) == 1
+    assert files[0].read_bytes() == original
+
+    # Existing uploads must also be rejected before starting an import task.
+    files[0].write_bytes(raw)
+    response = await ingest.start_ingest(
+        project="demo",
+        body=IngestStart(filename="novel.docx", rebuild=True, spine_template="narrated"),
+        user={"username": "admin"},
+    )
+    assert response["ok"] is False
+    assert response["error_type"] == "parse"
+    assert "50 MiB" in response["detail"]
+
+
+def test_docx_expanded_xml_is_rejected_before_document_parser(tmp_path, monkeypatch):
+    from novelvideo.utils.document_parsers import DocumentParseError, load_novel_text
+    import docx
+
+    path = tmp_path / "bomb.docx"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        with archive.open("word/document.xml", "w") as entry:
+            for _ in range(51):
+                entry.write(b"x" * (1024 * 1024))
+
+    def forbidden_parser(*args, **kwargs):
+        pytest.fail("oversized XML reached python-docx")
+
+    monkeypatch.setattr(docx, "Document", forbidden_parser)
+    with pytest.raises(DocumentParseError, match="50 MiB"):
+        load_novel_text(path)

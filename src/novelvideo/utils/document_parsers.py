@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
+from zipfile import ZipFile
 
 TEXT_NOVEL_EXTENSIONS = {".txt", ".md"}
 SUPPORTED_NOVEL_EXTENSIONS = TEXT_NOVEL_EXTENSIONS | {".docx"}
@@ -13,6 +14,7 @@ _BILLABLE_WHITESPACE_RE = re.compile(r"[\s\u3000]+")
 MAX_NOVEL_IMPORT_CHARS = 100_000
 # Storage/analysis-plan limit, not a claim about any model's context window.
 MAX_STRUCTURED_NOVEL_IMPORT_CHARS = 1_000_000
+MAX_DOCX_EXPANDED_BYTES = 50 * 1024 * 1024
 
 
 @dataclass
@@ -100,7 +102,19 @@ def parse_docx(path: Path) -> str:
         ) from exc
 
     try:
+        # python-docx loads ZIP parts into memory. Bound all expanded entries
+        # before it reads any XML or media, independently of upload/text limits.
+        with ZipFile(path) as archive:
+            expanded_bytes = sum(entry.file_size for entry in archive.infolist())
+            if expanded_bytes > MAX_DOCX_EXPANDED_BYTES:
+                raise DocumentParseError(
+                    source_format="docx",
+                    location="文档",
+                    reason="Word 文档解压后总大小超过 50 MiB 上限",
+                )
         document = Document(path)
+    except DocumentParseError:
+        raise
     except Exception as exc:
         raise DocumentParseError(
             source_format="docx",

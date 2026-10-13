@@ -16,7 +16,7 @@ import {
 import type { ReactNode } from "react";
 
 const SUPPORTED_FORMATS_LABEL =
-  "Supports .txt / .md / .docx · Up to 8MB / 1,000,000 characters; limits depend on the project";
+  "Supports .txt / .md / .docx · Structured import: 8 MiB / 1,000,000 characters; other pipelines: 512 KiB / 100,000 characters";
 const i18n = i18next.createInstance();
 
 beforeAll(async () => {
