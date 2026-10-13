@@ -125,6 +125,14 @@ it("sends public chat to the player bubble and blocks repeated Enter without los
   expect(screen.queryByText("再说一句", { selector: "article p" })).toBeNull();
 });
 
+it("uses a successful server profile in memory even when browser persistence is unavailable", () => {
+  const setItem = vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("quota"); });
+  const { result } = renderHook(() => usePikoProfile("cache-only-test"));
+  act(() => { expect(result.current.cacheProfile({ nickname: "已保存", bio: "服务器资料" })).toBe(true); });
+  expect(result.current.profile).toEqual({ nickname: "已保存", bio: "服务器资料" });
+  setItem.mockRestore();
+});
+
 vi.mock("./runtime/dog-world-session", () => ({ retainDogWorldSession: () => () => {} }));
 
 it("opens and focuses public chat on Enter only when no panel is open", async () => {

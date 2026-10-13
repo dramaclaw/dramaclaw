@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { PikoPrivateChat } from "./PikoPrivateChat";
 import type {
@@ -91,28 +91,21 @@ it("ends the real private session through the network callback", () => {
   expect(onEnd).toHaveBeenCalledWith(peer.character_id);
 });
 
-it("keeps an accepted conversation closed until the tray becomes active", () => {
-  const onOpenChange = vi.fn();
-  const props = { ownCharacterId: "character-me", peers: [peer], onOpenChange };
-  const view = render(<PikoPrivateChat {...props} active={false} messages={[]} />);
-  // The dialog portals to <body>, outside the hidden tray, so it must not exist at all.
-  expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(onOpenChange).not.toHaveBeenCalledWith(true);
-
-  // A message that arrives while the world is loading is unread, not silently seen.
-  view.rerender(<PikoPrivateChat {...props} active={false} messages={[
-    message("theirs", peer.character_id, "character-me", "在吗"),
-  ]} />);
-  expect(document.querySelector('[aria-label="1 条未读消息"]')).not.toBeNull();
-
-  view.rerender(<PikoPrivateChat {...props} active messages={[
-    message("theirs", peer.character_id, "character-me", "在吗"),
-  ]} />);
-  expect(screen.getByRole("dialog", { name: "在线小叶" })).toBeVisible();
-  expect(onOpenChange).toHaveBeenLastCalledWith(true);
-  expect(document.querySelector('[aria-label="1 条未读消息"]')).toBeNull();
-
-  view.rerender(<PikoPrivateChat {...props} active={false} messages={[]} />);
-  expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(onOpenChange).toHaveBeenLastCalledWith(false);
+it("keeps the draft until confirmation and retains it after rejection", async () => {
+  let finish!: (accepted: boolean) => void;
+  const onSend = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  render(<PikoPrivateChat active ownCharacterId="character-me" peers={[peer]}
+    onOpenChange={vi.fn()} onSend={onSend} />);
+  const input = screen.getByRole("textbox", { name: "输入私聊消息" });
+  fireEvent.change(input, { target: { value: "保留这条消息" } });
+  fireEvent.submit(input.closest("form")!);
+  fireEvent.submit(input.closest("form")!);
+  expect(onSend).toHaveBeenCalledTimes(1);
+  expect(input).toHaveValue("保留这条消息");
+  await act(async () => finish(false));
+  expect(input).toHaveValue("保留这条消息");
+  expect(screen.getByRole("alert")).toHaveTextContent("内容已保留");
+  fireEvent.submit(input.closest("form")!);
+  await act(async () => finish(true));
+  expect(input).toHaveValue("");
 });

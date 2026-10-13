@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import math
 import sqlite3
 import threading
@@ -17,14 +16,16 @@ from typing import Any
 from fastapi import WebSocket
 
 from novelvideo import config
+from novelvideo.piko.protocol import (
+    CHAT_COOLDOWN_SECONDS, CHAT_MAX_LENGTH, PRIVATE_CHAT_COOLDOWN_SECONDS,
+    message_body, message_correlation, message_error, message_receipt,
+    parse_client_payload, private_session_ended,
+)
 
 DEFAULT_SCENE_ID = "welcome-courtyard"
 DEFAULT_X = 1270.0
 DEFAULT_Y = 480.0
 MAX_COORDINATE = 10000.0
-CHAT_COOLDOWN_SECONDS = 3.0
-CHAT_MAX_LENGTH = 80
-PRIVATE_CHAT_COOLDOWN_SECONDS = 0.5
 
 
 def _utc_now() -> str:
@@ -156,7 +157,6 @@ class OnlinePlayer:
     y: float
     facing: str
     websocket: WebSocket
-    public_task_status: str | None = None
     instance_id: str = ""
     connection_token: str = ""
     last_chat_at: float = 0.0
@@ -176,7 +176,6 @@ class OnlinePlayer:
             "x": self.x,
             "y": self.y,
             "facing": self.facing,
-            "task_status": self.public_task_status,
         }
 
 
@@ -191,12 +190,7 @@ class PikoWorldHub:
         self._lock = asyncio.Lock()
 
     async def join(
-        self,
-        websocket: WebSocket,
-        *,
-        user_id: str,
-        character: PikoCharacter,
-        public_task_status: str | None = None,
+        self, websocket: WebSocket, *, user_id: str, character: PikoCharacter
     ) -> OnlinePlayer:
         player = OnlinePlayer(
             character_id=character.id,
@@ -209,7 +203,6 @@ class PikoWorldHub:
             y=character.position_y,
             facing=character.facing,
             websocket=websocket,
-            public_task_status=public_task_status,
             last_persist_at=monotonic(),
         )
         async with self._lock:
@@ -217,29 +210,20 @@ class PikoWorldHub:
                 socket for socket, current in self._players.items()
                 if current.user_id == user_id and socket is not websocket
             ]
-            ended: list[tuple[WebSocket, str]] = []
-            for socket in replaced:
-                old = self._players.pop(socket, None)
-                # The route's later disconnect() finds no player for this socket,
-                # so the takeover has to end the old connection's private chats.
-                for peer_socket in self._private_peers.pop(socket, set()):
-                    self._private_peers.get(peer_socket, set()).discard(socket)
-                    if old is not None:
-                        ended.append((peer_socket, old.character_id))
+            departures = [self._detach_connection(socket) for socket in replaced]
             self._players[websocket] = player
             snapshot = [
                 current.public_dict() for current in self._players.values()
                 if current.scene_id == player.scene_id and current.websocket is not websocket
             ]
-        for socket in replaced:
-            await self._close_replaced(socket)
-        for peer_socket, character_id in ended:
-            try:
-                await peer_socket.send_json(
-                    {"type": "chat.private.ended", "character_id": character_id}
-                )
-            except Exception:  # noqa: BLE001 - takeover cleanup is best effort
-                pass
+        for previous, peers in departures:
+            if previous is not None:
+                await self._notify_private_end(previous, peers)
+                if previous.scene_id != player.scene_id:
+                    await self._broadcast_scene(previous.scene_id, {
+                        "type": "player.left", "character_id": previous.character_id,
+                    })
+                await self._close_replaced(previous.websocket)
         await websocket.send_json({"type": "world.snapshot", "players": snapshot})
         await self._broadcast_scene(
             player.scene_id, {"type": "player.joined", "player": player.public_dict()},
@@ -247,34 +231,10 @@ class PikoWorldHub:
         )
         return player
 
-    async def update_public_task_status(
-        self, player: OnlinePlayer, status: str | None
-    ) -> None:
-        normalized = "running" if status == "running" else None
-        if player.public_task_status == normalized:
-            return
-        player.public_task_status = normalized
-        await self._broadcast_scene(
-            player.scene_id,
-            {
-                "type": "player.task_status",
-                "character_id": player.character_id,
-                "task_status": normalized,
-            },
-            exclude=player.websocket,
-        )
-
-    async def update_profile(self, player: OnlinePlayer, *, nickname: str, bio: str) -> None:
-        if (player.nickname, player.bio) == (nickname, bio):
-            return
-        player.nickname, player.bio = nickname, bio
-        await self._broadcast_scene(
-            player.scene_id,
-            {"type": "player.updated", "player": player.public_dict()},
-            exclude=player.websocket,
-        )
-
     async def handle(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        async with self._lock:
+            if self._players.get(player.websocket) is not player:
+                return
         player.last_seen_at = monotonic()
         event_type = payload.get("type")
         if event_type == "player.move":
@@ -293,27 +253,23 @@ class PikoWorldHub:
             await self._private_chat_end(player, payload)
         elif event_type == "ping":
             await player.websocket.send_json({"type": "pong"})
+        elif event_type == "profile.update":
+            await self._update_profile(player)
+
+    async def _update_profile(self, player: OnlinePlayer) -> None:
+        character = self.store.get(player.user_id)
+        if character is not None:
+            player.nickname, player.bio, player.gender = character.nickname, character.bio, character.gender
+            await self._broadcast_scene(player.scene_id, {
+                "type": "player.updated", "player": player.public_dict(),
+            }, exclude=player.websocket)
 
     async def disconnect(self, websocket: WebSocket) -> None:
         async with self._lock:
-            player = self._players.pop(websocket, None)
-            self._pending_chat_requests = {
-                request_id: pair
-                for request_id, pair in self._pending_chat_requests.items()
-                if websocket not in pair
-            }
-            peers = self._private_peers.pop(websocket, set())
-            for peer_socket in peers:
-                self._private_peers.get(peer_socket, set()).discard(websocket)
+            player, peers = self._detach_connection(websocket)
         if player is None:
             return
-        for peer_socket in peers:
-            try:
-                await peer_socket.send_json(
-                    {"type": "chat.private.ended", "character_id": player.character_id}
-                )
-            except Exception:  # noqa: BLE001 - disconnect cleanup is best effort
-                pass
+        await self._notify_private_end(player, peers)
         self.store.update_location(
             player.user_id, scene_id=player.scene_id, x=player.x, y=player.y,
             facing=player.facing,
@@ -322,6 +278,28 @@ class PikoWorldHub:
             player.scene_id,
             {"type": "player.left", "character_id": player.character_id},
         )
+
+    def _detach_connection(self, websocket: WebSocket) -> tuple[OnlinePlayer | None, set[WebSocket]]:
+        """Remove a connection and its relationships while holding ``_lock``."""
+        player = self._players.pop(websocket, None)
+        self._pending_chat_requests = {
+            request_id: pair
+            for request_id, pair in self._pending_chat_requests.items()
+            if websocket not in pair
+        }
+        peers = self._private_peers.pop(websocket, set())
+        for peer_socket in peers:
+            self._private_peers.get(peer_socket, set()).discard(websocket)
+        return player, peers
+
+    async def _notify_private_end(self, player: OnlinePlayer, peers: set[WebSocket]) -> None:
+        for peer_socket in peers:
+            try:
+                await peer_socket.send_json(
+                    private_session_ended(player.character_id)
+                )
+            except Exception:  # noqa: BLE001 - disconnect cleanup is best effort
+                pass
 
     async def _move(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
         try:
@@ -379,22 +357,25 @@ class PikoWorldHub:
         )
 
     async def _chat(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
-        body = str(payload.get("body") or "").strip()
-        if not body or len(body) > CHAT_MAX_LENGTH:
+        body = message_body(payload)
+        if body is None:
+            await player.websocket.send_json(message_error(payload, "invalid_message"))
             return
         now = monotonic()
         if now - player.last_chat_at < CHAT_COOLDOWN_SECONDS:
             await player.websocket.send_json(
-                {"type": "error", "code": "chat_cooldown"}
+                message_error(payload, "chat_cooldown")
             )
             return
         player.last_chat_at = now
+        message_id = str(uuid.uuid4())
         await self._broadcast_scene(
             player.scene_id,
             {
                 "type": "chat.message",
                 "message": {
-                    "id": str(uuid.uuid4()),
+                    "id": message_id,
+                    **message_correlation(payload),
                     "character_id": player.character_id,
                     "nickname": player.nickname,
                     "body": body,
@@ -402,6 +383,8 @@ class PikoWorldHub:
                 },
             },
         )
+        if receipt := message_receipt(payload, message_id):
+            await player.websocket.send_json(receipt)
 
     async def _chat_request(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
         target_id = str(payload.get("target_character_id") or "").strip()
@@ -507,11 +490,13 @@ class PikoWorldHub:
 
     async def _private_chat(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
         target_id = str(payload.get("target_character_id") or "").strip()
-        body = str(payload.get("body") or "").strip()
-        if not target_id or not body or len(body) > CHAT_MAX_LENGTH:
+        body = message_body(payload)
+        if not target_id or body is None:
+            await player.websocket.send_json(message_error(payload, "invalid_message"))
             return
         now = monotonic()
         if now - player.last_private_chat_at < PRIVATE_CHAT_COOLDOWN_SECONDS:
+            await player.websocket.send_json(message_error(payload, "private_chat_cooldown"))
             return
         async with self._lock:
             target_socket = next(
@@ -525,12 +510,14 @@ class PikoWorldHub:
             )
             target = self._players.get(target_socket) if target_socket else None
         if target_socket is None or target is None:
+            await player.websocket.send_json(message_error(payload, "private_chat_unavailable"))
             return
         player.last_private_chat_at = now
         frame = {
             "type": "chat.private.message",
             "message": {
                 "id": str(uuid.uuid4()),
+                **message_correlation(payload),
                 "from_character_id": player.character_id,
                 "to_character_id": target.character_id,
                 "from_nickname": player.nickname,
@@ -543,6 +530,8 @@ class PikoWorldHub:
                 await socket.send_json(frame)
             except Exception:  # noqa: BLE001 - delivery to the other participant continues
                 pass
+        if receipt := message_receipt(payload, frame["message"]["id"]):
+            await player.websocket.send_json(receipt)
 
     async def _private_chat_end(
         self, player: OnlinePlayer, payload: dict[str, Any]
@@ -564,7 +553,7 @@ class PikoWorldHub:
             self._private_peers.get(target_socket, set()).discard(player.websocket)
         try:
             await target_socket.send_json(
-                {"type": "chat.private.ended", "character_id": player.character_id}
+                private_session_ended(player.character_id)
             )
         except Exception:  # noqa: BLE001 - the peer may already be gone
             pass
@@ -593,17 +582,3 @@ class PikoWorldHub:
             await websocket.close(code=4001)
         except Exception:  # noqa: BLE001 - already disconnected
             pass
-
-
-character_store = PikoCharacterStore()
-world_hub = PikoWorldHub(character_store)
-
-
-def parse_client_payload(raw: str) -> dict[str, Any] | None:
-    if len(raw) > 2048:
-        return None
-    try:
-        value = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    return value if isinstance(value, dict) else None

@@ -5,18 +5,22 @@ export const PIKO_CHAT_MAX_LENGTH = 80;
 export const PIKO_CHAT_BUBBLE_MS = 10000;
 export type PikoSpeech = { id: number; body: string; expiresAt: number; owner: string | null };
 
-/** Browser-session rehearsal only; real multiplayer requires server enforcement. */
+/** Local validation and cooldown mirror server checks without consuming failed sends. */
 export function createPikoChatGate() {
   const deadlines = new Map<string | null, number>();
   return {
     remaining(owner: string | null, now: number) { return Math.max(0, (deadlines.get(owner) ?? 0) - now); },
-    send(owner: string | null, input: string, now: number) {
+    validate(owner: string | null, input: string, now: number) {
       const body = input.trim();
       if (!body) return { ok: false, reason: "empty" } as const;
       if (Array.from(body).length > PIKO_CHAT_MAX_LENGTH) return { ok: false, reason: "length" } as const;
       if (this.remaining(owner, now)) return { ok: false, reason: "cooldown" } as const;
-      deadlines.set(owner, now + PIKO_CHAT_COOLDOWN_MS);
       return { ok: true, body } as const;
+    },
+    send(owner: string | null, input: string, now: number) {
+      const result = this.validate(owner, input, now);
+      if (result.ok) deadlines.set(owner, now + PIKO_CHAT_COOLDOWN_MS);
+      return result;
     },
   };
 }
@@ -39,5 +43,5 @@ export function usePikoPublicChat(owner: string | null) {
     if (result.ok) setSpeech({ id: ++sequence.current, owner, body: result.body, expiresAt: now + PIKO_CHAT_BUBBLE_MS });
     return result;
   };
-  return { send, remaining: Math.ceil(remaining / 1000), speech: speech?.owner === owner && speech.expiresAt > clock ? speech : null };
+  return { send, validate: (input: string) => gate.validate(owner, input, Date.now()), remaining: Math.ceil(remaining / 1000), speech: speech?.owner === owner && speech.expiresAt > clock ? speech : null };
 }

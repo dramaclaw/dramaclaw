@@ -21,7 +21,7 @@ from novelvideo.piko.translation import Language, Translation, TranslationBusy, 
 from novelvideo.project_context import resolve_project_context, user_id_from_api_user
 from novelvideo.ports.authz import AuthzError
 from novelvideo.piko.backend import character_store, world_hub
-from novelvideo.piko.world import parse_client_payload
+from novelvideo.piko.protocol import parse_client_payload
 from novelvideo.task_backend.subprocesses import EgressBoundaryError
 from novelvideo.task_state import get_task_manager
 

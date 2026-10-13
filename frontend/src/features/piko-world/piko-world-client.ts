@@ -5,6 +5,7 @@ import type { PikoPlayerGender } from "./piko-player";
 import { PIKO_CHAT_BUBBLE_MS } from "./piko-public-chat";
 
 const PIKO_HEARTBEAT_MS = 15_000;
+const MESSAGE_CONFIRMATION_TIMEOUT_MS = 8_000;
 
 export type PikoCharacter = {
   id: string;
@@ -26,7 +27,6 @@ export type PikoRemotePlayer = {
   x: number;
   y: number;
   facing: PikoFacing;
-  task_status?: "running" | null;
   speech?: { id: string; body: string; expiresAt: number };
 };
 export type PikoWorldChatMessage = {
@@ -35,6 +35,7 @@ export type PikoWorldChatMessage = {
   nickname: string;
   body: string;
   sent_at: string;
+  client_message_id?: string;
 };
 export type PikoPrivateChatRequest = {
   id: string;
@@ -54,6 +55,7 @@ export type PikoPrivateChatMessage = {
   from_nickname: string;
   body: string;
   sent_at: string;
+  client_message_id?: string;
 };
 
 export async function fetchPikoCharacter(): Promise<PikoCharacter | null> {
@@ -84,9 +86,7 @@ function validPlayer(value: unknown): value is PikoRemotePlayer {
     && (player.gender === "male" || player.gender === "female")
     && typeof player.scene_id === "string" && typeof player.x === "number"
     && typeof player.y === "number"
-    && ["north", "south", "east", "west"].includes(String(player.facing))
-    && (player.task_status === undefined || player.task_status === null
-      || player.task_status === "running");
+    && ["north", "south", "east", "west"].includes(String(player.facing));
 }
 
 export function upsertRemotePlayer(
@@ -104,17 +104,10 @@ export function upsertRemotePlayer(
   ];
 }
 
-export function updateRemotePlayerTaskStatus(
-  players: PikoRemotePlayer[],
-  characterId: string,
-  status: "running" | null,
-): PikoRemotePlayer[] {
-  return players.map(player => player.character_id === characterId
-    ? { ...player, task_status: status }
-    : player);
-}
-
 export function usePikoWorldConnection(character: PikoCharacter | null, sceneId: string) {
+  const characterRef = useRef(character);
+  characterRef.current = character;
+  const characterId = character?.id ?? null;
   const [remotePlayers, setRemotePlayers] = useState<PikoRemotePlayer[]>([]);
   const [chatMessages, setChatMessages] = useState<PikoWorldChatMessage[]>([]);
   const [chatRequests, setChatRequests] = useState<PikoPrivateChatRequest[]>([]);
@@ -125,25 +118,68 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
   const sceneRef = useRef(sceneId);
   const reconnectRef = useRef<number | undefined>(undefined);
   const closedRef = useRef(false);
+  const profileSentRef = useRef<string | null>(null);
+  const sendSequenceRef = useRef(0);
+  const pendingSendsRef = useRef(new Map<string, { resolve: (accepted: boolean) => void; timer: number }>());
   const lastPositionRef = useRef({
     x: character?.position_x ?? 1270,
     y: character?.position_y ?? 480,
     facing: character?.facing ?? "south" as PikoFacing,
   });
   sceneRef.current = sceneId;
-  // The connection belongs to the character, not to one snapshot of its profile:
-  // saving a nickname must not close the socket and end every private chat.
-  const characterId = character?.id ?? null;
 
   const send = useCallback((payload: Record<string, unknown>) => {
     const socket = socketRef.current;
     if (socket?.readyState !== WebSocket.OPEN) return false;
-    socket.send(JSON.stringify(payload));
-    return true;
+    try {
+      socket.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      return false;
+    }
   }, []);
 
+  const finishSend = useCallback((identifier: string, accepted: boolean) => {
+    const pending = pendingSendsRef.current.get(identifier);
+    if (!pending) return;
+    window.clearTimeout(pending.timer);
+    pendingSendsRef.current.delete(identifier);
+    pending.resolve(accepted);
+  }, []);
+  const failPendingSends = useCallback(() => {
+    for (const identifier of pendingSendsRef.current.keys()) finishSend(identifier, false);
+  }, [finishSend]);
+  const sendConfirmed = useCallback((payload: Record<string, unknown>): Promise<boolean> => {
+    const identifier = globalThis.crypto?.randomUUID?.()
+      ?? `${Date.now()}-${++sendSequenceRef.current}`;
+    return new Promise(resolve => {
+      const timer = window.setTimeout(() => finishSend(identifier, false), MESSAGE_CONFIRMATION_TIMEOUT_MS);
+      pendingSendsRef.current.set(identifier, { resolve, timer });
+      if (!send({ ...payload, client_message_id: identifier })) finishSend(identifier, false);
+    });
+  }, [finishSend, send]);
+  const syncProfile = useCallback(() => {
+    const current = characterRef.current;
+    if (!current) return;
+    const signature = JSON.stringify([current.nickname, current.bio, current.gender]);
+    if (profileSentRef.current !== signature && send({ type: "profile.update" })) {
+      profileSentRef.current = signature;
+    }
+  }, [send]);
+
   useEffect(() => {
-    if (!characterId) return;
+    const character = characterRef.current;
+    setConnected(false);
+    setRemotePlayers([]);
+    setChatMessages([]);
+    setChatRequests([]);
+    setPrivateChatPeers([]);
+    setPrivateChatMessages([]);
+    if (!character) return;
+    lastPositionRef.current = {
+      x: character.position_x, y: character.position_y, facing: character.facing,
+    };
+    profileSentRef.current = JSON.stringify([character.nickname, character.bio, character.gender]);
     closedRef.current = false;
     let heartbeatTimer: number | undefined;
     let pageIsLeaving = false;
@@ -153,10 +189,10 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
     };
     const leaveWorld = () => {
       pageIsLeaving = true;
+      failPendingSends();
       const socket = socketRef.current;
-      if (socket?.readyState !== WebSocket.OPEN) return;
-      socket.send(JSON.stringify({ type: "client.leave" }));
-      socket.close(1000, "page_exit");
+      if (socket?.readyState === WebSocket.OPEN) send({ type: "client.leave" });
+      socket?.close(1000, "page_exit");
     };
     const connect = () => {
       if (closedRef.current) return;
@@ -164,8 +200,13 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
       socketRef.current = socket;
       socket.onopen = () => {
         if (socketRef.current !== socket) return;
+        if (pageIsLeaving || closedRef.current) {
+          socket.close(1000, "page_exit");
+          return;
+        }
         setConnected(true);
         send({ type: "scene.join", scene_id: sceneRef.current, ...lastPositionRef.current });
+        syncProfile();
         stopHeartbeat();
         heartbeatTimer = window.setInterval(() => {
           if (socketRef.current === socket && socket.readyState === WebSocket.OPEN) {
@@ -177,12 +218,15 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
         if (socketRef.current !== socket) return;
         let frame: Record<string, unknown>;
         try { frame = JSON.parse(String(event.data)) as Record<string, unknown>; } catch { return; }
+        if (typeof frame.client_message_id === "string" && (frame.type === "chat.sent" || frame.type === "error")) {
+          finishSend(frame.client_message_id, frame.type === "chat.sent");
+          return;
+        }
         if (frame.type === "world.snapshot" && Array.isArray(frame.players)) {
           setRemotePlayers(frame.players.filter(validPlayer));
           return;
         }
-        if ((frame.type === "player.joined" || frame.type === "player.moved" || frame.type === "player.updated")
-          && validPlayer(frame.player)) {
+        if ((frame.type === "player.joined" || frame.type === "player.moved" || frame.type === "player.updated") && validPlayer(frame.player)) {
           const next = frame.player;
           setRemotePlayers(players => upsertRemotePlayer(players, next));
           return;
@@ -191,20 +235,12 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
           setRemotePlayers(players => players.filter(player => player.character_id !== frame.character_id));
           return;
         }
-        if (frame.type === "player.task_status" && typeof frame.character_id === "string"
-          && (frame.task_status === "running" || frame.task_status === null)) {
-          setRemotePlayers(players => updateRemotePlayerTaskStatus(
-            players,
-            frame.character_id as string,
-            frame.task_status as "running" | null,
-          ));
-          return;
-        }
         if (frame.type === "chat.message" && frame.message && typeof frame.message === "object") {
           const message = frame.message as PikoWorldChatMessage;
           if (!message.id || !message.character_id || !message.body) return;
+          if (message.character_id === character.id && message.client_message_id) finishSend(message.client_message_id, true);
           setChatMessages(messages => [...messages.slice(-99), message]);
-          if (message.character_id !== characterId) {
+          if (message.character_id !== character.id) {
             setRemotePlayers(players => players.map(player => player.character_id === message.character_id
               ? { ...player, speech: {
                   id: message.id,
@@ -245,6 +281,7 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
           const message = frame.message as PikoPrivateChatMessage;
           if (!message.id || !message.from_character_id || !message.to_character_id
             || !message.body) return;
+          if (message.from_character_id === character.id && message.client_message_id) finishSend(message.client_message_id, true);
           setPrivateChatMessages(messages => messages.some(item => item.id === message.id)
             ? messages
             : [...messages.slice(-199), message]);
@@ -265,6 +302,7 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
         setChatRequests([]);
         setPrivateChatPeers([]);
         setPrivateChatMessages([]);
+        failPendingSends();
         if (!closedRef.current && !pageIsLeaving
           && event.code !== 1008 && event.code !== 4001) {
           reconnectRef.current = window.setTimeout(connect, 1500);
@@ -283,6 +321,7 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
     connect();
     return () => {
       closedRef.current = true;
+      failPendingSends();
       leaveWorld();
       window.removeEventListener("pagehide", leaveWorld);
       window.removeEventListener("beforeunload", leaveWorld);
@@ -291,14 +330,10 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
       if (reconnectRef.current !== undefined) window.clearTimeout(reconnectRef.current);
       socketRef.current?.close();
       socketRef.current = null;
-      // onclose ignores a socket this cleanup already detached, so drop what it owned here.
-      setConnected(false);
-      setRemotePlayers([]);
-      setChatRequests([]);
-      setPrivateChatPeers([]);
-      setPrivateChatMessages([]);
     };
-  }, [characterId, send]);
+  }, [characterId, failPendingSends, finishSend, send, syncProfile]);
+
+  useEffect(syncProfile, [characterId, character?.nickname, character?.bio, character?.gender, syncProfile]);
 
   useEffect(() => {
     setRemotePlayers([]);
@@ -309,16 +344,16 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
     lastPositionRef.current = { x, y, facing };
     send({ type: "player.move", x, y, facing });
   }, [send]);
-  const chat = useCallback((body: string) => send({ type: "chat.send", body }), [send]);
+  const chat = useCallback((body: string) => sendConfirmed({ type: "chat.send", body }), [sendConfirmed]);
   const requestChat = useCallback((targetCharacterId: string) => send({
     type: "chat.request", target_character_id: targetCharacterId,
   }), [send]);
   const respondToChatRequest = useCallback((requestId: string, accepted: boolean) => send({
     type: "chat.request.respond", request_id: requestId, accepted,
   }), [send]);
-  const sendPrivateChat = useCallback((targetCharacterId: string, body: string) => send({
+  const sendPrivateChat = useCallback((targetCharacterId: string, body: string) => sendConfirmed({
     type: "chat.private.send", target_character_id: targetCharacterId, body,
-  }), [send]);
+  }), [sendConfirmed]);
   const endPrivateChat = useCallback((targetCharacterId: string) => {
     const sent = send({
       type: "chat.private.end", target_character_id: targetCharacterId,
@@ -328,12 +363,9 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
     ));
     return sent;
   }, [send]);
-  /** Ask the server to re-read the saved nickname and bio for the online character. */
-  const refreshProfile = useCallback(() => send({ type: "profile.refresh" }), [send]);
-
   return {
     remotePlayers, chatMessages, chatRequests, privateChatPeers, privateChatMessages,
     connected, move, chat, requestChat, respondToChatRequest, sendPrivateChat,
-    endPrivateChat, refreshProfile,
+    endPrivateChat,
   };
 }

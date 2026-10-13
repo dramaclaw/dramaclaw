@@ -12,8 +12,8 @@ export function normalizePikoProfile(profile: PikoProfile): PikoProfile {
 }
 
 export function isValidPikoProfile(profile: PikoProfile): boolean {
-  return profile.nickname.length > 0 && profile.nickname.length <= PIKO_NICKNAME_MAX
-    && profile.bio.length <= PIKO_BIO_MAX;
+  return profile.nickname.length > 0 && Array.from(profile.nickname).length <= PIKO_NICKNAME_MAX
+    && Array.from(profile.bio).length <= PIKO_BIO_MAX;
 }
 
 export function readPikoProfile(username: string | null): PikoProfile {
@@ -30,17 +30,24 @@ export function readPikoProfile(username: string | null): PikoProfile {
   }
 }
 
-/** Local rehearsal profile; account identity and character appearance stay separate. */
+/** Account-scoped profile cache; offline previews require successful persistence. */
 export function usePikoProfile(username: string | null) {
   const [state, setState] = useState(() => ({ owner: username, profile: readPikoProfile(username) }));
   // Reconcile on account change before rendering children, without leaking the old nickname.
   if (state.owner !== username) setState({ owner: username, profile: readPikoProfile(username) });
   const profile = state.owner === username ? state.profile : readPikoProfile(username);
-  const saveProfile = (draft: PikoProfile): boolean => {
+  const applyProfile = (draft: PikoProfile, persistenceRequired: boolean): boolean => {
     const next = normalizePikoProfile(draft);
-    if (!isValidPikoProfile(next) || !safeLocalStorageSet(profileKey(username), JSON.stringify(next))) return false;
+    if (!isValidPikoProfile(next)) return false;
+    const persisted = safeLocalStorageSet(profileKey(username), JSON.stringify(next));
+    if (persistenceRequired && !persisted) return false;
     setState({ owner: username, profile: next });
     return true;
   };
-  return { profile, saveProfile };
+  return {
+    profile,
+    saveProfile: (draft: PikoProfile) => applyProfile(draft, true),
+    // A successful server write must not be reported as failed because the cache is full.
+    cacheProfile: (draft: PikoProfile) => applyProfile(draft, false),
+  };
 }

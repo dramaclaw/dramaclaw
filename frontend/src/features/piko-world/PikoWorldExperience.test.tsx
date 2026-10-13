@@ -2,6 +2,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PikoWorldExperience } from "./PikoWorldExperience";
+import { fetchPikoCharacter } from "./piko-world-client";
 import { readPikoPlayer, savePikoPlayer } from "./piko-player";
 import { selectPikoMusic, setPikoMusicMuted, usePikoSelection, usePikoMusicMuted, usePikoPlayback } from "./piko-bgm";
 import { PIKO_MUSIC_PLAYLISTS } from "./piko-map-music";
@@ -71,6 +72,19 @@ it("loads an existing account character without replaying onboarding", async () 
   expect(await screen.findByTestId("world")).toHaveTextContent("male");
   expect(screen.queryByText("create")).toBeNull();
   expect(readPikoPlayer("alice")?.nickname).toBe("小叶");
+});
+
+it("offers a retry after a loading error without showing creation or changing the stored character", async () => {
+  savePikoPlayer("alice", "male", "小叶");
+  vi.mocked(fetchPikoCharacter).mockRejectedValueOnce(new Error("offline"));
+  worldApi.character = { id: "existing", nickname: "小叶", gender: "male", bio: "", scene_id: "welcome-courtyard", position_x: 900, position_y: 500, facing: "south" };
+  render(<PikoWorldExperience />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("暂时无法加载角色");
+  expect(screen.queryByText("create")).toBeNull();
+  expect(readPikoPlayer("alice")?.nickname).toBe("小叶");
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
+  expect(await screen.findByTestId("world")).toHaveTextContent("male");
+  expect(screen.queryByText("create")).toBeNull();
 });
 
 it("keeps the same music channel from creation through map entry and releases it on exit", async () => {
