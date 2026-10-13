@@ -18,6 +18,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from novelvideo.config import (
+    GEMINI_WEBAI_MODEL,
     HUIMENG_IMAGE_MODEL,
     NEWAPI_IMAGE_MODEL,
     OPENAI_IMAGE_MODEL,
@@ -34,6 +35,7 @@ from novelvideo.generators.nanobanana_grid import (
     _call_newapi_image_api,
     _call_openai_image_api,
     _call_openrouter_image_api,
+    _call_webai_chat_image_api,
 )
 
 # Demo defaults for standalone/manual runs. In production stage_asset_tasks
@@ -1056,6 +1058,24 @@ async def run(args: argparse.Namespace) -> int:
             delivery_path=result_path,
             delivery_state=(image_delivery_state := {}),
             read_copied_bytes=False,
+        )
+    elif provider == "gemini_webai":
+        api_key, base_url = _resolve_newapi_credentials()
+        if not api_key:
+            raise RuntimeError("NEWAPI_API_KEY is missing")
+        model = (
+            args.model
+            or os.environ.get("SCENE_360_IMAGE_MODEL")
+            or os.environ.get("GEMINI_WEBAI_MODEL")
+            or SCENE_360_IMAGE_MODEL
+            or GEMINI_WEBAI_MODEL
+        )
+        image_bytes, _text, error = await _call_webai_chat_image_api(
+            api_key=api_key,
+            model=model,
+            prompt=prompt,
+            reference_images=reference_images,
+            base_url=base_url,
         )
     elif provider == "openrouter":
         api_key = os.environ.get("OPENROUTER_API_KEY")

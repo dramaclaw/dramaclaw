@@ -30,6 +30,7 @@ from novelvideo.generators.nanobanana_grid import (
     _call_newapi_image_api,
     _call_openai_image_api,
     _call_openrouter_image_api,
+    _call_webai_chat_image_api,
     _prepare_organization_image_egress,
 )
 from novelvideo.egress_context import TrustedEgressContext
@@ -707,6 +708,23 @@ async def generate_scene_reference_image(
             delivery_state=(image_delivery_state := {}),
             before_delivery_copy=lambda: _archive_existing(output_path),
             read_copied_bytes=False,
+        )
+    elif provider == "gemini_webai":
+        if organization_egress is None:
+            from novelvideo.config import get_effective_newapi_gateway_config
+
+            gateway = get_effective_newapi_gateway_config()
+            api_key = gateway.api_key
+            base_url = gateway.base_url
+        else:
+            api_key = organization_egress.credential.api_key
+            base_url = organization_egress.credential.base_url
+        image_bytes, _text, error = await _call_webai_chat_image_api(
+            api_key=api_key,
+            model=selected_model,
+            prompt=prompt,
+            reference_images=references or None,
+            base_url=base_url,
         )
     elif provider in {"huimeng", "huimengi"}:
         api_key = HUIMENGI_API_KEY or ""

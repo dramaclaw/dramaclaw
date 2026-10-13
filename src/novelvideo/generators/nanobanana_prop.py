@@ -32,6 +32,7 @@ from novelvideo.shared.billing_errors import is_fatal_billing_error
 from novelvideo.generators.nanobanana_grid import (
     _call_newapi_image_api,
     _call_openai_image_api,
+    _call_webai_chat_image_api,
     clamp_image_size,
     generate_text_to_image,
     normalize_image_size,
@@ -200,7 +201,7 @@ async def generate_prop_reference(
         or prop_provider
         or str(config.get("provider") or "google").strip().lower()
     )
-    if provider == "newapi":
+    if provider in {"newapi", "gemini_webai"}:
         from novelvideo.config import get_effective_newapi_gateway_config
 
         gateway = get_effective_newapi_gateway_config()
@@ -217,7 +218,7 @@ async def generate_prop_reference(
             key_name = "OPENROUTER_API_KEY"
         elif provider == "openai":
             key_name = "OPENAI_API_KEY"
-        elif provider == "newapi":
+        elif provider in {"newapi", "gemini_webai"}:
             key_name = "NEWAPI_API_KEY"
         else:
             key_name = "GOOGLE_AI_API_KEY"
@@ -259,6 +260,14 @@ async def generate_prop_reference(
                 model=model,
                 base_url=base_url,
                 quality=config.get("openai_image_quality", "medium"),
+            )
+        elif provider == "gemini_webai":
+            result_path = await _generate_via_webai(
+                prompt=prompt,
+                output_path=output_path,
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
             )
         else:
             result_path = await _generate_via_google(
@@ -431,6 +440,32 @@ async def _generate_via_newapi(
         return output_path
 
     print(f"[PropRefGen] DramaClawAPI 生成失败: {error_text or 'No response'}")
+    return None
+
+
+async def _generate_via_webai(
+    prompt: str,
+    output_path: str,
+    api_key: str,
+    model: str,
+    base_url: str,
+) -> Optional[str]:
+    """通过本地 Gemini WebAI 网桥生成道具三视图。"""
+
+    image_bytes, _text_content, error_text = await _call_webai_chat_image_api(
+        api_key=api_key,
+        model=model,
+        prompt=prompt,
+        base_url=base_url,
+    )
+
+    if image_bytes:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(image_bytes)
+        return output_path
+
+    print(f"[PropRefGen] Gemini WebAI 生成失败: {error_text or 'No response'}")
     return None
 
 
