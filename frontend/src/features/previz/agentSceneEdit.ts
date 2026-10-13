@@ -39,13 +39,19 @@ export function nodeAgentSceneDigest(
   return current.ok ? agentSceneDigest(current.scene) : null;
 }
 
-/** 只算不写：命令校验用它在用户确认之前就把错误报回给 Agent。 */
+/**
+ * 只算不写：命令校验用它在用户确认之前就把错误报回给 Agent。
+ *
+ * `planned` 是同一批命令里前一条对这个节点算出来的场景：执行时命令是一条接一条落地的，
+ * 校验也得接着上一条的结果往下算，否则两条都删同一个对象会双双通过、执行到第二条才失败。
+ */
 export function planNodeAgentSceneEdit(
   nodeId: string,
   nodeData: Record<string, unknown>,
   edit: unknown,
+  planned?: PrevizScene,
 ): PrevizAgentEditResult {
-  const current = readCurrentScene(nodeId, nodeData);
+  const current: SceneRead = planned ? { ok: true, scene: planned } : readCurrentScene(nodeId, nodeData);
   if (!current.ok) return current;
   const result = applyAgentSceneEdit(current.scene, edit);
   if (result.ok && !buildNodeScenePatch(result.scene).ok) {
@@ -68,12 +74,14 @@ export function landNodeAgentSceneEdit(
   const store = usePrevizStore.getState();
   if (store.editingNodeId === nodeId) {
     const removed = new Set(result.removedIds);
+    const activeCameraRemoved = store.activeCameraId !== null && removed.has(store.activeCameraId);
     store.applyScene(result.scene);
     usePrevizStore.setState({
       selectedObjectId:
         store.selectedObjectId !== null && removed.has(store.selectedObjectId) ? null : store.selectedObjectId,
-      activeCameraId:
-        store.activeCameraId !== null && removed.has(store.activeCameraId) ? null : store.activeCameraId,
+      activeCameraId: activeCameraRemoved ? null : store.activeCameraId,
+      // 手动监看的那台没了：把监看交还给镜头轨，与 `removeObject` 同一个处理。
+      monitorFollowsProgram: activeCameraRemoved ? true : store.monitorFollowsProgram,
       // 选中的片段被这次编辑删掉了：属性面板不该继续指着一条不存在的片段。
       selectedClipId:
         store.selectedClipId !== null && !clipById(result.scene, store.selectedClipId) ? null : store.selectedClipId,

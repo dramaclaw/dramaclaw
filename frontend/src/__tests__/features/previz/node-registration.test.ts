@@ -6,6 +6,7 @@ import { canvasNodeFactory } from "@/features/canvas/application/canvasServices"
 import {
   CANVAS_NODE_TYPES,
   isPrevizNode,
+  type CanvasNode,
   type PrevizNodeData,
 } from "@/features/canvas/domain/canvasNodes";
 import {
@@ -23,6 +24,10 @@ import {
   type CanvasChatCommandEnvelope,
 } from "@/features/freezone/canvasChatCommands";
 import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
+import { landNodeAgentSceneEdit, nodeAgentSceneDigest } from "@/features/previz/agentSceneEdit";
+import { createDefaultScene } from "@/features/previz/domain/scene";
+import { loadNodeScene } from "@/features/previz/nodeScene";
+import { usePrevizStore } from "@/features/previz/store";
 import {
   buildCommonNodeTypeGuidance,
   getCanvasNodeSemanticSpec,
@@ -169,5 +174,40 @@ describe("previz node as seen by the agent", () => {
     const rejected = validate({ add: [{ kind: "prop", shape: "teapot", position: [0, 0, 0] }] });
     expect(rejected.ok).toBe(false);
     expect(rejected.issues[0]?.message).toContain("sceneEdit rejected");
+  });
+
+  it("validates each scene edit against what the earlier ones in the batch leave behind", () => {
+    const wall = { kind: "prop", shape: "cube", ref: "wall", position: [0, 0, 0] };
+    const removeTwice = (node: CanvasNode) =>
+      validateCanvasChatCommandEnvelopes(
+        [
+          {
+            schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+            commands: ["first", "second"].map(() => ({
+              type: "update_node_data",
+              node_id: node.id,
+              data: { sceneEdit: { remove: [wallId] } },
+            })),
+          } as CanvasChatCommandEnvelope,
+        ],
+        [node],
+        [],
+      );
+    const created = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.previz, { x: 0, y: 0 });
+    const patch = landNodeAgentSceneEdit(created.id, { scene: null }, { add: [wall] });
+    const node = { ...created, data: { ...created.data, ...patch } } as CanvasNode;
+    const wallId = nodeAgentSceneDigest(node.id, node.data as Record<string, unknown>)!.objects[0].id;
+
+    const closed = removeTwice(node);
+    expect(closed.ok).toBe(false);
+    expect(closed.issues.map((issue) => issue.path)).toEqual(["envelopes[0].commands[1]"]);
+
+    // 编辑器开着这个节点时真相在 store 里，同批次里前一条的结果一样要算进去。
+    const loaded = loadNodeScene((node.data as Record<string, unknown>).scene);
+    if (!loaded.ok) throw new Error("scene did not load");
+    usePrevizStore.getState().loadScene(loaded.scene, node.id);
+    const open = removeTwice(node);
+    usePrevizStore.getState().loadScene(createDefaultScene(), null);
+    expect(open.issues.map((issue) => issue.path)).toEqual(["envelopes[0].commands[1]"]);
   });
 });

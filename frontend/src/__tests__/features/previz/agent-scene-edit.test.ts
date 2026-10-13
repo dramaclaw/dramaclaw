@@ -63,6 +63,20 @@ describe("agent scene edit on a previz node", () => {
     expect(state.timelineFrame).toBe(120);
   });
 
+  it("hands the monitor back to the program track when it removes the manually picked camera", () => {
+    usePrevizStore.getState().loadScene(createDefaultScene(), "node-a");
+    landNodeAgentSceneEdit("node-a", { scene: null }, {
+      add: [{ kind: "camera", name: "A 机", position: [0, 1.6, 4] }],
+    });
+    const id = usePrevizStore.getState().scene.objects[0].id;
+    usePrevizStore.setState({ activeCameraId: id, monitorFollowsProgram: false });
+
+    landNodeAgentSceneEdit("node-a", { scene: null }, { remove: [id] });
+
+    expect(usePrevizStore.getState().activeCameraId).toBeNull();
+    expect(usePrevizStore.getState().monitorFollowsProgram).toBe(true);
+  });
+
   it("plans without writing, and throws instead of landing a rejected edit", () => {
     usePrevizStore.getState().loadScene(createDefaultScene(), "node-a");
     const bad = { add: [{ ...wall, shape: "teapot" }] };
