@@ -103,7 +103,7 @@ Lý do và các câu hỏi thường gặp: <a href="https://github.com/dramacla
       <a href="https://nfg-web-assets.cdnfg.com/dramaclaw/guilingsi/guilingsi-ep01.mp4">▶ Tập 1</a>
     </td>
     <td align="center" width="205" valign="top">
-      <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/luban/luban-cover.png?v=2" width="185" alt="鲁班"/><br/>
+      <img src="../assets/readme/luban-cover.png" width="185" alt="鲁班"/><br/>
       <b>鲁班</b><br/>
       <a href="https://nfg-web-assets.cdnfg.com/dramaclaw/luban/luban-ep01.mp4">▶ Tập 1</a>
     </td>
@@ -115,7 +115,7 @@ Lý do và các câu hỏi thường gặp: <a href="https://github.com/dramacla
   </tr>
   <tr>
     <td align="center" width="205" valign="top">
-      <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/tianmingbukeqi/tianmingbukeqi-cover.png?v=2" width="185" alt="天命不可欺"/><br/>
+      <img src="../assets/readme/tianmingbukeqi-cover.png" width="185" alt="天命不可欺"/><br/>
       <b>天命不可欺</b><br/>
       <a href="https://nfg-web-assets.cdnfg.com/dramaclaw/tianmingbukeqi/tianmingbukeqi-ep02.mp4">▶ Tập 02</a> &nbsp;·&nbsp; <a href="https://nfg-web-assets.cdnfg.com/dramaclaw/tianmingbukeqi/tianmingbukeqi-ep58.mp4">Tập 58</a>
     </td>
