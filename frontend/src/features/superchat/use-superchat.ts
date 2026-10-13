@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import i18next from "i18next";
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -1187,6 +1188,57 @@ function updateAssistantUiEvents(
 }
 
 export const updateAssistantUiEventsForTest = updateAssistantUiEvents;
+
+function isPendingAssistantClarificationEvent(event: unknown): event is Record<string, unknown> {
+  if (!event || typeof event !== "object" || Array.isArray(event)) return false;
+  const value = event as Record<string, unknown>;
+  return value.type === "assistant.clarification.request"
+    && value.submitted !== true
+    && value.cancelled !== true;
+}
+
+function pendingAssistantClarificationEventsForTurn(
+  messages: ChatMessage[],
+  turnId: string,
+): Record<string, unknown>[] {
+  const byBridgeKey = new Map<string, Record<string, unknown>>();
+  for (const message of messages) {
+    if (message.role !== "assistant" || message.turnId !== turnId) continue;
+    const events = [
+      ...(message.uiEvents ?? []),
+      ...(message.parts ?? [])
+        .filter((part) => part.type !== "text")
+        .map((part) => part.event),
+    ];
+    for (const event of events) {
+      if (!isPendingAssistantClarificationEvent(event)) continue;
+      const bridgeKey = recordString(event, "bridge_key");
+      if (bridgeKey) byBridgeKey.set(bridgeKey, event);
+    }
+  }
+  return [...byBridgeKey.values()];
+}
+
+function cancelAssistantClarificationsForTurn(
+  messages: ChatMessage[],
+  turnId: string,
+): ChatMessage[] {
+  return updateAssistantUiEvents(
+    messages,
+    turnId,
+    isPendingAssistantClarificationEvent,
+    (event) => ({
+      ...(event as Record<string, unknown>),
+      submitted: true,
+      cancelled: true,
+      action: "cancel",
+      clarification_status: "cancelled",
+    }),
+  );
+}
+
+export const pendingAssistantClarificationEventsForTurnForTest = pendingAssistantClarificationEventsForTurn;
+export const cancelAssistantClarificationsForTurnForTest = cancelAssistantClarificationsForTurn;
 
 function upsertServerAssistantMessage(
   messages: ChatMessage[],
@@ -3097,6 +3149,48 @@ export function useSuperChat({
     const turnId = activeTurnIdRef.current ?? pendingClientTurnIdRef.current;
     if (turnId) {
       cancelledTurnIdsRef.current.add(turnId);
+      const pendingClarifications = pendingAssistantClarificationEventsForTurn(
+        messagesRef.current,
+        turnId,
+      );
+      if (pendingClarifications.length > 0) {
+        setMessages((current) => {
+          const next = cancelAssistantClarificationsForTurn(current, turnId);
+          const persistedMessage = next.find(
+            (message) => message.role === "assistant" && message.turnId === turnId,
+          );
+          persistAssistantMessageParts(
+            turnId,
+            persistedMessage?.parts,
+            persistedMessage?.text,
+          );
+          return next;
+        });
+        const cancelledMessage = i18next.t("freezone.chat.clarification.cancelledRequest", {
+          defaultValue: "用户已取消本轮请求",
+        });
+        for (const event of pendingClarifications) {
+          void api.post("api/v1/chat/clarification-tool-result", {
+            json: {
+              turn_id: turnId,
+              anchor_text_prefix: event.anchor_text_prefix,
+              bridge_key: event.bridge_key,
+              project_id: event.project_id,
+              canvas_id: event.canvas_id,
+              agent_id: event.agent_id,
+              tool_call_status: "completed",
+              clarification_status: "cancelled",
+              ok: false,
+              action: "cancel",
+              answers: {},
+              skipped: false,
+              used_recommended: false,
+              errors: [cancelledMessage],
+              message: cancelledMessage,
+            },
+          }).catch(() => undefined);
+        }
+      }
       void api.post("api/v1/chat/cancel", {
         json: {
           scope: desiredScopeRef.current,
@@ -3122,7 +3216,7 @@ export function useSuperChat({
         current.close(4000, "client abort");
       }
     }, ABORT_TERMINAL_GRACE_MS);
-  }, [clearAbortGrace, markTurnInactive]);
+  }, [clearAbortGrace, markTurnInactive, persistAssistantMessageParts]);
 
   const resolveApproval = useCallback((approval: ApprovalRequest, decision: ApprovalDecision) => {
     if (approval.kind !== "agent" || approval.requestId === undefined) {

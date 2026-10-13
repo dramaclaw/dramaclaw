@@ -942,6 +942,11 @@
       "canvasConfirmExecution": "Confirm execution",
       "canvasTimeoutCancelled": "The canvas operation timed out and was cancelled without being applied.",
       "canvasManuallyCancelled": "The canvas operation was manually cancelled without being applied.",
+      "backgroundGenerationRunningLabel": "Generating in background",
+      "backgroundGenerationRunningMessage": "The task was submitted and is generating in the background. This status will update automatically when it succeeds or fails.",
+      "backgroundGenerationFailed": "Background generation failed. Check the task details and try again.",
+      "backgroundGenerationCancelled": "Background generation was cancelled.",
+      "backgroundGenerationInterrupted": "Background generation was interrupted. Resume the task or try again.",
       "workflowOutputSyncPendingLabel": "Output syncing",
       "workflowRecipeAttemptEnded": "This node's run has ended. Rerun the node to start a new attempt ({{reason}})",
       "workflowOutputSyncPendingMessage": "The workflow finished, but the canvas output is still syncing. Refresh the canvas later to check the result; do not generate it again yet.",
@@ -975,12 +980,16 @@
         "audioOff": "Muted"
       },
       "clarification": {
+        "cancelled": "Cancelled",
         "skipped": "Skipped",
         "submitted": "Submitted",
+        "cancelledQuestions": "Questions cancelled for this turn",
         "skippedQuestions": "Questions skipped",
         "submittedAnswers": "Submitted answers · {{count}}",
+        "noAnswersCancelled": "This turn was cancelled without submitting options.",
         "noAnswersSkipped": "These questions were skipped.",
-        "noAnswersSubmitted": "No specific options were submitted."
+        "noAnswersSubmitted": "No specific options were submitted.",
+        "cancelledRequest": "The user cancelled this request."
       }
     },
     "workflowRecovery": {

@@ -924,6 +924,11 @@
       "canvasConfirmExecution": "Xác nhận thực hiện",
       "canvasTimeoutCancelled": "Thao tác trên canvas đã hết thời gian chờ và bị huỷ, chưa áp dụng thay đổi.",
       "canvasManuallyCancelled": "Thao tác trên canvas đã bị huỷ thủ công, chưa áp dụng thay đổi.",
+      "backgroundGenerationRunningLabel": "Đang tạo trong nền",
+      "backgroundGenerationRunningMessage": "Tác vụ đã được gửi và đang tạo trong nền. Trạng thái này sẽ tự động cập nhật khi thành công hoặc thất bại.",
+      "backgroundGenerationFailed": "Tạo trong nền thất bại. Hãy kiểm tra chi tiết tác vụ rồi thử lại.",
+      "backgroundGenerationCancelled": "Đã hủy quá trình tạo trong nền.",
+      "backgroundGenerationInterrupted": "Quá trình tạo trong nền đã bị gián đoạn. Hãy tiếp tục tác vụ hoặc thử lại.",
       "workflowOutputSyncPendingLabel": "Đang đồng bộ kết quả",
       "workflowRecipeAttemptEnded": "Lượt chạy của nút này đã kết thúc. Hãy chạy lại nút để bắt đầu lượt mới ({{reason}})",
       "workflowOutputSyncPendingMessage": "Quy trình đã hoàn tất nhưng kết quả trên canvas vẫn đang đồng bộ. Hãy tải lại canvas sau để kiểm tra; tạm thời đừng tạo lại.",
@@ -957,12 +962,16 @@
         "audioOff": "Tắt tiếng"
       },
       "clarification": {
+        "cancelled": "Đã hủy",
         "skipped": "Đã bỏ qua",
         "submitted": "Đã gửi",
+        "cancelledQuestions": "Các câu hỏi trong lượt này đã bị hủy",
         "skippedQuestions": "Các câu hỏi đã bỏ qua",
         "submittedAnswers": "Câu trả lời đã gửi · {{count}}",
+        "noAnswersCancelled": "Lượt này đã bị hủy mà không gửi lựa chọn.",
         "noAnswersSkipped": "Đã bỏ qua các câu hỏi này.",
-        "noAnswersSubmitted": "Chưa gửi lựa chọn cụ thể nào."
+        "noAnswersSubmitted": "Chưa gửi lựa chọn cụ thể nào.",
+        "cancelledRequest": "Người dùng đã hủy yêu cầu trong lượt này."
       }
     },
     "canvases": {

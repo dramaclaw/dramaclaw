@@ -967,11 +967,11 @@ def _clarification_timeout_seconds() -> int:
         return max(
             1,
             int(
-                os.environ.get("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "240")
+                os.environ.get("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "600")
             ),
         )
     except ValueError:
-        return 240
+        return 600
 
 
 def _clarification_timeout_result(
@@ -1106,14 +1106,6 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     # An id the agent already holds may name a card that is still waiting (or
     # was answered late). Resolve it first so a bare resume call needs no questions.
     resumed = _resume_clarification(project, canvas, clarification_id)
-    if not clarification_id:
-        context_id = str(
-            args.get("skill_studio_session_id") or canvas or "default"
-        ).strip()
-        safe_context = "".join(
-            ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in context_id
-        ).strip("-")
-        clarification_id = f"clarify_{safe_context or 'default'}_{uuid.uuid4().hex[:8]}"
     questions = _safe_list(args.get("questions"))
     generation_media_types = args.get("generation_media_types")
     generation_required_choices = args.get("generation_required_choices")
@@ -1403,6 +1395,40 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             if not isinstance(question, dict)
             or question.get("id") != "video_duration_seconds"
         ]
+    if not clarification_id:
+        context_id = str(
+            args.get("skill_studio_session_id") or canvas or "default"
+        ).strip()
+        safe_context = "".join(
+            ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in context_id
+        ).strip("-")
+        turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+        fingerprint_questions = (
+            [
+                str(question.get("id") or "").strip().lower()
+                for question in questions
+                if isinstance(question, dict)
+            ]
+            if generation_media_types is not None
+            or generation_required_choices is not None
+            else questions
+        )
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "turn_id": turn_id or uuid.uuid4().hex,
+                    "project_id": project or "",
+                    "canvas_id": canvas or "",
+                    "workflow_draft_id": str(args.get("workflow_draft_id") or ""),
+                    "questions": fingerprint_questions,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:8]
+        clarification_id = f"clarify_{safe_context or 'default'}_{fingerprint}"
+        resumed = _resume_clarification(project, canvas, clarification_id)
     if not questions and resumed is None:
         return tool_result(
             {

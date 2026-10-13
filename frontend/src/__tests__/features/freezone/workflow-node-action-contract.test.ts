@@ -48,6 +48,13 @@ describe("dynamic workflow node action contract", () => {
     expect(source).toContain("DEFAULT_NODE_ACTION_TIMEOUT_MS = 30 * 60 * 1000");
   });
 
+  it("reports image node action success only after the generated assets settle", () => {
+    const source = readNodeSource("ImageGenNode");
+
+    expect(source).toContain("completionMode: 'completed'");
+    expect(source).not.toContain("executionMode === 'single' ? 'submitted' : 'completed'");
+  });
+
   it("persists and reports the durable auto-compose task reference", () => {
     const source = readNodeSource("VideoComposeNode");
 
