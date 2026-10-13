@@ -34,6 +34,10 @@ Máy này đã cài và cấu hình sẵn. Đọc file này trước khi cài/c�
 - Chỉ dự án `cognee_legacy` (trường `knowledge_pipeline` vắng hoặc khác `structured_v1`, cố định từ lúc tạo) mới cần embedding. Xem trường này ở `GET /api/v1/projects/{id}`.
 - `structured_v1` chỉ chia tập theo chương/số tập (`planning_mode: "chapters"`); thao tác Cognee báo `KnowledgePipelineUnsupported`.
 
+## Tài liệu channel/model theo từng bước pipeline
+
+`docs/vi/pipeline/index.html` có tab **Model & Channel** (bên cạnh tab Pipeline gốc): bảng 4 channel NewAPI đang chạy (đối chiếu `list_channels()` live), và mỗi bước pipeline dùng key `.env` nào → alias nào → channel/model thật nào, kèm chế độ output (Tool/forced tool-call, NativeOutput, str) và có cần vision hay không. Đối chiếu lúc 2026-10-13; sửa channel/alias/`.env` theo các bullet ở trên thì nhớ cập nhật lại tab này.
+
 ## Quy ước API đã gặp
 
 - Tên dự án chỉ gồm chữ, số, gạch dưới (không có `-`). Các route dùng **project id** (ULID), không dùng tên.

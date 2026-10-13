@@ -33,6 +33,11 @@ h1{margin:0 0 4px;font-size:24px;line-height:1.2;text-wrap:balance}
 .btn{background:var(--surface);border:1px solid var(--line);color:var(--text);border-radius:8px;min-height:36px;padding:4px 12px;cursor:pointer;font:inherit;flex:none}
 button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
+/* tab Pipeline / Model & Channel */
+.tabbar{display:flex;gap:6px;margin-top:14px}
+.tabbar button{flex:1;min-height:40px;background:var(--surface);border:1px solid var(--line);border-radius:8px;color:var(--text);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+.tabbar button[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+
 /* dải biến đổi dữ liệu */
 .strip{margin:18px 0 6px;padding:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px}
 .strip h2{margin:0 0 8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
@@ -46,9 +51,9 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outli
 .stagebar button[aria-current="true"]{background:var(--sc);color:#fff;border-color:var(--sc)}
 
 /* khối chặng và thẻ */
-.stage{margin-top:14px;scroll-margin-top:70px}
-.stage>h2{margin:0 0 2px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--sc)}
-.stage>p{margin:0 0 8px;color:var(--muted);font-size:13px}
+.stage,.mstage{margin-top:14px;scroll-margin-top:70px}
+.stage>h2,.mstage>h2{margin:0 0 2px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--sc)}
+.stage>p,.mstage>p{margin:0 0 8px;color:var(--muted);font-size:13px}
 .card{position:relative;background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--sc);border-radius:10px;padding:12px 14px;scroll-margin-top:70px;transition:opacity .2s,box-shadow .2s}
 .card+.card{margin-top:22px}
 .card+.card::before{content:"";position:absolute;left:24px;top:-23px;height:22px;border-left:2px solid var(--line)}
@@ -95,33 +100,60 @@ footer{margin-top:20px;color:var(--muted);font-size:12px}
 <div class="wrap">
   <header>
     <div>
-      <h1>Pipeline sản xuất video DramaClaw</h1>
-      <p class="sub">15 bước từ bản thảo đến tập phim. Chạm vào một sản phẩm để thấy bước nào tạo ra và bước nào dùng nó.</p>
+      <h1>Pipeline DramaClaw</h1>
+      <p class="sub" id="subtitle">15 bước từ bản thảo đến tập phim. Chạm vào một sản phẩm để thấy bước nào tạo ra và bước nào dùng nó.</p>
     </div>
     <button class="btn" id="themeBtn" type="button">Sáng/Tối</button>
   </header>
 
-  <section class="strip" aria-label="Dữ liệu đổi dạng qua pipeline">
-    <h2>Dữ liệu đổi dạng</h2>
-    <div id="strip"></div>
-  </section>
+  <nav class="tabbar" id="tabbar" aria-label="Chọn tài liệu">
+    <button data-tab="pipeline" type="button" aria-selected="true">Pipeline</button>
+    <button data-tab="models" type="button" aria-selected="false">Model &amp; Channel</button>
+  </nav>
 
-  <nav class="stagebar" id="stagebar" aria-label="Chặng"></nav>
-  <div id="flow"></div>
+  <div id="panel-pipeline">
+    <section class="strip" aria-label="Dữ liệu đổi dạng qua pipeline">
+      <h2>Dữ liệu đổi dạng</h2>
+      <div id="strip"></div>
+    </section>
 
-  <section class="know">
-    <h2>Cần biết</h2>
-    <ul>
-      <li>Ghép tập chỉ nối cứng các clip. Không có phụ đề đốt vào video, không nhạc nền, không transition. Phụ đề chỉ là file SRT tải riêng.</li>
-      <li>Trạng thái "xong" chỉ nghĩa là file video cuối tồn tại, không kiểm tra độ dài, âm thanh hay phụ đề.</li>
-      <li>Viết kịch bản bắt buộc tập đã có identity. Chân dung và cảnh/đạo cụ thì không bắt buộc.</li>
-      <li>Phải gán màu sketch trước khi sinh sketch. Phải nhận diện identity trước khi sinh first frame.</li>
-      <li>Task chạy trong tiến trình, có hủy và theo dõi tiến độ, nhưng không có resume theo checkpoint.</li>
-      <li>SRT tính giờ theo mp3 từng beat (mặc định 5 giây nếu thiếu) nên có thể lệch so với video.</li>
-    </ul>
-  </section>
+    <nav class="stagebar" id="stagebar" aria-label="Chặng"></nav>
+    <div id="flow"></div>
 
-  <footer>Đọc tĩnh <code>src/novelvideo/</code>, chưa chạy thực tế. Chip nét đứt là phụ thuộc mềm hoặc chưa kiểm chứng. Chia 4 chặng là cách nhóm của tài liệu, không phải khái niệm trong code.</footer>
+    <section class="know">
+      <h2>Cần biết</h2>
+      <ul>
+        <li>Ghép tập chỉ nối cứng các clip. Không có phụ đề đốt vào video, không nhạc nền, không transition. Phụ đề chỉ là file SRT tải riêng.</li>
+        <li>Trạng thái "xong" chỉ nghĩa là file video cuối tồn tại, không kiểm tra độ dài, âm thanh hay phụ đề.</li>
+        <li>Viết kịch bản bắt buộc tập đã có identity. Chân dung và cảnh/đạo cụ thì không bắt buộc.</li>
+        <li>Phải gán màu sketch trước khi sinh sketch. Phải nhận diện identity trước khi sinh first frame.</li>
+        <li>Task chạy trong tiến trình, có hủy và theo dõi tiến độ, nhưng không có resume theo checkpoint.</li>
+        <li>SRT tính giờ theo mp3 từng beat (mặc định 5 giây nếu thiếu) nên có thể lệch so với video.</li>
+      </ul>
+    </section>
+  </div>
+
+  <div id="panel-models" hidden>
+    <section class="know">
+      <h2>Phạm vi</h2>
+      <p style="margin:0">Chỉ setup local dùng NewAPI mode <code>custom</code> (xem <code>.claude/CLAUDE.md</code>), không áp dụng cho gateway production/hosted. Bảng channel bên dưới lấy trực tiếp từ <code>list_channels()</code> (<code>src/novelvideo/newapi_provisioner.py</code>) lúc 2026-10-13 — tên, type, base_url, model thật; không đọc key hay token.</p>
+    </section>
+
+    <div id="mchannels"></div>
+    <div id="mflow"></div>
+
+    <section class="know">
+      <h2>Cảnh báo</h2>
+      <ul id="mwarnings"></ul>
+    </section>
+
+    <section class="know">
+      <h2>Đổi model thế nào</h2>
+      <ul id="mhowto"></ul>
+    </section>
+  </div>
+
+  <footer id="footer"></footer>
 </div>
 
 <script>
@@ -258,6 +290,156 @@ const STEPS = [
   warn:"add_subtitles và add_bgm được nhận nhưng không có tác dụng."}
 ];
 
+/* ====================== Tab 2: Model & Channel (đối chiếu live 2026-10-13) ====================== */
+const MSTAGES = {
+  1:{n:"Ingest",c:"var(--c1)",d:"Trích nhân vật, cảnh (drama), style, Cognee (chỉ dự án cognee_legacy)"},
+  2:{n:"Plan",c:"var(--c2)",d:"Identity, ảnh nhân vật, cảnh/đạo cụ theo tập, kịch bản"},
+  3:{n:"Produce",c:"var(--c3)",d:"Sketch, nhận diện, tối ưu video, first frame, giọng đọc, video"},
+  4:{n:"Deliver",c:"var(--c4)",d:"Ghép tập — không dùng model nào, chỉ FFmpeg"},
+  0:{n:"Ngoài pipeline",c:"var(--warn)",d:"Chat Hermes/Codex, Freezone, DirectorWorld 3GS"}
+};
+
+// 4 channel NewAPI mode custom đang chạy local, lấy từ list_channels() lúc 2026-10-13
+const CHANNELS = [
+ {name:"DC-custom", type:"1 · OpenAI-compatible", sc:"var(--c1)",
+  base:"http://localhost:6969 (container web_ai_server, docker gọi host.docker.internal:6969)",
+  items:[
+   {alias:"gemini6969", model:"gemini-auto", state:"active", note:"Ảnh mặc định (gemini_webai): portrait, identity, sketch, first frame"},
+   {alias:"LingShan-NB-2", model:"gemini-auto", state:"active", note:"Scene master/reverse master, SCENE_MASTER/REVERSE_MASTER_IMAGE_MODEL"},
+   {alias:"LingShan-G2", model:"gemini-auto", state:"active", note:"Prop ref, cũng là NEWAPI_IMAGE_MODEL (fallback ảnh)"},
+   {alias:"DC-identity-cast-planner-LLM", model:"gemini-auto", state:"orphan", note:"3 alias identity_planner gốc — không còn env nào trỏ tới sau khi chuyển sang DeepSeek (ADR 0002)"},
+   {alias:"DC-identity-analysis-planner-LLM", model:"gemini-auto", state:"orphan", note:"orphan"},
+   {alias:"DC-identity-appearance-writer-LLM", model:"gemini-auto", state:"orphan", note:"orphan"},
+  ]},
+ {name:"DC-ollama", type:"4 · Ollama", sc:"var(--c2)",
+  base:"http://localhost:11434 (cần ollama serve đang chạy)",
+  items:[
+   {alias:"DC-cognee-embedding", model:"bge-m3", state:"active", note:"Embedding 1024 chiều, batch 10 — chỉ dùng cho dự án cognee_legacy"},
+   {alias:"DC-ollama-identity-LLM", model:"qwen2.5:14b", state:"orphan", note:"Không còn env nào trỏ tới — identity_planner đã chuyển sang DeepSeek vì qwen2.5 lỗi forced tool-calling (ADR 0002)"},
+  ]},
+ {name:"DC-deepseek", type:"43 · DeepSeek", sc:"var(--c3)",
+  base:"https://api.deepseek.com, key DEEPSEEK_API_KEY",
+  items:[
+   {alias:"DC-deepseek-identity-LLM", model:"deepseek-chat", state:"active", note:"identity_plan — cả 3 pass (cast, analysis, appearance)"},
+   {alias:"DC-hermes-LLM", model:"deepseek-chat", state:"active", note:"Chat agent Hermes"},
+   {alias:"DC-codex-agent-LLM", model:"deepseek-chat", state:"active", note:"Chat agent Codex (EE only)"},
+   {alias:"DC-cognee-LLM", model:"deepseek-chat", state:"active", note:"Cognee graph — chỉ dự án cognee_legacy"},
+   {alias:"DC-character-builder-LLM", model:"deepseek-chat", state:"active", note:"build_characters"},
+   {alias:"DC-scene-builder-LLM", model:"deepseek-chat", state:"active", note:"build_scenes (drama)"},
+   {alias:"DC-screenplay-normalizer-LLM", model:"deepseek-chat", state:"active", note:"build_scenes — chuẩn hoá tiêu đề cảnh (drama)"},
+   {alias:"DC-literal-beat-meta-LLM", model:"deepseek-chat", state:"active", note:"script (viết kịch bản literal)"},
+   {alias:"DC-content-rewriter-LLM", model:"deepseek-chat", state:"active", note:"script — rewrite nội dung (tùy chọn)"},
+   {alias:"DC-episode-scene-planner-LLM", model:"deepseek-chat", state:"active", note:"scene_prop — menu cảnh"},
+   {alias:"DC-episode-scene-reconciler-LLM", model:"deepseek-chat", state:"active", note:"scene_prop — reconcile base scene"},
+   {alias:"DC-narrated-scene-asset-planner-LLM", model:"deepseek-chat", state:"active", note:"scene_prop — bản narrated"},
+   {alias:"DC-episode-prop-planner-LLM", model:"deepseek-chat", state:"active", note:"scene_prop — menu đạo cụ"},
+   {alias:"DC-style-analyzer-LLM", model:"deepseek-chat", state:"active", note:"configure — /styles/analyze (cần đọc ảnh, xem cảnh báo)"},
+   {alias:"DC-seedance2-prompt-composer-LLM", model:"deepseek-chat", state:"active", note:"video — soạn final_prompt cho Seedance 2"},
+   {alias:"DC-staging-prop-planner-LLM", model:"deepseek-chat", state:"active", note:"DirectorWorld staging (3GS)"},
+   {alias:"DC-freezone-translator-LLM", model:"deepseek-chat", state:"active", note:"Freezone — dịch"},
+   {alias:"DC-freezone-text-writer-LLM", model:"deepseek-chat", state:"active", note:"Freezone — viết văn bản"},
+   {alias:"DC-freezone-story-script-writer-LLM", model:"deepseek-chat", state:"active", note:"Freezone — viết kịch bản"},
+   {alias:"DC-freezone-recipe-compiler-LLM", model:"deepseek-chat", state:"active", note:"Freezone — compile recipe"},
+  ]},
+ {name:"DC-qwen-vision", type:"1 · OpenAI-compatible (DashScope)", sc:"var(--c4)",
+  base:"https://dashscope-intl.aliyuncs.com/compatible-mode/v1, key QWEN_API_KEY",
+  items:[
+   {alias:"DC-video-identity-detector-LLM", model:"qwen3.8-omni-flash", state:"active", note:"detect — nhận diện identity trên sketch (NativeOutput + ảnh)"},
+   {alias:"DC-video-prompt-optimizer-LLM", model:"qwen3.8-omni-flash", state:"active", note:"optimize + beat_video_prompt (str + ảnh), dùng chung alias cho GLOBAL_VIDEO_OPTIMIZER_MODEL và KEYFRAME_PROMPT_MODEL"},
+   {alias:"DC-freezone-vision-LLM", model:"qwen3.8-omni-flash", state:"active", note:"Freezone vision (xem cảnh báo tool_choice)"},
+  ]},
+];
+
+// hàng theo bước pipeline: key(.env) -> alias -> channel -> model thật
+const MSTEPS = [
+ {mstage:1, name:"configure (/styles/analyze)", mode:"Tool", vision:true, risk:"STYLE_ANALYZER_MODEL gửi ảnh nhưng đang nằm trên DC-deepseek (DeepSeek không có vision) — rủi ro lỗi, chưa kiểm chứng trong phiên này.",
+  keys:[{k:"STYLE_ANALYZER_MODEL", v:"DC-style-analyzer-LLM"}], chain:"DC-style-analyzer-LLM → DC-deepseek → deepseek-chat", ref:"generators/style_analyzer.py:73"},
+ {mstage:1, name:"build_characters", mode:"Tool", vision:false,
+  keys:[{k:"CHARACTER_BUILD_MODEL", v:"DC-character-builder-LLM"}], chain:"DC-character-builder-LLM → DC-deepseek → deepseek-chat", ref:"structured_extraction.py:189,824,1055"},
+ {mstage:1, name:"build_scenes (chỉ template drama)", mode:"Tool", vision:false,
+  keys:[{k:"SCENE_BUILD_MODEL", v:"DC-scene-builder-LLM"},{k:"SCREENPLAY_NORMALIZER_MODEL", v:"DC-screenplay-normalizer-LLM"}],
+  chain:"→ DC-deepseek → deepseek-chat", ref:"structured_extraction.py:1573; cognee/screenplay_normalizer.py:223,277"},
+ {mstage:1, name:"build_props", mode:"—", vision:false, keys:[], chain:"Không gọi LLM (no-op)", ref:"—"},
+ {mstage:1, name:"Cognee graph (chỉ dự án cognee_legacy)", mode:"litellm/instructor · Embedding", vision:false,
+  keys:[{k:"COGNEE_LLM_MODEL", v:"DC-cognee-LLM"},{k:"COGNEE_EMBEDDING_MODEL", v:"DC-cognee-embedding"}],
+  chain:"DC-cognee-LLM → DC-deepseek → deepseek-chat · DC-cognee-embedding → DC-ollama → bge-m3", ref:"cognee/config.py:346,860,1356; model_gateway_settings.py:1322"},
+
+ {mstage:2, name:"build_episodes", mode:"—", vision:false, keys:[], chain:"Không gọi LLM (chế độ chapters tất định cho structured_v1)", ref:"—"},
+ {mstage:2, name:"identity_plan", mode:"Tool", vision:false,
+  keys:[{k:"IDENTITY_PLANNER_CAST_MODEL", v:"DC-deepseek-identity-LLM"},{k:"IDENTITY_PLANNER_ANALYSIS_MODEL", v:"DC-deepseek-identity-LLM"},{k:"IDENTITY_PLANNER_APPEARANCE_MODEL", v:"DC-deepseek-identity-LLM"}],
+  chain:"DC-deepseek-identity-LLM → DC-deepseek → deepseek-chat", ref:"agents/identity_planner.py:789,985,1071,1524"},
+ {mstage:2, name:"portraits (character_portrait, identity_image)", mode:"Ảnh", vision:false,
+  risk:"character_image_selection có thể đã bị ghi cứng riêng theo project trong project_config.json (ví dụ tesla_pov_short), ghi đè vĩnh viễn default .env này cho project đó.",
+  keys:[{k:"DEFAULT_CHARACTER_IMAGE_SELECTION", v:"gemini_webai"},{k:"GEMINI_WEBAI_MODEL", v:"gemini6969"}],
+  chain:"gemini6969 → DC-custom → gemini-auto (web_ai_server :6969)", ref:"config.py:1201,1072"},
+ {mstage:2, name:"scene_prop (menu cảnh, đạo cụ theo tập)", mode:"Tool", vision:false,
+  keys:[{k:"EPISODE_SCENE_PLANNER_MODEL", v:"DC-episode-scene-planner-LLM"},{k:"EPISODE_PROP_PLANNER_MODEL", v:"DC-episode-prop-planner-LLM"},{k:"EPISODE_SCENE_RECONCILE_MODEL", v:"DC-episode-scene-reconciler-LLM"},{k:"NARRATED_SCENE_ASSET_MODEL", v:"DC-narrated-scene-asset-planner-LLM"}],
+  chain:"→ DC-deepseek → deepseek-chat", ref:"agents/asset_compiler.py:673,984,1067,1254"},
+ {mstage:2, name:"scene_prop — ảnh tham chiếu (master/reverse/prop)", mode:"Ảnh", vision:false,
+  keys:[{k:"SCENE_MASTER_IMAGE_MODEL", v:"LingShan-NB-2"},{k:"SCENE_REVERSE_MASTER_IMAGE_MODEL", v:"LingShan-NB-2"},{k:"PROP_REF_IMAGE_MODEL", v:"LingShan-G2"}],
+  chain:"→ DC-custom → gemini-auto", ref:"generators/scene_reference_images.py:559,561; nanobanana_prop.py:55,184"},
+ {mstage:2, name:"script (viết kịch bản literal)", mode:"Tool", vision:false,
+  keys:[{k:"LITERAL_BEAT_META_MODEL", v:"DC-literal-beat-meta-LLM"},{k:"CONTENT_REWRITER_MODEL (tùy chọn)", v:"DC-content-rewriter-LLM"}],
+  chain:"→ DC-deepseek → deepseek-chat", ref:"workflows/literal_script_writing.py:418; agents/content_rewriter.py:193"},
+ {mstage:2, name:"beat_video_prompt (chế độ keyframe)", mode:"str", vision:true,
+  keys:[{k:"KEYFRAME_PROMPT_MODEL", v:"DC-video-prompt-optimizer-LLM"}],
+  chain:"DC-video-prompt-optimizer-LLM → DC-qwen-vision → qwen3.8-omni-flash", ref:"agents/keyframe_prompt_builder.py:72"},
+
+ {mstage:3, name:"colors (gán màu sketch)", mode:"—", vision:false, keys:[], chain:"Thuật toán cố định, không gọi LLM", ref:"—"},
+ {mstage:3, name:"sketches (sketch storyboard)", mode:"Ảnh", vision:false,
+  keys:[{k:"DEFAULT_SKETCH_IMAGE_SELECTION", v:"gemini_webai"}], chain:"gemini6969 → DC-custom → gemini-auto", ref:"config.py:1366"},
+ {mstage:3, name:"detect (nhận diện identity trên sketch)", mode:"Native + ảnh", vision:true,
+  keys:[{k:"GLOBAL_VIDEO_IDENTITY_DETECTOR_MODEL", v:"DC-video-identity-detector-LLM"}],
+  chain:"DC-video-identity-detector-LLM → DC-qwen-vision → qwen3.8-omni-flash", ref:"agents/global_video_optimizer.py:754"},
+ {mstage:3, name:"optimize (tối ưu video_prompt)", mode:"str", vision:true,
+  risk:"GLOBAL_VIDEO_MODEL (biến cũ) nếu được set sẽ ghi đè GLOBAL_VIDEO_OPTIMIZER_MODEL — máy này không set biến đó.",
+  keys:[{k:"GLOBAL_VIDEO_OPTIMIZER_MODEL", v:"DC-video-prompt-optimizer-LLM"}],
+  chain:"→ DC-qwen-vision → qwen3.8-omni-flash", ref:"agents/global_video_optimizer.py:188"},
+ {mstage:3, name:"first_frames", mode:"Ảnh", vision:false,
+  keys:[{k:"DEFAULT_RENDER_IMAGE_SELECTION", v:"gemini_webai"}], chain:"gemini6969 → DC-custom → gemini-auto", ref:"config.py:1396"},
+ {mstage:3, name:"voice (hệ thống + IndexTTS2)", mode:"Audio", vision:false,
+  note:"index-tts-2 và giọng Edge-TTS không phải alias DC-* custom — đi qua gateway NewAPI chính (relay hosted sẵn), không qua 4 channel ở trên.",
+  keys:[{k:"INDEXTTS2_PROVIDER", v:"newapi"},{k:"INDEXTTS2_NEWAPI_MODEL", v:"index-tts-2"}], chain:"Gateway NewAPI chính (không phải channel DC-*)", ref:"generators/indextts2_fal.py:127,153"},
+ {mstage:3, name:"video (Seedance/HappyHorse i2v)", mode:"str (chỉ Seedance 2)", vision:false,
+  note:"Model video chính (seedance-*) cũng đi qua gateway NewAPI chính, không qua channel DC-*. Chỉ final_prompt của Seedance 2 là LLM text qua DC-deepseek.",
+  keys:[{k:"DEFAULT_VIDEO_MODEL", v:"seedance-1.0-pro-fast"},{k:"SEEDANCE2_PROMPT_COMPOSER_MODEL", v:"DC-seedance2-prompt-composer-LLM"}],
+  chain:"DC-seedance2-prompt-composer-LLM → DC-deepseek → deepseek-chat", ref:"seedance2_i2v/prompt.py:850"},
+
+ {mstage:4, name:"compose (ghép tập, SRT, zip)", mode:"—", vision:false, keys:[], chain:"Chỉ FFmpeg, không dùng model nào", ref:"—"},
+
+ {mstage:0, name:"Chat Hermes", mode:"config.yaml ngoài", vision:false,
+  keys:[{k:"HERMES_MODEL", v:"DC-hermes-LLM"}], chain:"→ DC-deepseek → deepseek-chat", ref:"chat/hermes_workspace.py:367,1272"},
+ {mstage:0, name:"Chat Codex (EE only)", mode:"External CLI", vision:false,
+  keys:[{k:"CODEX_MODEL", v:"DC-codex-agent-LLM"}], chain:"→ DC-deepseek → deepseek-chat", ref:"chat/service.py:1477,192"},
+ {mstage:0, name:"Freezone — dịch, viết văn bản, kịch bản, recipe", mode:"Tool/str", vision:false,
+  keys:[{k:"FREEZONE_TRANSLATION_MODEL", v:"DC-freezone-translator-LLM"},{k:"FREEZONE_TEXT_WRITER_MODEL", v:"DC-freezone-text-writer-LLM"},{k:"FREEZONE_STORY_SCRIPT_MODEL", v:"DC-freezone-story-script-writer-LLM"},{k:"FREEZONE_RECIPE_COMPILER_MODEL", v:"DC-freezone-recipe-compiler-LLM"}],
+  chain:"→ DC-deepseek → deepseek-chat", ref:"freezone/text_node.py:232,262,286,294; recipe_runtime.py:308,773"},
+ {mstage:0, name:"Freezone — vision", mode:"str + ảnh / Tool + ảnh", vision:true,
+  risk:"freezone/text_node.py:601 dùng Tool (forced tool-call) + ảnh trên DC-qwen-vision — theo ADR 0002, Qwen chạy thinking mode và từ chối tool_choice: required. Rủi ro lỗi 400, chưa kiểm chứng thực tế.",
+  keys:[{k:"FREEZONE_VISION_MODEL", v:"DC-freezone-vision-LLM"}], chain:"→ DC-qwen-vision → qwen3.8-omni-flash", ref:"freezone/vision_gateway.py:204,236; text_node.py:601,678"},
+ {mstage:0, name:"DirectorWorld staging (3GS)", mode:"Tool", vision:false,
+  keys:[{k:"STAGING_PROP_MODEL", v:"DC-staging-prop-planner-LLM"}], chain:"→ DC-deepseek → deepseek-chat", ref:"director_world/staging_prop_ai.py:243"},
+];
+
+const MWARNINGS = [
+ "Qwen qua DashScope chạy \"thinking mode\" và <b>không nhận <code>tool_choice: required</code></b> (400 nếu ép) — chỉ dùng DC-qwen-vision cho task không cần forced tool-calling. Đừng route task kiểu identity_planner sang channel này.",
+ "<b>Bẫy khi đổi model_mapping giữa 2 channel NewAPI</b>: gỡ alias khỏi channel A rồi thêm vào channel B có thể khiến request thật vẫn bay vào channel A rỗng (404 openai_error) vì bảng \"abilities\" nội bộ của NewAPI không tự đồng bộ theo <code>PUT /api/channel/</code>. Cách chắc ăn: xoá hẳn channel nguồn (<code>delete_channel_by_name</code>), không chỉ sửa mapping về rỗng.",
+ "<b>Override per-project cho ảnh nhân vật</b>: lần đầu UI mở panel chọn model ảnh, giá trị <code>character_image_selection</code> bị ghi cứng vào <code>project_config.json</code> của project đó, ghi đè vĩnh viễn default <code>.env</code>. Đổi <code>.env</code> không ảnh hưởng project đã có key này (ví dụ <code>tesla_pov_short</code>); phải tự xoá key khỏi file, API PATCH chính thức sẽ từ chối giá trị <code>gemini_webai</code>.",
+ "<code>STYLE_ANALYZER_MODEL</code> (bước configure/styles-analyze) gửi ảnh nhưng đang map sang DC-deepseek (DeepSeek không hỗ trợ vision) — rủi ro lỗi, <b>chưa kiểm chứng thực tế trong phiên làm việc đã dò code này</b>.",
+ "<code>FREEZONE_VISION_MODEL</code> ở <code>text_node.py:601</code> dùng Tool (forced tool-call) + ảnh trên DC-qwen-vision — cùng loại rủi ro tool_choice như trên, <b>chưa kiểm chứng thực tế</b>.",
+ "<code>CHARACTER_BUILD_MODEL</code> và <code>CODEX_MODEL</code> không nằm trong map mặc định của code (<code>official_defaults.py</code>); máy này set thẳng trong <code>.env</code> nên vẫn chạy đúng, nhưng máy khác clone repo mà không copy <code>.env</code> sẽ thiếu 2 key này.",
+ "Chưa có channel NewAPI \"custom\" nào cho video (seedance-*) hay TTS (index-tts-2) — 2 bước này đi qua <b>gateway NewAPI chính</b> (đã có sẵn trong image <code>claymorelab/dramaclaw-gateway</code>), không qua 4 channel DC-* ở trên. <code>DC-comfyui</code> trong code chỉ là tên dùng khi xoá channel, chưa có kênh ComfyUI nào được tạo.",
+ "3 alias identity_planner gốc trên DC-custom (<code>DC-identity-cast/analysis/appearance-*</code>) và <code>DC-ollama-identity-LLM</code> trên DC-ollama là orphan — không còn env nào trỏ tới, vô hại, có thể dọn sau.",
+];
+
+const MHOWTO = [
+ "Đổi 1 trong 20 alias trên DC-deepseek hoặc 3 alias trên DC-qwen-vision sang channel/model khác: <code>POST /api/v1/model-gateway/custom/newapi/channels</code> — cùng tên channel thì thành update; <code>upsert_channel()</code> tự gỡ alias khỏi channel cũ (<code>newapi_provisioner.py</code>).",
+ "Đổi 3 alias <code>IDENTITY_PLANNER_*</code> hoặc model ảnh mặc định (<code>DEFAULT_*_IMAGE_SELECTION</code>): sửa <code>.env</code> rồi <code>docker compose -f docker-compose.release.yml up -d</code> — nhớ <code>docker cp</code> lại toàn bộ <code>src/novelvideo</code> vào container sau khi recreate (xem phần \"Chạy stack\" trong <code>.claude/CLAUDE.md</code>), vì image local cũ hơn working tree khá nhiều.",
+ "Đổi model ảnh riêng cho 1 project đã lưu <code>character_image_selection</code> (ví dụ sau khi đổi <code>.env</code> mà project cũ không theo): phải tự xoá key đó khỏi <code>project_config.json</code> của project, API PATCH chính thức không set được <code>gemini_webai</code>.",
+ "Chuyển alias giữa 2 channel: luôn <b>xoá hẳn channel nguồn</b> (<code>delete_channel_by_name</code>) thay vì chỉ sửa <code>model_mapping</code> về rỗng, để tránh lỗi 404 do bảng \"abilities\" không tự đồng bộ.",
+ "Chi tiết đầy đủ + lý do từng quyết định: <code>docs/adr/0001-local-gemini-webai-image-provider.md</code> (ảnh) và <code>docs/adr/0002-identity-planner-and-text-models-deepseek.md</code> (text + vision).",
+];
+
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const producer = {};
@@ -307,9 +489,46 @@ function paint(){
   });
   document.querySelectorAll(".card").forEach(card => {
     const s = STEPS.find(x => x.id === card.dataset.id);
+    if (!s) return;
     const hit = trace && (s.in.includes(trace) || s.soft.includes(trace) || s.out.includes(trace));
     card.classList.toggle("hit", !!hit); card.classList.toggle("dim", !!trace && !hit);
   });
+}
+
+function renderModels(){
+  // bảng channel
+  $("#mchannels").innerHTML = `<div class="mstage" style="--sc:var(--c1)"><h2>Channel NewAPI đang map</h2><p>4 channel mode custom, đối chiếu live lúc 2026-10-13.</p></div>` +
+    CHANNELS.map(c => `<article class="card" style="--sc:${c.sc}">
+      <div class="top"><h3>${esc(c.name)}</h3><span class="tagk">type ${esc(c.type)}</span></div>
+      <p class="one"><code>${esc(c.base)}</code></p>
+      <details><summary>${c.items.length} alias đang map vào channel này</summary><dl>
+        ${c.items.map(it => `<dt><code>${esc(it.alias)}</code></dt><dd><code>${esc(it.model)}</code> — ${it.state === "orphan" ? '<span class="tagw">orphan</span> ' : ""}${esc(it.note)}</dd>`).join("")}
+      </dl></details>
+    </article>`).join("");
+
+  // theo bước pipeline
+  let html = "", last = null;
+  MSTEPS.forEach(s => {
+    if (s.mstage !== last){
+      const g = MSTAGES[s.mstage];
+      html += `<div class="mstage" style="--sc:${g.c}"><h2>Chặng ${s.mstage === 0 ? "—" : s.mstage}: ${g.n}</h2><p>${g.d}</p></div>`;
+      last = s.mstage;
+    }
+    const g2 = MSTAGES[s.mstage];
+    html += `<article class="card" style="--sc:${g2.c}">
+      <div class="top"><h3>${esc(s.name)}</h3><span class="tagk">${esc(s.mode)}</span>${s.vision?'<span class="tagk">cần ảnh</span>':""}${s.risk?'<span class="tagw">rủi ro</span>':""}</div>
+      <p class="one">${esc(s.chain)}</p>
+      ${s.risk ? `<p class="hint">⚠ ${s.risk}</p>` : s.note ? `<p class="hint">${esc(s.note)}</p>` : ""}
+      ${s.keys.length ? `<details><summary>Key .env</summary><dl>
+        ${s.keys.map(k => `<dt><code>${esc(k.k)}</code></dt><dd><code>${esc(k.v)}</code></dd>`).join("")}
+        <dt>File</dt><dd><code>${esc(s.ref)}</code></dd>
+      </dl></details>` : ""}
+    </article>`;
+  });
+  $("#mflow").innerHTML = html;
+
+  $("#mwarnings").innerHTML = MWARNINGS.map(w => `<li>${w}</li>`).join("");
+  $("#mhowto").innerHTML = MHOWTO.map(w => `<li>${w}</li>`).join("");
 }
 
 function wire(){
@@ -328,7 +547,7 @@ function wire(){
 }
 function sel(b){ const c = b.previousElementSibling; const r = document.createRange(); r.selectNodeContents(c); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
 
-// chặng đang xem
+// chặng đang xem (chỉ áp dụng cho tab Pipeline)
 const io = new IntersectionObserver(es => {
   es.forEach(e => { if (e.isIntersecting){
     const k = e.target.id.replace("stage","");
@@ -342,9 +561,24 @@ $("#themeBtn").onclick = () => {
   r.setAttribute("data-theme", dark ? "light" : "dark");
 };
 
-render(); paint();
+function showTab(name){
+  const isModels = name === "models";
+  $("#panel-pipeline").hidden = isModels;
+  $("#panel-models").hidden = !isModels;
+  $("#subtitle").textContent = isModels
+    ? "Channel NewAPI, key .env và model thật dùng ở mỗi bước — đối chiếu live 2026-10-13."
+    : "15 bước từ bản thảo đến tập phim. Chạm vào một sản phẩm để thấy bước nào tạo ra và bước nào dùng nó.";
+  document.querySelectorAll("[data-tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  if (location.hash.replace("#","") !== name) history.replaceState(null, "", name === "models" ? "#models" : location.pathname);
+}
+document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+render(); paint(); renderModels();
 document.querySelectorAll(".stage").forEach(s => io.observe(s));
 document.querySelector('[data-stage="1"]').setAttribute("aria-current", "true");
+showTab(location.hash === "#models" ? "models" : "pipeline");
+
+$("#footer").innerHTML = 'Đọc tĩnh <code>src/novelvideo/</code>, chưa chạy thực tế toàn bộ bước. Chip nét đứt là phụ thuộc mềm hoặc chưa kiểm chứng. Chia 4 chặng là cách nhóm của tài liệu, không phải khái niệm trong code. Tab Model &amp; Channel đối chiếu <code>list_channels()</code> thật lúc 2026-10-13, phần còn lại (key, file:line) từ đọc tĩnh code + ADR 0001/0002.';
 </script>
 
 </body>
