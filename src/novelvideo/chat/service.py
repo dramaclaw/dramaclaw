@@ -1454,7 +1454,7 @@ def _codex_model() -> str:
     from novelvideo.shared.runtime_env import is_ce_effective
 
     if is_ce_effective():
-        from novelvideo.model_gateway_settings import get_effective_llm_config
+        from novelvideo.model_gateway_settings import get_effective_agent_llm_config
 
         # CE is configured interactively and SQLite is authoritative. Only the
         # explicit Custom + BrainClaw choice sends the literal ``brainclaw``
@@ -1466,7 +1466,7 @@ def _codex_model() -> str:
             CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
         )
 
-        gateway = get_effective_llm_config()
+        gateway = get_effective_agent_llm_config()
         if gateway.mode == AGENT_LLM_MODE_THIRD_PARTY:
             return gateway.model or _DEFAULT_CODEX_MODEL
         if gateway.mode == CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW:
@@ -3253,11 +3253,11 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
     if entry is None:
         from novelvideo.model_gateway_settings import (
             AGENT_LLM_MODE_THIRD_PARTY,
-            get_effective_llm_config,
+            get_effective_agent_llm_config,
         )
         from novelvideo.shared.runtime_env import is_ce_effective
 
-        gateway = get_effective_llm_config() if is_ce_effective() else None
+        gateway = get_effective_agent_llm_config() if is_ce_effective() else None
         if gateway is not None and gateway.mode == AGENT_LLM_MODE_THIRD_PARTY:
             template = next(
                 (

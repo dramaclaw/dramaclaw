@@ -332,9 +332,9 @@ def _root_value(*names: str) -> str:
 
 def _effective_newapi_gateway() -> tuple[str, str]:
     """Return the independent LLM gateway used by Hermes."""
-    from novelvideo.model_gateway_settings import get_effective_llm_config
+    from novelvideo.model_gateway_settings import get_effective_agent_llm_config
 
-    gateway = get_effective_llm_config()
+    gateway = get_effective_agent_llm_config()
     return gateway.api_key, gateway.base_url
 
 
@@ -373,14 +373,14 @@ def effective_gateway_credentials() -> tuple[str, str]:
 
 
 def _hermes_model_default() -> str:
-    from novelvideo.model_gateway_settings import get_effective_llm_config
+    from novelvideo.model_gateway_settings import get_effective_agent_llm_config
     from novelvideo.shared.runtime_env import is_ce_effective
 
     # Only CE resolves the route from its gateway settings database. EE keeps
     # the deployment environment in charge, so HERMES_MODEL selects the alias
     # and BrainClaw is reached by pointing it at the BrainClaw alias.
     if is_ce_effective():
-        gateway = get_effective_llm_config()
+        gateway = get_effective_agent_llm_config()
         if gateway.is_brainclaw:
             return "brainclaw"
         if gateway.model:
@@ -398,7 +398,7 @@ def _hermes_model_default() -> str:
 def _hermes_model_api_mode() -> str:
     from novelvideo.model_gateway_settings import (
         AGENT_LLM_MODE_THIRD_PARTY,
-        get_effective_llm_config,
+        get_effective_agent_llm_config,
     )
     from novelvideo.shared.runtime_env import is_ce_effective
 
@@ -408,7 +408,7 @@ def _hermes_model_api_mode() -> str:
     # protocol instead of silently using Chat Completions in local development.
     if (
         is_ce_effective()
-        and get_effective_llm_config().mode == AGENT_LLM_MODE_THIRD_PARTY
+        and get_effective_agent_llm_config().mode == AGENT_LLM_MODE_THIRD_PARTY
     ):
         return "codex_responses"
     return _root_value("HERMES_MODEL_API_MODE") or _DEFAULT_HERMES_MODEL_API_MODE

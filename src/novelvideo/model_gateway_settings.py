@@ -1142,18 +1142,6 @@ def get_effective_llm_config() -> EffectiveLlmConfig:
         )
 
     settings = get_model_gateway_settings()
-    agent_llm_mode = normalize_agent_llm_mode(settings.get("agent_llm_mode"))
-    if agent_llm_mode == AGENT_LLM_MODE_THIRD_PARTY:
-        return EffectiveLlmConfig(
-            mode=AGENT_LLM_MODE_THIRD_PARTY,
-            source=AGENT_LLM_MODE_THIRD_PARTY,
-            base_url=normalize_relay_base_url(
-                settings.get("agent_llm_base_url", "")
-            ),
-            api_key=normalize_api_key(settings.get("agent_llm_api_key", "")),
-            model=str(settings.get("agent_llm_model", "")).strip(),
-            is_brainclaw=False,
-        )
     gateway_mode = normalize_gateway_mode(settings.get("model_gateway_mode"))
     custom_llm_mode = normalize_custom_llm_mode(settings.get("custom_llm_mode"))
     if gateway_mode in {MODE_OFFICIAL, MODE_HYBRID}:
@@ -1201,6 +1189,25 @@ def get_effective_llm_config() -> EffectiveLlmConfig:
         base_url=custom.base_url,
         api_key=custom.api_key,
         model="",
+        is_brainclaw=False,
+    )
+
+
+def get_effective_agent_llm_config() -> EffectiveLlmConfig:
+    """Resolve the Agent-only LLM route without affecting business text models."""
+    if not _uses_ce_gateway_settings():
+        return get_effective_llm_config()
+
+    settings = get_model_gateway_settings()
+    agent_llm_mode = normalize_agent_llm_mode(settings.get("agent_llm_mode"))
+    if agent_llm_mode != AGENT_LLM_MODE_THIRD_PARTY:
+        return get_effective_llm_config()
+    return EffectiveLlmConfig(
+        mode=AGENT_LLM_MODE_THIRD_PARTY,
+        source=AGENT_LLM_MODE_THIRD_PARTY,
+        base_url=normalize_relay_base_url(settings.get("agent_llm_base_url", "")),
+        api_key=normalize_api_key(settings.get("agent_llm_api_key", "")),
+        model=str(settings.get("agent_llm_model", "")).strip(),
         is_brainclaw=False,
     )
 

@@ -14,6 +14,7 @@ from novelvideo.chat import service as chat_service
 from novelvideo.model_gateway_settings import (
     AGENT_LLM_MODE_INHERIT,
     AGENT_LLM_MODE_THIRD_PARTY,
+    get_effective_agent_llm_config,
     get_effective_llm_config,
     get_effective_newapi_config,
     save_agent_llm_config,
@@ -39,7 +40,8 @@ def test_third_party_agent_route_is_independent_from_media_gateway(
         model="vendor-agent-model",
     )
 
-    llm = get_effective_llm_config()
+    llm = get_effective_agent_llm_config()
+    business_llm = get_effective_llm_config()
     media = get_effective_newapi_config()
     assert (llm.base_url, llm.api_key, llm.model) == (
         "https://agent.example/v1",
@@ -48,7 +50,23 @@ def test_third_party_agent_route_is_independent_from_media_gateway(
     )
     assert media.mode == "official"
     assert media.api_key == "sk-official-secret"
+    assert business_llm.mode == "official"
+    assert business_llm.api_key == "sk-official-secret"
     assert chat_service._codex_model() == "vendor-agent-model"
+
+    captured_business_route: dict[str, object] = {}
+
+    def fake_business_model(model_name: str, **kwargs: object) -> str:
+        captured_business_route.update(model_name=model_name, **kwargs)
+        return "business-model"
+
+    monkeypatch.setattr(config, "_newapi_text_openai_model", fake_business_model)
+    assert (
+        config.get_newapi_text_pydantic_model("CONTENT_REWRITER_MODEL")
+        == "business-model"
+    )
+    assert captured_business_route["api_key"] == "sk-official-secret"
+    assert captured_business_route["base_url"] != "https://agent.example/v1"
 
     overrides = chat_service._codex_gateway_config_overrides(llm.base_url)
     catalog_setting = next(
@@ -71,7 +89,7 @@ def test_third_party_agent_route_is_independent_from_media_gateway(
     assert hermes_pool.gateway_origin_fingerprint() != first_fingerprint
 
     save_agent_llm_config(mode=AGENT_LLM_MODE_INHERIT)
-    assert get_effective_llm_config().mode == "official"
+    assert get_effective_agent_llm_config().mode == "official"
 
 
 def test_agent_config_api_masks_secret_and_requires_key_for_new_host(
