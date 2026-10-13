@@ -197,12 +197,19 @@ Công cụ previz 3D trong trình duyệt để bố trí bối cảnh, dàn c�
 
 **Đang thử nghiệm kín**
 
-Đặt lựa chọn phân nhánh và biến truyện trên canvas, biên dịch thành truyện ink và xuất trình phát HTML độc lập, kèm thống kê playtest và độ phủ đường đi.
+Tạo video tương tác trên cùng một canvas, từ lập kế hoạch cốt truyện và biên tập nhánh đến sản xuất tư liệu, chơi thử và nhiều kết thúc. Lựa chọn của khán giả quyết định diễn biến câu chuyện.
 
 <p align="center">
   <img src="../assets/readme/interactive-story.gif" width="900" alt="Interactive stories — branching workflow and player"/>
 </p>
 <p align="center"><sub>Tạo truyện phân nhánh, biên tập trên canvas, phát tương tác và trải nghiệm nhiều kết thúc.</sub></p>
+
+- **Lập kế hoạch truyện với AI** — Chuyển yêu cầu bằng ngôn ngữ tự nhiên thành đề cương và cốt truyện phân nhánh có thể chỉnh sửa, với điểm lựa chọn, kết thúc và thời lượng xem dự kiến cho từng tuyến
+- **Biên tập nhánh trực quan** — Sắp xếp các đoạn truyện, video và lựa chọn trên canvas; chỉnh sửa lời thoại, thứ tự lựa chọn và liên kết giữa các nhánh
+- **Biến truyện và điều kiện** — Dùng mức độ thiện cảm, điểm số và các biến khác để ghi nhận quyết định của khán giả, kiểm soát lựa chọn và kết thúc; hỗ trợ lựa chọn có giới hạn thời gian và tuyến mặc định
+- **Sản xuất tư liệu tích hợp** — Tạo hình tham chiếu cho nhân vật, cảnh và storyboard, tạo video cho từng đoạn truyện và tái sử dụng tư liệu trên canvas
+- **Chơi thử và kiểm tra tuyến truyện** — Chơi thử bằng tư liệu tạm trước khi video hoàn tất; kiểm tra kết nối nhánh và tuyến có điều kiện, rồi xem thống kê lựa chọn, tỷ lệ đạt kết thúc và độ phủ tuyến truyện
+- **Xuất trình phát** — Xuất trình phát HTML độc lập hoặc gói ngoại tuyến kèm video, hỗ trợ phát theo nhánh, theo dõi tiến độ khám phá và chơi lại từ các đoạn đã mở khóa
 
 <br/>
 

@@ -197,12 +197,19 @@ An in-browser 3D previs tool for scene layout, character blocking and camera des
 
 **In closed beta**
 
-Set branching choices and story variables on the canvas, compile to an ink story and export a self-contained HTML player, with playtest stats and path coverage.
+Create interactive video stories on a shared canvas, from story planning and branching narratives to media production, playtesting and multiple endings. Audience choices shape how the story unfolds.
 
 <p align="center">
   <img src="./assets/readme/interactive-story.gif" width="900" alt="Interactive stories — branching workflow and player"/>
 </p>
 <p align="center"><sub>Branching story generation, canvas authoring, interactive playback and multiple endings.</sub></p>
+
+- **AI-assisted story planning** — Turn a natural-language brief into a story outline and editable branching narrative, with choice points, endings and estimated viewing time for each route
+- **Visual branching authoring** — Organize story segments, videos and choices on the canvas; edit dialogue, choice order and branch connections
+- **Story variables and conditions** — Use affinity, scores and other variables to track audience decisions, control available choices and determine endings; support timed choices and default routes
+- **Integrated media production** — Create character, scene and storyboard references, generate videos for individual segments and reuse canvas assets throughout production
+- **Playtesting and path validation** — Test the narrative with placeholder media before videos are ready; check branch connectivity and conditional paths, then inspect choice statistics, ending reach rates and path coverage
+- **Player export** — Export a standalone HTML player or an offline package with video assets, supporting branching playback, exploration progress and replay from unlocked segments
 
 <br/>
 
