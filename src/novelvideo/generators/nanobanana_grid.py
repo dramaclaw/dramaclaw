@@ -18,6 +18,7 @@ import io
 import json
 import logging
 import math
+import mimetypes
 import os
 import re
 import time
@@ -4279,6 +4280,18 @@ def _download_webai_artifact(url: str, cookie_file: str) -> tuple[bytes | None, 
     return data, ""
 
 
+def _webai_ref_filename(index: int, mime: str) -> str:
+    """Build a reference-image filename whose extension matches its MIME type.
+
+    WebAI-to-API (port 6969) validates that the filename extension matches the
+    declared MIME type and returns HTTP 400 ("File extension '.png' is not
+    allowed for MIME type 'image/jpeg'") on a mismatch — so the extension must
+    be derived from `mime`, never hardcoded.
+    """
+    ext = mimetypes.guess_extension(mime or "") or ".png"
+    return f"ref_{index}{ext}"
+
+
 async def _call_webai_chat_image_api(
     *,
     api_key: str,
@@ -5281,7 +5294,7 @@ class NanoBananaGridGenerator:
                     include_mime=True,
                 )
                 reference_images = [
-                    (f"ref_{i}.png", data, mime)
+                    (_webai_ref_filename(i, mime), data, mime)
                     for i, (data, mime) in enumerate(ref_bytes)
                 ]
                 image_bytes, _text, webai_error = await _call_webai_chat_image_api(
@@ -7443,7 +7456,7 @@ CRITICAL: Keep exact composition from sketch. Only add color, texture, and light
                     include_mime=True,
                 )
                 reference_images = [
-                    (f"ref_{i}.png", data, mime)
+                    (_webai_ref_filename(i, mime), data, mime)
                     for i, (data, mime) in enumerate(ref_bytes)
                 ]
                 image_bytes, _text_response, error_detail = await _call_webai_chat_image_api(
