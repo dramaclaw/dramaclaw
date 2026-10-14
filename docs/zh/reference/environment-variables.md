@@ -15,6 +15,7 @@
 | `NOVELVIDEO_STATE_DIR` | `$DATA_ROOT/state` | 本地状态。 |
 | `NOVELVIDEO_RUNTIME_DIR` | `$DATA_ROOT/runtime` | 运行时临时目录。 |
 | `ST_PUBLICATION_DIR` | `$NOVELVIDEO_STATE_DIR/publications` | 可选的公开互动作品索引和跨项目移动锁目录；作品元数据保存在项目 `state_dir/publications`，媒体保存在项目 `output_dir/publications`。 |
+| `ST_PUBLICATION_RETENTION_LIMIT` | `10` | 正整数：保留按首次发布顺序最近 N 个已发布版本，额外保护当前上线版本（下架时也保留）。发布或准备完成后清理，有准备任务时延后；无效值回退到 10。被清理版本无法播放或回滚，对应存档无法继续。 |
 | `ST_CONTROL_PLANE_DSN` / `ST_REDIS_URL` / `ST_CELERY_BROKER_URL` / `ST_CELERY_RESULT_BACKEND` | 空(CE 强制清空) | EE/分布式才用;CE 任务进程内 inline 执行,留空。 |
 
 ## 模型网关

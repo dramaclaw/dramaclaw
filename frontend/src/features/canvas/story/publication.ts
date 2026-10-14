@@ -76,7 +76,21 @@ export interface Publication {
   active_version: string | null;
   listed: boolean;
   versions: PublishedVersion[];
+  retention_limit?: number;
 }
+/** Estimate retention removals for the action using the latest loaded version list. */
+export function retentionRemovals(
+  work: Publication | null,
+  activeVersion: string | null,
+  addingVersion = false,
+): PublishedVersion[] {
+  if (!work?.retention_limit) return [];
+  const published = work.versions.filter((v) => v.published)
+    .sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
+  const excess = Math.max(0, published.length + Number(addingVersion) - work.retention_limit);
+  return published.slice(0, excess).filter((v) => v.version !== activeVersion);
+}
+
 export function compilePlayback(snapshot: PlaybackSnapshot) {
   // Runtime compiler retains its canvas entry point for editor/export callers.
   return compileStoryGroup(

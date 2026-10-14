@@ -10296,6 +10296,10 @@
     "selectLeaf": "Select the innermost text element to preserve nested formatting."
   },
   "storyPublication": {
+    "deletionNotice": "Based on the current version list, this action is expected to remove {{versions}} and their media. Removed versions cannot be restored; their links and saves will no longer work. Cleanup waits for preparation tasks.",
+    "publishWithCleanupTitle": "Publish a new version and remove older versions?",
+    "confirmPublishAndCleanup": "Publish and clean up",
+    "retentionPolicy": "Keep the latest {{limit}} published versions, plus the active version even while unlisted. Cleanup waits for preparation tasks. Removed versions cannot be restored, and their links and saves no longer work.",
     "publish": "Publish story",
     "close": "Close",
     "back": "Back to editing",

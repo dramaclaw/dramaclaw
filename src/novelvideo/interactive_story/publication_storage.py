@@ -10,6 +10,9 @@ import re
 from contextlib import ExitStack
 from pathlib import Path
 
+import anyio
+from anyio.lowlevel import RunVar
+
 from novelvideo.interactive_story.publication import PublicationError, PublicationStore
 from novelvideo.ports import get_project_registry
 from novelvideo.project_context import is_record_home_node
@@ -21,6 +24,27 @@ from novelvideo.utils.async_ops import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Copying and deleting media share a bounded budget, separate from ordinary
+# requests. Cleanup releases this budget between attempts at a busy lock.
+_media_limiter_var: RunVar[anyio.CapacityLimiter] = RunVar("publication_media_limiter")
+
+
+def media_io_limiter() -> anyio.CapacityLimiter:
+    limiter = _media_limiter_var.get(None)
+    if limiter is None:
+        limiter = anyio.CapacityLimiter(4)
+        _media_limiter_var.set(limiter)
+    return limiter
+
+
+async def finish_publication(store: PublicationStore, prepared: dict) -> None:
+    # Retain accepted preparation ownership while queued, including cancellation.
+    # The finalizer runs after the copy releases its token, even on cancellation.
+    await run_sync_bounded(
+        store.finish, prepared, cleanup=False, limiter=media_io_limiter(),
+        finalize=lambda _: cleanup_publication(store, prepared["public_id"]),
+    )
 
 
 def project_store(project_id: str, state_dir: Path, output_dir: Path) -> PublicationStore:
@@ -188,8 +212,10 @@ async def detach_project_publications(record, detach, restore, *, validate, **kw
             Path(record.state_dir) / "publications",
             project_id=record.id,
             index_root=PublicationStore().root,
+            output_dir=Path(record.output_dir),
         )
-        with store.locked():
+        # Never hold the metadata lock while waiting for a slow media copy.
+        with store.media_locked(), store.locked():
             return detach(record, **kwargs)
 
     task = asyncio.create_task(call_blocking(execute))
@@ -199,3 +225,22 @@ async def detach_project_publications(record, detach, restore, *, validate, **kw
         await wait_for_task_completion(rollback, cancellation)
         raise cancellation
     return quarantined
+
+
+async def cleanup_publication(store: PublicationStore, public_id: str):
+    """Retry media contention without reserving a shared worker while waiting."""
+    while True:
+        try:
+            await anyio.to_thread.run_sync(
+                store.prune_once, public_id, limiter=media_io_limiter()
+            )
+            return
+        except PublicationError as exc:
+            if exc.code == "publication_busy":
+                await asyncio.sleep(0.25)
+                continue
+            logger.exception("Unable to clean obsolete story publication drafts")
+            return
+        except Exception:
+            logger.exception("Unable to clean obsolete story publication drafts")
+            return

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import portalocker
 import json
@@ -15,7 +16,7 @@ import time
 from threading import local
 from collections.abc import Callable
 from datetime import datetime, timezone
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlsplit
 
@@ -23,6 +24,7 @@ from pydantic import ValidationError
 
 from novelvideo import config
 from novelvideo.freezone import canvas_store
+from novelvideo.freezone.asset_copy import copy_project_file
 from novelvideo.interactive_story.canvas_mapper import (
     CanvasStoryMappingError,
     story_from_canvas,
@@ -131,11 +133,51 @@ class PublicationStore:
                 "ST_PUBLICATION_DIR", str(Path(config.STATE_DIR) / "publications")
             )
         )
+        try:
+            self.retention_limit = int(os.environ.get("ST_PUBLICATION_RETENTION_LIMIT", "10"))
+            if self.retention_limit < 1:
+                raise ValueError
+        except ValueError:
+            logger.warning("Invalid ST_PUBLICATION_RETENTION_LIMIT; using 10")
+            self.retention_limit = 10
         self.project_id = project_id
         self.index_root = index_root
         self.output_dir = Path(output_dir) if output_dir is not None else None
         self.check_project: Callable[[], None] | None = None
         self._lock_state = local()
+        self.cleanup_requested = False
+        # A path can be reused immediately after purge. Bind this store/worker
+        # to the directories it opened, not just their names or registry IDs.
+        directories = [self.root.parent] if index_root is not None else []
+        if self.output_dir is not None and self.output_dir.is_dir():
+            directories.append(self.output_dir)
+        self._project_directories = {
+            path: self._directory_identity(path) for path in directories
+        }
+
+    @staticmethod
+    def _directory_identity(path: Path) -> tuple[int, int] | None:
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return None
+        return stat.st_dev, stat.st_ino
+
+    def _same_project(self) -> bool:
+        return all(
+            identity is not None and self._directory_identity(path) == identity
+            for path, identity in self._project_directories.items()
+        )
+
+    def _check_directory_identity(self) -> None:
+        if not self._same_project():
+            raise PublicationError("unavailable", 410)
+        # Metadata-only projects may not have output yet. Bind it on the first
+        # locked operation after it appears, before any preparation can copy.
+        if self.output_dir is not None and self.output_dir not in self._project_directories:
+            identity = self._directory_identity(self.output_dir)
+            if identity is not None:
+                self._project_directories[self.output_dir] = identity
 
     @contextmanager
     def locked(self):
@@ -160,6 +202,7 @@ class PublicationStore:
             path = self.index_root / "locks" / key
             path.parent.mkdir(parents=True, exist_ok=True)
             with self.file_lock(path):
+                self._check_directory_identity()
                 if not self.root.parent.is_dir():
                     raise PublicationError("unavailable", 410)
                 self.root.mkdir(exist_ok=True)
@@ -167,11 +210,41 @@ class PublicationStore:
                     self.check_project()
                 yield
         else:
+            self._check_directory_identity()
             self.root.mkdir(parents=True, exist_ok=True)
             with self.file_lock(self.root / ".lock"):
+                self._check_directory_identity()
                 if self.check_project is not None:
                     self.check_project()
                 yield
+
+    @contextmanager
+    def media_locked(self, *, timeout: float = 3):
+        """Serialize copies and directory removal, without blocking metadata reads.
+
+        Callers holding the metadata lock must never wait here: cleanup defers
+        on contention. Lifecycle moves acquire this lock before locked().
+        """
+        if getattr(self._lock_state, "media_held", False):
+            yield
+            return
+        self._check_directory_identity()
+        if self.index_root is not None:
+            key = hashlib.sha256(str(self.root.parent.resolve()).encode()).hexdigest()
+            path = self.index_root / "locks" / (key + ".media")
+            path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            self.root.mkdir(parents=True, exist_ok=True)
+            path = self.root / ".media-lock"
+        if getattr(self._lock_state, "held", False):
+            timeout = 0
+        with self.file_lock(path, timeout=timeout):
+            self._check_directory_identity()
+            self._lock_state.media_held = True
+            try:
+                yield
+            finally:
+                self._lock_state.media_held = False
 
     def index_work(self, work: dict):
         if self.index_root is not None:
@@ -181,9 +254,9 @@ class PublicationStore:
             )
 
     @contextmanager
-    def file_lock(self, path: Path):
+    def file_lock(self, path: Path, *, timeout: float = 3):
         lock = portalocker.Lock(
-            path, mode="a", timeout=3, flags=portalocker.LOCK_EX | portalocker.LOCK_NB
+            path, mode="a", timeout=timeout, flags=portalocker.LOCK_EX | portalocker.LOCK_NB
         )
         try:
             lock.acquire()
@@ -231,6 +304,19 @@ class PublicationStore:
             logger.exception("Unable to remove completed publication job %s", directory)
 
     def _retry_media_cleanup(self, release: dict) -> None:
+        try:
+            with self.media_locked(timeout=0):
+                self._cleanup_failed_media(release)
+        except PublicationError as exc:
+            if exc.code != "publication_busy":
+                raise
+            # Preserve the marker without waiting under the metadata lock.
+            self.write(
+                self.directory(release["public_id"]) / release["version"] / "version.json",
+                release,
+            )
+
+    def _cleanup_failed_media(self, release: dict) -> None:
         """Keep the durable marker until deletion succeeds, including across restarts."""
         if not release.get("media_cleanup_pending"):
             return
@@ -247,10 +333,11 @@ class PublicationStore:
             )
         else:
             release.pop("media_cleanup_pending", None)
-        self.write(
-            self.directory(release["public_id"]) / release["version"] / "version.json",
-            release,
-        )
+        with self._preparation_lock():
+            self.write(
+                self.directory(release["public_id"]) / release["version"] / "version.json",
+                release,
+            )
 
     def read(self, public_id: str) -> dict:
         try:
@@ -307,7 +394,7 @@ class PublicationStore:
             raise PublicationError("not_found", 404)
         return work
 
-    def version(self, public_id: str, version: str) -> dict:
+    def version(self, public_id: str, version: str, *, defer_cleanup: bool = False) -> dict:
         if not re.fullmatch(r"[a-f0-9]{32}", version):
             raise PublicationError("not_found", 404)
         try:
@@ -322,7 +409,7 @@ class PublicationStore:
                     with self.locked():
                         # Re-read membership and status after lifecycle operations
                         # ahead of us have completed. Never write from stale data.
-                        return self.version(public_id, version)
+                        return self.version(public_id, version, defer_cleanup=defer_cleanup)
                 directory = self.directory(public_id) / version
                 with preparation_lease.abandoned(directory) as abandoned:
                     if abandoned:
@@ -336,14 +423,26 @@ class PublicationStore:
                                 # Retain the author's original cover selection for retry.
                                 release["cover"] = release.get("request", {}).get("cover")
                                 release["media_cleanup_pending"] = True
-                                self._retry_media_cleanup(release)
-                                self._remove_job(directory)
+                                if not defer_cleanup:
+                                    try:
+                                        self.write(directory / "version.json", release)
+                                    except OSError as exc:
+                                        if exc.errno != errno.ENOSPC:
+                                            raise
+                                        # The existing preparing/job record is durable;
+                                        # background cleanup frees space before retrying.
+            if release.get("media_cleanup_pending"):
+                self.cleanup_requested = True
             release["published"] = version in work["published_versions"]
             if not isinstance(work.get("publication_details"), dict):
                 raise PublicationError("publication_data_invalid", 500)
             details = work["publication_details"].get(version)
             if details:
+                # Preserve media references in versions edited before the
+                # metadata editor was withdrawn; no new edits are accepted.
+                assets = {**release.get("assets", {}), **details.get("assets", {})}
                 release.update(details)
+                release["assets"] = assets
             return release
         except FileNotFoundError:
             raise PublicationError("not_found", 404)
@@ -401,8 +500,33 @@ class PublicationStore:
             json.dumps(body, sort_keys=True, ensure_ascii=False).encode()
         ).hexdigest()
 
-    def prune_drafts(self, public_id: str):
-        """Keep published history and the newest usable draft/result.
+    def prune_drafts(self, public_id: str, *, wait: bool = False):
+        # Do not silently inherit a caller's metadata lock across slow removal.
+        # Normal mutation callers invoke cleanup after their transaction ends.
+        if getattr(self._lock_state, "held", False):
+            return
+        while True:
+            try:
+                self.prune_once(public_id)
+                return
+            except PublicationError as exc:
+                if exc.code != "publication_busy":
+                    raise
+                if not wait:
+                    return
+                # Background cleanup retries without holding the metadata lock.
+                # Revalidate project identity on every attempt.
+                time.sleep(0.25)
+
+    def prune_once(self, public_id: str):
+        """One cleanup attempt; callers decide how to retry contention."""
+        if getattr(self._lock_state, "held", False):
+            raise PublicationError("publication_busy", 503)
+        with self.media_locked(timeout=0):
+            self._prune_drafts(public_id)
+
+    def _prune_drafts(self, public_id: str):
+        """Bound published history while keeping the active version and recent drafts.
 
         Pending jobs may reference an older draft's cover or video. Defer the
         whole work's cleanup until all jobs finish; prepare registers its source
@@ -411,7 +535,7 @@ class PublicationStore:
         with self.locked():
             work = self.read(public_id)
             directory = self.directory(public_id)
-            versions = [self.version(public_id, vid) for vid in work["versions"]]
+            versions = [self.version(public_id, vid, defer_cleanup=True) for vid in work["versions"]]
             preparing = {v["version"] for v in versions if v["status"] == "preparing"}
             pending = set(work.get("pending_cleanup", []))
             # A crash can leave a terminal job or a job not yet committed to work.json.
@@ -427,19 +551,38 @@ class PublicationStore:
                         if vid not in work["versions"]:
                             pending.add(vid)
                         elif vid not in preparing:
-                            self._remove_job(job.parent)
+                            # Interrupted versions are persisted after lock-free
+                            # media cleanup; keep their job until then.
+                            release = next((v for v in versions if v["version"] == vid), None)
+                            if release is None or not release.get("media_cleanup_pending"):
+                                self._remove_job(job.parent)
             if preparing:
                 return
-            for release in versions:
-                if release["status"] == "failed":
-                    self._retry_media_cleanup(release)
-            keep = set(work["published_versions"])
+        # Preparation completion can retry an earlier failed removal here.
+        # Keep media_locked(), but do not hold the metadata lock during deletion.
+        for release in versions:
+            if release["status"] == "failed":
+                self._retry_media_cleanup(release)
+                with self.locked():
+                    self._remove_job(directory / release["version"])
+        with self.locked():
+            # Another request may have prepared or activated a version while
+            # cleanup ran. Rebuild the retention decision from the latest state.
+            work = self.read(public_id)
+            versions = [self.version(public_id, vid, defer_cleanup=True) for vid in work["versions"]]
+            if any(v["status"] == "preparing" for v in versions):
+                return
+            pending = set(work.get("pending_cleanup", [])) | pending
+            # Append order records first publication; rollback does not reorder it.
+            published = set(work["published_versions"])
+            keep = set(work["published_versions"][-self.retention_limit:])
             if work.get("active_version"):
                 keep.add(work["active_version"])
-            if versions:
-                keep.add(versions[-1]["version"])
+            drafts = [v for v in versions if v["version"] not in published]
+            if drafts:
+                keep.add(drafts[-1]["version"])
             latest_ready = next(
-                (v for v in reversed(versions) if v["status"] == "ready"), None
+                (v for v in reversed(drafts) if v["status"] == "ready"), None
             )
             if latest_ready:
                 keep.add(latest_ready["version"])
@@ -452,28 +595,43 @@ class PublicationStore:
                 pending.add(version["version"])
             pending.difference_update(keep)
             work["versions"] = [vid for vid in work["versions"] if vid in keep]
+            work["published_versions"] = [
+                vid for vid in work["published_versions"] if vid in keep
+            ]
+            work["publication_details"] = {
+                vid: details for vid, details in work["publication_details"].items()
+                if vid in keep
+            }
             work["pending_cleanup"] = sorted(pending)
             # Commit the index first. A failed/interrupted removal is retried by
             # the next cleanup, without breaking publication management reads.
             self.write(directory / "work.json", work)
-            for vid in sorted(pending):
-                if not re.fullmatch(r"[a-f0-9]{32}", vid):
-                    raise PublicationError("publication_data_invalid", 500)
-                target = directory / vid
-                try:
-                    self._remove_tree(self.media_directory(public_id, vid).parent)
-                    self._remove_tree(target)
-                except OSError:
-                    logger.exception(
-                        "Unable to remove obsolete publication draft %s", vid
-                    )
-                else:
-                    work["pending_cleanup"].remove(vid)
+        completed = set()
+        for vid in sorted(pending):
+            if not re.fullmatch(r"[a-f0-9]{32}", vid):
+                raise PublicationError("publication_data_invalid", 500)
+            target = directory / vid
+            try:
+                self._remove_tree(self.media_directory(public_id, vid).parent)
+                self._remove_tree(target)
+            except OSError:
+                logger.exception(
+                    "Unable to remove obsolete publication draft %s", vid
+                )
+            else:
+                completed.add(vid)
+        with self.locked():
+            # New prepares, activation and metadata edits may have committed
+            # while deletion ran. Only acknowledge our completed cleanup IDs.
+            work = self.read(public_id)
+            work["pending_cleanup"] = [
+                vid for vid in work.get("pending_cleanup", []) if vid not in completed
+            ]
             self.write(directory / "work.json", work)
 
-    def _prune_best_effort(self, public_id: str):
+    def _prune_best_effort(self, public_id: str, *, wait: bool = False):
         try:
-            self.prune_drafts(public_id)
+            self.prune_drafts(public_id, wait=wait)
         except Exception:
             logger.exception("Unable to clean obsolete story publication drafts")
 
@@ -685,18 +843,20 @@ class PublicationStore:
         for path in self.root.glob("*/work.json"):
             self._prune_best_effort(path.parent.name)
 
-    def finish(self, prepared: dict):
+    def finish(self, prepared: dict, *, cleanup: bool = True):
         directory = self.directory(prepared["public_id"]) / prepared["version"]
         try:
             self._finish_owned(prepared)
         finally:
             preparation_lease.release(directory)
+        if cleanup and directory.exists():
+            self._prune_best_effort(prepared["public_id"], wait=True)
 
     def _finish_owned(self, prepared: dict):
         directory = self.directory(prepared["public_id"]) / prepared["version"]
         while True:
             try:
-                with self.locked() if self.index_root is not None else nullcontext():
+                with self.media_locked():
                     self._finish_job(prepared)
             except PublicationError as exc:
                 if exc.code == "publication_busy":
@@ -705,7 +865,7 @@ class PublicationStore:
                     # Reacquiring also rechecks whether the project was purged.
                     time.sleep(0.25)
                     continue
-                if exc.code != "unavailable" or self.root.parent.exists():
+                if exc.code != "unavailable" or self._same_project():
                     raise
                 return
             except FileNotFoundError:
@@ -714,32 +874,55 @@ class PublicationStore:
                 if directory.exists():
                     raise
             break
-        if directory.exists():
-            self._prune_best_effort(prepared["public_id"])
+
+    @contextmanager
+    def _preparation_lock(self):
+        # Accepted jobs wait for short metadata transactions instead of failing
+        # on the HTTP lock timeout. Retry acquisition, never the media copy.
+        with ExitStack() as stack:
+            while True:
+                try:
+                    stack.enter_context(self.locked())
+                except PublicationError as exc:
+                    if exc.code != "publication_busy":
+                        raise
+                    time.sleep(0.25)
+                else:
+                    break
+            yield
 
     def _finish_job(self, prepared: dict):
         directory = self.directory(prepared["public_id"]) / prepared["version"]
-        with self.file_lock(directory / ".job-lock"):
+        with ExitStack() as job:
+            # Opening a lock file is a write too. Validate before opening it.
+            with self._preparation_lock():
+                # Never wait for another worker while holding the project lock.
+                job.enter_context(self.file_lock(directory / ".job-lock", timeout=0))
             try:
-                if (
-                    self.version(prepared["public_id"], prepared["version"])["status"]
-                    == "preparing"
-                ):
+                with self._preparation_lock():
+                    preparing = (
+                        self.version(prepared["public_id"], prepared["version"])["status"]
+                        == "preparing"
+                    )
+                if preparing:
                     self._finish(prepared)
             except Exception as exc:
                 logger.exception("Story publication task failed before completion")
-                # Read the stored state directly: enriched version reads may be the failure.
-                release = json.loads((directory / "version.json").read_text())
-                if release["status"] == "preparing":
-                    release["status"] = "failed"
-                    release["error"] = (
-                        exc.code
-                        if isinstance(exc, PublicationError)
-                        else "publication_check_failed"
-                    )
-                    release["media_cleanup_pending"] = True
-                    self._retry_media_cleanup(release)
-            self._remove_job(directory)
+                with self._preparation_lock():
+                    # Read directly: enriched version reads may be the failure.
+                    release = json.loads((directory / "version.json").read_text())
+                    if release["status"] == "preparing":
+                        release["status"] = "failed"
+                        release["error"] = (
+                            exc.code
+                            if isinstance(exc, PublicationError)
+                            else "publication_check_failed"
+                        )
+                        release["media_cleanup_pending"] = True
+                # Keep the media lock, but release the metadata lock before I/O.
+                self._retry_media_cleanup(release)
+            with self._preparation_lock():
+                self._remove_job(directory)
 
     def _finish(self, prepared: dict):
         version = {k: v for k, v in prepared.items() if not k.startswith("_")}
@@ -890,12 +1073,17 @@ class PublicationStore:
                     return archived_sources[source_key]
                 asset = secrets.token_hex(16) + source.suffix.lower()
                 media_dir = self.media_directory(version["public_id"], version["version"])
+                # The worker holds media_locked(): mkdir on an OSS mount can
+                # block too, so it must not acquire the metadata lock.
                 media_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(source, media_dir / asset)
+                # media_locked() prevents lifecycle moves throughout the copy.
+                # Keep the shared helper's OSS CopyObject path and local fallback.
+                copy_project_file(source, media_dir / asset, create_parent=False)
                 if expected != self.media_fingerprint(source):
                     raise PublicationError("media_changed_retry")
                 version["progress"]["completed"] += 1
-                self.write(directory / "version.json", version)
+                with self._preparation_lock():
+                    self.write(directory / "version.json", version)
                 assets[asset] = asset
                 archived_url = f"/api/v1/public-stories/{version['public_id']}/versions/{version['version']}/media/{asset}"
                 archived_sources[source_key] = archived_url
@@ -980,36 +1168,35 @@ class PublicationStore:
         if version.get("media_cleanup_pending"):
             self._retry_media_cleanup(version)
         else:
-            self.write(directory / "version.json", version)
+            with self._preparation_lock():
+                self.write(directory / "version.json", version)
 
     def activate(
-        self, public_id: str, owner: str, version: str | None, listed: bool
+        self, public_id: str, owner: str, version: str | None, listed: bool,
+        *, cleanup: bool = True,
     ) -> dict:
         with self.locked():
             work = self.owned(public_id, owner)
-            committed = list(work["published_versions"])
-            details = dict(work["publication_details"])
             if version:
                 release = self.version(public_id, version)
-                if version not in work["versions"] or release["status"] != "ready":
+                if release["status"] != "ready":
                     raise PublicationError("version_not_ready", 409)
-                work["active_version"] = version
-                if version not in committed:
+                if version not in work["published_versions"]:
+                    details = work["publication_details"]
                     details[version] = {
-                        "number": max(
-                            (d["number"] for d in details.values()), default=0
-                        )
-                        + 1,
+                        "number": max((d["number"] for d in details.values()), default=0) + 1,
                         "published_at": datetime.now(timezone.utc).isoformat(),
                     }
-                    committed.append(version)
+                    work["published_versions"].append(version)
+                work["active_version"] = version
             if listed and not work["active_version"]:
                 raise PublicationError("version_not_ready", 409)
             work["listed"] = listed
-            work["published_versions"] = committed
-            work["publication_details"] = details
             self.write(self.directory(public_id) / "work.json", work)
-            return work
+        if cleanup:
+            self._prune_best_effort(public_id)
+        with self.locked():
+            return self.read(public_id)
 
     def public(self, public_id: str, version: str | None = None) -> dict:
         work = self.read(public_id)

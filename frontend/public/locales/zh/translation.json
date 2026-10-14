@@ -10296,6 +10296,10 @@
     "selectLeaf": "请选择最内层文字元素修改内容，避免覆盖内部排版。"
   },
   "storyPublication": {
+    "deletionNotice": "根据当前版本列表，本次操作预计清理 {{versions}} 及其媒体。清理后无法回滚，旧链接和对应存档无法继续使用。有准备任务时会延后清理。",
+    "publishWithCleanupTitle": "发布新版并清理旧版本？",
+    "confirmPublishAndCleanup": "确认发布并清理",
+    "retentionPolicy": "保留最近 {{limit}} 个已发布版本，当前上线版本额外保留（下架后也保留）。有准备任务时暂缓清理；清理后，旧版本无法回滚，其链接和对应存档无法继续使用。",
     "publish": "发布作品",
     "close": "关闭",
     "back": "返回编辑",

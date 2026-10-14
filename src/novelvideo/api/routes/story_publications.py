@@ -1,6 +1,7 @@
 """Author publication management and anonymous, manifest-scoped playback."""
 
 import hashlib
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
@@ -19,6 +20,8 @@ from novelvideo.interactive_story.publication import (
 )
 from novelvideo.utils.async_ops import call_blocking
 from novelvideo.interactive_story.publication_storage import (
+    cleanup_publication,
+    finish_publication,
     invoke_active,
     project_store,
     public_store,
@@ -81,6 +84,7 @@ def presentation(store, work):
             "public_id": work["public_id"],
             "active_version": work["active_version"],
             "listed": work["listed"],
+            "retention_limit": store.retention_limit,
             "versions": [
                 public_version(store.version(work["public_id"], v))
                 for v in reversed(work["versions"])
@@ -90,7 +94,8 @@ def presentation(store, work):
 
 @router.get("/projects/{project}/canvases/{canvas}/stories/{group}/publication")
 async def get_publication(
-    project: str, canvas: str, group: str, user: dict = Depends(get_api_user)
+    project: str, canvas: str, group: str, background: BackgroundTasks,
+    user: dict = Depends(get_api_user)
 ):
     resolved, owner = await scope(project, canvas, group, user)
     store = await invoke(
@@ -100,7 +105,10 @@ async def get_publication(
         resolved.project_dir,
     )
     work = await invoke(store.work, owner, getattr(resolved.ctx, "project_id", project))
-    return {"ok": True, "data": await invoke(presentation, store, work)}
+    data = await invoke(presentation, store, work)
+    if store.cleanup_requested:
+        background.add_task(cleanup_publication, store, work["public_id"])
+    return {"ok": True, "data": data}
 
 
 @router.post(
@@ -134,7 +142,7 @@ async def prepare(
         getattr(resolved.ctx, "project_id", project),
     )
     if "_canvas" in result:
-        background.add_task(store.finish, result)
+        background.add_task(finish_publication, store, result)
     return {"ok": True, "data": public_version(result)}
 
 
@@ -147,6 +155,7 @@ async def preview(
     group: str,
     public_id: str,
     version: str,
+    background: BackgroundTasks,
     user: dict = Depends(get_api_user),
 ):
     resolved, owner = await scope(project, canvas, group, user)
@@ -157,10 +166,10 @@ async def preview(
         resolved.project_dir,
     )
     await invoke(store.owned, public_id, owner)
-    return {
-        "ok": True,
-        "data": public_version(await invoke(store.version, public_id, version)),
-    }
+    release = await invoke(store.version, public_id, version)
+    if store.cleanup_requested:
+        background.add_task(cleanup_publication, store, public_id)
+    return {"ok": True, "data": public_version(release)}
 
 
 @router.get(
@@ -196,6 +205,7 @@ async def activate(
     group: str,
     public_id: str,
     body: ActivateBody,
+    background: BackgroundTasks,
     user: dict = Depends(require_project_scope("projects:lifecycle")),
 ):
     resolved, owner = await scope(project, canvas, group, user)
@@ -206,8 +216,9 @@ async def activate(
         resolved.project_dir,
     )
     work = await invoke_mutation(
-        store, store.activate, public_id, owner, body.version, body.listed
+        store, partial(store.activate, cleanup=False), public_id, owner, body.version, body.listed
     )
+    background.add_task(cleanup_publication, store, public_id)
     await emit_project_audit(
         action="story_publication.activate"
         if body.version

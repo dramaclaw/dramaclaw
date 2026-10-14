@@ -29,6 +29,7 @@ import { useCanvasStore } from "@/stores/canvasStore";
 import { useStoryRuntimeStore } from "@/stores/storyRuntimeStore";
 import {
   compilePlayback,
+  retentionRemovals,
   type Publication,
   type PublishedVersion,
 } from "./publication";
@@ -94,6 +95,8 @@ export function StoryPublicationPanel({
   const [previewVersion, setPreviewVersion] = useState<PublishedVersion | null>(null);
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [confirmPublication, setConfirmPublication] = useState(false);
+  const cancelPublicationRef = useRef<HTMLButtonElement>(null);
   function loadMetadata(version: PublishedVersion) {
     setName(version.title);
     setDescription(version.description);
@@ -189,6 +192,7 @@ export function StoryPublicationPanel({
   async function reload() {
     const data = await apiCall<Publication>(base);
     setWork(data);
+    setAwaitingRetention(retentionRemovals(data, data.active_version).length > 0);
     const published = data.versions.filter((v) => v.published);
     const lastPublication = Math.max(0, ...published.map((v) =>
       v.published_at ? Date.parse(v.published_at) : 0));
@@ -218,6 +222,31 @@ export function StoryPublicationPanel({
   useEffect(() => {
     void reload().catch((value) => setError(publicationErrorText(value)));
   }, [base]);
+  const [awaitingRetention, setAwaitingRetention] = useState(false);
+  useEffect(() => {
+    if (view !== "share" || busy || !awaitingRetention) return;
+    let stopped = false;
+    let timer: number;
+    async function refreshVersions() {
+      try {
+        const data = await apiCall<Publication>(base);
+        // Only refresh server state: preserve the author's pending form edits.
+        if (!stopped) {
+          setWork(data);
+          setAwaitingRetention(retentionRemovals(data, data.active_version).length > 0);
+        }
+      } catch {
+        // A transient query failure must not undo a successful mutation.
+      } finally {
+        if (!stopped) timer = window.setTimeout(() => void refreshVersions(), 1500);
+      }
+    }
+    timer = window.setTimeout(() => void refreshVersions(), 1500);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [base, view, busy, awaitingRetention]);
   useEffect(() => {
     if (prepared?.status !== "preparing") return;
     let stopped = false;
@@ -340,13 +369,14 @@ export function StoryPublicationPanel({
     setBusy(true);
     setError("");
     try {
-      setWork(
-        await apiCall<Publication>(`${base}/${publicId}/activate`, {
-          method: "POST",
-          json: { version, listed },
-        }),
-      );
+      const data = await apiCall<Publication>(`${base}/${publicId}/activate`, {
+        method: "POST",
+        json: { version, listed },
+      });
+      setWork(data);
+      setAwaitingRetention(retentionRemovals(data, data.active_version).length > 0);
       setPendingAction(null);
+      setConfirmPublication(false);
       if (version && prepared?.version === version) {
         useStoryRuntimeStore.getState().exitPlay();
         setPreviewing(false);
@@ -361,6 +391,11 @@ export function StoryPublicationPanel({
       setBusy(false);
     }
   }
+  const publicationRemovals = retentionRemovals(work, prepared?.version ?? null, true);
+  const switchRemovals = retentionRemovals(work, pendingAction?.version ?? null);
+  const deletionNotice = (versions: PublishedVersion[]) => t("storyPublication.deletionNotice", {
+    versions: versions.map((v) => `v${v.number ?? v.version.slice(0, 8)}`).join(", "),
+  });
   const current = work?.versions.find((v) => v.version === work.active_version);
   const currentCover = current
     ? authorPreviewUrl(current.cover ?? undefined, current, base)
@@ -574,6 +609,11 @@ export function StoryPublicationPanel({
                   </div>
                 </section>
               )}
+              {work.retention_limit != null && (
+                <p className="publication-muted">
+                  {t("storyPublication.retentionPolicy", { limit: work.retention_limit })}
+                </p>
+              )}
               <details className="publication-management">
                 <summary>
                   {t("storyPublication.versionHistory")}
@@ -632,6 +672,7 @@ export function StoryPublicationPanel({
                                 version: version.number ?? version.version.slice(0, 8),
                               })}
                             </p>
+                            {switchRemovals.length > 0 && <p role="note">{deletionNotice(switchRemovals)}</p>}
                             <div>
                               <button
                                 className="publication-button"
@@ -859,7 +900,12 @@ export function StoryPublicationPanel({
                 {!previewVersion?.published && <button
                   className="publication-button publication-button-primary"
                   disabled={busy || compiledVersion !== prepared?.version}
-                  onClick={() => void activate(prepared!.version, true)}
+                  onClick={(event) => {
+                    if (publicationRemovals.length) {
+                      actionTrigger.current = event.currentTarget;
+                      setConfirmPublication(true);
+                    } else void activate(prepared!.version, true);
+                  }}
                 >
                   {t(work?.active_version && !work.listed ? "storyPublication.publishAndRestore" : "storyPublication.publishThisVersion")}
                 </button>}
@@ -916,6 +962,21 @@ export function StoryPublicationPanel({
         </footer>}
       </section>
     </div>
+    <AlertDialog open={confirmPublication} onOpenChange={(open) => { if (!busy) setConfirmPublication(open); }}>
+      <AlertDialogContent initialFocus={cancelPublicationRef} finalFocus={actionTrigger}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("storyPublication.publishWithCleanupTitle")}</AlertDialogTitle>
+          <AlertDialogDescription>{deletionNotice(publicationRemovals)}</AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
+        <AlertDialogFooter>
+          <AlertDialogCancel ref={cancelPublicationRef} disabled={busy}>{t("storyPublication.cancel")}</AlertDialogCancel>
+          <AlertDialogAction disabled={busy} onClick={() => void activate(prepared!.version, true)}>
+            {t("storyPublication.confirmPublishAndCleanup")}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     <AlertDialog
       open={pendingAction?.version === null}
       onOpenChange={(open) => {

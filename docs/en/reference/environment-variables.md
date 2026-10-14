@@ -15,6 +15,7 @@
 | `NOVELVIDEO_STATE_DIR` | `$DATA_ROOT/state` | Local state. |
 | `NOVELVIDEO_RUNTIME_DIR` | `$DATA_ROOT/runtime` | Runtime temporary directory. |
 | `ST_PUBLICATION_DIR` | `$NOVELVIDEO_STATE_DIR/publications` | Optional index and cross-project move-lock directory for published interactive stories; metadata lives in each project's `state_dir/publications`, and media in `output_dir/publications`. |
+| `ST_PUBLICATION_RETENTION_LIMIT` | `10` | Positive integer: retain the latest N first-published versions plus the active version (also while unlisted). Cleanup runs after publication/preparation and waits for pending jobs. Invalid values fall back to 10. Removed versions cannot be played or rolled back; their saved games become unavailable. |
 | `ST_CONTROL_PLANE_DSN` / `ST_REDIS_URL` / `ST_CELERY_BROKER_URL` / `ST_CELERY_RESULT_BACKEND` | Empty (forced empty in CE) | Used only by EE/distributed; CE runs tasks inline in-process, so leave empty. |
 
 ## Model Gateway

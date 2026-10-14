@@ -10296,6 +10296,10 @@
     "resultTitle": "Kết quả cắt ảnh"
   },
   "storyPublication": {
+    "deletionNotice": "Dựa trên danh sách hiện tại, thao tác này dự kiến xóa {{versions}} cùng tệp phương tiện. Các phiên bản đã xóa không thể khôi phục; liên kết và bản lưu tương ứng sẽ không dùng được. Việc dọn dẹp chờ các tác vụ chuẩn bị hoàn tất.",
+    "publishWithCleanupTitle": "Xuất bản phiên bản mới và xóa các phiên bản cũ?",
+    "confirmPublishAndCleanup": "Xuất bản và dọn dẹp",
+    "retentionPolicy": "Giữ {{limit}} phiên bản đã xuất bản gần nhất và phiên bản hiện tại, kể cả khi đã gỡ công khai. Việc dọn dẹp chờ các tác vụ chuẩn bị hoàn tất. Phiên bản bị xóa không thể khôi phục; liên kết và bản lưu tương ứng không còn sử dụng được.",
     "publish": "Xuất bản câu chuyện",
     "close": "Đóng",
     "back": "Quay lại chỉnh sửa",

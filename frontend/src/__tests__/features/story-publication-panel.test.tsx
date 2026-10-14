@@ -3,7 +3,7 @@ import { vi, it, expect, beforeEach } from "vitest";
 import { StoryPublicationPanel } from "@/features/canvas/story/StoryPublicationPanel";
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({ t: (key: string, options?: { limit?: number; versions?: string }) => key === "storyPublication.deletionNotice" ? `${key}:${options?.versions}` : key === "storyPublication.retentionPolicy" ? `${key}:${options?.limit}` : key }),
 }));
 const mocks = vi.hoisted(() => ({
   api: vi.fn(),
@@ -682,4 +682,68 @@ it.each(["unchanged", "uploaded", "removed"])("preserves the retry cover after p
       cover: edit === "uploaded" ? newCover : edit === "removed" ? null : originalCover,
       title: "Edited title", description: "Edited description", cover_mode: "portrait",
     }) })));
+});
+
+it("requires confirmation before publication removes older versions and allows cancellation", async () => {
+  const old = { ...preparedVersion, version: "v5", number: 5, published: true };
+  const current = { ...preparedVersion, version: "v6", number: 6, published: true };
+  const initial = { ...work, active_version: "v6", listed: true, retention_limit: 1,
+    versions: [preparedVersion, current, old] };
+  mocks.api.mockImplementation(async (path: string) => path.endsWith("/activate")
+    ? { ...initial, active_version: preparedVersion.version, versions: [{ ...preparedVersion, number: 7, published: true }] } : initial);
+  render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
+  fireEvent.click(await screen.findByRole("button", { name: "storyPublication.continuePreparation" }));
+  fireEvent.click(await screen.findByRole("button", { name: "storyPublication.preview" }));
+  fireEvent.click(await screen.findByRole("button", { name: "storyPublication.publishThisVersion" }));
+  expect(await screen.findByText("storyPublication.deletionNotice:v5, v6")).toBeVisible();
+  expect(mocks.api.mock.calls.some(([path]) => path.endsWith("/activate"))).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "storyPublication.cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  expect(mocks.api.mock.calls.some(([path]) => path.endsWith("/activate"))).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "storyPublication.publishThisVersion" }));
+  fireEvent.click(await screen.findByRole("button", { name: "storyPublication.confirmPublishAndCleanup" }));
+  await waitFor(() => expect(mocks.api.mock.calls.some(([path]) => path.endsWith("/activate"))).toBe(true));
+});
+
+it("warns that manually switching from v6 to v11 will remove v6", async () => {
+  mocks.api.mockResolvedValue({ ...work, active_version: "v6", listed: true, retention_limit: 5,
+    versions: [11, 10, 9, 8, 7, 6].map(number => ({ ...preparedVersion, version: `v${number}`, number, published: true })) });
+  render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
+  fireEvent.click(await screen.findByText("storyPublication.versionHistory"));
+  fireEvent.click(screen.getAllByRole("button", { name: "storyPublication.rollback" })[0]);
+  expect(screen.getByText("storyPublication.deletionNotice:v6")).toBeVisible();
+  expect(mocks.api.mock.calls.some(([path]) => path.endsWith("/activate"))).toBe(false);
+});
+
+
+it.each([false, true])("refreshes excess history after cleanup and then stops polling (reopen: %s)", async (reopen) => {
+  const old = { ...preparedVersion, version: "old", number: 1, published: true };
+  const current = { ...preparedVersion, version: "current", number: 2, published: true };
+  let activated = false;
+  let cleaned = false;
+  mocks.api.mockImplementation(async (path: string) => {
+    if (path.endsWith("/activate")) {
+      activated = true;
+      return { ...work, retention_limit: 1, active_version: "current", versions: [current, old] };
+    }
+    return { ...work, retention_limit: 1, active_version: activated ? "current" : "old",
+      versions: cleaned ? [current] : [current, old] };
+  });
+  const panel = render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
+  fireEvent.click(await screen.findByText("storyPublication.versionHistory"));
+  expect(screen.getByText("storyPublication.retentionPolicy:1")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "storyPublication.rollback" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "storyPublication.rollback" })[1]);
+  await waitFor(() => expect(activated).toBe(true));
+  if (reopen) {
+    panel.unmount();
+    render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
+    fireEvent.click(await screen.findByText("storyPublication.versionHistory"));
+  }
+  expect(screen.getByRole("button", { name: "storyPublication.rollback" })).toBeVisible();
+  cleaned = true;
+  await waitFor(() => expect(screen.queryByText(/^v1/, { selector: "p" })).not.toBeInTheDocument(), { timeout: 3000 });
+  const calls = mocks.api.mock.calls.length;
+  await new Promise(resolve => setTimeout(resolve, 1700));
+  expect(mocks.api.mock.calls.length).toBe(calls);
 });

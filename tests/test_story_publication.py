@@ -416,9 +416,9 @@ def test_authorized_publication_lifecycle(publication_api, credential):
 def test_publication_lifecycle_token_cannot_write_other_project(publication_api, operation):
     api = publication_api
     headers = api.headers(["projects:read", "projects:lifecycle"], project="other")
-    path = api.path + ("/prepare" if operation == "prepare" else f"/{'a' * 32}/activate")
+    path = api.path + ("/prepare" if operation == "prepare" else f"/{'a' * 32}/{operation}")
     response = api.client.post(
-        path, headers=headers, json=api.body if operation == "prepare" else {"listed": True},
+        path, headers=headers, json=api.body if operation == "prepare" else {"listed": True, "version": "b" * 32},
     )
     assert response.status_code == 403, response.text
     assert "scope mismatch" in response.json()["detail"].lower()
@@ -680,7 +680,7 @@ def test_media_changed_during_copy_is_rejected(source, monkeypatch):
 
     def change_after_copy(src, dst):
         copyfile(src, dst)
-        src.write_bytes(b"changed during copy")
+        Path(src).write_bytes(b"changed during copy")
 
     monkeypatch.setattr(shutil, "copyfile", change_after_copy)
     store.finish(pending)
@@ -831,6 +831,7 @@ async def test_activation_emits_project_audit(source, monkeypatch):
         "g",
         prepared["public_id"],
         routes.ActivateBody(version=prepared["version"]),
+        routes.BackgroundTasks(),
         {},
     )
     assert audit.await_args.kwargs["ctx"] is ctx
@@ -840,7 +841,7 @@ async def test_activation_emits_project_audit(source, monkeypatch):
         "listed": True,
     }
     await routes.activate(
-        "p", "c", "g", prepared["public_id"], routes.ActivateBody(listed=False), {}
+        "p", "c", "g", prepared["public_id"], routes.ActivateBody(listed=False), routes.BackgroundTasks(), {}
     )
     assert audit.await_args.kwargs["metadata"]["listed"] is False
 
@@ -1040,7 +1041,7 @@ def test_startup_prunes_legacy_drafts_but_preserves_published_history(
     store, output, first, _ = ready(source)
     store.activate(first["public_id"], "owner", first["version"], True)
     with monkeypatch.context() as patch:
-        patch.setattr(store, "_prune_best_effort", lambda *_: None)
+        patch.setattr(store, "_prune_best_effort", lambda *_, **__: None)
         for i in range(3):
             pending = store.prepare(
                 "owner",
@@ -1175,9 +1176,9 @@ def test_background_finish_retries_lock_timeout(source, monkeypatch, contention)
     original_lock = store.file_lock
 
     @contextmanager
-    def observed_lock(path):
+    def observed_lock(path, **kwargs):
         try:
-            with original_lock(path):
+            with original_lock(path, **kwargs):
                 yield
         except PublicationError as exc:
             if exc.code == "publication_busy":
@@ -1334,6 +1335,9 @@ def test_interrupted_preparation_is_retryable_without_changing_online_version(so
     assert failed['status'] == 'failed'
     assert failed['error'] == 'publication_interrupted'
     assert failed['cover'] == body['cover']
+    assert failed['media_cleanup_pending'] and observer.cleanup_requested
+    assert media.exists()
+    observer.prune_drafts(pending['public_id'])
     assert not media.exists()
     assert not (directory / 'job.json').exists()
     assert store.public(published['public_id'])['version'] == published['version']
@@ -1747,6 +1751,10 @@ def test_disk_full_reclaims_partial_media_before_writing_failure(source, monkeyp
         store.finish(prepared)
     release = store.version(prepared["public_id"], prepared["version"])
     assert release["status"] == "failed"
+    if interrupted:
+        assert store.cleanup_requested
+        store.prune_drafts(prepared["public_id"])
+        release = store.version(prepared["public_id"], prepared["version"])
     assert not release.get("media_cleanup_pending")
     assert not media.exists()
     assert not (directory / "job.json").exists()
@@ -1778,3 +1786,1213 @@ def test_terminal_job_unlink_failure_is_retried_without_losing_media(source, mon
     restarted.recover()
     assert not job.exists()
     assert restarted.media_directory(prepared["public_id"], prepared["version"]).is_dir()
+
+
+@pytest.mark.parametrize("status", ["archived", "deleted", "active"])
+def test_copy_allows_polling_and_project_lifecycle(source, monkeypatch, status):
+    import asyncio
+    import shutil
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+    from novelvideo.interactive_story.publication_storage import (
+        project_store, set_project_status_and_unlist,
+    )
+
+    legacy, output, _, body = source
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(legacy.root))
+    state = output.parent / "state"
+    state.mkdir()
+    store = project_store("p", state, output)
+    first = store.prepare("owner", state, output, "p", body)
+    store.finish(first)
+    store.activate(first["public_id"], "owner", first["version"], True)
+    pending = store.prepare("owner", state, output, "p", {**body, "request_id": "next"})
+    entered, resume = Event(), Event()
+    original = shutil.copyfile
+
+    def slow_copy(src, dst):
+        entered.set()
+        assert resume.wait(10)
+        return original(src, dst)
+
+    class Registry:
+        async def update_project_status(self, project_id, new_status):
+            assert project_id == "p"
+            return SimpleNamespace(status=new_status)
+
+    monkeypatch.setattr(shutil, "copyfile", slow_copy)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(store.finish, pending)
+        try:
+            assert entered.wait(5)
+            reader = project_store("p", state, output)
+            assert reader.version(pending["public_id"], pending["version"])["status"] == "preparing"
+            result = asyncio.run(set_project_status_and_unlist("p", state, Registry(), status))
+            assert result.status == status
+        finally:
+            resume.set()
+            future.result(timeout=10)
+    assert store.version(pending["public_id"], pending["version"])["status"] == "ready"
+    assert store.read(pending["public_id"])["listed"] is False
+
+
+@pytest.mark.parametrize("phase", ["before_mkdir", "before_copy", "after_copy"])
+def test_permanent_delete_waits_for_copy_without_blocking_queries(source, monkeypatch, phase):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+    from novelvideo.interactive_story import publication
+    from novelvideo.interactive_story.publication_storage import project_store, detach_project_publications
+
+    legacy, output, _, body = source
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(legacy.root))
+    state = output.parent / "state"
+    state.mkdir()
+    store = project_store("p", state, output)
+    pending = store.prepare("owner", state, output, "p", body)
+    entered, resume, deleting = Event(), Event(), Event()
+    record = SimpleNamespace(id="p", state_dir=str(state), output_dir=str(output))
+    detached = []
+
+    def detach(record):
+        for root in (state, output):
+            root.rename(root.with_name(root.name + "-removed"))
+        detached.append(True)
+        return []
+
+    def validate(record):
+        deleting.set()
+
+    def remove():
+        return asyncio.run(detach_project_publications(record, detach, lambda _: None, validate=validate))
+
+    original_directory = store.media_directory
+    def media_directory(*args):
+        result = original_directory(*args)
+        if phase == "before_mkdir" and not entered.is_set():
+            entered.set()
+            assert resume.wait(10)
+        return result
+
+    original_copy = publication.copy_project_file
+    def copy_file(src, dst, **kwargs):
+        if phase == "after_copy":
+            original_copy(src, dst, **kwargs)
+        if phase != "before_mkdir":
+            entered.set()
+            assert resume.wait(10)
+        if phase != "after_copy":
+            return original_copy(src, dst, **kwargs)
+
+    monkeypatch.setattr(store, "media_directory", media_directory)
+    monkeypatch.setattr(publication, "copy_project_file", copy_file)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        copying = pool.submit(store.finish, pending)
+        try:
+            assert entered.wait(5)
+            deletion = pool.submit(remove)
+            assert deleting.wait(5)
+            # Even a waiting deletion must not acquire the metadata lock.
+            reader = project_store("p", state, output)
+            assert reader.version(pending["public_id"], pending["version"])["status"] == "preparing"
+            with pytest.raises(PublicationError, match="publication_busy"):
+                deletion.result(timeout=5)
+            assert not detached
+            assert state.exists() and output.exists()
+        finally:
+            resume.set()
+            copying.result(timeout=10)
+    assert store.version(pending["public_id"], pending["version"])["status"] == "ready"
+    remove()
+    assert detached == [True]
+    assert not state.exists() and not output.exists()
+
+
+@pytest.mark.parametrize("oss_result", ["success", "error", "not_ready"])
+def test_publication_uses_oss_copy_and_filesystem_fallback(source, monkeypatch, oss_result):
+    import shutil
+    from novelvideo.freezone import asset_copy
+
+    _, output, _, _ = source
+    copies, local = [], []
+    class Bucket:
+        bucket_name = "test-bucket"
+        def copy_object(self, bucket, src, dst):
+            copies.append((bucket, src, dst))
+            if oss_result == "error":
+                raise OSError("OSS temporarily unavailable")
+            (output / dst).write_bytes((output / src).read_bytes())
+
+    monkeypatch.setattr(asset_copy.oss_client, "get_bucket", lambda: Bucket())
+    monkeypatch.setattr(asset_copy.oss_client, "local_path_to_key", lambda p: str(p.relative_to(output)))
+    monkeypatch.setattr(asset_copy.oss_client, "object_matches_local", lambda *args: oss_result != "not_ready")
+    original = shutil.copyfile
+    def filesystem(src, dst):
+        local.append(dst)
+        if oss_result == "success":
+            pytest.fail("ready OSS objects must use CopyObject")
+        return original(src, dst)
+    monkeypatch.setattr(shutil, "copyfile", filesystem)
+    store, _, prepared, version = ready(source)
+    assert bool(copies) == (oss_result != "not_ready")
+    assert bool(local) == (oss_result != "success")
+    assert next(store.media_directory(prepared["public_id"], version["version"]).iterdir()).read_bytes() == b"original media"
+
+
+def publish_retention_version(source, request_id):
+    store, output, _, body = source
+    prepared = store.prepare("owner", Path("."), output, "p", {**body, "request_id": request_id})
+    store.finish(prepared)
+    store.activate(prepared["public_id"], "owner", prepared["version"], True)
+    return prepared
+
+
+@pytest.mark.parametrize("limit", [None, "1", "3"])
+def test_published_retention_default_and_config(source, monkeypatch, limit):
+    store, output, _, body = source
+    if limit is None:
+        monkeypatch.delenv("ST_PUBLICATION_RETENTION_LIMIT", raising=False)
+    else:
+        monkeypatch.setenv("ST_PUBLICATION_RETENTION_LIMIT", limit)
+    store = PublicationStore(store.root, output_dir=output)
+    source = (store, output, source[2], body)
+    count = int(limit or 10)
+    releases = [publish_retention_version(source, f"retention-{i}") for i in range(count + 2)]
+    pid = releases[-1]["public_id"]
+    work = store.read(pid)
+    expected = [v["version"] for v in releases[-count:]]
+    assert work["published_versions"] == expected
+    assert work["versions"] == expected
+    assert set(work["publication_details"]) == set(expected)
+    assert work["active_version"] == expected[-1]
+    assert work["publication_details"][expected[-1]]["number"] == count + 2
+    for release in releases[:-count]:
+        assert not store.media_directory(pid, release["version"]).parent.exists()
+        assert not (store.directory(pid) / release["version"]).exists()
+        with pytest.raises(PublicationError, match="not_found"):
+            store.public(pid, release["version"])
+        with pytest.raises(PublicationError, match="version_not_ready"):
+            store.prepare("owner", Path("."), output, "p", {**body, "request_id": release["request_id"]})
+
+
+@pytest.mark.parametrize("listed", [True, False])
+def test_retention_protects_old_active_version_without_reordering(source, listed):
+    store = source[0]
+    releases = [publish_retention_version(source, f"active-{i}") for i in range(4)]
+    pid = releases[0]["public_id"]
+    store.activate(pid, "owner", releases[0]["version"], listed)
+    store.retention_limit = 2
+    store.prune_drafts(pid)
+    expected = [releases[i]["version"] for i in (0, 2, 3)]
+    assert store.read(pid)["published_versions"] == expected
+    assert store.media_directory(pid, expected[0]).is_dir()
+    # Moving the active pointer allows the formerly protected version to retire.
+    store.activate(pid, "owner", releases[2]["version"], True)
+    assert store.read(pid)["published_versions"] == expected[1:]
+    assert not store.media_directory(pid, expected[0]).exists()
+
+
+def test_retention_defers_while_preparation_references_old_media(source):
+    store, output, _, body = source
+    releases = [publish_retention_version(source, f"pending-{i}") for i in range(3)]
+    pid = releases[0]["public_id"]
+    old = store.version(pid, releases[0]["version"])
+    url = next(n["data"]["videoUrl"] for n in old["snapshot"]["nodes"] if n["type"] == "videoNode")
+    for node in source[2]["nodes"]:
+        if node["type"] == "videoNode":
+            node["data"]["videoUrl"] = url
+            node["data"]["storyMedia"]["url"] = url
+    pending = store.prepare("owner", Path("."), output, "p", {**body, "request_id": "using-old"})
+    store.retention_limit = 1
+    store.activate(pid, "owner", releases[-1]["version"], True)
+    assert len(store.read(pid)["published_versions"]) == 3
+    assert store.media_directory(pid, releases[0]["version"]).exists()
+    store.finish(pending)
+    assert store.version(pid, pending["version"])["status"] == "ready"
+    assert store.read(pid)["published_versions"] == [releases[-1]["version"]]
+    assert not store.media_directory(pid, releases[0]["version"]).exists()
+
+
+def test_retention_removal_failure_retries_after_restart(source, monkeypatch):
+    store, output, _, _ = source
+    first = publish_retention_version(source, "delete-first")
+    store.retention_limit = 1
+    original = store._remove_tree
+
+    def fail(path):
+        if path.name == first["version"]:
+            raise OSError("busy media")
+        return original(path)
+
+    monkeypatch.setattr(store, "_remove_tree", fail)
+    second = publish_retention_version(source, "delete-second")
+    work = store.read(first["public_id"])
+    assert work["published_versions"] == [second["version"]]
+    assert work["pending_cleanup"] == [first["version"]]
+    assert store.public(first["public_id"])["version"] == second["version"]
+    restarted = PublicationStore(store.root, output_dir=output)
+    restarted.prune_drafts(first["public_id"])
+    assert restarted.read(first["public_id"])["pending_cleanup"] == []
+    assert not store.media_directory(first["public_id"], first["version"]).exists()
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "invalid", ""])
+def test_invalid_publication_retention_falls_back_to_ten(source, monkeypatch, value):
+    monkeypatch.setenv("ST_PUBLICATION_RETENTION_LIMIT", value)
+    assert PublicationStore(source[0].root, output_dir=source[1]).retention_limit == 10
+
+
+def test_author_presentation_exposes_configured_retention(source, monkeypatch):
+    from novelvideo.api.routes.story_publications import presentation
+
+    monkeypatch.setenv("ST_PUBLICATION_RETENTION_LIMIT", "5")
+    store = PublicationStore(source[0].root, output_dir=source[1])
+    result = presentation(store, store.work("owner", "p"))
+    assert result["retention_limit"] == 5
+
+
+@pytest.mark.parametrize("replacement", ["empty", "same_contents"])
+def test_old_preparation_cannot_modify_recreated_project(source, monkeypatch, replacement):
+    import asyncio
+    import shutil
+    from types import SimpleNamespace
+    from novelvideo.interactive_story import publication
+    from novelvideo.interactive_story.publication_storage import project_store, detach_project_publications
+
+    legacy, output, _, body = source
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(legacy.root))
+    state = output.parent / "state"
+    state.mkdir()
+    store = project_store("p", state, output)
+    pending = store.prepare("owner", state, output, "p", body)
+    record = SimpleNamespace(id="p", state_dir=str(state), output_dir=str(output))
+    def detach(record):
+        for root in (state, output):
+            root.rename(root.with_name(root.name + "-removed"))
+        return []
+    asyncio.run(detach_project_publications(record, detach, lambda _: None, validate=lambda _: None))
+    for root in (state, output):
+        if replacement == "same_contents":
+            shutil.copytree(root.with_name(root.name + "-removed"), root)
+        else:
+            root.mkdir()
+        (root / "new-project-marker").write_text("new project")
+    def unexpected_copy(*args, **kwargs):
+        pytest.fail("stale worker must not start either OSS or filesystem copy")
+    monkeypatch.setattr(publication, "copy_project_file", unexpected_copy)
+    before = {str(p): p.read_bytes() for root in (state, output) for p in root.rglob("*") if p.is_file()}
+    store.finish(pending)
+    after = {str(p): p.read_bytes() for root in (state, output) for p in root.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_queued_worker_does_not_open_job_in_rebuilt_project(source, monkeypatch):
+    import shutil
+    from novelvideo.interactive_story.publication_storage import project_store
+
+    legacy, output, _, body = source
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(legacy.root))
+    state = output.parent / "state"
+    state.mkdir()
+    store = project_store("p", state, output)
+    pending = store.prepare("owner", state, output, "p", body)
+    with store.locked():
+        for root in (state, output):
+            old = root.with_name(root.name + "-removed")
+            root.rename(old)
+            shutil.copytree(old, root)
+    before = {str(p): p.read_bytes() for root in (state, output) for p in root.rglob("*") if p.is_file()}
+    store.finish(pending)
+    after = {str(p): p.read_bytes() for root in (state, output) for p in root.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_project_identity_binds_output_when_first_created(tmp_path, monkeypatch):
+    from novelvideo.interactive_story.publication_storage import project_store
+
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(tmp_path / "index"))
+    state, output = tmp_path / "state", tmp_path / "output"
+    state.mkdir()
+    store = project_store("p", state, output)
+    # Metadata-only projects do not need an output directory.
+    store.work("owner", "p")
+    assert not output.exists()
+    output.mkdir()
+    with store.locked():
+        pass
+    output.rename(tmp_path / "old-output")
+    output.mkdir()
+    with pytest.raises(PublicationError) as error:
+        with store.locked():
+            pytest.fail("a replaced output directory must reject the old store")
+    assert error.value.code == "unavailable"
+
+
+def test_cleanup_defers_without_waiting_under_metadata_lock(source, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    store, output, prepared, version = ready(source)
+    reader = PublicationStore(store.root, output_dir=output)
+    media = reader.media_directory(prepared["public_id"], prepared["version"])
+    entered, resume = Event(), Event()
+
+    def hold_media():
+        with store.media_locked():
+            entered.set()
+            assert resume.wait(5)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(hold_media)
+        try:
+            assert entered.wait(5)
+            # Cleanup can be reached from version reconciliation while holding
+            # the metadata lock. It must defer, not wait for the copying worker.
+            with reader.locked():
+                failed = {**version, "status": "failed", "media_cleanup_pending": True}
+                reader._retry_media_cleanup(failed)
+                reader.prune_drafts(prepared["public_id"])
+                assert failed["media_cleanup_pending"]
+                assert media.exists()
+        finally:
+            resume.set()
+            future.result(timeout=5)
+    with reader.locked():
+        reader._retry_media_cleanup(failed)
+    assert not failed.get("media_cleanup_pending")
+    assert not media.exists()
+
+
+@pytest.mark.parametrize("phase", ["mkdir", "copy_failure", "state_read_failure", "cleanup_retry"])
+def test_slow_preparation_media_io_does_not_block_author_queries(source, monkeypatch, phase):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from novelvideo.interactive_story import publication
+    from novelvideo.interactive_story.publication_storage import project_store
+
+    legacy, output, _, body = source
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(legacy.root))
+    state = output.parent / "state"
+    state.mkdir()
+    store = project_store("p", state, output)
+    pending = store.prepare("owner", state, output, "p", body)
+    pid, vid = pending["public_id"], pending["version"]
+    media = store.media_directory(pid, vid)
+    entered, resume = Event(), Event()
+    original_mkdir = Path.mkdir
+    original_remove = store._remove_tree
+    original_version = store.version
+    removals = 0
+
+    def pause():
+        entered.set()
+        assert resume.wait(10)
+
+    def slow_mkdir(path, *args, **kwargs):
+        if path == media and not entered.is_set():
+            pause()
+        return original_mkdir(path, *args, **kwargs)
+
+    def fail_copy(src, dst, **kwargs):
+        dst.write_bytes(b"partial")
+        raise OSError("copy interrupted")
+
+    def slow_remove(path):
+        nonlocal removals
+        if path == media.parent:
+            removals += 1
+            if phase == "cleanup_retry" and removals == 1:
+                raise OSError("temporary cleanup failure")
+            pause()
+        return original_remove(path)
+
+    def fail_initial_read(*args):
+        if not entered.is_set():
+            raise ValueError("unexpected state read failure")
+        return original_version(*args)
+
+    if phase == "mkdir":
+        monkeypatch.setattr(Path, "mkdir", slow_mkdir)
+    else:
+        monkeypatch.setattr(publication, "copy_project_file", fail_copy)
+        monkeypatch.setattr(store, "_remove_tree", slow_remove)
+        if phase == "state_read_failure":
+            media.mkdir(parents=True)
+            (media / "partial.mp4").write_bytes(b"partial")
+            monkeypatch.setattr(store, "version", fail_initial_read)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(store.finish, pending)
+        try:
+            assert entered.wait(5)
+            # Must complete before releasing the slow storage operation.
+            reader = project_store("p", state, output)
+            release = reader.version(pid, vid)
+            assert release["status"] in {"preparing", "failed"}
+            assert not future.done()
+            if phase == "cleanup_retry":
+                newer = reader.prepare(
+                    "owner", state, output, "p", {**body, "request_id": "during-cleanup"}
+                )
+        finally:
+            resume.set()
+            future.result(timeout=10)
+    release = original_version(pid, vid)
+    assert release["status"] == ("ready" if phase == "mkdir" else "failed")
+    assert not release.get("media_cleanup_pending")
+    if phase != "mkdir":
+        assert not media.exists()
+    if phase == "cleanup_retry":
+        # Cleanup must not overwrite the work index captured before this prepare.
+        assert newer["version"] in reader.read(pid)["versions"]
+        assert reader.version(pid, newer["version"])["status"] == "preparing"
+        reader.finish(newer)
+
+
+@pytest.mark.parametrize("operation", ["prune", "activate"])
+@pytest.mark.parametrize("slow_path", ["media", "state"])
+def test_slow_retired_version_cleanup_releases_outer_metadata_locks(
+    source, monkeypatch, operation, slow_path
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    store, output, _, body = source
+    first = publish_retention_version(source, "cleanup-first")
+    publish_retention_version(source, "cleanup-second")
+    third = store.prepare("owner", Path("."), output, "p", {**body, "request_id": "cleanup-third"})
+    store.finish(third)
+    pid = first["public_id"]
+    store.retention_limit = 1
+    target = (store.media_directory(pid, first["version"]).parent if slow_path == "media"
+              else store.directory(pid) / first["version"])
+    entered, resume = Event(), Event()
+    original_remove = store._remove_tree
+
+    def slow_remove(path):
+        if path == target:
+            entered.set()
+            assert resume.wait(10)
+        return original_remove(path)
+
+    def execute():
+        if operation == "prune":
+            return store.prune_drafts(pid)
+        return store.activate(pid, "owner", third["version"], True)
+
+    monkeypatch.setattr(store, "_remove_tree", slow_remove)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(execute)
+        try:
+            assert entered.wait(5)
+            reader = PublicationStore(store.root, output_dir=output)
+            with reader.locked():
+                work = reader.owned(pid, "owner")
+                assert first["version"] not in work["versions"]
+                assert first["version"] in work["pending_cleanup"]
+                assert reader.version(pid, work["active_version"])["status"] == "ready"
+            assert not future.done()
+            # Both mutations must survive cleanup's final work.json update.
+            active = work["active_version"]
+            reader.activate(pid, "owner", active, False)
+            newer = reader.prepare("owner", Path("."), output, "p", {**body, "request_id": "during-retired-cleanup"})
+        finally:
+            resume.set()
+            future.result(timeout=10)
+    work = store.read(pid)
+    assert work["active_version"] == active
+    assert work["listed"] is False
+    assert newer["version"] in work["versions"]
+    assert first["version"] not in work["pending_cleanup"]
+    assert not target.exists()
+    assert store.media_directory(pid, active).exists()
+    reader.finish(newer)
+
+
+def test_retired_cleanup_defers_when_explicit_caller_holds_metadata_lock(source, monkeypatch):
+    store = source[0]
+    first = publish_retention_version(source, "outer-first")
+    publish_retention_version(source, "outer-second")
+    pid = first["public_id"]
+    store.retention_limit = 1
+    before = store.read(pid)
+    with monkeypatch.context() as patch:
+        def unexpected_remove(path):
+            pytest.fail("cleanup must defer while a caller holds the metadata lock")
+        patch.setattr(store, "_remove_tree", unexpected_remove)
+        with store.locked():
+            store.prune_drafts(pid)
+            assert store.read(pid) == before
+    store.prune_drafts(pid)
+    assert first["version"] not in store.read(pid)["versions"]
+    assert not store.media_directory(pid, first["version"]).exists()
+
+
+def test_pruning_abandoned_job_does_not_clean_media_under_metadata_lock(source, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from novelvideo.interactive_story import preparation_lease
+
+    store, output, _, body = source
+    pending = store.prepare("owner", Path("."), output, "p", body)
+    pid, vid = pending["public_id"], pending["version"]
+    directory = store.directory(pid) / vid
+    media = store.media_directory(pid, vid)
+    media.mkdir(parents=True)
+    (media / "partial.mp4").write_bytes(b"partial")
+    preparation_lease.release(directory)
+    entered, resume = Event(), Event()
+    original_remove = store._remove_tree
+
+    def slow_remove(path):
+        if path == media.parent:
+            entered.set()
+            assert resume.wait(10)
+        return original_remove(path)
+
+    monkeypatch.setattr(store, "_remove_tree", slow_remove)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(store.prune_drafts, pid)
+        try:
+            assert entered.wait(5)
+            reader = PublicationStore(store.root, output_dir=output)
+            with reader.locked():
+                assert reader.owned(pid, "owner")["public_id"] == pid
+                assert reader.version(pid, vid)["error"] == "publication_interrupted"
+            assert not future.done()
+        finally:
+            resume.set()
+            future.result(timeout=10)
+    release = store.version(pid, vid)
+    assert release["status"] == "failed"
+    assert not release.get("media_cleanup_pending")
+    assert not media.exists()
+    assert not (directory / "job.json").exists()
+
+
+def test_previously_edited_version_keeps_video_and_cover_assets_after_editor_withdrawal(source):
+    store, _, prepared, release = ready(source)
+    pid, vid = prepared["public_id"], prepared["version"]
+    store.activate(pid, "owner", vid, True)
+    cover = "legacy-edited-cover.png"
+    media = store.media_directory(pid, vid)
+    (media / cover).write_bytes(b"cover")
+    with store.locked():
+        work = store.read(pid)
+        work["publication_details"][vid].update({
+            "title": "Previously edited title",
+            "cover": f"/api/v1/public-stories/{pid}/versions/{vid}/media/{cover}",
+            "assets": {cover: cover},
+        })
+        store.write(store.directory(pid) / "work.json", work)
+    public = store.public(pid)
+    assert public["title"] == "Previously edited title"
+    assert public["assets"] == {**release["assets"], cover: cover}
+    assert all((media / asset).exists() for asset in public["assets"].values())
+
+
+@pytest.mark.parametrize("removal_fails", [False, True])
+def test_publication_http_response_precedes_slow_background_cleanup(
+    publication_api, monkeypatch, removal_fails
+):
+    import asyncio
+    from threading import Event
+    from novelvideo.interactive_story.publication_storage import project_store
+
+    api = publication_api
+    auth = api.headers(["projects:read", "projects:lifecycle"])
+    releases = []
+    for i in range(3):
+        response = api.client.post(
+            api.path + "/prepare", headers=auth,
+            json={**api.body, "request_id": f"background-{i}"},
+        )
+        assert response.status_code == 200, response.text
+        release = response.json()["data"]
+        releases.append(release)
+        if i < 2:
+            response = api.client.post(
+                f"{api.path}/{release['public_id']}/activate", headers=auth,
+                json={"version": release["version"], "listed": True},
+            )
+            assert response.status_code == 200, response.text
+    monkeypatch.setenv("ST_PUBLICATION_RETENTION_LIMIT", "1")
+    store = project_store("p", api.state, api.output)
+    pid = releases[0]["public_id"]
+    target = store.media_directory(pid, releases[0]["version"]).parent
+    entered, resume = Event(), Event()
+    original_remove = PublicationStore._remove_tree
+
+    def slow_remove(path):
+        if path == target:
+            entered.set()
+            assert resume.wait(10)
+            if removal_fails:
+                raise OSError("temporary media deletion failure")
+        original_remove(path)
+
+    monkeypatch.setattr(PublicationStore, "_remove_tree", staticmethod(slow_remove))
+    path = f"{api.path}/{pid}/activate"
+    payload = json.dumps({"version": releases[2]["version"], "listed": True}).encode()
+
+    async def request():
+        # TestClient/ASGITransport wait for background tasks as well as the
+        # response. Observe actual ASGI response messages to model the browser.
+        sent = asyncio.Event()
+        messages = []
+        scope = {
+            "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+            "method": "POST", "scheme": "http", "path": path,
+            "raw_path": path.encode(), "query_string": b"", "root_path": "",
+            "server": ("testserver", 80), "client": ("127.0.0.1", 1234),
+            "headers": [(b"content-type", b"application/json"),
+                        (b"authorization", auth["Authorization"].encode())],
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": payload, "more_body": False}
+
+        async def send(message):
+            messages.append(message)
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                sent.set()
+
+        task = asyncio.create_task(api.client.app(scope, receive, send))
+        try:
+            await asyncio.wait_for(sent.wait(), timeout=2)
+            assert await asyncio.to_thread(entered.wait, 2)
+            assert not task.done(), "cleanup must still be paused after the response"
+            assert next(m for m in messages if m["type"] == "http.response.start")["status"] == 200
+            result = json.loads(b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body"))
+            assert result["ok"] is True
+            expected = releases[2]["version"]
+            assert result["data"]["active_version"] == expected
+            assert any(v["version"] == releases[2]["version"] and v["published"] for v in result["data"]["versions"])
+            # The response's successful mutation is durable before deletion ends.
+            assert store.read(pid)["active_version"] == expected
+        finally:
+            resume.set()
+            await asyncio.wait_for(task, timeout=10)
+
+    asyncio.run(request())
+    if removal_fails:
+        assert releases[0]["version"] in store.read(pid)["pending_cleanup"]
+        assert target.exists()
+        monkeypatch.setattr(PublicationStore, "_remove_tree", staticmethod(original_remove))
+        restarted = project_store("p", api.state, api.output)
+        restarted.prune_drafts(pid)
+    assert not target.exists()
+    assert store.read(pid)["pending_cleanup"] == []
+
+
+def test_delayed_background_cleanup_cannot_touch_rebuilt_project(source, monkeypatch):
+    import asyncio
+    import shutil
+    from types import SimpleNamespace
+    from novelvideo.interactive_story.publication_storage import (
+        project_store, detach_project_publications,
+    )
+
+    legacy, output, _, body = source
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(legacy.root))
+    state = output.parent / "state"
+    state.mkdir()
+    store = project_store("p", state, output)
+    pending = store.prepare("owner", state, output, "p", body)
+    store.finish(pending)
+    pid = pending["public_id"]
+    store.activate(pid, "owner", pending["version"], True, cleanup=False)
+    orphan = "a" * 32
+    with store.locked():
+        work = store.read(pid)
+        work["pending_cleanup"] = [orphan]
+        store.write(store.directory(pid) / "work.json", work)
+        media = store.media_directory(pid, orphan)
+        media.mkdir(parents=True)
+        (media / "keep.mp4").write_bytes(b"new project's media")
+    record = SimpleNamespace(id="p", state_dir=str(state), output_dir=str(output))
+
+    def detach(_record):
+        for root in (state, output):
+            root.rename(root.with_name(root.name + "-removed"))
+        return []
+
+    asyncio.run(detach_project_publications(record, detach, lambda _: None, validate=lambda _: None))
+    for root in (state, output):
+        shutil.copytree(root.with_name(root.name + "-removed"), root)
+    before = {str(p): p.read_bytes() for root in (state, output) for p in root.rglob("*") if p.is_file()}
+    store._prune_best_effort(pid)
+    after = {str(p): p.read_bytes() for root in (state, output) for p in root.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_background_cleanup_retries_after_another_story_copy(source, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from novelvideo.interactive_story import publication
+
+    store, output, _, body = source
+    first = publish_retention_version(source, "b1")
+    second = publish_retention_version(source, "b2")
+    pid = first["public_id"]
+    story_a = store.prepare("another-story", Path("."), output, "p", {**body, "request_id": "a1"})
+    assert story_a["public_id"] != pid
+    store.retention_limit = 1
+    copying, resume, retrying = Event(), Event(), Event()
+    original_copy = publication.copy_project_file
+    original_sleep = publication.time.sleep
+
+    def slow_copy(*args, **kwargs):
+        copying.set()
+        assert resume.wait(10)
+        return original_copy(*args, **kwargs)
+
+    def observe_retry(seconds):
+        retrying.set()
+        original_sleep(seconds)
+
+    monkeypatch.setattr(publication, "copy_project_file", slow_copy)
+    monkeypatch.setattr(publication.time, "sleep", observe_retry)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        copy_task = pool.submit(store.finish, story_a)
+        cleanup_task = None
+        try:
+            assert copying.wait(2)
+            cleanup_task = pool.submit(store._prune_best_effort, pid, wait=True)
+            assert retrying.wait(2)
+            assert not cleanup_task.done()
+            # Metadata queries remain available while cleanup waits for media.
+            def query():
+                with store.locked():
+                    return store.read(pid)
+            assert len(pool.submit(query).result(timeout=1)["published_versions"]) == 2
+        finally:
+            resume.set()
+        copy_task.result(timeout=5)
+        assert cleanup_task is not None
+        cleanup_task.result(timeout=5)
+    assert store.read(pid)["published_versions"] == [second["version"]]
+    assert not store.media_directory(pid, first["version"]).exists()
+
+
+def test_cleanup_retry_revalidates_rebuilt_project(source, monkeypatch):
+    import shutil
+    from contextlib import contextmanager
+    from novelvideo.interactive_story import publication
+
+    store, output, _, _ = source
+    first = publish_retention_version(source, "retry-old")
+    publish_retention_version(source, "retry-new")
+    store.retention_limit = 1
+    original_lock = store.media_locked
+    attempts = 0
+    before = {}
+
+    @contextmanager
+    def busy_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PublicationError("publication_busy", 503)
+        with original_lock(*args, **kwargs):
+            yield
+
+    def rebuild_during_wait(_seconds):
+        original = output.with_name("removed-output")
+        output.rename(original)
+        shutil.copytree(original, output)
+        before.update({str(p): p.read_bytes() for p in output.rglob("*") if p.is_file()})
+
+    monkeypatch.setattr(store, "media_locked", busy_once)
+    monkeypatch.setattr(publication.time, "sleep", rebuild_during_wait)
+    with pytest.raises(PublicationError) as caught:
+        store.prune_drafts(first["public_id"], wait=True)
+    assert caught.value.code == "unavailable"
+    assert attempts == 2
+    assert before == {str(p): p.read_bytes() for p in output.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("query", ["version", "presentation"])
+def test_interrupted_draft_query_defers_slow_cleanup(source, monkeypatch, query):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from novelvideo.api.routes.story_publications import presentation
+    from novelvideo.interactive_story import preparation_lease
+    from novelvideo.interactive_story.publication_storage import cleanup_publication
+
+    store, output, _, body = source
+    pending = store.prepare("owner", Path("."), output, "p", body)
+    pid, vid = pending["public_id"], pending["version"]
+    directory = store.directory(pid) / vid
+    media = store.media_directory(pid, vid)
+    media.mkdir(parents=True)
+    (media / "partial.mp4").write_bytes(b"partial")
+    preparation_lease.release(directory)
+    entered, resume = Event(), Event()
+    remove = store._remove_tree
+
+    def slow_remove(path):
+        entered.set()
+        assert resume.wait(10)
+        remove(path)
+
+    monkeypatch.setattr(store, "_remove_tree", slow_remove)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        operation = (lambda: store.version(pid, vid)) if query == "version" else (lambda: presentation(store, store.read(pid)))
+        try:
+            result = pool.submit(operation).result(timeout=2)
+            assert not entered.is_set()
+            assert store.cleanup_requested
+            release = result if query == "version" else result["versions"][0]
+            assert release["error"] == "publication_interrupted"
+            cleanup = pool.submit(asyncio.run, cleanup_publication(store, pid))
+            assert entered.wait(2)
+            reader = PublicationStore(store.root, output_dir=output)
+            with reader.locked():
+                assert reader.version(pid, vid)["status"] == "failed"
+            assert not cleanup.done()
+        finally:
+            resume.set()
+        cleanup.result(timeout=5)
+    assert not media.exists()
+    assert not store.version(pid, vid).get("media_cleanup_pending")
+
+
+def test_async_cleanup_waiters_leave_shared_thread_pool_available(source, monkeypatch):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    import anyio
+    from starlette.background import BackgroundTask
+    from novelvideo.interactive_story.publication_storage import cleanup_publication
+
+    store, _, _, _ = source
+    first = publish_retention_version(source, "pool-one")
+    second = publish_retention_version(source, "pool-two")
+    store.retention_limit = 1
+    entered, resume = Event(), Event()
+
+    def other_story_copy():
+        with store.media_locked():
+            entered.set()
+            assert resume.wait(15)
+
+    async def check():
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        # More waiting cleanups than the actual default pool capacity.
+        count = limiter.total_tokens + 1
+        attempts = 0
+        attempted = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        original = store.prune_once
+
+        def record_attempt(pid):
+            def record():
+                nonlocal attempts
+                attempts += 1
+                if attempts >= count:
+                    attempted.set()
+            loop.call_soon_threadsafe(record)
+            return original(pid)
+
+        monkeypatch.setattr(store, "prune_once", record_attempt)
+        tasks = [asyncio.create_task(BackgroundTask(cleanup_publication, store, first["public_id"])()) for _ in range(count)]
+        try:
+            await asyncio.wait_for(attempted.wait(), 3)
+            assert all(not task.done() for task in tasks)
+            assert await asyncio.wait_for(anyio.to_thread.run_sync(lambda: "file response"), 1) == "file response"
+        finally:
+            resume.set()
+            await asyncio.wait_for(asyncio.gather(*tasks), 10)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        copying = pool.submit(other_story_copy)
+        assert entered.wait(2)
+        try:
+            asyncio.run(check())
+        finally:
+            resume.set()
+        copying.result(timeout=2)
+    assert store.read(first["public_id"])["published_versions"] == [second["version"]]
+
+
+@pytest.mark.parametrize("endpoint", ["list", "version"])
+def test_interrupted_query_schedules_background_cleanup(publication_api, monkeypatch, endpoint):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from novelvideo.api.routes import story_publications as routes
+    from novelvideo.interactive_story import preparation_lease
+    from novelvideo.interactive_story.publication_storage import project_store
+
+    api = publication_api
+    monkeypatch.setattr(PublicationStore, "finish", lambda *_, **__: None)
+    response = api.client.post(api.path + "/prepare", json=api.body)
+    assert response.status_code == 200
+    pending = response.json()["data"]
+    store = project_store("p", api.state, api.output)
+    pid, vid = pending["public_id"], pending["version"]
+    preparation_lease.release(store.directory(pid) / vid)
+    cleanup = AsyncMock()
+    monkeypatch.setattr(routes, "cleanup_publication", cleanup)
+    path = api.path if endpoint == "list" else f"{api.path}/{pid}/versions/{vid}"
+    response = api.client.get(path)
+    assert response.status_code == 200
+    data = response.json()["data"]
+    release = data["versions"][0] if endpoint == "list" else data
+    assert release["error"] == "publication_interrupted"
+    cleanup.assert_awaited_once()
+    assert cleanup.call_args.args[1] == pid
+    # Execute the scheduled operation to verify the durable marker clears.
+    from novelvideo.interactive_story.publication_storage import cleanup_publication
+    asyncio.run(cleanup_publication(store, pid))
+    assert not store.version(pid, vid).get("media_cleanup_pending")
+
+
+def test_slow_copy_and_queued_preparations_do_not_block_other_requests(source, monkeypatch):
+    import asyncio
+    from threading import Event
+    import anyio
+    import httpx
+    from starlette.applications import Starlette
+    from starlette.background import BackgroundTask
+    from starlette.responses import FileResponse, JSONResponse
+    from starlette.routing import Route
+    from novelvideo.interactive_story.publication_storage import finish_publication
+
+    store, output, _, body = source
+    copying, resume = Event(), Event()
+    completed = []
+    original_copy = store._finish
+    original_finish = store.finish
+
+    def slow_copy(prepared):
+        if not copying.is_set():
+            copying.set()
+            assert resume.wait(20)
+        original_copy(prepared)
+
+    def record_finish(prepared, **kwargs):
+        original_finish(prepared, **kwargs)
+        completed.append(prepared["version"])
+
+    monkeypatch.setattr(store, "_finish", slow_copy)
+    monkeypatch.setattr(store, "finish", record_finish)
+
+    async def check():
+        default_limiter = anyio.to_thread.current_default_thread_limiter()
+        jobs = [store.prepare("owner", Path("."), output, "p", {
+            **body, "request_id": f"isolated-copy-{i}",
+        }) for i in range(default_limiter.total_tokens + 1)]
+        pid = jobs[0]["public_id"]
+
+        def author_query(_request):
+            with store.locked():
+                statuses = [store.version(pid, job["version"])["status"] for job in jobs]
+            return JSONResponse(statuses)
+
+        app = Starlette(routes=[
+            Route("/query", author_query),
+            Route("/media", lambda _: FileResponse(output / "clip.mp4")),
+        ])
+        tasks = [asyncio.create_task(BackgroundTask(finish_publication, store, job)()) for job in jobs]
+        try:
+            async with asyncio.timeout(3):
+                while not copying.is_set():
+                    await asyncio.sleep(.01)
+            # A bounded number of copy workers run; the rest await admission.
+            from novelvideo.interactive_story.publication_storage import _media_limiter_var
+            limiter = _media_limiter_var.get()
+            async with asyncio.timeout(3):
+                while limiter.statistics().tasks_waiting < len(jobs) - limiter.total_tokens:
+                    await asyncio.sleep(.01)
+            assert default_limiter.borrowed_tokens == 0
+            assert all(not task.done() for task in tasks)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                query, media = await asyncio.wait_for(
+                    asyncio.gather(client.get("/query"), client.get("/media")), timeout=2,
+                )
+            assert query.status_code == 200
+            assert query.json() == ["preparing"] * len(jobs)
+            assert media.status_code == 200
+            assert media.content == b"original media"
+            assert not resume.is_set()
+        finally:
+            resume.set()
+            await asyncio.wait_for(asyncio.gather(*tasks), 20)
+        assert set(completed) == {job["version"] for job in jobs}
+        assert store.version(pid, jobs[-1]["version"])["status"] == "ready"
+
+    asyncio.run(check())
+
+
+def test_prepare_route_uses_isolated_copy_worker(publication_api, monkeypatch):
+    from unittest.mock import AsyncMock
+    from novelvideo.api.routes import story_publications as routes
+
+    worker = AsyncMock(wraps=routes.finish_publication)
+    monkeypatch.setattr(routes, "finish_publication", worker)
+    api = publication_api
+    response = api.client.post(api.path + "/prepare", json=api.body)
+    assert response.status_code == 200
+    worker.assert_awaited_once()
+    prepared = response.json()["data"]
+    response = api.client.get(f"{api.path}/{prepared['public_id']}/versions/{prepared['version']}")
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "ready"
+
+
+def test_queued_copy_keeps_ownership_until_completion_after_cancellation(source, monkeypatch):
+    import asyncio
+    from threading import Event
+    from novelvideo.interactive_story.publication_storage import finish_publication, _media_limiter_var
+
+    store, output, _, body = source
+    resume = Event()
+    original = store.finish
+
+    def paused_finish(prepared, **kwargs):
+        assert resume.wait(15)
+        original(prepared, **kwargs)
+
+    monkeypatch.setattr(store, "finish", paused_finish)
+
+    async def check():
+        jobs = [store.prepare("owner", Path("."), output, "p", {
+            **body, "request_id": f"cancel-queue-{i}",
+        }) for i in range(5)]
+        running = [asyncio.create_task(finish_publication(store, job)) for job in jobs[:4]]
+        queued = None
+        try:
+            async with asyncio.timeout(3):
+                while _media_limiter_var.get(None) is None or _media_limiter_var.get().borrowed_tokens < 4:
+                    await asyncio.sleep(.01)
+            queued = asyncio.create_task(finish_publication(store, jobs[-1]))
+            async with asyncio.timeout(3):
+                while _media_limiter_var.get().statistics().tasks_waiting != 1:
+                    await asyncio.sleep(.01)
+            queued.cancel()
+            await asyncio.sleep(.05)
+            assert not queued.done()
+            assert store.version(jobs[-1]["public_id"], jobs[-1]["version"])["status"] == "preparing"
+        finally:
+            resume.set()
+            await asyncio.wait_for(asyncio.gather(*running), 10)
+            if queued is not None:
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(queued, 10)
+        assert store.version(jobs[-1]["public_id"], jobs[-1]["version"])["status"] == "ready"
+        assert store.read(jobs[-1]["public_id"])["versions"] == [jobs[-1]["version"]]
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("background", [False, True])
+def test_finished_draft_cleanup_survives_another_story_copy(source, monkeypatch, background):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from novelvideo.interactive_story.publication_storage import finish_publication
+
+    store, output, _, body = source
+    first = store.prepare("owner", Path("."), output, "p", body)
+    store.finish(first)
+    latest = store.prepare("owner", Path("."), output, "p", {**body, "request_id": "latest"})
+    other = store.prepare("other-story", Path("."), output, "p", {**body, "request_id": "other"})
+    copied, start_cleanup, copying, resume, retried = (Event() for _ in range(5))
+    original_finish = store._finish_owned
+    original_copy = store._finish
+    original_prune = store.prune_once
+
+    def pause_before_cleanup(prepared):
+        original_finish(prepared)
+        if prepared["version"] == latest["version"]:
+            copied.set()
+            assert start_cleanup.wait(10)
+
+    def slow_other(prepared):
+        if prepared["version"] == other["version"]:
+            copying.set()
+            assert resume.wait(10)
+        original_copy(prepared)
+
+    def observe_retry(public_id):
+        try:
+            return original_prune(public_id)
+        except PublicationError as exc:
+            if public_id == first["public_id"] and exc.code == "publication_busy":
+                retried.set()
+            raise
+
+    monkeypatch.setattr(store, "_finish_owned", pause_before_cleanup)
+    monkeypatch.setattr(store, "_finish", slow_other)
+    monkeypatch.setattr(store, "prune_once", observe_retry)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        task = pool.submit(asyncio.run, finish_publication(store, latest)) if background else pool.submit(store.finish, latest)
+        competitor = None
+        try:
+            assert copied.wait(5)
+            competitor = pool.submit(store.finish, other)
+            assert copying.wait(5)
+            start_cleanup.set()
+            assert retried.wait(5)
+            assert not task.done()
+        finally:
+            start_cleanup.set()
+            resume.set()
+        task.result(timeout=10)
+        if competitor is not None:
+            competitor.result(timeout=10)
+    assert store.read(first["public_id"])["versions"] == [latest["version"]]
+    assert not store.media_directory(first["public_id"], first["version"]).parent.exists()
+
+
+def test_slow_media_deletion_does_not_exhaust_request_threads(source, monkeypatch):
+    import asyncio
+    from threading import Event
+    import anyio
+    from novelvideo.interactive_story.publication_storage import cleanup_publication
+
+    store, output, _, body = source
+    stores = [store, PublicationStore(store.root.with_name("other-project"), output_dir=output)]
+    public_ids = []
+    for current in stores:
+        current.retention_limit = 1
+        for i in range(2):
+            job = current.prepare("owner", Path("."), output, "p", {**body, "request_id": str(i)})
+            current.finish(job)
+            current.activate(job["public_id"], "owner", job["version"], True, cleanup=False)
+        public_ids.append(job["public_id"])
+    resume = Event()
+    entered = [Event() for _ in stores]
+    for i, current in enumerate(stores):
+        remove = current._remove_tree
+
+        def slow_remove(path, i=i, remove=remove):
+            entered[i].set()
+            assert resume.wait(10)
+            remove(path)
+
+        monkeypatch.setattr(current, "_remove_tree", slow_remove)
+
+    async def check():
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        previous = limiter.total_tokens
+        limiter.total_tokens = len(stores)
+        tasks = [asyncio.create_task(cleanup_publication(current, pid)) for current, pid in zip(stores, public_ids)]
+        try:
+            async with asyncio.timeout(5):
+                while not all(event.is_set() for event in entered):
+                    await asyncio.sleep(.01)
+            assert limiter.borrowed_tokens == 0
+            assert await asyncio.wait_for(anyio.to_thread.run_sync(lambda: "file response"), 1) == "file response"
+        finally:
+            resume.set()
+            await asyncio.wait_for(asyncio.gather(*tasks), 10)
+            limiter.total_tokens = previous
+    asyncio.run(check())
+    for current, pid in zip(stores, public_ids):
+        assert len(current.read(pid)["published_versions"]) == 1
+        assert current.read(pid)["pending_cleanup"] == []
