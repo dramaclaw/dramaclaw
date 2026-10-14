@@ -408,17 +408,56 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v27"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v28"
 
 
-def _codex_developer_instructions(tool_mode: str | None) -> str:
+def _codex_agent_skill_locator_instructions(workspace: Path) -> str:
+    skill_path = (
+        workspace / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
+    ).resolve()
+    if not skill_path.is_file():
+        raise RuntimeError("managed dramaclaw-workflows Agent Skill is unavailable")
+    locators = {
+        "agent_skills": [
+            {
+                "name": "dramaclaw-workflows",
+                "server": "dramaclaw",
+                "uri": skill_path.as_uri(),
+            }
+        ],
+        "workflow_catalog_server": "dramaclaw_workflows",
+    }
+    return (
+        "\n[DRAMACLAW_AGENT_SKILL_LOCATORS]\n"
+        + json.dumps(locators, ensure_ascii=False, separators=(",", ":"))
+        + "\n[/DRAMACLAW_AGENT_SKILL_LOCATORS]\n"
+        "This locator block is authoritative. To load a listed Agent Skill with "
+        "read_mcp_resource, pass the exact server and uri from the same entry; never infer "
+        "an MCP server from the Skill name or directory. workflow_catalog_server is only "
+        "for Workflow Catalog discovery and compilation. "
+    )
+
+
+def _codex_developer_instructions(
+    tool_mode: str | None,
+    *,
+    workspace: Path | None = None,
+) -> str:
     if str(tool_mode or "").strip() == "freezone_canvas":
         from novelvideo.freezone.workflow_planning import WORKFLOW_PLANNING_INSTRUCTIONS
 
-        return _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS + (
-            " " + WORKFLOW_PLANNING_INSTRUCTIONS +
-            " " + CANVAS_FINAL_RESPONSE_INSTRUCTIONS +
-            " Your final response MUST be a JSON object, not plain text or Markdown. "
+        skill_locators = (
+            _codex_agent_skill_locator_instructions(workspace)
+            if workspace is not None
+            else ""
+        )
+        instructions_prefix = _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS + skill_locators
+        return instructions_prefix + (
+            " "
+            + WORKFLOW_PLANNING_INSTRUCTIONS
+            + " "
+            + CANVAS_FINAL_RESPONSE_INSTRUCTIONS
+            + " Your final response MUST be a JSON object, not plain text or Markdown. "
             "This applies even to greetings and ordinary conversation. "
             'For a greeting, return {"message":"你好！有什么我可以帮你的吗？",'
             '"mode":"read_only","canvas_receipts":[]}. '
@@ -3387,7 +3426,10 @@ def _build_codex_thread(
         env=env,
         model=_codex_model(),
         model_provider=_CODEX_MODEL_PROVIDER,
-        developer_instructions=_codex_developer_instructions(tool_mode),
+        developer_instructions=_codex_developer_instructions(
+            tool_mode,
+            workspace=workspace,
+        ),
         config_overrides=node_config_overrides,
         thread_config_overrides=thread_config_overrides,
         turn_metadata=turn_metadata,
