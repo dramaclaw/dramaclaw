@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Diamond,
+  Eraser,
   Lightbulb,
   Link2,
   Pin,
@@ -31,6 +32,14 @@ export const PREVIZ_TRACK_HEADER_PX = 240;
 
 const ICON_BUTTON =
   'flex h-6 w-6 shrink-0 items-center justify-center rounded text-[#8b93a3] hover:bg-[#2a2f3a] hover:text-[#c7cedb] disabled:opacity-30 disabled:hover:bg-transparent';
+
+/*
+  剃刀、置顶、删除是低频操作：平时藏起来，鼠标停在这一行或焦点落进来才显形。
+  用透明度而不是 display:none——按钮仍在 Tab 序里，键盘走到它时靠 focus-within 现身。
+*/
+const QUIET_ACTIONS =
+  'flex shrink-0 items-center gap-1 opacity-0 transition-opacity ' +
+  'group-hover/track:opacity-100 focus-within:opacity-100';
 
 /*
   「直播」小红标。shrink-0 whitespace-nowrap 不能省：表头挤的时候，中文「直播」两字之间
@@ -149,6 +158,8 @@ export function PrevizTimelineTrack({
   const currentPath = usePrevizStore((state) => pathClipAt(track, state.timelineFrame));
   const pathEditable = currentPath !== undefined && currentPath.points.length > 0;
   const keyframes = keyframeFrames(track);
+  // 一个关键帧都没有时，路径行上四颗按钮全灰、轨槽里也没东西可画，整行只占高度。
+  const hasKeyframes = keyframes.length > 0;
   const descending = [...keyframes].reverse();
   const previous = usePrevizStore((state) => descending.find((at) => at < state.timelineFrame));
   const next = usePrevizStore((state) => keyframes.find((at) => at > state.timelineFrame));
@@ -156,21 +167,26 @@ export function PrevizTimelineTrack({
 
   return (
     <li aria-label={name} className="border-b border-[#1c202a]">
-      <div className="flex h-8 items-stretch">
+      <div className="group/track flex h-8 items-stretch">
         <div
           className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#15181f] pl-1 pr-2"
           style={{ width: PREVIZ_TRACK_HEADER_PX }}
         >
-          <PrevizHoverTip label={expanded ? t('previz.timeline.collapseTrack') : t('previz.timeline.expandTrack')}>
-            <button
-              type="button"
-              className={ICON_BUTTON}
-              aria-label={expanded ? t('previz.timeline.collapseTrack') : t('previz.timeline.expandTrack')}
-              onClick={onToggleExpand}
-            >
-              {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            </button>
-          </PrevizHoverTip>
+          {hasKeyframes ? (
+            <PrevizHoverTip label={expanded ? t('previz.timeline.collapseTrack') : t('previz.timeline.expandTrack')}>
+              <button
+                type="button"
+                className={ICON_BUTTON}
+                aria-label={expanded ? t('previz.timeline.collapseTrack') : t('previz.timeline.expandTrack')}
+                onClick={onToggleExpand}
+              >
+                {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              </button>
+            </PrevizHoverTip>
+          ) : (
+            // 没有路径行可展开时不摆箭头，留出同样的宽度让图标与标题和别的轨道对齐。
+            <span aria-hidden="true" className="h-6 w-6 shrink-0" />
+          )}
           <KindIcon className="h-3.5 w-3.5 shrink-0 text-[#6d7585]" />
           <span className="min-w-0 flex-1 truncate text-xs text-[#c7cedb]">{name}</span>
           {/* 直播标、切换机位、跟拍都只对机位轨有意义，同一个判断管三个。 */}
@@ -256,37 +272,39 @@ export function PrevizTimelineTrack({
               </button>
             </PrevizHoverTip>
           )}
-          <PrevizHoverTip label={t('previz.timeline.razor')}>
-            <button
-              type="button"
-              className={ICON_BUTTON}
-              aria-label={t('previz.timeline.razor')}
-              disabled={!current}
-              onClick={() => current && onSplit(current.id)}
-            >
-              <Scissors className="h-3.5 w-3.5" />
-            </button>
-          </PrevizHoverTip>
-          <PrevizHoverTip label={t('previz.timeline.pinTrack')}>
-            <button
-              type="button"
-              className={ICON_BUTTON}
-              aria-label={t('previz.timeline.pinTrack')}
-              onClick={onPin}
-            >
-              <Pin className="h-3.5 w-3.5" />
-            </button>
-          </PrevizHoverTip>
-          <PrevizHoverTip label={t('previz.timeline.removeTrack')}>
-            <button
-              type="button"
-              className={ICON_BUTTON}
-              aria-label={t('previz.timeline.removeTrack')}
-              onClick={onRemove}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </PrevizHoverTip>
+          <div className={QUIET_ACTIONS}>
+            <PrevizHoverTip label={t('previz.timeline.razor')}>
+              <button
+                type="button"
+                className={ICON_BUTTON}
+                aria-label={t('previz.timeline.razor')}
+                disabled={!current}
+                onClick={() => current && onSplit(current.id)}
+              >
+                <Scissors className="h-3.5 w-3.5" />
+              </button>
+            </PrevizHoverTip>
+            <PrevizHoverTip label={t('previz.timeline.pinTrack')}>
+              <button
+                type="button"
+                className={ICON_BUTTON}
+                aria-label={t('previz.timeline.pinTrack')}
+                onClick={onPin}
+              >
+                <Pin className="h-3.5 w-3.5" />
+              </button>
+            </PrevizHoverTip>
+            <PrevizHoverTip label={t('previz.timeline.removeTrack')}>
+              <button
+                type="button"
+                className={ICON_BUTTON}
+                aria-label={t('previz.timeline.removeTrack')}
+                onClick={onRemove}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </PrevizHoverTip>
+          </div>
         </div>
 
         <div className="relative shrink-0" style={{ width: laneWidthPx }}>
@@ -316,7 +334,7 @@ export function PrevizTimelineTrack({
         </div>
       </div>
 
-      {expanded && (
+      {expanded && hasKeyframes && (
         <div className="flex h-7 items-stretch bg-[#12151b]">
           <div
             className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#12151b] pl-6 pr-2"
@@ -366,7 +384,8 @@ export function PrevizTimelineTrack({
                 disabled={!pathEditable}
                 onClick={() => currentPath && onClearPath(currentPath.id)}
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                {/* 不用垃圾桶：上一行的垃圾桶是删整条轨道，两颗长得一样就会点错。 */}
+                <Eraser className="h-3.5 w-3.5" />
               </button>
             </PrevizHoverTip>
           </div>

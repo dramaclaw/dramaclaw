@@ -472,7 +472,7 @@ describe('PrevizTimeline 面板高度', () => {
   it('只把默认高度当上限用，不一上来就撑满', () => {
     render(<PrevizTimeline />);
 
-    // 一条轨道的场景本来就该只占两行；先撑到 224 再说等于白白吃掉视口。
+    // 一条轨道的场景本来就该只占两行；先撑到默认高度再说等于白白吃掉视口。
     expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({
       maxHeight: `${PREVIZ_TIMELINE_HEIGHT.default}px`,
     });
@@ -485,7 +485,7 @@ describe('PrevizTimeline 面板高度', () => {
 
     const tracks = screen.getByTestId('previz-timeline-tracks');
     // 用户亲手拖出来的空白是他自己要的（腾地方往里加轨道），不该再被内容高度收回去。
-    expect(tracks).toHaveStyle({ height: '324px' });
+    expect(tracks).toHaveStyle({ height: `${PREVIZ_TIMELINE_HEIGHT.default + 100}px` });
     expect(tracks.style.maxHeight).toBe('');
   });
 
@@ -509,7 +509,7 @@ describe('PrevizTimeline 面板高度', () => {
     fireEvent.pointerMove(window, { clientY: 0 });
 
     // 监听没摘干净的话，松手后指针每动一下面板还在长——而这时用户以为自己在操作别处。
-    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({ height: '324px' });
+    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({ height: `${PREVIZ_TIMELINE_HEIGHT.default + 100}px` });
   });
 
   it('上下键也能调，触控板上精确到几像素太难受', async () => {
@@ -519,10 +519,14 @@ describe('PrevizTimeline 面板高度', () => {
     const handle = screen.getByTestId('previz-timeline-resize');
     handle.focus();
     await user.keyboard('{ArrowUp}');
-    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({ height: '248px' });
+    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({
+      height: `${PREVIZ_TIMELINE_HEIGHT.default + 24}px`,
+    });
 
     await user.keyboard('{ArrowDown}{ArrowDown}');
-    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({ height: '200px' });
+    expect(screen.getByTestId('previz-timeline-tracks')).toHaveStyle({
+      height: `${PREVIZ_TIMELINE_HEIGHT.default - 24}px`,
+    });
   });
 
   it('上限由窗口高度与绝对值一起管', () => {

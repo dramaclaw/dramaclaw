@@ -43,12 +43,13 @@ const BUTTON_CLASS =
 const ZOOM_STEP = 1.5;
 
 /**
- * 轨道区高度的可调范围，单位像素。默认值就是原来那个 `max-h-56`。
+ * 轨道区高度的可调范围，单位像素。默认 280：标尺、镜头轨、音频轨三行固定，剩下的
+ * 够两个带路径和动作的人物加一台机位不用滚动。
  *
  * 下界留 96：再矮连一条轨道加它下面那行运动路径都露不全，拖到底等于把面板关掉，而
  * 关面板另有其人（左栏最下面那颗开关）。
  */
-export const PREVIZ_TIMELINE_HEIGHT: PrevizRange = { min: 96, max: 560, default: 224 };
+export const PREVIZ_TIMELINE_HEIGHT: PrevizRange = { min: 96, max: 560, default: 280 };
 
 /** 键盘每按一下调多少像素。 */
 const RESIZE_STEP_PX = 24;
@@ -415,21 +416,23 @@ export function PrevizTimeline({
         >
           <div className="relative min-w-max">
             {/*
-              三层压着的顺序是有讲究的：头列（30）> 播放头（20）> 标尺与轨槽（10）。
-              头列要在最上面，横向滚动时片段得从它底下穿过去；播放头要压过标尺，
-              不然顶上那个把手看不见——而参照实现里正是抓着那个把手拖的。
+              标尺行（40）> 头列（30）> 播放头（20）> 轨槽。标尺行钉在顶上，纵向滚动时
+              下面每一行连同头列都得从它底下穿过去，所以它比头列还高；头列压着播放头，
+              横向滚动时片段和播放头从头列底下穿过去。这样播放头那根线就被标尺盖住了，
+              把手于是画在标尺自己的轨槽里——参照实现里正是抓着那个把手拖的。
             */}
-            <div className="sticky top-0 z-10 flex items-stretch bg-[#15181f]">
+            <div className="sticky top-0 z-40 flex items-stretch bg-[#15181f]">
               <div
                 className="sticky left-0 z-30 shrink-0 border-b border-[#232833] bg-[#15181f]"
                 style={{ width: PREVIZ_TRACK_HEADER_PX }}
               />
               <div
-                className="shrink-0 cursor-ew-resize"
+                className="relative shrink-0 cursor-ew-resize"
                 style={{ width: laneWidthPx }}
                 onPointerDown={scrubFrom}
               >
                 <PrevizTimeRuler seconds={laneWidthPx / zoom} pxPerSecond={zoom} />
+                <PlayheadHandle pxPerFrame={pxPerFrame} />
               </div>
             </div>
 
@@ -559,7 +562,7 @@ export function PrevizTimeline({
               onAddUpstream={(source) => void audioImport.addUpstream(source)}
             />
 
-            {/* 播放头：一条贯穿所有轨道的竖线，压在头列下面（头列 z 更高）。 */}
+            {/* 播放头：一条贯穿所有轨道的竖线，压在头列与标尺行下面（它们 z 更高）。 */}
             <div
               className="pointer-events-none absolute inset-y-0 z-20"
               style={{ left: PREVIZ_TRACK_HEADER_PX, width: laneWidthPx }}
@@ -618,8 +621,18 @@ function PlayheadLine({ pxPerFrame }: { pxPerFrame: number }) {
       data-testid="previz-playhead"
       className="absolute inset-y-0 w-px bg-[#e8ecf5]"
       style={{ left: frame * pxPerFrame }}
-    >
-      <span className="absolute -left-[5px] top-0 h-2.5 w-2.5 rounded-b-sm bg-[#e8ecf5]" />
-    </div>
+    />
+  );
+}
+
+/** 播放头顶上的把手，画在标尺的轨槽里。只是个标记，按下拖动由标尺自己接。 */
+function PlayheadHandle({ pxPerFrame }: { pxPerFrame: number }) {
+  const frame = usePrevizStore((state) => state.timelineFrame);
+  return (
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute top-0 h-2.5 w-2.5 -translate-x-1/2 rounded-b-sm bg-[#e8ecf5]"
+      style={{ left: frame * pxPerFrame }}
+    />
   );
 }

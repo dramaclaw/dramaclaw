@@ -2030,10 +2030,6 @@ export function PrevizEditor({
                 </span>
               )}
 
-              <div className="pointer-events-none absolute bottom-4 left-4 rounded-lg bg-black/45 px-3 py-1.5 text-xs text-white/80">
-                {t("previz.editor.duration", { frames: scene.settings.durationFrames })}
-              </div>
-
               {/*
                 收起/展开的把手。贴视口右边缘、垂直居中：展开时它正好落在侧栏那条左边框
                 上，收起后原地不动——于是「收」和「展」在视觉上是同一颗按钮，不会出现

@@ -9196,7 +9196,6 @@
       "redo": "Redo",
       "description": "Block out a scene in 3D, place cameras, and capture multiple angles",
       "close": "Close Previz Stage",
-      "duration": "Duration {{frames}} frames",
       "hideMonitor": "Hide monitor",
       "showMonitor": "Show monitor",
       "collapsePanels": "Collapse panels",

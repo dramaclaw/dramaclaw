@@ -298,8 +298,29 @@ describe('PrevizTimelineTrack motion path row', () => {
     };
   }
 
-  it('greys the buttons out when the playhead sits on a closeup and nothing else', () => {
+  /** 路径行整行不在：标题、四颗按钮、连同展开箭头。 */
+  function expectNoPathRow() {
+    expect(screen.queryByText('previz.timeline.motionPath')).not.toBeInTheDocument();
+    for (const name of ['insertKeyframe', 'clearPath', 'collapseTrack', 'expandTrack']) {
+      expect(screen.queryByRole('button', { name: `previz.timeline.${name}` })).not.toBeInTheDocument();
+    }
+  }
+
+  it('drops the row when the track only has a closeup', () => {
     const track: PrevizTrack = { id: 't1', objectId: 'cam', clips: [closeup] };
+    usePrevizStore.setState({ timelineFrame: 20 });
+    render(
+      <ul>
+        <PrevizTimelineTrack {...trackProps({ track, expanded: true })} />
+      </ul>,
+    );
+    // 没有关键帧时这一行的按钮全是灰的，留着只占一行高度。
+    expectNoPathRow();
+  });
+
+  it('greys the buttons out when the playhead is outside every path clip', () => {
+    const later: PrevizPathClip = { ...drawn, startFrame: 50, endFrame: 100 };
+    const track: PrevizTrack = { id: 't1', objectId: 'cam', clips: [later] };
     usePrevizStore.setState({ timelineFrame: 20 });
     render(
       <ul>
@@ -330,7 +351,7 @@ describe('PrevizTimelineTrack motion path row', () => {
     expect(onClearPath).toHaveBeenCalledWith('p1');
   });
 
-  it('greys the buttons out on a path clip nobody has drawn yet', () => {
+  it('drops the row on a path clip nobody has drawn yet', () => {
     const track: PrevizTrack = { id: 't1', objectId: 'cam', clips: [{ ...drawn, points: [] }] };
     usePrevizStore.setState({ timelineFrame: 20 });
     render(
@@ -338,9 +359,7 @@ describe('PrevizTimelineTrack motion path row', () => {
         <PrevizTimelineTrack {...trackProps({ track, expanded: true })} />
       </ul>,
     );
-    const { insert, clear } = pathButtons();
-    expect(insert).toBeDisabled();
-    expect(clear).toBeDisabled();
+    expectNoPathRow();
   });
 
   it('keeps the razor on whatever clip the playhead is over', async () => {

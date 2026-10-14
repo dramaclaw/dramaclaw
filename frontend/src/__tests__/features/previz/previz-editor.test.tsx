@@ -741,7 +741,8 @@ describe("PrevizEditor", () => {
     );
 
     expect(screen.getByTestId("previz-canvas")).toBeInTheDocument();
-    expect(screen.getByText("previz.editor.duration:240")).toBeInTheDocument();
+    // 时长只在时间轴工具条上报一次，视口角上不再重复一块。
+    expect(screen.queryByText(/previz\.editor\.duration/)).not.toBeInTheDocument();
   });
 
   it("flushes the current scene when closed", async () => {
