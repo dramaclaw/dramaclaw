@@ -485,7 +485,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--master", default=str(DEFAULT_MASTER))
     parser.add_argument("--reverse", default=str(DEFAULT_REVERSE))
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
-    parser.add_argument("--model", default=os.environ.get(OVERLAP_MODEL_ENV, ""))
+    parser.add_argument(
+        "--model", default=os.environ.get("SCENE_OVERLAP_ANALYSIS_MODEL", "")
+    )
     parser.add_argument("--edge-ratio", type=float, default=0.36)
     return parser.parse_args()
 

@@ -2081,6 +2081,7 @@ src/novelvideo/director_world/pano_sharp.py,Elastic-2.0,2026 SuperTale contribut
 src/novelvideo/director_world/pano_views.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/paths.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/scene_360_builder.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/director_world/scene_analysis_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/scene_overlap_analyzer.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/scene_spatial_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/service.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2858,6 +2859,7 @@ tests/test_running_task_authz_indeterminate.py,Elastic-2.0,2026 SuperTale contri
 tests/test_runtime_env.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_sandbox_linux_probe.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_sandbox_roots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_scene_analysis_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_scene_build_resume.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_scene_environment_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_scene_gallery_backend_removed.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
