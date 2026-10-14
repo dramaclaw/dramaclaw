@@ -37,7 +37,7 @@ def test_builtin_text_recipes_produce_final_deliverables():
     "recipe_id",
     ["sci-fi-survival-shot-video", "anthropomorphic-kungfu-shot-video"],
 )
-def test_voiced_builtin_video_recipes_pass_strict_catalog_validation(recipe_id):
+def test_builtin_video_recipes_leave_audio_to_confirmed_user_choice(recipe_id):
     recipe_path = (
         Path(__file__).resolve().parents[1]
         / "src/novelvideo/freezone/agent_catalog/builtins/recipes"
@@ -48,7 +48,7 @@ def test_voiced_builtin_video_recipes_pass_strict_catalog_validation(recipe_id):
     validated = validate_agent_recipe_config(payload)
 
     assert validated["id"] == recipe_id
-    assert validated["requires_generated_audio"] is True
+    assert validated["requires_generated_audio"] is False
 
 
 def test_generated_audio_requirement_cannot_be_attached_to_text_recipe():

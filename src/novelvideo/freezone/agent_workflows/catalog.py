@@ -352,6 +352,7 @@ _DETERMINISTIC_SKILL_PLANNERS = {
 
 _TEXT_NODE_TYPES = {"textAnnotationNode", "scriptNode", "beatContextNode"}
 _USER_MATERIAL_STAGES = {"input", "resource", "asset"}
+_SKILLS_REQUIRING_VIDEO_COMPOSE = frozenset({"ling-cage-cinematic-video"})
 
 
 def standard_skill_stages(skill_id: str) -> list[dict[str, Any]]:
@@ -436,6 +437,89 @@ def _node_fills_stage(
     return kind_is_unique and bool(recipe_id)
 
 
+def _required_video_compose_blockers(
+    skill_id: str, nodes: list[Any], edges: Any
+) -> list[dict[str, Any]]:
+    """Require exactly one terminal compose fed by every planned video."""
+    video_ids = [
+        _text(node.get("id"))
+        for node in nodes
+        if isinstance(node, dict) and node.get("node_type") == "videoNode"
+    ]
+    if not video_ids:
+        return []
+    compose_ids = [
+        _text(node.get("id"))
+        for node in nodes
+        if isinstance(node, dict) and node.get("node_type") == "videoComposeNode"
+    ]
+    if not compose_ids:
+        return [
+            {
+                "path": "plan.stages.compose",
+                "code": "skill_stage_missing",
+                "message": (
+                    f"Skill {skill_id} requires one terminal videoComposeNode fed by "
+                    "every planned video"
+                ),
+                "stage": "compose",
+                "node_type": "videoComposeNode",
+                "hint": (
+                    "Add one terminal videoComposeNode and connect every videoNode to it "
+                    "with composition_input_for in delivery order"
+                ),
+            }
+        ]
+    if len(compose_ids) > 1:
+        return [
+            {
+                "path": "plan.stages.compose.nodes",
+                "code": "skill_stage_unused",
+                "message": (
+                    f"Skill {skill_id} requires exactly one terminal videoComposeNode; "
+                    f"extra nodes: {', '.join(compose_ids[1:])}"
+                ),
+                "stage": "compose",
+                "downstream_stage": "compose",
+                "node_ids": compose_ids[1:],
+                "hint": (
+                    f"Keep {compose_ids[0]}, remove the extra compose nodes, and connect "
+                    "every videoNode to the remaining node in delivery order"
+                ),
+            }
+        ]
+
+    compose_id = compose_ids[0]
+    edge_values = edges if isinstance(edges, list) else []
+    connected = {
+        _text(edge.get("source"))
+        for edge in edge_values
+        if isinstance(edge, dict)
+        if _text(edge.get("target")) == compose_id
+        and _text(edge.get("link_type")) == "composition_input_for"
+    }
+    unfed = [node_id for node_id in video_ids if node_id not in connected]
+    if not unfed:
+        return []
+    return [
+        {
+            "path": "plan.stages.compose.inputs",
+            "code": "skill_stage_unused",
+            "message": (
+                f"Skill {skill_id} requires every video to feed terminal compose; "
+                f"missing: {', '.join(unfed)}"
+            ),
+            "stage": "compose",
+            "downstream_stage": "compose",
+            "node_ids": unfed,
+            "hint": (
+                f"Connect {', '.join(unfed)} to {compose_id} with "
+                "composition_input_for in delivery order"
+            ),
+        }
+    ]
+
+
 def skill_stage_blockers(
     skill_id: str,
     nodes: Any,
@@ -452,11 +536,19 @@ def skill_stage_blockers(
     a downstream stage must be reachable from a node of the upstream stage
     (``skill_stage_unused``), and only consuming edges count for that: a
     ``dependency_for`` edge orders execution without feeding the target.
-    Skills without a standard planner have no template and are not checked.
+    A small set of dynamic-only Skills also declares a terminal composition
+    contract here so prose guidance cannot admit disconnected final clips.
     """
     stages = standard_skill_stages(skill_id)
-    if not stages or not isinstance(nodes, list):
+    if not isinstance(nodes, list):
         return []
+    blockers = (
+        _required_video_compose_blockers(skill_id, nodes, edges)
+        if skill_id in _SKILLS_REQUIRING_VIDEO_COMPOSE
+        else []
+    )
+    if not stages:
+        return blockers
     kind_counts: dict[str, int] = {}
     for stage in stages:
         kind = _node_kind(_text(stage["node_type"]))
@@ -476,7 +568,6 @@ def skill_stage_blockers(
             source_id = _text(source.get("id"))
             if source_id and _text(source.get("media_kind")) in accepted_media:
                 filled[stage["id"]].append(source_id)
-    blockers: list[dict[str, Any]] = []
     for stage in stages:
         if not stage.get("required") or filled[stage["id"]]:
             continue
@@ -4118,7 +4209,13 @@ def _backfill_plan_runtime_fields(
 def _bind_recipe_audio_requirements(
     nodes: list[Any], recipes: dict[str, dict[str, Any]]
 ) -> bool:
-    """Apply trusted Recipe audio requirements to agent-authored video nodes."""
+    """Rebind cached video audio requirements to their authoritative source.
+
+    Recipe metadata wins for built-in requirements.  A dynamic intent item may
+    still opt into generated audio explicitly; the compiler preserves that item
+    under ``promptBuilder.planItem``.  Bare catalog values are only cached
+    derivatives and must not keep an obsolete Recipe requirement alive.
+    """
     changed = False
     for node in nodes:
         if not isinstance(node, dict) or node.get("node_type") != "videoNode":
@@ -4128,13 +4225,21 @@ def _bind_recipe_audio_requirements(
         if not isinstance(workflow_catalog, dict):
             continue
         recipe = recipes.get(_text(workflow_catalog.get("recipeId")))
-        if (
-            not isinstance(recipe, dict)
-            or recipe.get("requires_generated_audio") is not True
-        ):
+        if not isinstance(recipe, dict):
             continue
-        if workflow_catalog.get("requiresGeneratedAudio") is not True:
-            workflow_catalog["requiresGeneratedAudio"] = True
+        prompt_builder = workflow_catalog.get("promptBuilder")
+        plan_item = (
+            prompt_builder.get("planItem")
+            if isinstance(prompt_builder, dict)
+            and isinstance(prompt_builder.get("planItem"), dict)
+            else {}
+        )
+        item_requirement = plan_item.get("requires_generated_audio")
+        required = recipe.get("requires_generated_audio") is True or (
+            isinstance(item_requirement, bool) and item_requirement
+        )
+        if workflow_catalog.get("requiresGeneratedAudio") is not required:
+            workflow_catalog["requiresGeneratedAudio"] = required
             changed = True
     return changed
 

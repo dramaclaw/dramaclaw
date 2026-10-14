@@ -1310,6 +1310,38 @@ def test_intent_video_item_carries_explicit_embedded_audio_requirement():
     assert node["data"]["workflowCatalog"]["requiresGeneratedAudio"] is True
 
 
+def test_explicit_intent_audio_requirement_survives_recipe_rebinding(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    compiled = catalog.compile_workflow_intent(
+        {
+            "skill_id": "ling-cage-cinematic-video",
+            "user_goal": "制作一个必须带同期声的镜头",
+            "items": [
+                {
+                    "id": "shot",
+                    "title": "对白镜头",
+                    "recipe_id": "sci-fi-survival-shot-video",
+                    "prompt": "人物说出对白",
+                    "duration_seconds": 5,
+                    "requires_generated_audio": True,
+                }
+            ],
+        }
+    )
+
+    assert compiled["ok"] is True, compiled
+    checked = catalog.validate_agent_workflow_plan(
+        compiled["plan"], allow_template_reroute=False
+    )
+    shot = next(
+        node
+        for node in checked["plan"]["nodes"]
+        if node["node_type"] == "videoNode"
+    )
+    assert shot["data"]["workflowCatalog"]["requiresGeneratedAudio"] is True
+
+
 @pytest.mark.parametrize(
     ("skill_id", "shot_recipe_id", "anchor_recipe_id"),
     [
@@ -1321,10 +1353,10 @@ def test_intent_video_item_carries_explicit_embedded_audio_requirement():
         ),
     ],
 )
-def test_builtin_voiced_shot_recipe_blocks_silent_agent_plan(
+def test_builtin_shot_recipe_accepts_confirmed_silent_agent_plan(
     monkeypatch, skill_id, shot_recipe_id, anchor_recipe_id
 ):
-    """No-BGM must not silently disable dialogue and sound in these two Skills."""
+    """The user's direct sound choice must win over optional Recipe audio."""
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
     items = []
@@ -1359,7 +1391,9 @@ def test_builtin_voiced_shot_recipe_blocks_silent_agent_plan(
     plan.pop("planner", None)
     shot = next(node for node in plan["nodes"] if node["node_type"] == "videoNode")
     shot["data"]["generateAudio"] = False
-    shot["data"]["workflowCatalog"]["requiresGeneratedAudio"] = False
+    # Simulate a draft compiled before the built-in Recipe made generated
+    # audio optional. Validation must rebind this cached catalog value.
+    shot["data"]["workflowCatalog"]["requiresGeneratedAudio"] = True
 
     silent = catalog.validate_agent_workflow_plan(plan, allow_template_reroute=False)
 
@@ -1367,13 +1401,12 @@ def test_builtin_voiced_shot_recipe_blocks_silent_agent_plan(
     actual_shot = next(
         n for n in silent["plan"]["nodes"] if n["node_type"] == "videoNode"
     )
-    assert actual_shot["data"]["workflowCatalog"]["requiresGeneratedAudio"] is True
+    assert actual_shot["data"]["workflowCatalog"].get("requiresGeneratedAudio") is False
     silent_preflight = evaluate_workflow_preflight(
         silent, model_responses={}, limits={}, runtime_available=False
     )
-    assert any(
+    assert not any(
         blocker["code"] == "generation_parameter_conflict"
-        and blocker["path"].endswith(".generateAudio")
         for blocker in silent_preflight["blockers"]
     )
     shot["data"]["generateAudio"] = True
@@ -1384,6 +1417,76 @@ def test_builtin_voiced_shot_recipe_blocks_silent_agent_plan(
     assert not any(
         blocker["code"] == "generation_parameter_conflict"
         for blocker in audible_preflight["blockers"]
+    )
+
+
+def test_ling_cage_requires_every_video_to_feed_terminal_compose():
+    catalog = _load_catalog_module()
+    nodes = [
+        {"id": "shot-1", "node_type": "videoNode"},
+        {"id": "shot-2", "node_type": "videoNode"},
+    ]
+
+    missing = catalog.skill_stage_blockers(
+        "ling-cage-cinematic-video", nodes, []
+    )
+    assert any(
+        blocker["code"] == "skill_stage_missing"
+        and blocker["path"] == "plan.stages.compose"
+        for blocker in missing
+    )
+
+    nodes.append({"id": "compose", "node_type": "videoComposeNode"})
+    partly_connected = catalog.skill_stage_blockers(
+        "ling-cage-cinematic-video",
+        nodes,
+        [
+            {
+                "source": "shot-1",
+                "target": "compose",
+                "link_type": "composition_input_for",
+            }
+        ],
+    )
+    assert any(
+        blocker["code"] == "skill_stage_unused"
+        and blocker["node_ids"] == ["shot-2"]
+        for blocker in partly_connected
+    )
+
+    complete = catalog.skill_stage_blockers(
+        "ling-cage-cinematic-video",
+        nodes,
+        [
+            {
+                "source": shot_id,
+                "target": "compose",
+                "link_type": "composition_input_for",
+            }
+            for shot_id in ("shot-1", "shot-2")
+        ],
+    )
+    assert not any(
+        blocker["path"].startswith("plan.stages.compose") for blocker in complete
+    )
+
+    duplicated = catalog.skill_stage_blockers(
+        "ling-cage-cinematic-video",
+        [*nodes, {"id": "compose-extra", "node_type": "videoComposeNode"}],
+        [
+            {
+                "source": shot_id,
+                "target": "compose",
+                "link_type": "composition_input_for",
+            }
+            for shot_id in ("shot-1", "shot-2")
+        ],
+    )
+    assert any(
+        blocker["code"] == "skill_stage_unused"
+        and blocker["path"] == "plan.stages.compose.nodes"
+        and blocker["node_ids"] == ["compose-extra"]
+        for blocker in duplicated
     )
 
 
