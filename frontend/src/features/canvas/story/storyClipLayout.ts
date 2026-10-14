@@ -16,10 +16,7 @@ export const STORY_CLIP_MIN_WIDTH = 580;
 export const STORY_CLIP_MIN_HEIGHT = 324;
 export const STORY_CLIP_DETAILS_WIDTH_PERCENT = 40;
 
-/**
- * 底部快捷「+」没有画布落点，只能根据当前选中上下文判断归属。
- * 单故事组画布可无歧义兜底；多故事组且未选中时返回 null，避免把片段加错组。
- */
+/** Resolve membership only from an explicit story group or source clip. */
 export function resolveStoryGroupForNewVideo(
   nodes: CanvasNode[],
   selectedNodeId: string | null,
@@ -34,11 +31,7 @@ export function resolveStoryGroupForNewVideo(
     if (isStoryGroupNode(parent)) return parent.id;
   }
 
-  // 已经有一个明确的普通节点选中上下文时，尊重它，不用「单故事组」兜底抢走新视频。
-  if (selected) return null;
-
-  const storyGroups = nodes.filter(isStoryGroupNode);
-  return storyGroups.length === 1 ? storyGroups[0].id : null;
+  return null;
 }
 
 /** 同一故事组中的两个视频节点相连时，连线语义才是剧情选项。 */

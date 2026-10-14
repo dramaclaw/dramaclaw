@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { isStoryGroup } from '../domain/storyGroupLimit';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -141,11 +142,12 @@ export const MultiSelectionToolbar = memo(({
 
   // 互动短剧的运行时只编译组内视频节点；在入口处收紧选择条件，避免用户先
   // 创建一个必然无法试玩的混合组，再从编译错误里猜原因。
+  const hasStoryGroup = useCanvasStore((state) => state.nodes.some(isStoryGroup));
   const canCreateStoryGroup = useMemo(
     () =>
-      selectedNodes.length >= 2 &&
+      !hasStoryGroup && selectedNodes.length >= 2 &&
       selectedNodes.every((node) => node.type === CANVAS_NODE_TYPES.video),
-    [selectedNodes]
+    [selectedNodes, hasStoryGroup]
   );
 
   // Preset/mainline-managed nodes are not user-deletable — the store filters
@@ -294,8 +296,13 @@ export const MultiSelectionToolbar = memo(({
     if (selectedIds.length === 0) {
       return;
     }
-    duplicateNodesAsSiblings(collectDuplicableIds(nodes, selectedIds));
-  }, [duplicateNodesAsSiblings, nodes, selectedIds]);
+    const ids = collectDuplicableIds(nodes, selectedIds);
+    if (nodes.some((node) => ids.includes(node.id) && isStoryGroup(node))) {
+      toast.warning(t('canvas.story.messages.storyGroupLimit'));
+      return;
+    }
+    duplicateNodesAsSiblings(ids);
+  }, [duplicateNodesAsSiblings, nodes, selectedIds, t]);
 
   const handleRunWorkflow = useCallback(async (regenerate: boolean) => {
     if (isRunningWorkflow || selectedIds.length === 0) {
@@ -412,11 +419,17 @@ export const MultiSelectionToolbar = memo(({
   const handleCreateStoryGroup = useCallback(() => {
     setGroupMenuOpen(false);
     if (!canCreateStoryGroup) {
+      toast.warning(t(hasStoryGroup
+        ? 'canvas.story.messages.storyGroupLimit'
+        : 'canvas.story.messages.storyGroupMinimum'));
       return;
     }
-    createStoryGroup(selectedIds);
+    if (!createStoryGroup(selectedIds)) {
+      toast.warning(t('canvas.story.messages.storyGroupLimit'));
+      return;
+    }
     toast.success(t('canvas.story.messages.storyGroupCreated'));
-  }, [canCreateStoryGroup, createStoryGroup, selectedIds, t]);
+  }, [canCreateStoryGroup, hasStoryGroup, createStoryGroup, selectedIds, t]);
 
   useEffect(() => {
     if (!arrangeMenuOpen) {
@@ -625,18 +638,14 @@ export const MultiSelectionToolbar = memo(({
                     className={`${MULTI_TOOLBAR_MENU_ITEM_CLASS} ${
                       canCreateStoryGroup ? '' : 'cursor-not-allowed opacity-40'
                     }`}
-                    onClick={() => {
-                      if (canCreateStoryGroup) {
-                        handleCreateStoryGroup();
-                      }
-                    }}
+                    onClick={handleCreateStoryGroup}
                   >
                     <Play className="h-4 w-4 text-text-muted" />
                     <span className="whitespace-nowrap">{t('canvas.story.messages.createStoryGroup')}</span>
                   </button>
                   {!canCreateStoryGroup ? (
                     <div className="pointer-events-none absolute right-0 top-full z-10 mt-1.5 hidden w-max max-w-[240px] rounded-lg border border-white/10 bg-[#1c1c1e]/95 px-3 py-1.5 text-xs leading-relaxed text-white/80 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl group-hover/story:block">
-                      {t('canvas.story.messages.storyGroupMinimum')}
+                      {t(hasStoryGroup ? 'canvas.story.messages.storyGroupLimit' : 'canvas.story.messages.storyGroupMinimum')}
                     </div>
                   ) : null}
                 </div>

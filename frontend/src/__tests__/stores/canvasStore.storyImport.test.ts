@@ -36,3 +36,20 @@ describe('addStoryImport', () => {
     expect(ids).toEqual(['existing']);
   });
 });
+
+it('rejects a second imported story without partially importing nodes or edges', () => {
+  useCanvasStore.getState().setCanvasData([], []);
+  const group = { id: 'g', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { storyGroup: true } } as CanvasNode;
+  expect(useCanvasStore.getState().addStoryImport([group], [])).toBe(true);
+  const before = useCanvasStore.getState();
+  expect(before.addStoryImport([{ ...group, id: 'g2' }], [])).toBe(false);
+  expect(useCanvasStore.getState()).toBe(before);
+});
+
+it('rejects an import containing two story groups even on an empty canvas', () => {
+  useCanvasStore.getState().setCanvasData([], []);
+  const group = { id: 'g', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { storyGroup: true } } as CanvasNode;
+  const before = useCanvasStore.getState();
+  expect(before.addStoryImport([group, { ...group, id: 'g2' }], [])).toBe(false);
+  expect(useCanvasStore.getState()).toBe(before);
+});

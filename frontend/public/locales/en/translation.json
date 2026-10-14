@@ -5364,6 +5364,7 @@
         "captureFailed": "Could not capture the {{frameName}}.",
         "storyGroupCreated": "Interactive story group created. Set a start and choices to play.",
         "createStoryGroup": "Create interactive story group",
+        "storyGroupLimit": "Only one interactive story group is allowed per canvas. Edit the existing group or use a new canvas.",
         "storyGroupMinimum": "An interactive story group requires at least two video nodes.",
         "endingBadge": "Ending",
         "loadError": "Failed to load the story"

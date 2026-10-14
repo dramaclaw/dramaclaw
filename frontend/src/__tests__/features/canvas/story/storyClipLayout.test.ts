@@ -43,9 +43,9 @@ describe('resolveStoryGroupForNewVideo', () => {
     expect(resolveStoryGroupForNewVideo(nodes, 'clip-a')).toBe('story-a');
   });
 
-  it('画布中只有一个故事组时可以无选中兜底', () => {
+  it('没有明确来源时不因存在唯一故事组而自动入组', () => {
     const nodes = [storyGroup('story-a'), storyClip('clip-a', 'story-a')];
-    expect(resolveStoryGroupForNewVideo(nodes, null)).toBe('story-a');
+    expect(resolveStoryGroupForNewVideo(nodes, null)).toBeNull();
   });
 
   it('多故事组且无上下文时不猜测归属', () => {

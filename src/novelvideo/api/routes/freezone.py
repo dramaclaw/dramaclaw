@@ -13103,6 +13103,8 @@ def _stamp_canvas_mainline_context_project_id(payload: dict, project_id: str) ->
 
 
 def _raise_canvas_store_http(exc: Exception) -> None:
+    if isinstance(exc, canvas_store.CanvasStoryGroupLimit):
+        raise HTTPException(409, {"code": "story_group_limit", "error": str(exc)}) from exc
     if isinstance(exc, canvas_store.CanvasCorruptError):
         raise HTTPException(500, str(exc)) from exc
     if isinstance(exc, canvas_store.CanvasBaseRevisionRequired):

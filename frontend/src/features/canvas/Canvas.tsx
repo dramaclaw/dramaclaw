@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { canAddStoryGroups, isStoryGroup } from './domain/storyGroupLimit';
 import {
   useState,
   useCallback,
@@ -118,7 +119,6 @@ import { videoReferenceConnectionRejection } from '@/features/canvas/domain/vide
 import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
 import { embedStoryboardImageMetadata } from '@/commands/image';
 import {
-  resolveStoryGroupAtCanvasPoint,
   resolveStoryGroupForNewVideo,
   storySegmentPositionInGroup,
 } from '@/features/canvas/story/storyClipLayout';
@@ -2263,29 +2263,15 @@ export function Canvas({
         return false;
       }
 
-      const placementCenter = reactFlowInstance.screenToFlowPosition(clientPosition);
-      const storyGroupId = pendingNodePlacement.type === CANVAS_NODE_TYPES.video
-        ? (
-            resolveStoryGroupAtCanvasPoint(nodes, placementCenter)
-            ?? resolveStoryGroupForNewVideo(nodes, selectedNodeId)
-          )
-        : null;
-      const storyPosition = storyGroupId
-        ? storySegmentPositionInGroup(nodes, storyGroupId, placementCenter)
-        : null;
-      const newNodeId = storyGroupId && storyPosition
-        ? addStorySegment(storyGroupId, {
-            position: storyPosition,
-            data: pendingNodePlacement.initialData as Partial<CanvasNodeData> | undefined,
-          })!
-        : addNode(
-            pendingNodePlacement.type,
-            reactFlowInstance.screenToFlowPosition({
+      // Plain placement never assigns story membership, even inside a group.
+      const newNodeId = addNode(
+        pendingNodePlacement.type,
+        reactFlowInstance.screenToFlowPosition({
           x: clientPosition.x - NODE_PLACEMENT_PREVIEW_WIDTH / 2,
           y: clientPosition.y - NODE_PLACEMENT_PREVIEW_HEIGHT / 2,
-            }),
-            pendingNodePlacement.initialData,
-          );
+        }),
+        pendingNodePlacement.initialData,
+      );
       setSelectedNode(newNodeId);
       focusNewNodeIfLowZoom(newNodeId);
       if (pendingNodePlacement.skill) {
@@ -2300,14 +2286,11 @@ export function Canvas({
     },
     [
       addNode,
-      addStorySegment,
       bindSingleBeatContextInput,
       focusNewNodeIfLowZoom,
-      nodes,
       pendingNodePlacement,
       reactFlowInstance,
       scheduleCanvasPersist,
-      selectedNodeId,
       setSelectedNode,
       triggerPlacementConfirm,
     ],
@@ -3458,17 +3441,6 @@ export function Canvas({
 
   const handleQuickAddNode = useCallback(
     (type: CanvasNodeType) => {
-      if (type === CANVAS_NODE_TYPES.video) {
-        const storyGroupId = resolveStoryGroupForNewVideo(nodes, selectedNodeId);
-        if (storyGroupId) {
-          const storySegmentId = addStorySegment(storyGroupId);
-          if (storySegmentId) {
-            focusNewNodeIfLowZoom(storySegmentId);
-            scheduleCanvasPersist(0);
-            return;
-          }
-        }
-      }
       const newNodeId = addNode(type, spawnAtViewportCenter());
       setSelectedNode(newNodeId);
       focusNewNodeIfLowZoom(newNodeId);
@@ -3476,11 +3448,8 @@ export function Canvas({
     },
     [
       addNode,
-      addStorySegment,
       focusNewNodeIfLowZoom,
-      nodes,
       scheduleCanvasPersist,
-      selectedNodeId,
       setSelectedNode,
       spawnAtViewportCenter,
     ],
@@ -3489,8 +3458,12 @@ export function Canvas({
   const importStoryFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleImportStory = useCallback(() => {
+    if (useCanvasStore.getState().nodes.some(isStoryGroup)) {
+      toast.warning(t('canvas.story.messages.storyGroupLimit'));
+      return;
+    }
     importStoryFileInputRef.current?.click();
-  }, []);
+  }, [t]);
 
   const handleImportStoryFileChange = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -3506,7 +3479,10 @@ export function Canvas({
         const { nodes, edges } = buildStoryGroupFromImport(imported, {
           center: spawnAtViewportCenter(),
         });
-        addStoryImport(nodes, edges);
+        if (!addStoryImport(nodes, edges)) {
+          toast.warning(t('canvas.story.messages.storyGroupLimit'));
+          return;
+        }
         scheduleCanvasPersist(0);
         const hasReview =
           imported.warnings.length > 0 ||
@@ -3618,6 +3594,11 @@ export function Canvas({
         : nodes.filter((node) => sourceNodeIds.includes(node.id));
       if (sourceNodes.length === 0) {
         return null as DuplicateResult | null;
+      }
+
+      if (!canAddStoryGroups(useCanvasStore.getState().nodes, sourceNodes)) {
+        toast.warning(t('canvas.story.messages.storyGroupLimit'));
+        return null;
       }
 
       const sourceIdSet = new Set(sourceNodes.map((node) => node.id));

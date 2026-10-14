@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { toast } from "sonner";
+import { isStoryGroup } from "@/features/canvas/domain/storyGroupLimit";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -528,8 +530,14 @@ export function CanvasOutlineList({
 
   // 复制组时要连成员一起给，而且父必须排在成员前面（collectOutlineIds 是前序）。
   const duplicateItem = useCallback((item: CanvasOutlineItem) => {
-    useCanvasStore.getState().duplicateNodesAsSiblings(collectOutlineIds(item));
-  }, []);
+    const store = useCanvasStore.getState();
+    const ids = collectOutlineIds(item);
+    if (store.nodes.some((node) => ids.includes(node.id) && isStoryGroup(node))) {
+      toast.warning(t("canvas.story.messages.storyGroupLimit"));
+      return;
+    }
+    store.duplicateNodesAsSiblings(ids);
+  }, [t]);
 
   const commitRename = useCallback((item: CanvasOutlineItem, rawName: string) => {
     setRenamingId(null);

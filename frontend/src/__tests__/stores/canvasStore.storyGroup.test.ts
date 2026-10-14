@@ -361,3 +361,40 @@ describe('canvasStore story group', () => {
     expect(useCanvasStore.getState().openStoryVariablesGroupId).toBeNull();
   });
 });
+
+describe('one story group per canvas', () => {
+  beforeEach(seedTwoVideos);
+
+  it('rejects a second group without changing nodes or undo history', () => {
+    const store = useCanvasStore.getState();
+    store.createStoryGroup(['v1', 'v2']);
+    const before = useCanvasStore.getState();
+    expect(before.createStoryGroup(['v1', 'v2'])).toBeNull();
+    expect(useCanvasStore.getState()).toBe(before);
+  });
+
+  it('rejects single and batch story group duplication atomically', () => {
+    const gid = useCanvasStore.getState().createStoryGroup(['v1', 'v2'])!;
+    const before = useCanvasStore.getState();
+    expect(before.duplicateNodeAsSibling(gid, 1)).toBeNull();
+    expect(before.duplicateNodesAsSiblings([gid, 'v1', 'v2'])).toEqual([]);
+    expect(useCanvasStore.getState()).toBe(before);
+  });
+
+  it('allows creation again after undoing the first group', () => {
+    useCanvasStore.getState().createStoryGroup(['v1', 'v2']);
+    useCanvasStore.getState().undo();
+    expect(useCanvasStore.getState().createStoryGroup(['v1', 'v2'])).toBeTruthy();
+  });
+});
+
+it.each(['group', 'clip', 'none'])('ordinary addVideo stays outside a story with %s selected, even at an inside position', (selection) => {
+  seedTwoVideos();
+  const gid = useCanvasStore.getState().createStoryGroup(['v1', 'v2'])!;
+  useCanvasStore.getState().setSelectedNode(selection === 'group' ? gid : selection === 'clip' ? 'v1' : null);
+  const id = useCanvasStore.getState().addNode(CANVAS_NODE_TYPES.video, { x: 20, y: 20 });
+  const added = useCanvasStore.getState().nodes.find((node) => node.id === id)!;
+  expect(added.parentId).toBeUndefined();
+  expect(added.data).not.toHaveProperty('storySegmentId');
+  expect(useCanvasStore.getState().nodes.filter((node) => node.parentId === gid)).toHaveLength(2);
+});

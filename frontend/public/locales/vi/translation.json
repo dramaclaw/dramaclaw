@@ -5139,6 +5139,7 @@
         "captureFailed": "Không thể chụp {{frameName}}.",
         "storyGroupCreated": "Đã tạo nhóm câu chuyện tương tác. Hãy đặt điểm bắt đầu và các lựa chọn để chơi thử.",
         "createStoryGroup": "Tạo nhóm câu chuyện tương tác",
+        "storyGroupLimit": "Mỗi bảng vẽ chỉ được có một nhóm truyện tương tác. Hãy chỉnh sửa nhóm hiện có hoặc dùng bảng vẽ mới.",
         "storyGroupMinimum": "Nhóm câu chuyện tương tác cần ít nhất hai nút video.",
         "endingBadge": "Kết thúc",
         "loadError": "Không thể tải câu chuyện"
