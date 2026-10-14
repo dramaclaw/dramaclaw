@@ -418,6 +418,72 @@ def test_embedded_dialogue_conflict_blocks_without_live_catalog():
     assert any(b["code"] == "generation_parameter_conflict" for b in result["blockers"])
 
 
+def test_required_speech_audio_without_usable_voice_is_not_ready():
+    """Issue #677: catalog-backed speech is skipped by the executor unless a
+    usable custom/reference voice was selected, so it cannot be admitted as ready."""
+    result = evaluate_workflow_preflight(
+        {
+            "plan": {
+                "nodes": [
+                    {
+                        "id": "voice-1",
+                        "node_type": "audioNode",
+                        "data": {
+                            "audioKind": "speech",
+                            "voiceAvailable": False,
+                            "workflowCatalog": {
+                                "recipeId": "general-audio",
+                                "timelineRole": "voiceover",
+                            },
+                        },
+                    }
+                ]
+            }
+        },
+        model_responses={},
+        limits={"ok": True, "data": {"default": {"limit": 1, "remaining": 1}}},
+    )
+
+    assert result["status"] == "blocked"
+    assert any(
+        blocker["code"] == "audio_voice_required"
+        and blocker["path"] == "runtime.audio.voice-1.voiceRef"
+        for blocker in result["blockers"]
+    )
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {
+            "audioKind": "speech",
+            "voiceAvailable": True,
+            "voiceRef": {"scope": "project_narrator"},
+            "workflowCatalog": {"recipeId": "general-audio"},
+        },
+        {
+            "audioKind": "speech",
+            "voiceAvailable": True,
+            "voiceRef": {"scope": "user_custom", "voiceId": "voice-42"},
+            "workflowCatalog": {"recipeId": "general-audio"},
+        },
+        {
+            "audioKind": "music",
+            "voiceAvailable": False,
+            "workflowCatalog": {"recipeId": "general-audio"},
+        },
+    ],
+)
+def test_audio_preflight_accepts_usable_voice_or_music(data):
+    result = evaluate_workflow_preflight(
+        {"plan": {"nodes": [{"id": "audio-1", "node_type": "audioNode", "data": data}]}},
+        model_responses={},
+        limits={"ok": True, "data": {"default": {"limit": 1, "remaining": 1}}},
+    )
+
+    assert result["status"] == "ready"
+
+
 @pytest.mark.parametrize(
     "data",
     [

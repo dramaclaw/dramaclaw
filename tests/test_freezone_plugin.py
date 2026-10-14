@@ -5195,7 +5195,7 @@ def test_recipe_alias_normalization_preserves_malformed_or_conflicting_input(
         assert node["data"]["workflowCatalog"] == catalog
 
 
-def test_prepare_exact_plan_keeps_explicit_shot_values_when_card_has_global_defaults(
+def test_prepare_exact_plan_keeps_per_shot_values_but_applies_confirmed_audio_choice(
     monkeypatch, tmp_path,
 ):
     plugin = _load_plugin_module()
@@ -5230,8 +5230,9 @@ def test_prepare_exact_plan_keeps_explicit_shot_values_when_card_has_global_defa
     assert result["ok"] is True
     assert [n["data"]["durationSec"] for n in received[0]["nodes"]] == durations
     assert all(n["data"]["aspectRatio"] == "16:9" for n in received[0]["nodes"])
-    assert all(n["data"]["generateAudio"] is True for n in received[0]["nodes"])
+    assert all(n["data"]["generateAudio"] is False for n in received[0]["nodes"])
     assert all(n["data"]["model"] == "video-a" for n in received[0]["nodes"])
+    assert received[0]["inputs"]["video_generate_audio"] is False
 
     # A full card omits the global duration when all shots already state one.
     without_global_duration = copy.deepcopy(args)

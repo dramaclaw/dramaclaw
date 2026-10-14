@@ -13,9 +13,10 @@ accepted under node `data` for step-local pins:
 `video_variants_per_node`. Preparation converts them to the canvas runtime fields before validation
 and persistence. The shorter semantic setting names used by revision are also accepted under node
 `data` during exact plan preparation. Shared `plan.inputs` values only fill fields a node leaves
-unset: an explicit node pin (either spelling) wins over the shared value. Two aliases for the same
-setting with different values on one node are still rejected; the server never silently chooses
-between them.
+unset: an explicit node pin (either spelling) wins over the shared value, except for
+`video_generate_audio`. That direct user confirmation is authoritative and replaces every
+conflicting video-node `generateAudio` value. Two aliases for the same setting with different
+values on one node are still rejected; the server never silently chooses between them.
 
 `video_generation_mode` is the exception to "the node wins": it records the mode the user asked
 for, and modes are not interchangeable (`imageToVideo` uses the image as a whole-picture

@@ -273,7 +273,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "top-level schema_version plus skill.id and skill.version copied from the selected production "
     "Skill; use text-to-image for a pure image workflow and text-to-image-video only "
     "when the user requests a video stage. generation_answers supplements that Plan and "
-    "never replaces it. "
+    "never replaces it, but a confirmed video_generate_audio answer is authoritative and "
+    "replaces conflicting generateAudio values on every video node. "
     "Before authoring or submitting any workflow result, call "
     "freezone_begin_agent_product_generation and copy its returned operation_id exactly. Never "
     "invent, abbreviate, or reconstruct an operation_id, and never call a workflow prepare tool "
@@ -325,7 +326,9 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "Only a later explicit user retry after a terminal failure may start another run. For a "
     "Freezone speech uses custom/reference voices only and must never use a preset/system voice. "
     "Preserve a valid voiceRef. If no valid custom voice is selected, skip that audio node without "
-    "submitting TTS and continue the remaining workflow. Never choose the first available voice or "
+    "submitting TTS and continue the remaining workflow. A draft that requires that speech for "
+    "voice-over or final composition must remain blocked until a valid voiceRef is bound. "
+    "Never choose the first available voice or "
     "call open_voice_picker unless the user explicitly requests voice selection. "
     "request whose actual next step will generate image or video media, inspect the user's message, "
     "the selected Recipe, and existing target-node data before any canvas write. Obey the injected "
@@ -345,7 +348,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "choices for each relevant field; do not submit a generic recommended preset. Never include "
     "an audio voice-source question in this preliminary "
     "clarification: do not ask the user to choose system voice versus custom voice. Freezone speech "
-    "uses an already selected custom voiceRef or skips generation when none is selected. "
+    "uses an already selected custom voiceRef or skips generation when none is selected; if that "
+    "speech is required by the plan, preflight blocks the draft instead of marking it ready. "
     "Never bundle these fields into one preset such "
     "as 'recommended settings'. The clarification tool constructs one question per "
     "required field and the frontend resolves exact live options, including 480P "
@@ -667,7 +671,8 @@ Canvas write contract:
   planner.item_count=N and planner.video_dependency=sequential; the deterministic planner creates
   the nodes and execution-only dependency_for edges. The Plan must include top-level schema_version plus skill.id and skill.version
   copied from the selected production Skill; generation_answers supplements the complete Plan and
-  never replaces it. Recipe-backed text nodes must not use the reserved input/resource/asset stages,
+  never replaces it, but a confirmed video_generate_audio answer is authoritative for every video
+  node. Recipe-backed text nodes must not use the reserved input/resource/asset stages,
   which identify recipe-less user resources. Beat counts, shot counts, episode counts, and other
   business totals stay in compact Intent or standard-planner inputs and do not by themselves require
   a raw Plan. Only explicit canvas nodes plus a nonstandard dependency graph take the exact-topology

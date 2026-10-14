@@ -209,6 +209,14 @@ def _catalog_string_options(entry: dict[str, Any], key: str) -> list[str]:
 # is the narrow, explicit signal preflight can act on (issue #677).
 _VOICED_RECIPE_MARKERS = ("dialog", "voice", "speech", "narrat", "lipsync", "lip-sync")
 _VOICED_TIMELINE_ROLES = frozenset({"voiceover", "narration", "shot_voice", "dialogue"})
+_AUDIO_VOICE_REF_REQUIRED_FIELDS = {
+    "project_narrator": (),
+    "user_custom": ("voiceId",),
+    "character_default": ("characterName",),
+    "character_age_group": ("characterName", "slot"),
+    "identity": ("characterName", "identityId"),
+    "identity_resolved": ("characterName", "identityId"),
+}
 
 
 def _video_node_is_voiced(node: dict[str, Any]) -> bool:
@@ -301,6 +309,43 @@ def _video_runtime_parameter_blockers(
             }
         )
     return blockers
+
+
+def _audio_voice_blockers(node: dict[str, Any], *, required: bool) -> list[dict[str, Any]]:
+    """Reject required speech that the canvas executor would silently skip."""
+    if not required:
+        return []
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    if data.get("audioKind", "speech") == "music":
+        return []
+    catalog = data.get("workflowCatalog")
+    if not isinstance(catalog, dict):
+        return []  # Historical canvas nodes retain their legacy narrator fallback.
+    voice_ref = data.get("voiceRef")
+    scope = str(voice_ref.get("scope") or "").strip() if isinstance(voice_ref, dict) else ""
+    required_fields = _AUDIO_VOICE_REF_REQUIRED_FIELDS.get(scope)
+    usable = (
+        data.get("voiceAvailable") is True
+        and required_fields is not None
+        and all(
+            isinstance(voice_ref.get(field), str) and voice_ref[field].strip()
+            for field in required_fields
+        )
+    )
+    if usable:
+        return []
+    node_id = str(node.get("id") or "audio").strip()
+    return [
+        {
+            "path": f"runtime.audio.{node_id}.voiceRef",
+            "code": "audio_voice_required",
+            "message": (
+                "required speech has no usable custom/reference voice and would be skipped; "
+                "bind a valid voiceRef before confirming the draft"
+            ),
+            "recovery": "select_custom_voice",
+        }
+    ]
 
 
 # Portable choice names used in required_choices -> canvas data field.
@@ -864,13 +909,37 @@ def evaluate_workflow_preflight(
                             "message": f"{lane} generation queue is currently full; tasks will wait",
                         }
                     )
+    composition_sources = {
+        str(edge.get("source"))
+        for edge in edges
+        if isinstance(edge, dict) and edge.get("link_type") == "composition_input_for"
+    }
     # Duration existence is model-independent: check every video node whether
     # or not the live catalog was reachable (after catalog-level blockers so an
     # unavailable catalog is still reported first).
     for node in nodes:
-        if isinstance(node, dict) and node.get("node_type") == "videoNode":
+        if not isinstance(node, dict):
+            continue
+        if node.get("node_type") == "videoNode":
             blockers.extend(_video_duration_blockers(node))
             blockers.extend(_video_audio_intent_blockers(node))
+        elif node.get("node_type") == "audioNode":
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            catalog = (
+                data.get("workflowCatalog")
+                if isinstance(data.get("workflowCatalog"), dict)
+                else {}
+            )
+            role = str(catalog.get("timelineRole") or "").strip().casefold()
+            blockers.extend(
+                _audio_voice_blockers(
+                    node,
+                    required=(
+                        str(node.get("id") or "") in composition_sources
+                        or role in _VOICED_TIMELINE_ROLES
+                    ),
+                )
+            )
     return {
         **base,
         "status": "blocked" if blockers else "ready",

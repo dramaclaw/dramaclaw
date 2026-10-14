@@ -4075,8 +4075,10 @@ def _finalize_generation_clarification_result(
         "agent_instruction": (
             "Concrete generation values are in node_data keyed by node type. Apply each "
             "node_data.<node_type> field only where the matching image/video node does not "
-            "already state an explicit value; retain each shot's own duration and audio "
-            "requirement. Do not translate question ids yourself. For a new workflow draft, "
+            "already state an explicit value, except video generateAudio: the user's direct "
+            "choice replaces every conflicting video-node value. Retain each shot's own "
+            "duration and other step-local requirements. Do not translate question ids yourself. "
+            "For a new workflow draft, "
             "pass only this result's "
             "answers field: generation_answers = result['answers']; do not pass the entire "
             "clarification result. If using plan, put the user goal in plan.summary, never "
@@ -7241,12 +7243,20 @@ _GENERATION_ANSWER_DATA_FIELDS = {
     "video_variants_per_node": ("videoNode", "count"),
 }
 
+# A generation card is the user's direct confirmation. Most fields remain
+# defaults because a shot can legitimately pin its own model, ratio, or
+# duration. Sound generation is a workflow-wide yes/no policy, though: an
+# agent-authored node must not reverse the user's explicit answer (issue #677).
+_AUTHORITATIVE_GENERATION_ANSWER_IDS = frozenset({"video_generate_audio"})
+
 # These clarification answers are shared Plan inputs rather than per-node
 # create fields.  Keep them out of the regular generation-question registry so
 # an ordinary custom clarification does not accidentally become a full media
 # settings card, while still accepting the answer when it is carried alongside
 # the card's concrete video settings at draft preparation time.
-_GENERATION_ANSWER_PLAN_INPUT_FIELDS = frozenset({"video_generation_mode"})
+_GENERATION_ANSWER_PLAN_INPUT_FIELDS = frozenset(
+    {"video_generate_audio", "video_generation_mode"}
+)
 
 
 def _workflow_generation_draft(
@@ -7597,7 +7607,7 @@ def _apply_generation_choices_to_plan(
         if not isinstance(node, dict):
             continue
         node_choices = [
-            (field, value)
+            (question_id, field, value)
             for question_id, value in choices.items()
             if question_id in _GENERATION_ANSWER_DATA_FIELDS
             for node_type, field in (_GENERATION_ANSWER_DATA_FIELDS[question_id],)
@@ -7606,13 +7616,18 @@ def _apply_generation_choices_to_plan(
         if not node_choices:
             continue
         data = node.get("data") if isinstance(node.get("data"), dict) else {}
-        for field, value in node_choices:
+        for question_id, field, value in node_choices:
             current = data.get(field)
             symbolic = (
                 isinstance(current, str)
                 and current.strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
             )
-            if missing_only and not symbolic and _generation_parameter_value_present(field, current):
+            if (
+                missing_only
+                and question_id not in _AUTHORITATIVE_GENERATION_ANSWER_IDS
+                and not symbolic
+                and _generation_parameter_value_present(field, current)
+            ):
                 continue
             data[field] = value
         node["data"] = data
