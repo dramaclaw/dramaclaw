@@ -20,6 +20,7 @@ import {
   applyRemoteFreezoneCanvas,
   consumeQueuedLocalFreezoneProjections,
   queueLocalFreezoneProjection,
+  registerFreezoneCanvasRuntime,
   removeLocalFreezoneProjection,
 } from "@/features/freezone/canvasSyncRuntime";
 import { holdCanvasAutosave } from "@/features/freezone/canvasAutosaveHold";
@@ -1136,7 +1137,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
           taskKey,
           jobId: "compose-job-1",
         }),
-      ).toBe(true);
+      ).toBe("applied");
     });
     expect(hook.result.current.revision).toBe(8);
 
@@ -1186,6 +1187,158 @@ describe("useCanvasSync hydrate lifecycle", () => {
 
     hook.unmount();
   });
+
+  it("does not adopt a compose projection revision that also contains another writer", async () => {
+    vi.useFakeTimers();
+    const taskKey = "task:freezone_video_compose:project:project-a:0:compose-job-2";
+    const localComposeNode = {
+      id: "compose-1",
+      type: CANVAS_NODE_TYPES.videoCompose,
+      position: { x: 20, y: 30 },
+      data: {
+        isGenerating: true,
+        generationTaskKey: taskKey,
+        generationTaskType: "freezone_video_compose",
+        generationTaskJobId: "compose-job-2",
+      },
+    } as any;
+    const projectedComposeNode = {
+      ...localComposeNode,
+      data: {
+        ...localComposeNode.data,
+        resultVideoUrl: "/static/project/compose-job-2.mp4",
+        resultVideoTaskKey: taskKey,
+        resultVideoJobId: "compose-job-2",
+        isGenerating: false,
+        generationTaskKey: null,
+        generationTaskType: null,
+        generationTaskJobId: null,
+      },
+    };
+    const remoteAfterConcurrentWrite = {
+      nodes: [
+        projectedComposeNode,
+        {
+          id: "added-by-other-tab",
+          type: CANVAS_NODE_TYPES.upload,
+          position: { x: 400, y: 30 },
+          data: { imageUrl: "/static/project/other.png" },
+        },
+      ],
+      edges: [],
+      revision: 9,
+      save_source: "task_projection" as any,
+    };
+    vi.mocked(getFreezoneCanvas)
+      .mockResolvedValueOnce({
+        nodes: [localComposeNode],
+        edges: [],
+        revision: 7,
+      })
+      .mockResolvedValue(remoteAfterConcurrentWrite);
+    vi.mocked(putFreezoneCanvas).mockRejectedValue(
+      new ApiError("conflict", 409, {}),
+    );
+
+    const hook = renderHook(() =>
+      useCanvasSync("project-a", "compose_concurrent_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(hook.result.current.revision).toBe(7);
+
+    await act(async () => {
+      expect(
+        await reconcileCompletedVideoComposeProjection({
+          projectId: "project-a",
+          canvasId: "compose_concurrent_user_eric",
+          nodeId: "compose-1",
+          taskKey,
+          jobId: "compose-job-2",
+        }),
+      ).toBe("unsafe_remote");
+    });
+    expect(hook.result.current.revision).toBe(7);
+
+    act(() => {
+      const store = useCanvasStore.getState();
+      const resultNodeId = store.addNode(
+        CANVAS_NODE_TYPES.video,
+        { x: 600, y: 30 },
+        {
+          videoUrl: "/static/project/compose-job-2.mp4",
+          composeSourceNodeId: "compose-1",
+        },
+      );
+      store.addEdge("compose-1", resultNodeId);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+
+    expect(putFreezoneCanvas).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(putFreezoneCanvas).mock.calls[0][2]).toMatchObject({
+      base_revision: 7,
+    });
+    expect(hook.result.current.status).toBe("conflict");
+    expect(readCanvasDraft("project-a", "compose_concurrent_user_eric")).not.toBeNull();
+
+    hook.unmount();
+  });
+
+  it.each([
+    ["was not written by task projection", "autosave", "compose-job-3"],
+    ["belongs to a different task", "task_projection", "other-job"],
+  ])(
+    "does not adopt a next compose revision that %s",
+    async (_label, saveSource, resultJobId) => {
+      const taskKey = "task:freezone_video_compose:project:project-a:0:compose-job-3";
+      vi.mocked(getFreezoneCanvas).mockResolvedValue({
+        nodes: [
+          {
+            id: "compose-1",
+            type: CANVAS_NODE_TYPES.videoCompose,
+            position: { x: 20, y: 30 },
+            data: {
+              resultVideoUrl: "/static/project/compose-job-3.mp4",
+              resultVideoTaskKey: taskKey,
+              resultVideoJobId: resultJobId,
+            },
+          },
+        ],
+        edges: [],
+        revision: 8,
+        save_source: saveSource as any,
+      });
+      const applyRemote = vi.fn();
+      const unregister = registerFreezoneCanvasRuntime(
+        "project-a",
+        "compose_guard_user_eric",
+        applyRemote,
+        undefined,
+        undefined,
+        undefined,
+        () => 7,
+      );
+
+      expect(
+        await reconcileCompletedVideoComposeProjection({
+          projectId: "project-a",
+          canvasId: "compose_guard_user_eric",
+          nodeId: "compose-1",
+          taskKey,
+          jobId: "compose-job-3",
+        }),
+      ).toBe("unsafe_remote");
+      expect(applyRemote).not.toHaveBeenCalled();
+
+      unregister();
+    },
+  );
 
   // The draft is the only copy of edits that have not reached the server. A
   // save landing clears it — but only if nothing newer is still queued behind

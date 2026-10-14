@@ -16,6 +16,7 @@ type RemoteCanvasApplier = (
 ) => void;
 
 type CanvasFlush = () => Promise<boolean>;
+type CanvasRevisionReader = () => number | null;
 
 export interface LocalProjectionPayload {
   projectionKey: string;
@@ -36,6 +37,7 @@ interface RemoteCanvasRuntime {
   flush?: CanvasFlush;
   applyLocalProjection?: LocalProjectionApplier;
   removeLocalProjection?: LocalProjectionRemover;
+  readRevision?: CanvasRevisionReader;
 }
 
 let currentRuntime: RemoteCanvasRuntime | null = null;
@@ -52,14 +54,37 @@ export function registerFreezoneCanvasRuntime(
   flush?: CanvasFlush,
   applyLocalProjection?: LocalProjectionApplier,
   removeLocalProjection?: LocalProjectionRemover,
+  readRevision?: CanvasRevisionReader,
 ): () => void {
-  const runtime = { project, canvasId, apply, flush, applyLocalProjection, removeLocalProjection };
+  const runtime = {
+    project,
+    canvasId,
+    apply,
+    flush,
+    applyLocalProjection,
+    removeLocalProjection,
+    readRevision,
+  };
   currentRuntime = runtime;
   return () => {
     if (currentRuntime === runtime) {
       currentRuntime = null;
     }
   };
+}
+
+export function readFreezoneCanvasRuntimeRevision(
+  project: string,
+  canvasId: string,
+): { revision: number | null } | null {
+  if (
+    !currentRuntime ||
+    currentRuntime.project !== project ||
+    currentRuntime.canvasId !== canvasId
+  ) {
+    return null;
+  }
+  return { revision: currentRuntime.readRevision?.() ?? null };
 }
 
 export function applyRemoteFreezoneCanvas(

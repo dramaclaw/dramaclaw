@@ -1088,7 +1088,7 @@ export function useCanvasSync(
       applyCanvasDataEdit(next.nodes, next.edges);
       saveProjectionEditNow();
       return true;
-    });
+    }, () => revisionRef.current);
   }, [applyCanvasDataEdit, project, canvasId, setCanvasData]);
 
   // ---- 1. Hydrate ---- //

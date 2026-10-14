@@ -157,13 +157,14 @@ export const VideoComposeNode = memo(
           ref.job_id,
         );
         if (!result.url) throw new Error("视频合成完成但未返回成片地址");
-        const runtimeApplied = await reconcileCompletedVideoComposeProjection({
-          projectId: project,
-          canvasId,
-          nodeId: id,
-          taskKey: ref.task_key,
-          jobId: ref.job_id,
-        });
+        const projectionReconcile =
+          await reconcileCompletedVideoComposeProjection({
+            projectId: project,
+            canvasId,
+            nodeId: id,
+            taskKey: ref.task_key,
+            jobId: ref.job_id,
+          });
         const output = {
           videoUrl: result.url,
           output_url: result.url,
@@ -174,7 +175,7 @@ export const VideoComposeNode = memo(
         // The user navigated away while the task was finishing. The worker's
         // projection is already durable; do not write its result into whatever
         // canvas runtime is active now.
-        if (!runtimeApplied) return output;
+        if (projectionReconcile === "runtime_missing") return output;
         const resultCoverUrl = result.cover_url ?? timeline.cover?.url ?? null;
         const store = useCanvasStore.getState();
         const existingResult = store.nodes.find((node) =>

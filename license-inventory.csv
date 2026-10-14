@@ -1202,6 +1202,7 @@ frontend/src/features/canvas/application/videoBreakdownGroups.ts,Elastic-2.0,202
 frontend/src/features/canvas/application/videoBreakdownLanding.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/videoCaptureFrame.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/videoClipSubmit.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/application/videoComposeProjection.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/videoCrop/cropMath.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/videoCrop/cropVideo.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/videoCrop/runVideoCrop.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

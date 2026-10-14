@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { getFreezoneCanvas } from "@/api/canvas";
-import { applyRemoteFreezoneCanvas } from "@/features/freezone/canvasSyncRuntime";
+import {
+  applyRemoteFreezoneCanvas,
+  readFreezoneCanvasRuntimeRevision,
+} from "@/features/freezone/canvasSyncRuntime";
 import type { CanvasNode } from "@/stores/canvasStore";
 
 const VIDEO_COMPOSE_PROJECTION_FIELDS = [
@@ -35,25 +38,33 @@ export async function reconcileCompletedVideoComposeProjection(params: {
   nodeId: string;
   taskKey: string;
   jobId: string;
-}): Promise<boolean> {
+}): Promise<"applied" | "unsafe_remote" | "runtime_missing"> {
   const { projectId, canvasId, nodeId, taskKey, jobId } = params;
   const remote = await getFreezoneCanvas(projectId, canvasId);
-  return applyRemoteFreezoneCanvas(
+  const runtime = readFreezoneCanvasRuntimeRevision(projectId, canvasId);
+  if (!runtime) return "runtime_missing";
+
+  const remoteRevision =
+    typeof remote.revision === "number" ? remote.revision : null;
+  const remoteData = dataRecord(
+    (remote.nodes as CanvasNode[]).find((node) => node.id === nodeId),
+  );
+  if (
+    runtime.revision == null ||
+    remoteRevision !== runtime.revision + 1 ||
+    String(remote.save_source ?? "") !== "task_projection" ||
+    !remoteData ||
+    remoteData.resultVideoTaskKey !== taskKey ||
+    remoteData.resultVideoJobId !== jobId
+  ) {
+    return "unsafe_remote";
+  }
+
+  const applied = applyRemoteFreezoneCanvas(
     projectId,
     canvasId,
     remote,
-    (remoteNodes, _remoteEdges, localNodes, localEdges) => {
-      const remoteData = dataRecord(
-        remoteNodes.find((node) => node.id === nodeId),
-      );
-      if (
-        !remoteData ||
-        remoteData.resultVideoTaskKey !== taskKey ||
-        remoteData.resultVideoJobId !== jobId
-      ) {
-        return { nodes: localNodes, edges: localEdges };
-      }
-
+    (_remoteNodes, _remoteEdges, localNodes, localEdges) => {
       const projectionPatch: Record<string, unknown> = {};
       for (const field of VIDEO_COMPOSE_PROJECTION_FIELDS) {
         if (Object.prototype.hasOwnProperty.call(remoteData, field)) {
@@ -76,4 +87,5 @@ export async function reconcileCompletedVideoComposeProjection(params: {
       };
     },
   );
+  return applied ? "applied" : "runtime_missing";
 }
