@@ -328,6 +328,148 @@ def test_unsupported_video_mode_without_compatible_model_asks_user():
     assert blocker["recovery"] == "ask_user"
 
 
+def test_video_model_recovery_intersects_mode_and_every_shot_duration():
+    """Issue #742: a mode-compatible model is not a recovery candidate when
+    another shot in the same selected-model group falls outside its duration."""
+    catalog = [
+        {
+            "id": "selected",
+            "supportedModes": ["text_to_video", "first_frame"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+        {
+            "id": "mode-only",
+            "supportedModes": ["all_reference"],
+            "minDuration": 4,
+            "maxDuration": 15,
+        },
+        {
+            "id": "duration-only",
+            "supportedModes": ["image_reference"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+        {
+            "id": "compatible",
+            "supportedModes": ["all_reference"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+    ]
+    compiled = {
+        "plan": {
+            "nodes": [
+                {
+                    "id": "shot-1",
+                    "node_type": "videoNode",
+                    "data": {
+                        "model": "selected",
+                        "genMode": "allReference",
+                        "durationSec": 4,
+                    },
+                },
+                {
+                    "id": "shot-2",
+                    "node_type": "videoNode",
+                    "data": {
+                        "model": "selected",
+                        "genMode": "allReference",
+                        "durationSec": 3,
+                    },
+                },
+            ]
+        }
+    }
+    result = evaluate_workflow_preflight(
+        compiled,
+        model_responses={"videoNode": {"ok": True, "data": catalog}},
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 1}}},
+    )
+
+    mode_blockers = [
+        blocker for blocker in result["blockers"] if blocker["path"].endswith(".genMode")
+    ]
+    assert len(mode_blockers) == 2
+    assert all(
+        blocker["compatible_models"] == ["compatible"]
+        and blocker["recovery"] == "choose_compatible_model"
+        for blocker in mode_blockers
+    )
+    recovered = deepcopy(compiled)
+    for node in recovered["plan"]["nodes"]:
+        node["data"]["model"] = "compatible"
+    ready = evaluate_workflow_preflight(
+        recovered,
+        model_responses={"videoNode": {"ok": True, "data": catalog}},
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 1}}},
+    )
+    assert ready["status"] == "ready", ready["blockers"]
+
+
+def test_video_duration_recovery_keeps_reference_mode_and_reports_no_candidate():
+    catalog = [
+        {
+            "id": "selected",
+            "supportedModes": ["all_reference"],
+            "minDuration": 4,
+            "maxDuration": 15,
+        },
+        {
+            "id": "duration-only",
+            "supportedModes": ["image_reference"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+    ]
+    blocked = _check_catalog(
+        {"model": "selected", "genMode": "allReference", "durationSec": 3},
+        catalog,
+    )
+
+    blocker = next(
+        item for item in blocked["blockers"] if item["path"].endswith(".durationSec")
+    )
+    assert blocker["compatible_models"] == []
+    assert blocker["recovery"] == "ask_user"
+    assert "No available model satisfies the existing generation parameters" in blocker[
+        "message"
+    ]
+
+
+def test_video_duration_recovery_names_only_full_constraint_candidates():
+    catalog = [
+        {
+            "id": "selected",
+            "supportedModes": ["all_reference"],
+            "minDuration": 4,
+            "maxDuration": 15,
+        },
+        {
+            "id": "duration-only",
+            "supportedModes": ["image_reference"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+        {
+            "id": "compatible",
+            "supportedModes": ["all_reference"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+    ]
+    blocked = _check_catalog(
+        {"model": "selected", "genMode": "allReference", "durationSec": 3},
+        catalog,
+    )
+
+    blocker = next(
+        item for item in blocked["blockers"] if item["path"].endswith(".durationSec")
+    )
+    assert blocker["compatible_models"] == ["compatible"]
+    assert blocker["recovery"] == "choose_compatible_model"
+
+
 def test_video_node_without_planned_duration_asks_for_clarification():
     """Issue #677: an agent-authored video node that pins a model but no
     durationSec would run as a 0-second shot; preflight blocks and names the

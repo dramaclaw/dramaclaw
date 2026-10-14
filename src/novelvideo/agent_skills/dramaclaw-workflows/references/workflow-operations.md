@@ -27,8 +27,12 @@ reference, `firstFrame` locks it as the opening frame). State the mode as the sh
 `freezone_revise_workflow` step update of `generation_mode`, which the server records for that node
 outside the plan; a `confirmedInputs.video_generation_mode` inside any plan (including a draft
 stored earlier) is never treated as a confirmation. When a
-model rejects the mode (`model_capability_unsupported` on `genMode`), keep the mode and switch to
-one of the returned `compatible_models`; if there are none, ask the user.
+model rejects the mode or a shot duration (`model_capability_unsupported`), keep every confirmed
+mode, per-shot duration, ratio, resolution, and audio choice. Returned `compatible_models` have
+already been intersected across every shot using the rejected model. If candidates exist,
+preparation returns `video_model_clarification_required`: show its question and switch only after
+the user confirms the cost/quality tradeoff. If there are no candidates, do not probe models from
+memory or retry known-invalid values; ask which existing constraint the user wants to change.
 
 Bindings refer to existing plan node IDs:
 

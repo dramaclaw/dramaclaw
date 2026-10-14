@@ -517,10 +517,69 @@ def workflow_parameter_type_blockers(node: dict[str, Any]) -> list[dict[str, Any
     )
 
 
+def _video_catalog_entry_satisfies_nodes(
+    entry: dict[str, Any], nodes: list[dict[str, Any]]
+) -> bool:
+    """Whether one visible model satisfies every confirmed field in a shot group."""
+    for node in nodes:
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        for field, catalog_key, case_insensitive in (
+            ("aspectRatio", "ratioOptions", False),
+            ("quality", "resolutionOptions", True),
+        ):
+            value = data.get(field)
+            options = _catalog_string_options(entry, catalog_key)
+            if value not in (None, "") and options and not _catalog_option_supported(
+                value, options, case_insensitive=case_insensitive
+            ):
+                return False
+
+        selected_mode = data.get("genMode") or "textToVideo"
+        catalog_mode = (
+            _VIDEO_CATALOG_MODES.get(selected_mode)
+            if isinstance(selected_mode, str)
+            else None
+        )
+        supported_modes = entry.get("supportedModes")
+        if (
+            not isinstance(supported_modes, list)
+            or not supported_modes
+            or catalog_mode not in supported_modes
+        ):
+            return False
+
+        duration = data.get("durationSec")
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+            minimum = entry.get("minDuration")
+            maximum = entry.get("maxDuration")
+            if isinstance(minimum, (int, float)) and duration < minimum:
+                return False
+            if isinstance(maximum, (int, float)) and duration > maximum:
+                return False
+        if data.get("generateAudio") is True and entry.get("supportsGenerateAudio") is False:
+            return False
+    return True
+
+
+def _compatible_video_models(
+    nodes: list[dict[str, Any]], catalog: list[dict[str, Any]] | None
+) -> list[str]:
+    return [
+        str(entry.get("id") or entry.get("apiModel") or entry.get("api_model") or "").strip()
+        for entry in catalog or []
+        if isinstance(entry, dict)
+        and str(
+            entry.get("id") or entry.get("apiModel") or entry.get("api_model") or ""
+        ).strip()
+        and _video_catalog_entry_satisfies_nodes(entry, nodes)
+    ]
+
+
 def _workflow_node_capability_blockers(
     node: dict[str, Any],
     catalog_entry: dict[str, Any],
     catalog: list[dict[str, Any]] | None = None,
+    candidate_nodes: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     node_type = str(node.get("node_type") or "").strip()
     data = node.get("data") if isinstance(node.get("data"), dict) else {}
@@ -578,6 +637,11 @@ def _workflow_node_capability_blockers(
         )
     type_blockers = workflow_parameter_type_blockers(node)
     blockers.extend(type_blockers)
+    compatible = (
+        _compatible_video_models(candidate_nodes or [node], catalog)
+        if node_type == "videoNode"
+        else []
+    )
     if node_type == "videoNode":
         supported_modes = catalog_entry.get("supportedModes")
         selected_mode = data.get("genMode") or "textToVideo"
@@ -595,14 +659,6 @@ def _workflow_node_capability_blockers(
             # The mode is what the user asked for (issue #711): imageToVideo and
             # firstFrame consume the same single image differently, so recovery
             # keeps the mode and switches to a model that supports it.
-            compatible = [
-                str(entry.get("id") or "").strip()
-                for entry in catalog or []
-                if isinstance(entry, dict)
-                and str(entry.get("id") or "").strip()
-                and isinstance(entry.get("supportedModes"), list)
-                and catalog_mode in entry["supportedModes"]
-            ]
             blockers.append({
                 "path": f"runtime.models.{node_id}.genMode",
                 "message": (
@@ -646,10 +702,19 @@ def _workflow_node_capability_blockers(
                         f"durationSec value {data['durationSec']!r} is not supported "
                         f"by model {model_id}"
                         f"; supported duration range: {minimum!r} to {maximum!r} seconds"
+                        + (
+                            ". Select one of compatible_models without changing the "
+                            "existing mode or shot durations."
+                            if compatible
+                            else ". No available model satisfies the existing generation "
+                            "parameters; ask the user which constraint to change."
+                        )
                     ),
                     "code": "model_capability_unsupported",
                     "minimum": minimum,
                     "maximum": maximum,
+                    "compatible_models": compatible,
+                    "recovery": "choose_compatible_model" if compatible else "ask_user",
                 }
             )
     if (
@@ -828,8 +893,24 @@ def evaluate_workflow_preflight(
                 model = str((node.get("data") or {}).get("model") or "").strip()
                 catalog_entry = _catalog_entry_for_model(catalog, model)
                 if catalog_entry is not None:
+                    candidate_nodes = None
+                    if node_type == "videoNode":
+                        candidate_nodes = [
+                            peer
+                            for peer in typed_nodes
+                            if _catalog_entry_for_model(
+                                catalog,
+                                str((peer.get("data") or {}).get("model") or "").strip(),
+                            )
+                            is catalog_entry
+                        ]
                     blockers.extend(
-                        _workflow_node_capability_blockers(node, catalog_entry, catalog)
+                        _workflow_node_capability_blockers(
+                            node,
+                            catalog_entry,
+                            catalog,
+                            candidate_nodes=candidate_nodes,
+                        )
                     )
                     if node_type == "videoNode":
                         blockers.extend(

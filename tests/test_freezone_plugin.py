@@ -5439,6 +5439,171 @@ def test_text_to_image_video_text_mode_returns_nonfailure_clarification(monkeypa
     assert structured["question"] == result["question"]
 
 
+def test_incompatible_video_model_requires_confirmed_full_constraint_replacement(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    compiled = {
+        "ok": True,
+        "skill_id": "pixar-ip-ad-video",
+        "plan": {
+            "nodes": [
+                {
+                    "id": "shot-1",
+                    "node_type": "videoNode",
+                    "data": {"model": "selected", "durationSec": 4},
+                },
+                {
+                    "id": "shot-2",
+                    "node_type": "videoNode",
+                    "data": {"model": "selected", "durationSec": 3},
+                },
+            ],
+            "edges": [],
+        },
+    }
+    preflight = {
+        "status": "blocked",
+        "warnings": [],
+        "blockers": [
+            {
+                "path": "runtime.models.shot-1.genMode",
+                "code": "model_capability_unsupported",
+                "message": "selected does not support allReference",
+                "compatible_models": ["mode-only", "compatible"],
+                "recovery": "choose_compatible_model",
+            },
+            {
+                "path": "runtime.models.shot-2.genMode",
+                "code": "model_capability_unsupported",
+                "message": "selected does not support allReference",
+                "compatible_models": ["compatible"],
+                "recovery": "choose_compatible_model",
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "data": [
+                {"id": "mode-only", "label": "Mode Only"},
+                {
+                    "id": "compatible",
+                    "label": "Compatible Model",
+                    "minDuration": 2,
+                    "maxDuration": 15,
+                    "supportedModes": ["all_reference"],
+                },
+            ],
+        },
+    )
+
+    result = plugin._workflow_model_reselection_clarification(
+        preflight, compiled, project_id="project-a"
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "video_model_clarification_required"
+    assert result["draft_created"] is False
+    assert result["required_choice"] == "compatible_video_model"
+    assert result["affected_node_ids"] == ["shot-1", "shot-2"]
+    assert result["question"]["options"] == [
+        {
+            "id": "compatible",
+            "label": "Compatible Model",
+            "description": "支持当前镜头的参考模式、时长及已确认生成参数。",
+        }
+    ]
+    assert "Do not select a replacement without the user's answer" in result[
+        "agent_instruction"
+    ]
+    structured = _assert_real_mcp_output(
+        plugin, "freezone_prepare_workflow_plan_draft", result
+    )
+    assert structured["question"] == result["question"]
+
+
+def test_prepare_exact_plan_returns_video_model_clarification(monkeypatch, tmp_path):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "nodes": [
+            {
+                "id": "shot",
+                "node_type": "videoNode",
+                "data": {"model": "selected", "durationSec": 3},
+            }
+        ],
+        "edges": [],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda value: {"ok": True, "skill_id": "video-ad", "plan": value},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: {
+            "status": "blocked",
+            "warnings": [],
+            "blockers": [
+                {
+                    "path": "runtime.models.shot.durationSec",
+                    "code": "model_capability_unsupported",
+                    "message": "selected requires at least four seconds",
+                    "compatible_models": ["compatible"],
+                    "recovery": "choose_compatible_model",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "data": [{"id": "compatible", "label": "Compatible Model"}],
+        },
+    )
+
+    result = plugin._handle_prepare_workflow_plan_draft({"plan": plan})
+
+    assert result["ok"] is True
+    assert result["status"] == "video_model_clarification_required"
+    assert result["draft_created"] is False
+    assert result["question"]["options"][0]["id"] == "compatible"
+
+
+def test_no_compatible_video_model_stops_retry_loop_and_asks_to_relax_constraints():
+    plugin = _load_plugin_module()
+    preflight = {
+        "status": "blocked",
+        "warnings": [],
+        "blockers": [
+            {
+                "path": "runtime.models.shot.durationSec",
+                "code": "model_capability_unsupported",
+                "message": "No available model satisfies the existing generation parameters",
+                "compatible_models": [],
+                "recovery": "ask_user",
+            }
+        ],
+    }
+
+    result = plugin._workflow_preflight_failure(preflight)
+
+    assert result["ok"] is False
+    assert result["status"] == "workflow_preflight_failed"
+    assert result["code"] == "no_compatible_video_model"
+    assert result["retryable"] is False
+    assert result["next_action"] == "ask_user_to_change_constraints"
+    assert "Do not retry another model" in result["agent_instruction"]
+
+
 def test_prepare_exact_plan_mixed_preflight_blockers_fail_without_clarification(
     monkeypatch, tmp_path
 ):

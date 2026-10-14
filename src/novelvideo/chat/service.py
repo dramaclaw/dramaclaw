@@ -375,8 +375,12 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "video node's genMode equal to it; "
     "imageToVideo (whole-picture image reference) and firstFrame (locked first frame) are "
     "different modes, never substitute one for the other. A node genMode without a shared "
-    "video_generation_mode blocks the draft. If the selected model does not "
-    "support the mode, choose a model that does, or ask the user. The Skill-specific "
+    "video_generation_mode blocks the draft. If a model cannot satisfy the mode or a shot "
+    "duration, use only the preflight's compatible_models, which already satisfy every shot "
+    "using that model and all confirmed generation fields. If preparation returns "
+    "video_model_clarification_required, show that exact question and never choose the "
+    "replacement yourself. If it reports no compatible model, stop trying model ids and ask "
+    "which mode, duration, or other confirmed constraint the user wants to change. The Skill-specific "
     "image_count/video_count fields describe "
     "workflow deliverable or node counts and must never be copied to a node's data.count. If a "
     "canvas write returns code=generation_parameters_required, never retry unchanged. Pass "
@@ -412,7 +416,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v28"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v29"
 
 
 def _codex_agent_skill_locator_instructions(workspace: Path) -> str:

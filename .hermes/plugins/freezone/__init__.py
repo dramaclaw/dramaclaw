@@ -4441,6 +4441,22 @@ def _workflow_preflight_failure(
                 "conflict instead of asking how to bypass it."
             ),
         )
+    elif (
+        blocker.get("code") == "model_capability_unsupported"
+        and blocker.get("recovery") == "ask_user"
+        and blocker.get("compatible_models") == []
+    ):
+        result.update(
+            code="no_compatible_video_model",
+            retryable=False,
+            next_action="ask_user_to_change_constraints",
+            agent_instruction=(
+                "No user-visible video model satisfies the already confirmed mode, shot "
+                "durations, and generation parameters together. Do not retry another model "
+                "or silently change those values. Ask the user which constraint to relax, "
+                "then collect the changed generation choice before retrying once."
+            ),
+        )
     return result
 
 
@@ -4456,6 +4472,114 @@ _VIDEO_MODE_LABELS = {
     "imageReference": "图片参考生成视频",
     "allReference": "全参考生成视频",
 }
+
+
+def _workflow_model_reselection_clarification(
+    preflight: dict[str, Any], compiled: dict[str, Any], *, project_id: str
+) -> dict[str, Any] | None:
+    """Require confirmation before replacing an explicitly selected video model."""
+    blockers = preflight.get("blockers")
+    if not isinstance(blockers, list) or not blockers:
+        return None
+    relevant = [
+        blocker
+        for blocker in blockers
+        if isinstance(blocker, dict)
+        and blocker.get("code") == "model_capability_unsupported"
+        and blocker.get("recovery") == "choose_compatible_model"
+        and isinstance(blocker.get("compatible_models"), list)
+        and str(blocker.get("path") or "").endswith((".genMode", ".durationSec"))
+    ]
+    if len(relevant) != len(blockers):
+        return None
+
+    candidate_order = [str(value).strip() for value in relevant[0]["compatible_models"]]
+    compatible_sets = [
+        {str(value).strip() for value in blocker["compatible_models"] if str(value).strip()}
+        for blocker in relevant
+    ]
+    compatible = [
+        model_id
+        for model_id in candidate_order
+        if model_id and all(model_id in values for values in compatible_sets)
+    ]
+    if not compatible:
+        return None
+    try:
+        response = _request(
+            "GET", f"/projects/{quote(project_id, safe='')}/freezone/video/models"
+        )
+    except Exception:  # noqa: BLE001 - preserve the original preflight failure
+        return None
+    catalog = response.get("data") if response.get("ok") is not False else None
+    if not isinstance(catalog, list):
+        return None
+    from novelvideo.freezone.workflow_preflight import _catalog_entry_for_model
+
+    options = []
+    for model_id in compatible:
+        entry = _catalog_entry_for_model(
+            [item for item in catalog if isinstance(item, dict)], model_id
+        )
+        if entry is None:
+            continue
+        options.append(
+            {
+                "id": model_id,
+                "label": str(entry.get("label") or entry.get("name") or model_id),
+                "description": "支持当前镜头的参考模式、时长及已确认生成参数。",
+            }
+        )
+    if not options:
+        return None
+
+    planned_video_ids = {
+        str(node.get("id") or "")
+        for node in (compiled.get("plan") or {}).get("nodes") or []
+        if isinstance(node, dict) and node.get("node_type") == "videoNode"
+    }
+    affected_node_ids = []
+    for blocker in relevant:
+        path = str(blocker.get("path") or "")
+        node_path = path.removeprefix("runtime.models.")
+        node_id, separator, _field = node_path.rpartition(".")
+        if (
+            separator
+            and node_id in planned_video_ids
+            and node_id not in affected_node_ids
+        ):
+            affected_node_ids.append(node_id)
+    if not affected_node_ids:
+        return None
+    return {
+        "ok": True,
+        "status": "video_model_clarification_required",
+        "code": "video_model_incompatible",
+        "draft_created": False,
+        "preflight": preflight,
+        "required_choice": "compatible_video_model",
+        "affected_node_ids": affected_node_ids,
+        "question": {
+            "id": "compatible_video_model",
+            "title": "确认兼容的视频模型",
+            "prompt": (
+                "当前选择的视频模型不能同时满足参考模式和镜头时长。切换模型可能影响"
+                "成本或效果，请确认替代模型。"
+            ),
+            "mode": "single",
+            "options": options,
+        },
+        "agent_instruction": (
+            "This is a successful pre-draft clarification outcome, not a failed draft. "
+            "Call freezone_request_user_clarification exactly once with the returned question. "
+            "Do not select a replacement without the user's answer. After the answer, replace "
+            "plan.inputs.video_model and data.model on every affected_node_id with the chosen "
+            "option id, and retry the same complete plan exactly once with the same operation_id. "
+            "Also pass that answer as generation_answers.video_model so it replaces the earlier "
+            "model answer while the other remembered generation choices remain unchanged. Preserve "
+            "all modes, shot durations, references, node counts, and other confirmed values."
+        ),
+    }
 
 
 def _workflow_generation_mode_clarification(
@@ -6160,6 +6284,11 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     )
     validated["preflight"] = preflight
     if preflight["blockers"]:
+        model_clarification = _workflow_model_reselection_clarification(
+            preflight, validated, project_id=project
+        )
+        if model_clarification is not None:
+            return tool_result(model_clarification)
         mode_clarification = _workflow_generation_mode_clarification(
             preflight, validated, project_id=project
         )
@@ -7058,6 +7187,11 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     preflight = _workflow_runtime_preflight(compiled, project_id=project_id)
     compiled["preflight"] = preflight
     if preflight["blockers"]:
+        model_clarification = _workflow_model_reselection_clarification(
+            preflight, compiled, project_id=project_id
+        )
+        if model_clarification is not None:
+            return tool_result(model_clarification)
         mode_clarification = _workflow_generation_mode_clarification(
             preflight, compiled, project_id=project_id
         )
@@ -9349,7 +9483,10 @@ def _success_contract(name: str) -> dict[str, Any]:
                     {
                         "properties": {
                             "status": {
-                                "const": "generation_mode_clarification_required"
+                                "enum": [
+                                    "generation_mode_clarification_required",
+                                    "video_model_clarification_required",
+                                ]
                             },
                             "draft_created": {"const": False},
                         },
