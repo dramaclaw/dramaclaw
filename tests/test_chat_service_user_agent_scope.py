@@ -1610,7 +1610,10 @@ def test_named_recipe_distinguishes_existing_output_from_external_media_input():
         chat_service._codex_developer_instructions("freezone_canvas"),
         chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS,
     ):
-        assert "named Recipe already bound to an existing standalone output node" in instructions
+        assert (
+            "named Recipe already bound to an existing standalone output node"
+            in instructions
+        )
         assert "freezone_run_node_action" in instructions
         assert "never substitute freezone_update_node_data" in instructions
         assert "existing media node is only the source or reference" in instructions

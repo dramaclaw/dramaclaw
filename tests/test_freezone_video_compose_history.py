@@ -93,8 +93,7 @@ async def test_video_compose_runner_records_node_generation_history(
     assert records[0]["media_type"] == "video"
     assert records[0]["result"]["output_url"].endswith("job-a.mp4")
     assert (
-        records[0]["result"]["cover_url"]
-        == "/static/project/freezone/covers/cover.png"
+        records[0]["result"]["cover_url"] == "/static/project/freezone/covers/cover.png"
     )
 
 
@@ -187,11 +186,7 @@ async def test_video_compose_runner_does_not_overwrite_a_newer_generation(
     output_dir = tmp_path / "output"
     state_dir = tmp_path / "state"
     output = (
-        output_dir
-        / "freezone"
-        / "_outputs"
-        / "freezone_video_compose"
-        / "old-job.mp4"
+        output_dir / "freezone" / "_outputs" / "freezone_video_compose" / "old-job.mp4"
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(b"video")
@@ -249,8 +244,7 @@ async def test_video_compose_runner_does_not_overwrite_a_newer_generation(
     assert canvas["revision"] == 3
     assert canvas["nodes"][0]["data"]["generationTaskJobId"] == "new-job"
     assert (
-        canvas["nodes"][0]["data"]["resultVideoUrl"]
-        == "/static/project/previous.mp4"
+        canvas["nodes"][0]["data"]["resultVideoUrl"] == "/static/project/previous.mp4"
     )
 
 
