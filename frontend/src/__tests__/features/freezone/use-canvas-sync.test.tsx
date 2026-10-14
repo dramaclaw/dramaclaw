@@ -26,6 +26,9 @@ import { holdCanvasAutosave } from "@/features/freezone/canvasAutosaveHold";
 import { projectionScopedId } from "@/features/freezone/projectionGraphIds";
 import { useShotMetadataStore } from "@/features/freezone/shotMetadataStore";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
+import {
+  reconcileCompletedVideoComposeProjection,
+} from "@/features/canvas/application/videoComposeProjection";
 import { useCanvasStore } from "@/stores/canvasStore";
 
 vi.mock("@/api/canvas", async (importOriginal) => {
@@ -1057,6 +1060,129 @@ describe("useCanvasSync hydrate lifecycle", () => {
       for (let i = 0; i < 12; i += 1) await Promise.resolve();
     });
     expect(putBaseRevisions).toEqual([7, 100]);
+
+    hook.unmount();
+  });
+
+  it("rebases a completed compose projection before saving the browser result node", async () => {
+    vi.useFakeTimers();
+    const taskKey = "task:freezone_video_compose:project:project-a:0:compose-job-1";
+    const localComposeNode = {
+      id: "compose-1",
+      type: CANVAS_NODE_TYPES.videoCompose,
+      position: { x: 20, y: 30 },
+      data: {
+        displayName: "Final cut",
+        draftTimeline: { resolution: "1080p", tracks: [] },
+        isGenerating: true,
+        generationTaskKey: taskKey,
+        generationTaskType: "freezone_video_compose",
+        generationTaskJobId: "compose-job-1",
+      },
+    } as any;
+    vi.mocked(getFreezoneCanvas)
+      .mockResolvedValueOnce({
+        nodes: [localComposeNode],
+        edges: [],
+        revision: 7,
+      })
+      .mockResolvedValueOnce({
+        nodes: [
+          {
+            ...localComposeNode,
+            data: {
+              ...localComposeNode.data,
+              resultVideoUrl: "/static/project/compose-job-1.mp4",
+              resultVideoTaskKey: taskKey,
+              resultVideoJobId: "compose-job-1",
+              isGenerating: false,
+              generationStartedAt: null,
+              generationTaskKey: null,
+              generationTaskType: null,
+              generationTaskJobId: null,
+              generationError: null,
+            },
+          },
+        ],
+        edges: [],
+        revision: 8,
+        save_source: "task_projection" as any,
+      });
+    let serverRevision = 8;
+    vi.mocked(putFreezoneCanvas).mockImplementation(
+      async (_project, _canvasId, payload) => {
+        expect(payload.base_revision).toBe(serverRevision);
+        serverRevision += 1;
+        return { saved: true, revision: serverRevision };
+      },
+    );
+
+    const hook = renderHook(() =>
+      useCanvasSync("project-a", "compose_projection_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(hook.result.current.revision).toBe(7);
+
+    await act(async () => {
+      expect(
+        await reconcileCompletedVideoComposeProjection({
+          projectId: "project-a",
+          canvasId: "compose_projection_user_eric",
+          nodeId: "compose-1",
+          taskKey,
+          jobId: "compose-job-1",
+        }),
+      ).toBe(true);
+    });
+    expect(hook.result.current.revision).toBe(8);
+
+    act(() => {
+      const store = useCanvasStore.getState();
+      const resultNodeId = store.addNode(
+        CANVAS_NODE_TYPES.video,
+        { x: 600, y: 30 },
+        {
+          videoUrl: "/static/project/compose-job-1.mp4",
+          composeSourceNodeId: "compose-1",
+        },
+      );
+      store.addEdge("compose-1", resultNodeId);
+      store.updateNodeData("compose-1", {
+        resultVideoUrl: "/static/project/compose-job-1.mp4",
+        resultVideoTaskKey: taskKey,
+        resultVideoJobId: "compose-job-1",
+      });
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+
+    expect(putFreezoneCanvas).toHaveBeenCalled();
+    const saveCalls = vi.mocked(putFreezoneCanvas).mock.calls;
+    const saved = saveCalls[saveCalls.length - 1][2];
+    expect(saved.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "compose-1",
+          data: expect.objectContaining({
+            resultVideoUrl: "/static/project/compose-job-1.mp4",
+            resultVideoTaskKey: taskKey,
+            resultVideoJobId: "compose-job-1",
+            isGenerating: false,
+            generationTaskKey: null,
+          }),
+        }),
+        expect.objectContaining({
+          data: expect.objectContaining({ composeSourceNodeId: "compose-1" }),
+        }),
+      ]),
+    );
+    expect(hook.result.current.status).toBe("ready");
 
     hook.unmount();
   });

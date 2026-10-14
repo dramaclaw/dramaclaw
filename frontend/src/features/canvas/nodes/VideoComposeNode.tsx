@@ -55,6 +55,9 @@ import {
   CLEARED_GENERATION_TASK_FIELDS,
   generationTaskDescriptor,
 } from "@/features/canvas/application/resumeGeneration";
+import {
+  reconcileCompletedVideoComposeProjection,
+} from "@/features/canvas/application/videoComposeProjection";
 
 type VideoComposeNodeProps = NodeProps & {
   id: string;
@@ -117,6 +120,7 @@ export const VideoComposeNode = memo(
       if (!project || !canAutoCompose) {
         throw new Error("自动合成至少需要 1 个视频和共计 2 个已完成媒体节点");
       }
+      let taskCompleted = false;
       const draft = data.draftTimeline as ComposeTimelineState | undefined;
       const timeline = await resolveUnknownClipDurations(
         draft?.tracks?.length
@@ -146,12 +150,31 @@ export const VideoComposeNode = memo(
         await awaitTaskCompletion(ref.task_key, project, {
           taskType: ref.task_type,
         });
+        taskCompleted = true;
         const result = await fetchFreezoneJobResult(
           project,
           "freezone_video_compose",
           ref.job_id,
         );
         if (!result.url) throw new Error("视频合成完成但未返回成片地址");
+        const runtimeApplied = await reconcileCompletedVideoComposeProjection({
+          projectId: project,
+          canvasId,
+          nodeId: id,
+          taskKey: ref.task_key,
+          jobId: ref.job_id,
+        });
+        const output = {
+          videoUrl: result.url,
+          output_url: result.url,
+          task_key: ref.task_key,
+          task_type: ref.task_type,
+          job_id: ref.job_id,
+        };
+        // The user navigated away while the task was finishing. The worker's
+        // projection is already durable; do not write its result into whatever
+        // canvas runtime is active now.
+        if (!runtimeApplied) return output;
         const resultCoverUrl = result.cover_url ?? timeline.cover?.url ?? null;
         const store = useCanvasStore.getState();
         const existingResult = store.nodes.find((node) =>
@@ -183,22 +206,22 @@ export const VideoComposeNode = memo(
           draftTimeline: timeline,
           generationError: null,
         });
-        return {
-          videoUrl: result.url,
-          output_url: result.url,
-          task_key: ref.task_key,
-          task_type: ref.task_type,
-          job_id: ref.job_id,
-        };
+        return output;
       } catch (error) {
         if (isTaskPollTimeoutError(error)) {
           notifyTaskStillRunning(t);
           throw error;
         }
-        updateNodeData(id, {
-          ...CLEARED_GENERATION_TASK_FIELDS,
-          generationError: error instanceof Error ? error.message : String(error),
-        });
+        // Once completion is observed, the worker may already have advanced
+        // the server canvas revision. Keep the durable task descriptor intact
+        // if fetching/rebasing the result fails; a refresh can recover it
+        // without issuing another stale autosave.
+        if (!taskCompleted) {
+          updateNodeData(id, {
+            ...CLEARED_GENERATION_TASK_FIELDS,
+            generationError: error instanceof Error ? error.message : String(error),
+          });
+        }
         throw error;
       }
     }, [
