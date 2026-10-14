@@ -42,7 +42,8 @@ import {
   type ComposeTimelineState,
 } from "@/features/canvas/compose/timelineModel";
 import { fetchFreezoneJobResult, submitFreezoneVideoCompose } from "@/api/ops";
-import { awaitTaskCompletion } from "@/api/tasks";
+import { awaitTaskCompletion, isTaskPollTimeoutError } from "@/api/tasks";
+import { notifyTaskStillRunning } from "@/features/canvas/application/errorDialog";
 import { orderedComposeSeedNodeIds } from "@/features/canvas/compose/composeInputOrdering";
 import {
   publishNodeActionAccepted,
@@ -50,7 +51,10 @@ import {
   publishNodeActionSuccess,
   subscribeNodeAction,
 } from "@/features/canvas/application/nodeActionResult";
-import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
+import {
+  CLEARED_GENERATION_TASK_FIELDS,
+  generationTaskDescriptor,
+} from "@/features/canvas/application/resumeGeneration";
 
 type VideoComposeNodeProps = NodeProps & {
   id: string;
@@ -170,12 +174,13 @@ export const VideoComposeNode = memo(
           store.addEdge(id, resultNodeId);
         }
         updateNodeData(id, {
+          ...CLEARED_GENERATION_TASK_FIELDS,
           resultVideoUrl: result.url,
+          resultVideoTaskKey: ref.task_key,
+          resultVideoJobId: ref.job_id,
           previewImageUrl: resultCoverUrl,
           resolution: timeline.resolution,
           draftTimeline: timeline,
-          isGenerating: false,
-          generationStartedAt: null,
           generationError: null,
         });
         return {
@@ -186,9 +191,12 @@ export const VideoComposeNode = memo(
           job_id: ref.job_id,
         };
       } catch (error) {
+        if (isTaskPollTimeoutError(error)) {
+          notifyTaskStillRunning(t);
+          throw error;
+        }
         updateNodeData(id, {
-          isGenerating: false,
-          generationStartedAt: null,
+          ...CLEARED_GENERATION_TASK_FIELDS,
           generationError: error instanceof Error ? error.message : String(error),
         });
         throw error;

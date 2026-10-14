@@ -155,6 +155,7 @@ type ResumeKind =
   | 'derived-media'
   | 'image'
   | 'video'
+  | 'video-compose'
   | 'audio'
   | 'ply'
   | 'script'
@@ -173,6 +174,8 @@ function resumeKindForNode(type: CanvasNodeType, taskType: FreezoneTaskType): Re
       return 'image';
     case CANVAS_NODE_TYPES.video:
       return 'video';
+    case CANVAS_NODE_TYPES.videoCompose:
+      return taskType === 'freezone_video_compose' ? 'video-compose' : null;
     case CANVAS_NODE_TYPES.audio:
       return 'audio';
     case CANVAS_NODE_TYPES.threeDWorld:
@@ -275,6 +278,28 @@ async function buildSuccessPatch(
         generationErrorRequestId: null,
       };
     }
+    case 'video-compose': {
+      let url = resolveUrlFromResult(completed.result, ['video_url', 'output_url', 'url']);
+      let coverUrl = resolveUrlFromResult(completed.result, ['cover_url', 'preview_image_url']);
+      if (!url && jobId) {
+        const result = await fetchFreezoneJobResult(projectId, taskType, jobId).catch(() => null);
+        url = result?.url ?? null;
+        coverUrl = coverUrl ?? result?.cover_url ?? null;
+      }
+      if (!url) {
+        return { ...CLEARED_GENERATION_TASK_FIELDS, generationError: i18n.t('canvas.resumeGeneration.noVideoResult') };
+      }
+      return {
+        ...CLEARED_GENERATION_TASK_FIELDS,
+        resultVideoUrl: url,
+        ...(coverUrl ? { previewImageUrl: coverUrl } : {}),
+        resultVideoTaskKey: completed.task_key,
+        resultVideoJobId: jobId,
+        generationError: null,
+        generationErrorDetails: null,
+        generationErrorRequestId: null,
+      };
+    }
     case 'audio': {
       let url = resolveUrlFromResult(completed.result, ['audio_url', 'output_url', 'url']);
       if (!url && jobId) {
@@ -328,8 +353,8 @@ function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unkno
     const message = error instanceof Error ? error.message : String(error);
     return { ...CLEARED_GENERATION_TASK_FIELDS, taskKey: null, errorMessage: i18n.t('canvas.resumeGeneration.failedWithMessage', { message }) };
   }
-  if (kind === 'image' || kind === 'video' || kind === 'derived-media') {
-    const resolved = resolveErrorContent(error, kind === 'video'
+  if (kind === 'image' || kind === 'video' || kind === 'video-compose' || kind === 'derived-media') {
+    const resolved = resolveErrorContent(error, kind === 'video' || kind === 'video-compose'
       ? i18n.t('canvas.resumeGeneration.videoFailed')
       : i18n.t('canvas.resumeGeneration.imageFailed'));
     const rawMessage = resolved.message;
@@ -439,7 +464,7 @@ export async function resumeNodeGeneration(params: {
       return;
     }
     if (!stillOwnsTask()) return;
-    if (kind === 'image' || kind === 'video') {
+    if (kind === 'image' || kind === 'video' || kind === 'video-compose') {
       const latestNodeData = readLatestNodeData();
       if (!shouldWriteGenerationError({ nodeData: latestNodeData, taskKey, error })) {
         updateNodeData(node.id, { ...CLEARED_GENERATION_TASK_FIELDS });

@@ -4434,6 +4434,43 @@ describe("canvas chat commands", () => {
     expect(nodeActionCatalog?.data?.editable_schema).toBeUndefined();
   });
 
+  it("routes a missing named Recipe action to a workflow with the source kept external", async () => {
+    const imageId = useCanvasStore.getState().addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { imageUrl: "/static/project/red-cup.png", prompt: "红色马克杯" },
+    );
+    const response = await buildCanvasContextRequestResponse({
+      project: "project-a",
+      canvasId: "canvas-a",
+      nodes: useCanvasStore.getState().nodes,
+      edges: [],
+      ontologyContext: null,
+      selectedNodeIds: [],
+      envelopes: extractCanvasContextRequestEnvelopes([{
+        schema_version: "canvas_context_request.v1",
+        requests: [{
+          type: "node_action_catalog",
+          node_id: imageId,
+          action: "ecommerce-remix-image",
+        }],
+      }]),
+    });
+    const payload = JSON.parse(response?.split("\n")[2] ?? "{}") as {
+      responses: Array<{ data: {
+        action_found?: boolean;
+        instruction?: string;
+      } }>;
+    };
+    const catalog = payload.responses[0]?.data;
+
+    expect(catalog?.action_found).toBe(false);
+    expect(catalog?.instruction).toContain("Workflow Skill");
+    expect(catalog?.instruction).toContain("external_inputs");
+    expect(catalog?.instruction).toContain("reference_inputs");
+    expect(catalog?.instruction).toContain("do not recreate or copy the source node");
+  });
+
   it("shows valid single and batch calls for default and parameterized node actions", async () => {
     const imageId = useCanvasStore.getState().addNode(
       CANVAS_NODE_TYPES.imageGen,

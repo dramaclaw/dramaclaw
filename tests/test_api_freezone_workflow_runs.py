@@ -1437,6 +1437,56 @@ def test_metered_workflow_run_admits_each_model_recipe_before_run_creation(
     assert not deterministic_action["product_operation_id"]
 
 
+def test_metered_workflow_run_fails_unbound_operation_when_admission_is_rejected(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+    from novelvideo.shared.billing_errors import BillingRuleNotConfiguredError
+
+    class RejectingTaskBackend:
+        async def enqueue_project_task(self, _ctx, **_kwargs):
+            raise BillingRuleNotConfiguredError(
+                kind="feature", key="freezone.agent.recipe_result"
+            )
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    monkeypatch.setattr(freezone, "get_task_backend", lambda: RejectingTaskBackend())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    request = {
+        "idempotency_key": "missing-recipe-price",
+        "actions": [
+            {
+                "node_id": "text-1",
+                "action": "generate_text",
+                "recipe_id": "general-text",
+                "recipe_version": "1.0.0",
+                "generation_attempt_id": "attempt-text",
+            }
+        ],
+    }
+
+    with pytest.raises(BillingRuleNotConfiguredError):
+        workflow_run_client.post(base, json=request)
+
+    with sqlite3.connect(workflow_run_client.state_dir / "data.db") as conn:
+        run_rows = conn.execute("SELECT status FROM workflow_runs").fetchall()
+        rows = conn.execute(
+            "SELECT operation_id FROM freezone_agent_product_operations"
+        ).fetchall()
+    assert run_rows == [("failed",)]
+    assert len(rows) == 1
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=rows[0][0],
+    )
+    assert operation is not None
+    assert operation["status"] == "failed"
+    assert operation["task_id"] == ""
+
+
 def test_metered_html_recipe_workflow_admits_and_binds_operation(
     workflow_run_client: TestClient, monkeypatch
 ) -> None:

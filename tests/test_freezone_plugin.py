@@ -375,7 +375,9 @@ def test_recipe_generation_and_plain_edit_tool_descriptions_remain_distinct():
     run_action = schemas["freezone_run_node_action"]["description"]
     update_data = schemas["freezone_update_node_data"]["description"]
 
-    assert "generate content through a named Recipe" in run_action
+    assert "named Recipe is already bound to this standalone output node" in run_action
+    assert "source or reference for a new Recipe result" in run_action
+    assert "external_inputs and reference_inputs" in run_action
     assert "never substitute freezone_update_node_data" in run_action
     assert "edit fields without generating" in update_data
     assert "not a substitute for Recipe generation" in update_data

@@ -1605,14 +1605,20 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "freezone_run_node_action" in canvas_instructions
 
 
-def test_recipe_generation_on_an_existing_standalone_node_routes_to_node_action():
+def test_named_recipe_distinguishes_existing_output_from_external_media_input():
     for instructions in (
         chat_service._codex_developer_instructions("freezone_canvas"),
         chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS,
     ):
-        assert "generate content through a named Recipe" in instructions
+        assert "named Recipe already bound to an existing standalone output node" in instructions
         assert "freezone_run_node_action" in instructions
         assert "never substitute freezone_update_node_data" in instructions
+        assert "existing media node is only the source or reference" in instructions
+        assert "external_inputs" in instructions
+        assert "reference_inputs" in instructions
+        assert "never use freezone_get_node_action_catalog" in instructions
+        assert "do not recreate" in instructions
+        assert "copy the source node" in instructions
 
 
 def test_explicit_standalone_node_edit_does_not_trigger_recipe_generation():

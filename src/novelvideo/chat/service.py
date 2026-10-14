@@ -248,9 +248,14 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "continue, or resume an existing workflow, call freezone_run_workflow directly even when it "
     "contains only one executable node; do not read node detail before starting it and never "
     "substitute freezone_run_node_action. "
-    "If the user asks to generate content through a named Recipe on one existing standalone "
-    "node, call freezone_run_node_action with the node's catalog action; never substitute "
+    "If the user asks to run a named Recipe already bound to an existing standalone output node, "
+    "call freezone_run_node_action with that node's catalog action; never substitute "
     "freezone_update_node_data, even if the requested content could be written directly. "
+    "If an existing media node is only the source or reference for a new named Recipe result, "
+    "preserve it as an external workflow input: use Workflow Skill discovery and draft with "
+    "external_inputs and reference_inputs; never use freezone_get_node_action_catalog, "
+    "freezone_run_node_action, freezone_add_next_node, or freezone_emit_canvas_command for that "
+    "request, and do not recreate or copy the source node. "
     "If the user asks only to edit fields on one existing standalone node without generating, "
     "use freezone_update_node_data; do not call freezone_run_node_action. "
     "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
@@ -654,9 +659,14 @@ Canvas write contract:
   or resume an existing workflow, call freezone_run_workflow directly even when it contains only
   one executable node; do not read node detail before starting it and never substitute
   freezone_run_node_action.
-- If the user asks to generate content through a named Recipe on one existing standalone node,
-  call freezone_run_node_action with the node's catalog action; never substitute freezone_update_node_data,
+- If the user asks to run a named Recipe already bound to an existing standalone output node, call
+  freezone_run_node_action with that node's catalog action; never substitute freezone_update_node_data,
   even if the requested content could be written directly.
+- If an existing media node is only the source or reference for a new named Recipe result, preserve
+  it as an external workflow input: use Workflow Skill discovery and draft with external_inputs and
+  reference_inputs; never use freezone_get_node_action_catalog, freezone_run_node_action,
+  freezone_add_next_node, or freezone_emit_canvas_command for that request, and do not recreate or
+  copy the source node.
 - If the user asks only to edit fields on one existing standalone node without generating, use
   freezone_update_node_data; do not call freezone_run_node_action.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never

@@ -16279,6 +16279,10 @@ async def create_canvas_workflow_run(
                     "generation_attempt_id": attempt_id,
                 },
             )
+            # Track the durable operation before admission. Enqueue can fail
+            # (for example when its billing rule is missing) before a task id
+            # exists, and that unbound operation still needs a terminal state.
+            admitted_operations.append(operation)
             if not operation.get("task_id"):
                 queued = await get_task_backend().enqueue_project_task(
                     ctx,
@@ -16302,7 +16306,7 @@ async def create_canvas_workflow_run(
                     task_id=task_id,
                     root_task_id=task_id,
                 )
-            admitted_operations.append(operation)
+                admitted_operations[-1] = operation
             run = await asyncio.to_thread(
                 bind_workflow_action_product_operation,
                 project_dir=state_dir,

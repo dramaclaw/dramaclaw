@@ -62,6 +62,10 @@ describe("dynamic workflow node action contract", () => {
     expect(source).toContain("task_key: ref.task_key");
     expect(source).toContain("task_type: ref.task_type");
     expect(source).toContain("job_id: ref.job_id");
+    expect(source).toContain("resultVideoTaskKey: ref.task_key");
+    expect(source).toContain("resultVideoJobId: ref.job_id");
+    expect(source).toContain("if (isTaskPollTimeoutError(error))");
+    expect(source).toContain("notifyTaskStillRunning(t)");
   });
 
   it("compiles catalog-backed image workflow prompts before generation", () => {
