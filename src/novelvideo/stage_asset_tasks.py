@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 SCENE_360_EGRESS_CAPABILITY = "image.generate.pano_360"
 
 SPATIAL_CONTRACT_SCHEMA_VERSION = "scene_spatial_contract_v8_topology_only_locks"
-SPATIAL_CONTRACT_DEFAULT_MODEL = "openai/gpt-5.5"
+SPATIAL_CONTRACT_DEFAULT_MODEL = "DC-scene-spatial-contract-LLM"
 SAFE_SEAM_SPHERE_YAW_DEG = -90.0
 
 
@@ -1216,6 +1216,10 @@ def run_scene_360(
         resolve_organization_egress_context,
     )
 
+    from novelvideo.director_world.scene_analysis_gateway import (
+        scene_analysis_gateway_configured,
+    )
+
     def report(progress: float, message: str) -> None:
         if progress_callback:
             progress_callback(progress, message)
@@ -1307,7 +1311,6 @@ def run_scene_360(
     spatial_contract_path = ""
     spatial_contract_model = (
         os.environ.get("SCENE_SPATIAL_CONTRACT_MODEL")
-        or os.environ.get("OPENROUTER_VISION_MODEL")
         or SPATIAL_CONTRACT_DEFAULT_MODEL
     )
     pano_correction_payload: dict[str, Any] | None = None
@@ -1354,7 +1357,7 @@ def run_scene_360(
                 if (
                     needs_analysis
                     and not is_org
-                    and os.environ.get("OPENROUTER_API_KEY")
+                    and scene_analysis_gateway_configured()
                 ):
                     report(0.12, "分析 master/reverse 侧边 overlap 和 continuation...")
                     analyzer_cmd = [
@@ -1415,7 +1418,7 @@ def run_scene_360(
                 if (
                     needs_contract
                     and not is_org
-                    and os.environ.get("OPENROUTER_API_KEY")
+                    and scene_analysis_gateway_configured()
                 ):
                     report(
                         0.14,
