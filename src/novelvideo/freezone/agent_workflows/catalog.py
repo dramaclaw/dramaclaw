@@ -2063,6 +2063,8 @@ def _standard_skill_items(
     include_audio: bool,
     units: list[dict[str, Any]],
     user_goal: str,
+    external_inputs: list[dict[str, Any]] | None = None,
+    image_recipe_id: str = "",
     include_unit_facts: bool = True,
     video_dependency: str = "independent",
 ) -> list[dict[str, Any]]:
@@ -2078,26 +2080,42 @@ def _standard_skill_items(
                 stage="planning",
             )
         )
-        items.append(
-            _planned_item(
-                item_id="product_reference",
-                title="商品视觉锚点",
-                prompt=f"{user_goal}，生成稳定一致的商品主体参考图",
-                recipe_id="general-image",
-                depends_on=["creative_outline"],
-                reference_inputs=["creative_outline"],
-                stage="assets",
+        external_image_ids = [
+            _text(source.get("id"))
+            for source in external_inputs or []
+            if isinstance(source, dict)
+            and source.get("media_kind") == "image"
+            and _text(source.get("id"))
+        ]
+        asset_ids = external_image_ids
+        if not asset_ids:
+            asset_ids = ["product_reference"]
+            items.append(
+                _planned_item(
+                    item_id="product_reference",
+                    title="商品视觉锚点",
+                    prompt=f"{user_goal}，生成稳定一致的商品主体参考图",
+                    recipe_id="general-image",
+                    depends_on=["creative_outline"],
+                    reference_inputs=["creative_outline"],
+                    stage="assets",
+                )
             )
-        )
         for index, unit in enumerate(units, 1):
             image_id = f"scene_{index}"
+            image_dependencies = (
+                ["creative_outline", *asset_ids] if external_image_ids else asset_ids
+            )
             items.append(
                 _planned_item(
                     item_id=image_id,
                     title=unit["title"],
                     prompt=unit["prompt"],
-                    recipe_id="ecommerce-scene-image",
-                    depends_on=["product_reference"],
+                    recipe_id=image_recipe_id or "ecommerce-scene-image",
+                    depends_on=image_dependencies,
+                    reference_inputs=(
+                        image_dependencies if external_image_ids else None
+                    ),
                     stage="images",
                 )
             )
@@ -2624,6 +2642,28 @@ def _expand_standard_skill_intent(
                 path="planner.video_dependency",
             ),
         )
+    image_recipe_id = _text(planner.get("image_recipe_id"))
+    if image_recipe_id:
+        image_stage = next(
+            (
+                stage
+                for stage in profile.get("stages") or []
+                if stage.get("id") == "images"
+            ),
+            {},
+        )
+        if skill_id != "ecommerce-ad" or image_recipe_id not in (
+            image_stage.get("recipes") or []
+        ):
+            return (
+                intent,
+                None,
+                _intent_error(
+                    f"planner.image_recipe_id is not supported by Skill {skill_id}: "
+                    f"{image_recipe_id}",
+                    path="planner.image_recipe_id",
+                ),
+            )
     units = _standard_planner_units(
         planner=planner,
         item_count=item_count,
@@ -2687,6 +2727,12 @@ def _expand_standard_skill_intent(
         include_audio=include_audio,
         units=units,
         user_goal=user_goal,
+        external_inputs=(
+            intent.get("external_inputs")
+            if isinstance(intent.get("external_inputs"), list)
+            else []
+        ),
+        image_recipe_id=image_recipe_id,
         include_unit_facts=include_unit_facts,
         video_dependency=video_dependency,
     )
@@ -2721,6 +2767,7 @@ def _expand_standard_skill_intent(
         "deliverable": deliverable,
         "item_count": len(units),
         "include_audio": include_audio,
+        **({"image_recipe_id": image_recipe_id} if image_recipe_id else {}),
         **(
             {"video_dependency": video_dependency}
             if video_dependency != "independent"

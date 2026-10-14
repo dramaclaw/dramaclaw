@@ -251,6 +251,11 @@ Route between the normal draft flow and the exact topology path in this priority
    planner: set `planner.item_count=N` and `planner.video_dependency="sequential"`. Do not author
    `items`, nodes, or edges for that pattern. The compiler adds execution-only `dependency_for`
    edges between consecutive clips, so earlier clips are not sent as media references.
+   For `ecommerce-ad`, when the user names one of the Skill's allowed images-stage Recipes, set
+   `planner.image_recipe_id` to that Recipe. If selected canvas images are supplied as
+   `external_inputs`, do not add `items` merely to bind them or to preserve the Recipe: the
+   standard planner uses those images as the asset stage, creates the planning text, and emits
+   `prompt_for` from planning plus `media_input_for` from each external image to every result.
 2. Otherwise, when the user explicitly requires an exact canvas node count or node set, or names
    required nodes and a dependency order that deviates from the matching Skill's template, use the
    exact topology path in

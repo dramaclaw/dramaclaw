@@ -996,6 +996,66 @@ def test_ecommerce_external_image_replaces_generated_asset_stage(monkeypatch):
     }
 
 
+def test_ecommerce_standard_planner_binds_external_image_to_requested_recipe(
+    monkeypatch,
+):
+    """CORE-RCP-02: compact planning owns the topology and reaches ready once."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    intent = {
+        "schema_version": "freezone_workflow_intent.v1",
+        "skill_id": "ecommerce-ad",
+        "user_goal": (
+            "Use ecommerce-remix-image with the selected red cup only; preserve its shape, "
+            "replace the background with blue, and add no text."
+        ),
+        "external_inputs": [
+            {"id": "red_cup", "node_id": "red-cup-source", "media_kind": "image"}
+        ],
+        "planner": {
+            "mode": "standard",
+            "deliverable": "images",
+            "item_count": 1,
+            "image_recipe_id": "ecommerce-remix-image",
+        },
+        "include_audio": False,
+        "include_compose": False,
+    }
+
+    result = catalog.compile_workflow_intent(intent)
+
+    assert result["ok"] is True, result
+    Draft202012Validator(workflow_intent_json_schema()).validate(intent)
+    assert result["planner"]["mode"] == "deterministic_standard"
+    assert result["preflight"]["status"] == "ready"
+    assert result["preflight"]["blockers"] == []
+    plan = result["plan"]
+    planning_nodes = [node for node in plan["nodes"] if node.get("stage") == "planning"]
+    image_nodes = [
+        node for node in plan["nodes"] if node.get("node_type") == "imageGenNode"
+    ]
+    assert len(planning_nodes) == 1
+    assert len(image_nodes) == 1
+    assert (
+        image_nodes[0]["data"]["workflowCatalog"]["recipeId"] == "ecommerce-remix-image"
+    )
+    assert not any(node.get("stage") == "assets" for node in plan["nodes"])
+    edges = {
+        (edge["source"], edge["target"]): edge["link_type"] for edge in plan["edges"]
+    }
+    assert edges[(planning_nodes[0]["id"], image_nodes[0]["id"])] == "prompt_for"
+    assert edges[("red_cup", image_nodes[0]["id"])] == "media_input_for"
+    assert [
+        edge for edge in plan["edges"] if edge["link_type"] == "media_input_for"
+    ] == [
+        {
+            "source": "red_cup",
+            "target": image_nodes[0]["id"],
+            "link_type": "media_input_for",
+        }
+    ]
+
+
 def _raw_plan_from_standard(catalog, intent: dict, *, deviate: bool = True) -> dict:
     """A raw plan derived from the standard planner output.
 

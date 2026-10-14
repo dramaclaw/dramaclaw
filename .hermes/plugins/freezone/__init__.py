@@ -9785,8 +9785,8 @@ _WORKFLOW_INTENT_OBJECT_SCHEMA = {
         "planner": {
             "type": "object",
             "description": (
-                "Preferred for supported common Skills. The Agent supplies only count, "
-                "deliverable, and content units; the tool selects Recipes and dependencies."
+                "Preferred for supported common Skills. The Agent supplies count, deliverable, "
+                "content units, and supported Recipe overrides; the tool owns dependencies."
             ),
             "properties": {
                 "mode": {"type": "string", "enum": ["standard"]},
@@ -9795,6 +9795,14 @@ _WORKFLOW_INTENT_OBJECT_SCHEMA = {
                     "enum": ["images", "video", "mixed"],
                 },
                 "item_count": {"type": "integer", "minimum": 1, "maximum": 25},
+                "image_recipe_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": (
+                        "For ecommerce-ad, select an allowed images-stage Recipe while "
+                        "the standard planner still owns nodes and consuming edges."
+                    ),
+                },
                 "total_duration_seconds": {
                     "type": "integer",
                     "minimum": 1,
@@ -9879,16 +9887,16 @@ _WORKFLOW_INTENT_OBJECT_SCHEMA = {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Execution dependencies. A media dependency is not automatically "
-                            "sent to the provider as a reference."
+                            "Execution-order dependencies. Text-to-media dependencies become "
+                            "dependency_for and do not feed the text into the media prompt."
                         ),
                     },
                     "reference_inputs": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Item ids whose generated media must be consumed as actual provider "
-                            "references. These also imply execution dependencies."
+                            "Outputs consumed by this item. Text references become prompt_for; "
+                            "media references become media_input_for."
                         ),
                     },
                     "stage": {"type": "string"},
