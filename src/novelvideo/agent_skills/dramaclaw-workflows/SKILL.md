@@ -59,6 +59,10 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   bypassing WorkflowPlan validation. A user selection cannot authorize that bypass. When a Skill's
   required stage conflicts with an exact node-only constraint, report the conflict or ask whether
   the required stage may be added; do not offer an invalid direct-write alternative.
+- During exact-Plan recovery, preserve the user's explicit media/result cardinality and existing
+  external-input edges. If the planning contract says a stage `accepts_external_media`, a connected
+  input of that kind fills the stage; never add a generated replacement anchor for it. Add only the
+  genuinely missing stage named by preflight (for example a required planning text node).
 - Never resubmit an unchanged workflow payload. After one correction, if the same validation path
   fails again in the same turn, stop retrying and report that blocker instead of increasing the
   failure counter.
