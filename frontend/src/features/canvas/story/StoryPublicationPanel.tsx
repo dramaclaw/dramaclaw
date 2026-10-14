@@ -34,6 +34,8 @@ import {
   type PublishedVersion,
 } from "./publication";
 
+const RETENTION_REFRESH_ATTEMPTS = 20;
+
 function publicationErrorCode(error: unknown): string | null {
   const pending: unknown[] = [error];
   const seen = new Set<unknown>();
@@ -226,8 +228,12 @@ export function StoryPublicationPanel({
   useEffect(() => {
     if (view !== "share" || busy || !awaitingRetention) return;
     let stopped = false;
+    // Excess history can predate this session without any cleanup job running.
+    // Bound both successful and failed reads while still catching delayed cleanup.
+    let remaining = RETENTION_REFRESH_ATTEMPTS;
     let timer: number;
     async function refreshVersions() {
+      remaining -= 1;
       try {
         const data = await apiCall<Publication>(base);
         // Only refresh server state: preserve the author's pending form edits.
@@ -238,7 +244,10 @@ export function StoryPublicationPanel({
       } catch {
         // A transient query failure must not undo a successful mutation.
       } finally {
-        if (!stopped) timer = window.setTimeout(() => void refreshVersions(), 1500);
+        if (!stopped) {
+          if (remaining > 0) timer = window.setTimeout(() => void refreshVersions(), 1500);
+          else setAwaitingRetention(false);
+        }
       }
     }
     timer = window.setTimeout(() => void refreshVersions(), 1500);

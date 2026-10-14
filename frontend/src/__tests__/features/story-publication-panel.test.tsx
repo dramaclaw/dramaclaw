@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { vi, it, expect, beforeEach } from "vitest";
 import { StoryPublicationPanel } from "@/features/canvas/story/StoryPublicationPanel";
 
@@ -746,4 +746,30 @@ it.each([false, true])("refreshes excess history after cleanup and then stops po
   const calls = mocks.api.mock.calls.length;
   await new Promise(resolve => setTimeout(resolve, 1700));
   expect(mocks.api.mock.calls.length).toBe(calls);
+});
+
+
+it.each(["unchanged", "unavailable"])("bounds retention refreshes when cleanup is %s", async (result) => {
+  const current = { ...preparedVersion, version: "current", number: 2, published: true };
+  const old = { ...preparedVersion, version: "old", number: 1, published: true };
+  const excess = { ...work, retention_limit: 1, active_version: "current", versions: [current, old] };
+  mocks.api.mockResolvedValue(excess);
+  vi.useFakeTimers();
+  const panel = render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
+  try {
+    await act(async () => {});
+    expect(screen.getByText("storyPublication.versionHistory")).toBeInTheDocument();
+    expect(mocks.api).toHaveBeenCalledTimes(1);
+    if (result === "unavailable") mocks.api.mockRejectedValue(new Error("offline"));
+    for (let i = 0; i < 20; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    }
+    expect(mocks.api).toHaveBeenCalledTimes(21);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(mocks.api).toHaveBeenCalledTimes(21);
+    expect(mocks.api.mock.calls.every(([path]) => path.endsWith("/publication"))).toBe(true);
+  } finally {
+    panel.unmount();
+    vi.useRealTimers();
+  }
 });
