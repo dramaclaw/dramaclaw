@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useRef, useState } from "react";
+import i18next from 'i18next';
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useReactFlow, type Viewport } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import {
@@ -10,6 +11,8 @@ import {
   type CanvasHistoryState,
   type CanvasNode,
 } from "@/stores/canvasStore";
+import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
+import { syncStoryVideoReferencePrompt } from "@/features/canvas/application/videoContinuity";
 import {
   applyForeignMediaRepairToNodes,
   publishForeignMediaRefs,
@@ -70,6 +73,7 @@ import {
   type StoredCanvasDraft,
 } from "./canvasDraftStorage";
 import { safeLocalStorageSet } from "@/lib/localStorageQuota";
+import { clearCanvasSelection } from "@/features/canvas/application/nodeSelection";
 import {
   beginCanvasHydrateBurst,
   notifyCanvasHydrateViewport,
@@ -77,6 +81,15 @@ import {
 
 const DEBOUNCE_MS = 800;
 const DRAFT_DEBOUNCE_MS = 300;
+
+function syncHydratedStoryReferencePrompts(): void {
+  for (const node of useCanvasStore.getState().nodes) {
+    if (node.type === CANVAS_NODE_TYPES.video && node.data.storySegmentId) {
+      syncStoryVideoReferencePrompt(node.id);
+    }
+  }
+}
+
 /** Extra app-level retry attempts when ky surfaces a 503 canvas_lock_busy. */
 const LOCK_BUSY_MAX_RETRIES = 1;
 export const FREEZONE_HYDRATE_RELEASE_GRACE_MS = 50;
@@ -985,7 +998,49 @@ export function useCanvasSync(
       }, 0);
     };
 
-    return registerFreezoneCanvasRuntime(project, canvasId, (remote, merge) => {
+    return registerFreezoneCanvasRuntime(project, canvasId, (remote, merge, options) => {
+      const local = useCanvasStore.getState();
+      if (options?.protectUnsavedLocalEdits) {
+        const shot = useShotMetadataStore.getState().shot;
+        const localSignature = canvasDraftSignature(
+          local.nodes,
+          local.edges,
+          buildPersistMetadata(shot),
+        );
+        if (
+          lastPersistedDraftSignatureRef.current == null ||
+          localSignature !== lastPersistedDraftSignatureRef.current
+        ) {
+          if (debounceTimerRef.current != null) {
+            window.clearTimeout(debounceTimerRef.current);
+            debounceTimerRef.current = null;
+          }
+          if (draftTimerRef.current != null) {
+            window.clearTimeout(draftTimerRef.current);
+            draftTimerRef.current = null;
+          }
+          // The Agent has already committed a newer remote revision. Sending
+          // this local snapshot with the old base revision can only create a
+          // synthetic 409, and adopting the remote payload would discard the
+          // user's unsaved work. Fence pending saves and surface the existing
+          // recovery flow only for this genuine overlap.
+          startSaveSession();
+          writeConflictSnapshot({
+            canvas_id: canvasId,
+            nodes: local.nodes,
+            edges: local.edges,
+            viewport: local.currentViewport,
+            metadata: buildPersistMetadata(shot),
+            timestamp: new Date().toISOString(),
+          });
+          setError(
+            options.conflictMessage ??
+              i18next.t('canvas.story.messages.refreshConflict'),
+          );
+          setSyncStatus("conflict");
+          return false;
+        }
+      }
       if (debounceTimerRef.current != null) {
         window.clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
@@ -1001,7 +1056,6 @@ export function useCanvasSync(
       // Queued work is stale for the same reason — the merged content is
       // rescheduled explicitly below when there is local work worth keeping.
       startSaveSession();
-      const local = useCanvasStore.getState();
       const remoteNodes = (remote.nodes ?? []) as CanvasNode[];
       const remoteEdges = (remote.edges ?? []) as CanvasEdge[];
       const next = merge
@@ -1034,12 +1088,24 @@ export function useCanvasSync(
         .getState()
         .hydrate(meta?.shotMetadata ?? EMPTY_SHOT_METADATA);
       setCanvasData(next.nodes, next.edges);
+      // A plain remote replacement is persisted in the normalized shape now
+      // held by the store. Keep merged local work dirty until its scheduled
+      // save lands; treating that merged shape as persisted would weaken the
+      // unsaved-edit guard.
+      lastPersistedDraftSignatureRef.current = mergedLocalWork
+        ? canvasDraftSignature(
+            remoteNodes,
+            remoteEdges,
+            buildPersistMetadata(useShotMetadataStore.getState().shot),
+          )
+        : currentDraftSignature();
       setSyncStatus("ready");
       setError(null);
       hydratedRef.current = true;
       switchingRef.current = false;
       setHydratedCanvasId(canvasId);
       setHydratedProject(project);
+      syncHydratedStoryReferencePrompts();
       if (mergedLocalWork) {
         window.setTimeout(() => {
           if (!hydratedRef.current || switchingRef.current) return;
@@ -1048,6 +1114,7 @@ export function useCanvasSync(
           void requestSave();
         }, 0);
       }
+      return true;
     }, flush, (projection) => {
       if (!hydratedRef.current || switchingRef.current) {
         return false;
@@ -1088,10 +1155,15 @@ export function useCanvasSync(
       applyCanvasDataEdit(next.nodes, next.edges);
       saveProjectionEditNow();
       return true;
-    });
+    }, () => revisionRef.current);
   }, [applyCanvasDataEdit, project, canvasId, setCanvasData]);
 
   // ---- 1. Hydrate ---- //
+  useLayoutEffect(() => {
+    // 缓存画布会在重新进入时立即渲染，首帧绘制前先清理旧选中态。
+    clearCanvasSelection();
+  }, [project, canvasId]);
+
   useEffect(() => {
     let cancelled = false;
     // 清理旧草稿要遍历并解析整个 localStorage（草稿动辄几 MB），放在挂载的关键路径上
@@ -1203,6 +1275,7 @@ export function useCanvasSync(
             history: draftDecision.draft.history,
             mutation: draftDecision.draft.mutation,
           });
+          clearCanvasSelection();
           storeCanvasKey = storeKeyOf(project, canvasId);
           useCanvasStore
             .getState()
@@ -1261,6 +1334,7 @@ export function useCanvasSync(
         // 这一次挂载的节点先出 shell，再由升级队列每帧 3 个补成完整组件。
         beginCanvasHydrateBurst();
         setCanvasData(nodes, edges);
+        clearCanvasSelection();
         storeCanvasKey = storeKeyOf(project, canvasId);
         // Seed the fingerprint from the normalized store state so the first
         // post-hydrate emission (measure/select) is recognized as a no-op.
@@ -1316,6 +1390,11 @@ export function useCanvasSync(
         useCanvasStore.getState().hydrateViewportBookmarks(meta?.viewportBookmarks);
         const hydrate = useShotMetadataStore.getState().hydrate;
         hydrate(meta?.shotMetadata ?? EMPTY_SHOT_METADATA);
+        // Keep the server baseline in the same normalized shape used by live
+        // saves (including default shot metadata and bookmark slots). Without
+        // this, a clean canvas hydrated from legacy metadata can look dirty to
+        // a later Agent refresh.
+        lastPersistedDraftSignatureRef.current = currentDraftSignature();
         // Order matters: only flip `hydrated → true` after the store is fully
         // seeded, then drop the `switching` gate. Inverting these would let
         // the first signature-change subscription fire while the dangerous-
@@ -1330,6 +1409,7 @@ export function useCanvasSync(
         } else {
           setSyncStatus("ready");
           consumeQueuedLocalFreezoneProjections(project, canvasId);
+          syncHydratedStoryReferencePrompts();
         }
       } catch (err) {
         if (cancelled) return;

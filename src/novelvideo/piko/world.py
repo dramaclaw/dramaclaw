@@ -1,0 +1,758 @@
+"""Small-scale, single-process realtime world state for Piko World."""
+
+from __future__ import annotations
+
+import asyncio
+from contextlib import closing
+import math
+import sqlite3
+import threading
+import uuid
+from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime, timezone
+from pathlib import Path
+from time import monotonic
+from typing import Any
+
+from fastapi import WebSocket
+
+from novelvideo import config
+from novelvideo.piko.protocol import (
+    CHAT_COOLDOWN_SECONDS,
+    CHAT_REQUEST_TTL_SECONDS,
+    OPEN_SCENE_IDS,
+    PRIVATE_CHAT_COOLDOWN_SECONDS,
+    message_body,
+    message_correlation,
+    message_error,
+    message_receipt,
+    private_message,
+    private_session_ended,
+    valid_accessory_id,
+    valid_seat_id,
+)
+
+DEFAULT_SCENE_ID = "welcome-courtyard"
+DEFAULT_X = 1270.0
+DEFAULT_Y = 480.0
+MAX_COORDINATE = 10000.0
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _valid_coordinate(value: float) -> bool:
+    return math.isfinite(value) and -MAX_COORDINATE <= value <= MAX_COORDINATE
+
+
+@dataclass(frozen=True)
+class PikoCharacter:
+    id: str
+    user_id: str
+    nickname: str
+    gender: str
+    bio: str
+    scene_id: str
+    position_x: float
+    position_y: float
+    facing: str
+    created_at: str
+    updated_at: str
+
+    def public_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data.pop("user_id", None)
+        return data
+
+
+def normalize_character_location(character: PikoCharacter) -> PikoCharacter:
+    """Return players saved in closed scenes to the courtyard's default spawn."""
+    if character.scene_id in OPEN_SCENE_IDS:
+        return character
+    return replace(
+        character,
+        scene_id=DEFAULT_SCENE_ID,
+        position_x=DEFAULT_X,
+        position_y=DEFAULT_Y,
+        facing="south",
+    )
+
+
+class PikoCharacterStore:
+    """SQLite persistence for one Piko character per authenticated account."""
+
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path or Path(config.STATE_DIR) / "piko" / "world.db"
+        self._lock = threading.RLock()
+
+    def _connect(self) -> sqlite3.Connection:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self.path, timeout=10)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=10000")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS piko_characters (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL UNIQUE,
+                nickname TEXT NOT NULL,
+                gender TEXT NOT NULL CHECK (gender IN ('male', 'female')),
+                bio TEXT NOT NULL DEFAULT '',
+                scene_id TEXT NOT NULL DEFAULT 'welcome-courtyard',
+                position_x REAL NOT NULL DEFAULT 1270,
+                position_y REAL NOT NULL DEFAULT 480,
+                facing TEXT NOT NULL DEFAULT 'south',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        return connection
+
+    @staticmethod
+    def _character(row: sqlite3.Row | None) -> PikoCharacter | None:
+        return PikoCharacter(**dict(row)) if row is not None else None
+
+    def get(self, user_id: str) -> PikoCharacter | None:
+        with self._lock, closing(self._connect()) as connection, connection:
+            row = connection.execute(
+                "SELECT * FROM piko_characters WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            return self._character(row)
+
+    def create_or_update(
+        self, user_id: str, *, nickname: str, gender: str, bio: str = ""
+    ) -> PikoCharacter:
+        now = _utc_now()
+        with self._lock, closing(self._connect()) as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO piko_characters (
+                    id, user_id, nickname, gender, bio, scene_id,
+                    position_x, position_y, facing, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'south', ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    nickname = excluded.nickname,
+                    gender = excluded.gender,
+                    bio = excluded.bio,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    str(uuid.uuid4()), user_id, nickname, gender, bio,
+                    DEFAULT_SCENE_ID, DEFAULT_X, DEFAULT_Y, now, now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM piko_characters WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            character = self._character(row)
+            if character is None:  # pragma: no cover - protected by the upsert
+                raise RuntimeError("Piko character upsert failed")
+            return character
+
+    def update_location(
+        self, user_id: str, *, scene_id: str, x: float, y: float, facing: str
+    ) -> None:
+        if not _valid_coordinate(x) or not _valid_coordinate(y):
+            return
+        with self._lock, closing(self._connect()) as connection, connection:
+            connection.execute(
+                """
+                UPDATE piko_characters
+                   SET scene_id = ?, position_x = ?, position_y = ?, facing = ?, updated_at = ?
+                 WHERE user_id = ?
+                """,
+                (scene_id, x, y, facing, _utc_now(), user_id),
+            )
+
+
+@dataclass
+class OnlinePlayer:
+    character_id: str
+    user_id: str
+    nickname: str
+    bio: str
+    gender: str
+    scene_id: str
+    x: float
+    y: float
+    facing: str
+    websocket: WebSocket
+    public_task_status: str | None = None
+    instance_id: str = ""
+    connection_token: str = ""
+    last_chat_at: float = 0.0
+    last_chat_request_at: float = 0.0
+    last_private_chat_at: float = 0.0
+    last_move_at: float = 0.0
+    last_persist_at: float = 0.0
+    last_seen_at: float = field(default_factory=monotonic)
+    seat_id: str | None = None
+    accessory_id: str | None = None
+    standing_position: tuple[float, float] | None = None
+
+    def set_position(self, x: float, y: float, facing: str, seat_id: str | None = None) -> None:
+        if self.standing_position is None:
+            self.standing_position = (self.x, self.y)
+        self.x, self.y, self.facing, self.seat_id = x, y, facing, seat_id
+        if seat_id is None:
+            self.standing_position = (x, y)
+
+    def persistence_position(self) -> tuple[float, float]:
+        return self.standing_position if self.seat_id and self.standing_position else (self.x, self.y)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "character_id": self.character_id,
+            "nickname": self.nickname,
+            "bio": self.bio,
+            "gender": self.gender,
+            "scene_id": self.scene_id,
+            "x": self.x,
+            "y": self.y,
+            "facing": self.facing,
+            "task_status": self.public_task_status,
+            "seat_id": self.seat_id,
+            "accessory_id": self.accessory_id,
+        }
+
+
+@dataclass
+class PendingChatRequest:
+    sender: WebSocket
+    receiver: WebSocket
+    messages: list[dict[str, str]] = field(default_factory=list)
+    expires_at: float = field(default_factory=lambda: monotonic() + CHAT_REQUEST_TTL_SECONDS)
+
+
+class PikoWorldHub:
+    """In-memory scene rooms suitable for one API worker and small communities."""
+
+    def __init__(self, store: PikoCharacterStore) -> None:
+        self.store = store
+        self._players: dict[WebSocket, OnlinePlayer] = {}
+        self._pending_chat_requests: dict[str, PendingChatRequest] = {}
+        self._private_peers: dict[WebSocket, set[WebSocket]] = {}
+        self._lock = asyncio.Lock()
+
+    def _expire_chat_requests(self) -> None:
+        """Called under the hub lock; match Redis's pending-request lifetime."""
+        now = monotonic()
+        self._pending_chat_requests = {
+            request_id: request
+            for request_id, request in self._pending_chat_requests.items()
+            if request.expires_at > now
+        }
+
+    async def join(
+        self,
+        websocket: WebSocket,
+        *,
+        user_id: str,
+        character: PikoCharacter,
+        public_task_status: str | None = None,
+    ) -> OnlinePlayer:
+        character = normalize_character_location(character)
+        player = OnlinePlayer(
+            character_id=character.id,
+            user_id=user_id,
+            nickname=character.nickname,
+            bio=character.bio,
+            gender=character.gender,
+            scene_id=character.scene_id,
+            x=character.position_x,
+            y=character.position_y,
+            facing=character.facing,
+            websocket=websocket,
+            public_task_status="running" if public_task_status == "running" else None,
+            last_persist_at=monotonic(),
+        )
+        async with self._lock:
+            replaced = [
+                socket for socket, current in self._players.items()
+                if current.user_id == user_id and socket is not websocket
+            ]
+            departures = [self._detach_connection(socket) for socket in replaced]
+            self._players[websocket] = player
+            snapshot = [
+                current.public_dict() for current in self._players.values()
+                if current.scene_id == player.scene_id and current.websocket is not websocket
+            ]
+        for previous, peers in departures:
+            if previous is not None:
+                await self._notify_private_end(previous, peers)
+                if previous.scene_id != player.scene_id:
+                    await self._broadcast_scene(previous.scene_id, {
+                        "type": "player.left", "character_id": previous.character_id,
+                    })
+                await self._close_replaced(previous.websocket)
+        await websocket.send_json({"type": "world.snapshot", "players": snapshot})
+        await self._broadcast_scene(
+            player.scene_id, {"type": "player.joined", "player": player.public_dict()},
+            exclude=websocket,
+        )
+        return player
+
+    async def update_public_task_status(
+        self, player: OnlinePlayer, status: str | None
+    ) -> None:
+        normalized = "running" if status == "running" else None
+        if player.public_task_status == normalized:
+            return
+        player.public_task_status = normalized
+        await self._broadcast_scene(
+            player.scene_id,
+            {
+                "type": "player.task_status",
+                "character_id": player.character_id,
+                "task_status": normalized,
+            },
+            exclude=player.websocket,
+        )
+
+    async def update_profile(self, player: OnlinePlayer, *, nickname: str, bio: str) -> None:
+        if (player.nickname, player.bio) == (nickname, bio):
+            return
+        player.nickname, player.bio = nickname, bio
+        await self._broadcast_scene(
+            player.scene_id,
+            {"type": "player.updated", "player": player.public_dict()},
+            exclude=player.websocket,
+        )
+    async def handle(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        async with self._lock:
+            if self._players.get(player.websocket) is not player:
+                return
+        player.last_seen_at = monotonic()
+        event_type = payload.get("type")
+        if event_type == "player.move":
+            await self._move(player, payload)
+        elif event_type == "scene.join":
+            await self._change_scene(player, payload)
+        elif event_type == "chat.send":
+            await self._chat(player, payload)
+        elif event_type == "chat.request":
+            await self._chat_request(player, payload)
+        elif event_type == "chat.request.message":
+            await self._chat_request_message(player, payload)
+        elif event_type == "chat.request.respond":
+            await self._chat_request_response(player, payload)
+        elif event_type == "chat.private.send":
+            await self._private_chat(player, payload)
+        elif event_type == "chat.private.end":
+            await self._private_chat_end(player, payload)
+        elif event_type == "ping":
+            await player.websocket.send_json({"type": "pong"})
+        elif event_type == "profile.update":
+            await self._update_profile(player, payload)
+
+    async def _update_profile(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        if "accessory_id" in payload:
+            if not valid_accessory_id(payload["accessory_id"]):
+                await player.websocket.send_json({"type": "error", "code": "invalid_accessory"})
+                return
+            player.accessory_id = payload["accessory_id"]
+        character = self.store.get(player.user_id)
+        if character is not None:
+            player.nickname, player.bio, player.gender = character.nickname, character.bio, character.gender
+            await self._broadcast_scene(player.scene_id, {
+                "type": "player.updated", "player": player.public_dict(),
+            }, exclude=player.websocket)
+
+    async def disconnect(self, websocket: WebSocket) -> None:
+        async with self._lock:
+            player, peers = self._detach_connection(websocket)
+        if player is None:
+            return
+        await self._notify_private_end(player, peers)
+        saved_x, saved_y = player.persistence_position()
+        self.store.update_location(
+            player.user_id, scene_id=player.scene_id, x=saved_x, y=saved_y,
+            facing=player.facing,
+        )
+        await self._broadcast_scene(
+            player.scene_id,
+            {"type": "player.left", "character_id": player.character_id},
+        )
+
+    async def close(self) -> None:
+        """Persist locations and terminate private sessions during API shutdown."""
+        async with self._lock:
+            sockets = list(self._players)
+        for websocket in sockets:
+            await self.disconnect(websocket)
+
+    def _detach_connection(self, websocket: WebSocket) -> tuple[OnlinePlayer | None, set[WebSocket]]:
+        """Remove a connection and its relationships while holding ``_lock``."""
+        player = self._players.pop(websocket, None)
+        self._pending_chat_requests = {
+            request_id: pair
+            for request_id, pair in self._pending_chat_requests.items()
+            if websocket not in (pair.sender, pair.receiver)
+        }
+        peers = self._private_peers.pop(websocket, set())
+        for peer_socket in peers:
+            self._private_peers.get(peer_socket, set()).discard(websocket)
+        return player, peers
+
+    async def _notify_private_end(self, player: OnlinePlayer, peers: set[WebSocket]) -> None:
+        for peer_socket in peers:
+            try:
+                await peer_socket.send_json(
+                    private_session_ended(player.character_id)
+                )
+            except Exception:  # noqa: BLE001 - disconnect cleanup is best effort
+                pass
+
+    async def _move(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        try:
+            x, y = float(payload["x"]), float(payload["y"])
+        except (KeyError, TypeError, ValueError):
+            return
+        facing = str(payload.get("facing") or player.facing)
+        if not _valid_coordinate(x) or not _valid_coordinate(y):
+            return
+        if facing not in {"north", "south", "east", "west"}:
+            return
+        seat_id = payload.get("seat_id")
+        if not valid_seat_id(player.scene_id, seat_id):
+            return
+        player.set_position(x, y, facing, seat_id)
+        await self._broadcast_scene(
+            player.scene_id,
+            {"type": "player.moved", "player": player.public_dict()},
+            exclude=player.websocket,
+        )
+        now = monotonic()
+        if now - player.last_persist_at >= 10:
+            player.last_persist_at = now
+            saved_x, saved_y = player.persistence_position()
+            self.store.update_location(
+                player.user_id, scene_id=player.scene_id, x=saved_x, y=saved_y, facing=facing
+            )
+
+    async def _change_scene(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        scene_id = str(payload.get("scene_id") or "").strip()
+        if not scene_id or len(scene_id) > 80:
+            return
+        if scene_id not in OPEN_SCENE_IDS:
+            await player.websocket.send_json({"type": "error", "code": "scene_not_open"})
+            return
+        old_scene = player.scene_id
+        if scene_id == old_scene:
+            return
+        await self._broadcast_scene(
+            old_scene, {"type": "player.left", "character_id": player.character_id},
+            exclude=player.websocket,
+        )
+        player.scene_id = scene_id
+        try:
+            x, y = float(payload["x"]), float(payload["y"])
+            if _valid_coordinate(x) and _valid_coordinate(y):
+                player.x, player.y = x, y
+        except (KeyError, TypeError, ValueError):
+            pass
+        facing = str(payload.get("facing") or player.facing)
+        if facing in {"north", "south", "east", "west"}:
+            player.facing = facing
+        player.set_position(player.x, player.y, player.facing)
+        async with self._lock:
+            snapshot = [
+                current.public_dict() for current in self._players.values()
+                if current.scene_id == scene_id and current.websocket is not player.websocket
+            ]
+        await player.websocket.send_json({"type": "world.snapshot", "players": snapshot})
+        await self._broadcast_scene(
+            scene_id, {"type": "player.joined", "player": player.public_dict()},
+            exclude=player.websocket,
+        )
+
+    async def _chat(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        body = message_body(payload)
+        if body is None:
+            await player.websocket.send_json(message_error(payload, "invalid_message"))
+            return
+        now = monotonic()
+        if now - player.last_chat_at < CHAT_COOLDOWN_SECONDS:
+            await player.websocket.send_json(
+                message_error(payload, "chat_cooldown")
+            )
+            return
+        player.last_chat_at = now
+        message_id = str(uuid.uuid4())
+        await self._broadcast_scene(
+            player.scene_id,
+            {
+                "type": "chat.message",
+                "message": {
+                    "id": message_id,
+                    **message_correlation(payload),
+                    "character_id": player.character_id,
+                    "nickname": player.nickname,
+                    "body": body,
+                    "sent_at": _utc_now(),
+                },
+            },
+        )
+        if receipt := message_receipt(payload, message_id):
+            await player.websocket.send_json(receipt)
+
+    async def _chat_request(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        target_id = str(payload.get("target_character_id") or "").strip()
+        body = message_body(payload)
+        if "body" in payload and body is None:
+            await player.websocket.send_json(message_error(payload, "invalid_message"))
+            return
+        if not target_id or target_id == player.character_id:
+            await player.websocket.send_json(message_error(payload, "chat_request_target_unavailable"))
+            return
+        now = monotonic()
+        if now - player.last_chat_request_at < CHAT_COOLDOWN_SECONDS:
+            await player.websocket.send_json(
+                message_error(payload, "chat_request_cooldown")
+            )
+            return
+        async with self._lock:
+            target = next(
+                (
+                    current
+                    for current in self._players.values()
+                    if current.character_id == target_id
+                    and current.scene_id == player.scene_id
+                ),
+                None,
+            )
+        if target is None:
+            await player.websocket.send_json(
+                message_error(payload, "chat_request_target_unavailable")
+            )
+            return
+        request_id = str(uuid.uuid4())
+        sent_at = _utc_now()
+        message = private_message(
+            player.character_id, target.character_id, player.nickname, body,
+            message_id=request_id, sent_at=sent_at,
+        ) if body else None
+        player.last_chat_request_at = now
+        async with self._lock:
+            self._expire_chat_requests()
+            self._pending_chat_requests[request_id] = PendingChatRequest(
+                player.websocket,
+                target.websocket,
+                [message] if message else [],
+            )
+        try:
+            await target.websocket.send_json(
+                {
+                    "type": "chat.request",
+                    "request": {
+                        "id": request_id,
+                        "from_character_id": player.character_id,
+                        "from_nickname": player.nickname,
+                        "sent_at": sent_at,
+                    },
+                }
+            )
+        except Exception:  # noqa: BLE001 - the target may disconnect mid-request
+            async with self._lock:
+                self._pending_chat_requests.pop(request_id, None)
+            await self.disconnect(target.websocket)
+            await player.websocket.send_json(message_error(payload, "chat_request_target_unavailable"))
+            return
+        try:
+            await player.websocket.send_json({
+                "type": "chat.request.sent",
+                "request_id": request_id,
+                "target_character_id": target.character_id,
+                **message_correlation(payload),
+                **({"message": message} if message else {}),
+            })
+        except Exception:  # noqa: BLE001 - retire only the socket whose delivery failed
+            await self.disconnect(player.websocket)
+
+    async def _chat_request_message(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        request_id = str(payload.get("request_id") or "").strip()
+        target_id = str(payload.get("target_character_id") or "").strip()
+        body = message_body(payload)
+        if not request_id or not target_id or body is None:
+            await player.websocket.send_json(message_error(payload, "invalid_message"))
+            return
+        message = None
+        rate_limited = False
+        async with self._lock:
+            self._expire_chat_requests()
+            pair = self._pending_chat_requests.get(request_id)
+            target = self._players.get(pair.receiver) if pair else None
+            active = any(
+                socket in self._private_peers.get(player.websocket, set())
+                and current.character_id == target_id
+                for socket, current in self._players.items()
+            )
+            if pair and pair.sender is player.websocket and target and target.character_id == target_id:
+                now = monotonic()
+                rate_limited = now - player.last_private_chat_at < PRIVATE_CHAT_COOLDOWN_SECONDS
+                if not rate_limited:
+                    player.last_private_chat_at = now
+                    message = private_message(player.character_id, target_id, player.nickname, body)
+                    pair.messages.append(message)
+                    pair.expires_at = now + CHAT_REQUEST_TTL_SECONDS
+        if rate_limited:
+            await player.websocket.send_json(message_error(payload, "private_chat_cooldown"))
+        elif message:
+            await player.websocket.send_json({
+                "type": "chat.request.message.sent", "request_id": request_id,
+                "target_character_id": target_id, "message": message,
+                **message_correlation(payload),
+            })
+        elif pair or not active:
+            await player.websocket.send_json({**message_error(payload, "chat_request_unavailable"), "request_id": request_id})
+        else:
+            # Acceptance may win the lock before this final queued send.
+            await self._private_chat(player, payload)
+
+    async def _chat_request_response(
+        self, player: OnlinePlayer, payload: dict[str, Any]
+    ) -> None:
+        request_id = str(payload.get("request_id") or "").strip()
+        accepted = payload.get("accepted") is True
+        async with self._lock:
+            self._expire_chat_requests()
+            pair = self._pending_chat_requests.get(request_id)
+            if pair is not None and pair.receiver is player.websocket:
+                self._pending_chat_requests.pop(request_id, None)
+                sender_socket = pair.sender
+                sender = self._players.get(sender_socket)
+                if sender is None:
+                    return
+                if accepted:
+                    self._private_peers.setdefault(sender_socket, set()).add(player.websocket)
+                    self._private_peers.setdefault(player.websocket, set()).add(sender_socket)
+            else:
+                pair = None
+        if pair is None:
+            await player.websocket.send_json({
+                **message_error(payload, "chat_request_unavailable"), "request_id": request_id,
+            })
+            return
+        frames = (
+            (
+                sender_socket,
+                {
+                    "character_id": player.character_id,
+                    "nickname": player.nickname,
+                },
+            ),
+            (
+                player.websocket,
+                {
+                    "character_id": sender.character_id,
+                    "nickname": sender.nickname,
+                },
+            ),
+        )
+        for socket, peer in frames:
+            try:
+                await socket.send_json(
+                    {
+                        "type": "chat.request.responded",
+                        "request_id": request_id,
+                        "accepted": accepted,
+                        "peer": peer,
+                        **message_correlation(payload),
+                        **({"message": pair.messages[0], "messages": pair.messages} if accepted and pair.messages else {}),
+                    }
+                )
+            except Exception:  # noqa: BLE001 - the participant may disconnect
+                pass
+
+    async def _private_chat(self, player: OnlinePlayer, payload: dict[str, Any]) -> None:
+        target_id = str(payload.get("target_character_id") or "").strip()
+        body = message_body(payload)
+        if not target_id or body is None:
+            await player.websocket.send_json(message_error(payload, "invalid_message"))
+            return
+        now = monotonic()
+        if now - player.last_private_chat_at < PRIVATE_CHAT_COOLDOWN_SECONDS:
+            await player.websocket.send_json(message_error(payload, "private_chat_cooldown"))
+            return
+        async with self._lock:
+            target_socket = next(
+                (
+                    socket
+                    for socket, current in self._players.items()
+                    if current.character_id == target_id
+                    and socket in self._private_peers.get(player.websocket, set())
+                ),
+                None,
+            )
+            target = self._players.get(target_socket) if target_socket else None
+        if target_socket is None or target is None:
+            await player.websocket.send_json(message_error(payload, "private_chat_unavailable"))
+            return
+        player.last_private_chat_at = now
+        frame = {
+            "type": "chat.private.message",
+            "message": {
+                **private_message(player.character_id, target.character_id, player.nickname, body),
+                **message_correlation(payload),
+            },
+        }
+        for socket in (player.websocket, target_socket):
+            try:
+                await socket.send_json(frame)
+            except Exception:  # noqa: BLE001 - delivery to the other participant continues
+                pass
+        if receipt := message_receipt(payload, frame["message"]["id"]):
+            await player.websocket.send_json(receipt)
+
+    async def _private_chat_end(
+        self, player: OnlinePlayer, payload: dict[str, Any]
+    ) -> None:
+        target_id = str(payload.get("target_character_id") or "").strip()
+        async with self._lock:
+            target_socket = next(
+                (
+                    socket
+                    for socket, current in self._players.items()
+                    if current.character_id == target_id
+                    and socket in self._private_peers.get(player.websocket, set())
+                ),
+                None,
+            )
+            if target_socket is None:
+                return
+            self._private_peers.get(player.websocket, set()).discard(target_socket)
+            self._private_peers.get(target_socket, set()).discard(player.websocket)
+        try:
+            await target_socket.send_json(
+                private_session_ended(player.character_id)
+            )
+        except Exception:  # noqa: BLE001 - the peer may already be gone
+            pass
+
+    async def _broadcast_scene(
+        self, scene_id: str, payload: dict[str, Any], *, exclude: WebSocket | None = None
+    ) -> None:
+        async with self._lock:
+            sockets = [
+                current.websocket for current in self._players.values()
+                if current.scene_id == scene_id and current.websocket is not exclude
+            ]
+        stale: list[WebSocket] = []
+        for socket in sockets:
+            try:
+                await socket.send_json(payload)
+            except Exception:  # noqa: BLE001 - a broadcast must survive one stale peer
+                stale.append(socket)
+        for socket in stale:
+            await self.disconnect(socket)
+
+    @staticmethod
+    async def _close_replaced(websocket: WebSocket) -> None:
+        try:
+            await websocket.send_json({"type": "session.replaced"})
+            await websocket.close(code=4001)
+        except Exception:  # noqa: BLE001 - already disconnected
+            pass

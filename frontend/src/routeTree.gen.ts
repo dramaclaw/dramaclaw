@@ -12,6 +12,7 @@ import { createFileRoute } from '@tanstack/react-router'
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as RechargeRouteImport } from './routes/recharge'
+import { Route as PikoWorldRouteImport } from './routes/piko-world'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as CheckoutRouteImport } from './routes/checkout'
 import { Route as AppRouteImport } from './routes/_app'
@@ -27,6 +28,7 @@ import { Route as AppProjectsProjectEpisodesRouteImport } from './routes/_app/pr
 import { Route as AppProjectsProjectAssistantRouteImport } from './routes/_app/projects.$project/assistant'
 
 const DownloadLazyRouteImport = createFileRoute('/download')()
+const PlayPublicIdLazyRouteImport = createFileRoute('/play/$publicId')()
 const AppProjectsProjectFreezoneLazyRouteImport = createFileRoute(
   '/_app/projects/$project/freezone',
 )()
@@ -66,6 +68,11 @@ const RechargeRoute = RechargeRouteImport.update({
   path: '/recharge',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PikoWorldRoute = PikoWorldRouteImport.update({
+  id: '/piko-world',
+  path: '/piko-world',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() => import('./routes/piko-world.lazy').then((d) => d.Route))
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -85,6 +92,13 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const PlayPublicIdLazyRoute = PlayPublicIdLazyRouteImport.update({
+  id: '/play/$publicId',
+  path: '/play/$publicId',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() =>
+  import('./routes/play.$publicId.lazy').then((d) => d.Route),
+)
 const WatchWorkRoute = WatchWorkRouteImport.update({
   id: '/watch/$work',
   path: '/watch/$work',
@@ -239,12 +253,14 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/checkout': typeof CheckoutRoute
   '/login': typeof LoginRoute
+  '/piko-world': typeof PikoWorldRoute
   '/recharge': typeof RechargeRoute
   '/download': typeof DownloadLazyRoute
   '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
   '/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
+  '/play/$publicId': typeof PlayPublicIdLazyRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
   '/projects/$project/ingest': typeof AppProjectsProjectIngestRoute
@@ -264,12 +280,14 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/checkout': typeof CheckoutRoute
   '/login': typeof LoginRoute
+  '/piko-world': typeof PikoWorldRoute
   '/recharge': typeof RechargeRoute
   '/download': typeof DownloadLazyRoute
   '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
   '/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
+  '/play/$publicId': typeof PlayPublicIdLazyRoute
   '/': typeof AppIndexRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
@@ -292,12 +310,14 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/checkout': typeof CheckoutRoute
   '/login': typeof LoginRoute
+  '/piko-world': typeof PikoWorldRoute
   '/recharge': typeof RechargeRoute
   '/download': typeof DownloadLazyRoute
   '/_app/access-unavailable': typeof AppAccessUnavailableRoute
   '/_app/credits': typeof AppCreditsRoute
   '/_app/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
+  '/play/$publicId': typeof PlayPublicIdLazyRoute
   '/_app/': typeof AppIndexRoute
   '/_app/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/_app/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
@@ -321,12 +341,14 @@ export interface FileRouteTypes {
     | '/'
     | '/checkout'
     | '/login'
+    | '/piko-world'
     | '/recharge'
     | '/download'
     | '/access-unavailable'
     | '/credits'
     | '/payment-return'
     | '/watch/$work'
+    | '/play/$publicId'
     | '/projects/$project/assistant'
     | '/projects/$project/episodes'
     | '/projects/$project/ingest'
@@ -346,12 +368,14 @@ export interface FileRouteTypes {
   to:
     | '/checkout'
     | '/login'
+    | '/piko-world'
     | '/recharge'
     | '/download'
     | '/access-unavailable'
     | '/credits'
     | '/payment-return'
     | '/watch/$work'
+    | '/play/$publicId'
     | '/'
     | '/projects/$project/assistant'
     | '/projects/$project/episodes'
@@ -373,12 +397,14 @@ export interface FileRouteTypes {
     | '/_app'
     | '/checkout'
     | '/login'
+    | '/piko-world'
     | '/recharge'
     | '/download'
     | '/_app/access-unavailable'
     | '/_app/credits'
     | '/_app/payment-return'
     | '/watch/$work'
+    | '/play/$publicId'
     | '/_app/'
     | '/_app/projects/$project/assistant'
     | '/_app/projects/$project/episodes'
@@ -401,9 +427,11 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   CheckoutRoute: typeof CheckoutRoute
   LoginRoute: typeof LoginRoute
+  PikoWorldRoute: typeof PikoWorldRoute
   RechargeRoute: typeof RechargeRoute
   DownloadLazyRoute: typeof DownloadLazyRoute
   WatchWorkRoute: typeof WatchWorkRoute
+  PlayPublicIdLazyRoute: typeof PlayPublicIdLazyRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -420,6 +448,13 @@ declare module '@tanstack/react-router' {
       path: '/recharge'
       fullPath: '/recharge'
       preLoaderRoute: typeof RechargeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/piko-world': {
+      id: '/piko-world'
+      path: '/piko-world'
+      fullPath: '/piko-world'
+      preLoaderRoute: typeof PikoWorldRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -449,6 +484,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/play/$publicId': {
+      id: '/play/$publicId'
+      path: '/play/$publicId'
+      fullPath: '/play/$publicId'
+      preLoaderRoute: typeof PlayPublicIdLazyRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/watch/$work': {
       id: '/watch/$work'
@@ -656,9 +698,11 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   CheckoutRoute: CheckoutRoute,
   LoginRoute: LoginRoute,
+  PikoWorldRoute: PikoWorldRoute,
   RechargeRoute: RechargeRoute,
   DownloadLazyRoute: DownloadLazyRoute,
   WatchWorkRoute: WatchWorkRoute,
+  PlayPublicIdLazyRoute: PlayPublicIdLazyRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

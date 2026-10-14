@@ -14,8 +14,53 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from novelvideo.chat import dramaclaw_mcp
+from novelvideo.interactive_story.models import StoryDraftV2, StoryPatchV2
 
 CE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_interactive_story_mcp_schema_accepts_product_scenes_and_scene_refs(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    tools = dramaclaw_mcp._agent_tools()
+    story = {
+        "story_id": "earbuds-ad",
+        "title": "耳机互动广告",
+        "start_segment_id": "intro",
+        "characters": [{"id": "earbuds", "name": "耳机", "kind": "product"}],
+        "scenes": [{"id": "subway", "name": "地铁车厢"}],
+        "segments": [{
+            "id": "intro",
+            "title": "开场",
+            "script": "耳机出现在地铁车厢。",
+            "character_ids": ["earbuds"],
+            "scene_refs": [{"scene_id": "subway", "usage": "setting"}],
+            "kind": "ending",
+            "ending_label": "通勤",
+        }],
+    }
+    Draft202012Validator(
+        tools["dramaclaw_create_interactive_story"][0]["parameters"]
+    ).validate({"base_revision": 0, "idempotency_key": "earbuds-ad-001", "story": story})
+    StoryDraftV2.model_validate(story)
+
+    operations = [
+        {"op": "upsert_scene", "scene": {"id": "park", "name": "跑道"}},
+        {"op": "update_segment", "segment_id": "intro", "changes": {
+            "scene_refs": [{"scene_id": "park", "usage": "style"}],
+        }},
+        {"op": "remove_scene", "scene_id": "subway"},
+    ]
+    Draft202012Validator(
+        tools["dramaclaw_patch_interactive_story"][0]["parameters"]
+    ).validate({
+        "story_id": "earbuds-ad", "base_revision": 1,
+        "idempotency_key": "earbuds-patch-001", "operations": operations,
+    })
+    StoryPatchV2.model_validate({
+        "canvas_id": "canvas-a", "story_id": "earbuds-ad", "base_revision": 1,
+        "idempotency_key": "earbuds-patch-001", "operations": operations,
+    })
 
 
 def test_plugin_path_uses_explicit_runtime_root_from_site_packages(monkeypatch, tmp_path):
@@ -336,7 +381,18 @@ async def test_project_scope_lists_only_profile_concrete_tools(
     if plugin_name == "dramaclaw":
         assert not any(name.startswith("freezone_") for name in names)
     else:
-        assert not any(name.startswith("dramaclaw_") for name in names)
+        assert {name for name in names if name.startswith("dramaclaw_")} == {
+            "dramaclaw_get_freezone_canvas",
+            "dramaclaw_create_interactive_story",
+            "dramaclaw_get_interactive_story",
+            "dramaclaw_patch_interactive_story",
+            "dramaclaw_validate_interactive_story",
+            "dramaclaw_save_interactive_story_outline",
+            "dramaclaw_confirm_interactive_story_outline",
+            "dramaclaw_get_interactive_story_outline",
+            "dramaclaw_get_interactive_story_progress",
+            "dramaclaw_confirm_interactive_story_stages",
+        }
 
     schemas = {tool.name: tool.outputSchema for tool in tools}
     assert all(schema is not None for schema in schemas.values())
@@ -896,6 +952,9 @@ async def test_concrete_tool_completes_real_mcp_output_contract_round_trip():
     env = {
         **os.environ,
         "DRAMACLAW_PROJECT_ID": "project-a",
+        "DRAMACLAW_TOOL_MODE": "default",
+        "DRAMACLAW_CHAT_SURFACE": "",
+        "DRAMACLAW_AGENT_PROFILE": "main",
         "DRAMACLAW_USERNAME": "local",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
@@ -910,6 +969,15 @@ async def test_concrete_tool_completes_real_mcp_output_contract_round_trip():
         async with ClientSession(reader, writer) as session:
             await session.initialize()
             tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+            assert not any("_interactive_story" in name for name in tools)
+            assert "dramaclaw_get_freezone_canvas" in tools
+            denied = await session.call_tool("dramaclaw_get_interactive_story", {})
+            assert denied.isError is True
+            bypass = await session.call_tool("dramaclaw_post", {
+                "path": "/projects/project-a/interactive-stories", "body": {},
+            })
+            assert bypass.isError is True
+            assert "interactive_story_canvas_only" in bypass.content[0].text
             result = await session.call_tool(
                 "dramaclaw_prepare_system_voices",
                 {"episode": 1, "confirmed": False},
@@ -1077,7 +1145,18 @@ def test_freezone_scope_loads_only_canvas_plugin_tools(monkeypatch):
     available = dramaclaw_mcp._agent_tools()
 
     assert set(available) == set(dramaclaw_mcp._plugin_tools("freezone"))
-    assert not any(name.startswith("dramaclaw_") for name in available)
+    assert {name for name in available if name.startswith("dramaclaw_")} == {
+        "dramaclaw_get_freezone_canvas",
+        "dramaclaw_create_interactive_story",
+        "dramaclaw_get_interactive_story",
+        "dramaclaw_patch_interactive_story",
+        "dramaclaw_validate_interactive_story",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_outline",
+        "dramaclaw_get_interactive_story_outline",
+        "dramaclaw_get_interactive_story_progress",
+        "dramaclaw_confirm_interactive_story_stages",
+    }
     assert "freezone_emit_canvas_command" in available
 
 
@@ -1134,6 +1213,10 @@ async def test_tool_call_validates_and_dispatches_existing_handler(monkeypatch):
     invalid_payload = json.loads(invalid.content[0].text)
     assert invalid_payload["ok"] is False
     assert invalid_payload["error"] == "tool_arguments_invalid"
+    assert invalid.structuredContent["tool_name"] == "dramaclaw_render_first_frames"
+    assert invalid.structuredContent["path"] == "arguments"
+    assert invalid.structuredContent["phase"] == "tool_validation"
+    assert "details" not in invalid.structuredContent
     assert calls == []
 
     valid = await dramaclaw_mcp.call_tool(
@@ -1180,6 +1263,169 @@ async def test_native_tool_call_does_not_block_mcp_event_loop(monkeypatch):
     assert json.loads(result.content[0].text)["ok"] is True
 
 
+@pytest.mark.parametrize("operation,payload,required_field", [
+    ("create", {"story_id": "story-a", "revision": 1, "idempotent": False, "refresh_canvas": True}, "revision"),
+    ("patch", {"story_id": "story-a", "revision": 2, "idempotent": True, "refresh_canvas": True}, "refresh_canvas"),
+    ("get", {"story": {"id": "story-a", "schema_version": "story_draft.v2"}}, "story"),
+    ("validate", {"story_id": "story-a", "revision": 2, "valid": False}, "valid"),
+])
+def test_interactive_story_results_survive_strict_mcp_contract(monkeypatch, operation, payload, required_field):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    name = f"dramaclaw_{operation}_interactive_story"
+    payload = {
+        "ok": True,
+        "canvas_id": "default",
+        "issues": [],
+        **({"project_id": "project-a"} if operation in {"create", "patch"} else {}),
+        **payload,
+    }
+    result = dramaclaw_mcp._structured_tool_result(name, json.dumps(payload))
+    assert result.isError is False
+    assert result.structuredContent.items() >= payload.items()
+    schema = dramaclaw_mcp._output_schema_for_tool(name)
+    Draft202012Validator(schema).validate(result.structuredContent)
+    incomplete = dict(result.structuredContent)
+    incomplete.pop(required_field)
+    assert list(Draft202012Validator(schema).iter_errors(incomplete))
+    failure = dramaclaw_mcp._structured_tool_result(name, json.dumps({
+        "ok": False, "code": "revision_conflict", "message": "Canvas changed",
+        "story_id": "story-a", "current_revision": 3, "issues": [],
+    }))
+    assert failure.isError is True
+    Draft202012Validator(schema).validate(failure.structuredContent)
+
+
+def test_interactive_story_validation_details_survive_mcp_normalization(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    result = dramaclaw_mcp._structured_tool_result(
+        "dramaclaw_patch_interactive_story",
+        json.dumps(
+            {
+                "ok": False,
+                "status_code": 422,
+                "error": "Unprocessable Entity",
+                "data": {
+                    "detail": [
+                        {
+                            "loc": ["body", "operations", 0, "op"],
+                            "msg": "Field required",
+                        }
+                    ]
+                },
+            }
+        ),
+    )
+    assert result.isError is True
+    assert result.structuredContent["details"][0]["message"] == "Field required"
+    Draft202012Validator(
+        dramaclaw_mcp._output_schema_for_tool("dramaclaw_patch_interactive_story")
+    ).validate(result.structuredContent)
+
+
+@pytest.mark.asyncio
+async def test_story_argument_validation_returns_every_field_path(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_CHAT_SURFACE", "freezone")
+    result = await dramaclaw_mcp.call_tool(
+        "dramaclaw_create_interactive_story",
+        {
+            "base_revision": 1,
+            "idempotency_key": "create-story-errors-01",
+            "story": {
+                "story_id": "story-a",
+                "title": "测试故事",
+                "start_segment_id": "scene-a",
+                "segments": [
+                    {"id": "scene-a", "title": "开始", "script": "开始"},
+                    {
+                        "id": "ending-a",
+                        "title": "结束",
+                        "script": "结束",
+                        "kind": "ending",
+                        "ending_label": "结局",
+                    },
+                ],
+                "choices": [
+                    {
+                        "id": "auto-a",
+                        "source_segment_id": "scene-a",
+                        "target_segment_id": "ending-a",
+                        "mode": "automatic",
+                        "text": "",
+                        "order": 0,
+                        "feedback_text": "错误反馈一",
+                        "is_default": False,
+                    },
+                    {
+                        "id": "auto-b",
+                        "source_segment_id": "scene-a",
+                        "target_segment_id": "ending-a",
+                        "mode": "automatic",
+                        "text": "",
+                        "order": 1,
+                        "feedback_text": "错误反馈二",
+                        "is_default": False,
+                    },
+                ],
+            },
+        },
+    )
+
+    assert result.isError is True
+    assert result.structuredContent["path"] == "story.choices.0.feedback_text"
+    assert [detail["path"] for detail in result.structuredContent["details"]] == [
+        "story.choices.0.feedback_text",
+        "story.choices.1.feedback_text",
+    ]
+    assert result.structuredContent["retryable"] is True
+    assert all(
+        "Keep effects unchanged" in detail["message"]
+        for detail in result.structuredContent["details"]
+    )
+    assert "retry once" in result.structuredContent["agent_instruction"]
+    Draft202012Validator(
+        dramaclaw_mcp._output_schema_for_tool(
+            "dramaclaw_create_interactive_story"
+        )
+    ).validate(result.structuredContent)
+
+
+@pytest.mark.asyncio
+async def test_synced_story_skill_loads_through_existing_mcp_resources(monkeypatch, tmp_path):
+    from novelvideo.chat import service as chat_service
+
+    root = tmp_path / ".agents" / "skills"
+    chat_service._sync_project_skills(root, agent_profile="freezone:main")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DRAMACLAW_SKILLS_DIR", str(root))
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "novelvideo.chat.dramaclaw_mcp"],
+        env={
+            **os.environ,
+            "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        cwd=str(CE_ROOT),
+    )
+    source = Path(chat_service.__file__).resolve().parents[1] / "agent_skills" / "interactive-story"
+    async with stdio_client(parameters) as (reader, writer):
+        async with ClientSession(reader, writer) as session:
+            await session.initialize()
+            resources = {resource.name: resource for resource in (await session.list_resources()).resources}
+            expected = sorted(
+                path.relative_to(source).as_posix()
+                for path in source.rglob("*.md")
+            )
+            for relative in expected:
+                resource = resources[f"interactive-story/{relative}"]
+                result = await session.read_resource(resource.uri)
+                assert result.contents[0].text == (source / relative).read_text(encoding="utf-8")
+    # Discovery returns metadata, not an eagerly concatenated skill package.
+    assert resources["interactive-story/SKILL.md"].mimeType == "text/markdown"
 @pytest.mark.asyncio
 async def test_canvas_command_rejection_reports_unexpected_fields(monkeypatch):
     """#686: the chat service may only drop exactly the fields reported here."""

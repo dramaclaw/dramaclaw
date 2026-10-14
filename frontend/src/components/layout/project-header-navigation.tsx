@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { ArrowLeft, Check, ChevronDown, Clapperboard, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -27,8 +27,62 @@ import { beginRouteSwitch } from "@/lib/route-switch-transition";
 import { cn } from "@/lib/utils";
 import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
 import { SlidingTabs, type SlidingTabItem } from "@/components/nav/sliding-tabs";
+import { useFreezoneViewMode, type FreezoneViewMode } from "@/features/freezone/useFreezoneViewMode";
+import { PROJECT_SUBMENU_HEIGHT, PROJECT_SUBMENU_TOP_GAP, PROJECT_SUBMENU_BOTTOM_GAP } from "./layout-metrics";
 
 const XIAJI_DEFAULT_ROUTE = PROJECT_SECTION_ROUTES.ingest;
+const PROJECT_SUBMENU_CLASS = "backdrop-blur-tap flex items-center gap-3 whitespace-nowrap rounded-full border border-white/[0.08] bg-[rgb(var(--surface-rgb)/0.78)] px-3.5 py-px text-sidebar-foreground";
+const PROJECT_SUBMENU_ITEM_CLASS = "flex h-[26px] items-center px-1.5 text-[11px] font-semibold transition-colors duration-150 ease-[var(--ease-out-quint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring";
+
+function ProjectSubmenu({ label, role, children }: { label: string; role?: 'tablist'; children: ReactNode }) {
+  return <nav role={role} aria-label={label} style={{ height: PROJECT_SUBMENU_HEIGHT }} className={PROJECT_SUBMENU_CLASS}>{children}</nav>;
+}
+
+function ProjectSubmenuRow({ overlay = false, children }: { overlay?: boolean; children: ReactNode }) {
+  return (
+    <div className={cn("z-30 flex justify-center", overlay
+      ? "absolute left-1/2 top-full -translate-x-1/2"
+      : "relative px-4")}
+      style={{ paddingTop: PROJECT_SUBMENU_TOP_GAP, paddingBottom: overlay ? 0 : PROJECT_SUBMENU_BOTTOM_GAP }}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function ProjectXiahuaMenu() {
+  const { t } = useTranslation();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const [viewMode, setViewMode] = useFreezoneViewMode();
+  if (projectModeFromPath(pathname) !== "xiahua") return null;
+  const modes: FreezoneViewMode[] = ["workflow", "board"];
+
+  return (
+    <ProjectSubmenuRow overlay>
+      <ProjectSubmenu role="tablist" label={t("freezone.viewMode.label")}>
+        {modes.map((mode, index) => (
+          <button key={mode} type="button" role="tab"
+            data-testid={`freezone-view-${mode}`}
+            aria-selected={viewMode === mode}
+            tabIndex={viewMode === mode ? 0 : -1}
+            onClick={() => setViewMode(mode)}
+            onKeyDown={(event) => {
+              const next = event.key === "ArrowRight" ? modes[(index + 1) % modes.length]
+                : event.key === "ArrowLeft" ? modes[(index + modes.length - 1) % modes.length]
+                  : event.key === "Home" ? modes[0] : event.key === "End" ? modes[modes.length - 1] : null;
+              if (!next) return;
+              event.preventDefault();
+              setViewMode(next);
+              event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-testid="freezone-view-${next}"]`)?.focus();
+            }}
+            className={cn(PROJECT_SUBMENU_ITEM_CLASS, "cursor-pointer",
+              viewMode === mode ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
+          >{t(`freezone.viewMode.${mode}`)}</button>
+        ))}
+      </ProjectSubmenu>
+    </ProjectSubmenuRow>
+  );
+}
 
 const xiajiMenuItems = [
   { labelKey: "nav.ingest", to: PROJECT_SECTION_ROUTES.ingest },
@@ -189,11 +243,8 @@ export function ProjectXiajiMenu({ project }: { project: string }) {
   );
 
   return (
-    <div className="relative flex justify-center px-4 pb-2">
-      <nav
-        aria-label={t("nav.xiajiMenu")}
-        className="flex items-center gap-3 whitespace-nowrap rounded-full border border-white/[0.08] bg-white/[0.04] px-3.5 py-px text-sidebar-foreground"
-      >
+    <ProjectSubmenuRow>
+      <ProjectSubmenu label={t("nav.xiajiMenu")}>
         {visibleMenuItems.map((item) => {
           const target =
             "rememberKey" in item && rememberedEpisodeLocation
@@ -209,7 +260,7 @@ export function ProjectXiajiMenu({ project }: { project: string }) {
               to={target}
               params={{ project }}
               className={cn(
-                "flex h-7 items-center px-1.5 text-xs font-semibold transition-colors duration-150 ease-[var(--ease-out-quint)]",
+                PROJECT_SUBMENU_ITEM_CLASS,
                 active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
               )}
               aria-current={active ? "page" : undefined}
@@ -235,12 +286,12 @@ export function ProjectXiajiMenu({ project }: { project: string }) {
             </Link>
           );
         })}
-      </nav>
+      </ProjectSubmenu>
       <div
         id="superchat-search-anchor"
         className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2"
       />
-    </div>
+    </ProjectSubmenuRow>
   );
 }
 

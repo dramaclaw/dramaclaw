@@ -13,6 +13,7 @@ __pycache__/
 logs/
 jr_error.log
 /launchd/
+.idea
 
 # 测试数据与产物，勿提交
 /data/
@@ -43,6 +44,7 @@ frontend/.tanstack/
 /docs/issues
 scripts/incident_drills/.drill.local.env
 .obsidian/
+.superdesign
 
 # 验收日志（证据归档在本地/CI 工件，不进 git）
 /acceptance-logs/
@@ -111,3 +113,10 @@ docs/superpowers/
 # 风格图墙的图片改由 OSS 提供(后端配 STYLE_GALLERY_ASSET_BASE),不再随仓库
 # 发布。scripts/build_style_gallery.py 仍会把产物写到这里，属本地中间物。
 /frontend/public/style-gallery/
+
+# Reproducible player art previews and local superseded exports
+/piko-world/art/review/player-*/
+/piko-world/art/archive/
+
+# 预演台模型库本地副本（正式走 CDN，见 previz/domain/modelLibrary.ts）。
+/frontend/public/previz/models/

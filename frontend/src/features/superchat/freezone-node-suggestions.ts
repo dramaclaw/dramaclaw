@@ -77,8 +77,8 @@ export function stripFreezoneNodeAtQuery(value: string): string {
   return value.slice(0, tokenStart);
 }
 
-/** 节点 token 语法 `@[节点名](nodeId)`。节点名不含 `]`/换行，nodeId 不含 `)`/空白。前置边界与 @ 检测一致。 */
-const NODE_MENTION_PATTERN = /(?:^|\s)@\[([^\]\n]+)\]\(([^)\s]+)\)/gu;
+/** 完整节点 token 由括号界定，可紧贴正文或其他 chip；输入中的普通 @ 查询仍要求空白边界。 */
+const NODE_MENTION_PATTERN = /@\[([^\]\n]+)\]\(([^)\s]+)\)/gu;
 
 export type FreezoneNodeMention = {
   nodeId: string;
@@ -127,8 +127,7 @@ export function parseFreezoneNodeMentions(value: string): FreezoneNodeMention[] 
     const label = match[1] ?? "";
     const nodeId = match[2]?.trim();
     if (!nodeId) continue;
-    const matched = match[0] ?? "";
-    const start = match.index + (matched.startsWith("@") ? 0 : 1);
+    const start = match.index;
     out.push({ nodeId, label, start, end: start + `@[${label}](${nodeId})`.length });
   }
   return out;
@@ -146,12 +145,9 @@ export function freezoneNodeMentionIds(value: string): string[] {
   return ids;
 }
 
-/** 提交时把 `@[名](id)` 改写为可读的 `[名]`（保留前置空白），作为发给 agent 的正文。 */
+/** 提交时把 `@[名](id)` 改写为可读的 `[名]`，保留周围正文，作为发给 agent 的正文。 */
 export function freezoneNodeMentionText(value: string): string {
-  return value.replace(NODE_MENTION_PATTERN, (matched: string, label: string) => {
-    const lead = matched.startsWith("@") ? "" : matched.slice(0, 1);
-    return `${lead}[${label}]`;
-  });
+  return value.replace(NODE_MENTION_PATTERN, (_matched: string, label: string) => `[${label}]`);
 }
 
 /** 从候选列表建 nodeId → 缩略图/片源/列 查表，供编辑器 chip 渲染缩略图与首帧兜底。 */

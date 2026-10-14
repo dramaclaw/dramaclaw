@@ -11,6 +11,8 @@ interface ImportMetaEnv {
   readonly VITE_CLUSTER_MODE?: "none" | "multi-region";
   readonly VITE_CLUSTER_REGIONS_URL?: string;
   readonly VITE_LOGIN_ANNOUNCEMENTS_URL?: string;
+  /** 预演台模型库根地址，本地开发用；不配走 CDN。 */
+  readonly VITE_PREVIZ_MODEL_LIBRARY_BASE?: string;
 }
 
 interface ImportMeta {
@@ -19,3 +21,8 @@ interface ImportMeta {
 
 declare const __APP_VERSION__: string;
 declare const __BUILD_ID__: string;
+
+declare module 'virtual:story-player-assets' {
+  export const PLAYER_SCRIPT: string;
+  export const PLAYER_STYLE: string;
+}

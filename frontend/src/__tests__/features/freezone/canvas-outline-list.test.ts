@@ -259,6 +259,8 @@ describe("CANVAS_OUTLINE_FILTERS", () => {
   it("maps 全部 to an empty type list", () => {
     expect(outlineFilterTypes("all")).toEqual([]);
     expect(outlineFilterTypes("audio")).toEqual([CANVAS_NODE_TYPES.audio]);
+    // 上面那条 exactly-once 棘轮只管「被某个档收了」，收进哪个档它无感。
+    expect(outlineFilterTypes("world")).toContain(CANVAS_NODE_TYPES.previz);
   });
 });
 

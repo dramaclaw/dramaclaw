@@ -9,17 +9,21 @@ import {
   AlertTriangle,
   Bell,
   Bolt,
-  Camera,
-  Check,
   ChevronRight,
-  Languages,
+  Gamepad2,
+  Map,
+  Users,
   LogOut,
   KeyRound,
   X,
 } from "lucide-react";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { capturePikoTaskEntry } from "@/features/piko-world/piko-task-entry";
+import { enterPikoWorld } from "@/features/piko-world/piko-entry-transition";
+import { playPikoUiSound } from "@/features/piko-world/piko-audio";
 import { Button } from "@/components/ui/button";
-import { AvatarUploadDialog } from "@/components/account/avatar-upload-dialog";
-import { PasswordChangeDialog } from "@/components/account/password-change-dialog";
+import { NotificationDot } from "@/components/ui/notification-dot";
+import { useFeatureEntrySeen } from "@/lib/feature-entry-state";
 import { PhoneBindingDialog } from "@/components/account/phone-binding-dialog";
 import {
   Tooltip,
@@ -30,7 +34,11 @@ import {
 import { CreditBalanceBadge } from "@/components/layout/credit-balance-badge";
 import { BrandLockup } from "@/components/layout/brand-lockup";
 import { NotificationDrawer } from "@/components/notifications/notification-drawer";
-import { SettingsDialog } from "@/components/settings/settings-dialog";
+import { SettingsDialog, type SettingsPage } from "@/components/settings/settings-dialog";
+import {
+  OPEN_SETTINGS_DIALOG_EVENT,
+  type OpenSettingsDialogDetail,
+} from "@/components/settings/settings-dialog-events";
 import {
   PetGalleryDialog,
   type CompanionSelection,
@@ -44,7 +52,6 @@ import { useModelGatewayConfig } from "@/lib/queries/model-gateway";
 import { useOrgBranding } from "@/lib/queries/org-branding";
 import { useAccountSecurity } from "@/lib/queries/auth";
 import { useReleaseNotifications } from "@/lib/queries/release-notifications";
-import { normalize, SUPPORTED, type Supported } from "@/i18n/languages";
 import {
   useAnnouncementReadState,
   useAnnouncements,
@@ -53,13 +60,15 @@ import {
   markUpgradeSeen,
   shouldShowUpgradeNudge,
 } from "@/lib/release-notification-state";
-import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from "@/features/freezone/dockOffset";
 import {
   ProjectHeaderNavigation,
   ProjectSwitcher,
   ProjectXiajiMenu,
+  ProjectXiahuaMenu,
 } from "@/components/layout/project-header-navigation";
-const ACCOUNT_PANEL_TRANSITION_MS = 350;
+import entryStyles from "./header-entry.module.css";
+import { APP_HEADER_HEIGHT } from "./layout-metrics";
+const ACCOUNT_PANEL_TRANSITION_MS = 150;
 
 export function Header({ ambientBackground = false }: { ambientBackground?: boolean }) {
   const { t, i18n } = useTranslation();
@@ -67,10 +76,9 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   const params = useParams({ strict: false }) as { project?: string };
   const [companionOpen, setCompanionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialPage, setSettingsInitialPage] = useState<SettingsPage>();
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [releaseNotificationStateVersion, setReleaseNotificationStateVersion] = useState(0);
-  const [avatarDialogOpen, setAvatarDialogOpen] = useState(false);
-  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [phoneBindingOpen, setPhoneBindingOpen] = useState(false);
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const [accountPanelVisible, setAccountPanelVisible] = useState(false);
@@ -79,6 +87,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     top: 56,
     right: 16,
   });
+  const accountHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const accountCloseTimerRef = useRef<number | null>(null);
   const accountUnmountTimerRef = useRef<number | null>(null);
   const accountOpenFrameRef = useRef<number | null>(null);
@@ -87,8 +96,19 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   const accountPanelRef = useRef<HTMLDivElement | null>(null);
   // 面板由点击/键盘打开时「钉住」：此时鼠标移开不再收走它。悬停打开的面板不钉。
   const accountPanelPinnedRef = useRef(false);
-  const settingsAnchorRef = useRef<HTMLDivElement | null>(null);
   const { username, displayName: storedDisplayName, logout } = useAuthStore();
+
+  useEffect(() => {
+    const handleOpenSettings = (event: Event) => {
+      const page = (event as CustomEvent<OpenSettingsDialogDetail>).detail?.page;
+      setSettingsInitialPage(page);
+      setSettingsOpen(true);
+    };
+    window.addEventListener(OPEN_SETTINGS_DIALOG_EVENT, handleOpenSettings);
+    return () => window.removeEventListener(OPEN_SETTINGS_DIALOG_EVENT, handleOpenSettings);
+  }, []);
+  const { seen: pikoEntrySeen, markSeen: markPikoEntrySeen } =
+    useFeatureEntrySeen("piko-hub-v1", username);
   const queryClient = useQueryClient();
   // 退出登录是 SPA 内部跳转（不刷新页面），必须一并清掉 React Query 缓存和
   // 用户级 zustand/localStorage 状态，否则换账号登录后 projectSummaries 等
@@ -103,7 +123,6 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   const pikoAccessory = useAppStore((s) => s.pikoAccessory);
   const setCompanion = useAppStore((s) => s.setCompanion);
   const setPikoAccessory = useAppStore((s) => s.setPikoAccessory);
-  const setLanguage = useAppStore((s) => s.setLanguage);
   const showLogout = authRequired();
   const ceRuntime = isCeRuntime();
   const orgBranding = useOrgBranding(!ceRuntime && Boolean(username));
@@ -119,7 +138,6 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     && accountSecurity.data?.phone === null && accountSecurity.data?.password_configured === true;
   const displayName = accountSecurity.data?.phone_masked ?? storedDisplayName ?? username ?? "User";
   const avatarInitial = displayName.slice(0, 1).toUpperCase();
-  const activeLanguage = normalize(i18n.resolvedLanguage ?? i18n.language);
   const modelGatewayConfig = useModelGatewayConfig(ceRuntime);
   const releaseNotifications = useReleaseNotifications(i18n.resolvedLanguage ?? i18n.language);
   const releaseFeed = releaseNotifications.data?.data;
@@ -141,13 +159,14 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         gatewayConfig.mediaRelay?.configured === false),
   );
   const settingsWarningBubble = useFloatingBubblePosition(
-    settingsAnchorRef,
-    hasSettingsWarning && !settingsOpen && !settingsWarningBubbleDismissed,
+    accountAnchorRef,
+    hasSettingsWarning && !settingsOpen && !accountPanelOpen && !settingsWarningBubbleDismissed,
   );
   const project = params.project ?? null;
 
   useEffect(() => {
     return () => {
+      if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
       clearAccountCloseTimer();
       clearAccountUnmountTimer();
       clearAccountOpenFrame();
@@ -193,6 +212,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   };
 
   const closeAccountPanelNow = () => {
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
     accountPanelPinnedRef.current = false;
     clearAccountCloseTimer();
     clearAccountOpenFrame();
@@ -202,6 +222,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   };
 
   const openAccountPanel = () => {
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
     clearAccountCloseTimer();
     clearAccountUnmountTimer();
     clearAccountOpenFrame();
@@ -219,7 +240,16 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     });
   };
 
+  const scheduleOpenAccountPanel = () => {
+    clearAccountCloseTimer();
+    clearAccountUnmountTimer();
+    if (accountPanelOpen) { openAccountPanel(); return; }
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
+    accountHoverTimerRef.current = setTimeout(openAccountPanel, 100);
+  };
+
   const scheduleCloseAccountPanel = () => {
+    if (accountHoverTimerRef.current) clearTimeout(accountHoverTimerRef.current);
     // 钉住的面板只由 Escape、面板外交互或选中某一项关闭 —— 鼠标掠过就收走的话,
     // 触屏和键盘用户点开后根本读不完里面的内容(公告中心现在只在这儿)。
     if (accountPanelPinnedRef.current) return;
@@ -232,7 +262,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         accountUnmountTimerRef.current = null;
       }, ACCOUNT_PANEL_TRANSITION_MS);
       accountCloseTimerRef.current = null;
-    }, 120);
+    }, 180);
   };
 
   const toggleAccountPanel = () => {
@@ -263,7 +293,8 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
       closeAccountPanelNow();
     };
     const handleFocusIn = (event: FocusEvent) => {
-      if (isInsideAccountUi(event.target)) return;
+      // Hover panels do not own focus; another popup may restore it on exit.
+      if (!accountPanelPinnedRef.current || isInsideAccountUi(event.target)) return;
       closeAccountPanelNow();
     };
     document.addEventListener("keydown", handleKeyDown);
@@ -286,11 +317,6 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
       ?.focus();
   }, [accountPanelOpen]);
 
-  const switchLanguage = (lang: Supported) => {
-    void i18n.changeLanguage(lang);
-    setLanguage(lang);
-  };
-
   const openNotifications = () => {
     closeAccountPanelNow();
     markUpgradeSeen(releaseFeed?.latest_tag);
@@ -303,32 +329,14 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
     setReleaseNotificationStateVersion((version) => version + 1);
   }, []);
 
-  const openAvatarDialog = () => {
-    closeAccountPanelNow();
-    setAvatarDialogOpen(true);
-  };
-
-  const openPasswordDialog = () => {
-    closeAccountPanelNow();
-    setPasswordDialogOpen(true);
-  };
-
   const handlePasswordChanged = () => {
     resetUserSessionState({ queryClient });
     void navigate({ to: "/login", replace: true });
   };
 
   return (
-    // marginRight：自由画布的虾导抽屉打开时是一块通屏高的浮层，会盖住顶栏右侧。
-    // 顶栏整条往左收，右上角那组入口（设置/通知/伙伴/算力/头像）与中间的 虾画/虾集
-    // 就跟着往左靠，仍然可见可点（对标 liblib）。抽屉没开时变量不存在 → 0px，原样。
-    <div
-      className={`relative z-20 shrink-0 text-sidebar-foreground ${
-        ambientBackground ? "bg-transparent" : "bg-background/58 backdrop-blur-xl"
-      }`}
-      style={FREEZONE_DOCK_OFFSET_ANIMATED_STYLE}
-    >
-      <header className="relative flex h-[48px] items-center justify-between gap-3 px-4">
+    <div className="relative shrink-0 text-sidebar-foreground">
+      <header style={{ height: APP_HEADER_HEIGHT }} className={`relative z-20 flex items-center justify-between gap-3 px-4 ${ambientBackground ? "bg-transparent" : "bg-background/58 backdrop-blur-xl"}`}>
         <div className="flex min-w-0 flex-1 items-center">
           <TooltipProvider delay={80}>
             <Tooltip>
@@ -362,45 +370,42 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
 
         {/* Actions */}
         <div className="flex min-w-0 flex-1 shrink-0 items-center justify-end gap-1">
-          <div ref={settingsAnchorRef} className="relative">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="relative size-[32px] text-sidebar-foreground/82 transition-colors duration-150 ease-[var(--ease-out-quint)] hover:bg-white/[0.05] hover:text-white aria-expanded:bg-white/[0.05] aria-expanded:text-white"
-              aria-label={
-                hasSettingsWarning ? t("header.settingsWithWarning") : t("header.settings")
-              }
-              aria-expanded={settingsOpen}
-              onClick={() => setSettingsOpen(true)}
-            >
-              <Bolt className="size-[17px]" />
-              {hasSettingsWarning ? (
-                <span
-                  className="absolute right-[5px] top-[5px] flex size-[11px] items-center justify-center rounded-full bg-amber-400 text-black shadow-[0_0_7px_rgba(251,191,36,0.68)]"
-                  aria-hidden="true"
-                >
-                  <AlertTriangle className="size-[8px]" strokeWidth={3} />
-                </span>
-              ) : null}
-            </Button>
-          </div>
-          <Button
-            id="mybuddy-companion-entry"
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="companion-capsule-entry -ml-0.5 -mr-0.5 size-[32px]"
-            onClick={() => setCompanionOpen(true)}
-            aria-label={t("myBuddy.companion.entry")}
-          >
-            <img
-              src="/piko/entry/companion-capsule.png"
-              alt=""
-              aria-hidden="true"
-              className="companion-capsule-entry__icon size-[22px] object-contain [image-rendering:pixelated]"
-            />
-          </Button>
+          <DropdownMenu modal={false} onOpenChange={(open, details) => {
+            if (open && (details.reason === "trigger-press" || details.reason === "list-navigation")) {
+              markPikoEntrySeen();
+            }
+          }}>
+            <DropdownMenuTrigger openOnHover delay={100} closeDelay={180} onClick={markPikoEntrySeen}
+              render={<Button id="piko-hub-entry" variant="ghost" size="sm" className={`${entryStyles.trigger} ${entryStyles.pikoTrigger} gap-1.5 px-2 text-xs font-medium`} />}>
+              <span className={entryStyles.pikoCapsule} aria-hidden="true">
+                <img
+                  src="/piko/entry/companion-capsule.png"
+                  alt=""
+                  draggable={false}
+                  className={entryStyles.pikoCapsuleIcon}
+                />
+              </span>
+              <span className={entryStyles.pikoLabel}>
+                Piko Piko
+                {!pikoEntrySeen ? <NotificationDot className={entryStyles.pikoDot} /> : null}
+              </span>
+            </DropdownMenuTrigger>
+            <HeaderMenuPanel dropdown>
+              <HeaderMenuRow menuItem
+                icon={<Map className="size-3.5" />}
+                label={t("header.pikoHub.world")}
+                badge="New"
+                onClick={() => { markPikoEntrySeen(); capturePikoTaskEntry(username, window.location.href); playPikoUiSound("open"); void enterPikoWorld(() => navigate({ to: "/piko-world" })); }} />
+              <HeaderMenuRow menuItem id="mybuddy-companion-entry"
+                icon={<Users className="size-3.5" />}
+                label={t("header.pikoHub.companion")}
+                onClick={() => { markPikoEntrySeen(); setCompanionOpen(true); }} />
+              <HeaderMenuRow menuItem
+                icon={<Gamepad2 className="size-3.5" />}
+                label={t("header.pikoHub.play")}
+                onClick={() => { markPikoEntrySeen(); window.dispatchEvent(new Event("piko-open-station")); }} />
+            </HeaderMenuPanel>
+          </DropdownMenu>
           <CreditBalanceBadge />
           <div
             id="superchat-header-controls"
@@ -409,7 +414,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
           <div
             ref={accountAnchorRef}
             className="relative ml-1 flex items-center"
-            onMouseEnter={openAccountPanel}
+            onMouseEnter={scheduleOpenAccountPanel}
             onMouseLeave={scheduleCloseAccountPanel}
           >
             <Button
@@ -417,52 +422,51 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="relative size-[28px] rounded-full p-0 hover:bg-transparent"
+              className={`${entryStyles.trigger} relative size-[28px] rounded-full p-0`}
               aria-label={t("header.account.open")}
               aria-haspopup="true"
               aria-expanded={accountPanelOpen}
               aria-controls={accountPanelOpen ? "header-account-panel" : undefined}
               onClick={toggleAccountPanel}
             >
-              <span className="flex size-[26px] items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[11px] font-normal text-white/72">
+              <span data-account-avatar className="flex size-[26px] items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[11px] font-normal text-white/72">
                 {avatarUrl ? (
                   <img src={avatarUrl} alt="" className="size-full object-cover" />
                 ) : (
                   avatarInitial
                 )}
               </span>
-              {hasUnreadNotification ? (
-                <span
-                  className="absolute right-0 top-0 size-1.5 rounded-full border border-background bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.72)]"
-                  aria-hidden="true"
-                />
+              {hasUnreadNotification || hasSettingsWarning ? (
+                <NotificationDot className="absolute right-0 top-0" />
               ) : null}
             </Button>
           </div>
         </div>
       </header>
       {project ? <ProjectXiajiMenu project={project} /> : null}
+      {project ? <ProjectXiahuaMenu /> : null}
       {accountPanelOpen
         ? createPortal(
             <AccountPanel
-              activeLanguage={activeLanguage}
               avatarInitial={avatarInitial}
               avatarUrl={avatarUrl}
               displayName={displayName}
               hasUnreadNotification={hasUnreadNotification}
-              onChangeAvatar={openAvatarDialog}
-              onChangePassword={showLogout ? openPasswordDialog : undefined}
+              hasSettingsWarning={hasSettingsWarning}
+              onSettings={() => {
+                closeAccountPanelNow();
+                setSettingsInitialPage(undefined);
+                setSettingsOpen(true);
+              }}
               onBindPhone={canBindPhone ? () => {
                 closeAccountPanelNow();
                 setPhoneBindingOpen(true);
               } : undefined}
-              onLanguageChange={switchLanguage}
               onNotifications={openNotifications}
               onClose={scheduleCloseAccountPanel}
               onEnter={openAccountPanel}
               onLogout={showLogout ? () => void handleLogout() : undefined}
               panelRef={accountPanelRef}
-              passwordConfigured={passwordConfigured}
               position={accountPanelPosition}
               visible={accountPanelVisible}
               t={t}
@@ -484,24 +488,25 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         onUpgradeStateChange={handleUpgradeStateChange}
         announcements={announcements}
       />
-      <AvatarUploadDialog
-        avatarInitial={avatarInitial}
-        displayName={displayName}
-        open={avatarDialogOpen}
-        onOpenChange={setAvatarDialogOpen}
-      />
-      <PasswordChangeDialog
-        open={passwordDialogOpen}
-        onOpenChange={setPasswordDialogOpen}
-        onPasswordChanged={handlePasswordChanged}
-        passwordConfigured={passwordConfigured}
-      />
       {phoneBindingOpen && canBindPhone ? <PhoneBindingDialog
         key={username}
         onClose={() => setPhoneBindingOpen(false)}
         onBound={() => { void accountSecurity.refetch(); }}
       /> : null}
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog
+        open={settingsOpen}
+        initialPage={settingsInitialPage}
+        onOpenChange={(open) => {
+          setSettingsOpen(open);
+          if (!open) setSettingsInitialPage(undefined);
+        }}
+        account={{
+          avatarInitial,
+          displayName,
+          passwordConfigured,
+          onPasswordChanged: showLogout ? handlePasswordChanged : undefined,
+        }}
+      />
       {settingsWarningBubble
         ? createPortal(
             <div
@@ -577,69 +582,52 @@ function useFloatingBubblePosition(
   return position;
 }
 
-// The account menu renders one row per entry in `SUPPORTED`, so adding a
-// locale means adding it there plus its label key here — no JSX to touch.
-const LANGUAGE_LABEL_KEYS: Record<Supported, string> = {
-  zh: "header.account.languageChinese",
-  en: "header.account.languageEnglish",
-  vi: "header.account.languageVietnamese",
-};
-
 function AccountPanel({
-  activeLanguage,
   avatarInitial,
   avatarUrl,
   displayName,
   hasUnreadNotification,
-  onChangeAvatar,
-  onChangePassword,
+  hasSettingsWarning,
+  onSettings,
   onBindPhone,
-  onLanguageChange,
   onNotifications,
   onClose,
   onEnter,
   onLogout,
   panelRef,
-  passwordConfigured,
   position,
   visible,
   t,
 }: {
-  activeLanguage: Supported;
   avatarInitial: string;
   avatarUrl: string | null;
   displayName: string;
   hasUnreadNotification: boolean;
-  onChangeAvatar: () => void;
-  onChangePassword?: () => void;
+  hasSettingsWarning: boolean;
+  onSettings: () => void;
   onBindPhone?: () => void;
-  onLanguageChange: (lang: Supported) => void;
   onNotifications: () => void;
   onClose: () => void;
   onEnter: () => void;
   onLogout?: () => void;
   panelRef: RefObject<HTMLDivElement | null>;
-  passwordConfigured: boolean;
   position: { top: number; right: number };
   visible: boolean;
   t: (key: string) => string;
 }) {
-  const [languageOpen, setLanguageOpen] = useState(false);
-  const activeLanguageLabel = t(LANGUAGE_LABEL_KEYS[activeLanguage]);
-
   return (
     <div
       ref={panelRef}
       id="header-account-panel"
       aria-label={t("header.account.open")}
-      className={`fixed z-[80] w-[216px] transition-opacity duration-[350ms] ease-[var(--ease-out-quint)] ${
+      className={`fixed z-[80] w-[216px] transition-opacity duration-150 ease-[var(--ease-out-quint)] motion-reduce:transition-none ${
         visible ? "opacity-100" : "opacity-0"
       }`}
       style={{ top: position.top, right: position.right }}
       onMouseEnter={onEnter}
       onMouseLeave={onClose}
     >
-      <div className="rounded-[14px] border border-white/[0.08] bg-[#202020]/78 p-2.5 text-slate-100 shadow-[0_18px_50px_rgba(0,0,0,0.36)] backdrop-blur-xl">
+      <HeaderMenuPanel>
         <div className="mb-2.5 flex h-[50px] items-center gap-2.5 rounded-[10px] bg-white/[0.07] px-2.5">
           <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-xs font-normal text-white/72">
             {avatarUrl ? (
@@ -653,128 +641,88 @@ function AccountPanel({
           </span>
         </div>
         <div className="space-y-0.5">
-          {onBindPhone ? <AccountMenuRow
+          <HeaderMenuRow
+            icon={hasSettingsWarning ? <AlertTriangle className="size-3.5 text-amber-400" /> : <Bolt className="size-3.5" />}
+            label={t(hasSettingsWarning ? "header.settingsWithWarning" : "header.settings")}
+            onClick={onSettings}
+          />
+          {onBindPhone ? <HeaderMenuRow
             icon={<KeyRound className="size-3.5" />}
             label={t("header.account.phoneBinding.title")}
             onClick={onBindPhone}
           /> : null}
-          <AccountMenuRow
+          <HeaderMenuRow
             icon={<Bell className="size-3.5" />}
             label={t("header.notifications")}
             unread={hasUnreadNotification}
             onClick={onNotifications}
           />
-          <AccountMenuRow
-            icon={<Camera className="size-3.5" />}
-            label={t("header.account.changeAvatar")}
-            onClick={onChangeAvatar}
-          />
-          {onChangePassword ? (
-            <AccountMenuRow
-              icon={<KeyRound className="size-3.5" />}
-              label={t(
-                passwordConfigured
-                  ? "header.account.changePassword"
-                  : "header.account.setPassword",
-              )}
-              onClick={onChangePassword}
-            />
-          ) : null}
-          <AccountMenuRow
-            active={languageOpen}
-            icon={<Languages className="size-3.5" />}
-            label={t("header.account.selectLanguage")}
-            meta={activeLanguageLabel}
-            onClick={() => setLanguageOpen((open) => !open)}
-          />
-          {languageOpen ? (
-            <div className="ml-[30px] mr-1 space-y-0.5 pb-1">
-              {SUPPORTED.map((language) => (
-                <PreferenceOption
-                  key={language}
-                  active={activeLanguage === language}
-                  label={t(LANGUAGE_LABEL_KEYS[language])}
-                  onClick={() => onLanguageChange(language)}
-                />
-              ))}
-            </div>
-          ) : null}
           {onLogout ? (
-            <AccountMenuRow
+            <HeaderMenuRow
               icon={<LogOut className="size-3.5" />}
               label={t("auth.logout")}
               onClick={onLogout}
             />
           ) : null}
         </div>
-      </div>
+      </HeaderMenuPanel>
     </div>
   );
 }
 
-function AccountMenuRow({
-  active = false,
+function HeaderMenuPanel({ children, dropdown = false }: {
+  children: ReactNode;
+  dropdown?: boolean;
+}) {
+  const className = `${entryStyles.panel} ${entryStyles.menuPanel}`;
+  return dropdown ? (
+    <DropdownMenuContent align="end" sideOffset={8} className={className}>
+      {children}
+    </DropdownMenuContent>
+  ) : <div className={className}>{children}</div>;
+}
+
+function HeaderMenuRow({
+  menuItem = false,
+  id,
   icon,
   label,
-  meta,
+  badge,
   unread = false,
   onClick,
 }: {
-  active?: boolean;
+  menuItem?: boolean;
+  id?: string;
   icon: ReactNode;
   label: string;
-  meta?: string;
+  badge?: string;
   unread?: boolean;
   onClick?: () => void;
 }) {
   const content = (
     <>
-      <span className="ml-1 flex size-3.5 shrink-0 items-center justify-center text-slate-100/58" aria-hidden="true">
+      <span className={`${entryStyles.menuIcon} ml-1 flex size-3.5 shrink-0 items-center justify-center`} aria-hidden="true">
         {icon}
       </span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {meta ? (
-        <span className="max-w-16 truncate text-[11px] text-slate-400">{meta}</span>
-      ) : null}
+      <span className={`${entryStyles.menuLabel} flex min-w-0 flex-1 items-center gap-1.5`}>
+        <span className="truncate">{label}</span>
+        {badge && <span className={entryStyles.newBadge}>{badge}</span>}
+      </span>
       {unread ? (
-        <span
-          className="size-1.5 shrink-0 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.62)]"
-          aria-hidden="true"
-        />
+        <NotificationDot />
       ) : null}
       <ChevronRight
-        className={`mr-1 size-3.5 shrink-0 text-slate-100/88 transition-transform duration-150 ${
-          active ? "rotate-90" : ""
-        }`}
+        className={`${entryStyles.menuChevron} mr-1 size-3.5 shrink-0`}
       />
     </>
   );
-  const className =
-    "flex h-9 w-full items-center gap-2 rounded-[8px] px-1.5 text-left text-[13px] font-normal text-slate-100 transition-colors duration-150 hover:bg-white/[0.05]";
+  const className = entryStyles.menuRow;
+  if (menuItem) {
+    return <DropdownMenuItem id={id} className={className} onClick={onClick}>{content}</DropdownMenuItem>;
+  }
   return (
-    <button type="button" className={className} onClick={onClick}>
+    <button id={id} type="button" className={className} onClick={onClick}>
       {content}
-    </button>
-  );
-}
-
-function PreferenceOption({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="flex h-7 w-full items-center justify-between rounded-[7px] px-2 text-left text-[11px] text-slate-100/78 transition-colors duration-150 hover:bg-white/[0.05] hover:text-white"
-      onClick={onClick}
-    >
-      <span>{label}</span>
-      {active ? <Check className="size-3.5 text-cyan-300" /> : null}
     </button>
   );
 }

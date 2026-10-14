@@ -135,6 +135,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { findSeedance25VideoModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
+import { openNodeImageViewer } from '../application/nodeMediaViewer';
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { analyzeVideoStory } from "@/features/canvas/application/videoAnalyzeStory";
 import { separateVideoAudio } from "@/features/canvas/application/videoSeparateAudio";
@@ -2116,6 +2117,18 @@ export const NodeActionToolbar = memo(
                 }}
               />
             )}
+            {!isImageEdit && canHandleImage && (
+              <ToolbarIconChip
+                key="image-fullscreen"
+                label={t("viewer.imageDetails")}
+                icon={Maximize2}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  const batch = (node.data as { generationBatch?: string[] | null }).generationBatch;
+                  void openNodeImageViewer(imageSource!, node.id, batch ?? []);
+                }}
+              />
+            )}
             {isVideoNode(node) &&
               (() => {
                 const videoData = node.data;
@@ -2195,6 +2208,8 @@ export const NodeActionToolbar = memo(
                   }
                   canvasEventBus.publish("video-viewer/open", {
                     videoUrl,
+                    nodeId: node.id,
+                    videoList: videoData.generationBatch ?? undefined,
                     title:
                       typeof videoData.displayName === "string"
                         ? videoData.displayName
@@ -2307,14 +2322,17 @@ export const NodeActionToolbar = memo(
                       ) : (
                         <Wand2 className="h-3.5 w-3.5" />
                       )}
-                      {t("nodeToolbar.video.analyze")}
-                      <CreditCostPill
-                        display={videoAnalyzeCreditCostDisplay}
-                        promotion={videoAnalyzeCreditCost.data?.data.promotion}
-                        disabled={
-                          !hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing
-                        }
-                      />
+                      <span className="inline-flex items-center gap-1">
+                        {t("nodeToolbar.video.analyze")}
+                        <CreditCostPill
+                          display={videoAnalyzeCreditCostDisplay}
+                          promotion={videoAnalyzeCreditCost.data?.data.promotion}
+                          disabled={
+                            !hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing
+                          }
+                          className="h-auto rounded-none bg-transparent px-0"
+                        />
+                      </span>
                     </UiChipButton>
                     {/* 拉片族工具共用一个下拉。「片段截取」就是原来独立的「剪辑」
                         按钮（isClipMode），画面裁切 / 深度动作捕捉都已接上真实

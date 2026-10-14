@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { confirmDialog } from "@/components/confirm-dialog-host";
 import {
   AlertTriangle,
+  Camera,
+  Check,
   ChevronDown,
   Cpu,
   Eye,
@@ -13,6 +15,8 @@ import {
   ExternalLink,
   HardDrive,
   Loader2,
+  Languages,
+  KeyRound,
   Package,
   Maximize2,
   Minimize2,
@@ -100,13 +104,45 @@ import {
   type MediaModelEntry,
   type MediaStorageProvider,
 } from "@/stores/settingsStore";
+import {
+  MEDIA_MODEL_REQUEST_ENDPOINTS,
+  defaultMediaModelRequest,
+  isMediaModelCatalogType,
+  type MediaModelCatalogType,
+  type MediaModelType,
+} from "@/lib/media-model-catalog-types";
 import { isCeRuntime } from "@/lib/runtime-config";
+import { AvatarUploadForm } from "@/components/account/avatar-upload-form";
+import { PasswordChangeForm } from "@/components/account/password-change-form";
+import { normalize, SUPPORTED, type Supported } from "@/i18n/languages";
+import { useAppStore } from "@/stores/app-store";
 import { FreezoneSkillRecipeSettings } from "./freezone-skill-recipe-settings";
 
 interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialPage?: SettingsPage;
+  account?: {
+    avatarInitial: string;
+    displayName: string;
+    passwordConfigured: boolean;
+    onPasswordChanged?: () => void;
+  };
 }
+
+export type SettingsPage =
+  | "models"
+  | "storage"
+  | "freezone-skills"
+  | "freezone-recipes"
+  | "avatar"
+  | "password"
+  | "language";
+const LANGUAGE_LABEL_KEYS: Record<Supported, string> = {
+  zh: "header.account.languageChinese",
+  en: "header.account.languageEnglish",
+  vi: "header.account.languageVietnamese",
+};
 
 const MEDIA_STORAGE_PROVIDERS: MediaStorageProvider[] = [
   "aliyun_oss",
@@ -119,11 +155,14 @@ const MODEL_CONFIGURATION_GUIDE_URL =
   "https://github.com/dramaclaw/dramaclaw/blob/main/docs/en/getting-started/configuring-models.md";
 const COMFY_WORKFLOW_MANAGED_CONFIG_KEY = "_dcManagedByWorkflow";
 
-export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const { t } = useTranslation();
+export function SettingsDialog({ open, onOpenChange, initialPage, account }: SettingsDialogProps) {
+  const { t, i18n } = useTranslation();
+  const setLanguage = useAppStore((state) => state.setLanguage);
+  const activeLanguage = normalize(i18n.resolvedLanguage ?? i18n.language);
+  const [accountActionPending, setAccountActionPending] = useState(false);
   const ceRuntime = isCeRuntime();
-  const [page, setPage] = useState<"models" | "storage" | "freezone-skills" | "freezone-recipes">(
-    () => (ceRuntime ? "models" : "freezone-skills"),
+  const [page, setPage] = useState<SettingsPage>(
+    () => initialPage ?? (ceRuntime ? "models" : "freezone-skills"),
   );
   const statusQuery = useModelGatewayConfig(open && ceRuntime);
   const settingsStatus = statusQuery.data?.data;
@@ -133,10 +172,33 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   );
 
   useEffect(() => {
+    if (open && initialPage) setPage(initialPage);
+  }, [initialPage, open]);
+
+  useEffect(() => {
     if (!ceRuntime && (page === "models" || page === "storage")) {
       setPage("freezone-skills");
     }
   }, [ceRuntime, page]);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!accountActionPending) onOpenChange(nextOpen);
+  };
+  const navigationPages = [
+    ...(account ? [
+      { page: "avatar" as const, icon: Camera, label: "header.account.changeAvatar" },
+      ...(account.onPasswordChanged ? [{
+        page: "password" as const, icon: KeyRound,
+        label: account.passwordConfigured ? "header.account.changePassword" : "header.account.setPassword",
+      }] : []),
+      { page: "language" as const, icon: Languages, label: "header.account.selectLanguage" },
+    ] : []),
+    ...(ceRuntime ? [
+      { page: "models" as const, icon: Cpu, label: "settings.pages.models" },
+      { page: "storage" as const, icon: HardDrive, label: "settings.pages.storage" },
+    ] : []),
+    { page: "freezone-skills" as const, icon: Package, label: "settings.pages.freezoneSkills" },
+  ];
 
   const pageStatus = (configured: boolean, label: string) => {
     if (statusQuery.isLoading) {
@@ -165,9 +227,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        showCloseButton
+        showCloseButton={!accountActionPending}
         className="flex h-[min(82vh,760px)] max-w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-lg border border-border bg-black p-0 ring-0 sm:max-w-[1120px]"
       >
         <DialogHeader className="border-b border-border px-5 py-4">
@@ -177,59 +239,67 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         <div className="flex min-h-0 flex-1">
           <nav
             aria-label={t("settings.navigationLabel")}
-            className="flex w-14 shrink-0 flex-col gap-1 border-r border-border px-2 py-4 sm:w-44 sm:px-3"
+            className="flex w-14 shrink-0 flex-col gap-1 border-r border-border px-2 py-4 sm:w-52 sm:px-3"
           >
-            {ceRuntime ? (
-              <>
-                <button
-                  type="button"
-                  aria-current={page === "models" ? "page" : undefined}
-                  onClick={() => setPage("models")}
-                  className={cn(
-                    "relative flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
-                    page === "models"
-                      ? "bg-white/[0.09] text-foreground"
-                      : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
-                  )}
-                >
-                  <Cpu className="size-4" aria-hidden />
-                  <span className="hidden sm:inline">{t("settings.pages.models")}</span>
-                  {pageStatus(modelConfigured, t("settings.pages.models"))}
-                </button>
-                <button
-                  type="button"
-                  aria-current={page === "storage" ? "page" : undefined}
-                  onClick={() => setPage("storage")}
-                  className={cn(
-                    "relative flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
-                    page === "storage"
-                      ? "bg-white/[0.09] text-foreground"
-                      : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
-                  )}
-                >
-                  <HardDrive className="size-4" aria-hidden />
-                  <span className="hidden sm:inline">{t("settings.pages.storage")}</span>
-                  {pageStatus(mediaStorageConfigured, t("settings.pages.storage"))}
-                </button>
-              </>
-            ) : null}
-            <button
-              type="button"
-              aria-current={page === "freezone-skills" || page === "freezone-recipes" ? "page" : undefined}
-              onClick={() => setPage("freezone-skills")}
-              className={cn(
-                "relative flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
-                page === "freezone-skills" || page === "freezone-recipes"
-                  ? "bg-white/[0.09] text-foreground"
-                  : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
-              )}
-            >
-              <Package className="size-4" aria-hidden />
-              <span className="hidden sm:inline">{t("settings.pages.freezoneSkills")}</span>
-            </button>
+            {navigationPages.map(({ page: target, icon: Icon, label }) => (
+              <button
+                key={target}
+                type="button"
+                title={t(label)}
+                aria-label={t(label)}
+                aria-current={page === target || (target === "freezone-skills" && page === "freezone-recipes") ? "page" : undefined}
+                disabled={accountActionPending}
+                onClick={() => setPage(target)}
+                className={cn(
+                  "relative flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 sm:justify-start sm:px-3",
+                  (page === target || (target === "freezone-skills" && page === "freezone-recipes")) ? "bg-white/[0.09] text-foreground" : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
+                )}
+              >
+                <Icon className="size-4" aria-hidden />
+                <span className="hidden min-w-0 flex-1 truncate text-left sm:inline">{t(label)}</span>
+                {target === "models" ? pageStatus(modelConfigured, t(label)) : target === "storage" ? pageStatus(mediaStorageConfigured, t(label)) : null}
+              </button>
+            ))}
           </nav>
 
-          {page === "models" ? (
+          {account && (page === "avatar" || page === "password") ? (
+            <ScrollArea className="min-w-0 flex-1">
+              <div className="mx-auto max-w-[480px] py-3">
+                {page === "avatar" ? <AvatarUploadForm
+                  avatarInitial={account.avatarInitial}
+                  displayName={account.displayName}
+                  onOpenChange={onOpenChange}
+                  onBusyChange={setAccountActionPending}
+                /> : account.onPasswordChanged ? <PasswordChangeForm
+                  passwordConfigured={account.passwordConfigured}
+                  onOpenChange={onOpenChange}
+                  onPasswordChanged={account.onPasswordChanged}
+                  onBusyChange={setAccountActionPending}
+                /> : null}
+              </div>
+            </ScrollArea>
+          ) : page === "language" ? (
+            <section className="min-w-0 flex-1 px-5 py-5">
+              <h2 className="font-heading text-sm font-medium">{t("header.account.selectLanguage")}</h2>
+              <div className="mt-4 grid max-w-[380px] gap-2" role="group" aria-label={t("header.account.selectLanguage")}>
+                {SUPPORTED.map((language) => (
+                  <Button
+                    key={language}
+                    variant="outline"
+                    aria-pressed={activeLanguage === language}
+                    className="justify-between"
+                    onClick={() => {
+                      void i18n.changeLanguage(language);
+                      setLanguage(language);
+                    }}
+                  >
+                    {t(LANGUAGE_LABEL_KEYS[language])}
+                    {activeLanguage === language ? <Check className="size-4" aria-hidden /> : null}
+                  </Button>
+                ))}
+              </div>
+            </section>
+          ) : page === "models" ? (
             <div className="min-w-0 flex-1">
               <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
                 <ModelConfigSection open={open && page === "models"} />
@@ -257,7 +327,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </div>
 
         <div className="flex justify-end border-t border-border px-5 py-3.5">
-          <DialogClose render={<Button variant="outline" size="sm" />}>
+          <DialogClose render={<Button variant="outline" size="sm" disabled={accountActionPending} />}>
             {t("settings.close")}
           </DialogClose>
         </div>
@@ -1580,7 +1650,7 @@ function splitFeatureModelGroups(
 
 const MEDIA_MODEL_ROWS: readonly {
   model: string;
-  kind: "image" | "video" | "audio";
+  kind: MediaModelType;
   officialOnly?: boolean;
 }[] = [
   { model: "LingShan-G2", kind: "image" },
@@ -1618,7 +1688,7 @@ interface QuickProfileChannel {
 interface QuickProfileModel {
   channel: string;
   model: string;
-  mediaType?: "image" | "video" | "audio";
+  mediaType?: MediaModelType;
   label?: string;
   enabled?: boolean;
   sortOrder?: number;
@@ -1964,16 +2034,8 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
         sortOrder: 100,
         config:
           mapping.config ??
-          (mapping.mediaType === "image" || mapping.mediaType === "video"
-            ? {
-                request: {
-                  endpoint:
-                    mapping.mediaType === "image"
-                      ? "images/generations"
-                      : "video/generations",
-                  parameters: [],
-                },
-              }
+          (isMediaModelCatalogType(mapping.mediaType)
+            ? { request: defaultMediaModelRequest(mapping.mediaType) }
             : {}),
       },
     ]),
@@ -4183,10 +4245,14 @@ function LocalMediaModelEditor({
   onSave: (model: string, entry: MediaModelEntry) => void;
 }) {
   const { t } = useTranslation();
-  const initialType = entry?.mediaType === "image" ? "image" : "video";
+  const initialType: MediaModelCatalogType = isMediaModelCatalogType(
+    entry?.mediaType,
+  )
+    ? entry.mediaType
+    : "video";
   const [model, setModel] = useState(originalModel ?? "");
   const [label, setLabel] = useState(entry?.label ?? originalModel ?? "");
-  const [mediaType, setMediaType] = useState<"image" | "video">(initialType);
+  const [mediaType, setMediaType] = useState<MediaModelCatalogType>(initialType);
   const [provider, setProvider] = useState<FeatureModelProvider>(
     entry?.provider ?? configuredProviders[0] ?? "comfyui",
   );
@@ -4195,13 +4261,7 @@ function LocalMediaModelEditor({
   );
   const [enabled, setEnabled] = useState(entry?.enabled !== false);
   const [sortOrder, setSortOrder] = useState(entry?.sortOrder ?? 100);
-  const defaultConfig = {
-    request: {
-      endpoint:
-        mediaType === "image" ? "images/generations" : "video/generations",
-      parameters: [],
-    },
-  };
+  const defaultConfig = { request: defaultMediaModelRequest(mediaType) };
   const [configJson, setConfigJson] = useState(
     JSON.stringify(entry?.config ?? defaultConfig, null, 2),
   );
@@ -4232,7 +4292,7 @@ function LocalMediaModelEditor({
       ? (parsedConfig[key] as unknown[]).map(String)
       : [];
 
-  const handleMediaTypeChange = (nextType: "image" | "video") => {
+  const handleMediaTypeChange = (nextType: MediaModelCatalogType) => {
     setMediaType(nextType);
     try {
       const current = JSON.parse(configJson) as Record<string, unknown>;
@@ -4248,10 +4308,7 @@ function LocalMediaModelEditor({
             ...current,
             request: {
               ...request,
-              endpoint:
-                nextType === "image"
-                  ? "images/generations"
-                  : "video/generations",
+              endpoint: MEDIA_MODEL_REQUEST_ENDPOINTS[nextType],
               parameters: Array.isArray(request.parameters)
                 ? request.parameters
                 : [],
@@ -4332,7 +4389,7 @@ function LocalMediaModelEditor({
           <Select
             value={mediaType}
             onValueChange={(value) =>
-              handleMediaTypeChange(value as "image" | "video")
+              handleMediaTypeChange(value as MediaModelCatalogType)
             }
           >
             <SelectTrigger size="sm">
@@ -4344,6 +4401,9 @@ function LocalMediaModelEditor({
               </SelectItem>
               <SelectItem value="video">
                 {t("settings.modelConfig.mediaModels.types.video")}
+              </SelectItem>
+              <SelectItem value="blockout">
+                {t("settings.modelConfig.mediaModels.types.blockout")}
               </SelectItem>
             </SelectContent>
           </Select>
@@ -4407,167 +4467,170 @@ function LocalMediaModelEditor({
           {t("settings.modelConfig.mediaModels.enabled")}
         </label>
       </div>
-      <div className="mt-3">
-        <p className="text-[11px] font-medium text-foreground">
-          {t("settings.modelConfig.mediaModels.commonCapabilities")}
-        </p>
-        <div className="mt-2 grid grid-cols-2 gap-3">
-          <CatalogMultiSelectField
-            label={t("settings.modelConfig.mediaModels.resolutionOptions")}
-            value={stringOptions("resolutionOptions")}
-            onChange={(value) => setCapability("resolutionOptions", value)}
-            options={
-              mediaType === "image"
-                ? ["1K", "2K", "3K", "4K", "8K", "1024x1024", "2048x2048"]
-                : ["480p", "720p", "1080p", "2K", "4K"]
-            }
-          />
-          <CatalogMultiSelectField
-            label={t("settings.modelConfig.mediaModels.ratioOptions")}
-            value={stringOptions("ratioOptions")}
-            onChange={(value) => setCapability("ratioOptions", value)}
-            options={[
-              "1:1",
-              "16:9",
-              "9:16",
-              "4:3",
-              "3:4",
-              "3:2",
-              "2:3",
-              "21:9",
-              "adaptive",
-            ]}
-          />
-          {mediaType === "image" ? (
-            <CatalogListField
-              label={t("settings.modelConfig.mediaModels.qualityOptions")}
-              value={stringOptions("qualityOptions")}
-              onChange={(value) => setCapability("qualityOptions", value)}
-              placeholder="low, medium, high"
+      {/* 白模模型是对话模型，图片 / 视频的能力字段对它无意义，后端也会拒绝。 */}
+      {mediaType !== "blockout" && (
+        <div className="mt-3">
+          <p className="text-[11px] font-medium text-foreground">
+            {t("settings.modelConfig.mediaModels.commonCapabilities")}
+          </p>
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <CatalogMultiSelectField
+              label={t("settings.modelConfig.mediaModels.resolutionOptions")}
+              value={stringOptions("resolutionOptions")}
+              onChange={(value) => setCapability("resolutionOptions", value)}
+              options={
+                mediaType === "image"
+                  ? ["1K", "2K", "3K", "4K", "8K", "1024x1024", "2048x2048"]
+                  : ["480p", "720p", "1080p", "2K", "4K"]
+              }
             />
-          ) : (
-            <>
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.minDuration")}
-                value={parsedConfig?.minDuration}
-                onChange={(value) => setCapability("minDuration", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.maxDuration")}
-                value={parsedConfig?.maxDuration}
-                onChange={(value) => setCapability("maxDuration", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.referenceImageMax")}
-                value={parsedConfig?.referenceImageMax}
-                min={0}
-                onChange={(value) => setCapability("referenceImageMax", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.referenceVideoMax")}
-                value={parsedConfig?.referenceVideoMax}
-                min={0}
-                onChange={(value) => setCapability("referenceVideoMax", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.referenceAudioMax")}
-                value={parsedConfig?.referenceAudioMax}
-                min={0}
-                onChange={(value) => setCapability("referenceAudioMax", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.referenceFileMax")}
-                value={parsedConfig?.referenceFileMax}
-                min={0}
-                max={1}
-                onChange={(value) => setCapability("referenceFileMax", value)}
-              />
-              <CatalogNumberField
-                label={t("settings.modelConfig.mediaModels.referenceLinkMax")}
-                value={parsedConfig?.referenceLinkMax}
-                min={0}
-                max={1}
-                onChange={(value) => setCapability("referenceLinkMax", value)}
-              />
+            <CatalogMultiSelectField
+              label={t("settings.modelConfig.mediaModels.ratioOptions")}
+              value={stringOptions("ratioOptions")}
+              onChange={(value) => setCapability("ratioOptions", value)}
+              options={[
+                "1:1",
+                "16:9",
+                "9:16",
+                "4:3",
+                "3:4",
+                "3:2",
+                "2:3",
+                "21:9",
+                "adaptive",
+              ]}
+            />
+            {mediaType === "image" ? (
               <CatalogListField
-                label={t("settings.modelConfig.mediaModels.referenceFileTypes")}
-                value={stringOptions("referenceFileTypes")}
-                onChange={(value) => setCapability("referenceFileTypes", value)}
-                placeholder="pdf, docx, xlsx, pptx, txt, md"
+                label={t("settings.modelConfig.mediaModels.qualityOptions")}
+                value={stringOptions("qualityOptions")}
+                onChange={(value) => setCapability("qualityOptions", value)}
+                placeholder="low, medium, high"
               />
-              {[
-                "referenceAudioMinSeconds",
-                "referenceAudioMaxSeconds",
-                "referenceAudioTotalMinSeconds",
-                "referenceAudioTotalMaxSeconds",
-                "referenceVideoMinSeconds",
-                "referenceVideoMaxSeconds",
-                "referenceVideoTotalMinSeconds",
-                "referenceVideoTotalMaxSeconds",
-              ].map((field) => (
+            ) : (
+              <>
                 <CatalogNumberField
-                  key={field}
-                  label={t(`settings.modelConfig.mediaModels.${field}`)}
-                  value={parsedConfig?.[field]}
-                  min={0.1}
-                  step={0.1}
-                  onChange={(value) => setCapability(field, value)}
+                  label={t("settings.modelConfig.mediaModels.minDuration")}
+                  value={parsedConfig?.minDuration}
+                  onChange={(value) => setCapability("minDuration", value)}
                 />
-              ))}
-              <label className="flex items-center gap-2 text-xs text-foreground">
-                <input
-                  type="checkbox"
-                  checked={parsedConfig?.humanReview === true}
-                  onChange={(event) =>
-                    setCapability("humanReview", event.target.checked)
-                  }
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.maxDuration")}
+                  value={parsedConfig?.maxDuration}
+                  onChange={(value) => setCapability("maxDuration", value)}
                 />
-                {t("settings.modelConfig.mediaModels.humanReview")}
-              </label>
-              <div className="col-span-2">
-                <p className="mb-2 text-[11px] text-muted-foreground">
-                  {t("settings.modelConfig.mediaModels.supportedModes")}
-                </p>
-                <div className="grid grid-cols-3 gap-2">
-                  {/* 左边是后端目录里的模式值，右边只是展示名，和视频节点的页签共用词条。 */}
-                  {[
-                    ["text_to_video", "node.videoNode.tabs.textToVideo"],
-                    ["first_frame", "node.videoNode.tabs.firstFrame"],
-                    ["first_last_frame", "node.videoNode.tabs.firstLastFrame"],
-                    ["image_to_video", "node.videoNode.tabs.imageToVideo"],
-                    ["image_reference", "node.videoNode.tabs.imageReference"],
-                    ["all_reference", "node.videoNode.tabs.allReference"],
-                    ["video_edit", "node.videoNode.tabs.videoEdit"],
-                    ["video_extend", "node.videoNode.tabs.videoExtend"],
-                  ].map(([value, labelKey]) => {
-                    const selected = stringOptions("supportedModes");
-                    return (
-                      <label
-                        key={value}
-                        className="flex items-center gap-2 text-xs text-foreground"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selected.includes(value)}
-                          onChange={(event) =>
-                            setCapability(
-                              "supportedModes",
-                              event.target.checked
-                                ? [...selected, value]
-                                : selected.filter((item) => item !== value),
-                            )
-                          }
-                        />
-                        {t(labelKey)}
-                      </label>
-                    );
-                  })}
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.referenceImageMax")}
+                  value={parsedConfig?.referenceImageMax}
+                  min={0}
+                  onChange={(value) => setCapability("referenceImageMax", value)}
+                />
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.referenceVideoMax")}
+                  value={parsedConfig?.referenceVideoMax}
+                  min={0}
+                  onChange={(value) => setCapability("referenceVideoMax", value)}
+                />
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.referenceAudioMax")}
+                  value={parsedConfig?.referenceAudioMax}
+                  min={0}
+                  onChange={(value) => setCapability("referenceAudioMax", value)}
+                />
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.referenceFileMax")}
+                  value={parsedConfig?.referenceFileMax}
+                  min={0}
+                  max={1}
+                  onChange={(value) => setCapability("referenceFileMax", value)}
+                />
+                <CatalogNumberField
+                  label={t("settings.modelConfig.mediaModels.referenceLinkMax")}
+                  value={parsedConfig?.referenceLinkMax}
+                  min={0}
+                  max={1}
+                  onChange={(value) => setCapability("referenceLinkMax", value)}
+                />
+                <CatalogListField
+                  label={t("settings.modelConfig.mediaModels.referenceFileTypes")}
+                  value={stringOptions("referenceFileTypes")}
+                  onChange={(value) => setCapability("referenceFileTypes", value)}
+                  placeholder="pdf, docx, xlsx, pptx, txt, md"
+                />
+                {[
+                  "referenceAudioMinSeconds",
+                  "referenceAudioMaxSeconds",
+                  "referenceAudioTotalMinSeconds",
+                  "referenceAudioTotalMaxSeconds",
+                  "referenceVideoMinSeconds",
+                  "referenceVideoMaxSeconds",
+                  "referenceVideoTotalMinSeconds",
+                  "referenceVideoTotalMaxSeconds",
+                ].map((field) => (
+                  <CatalogNumberField
+                    key={field}
+                    label={t(`settings.modelConfig.mediaModels.${field}`)}
+                    value={parsedConfig?.[field]}
+                    min={0.1}
+                    step={0.1}
+                    onChange={(value) => setCapability(field, value)}
+                  />
+                ))}
+                <label className="flex items-center gap-2 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={parsedConfig?.humanReview === true}
+                    onChange={(event) =>
+                      setCapability("humanReview", event.target.checked)
+                    }
+                  />
+                  {t("settings.modelConfig.mediaModels.humanReview")}
+                </label>
+                <div className="col-span-2">
+                  <p className="mb-2 text-[11px] text-muted-foreground">
+                    {t("settings.modelConfig.mediaModels.supportedModes")}
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* 左边是后端目录里的模式值，右边只是展示名，和视频节点的页签共用词条。 */}
+                    {[
+                      ["text_to_video", "node.videoNode.tabs.textToVideo"],
+                      ["first_frame", "node.videoNode.tabs.firstFrame"],
+                      ["first_last_frame", "node.videoNode.tabs.firstLastFrame"],
+                      ["image_to_video", "node.videoNode.tabs.imageToVideo"],
+                      ["image_reference", "node.videoNode.tabs.imageReference"],
+                      ["all_reference", "node.videoNode.tabs.allReference"],
+                      ["video_edit", "node.videoNode.tabs.videoEdit"],
+                      ["video_extend", "node.videoNode.tabs.videoExtend"],
+                    ].map(([value, labelKey]) => {
+                      const selected = stringOptions("supportedModes");
+                      return (
+                        <label
+                          key={value}
+                          className="flex items-center gap-2 text-xs text-foreground"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected.includes(value)}
+                            onChange={(event) =>
+                              setCapability(
+                                "supportedModes",
+                                event.target.checked
+                                  ? [...selected, value]
+                                  : selected.filter((item) => item !== value),
+                              )
+                            }
+                          />
+                          {t(labelKey)}
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            </>
-          )}
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
       <div className="mt-3 border-t border-border/60 pt-3">
         <Label className="text-[11px] font-normal text-muted-foreground">
           {t("settings.modelConfig.mediaModels.capabilitiesJson")}

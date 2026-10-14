@@ -11,6 +11,24 @@
  */
 import { useCanvasStore } from '@/stores/canvasStore';
 
+/** 进入画布时清掉仅属于上一视图会话的选中态，不改内容和撤销历史。 */
+export function clearCanvasSelection(): void {
+  useCanvasStore.setState((state) => {
+    const hasSelectedNodes = state.nodes.some((node) => node.selected);
+    const hasSelectedEdges = state.edges.some((edge) => edge.selected);
+    if (!hasSelectedNodes && !hasSelectedEdges && state.selectedNodeId === null) return state;
+    return {
+      nodes: hasSelectedNodes
+        ? state.nodes.map((node) => node.selected ? { ...node, selected: false } : node)
+        : state.nodes,
+      edges: hasSelectedEdges
+        ? state.edges.map((edge) => edge.selected ? { ...edge, selected: false } : edge)
+        : state.edges,
+      selectedNodeId: null,
+    };
+  });
+}
+
 export function selectNodeExclusively(nodeId: string): void {
   const store = useCanvasStore.getState();
   if (!store.nodes.some((node) => node.id === nodeId)) return;

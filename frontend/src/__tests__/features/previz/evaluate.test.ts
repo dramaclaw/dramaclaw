@@ -1,0 +1,803 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import { describe, expect, it } from 'vitest';
+
+import {
+  PREVIZ_RIG_ANCHOR_FRACTION,
+  PREVIZ_RIG_ORBIT_DEG,
+} from '@/features/previz/domain/closeup';
+import { PREVIZ_MOTION_BLEND_SEC, evaluateSceneAt } from '@/features/previz/domain/evaluate';
+import { PREVIZ_CHARACTER_RADIUS_M } from '@/features/previz/domain/moveAssist';
+import { builtinMotionById } from '@/features/previz/domain/motionLibrary';
+import { createPrevizObject } from '@/features/previz/domain/objects';
+import { PREVIZ_POSE_CLIPS, type PrevizPoseId } from '@/features/previz/domain/poses';
+import {
+  PREVIZ_FPS,
+  createDefaultScene,
+  type PrevizActionClip,
+  type PrevizCamera,
+  type PrevizCharacter,
+  type PrevizClip,
+  type PrevizObject,
+  type PrevizPathClip,
+  type PrevizRigClip,
+  type PrevizScene,
+} from '@/features/previz/domain/scene';
+
+function sceneWithCharacter(): { scene: PrevizScene; character: PrevizCharacter } {
+  const character = createPrevizObject('character', []) as PrevizCharacter;
+  character.transform.position = [5, 0, 5];
+  character.transform.rotation = [0, 45, 0];
+  return { scene: { ...createDefaultScene(), objects: [character] }, character };
+}
+
+/** 人物静止时定格在候选表挑好的那一秒。 */
+function stillTimeOf(character: PrevizCharacter): number {
+  return PREVIZ_POSE_CLIPS[character.basePoseId as PrevizPoseId].sampleTime;
+}
+
+function clipFor(startFrame: number, endFrame: number): PrevizPathClip {
+  return {
+    id: 'clip',
+    kind: 'path',
+    startFrame,
+    endFrame,
+    points: [
+      { id: 'a', u: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { id: 'b', u: 1, position: [10, 0, 0], rotation: [0, 90, 0] },
+    ],
+  };
+}
+
+describe('evaluateSceneAt', () => {
+  it('falls back to the static transform for objects with no track', () => {
+    const { scene, character } = sceneWithCharacter();
+    const frame = evaluateSceneAt(scene, 0);
+    expect(frame.get(character.id)?.position).toEqual([5, 0, 5]);
+    expect(frame.get(character.id)?.rotation).toEqual([0, 45, 0]);
+  });
+
+  it('reports the character base pose and a null pose for everything else', () => {
+    const { scene, character } = sceneWithCharacter();
+    const camera = createPrevizObject('camera', scene.objects);
+    scene.objects.push(camera);
+    const frame = evaluateSceneAt(scene, 0);
+    // 静止的人物定格在候选表挑好的那一秒——定格在 0 常常是绑定姿势，看起来像没摆。
+    expect(frame.get(character.id)?.motion).toEqual({
+      primary: { ref: character.basePoseId, time: stillTimeOf(character) },
+      weight: 1,
+    });
+    expect(frame.get(camera.id)?.motion).toBeNull();
+  });
+
+  it('plays the walk cycle while a path clip carries the character', () => {
+    const { scene, character } = sceneWithCharacter();
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [clipFor(30, 150)] }],
+    };
+    const state = evaluateSceneAt(scene, 60).get(character.id);
+    // 位置在变而脚不动，看着是整个人被平移过去的。姿势内的时间从片段首帧起算、单位秒，
+    // 引擎直接拿它推动画。
+    expect(state?.motion?.primary.ref).toBe('walking');
+    expect(state?.motion?.primary.time).toBeCloseTo(30 / PREVIZ_FPS, 10);
+  });
+
+  it('keeps a running character running along the path', () => {
+    const { scene, character } = sceneWithCharacter();
+    character.basePoseId = 'running';
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 120)] }],
+    };
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.motion?.primary.ref).toBe('running');
+  });
+
+  it('returns to the base pose outside the clip and on a single-point path', () => {
+    const { scene, character } = sceneWithCharacter();
+    const clip = clipFor(60, 120);
+    const pinned: PrevizPathClip = { ...clip, points: clip.points.slice(0, 1) };
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [pinned] }],
+    };
+    const still = { ref: character.basePoseId, time: stillTimeOf(character) };
+    // 片段之外人回到静态姿势；只有一个点的路径没有位移，原地迈腿是在踏步。
+    expect(evaluateSceneAt(scene, 10).get(character.id)?.motion?.primary).toEqual(still);
+    expect(evaluateSceneAt(scene, 90).get(character.id)?.motion?.primary).toEqual(still);
+  });
+
+  it('never gives a camera a pose, even on a path', () => {
+    const { scene } = sceneWithCharacter();
+    const camera = createPrevizObject('camera', scene.objects);
+    scene.objects.push(camera);
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: camera.id, clips: [clipFor(0, 120)] }],
+    };
+    expect(evaluateSceneAt(scene, 60).get(camera.id)?.motion).toBeNull();
+  });
+
+  it('lets a covering path clip override position and rotation', () => {
+    const { scene, character } = sceneWithCharacter();
+    scene.timeline = { ...scene.timeline, tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 120)] }] };
+    const mid = evaluateSceneAt(scene, 60).get(character.id);
+    expect(mid?.position[0]).toBeCloseTo(5, 10);
+    expect(mid?.rotation[1]).toBeCloseTo(45, 10);
+  });
+
+  it('leaves the static transform alone outside the clip range', () => {
+    const { scene, character } = sceneWithCharacter();
+    scene.timeline = { ...scene.timeline, tracks: [{ id: 't', objectId: character.id, clips: [clipFor(60, 120)] }] };
+    // 片段之外对象回到自己的静态位置，而不是钉在片段首帧上。
+    expect(evaluateSceneAt(scene, 10).get(character.id)?.position).toEqual([5, 0, 5]);
+  });
+
+  it('holds the last path point after the clip ends', () => {
+    const { scene, character } = sceneWithCharacter();
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 60)] }],
+    };
+    // 走完不该弹回摆放时的位置：人物停在轨迹终点，朝着走到头时的朝向。
+    const held = evaluateSceneAt(scene, 90).get(character.id);
+    expect(held?.position[0]).toBeCloseTo(10, 10);
+    expect(held?.rotation[1]).toBeCloseTo(90, 10);
+    // 停下的人不该还在迈腿。
+    expect(held?.motion?.primary).toEqual({
+      ref: character.basePoseId,
+      time: stillTimeOf(character),
+    });
+  });
+
+  it('holds the earlier clip through the gap before the next one starts', () => {
+    const { scene, character } = sceneWithCharacter();
+    const second: PrevizPathClip = {
+      ...clipFor(90, 150),
+      id: 'second',
+      points: [
+        { id: 'c', u: 0, position: [10, 0, 0], rotation: [0, 90, 0] },
+        { id: 'd', u: 1, position: [10, 0, 8], rotation: [0, 180, 0] },
+      ],
+    };
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 60), second] }],
+    };
+    // 两段之间的空隙停在前一段的终点，而不是回到摆放位置、再从那里瞬移到第二段起点。
+    expect(evaluateSceneAt(scene, 75).get(character.id)?.position[0]).toBeCloseTo(10, 10);
+  });
+
+  it('looks past an empty clip to the last one that actually moved the object', () => {
+    const { scene, character } = sceneWithCharacter();
+    const empty: PrevizPathClip = { ...clipFor(90, 150), id: 'empty', points: [] };
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 60), empty] }],
+    };
+    // 空片段一帧都没挪过谁，让它挡住前面那段真轨迹的终点是无中生有。
+    expect(evaluateSceneAt(scene, 200).get(character.id)?.position[0]).toBeCloseTo(10, 10);
+    // 它自己覆盖的那几帧同理：停在上一段走到的地方，而不是闪回摆放位置。
+    expect(evaluateSceneAt(scene, 120).get(character.id)?.position[0]).toBeCloseTo(10, 10);
+  });
+
+  it('ignores a clip with no points', () => {
+    const { scene, character } = sceneWithCharacter();
+    const empty: PrevizPathClip = { ...clipFor(0, 120), points: [] };
+    scene.timeline = { ...scene.timeline, tracks: [{ id: 't', objectId: character.id, clips: [empty] }] };
+    // 「片段建好了还没画」是常态（末尾新建片段就是这样），不能把对象拽到原点。
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.position).toEqual([5, 0, 5]);
+  });
+
+  it('skips a track whose object is gone', () => {
+    const { scene } = sceneWithCharacter();
+    scene.timeline = { ...scene.timeline, tracks: [{ id: 't', objectId: 'ghost', clips: [clipFor(0, 120)] }] };
+    // parseScene 已经丢掉悬空轨道，这条兜的是运行时脏值（JS 调用方、旧快照）。
+    expect(() => evaluateSceneAt(scene, 60)).not.toThrow();
+    expect(evaluateSceneAt(scene, 60).has('ghost')).toBe(false);
+  });
+
+  it('does not alias the scene transform arrays', () => {
+    const { scene, character } = sceneWithCharacter();
+    const evaluated = evaluateSceneAt(scene, 0).get(character.id);
+    evaluated!.position[0] = 999;
+    // 求值结果每帧都会被写进 three 节点；共享数组的话改一次采样就把场景改了。
+    expect(scene.objects[0].transform.position[0]).toBe(5);
+  });
+});
+
+/** 一个人物 + 一台特写机位跟着他。人物身高钉成 180 cm，锚点高度才算得出定值。 */
+function sceneWithCloseup(
+  patch: Partial<PrevizRigClip> = {},
+): { scene: PrevizScene; character: PrevizCharacter; camera: PrevizCamera; clip: PrevizRigClip } {
+  const character = createPrevizObject('character', [], { heightCm: 180 });
+  character.transform.position = [0, 0, 0];
+  const camera = createPrevizObject('camera', [character]);
+  camera.transform.position = [99, 99, 99];
+
+  const clip: PrevizRigClip = {
+    id: 'rig',
+    kind: 'rig',
+    startFrame: 0,
+    endFrame: 120,
+    anchorObjectId: character.id,
+    anchorPart: 'face',
+    aimObjectId: character.id,
+    azimuth: 0,
+    elevation: 0,
+    distance: 3,
+    height: 0,
+    bearing: 'custom',
+    motion: 'static',
+    ...patch,
+  };
+
+  return {
+    scene: {
+      ...createDefaultScene(),
+      objects: [character, camera],
+      timeline: { ...createDefaultScene().timeline, tracks: [{ id: 'rt', objectId: camera.id, clips: [clip] }] },
+    },
+    character,
+    camera,
+    clip,
+  };
+}
+
+/**
+ * 一个人从 (-3, 0, 0) 直走到 (3, 0, 0)，正中间的原点上摆一件 2×2 m 的道具。
+ *
+ * 片段正中那一帧，走位会把人放在原点上——也就是道具正中央。移动辅助不生效时那正是
+ * 该发生的事（这一层不管穿模），生效时人必须被推出去。
+ */
+function walkThroughProp(flags: { avoidCollision: boolean; stayInBounds: boolean }): {
+  scene: PrevizScene;
+  character: PrevizCharacter;
+  prop: PrevizObject;
+} {
+  const character = createPrevizObject('character', [], flags) as PrevizCharacter;
+  const prop = createPrevizObject('prop', [character]);
+  prop.transform.position = [0, 0, 0];
+  const clip: PrevizPathClip = {
+    id: 'walk',
+    kind: 'path',
+    startFrame: 0,
+    endFrame: 120,
+    points: [
+      { id: 'a', u: 0, position: [-3, 0, 0], rotation: [0, 0, 0] },
+      { id: 'b', u: 1, position: [3, 0, 0], rotation: [0, 0, 0] },
+    ],
+  };
+  const base = createDefaultScene();
+  return {
+    scene: {
+      ...base,
+      objects: [character, prop],
+      timeline: { ...base.timeline, tracks: [{ id: 'wt', objectId: character.id, clips: [clip] }] },
+    },
+    character,
+    prop,
+  };
+}
+
+/** 上面那件道具量出来的本地半尺寸：1 m 见方的一半。 */
+function extentsFor(prop: PrevizObject): { id: string; halfX: number; halfZ: number }[] {
+  return [{ id: prop.id, halfX: 1, halfZ: 1 }];
+}
+
+describe('evaluateSceneAt movement assist', () => {
+  // 两个开关都不勾时，这一轮必须一步都不让：不然「打开预演台发现人跟上次走得不一样」
+  // 这种事会落在每一份存量场景上，而画面上只是「人不知怎么绕了一下」。
+  it('walks a character straight through a prop when neither switch is on', () => {
+    const { scene, character, prop } = walkThroughProp({
+      avoidCollision: false,
+      stayInBounds: false,
+    });
+
+    const state = evaluateSceneAt(scene, 60, extentsFor(prop)).get(character.id);
+
+    expect(state?.position[0]).toBeCloseTo(0, 6);
+    expect(state?.position[2]).toBeCloseTo(0, 6);
+  });
+
+  it('pushes a colliding character clear of the prop', () => {
+    const { scene, character, prop } = walkThroughProp({
+      avoidCollision: true,
+      stayInBounds: false,
+    });
+
+    const [x, , z] = evaluateSceneAt(scene, 60, extentsFor(prop)).get(character.id)!.position;
+
+    // 出了那个 1 m 半宽的盒子，还差一个身体半径。
+    expect(Math.max(Math.abs(x), Math.abs(z))).toBeCloseTo(1 + PREVIZ_CHARACTER_RADIUS_M, 6);
+  });
+
+  // 模型还在下载的那几帧、以及没有渲染器的调用点（测试、将来的服务端求值）都没有尺寸表。
+  // 那时该老老实实不推，而不是抛错或者拿一个猜出来的尺寸推。
+  it('has nothing to push against without a prop extent table', () => {
+    const { scene, character } = walkThroughProp({ avoidCollision: true, stayInBounds: false });
+
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.position[0]).toBeCloseTo(0, 6);
+  });
+
+  // 这一轮只动 XZ。y 归高度策略——两边都改 y 的话，「人物突然沉进地里」要在两个模块
+  // 之间来回找。
+  it('leaves the vertical axis to the height policy', () => {
+    const { scene, character, prop } = walkThroughProp({
+      avoidCollision: true,
+      stayInBounds: false,
+    });
+    character.heightPolicy = 'plane';
+    character.planeY = 3;
+
+    expect(evaluateSceneAt(scene, 60, extentsFor(prop)).get(character.id)?.position[1]).toBe(3);
+  });
+
+  // 这一条是「移动辅助必须排在特写之前」的全部理由：排在后面的话，机位会一直盯着人被
+  // 推开**之前**的那个位置，而那个位置在道具肚子里。
+  it('lets a closeup track the pushed position, not the raw path point', () => {
+    const { scene, character, prop } = walkThroughProp({
+      avoidCollision: true,
+      stayInBounds: false,
+    });
+    const camera = createPrevizObject('camera', scene.objects) as PrevizCamera;
+    const rig: PrevizRigClip = {
+      id: 'rig',
+      kind: 'rig',
+      startFrame: 0,
+      endFrame: 120,
+      anchorObjectId: character.id,
+      anchorPart: 'face',
+      aimObjectId: character.id,
+      azimuth: 0,
+      elevation: 0,
+      distance: 3,
+      height: 0,
+      bearing: 'custom',
+      motion: 'static',
+    };
+    scene.objects.push(camera);
+    scene.timeline.tracks.push({ id: 'rt', objectId: camera.id, clips: [rig] });
+
+    const frame = evaluateSceneAt(scene, 60, extentsFor(prop));
+    const person = frame.get(character.id)!.position;
+    const lens = frame.get(camera.id)!.position;
+
+    // 人确实被推开了（否则下面那条等式在「两边都没动」时也成立）。
+    expect(Math.hypot(person[0], person[2])).toBeGreaterThan(1);
+    // 机位与人的水平距离就是片段设的那 3 m，而不是「机位到原点」的距离。
+    expect(Math.hypot(lens[0] - person[0], lens[2] - person[2])).toBeCloseTo(3, 6);
+  });
+
+  it('pulls a character who walks off the edge back inside the block', () => {
+    const character = createPrevizObject('character', [], {
+      avoidCollision: false,
+      stayInBounds: true,
+    }) as PrevizCharacter;
+    const clip: PrevizPathClip = {
+      id: 'far',
+      kind: 'path',
+      startFrame: 0,
+      endFrame: 120,
+      points: [
+        { id: 'a', u: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+        { id: 'b', u: 1, position: [100, 0, 0], rotation: [0, 0, 0] },
+      ],
+    };
+    const base = createDefaultScene();
+    const scene: PrevizScene = {
+      ...base,
+      objects: [character],
+      timeline: { ...base.timeline, tracks: [{ id: 'ft', objectId: character.id, clips: [clip] }] },
+    };
+
+    // 空场景的默认地块是 ±6 m（`PREVIZ_TOP_DOWN_DEFAULT_BOUNDS`），再收一个身体半径。
+    const x = evaluateSceneAt(scene, 120, []).get(character.id)!.position[0];
+    expect(x).toBeCloseTo(6 - PREVIZ_CHARACTER_RADIUS_M, 6);
+  });
+});
+
+describe('evaluateSceneAt closeup clips', () => {
+  it('parks the camera in front of the tracked face and points it there', () => {
+    const { scene, camera } = sceneWithCloseup();
+    const state = evaluateSceneAt(scene, 0).get(camera.id);
+
+    const faceY = 1.8 * PREVIZ_RIG_ANCHOR_FRACTION.face;
+    expect(state?.position[0]).toBeCloseTo(0, 6);
+    expect(state?.position[1]).toBeCloseTo(faceY, 6);
+    expect(state?.position[2]).toBeCloseTo(-3, 6);
+    // 机位站在人物正面（-Z 一侧）回头看他，所以朝向是掉转过来的 180°，而不是 0。
+    expect(state?.rotation[1]).toBeCloseTo(180, 6);
+    expect(state?.rotation[0]).toBeCloseTo(0, 6);
+  });
+
+  it('follows the tracked object along its own path', () => {
+    const { scene, character, camera } = sceneWithCloseup();
+    // 人物这一段走 0 → 10；特写必须跟着走，而不是钉在他出发的地方。
+    scene.timeline.tracks.push({ id: 'pt', objectId: character.id, clips: [clipFor(0, 120)] });
+
+    const state = evaluateSceneAt(scene, 120).get(camera.id);
+    expect(state?.position[0]).toBeCloseTo(10, 6);
+    expect(state?.position[2]).toBeCloseTo(-3, 6);
+  });
+
+  it('tips down to a low anchor', () => {
+    const { scene, camera } = sceneWithCloseup({ anchorPart: 'pelvis', height: 2 });
+    const state = evaluateSceneAt(scene, 0).get(camera.id);
+    // 机位抬高到锚点之上，视线跟着往下压——朝向是从解算出来的机位反推的，
+    // 不是照抄片段里那个俯仰角。
+    expect(state?.rotation[0]).toBeLessThan(0);
+  });
+
+  it('carries the orbit around over the clip', () => {
+    const { scene, camera } = sceneWithCloseup({ motion: 'orbit' });
+    const half = evaluateSceneAt(scene, 60).get(camera.id);
+    // 半程转过半圈：从 -Z 侧转到 +Z 侧。
+    expect(half?.position[2]).toBeCloseTo(3, 6);
+    expect(PREVIZ_RIG_ORBIT_DEG).toBe(360);
+  });
+
+  it('keeps the camera on its own rotation when nothing is aimed at', () => {
+    const { scene, camera } = sceneWithCloseup({ aimObjectId: null });
+    scene.objects[1]!.transform.rotation = [0, 33, 0];
+    const state = evaluateSceneAt(scene, 0).get(camera.id);
+    // 位置照样接管，朝向留给用户——「只定机位不定朝向」是手动构图的用法。
+    expect(state?.position[2]).toBeCloseTo(-3, 6);
+    expect(state?.rotation[1]).toBe(33);
+  });
+
+  it('leaves the camera alone outside the clip and when the anchor is gone', () => {
+    const outside = sceneWithCloseup({ startFrame: 60, endFrame: 120 });
+    expect(evaluateSceneAt(outside.scene, 10).get(outside.camera.id)?.position).toEqual([
+      99, 99, 99,
+    ]);
+
+    const orphan = sceneWithCloseup({ anchorObjectId: 'ghost' });
+    expect(evaluateSceneAt(orphan.scene, 0).get(orphan.camera.id)?.position).toEqual([99, 99, 99]);
+  });
+
+  it('refuses to have a camera track itself', () => {
+    const { scene, camera } = sceneWithCloseup();
+    scene.timeline.tracks[0]!.clips = [
+      { ...(scene.timeline.tracks[0]!.clips[0] as PrevizRigClip), anchorObjectId: camera.id },
+    ];
+    // 自己跟自己没有不动点：解出来的位置又成了下一帧的锚点。原地不动才是老实的。
+    expect(evaluateSceneAt(scene, 0).get(camera.id)?.position).toEqual([99, 99, 99]);
+  });
+});
+
+/** 一台沿直线走的机位 + 一个站着不动的人物。机位这一段可以「看向」他。 */
+function sceneWithAim(
+  aimObjectId: string | null,
+  moverKind: 'camera' | 'character' = 'camera',
+): { scene: PrevizScene; mover: PrevizObject; character: PrevizCharacter } {
+  const character = createPrevizObject('character', [], { heightCm: 180 });
+  character.transform.position = [0, 0, -5];
+  const mover = createPrevizObject(moverKind, [character]);
+
+  const clip: PrevizPathClip = {
+    ...clipFor(0, 120),
+    aimObjectId: aimObjectId === 'self' ? character.id : aimObjectId,
+  };
+
+  return {
+    scene: {
+      ...createDefaultScene(),
+      objects: [character, mover],
+      timeline: { ...createDefaultScene().timeline, tracks: [{ id: 'at', objectId: mover.id, clips: [clip] }] },
+    },
+    mover,
+    character,
+  };
+}
+
+describe('evaluateSceneAt path aims', () => {
+  it('turns the mover toward what the clip aims at', () => {
+    const { scene, mover } = sceneWithAim('self');
+
+    // 起点在原点，目标在正 -Z：正好是零朝向。
+    const start = evaluateSceneAt(scene, 0).get(mover.id);
+    expect(start?.rotation[1]).toBeCloseTo(0, 6);
+    // 瞄的是胸口而不是脚底，所以从地面高度看过去是抬着头的。
+    expect(start?.rotation[0]).toBeGreaterThan(0);
+
+    // 走到 x=10 之后目标落在左后方，朝向必须跟着转，而不是停在切线上。
+    const end = evaluateSceneAt(scene, 120).get(mover.id);
+    expect(end?.rotation[1]).toBeCloseTo((Math.atan2(10, 5) * 180) / Math.PI, 6);
+  });
+
+  it('keeps a walking character upright', () => {
+    const { scene, mover } = sceneWithAim('self', 'character');
+    const state = evaluateSceneAt(scene, 0).get(mover.id);
+
+    // 人看人是转身，不是整个人前倾。俯仰留给机位。
+    expect(state?.rotation[1]).toBeCloseTo(0, 6);
+    expect(state?.rotation[0]).toBe(0);
+  });
+
+  it('falls back to the path tangent without an aim', () => {
+    const { scene, mover } = sceneWithAim(null);
+    // 没有「看向」时照旧沿切线：这条片段的两个点自己带了 0° 与 90°。
+    expect(evaluateSceneAt(scene, 120).get(mover.id)?.rotation[1]).toBeCloseTo(90, 6);
+  });
+
+  it('ignores an aim at an object that is gone', () => {
+    const { scene, mover } = sceneWithAim('ghost');
+    // 删对象不该顺手改别人的片段，所以悬空的「看向」会留在场上；此时退回切线朝向。
+    expect(evaluateSceneAt(scene, 120).get(mover.id)?.rotation[1]).toBeCloseTo(90, 6);
+  });
+
+  it('refuses to have an object aim at itself', () => {
+    const { scene, mover } = sceneWithAim(null);
+    scene.timeline.tracks[0]!.clips = [
+      { ...(scene.timeline.tracks[0]!.clips[0] as PrevizPathClip), aimObjectId: mover.id },
+    ];
+    // 自己看自己解不出方向，lookAtEulerDeg 会交出零朝向——那是个假的正前方。
+    expect(evaluateSceneAt(scene, 120).get(mover.id)?.rotation[1]).toBeCloseTo(90, 6);
+  });
+});
+
+/** 一条爬升的轨迹：终点比起点高 9 米——「跟随轨迹」和「锁定平面」在这条线上才分得开。 */
+function climbingClip(): PrevizPathClip {
+  return {
+    ...clipFor(0, 120),
+    points: [
+      { id: 'a', u: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { id: 'b', u: 1, position: [4, 9, 4], rotation: [0, 0, 0] },
+    ],
+  };
+}
+
+/** 把人物挂上那条爬升轨迹，取半程（曲线正好在中点，y = 4.5）那一帧。 */
+function climbHalfway(character: PrevizCharacter, scene: PrevizScene) {
+  scene.timeline = {
+    ...scene.timeline,
+    tracks: [{ id: 't', objectId: character.id, clips: [climbingClip()] }],
+  };
+  return evaluateSceneAt(scene, 60).get(character.id);
+}
+
+describe('evaluateSceneAt height policies', () => {
+  it('keeps every plane-locked character on their own storey while they walk', () => {
+    const { scene, character } = sceneWithCharacter();
+    character.heightPolicy = 'plane';
+    character.planeY = 3;
+    // 第二个人锁在另一层。只压住列表里第一个 plane 人物的实现（循环体末尾一句
+    // `return`）在单人场景里量不出来，一层楼只站得下一个人才是真正会被看见的样子。
+    const upstairs = createPrevizObject('character', scene.objects, {
+      heightPolicy: 'plane',
+      planeY: 7,
+    });
+    scene.objects.push(upstairs);
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [
+        { id: 't', objectId: character.id, clips: [climbingClip()] },
+        { id: 'u', objectId: upstairs.id, clips: [climbingClip()] },
+      ],
+    };
+    const frame = evaluateSceneAt(scene, 60);
+
+    // 两个人走的是同一条曲线，这一帧都在 4.5 上；锁定平面把他们分别压回自己那一层。
+    expect(frame.get(character.id)?.position[1]).toBe(3);
+    expect(frame.get(upstairs.id)?.position[1]).toBe(7);
+    // 策略管的是高度，不是走位：XZ 照旧跟着曲线跑。
+    expect(frame.get(character.id)?.position[0]).toBeCloseTo(2, 10);
+    expect(frame.get(character.id)?.position[2]).toBeCloseTo(2, 10);
+  });
+
+  it('leaves a follow-policy character on the height the path says', () => {
+    const { scene, character } = sceneWithCharacter();
+    // 默认档。压平要是漏了判断策略，这条会掉到 planeY 的 0 上。
+    expect(character.heightPolicy).toBe('follow');
+    expect(climbHalfway(character, scene)?.position[1]).toBeCloseTo(4.5, 10);
+  });
+
+  it('leaves the ground policy to the renderer', () => {
+    const { scene, character } = sceneWithCharacter();
+    character.heightPolicy = 'ground';
+    character.planeY = 3;
+    // 贴合地面要往场景几何体上打射线，本模块拿不到 three 的场景。在这里顺手压到
+    // planeY 上，等于拿「锁定平面」的答案冒充落地高度。
+    expect(climbHalfway(character, scene)?.position[1]).toBeCloseTo(4.5, 10);
+  });
+
+  it('locks a standing character to the plane with no path at all', () => {
+    const { scene, character } = sceneWithCharacter();
+    character.heightPolicy = 'plane';
+    character.planeY = -2;
+    // 只对走动的人生效的话，「锁定平面」在摆放阶段就是个不动的开关。
+    expect(evaluateSceneAt(scene, 0).get(character.id)?.position).toEqual([5, -2, 5]);
+  });
+
+  it('parks a closeup on the plane its subject is locked to', () => {
+    const { scene, character, camera } = sceneWithCloseup();
+    character.heightPolicy = 'plane';
+    character.planeY = 3;
+    // 机位是从锚点**这一帧**的位置反推的：压平排在特写之后，机位就停在人物不在的那一层。
+    const faceY = 3 + 1.8 * PREVIZ_RIG_ANCHOR_FRACTION.face;
+    expect(evaluateSceneAt(scene, 0).get(camera.id)?.position[1]).toBeCloseTo(faceY, 6);
+  });
+
+  it('aims at the plane its subject is locked to', () => {
+    const pitchOf = (built: ReturnType<typeof sceneWithAim>) =>
+      evaluateSceneAt(built.scene, 0).get(built.mover.id)!.rotation[0];
+
+    const locked = sceneWithAim('self');
+    locked.character.heightPolicy = 'plane';
+    locked.character.planeY = 2;
+    const lifted = sceneWithAim('self');
+    lifted.character.transform.position = [0, 2, -5];
+
+    // 「看向」也是从被看的人这一帧的位置反推的：锁在 2 米上的人，和干脆摆在 2 米高的
+    // 人，机位该抬同样的头。
+    expect(pitchOf(locked)).toBeCloseTo(pitchOf(lifted), 10);
+    // 上一条是两个场景之间的等式，两边一起退化时它也成立：把 `lookAtEulerDeg` 的俯仰
+    // 钉成常数，只剩上一条的话这个用例照样绿。所以再对一次绝对量。
+    expect(pitchOf(locked)).toBeGreaterThan(pitchOf(sceneWithAim('self')));
+  });
+});
+
+/** 一个静止的人物，轨道上挂着给定的动作片段（可再带路径片段）。 */
+function sceneWithActions(clips: PrevizClip[]): { scene: PrevizScene; character: PrevizCharacter } {
+  const { scene, character } = sceneWithCharacter();
+  scene.timeline = { ...scene.timeline, tracks: [{ id: 't', objectId: character.id, clips }] };
+  return { scene, character };
+}
+
+function action(id: string, startFrame: number, endFrame: number, motionId: string): PrevizActionClip {
+  return { id, kind: 'action', startFrame, endFrame, motionId };
+}
+
+const LOOP = 'builtin:Idle_Talking_Loop';
+const ONCE = 'builtin:Sitting_Enter';
+const LOOP_SEC = builtinMotionById(LOOP)!.durationSec;
+const ONCE_SEC = builtinMotionById(ONCE)!.durationSec;
+const BLEND = Math.round(PREVIZ_MOTION_BLEND_SEC * PREVIZ_FPS);
+
+describe('evaluateSceneAt action clips', () => {
+  it('pins the blend to 0.2 s', () => {
+    expect(PREVIZ_MOTION_BLEND_SEC).toBe(0.2);
+    expect(BLEND).toBe(6);
+  });
+
+  it('wraps a looping motion around its own duration', () => {
+    const { scene, character } = sceneWithActions([action('a', 0, 300, LOOP)]);
+    const frame = 30 + Math.round(LOOP_SEC * PREVIZ_FPS);
+    const motion = evaluateSceneAt(scene, frame).get(character.id)?.motion;
+    expect(motion?.primary.ref).toBe(LOOP);
+    expect(motion?.primary.time).toBeCloseTo((frame / PREVIZ_FPS) % LOOP_SEC, 10);
+    expect(motion?.weight).toBe(1);
+    expect(motion?.secondary).toBeUndefined();
+  });
+
+  it('holds a one-shot motion on its last frame until the clip ends', () => {
+    const { scene, character } = sceneWithActions([action('a', 0, 300, ONCE)]);
+    const motion = evaluateSceneAt(scene, 200).get(character.id)?.motion;
+    expect(motion?.primary).toEqual({ ref: ONCE, time: ONCE_SEC });
+  });
+
+  it('starts the motion clock at the clip start, not at frame zero', () => {
+    const { scene, character } = sceneWithActions([action('a', 60, 300, ONCE)]);
+    expect(evaluateSceneAt(scene, 75).get(character.id)?.motion?.primary.time).toBeCloseTo(
+      15 / PREVIZ_FPS,
+      10,
+    );
+  });
+
+  it('treats the clip range as half-open', () => {
+    const { scene, character } = sceneWithActions([action('a', 60, 120, LOOP)]);
+    // 片段外回到基础姿势；终点帧不算片段内——相接的下一段从这一帧开始。
+    expect(evaluateSceneAt(scene, 59).get(character.id)?.motion?.primary.ref).toBe(character.basePoseId);
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.motion?.primary.ref).toBe(LOOP);
+    expect(evaluateSceneAt(scene, 120).get(character.id)?.motion?.primary.ref).toBe(character.basePoseId);
+  });
+
+  it('fades in from the base pose and back out to it linearly', () => {
+    const { scene, character } = sceneWithActions([action('a', 60, 180, LOOP)]);
+    const still = { ref: character.basePoseId, time: stillTimeOf(character) };
+    for (let entered = 0; entered < BLEND; entered += 1) {
+      const motion = evaluateSceneAt(scene, 60 + entered).get(character.id)?.motion;
+      expect(motion?.secondary).toEqual(still);
+      expect(motion?.weight).toBeCloseTo(entered / BLEND, 10);
+    }
+    // 离开时权重按「离终点还剩几帧」算，终点帧本身已在片段外、权重归零。
+    for (let remaining = 1; remaining < BLEND; remaining += 1) {
+      const motion = evaluateSceneAt(scene, 180 - remaining).get(character.id)?.motion;
+      expect(motion?.secondary).toEqual(still);
+      expect(motion?.weight).toBeCloseTo(remaining / BLEND, 10);
+    }
+    expect(evaluateSceneAt(scene, 60 + BLEND).get(character.id)?.motion?.secondary).toBeUndefined();
+    expect(evaluateSceneAt(scene, 180 - BLEND).get(character.id)?.motion?.secondary).toBeUndefined();
+  });
+
+  it('halves the blend on a clip shorter than two blends', () => {
+    const { scene, character } = sceneWithActions([action('a', 60, 66, LOOP)]);
+    // 6 帧的片段：进 3 帧、出 3 帧，中间没有满权重的一帧也不许两段重叠。
+    expect(evaluateSceneAt(scene, 61).get(character.id)?.motion?.weight).toBeCloseTo(1 / 3, 10);
+    expect(evaluateSceneAt(scene, 63).get(character.id)?.motion?.weight).toBeCloseTo(3 / 3, 10);
+    expect(evaluateSceneAt(scene, 65).get(character.id)?.motion?.weight).toBeCloseTo(1 / 3, 10);
+  });
+
+  it('skips the blend on a one-frame clip instead of dividing by zero', () => {
+    const { scene, character } = sceneWithActions([action('a', 60, 61, LOOP)]);
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.motion).toEqual({
+      primary: { ref: LOOP, time: 0 },
+      weight: 1,
+    });
+  });
+
+  it('blends only once where two clips meet', () => {
+    const { scene, character } = sceneWithActions([
+      action('b', 120, 240, ONCE),
+      action('a', 0, 120, LOOP),
+    ]);
+    // 前一段的尾巴不淡回底层：交界那一次过渡归后一段。
+    expect(evaluateSceneAt(scene, 119).get(character.id)?.motion).toEqual({
+      primary: { ref: LOOP, time: (119 / PREVIZ_FPS) % LOOP_SEC },
+      weight: 1,
+    });
+    // 后一段开头从前一段接着播的那一秒淡入，而不是从基础姿势。
+    const seam = evaluateSceneAt(scene, 122).get(character.id)?.motion;
+    expect(seam?.primary).toEqual({ ref: ONCE, time: 2 / PREVIZ_FPS });
+    expect(seam?.secondary?.ref).toBe(LOOP);
+    expect(seam?.secondary?.time).toBeCloseTo((122 / PREVIZ_FPS) % LOOP_SEC, 10);
+    expect(seam?.weight).toBeCloseTo(2 / BLEND, 10);
+  });
+
+  it('fades from the base pose when the previous clip leaves a gap', () => {
+    const { scene, character } = sceneWithActions([action('a', 0, 100, LOOP), action('b', 120, 240, ONCE)]);
+    expect(evaluateSceneAt(scene, 121).get(character.id)?.motion?.secondary?.ref).toBe(character.basePoseId);
+  });
+
+  it('plays the motion on the body while the path moves the character', () => {
+    const { scene, character } = sceneWithActions([clipFor(0, 120), action('a', 30, 90, LOOP)]);
+    const state = evaluateSceneAt(scene, 60).get(character.id);
+    // 位置照走路径；身体播动作。
+    expect(state?.position[0]).toBeCloseTo(5, 10);
+    expect(state?.motion?.primary.ref).toBe(LOOP);
+    // 淡入淡出的底子是这一帧的走路循环，时间从路径片段首帧起算。
+    const entering = evaluateSceneAt(scene, 31).get(character.id)?.motion;
+    expect(entering?.secondary).toEqual({ ref: 'walking', time: 31 / PREVIZ_FPS });
+  });
+
+  it('keeps the base layer when the motion cannot be resolved', () => {
+    const { scene, character } = sceneWithActions([action('a', 0, 120, 'import:gone')]);
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.motion).toEqual({
+      primary: { ref: character.basePoseId, time: stillTimeOf(character) },
+      weight: 1,
+    });
+  });
+
+  it('resolves an imported motion through scene.motions', () => {
+    const { scene, character } = sceneWithActions([action('a', 0, 120, 'import:m1')]);
+    scene.motions = [
+      {
+        id: 'm1',
+        name: 'Wave',
+        url: '/u/wave.bvh',
+        sourceFileName: 'wave.bvh',
+        format: 'bvh',
+        skeleton: 'smpl',
+        clipIndex: 0,
+        durationSec: 1,
+        loop: false,
+      },
+    ];
+    expect(evaluateSceneAt(scene, 90).get(character.id)?.motion?.primary).toEqual({
+      ref: 'import:m1',
+      time: 1,
+    });
+  });
+
+  it('never gives a camera a body, even with an action clip on its track', () => {
+    const { scene } = sceneWithCharacter();
+    const camera = createPrevizObject('camera', scene.objects);
+    scene.objects.push(camera);
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: camera.id, clips: [action('a', 0, 120, LOOP)] }],
+    };
+    expect(evaluateSceneAt(scene, 60).get(camera.id)?.motion).toBeNull();
+  });
+});

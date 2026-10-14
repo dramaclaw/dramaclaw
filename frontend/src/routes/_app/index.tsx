@@ -68,6 +68,7 @@ import { ProjectFolder } from "@/components/projects/project-folder";
 import { ShareProjectDialog } from "@/components/projects/share-project-dialog";
 import { getProjectCover, NOISE_DATA_URI } from "@/lib/project-cover";
 import { openFreezoneProject } from "@/lib/freezone-url";
+import { resetFreezoneViewMode } from "@/features/freezone/useFreezoneViewMode";
 import { formatRelativeTime } from "@/lib/relative-time";
 import {
   canDeleteProject,
@@ -1220,8 +1221,11 @@ function ProjectDashboard() {
     return PROJECT_SECTION_ROUTES[section] ?? PROJECT_SECTION_ROUTES.freezone;
   }, [assistantAvailable, freezoneAvailable, mainlineAvailable]);
 
-  const openProject = (project: string) =>
-    navigate({ to: resolveProjectEntry(project), params: { project } });
+  const openProject = (project: string) => {
+    const to = resolveProjectEntry(project);
+    if (to === PROJECT_SECTION_ROUTES.freezone) resetFreezoneViewMode();
+    return navigate({ to, params: { project } });
+  };
   const preloadProject = useCallback(
     (project: string) => {
       void router

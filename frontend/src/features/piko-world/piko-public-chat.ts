@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: Elastic-2.0
+import { useEffect, useRef, useState } from "react";
+export const PIKO_CHAT_COOLDOWN_MS = 6000;
+export const PIKO_CHAT_MAX_LENGTH = 80;
+export const PIKO_CHAT_BUBBLE_MS = 6000;
+export type PikoSpeech = { id: number; body: string; expiresAt: number; owner: string | null };
+
+/** Local validation and cooldown mirror server checks without consuming failed sends. */
+export function createPikoChatGate() {
+  const deadlines = new Map<string | null, number>();
+  return {
+    remaining(owner: string | null, now: number) { return Math.max(0, (deadlines.get(owner) ?? 0) - now); },
+    validate(owner: string | null, input: string, now: number) {
+      const body = input.trim();
+      if (!body) return { ok: false, reason: "empty" } as const;
+      if (Array.from(body).length > PIKO_CHAT_MAX_LENGTH) return { ok: false, reason: "length" } as const;
+      if (this.remaining(owner, now)) return { ok: false, reason: "cooldown" } as const;
+      return { ok: true, body } as const;
+    },
+    send(owner: string | null, input: string, now: number) {
+      const result = this.validate(owner, input, now);
+      if (result.ok) deadlines.set(owner, now + PIKO_CHAT_COOLDOWN_MS);
+      return result;
+    },
+  };
+}
+const gate = createPikoChatGate();
+export function usePikoPublicChat(owner: string | null) {
+  const [clock, setClock] = useState(Date.now());
+  const [speech, setSpeech] = useState<PikoSpeech | null>(null);
+  const sequence = useRef(0);
+  const remaining = gate.remaining(owner, clock);
+  const ticking = remaining > 0 || (speech?.owner === owner && speech.expiresAt > clock);
+  useEffect(() => {
+    if (!ticking) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 200);
+    return () => window.clearInterval(timer);
+  }, [ticking]);
+  const send = (input: string) => {
+    const now = Date.now();
+    const result = gate.send(owner, input, now);
+    setClock(now);
+    if (result.ok) setSpeech({ id: ++sequence.current, owner, body: result.body, expiresAt: now + PIKO_CHAT_BUBBLE_MS });
+    return result;
+  };
+  return { send, validate: (input: string) => gate.validate(owner, input, Date.now()), remaining: Math.ceil(remaining / 1000), speech: speech?.owner === owner && speech.expiresAt > clock ? speech : null };
+}

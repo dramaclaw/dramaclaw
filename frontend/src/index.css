@@ -73,6 +73,10 @@
   --text-rgb: 0 0 0;
   --text-muted-rgb: 102 102 102;
   --accent-rgb: 59 130 246;
+  --notification-dot: #e77e73;
+  --feature-new-background: #e8f3ed;
+  --feature-new-foreground: #28674e;
+  --feature-new-border: #a3c7b4;
   --ui-surface-panel: rgba(255, 255, 255, 0.96);
   --ui-surface-modal: rgba(255, 255, 255, 0.98);
   --ui-surface-field: rgba(248, 250, 252, 0.95);
@@ -150,6 +154,9 @@
   --text-rgb: 232 234 240;
   --text-muted-rgb: 111 112 121;
   --accent-rgb: 91 160 255;
+  --feature-new-background: #203c36;
+  --feature-new-foreground: #a6dac3;
+  --feature-new-border: #416a5b;
   --ui-surface-panel: rgba(21, 22, 29, 0.78);
   --ui-surface-modal: rgba(27, 28, 35, 0.98);
   --ui-surface-field: rgba(13, 14, 20, 0.85);
@@ -264,6 +271,36 @@
 .backdrop-blur-tap {
   backdrop-filter: saturate(180%) blur(18px);
   -webkit-backdrop-filter: saturate(180%) blur(18px);
+}
+
+[data-freezone-chat-layout-motion="enter"] .freezone-asset-board {
+  transition: right var(--duration-slow) var(--ease-in-out);
+}
+
+[data-freezone-chat-layout-motion="exit"] .freezone-asset-board {
+  transition: right var(--duration-base) var(--ease-out-quint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-freezone-chat-layout-motion] .freezone-asset-board {
+    transition: none;
+  }
+}
+
+.canvas-node-media-frame {
+  border-width: 0;
+}
+
+.canvas-node-media-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border: 1px solid;
+  border-color: inherit;
+  border-style: inherit;
+  border-radius: inherit;
 }
 
 .tap-panel,
@@ -524,8 +561,8 @@
   color: #fff;
 }
 
-.mention-chip:hover > img,
-.mention-chip:hover > video {
+.mention-chip:has(> .mention-chip-swap):hover > img,
+.mention-chip:has(> .mention-chip-swap):hover > video {
   display: none;
 }
 
@@ -756,6 +793,16 @@
   cursor: grabbing;
 }
 
+/* 虾导专注模式：临时隐藏节点面板，保留布局、挂载与输入草稿。 */
+.dc-canvas[data-assistant-selection-focus="true"] .react-flow__node-toolbar,
+.dc-canvas[data-assistant-selection-focus="true"] .react-flow__node-toolbar *,
+.dc-canvas[data-assistant-selection-focus="true"] .canvas-node-transient-ui,
+.dc-canvas[data-assistant-selection-focus="true"] .canvas-node-transient-ui * {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 /* 节点拖动专注模式：只隐藏临时操作 chrome，不卸载组件、不清空 selection，
    因此输入草稿、面板展开状态和松手后的工具栏恢复都不受影响。吸附引导线不在
    此列表中，会继续提供必要的对齐反馈。body 级选择器同时覆盖 portal 到 body 的
@@ -863,6 +910,13 @@ body.canvas-node-drag-focus [role="listbox"] {
    的 pane 当祖先就能盖住节点自己的 grab。 */
 [data-canvas-tool='hand'] .react-flow__pane.dragging .react-flow__node {
   cursor: grabbing;
+}
+
+/* 剧情边标签为 1002（高于分组边的 SVG 命中层 1001）。视频操作面板
+   位于节点的 stacking context 内，仅提高面板自身 z-index 无效。
+   只在影游片段的内联操作面板打开时提高节点，普通视频节点保持原有层级。 */
+.react-flow .react-flow__node-videoNode:has([data-story-edit-frame]):has([data-slot='node-operation-panel']) {
+  z-index: 1003 !important;
 }
 
 .react-flow__handle {
@@ -1062,6 +1116,49 @@ body.canvas-node-drag-focus [role="listbox"] {
 @keyframes dc-lod-busy-pulse {
   0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }
+}
+
+/*
+  预演台入场遮罩（PrevizBootOverlay）。淡入不加 fill-mode：填充住终值的话会压过
+  撤场时的 opacity-0，淡出的 transition 就不生效了。
+*/
+.previz-boot-overlay {
+  animation: previz-boot-in 160ms ease-out;
+}
+
+.previz-boot-scan {
+  animation: previz-boot-scan 1.8s ease-in-out infinite;
+}
+
+.previz-boot-rec {
+  animation: dc-lod-busy-pulse 1.2s ease-in-out infinite;
+}
+
+.previz-boot-bar {
+  animation: previz-boot-bar 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .previz-boot-overlay,
+  .previz-boot-scan,
+  .previz-boot-bar {
+    animation: none;
+  }
+}
+
+@keyframes previz-boot-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes previz-boot-scan {
+  0%, 100% { transform: translateY(0); opacity: 0.25; }
+  50% { transform: translateY(58px); opacity: 0.9; }
+}
+
+@keyframes previz-boot-bar {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
 }
 
 .canvas-minimap {
@@ -1726,83 +1823,6 @@ button:hover .st-keyframe-video-play {
     border-radius: 999px;
     background: transparent;
     box-shadow: 0 1px 5px rgb(0 0 0 / 0.42);
-  }
-
-  .companion-capsule-entry {
-    position: relative;
-    overflow: visible;
-  }
-
-  .companion-capsule-entry__icon {
-    transition:
-      filter 150ms ease,
-      transform 150ms ease;
-  }
-
-  .companion-capsule-entry::after {
-    content: "";
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    width: 2px;
-    height: 2px;
-    opacity: 0;
-    background: rgb(255 255 255 / 0.96);
-    box-shadow:
-      2px 0 0 rgb(103 232 249 / 0.88),
-      -2px 0 0 rgb(255 255 255 / 0.54),
-      0 2px 0 rgb(255 255 255 / 0.62),
-      0 -2px 0 rgb(103 232 249 / 0.72);
-    image-rendering: pixelated;
-    pointer-events: none;
-  }
-
-  .companion-capsule-entry:hover .companion-capsule-entry__icon {
-    filter: brightness(1.22) saturate(1.12) drop-shadow(0 0 4px rgb(34 211 238 / 0.32));
-    transform: translateY(-1px);
-  }
-
-  .companion-capsule-entry--reward-hit .companion-capsule-entry__icon {
-    animation: companion-capsule-reward-hit 520ms cubic-bezier(0.2, 1.24, 0.26, 1) both;
-  }
-
-  .companion-capsule-entry:hover::after {
-    animation: companion-capsule-sparkle 620ms steps(3, end) both;
-  }
-
-  .companion-capsule-entry--reward-hit::after {
-    animation: companion-capsule-sparkle 520ms steps(3, end) both;
-  }
-
-  @keyframes companion-capsule-reward-hit {
-    0%,
-    100% {
-      filter: brightness(1) saturate(1);
-      transform: translateY(0) scale(1);
-    }
-    42% {
-      filter: brightness(1.32) saturate(1.18) drop-shadow(0 0 7px rgb(34 211 238 / 0.42));
-      transform: translateY(-1px) scale(1.18);
-    }
-    68% {
-      transform: translateY(0) scale(0.94);
-    }
-  }
-
-  @keyframes companion-capsule-sparkle {
-    0%,
-    100% {
-      opacity: 0;
-      transform: translate(0, 0);
-    }
-    34% {
-      opacity: 1;
-      transform: translate(-2px, -1px);
-    }
-    68% {
-      opacity: 0.55;
-      transform: translate(1px, -3px);
-    }
   }
 
   @keyframes piko-mini-feedback {

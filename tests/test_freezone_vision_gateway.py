@@ -109,6 +109,40 @@ async def test_vision_gateway_uses_pydantic_agent_and_logical_model(
     )
 
 
+@pytest.mark.asyncio
+async def test_vision_gateway_forwards_model_settings_to_the_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[object] = []
+
+    class RecordingModel(TestModel):
+        async def request(self, messages, model_settings, model_request_parameters):
+            seen.append(model_settings)
+            return await super().request(
+                messages, model_settings, model_request_parameters
+            )
+
+    monkeypatch.setattr(
+        config,
+        "get_newapi_text_pydantic_model",
+        lambda *args, **kwargs: RecordingModel(custom_output_text="ok"),
+    )
+
+    await call_freezone_vision_model(
+        prompt="分析图片",
+        images=[VisionInput(data=b"image", media_type="image/png")],
+        timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+        model_settings={"openai_reasoning_effort": "low"},
+    )
+    await call_freezone_vision_model(
+        prompt="分析图片",
+        images=[VisionInput(data=b"image", media_type="image/png")],
+        timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+    )
+
+    assert seen == [{"openai_reasoning_effort": "low"}, None]
+
+
 @pytest.mark.parametrize(
     ("path", "expected"),
     [

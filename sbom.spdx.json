@@ -7,7 +7,7 @@
     ]
   },
   "dataLicense": "CC0-1.0",
-  "documentNamespace": "https://supertale.local/spdx/supertale-ce/a90eead043aac60c",
+  "documentNamespace": "https://supertale.local/spdx/supertale-ce/cdb073a3d65283a1",
   "name": "supertale-ce-p0b-sbom",
   "packages": [
     {
@@ -18,7 +18,7 @@
       "licenseConcluded": "Elastic-2.0",
       "licenseDeclared": "Elastic-2.0",
       "name": "supertale-ce",
-      "versionInfo": "2.0.2"
+      "versionInfo": "2.0.4"
     },
     {
       "SPDXID": "SPDXRef-Package-aiofiles",

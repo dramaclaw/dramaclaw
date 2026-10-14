@@ -370,7 +370,9 @@ describe("stale generation-error banner", () => {
       "generationAttemptRef.current === generationAttempt",
     );
     expect(
-      submitHandler.match(/if \(!isCurrentGenerationAttempt\(\)\) return;/g),
+      submitHandler.match(
+        /if \(!isCurrentGenerationAttempt\(\)\) return 'ignored';/g,
+      ),
     ).toHaveLength(3);
   });
 });

@@ -27,6 +27,12 @@ export function buildImageGenerationSuccessPatch(url: string): Record<string, un
     previewImageUrl: url,
     isGenerating: false,
     generationStartedAt: null,
+    // 任务已经返回正式产物，节点不应再绑定旧句柄。否则任务中心的终态事件
+    // 稍晚于 awaitTaskCompletion 到达时，旧任务仍会被视为 active，发送按钮会
+    // 短暂甚至持续保持禁用，导致已有图片无法再次生成。
+    generationTaskKey: null,
+    generationTaskType: null,
+    generationTaskJobId: null,
     ...GENERATION_ERROR_CLEARED_PATCH,
   };
 }

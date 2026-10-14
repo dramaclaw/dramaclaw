@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { resetFreezoneViewMode } from '@/features/freezone/useFreezoneViewMode';
 /**
  * Reduce backend-provided links to path + query + hash, then re-anchor them onto
  * the project-scoped Freezone tab.
@@ -46,6 +47,7 @@ export function buildFreezoneProjectUrl(projectId: string): string | null {
 export function openFreezoneProject(projectId: string): boolean {
   const url = buildFreezoneProjectUrl(projectId);
   if (!url || typeof window === "undefined") return false;
+  resetFreezoneViewMode();
   window.location.assign(url);
   return true;
 }

@@ -1,26 +1,28 @@
+import { canvasCreationActions } from "@/features/canvas/application/nodeCatalog";
+import { uuidGenerator } from "@/features/canvas/infrastructure/idGenerator";
 import { htmlArtifactNodePatches } from '@/features/html-artifacts/nodeMetadata';
 import { HtmlArtifactEditor } from '@/features/html-artifacts/HtmlArtifactEditor';
 import { HTML_ARTIFACT_OPEN_EVENT, HTML_ARTIFACT_REFERENCE_EVENT, HTML_ARTIFACT_UPDATED_EVENT, type HtmlArtifactTarget } from '@/features/html-artifacts/api';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Clapperboard,
   PanelRight,
   PanelRightClose,
   PanelRightOpen,
   PictureInPicture2,
   Plus,
   Search,
-  Workflow,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import { Canvas } from "@/features/canvas/Canvas";
 import { NodeReplaceDragPreview } from "@/features/canvas/ui/NodeReplaceDragPreview";
 import { AssetBoardView } from "@/features/canvas/ui/asset-board/AssetBoardView";
+import { CANVAS_PANEL_SURFACE_CLASS } from "@/features/canvas/ui/canvasControlStyles";
+import { APP_HEADER_HEIGHT, TASK_STATUS_BAR_HEIGHT } from "@/components/layout/layout-metrics";
 import {
   listCharacters,
   listFreezoneProjectAssets,
@@ -69,11 +71,6 @@ import { CompareDialog } from "@/pipeline-import/CompareDialog";
 import { MaskEditor } from "@/pipeline-import/MaskEditor";
 import { AssetLibraryPanel } from "./AssetLibraryPanel";
 import { CanvasDebugPanel } from "./CanvasDebugPanel";
-import {
-  FREEZONE_DOCK_TRANSITION_VAR,
-  FREEZONE_DOCK_WIDTH_VAR,
-  freezoneDockOffsetCss,
-} from "./dockOffset";
 import type { PushResult, PushTarget, PushTargetKind } from "@/api/push";
 import { coerceSlotTarget } from "@/features/canvas/domain/mainlineNodeTypes";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
@@ -120,8 +117,8 @@ import {
 } from "@/features/freezone/canvasSyncRuntime";
 import {
   useFreezoneViewMode,
-  type FreezoneViewMode,
 } from "@/features/freezone/useFreezoneViewMode";
+import { useFreezoneChatVisibility } from "./useFreezoneChatVisibility";
 import {
   Tooltip,
   TooltipContent,
@@ -174,8 +171,22 @@ import {
 import type { ServerFrame } from "@/features/superchat/types";
 import { initializeEmptyFreezoneAgentChat } from "@/features/superchat/freezoneChatScopeCache";
 import { WorkflowRunRecoveryBar } from "./WorkflowRunRecoveryBar";
+import { PendingOutlineCard } from "./PendingOutlineCard";
+import { StoryStageNav } from "./StoryStageNav";
+import { parsePendingStoryOutline, type PendingStoryOutline } from "@/features/canvas/story/pendingStoryOutline";
 
 export { hasLegacyPresetCanvasMetadata } from "@/features/freezone/projections";
+
+export function shouldKeepCanvasOverlaysMounted(
+  status: CanvasSyncStatus,
+  hydratedCanvasId: string | null,
+  canvasId: string,
+): boolean {
+  return (
+    hydratedCanvasId === canvasId &&
+    (status === "ready" || status === "saving")
+  );
+}
 
 interface FreezoneShellProps {
   project: SupertaleProjectSummary;
@@ -209,24 +220,17 @@ const FREEZONE_AGENT_HISTORY_WIDTH_MAX = 360;
 // but Freezone currently defines one Agent session per canvas.
 const FREEZONE_MULTI_AGENT_SESSION_UI_ENABLED = false;
 /**
- * 抽屉最多能挤到只剩这么宽的左侧内容。
- * - 工作流（浮层）：画布可以任意窄，360 只是别让它彻底消失。
- * - 故事板（挤占）：三栏各有 200px 下限 + 两条 12px 分隔 + 容器 px-4，
- *   低于 680 三栏就会被 min-width 顶出容器、右栏被裁掉。
- */
-const FREEZONE_CHAT_MIN_CONTENT_WIDTH = 360;
-const FREEZONE_CHAT_MIN_BOARD_CONTENT_WIDTH = 680;
-/**
  * 抽屉内两栏的宽度走 CSS 变量（挂在 <aside> 上，两栏继承着读）。
  * 这样拖拽时只需要改外壳这一个元素的 style，就能同时驱动外壳与内部两栏，
  * 全程不碰 React —— 见 startPaneResize 里的 paint()。
  */
 const CHAT_PANE_WIDTH_VAR = "--freezone-chat-pane-width";
 const AGENT_HISTORY_PANE_WIDTH_VAR = "--freezone-agent-history-pane-width";
-/**
- * 虾导两种摆法：停靠右侧（通高抽屉，顶栏等据 --freezone-dock-width 让位）或浮窗
- * （圆角悬浮窗压在内容上，可拖动，谁也不挤）。用户在聊天头部切换，偏好存本地。
- */
+/** 右侧覆盖面板最多遮住视口的一部分，保留可操作的工作区。 */
+const FREEZONE_CHAT_MIN_CONTENT_WIDTH = 360;
+const FREEZONE_BOARD_MIN_CONTENT_WIDTH = 680;
+const BOARD_CHAT_WIDTH_VAR = "--freezone-board-chat-width";
+// 停靠态仅挤压故事板；工作流与可拖动浮窗始终保持覆盖布局。
 type FreezoneChatDockMode = "docked" | "floating";
 const FREEZONE_CHAT_DOCK_MODE_STORAGE_KEY = "freezone.chatDock.mode";
 /** 浮窗位置按「右边距 + 上边距」存：左缘拖宽时右边不动，与停靠态的拖宽手感一致。 */
@@ -234,25 +238,11 @@ const FREEZONE_CHAT_FLOAT_POS_STORAGE_KEY = "freezone.chatDock.floatPos";
 const FREEZONE_CHAT_FLOAT_HEIGHT = 720;
 const FREEZONE_CHAT_FLOAT_MARGIN = 12;
 /** 上下各让开顶栏（48px）与底部任务状态条（36px），浮窗不被它们压住。 */
-const FREEZONE_CHAT_FLOAT_MIN_TOP = 56;
-const FREEZONE_CHAT_FLOAT_BOTTOM_RESERVE = 44;
+const FREEZONE_CHAT_FLOAT_MIN_TOP = APP_HEADER_HEIGHT + 8;
+const FREEZONE_CHAT_FLOAT_BOTTOM_RESERVE = TASK_STATUS_BAR_HEIGHT + 8;
 const FREEZONE_CHAT_FLOAT_DEFAULT_POS = { right: 24, top: FREEZONE_CHAT_FLOAT_MIN_TOP + 8 };
 const EXTERNAL_CANVAS_COMMAND_POLL_MS = 800;
 const EXTERNAL_CANVAS_REVISION_POLL_MS = 2_000;
-
-/**
- * 左上角「工作流 / 故事板」切换开关的两颗键。
- * 只画图标，文案走 hover 提示 + aria-label（用户要求：文字胶囊太占画布）。
- * 顺序即视觉顺序——滑块位移按下标算（第 2 颗 translate-x-7）。
- */
-const FREEZONE_VIEW_MODE_TABS: ReadonlyArray<{
-  mode: FreezoneViewMode;
-  icon: LucideIcon;
-  label: string;
-}> = [
-  { mode: "workflow", icon: Workflow, label: "工作流" },
-  { mode: "board", icon: Clapperboard, label: "故事板" },
-];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -264,13 +254,23 @@ function clampNumber(value: number, min: number, max: number): number {
 
 function loadStoredPanelWidth(key: string, fallback: number, min: number, max: number): number {
   if (typeof window === "undefined") return fallback;
-  const parsed = Number(window.localStorage.getItem(key));
-  return Number.isFinite(parsed) ? clampNumber(parsed, min, max) : fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw?.trim()) return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? clampNumber(parsed, min, max) : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function storePanelWidth(key: string, value: number): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(key, String(Math.round(value)));
+  try {
+    window.localStorage.setItem(key, String(Math.round(value)));
+  } catch {
+    // Storage may be unavailable; keep the current in-memory width.
+  }
 }
 
 function loadChatDockMode(): FreezoneChatDockMode {
@@ -296,7 +296,8 @@ function loadChatFloatPos(): { right: number; top: number } {
     const raw = window.localStorage.getItem(FREEZONE_CHAT_FLOAT_POS_STORAGE_KEY);
     if (!raw) return FREEZONE_CHAT_FLOAT_DEFAULT_POS;
     const parsed = JSON.parse(raw) as { right?: unknown; top?: unknown };
-    if (typeof parsed.right === "number" && typeof parsed.top === "number") {
+    if (typeof parsed.right === "number" && Number.isFinite(parsed.right)
+      && typeof parsed.top === "number" && Number.isFinite(parsed.top)) {
       return { right: parsed.right, top: parsed.top };
     }
   } catch {
@@ -313,31 +314,6 @@ function storeChatFloatPos(pos: { right: number; top: number }): void {
     );
   } catch {
     // ignore storage failures
-  }
-}
-
-/**
- * 虾画 agent 的开合状态：持久化到 localStorage，刷新/重进画布后恢复，避免工作流中
- * 一刷新就丢掉已打开的对话。key 同样避开 `supertale-` 前缀（会被 reset-region-state
- * 的清扫误删）——开合只是 UI 偏好，跨区域保留没问题。
- */
-const CHAT_OPEN_STORAGE_KEY = "st.freezone.chatOpen";
-
-function loadChatOpen(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(CHAT_OPEN_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function storeChatOpen(open: boolean): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(CHAT_OPEN_STORAGE_KEY, open ? "1" : "0");
-  } catch {
-    // storage full / unavailable — 开合状态就不持久化
   }
 }
 
@@ -969,9 +945,17 @@ export function FreezoneShell({
   const [assetLibraryReloadToken, setAssetLibraryReloadToken] = useState(0);
   const [assetPanelCollapsed, setAssetPanelCollapsed] = useState(true);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
-  const [chatOpen, setChatOpen] = useState(loadChatOpen);
+  const [viewMode, setViewMode] = useFreezoneViewMode();
+  const [chatOpen, setChatOpen] = useFreezoneChatVisibility(viewMode, active);
   const [pendingChatAttachments, setPendingChatAttachments] = useState<ChatAttachment[]>([]);
   const [pendingChatNodeMentions, setPendingChatNodeMentions] = useState<string[]>([]);
+  // 面板外「提交并继续」（如大纲确认后自动接龙）：drain 归 SuperChatPanel 的发送队列。
+  // mode="draft" 只预填输入框（如「需要修改」后等用户补意见），不代发送。
+  const [pendingChatExternalSubmit, setPendingChatExternalSubmit] = useState<{
+    id: string;
+    text: string;
+    mode?: "send" | "draft";
+  } | null>(null);
   const deliveredSelectionAttachmentKeyRef = useRef<string | null>(null);
   const handlePendingChatAttachmentsConsumed = useCallback(() => {
     setPendingChatAttachments([]);
@@ -979,6 +963,49 @@ export function FreezoneShell({
   const handlePendingChatNodeMentionsConsumed = useCallback(() => {
     setPendingChatNodeMentions([]);
   }, []);
+  const handlePendingChatExternalSubmitConsumed = useCallback(() => {
+    setPendingChatExternalSubmit(null);
+  }, []);
+  // 保活画布共享事件总线，仅当前活动画布接收创作入口事件，避免把草稿填到其他画布。
+  // draft 复用聊天面板的追加与聚焦逻辑，保留已有输入，由用户补充后发送，不自动生成。
+  useEffect(() => {
+    if (!active) return;
+    return canvasEventBus.subscribe("freezone/start-creation", ({ actionId }) => {
+      const action = canvasCreationActions.find((entry) => entry.id === actionId);
+      if (!action) return;
+      setChatOpen(true);
+      setPendingChatExternalSubmit({
+        id: `creation:${actionId}:${uuidGenerator.next()}`,
+        text: t(action.draftKey),
+        mode: "draft",
+      });
+    });
+  }, [active, t]);
+  const handleOutlineConfirmed = useCallback(
+    (outline: PendingStoryOutline) => {
+      // 确认成功的同一动线里展开虾导并代投「继续创作」，不等用户回聊天再说一遍；
+      // Agent 忙时消息排队，空闲即发（见 SuperChatPanel 的 pendingExternalSubmit drain）。
+      setChatOpen(true);
+      setPendingChatExternalSubmit({
+        id: `outline-confirmed:${outline.outline_id}`,
+        text: t(outline.kind === "ad" ? "freezone.outline.continueMessageAd" : "freezone.outline.continueMessageStory"),
+      });
+    },
+    [t],
+  );
+  const handleOutlineRevisionRequested = useCallback(
+    (outline: PendingStoryOutline) => {
+      // 「需要修改」只改状态，Agent 得从聊天里知道改哪里：展开虾导预填草稿并聚焦，
+      // 用户补完意见自己发。id 按点击唯一：同一份大纲连续要求修改要能反复预填。
+      setChatOpen(true);
+      setPendingChatExternalSubmit({
+        id: `outline-revision:${outline.outline_id}:${Date.now()}`,
+        text: t("freezone.outline.revisionDraft"),
+        mode: "draft",
+      });
+    },
+    [t],
+  );
   const [htmlTarget, setHtmlTarget] = useState<HtmlArtifactTarget | null>(null);
   useEffect(() => {
     const open = (event: Event) => {
@@ -1025,6 +1052,9 @@ export function FreezoneShell({
   // ——「卸旧的」和「挂新的」并进同一次提交，这正是切换卡顿的主因。按画布记之后，
   // 换画布这一帧立刻回到全屏 loading，卸载与挂载被拆成两次提交。
   const currentCanvasKey = canvasKey(projectId, canvasId);
+  useEffect(() => {
+    useCanvasStore.getState().closeMediaViewers();
+  }, [currentCanvasKey]);
   const [renderedCanvasKey, setRenderedCanvasKey] = useState<string | null>(() =>
     lastRenderedCanvasKey === currentCanvasKey &&
     useCanvasStore.getState().nodes.length > 0
@@ -1067,20 +1097,13 @@ export function FreezoneShell({
     setToast(null);
   }
 
-  const [viewMode, setViewMode] = useFreezoneViewMode();
+  const boardWorkspaceRef = useRef<HTMLDivElement>(null);
   // 懒挂载：首次切到故事板才 mount AssetBoardView，之后保活（visible 切 visibility）。
   const [boardMounted, setBoardMounted] = useState(viewMode === "board");
-  const handleViewModeChange = useCallback(
-    (mode: FreezoneViewMode) => {
-      if (mode === "board") {
-        setBoardMounted(true);
-        // 进入故事板默认展开虾导，便于直接对着素材开聊。
-        setChatOpen(true);
-      }
-      setViewMode(mode);
-    },
-    [setViewMode],
-  );
+  useEffect(() => {
+    if (!active || viewMode !== "board") return;
+    setBoardMounted(true);
+  }, [active, viewMode]);
   const handleLocateNode = useCallback(
     (nodeId: string) => {
       setViewMode("workflow");
@@ -1103,6 +1126,11 @@ export function FreezoneShell({
     }
   }, [projectId, queryClient]);
   const sync = useCanvasSync(projectId, canvasId);
+  // fmv marker：画布 metadata 里出现待确认大纲时才挂方案卡（阶段B）。
+  const pendingOutline = useMemo(
+    () => parsePendingStoryOutline(sync.metadata),
+    [sync.metadata],
+  );
   const canvasNodes = useCanvasStore((state) => state.nodes);
   const canvasEdges = useCanvasStore((state) => state.edges);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
@@ -1211,17 +1239,11 @@ export function FreezoneShell({
     deliveredSelectionAttachmentKeyRef.current = currentCanvasSelectionAttachmentKey;
     setPendingChatAttachments([currentCanvasSelectionAttachment]);
   }, [chatOpen, currentCanvasSelectionAttachment, currentCanvasSelectionAttachmentKey]);
-  // 开合状态落盘：刷新/重进画布后由 useState(loadChatOpen) 恢复。所有开关路径
-  // （手动按钮、命令自动展开、空白点击）都经由 chatOpen，故一个 effect 全覆盖。
   useEffect(() => {
-    storeChatOpen(chatOpen);
-  }, [chatOpen]);
-
-  useEffect(() => {
-    if (!showChatDock) {
+    if (!productSurfaces.isPending && !showChatDock) {
       setChatOpen(false);
     }
-  }, [showChatDock]);
+  }, [productSurfaces.isPending, setChatOpen, showChatDock]);
 
   const handleBlankPaneClick = useCallback(() => {
     setAssetPanelCollapsed(true);
@@ -2165,7 +2187,7 @@ export function FreezoneShell({
     );
 
   const handleMaskEditResult = async (newUrl: string) => {
-    const { CANVAS_NODE_TYPES, DEFAULT_NODE_WIDTH } = await import(
+    const { CANVAS_NODE_TYPES } = await import(
       "@/features/canvas/domain/canvasNodes"
     );
     const addNode = useCanvasStore.getState().addNode;
@@ -2182,7 +2204,6 @@ export function FreezoneShell({
       } as Record<string, unknown>,
     );
     setToast(t("freezone.shell.maskEditDone"));
-    void DEFAULT_NODE_WIDTH; // unused but keep import alive
   };
 
   // 不用 status === "loading" 判定：换画布那一帧 status 还停在旧画布的 "ready"，
@@ -2191,9 +2212,16 @@ export function FreezoneShell({
   const showBlockingLoading =
     !hasRenderedCanvas && sync.status !== "error" && sync.status !== "conflict";
   const showLoadingOverlay = sync.status === "loading" && hasRenderedCanvas;
+  // Autosave moves ready -> saving -> ready for every persisted node edit.
+  // Keep read-only canvas chrome mounted through that transition so dragging a
+  // node does not make the outline/stage UI disappear and remount. Mutating
+  // outline actions receive a null revision below while the save is in flight.
+  const keepCanvasOverlaysMounted =
+    active &&
+    shouldKeepCanvasOverlaysMounted(sync.status, sync.hydratedCanvasId, canvasId);
 
   return (
-    <div className="relative w-full h-full flex flex-col overflow-hidden">
+    <div ref={boardWorkspaceRef} className="relative w-full h-full flex flex-col overflow-hidden">
       <div className="relative flex flex-1 min-h-0">
         <main className="relative h-full min-w-0 flex-1">
           {showBlockingLoading ? (
@@ -2208,6 +2236,7 @@ export function FreezoneShell({
               // 监听（含 capture 阶段）都读这个开关，否则在虾集的输入框里打字会
               // 被画布快捷键截走。
               suspended={!active || viewMode === "board" || Boolean(htmlTarget)}
+              assistantActive={active && chatOpen && viewMode === "workflow"}
             />
           )}
           {showLoadingOverlay && <CanvasLoadingOverlay />}
@@ -2228,9 +2257,27 @@ export function FreezoneShell({
             />
           )}
           <BackupStatusIndicator status={sync.backupStatus} />
-          {active && sync.status === "ready" && sync.hydratedCanvasId === canvasId && (
+          {keepCanvasOverlaysMounted && (
             // 自带 15s 轮询，保活期间不挂载。
             <WorkflowRunRecoveryBar projectId={projectId} canvasId={canvasId} />
+          )}
+          {keepCanvasOverlaysMounted && pendingOutline && (
+            <PendingOutlineCard
+              projectId={projectId}
+              canvasId={canvasId}
+              outline={pendingOutline}
+              canvasRevision={sync.status === "ready" ? sync.revision : null}
+              onConfirmed={handleOutlineConfirmed}
+              onRevisionRequested={handleOutlineRevisionRequested}
+            />
+          )}
+          {/* 阶段D：纯读的阶段导航，只在有大纲/正式故事组的 fmv 画布上出现。 */}
+          {keepCanvasOverlaysMounted && (
+            <StoryStageNav
+              outline={pendingOutline}
+              leftPanelExpanded={!assetPanelCollapsed}
+              rightPanelExpanded={chatOpen}
+            />
           )}
           {/* 调试面板暂时隐藏，恢复时去掉 `false &&` 即可 */}
           {false && import.meta.env.DEV && (
@@ -2272,6 +2319,7 @@ export function FreezoneShell({
           {/* 故事板视图：懒挂载 + 保活（对标 liblib，秒切且滚动/筛选状态保留）。 */}
           {!showBlockingLoading && boardMounted && (
             <AssetBoardView
+              rightInset={`var(${BOARD_CHAT_WIDTH_VAR}, 0px)`}
               // 必须带上 active：故事板保活用的是 `visibility: visible`
               // （AssetBoardView.tsx:435），会穿透宿主容器上的 invisible ——
               // 不接这个开关，故事板视图下切到虾集，它会浮在虾集页面上。
@@ -2279,62 +2327,6 @@ export function FreezoneShell({
               visible={active && viewMode === "board" && !htmlTarget}
               onLocateNode={handleLocateNode}
             />
-          )}
-          {/* 工作流/故事板 切换开关：左上角悬浮，压在故事板 overlay(z-30) 之上。
-              只留图标、不带文字（用户要求）——原来是两颗 88px 宽的文字胶囊悬在画布
-              正上方，把画面正中那一条压掉了；文案改由 hover 提示给出，读屏走
-              aria-label。提示用 shadcn Tooltip 而不是原生 title：原生要悬停约一秒才
-              出，样式也和产品其它悬浮说明不统一（同 AddNodeToChatButton 的取舍）。
-
-              left-4：对齐故事板内容区的 px-4 左内边距，两个视图切来切去开关不跳位；
-              工作流态那侧素材抽屉的把手/卡片已下移让开这条顶部窄带（AssetLibraryPanel）。
-              选中态样式仍对齐头部「虾画/虾集」产品切换（project-header-navigation.tsx
-              的 ProjectHeaderNavigation）：手写胶囊 + 滑块，滑块宽度跟着按钮收成 44px。
-              容器底色沿用硬编码 #262626（与故事板背景同色），圆角按 10px 走圆角矩形。 */}
-          {!showBlockingLoading && !htmlTarget && (
-            <div className="absolute left-4 top-1.5 z-40">
-              <TooltipProvider delay={80}>
-                <nav
-                  aria-label="画布视图切换"
-                  className="relative flex h-8 items-center rounded-[10px] bg-[#262626] p-0.5 shadow-lg"
-                >
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "absolute left-0.5 top-1/2 h-7 w-11 -translate-y-1/2 rounded-[8px] bg-foreground transition-transform duration-300 ease-[var(--ease-out-quint)]",
-                      viewMode === "board" && "translate-x-11",
-                    )}
-                  />
-                  {FREEZONE_VIEW_MODE_TABS.map(({ mode, icon: Icon, label }) => (
-                    <Tooltip key={mode}>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            data-testid={`freezone-view-${mode}`}
-                            onClick={() => handleViewModeChange(mode)}
-                            aria-label={label}
-                            aria-pressed={viewMode === mode}
-                            className={cn(
-                              // w-11：只有图标不代表要挤成 28px 方块——键位宽一点更好点、
-                              // 也更像一条分段控件（用户反馈「胶囊宽度要宽一点」）。
-                              "relative z-10 inline-flex h-7 w-11 items-center justify-center rounded-[8px] transition-colors",
-                              viewMode === mode
-                                ? "text-background"
-                                : "text-muted-foreground hover:text-foreground",
-                            )}
-                          />
-                        }
-                      >
-                        <Icon className="size-4" />
-                      </TooltipTrigger>
-                      {/* side=bottom：开关贴着内容区顶边，提示朝上会被顶栏盖住。 */}
-                      <TooltipContent side="bottom">{label}</TooltipContent>
-                    </Tooltip>
-                  ))}
-                </nav>
-              </TooltipProvider>
-            </div>
           )}
           {htmlTarget && active && <HtmlArtifactEditor key={htmlTarget.artifactId} {...htmlTarget} onClose={() => setHtmlTarget(null)} />}
         </main>
@@ -2349,16 +2341,12 @@ export function FreezoneShell({
             onPendingAttachmentsConsumed={handlePendingChatAttachmentsConsumed}
             pendingNodeMentions={pendingChatNodeMentions}
             onPendingNodeMentionsConsumed={handlePendingChatNodeMentionsConsumed}
-            open={chatOpen}
+            pendingExternalSubmit={pendingChatExternalSubmit}
+            onPendingExternalSubmitConsumed={handlePendingChatExternalSubmitConsumed}
+            open={chatOpen && active}
+            pushesBoard={viewMode === "board" && !htmlTarget}
+            boardWorkspaceRef={boardWorkspaceRef}
             onOpenChange={handleChatOpenChange}
-            // 抽屉会往 <html> 上广播 --freezone-dock-width，顶栏 / 任务状态条 / 任务
-            // 面板据此整条往左收。以前离开虾画会整棵卸载、effect 清理顺手把变量删掉；
-            // 保活之后没人卸载，虾集的顶栏就一直挂着虾导抽屉的让位量（顶栏被挤窄、
-            // 虾画·虾集 与右上角那组入口整体左移）。所以非激活时按「抽屉没开」广播。
-            hostActive={active}
-            // 故事板：抽屉挤占左侧内容宽度（对标 liblib）；工作流：浮在画布上，
-            // 画布视口不受影响（否则每次开合聊天都会让 ReactFlow 重排一次视口）。
-            pushesContent={viewMode === "board" || Boolean(htmlTarget)}
             title={t("freezone.chat.title")}
             description={t("freezone.chat.description")}
             toggleLabel={t("freezone.chat.toggle")}
@@ -2435,13 +2423,15 @@ function FreezoneChatDock({
   onPendingAttachmentsConsumed,
   pendingNodeMentions,
   onPendingNodeMentionsConsumed,
+  pendingExternalSubmit,
+  onPendingExternalSubmitConsumed,
   open,
+  pushesBoard,
+  boardWorkspaceRef,
   onOpenChange,
-  pushesContent,
   title,
   description,
   toggleLabel,
-  hostActive,
 }: {
   projectId: string;
   canvasId: string;
@@ -2452,20 +2442,20 @@ function FreezoneChatDock({
   onPendingAttachmentsConsumed: () => void;
   pendingNodeMentions: string[];
   onPendingNodeMentionsConsumed: () => void;
+  pendingExternalSubmit: { id: string; text: string; mode?: "send" | "draft" } | null;
+  onPendingExternalSubmitConsumed: () => void;
   open: boolean;
+  pushesBoard: boolean;
+  boardWorkspaceRef: RefObject<HTMLDivElement | null>;
   onOpenChange: (open: boolean) => void;
-  /** true=抽屉在 flex 行里占位（左侧内容被挤窄）；false=纯浮层，左侧内容不动。 */
-  pushesContent: boolean;
   title: string;
   description: string;
   toggleLabel: string;
-  /** 画布是否在前台。false 时抽屉不再向全局广播让位宽度（见下方 effect）。 */
-  hostActive: boolean;
 }) {
   const { t } = useTranslation();
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [shouldRenderPanel, setShouldRenderPanel] = useState(open);
-  const [panelVisible, setPanelVisible] = useState(open);
+  const [panelVisible, setPanelVisible] = useState(false);
   const [agentHistoryOpen, setAgentHistoryOpen] = useState(false);
   const [agentSearch, setAgentSearch] = useState("");
   const [chatWidth, setChatWidth] = useState(() =>
@@ -2495,7 +2485,53 @@ function FreezoneChatDock({
     height: window.innerHeight,
   }));
   const asideRef = useRef<HTMLElement | null>(null);
-  const spacerRef = useRef<HTMLDivElement | null>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => dragCleanupRef.current?.(), [floating, isDesktop, open]);
+
+  const previousPanelVisibleRef = useRef(false);
+  const measuredDockWidthRef = useRef(0);
+
+  // Start the board's layout transition on the same reveal frame as the panel.
+  // Resize and view/mode switches stay immediate; only opening/closing animates.
+  useLayoutEffect(() => {
+    const workspace = boardWorkspaceRef.current;
+    const aside = asideRef.current;
+    if (!workspace) return;
+    const visibilityChanged = previousPanelVisibleRef.current !== panelVisible;
+    previousPanelVisibleRef.current = panelVisible;
+    const reservesBoard = isDesktop && !floating && pushesBoard && Boolean(aside);
+    const width = aside
+      ? visibilityChanged && measuredDockWidthRef.current > 0
+        ? measuredDockWidthRef.current : aside.offsetWidth
+      : 0;
+    measuredDockWidthRef.current = width;
+    const apply = (reservedWidth: number, motion: "enter" | "exit" | "none") => {
+      workspace.dataset.freezoneChatLayoutMotion = motion;
+      workspace.style.setProperty(BOARD_CHAT_WIDTH_VAR, `${reservedWidth}px`);
+    };
+    const motion = reservesBoard && visibilityChanged && resizingPane === null
+      ? panelVisible ? "enter" : "exit" : "none";
+    apply(reservesBoard && panelVisible ? width : 0, motion);
+    if (!aside || !isDesktop) return;
+    const observer = new ResizeObserver((entries) => {
+      const measuredWidth = entries[0]?.borderBoxSize?.[0]?.inlineSize ?? aside.offsetWidth;
+      measuredDockWidthRef.current = measuredWidth;
+      const reservedWidth = reservesBoard && panelVisible ? measuredWidth : 0;
+      const currentWidth = Number.parseFloat(workspace.style.getPropertyValue(BOARD_CHAT_WIDTH_VAR));
+      if (currentWidth !== reservedWidth) apply(reservedWidth, "none");
+    });
+    observer.observe(aside);
+    return () => observer.disconnect();
+  }, [boardWorkspaceRef, floating, isDesktop, panelVisible, pushesBoard, resizingPane, shouldRenderPanel]);
+
+  useLayoutEffect(() => {
+    const workspace = boardWorkspaceRef.current;
+    return () => {
+      if (!workspace) return;
+      workspace.style.removeProperty(BOARD_CHAT_WIDTH_VAR);
+      workspace.removeAttribute("data-freezone-chat-layout-motion");
+    };
+  }, [boardWorkspaceRef]);
   const localAgentSelectionRef = useRef(false);
   const [agentState, setAgentState] = useState<FreezoneCanvasAgentState>(() => {
     const loaded = loadFreezoneCanvasAgentsWithSource(projectId, canvasId);
@@ -2588,14 +2624,18 @@ function FreezoneChatDock({
     });
   }, [agentState.agents]);
 
-  const minContentWidth = pushesContent
-    ? FREEZONE_CHAT_MIN_BOARD_CONTENT_WIDTH
+  // At narrow desktop widths the chat keeps its usable minimum; the board can
+  // scroll horizontally rather than having its third column hidden beneath it.
+  const minContentWidth = pushesBoard
+    ? Math.min(FREEZONE_BOARD_MIN_CONTENT_WIDTH, viewportSize.width - FREEZONE_CHAT_WIDTH_MIN)
     : FREEZONE_CHAT_MIN_CONTENT_WIDTH;
 
   const startPaneResize = useCallback((
     pane: "chat" | "history",
     event: ReactPointerEvent<HTMLDivElement>,
   ) => {
+    if (event.button !== 0) return;
+    dragCleanupRef.current?.();
     event.preventDefault();
     const target = event.currentTarget;
     const pointerId = event.pointerId;
@@ -2604,6 +2644,8 @@ function FreezoneChatDock({
     const startHistoryWidth = agentHistoryWidth;
     let cleaned = false;
 
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
     setResizingPane(pane);
@@ -2660,15 +2702,6 @@ function FreezoneChatDock({
         aside.style.setProperty(CHAT_PANE_WIDTH_VAR, `${nextChatWidth}px`);
         aside.style.setProperty(AGENT_HISTORY_PANE_WIDTH_VAR, `${nextHistoryWidth}px`);
       }
-      if (spacerRef.current) spacerRef.current.style.width = `${dockWidth}px`;
-      // 顶栏 / 底部状态条也在同一帧让位（过渡已被压成 0ms），否则它们会拖在手后面。
-      // 浮窗不占位，也就不让位。
-      if (!floating) {
-        document.documentElement.style.setProperty(
-          FREEZONE_DOCK_WIDTH_VAR,
-          freezoneDockOffsetCss(dockWidth, minContentWidth),
-        );
-      }
     };
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
@@ -2696,8 +2729,8 @@ function FreezoneChatDock({
       } catch {
         // Pointer capture can already be released by the browser.
       }
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
       // 取消掉的那帧里还压着最后一次 pointermove，先补算再落库，
       // 否则松手瞬间宽度会回跳一帧。
       measure();
@@ -2706,6 +2739,7 @@ function FreezoneChatDock({
       storePanelWidth(FREEZONE_CHAT_WIDTH_STORAGE_KEY, nextChatWidth);
       storePanelWidth(FREEZONE_AGENT_HISTORY_WIDTH_STORAGE_KEY, nextHistoryWidth);
       setResizingPane(null);
+      dragCleanupRef.current = null;
     };
 
     try {
@@ -2719,6 +2753,7 @@ function FreezoneChatDock({
     window.addEventListener("pointercancel", cleanup);
     window.addEventListener("blur", cleanup);
     target.addEventListener("lostpointercapture", cleanup);
+    dragCleanupRef.current = cleanup;
   }, [agentHistoryOpen, agentHistoryWidth, chatWidth, floating, minContentWidth]);
 
   const toggleDockMode = useCallback(() => {
@@ -2819,6 +2854,8 @@ function FreezoneChatDock({
           onPendingAttachmentsConsumed={active ? onPendingAttachmentsConsumed : undefined}
           pendingNodeMentions={active ? pendingNodeMentions : []}
           onPendingNodeMentionsConsumed={active ? onPendingNodeMentionsConsumed : undefined}
+          pendingExternalSubmit={active ? pendingExternalSubmit : null}
+          onPendingExternalSubmitConsumed={active ? onPendingExternalSubmitConsumed : undefined}
           onRequestClose={() => onOpenChange(false)}
           freezoneHeaderActions={agentHeaderActions}
           onFreezoneUserMessage={(message, timestamp) => handleAgentUserMessage(agent.id, message, timestamp)}
@@ -2840,8 +2877,16 @@ function FreezoneChatDock({
     }
     if (open) {
       setShouldRenderPanel(true);
-      const frame = window.requestAnimationFrame(() => setPanelVisible(true));
-      return () => window.cancelAnimationFrame(frame);
+      // A single frame can merge mounting and revealing into the same paint.
+      // Paint the hidden shell first, then animate it into view on the next frame.
+      let revealFrame = 0;
+      const mountFrame = window.requestAnimationFrame(() => {
+        revealFrame = window.requestAnimationFrame(() => setPanelVisible(true));
+      });
+      return () => {
+        window.cancelAnimationFrame(mountFrame);
+        window.cancelAnimationFrame(revealFrame);
+      };
     }
     if (shouldKeepPanelMounted) {
       setShouldRenderPanel(true);
@@ -2853,35 +2898,18 @@ function FreezoneChatDock({
     return () => window.clearTimeout(timeout);
   }, [isDesktop, open, shouldKeepPanelMounted]);
 
-  // 抽屉总宽（聊天 + 可选的历史 Agent 栏，中间 8px 分隔条）。占位块用同一个值，
-  // 保证被挤窄的左侧内容与抽屉严丝合缝。
+  // 覆盖面板总宽（聊天 + 可选的历史 Agent 栏，中间 8px 分隔条）。
   const dockWidth = agentHistoryOpen ? chatWidth + agentHistoryWidth + 8 : chatWidth;
   const resizing = resizingPane !== null;
 
-  // 抽屉是通高浮层（压在顶栏之上），挤不动任何人，只能广播「右边被我占了多少」，
-  // 让横贯整屏的顶栏 / 底部状态条 / 任务面板自己往左收——右上角那组入口就跟着
-  // 让位。协议与消费方见 ./dockOffset。
+  // Both modes respond to viewport changes; floating positions and the board's
+  // reserved width must match the panel that is actually visible.
   useEffect(() => {
-    const root = document.documentElement;
-    root.style.setProperty(
-      FREEZONE_DOCK_WIDTH_VAR,
-      isDesktop && panelVisible && hostActive && !floating
-        ? freezoneDockOffsetCss(dockWidth, minContentWidth)
-        : "0px",
-    );
-    return () => {
-      root.style.removeProperty(FREEZONE_DOCK_WIDTH_VAR);
-    };
-  }, [dockWidth, floating, hostActive, isDesktop, minContentWidth, panelVisible]);
-
-  // 浮窗要跟着窗口尺寸重新钳位，否则缩窗后标题栏可能跑出可视区、再也拖不回来。
-  useEffect(() => {
-    if (!floating) return;
     const handleResize = () => setViewportSize({ width: window.innerWidth, height: window.innerHeight });
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [floating]);
+  }, []);
 
   // 可用高度是硬上限：矮窗口里宁可浮窗变矮，也不能压住底部状态区或越出视口、
   // 让输入框够不着。
@@ -2917,6 +2945,7 @@ function FreezoneChatDock({
     const target = event.target as HTMLElement | null;
     if (!target?.closest("[data-freezone-chat-drag-handle]")) return;
     if (target.closest("button, a, input, textarea, select, [role='button'], [role='menuitem']")) return;
+    dragCleanupRef.current?.();
     event.preventDefault();
     const pointerId = event.pointerId;
     const startX = event.clientX;
@@ -2927,6 +2956,7 @@ function FreezoneChatDock({
     let pointerX = startX;
     let pointerY = startY;
 
+    const previousUserSelect = document.body.style.userSelect;
     document.body.style.userSelect = "none";
     setDraggingFloat(true);
 
@@ -2957,27 +2987,18 @@ function FreezoneChatDock({
         window.cancelAnimationFrame(frame);
         paint();
       }
-      document.body.style.userSelect = "";
+      document.body.style.userSelect = previousUserSelect;
       setDraggingFloat(false);
       setFloatPos(latest);
       storeChatFloatPos(latest);
+      dragCleanupRef.current = null;
     };
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", cleanup);
     window.addEventListener("pointercancel", cleanup);
     window.addEventListener("blur", cleanup);
+    dragCleanupRef.current = cleanup;
   }, [clampFloatPos, dockWidth, floating, renderedFloatPos]);
-
-  // 拖宽期间把让位动画压成 0ms：留着 300ms 缓动的话，每一帧都会重排一段新的缓动，
-  // 顶栏边缘会像橡皮筋一样吊在抽屉后面。
-  useEffect(() => {
-    if (!resizing) return;
-    const root = document.documentElement;
-    root.style.setProperty(FREEZONE_DOCK_TRANSITION_VAR, "0ms");
-    return () => {
-      root.style.removeProperty(FREEZONE_DOCK_TRANSITION_VAR);
-    };
-  }, [resizing]);
 
   if (!isDesktop) {
     return (
@@ -2990,7 +3011,7 @@ function FreezoneChatDock({
         <Sheet open={open} onOpenChange={onOpenChange}>
           <SheetContent
             side="right"
-            className="flex w-full flex-col gap-0 bg-[#212121] p-0 sm:!max-w-[560px]"
+            className={`flex w-full flex-col gap-0 p-0 sm:!max-w-[560px] ${CANVAS_PANEL_SURFACE_CLASS}`}
           >
             <SheetHeader className="sr-only">
               <SheetTitle>{title}</SheetTitle>
@@ -3001,7 +3022,7 @@ function FreezoneChatDock({
               {FREEZONE_MULTI_AGENT_SESSION_UI_ENABLED && (
                 <div
                   className={cn(
-                    "absolute inset-y-0 right-0 z-20 w-[220px] border-l border-white/[0.08] bg-[#212121] shadow-[-16px_0_32px_rgba(0,0,0,0.18)] transition-transform duration-200",
+                    "absolute inset-y-0 right-0 z-20 w-[220px] border-l border-white/[0.08] shadow-[-16px_0_32px_rgba(0,0,0,0.18)] transition-transform duration-200",
                     agentHistoryOpen ? "translate-x-0" : "translate-x-full",
                   )}
                 >
@@ -3025,14 +3046,19 @@ function FreezoneChatDock({
     );
   }
 
-  // CSS 侧再兜一层：换窗口尺寸、或带着一个宽抽屉从工作流切到故事板时，存下来的
-  // 宽度可能已经超额——这里直接压回去，而不是改写用户的宽度偏好。
+  // 窗口变窄时限制覆盖面板宽度，不改写用户存下来的宽度偏好。
   const dockMaxWidth = `calc(100vw - ${minContentWidth}px)`;
-  // 开合 / 收起历史栏时宽度平滑过渡；拖拽期必须整条关掉——拖的是同一个 width，
-  // 留着过渡就等于给每一帧都排一段 300ms 缓动，手感变成「橡皮筋拖后腿」。
+  // A gentler entrance spreads movement across the whole transition instead of
+  // completing it in the first few frames. Closing stays responsive. Animate
+  // only composited properties; resizing and board reservation track instantly.
   const dockTransition = resizing
     ? "transition-none"
-    : "transition-[opacity,transform,width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]";
+    : cn(
+      "transition-[opacity,translate,scale] motion-reduce:transition-none",
+      open
+        ? "duration-[var(--duration-slow)] ease-[var(--ease-in-out)]"
+        : "duration-[var(--duration-base)] ease-[var(--ease-out-quint)]",
+    );
   const dockStyle = {
     width: dockWidth,
     maxWidth: floating ? `calc(100vw - ${FREEZONE_CHAT_FLOAT_MARGIN * 2}px)` : dockMaxWidth,
@@ -3052,51 +3078,27 @@ function FreezoneChatDock({
           onClick={() => onOpenChange(true)}
         />
       )}
-      {/* 故事板：在 flex 行里占一格，把 <main>(flex-1) 挤窄——抽屉本身仍是绝对定位
-          的浮层，正好盖住这一格。这样开合/拖宽只动这个占位块，抽屉内部布局与工作流
-          态共用同一份代码。拖拽中关掉宽度过渡，否则跟手会有一帧延迟。 */}
-      {pushesContent && !floating && (
-        <div
-          ref={spacerRef}
-          aria-hidden="true"
-          className={cn(
-            "hidden shrink-0 lg:block",
-            resizing
-              ? "transition-none"
-              : "transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-          )}
-          style={{ width: panelVisible ? dockWidth : 0, maxWidth: dockMaxWidth }}
-        />
-      )}
-      <aside
+      {createPortal(<aside
         ref={asideRef}
         className={cn(
-          // 贴右边、通屏高（对标 liblib）：fixed 而不是 absolute——抽屉要从屏幕
-          // 最顶铺到最底，而不是只占内容区那一段。顶栏/任务面板/底部状态条不靠 z 压，
-          // 是靠 --freezone-dock-width 自己整条往左收（见 dockOffset），两边宽度用同一个
-          // clamp，稳态下压根不重叠。
-          // z 必须 <50：shadcn 的浮层（下拉/选择/气泡/提示/弹窗）都 portal 到 body 且
-          // 定位层是 isolate z-50，抽屉一旦到 50 以上，抽屉内所有菜单都会被自己的实底
-          // 盖住 —— 表现就是「点了没反应」。45 只要高过任务面板(z-40)与其遮罩(z-30)即可。
-          // 浮窗：同一个 fixed 外壳改成圆角悬浮窗，位置/高度走 style；拖头部移动。
+          // Body-level hosting keeps fixed panels independent of the cached
+          // canvas stacking context. Global dialogs and menus remain above z45.
           floating
             ? "fixed z-[45] hidden flex-col overflow-hidden rounded-2xl border border-white/[0.12] shadow-[0_24px_64px_rgba(0,0,0,0.55)] lg:flex [&_[data-freezone-chat-drag-handle]]:cursor-grab"
             : "fixed inset-y-0 right-0 z-[45] hidden flex-col overflow-hidden border-l border-white/[0.12] shadow-none lg:flex",
           draggingFloat && "[&_[data-freezone-chat-drag-handle]]:cursor-grabbing",
-          // 实底 #212121（用户指定）：比故事板面板的 #262626 再深一档，agent 抽屉不再是半透明
-          // 毛玻璃。顺带把 backdrop-blur-2xl 一起去掉——通高的大半径模糊每帧都要
-          // 重新光栅化，是拖宽「跟不上手」的主因，实底之后它也没有可模糊的东西了。
-          // 浮窗例外：压在画布/预览图上，半透明 + 模糊能透出底下的内容（对标参考稿）。
-          // 浮窗只有 720px 高、面积小，模糊的光栅化成本比通高抽屉低得多。
-          floating ? "bg-[#212121]/25 backdrop-blur-md" : "bg-[#212121]",
+          // 两种摆法共用同一个玻璃表面，切换只改变位置、尺寸与轮廓。
+          CANVAS_PANEL_SURFACE_CLASS,
           dockTransition,
           panelVisible
             ? floating ? "scale-100 opacity-100" : "translate-x-0 opacity-100"
-            : floating ? "scale-95 opacity-0" : "translate-x-10 opacity-0",
-          !panelVisible && "pointer-events-none",
+            : floating ? "scale-[0.98] opacity-0" : "translate-x-5 opacity-0",
+          (!panelVisible || !open) && "pointer-events-none",
         )}
         style={dockStyle}
         aria-label={title}
+        aria-hidden={!open}
+        inert={!open}
         onPointerDown={startFloatDrag}
       >
         {/* 命中区整条压在面板内侧（12px）：外壳是 overflow-hidden，把手往画布那侧
@@ -3122,7 +3124,7 @@ function FreezoneChatDock({
         </div>
         {resizing && <div className="fixed inset-0 z-50 cursor-col-resize" aria-hidden="true" />}
         <div className="flex min-h-0 flex-1">
-          <div className="min-w-0 shrink-0" style={{ width: `var(${CHAT_PANE_WIDTH_VAR})` }}>
+          <div className="min-w-0 shrink-0" style={{ width: agentHistoryOpen ? `var(${CHAT_PANE_WIDTH_VAR})` : "100%" }}>
             {agentPanels}
           </div>
           {FREEZONE_MULTI_AGENT_SESSION_UI_ENABLED && agentHistoryOpen && (
@@ -3142,11 +3144,9 @@ function FreezoneChatDock({
               />
             </div>
           )}
-          <div
+          {FREEZONE_MULTI_AGENT_SESSION_UI_ENABLED && <div
             className={cn(
-              // 与聊天区同底色：靠那条左描边分栏就够了。旧的 zinc-950/45 是叠在
-              // 半透明抽屉上的一层压暗，抽屉换实底后它会变成一块明显更黑的侧栏。
-              "min-h-0 overflow-hidden border-l border-white/[0.08] bg-[#212121]",
+              "min-h-0 overflow-hidden border-l border-white/[0.08]",
               // 与外壳同一条时间线：收起/展开一起走 300ms，拖拽期一起关掉。
               resizing
                 ? "transition-none"
@@ -3157,9 +3157,9 @@ function FreezoneChatDock({
             aria-hidden={!agentHistoryOpen}
           >
             {agentHistoryPanel}
-          </div>
+          </div>}
         </div>
-      </aside>
+      </aside>, document.body)}
     </>
   );
 }
@@ -3268,12 +3268,11 @@ function formatAgentHistoryTime(timestamp: number): string {
  * localStorage 清扫误删；这只是个 UI 位置偏好，跨区域保留没问题。
  */
 const CHAT_LAUNCHER_POS_STORAGE_KEY = "st.freezone.chatLauncherPos";
-const CHAT_LAUNCHER_VISUAL_WIDTH = 96;
-const CHAT_LAUNCHER_VISUAL_HEIGHT = 35;
-const CHAT_LAUNCHER_HIT_HEIGHT = 44;
+const CHAT_LAUNCHER_VISUAL_WIDTH = 81.648;
+const CHAT_LAUNCHER_VISUAL_HEIGHT = (CHAT_LAUNCHER_VISUAL_WIDTH * 647) / 743;
 const CHAT_LAUNCHER_MARGIN = 8;
-/** 默认抬到 MiniMap（约 150px 高 + 15px 边距）上方，避免挡住画布缩略图。 */
-const CHAT_LAUNCHER_DEFAULT_POS = { right: 16, bottom: 180 };
+/** 默认抬到 MiniMap 上方并留出间距，避免挡住画布缩略图。 */
+const CHAT_LAUNCHER_DEFAULT_POS = { right: 16, bottom: 260 };
 const CHAT_LAUNCHER_DRAG_THRESHOLD = 4;
 
 function loadChatLauncherPos(): { right: number; bottom: number } {
@@ -3299,7 +3298,6 @@ function FreezoneChatToggleButton({
   expanded: boolean;
   onClick: () => void;
 }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const [entered, setEntered] = useState(false);
   const [pos, setPos] = useState(loadChatLauncherPos);
@@ -3323,7 +3321,7 @@ function FreezoneChatToggleButton({
     );
     const maxBottom = Math.max(
       CHAT_LAUNCHER_MARGIN,
-      rect.height - CHAT_LAUNCHER_HIT_HEIGHT - CHAT_LAUNCHER_MARGIN,
+      rect.height - CHAT_LAUNCHER_VISUAL_HEIGHT - CHAT_LAUNCHER_MARGIN,
     );
     setPos((current) => {
       const clamped = {
@@ -3367,7 +3365,7 @@ function FreezoneChatToggleButton({
         const maxBottom = parentRect
           ? Math.max(
               CHAT_LAUNCHER_MARGIN,
-              parentRect.height - CHAT_LAUNCHER_HIT_HEIGHT - CHAT_LAUNCHER_MARGIN,
+              parentRect.height - CHAT_LAUNCHER_VISUAL_HEIGHT - CHAT_LAUNCHER_MARGIN,
             )
           : Number.MAX_SAFE_INTEGER;
         latest = {
@@ -3405,21 +3403,6 @@ function FreezoneChatToggleButton({
     onClick();
   }, [onClick]);
 
-  const playMotion = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.currentTime = 0;
-    void video.play().catch(() => undefined);
-  }, []);
-
-  const stopMotion = useCallback(() => {
-    const video = videoRef.current;
-    if (video) {
-      video.pause();
-      video.currentTime = 0;
-    }
-  }, []);
-
   return (
     <Button
       ref={buttonRef}
@@ -3428,33 +3411,26 @@ function FreezoneChatToggleButton({
       variant="secondary"
       className={cn(
         "group/xia-dao absolute z-50 cursor-grab touch-none overflow-visible border-0 bg-transparent p-0 transition-opacity duration-200 ease-out hover:bg-transparent active:cursor-grabbing",
-        entered ? "opacity-100" : "opacity-0",
+        entered ? "opacity-90 hover:opacity-100 focus-visible:opacity-100" : "opacity-0",
       )}
       style={{
         right: pos.right,
         bottom: pos.bottom,
         width: CHAT_LAUNCHER_VISUAL_WIDTH,
-        height: CHAT_LAUNCHER_HIT_HEIGHT,
+        height: CHAT_LAUNCHER_VISUAL_HEIGHT,
       }}
       aria-label={label}
       aria-expanded={expanded}
-      onMouseEnter={playMotion}
-      onMouseLeave={stopMotion}
-      onFocus={playMotion}
-      onBlur={stopMotion}
       onPointerDown={handlePointerDown}
       onClick={handleClick}
     >
-      <video
-        ref={videoRef}
-        src="/images/xia-dao-launcher.mp4"
-        muted
-        loop
-        playsInline
-        preload="auto"
-        className="pointer-events-none absolute left-0 top-1/2 w-full -translate-y-1/2 rounded-[6px] object-cover brightness-[1.08] saturate-[1.02] shadow-[0_4px_10px_rgba(0,0,0,0.2)] transition-[filter] duration-200 ease-out group-hover/xia-dao:brightness-[1.16] group-focus-visible/xia-dao:brightness-[1.16]"
-        style={{ height: CHAT_LAUNCHER_VISUAL_HEIGHT }}
-        aria-hidden="true"
+      <img
+        src="/images/xia-dao-launcher.png"
+        alt=""
+        width={743}
+        height={647}
+        draggable={false}
+        className="pointer-events-none h-full w-full object-contain transition-[filter,scale] duration-[var(--duration-fast)] ease-[var(--ease-out-quint)] group-hover/xia-dao:brightness-[1.12] group-focus-visible/xia-dao:brightness-[1.12] motion-safe:group-hover/xia-dao:scale-105 motion-safe:group-focus-visible/xia-dao:scale-105 motion-reduce:transition-none"
       />
     </Button>
   );

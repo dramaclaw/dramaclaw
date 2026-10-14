@@ -11,10 +11,12 @@
 // 下产出的东西还是不是原来那个」。
 //
 // 断言一律落在 ops 层的载荷与节点数据上——中间怎么重构都行，这两头必须不变。
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { submitFreezoneGen } from "@/api/ops";
+import { TaskCompletionError } from "@/api/tasks";
+import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { useImageGenerationForm } from "@/features/canvas/nodes/shared/useImageGenerationForm";
 import { useCanvasStore } from "@/stores/canvasStore";
@@ -45,6 +47,7 @@ vi.mock("@/lib/url-params", async (importOriginal) => ({
 }));
 
 let submitSeq = 0;
+const awaitTaskCompletion = vi.hoisted(() => vi.fn());
 
 vi.mock("@/api/ops", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/ops")>()),
@@ -74,14 +77,17 @@ vi.mock("@/api/ops", async (importOriginal) => ({
 vi.mock("@/api/tasks", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/tasks")>()),
   // 每个任务回一张与自己 task_key 对应的图，方便断言画册收齐了几张。
-  awaitTaskCompletion: vi.fn(async (taskKey: string) => ({
-    result: { output_url: `/static/${taskKey}.png` },
-  })),
+  awaitTaskCompletion,
 }));
 
 vi.mock("@/features/canvas/application/errorDialog", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/features/canvas/application/errorDialog")>()),
   showErrorDialog: vi.fn(async () => undefined),
+}));
+
+vi.mock("@/features/canvas/application/workflowRecipeRuntime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/canvas/application/workflowRecipeRuntime")>()),
+  compileWorkflowNodePrompt: vi.fn(async (input) => input.fallbackPrompt),
 }));
 
 function imageGenNode(data: Record<string, unknown> = {}): CanvasNode {
@@ -131,6 +137,11 @@ async function submitAndSettle(options?: { onGenerationSettled?: () => void }) {
 beforeEach(() => {
   submitSeq = 0;
   vi.mocked(submitFreezoneGen).mockClear();
+  vi.mocked(compileWorkflowNodePrompt).mockClear();
+  awaitTaskCompletion.mockReset();
+  awaitTaskCompletion.mockImplementation(async (taskKey: string) => ({
+    result: { output_url: `/static/${taskKey}.png` },
+  }));
 });
 
 describe("图片节点：三种参考图形态的提交载荷", () => {
@@ -200,6 +211,40 @@ describe("图片节点：三种参考图形态的提交载荷", () => {
 });
 
 describe("图片节点：多结果画册", () => {
+  it("已有图片且提示词未修改时，仍可再次生成并替换结果", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [imageGenNode({
+        imageUrl: "/static/old.png",
+        previewImageUrl: "/static/old.png",
+      })],
+      [],
+    );
+
+    const { result } = renderHook(() => useImageGenerationForm("img-1"));
+    await waitFor(() => {
+      expect(result.current.submitDisabled).toBe(false);
+    });
+
+    await result.current.submit();
+    await waitFor(() => {
+      expect(nodeData().imageUrl).toBe("/static/task-1.png");
+    });
+
+    // 不改提示词，再点一次发送也必须创建新任务，不能把“未修改”误判成不可提交。
+    await result.current.submit();
+    await waitFor(() => {
+      expect(nodeData().imageUrl).toBe("/static/task-2.png");
+    });
+
+    expect(payloads()).toHaveLength(2);
+    expect(payloads()[0]?.prompt).toBe("一只在窗台上的猫");
+    expect(payloads()[1]?.prompt).toBe("一只在窗台上的猫");
+    expect(compileWorkflowNodePrompt).toHaveBeenCalledTimes(2);
+    for (const [input] of vi.mocked(compileWorkflowNodePrompt).mock.calls) {
+      expect(input).toEqual(expect.objectContaining({ executionSource: "manual" }));
+    }
+  });
+
   it("生成数量 3 → 并发提交 3 次，三张全落进同一个节点的画册", async () => {
     useCanvasStore.getState().setCanvasData([imageGenNode({ count: 3 })], []);
 
@@ -233,25 +278,150 @@ describe("图片节点：多结果画册", () => {
   });
 });
 
+describe("图片节点：提交前置失败反馈", () => {
+  it("Recipe 编译期间立即进入生成态，失败后展示错误并恢复发送", async () => {
+    let rejectCompile!: (error: Error) => void;
+    vi.mocked(compileWorkflowNodePrompt).mockImplementationOnce(
+      () => new Promise((_resolve, reject) => {
+        rejectCompile = reject;
+      }),
+    );
+    useCanvasStore.getState().setCanvasData([imageGenNode()], []);
+
+    const { result } = renderHook(() => useImageGenerationForm("img-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+
+    let submission!: Promise<Record<string, unknown> | undefined>;
+    act(() => {
+      submission = result.current.submit();
+    });
+    await waitFor(() => expect(nodeData().isGenerating).toBe(true));
+
+    const error = new Error("Recipe 编译失败，请重试");
+    rejectCompile(error);
+    await expect(submission).rejects.toThrow(error.message);
+
+    await waitFor(() => {
+      expect(nodeData()).toMatchObject({
+        isGenerating: false,
+        generationTaskKey: null,
+        generationError: error.message,
+        generationErrorDetails: error.message,
+      });
+      expect(result.current.submitDisabled).toBe(false);
+    });
+    expect(submitFreezoneGen).not.toHaveBeenCalled();
+  });
+});
+
 describe("图片节点：恢复与历史", () => {
-  it("提交后立刻把任务句柄写到节点上（刷新页面才能续上轮询）", async () => {
+  it("取消已有图片的重生成时保留旧图且不写错误", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [imageGenNode({
+        imageUrl: "/static/old.png",
+        previewImageUrl: "/static/old.png",
+      })],
+      [],
+    );
+    awaitTaskCompletion.mockRejectedValueOnce(
+      new TaskCompletionError("task cancelled", "cancelled", "task-1"),
+    );
+
+    const { result } = renderHook(() => useImageGenerationForm("img-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    await expect(result.current.submit()).resolves.toBeUndefined();
+
+    expect(nodeData()).toMatchObject({
+      imageUrl: "/static/old.png",
+      previewImageUrl: "/static/old.png",
+      isGenerating: false,
+      generationError: null,
+      generationErrorDetails: null,
+    });
+  });
+
+  it("批量重生成全部取消时保留旧图且非首任务不写错误", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [imageGenNode({
+        count: 2,
+        imageUrl: "/static/old.png",
+        previewImageUrl: "/static/old.png",
+      })],
+      [],
+    );
+    awaitTaskCompletion.mockImplementation(async (taskKey: string) => {
+      throw new TaskCompletionError("task cancelled", "cancelled", taskKey);
+    });
+
+    const { result } = renderHook(() => useImageGenerationForm("img-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    await expect(result.current.submit()).resolves.toBeUndefined();
+
+    expect(submitFreezoneGen).toHaveBeenCalledTimes(2);
+    expect(nodeData()).toMatchObject({
+      imageUrl: "/static/old.png",
+      previewImageUrl: "/static/old.png",
+      isGenerating: false,
+      generationTaskKey: "task-1",
+      generationError: null,
+      generationErrorDetails: null,
+    });
+  });
+
+  it("旧任务结算时不清除新任务句柄", async () => {
+    let rejectOldTask!: (error: Error) => void;
+    awaitTaskCompletion.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => {
+        rejectOldTask = reject;
+      }),
+    );
+    useCanvasStore.getState().setCanvasData([imageGenNode()], []);
+
+    const { result } = renderHook(() => useImageGenerationForm("img-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    let submission!: Promise<Record<string, unknown> | undefined>;
+    act(() => {
+      submission = result.current.submit();
+    });
+    await waitFor(() => expect(nodeData().generationTaskKey).toBe("task-1"));
+
+    act(() => {
+      useCanvasStore.getState().updateNodeData("img-1", {
+        generationTaskKey: "task-new",
+        generationTaskType: "freezone_gen",
+        generationTaskJobId: "job-new",
+      });
+    });
+    rejectOldTask(new Error("old task failed"));
+    await expect(submission).resolves.toBeUndefined();
+
+    expect(nodeData()).toMatchObject({
+      generationTaskKey: "task-new",
+      generationTaskType: "freezone_gen",
+      generationTaskJobId: "job-new",
+      generationError: null,
+      generationErrorDetails: null,
+    });
+  });
+
+  it("任务完成后清除任务句柄，旧任务状态不能阻塞再次发送", async () => {
     useCanvasStore.getState().setCanvasData([imageGenNode()], []);
 
     await submitAndSettle();
 
     expect(nodeData()).toMatchObject({
-      generationTaskKey: "task-1",
-      generationTaskType: "freezone_gen",
-      generationTaskJobId: "job-1",
+      generationTaskKey: null,
+      generationTaskType: null,
+      generationTaskJobId: null,
     });
   });
 
-  it("多结果时只持久化 run 0 的句柄（节点上只有一份，不能被后来的覆盖）", async () => {
+  it("多结果完成后也清除 run 0 的任务句柄", async () => {
     useCanvasStore.getState().setCanvasData([imageGenNode({ count: 3 })], []);
 
     await submitAndSettle();
 
-    expect(nodeData().generationTaskKey).toBe("task-1");
+    expect(nodeData().generationTaskKey).toBeNull();
   });
 
   it("整批落地后回调宿主刷新历史", async () => {

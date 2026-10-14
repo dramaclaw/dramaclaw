@@ -44,10 +44,12 @@ vi.stubGlobal("ResizeObserver", ResizeObserverMock);
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: unknown) =>
-      typeof fallback === "string"
+    t: (key: string, fallback?: unknown) => {
+      if (key === "node.videoModel.reason.imageUnsupported") return "当前模型不支持图片输入";
+      return typeof fallback === "string"
         ? fallback
-        : ((fallback as { defaultValue?: string } | undefined)?.defaultValue ?? key),
+        : ((fallback as { defaultValue?: string } | undefined)?.defaultValue ?? key);
+    },
     i18n: { language: "zh" },
   }),
 }));
@@ -249,6 +251,23 @@ beforeEach(() => {
 });
 
 describe("video-only catalog mode state", () => {
+  it("keeps automatic FMV continuity while its tail frame is still pending", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [
+        videoNode({ model: "seedance-edit", storySegmentId: "shot-2", continuityMode: "auto", genMode: "allReference" }),
+        upstreamVideoNode("previous", "/static/previous.mp4"),
+      ],
+      [{ ...edge("choice", "previous"), type: "storyChoiceEdge" }],
+    );
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+    await waitFor(() => expect(result.current.formProps.genModeSupportedModes).toContain("all_reference"));
+    expect(result.current.formProps.genMode).toBe("allReference");
+    expect(result.current.submitDisabled).toBe(false);
+
+    act(() => useCanvasStore.getState().updateNodeData("vid-1", { continuityMode: "independent" }));
+    await waitFor(() => expect(result.current.formProps.genMode).toBe("textToVideo"));
+  });
+
   it("preserves explicitly selected edit mode on models also supporting all-reference", async () => {
     useCanvasStore.setState({
       nodes: [videoNode({ model: "seedance-edit", genMode: "videoEdit", prompt: "" }), upstreamVideoNode("source", "/static/source.mp4")],
@@ -296,6 +315,36 @@ describe("video-only catalog mode state", () => {
 });
 
 describe("视频节点：genMode → 提交端点的分派", () => {
+  it("ordinary video ignores an accidental FMV continuity flag", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [videoNode({ genMode: "textToVideo", continuityMode: "auto" })],
+      [],
+    );
+
+    await submitAndSettle();
+
+    expect(nodeData().genMode).toBe("textToVideo");
+    expectOnlyEndpointCalled(submitFreezoneVideoGen);
+    expect(payloadOf(submitFreezoneVideoGen)?.prompt).toBe("一只猫跳上桌子");
+  });
+
+  it("剧情选择线不进入参考栏或提交，显式素材引用仍保留", async () => {
+    const choice = (id: string) => ({ ...edge(id, "previous"), type: "storyChoiceEdge" });
+    useCanvasStore.getState().setCanvasData(
+      [videoNode({ genMode: "allReference" }),
+       upstreamVideoNode("previous", "/static/previous.mp4"),
+       upstreamVideoNode("reference", "/static/reference.mp4"),
+       uploadImageNode("character", "/static/character.png")],
+      [choice("choice-a"), choice("choice-b"), edge("explicit-video", "reference"), edge("explicit-image", "character")],
+    );
+    const result = await submitAndSettle();
+    expect(result.current.formProps.referenceMediaItems.map((entry) => entry.item.nodeId)).toEqual(["reference", "character"]);
+    expect(payloadOf(submitFreezoneVideoOmniGen)).toMatchObject({
+      references: [{ type: "video", url: "/static/reference.mp4" }, { type: "image", url: "/static/character.png" }],
+    });
+    expect(useCanvasStore.getState().edges.filter((item) => item.type === "storyChoiceEdge")).toHaveLength(2);
+  });
+
   it("文生视频 → /video/gen", async () => {
     useCanvasStore.getState().setCanvasData([videoNode({ genMode: "textToVideo" })], []);
 
@@ -351,6 +400,42 @@ describe("视频节点：genMode → 提交端点的分派", () => {
       lastFrameUrl: null,
       model: "catalog-sd1",
     });
+  });
+
+  it("旧画布把上一段的尾帧接作下一段首帧时仍提交任务", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [
+        videoNode({ model: MODEL_SD1, genMode: "firstFrame" }),
+        {
+          id: "previous-tail",
+          type: CANVAS_NODE_TYPES.exportImage,
+          position: { x: 0, y: 0 },
+          data: { displayName: "视频尾帧", imageUrl: "/static/previous-tail.png" },
+        } as CanvasNode,
+      ],
+      [edge("legacy-media-input", "previous-tail", { link_type: "media_input_for" })],
+    );
+
+    await submitAndSettle();
+
+    expectOnlyEndpointCalled(submitFreezoneVideoKeyframes);
+    expect(payloadOf(submitFreezoneVideoKeyframes)).toMatchObject({
+      genMode: "firstFrame",
+      firstFrameUrl: "/static/previous-tail.png",
+      lastFrameUrl: null,
+    });
+  });
+
+  it("显式标记为尾帧的图片不冒充首帧，并提示缺少关键帧", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [videoNode({ model: MODEL_SD1, genMode: "firstFrame" }), uploadImageNode("tail", "/static/tail.png")],
+      [edge("explicit-tail", "tail", { keyframeSlot: "last" })],
+    );
+
+    await submitAndSettle();
+
+    for (const endpoint of ALL_ENDPOINTS) expect(vi.mocked(endpoint)).not.toHaveBeenCalled();
+    expect(nodeData().generationError).toBe("node.videoNode.generation.missingKeyframe");
   });
 
   it("首尾帧 → /video/keyframes，按连线上的槽位分首尾", async () => {
@@ -464,6 +549,59 @@ describe("视频节点：genMode → 提交端点的分派", () => {
       ],
       model: "catalog-sd2",
     });
+  });
+
+  it("影游全能参考把上一镜尾帧和人物、物品图片按同一编号提交", async () => {
+    const tail = {
+      id: "tail-frame",
+      type: CANVAS_NODE_TYPES.exportImage,
+      position: { x: 0, y: 0 },
+      data: {
+        displayName: "上一镜尾帧",
+        imageUrl: "/static/tail.png",
+        videoFrameSource: {
+          sourceVideoNodeId: "previous",
+          sourceVideoUrl: "/static/previous.mp4",
+          sourceMediaVersion: null,
+          sourceTaskJobId: null,
+          captureMode: "last",
+          seekSec: 3.95,
+        },
+      },
+    } as CanvasNode;
+    useCanvasStore.getState().setCanvasData(
+      [
+        videoNode({ storySegmentId: "shot-2", continuityMode: "auto", genMode: "allReference", prompt: "接着走" }),
+        upstreamVideoNode("previous", "/static/previous.mp4"),
+        { ...uploadImageNode("person", "/static/person.png"), data: {
+          imageUrl: "/static/person.png", displayName: "小林", keyElementCategory: "character",
+        } } as CanvasNode,
+        { ...uploadImageNode("watch", "/static/watch.png"), data: {
+          imageUrl: "/static/watch.png", displayName: "手表", keyElementCategory: "object",
+        } } as CanvasNode,
+        tail,
+      ],
+      [
+        { ...edge("choice", "previous"), type: "storyChoiceEdge" },
+        edge("person-ref", "person"), edge("watch-ref", "watch"),
+        edge("tail-ref", "tail-frame", { link_type: "media_input_for", edgeKind: "workflow_continuity_tail_frame" }),
+      ],
+    );
+
+    await submitAndSettle();
+
+    expectOnlyEndpointCalled(submitFreezoneVideoOmniGen);
+    expect(payloadOf(submitFreezoneVideoOmniGen)).toMatchObject({
+      references: [
+        { type: "image", url: "/static/person.png" },
+        { type: "image", url: "/static/watch.png" },
+        { type: "image", url: "/static/tail.png" },
+      ],
+    });
+    const submittedPrompt = String(payloadOf(submitFreezoneVideoOmniGen)?.prompt);
+    expect(submittedPrompt).toMatch(/^\[FMV自动承接\]本镜头的首帧必须从 @图片3/);
+    expect(submittedPrompt).toContain("@图片1（小林） 是人物身份参考");
+    expect(submittedPrompt).toContain("@图片2（手表） 是物品外观参考");
   });
 
   it("全能参考撞上非 2.0 模型时拦在前端，不发任何请求", async () => {
@@ -581,6 +719,7 @@ it("rejects AI-persisted imageToVideo on a text-only model before submitting", a
   const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
   await waitFor(() => expect(result.current.selectedVideoModelId).toBe("text-only"));
   expect(result.current.submitDisabled).toBe(true);
+  expect(result.current.formProps.submitDisabledReason).toBe("当前模型不支持图片输入");
   await result.current.submit();
   for (const endpoint of ALL_ENDPOINTS) expect(endpoint).not.toHaveBeenCalled();
 });

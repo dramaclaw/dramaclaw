@@ -3,7 +3,7 @@
 import { Magnet } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { CANVAS_CONTROL_ICON_BUTTON_CLASS } from '../ui/canvasControlStyles';
+import { CANVAS_CONTROL_ICON_BUTTON_CLASS, CANVAS_CONTROL_ICON_STEP, canvasControlPositionStyle } from '../ui/canvasControlStyles';
 import { useSnapAlignStore } from './snapAlignStore';
 
 interface CanvasSnapAlignButtonProps {
@@ -22,9 +22,8 @@ export function CanvasSnapAlignButton({
     : t('canvas.controls.snapAlignOn');
   return (
     <div
-      className={`nopan nowheel pointer-events-auto group absolute right-12 z-30 ${
-        isTop ? 'top-3' : 'bottom-3'
-      }`}
+      className="nopan nowheel pointer-events-auto group absolute z-30"
+      style={canvasControlPositionStyle(placement, CANVAS_CONTROL_ICON_STEP)}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <button

@@ -8,6 +8,7 @@ import {
   CANVAS_CONTROL_GLASS_CLASS,
   CANVAS_CONTROL_ICON_BUTTON_ACTIVE_CLASS,
   CANVAS_CONTROL_ICON_BUTTON_CLASS,
+  canvasControlPositionStyle,
 } from './canvasControlStyles';
 
 /**
@@ -56,7 +57,8 @@ export function CanvasFpsMeter() {
 
   return (
     <div
-      className="nopan nowheel pointer-events-auto group absolute right-3 top-3 z-30 flex items-center gap-1.5"
+      className="nopan nowheel pointer-events-auto group absolute z-30 flex items-center gap-1.5"
+      style={canvasControlPositionStyle('top-right', 0)}
       onPointerDown={(event) => event.stopPropagation()}
     >
       {enabled && (

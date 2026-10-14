@@ -49,6 +49,7 @@ import {
   CANVAS_NODE_INPUT_BODY_FRAME_CLASS,
   CANVAS_NODE_INPUT_BODY_SELECTED_FRAME_CLASS,
   CANVAS_NODE_INPUT_SURFACE_CLASS,
+  CANVAS_NODE_MEDIA_FRAME_CLASS,
   CANVAS_NODE_PANEL_SURFACE_CLASS,
   canvasNodeFrameClass,
 } from '@/features/canvas/ui/nodeFrameStyles';
@@ -907,7 +908,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
   return (
     <div
       className={`
-        group relative overflow-visible rounded-[var(--node-radius)] border ${surfaceClass} p-0 transition-colors duration-150
+        group relative overflow-visible rounded-[var(--node-radius)] ${hasMediaContent ? CANVAS_NODE_MEDIA_FRAME_CLASS : 'border'} ${surfaceClass} p-0 transition-colors duration-150
         ${frameToneClass}
       `}
       style={{ width: resolvedWidth, height: resolvedHeight }}

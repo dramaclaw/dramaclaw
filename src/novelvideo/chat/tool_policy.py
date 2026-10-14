@@ -65,6 +65,7 @@ DRAMACLAW_WRITE_TOOLS: frozenset[str] = frozenset(
         "dramaclaw_build_characters",
         "dramaclaw_compose_episode",
         "dramaclaw_create_freezone_canvas_from_preset",
+        "dramaclaw_create_interactive_story",
         "dramaclaw_delete",
         "dramaclaw_delete_freezone_canvas",
         "dramaclaw_detect_sketch_identities",
@@ -77,6 +78,7 @@ DRAMACLAW_WRITE_TOOLS: frozenset[str] = frozenset(
         "dramaclaw_generate_sketches",
         "dramaclaw_optimize_video_global",
         "dramaclaw_patch",
+        "dramaclaw_patch_interactive_story",
         "dramaclaw_plan_episodes",
         "dramaclaw_plan_identities",
         "dramaclaw_plan_props",
@@ -85,16 +87,28 @@ DRAMACLAW_WRITE_TOOLS: frozenset[str] = frozenset(
         "dramaclaw_prepare_system_voices",
         "dramaclaw_render_first_frames",
         "dramaclaw_run_freezone_skill",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_outline",
         "dramaclaw_save_freezone_canvas",
         "dramaclaw_start_single_video",
         "dramaclaw_start_video_batch",
         "dramaclaw_update_character_face_prompt",
+        "dramaclaw_confirm_interactive_story_stages",
     }
 )
-"""Mainline write tools. A Hermes turn stops after one of these has run (one-step rule)."""
+"""Legacy one-step write classification, including canvas-only story writes.
+
+This set governs Hermes lifecycle, not tool exposure. Story entries remain for
+the native Freezone adapter; the mainline plugin does not publish them.
+"""
 
 FREEZONE_CANVAS_WRITE_TOOLS: frozenset[str] = frozenset(
     {
+        "dramaclaw_confirm_interactive_story_stages",
+        "dramaclaw_create_interactive_story",
+        "dramaclaw_patch_interactive_story",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_outline",
         "freezone_add_next_node",
         "freezone_confirm_canvas_action",
         "freezone_confirm_workflow_draft",

@@ -7,6 +7,9 @@ import type {
   DirectorWorldSource,
 } from '@/features/viewer-kit/three-d/directorManifest';
 import type { KeyElementCategory } from './keyElements';
+import type { PrevizHeldBlockout } from '@/features/previz/blockoutLanding';
+import type { PrevizBlockoutImportMode } from '@/features/previz/domain/blockout';
+import type { PrevizNodeSummary, PrevizScene } from '@/features/previz/domain/scene';
 
 export const CANVAS_NODE_TYPES = {
   vectorSvg: 'vectorSvgNode',
@@ -29,9 +32,13 @@ export const CANVAS_NODE_TYPES = {
   script: 'scriptNode',
   pano360Viewer: 'pano360ViewerNode',
   threeDWorld: 'threeDWorldNode',
+  previz: 'previzNode',
   skill: 'skillNode',
   style: 'styleNode',
 } as const;
+
+export { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
+import type { StoryFlag, StoryVariable } from '@/features/canvas/story/storyTypes';
 
 export type CanvasNodeType = (typeof CANVAS_NODE_TYPES)[keyof typeof CANVAS_NODE_TYPES];
 
@@ -71,7 +78,7 @@ export interface NodeDisplayData {
   workflowActionRunning?: boolean;
   workflowActionStartedAt?: number | null;
   /** 关键元素分类：用户把该节点标记为关键元素并归类（见 domain/keyElements）。
-   *  纯展示元数据、画布级持久化、工作流侧不读——未标记为 undefined/null。 */
+   *  影游自动承接会用已连入图片的分类说明参考用途；普通工作流不读。 */
   keyElementCategory?: KeyElementCategory | null;
   /** 未命名节点的自动序号：新建时写入，默认名后拼上它（「文本1」「文本2」…），
    *  避免同类型节点重名。用户改了 displayName 后这个序号就不再露出。
@@ -137,6 +144,29 @@ export type VideoGenMode =
 export type VideoGenQuality = string;
 export type VideoGenCount = 1 | 2 | 4;
 export type Seedance2SceneOptimize = 'anime' | 'realistic';
+
+/** Agent 互动故事节点的素材来源元数据；videoUrl 仍是播放器读取的实际地址。 */
+export interface StoryMediaMetadata {
+  source: 'placeholder' | 'imported' | 'generated';
+  status: 'missing' | 'pending' | 'ready' | 'failed';
+  asset_id?: string | null;
+  url?: string | null;
+  version: number;
+}
+
+/** Agent 互动故事的角色摘要，保存在故事组供后续制作规格复用。 */
+export interface StoryCharacterMetadata {
+  id: string;
+  name: string;
+  description?: string;
+  visual_description?: string;
+}
+
+/** StoryDraftV2 的完整数值状态定义。 */
+export interface StoryVariableDefinition extends StoryVariable {
+  minimum?: number | null;
+  maximum?: number | null;
+}
 
 /** 深度动作捕捉失败原因；`failed` 是兜底，原始报错放在 errorDetail。 */
 export type DepthCaptureErrorCode =
@@ -266,6 +296,44 @@ export interface VideoNodeData extends NodeDisplayData {
   upscaleResolution?: '1080p' | '2k' | '4k';
   /** 降噪强度。 */
   upscaleDenoise?: 'none' | '1x' | '2x';
+  /** 故事模式:被设为分支叙事起点的视频节点。仅 'start',未设则 undefined。 */
+  storyRole?: 'start';
+  /** Agent 领域协议中的稳定片段 ID，不随画布布局或节点标题变化。 */
+  storySegmentId?: string;
+  /** 当前片段出现的 StoryDraftV2 角色 ID。 */
+  storyCharacterIds?: string[];
+  /** 供视频生产阶段使用的镜头、连续性等备注。 */
+  storyProductionNotes?: string;
+  /** 连续性模式：auto 在生成时自动从选定上游推导开场参考；independent 为独立开场。 */
+  continuityMode?: 'auto' | 'independent';
+  /** 连续镜头有多个上游剧情分支时，手动指定的承接来源节点 ID。 */
+  continuitySourceNodeId?: string;
+  /** 素材来源、任务状态和版本；播放器仍读取 videoUrl。 */
+  storyMedia?: StoryMediaMetadata;
+  /**
+   * 选择阶段专用的短循环片段。主剧情视频只播放一次；进入互动后优先播放此素材，
+   * 素材缺失时播放器停留在主视频尾帧。
+   */
+  storyChoiceLoop?: {
+    description: string;
+    productionNotes?: string;
+    media?: StoryMediaMetadata;
+  };
+  /** 选择阶段循环片段的实际播放地址；与主剧情 videoUrl 分离。 */
+  choiceLoopVideoUrl?: string | null;
+  /** 互动影游:选项窗口秒数(每源片段一个)。空/0 = 不限时(无限等待)。 */
+  choiceTimeLimitSec?: number;
+  /** 互动影游:结局标(如 GE/NE/BE),仅叶子结局片段。结局页作 badge 显示。 */
+  endingLabel?: string;
+  storyCta?: { label: string; url: string };
+  /** 导入互动影游时的旁白文本(占位片段,无视频时展示)。 */
+  narration?: string;
+  /** 导入时 `# video: x.mp4` 的期望文件名提示。 */
+  videoHint?: string;
+  /** 导入的超模型结构,需创作者手动处理。 */
+  importNeedsReview?: boolean;
+  /** needsReview 的说明文字。 */
+  importReviewNote?: string;
   /**
    * 故事板详情「剪辑」为该视频节点自身打开合成时间线时的草稿（关闭弹窗时写回，
    * 重开/刷新后恢复）。语义与 {@link VideoComposeNodeData.draftTimeline} 一致，
@@ -340,6 +408,18 @@ export interface GroupNodeData extends NodeDisplayData {
   /** Largest member content box at merge time — the cell-size floor for re-layout. */
   storyboardBaseWidth?: number;
   storyboardBaseHeight?: number;
+  /** 标记此组为「故事组」(互动影游)。 */
+  storyGroup?: boolean;
+  /** Agent 领域协议中的稳定故事 ID。 */
+  interactiveStoryId?: string;
+  /** 当前故事领域协议版本。 */
+  interactiveStorySchemaVersion?: string;
+  storySynopsis?: string;
+  storyCharacters?: StoryCharacterMetadata[];
+  /** 数值剧情状态。 */
+  storyVariableDefinitions?: StoryVariableDefinition[];
+  /** 布尔剧情状态，如“已拿到钥匙”。 */
+  storyFlags?: StoryFlag[];
   [key: string]: unknown;
 }
 
@@ -823,6 +903,32 @@ export interface ThreeDWorldNodeData extends NodeDisplayData {
   [key: string]: unknown;
 }
 
+/**
+ * 预演台节点。场景是纯数值 JSON，直接内联在 node.data 里随整画布持久化；
+ * 体积护栏见 features/previz/domain/limits.ts。
+ */
+export interface PrevizNodeData extends NodeDisplayData {
+  /** 场景数据；节点从未打开过时为 null。 */
+  scene?: PrevizScene | null;
+  /** 卡片摘要，免得为了看规模而打开编辑器。 */
+  summary?: PrevizNodeSummary | null;
+  /** 节点封面，P2 截图闭环写入。 */
+  previewImageUrl?: string | null;
+  /**
+   * 「参考图转白模」任务在途。句柄三件套与别的生成节点同名，好让画布的恢复路径
+   * （resumeGeneration）一视同仁地接管；结果落地见 features/previz/blockoutLanding.ts。
+   */
+  isGenerating?: boolean;
+  generationStartedAt?: number | null;
+  generationTaskKey?: string | null;
+  generationTaskType?: string | null;
+  generationTaskJobId?: string | null;
+  /** 在途任务落地时该替换还是追加，提交时定下。 */
+  blockoutImportMode?: PrevizBlockoutImportMode | null;
+  /** 生成成功但放不进场景的那份结果，按任务号可再取。 */
+  blockoutHeld?: PrevizHeldBlockout | null;
+}
+
 export interface SkillNodeData extends NodeDisplayData {
   skill_id: string;
   skill_schema_version?: string;
@@ -893,6 +999,7 @@ export type CanvasNodeData =
   | ScriptNodeData
   | Pano360ViewerNodeData
   | ThreeDWorldNodeData
+  | PrevizNodeData
   | SkillNodeData
   | HtmlArtifactNodeData
   | StyleNodeData;
@@ -1010,6 +1117,12 @@ export function isStoryboardGroupNode(
   return isGroupNode(node) && node.data.storyboardGroup === true;
 }
 
+export function isStoryGroupNode(
+  node: CanvasNode | null | undefined,
+): node is Node<GroupNodeData, typeof CANVAS_NODE_TYPES.group> {
+  return isGroupNode(node) && node.data.storyGroup === true;
+}
+
 export function isProtectedProjectionGroupNode(
   node: CanvasNode | null | undefined
 ): node is Node<GroupNodeData, typeof CANVAS_NODE_TYPES.group> {
@@ -1093,6 +1206,12 @@ export function isThreeDWorldNode(
   node: CanvasNode | null | undefined
 ): node is Node<ThreeDWorldNodeData, typeof CANVAS_NODE_TYPES.threeDWorld> {
   return node?.type === CANVAS_NODE_TYPES.threeDWorld;
+}
+
+export function isPrevizNode(
+  node: CanvasNode | null | undefined
+): node is Node<PrevizNodeData, typeof CANVAS_NODE_TYPES.previz> {
+  return node?.type === CANVAS_NODE_TYPES.previz;
 }
 
 export function nodeHasImage(node: CanvasNode | null | undefined): boolean {

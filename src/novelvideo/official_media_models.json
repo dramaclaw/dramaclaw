@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "catalogVersion": "2026.09.11.1",
+  "catalogVersion": "2026.10.08.1",
   "name": "DramaClaw CE official media models",
   "mediaModels": {
     "LingShan-G2": {
@@ -397,6 +397,18 @@
         "referenceImageMax": 9,
         "referenceVideoMax": 3,
         "resolutionOptions": ["768P", "2K"]
+      }
+    },
+    "DC-previz-blockout-LLM": {
+      "provider": "newapi",
+      "upstreamModel": "DC-previz-blockout-LLM",
+      "mediaType": "blockout",
+      "label": "DramaClaw 白模",
+      "enabled": true,
+      "sortOrder": 10,
+      "aliases": [],
+      "config": {
+        "request": {"endpoint": "chat/completions", "parameters": []}
       }
     }
   }

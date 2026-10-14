@@ -44,10 +44,7 @@ import {
 import { AddNodeToChatButton } from '@/features/canvas/ui/AddNodeToChatButton';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { PanelExpandButton } from '@/features/canvas/ui/PanelExpandButton';
-import {
-  NODE_OPS_PANEL_ENTER_CLASS,
-  OperationPanelShell,
-} from '@/features/canvas/ui/OperationPanelShell';
+import { OperationPanelShell } from '@/features/canvas/ui/OperationPanelShell';
 import { NodeGenerationOverlay } from '@/features/canvas/ui/NodeGenerationOverlay';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import { useAlbumPendingTotal } from '@/features/canvas/nodes/shared/albumPendingTotals';
@@ -56,6 +53,7 @@ import { useModelTaskAccess } from '@/lib/model-task-access';
 import {
   CANVAS_NODE_INPUT_BODY_FRAME_CLASS,
   CANVAS_NODE_INPUT_SURFACE_CLASS,
+  CANVAS_NODE_MEDIA_FRAME_CLASS,
   CANVAS_NODE_OPS_PANEL_CLASS,
   CANVAS_NODE_PANEL_SURFACE_CLASS,
   canvasNodeFrameClass,
@@ -83,12 +81,13 @@ import {
 import type { DirectorStageManifest } from '@/features/viewer-kit/three-d/directorManifest';
 import { readUrl } from '@/lib/url-params';
 import { useNodeGenerationHistory } from '@/features/canvas/hooks/useNodeGenerationHistory';
+import { NodeHistoryRail } from '@/features/canvas/ui/NodeHistoryRail';
+import { nodeImageViewerUrls } from '@/features/canvas/application/nodeMediaViewer';
 import {
   AssetLibraryModal,
   type AssetLibrarySelection,
 } from '@/features/canvas/ui/AssetLibraryModal';
 import {
-  NodeGenerationHistory,
   hasCompletedHistoryRecords,
   historyRecordOutputUrl,
 } from '@/features/canvas/ui/NodeGenerationHistory';
@@ -331,6 +330,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     if (!Array.isArray(raw)) return [];
     return raw.filter((u): u is string => typeof u === 'string' && u.length > 0);
   }, [data.generationBatch]);
+  const viewerImageList = useMemo(
+    () => nodeImageViewerUrls(visiblePreviewUrl ?? '', albumUrls, historyRecords),
+    [visiblePreviewUrl, albumUrls, historyRecords],
+  );
   const albumTotalSlots = Math.max(albumUrls.length, albumPendingTotal);
   const albumPendingCount = Math.max(0, albumPendingTotal - albumUrls.length);
   const hasAlbum = albumTotalSlots > 1;
@@ -499,13 +502,15 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const submitDisabled = formSubmitDisabled || modelTaskAccess.blocked;
 
   useEffect(() => {
-    return subscribeNodeAction(({ nodeId, action, requestId }) => {
+    return subscribeNodeAction(({ nodeId, action, executionMode, requestId }) => {
       if (nodeId !== id || action !== 'generate_image') return;
       publishNodeActionAccepted(requestId, id, action);
       void handleSubmit({
         // 虾导外层会在任务受理后立即进入后台态；节点动作本身必须等真实产物
         // 终态再回报成功，否则对话会把“已提交”误显示成“图片已完成”。
         completionMode: 'completed',
+        executionSource: 'workflow',
+        attachStoryFrame: executionMode !== 'workflow',
       })
         .then((output) => publishNodeActionSuccess(requestId, id, action, output))
         .catch((error) => publishNodeActionError(requestId, id, action, error));
@@ -751,7 +756,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       )}
 
       <div
-        className={`relative flex h-full w-full items-center justify-center ${visiblePreviewUrl ? 'overflow-hidden' : 'overflow-visible'} rounded-[var(--node-radius)] border transition-colors ${visiblePreviewUrl ? CANVAS_NODE_PANEL_SURFACE_CLASS : CANVAS_NODE_INPUT_SURFACE_CLASS} ${cardToneClass} ${visiblePreviewUrl ? '' : CANVAS_NODE_INPUT_BODY_FRAME_CLASS} ${
+        className={`relative flex h-full w-full items-center justify-center ${visiblePreviewUrl ? 'overflow-hidden' : 'overflow-visible'} rounded-[var(--node-radius)] ${visiblePreviewUrl ? CANVAS_NODE_MEDIA_FRAME_CLASS : 'border'} transition-colors ${visiblePreviewUrl ? CANVAS_NODE_PANEL_SURFACE_CLASS : CANVAS_NODE_INPUT_SURFACE_CLASS} ${cardToneClass} ${visiblePreviewUrl ? '' : CANVAS_NODE_INPUT_BODY_FRAME_CLASS} ${
           // 画册展开时藏起节点本体的图片卡——半透明的画册容器盖不严，
           // 底下的主图会透出来叠在宫格头部。
           albumExpanded && hasAlbum ? 'invisible' : ''
@@ -763,6 +768,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               src={visiblePreviewUrl}
               alt={resolvedTitle}
               viewerSourceUrl={visiblePreviewUrl}
+              viewerNodeId={id}
+              viewerImageList={viewerImageList}
               onLoad={(event) => {
                 const naturalW = event.currentTarget.naturalWidth;
                 const naturalH = event.currentTarget.naturalHeight;
@@ -1141,6 +1148,20 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       */}
       {showImageOpsPanel && (
         <OperationPanelShell
+          sidePanel={!stylePickerOpen && hasCompletedHistoryRecords(historyRecords) ? (
+            <NodeHistoryRail
+              records={historyRecords}
+              isLoading={historyLoading}
+              onRestore={handleRestoreHistory}
+              onRefresh={() => void refreshHistory()}
+              isActive={(record) => {
+                const url = historyRecordOutputUrl(record);
+                if (!url) return false;
+                if (isGenerating && historyPreviewUrl) return url === historyPreviewUrl;
+                return url === data.imageUrl;
+              }}
+            />
+          ) : undefined}
           expanded={panelExpanded}
           onCollapse={() => setPanelExpanded(false)}
           inlineClassName={`nodrag absolute left-1/2 z-10 flex -translate-x-1/2 flex-col rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS}`}
@@ -1166,32 +1187,6 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             {...(opFormProps ?? {})}
           />
         </OperationPanelShell>
-      )}
-      {selected && !isBoxSelecting && !hasActiveOverlay && !panelExpanded && !stylePickerOpen && hasCompletedHistoryRecords(historyRecords) && (
-        <div
-          className={`nodrag absolute left-1/2 z-[300] -translate-x-1/2 rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS} ${NODE_OPS_PANEL_ENTER_CLASS} px-3 py-2`}
-          style={{
-            top: `calc(100% + ${OPERATIONS_PANEL_GAP * 2 + panelHeight}px)`,
-            width: panelWidth,
-          }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <NodeGenerationHistory
-            records={historyRecords}
-            isLoading={historyLoading}
-            onRestore={handleRestoreHistory}
-            onRefresh={() => void refreshHistory()}
-            isActive={(record) => {
-              const url = historyRecordOutputUrl(record);
-              if (!url) return false;
-              // 预览态下高亮正在预览的历史条，否则高亮当前主图。
-              if (isGenerating && historyPreviewUrl) {
-                return url === historyPreviewUrl;
-              }
-              return url === data.imageUrl;
-            }}
-          />
-        </div>
       )}
 
       {/* Step B: 平面 source (master/reverse) 的截取背景 dialog。

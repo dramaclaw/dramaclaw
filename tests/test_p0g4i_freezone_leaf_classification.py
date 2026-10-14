@@ -520,8 +520,8 @@ def test_every_dispatch_site_names_a_classified_leaf() -> None:
 
     # 19 → 20：`origin/staging` 的 f33ac189（#279）带进来的
     # `generate_freezone_text`，正是上一条用例点名预言的那个形状。
-    # 20 → 21：逐帧拉片 `run_freezone_video_breakdown`（抽帧后一跳 Vision）。
-    assert len(named) == 21
+    # 白模生成与逐帧拉片均通过 leaf 分发器，合并后共 22 个调用点。
+    assert len(named) == 22
     assert set(named) <= set(FREEZONE_LEAF_EGRESS)
 
 

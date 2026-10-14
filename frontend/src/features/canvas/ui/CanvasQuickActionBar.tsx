@@ -2,7 +2,15 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Clock, Hand, HelpCircle, Keyboard, MousePointer2, Plus } from 'lucide-react';
+import {
+  Clock,
+  FileInput,
+  Hand,
+  HelpCircle,
+  Keyboard,
+  MousePointer2,
+  Plus,
+} from 'lucide-react';
 
 import type { CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 import type { CanvasAsset } from '@/features/canvas/domain/canvasAssets';
@@ -13,6 +21,7 @@ import { CanvasShortcutsPanel } from './CanvasShortcutsPanel';
 import { CanvasHistoryAssetsModal } from './CanvasHistoryAssetsModal';
 import { CanvasToolMenu } from './CanvasToolMenu';
 import { useCanvasToolStore } from './canvasToolStore';
+import { CANVAS_PANEL_SURFACE_CLASS, canvasControlPositionStyle } from './canvasControlStyles';
 
 type QuickPanel = 'add' | 'tool' | 'history' | 'shortcuts' | 'help';
 
@@ -24,6 +33,8 @@ const ANCHORED_POPOVER_PANELS: ReadonlySet<QuickPanel> = new Set([
   'shortcuts',
 ]);
 const PRODUCT_MANUAL_URL = 'https://neo-flying.feishu.cn/docx/T2UgdVA4Fo1A5KxCh0vckDz3nTg';
+// Ink 导入尚未接入完整影游制作流程，暂时隐藏入口。
+const STORY_IMPORT_ENABLED = false;
 
 interface CanvasQuickActionBarProps {
   placement?: 'bottom-right' | 'top-right';
@@ -32,6 +43,8 @@ interface CanvasQuickActionBarProps {
   onAddSkill: (skill: SkillDefinition) => void;
   onUseAsset: (asset: CanvasAsset) => void;
   onDeleteNode: (nodeId: string) => void;
+  /** 「导入互动影游」:打开文件选择(.ink / .js.json)。 */
+  onImportStory: () => void;
 }
 
 interface QuickActionDef {
@@ -76,6 +89,7 @@ export function CanvasQuickActionBar({
   onAddSkill,
   onUseAsset,
   onDeleteNode,
+  onImportStory,
 }: CanvasQuickActionBarProps) {
   const { t } = useTranslation();
   const [openPanel, setOpenPanel] = useState<QuickPanel | null>(null);
@@ -151,9 +165,8 @@ export function CanvasQuickActionBar({
       )}
 
       <div
-        className={`pointer-events-none absolute inset-x-0 z-[41] flex justify-center ${
-          isTop ? 'top-3' : 'bottom-3'
-        }`}
+        className="pointer-events-none absolute inset-x-0 z-[41] flex justify-center"
+        style={canvasControlPositionStyle(placement)}
       >
         <div
           className="nopan nowheel pointer-events-auto relative"
@@ -190,7 +203,7 @@ export function CanvasQuickActionBar({
             </div>
           )}
 
-          <div className="flex h-12 items-center gap-2.5 rounded-[12px] border border-white/[0.08] bg-[#11151d]/95 px-1.5 shadow-[0_14px_36px_rgba(0,0,0,0.42)] backdrop-blur-md">
+          <div className={`flex h-[43.2px] items-center gap-[9px] rounded-[10.8px] border border-white/[0.08] px-[5.4px] shadow-[0_14px_36px_rgba(0,0,0,0.42)] ${CANVAS_PANEL_SURFACE_CLASS}`}>
             {ACTIONS.map((action) => {
               const { key, labelKey, tooltipKey, primary } = action;
               const active = openPanel === key;
@@ -217,14 +230,14 @@ export function CanvasQuickActionBar({
                     onClick={() => handleActionClick(action)}
                     aria-label={t(labelKey)}
                     aria-pressed={active}
-                    className={`flex h-9 w-9 items-center justify-center rounded-[10px] transition-colors ${
+                    className={`flex h-[32.4px] w-[32.4px] items-center justify-center rounded-[9px] transition-colors ${
                       filled
                         ? 'bg-white text-[#15171c] shadow-[0_2px_8px_rgba(0,0,0,0.22)]'
                         : 'text-white/52 hover:bg-white/[0.09] hover:text-white/82'
                     }`}
                   >
                     <Icon
-                      className={`h-[18px] w-[18px] ${
+                      className={`h-[16.2px] w-[16.2px] ${
                         primary
                           ? 'transition-transform duration-200 ease-out motion-reduce:transition-none group-hover:rotate-45 group-hover:scale-110 motion-reduce:group-hover:rotate-0 motion-reduce:group-hover:scale-100'
                           : ''
@@ -252,6 +265,25 @@ export function CanvasQuickActionBar({
                 </span>
               );
             })}
+            {STORY_IMPORT_ENABLED && (
+              <span className="group relative inline-flex">
+                <button
+                  type="button"
+                  onClick={onImportStory}
+                  aria-label={t('canvas.story.import')}
+                  className="flex h-9 w-9 items-center justify-center rounded-[10px] text-white/52 transition-colors hover:bg-white/[0.09] hover:text-white/82"
+                >
+                  <FileInput className="h-[18px] w-[18px]" />
+                </button>
+                <span
+                  className={`pointer-events-none absolute left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-[6px] border border-white/[0.08] bg-[#11151d]/95 px-2 py-1 text-[11px] leading-none text-white/78 opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.32)] transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 ${
+                    isTop ? 'top-full mt-2' : 'bottom-full mb-2'
+                  }`}
+                >
+                  {t('canvas.story.import')}
+                </span>
+              </span>
+            )}
           </div>
         </div>
       </div>
