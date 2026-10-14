@@ -618,6 +618,58 @@ NEWAPI_NANOBANANA2_MODEL = os.environ.get("NEWAPI_NANOBANANA2_MODEL", "LingShan-
 GEMINI_WEBAI_MODEL = os.environ.get("GEMINI_WEBAI_MODEL", "gemini6969")
 GEMINI_WEBAI_COOKIE_FILE = os.environ.get("GEMINI_WEBAI_COOKIE_FILE", "")
 GEMINI_WEBAI_TIMEOUT_SECONDS = _env_float("GEMINI_WEBAI_TIMEOUT_SECONDS", 180.0)
+# Dev-only: DashScope's native Qwen-Image API (image generation has no
+# OpenAI-compatible endpoint, only `multimodal-generation/generation`; see
+# nanobanana_grid.py `_call_qwen_image_api`). QWEN_API_KEY is also used by
+# the `DC-qwen-vision` NewAPI channel (text/vision), unrelated to this.
+QWEN_API_KEY = os.environ.get("QWEN_API_KEY", "")
+QWEN_IMAGE_BASE_URL = os.environ.get(
+    "QWEN_IMAGE_BASE_URL", "https://dashscope-intl.aliyuncs.com/api/v1"
+)
+QWEN_IMAGE_TIMEOUT_SECONDS = _env_float("QWEN_IMAGE_TIMEOUT_SECONDS", 180.0)
+# Dev-only: RunPod Serverless endpoint from the `photoreal-short-drama-generator`
+# project, running ComfyUI + Qwen-Image 2.1 (not DashScope — a different Qwen
+# image stack with its own worker, see nanobanana_grid.py
+# `_call_runpod_qwen_image_api`). The worker only accepts/returns files via
+# Cloudflare R2 (no base64 path), so this needs its own R2 bucket config,
+# independent of any other R2/S3 usage elsewhere in the app.
+RUNPOD_API_KEY = os.environ.get("RUNPOD_API_KEY", "")
+RUNPOD_QWEN_IMAGE_ENDPOINT_ID = os.environ.get("RUNPOD_QWEN_IMAGE_ENDPOINT_ID", "")
+RUNPOD_QWEN_IMAGE_TIMEOUT_SECONDS = _env_float(
+    "RUNPOD_QWEN_IMAGE_TIMEOUT_SECONDS", 1500.0
+)
+RUNPOD_QWEN_IMAGE_UNET = os.environ.get(
+    "RUNPOD_QWEN_IMAGE_UNET", "qwen_image_2.1_int8_convrot.safetensors"
+)
+RUNPOD_QWEN_IMAGE_TEXT_ENCODER = os.environ.get(
+    "RUNPOD_QWEN_IMAGE_TEXT_ENCODER", "qwen3vl_8b_int8_convrot.safetensors"
+)
+RUNPOD_QWEN_IMAGE_VAE = os.environ.get(
+    "RUNPOD_QWEN_IMAGE_VAE", "qwen_image_2.1_vae_bf16.safetensors"
+)
+# How long the endpoint lets a worker sit idle before scaling back to 0 — used
+# by the Settings "start worker" control (runpod_worker_control.py), not by
+# image generation itself.
+RUNPOD_QWEN_IMAGE_IDLE_TIMEOUT_SECONDS = int(
+    _env_float("RUNPOD_QWEN_IMAGE_IDLE_TIMEOUT_SECONDS", 90.0)
+)
+R2_ENDPOINT = os.environ.get("R2_ENDPOINT", "")
+R2_BUCKET = os.environ.get("R2_BUCKET", "")
+R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+
+
+def _runpod_qwen_image_configured() -> bool:
+    return bool(
+        RUNPOD_API_KEY
+        and RUNPOD_QWEN_IMAGE_ENDPOINT_ID
+        and R2_ENDPOINT
+        and R2_BUCKET
+        and R2_ACCESS_KEY_ID
+        and R2_SECRET_ACCESS_KEY
+    )
+
+
 SCENE_MASTER_IMAGE_PROVIDER = (
     os.environ.get("SCENE_MASTER_IMAGE_PROVIDER", "").strip().lower() or "newapi"
 )
@@ -1000,6 +1052,18 @@ NANOBANANA_PROVIDER = os.environ.get("NANOBANANA_PROVIDER", "openrouter")
 
 
 NANOBANANA_MODEL = os.environ.get("NANOBANANA_MODEL", "gemini-3.1-flash-image-preview")
+# Cheapest non-deprecated Google AI Studio image model ($0.034/1K image vs
+# $0.067 for gemini-3.1-flash-image(-preview)); kept separate from
+# NANOBANANA_MODEL since that constant is shared with the openrouter provider.
+GOOGLE_AI_IMAGE_MODEL = os.environ.get(
+    "GOOGLE_AI_IMAGE_MODEL", "gemini-3.1-flash-lite-image"
+)
+# Non-lite sibling: supports 1K/2K/4K (lite is 1K-only, rejects 2K/4K with
+# 400 INVALID_ARGUMENT), at a higher price ($0.067-$0.151/image vs lite's
+# flat $0.034). Used by the resolution-specific google_gemini_* selections.
+GOOGLE_AI_IMAGE_MODEL_FULL = os.environ.get(
+    "GOOGLE_AI_IMAGE_MODEL_FULL", "gemini-3.1-flash-image"
+)
 OPENAI_IMAGE_MODEL = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-2")
 HUIMENG_IMAGE_MODEL = os.environ.get("HUIMENG_IMAGE_MODEL", "image-2")
 HUIMENG_IMAGE_OFFICIAL_MODEL = os.environ.get(
@@ -1071,7 +1135,132 @@ IMAGE_GENERATION_SELECTIONS: dict[str, dict[str, str]] = {
         "provider": "gemini_webai",
         "model": GEMINI_WEBAI_MODEL,
     },
+    # Dev-only: direct Google AI Studio key, never shown in the hosted-gateway
+    # UI. "image_size" here is a forced override (see NanoBananaGridGenerator.
+    # force_image_size) — it wins over the grid-shape-driven resolution that
+    # other providers use, since resolution is a property of which of these
+    # entries was picked, not of the grid mode.
+    "google_gemini": {
+        "label": "Google Gemini Lite (1K)",
+        "provider": "google",
+        "model": GOOGLE_AI_IMAGE_MODEL,
+        "image_size": "1K",  # the lite model only supports 1K
+    },
+    "google_gemini_1k": {
+        "label": "Google Gemini (1K)",
+        "provider": "google",
+        "model": GOOGLE_AI_IMAGE_MODEL_FULL,
+        "image_size": "1K",
+    },
+    "google_gemini_2k": {
+        "label": "Google Gemini (2K)",
+        "provider": "google",
+        "model": GOOGLE_AI_IMAGE_MODEL_FULL,
+        "image_size": "2K",
+    },
+    "google_gemini_4k": {
+        "label": "Google Gemini (4K)",
+        "provider": "google",
+        "model": GOOGLE_AI_IMAGE_MODEL_FULL,
+        "image_size": "4K",
+    },
+    # Dev-only: direct DashScope key, never shown in the hosted-gateway UI.
+    # No forced "image_size" here — DashScope's native API has no 1K/2K/4K
+    # concept, just a pixel-area range ([email protected], [email protected]), so
+    # `_call_qwen_image_api` maps the grid-shape-driven size label itself.
+    "qwen_image_2": {
+        "label": "Qwen Image 2.0 (local dev)",
+        "provider": "qwen",
+        "model": "qwen-image-2.0",
+    },
+    "qwen_image_2_pro": {
+        "label": "Qwen Image 2.0 Pro (local dev)",
+        "provider": "qwen",
+        "model": "qwen-image-2.0-pro",
+    },
+    "qwen_image_3": {
+        "label": "Qwen Image 3.0 (local dev)",
+        "provider": "qwen",
+        "model": "qwen-image-3.0",
+    },
+    "qwen_image_3_pro": {
+        "label": "Qwen Image 3.0 Pro (local dev)",
+        "provider": "qwen",
+        "model": "qwen-image-3.0-pro",
+    },
+    # Dev-only: RunPod Serverless worker from the `photoreal-short-drama-
+    # generator` project (ComfyUI + Qwen-Image 2.1, not DashScope — see
+    # `_call_runpod_qwen_image_api`). "image_size" here is a forced override
+    # (same mechanism as google_gemini_1k/2k/4k) mapped to a target pixel
+    # area by `_runpod_qwen_image_dims`, since ComfyUI's own EmptyLatentImage
+    # takes explicit width/height, not a size label. "auto" leaves it unset
+    # so the grid-shape-driven resolution (force_image_size unset) applies.
+    "runpod_qwen_image": {
+        "label": "Qwen Image 2.1 RunPod (auto)",
+        "provider": "runpod_qwen",
+        "model": "qwen-image-2.1",
+    },
+    "runpod_qwen_image_0_5k": {
+        "label": "Qwen Image 2.1 RunPod (0.5K)",
+        "provider": "runpod_qwen",
+        "model": "qwen-image-2.1",
+        "image_size": "0.5K",
+    },
+    "runpod_qwen_image_1k": {
+        "label": "Qwen Image 2.1 RunPod (1K)",
+        "provider": "runpod_qwen",
+        "model": "qwen-image-2.1",
+        "image_size": "1K",
+    },
+    "runpod_qwen_image_1_5k": {
+        "label": "Qwen Image 2.1 RunPod (1.5K)",
+        "provider": "runpod_qwen",
+        "model": "qwen-image-2.1",
+        "image_size": "1.5K",
+    },
+    "runpod_qwen_image_2k": {
+        "label": "Qwen Image 2.1 RunPod (2K)",
+        "provider": "runpod_qwen",
+        "model": "qwen-image-2.1",
+        "image_size": "2K",
+    },
+    "runpod_qwen_image_3k": {
+        "label": "Qwen Image 2.1 RunPod (3K, chậm ~9-10 phút/ảnh)",
+        "provider": "runpod_qwen",
+        "model": "qwen-image-2.1",
+        "image_size": "3K",
+    },
+    "runpod_qwen_image_4k": {
+        "label": "Qwen Image 2.1 RunPod (4K, rất chậm — VRAM swap, ~20+ phút/ảnh, có thể vượt timeout)",
+        "provider": "runpod_qwen",
+        "model": "qwen-image-2.1",
+        "image_size": "4K",
+    },
 }
+
+GOOGLE_GEMINI_SELECTION_KEYS = (
+    "google_gemini",
+    "google_gemini_1k",
+    "google_gemini_2k",
+    "google_gemini_4k",
+)
+
+QWEN_IMAGE_SELECTION_KEYS = (
+    "qwen_image_2",
+    "qwen_image_2_pro",
+    "qwen_image_3",
+    "qwen_image_3_pro",
+)
+
+RUNPOD_QWEN_IMAGE_SELECTION_KEYS = (
+    "runpod_qwen_image",
+    "runpod_qwen_image_0_5k",
+    "runpod_qwen_image_1k",
+    "runpod_qwen_image_1_5k",
+    "runpod_qwen_image_2k",
+    "runpod_qwen_image_3k",
+    "runpod_qwen_image_4k",
+)
 
 VISIBLE_IMAGE_GENERATION_SELECTION_KEYS = (
     "newapi_gpt_image2",
@@ -1133,11 +1322,29 @@ GRID_TOTAL_PANELS = 25  # 动态优化时的最大面板数
 
 def image_generation_selection_options() -> dict[str, str]:
     """Return UI labels for configured image-generation selections."""
-    return {
+    options = {
         key: IMAGE_GENERATION_SELECTIONS[key]["label"]
         for key in VISIBLE_IMAGE_GENERATION_SELECTION_KEYS
         if key in IMAGE_GENERATION_SELECTIONS
     }
+    # Dev-only entries: only listed once their local credential is configured,
+    # same gates as _visible_image_generation_selection(). gemini_webai must be
+    # listed here too (not just special-cased in the visibility check) — once
+    # any other entry is explicitly picked in the UI, the choice is persisted
+    # per-project and there is no way back to gemini_webai unless it is also
+    # a selectable menu option.
+    if GEMINI_WEBAI_COOKIE_FILE:
+        options["gemini_webai"] = IMAGE_GENERATION_SELECTIONS["gemini_webai"]["label"]
+    if GOOGLE_AI_API_KEY:
+        for key in GOOGLE_GEMINI_SELECTION_KEYS:
+            options[key] = IMAGE_GENERATION_SELECTIONS[key]["label"]
+    if QWEN_API_KEY:
+        for key in QWEN_IMAGE_SELECTION_KEYS:
+            options[key] = IMAGE_GENERATION_SELECTIONS[key]["label"]
+    if _runpod_qwen_image_configured():
+        for key in RUNPOD_QWEN_IMAGE_SELECTION_KEYS:
+            options[key] = IMAGE_GENERATION_SELECTIONS[key]["label"]
+    return options
 
 
 def character_image_selection_options() -> dict[str, str]:
@@ -1156,6 +1363,12 @@ def _visible_image_generation_selection(value: str | None) -> str:
     # the local WebAI-to-API cookie bridge. Everywhere else it stays unreachable,
     # so it never becomes an accidental fallback.
     if candidate == "gemini_webai" and GEMINI_WEBAI_COOKIE_FILE:
+        return candidate
+    if candidate in GOOGLE_GEMINI_SELECTION_KEYS and GOOGLE_AI_API_KEY:
+        return candidate
+    if candidate in QWEN_IMAGE_SELECTION_KEYS and QWEN_API_KEY:
+        return candidate
+    if candidate in RUNPOD_QWEN_IMAGE_SELECTION_KEYS and _runpod_qwen_image_configured():
         return candidate
     alias = LEGACY_IMAGE_GENERATION_SELECTION_ALIASES.get(candidate)
     if (
@@ -1253,11 +1466,13 @@ def _image_provider_config(
     model_override: str | None = None,
     selection_override: str | None = None,
 ) -> dict:
+    force_image_size: str | None = None
     if selection_override:
         selection = normalize_image_generation_selection(selection_override)
         entry = IMAGE_GENERATION_SELECTIONS[selection]
         provider = entry["provider"]
         model = model_override or entry["model"]
+        force_image_size = entry.get("image_size")
     else:
         provider = (provider or "openrouter").lower()
         model = model_override or ""
@@ -1272,18 +1487,21 @@ def _image_provider_config(
             "provider": provider,
             "api_key": OPENROUTER_API_KEY,
             "model": resolved_model,
+            "force_image_size": force_image_size,
         }
     if provider in {"huimeng", "huimengi"}:
         return {
             "provider": "huimeng",
             "api_key": HUIMENGI_API_KEY,
             "model": model or HUIMENG_IMAGE_MODEL,
+            "force_image_size": force_image_size,
         }
     if provider == "openai":
         return {
             "provider": provider,
             "api_key": OPENAI_API_KEY,
             "model": model or OPENAI_IMAGE_MODEL,
+            "force_image_size": force_image_size,
         }
     if provider == "newapi":
         gateway = get_effective_newapi_gateway_config()
@@ -1292,6 +1510,7 @@ def _image_provider_config(
             "api_key": gateway.api_key,
             "model": model or NEWAPI_IMAGE_MODEL,
             "base_url": gateway.base_url,
+            "force_image_size": force_image_size,
         }
     if provider == "gemini_webai":
         gateway = get_effective_newapi_gateway_config()
@@ -1300,12 +1519,30 @@ def _image_provider_config(
             "api_key": gateway.api_key,
             "model": model or GEMINI_WEBAI_MODEL,
             "base_url": gateway.base_url,
+            "force_image_size": force_image_size,
+        }
+    if provider == "qwen":
+        return {
+            "provider": provider,
+            "api_key": QWEN_API_KEY,
+            "model": model or "qwen-image-2.0",
+            "base_url": QWEN_IMAGE_BASE_URL,
+            "force_image_size": force_image_size,
+        }
+    if provider == "runpod_qwen":
+        return {
+            "provider": provider,
+            "api_key": RUNPOD_API_KEY,
+            "model": model or "qwen-image-2.1",
+            "base_url": None,
+            "force_image_size": force_image_size,
         }
 
     return {
         "provider": "google",
         "api_key": GOOGLE_AI_API_KEY,
         "model": model or NANOBANANA_MODEL,
+        "force_image_size": force_image_size,
     }
 
 
@@ -1355,6 +1592,7 @@ def get_grid_generation_config(
         "openai_sketch_image_quality": OPENAI_SKETCH_IMAGE_QUALITY,
         "huimeng_image_quality": os.environ.get("HUIMENG_IMAGE_QUALITY", "medium"),
         "image_size": image_size_override or "1K",
+        "force_image_size": provider_config.get("force_image_size"),
         "mode": GRID_MODE,
         "rows": GRID_ROWS,
         "cols": GRID_COLS,

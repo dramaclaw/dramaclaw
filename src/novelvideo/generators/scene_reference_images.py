@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from novelvideo.config import (
+    GOOGLE_AI_API_KEY,
     HUIMENGI_API_KEY,
     HUIMENG_IMAGE_MODEL,
     NEWAPI_IMAGE_MODEL,
@@ -17,6 +18,8 @@ from novelvideo.config import (
     OPENAI_IMAGE_MODEL,
     OPENROUTER_API_KEY,
     OPENROUTER_GPT_IMAGE2_MODEL,
+    QWEN_API_KEY,
+    RUNPOD_API_KEY,
     SCENE_ASSET_MODEL,
     SCENE_ASSET_PROVIDER,
     SCENE_MASTER_IMAGE_MODEL,
@@ -26,10 +29,13 @@ from novelvideo.config import (
 )
 from novelvideo.generators.nanobanana_grid import (
     _complete_organization_image_egress,
+    _call_google_genai_image_api,
     _call_huimeng_image_api,
     _call_newapi_image_api,
     _call_openai_image_api,
     _call_openrouter_image_api,
+    _call_qwen_image_api,
+    _call_runpod_qwen_image_api,
     _call_webai_chat_image_api,
     _prepare_organization_image_egress,
 )
@@ -615,6 +621,7 @@ async def generate_scene_reference_image(
     avoid_instructions: str = "",
     base_scene: NovelScene | None = None,
     egress_context: TrustedEgressContext | None = None,
+    force_image_size: str | None = None,
 ) -> Path:
     """Generate one canonical scene reference image and return its path."""
 
@@ -738,6 +745,42 @@ async def generate_scene_reference_image(
                 "image_size": "1K",
                 "quality": "medium",
                 "huimeng_image_quality": "medium",
+            },
+        )
+    elif provider == "google":
+        api_key = GOOGLE_AI_API_KEY or ""
+        image_bytes, _text, error = await _call_google_genai_image_api(
+            api_key=api_key,
+            model=selected_model,
+            prompt=prompt,
+            reference_images=references or None,
+            image_config={
+                "aspect_ratio": "16:9",
+                "image_size": force_image_size or "1K",
+            },
+        )
+    elif provider == "qwen":
+        api_key = QWEN_API_KEY or ""
+        image_bytes, _text, error = await _call_qwen_image_api(
+            api_key=api_key,
+            model=selected_model,
+            prompt=prompt,
+            reference_images=references or None,
+            image_config={
+                "aspect_ratio": "16:9",
+                "image_size": force_image_size or "1K",
+            },
+        )
+    elif provider == "runpod_qwen":
+        api_key = RUNPOD_API_KEY or ""
+        image_bytes, _text, error = await _call_runpod_qwen_image_api(
+            api_key=api_key,
+            model=selected_model,
+            prompt=prompt,
+            reference_images=references or None,
+            image_config={
+                "aspect_ratio": "16:9",
+                "image_size": force_image_size or "1K",
             },
         )
     else:

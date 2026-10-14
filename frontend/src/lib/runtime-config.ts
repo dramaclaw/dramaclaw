@@ -9,6 +9,7 @@ export const RuntimeConfigResponse = z.object({
     auth_required: z.boolean(),
     instance_id: z.string().optional(),
     mcp_direct_canvas_apply: z.boolean().optional(),
+    runpod_qwen_worker_control_enabled: z.boolean().optional(),
   }),
 });
 
@@ -25,6 +26,7 @@ export interface RuntimeConfig {
   phoneOtpEntryVisible: boolean;
   instanceId?: string;
   mcpDirectCanvasApply: boolean;
+  runpodQwenWorkerControlEnabled: boolean;
 }
 
 let runtimeConfig: RuntimeConfig = {
@@ -32,12 +34,25 @@ let runtimeConfig: RuntimeConfig = {
   authRequired: true,
   mcpDirectCanvasApply: false,
   phoneOtpEntryVisible: false,
+  runpodQwenWorkerControlEnabled: false,
 };
 
 function fallbackRuntimeConfig(): RuntimeConfig {
   return import.meta.env.VITE_EDITION === "ce"
-    ? { edition: "ce", authRequired: false, phoneOtpEntryVisible: false, mcpDirectCanvasApply: false }
-    : { edition: "ee", authRequired: true, phoneOtpEntryVisible: false, mcpDirectCanvasApply: false };
+    ? {
+        edition: "ce",
+        authRequired: false,
+        phoneOtpEntryVisible: false,
+        mcpDirectCanvasApply: false,
+        runpodQwenWorkerControlEnabled: false,
+      }
+    : {
+        edition: "ee",
+        authRequired: true,
+        phoneOtpEntryVisible: false,
+        mcpDirectCanvasApply: false,
+        runpodQwenWorkerControlEnabled: false,
+      };
 }
 
 async function loadPhoneOtpEntryVisibility(): Promise<boolean> {
@@ -71,6 +86,8 @@ export async function loadRuntimeConfig(): Promise<void> {
       phoneOtpEntryVisible,
       instanceId: parsed.data.instance_id,
       mcpDirectCanvasApply: parsed.data.mcp_direct_canvas_apply ?? false,
+      runpodQwenWorkerControlEnabled:
+        parsed.data.runpod_qwen_worker_control_enabled ?? false,
     };
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -93,4 +110,8 @@ export function mcpDirectCanvasApplyEnabled(): boolean {
 
 export function phoneOtpEntryVisible(): boolean {
   return runtimeConfig.phoneOtpEntryVisible;
+}
+
+export function runpodQwenWorkerControlEnabled(): boolean {
+  return runtimeConfig.runpodQwenWorkerControlEnabled;
 }

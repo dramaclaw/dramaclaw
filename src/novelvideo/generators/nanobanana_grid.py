@@ -4378,6 +4378,644 @@ async def _call_webai_chat_image_api(
     return image_bytes, "", ""
 
 
+# Gemini's image_config.aspect_ratio only accepts this fixed enum (400
+# INVALID_ARGUMENT otherwise) — e.g. equirectangular panoramas ask for "2:1",
+# which isn't in it. Values are width/height floats for nearest-match lookup.
+_GEMINI_SUPPORTED_ASPECT_RATIOS: dict[str, float] = {
+    "1:1": 1.0,
+    "1:4": 0.25,
+    "1:8": 0.125,
+    "2:3": 2 / 3,
+    "3:2": 1.5,
+    "3:4": 0.75,
+    "4:1": 4.0,
+    "4:3": 4 / 3,
+    "4:5": 0.8,
+    "5:4": 1.25,
+    "8:1": 8.0,
+    "9:16": 9 / 16,
+    "16:9": 16 / 9,
+    "21:9": 21 / 9,
+}
+
+
+def _nearest_gemini_aspect_ratio(aspect_ratio: str) -> str:
+    try:
+        w, h = aspect_ratio.split(":", 1)
+        target = float(w) / float(h)
+    except (ValueError, ZeroDivisionError):
+        return "1:1"
+    return min(
+        _GEMINI_SUPPORTED_ASPECT_RATIOS,
+        key=lambda key: abs(_GEMINI_SUPPORTED_ASPECT_RATIOS[key] - target),
+    )
+
+
+def _reshape_image_bytes_to_aspect_ratio(
+    data: bytes, aspect_ratio: str
+) -> bytes:
+    """Stretch-resize to an exact aspect ratio Gemini can't generate natively.
+
+    Stretches rather than crops: cropping would cut real content off the
+    edges of an equirectangular panorama, which needs full 360 coverage.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    try:
+        w, h = aspect_ratio.split(":", 1)
+        target = float(w) / float(h)
+    except (ValueError, ZeroDivisionError):
+        return data
+
+    with Image.open(BytesIO(data)) as im:
+        current = im.width / im.height
+        if abs(current - target) < 1e-3:
+            return data
+        if target >= current:
+            new_width = im.width
+            new_height = round(new_width / target)
+        else:
+            new_height = im.height
+            new_width = round(new_height * target)
+        resized = im.resize((new_width, new_height), Image.LANCZOS)
+        buffer = BytesIO()
+        resized.save(buffer, format=im.format or "PNG")
+        return buffer.getvalue()
+
+
+async def _call_google_genai_image_api(
+    *,
+    api_key: str,
+    model: str,
+    prompt: str,
+    reference_images: list[tuple[str, bytes, str]] | None = None,
+    image_config: dict | None = None,
+) -> tuple[bytes | None, str, str]:
+    """Generate an image via the native Google AI Studio API (google-genai SDK).
+
+    Shared by the asset generators (scene/prop/360) that only build a single
+    text+reference request, unlike the grid/character generators which have
+    their own inline "google" branches with richer prompt assembly.
+    """
+    if not api_key:
+        return None, "", "GOOGLE_AI_API_KEY is missing"
+
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=api_key)
+
+    contents: list[Any] = [prompt]
+    for _name, data, mime in reference_images or []:
+        try:
+            contents.append(
+                types.Part.from_bytes(data=data, mime_type=mime or "image/png")
+            )
+        except Exception as exc:
+            return None, "", f"google reference image encode failed: {exc}"
+
+    cfg = image_config or {}
+    requested_aspect_ratio = cfg.get("aspect_ratio") or "1:1"
+    needs_reshape = requested_aspect_ratio not in _GEMINI_SUPPORTED_ASPECT_RATIOS
+    gen_aspect_ratio = (
+        _nearest_gemini_aspect_ratio(requested_aspect_ratio)
+        if needs_reshape
+        else requested_aspect_ratio
+    )
+    is_gemini3 = "gemini-3" in model
+    requested_image_size = cfg.get("image_size") or "1K"
+
+    def _build_config(image_size: str | None) -> Any:
+        if is_gemini3:
+            image_config_kwargs: dict[str, str] = {"aspect_ratio": gen_aspect_ratio}
+            if image_size:
+                image_config_kwargs["image_size"] = image_size
+            gen_image_config = types.ImageConfig(**image_config_kwargs)
+        else:
+            gen_image_config = types.ImageConfig(aspect_ratio=gen_aspect_ratio)
+        return types.GenerateContentConfig(
+            response_modalities=["IMAGE", "TEXT"],
+            image_config=gen_image_config,
+        )
+
+    async def _generate(image_size: str | None):
+        return await asyncio.to_thread(
+            client.models.generate_content,
+            model=model,
+            contents=contents,
+            config=_build_config(image_size),
+        )
+
+    try:
+        response = await _generate(requested_image_size)
+    except Exception as exc:
+        # Some tiers (e.g. gemini-3.1-flash-lite-image) only support 1K and
+        # reject 2K/4K with 400 INVALID_ARGUMENT — fall back once.
+        if is_gemini3 and "is not supported for this model" in str(exc):
+            try:
+                response = await _generate("1K")
+            except Exception as retry_exc:
+                return None, "", f"google genai request failed: {retry_exc}"
+        else:
+            return None, "", f"google genai request failed: {exc}"
+
+    if not response.candidates or not response.candidates[0].content:
+        return None, "", "google genai response had no content"
+
+    image_bytes = None
+    text = ""
+    for part in response.candidates[0].content.parts:
+        if getattr(part, "inline_data", None) is not None:
+            image_bytes = part.inline_data.data
+        elif getattr(part, "text", None):
+            text = part.text
+    if not image_bytes:
+        return None, text, "google genai response had no image data"
+
+    if needs_reshape:
+        try:
+            image_bytes = _reshape_image_bytes_to_aspect_ratio(
+                image_bytes, requested_aspect_ratio
+            )
+        except Exception as exc:
+            return None, text, f"google genai aspect-ratio reshape failed: {exc}"
+
+    return image_bytes, text, ""
+
+
+# DashScope's native Qwen-Image API has no 1K/2K/4K enum — just a pixel-area
+# range the account is allowed: verified empirically (2026-10-13) as
+# [email protected] to [email protected] ("Image area must be between 262144
+# (512x512) and 4194304 (2048x2048) pixels"). There's no true "4K" tier, so
+# both "2K" and "4K" map to the same max area.
+_QWEN_IMAGE_SIZE_TARGET_AREA: dict[str, int] = {
+    "0.5K": 512 * 512,
+    "1K": 1024 * 1024,
+    "2K": 2048 * 2048,
+    "4K": 2048 * 2048,
+}
+_QWEN_IMAGE_MIN_AREA = 512 * 512
+_QWEN_IMAGE_MAX_AREA = 2048 * 2048
+
+
+def _qwen_image_size(aspect_ratio: str, image_size: str) -> str:
+    """Map an aspect ratio + size label to DashScope's "W*H" size string."""
+    try:
+        w_ratio, h_ratio = (aspect_ratio or "1:1").split(":", 1)
+        ratio = float(w_ratio) / float(h_ratio)
+    except (ValueError, ZeroDivisionError):
+        ratio = 1.0
+    area = _QWEN_IMAGE_SIZE_TARGET_AREA.get(image_size or "1K", _QWEN_IMAGE_SIZE_TARGET_AREA["1K"])
+    area = max(_QWEN_IMAGE_MIN_AREA, min(_QWEN_IMAGE_MAX_AREA, area))
+    width = max(1, round((area * ratio) ** 0.5))
+    height = max(1, round((area / ratio) ** 0.5))
+    # Rounding both dimensions independently can push the actual area just
+    # under the min bound (e.g. a 3:4 1K request landed at 591*443=261813,
+    # just below the 262144 floor and rejected with 400 INVALID_ARGUMENT) or
+    # just over the max bound — nudge one dimension back into range.
+    while width * height < _QWEN_IMAGE_MIN_AREA:
+        height += 1
+    while width * height > _QWEN_IMAGE_MAX_AREA and height > 1:
+        height -= 1
+    return f"{width}*{height}"
+
+
+async def _call_qwen_image_api(
+    *,
+    api_key: str,
+    model: str,
+    prompt: str,
+    reference_images: list[tuple[str, bytes, str]] | None = None,
+    image_config: dict | None = None,
+    base_url: str | None = None,
+) -> tuple[bytes | None, str, str]:
+    """Generate an image via DashScope's native Qwen-Image API (dev-only).
+
+    Image generation has no OpenAI-compatible endpoint on DashScope (unlike
+    the `DC-qwen-vision` text/vision channel) — only the native
+    `multimodal-generation/generation` endpoint. Reference images are sent
+    edit-style, as extra `image` entries in the same `content` array as the
+    text prompt; the result comes back as a short-lived OSS URL (no
+    session/cookie gate, unlike `_call_webai_chat_image_api`) that is
+    downloaded directly.
+    """
+    import httpx
+
+    from novelvideo.config import QWEN_IMAGE_BASE_URL, QWEN_IMAGE_TIMEOUT_SECONDS
+
+    if not api_key:
+        return None, "", "QWEN_API_KEY is missing"
+
+    endpoint = (base_url or QWEN_IMAGE_BASE_URL).rstrip("/")
+
+    content: list[dict[str, Any]] = []
+    for _name, data, mime in reference_images or []:
+        encoded = base64.b64encode(data).decode()
+        content.append({"image": f"data:{mime or 'image/png'};base64,{encoded}"})
+    content.append({"text": prompt})
+
+    cfg = image_config or {}
+    size = _qwen_image_size(cfg.get("aspect_ratio") or "1:1", cfg.get("image_size") or "1K")
+    payload = {
+        "model": model,
+        "input": {"messages": [{"role": "user", "content": content}]},
+        "parameters": {
+            "size": size,
+            "n": 1,
+            "watermark": False,
+            "prompt_extend": False,
+        },
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=QWEN_IMAGE_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                f"{endpoint}/services/aigc/multimodal-generation/generation",
+                headers=headers,
+                json=payload,
+            )
+    except httpx.HTTPError as exc:
+        return None, "", f"qwen image request failed: {exc}"
+
+    if response.status_code >= 400:
+        return None, "", f"qwen image HTTP {response.status_code}: {response.text[:500]}"
+
+    try:
+        data = response.json()
+    except ValueError:
+        return None, "", "qwen image returned non-JSON response"
+
+    if data.get("code"):
+        return None, "", f"qwen image error {data['code']}: {data.get('message', '')}"
+
+    choices = (data.get("output") or {}).get("choices") or []
+    first_choice = choices[0] if choices else {}
+    message_content = (first_choice.get("message") or {}).get("content") or []
+    image_url = next(
+        (item.get("image") for item in message_content if item.get("image")), None
+    )
+    if not image_url:
+        text = next((item.get("text") for item in message_content if item.get("text")), "")
+        return None, text, "qwen image response had no image URL"
+
+    try:
+        async with httpx.AsyncClient(timeout=QWEN_IMAGE_TIMEOUT_SECONDS) as client:
+            download_response = await client.get(image_url)
+            download_response.raise_for_status()
+    except httpx.HTTPError as exc:
+        return None, "", f"qwen image download failed: {exc}"
+
+    return download_response.content, "", ""
+
+
+# Dev-only: RunPod Serverless worker from the `photoreal-short-drama-generator`
+# project (ComfyUI + Qwen-Image 2.1, UNETLoader-loaded int8_convrot checkpoint —
+# a different Qwen image stack from the DashScope one above, with its own
+# worker and R2 transport). "K" labels follow the same convention already
+# established for Google Gemini in this app (1K≈1MP, 2K≈4MP, 4K≈16MP — see
+# CLAUDE.md's measured 1376×768/2752×1536/5504×3072), with 0.5K/1.5K/3K
+# interpolated; 1.5K is pinned to 1920×1088 (16:9), the resolution the
+# photoreal project actually runs this worker at day to day.
+_RUNPOD_QWEN_IMAGE_SIZE_TARGET_AREA: dict[str, int] = {
+    "0.5K": 512 * 512,
+    "1K": 1024 * 1024,
+    "1.5K": 1920 * 1088,
+    "2K": 2048 * 2048,
+    "3K": 3072 * 3072,
+    "4K": 4096 * 4096,
+}
+# Worker VRAM (A40 48GB / A-series 24GB pool) hasn't been measured past 2K for
+# this model yet — 3K/4K are provisional until verified (see CLAUDE.md note to
+# add once tested); keep a generous but finite ceiling so a bad aspect ratio
+# can't request an unbounded latent.
+_RUNPOD_QWEN_IMAGE_MIN_AREA = 256 * 256
+_RUNPOD_QWEN_IMAGE_MAX_AREA = 4096 * 4096
+
+
+def _runpod_qwen_image_dims(aspect_ratio: str, image_size: str) -> tuple[int, int]:
+    """Map an aspect ratio + size label to ComfyUI EmptyLatentImage width/height.
+
+    Unlike DashScope's "W*H" string, ComfyUI's graph takes explicit integer
+    width/height — and prefers multiples of 16 for clean VAE tiling.
+    """
+    try:
+        w_ratio, h_ratio = (aspect_ratio or "1:1").split(":", 1)
+        ratio = float(w_ratio) / float(h_ratio)
+    except (ValueError, ZeroDivisionError):
+        ratio = 1.0
+    area = _RUNPOD_QWEN_IMAGE_SIZE_TARGET_AREA.get(
+        image_size or "1K", _RUNPOD_QWEN_IMAGE_SIZE_TARGET_AREA["1K"]
+    )
+    area = max(_RUNPOD_QWEN_IMAGE_MIN_AREA, min(_RUNPOD_QWEN_IMAGE_MAX_AREA, area))
+    width = max(16, round(((area * ratio) ** 0.5) / 16) * 16)
+    height = max(16, round(((area / ratio) ** 0.5) / 16) * 16)
+    return width, height
+
+
+def _runpod_qwen_image_graph(
+    prompt: str,
+    width: int,
+    height: int,
+    seed: int,
+    reference_images: list[tuple[str, bytes, str]],
+) -> tuple[dict, list[tuple[str, bytes, str]]]:
+    """Build the ComfyUI API graph for the RunPod Qwen-Image 2.1 worker.
+
+    Ported from `comfy.qwen_t2i`/`comfy.qwen_edit` in the
+    `photoreal-short-drama-generator` project's `scripts/comfy.py` — same
+    UNETLoader-loaded int8_convrot checkpoint, same euler/simple/cfg-1
+    sampler settings. Returns (graph, reference_images) — the LoadImage node
+    names are already baked into the graph, matching the names the RunPod
+    job's `inputs` list must upload under.
+    """
+    from novelvideo.config import (
+        RUNPOD_QWEN_IMAGE_TEXT_ENCODER,
+        RUNPOD_QWEN_IMAGE_UNET,
+        RUNPOD_QWEN_IMAGE_VAE,
+    )
+
+    graph: dict[str, Any] = {
+        "1": {
+            "class_type": "UNETLoader",
+            "inputs": {"unet_name": RUNPOD_QWEN_IMAGE_UNET, "weight_dtype": "default"},
+        },
+        "2": {
+            "class_type": "CLIPLoader",
+            "inputs": {
+                "clip_name": RUNPOD_QWEN_IMAGE_TEXT_ENCODER,
+                "type": "qwen_image",
+                "device": "default",
+            },
+        },
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": RUNPOD_QWEN_IMAGE_VAE}},
+    }
+    if reference_images:
+        graph["9"] = {
+            "class_type": "QwenImage21Cache",
+            "inputs": {"model": ["1", 0], "device": "auto", "dtype": "default"},
+        }
+        graph["4"] = {
+            "class_type": "TextEncodeQwenImage21",
+            "inputs": {
+                "clip": ["2", 0],
+                "vae": ["3", 0],
+                "prompt": prompt,
+                "negative_prompt": "",
+                "resolution": 0,
+            },
+        }
+        for k, (name, _data, _mime) in enumerate(reference_images):
+            graph[str(100 + k)] = {"class_type": "LoadImage", "inputs": {"image": name}}
+            graph["4"]["inputs"][f"images.image_{k + 1}"] = [str(100 + k), 0]
+        graph["5"] = {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"width": width, "height": height, "batch_size": 1},
+        }
+        graph["6"] = {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["9", 0],
+                "seed": seed,
+                "steps": 25,
+                "cfg": 1.0,
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["4", 0],
+                "negative": ["4", 1],
+                "latent_image": ["5", 0],
+                "denoise": 1.0,
+            },
+        }
+    else:
+        graph["4"] = {
+            "class_type": "TextEncodeQwenImage21",
+            "inputs": {
+                "clip": ["2", 0],
+                "prompt": prompt,
+                "negative_prompt": "",
+                "resolution": 1024,
+            },
+        }
+        graph["5"] = {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"width": width, "height": height, "batch_size": 1},
+        }
+        graph["6"] = {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["1", 0],
+                "seed": seed,
+                "steps": 25,
+                "cfg": 1.0,
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["4", 0],
+                "negative": ["4", 1],
+                "latent_image": ["5", 0],
+                "denoise": 1.0,
+            },
+        }
+    graph["7"] = {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 0]}}
+    graph["8"] = {
+        "class_type": "SaveImage",
+        "inputs": {"images": ["7", 0], "filename_prefix": "dramaclaw"},
+    }
+    return graph, reference_images
+
+
+def _runpod_r2_client():
+    """Build a boto3 S3 client for the RunPod worker's Cloudflare R2 bucket.
+
+    Sync (boto3 has no async API) — callers must run this off the event loop
+    (`asyncio.to_thread`).
+    """
+    import boto3
+
+    from novelvideo.config import R2_ACCESS_KEY_ID, R2_ENDPOINT, R2_SECRET_ACCESS_KEY
+
+    return boto3.client(
+        "s3",
+        endpoint_url=R2_ENDPOINT,
+        aws_access_key_id=R2_ACCESS_KEY_ID,
+        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+    )
+
+
+def _runpod_upload_inputs_sync(
+    reference_images: list[tuple[str, bytes, str]],
+) -> list[dict[str, str]]:
+    """Upload each reference image to R2 (skip if already there, by sha256) and
+    return the `inputs` list the RunPod handler expects: `{name, r2_key, sha256}`.
+    """
+    from novelvideo.config import R2_BUCKET
+
+    s3 = _runpod_r2_client()
+    out = []
+    for name, data, _mime in reference_images:
+        sha = hashlib.sha256(data).hexdigest()
+        ext = os.path.splitext(name)[1] or ".png"
+        r2_key = f"inputs/{sha}{ext}"
+        try:
+            s3.head_object(Bucket=R2_BUCKET, Key=r2_key)
+        except Exception:
+            s3.put_object(Bucket=R2_BUCKET, Key=r2_key, Body=data)
+        out.append({"name": name, "r2_key": r2_key, "sha256": sha})
+    return out
+
+
+def _runpod_download_output_sync(r2_key: str) -> bytes:
+    from novelvideo.config import R2_BUCKET
+
+    s3 = _runpod_r2_client()
+    return s3.get_object(Bucket=R2_BUCKET, Key=r2_key)["Body"].read()
+
+
+async def _call_runpod_qwen_image_api(
+    *,
+    api_key: str,
+    model: str,
+    prompt: str,
+    reference_images: list[tuple[str, bytes, str]] | None = None,
+    image_config: dict | None = None,
+    base_url: str | None = None,
+) -> tuple[bytes | None, str, str]:
+    """Generate an image via the RunPod Serverless Qwen-Image 2.1 worker
+    (`photoreal-short-drama-generator` project's `runpod/handler.py`).
+
+    The worker has no base64 path: reference images must be uploaded to
+    Cloudflare R2 first (by sha256 key, so repeat refs are a cheap
+    head_object), and outputs come back only as an R2 key to download. The
+    job itself is a ComfyUI API graph, not a simple prompt/params payload —
+    `model`/`base_url` are accepted for call-site symmetry with the other
+    `_call_*_image_api` helpers but unused (the worker always runs the one
+    Qwen-Image 2.1 checkpoint baked into its image).
+    """
+    import httpx
+
+    from novelvideo.config import (
+        RUNPOD_QWEN_IMAGE_ENDPOINT_ID,
+        RUNPOD_QWEN_IMAGE_TIMEOUT_SECONDS,
+    )
+
+    if not api_key:
+        return None, "", "RUNPOD_API_KEY is missing"
+    if not RUNPOD_QWEN_IMAGE_ENDPOINT_ID:
+        return None, "", "RUNPOD_QWEN_IMAGE_ENDPOINT_ID is missing"
+
+    cfg = image_config or {}
+    width, height = _runpod_qwen_image_dims(
+        cfg.get("aspect_ratio") or "1:1", cfg.get("image_size") or "1K"
+    )
+    ref_images = reference_images or []
+    graph, ref_images = _runpod_qwen_image_graph(
+        prompt, width, height, uuid.uuid4().int & 0xFFFFFFFF, ref_images
+    )
+
+    try:
+        job_inputs = await asyncio.to_thread(_runpod_upload_inputs_sync, ref_images)
+    except Exception as exc:
+        return None, "", f"runpod qwen image upload to R2 failed: {exc}"
+
+    base = "https://api.runpod.ai/v2"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    job_input = {"action": "prompt", "workflow": graph, "inputs": job_inputs, "free_first": False}
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            submit_response = await client.post(
+                f"{base}/{RUNPOD_QWEN_IMAGE_ENDPOINT_ID}/run",
+                headers=headers,
+                json={"input": job_input},
+            )
+            submit_response.raise_for_status()
+            job_id = submit_response.json()["id"]
+    except httpx.HTTPError as exc:
+        return None, "", f"runpod qwen image submit failed: {exc}"
+
+    # Poll separately from submit: once a job exists on RunPod it keeps
+    # running (and billing) regardless of what this client does, so a
+    # transient error here (observed in practice: an occasional 500 from
+    # RunPod's own /status endpoint on a long-running job, with the job
+    # itself completing normally seconds later) must not abort the whole
+    # call and orphan the job — retry status checks until the deadline
+    # instead, only giving up (and attempting a cancel) once that's spent.
+    deadline = time.monotonic() + RUNPOD_QWEN_IMAGE_TIMEOUT_SECONDS
+    status_resp: dict = {}
+    last_poll_error = ""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        while time.monotonic() < deadline:
+            await asyncio.sleep(5)
+            try:
+                status_response = await client.get(
+                    f"{base}/{RUNPOD_QWEN_IMAGE_ENDPOINT_ID}/status/{job_id}",
+                    headers=headers,
+                )
+                status_response.raise_for_status()
+                status_resp = status_response.json()
+            except httpx.HTTPError as exc:
+                last_poll_error = str(exc)
+                continue
+            if status_resp.get("status") not in ("IN_QUEUE", "IN_PROGRESS"):
+                break
+        else:
+            try:
+                await client.post(
+                    f"{base}/{RUNPOD_QWEN_IMAGE_ENDPOINT_ID}/cancel/{job_id}",
+                    headers=headers,
+                )
+            except httpx.HTTPError:
+                pass
+            status_note = status_resp.get("status", "IN_QUEUE")
+            poll_note = f"; last poll error: {last_poll_error}" if last_poll_error else ""
+            return (
+                None,
+                "",
+                f"runpod qwen image job {job_id} timed out after "
+                f"{RUNPOD_QWEN_IMAGE_TIMEOUT_SECONDS:.0f}s (still "
+                f"{status_note} — endpoint workers.max may be 0){poll_note}",
+            )
+
+    status = status_resp.get("status")
+    if status != "COMPLETED":
+        return None, "", f"runpod qwen image job {status}: {json.dumps(status_resp)[:800]}"
+
+    output = status_resp.get("output") or {}
+    if output.get("error"):
+        return None, "", f"runpod qwen image worker error: {output['error']}"
+    if output.get("node_errors"):
+        return None, "", f"runpod qwen image node_errors: {json.dumps(output['node_errors'])[:800]}"
+
+    image_item = None
+    for node_out in (output.get("outputs") or {}).values():
+        for lst in node_out.values():
+            if not isinstance(lst, list):
+                continue
+            for item in lst:
+                if isinstance(item, dict) and item.get("r2_key"):
+                    image_item = item
+                    break
+            if image_item:
+                break
+        if image_item:
+            break
+    if image_item is None:
+        return None, "", "runpod qwen image job completed but had no output image"
+
+    try:
+        data = await asyncio.to_thread(_runpod_download_output_sync, image_item["r2_key"])
+    except Exception as exc:
+        return None, "", f"runpod qwen image download from R2 failed: {exc}"
+
+    sha = hashlib.sha256(data).hexdigest()
+    if image_item.get("sha256") and sha != image_item["sha256"]:
+        return None, "", "runpod qwen image downloaded file sha256 mismatch"
+
+    return data, "", ""
+
+
 async def _call_huimeng_image_api(
     *,
     api_key: str,
@@ -4497,6 +5135,9 @@ class NanoBananaGridGenerator:
         )
         self.huimeng_image_quality = config.get("huimeng_image_quality", "medium")
         self.default_image_size = config.get("image_size", "1K")
+        # Selection-level resolution override (e.g. "Google Gemini (2K)" in
+        # the Image source picker) — see generate_grid()'s force_image_size.
+        self.force_image_size = config.get("force_image_size") or None
         self.newapi_request_schema = config.get("newapi_request_schema") or {}
         self.newapi_model_params = config.get("newapi_model_params") or {}
         self.mode = config.get("mode", "3x3")
@@ -4514,6 +5155,10 @@ class NanoBananaGridGenerator:
                 key_name = "OPENAI_API_KEY"
             elif self.provider == "newapi":
                 key_name = "NEWAPI_API_KEY"
+            elif self.provider == "qwen":
+                key_name = "QWEN_API_KEY"
+            elif self.provider == "runpod_qwen":
+                key_name = "RUNPOD_API_KEY"
             else:
                 key_name = "GOOGLE_AI_API_KEY"
             raise ValueError(f"API key not set. Set {key_name} environment variable.")
@@ -5167,6 +5812,11 @@ class NanoBananaGridGenerator:
                         aspect_ratio = "21:9"
                         image_size = "2K"
 
+            # Selection-level resolution (e.g. "Google Gemini (2K)" in the
+            # Image source picker) overrides the grid-shape-driven default
+            # above, but an explicit per-call force_image_size still wins.
+            if self.force_image_size:
+                image_size = self.force_image_size
             if force_image_size:
                 image_size = force_image_size
 
@@ -5308,6 +5958,58 @@ class NanoBananaGridGenerator:
                     message = "Gemini WebAI 未返回图像数据"
                     if webai_error:
                         message = f"{message}: {webai_error}"
+                    return _usage_fail(message)
+            elif self.provider == "qwen":
+                print(
+                    f"[NanoBananaPro] 调用 Qwen Image ({self.model}) 生成网格图 "
+                    f"(分辨率: {image_size}, 比例: {aspect_ratio})..."
+                )
+                prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
+                    contents,
+                    include_mime=True,
+                )
+                reference_images = [
+                    (_webai_ref_filename(i, mime), data, mime)
+                    for i, (data, mime) in enumerate(ref_bytes)
+                ]
+                image_bytes, _text, qwen_error = await _call_qwen_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt_text,
+                    reference_images=reference_images or None,
+                    image_config={"aspect_ratio": aspect_ratio, "image_size": image_size},
+                    base_url=self.base_url,
+                )
+                if not image_bytes:
+                    message = "Qwen Image 未返回图像数据"
+                    if qwen_error:
+                        message = f"{message}: {qwen_error}"
+                    return _usage_fail(message)
+            elif self.provider == "runpod_qwen":
+                print(
+                    f"[NanoBananaPro] 调用 RunPod Qwen Image 2.1 生成网格图 "
+                    f"(分辨率: {image_size}, 比例: {aspect_ratio})..."
+                )
+                prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
+                    contents,
+                    include_mime=True,
+                )
+                reference_images = [
+                    (_webai_ref_filename(i, mime), data, mime)
+                    for i, (data, mime) in enumerate(ref_bytes)
+                ]
+                image_bytes, _text, runpod_qwen_error = await _call_runpod_qwen_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt_text,
+                    reference_images=reference_images or None,
+                    image_config={"aspect_ratio": aspect_ratio, "image_size": image_size},
+                    base_url=self.base_url,
+                )
+                if not image_bytes:
+                    message = "RunPod Qwen Image 未返回图像数据"
+                    if runpod_qwen_error:
+                        message = f"{message}: {runpod_qwen_error}"
                     return _usage_fail(message)
             else:
                 # ===== Google 直连分支 =====
@@ -6263,6 +6965,8 @@ class NanoBananaGridGenerator:
                     aspect_ratio = "21:9"
                     image_size = "2K"
 
+        if self.force_image_size:
+            image_size = self.force_image_size
         if force_image_size:
             image_size = force_image_size
 
@@ -7472,6 +8176,60 @@ CRITICAL: Keep exact composition from sketch. Only add color, texture, and light
                     return output_path
                 if error_detail:
                     print(f"[Render] Gemini WebAI 失败详情: {error_detail}")
+                return None
+            elif self.provider == "qwen":
+                prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
+                    contents,
+                    include_mime=True,
+                )
+                reference_images = [
+                    (_webai_ref_filename(i, mime), data, mime)
+                    for i, (data, mime) in enumerate(ref_bytes)
+                ]
+                image_bytes, _text_response, error_detail = await _call_qwen_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt_text,
+                    reference_images=reference_images or None,
+                    image_config={
+                        "aspect_ratio": target_aspect_ratio or "9:16",
+                        "image_size": "1K",
+                    },
+                    base_url=self.base_url,
+                )
+                if image_bytes:
+                    with open(output_path, "wb") as f:
+                        f.write(image_bytes)
+                    return output_path
+                if error_detail:
+                    print(f"[Render] Qwen Image 失败详情: {error_detail}")
+                return None
+            elif self.provider == "runpod_qwen":
+                prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
+                    contents,
+                    include_mime=True,
+                )
+                reference_images = [
+                    (_webai_ref_filename(i, mime), data, mime)
+                    for i, (data, mime) in enumerate(ref_bytes)
+                ]
+                image_bytes, _text_response, error_detail = await _call_runpod_qwen_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt_text,
+                    reference_images=reference_images or None,
+                    image_config={
+                        "aspect_ratio": target_aspect_ratio or "9:16",
+                        "image_size": "1K",
+                    },
+                    base_url=self.base_url,
+                )
+                if image_bytes:
+                    with open(output_path, "wb") as f:
+                        f.write(image_bytes)
+                    return output_path
+                if error_detail:
+                    print(f"[Render] RunPod Qwen Image 失败详情: {error_detail}")
                 return None
             else:
                 # ===== Google 直连分支 =====

@@ -42,6 +42,8 @@ from novelvideo.generators.nanobanana_grid import (
     _call_newapi_image_api,
     _call_openai_image_api,
     _call_openrouter_image_api,
+    _call_qwen_image_api,
+    _call_runpod_qwen_image_api,
     _call_webai_chat_image_api,
     generate_reference_edit_image,
     generate_text_to_image,
@@ -189,6 +191,10 @@ class NanoBananaCharacterGenerator:
         self.model = config["model"]
         self.base_url = config.get("base_url", "")
         self.openai_image_quality = config.get("openai_image_quality", "medium")
+        # Selection-level resolution override (e.g. "Google Gemini (2K)" in
+        # the Image source picker) — wins over each method's own image_size
+        # default/param. See IMAGE_GENERATION_SELECTIONS in config.py.
+        self.force_image_size = config.get("force_image_size") or None
 
         if not self.api_key:
             if self.provider == "openrouter":
@@ -199,6 +205,10 @@ class NanoBananaCharacterGenerator:
                 key_name = "NEWAPI_API_KEY"
             elif self.provider == "openai":
                 key_name = "OPENAI_API_KEY"
+            elif self.provider == "qwen":
+                key_name = "QWEN_API_KEY"
+            elif self.provider == "runpod_qwen":
+                key_name = "RUNPOD_API_KEY"
             else:
                 key_name = "GOOGLE_AI_API_KEY"
             raise ValueError(f"API key not set. " f"Set {key_name} environment variable.")
@@ -1168,6 +1178,7 @@ STRICT REQUIREMENTS (MUST AVOID):
         Returns:
             图像字节数据，失败返回 None
         """
+        image_size = self.force_image_size or image_size
         if self.egress_context is not None and self.egress_context.is_organization:
             if not output_path:
                 raise ValueError("organization character image requires an output path")
@@ -1285,6 +1296,38 @@ STRICT REQUIREMENTS (MUST AVOID):
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] Gemini WebAI 失败详情: {error_detail}")
                     raise RuntimeError(error_detail)
+            elif self.provider == "qwen":
+                print(f"[NanoBanana Character] 调用 Qwen Image ({self.model}) 生成图像...")
+                image_bytes, _text_response, error_detail = await _call_qwen_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt,
+                    reference_images=None,
+                    image_config={
+                        "aspect_ratio": aspect_ratio,
+                        "image_size": image_size,
+                    },
+                    base_url=self.base_url,
+                )
+                if not image_bytes and error_detail:
+                    print(f"[NanoBanana Character] Qwen Image 失败详情: {error_detail}")
+                    raise RuntimeError(error_detail)
+            elif self.provider == "runpod_qwen":
+                print(f"[NanoBanana Character] 调用 RunPod Qwen Image 2.1 生成图像...")
+                image_bytes, _text_response, error_detail = await _call_runpod_qwen_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt,
+                    reference_images=None,
+                    image_config={
+                        "aspect_ratio": aspect_ratio,
+                        "image_size": image_size,
+                    },
+                    base_url=self.base_url,
+                )
+                if not image_bytes and error_detail:
+                    print(f"[NanoBanana Character] RunPod Qwen Image 失败详情: {error_detail}")
+                    raise RuntimeError(error_detail)
             else:
                 # Google 直连模式
                 from google.genai import types
@@ -1393,6 +1436,7 @@ STRICT REQUIREMENTS (MUST AVOID):
         Returns:
             图像字节数据，失败返回 None
         """
+        image_size = self.force_image_size or image_size
 
         if self.egress_context is not None and self.egress_context.is_organization:
             if not output_path:
@@ -1580,6 +1624,66 @@ STRICT REQUIREMENTS (MUST AVOID):
                 )
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] Gemini WebAI 失败详情: {error_detail}")
+                    raise RuntimeError(error_detail)
+            elif self.provider == "qwen":
+                print(
+                    f"[NanoBanana Character] 调用 Qwen Image ({self.model}) 生成图像（带参考图）..."
+                )
+                ref_images = []
+                if reference_image_bytes:
+                    ref_images.append(_named_image_ref(reference_image_bytes, reference_image_name))
+                if additional_image_bytes:
+                    additional_names = list(additional_image_names or [])
+                    for idx, image_bytes_item in enumerate(additional_image_bytes):
+                        ref_images.append(
+                            _named_image_ref(
+                                image_bytes_item,
+                                additional_names[idx] if idx < len(additional_names) else "",
+                            )
+                        )
+                image_bytes, _text_response, error_detail = await _call_qwen_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt,
+                    reference_images=ref_images or None,
+                    image_config={
+                        "aspect_ratio": aspect_ratio,
+                        "image_size": image_size,
+                    },
+                    base_url=self.base_url,
+                )
+                if not image_bytes and error_detail:
+                    print(f"[NanoBanana Character] Qwen Image 失败详情: {error_detail}")
+                    raise RuntimeError(error_detail)
+            elif self.provider == "runpod_qwen":
+                print(
+                    f"[NanoBanana Character] 调用 RunPod Qwen Image 2.1 生成图像（带参考图）..."
+                )
+                ref_images = []
+                if reference_image_bytes:
+                    ref_images.append(_named_image_ref(reference_image_bytes, reference_image_name))
+                if additional_image_bytes:
+                    additional_names = list(additional_image_names or [])
+                    for idx, image_bytes_item in enumerate(additional_image_bytes):
+                        ref_images.append(
+                            _named_image_ref(
+                                image_bytes_item,
+                                additional_names[idx] if idx < len(additional_names) else "",
+                            )
+                        )
+                image_bytes, _text_response, error_detail = await _call_runpod_qwen_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=prompt,
+                    reference_images=ref_images or None,
+                    image_config={
+                        "aspect_ratio": aspect_ratio,
+                        "image_size": image_size,
+                    },
+                    base_url=self.base_url,
+                )
+                if not image_bytes and error_detail:
+                    print(f"[NanoBanana Character] RunPod Qwen Image 失败详情: {error_detail}")
                     raise RuntimeError(error_detail)
             else:
                 # Google 直连模式

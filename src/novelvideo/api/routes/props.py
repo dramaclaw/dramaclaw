@@ -363,7 +363,7 @@ async def generate_prop_reference(
             resolve_prop_reference_image_model,
         )
 
-        _, selected_model = _prop_reference_image_source(model)
+        _, selected_model, _ = _prop_reference_image_source(model)
         pricing_model = selected_model or resolve_prop_reference_image_model()
         queued = await get_task_backend().enqueue_project_task(
             ctx,

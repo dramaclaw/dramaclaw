@@ -7539,6 +7539,22 @@
       "authLabel": "Xác thực",
       "authReady": "Đã tạo token"
     },
+    "runpodWorker": {
+      "title": "RunPod Qwen Image 2.1 Worker",
+      "badge": "dev-only",
+      "description": "GPU dùng chung cho nguồn ảnh \"Qwen Image 2.1 RunPod\". Mặc định đang tắt để không tính phí theo giờ khi không dùng — bật trước khi sinh ảnh, tắt lúc xong.",
+      "statusLabel": "Trạng thái",
+      "statusRunning": "Đang chạy",
+      "statusStopped": "Đã tắt",
+      "liveLabel": "Worker",
+      "liveSummary": "rảnh {{idle}} · đang khởi động {{initializing}} · đang bận {{running}}",
+      "startButton": "Bật",
+      "stopButton": "Tắt",
+      "startedToast": "Đã bật worker RunPod",
+      "stoppedToast": "Đã tắt worker RunPod",
+      "startErrorFallback": "Bật worker RunPod thất bại",
+      "stopErrorFallback": "Tắt worker RunPod thất bại"
+    },
     "providers": "API Key",
     "providersDesc": "Cấu hình API key của các nhà cung cấp AI",
     "pricing": "Giá cả",

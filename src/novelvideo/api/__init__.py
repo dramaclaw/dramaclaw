@@ -63,6 +63,7 @@ from novelvideo.api.routes import (  # noqa: E402
     prompt_preview,
     props,
     release_notifications,
+    runpod_worker,
     scenes,
     scripts,
     styles,
@@ -121,6 +122,7 @@ api_router.include_router(pipeline.router, tags=["pipeline"])
 api_router.include_router(prompt_preview.router, tags=["prompt-preview"])
 api_router.include_router(model_gateway.router, tags=["model-gateway"])
 api_router.include_router(model_credits.router, tags=["model-credits"])
+api_router.include_router(runpod_worker.router, tags=["runpod-worker"])
 api_router.include_router(freezone.router)
 api_router.include_router(skill_imports.router)
 api_router.include_router(html_artifacts.router)

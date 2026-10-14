@@ -7885,6 +7885,22 @@
       "authLabel": "Auth",
       "authReady": "Token generated"
     },
+    "runpodWorker": {
+      "title": "RunPod Qwen Image 2.1 Worker",
+      "badge": "dev-only",
+      "description": "Shared GPU worker for the \"Qwen Image 2.1 RunPod\" image source. Stopped by default so it never bills by the hour — start it before generating, stop it when you're done.",
+      "statusLabel": "Status",
+      "statusRunning": "Running",
+      "statusStopped": "Stopped",
+      "liveLabel": "Workers",
+      "liveSummary": "idle {{idle}} · starting {{initializing}} · busy {{running}}",
+      "startButton": "Start",
+      "stopButton": "Stop",
+      "startedToast": "RunPod worker started",
+      "stoppedToast": "RunPod worker stopped",
+      "startErrorFallback": "Failed to start the RunPod worker",
+      "stopErrorFallback": "Failed to stop the RunPod worker"
+    },
     "providers": "API Key",
     "providersDesc": "Configure AI provider API keys",
     "pricing": "Pricing",

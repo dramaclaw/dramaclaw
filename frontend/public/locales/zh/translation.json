@@ -7885,6 +7885,22 @@
       "authLabel": "鉴权",
       "authReady": "已生成 token"
     },
+    "runpodWorker": {
+      "title": "RunPod Qwen Image 2.1 Worker",
+      "badge": "dev-only",
+      "description": "「Qwen Image 2.1 RunPod」图片来源共用的 GPU worker。默认关闭，不用时不按小时计费——生成前先启动，用完记得关闭。",
+      "statusLabel": "状态",
+      "statusRunning": "运行中",
+      "statusStopped": "已停止",
+      "liveLabel": "Worker",
+      "liveSummary": "空闲 {{idle}} · 启动中 {{initializing}} · 处理中 {{running}}",
+      "startButton": "启动",
+      "stopButton": "停止",
+      "startedToast": "RunPod worker 已启动",
+      "stoppedToast": "RunPod worker 已停止",
+      "startErrorFallback": "启动 RunPod worker 失败",
+      "stopErrorFallback": "停止 RunPod worker 失败"
+    },
     "providers": "密钥",
     "providersDesc": "配置 AI 服务商的 API 密钥",
     "pricing": "价格",
