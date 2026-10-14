@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 const dashboard = readFileSync("src/routes/_app/index.tsx", "utf8");
 const appLayout = readFileSync("src/routes/_app.tsx", "utf8");
 const worldRoute = readFileSync("src/routes/piko-world.tsx", "utf8");
+const worldLazyRoute = readFileSync("src/routes/piko-world.lazy.tsx", "utf8");
 const worldCanvas = readFileSync("src/features/piko-world/PikoWorldCanvas.tsx", "utf8");
 const worldShell = readFileSync("src/features/piko-world/PikoWorldShell.tsx", "utf8");
 const residentSelector = readFileSync(
@@ -25,6 +26,16 @@ const zh = JSON.parse(readFileSync("public/locales/zh/translation.json", "utf8")
 const en = JSON.parse(readFileSync("public/locales/en/translation.json", "utf8"));
 
 describe("Piko World 项目中心入口", () => {
+  it("在严格 CSP 下先安装 PixiJS 无 eval 实现", () => {
+    const cspAdapter = worldLazyRoute.indexOf('import "pixi.js/unsafe-eval";');
+    const worldExperience = worldLazyRoute.indexOf(
+      'import { PikoWorldExperience } from "@/features/piko-world/PikoWorldExperience";',
+    );
+
+    expect(cspAdapter).toBeGreaterThan(-1);
+    expect(worldExperience).toBeGreaterThan(cspAdapter);
+  });
+
   it("通过顶部统一入口进入世界，撤下项目中心悬浮入口", () => {
     const header = readFileSync("src/components/layout/header.tsx", "utf8");
     expect(dashboard).not.toContain("<PikoWorldFloatingEntry />");
