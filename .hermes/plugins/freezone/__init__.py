@@ -173,6 +173,12 @@ _PENDING_SKILL_STUDIO_DRAFTS: dict[str, dict[str, Any]] = {}
 # with values copied from the original prompt. The turn id prevents answers from
 # leaking into a later request on the same canvas.
 _PENDING_GENERATION_ANSWERS: dict[tuple[str, str, str], dict[str, Any]] = {}
+# Video model decisions are server-owned. A preflight result authorizes exactly
+# one following clarification card in the same project/canvas scope; this
+# prevents an agent from inventing candidates before submitting a plan.
+_PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS: dict[
+    tuple[str, str], dict[str, Any]
+] = {}
 # A revision conflict is a user-authorization boundary, not a retryable canvas
 # write error. Keep the canvas blocked until the user explicitly confirms the
 # current draft revision. This process-local guard covers the follow-up tool
@@ -1161,6 +1167,67 @@ def _workflow_bypass_clarification_error(
     }
 
 
+def _video_model_clarification_scope_key(
+    project: str | None, canvas: str | None
+) -> tuple[str, str]:
+    return (str(project or "").strip(), str(canvas or "").strip())
+
+
+def _remember_server_video_model_clarification(
+    project: str | None,
+    canvas: str | None,
+    result: dict[str, Any],
+) -> None:
+    question = result.get("question")
+    if not isinstance(question, dict) or question.get("id") not in {
+        "compatible_video_model",
+        "video_model_constraint_adjustment",
+    }:
+        return
+    _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS[
+        _video_model_clarification_scope_key(project, canvas)
+    ] = {
+        "expires_at": time.monotonic() + 300,
+        "question": deepcopy(question),
+    }
+
+
+def _take_server_video_model_clarification(
+    project: str | None,
+    canvas: str | None,
+    question_id: str,
+) -> dict[str, Any] | None:
+    key = _video_model_clarification_scope_key(project, canvas)
+    pending = _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS.get(key)
+    if not isinstance(pending, dict):
+        return None
+    question = pending.get("question")
+    if (
+        pending.get("expires_at", 0) < time.monotonic()
+        or not isinstance(question, dict)
+        or question.get("id") != question_id
+    ):
+        _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS.pop(key, None)
+        return None
+    _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS.pop(key, None)
+    return deepcopy(question)
+
+
+def _unverified_video_model_clarification_result() -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status": "unverified_video_model_clarification_rejected",
+        "code": "unverified_video_model_clarification_rejected",
+        "error": "Video model alternatives must be produced by WorkflowPlan preflight.",
+        "retryable": False,
+        "next_action": "submit_workflow_plan_for_preflight",
+        "agent_instruction": (
+            "Do not show this question. Submit the unchanged complete WorkflowPlan to "
+            "preflight, then show only the model question returned by the server."
+        ),
+    }
+
+
 def _unverified_video_model_clarification_error(
     questions: list[Any],
 ) -> dict[str, Any] | None:
@@ -1190,20 +1257,7 @@ def _unverified_video_model_clarification_error(
         )
         if not asks_for_compatible_video_model:
             continue
-        return {
-            "ok": False,
-            "status": "unverified_video_model_clarification_rejected",
-            "code": "unverified_video_model_clarification_rejected",
-            "error": (
-                "Video model alternatives must be produced by WorkflowPlan preflight."
-            ),
-            "retryable": False,
-            "next_action": "submit_workflow_plan_for_preflight",
-            "agent_instruction": (
-                "Do not show this question. Submit the unchanged complete WorkflowPlan to "
-                "preflight, then show only the model question returned by the server."
-            ),
-        }
+        return _unverified_video_model_clarification_result()
     return None
 
 
@@ -1249,47 +1303,36 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             )
         )
     )
-    if model_constraint_adjustment_requested:
-        from novelvideo.freezone.clarifications import (
-            video_model_constraint_adjustment_clarification,
-        )
-
-        canonical = video_model_constraint_adjustment_clarification()["question"]
-        questions = [
-            {
-                "id": canonical["id"],
-                "title": canonical["prompt"],
-                "mode": canonical["mode"],
-                "options": canonical["options"],
-            }
-        ]
-        generation_required_choices = None
-        args = {
-            **args,
-            "title": canonical["title"],
-            "description": "",
-            "allow_recommended": False,
-            "allow_skip": False,
-        }
     compatible_model_questions = [
         question
         for question in questions
         if isinstance(question, dict)
         and question.get("id") == "compatible_video_model"
     ]
-    if compatible_model_questions:
-        question = compatible_model_questions[0]
+    requested_server_question_id = (
+        "video_model_constraint_adjustment"
+        if model_constraint_adjustment_requested
+        else "compatible_video_model" if compatible_model_questions else ""
+    )
+    if requested_server_question_id:
+        question = _take_server_video_model_clarification(
+            project, canvas, requested_server_question_id
+        )
+        if question is None:
+            return tool_result(_unverified_video_model_clarification_result())
         questions = [
             {
-                "id": "compatible_video_model",
-                "title": str(question.get("title") or "确认兼容的视频模型"),
-                "mode": "single",
+                "id": requested_server_question_id,
+                "title": str(question.get("prompt") or "请选择下一步"),
+                "mode": str(question.get("mode") or "single"),
                 "options": _safe_list(question.get("options")),
             }
         ]
+        if model_constraint_adjustment_requested:
+            generation_required_choices = None
         args = {
             **args,
-            "title": str(question.get("title") or "确认兼容的视频模型"),
+            "title": str(question.get("title") or "选择下一步"),
             "description": "",
             "allow_recommended": False,
             "allow_skip": False,
@@ -6397,6 +6440,9 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             preflight, validated, project_id=project
         )
         if model_clarification is not None:
+            _remember_server_video_model_clarification(
+                project, canvas, model_clarification
+            )
             return tool_result(model_clarification)
         mode_clarification = _workflow_generation_mode_clarification(
             preflight, validated, project_id=project
@@ -7204,6 +7250,13 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
                     else {}
                 ),
             }
+        if action == "prepare" and error.get("required_choice") in {
+            "compatible_video_model",
+            "video_model_constraint_adjustment",
+        }:
+            _remember_server_video_model_clarification(
+                project_id, canvas_id, error
+            )
         error.setdefault("retryable", False)
         error.setdefault(
             "next_action",
@@ -7332,6 +7385,9 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             preflight, compiled, project_id=project_id
         )
         if model_clarification is not None:
+            _remember_server_video_model_clarification(
+                project_id, canvas_id, model_clarification
+            )
             return tool_result(model_clarification)
         mode_clarification = _workflow_generation_mode_clarification(
             preflight, compiled, project_id=project_id

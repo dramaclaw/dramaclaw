@@ -3848,6 +3848,13 @@ def test_generation_clarification_presents_server_owned_model_constraint_questio
         "_emit_clarification_event",
         lambda _project, _canvas, event: emitted.append(event) or "shown",
     )
+    from novelvideo.freezone.clarifications import (
+        video_model_constraint_adjustment_clarification,
+    )
+
+    plugin._remember_server_video_model_clarification(
+        None, None, video_model_constraint_adjustment_clarification()
+    )
 
     result = handlers["freezone_request_user_clarification"](
         {
@@ -3893,6 +3900,13 @@ def test_generation_clarification_replaces_agent_authored_constraint_options(
         plugin,
         "_emit_clarification_event",
         lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+    from novelvideo.freezone.clarifications import (
+        video_model_constraint_adjustment_clarification,
+    )
+
+    plugin._remember_server_video_model_clarification(
+        None, None, video_model_constraint_adjustment_clarification()
     )
 
     result = handlers["freezone_request_user_clarification"](
@@ -3956,7 +3970,7 @@ def test_generation_clarification_rejects_unverified_video_model_alternatives(
             "title": "需要确认兼容替代模型",
             "questions": [
                 {
-                    "id": "compatible_video_model_mode",
+                    "id": "compatible_video_model",
                     "title": "兼容的视频模型与生成模式",
                     "mode": "single",
                     "options": [
@@ -3987,6 +4001,25 @@ def test_generation_clarification_shows_only_server_model_question(monkeypatch):
         plugin,
         "_emit_clarification_event",
         lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+    plugin._remember_server_video_model_clarification(
+        None,
+        None,
+        {
+            "question": {
+                "id": "compatible_video_model",
+                "title": "确认兼容的视频模型",
+                "prompt": "请选择服务端验证过的兼容模型。",
+                "mode": "single",
+                "options": [
+                    {
+                        "id": "verified-model",
+                        "label": "Verified Model",
+                        "description": "服务端验证通过。",
+                    }
+                ],
+            }
+        },
     )
 
     result = handlers["freezone_request_user_clarification"](
@@ -4019,13 +4052,14 @@ def test_generation_clarification_shows_only_server_model_question(monkeypatch):
     assert result == "shown"
     assert len(emitted) == 1
     event = emitted[0]
+    assert event["title"] == "确认兼容的视频模型"
     assert event["description"] == ""
     assert event["allow_recommended"] is False
     assert event["allow_skip"] is False
     assert event["questions"] == [
         {
             "id": "compatible_video_model",
-            "title": "确认兼容的视频模型",
+            "title": "请选择服务端验证过的兼容模型。",
             "mode": "single",
             "options": [
                 {
