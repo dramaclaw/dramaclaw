@@ -11071,7 +11071,8 @@ _NODE_TYPE_DESCRIPTION = (
     "parameters.sceneEdit.description (primitive props, cameras, characters, lights). "
     "The same sceneEdit also takes a timeline section for walk paths, follow cameras, "
     "character motions and cuts, and props may use built-in model library ids. "
-    "Reference-image-to-blockout generation stays with the user."
+    "A reference image can be blocked out only when the image itself is attached to "
+    "the turn as image input; a file name or link does not show you the image."
 )
 
 _NODE_TYPE_SCHEMA = {

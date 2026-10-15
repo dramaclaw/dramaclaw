@@ -793,7 +793,7 @@ const PREVIZ_SCENE_EDIT_DESCRIPTION = [
   "Write-only batch edit of the 3D blocking scene; current_value is the read-only scene (objects with their clips, cuts, durationFrames, fps) and must never be sent back.",
   "Shape: { add?: [...], update?: [...], remove?: [objectId, ...], timeline?: {...} }. The batch is atomic: any invalid entry rejects all of it. Unknown fields are rejected.",
   "add entry: { kind: 'prop'|'camera'|'character'|'light', position: [x,y,z], name?, ref?, rotation?: [x,y,z], scale?: [x,y,z], lookAt?: [x,y,z], visible? }. ref is a temporary name you choose so timeline entries in the same batch can point at this new object.",
-  "prop needs exactly one of shape (primitive: cube, cylinder, sphere, cone, wedge, plane, torus...) or model (a model library id listed below; never a URL); camera accepts focalMm (12-200); character accepts color '#rrggbb'; light accepts color and lightType 'key'|'point'|'spot'.",
+  "prop needs exactly one of shape (primitive: cube, cylinder, sphere, cone, wedge, plane, torus...) or model (a model library id listed below; never a URL); there is no default shape, a prop with neither is rejected; camera accepts focalMm (12-200); character accepts color '#rrggbb'; light accepts color and lightType 'key'|'point'|'spot'.",
   "update entry: { id, ...same optional fields }. Locked objects cannot be updated, removed or animated.",
   "Units: meters, Y is up, rotation in degrees. A primitive is 1 m on its longest edge, centered on X/Z with its bottom at the object position, so a 4 m long, 2 m high, 0.2 m thick wall is a cube with scale [4, 2, 0.2] and position y = 0.",
   "Aim a static camera with lookAt (the point it should look at) instead of computing rotation. Do not set both.",
@@ -805,7 +805,8 @@ const PREVIZ_SCENE_EDIT_DESCRIPTION = [
   "To change an existing clip, put its id in removeClips and add the replacement in the same batch. Overlapping path or follow clips on one object are allowed; the one that starts later wins.",
   `Motions — ${catalogLine(PREVIZ_SCENE_CATALOG.motions)}.`,
   `Model library ids — ${catalogLine(PREVIZ_SCENE_CATALOG.models)}.`,
-  "Not available here: reference-image-to-blockout generation, audio clips, importing model or motion files.",
+  "Blocking out from a reference image: only when the image itself is attached to the turn as image input, read its layout, proportions and viewpoint and rebuild them with primitives plus a camera matching the shot. A file name or link does not show you the image; then say you cannot see it and suggest the editor's reference-image-to-blockout tool.",
+  "Not available here: audio clips, importing model or motion files.",
 ].join(" ");
 
 function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableFieldSchema> {
