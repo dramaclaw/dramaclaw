@@ -3938,6 +3938,106 @@ def test_generation_clarification_replaces_agent_authored_constraint_options(
     assert "删除多图参考" not in serialized
 
 
+def test_generation_clarification_rejects_unverified_video_model_alternatives(
+    monkeypatch,
+):
+    """Issue #742: model alternatives must come from WorkflowPlan preflight."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    emitted = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "title": "需要确认兼容替代模型",
+            "questions": [
+                {
+                    "id": "compatible_video_model_mode",
+                    "title": "兼容的视频模型与生成模式",
+                    "mode": "single",
+                    "options": [
+                        {
+                            "id": "newapi_seedance-2.0-fast|allReference",
+                            "label": "Seedance2.0 Fast + allReference",
+                        },
+                        {
+                            "id": "newapi_happyhorse-1.0|imageReference",
+                            "label": "HappyHorse 1.0 + imageReference",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert result["status"] == "unverified_video_model_clarification_rejected"
+    assert result["next_action"] == "submit_workflow_plan_for_preflight"
+    assert emitted == []
+
+
+def test_generation_clarification_shows_only_server_model_question(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    emitted = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "allow_recommended": True,
+            "description": "Agent-authored combined explanation",
+            "questions": [
+                {
+                    "id": "compatible_video_model",
+                    "title": "确认兼容的视频模型",
+                    "description": "Agent-authored option explanation",
+                    "mode": "single",
+                    "options": [
+                        {
+                            "id": "verified-model",
+                            "label": "Verified Model",
+                            "description": "服务端验证通过。",
+                        }
+                    ],
+                },
+                {
+                    "id": "audio_voice_handling",
+                    "title": "Agent-authored extra question",
+                    "options": [{"id": "drop_speech", "label": "Drop speech"}],
+                },
+            ],
+        }
+    )
+
+    assert result == "shown"
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert event["description"] == ""
+    assert event["allow_recommended"] is False
+    assert event["allow_skip"] is False
+    assert event["questions"] == [
+        {
+            "id": "compatible_video_model",
+            "title": "确认兼容的视频模型",
+            "mode": "single",
+            "options": [
+                {
+                    "id": "verified-model",
+                    "label": "Verified Model",
+                    "description": "服务端验证通过。",
+                }
+            ],
+        }
+    ]
+
+
 def test_generation_clarification_reuses_confirmed_model_for_dependent_choice(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}

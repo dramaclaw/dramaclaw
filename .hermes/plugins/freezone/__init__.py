@@ -1161,6 +1161,52 @@ def _workflow_bypass_clarification_error(
     }
 
 
+def _unverified_video_model_clarification_error(
+    questions: list[Any],
+) -> dict[str, Any] | None:
+    """Require model replacement choices to originate from workflow preflight."""
+    allowed_question_ids = {
+        "video_model",
+        "compatible_video_model",
+        "video_model_constraint_adjustment",
+    }
+    for question in questions:
+        if not isinstance(question, dict):
+            continue
+        question_id = str(question.get("id") or "").strip()
+        if question_id in allowed_question_ids:
+            continue
+        text = " ".join(
+            str(question.get(field) or "")
+            for field in ("id", "title", "description")
+        ).casefold()
+        asks_for_compatible_video_model = (
+            "video_model" in question_id.casefold()
+            or "model_mode" in question_id.casefold()
+            or (
+                ("compatible" in text or "兼容" in text or "替代" in text)
+                and ("video model" in text or "视频模型" in text)
+            )
+        )
+        if not asks_for_compatible_video_model:
+            continue
+        return {
+            "ok": False,
+            "status": "unverified_video_model_clarification_rejected",
+            "code": "unverified_video_model_clarification_rejected",
+            "error": (
+                "Video model alternatives must be produced by WorkflowPlan preflight."
+            ),
+            "retryable": False,
+            "next_action": "submit_workflow_plan_for_preflight",
+            "agent_instruction": (
+                "Do not show this question. Submit the unchanged complete WorkflowPlan to "
+                "preflight, then show only the model question returned by the server."
+            ),
+        }
+    return None
+
+
 def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     project = (
         str(
@@ -1225,6 +1271,32 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             "allow_recommended": False,
             "allow_skip": False,
         }
+    compatible_model_questions = [
+        question
+        for question in questions
+        if isinstance(question, dict)
+        and question.get("id") == "compatible_video_model"
+    ]
+    if compatible_model_questions:
+        question = compatible_model_questions[0]
+        questions = [
+            {
+                "id": "compatible_video_model",
+                "title": str(question.get("title") or "确认兼容的视频模型"),
+                "mode": "single",
+                "options": _safe_list(question.get("options")),
+            }
+        ]
+        args = {
+            **args,
+            "title": str(question.get("title") or "确认兼容的视频模型"),
+            "description": "",
+            "allow_recommended": False,
+            "allow_skip": False,
+        }
+    unverified_model_error = _unverified_video_model_clarification_error(questions)
+    if unverified_model_error is not None:
+        return tool_result(unverified_model_error)
     if generation_media_types is not None or generation_required_choices is not None:
         if generation_media_types is not None and generation_required_choices is not None:
             return tool_result({
