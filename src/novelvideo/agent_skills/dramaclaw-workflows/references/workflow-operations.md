@@ -31,8 +31,10 @@ model rejects the mode or a shot duration (`model_capability_unsupported`), keep
 mode, per-shot duration, ratio, resolution, and audio choice. Returned `compatible_models` have
 already been intersected across every shot using the rejected model. If candidates exist,
 preparation returns `video_model_clarification_required`: show its question and switch only after
-the user confirms the cost/quality tradeoff. If there are no candidates, do not probe models from
-memory or retry known-invalid values; ask which existing constraint the user wants to change.
+the user confirms the cost/quality tradeoff. This confirmation remains mandatory when an
+independent voice blocker is also present; after the confirmed model is applied, the next preflight
+reports the unresolved voice choice. If there are no candidates, do not probe models from memory
+or retry known-invalid values; ask which existing constraint the user wants to change.
 
 Bindings refer to existing plan node IDs:
 

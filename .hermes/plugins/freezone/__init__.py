@@ -4490,7 +4490,19 @@ def _workflow_model_reselection_clarification(
         and isinstance(blocker.get("compatible_models"), list)
         and str(blocker.get("path") or "").endswith((".genMode", ".durationSec"))
     ]
-    if len(relevant) != len(blockers):
+    # A required voice is an independent, later user decision. Surface the
+    # model replacement first so the agent cannot infer it from a generic
+    # failure payload, then let the next preflight report the voice blocker.
+    unhandled = [
+        blocker
+        for blocker in blockers
+        if blocker not in relevant
+        and not (
+            isinstance(blocker, dict)
+            and blocker.get("code") == "audio_voice_required"
+        )
+    ]
+    if not relevant or unhandled:
         return None
 
     candidate_order = [str(value).strip() for value in relevant[0]["compatible_models"]]

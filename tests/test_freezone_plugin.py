@@ -5578,6 +5578,91 @@ def test_prepare_exact_plan_returns_video_model_clarification(monkeypatch, tmp_p
     assert result["question"]["options"][0]["id"] == "compatible"
 
 
+def test_prepare_exact_plan_prioritizes_video_model_clarification_with_voice_blocker(
+    monkeypatch, tmp_path
+):
+    """Issue #742: an independent voice blocker must not expose a compatible
+    replacement in a generic failure where the agent can select it itself."""
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "nodes": [
+            {
+                "id": "shot",
+                "node_type": "videoNode",
+                "data": {"model": "selected", "durationSec": 3},
+            },
+            {
+                "id": "audio-layer",
+                "node_type": "audioNode",
+                "data": {"voiceAvailable": False},
+            },
+        ],
+        "edges": [],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda value: {"ok": True, "skill_id": "video-ad", "plan": value},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: {
+            "status": "blocked",
+            "warnings": [],
+            "blockers": [
+                {
+                    "path": "runtime.models.shot.durationSec",
+                    "code": "model_capability_unsupported",
+                    "message": "selected requires at least four seconds",
+                    "compatible_models": ["compatible"],
+                    "recovery": "choose_compatible_model",
+                },
+                {
+                    "path": "runtime.audio.audio-layer.voiceRef",
+                    "code": "audio_voice_required",
+                    "message": "required speech needs a voice",
+                    "recovery": "select_custom_voice",
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "data": [{"id": "compatible", "label": "Compatible Model"}],
+        },
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_preflight_failure",
+        lambda value: {
+            "ok": False,
+            "status": "workflow_preflight_failed",
+            "preflight": value,
+        },
+    )
+
+    result = plugin._handle_prepare_workflow_plan_draft({"plan": plan})
+
+    assert result["ok"] is True
+    assert result["status"] == "video_model_clarification_required"
+    assert result["draft_created"] is False
+    assert result["affected_node_ids"] == ["shot"]
+    assert result["preflight"]["blockers"][1]["code"] == "audio_voice_required"
+    assert result["question"]["options"] == [
+        {
+            "id": "compatible",
+            "label": "Compatible Model",
+            "description": "支持当前镜头的参考模式、时长及已确认生成参数。",
+        }
+    ]
+
+
 def test_no_compatible_video_model_stops_retry_loop_and_asks_to_relax_constraints():
     plugin = _load_plugin_module()
     preflight = {
