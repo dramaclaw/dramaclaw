@@ -18,7 +18,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
@@ -81,6 +81,7 @@ from novelvideo.chat.runtime_history import (
     _split_trace_contents,
     parse_codex_history_item,
 )
+from novelvideo.chat.turn_images import codex_image_input_enabled, image_data_urls
 from novelvideo.chat.presentation_text import (
     _completion_text_or_existing as _completion_text_or_existing,
     _is_completion_notice as _is_completion_notice,
@@ -3806,6 +3807,7 @@ async def stream_assistant_reply(
     egress_project_id: str | None = None,
     backend: str | None = None,
     execution_context: AgentExecutionContext | None = None,
+    image_paths: Sequence[Path] = (),
 ) -> dict[str, Any]:
     if execution_context is not None:
         if project != execution_context.project_id:
@@ -3875,6 +3877,7 @@ async def stream_assistant_reply(
                     if execution_context is not None
                     else None
                 ),
+                image_paths=image_paths,
             )
         if backend == "hermes":
             return await _stream_assistant_reply_hermes(
@@ -4991,6 +4994,7 @@ async def _stream_assistant_reply_codex(
     route_prompt: str | None = None,
     agent_profile: str | None = None,
     canvas_id: str | None = None,
+    image_paths: Sequence[Path] = (),
 ) -> dict[str, Any]:
     assistant_text = ""
     tool_text = ""
@@ -5119,10 +5123,18 @@ async def _stream_assistant_reply_codex(
             agent_prompt += await _canvas_background_result_context_for_scope(
                 username, store_scope
             )
+        turn_images = (
+            await image_data_urls(image_paths)
+            if image_paths and codex_image_input_enabled()
+            else []
+        )
+        # Only pass the keyword when there is something to send: development
+        # adapters implement the plain ``stream(prompt)`` port.
+        stream_kwargs = {"images": turn_images} if turn_images else {}
 
         async def turn_events():
             nonlocal assistant_text, turn_disposition
-            async for event in thread.stream(agent_prompt):
+            async for event in thread.stream(agent_prompt, **stream_kwargs):
                 yield event
             if not (
                 structured_canvas_reply

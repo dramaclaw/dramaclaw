@@ -7,7 +7,7 @@ import os
 import threading
 import tomllib
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Literal, Sequence
 
 from novelvideo.chat.runtime_port import (
     AgentRuntimeThreadPort,
@@ -1177,21 +1177,24 @@ def _start_codex_turn(
     prompt: str,
     turn_metadata: dict[str, str],
     output_schema: dict[str, Any] | None = None,
+    images: Sequence[str] = (),
 ) -> Any:
     """Start a turn with metadata omitted by the 0.147 generated facade.
 
     App Server 0.147 already accepts ``responsesapiClientMetadata``; only the
     generated Python convenience method lagged behind the protocol. Sending a
     raw params mapping keeps the credential scoped to the turn context instead
-    of the long-lived thread configuration.
+    of the long-lived thread configuration. ``images`` are data URLs sent as
+    image input after the prompt text.
     """
 
-    if not turn_metadata and output_schema is None:
-        from openai_codex import TextInput
+    from openai_codex._inputs import ImageInput, TextInput, _to_wire_input
 
+    if not turn_metadata and output_schema is None:
+        if images:
+            return thread.turn([TextInput(prompt), *map(ImageInput, images)])
         return thread.turn(TextInput(prompt))
 
-    from openai_codex._inputs import TextInput, _normalize_run_input, _to_wire_input
     from openai_codex.api import TurnHandle
 
     if output_schema is not None:
@@ -1202,7 +1205,7 @@ def _start_codex_turn(
             else "Your final response must be exactly one JSON object matching the supplied schema."
         )
         prompt += "\n\n" + contract + "\nFinal response JSON schema: " + json.dumps(output_schema, ensure_ascii=False)
-    wire_input = _to_wire_input(_normalize_run_input(TextInput(prompt)))
+    wire_input = _to_wire_input([TextInput(prompt), *map(ImageInput, images)])
     params: dict[str, Any] = {}
     if turn_metadata:
         params["responsesapiClientMetadata"] = dict(turn_metadata)
@@ -1306,7 +1309,9 @@ class CodexThread:
         self._output_schema = output_schema
         self.id = thread_id
 
-    async def stream(self, prompt: str) -> AsyncIterator[ChatBackendEvent]:
+    async def stream(
+        self, prompt: str, *, images: Sequence[str] = ()
+    ) -> AsyncIterator[ChatBackendEvent]:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         current_turn_id: str | None = None
@@ -1381,7 +1386,11 @@ class CodexThread:
                 )
                 self.id = thread.id
                 turn = _start_codex_turn(
-                    thread, prompt, self._turn_metadata, self._output_schema
+                    thread,
+                    prompt,
+                    self._turn_metadata,
+                    self._output_schema,
+                    images=images,
                 )
                 nonlocal current_turn_id
                 current_turn_id = turn.id

@@ -257,6 +257,51 @@ def test_output_schema_is_sent_even_without_turn_metadata():
     assert calls == [{"outputSchema": schema}]
 
 
+@pytest.mark.parametrize("output_schema", [None, {"type": "object"}])
+def test_turn_images_follow_the_prompt_as_image_input(output_schema):
+    turns = []
+    raw_starts = []
+
+    class FakeClient:
+        def turn_start(self, thread_id, input_items, params=None):
+            raw_starts.append(input_items)
+            return SimpleNamespace(turn=SimpleNamespace(id="turn-raw"))
+
+    class FakeThread:
+        id = "thread-images"
+        _client = FakeClient()
+
+        def turn(self, items):
+            turns.append(items)
+            return SimpleNamespace(id="turn-facade")
+
+    _start_codex_turn(
+        FakeThread(),
+        "hello",
+        {},
+        output_schema,
+        images=["data:image/jpeg;base64,AAA", "data:image/jpeg;base64,BBB"],
+    )
+
+    if output_schema is None:
+        from openai_codex._inputs import ImageInput, TextInput
+
+        assert turns == [
+            [
+                TextInput("hello"),
+                ImageInput("data:image/jpeg;base64,AAA"),
+                ImageInput("data:image/jpeg;base64,BBB"),
+            ]
+        ]
+    else:
+        (items,) = raw_starts
+        assert items[0]["type"] == "text"
+        assert items[1:] == [
+            {"type": "image", "url": "data:image/jpeg;base64,AAA"},
+            {"type": "image", "url": "data:image/jpeg;base64,BBB"},
+        ]
+
+
 def test_codex_149_sdk_exposes_required_runtime_notifications():
     from importlib.metadata import version
 
