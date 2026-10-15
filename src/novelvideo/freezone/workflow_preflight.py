@@ -674,9 +674,9 @@ def _video_catalog_entry_satisfies_nodes(
         )
         supported_modes = entry.get("supportedModes")
         if (
-            not isinstance(supported_modes, list)
-            or not supported_modes
-            or catalog_mode not in supported_modes
+            isinstance(supported_modes, list)
+            and supported_modes
+            and catalog_mode not in supported_modes
         ):
             return False
 

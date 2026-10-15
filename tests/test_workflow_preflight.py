@@ -470,6 +470,36 @@ def test_video_duration_recovery_names_only_full_constraint_candidates():
     assert blocker["recovery"] == "choose_compatible_model"
 
 
+@pytest.mark.parametrize("declared_modes", [None, []])
+def test_video_model_recovery_treats_undeclared_modes_as_unrestricted(declared_modes):
+    candidate = {
+        "id": "compatible",
+        "minDuration": 2,
+        "maxDuration": 15,
+    }
+    if declared_modes is not None:
+        candidate["supportedModes"] = declared_modes
+    catalog = [
+        {
+            "id": "selected",
+            "supportedModes": ["all_reference"],
+            "minDuration": 4,
+            "maxDuration": 15,
+        },
+        candidate,
+    ]
+
+    blocked = _check_catalog(
+        {"model": "selected", "genMode": "allReference", "durationSec": 3},
+        catalog,
+    )
+
+    blocker = next(
+        item for item in blocked["blockers"] if item["path"].endswith(".durationSec")
+    )
+    assert blocker["compatible_models"] == ["compatible"]
+
+
 def test_video_node_without_planned_duration_asks_for_clarification():
     """Issue #677: an agent-authored video node that pins a model but no
     durationSec would run as a 0-second shot; preflight blocks and names the

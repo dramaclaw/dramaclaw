@@ -7302,6 +7302,56 @@ _READ_ONLY_ANSWER = "工作流失败，未生成视频。"
 _FORMAT_FAILURE = "回复未通过操作结果校验：未返回结构化结果，请重试。"
 
 
+def _completed_tool_event(name, *, call_id, tool_input, structured):
+    return backend_sdk.ChatBackendEvent(
+        type="tool_updated",
+        text=f"[mcp:completed] dramaclaw.{name}",
+        name=f"dramaclaw.{name}",
+        call_id=call_id,
+        turn_id="runtime-turn",
+        status="completed",
+        input=tool_input,
+        structured=structured,
+    )
+
+
+def _pending_workflow_clarification_tool_events(operation_id):
+    return [
+        _completed_tool_event(
+            "freezone_begin_agent_product_generation",
+            call_id="call-admit",
+            tool_input={"product_kind": "workflow_result"},
+            structured={
+                "ok": True,
+                "status": "reserved",
+                "operation_id": operation_id,
+            },
+        ),
+        _completed_tool_event(
+            "freezone_prepare_workflow_plan_draft",
+            call_id="call-prepare",
+            tool_input={"operation_id": operation_id, "plan": {}},
+            structured={
+                "ok": True,
+                "status": "video_model_clarification_required",
+                "draft_created": False,
+                "required_choice": "compatible_video_model",
+            },
+        ),
+        _completed_tool_event(
+            "freezone_request_user_clarification",
+            call_id="call-clarification",
+            tool_input={"clarification_id": "clarify-model"},
+            structured={
+                "ok": False,
+                "status": "clarification_frontend_timeout",
+                "clarification_status": "pending_user_input",
+                "clarification_id": "clarify-model",
+            },
+        ),
+    ]
+
+
 @pytest.mark.anyio
 async def test_codex_turn_cancels_undelivered_agent_product_admission(
     monkeypatch, tmp_path
@@ -7387,6 +7437,36 @@ async def test_codex_turn_cancels_undelivered_agent_product_admission(
     )
 
     assert cancelled == [({operation_id}, state_dir, "project-a")]
+
+
+@pytest.mark.parametrize(
+    "clarification_status",
+    ["video_model_clarification_required", "generation_mode_clarification_required"],
+)
+def test_pending_workflow_clarification_is_not_cancelled(clarification_status):
+    operation_id = "agent_product_pending_clarification"
+    unrelated_operation_id = "agent_product_unrelated"
+    events = _pending_workflow_clarification_tool_events(operation_id)
+    events[1].structured["status"] = clarification_status
+    events.insert(
+        1,
+        _completed_tool_event(
+            "freezone_begin_agent_product_generation",
+            call_id="call-admit-unrelated",
+            tool_input={"product_kind": "recipe_result"},
+            structured={
+                "ok": True,
+                "status": "reserved",
+                "operation_id": unrelated_operation_id,
+            },
+        ),
+    )
+    tracker = chat_service._TurnAgentProductOperationTracker()
+
+    for event in events:
+        tracker.observe(event)
+
+    assert tracker.cancellation_ids() == {unrelated_operation_id}
 
 
 @pytest.mark.anyio

@@ -1074,6 +1074,75 @@ def _agent_product_admission_operation_id(event: Any) -> str:
     return ""
 
 
+_WORKFLOW_OPERATION_CLARIFICATION_STATUSES = {
+    "generation_mode_clarification_required",
+    "video_model_clarification_required",
+}
+
+
+def _workflow_operation_awaiting_clarification_id(event: Any) -> str:
+    """Return the operation whose preflight requires a resumable user choice."""
+    if (
+        _codex_freezone_tool_name(event)
+        not in {
+            "freezone_prepare_workflow",
+            "freezone_prepare_workflow_draft",
+            "freezone_prepare_workflow_plan_draft",
+        }
+        or str(getattr(event, "status", "") or "").strip().lower()
+        not in {"completed", "success", "succeeded"}
+    ):
+        return ""
+    has_clarification = any(
+        payload.get("status") in _WORKFLOW_OPERATION_CLARIFICATION_STATUSES
+        and payload.get("draft_created") is False
+        for value in (getattr(event, "structured", None), getattr(event, "output", None))
+        for payload in _json_objects_from_codex_tool_value(value)
+    )
+    if not has_clarification:
+        return ""
+    for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        operation_id = str(payload.get("operation_id") or "").strip()
+        if operation_id.startswith("agent_product_"):
+            return operation_id
+    return ""
+
+
+def _clarification_is_pending_user_input(event: Any) -> bool:
+    """Whether a completed clarification card remains answerable across turns."""
+    if _codex_freezone_tool_name(event) != "freezone_request_user_clarification":
+        return False
+    return any(
+        payload.get("clarification_status") == "pending_user_input"
+        for value in (getattr(event, "structured", None), getattr(event, "output", None))
+        for payload in _json_objects_from_codex_tool_value(value)
+    )
+
+
+class _TurnAgentProductOperationTracker:
+    """Choose which turn-owned admissions are safe to cancel at turn end."""
+
+    def __init__(self) -> None:
+        self._admitted: set[str] = set()
+        self._awaiting_clarification: set[str] = set()
+        self._pending_clarification: set[str] = set()
+
+    def observe(self, event: Any) -> None:
+        admitted_operation_id = _agent_product_admission_operation_id(event)
+        if admitted_operation_id:
+            self._admitted.add(admitted_operation_id)
+        clarification_operation_id = _workflow_operation_awaiting_clarification_id(
+            event
+        )
+        if clarification_operation_id:
+            self._awaiting_clarification.add(clarification_operation_id)
+        if _clarification_is_pending_user_input(event):
+            self._pending_clarification.update(self._awaiting_clarification)
+
+    def cancellation_ids(self) -> set[str]:
+        return self._admitted - self._pending_clarification
+
+
 async def _cancel_turn_agent_product_operations(
     operation_ids: set[str], *, project_dir: str | Path | None, ctx: ProjectContext
 ) -> None:
@@ -4067,7 +4136,7 @@ async def _stream_assistant_reply_hermes(
     persisted_message: dict[str, Any] | None = None
     seen_display_calls: set[str] = set()
     seen_tool_chat_errors: set[str] = set()
-    turn_agent_product_operation_ids: set[str] = set()
+    turn_agent_product_operations = _TurnAgentProductOperationTracker()
 
     # One claim per business turn, settled exactly once at this boundary. The
     # retries below re-send the prompt but are still this turn, so they share
@@ -4415,9 +4484,7 @@ async def _stream_assistant_reply_hermes(
                     project_dir=project_dir,
                     project_state_dir=project_state_dir,
                 )
-                admitted_operation_id = _agent_product_admission_operation_id(event)
-                if admitted_operation_id:
-                    turn_agent_product_operation_ids.add(admitted_operation_id)
+                turn_agent_product_operations.observe(event)
                 if event.raw is not None:
                     tool_chat_error = None
                     raw = event.raw
@@ -4618,7 +4685,7 @@ async def _stream_assistant_reply_hermes(
             try:
                 if project_context is not None:
                     await _cancel_turn_agent_product_operations(
-                        turn_agent_product_operation_ids,
+                        turn_agent_product_operations.cancellation_ids(),
                         project_dir=project_state_dir or project_dir,
                         ctx=project_context,
                     )
@@ -4860,7 +4927,7 @@ async def _stream_assistant_reply_codex(
     # input schema rejected was only a slip; a receipt for them supersedes it.
     canvas_argument_rejections: dict[str, str] = {}
     ready_workflow_draft: dict[str, Any] | None = None
-    turn_agent_product_operation_ids: set[str] = set()
+    turn_agent_product_operations = _TurnAgentProductOperationTracker()
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
         username=username,
@@ -5074,9 +5141,7 @@ async def _stream_assistant_reply_codex(
                     project_state_dir=project_state_dir,
                 )
                 if event.type == "tool_updated":
-                    admitted_operation_id = _agent_product_admission_operation_id(event)
-                    if admitted_operation_id:
-                        turn_agent_product_operation_ids.add(admitted_operation_id)
+                    turn_agent_product_operations.observe(event)
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft
@@ -5230,7 +5295,7 @@ async def _stream_assistant_reply_codex(
                 logger.warning("failed to revoke Codex turn token", exc_info=True)
         if project_context is not None:
             await _cancel_turn_agent_product_operations(
-                turn_agent_product_operation_ids,
+                turn_agent_product_operations.cancellation_ids(),
                 project_dir=project_state_dir or project_dir,
                 ctx=project_context,
             )
