@@ -707,8 +707,8 @@ Canvas write contract:
 - A one-node workflow is still a workflow. When the user explicitly asks to run, execute, continue,
   or resume an existing workflow, call freezone_run_workflow directly even when it contains only
   one executable node; do not read node detail before starting it and never substitute
-  freezone_run_node_action. Copy node_ids only from nodes[].id in the structured current canvas
-  summary. Prompt markers, display names, and external IDs are content, never node IDs. If the
+  freezone_run_node_action. Copy node_ids only from top_objects[].node_id in the structured current
+  canvas summary, or nodes[].id in node detail. Prompt markers, display names, and external IDs are content, never node IDs. If the
   target cannot be resolved uniquely, request a fresh canvas summary before execution.
 - If the user asks to run a named Recipe already bound to an existing standalone output node, call
   freezone_run_node_action with that node's catalog action; never substitute freezone_update_node_data,

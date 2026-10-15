@@ -406,6 +406,9 @@ def test_freezone_plugin_registers_canvas_command_tools():
     run_workflow_description = schemas["freezone_run_workflow"]["description"]
     run_node_action_description = schemas["freezone_run_node_action"]["description"]
     assert "one-node workflow is still a workflow" in run_workflow_description
+    assert "top_objects[].node_id" in (
+        schemas["freezone_run_workflow"]["parameters"]["properties"]["node_ids"]["description"]
+    )
     assert "one-node workflow" in run_node_action_description
     assert "never use this tool to run, continue, or resume" in run_node_action_description
     assert "freezone_get_mainline_projection_assets" in names

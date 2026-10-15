@@ -12410,7 +12410,7 @@ TOOLS = (
                 "node_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Exact nodes[].id values from the structured current canvas summary. Never use prompt markers, display names, or external IDs. Required unless scope=canvas.",
+                    "description": "Exact top_objects[].node_id values from the structured current canvas summary, or nodes[].id from node detail. Never use prompt markers, display names, or external IDs. Required unless scope=canvas.",
                 },
                 "scope": {
                     "type": "string",
