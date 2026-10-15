@@ -1111,6 +1111,35 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     questions = _safe_list(args.get("questions"))
     generation_media_types = args.get("generation_media_types")
     generation_required_choices = args.get("generation_required_choices")
+    model_constraint_adjustment_requested = (
+        generation_media_types is None
+        and isinstance(generation_required_choices, dict)
+        and set(generation_required_choices) == {"video"}
+        and generation_required_choices["video"]
+        == ["video_model_constraint_adjustment"]
+    )
+    if model_constraint_adjustment_requested:
+        from novelvideo.freezone.clarifications import (
+            video_model_constraint_adjustment_clarification,
+        )
+
+        canonical = video_model_constraint_adjustment_clarification()["question"]
+        questions = [
+            {
+                "id": canonical["id"],
+                "title": canonical["prompt"],
+                "mode": canonical["mode"],
+                "options": canonical["options"],
+            }
+        ]
+        generation_required_choices = None
+        args = {
+            **args,
+            "title": canonical["title"],
+            "description": "",
+            "allow_recommended": False,
+            "allow_skip": False,
+        }
     if generation_media_types is not None or generation_required_choices is not None:
         if generation_media_types is not None and generation_required_choices is not None:
             return tool_result({

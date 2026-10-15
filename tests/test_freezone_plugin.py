@@ -3837,6 +3837,51 @@ def test_generation_clarification_unsupported_required_choice_lists_allowed_fiel
     assert "aspect_ratio" in result["allowed_required_choices"]["image"]
 
 
+def test_generation_clarification_presents_server_owned_model_constraint_question(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    emitted = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "title": "agent-authored title",
+            "description": "agent-authored replacement suggestion",
+            "generation_required_choices": {
+                "video": ["video_model_constraint_adjustment"]
+            },
+        }
+    )
+
+    assert result == "shown"
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert event["title"] == "选择下一步"
+    assert event["description"] == ""
+    assert event["allow_recommended"] is False
+    assert event["allow_skip"] is False
+    assert len(event["questions"]) == 1
+    question = event["questions"][0]
+    assert question["id"] == "video_model_constraint_adjustment"
+    assert question["title"] == (
+        "当前没有视频模型能同时满足全部参考模式、镜头时长和生成参数。"
+        "请选择是否调整一类约束。"
+    )
+    assert [option["id"] for option in question["options"]] == [
+        "keep_requirements",
+        "adjust_reference_mode",
+        "adjust_shot_duration",
+        "specify_video_model",
+    ]
+    assert "agent-authored" not in json.dumps(event)
+
+
 def test_generation_clarification_reuses_confirmed_model_for_dependent_choice(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
