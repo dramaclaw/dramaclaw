@@ -392,6 +392,100 @@ def preflight_failure_blocker(preflight: dict[str, Any]) -> dict[str, Any]:
     return blockers[0] if blockers else {}
 
 
+def video_model_constraint_adjustment_clarification(
+    preflight: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The fixed user decision returned when no video model fits all constraints."""
+    result = {
+        "ok": True,
+        "status": "video_model_clarification_required",
+        "code": "no_compatible_video_model",
+        "draft_created": False,
+        "retryable": False,
+        "required_choice": "video_model_constraint_adjustment",
+        "next_action": "request_user_clarification",
+        "question": {
+            "id": "video_model_constraint_adjustment",
+            "title": "选择下一步",
+            "prompt": (
+                "当前没有视频模型能同时满足全部参考模式、镜头时长和生成参数。"
+                "请选择是否调整一类约束。"
+            ),
+            "mode": "single",
+            "options": [
+                {
+                    "id": "keep_requirements",
+                    "label": "保持当前要求并停止",
+                    "description": "不修改当前 Plan，也不继续创建 Draft。",
+                },
+                {
+                    "id": "adjust_reference_mode",
+                    "label": "调整参考模式",
+                    "description": "仅确认调整方向；提供具体新值前不修改参考边或媒体锚点。",
+                },
+                {
+                    "id": "adjust_shot_duration",
+                    "label": "调整镜头时长",
+                    "description": "仅确认调整方向；提供具体新时长前不修改 Plan。",
+                },
+                {
+                    "id": "specify_video_model",
+                    "label": "重新指定模型",
+                    "description": "由用户提供具体模型，再使用原约束重新执行 preflight。",
+                },
+            ],
+        },
+    }
+    if preflight is not None:
+        result["preflight"] = preflight
+    return result
+
+
+def no_compatible_video_model_clarification(
+    preflight: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the fixed question only when model blockers have no common candidate."""
+    blockers = preflight.get("blockers")
+    if not isinstance(blockers, list) or not blockers:
+        return None
+    relevant = [
+        blocker
+        for blocker in blockers
+        if isinstance(blocker, dict)
+        and blocker.get("code") == "model_capability_unsupported"
+        and blocker.get("recovery") in {"choose_compatible_model", "ask_user"}
+        and isinstance(blocker.get("compatible_models"), list)
+        and str(blocker.get("path") or "").endswith((".genMode", ".durationSec"))
+    ]
+    unhandled = [
+        blocker
+        for blocker in blockers
+        if blocker not in relevant
+        and not (
+            isinstance(blocker, dict) and blocker.get("code") == "audio_voice_required"
+        )
+    ]
+    if not relevant or unhandled:
+        return None
+    candidate_order = [str(value).strip() for value in relevant[0]["compatible_models"]]
+    compatible_sets = [
+        {
+            str(value).strip()
+            for value in blocker["compatible_models"]
+            if str(value).strip()
+        }
+        for blocker in relevant
+    ]
+    compatible = [
+        model_id
+        for model_id in candidate_order
+        if model_id and all(model_id in values for values in compatible_sets)
+    ]
+    if compatible:
+        return None
+    return video_model_constraint_adjustment_clarification(preflight)
+
+
 def generation_clarification_request(preflight: dict[str, Any]) -> dict[str, Any] | None:
     """Merge generation_parameters_required blockers into one clarification request.
 

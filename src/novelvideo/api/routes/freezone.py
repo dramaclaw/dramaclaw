@@ -14973,6 +14973,7 @@ async def _check_workflow_runtime(compiled: dict, *, project: str, user: dict) -
     if preflight["blockers"]:
         from novelvideo.freezone.workflow_preflight import (
             generation_clarification_request,
+            no_compatible_video_model_clarification,
             preflight_failure_blocker,
         )
 
@@ -14993,6 +14994,9 @@ async def _check_workflow_runtime(compiled: dict, *, project: str, user: dict) -
                     "next_action": "request_user_clarification",
                 },
             )
+        model_clarification = no_compatible_video_model_clarification(preflight)
+        if model_clarification is not None:
+            raise HTTPException(400, model_clarification)
         raise HTTPException(
             400,
             {

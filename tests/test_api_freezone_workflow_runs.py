@@ -4126,6 +4126,115 @@ def test_backend_returns_standard_clarification_for_missing_generation_choices(m
     assert detail["preflight"]["status"] == "blocked"
 
 
+def test_backend_asks_which_constraint_to_change_when_no_video_model_is_compatible(
+    monkeypatch,
+):
+    """Issue #742: the server-owned drafts entry must ask a fixed question
+    before draft persistence instead of leaving the agent to invent a topology."""
+    import asyncio
+
+    from novelvideo.api.routes import freezone, tasks
+
+    async def video_models(project, user):
+        return {
+            "ok": True,
+            "data": [
+                {
+                    "id": "selected",
+                    "supportedModes": ["all_reference"],
+                    "minDuration": 4,
+                    "maxDuration": 15,
+                },
+                {
+                    "id": "duration-only",
+                    "supportedModes": ["image_reference"],
+                    "minDuration": 2,
+                    "maxDuration": 15,
+                },
+            ],
+        }
+
+    async def limits(project, user):
+        return {"ok": True, "data": {"video": {"limit": 2, "remaining": 2}}}
+
+    monkeypatch.setattr(freezone, "freezone_video_models", video_models)
+    monkeypatch.setattr(tasks, "get_project_task_limits", limits)
+    compiled = {
+        "ok": True,
+        "skill_id": "video-ad",
+        "plan": {
+            "nodes": [
+                {
+                    "id": "reference",
+                    "node_type": "imageNode",
+                    "data": {"mediaId": "asset-reference"},
+                },
+                {
+                    "id": "shot-1",
+                    "node_type": "videoNode",
+                    "data": {
+                        "model": "selected",
+                        "genMode": "allReference",
+                        "durationSec": 3,
+                        "referenceMediaIds": ["asset-reference"],
+                    },
+                },
+            ],
+            "edges": [
+                {
+                    "id": "reference-to-shot",
+                    "source": "reference",
+                    "target": "shot-1",
+                    "link_type": "media_input_for",
+                }
+            ],
+        },
+        "preflight": {"status": "ready", "blockers": [], "warnings": []},
+    }
+    original = deepcopy(compiled)
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(
+            freezone._check_workflow_runtime(
+                compiled, project="proj_demo", user={"username": "alice"}
+            )
+        )
+
+    detail = excinfo.value.detail
+    assert excinfo.value.status_code == 400
+    assert detail["ok"] is True
+    assert detail["status"] == "video_model_clarification_required"
+    assert detail["code"] == "no_compatible_video_model"
+    assert detail["draft_created"] is False
+    assert detail["retryable"] is False
+    assert detail["required_choice"] == "video_model_constraint_adjustment"
+    assert detail["next_action"] == "request_user_clarification"
+    assert "agent_instruction" not in detail
+    assert detail["question"]["options"] == [
+        {
+            "id": "keep_requirements",
+            "label": "保持当前要求并停止",
+            "description": "不修改当前 Plan，也不继续创建 Draft。",
+        },
+        {
+            "id": "adjust_reference_mode",
+            "label": "调整参考模式",
+            "description": "仅确认调整方向；提供具体新值前不修改参考边或媒体锚点。",
+        },
+        {
+            "id": "adjust_shot_duration",
+            "label": "调整镜头时长",
+            "description": "仅确认调整方向；提供具体新时长前不修改 Plan。",
+        },
+        {
+            "id": "specify_video_model",
+            "label": "重新指定模型",
+            "description": "由用户提供具体模型，再使用原约束重新执行 preflight。",
+        },
+    ]
+    assert compiled == original
+
+
 def test_backend_reports_missing_skill_stage_before_missing_generation_choices(monkeypatch):
     """Issue #677: a required stage the plan skipped is a structural blocker the
     server-owned entry keeps from the compiled preflight and reports first,
