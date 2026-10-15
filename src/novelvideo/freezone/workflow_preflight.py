@@ -395,10 +395,9 @@ def preflight_failure_blocker(preflight: dict[str, Any]) -> dict[str, Any]:
     return blockers[0] if blockers else {}
 
 
-def no_compatible_video_model_clarification(
+def _video_model_reselection_candidates(
     preflight: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Return the fixed question only when model blockers have no common candidate."""
+) -> tuple[list[dict[str, Any]], list[str]] | None:
     blockers = preflight.get("blockers")
     if not isinstance(blockers, list) or not blockers:
         return None
@@ -435,6 +434,91 @@ def no_compatible_video_model_clarification(
         for model_id in candidate_order
         if model_id and all(model_id in values for values in compatible_sets)
     ]
+    return relevant, compatible
+
+
+def video_model_reselection_clarification(
+    preflight: dict[str, Any],
+    compiled: dict[str, Any],
+    catalog: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Return the verified model choice, or the fixed constraint-adjustment choice."""
+    candidates = _video_model_reselection_candidates(preflight)
+    if candidates is None:
+        return None
+    relevant, compatible = candidates
+    if not compatible:
+        return video_model_constraint_adjustment_clarification(preflight)
+
+    options = []
+    for model_id in compatible:
+        entry = _catalog_entry_for_model(catalog, model_id)
+        if entry is None:
+            continue
+        options.append(
+            {
+                "id": model_id,
+                "label": str(entry.get("label") or entry.get("name") or model_id),
+                "description": "支持当前镜头的参考模式、时长及已确认生成参数。",
+            }
+        )
+    if not options:
+        return None
+
+    planned_video_ids = {
+        str(node.get("id") or "")
+        for node in (compiled.get("plan") or {}).get("nodes") or []
+        if isinstance(node, dict) and node.get("node_type") == "videoNode"
+    }
+    affected_node_ids = []
+    for blocker in relevant:
+        node_id = _blocker_node_id(str(blocker.get("path") or ""))
+        if node_id in planned_video_ids and node_id not in affected_node_ids:
+            affected_node_ids.append(node_id)
+    if not affected_node_ids:
+        return None
+
+    return {
+        "ok": True,
+        "status": "video_model_clarification_required",
+        "code": "video_model_incompatible",
+        "draft_created": False,
+        "retryable": False,
+        "next_action": "request_user_clarification",
+        "preflight": preflight,
+        "required_choice": "compatible_video_model",
+        "affected_node_ids": affected_node_ids,
+        "question": {
+            "id": "compatible_video_model",
+            "title": "确认兼容的视频模型",
+            "prompt": (
+                "当前选择的视频模型不能同时满足参考模式和镜头时长。切换模型可能影响"
+                "成本或效果，请确认替代模型。"
+            ),
+            "mode": "single",
+            "options": options,
+        },
+        "agent_instruction": (
+            "This is a successful pre-draft clarification outcome, not a failed draft. "
+            "Call freezone_request_user_clarification exactly once with the returned question. "
+            "Do not select a replacement without the user's answer. After the answer, replace "
+            "plan.inputs.video_model and data.model on every affected_node_id with the chosen "
+            "option id, and retry the same complete plan exactly once with the same operation_id. "
+            "Also pass that answer as generation_answers.video_model so it replaces the earlier "
+            "model answer while the other remembered generation choices remain unchanged. Preserve "
+            "all modes, shot durations, references, node counts, and other confirmed values."
+        ),
+    }
+
+
+def no_compatible_video_model_clarification(
+    preflight: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the fixed question only when model blockers have no common candidate."""
+    candidates = _video_model_reselection_candidates(preflight)
+    if candidates is None:
+        return None
+    _relevant, compatible = candidates
     if compatible:
         return None
     return video_model_constraint_adjustment_clarification(preflight)

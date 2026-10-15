@@ -517,6 +517,74 @@ def _safe_error_string(value: Any, limit: int) -> str:
     return cleaned
 
 
+def _safe_compatible_video_model_clarification(
+    source: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Copy only the bounded server-owned model question across the HTTP boundary."""
+    if source.get("required_choice") != "compatible_video_model":
+        return None
+    question = source.get("question")
+    if not isinstance(question, dict):
+        return None
+    if question.get("id") != "compatible_video_model" or question.get("mode") != "single":
+        return None
+    raw_options = question.get("options")
+    if not isinstance(raw_options, list) or not 1 <= len(raw_options) <= 20:
+        return None
+    options: list[dict[str, str]] = []
+    option_ids: set[str] = set()
+    for raw in raw_options:
+        if not isinstance(raw, dict):
+            return None
+        option_id = _safe_error_string(raw.get("id"), 160)
+        label = _safe_error_string(raw.get("label"), 160)
+        description = _safe_error_string(raw.get("description"), 300)
+        if (
+            not option_id
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]+", option_id)
+            or option_id in option_ids
+            or not label
+        ):
+            return None
+        option_ids.add(option_id)
+        options.append(
+            {
+                "id": option_id,
+                "label": label,
+                **({"description": description} if description else {}),
+            }
+        )
+    raw_node_ids = source.get("affected_node_ids")
+    if not isinstance(raw_node_ids, list) or not 1 <= len(raw_node_ids) <= 50:
+        return None
+    affected_node_ids = [
+        _safe_error_string(node_id, 160) for node_id in raw_node_ids
+    ]
+    if any(
+        not node_id or not re.fullmatch(r"[A-Za-z0-9_.:-]+", node_id)
+        for node_id in affected_node_ids
+    ):
+        return None
+    title = _safe_error_string(question.get("title"), 160)
+    prompt = _safe_error_string(question.get("prompt"), 500)
+    if not title or not prompt:
+        return None
+    instruction = _safe_error_string(source.get("agent_instruction"), 2000)
+    return {
+        "required_choice": "compatible_video_model",
+        "affected_node_ids": affected_node_ids,
+        "draft_created": False,
+        "question": {
+            "id": "compatible_video_model",
+            "title": title,
+            "prompt": prompt,
+            "mode": "single",
+            "options": options,
+        },
+        **({"agent_instruction": instruction} if instruction else {}),
+    }
+
+
 def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, Any]:
     """Expose only bounded validation diagnostics from the project API."""
     result: dict[str, Any] = {
@@ -556,6 +624,10 @@ def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, An
         result["error"] = _safe_error_string(detail, 300) or result["error"]
     if isinstance(source.get("retryable"), bool):
         result["retryable"] = source["retryable"]
+    if result.get("code") == "video_model_incompatible":
+        clarification = _safe_compatible_video_model_clarification(source)
+        if clarification is not None:
+            result.update(clarification)
     if result.get("code") == "generation_parameters_required":
         # Bounded copy of the standard clarification request so the agent can
         # answer it; anything malformed is dropped rather than forwarded.
@@ -4507,53 +4579,13 @@ def _workflow_model_reselection_clarification(
     preflight: dict[str, Any], compiled: dict[str, Any], *, project_id: str
 ) -> dict[str, Any] | None:
     """Require confirmation before replacing an explicitly selected video model."""
+    from novelvideo.freezone.workflow_preflight import (
+        no_compatible_video_model_clarification,
+    )
 
-    blockers = preflight.get("blockers")
-    if not isinstance(blockers, list) or not blockers:
-        return None
-    relevant = [
-        blocker
-        for blocker in blockers
-        if isinstance(blocker, dict)
-        and blocker.get("code") == "model_capability_unsupported"
-        and blocker.get("recovery") in {"choose_compatible_model", "ask_user"}
-        and isinstance(blocker.get("compatible_models"), list)
-        and str(blocker.get("path") or "").endswith((".genMode", ".durationSec"))
-    ]
-    # A required voice is an independent, later user decision. Surface the
-    # model replacement first so the agent cannot infer it from a generic
-    # failure payload, then let the next preflight report the voice blocker.
-    unhandled = [
-        blocker
-        for blocker in blockers
-        if blocker not in relevant
-        and not (
-            isinstance(blocker, dict) and blocker.get("code") == "audio_voice_required"
-        )
-    ]
-    if not relevant or unhandled:
-        return None
-
-    candidate_order = [str(value).strip() for value in relevant[0]["compatible_models"]]
-    compatible_sets = [
-        {
-            str(value).strip()
-            for value in blocker["compatible_models"]
-            if str(value).strip()
-        }
-        for blocker in relevant
-    ]
-    compatible = [
-        model_id
-        for model_id in candidate_order
-        if model_id and all(model_id in values for values in compatible_sets)
-    ]
-    if not compatible:
-        from novelvideo.freezone.workflow_preflight import (
-            no_compatible_video_model_clarification,
-        )
-
-        return no_compatible_video_model_clarification(preflight)
+    no_compatible = no_compatible_video_model_clarification(preflight)
+    if no_compatible is not None:
+        return no_compatible
     try:
         response = _request(
             "GET", f"/projects/{quote(project_id, safe='')}/freezone/video/models"
@@ -4563,72 +4595,15 @@ def _workflow_model_reselection_clarification(
     catalog = response.get("data") if response.get("ok") is not False else None
     if not isinstance(catalog, list):
         return None
-    from novelvideo.freezone.workflow_preflight import _catalog_entry_for_model
+    from novelvideo.freezone.workflow_preflight import (
+        video_model_reselection_clarification,
+    )
 
-    options = []
-    for model_id in compatible:
-        entry = _catalog_entry_for_model(
-            [item for item in catalog if isinstance(item, dict)], model_id
-        )
-        if entry is None:
-            continue
-        options.append(
-            {
-                "id": model_id,
-                "label": str(entry.get("label") or entry.get("name") or model_id),
-                "description": "支持当前镜头的参考模式、时长及已确认生成参数。",
-            }
-        )
-    if not options:
-        return None
-
-    planned_video_ids = {
-        str(node.get("id") or "")
-        for node in (compiled.get("plan") or {}).get("nodes") or []
-        if isinstance(node, dict) and node.get("node_type") == "videoNode"
-    }
-    affected_node_ids = []
-    for blocker in relevant:
-        path = str(blocker.get("path") or "")
-        node_path = path.removeprefix("runtime.models.")
-        node_id, separator, _field = node_path.rpartition(".")
-        if (
-            separator
-            and node_id in planned_video_ids
-            and node_id not in affected_node_ids
-        ):
-            affected_node_ids.append(node_id)
-    if not affected_node_ids:
-        return None
-    return {
-        "ok": True,
-        "status": "video_model_clarification_required",
-        "code": "video_model_incompatible",
-        "draft_created": False,
-        "preflight": preflight,
-        "required_choice": "compatible_video_model",
-        "affected_node_ids": affected_node_ids,
-        "question": {
-            "id": "compatible_video_model",
-            "title": "确认兼容的视频模型",
-            "prompt": (
-                "当前选择的视频模型不能同时满足参考模式和镜头时长。切换模型可能影响"
-                "成本或效果，请确认替代模型。"
-            ),
-            "mode": "single",
-            "options": options,
-        },
-        "agent_instruction": (
-            "This is a successful pre-draft clarification outcome, not a failed draft. "
-            "Call freezone_request_user_clarification exactly once with the returned question. "
-            "Do not select a replacement without the user's answer. After the answer, replace "
-            "plan.inputs.video_model and data.model on every affected_node_id with the chosen "
-            "option id, and retry the same complete plan exactly once with the same operation_id. "
-            "Also pass that answer as generation_answers.video_model so it replaces the earlier "
-            "model answer while the other remembered generation choices remain unchanged. Preserve "
-            "all modes, shot durations, references, node counts, and other confirmed values."
-        ),
-    }
+    return video_model_reselection_clarification(
+        preflight,
+        compiled,
+        [item for item in catalog if isinstance(item, dict)],
+    )
 
 
 def _workflow_generation_mode_clarification(
@@ -7121,6 +7096,29 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
             )
 
             error = video_model_constraint_adjustment_clarification()
+        elif (
+            action == "prepare"
+            and error.get("code") == "video_model_incompatible"
+            and error.get("required_choice") == "compatible_video_model"
+            and isinstance(error.get("affected_node_ids"), list)
+            and isinstance(error.get("question"), dict)
+        ):
+            error = {
+                "ok": True,
+                "status": "video_model_clarification_required",
+                "code": "video_model_incompatible",
+                "draft_created": False,
+                "retryable": False,
+                "next_action": "request_user_clarification",
+                "required_choice": "compatible_video_model",
+                "affected_node_ids": error["affected_node_ids"],
+                "question": error["question"],
+                **(
+                    {"agent_instruction": error["agent_instruction"]}
+                    if isinstance(error.get("agent_instruction"), str)
+                    else {}
+                ),
+            }
         error.setdefault("retryable", False)
         error.setdefault(
             "next_action",
@@ -8939,6 +8937,7 @@ _WORKFLOW_RESULT_FIELDS = (
     "clarification",
     "draft_created",
     "required_choice",
+    "affected_node_ids",
     "question",
 )
 
@@ -8949,6 +8948,7 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "actions",
         "assets",
         "available_ids",
+        "affected_node_ids",
         "candidates",
         "commands",
         "edge_ids",

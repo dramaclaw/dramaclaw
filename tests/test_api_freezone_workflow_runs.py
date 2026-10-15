@@ -4235,6 +4235,96 @@ def test_backend_asks_which_constraint_to_change_when_no_video_model_is_compatib
     assert compiled == original
 
 
+def test_backend_offers_only_models_compatible_with_every_video_constraint(monkeypatch):
+    """Issue #742: the unified drafts entry reuses the verified candidate list."""
+    import asyncio
+
+    from novelvideo.api.routes import freezone, tasks
+
+    async def video_models(project, user):
+        return {
+            "ok": True,
+            "data": [
+                {
+                    "id": "selected",
+                    "label": "Selected",
+                    "supportedModes": ["first_frame"],
+                    "minDuration": 2,
+                    "maxDuration": 10,
+                },
+                {
+                    "id": "mode-only",
+                    "label": "Mode Only",
+                    "supportedModes": ["image_reference"],
+                    "minDuration": 4,
+                    "maxDuration": 10,
+                },
+                {
+                    "id": "compatible",
+                    "label": "Compatible Model",
+                    "supportedModes": ["image_reference"],
+                    "minDuration": 2,
+                    "maxDuration": 10,
+                },
+            ],
+        }
+
+    async def limits(project, user):
+        return {"ok": True, "data": {"video": {"limit": 2, "remaining": 2}}}
+
+    monkeypatch.setattr(freezone, "freezone_video_models", video_models)
+    monkeypatch.setattr(tasks, "get_project_task_limits", limits)
+    compiled = {
+        "ok": True,
+        "skill_id": "video-ad",
+        "plan": {
+            "nodes": [
+                {
+                    "id": "shot-1",
+                    "node_type": "videoNode",
+                    "data": {
+                        "model": "selected",
+                        "genMode": "imageReference",
+                        "durationSec": 3,
+                    },
+                },
+                {
+                    "id": "shot-2",
+                    "node_type": "videoNode",
+                    "data": {
+                        "model": "selected",
+                        "genMode": "imageReference",
+                        "durationSec": 4,
+                    },
+                },
+            ],
+            "edges": [],
+        },
+        "preflight": {"status": "ready", "blockers": [], "warnings": []},
+    }
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(
+            freezone._check_workflow_runtime(
+                compiled, project="proj_demo", user={"username": "alice"}
+            )
+        )
+
+    detail = excinfo.value.detail
+    assert excinfo.value.status_code == 400
+    assert detail["ok"] is True
+    assert detail["code"] == "video_model_incompatible"
+    assert detail["draft_created"] is False
+    assert detail["affected_node_ids"] == ["shot-1", "shot-2"]
+    assert detail["question"]["options"] == [
+        {
+            "id": "compatible",
+            "label": "Compatible Model",
+            "description": "支持当前镜头的参考模式、时长及已确认生成参数。",
+        }
+    ]
+
+
 def test_backend_reports_missing_skill_stage_before_missing_generation_choices(monkeypatch):
     """Issue #677: a required stage the plan skipped is a structural blocker the
     server-owned entry keeps from the compiled preflight and reports first,

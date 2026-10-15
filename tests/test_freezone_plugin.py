@@ -9661,6 +9661,92 @@ def test_workflow_adapter_preserves_no_compatible_model_clarification(monkeypatc
     )
 
 
+def test_workflow_adapter_preserves_verified_compatible_model_clarification(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "tool_result", lambda value: json.dumps(value))
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_draft_scope",
+        lambda _: ("proj_demo", "canvas_demo", None),
+    )
+
+    question = {
+        "id": "compatible_video_model",
+        "title": "确认兼容的视频模型",
+        "prompt": "当前选择的视频模型不能同时满足参考模式和镜头时长。请选择替代模型。",
+        "mode": "single",
+        "options": [
+            {
+                "id": "verified-model",
+                "label": "Verified Model",
+                "description": "支持当前镜头的参考模式、时长及已确认生成参数。",
+            }
+        ],
+    }
+
+    def request(method, _path, **_kwargs):
+        if method == "GET":
+            return {
+                "ok": True,
+                "data": {
+                    "product_kind": "workflow_result",
+                    "canvas_id": "canvas_demo",
+                    "artifact_id": "video-ad@1",
+                    "metadata": {"skill_id": "video-ad", "skill_version": "1"},
+                },
+            }
+        return plugin._http_error_result(
+            400,
+            json.dumps(
+                {
+                    "detail": {
+                        "ok": True,
+                        "status": "video_model_clarification_required",
+                        "code": "video_model_incompatible",
+                        "draft_created": False,
+                        "retryable": False,
+                        "required_choice": "compatible_video_model",
+                        "next_action": "request_user_clarification",
+                        "affected_node_ids": ["shot-1", "shot-2"],
+                        "question": question,
+                        "agent_instruction": "Show the returned server question unchanged.",
+                    }
+                }
+            ),
+            "Bad Request",
+        )
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = json.loads(
+        plugin._handle_workflow_operation(
+            {
+                "operation_id": "op-1",
+                "plan": {
+                    "schema_version": "freezone_workflow_plan.v1",
+                    "skill": {"id": "video-ad"},
+                    "nodes": [],
+                    "edges": [],
+                },
+            },
+            action="prepare",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "video_model_clarification_required"
+    assert result["code"] == "video_model_incompatible"
+    assert result["draft_created"] is False
+    assert result["retryable"] is False
+    assert result["required_choice"] == "compatible_video_model"
+    assert result["affected_node_ids"] == ["shot-1", "shot-2"]
+    assert result["question"] == question
+    assert result["agent_instruction"] == "Show the returned server question unchanged."
+    assert "error" not in result
+    Draft202012Validator(plugin._output_schema("freezone_prepare_workflow")).validate(
+        result
+    )
+
+
 def test_workflow_adapter_preserves_structured_validation_error(monkeypatch):
     plugin = _load_plugin_module()
     monkeypatch.setattr(plugin, "tool_result", lambda value: json.dumps(value))
