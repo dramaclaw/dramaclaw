@@ -5517,29 +5517,40 @@ def test_incompatible_video_model_requires_confirmed_full_constraint_replacement
             "description": "支持当前镜头的参考模式、时长及已确认生成参数。",
         }
     ]
-    assert "Do not select a replacement without the user's answer" in result[
-        "agent_instruction"
-    ]
+    assert (
+        "Do not select a replacement without the user's answer"
+        in result["agent_instruction"]
+    )
     structured = _assert_real_mcp_output(
         plugin, "freezone_prepare_workflow_plan_draft", result
     )
     assert structured["question"] == result["question"]
 
 
-def test_prepare_exact_plan_returns_video_model_clarification(monkeypatch, tmp_path):
+def test_prepare_exact_plan_only_offers_models_matching_every_shot_constraint(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
-    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    monkeypatch.delenv("DRAMACLAW_API_URL", raising=False)
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
     plan = {
         "schema_version": "freezone_workflow_plan.v1",
         "nodes": [
             {
-                "id": "shot",
+                "id": "shot-1",
                 "node_type": "videoNode",
                 "data": {"model": "selected", "durationSec": 3},
-            }
+            },
+            {
+                "id": "shot-2",
+                "node_type": "videoNode",
+                "data": {"model": "selected", "durationSec": 8},
+            },
         ],
         "edges": [],
     }
+    original_plan = copy.deepcopy(plan)
     monkeypatch.setattr(
         plugin,
         "validate_agent_workflow_plan",
@@ -5553,22 +5564,41 @@ def test_prepare_exact_plan_returns_video_model_clarification(monkeypatch, tmp_p
             "warnings": [],
             "blockers": [
                 {
-                    "path": "runtime.models.shot.durationSec",
+                    "path": "runtime.models.shot-1.genMode",
                     "code": "model_capability_unsupported",
-                    "message": "selected requires at least four seconds",
-                    "compatible_models": ["compatible"],
+                    "message": "selected does not support the reference mode",
+                    "compatible_models": ["mode-only", "compatible"],
                     "recovery": "choose_compatible_model",
-                }
+                },
+                {
+                    "path": "runtime.models.shot-2.durationSec",
+                    "code": "model_capability_unsupported",
+                    "message": "selected does not support the shot duration",
+                    "compatible_models": ["compatible", "duration-only"],
+                    "recovery": "choose_compatible_model",
+                },
             ],
         },
     )
+    requests = []
+
+    def request(method, path, **_kwargs):
+        requests.append((method, path))
+        assert method == "GET"
+        assert path.endswith("/freezone/video/models")
+        return {
+            "ok": True,
+            "data": [
+                {"id": "mode-only", "label": "Mode Only"},
+                {"id": "compatible", "label": "Compatible Model"},
+                {"id": "duration-only", "label": "Duration Only"},
+            ],
+        }
+
     monkeypatch.setattr(
         plugin,
         "_request",
-        lambda *_args, **_kwargs: {
-            "ok": True,
-            "data": [{"id": "compatible", "label": "Compatible Model"}],
-        },
+        request,
     )
 
     result = plugin._handle_prepare_workflow_plan_draft({"plan": plan})
@@ -5576,7 +5606,9 @@ def test_prepare_exact_plan_returns_video_model_clarification(monkeypatch, tmp_p
     assert result["ok"] is True
     assert result["status"] == "video_model_clarification_required"
     assert result["draft_created"] is False
-    assert result["question"]["options"][0]["id"] == "compatible"
+    assert [option["id"] for option in result["question"]["options"]] == ["compatible"]
+    assert requests == [("GET", "/projects/project-a/freezone/video/models")]
+    assert plan == original_plan
 
 
 def test_prepare_exact_plan_prioritizes_video_model_clarification_with_voice_blocker(
@@ -5664,30 +5696,112 @@ def test_prepare_exact_plan_prioritizes_video_model_clarification_with_voice_blo
     ]
 
 
-def test_no_compatible_video_model_stops_retry_loop_and_asks_to_relax_constraints():
+def test_prepare_exact_plan_without_compatible_model_asks_which_constraint_to_change(
+    monkeypatch,
+):
     plugin = _load_plugin_module()
-    preflight = {
-        "status": "blocked",
-        "warnings": [],
-        "blockers": [
+    monkeypatch.delenv("DRAMACLAW_API_URL", raising=False)
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "nodes": [
             {
-                "path": "runtime.models.shot.durationSec",
-                "code": "model_capability_unsupported",
-                "message": "No available model satisfies the existing generation parameters",
-                "compatible_models": [],
-                "recovery": "ask_user",
+                "id": "reference",
+                "node_type": "imageGenNode",
+                "data": {"mediaId": "asset-reference"},
+            },
+            {
+                "id": "shot",
+                "node_type": "videoNode",
+                "data": {
+                    "model": "selected",
+                    "genMode": "allReference",
+                    "durationSec": 3,
+                    "referenceMediaIds": ["asset-reference"],
+                },
+            },
+        ],
+        "edges": [
+            {
+                "id": "reference-to-shot",
+                "source": "reference",
+                "target": "shot",
+                "targetHandle": "reference",
             }
         ],
     }
+    original_plan = copy.deepcopy(plan)
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda value: {"ok": True, "skill_id": "video-ad", "plan": value},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: {
+            "status": "blocked",
+            "warnings": [],
+            "blockers": [
+                {
+                    "path": "runtime.models.shot.durationSec",
+                    "code": "model_capability_unsupported",
+                    "message": (
+                        "No available model satisfies the existing generation parameters"
+                    ),
+                    "compatible_models": [],
+                    "recovery": "ask_user",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: pytest.fail(
+            "clarification must be returned before catalog lookup or draft creation"
+        ),
+    )
 
-    result = plugin._workflow_preflight_failure(preflight)
+    result = plugin._handle_prepare_workflow_plan_draft({"plan": plan})
 
-    assert result["ok"] is False
-    assert result["status"] == "workflow_preflight_failed"
+    assert result["ok"] is True
+    assert result["status"] == "video_model_clarification_required"
     assert result["code"] == "no_compatible_video_model"
+    assert result["draft_created"] is False
     assert result["retryable"] is False
-    assert result["next_action"] == "ask_user_to_change_constraints"
-    assert "Do not retry another model" in result["agent_instruction"]
+    assert result["required_choice"] == "video_model_constraint_adjustment"
+    assert "agent_instruction" not in result
+    assert result["question"] == {
+        "id": "video_model_constraint_adjustment",
+        "title": "选择下一步",
+        "prompt": "当前没有视频模型能同时满足全部参考模式、镜头时长和生成参数。请选择是否调整一类约束。",
+        "mode": "single",
+        "options": [
+            {
+                "id": "keep_requirements",
+                "label": "保持当前要求并停止",
+                "description": "不修改当前 Plan，也不继续创建 Draft。",
+            },
+            {
+                "id": "adjust_reference_mode",
+                "label": "调整参考模式",
+                "description": "仅确认调整方向；提供具体新值前不修改参考边或媒体锚点。",
+            },
+            {
+                "id": "adjust_shot_duration",
+                "label": "调整镜头时长",
+                "description": "仅确认调整方向；提供具体新时长前不修改 Plan。",
+            },
+            {
+                "id": "specify_video_model",
+                "label": "重新指定模型",
+                "description": "由用户提供具体模型，再使用原约束重新执行 preflight。",
+            },
+        ],
+    }
+    assert plan == original_plan
 
 
 def test_prepare_exact_plan_mixed_preflight_blockers_fail_without_clarification(

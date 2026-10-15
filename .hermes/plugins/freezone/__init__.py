@@ -4478,6 +4478,7 @@ def _workflow_model_reselection_clarification(
     preflight: dict[str, Any], compiled: dict[str, Any], *, project_id: str
 ) -> dict[str, Any] | None:
     """Require confirmation before replacing an explicitly selected video model."""
+
     blockers = preflight.get("blockers")
     if not isinstance(blockers, list) or not blockers:
         return None
@@ -4486,7 +4487,7 @@ def _workflow_model_reselection_clarification(
         for blocker in blockers
         if isinstance(blocker, dict)
         and blocker.get("code") == "model_capability_unsupported"
-        and blocker.get("recovery") == "choose_compatible_model"
+        and blocker.get("recovery") in {"choose_compatible_model", "ask_user"}
         and isinstance(blocker.get("compatible_models"), list)
         and str(blocker.get("path") or "").endswith((".genMode", ".durationSec"))
     ]
@@ -4498,8 +4499,7 @@ def _workflow_model_reselection_clarification(
         for blocker in blockers
         if blocker not in relevant
         and not (
-            isinstance(blocker, dict)
-            and blocker.get("code") == "audio_voice_required"
+            isinstance(blocker, dict) and blocker.get("code") == "audio_voice_required"
         )
     ]
     if not relevant or unhandled:
@@ -4507,7 +4507,11 @@ def _workflow_model_reselection_clarification(
 
     candidate_order = [str(value).strip() for value in relevant[0]["compatible_models"]]
     compatible_sets = [
-        {str(value).strip() for value in blocker["compatible_models"] if str(value).strip()}
+        {
+            str(value).strip()
+            for value in blocker["compatible_models"]
+            if str(value).strip()
+        }
         for blocker in relevant
     ]
     compatible = [
@@ -4516,7 +4520,51 @@ def _workflow_model_reselection_clarification(
         if model_id and all(model_id in values for values in compatible_sets)
     ]
     if not compatible:
-        return None
+        return {
+            "ok": True,
+            "status": "video_model_clarification_required",
+            "code": "no_compatible_video_model",
+            "draft_created": False,
+            "retryable": False,
+            "preflight": preflight,
+            "required_choice": "video_model_constraint_adjustment",
+            "next_action": "request_user_clarification",
+            "question": {
+                "id": "video_model_constraint_adjustment",
+                "title": "选择下一步",
+                "prompt": (
+                    "当前没有视频模型能同时满足全部参考模式、镜头时长和生成参数。"
+                    "请选择是否调整一类约束。"
+                ),
+                "mode": "single",
+                "options": [
+                    {
+                        "id": "keep_requirements",
+                        "label": "保持当前要求并停止",
+                        "description": "不修改当前 Plan，也不继续创建 Draft。",
+                    },
+                    {
+                        "id": "adjust_reference_mode",
+                        "label": "调整参考模式",
+                        "description": (
+                            "仅确认调整方向；提供具体新值前不修改参考边或媒体锚点。"
+                        ),
+                    },
+                    {
+                        "id": "adjust_shot_duration",
+                        "label": "调整镜头时长",
+                        "description": "仅确认调整方向；提供具体新时长前不修改 Plan。",
+                    },
+                    {
+                        "id": "specify_video_model",
+                        "label": "重新指定模型",
+                        "description": (
+                            "由用户提供具体模型，再使用原约束重新执行 preflight。"
+                        ),
+                    },
+                ],
+            },
+        }
     try:
         response = _request(
             "GET", f"/projects/{quote(project_id, safe='')}/freezone/video/models"
