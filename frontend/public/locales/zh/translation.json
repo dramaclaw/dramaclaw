@@ -8560,5 +8560,18 @@
     "aligncenter": "居中",
     "alignright": "右对齐",
     "selectLeaf": "请选择最内层文字元素修改内容，避免覆盖内部排版。"
+  },
+  "resizeEditor": {
+    "title": "调整像素",
+    "original": "原像素：{{width}} × {{height}} 像素",
+    "loading": "正在读取原图尺寸…",
+    "width": "宽度（px）",
+    "height": "高度（px）",
+    "lockRatio": "锁定宽高比",
+    "submit": "调整",
+    "resultTitle": "已调整像素",
+    "loadFailed": "无法读取原图，请重试。",
+    "saveFailed": "无法创建结果，请确认图片和当前项目可用。",
+    "invalidSize": "请输入正整数，单边不超过 16384 像素，总像素不超过 4000 万。"
   }
 }

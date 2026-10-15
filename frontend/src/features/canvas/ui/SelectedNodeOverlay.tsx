@@ -70,6 +70,7 @@ import {
 } from '@/features/canvas/ui/ProviderModelPicker';
 import { OutpaintEditorOverlay } from './OutpaintEditorOverlay';
 import { RotateEditorOverlay } from './RotateEditorOverlay';
+import { ImageResizeOverlay } from './ImageResizeOverlay';
 import type { GridActionKey } from '@/features/canvas/application/gridTemplateAction';
 import type { GridActionRequest } from './NodeActionToolbar';
 import { spawnAssetBoardImageOpNode } from '@/features/canvas/application/assetBoardImageOps';
@@ -250,6 +251,19 @@ export const SelectedNodeOverlay = memo(() => {
   const [eraseNodeId, setEraseNodeId] = useState<string | null>(null);
   const [outpaintNodeId, setOutpaintNodeId] = useState<string | null>(null);
   const [rotateNodeId, setRotateNodeId] = useState<string | null>(null);
+  const [resizeNodeId, setResizeNodeId] = useState<string | null>(null);
+  const resizeNode = nodes.find((node) => node.id === resizeNodeId) ?? null;
+  const resizeImageSource = resolveNodeSourceImageUrl(resizeNode);
+  const handleOpenResize = useCallback((nodeId: string) => {
+    setResizeNodeId(nodeId);
+    clearFlowSelection();
+    setSelectedNode(null);
+  }, [clearFlowSelection, setSelectedNode]);
+  const handleCloseResize = useCallback(() => setResizeNodeId(null), []);
+  useEffect(() => {
+    if (resizeNodeId && !resizeNode) setResizeNodeId(null);
+  }, [resizeNodeId, resizeNode]);
+
 
   const selectedNode = useMemo(() => {
     if (!selectedNodeId) {
@@ -963,6 +977,7 @@ export const SelectedNodeOverlay = memo(() => {
     ?? eraseNodeId
     ?? outpaintNodeId
     ?? rotateNodeId
+    ?? resizeNodeId
     ?? null;
 
   useEffect(() => {
@@ -1020,6 +1035,7 @@ export const SelectedNodeOverlay = memo(() => {
           onOpenRedraw={handleOpenRedraw}
           onOpenErase={handleOpenErase}
           onOpenRotate={handleOpenRotate}
+          onOpenResize={handleOpenResize}
         />
       )}
       {/* 逐帧拉片产出的图片/视频/音频卡片把这颗按钮画在卡片内右上角
@@ -1073,6 +1089,10 @@ export const SelectedNodeOverlay = memo(() => {
           imageSource={outpaintImageSource}
           onClose={handleCloseOutpaint}
         />
+      )}
+      {resizeNode && resizeImageSource && (
+        <ImageResizeOverlay node={resizeNode} imageSource={resizeImageSource}
+          onClose={handleCloseResize} onCreated={selectAndFocusCanvasNode} />
       )}
       {rotateNode && rotateImageSource && (
         <RotateEditorOverlay

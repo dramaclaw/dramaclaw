@@ -41,6 +41,7 @@ import {
   Lightbulb,
   Loader2,
   Maximize2,
+  Scaling,
   Mountain,
   Package,
   Palette,
@@ -191,6 +192,7 @@ interface NodeActionToolbarProps {
   onOpenRedraw: (nodeId: string) => void;
   onOpenErase: (nodeId: string) => void;
   onOpenRotate: (nodeId: string) => void;
+  onOpenResize: (nodeId: string) => void;
 }
 
 const toolIconMap: Record<ToolIconKey, typeof Crop> = {
@@ -503,6 +505,7 @@ export const NodeActionToolbar = memo(
     onOpenRedraw,
     onOpenErase,
     onOpenRotate,
+    onOpenResize,
   }: NodeActionToolbarProps) => {
     const { t, i18n } = useTranslation();
     // Radix 下拉关闭时默认把焦点收回触发按钮；「画面裁切」这一项选中后我们要让
@@ -2037,6 +2040,18 @@ export const NodeActionToolbar = memo(
                 }}
               />
             )}
+            {canHandleImage && (
+              <ToolbarIconChip
+                key="image-resize"
+                label={t("resizeEditor.title")}
+                icon={Scaling}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  closeDownloadMenu();
+                  onOpenResize(node.id);
+                }}
+              />
+            )}
             {/* 重新上传按钮暂时隐藏（保留代码，等需求恢复时取消注释）
         {!isImageEdit && canReupload && (
           <UiChipButton
@@ -2946,6 +2961,7 @@ export const NodeActionToolbar = memo(
           </UiPanel>
           </ZoomScaledToolbar>
         </ReactFlowNodeToolbar>
+
       </>
     );
   },

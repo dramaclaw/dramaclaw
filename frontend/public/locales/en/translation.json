@@ -8560,5 +8560,18 @@
     "aligncenter": "Center",
     "alignright": "Align right",
     "selectLeaf": "Select the innermost text element to preserve nested formatting."
+  },
+  "resizeEditor": {
+    "title": "Resize image",
+    "original": "Original: {{width}} × {{height}} pixels",
+    "loading": "Loading original dimensions…",
+    "width": "Width (px)",
+    "height": "Height (px)",
+    "lockRatio": "Lock aspect ratio",
+    "submit": "Resize",
+    "resultTitle": "Resized image",
+    "loadFailed": "Unable to load the original image. Please retry.",
+    "saveFailed": "Unable to create the result. Check the image and current project.",
+    "invalidSize": "Enter positive integers. Maximum edge: 16384 pixels; maximum total: 40 million pixels."
   }
 }

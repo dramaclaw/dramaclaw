@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useMemo, useState, type ReactElement } from 'react';
-import { Boxes, Crop, Globe2, ImageUpscale, Lightbulb, RotateCw } from 'lucide-react';
+import { Boxes, Crop, Globe2, ImageUpscale, Lightbulb, RotateCw, Scaling } from 'lucide-react';
 
 import {
   createCropResultNode,
@@ -22,6 +22,8 @@ import {
 } from '@/features/canvas/ui/ProviderModelPicker';
 import { useCanvasStore } from '@/stores/canvasStore';
 
+import { ImageResizeDialog } from '../ImageResizeDialog';
+import { useTranslation } from 'react-i18next';
 import { AssetBoardCropDialog } from './AssetBoardCropDialog';
 import { AssetBoardMultiAngleDialog } from './AssetBoardMultiAngleDialog';
 import { AssetBoardRelightDialog } from './AssetBoardRelightDialog';
@@ -124,6 +126,8 @@ export function useAssetBoardImageEditActions({
   onOpenNode?: (nodeId: string) => void;
 }): { entries: MoreMenuEntry[]; overlays: ReactElement | null } {
   const busyOp = useInFlightOp(node.id);
+  const { t } = useTranslation();
+  const [resizeOpen, setResizeOpen] = useState(false);
   // 裁剪 / 旋转：进入编辑器前就把结果节点建好（同工作流 SelectedNodeOverlay），
   // 编辑器实时预览、保存时把结果写回这个节点；取消则回收它。
   const [cropNodeId, setCropNodeId] = useState<string | null>(null);
@@ -225,13 +229,16 @@ export function useAssetBoardImageEditActions({
         [
           { kind: 'action', key: 'hd', icon: ImageUpscale, label: '高清', onSelect: handleOpenHd },
           { kind: 'action', key: 'crop', icon: Crop, label: '裁剪', busy: busyOp === 'crop', onSelect: handleOpenCrop },
+          { kind: 'action', key: 'resize', icon: Scaling, label: t('resizeEditor.title'), onSelect: () => { if (!busyOp) setResizeOpen(true); } },
           { kind: 'action', key: 'rotate', icon: RotateCw, label: '旋转', busy: busyOp === 'rotate', onSelect: handleOpenRotate },
         ] satisfies MoreMenuEntry[]
       ).filter((entry) => !(isPresetLocked && (entry.key === 'hd' || entry.key === 'rotate')));
 
   const overlays =
-    !imageSource || (!cropNodeId && !rotateNodeId) ? null : (
+    !imageSource || (!cropNodeId && !rotateNodeId && !resizeOpen) ? null : (
       <>
+        {resizeOpen && <ImageResizeDialog nodeId={node.id} imageSource={imageSource}
+          onClose={() => setResizeOpen(false)} onCreated={onOpenNode} />}
         {/* 裁剪：大图 + 取景框 + 悬浮控制条（liblib 同款）。纯本地 canvas 切图，
             不走生成接口。 */}
         {cropNodeId && (
