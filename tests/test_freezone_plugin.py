@@ -709,6 +709,11 @@ def test_freezone_run_workflow_emits_one_deterministic_runner_command(monkeypatc
         return "queued"
 
     monkeypatch.setattr(plugin, "_single_write_command", fake_single_write)
+    monkeypatch.setattr(plugin, "_default_project_id", lambda: "project-a")
+    monkeypatch.setattr(plugin, "_default_canvas_id", lambda: "canvas-a")
+    monkeypatch.setattr(plugin, "_request", lambda *a, **k: {
+        "ok": True, "data": {"nodes": [{"id": "shot-2"}]},
+    })
 
     result = plugin._handle_run_workflow(
         {
@@ -725,6 +730,60 @@ def test_freezone_run_workflow_emits_one_deterministic_runner_command(monkeypatc
         "direction": "downstream",
         "regenerate": True,
     }
+
+
+@pytest.mark.parametrize("target", [
+    "RECOVER01_core_recover_01_mv6dfiw6", "恢复测试图片", "external-image-42",
+])
+def test_run_workflow_rejects_non_canvas_identity_before_emitting(monkeypatch, target):
+    plugin = _load_plugin_module()
+    emitted = []
+    monkeypatch.setattr(plugin, "_request", lambda *a, **k: {
+        "ok": True, "data": {"nodes": [{
+            "id": "recover-image", "type": "imageGenNode",
+            "data": {"displayName": "恢复测试图片", "externalId": "external-image-42",
+                     "prompt": "RECOVER01_core_recover_01_mv6dfiw6 一只红色马克杯"},
+        }]},
+    })
+    monkeypatch.setattr(plugin, "_single_write_command", lambda *a: emitted.append(a))
+
+    result = plugin._handle_run_workflow({
+        "project_id": "project-a", "canvas_id": "canvas-a", "node_ids": [target],
+    })
+
+    assert emitted == []
+    assert result["status"] == "workflow_node_not_found"
+    assert result["available_node_ids"] == ["recover-image"]
+
+
+@pytest.mark.parametrize("node_id", ["recover-image", "RECOVER01_valid_node_id"])
+def test_run_workflow_uses_structured_node_id_without_rewriting(monkeypatch, node_id):
+    plugin = _load_plugin_module()
+    emitted = []
+    monkeypatch.setattr(plugin, "_request", lambda *a, **k: {
+        "ok": True, "data": {"nodes": [{"id": node_id}]},
+    })
+    monkeypatch.setattr(plugin, "_single_write_command", lambda *a: emitted.append(a))
+    plugin._handle_run_workflow({
+        "project_id": "project-a", "canvas_id": "canvas-a", "node_ids": [node_id],
+    })
+    assert emitted[0][1] == {
+        "type": "run_workflow", "direction": "connected", "node_ids": [node_id],
+    }
+
+
+def test_run_workflow_does_not_emit_when_canvas_cannot_be_read(monkeypatch):
+    plugin = _load_plugin_module()
+    emitted = []
+    monkeypatch.setattr(plugin, "_request", lambda *a, **k: {
+        "ok": False, "error": "canvas unavailable",
+    })
+    monkeypatch.setattr(plugin, "_single_write_command", lambda *a: emitted.append(a))
+    result = plugin._handle_run_workflow({
+        "project_id": "project-a", "canvas_id": "canvas-a", "node_ids": ["recover-image"],
+    })
+    assert result["status"] == "canvas_read_failed"
+    assert emitted == []
 
 
 def test_freezone_agent_rules_bound_content_policy_remediation() -> None:

@@ -8847,6 +8847,37 @@ def _handle_run_workflow(args: dict[str, Any], **_: Any) -> str:
                 "error": f"unsupported workflow direction: {direction}",
             }
         )
+    if node_ids:
+        project = str(args.get("project_id") or _default_project_id()).strip() or None
+        canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+        project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
+        if scope_error:
+            return scope_error
+        response = _request(
+            "GET",
+            f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}",
+        )
+        if not response.get("ok", True):
+            return tool_result({
+                "ok": False, "status": "canvas_read_failed",
+                "error": response.get("error") or "failed to read canvas",
+            })
+        current = response.get("data") if isinstance(response.get("data"), dict) else {}
+        available_ids = [
+            node["id"] for node in current.get("nodes") or []
+            if isinstance(node, dict) and isinstance(node.get("id"), str)
+        ]
+        if any(node_id not in available_ids for node_id in node_ids):
+            return tool_result({
+                "ok": False, "status": "workflow_node_not_found",
+                "error": "node_ids must be exact nodes[].id values from the current canvas",
+                "available_node_ids": available_ids,
+                "agent_instruction": (
+                    "Resolve the requested target from the structured canvas summary. "
+                    "Prompt markers, display names, and external IDs are not node IDs. "
+                    "Do not broaden to scope=canvas or guess a replacement."
+                ),
+            })
     command: dict[str, Any] = {
         "type": "run_workflow",
         "direction": direction,
@@ -12379,7 +12410,7 @@ TOOLS = (
                 "node_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional start node ids. Required unless scope=canvas.",
+                    "description": "Exact nodes[].id values from the structured current canvas summary. Never use prompt markers, display names, or external IDs. Required unless scope=canvas.",
                 },
                 "scope": {
                     "type": "string",

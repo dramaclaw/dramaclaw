@@ -707,10 +707,14 @@ Canvas write contract:
 - A one-node workflow is still a workflow. When the user explicitly asks to run, execute, continue,
   or resume an existing workflow, call freezone_run_workflow directly even when it contains only
   one executable node; do not read node detail before starting it and never substitute
-  freezone_run_node_action.
+  freezone_run_node_action. Copy node_ids only from nodes[].id in the structured current canvas
+  summary. Prompt markers, display names, and external IDs are content, never node IDs. If the
+  target cannot be resolved uniquely, request a fresh canvas summary before execution.
 - If the user asks to run a named Recipe already bound to an existing standalone output node, call
   freezone_run_node_action with that node's catalog action; never substitute freezone_update_node_data,
-  even if the requested content could be written directly.
+  even if the requested content could be written directly. Keep the existing creative text intact
+  unless the user requests an edit. When editing, preserve its specific subject and purpose;
+  never generalize a named subject into a category such as product presentation.
 - If an existing media node is only the source or reference for a new named Recipe result, preserve
   it as an external workflow input: use Workflow Skill discovery and draft with external_inputs and
   reference_inputs; never use freezone_get_node_action_catalog, freezone_run_node_action,

@@ -53,7 +53,8 @@ Rules:
    Skill prompt guide, Recipe method, then defaults.
 2. Recipe instructions are a reusable production method, not permission to override higher-priority
    user choices or Skill constraints.
-3. Preserve the current node's specific intent.
+3. Preserve the current node's specific subject, purpose, and creative constraints. Never replace
+   a named subject with a generic category such as "product presentation".
 4. Use upstream text as factual context. Do not invent claims that conflict with it.
 5. Reference media metadata describes available inputs; never claim an input exists when it does not.
 6. Return only the final prompt for the target generation node. Do not explain your work.
@@ -330,6 +331,19 @@ async def _run_recipe_compiler(task: str) -> RecipeModelCompilation:
         model_call_id=f"recipe-compiler:{uuid.uuid4().hex}",
         executed_at=time.time(),
     )
+
+
+async def _compile_with_music_intent(task: str, music_intent: str) -> RecipeModelCompilation:
+    compiled = _model_compilation(await _run_recipe_compiler(task))
+    # Music elaboration must keep the original creative brief, even if the model
+    # generalizes its subject. Do not copy user_goal: it can contain UI commands.
+    if music_intent and music_intent not in compiled.prompt:
+        return RecipeModelCompilation(
+            prompt=f"{compiled.prompt}\n\n配乐创作要求：{music_intent}",
+            model_call_id=compiled.model_call_id,
+            executed_at=compiled.executed_at,
+        )
+    return compiled
 
 
 def get_recipe_for_runtime(
@@ -641,6 +655,16 @@ async def compile_recipe_prompt_result(
         skill_id=str(skill.get("id") or "") if skill else "",
         skill_version=str(skill.get("version") or "") if skill else "",
     )
+    music_intent = (
+        str(node_prompt or "").strip()
+        if node_kind == "audio" and "drama-background-music" in recipe_ids
+        else ""
+    )
+    if music_intent:
+        task += (
+            "\n\nMusic fidelity requirement:\nKeep the specific subject and purpose of the "
+            "current node intent. The original music brief remains a creative constraint."
+        )
     cache_key = _cache_key(recipe=effective_recipe, task=task, node_kind=node_kind)
     cached = _prompt_cache.get(cache_key)
     if cached is not None:
@@ -655,7 +679,7 @@ async def compile_recipe_prompt_result(
     compiler_task = _prompt_inflight.get(cache_key)
     owns_model_call = compiler_task is None
     if compiler_task is None:
-        compiler_task = asyncio.create_task(_run_recipe_compiler(task))
+        compiler_task = asyncio.create_task(_compile_with_music_intent(task, music_intent))
         _prompt_inflight[cache_key] = compiler_task
         compiler_task.add_done_callback(
             lambda done: _finalize_compiler_task(cache_key, username, done)
