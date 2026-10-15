@@ -203,6 +203,7 @@ from novelvideo.freezone.agent_product_operations import (
     read_agent_product_operation,
     read_recipe_model_prompt,
     save_agent_generation_session,
+    terminalize_undelivered_agent_product_task,
 )
 from novelvideo.freezone.workflow_runs import (
     RECIPE_ATTEMPT_ENDED_MARKER,
@@ -16003,7 +16004,12 @@ async def complete_agent_product_operation(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+    if operation.get("status") == "delivered":
+        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+    else:
+        await terminalize_undelivered_agent_product_task(
+            ctx=ctx, operation=operation
+        )
     return {"ok": True, "data": operation}
 
 

@@ -18,6 +18,10 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+from novelvideo.task_backend.run_core import (
+    refund_undelivered_feature_credit_reservation,
+)
+from novelvideo.task_state import get_task_manager
 
 SCHEMA_VERSION = "freezone_agent_product_operation.v1"
 PRODUCT_TASK_TYPES = {
@@ -592,6 +596,104 @@ def finish_agent_product_operation(
         ).fetchone()
     assert row is not None
     return _payload(row)
+
+
+async def terminalize_undelivered_agent_product_task(
+    *, ctx: Any, operation: dict[str, Any]
+) -> None:
+    """Project a failed/cancelled product operation to its task and refund it."""
+    outcome = str(operation.get("status") or "")
+    if outcome not in {"failed", "cancelled"}:
+        return
+    task_type = str(operation.get("task_type") or "")
+    operation_id = str(operation.get("operation_id") or "")
+    expected_task_id = str(operation.get("task_id") or "")
+    if (
+        operation.get("project_id") != getattr(ctx, "project_id", None)
+        or PRODUCT_TASK_TYPES.get(operation.get("product_kind")) != task_type
+        or not operation_id
+        or not expected_task_id
+    ):
+        return
+    manager = get_task_manager()
+    task = manager.get_task_for_project(ctx, task_type, 0, scope=operation_id)
+    if (
+        task is None
+        or task.task_id != expected_task_id
+        or task.status in {"completed", "failed", "cancelled"}
+    ):
+        return
+    metadata = task.metadata if isinstance(task.metadata, dict) else {}
+    reservation_id = str(
+        metadata.get("feature_credit_reservation_id")
+        or metadata.get("feature_credit_charge_id")
+        or ""
+    ).strip()
+    settlement_status = "not_applicable"
+    if reservation_id:
+        settlement = await refund_undelivered_feature_credit_reservation(
+            reservation_id,
+            metadata={
+                "source": f"agent_product_{outcome}",
+                "operation_id": operation_id,
+                "business_outcome": outcome,
+            },
+        )
+        settlement_status = (
+            "refunded"
+            if settlement.accepted
+            else "refund_pending" if settlement.retryable else "refund_conflict"
+        )
+    task_metadata = {
+        "operation_status": outcome,
+        "settlement_status": settlement_status,
+        "error_code": None,
+    }
+    if outcome == "cancelled":
+        manager.update_progress_for_project(
+            ctx,
+            task_type,
+            0,
+            scope=operation_id,
+            progress=task.progress,
+            current_task="任务已取消",
+            metadata=task_metadata,
+            status="cancelled",
+            expected_task_id=expected_task_id,
+        )
+        return
+    manager.fail_task_for_project(
+        ctx,
+        task_type,
+        0,
+        scope=operation_id,
+        error="Agent 产品未交付",
+        current_task="Agent 产品交付失败",
+        metadata=task_metadata,
+        expected_task_id=expected_task_id,
+    )
+
+
+async def cancel_pending_agent_product_operation(
+    *, project_dir: Path, ctx: Any, operation_id: str
+) -> dict[str, Any] | None:
+    """Cancel one still-pending turn-owned operation and settle its task."""
+    operation = read_agent_product_operation(
+        project_dir=project_dir,
+        operation_id=operation_id,
+    )
+    if operation is None or operation.get("status") in TERMINAL_STATUSES:
+        return operation
+    if operation.get("status") not in PENDING_STATUSES:
+        raise ValueError("agent product operation is not pending")
+    cancelled = finish_agent_product_operation(
+        project_dir=project_dir,
+        operation_id=operation_id,
+        outcome="cancelled",
+        expected_task_id=str(operation.get("task_id") or ""),
+    )
+    await terminalize_undelivered_agent_product_task(ctx=ctx, operation=cancelled)
+    return cancelled
 
 
 def save_agent_generation_session(

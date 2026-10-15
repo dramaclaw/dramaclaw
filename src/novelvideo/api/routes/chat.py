@@ -3674,6 +3674,7 @@ async def _stream_project_turn(
                 route_prompt=display_text,
                 backend=runtime_backend,
                 execution_context=execution_context,
+                project_context=project_ctx,
             )
     finally:
         heartbeat_task.cancel()

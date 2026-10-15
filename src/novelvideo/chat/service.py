@@ -174,6 +174,7 @@ from novelvideo.chat.tool_policy import (
 )
 from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
 from novelvideo.ports import get_auth_session_port
+from novelvideo.project_context import ProjectContext
 from novelvideo.utils.document_parsers import count_billable_text_chars
 from novelvideo.utils.error_redaction import redact_secrets
 
@@ -1038,6 +1039,53 @@ async def _bind_server_observed_agent_product_execution(
             evidence_metrics.observe("agent_product_binding_failed")
             logger.warning(
                 "could not bind observed Agent product execution operation=%s",
+                operation_id,
+                exc_info=True,
+            )
+
+
+def _agent_product_admission_operation_id(event: Any) -> str:
+    """Read one server-issued product operation from a completed begin tool."""
+    if (
+        _codex_freezone_tool_name(event)
+        != "freezone_begin_agent_product_generation"
+        or str(getattr(event, "status", "") or "").strip().lower()
+        not in {"completed", "success", "succeeded"}
+        or getattr(event, "error", None)
+    ):
+        return ""
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            operation_id = str(payload.get("operation_id") or "").strip()
+            if (
+                payload.get("ok") is True
+                and payload.get("status") == "agent_product_generation_admitted"
+                and operation_id.startswith("agent_product_")
+            ):
+                return operation_id
+    return ""
+
+
+async def _cancel_turn_agent_product_operations(
+    operation_ids: set[str], *, project_dir: str | Path | None, ctx: ProjectContext
+) -> None:
+    """Best-effort cleanup for admissions this turn did not deliver."""
+    if not operation_ids or project_dir is None:
+        return
+    from novelvideo.freezone.agent_product_operations import (
+        cancel_pending_agent_product_operation,
+    )
+
+    for operation_id in sorted(operation_ids):
+        try:
+            await cancel_pending_agent_product_operation(
+                project_dir=Path(project_dir),
+                ctx=ctx,
+                operation_id=operation_id,
+            )
+        except Exception:  # noqa: BLE001 - cleanup must not replace the chat result
+            logger.warning(
+                "could not cancel undelivered turn product operation %s",
                 operation_id,
                 exc_info=True,
             )
@@ -3585,7 +3633,10 @@ async def stream_assistant_reply(
     egress_project_id: str | None = None,
     backend: str | None = None,
     execution_context: AgentExecutionContext | None = None,
+    project_context: ProjectContext | None = None,
 ) -> dict[str, Any]:
+    if project_context is not None and project != project_context.project_id:
+        raise ValueError("project context project mismatch")
     if execution_context is not None:
         if project != execution_context.project_id:
             raise ValueError("agent execution context project mismatch")
@@ -3654,6 +3705,7 @@ async def stream_assistant_reply(
                     if execution_context is not None
                     else None
                 ),
+                project_context=project_context,
             )
         if backend == "hermes":
             return await _stream_assistant_reply_hermes(
@@ -3680,6 +3732,7 @@ async def stream_assistant_reply(
                     if execution_context is not None
                     else None
                 ),
+                project_context=project_context,
             )
         if backend != "claude":
             raise RuntimeError(f"Unsupported chat backend: {backend}")
@@ -3908,6 +3961,7 @@ async def _stream_assistant_reply_hermes(
     requester_user_id: str | None = None,
     agent_profile: str | None = None,
     canvas_id: str | None = None,
+    project_context: ProjectContext | None = None,
 ) -> dict[str, Any]:
     """Stream via Hermes ACP subprocess (per-user, sandboxed).
 
@@ -4005,6 +4059,7 @@ async def _stream_assistant_reply_hermes(
     persisted_message: dict[str, Any] | None = None
     seen_display_calls: set[str] = set()
     seen_tool_chat_errors: set[str] = set()
+    turn_agent_product_operation_ids: set[str] = set()
 
     # One claim per business turn, settled exactly once at this boundary. The
     # retries below re-send the prompt but are still this turn, so they share
@@ -4352,6 +4407,9 @@ async def _stream_assistant_reply_hermes(
                     project_dir=project_dir,
                     project_state_dir=project_state_dir,
                 )
+                admitted_operation_id = _agent_product_admission_operation_id(event)
+                if admitted_operation_id:
+                    turn_agent_product_operation_ids.add(admitted_operation_id)
                 if event.raw is not None:
                     tool_chat_error = None
                     raw = event.raw
@@ -4549,7 +4607,15 @@ async def _stream_assistant_reply_hermes(
         try:
             await _settle_turn_operation()
         finally:
-            await persist_partial_reply()
+            try:
+                if project_context is not None:
+                    await _cancel_turn_agent_product_operations(
+                        turn_agent_product_operation_ids,
+                        project_dir=project_state_dir or project_dir,
+                        ctx=project_context,
+                    )
+            finally:
+                await persist_partial_reply()
 
 
 async def _stream_assistant_reply_claude(
@@ -4770,6 +4836,7 @@ async def _stream_assistant_reply_codex(
     route_prompt: str | None = None,
     agent_profile: str | None = None,
     canvas_id: str | None = None,
+    project_context: ProjectContext | None = None,
 ) -> dict[str, Any]:
     assistant_text = ""
     tool_text = ""
@@ -4785,6 +4852,7 @@ async def _stream_assistant_reply_codex(
     # input schema rejected was only a slip; a receipt for them supersedes it.
     canvas_argument_rejections: dict[str, str] = {}
     ready_workflow_draft: dict[str, Any] | None = None
+    turn_agent_product_operation_ids: set[str] = set()
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
         username=username,
@@ -4998,6 +5066,9 @@ async def _stream_assistant_reply_codex(
                     project_state_dir=project_state_dir,
                 )
                 if event.type == "tool_updated":
+                    admitted_operation_id = _agent_product_admission_operation_id(event)
+                    if admitted_operation_id:
+                        turn_agent_product_operation_ids.add(admitted_operation_id)
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft
@@ -5149,6 +5220,12 @@ async def _stream_assistant_reply_codex(
                 await get_auth_session_port().revoke_agent_session(agent_token)
             except Exception:
                 logger.warning("failed to revoke Codex turn token", exc_info=True)
+        if project_context is not None:
+            await _cancel_turn_agent_product_operations(
+                turn_agent_product_operation_ids,
+                project_dir=project_state_dir or project_dir,
+                ctx=project_context,
+            )
         if turn_operation is not None:
             await turn_operation.finish(turn_disposition)
 

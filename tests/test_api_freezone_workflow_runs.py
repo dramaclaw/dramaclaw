@@ -3896,6 +3896,46 @@ def test_client_cannot_forge_server_recipe_receipt(
     assert stored["result_ref"] == {}
 
 
+def test_cancelled_agent_product_operation_terminalizes_its_task(
+    workflow_run_client, monkeypatch
+):
+    from novelvideo.api.routes import freezone
+
+    response = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+        json={
+            "product_kind": "workflow_result",
+            "generation_session_id": "awaiting-user",
+            "canvas_id": "default",
+            "artifact_id": "video-ad@1.0.0",
+            "normalized_inputs_hash": "awaiting-user",
+        },
+    )
+    assert response.status_code == 200
+    operation = response.json()["data"]
+    settled = []
+
+    async def terminalize(*, ctx, operation):
+        settled.append((ctx.project_id, operation["operation_id"], operation["status"]))
+
+    monkeypatch.setattr(
+        freezone,
+        "terminalize_undelivered_agent_product_task",
+        terminalize,
+        raising=False,
+    )
+
+    finished = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations/"
+        f"{operation['operation_id']}/finish",
+        json={"task_id": operation["task_id"], "outcome": "cancelled"},
+    )
+
+    assert finished.status_code == 200, finished.text
+    assert finished.json()["data"]["status"] == "cancelled"
+    assert settled == [("proj_demo", operation["operation_id"], "cancelled")]
+
+
 def test_server_workflow_prepare_revise_and_compact_query(workflow_run_client):
     base = "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts"
     response = workflow_run_client.post(

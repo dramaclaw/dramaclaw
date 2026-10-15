@@ -247,6 +247,122 @@ def test_terminal_operation_requires_a_new_generation_attempt(tmp_path):
         _create(tmp_path, key="completed-attempt", kind="workflow_generate")
 
 
+@pytest.mark.asyncio
+async def test_cancel_pending_operation_terminalizes_task_and_refunds_reservation(
+    tmp_path, monkeypatch
+):
+    from novelvideo.freezone import agent_product_operations as operations
+
+    operation = _create(tmp_path, key="cancel-awaiting-user")
+    operation = bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    task = SimpleNamespace(
+        task_id="task-a",
+        task_type=operation["task_type"],
+        status="running",
+        progress=0.01,
+        metadata={
+            "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+            "feature_credit_reservation_id": "reservation-a",
+        },
+    )
+    updates = []
+
+    class Manager:
+        def get_task_for_project(self, *_args, **_kwargs):
+            return task
+
+        def update_progress_for_project(self, *_args, **kwargs):
+            updates.append(kwargs)
+            task.status = kwargs["status"]
+
+    refunds = []
+
+    async def refund(reservation_id, *, metadata):
+        refunds.append((reservation_id, metadata))
+        return SimpleNamespace(accepted=True, retryable=False)
+
+    monkeypatch.setattr(operations, "get_task_manager", lambda: Manager(), raising=False)
+    monkeypatch.setattr(
+        operations,
+        "refund_undelivered_feature_credit_reservation",
+        refund,
+        raising=False,
+    )
+
+    cancelled = await operations.cancel_pending_agent_product_operation(
+        project_dir=tmp_path,
+        ctx=SimpleNamespace(project_id="project-a"),
+        operation_id=operation["operation_id"],
+    )
+
+    assert cancelled["status"] == "cancelled"
+    assert task.status == "cancelled"
+    assert updates[0]["expected_task_id"] == "task-a"
+    assert updates[0]["metadata"]["settlement_status"] == "refunded"
+    assert refunds == [
+        (
+            "reservation-a",
+            {
+                "source": "agent_product_cancelled",
+                "operation_id": operation["operation_id"],
+                "business_outcome": "cancelled",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_operation_preserves_delivered_operation(
+    tmp_path, monkeypatch
+):
+    from novelvideo.freezone import agent_product_operations as operations
+
+    operation = _create(tmp_path, key="already-delivered")
+    operation = bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="model-call-a",
+        executed_at=1.0,
+        source="server_observed_agent_turn",
+    )
+    delivered = finish_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        outcome="delivered",
+        expected_task_id="task-a",
+        result_ref={"kind": "workflow_skill_definition", "id": "skill-a"},
+    )
+
+    async def unexpected_terminalize(**_kwargs):
+        raise AssertionError("delivered operations must not be terminalized again")
+
+    monkeypatch.setattr(
+        operations,
+        "terminalize_undelivered_agent_product_task",
+        unexpected_terminalize,
+    )
+
+    result = await operations.cancel_pending_agent_product_operation(
+        project_dir=tmp_path,
+        ctx=SimpleNamespace(project_id="project-a"),
+        operation_id=operation["operation_id"],
+    )
+
+    assert result == delivered
+    assert result["status"] == "delivered"
+
+
 def test_recipe_delivery_requires_fresh_model_compile_evidence(tmp_path):
     operation = _create(tmp_path, key="recipe-key", kind="recipe_result")
     bind_agent_product_task(
