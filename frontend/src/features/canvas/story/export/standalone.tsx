@@ -3,6 +3,7 @@ import { StoryExperience } from '../StoryExperience';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 import type { CompiledStory } from '../storyTypes';
 import type { PlayerLabels } from './buildPlayerHtml';
+import { storySaveFingerprint } from '../storySave';
 import './standalone.css';
 
 type StoryData = {
@@ -65,5 +66,12 @@ useStoryRuntimeStore.getState().enterPlay({
   choiceStateChangesById: data.choiceStateChanges,
   choiceInteractionById: data.choiceInteraction,
   knotByNodeId: {}, variables: [], warnings: [],
-}, { storyJson: data.storyJson });
+}, {
+  storyJson: data.storyJson,
+  // Keep offline saves separate from author playtests and other story versions.
+  saveKey: `st.story.save.offline.${storySaveFingerprint(data.storyJson)}`,
+});
+if (useStoryRuntimeStore.getState().resumeAvailable) {
+  useStoryRuntimeStore.getState().resumeSaved();
+}
 createRoot(document.getElementById('app')!).render(<StoryExperience t={t} title={data.title} />);

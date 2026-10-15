@@ -22,7 +22,16 @@ function compiled(overrides: Partial<CompiledStory> = {}): CompiledStory {
     variables: [], warnings: [], ...overrides,
   };
 }
-async function openExport(story = compiled(), rejectPlay = false, options: BuildPlayerHtmlOptions = {}) {
+type ExportStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+function memoryStorage(): ExportStorage {
+  const items = new Map<string, string>();
+  return {
+    getItem: (key) => items.get(key) ?? null,
+    setItem: (key, value) => { items.set(key, value); },
+    removeItem: (key) => { items.delete(key); },
+  };
+}
+async function openExport(story = compiled(), rejectPlay = false, options: BuildPlayerHtmlOptions = {}, storage?: ExportStorage) {
   const errors: string[] = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', (error: Error) => errors.push(error.message));
@@ -30,6 +39,9 @@ async function openExport(story = compiled(), rejectPlay = false, options: Build
   const dom = new JSDOM(html, {
     url: 'file:///offline/story.html', runScripts: 'dangerously', pretendToBeVisual: true, virtualConsole,
     beforeParse(window: Window & typeof globalThis) {
+      // jsdom denies storage for file:// opaque origins. Supply browser storage
+      // explicitly when testing reloads; other tests exercise unavailable storage.
+      if (storage) Object.defineProperty(window, 'localStorage', { value: storage });
       Object.defineProperties(window.HTMLMediaElement.prototype, {
         play: { configurable: true, value: () => rejectPlay ? Promise.reject(new Error('NotAllowedError')) : Promise.resolve() },
         pause: { configurable: true, value() {} },
@@ -44,6 +56,80 @@ async function openExport(story = compiled(), rejectPlay = false, options: Build
 afterEach(() => { windows.splice(0).forEach((window) => window.close()); });
 
 describe('exported HTML using the shared player', () => {
+  it('restores offline progress and rewind checkpoints after reload, and persists clearing', async () => {
+    const storage = memoryStorage();
+    const story = compiled({
+      explorationNodes: [
+        { id: 'intro', label: '开场', successors: ['ending'], choices: [{ target: 'ending', text: '继续' }], isEnding: false },
+        { id: 'ending', label: '终章', successors: [], isEnding: true },
+      ],
+    });
+    const first = await openExport(story, false, {}, storage);
+    (first.document.querySelector('[data-choice-stage] button') as HTMLButtonElement).click();
+    await pause(550);
+    expect(first.document.querySelector('.story-ending-progress')?.textContent).toContain('探索 100%');
+    first.window.close();
+
+    const reloaded = await openExport(story, false, {}, storage);
+    expect(reloaded.document.querySelector('[data-story-ending]')).not.toBeNull();
+    expect(reloaded.document.querySelector('.story-ending-progress')?.textContent).toContain('探索 100%');
+    (reloaded.document.querySelector('button[aria-label="返回上一个选择点"]') as HTMLButtonElement).click();
+    await pause();
+    expect(reloaded.document.querySelector('[data-choice-stage] button')).not.toBeNull();
+    reloaded.window.close();
+
+    const rewound = await openExport(story, false, {}, storage);
+    expect(rewound.document.querySelector('[data-choice-stage] button')).not.toBeNull();
+    (rewound.document.querySelector('button[aria-label="打开剧情探索"]') as HTMLButtonElement).click();
+    await pause();
+    expect(rewound.document.querySelector('.story-exploration-summary')?.textContent).toBe('已解锁 2/2 个片段 · 结局 1/1');
+    (rewound.document.querySelector('button[aria-label="清除探索进度"]') as HTMLButtonElement).click();
+    await pause();
+    (rewound.document.querySelector('.story-exploration-confirm-buttons button:last-child') as HTMLButtonElement).click();
+    await pause();
+    rewound.window.close();
+
+    const cleared = await openExport(story, false, {}, storage);
+    (cleared.document.querySelector('button[aria-label="打开剧情探索"]') as HTMLButtonElement).click();
+    await pause();
+    expect(cleared.document.querySelector('.story-exploration-summary')?.textContent).toBe('已解锁 1/2 个片段 · 结局 0/1');
+    expect([...first.errors, ...reloaded.errors, ...rewound.errors, ...cleared.errors]).toEqual([]);
+  });
+
+  it('isolates offline story versions and recovers from a damaged save', async () => {
+    const storage = memoryStorage();
+    const first = await openExport(compiled(), false, {}, storage);
+    (first.document.querySelector('[data-choice-stage] button') as HTMLButtonElement).click();
+    await pause(550);
+    first.window.close();
+    const changed = await openExport(compiled({ ink: compiled().ink.replace('开场', '新版开场') }), false, {}, storage);
+    expect(changed.document.querySelector('[data-choice-stage] button')).not.toBeNull();
+    const original = await openExport(compiled(), false, {}, storage);
+    expect(original.document.querySelector('[data-story-ending]')).not.toBeNull();
+    original.window.close();
+
+    const damaged: ExportStorage = { ...storage, getItem: () => '{broken' };
+    const recovered = await openExport(compiled(), false, {}, damaged);
+    expect(recovered.document.querySelector('[data-choice-stage] button')).not.toBeNull();
+    (recovered.document.querySelector('[data-choice-stage] button') as HTMLButtonElement).click();
+    await pause(550);
+    expect(recovered.document.querySelector('[data-story-ending]')).not.toBeNull();
+    expect([...changed.errors, ...original.errors, ...recovered.errors]).toEqual([]);
+  });
+
+  it('keeps playback working when storage writes exceed the quota', async () => {
+    const storage: ExportStorage = {
+      getItem: () => null,
+      setItem: () => { throw new Error('QuotaExceededError'); },
+      removeItem: () => {},
+    };
+    const { document, errors } = await openExport(compiled(), false, {}, storage);
+    (document.querySelector('[data-choice-stage] button') as HTMLButtonElement).click();
+    await pause(550);
+    expect(document.querySelector('[data-story-ending]')).not.toBeNull();
+    expect(errors).toEqual([]);
+  });
+
   it('plays a compiled story with state names that collide with knots', async () => {
     const nodes = ['start', 'gate', 'end'].map(id => ({
       id, type: 'videoNode', position: { x: 0, y: 0 }, data: {

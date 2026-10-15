@@ -52,7 +52,7 @@ export async function buildStoryZip(
   await writer.add('index.html', new TextReader(html));
   // The portable archive intentionally includes instructions in both languages.
   await writer.add('README.txt', new TextReader(
-    '完整解压此 ZIP，然后打开 index.html。请保留 videos 文件夹的位置。\n播放器、剧情探索和视频支持离线使用；外部链接需要网络。\n\nExtract the entire ZIP, then open index.html. Keep the videos folder beside it.\nPlayer, story exploration and videos work offline; external links require internet.\n', // i18n-exempt
+    '完整解压此 ZIP，然后打开 index.html。请保留 videos 文件夹的位置。\n播放器、剧情探索和视频支持离线使用；外部链接需要网络。\n剧情位置和探索进度自动保存在当前浏览器，刷新后恢复；需允许本地文件使用浏览器存储。更换浏览器或移动文件后不保证继承进度。\n\nExtract the entire ZIP, then open index.html. Keep the videos folder beside it.\nPlayer, story exploration and videos work offline; external links require internet.\nPlayback position and exploration progress are saved in this browser and restored on reload, provided local-file storage is allowed. Progress may not carry over to another browser or file location.\n', // i18n-exempt
   ));
   return writer.close();
 }
