@@ -1183,12 +1183,25 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     questions = _safe_list(args.get("questions"))
     generation_media_types = args.get("generation_media_types")
     generation_required_choices = args.get("generation_required_choices")
+    has_model_constraint_adjustment_question = any(
+        isinstance(question, dict)
+        and question.get("id") == "video_model_constraint_adjustment"
+        for question in questions
+    )
     model_constraint_adjustment_requested = (
         generation_media_types is None
-        and isinstance(generation_required_choices, dict)
-        and set(generation_required_choices) == {"video"}
-        and generation_required_choices["video"]
-        == ["video_model_constraint_adjustment"]
+        and (
+            (
+                isinstance(generation_required_choices, dict)
+                and set(generation_required_choices) == {"video"}
+                and generation_required_choices["video"]
+                == ["video_model_constraint_adjustment"]
+            )
+            or (
+                generation_required_choices is None
+                and has_model_constraint_adjustment_question
+            )
+        )
     )
     if model_constraint_adjustment_requested:
         from novelvideo.freezone.clarifications import (

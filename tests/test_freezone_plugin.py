@@ -3882,6 +3882,62 @@ def test_generation_clarification_presents_server_owned_model_constraint_questio
     assert "agent-authored" not in json.dumps(event)
 
 
+def test_generation_clarification_replaces_agent_authored_constraint_options(
+    monkeypatch,
+):
+    """Issue #742: the reserved question id cannot carry agent-authored alternatives."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    emitted = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "title": "视频模型或模式不兼容",
+            "description": "Seedance 只支持 firstFrame / textToVideo。",
+            "questions": [
+                {
+                    "id": "video_model_constraint_adjustment",
+                    "title": "要如何处理？",
+                    "mode": "single",
+                    "options": [
+                        {
+                            "id": "adjust_reference_mode",
+                            "label": "改用 firstFrame",
+                            "description": "删除多图参考，只保留首帧。",
+                        },
+                        {
+                            "id": "text_to_video",
+                            "label": "改用 textToVideo",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert result == "shown"
+    event = emitted[0]
+    assert event["title"] == "选择下一步"
+    assert event["description"] == ""
+    assert event["allow_recommended"] is False
+    assert event["allow_skip"] is False
+    assert [option["id"] for option in event["questions"][0]["options"]] == [
+        "keep_requirements",
+        "adjust_reference_mode",
+        "adjust_shot_duration",
+        "specify_video_model",
+    ]
+    serialized = json.dumps(event, ensure_ascii=False)
+    assert "firstFrame" not in serialized
+    assert "textToVideo" not in serialized
+    assert "删除多图参考" not in serialized
+
+
 def test_generation_clarification_reuses_confirmed_model_for_dependent_choice(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
