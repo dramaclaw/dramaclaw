@@ -1054,12 +1054,20 @@ def _agent_product_admission_operation_id(event: Any) -> str:
         or getattr(event, "error", None)
     ):
         return ""
+    from novelvideo.freezone.agent_product_operations import (
+        PENDING_STATUSES,
+        TERMINAL_STATUSES,
+    )
+
+    admission_statuses = PENDING_STATUSES | TERMINAL_STATUSES | {
+        "agent_product_generation_admitted"
+    }
     for value in (getattr(event, "structured", None), getattr(event, "output", None)):
         for payload in _json_objects_from_codex_tool_value(value):
             operation_id = str(payload.get("operation_id") or "").strip()
             if (
                 payload.get("ok") is True
-                and payload.get("status") == "agent_product_generation_admitted"
+                and payload.get("status") in admission_statuses
                 and operation_id.startswith("agent_product_")
             ):
                 return operation_id

@@ -5551,7 +5551,9 @@ async def test_freezone_hermes_turn_cancels_undelivered_agent_product_admission(
                 status="completed",
                 structured={
                     "ok": True,
-                    "status": "agent_product_generation_admitted",
+                    # The live begin tool returns the durable operation state,
+                    # not a synthetic admission status.
+                    "status": "reserved",
                     "operation_id": operation_id,
                 },
                 text="admitted",
@@ -7317,7 +7319,8 @@ async def test_codex_turn_cancels_undelivered_agent_product_admission(
         output={
             "structuredContent": {
                 "ok": True,
-                "status": "agent_product_generation_admitted",
+                # Mirror the actual MCP envelope returned by the begin tool.
+                "status": "reserved",
                 "operation_id": operation_id,
             }
         },

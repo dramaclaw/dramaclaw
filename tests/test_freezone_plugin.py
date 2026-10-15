@@ -118,7 +118,7 @@ def test_product_admission_preserves_generic_result_routing(
     def request(method, path, *, body):
         requests.append(body)
         return {"ok": True, "data": {
-            "operation_id": "op-1", "product_kind": product_kind,
+            "operation_id": "op-1", "product_kind": product_kind, "status": "reserved",
             "task_id": "task-1", "generation_session_id": "session-1",
         }}
 
@@ -132,6 +132,7 @@ def test_product_admission_preserves_generic_result_routing(
     result = plugin._handle_begin_agent_product_generation(args)
     assert len(requests) == 1
     assert requests[0]["product_kind"] == product_kind
+    assert result["status"] == "agent_product_generation_admitted"
     assert result["operation_id"] == "op-1"
     assert result["next_action"] == "generate_product_result"
     assert "required_next_tool" not in result

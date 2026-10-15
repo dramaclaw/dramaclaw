@@ -6615,8 +6615,11 @@ def _handle_begin_agent_product_generation(args: dict[str, Any], **_: Any) -> st
     return _structured_tool_result(
         {
             "ok": True,
-            "status": "agent_product_generation_admitted",
             **payload,
+            # The tool reports the admission outcome; the durable operation's
+            # internal state (normally ``reserved``) remains available through
+            # the operation read API.
+            "status": "agent_product_generation_admitted",
             "confirmation_required": False,
             "next_action": "generate_product_result",
             "agent_instruction": (
