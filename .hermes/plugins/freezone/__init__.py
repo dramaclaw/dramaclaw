@@ -8871,7 +8871,7 @@ def _handle_run_workflow(args: dict[str, Any], **_: Any) -> str:
             return tool_result({
                 "ok": False, "status": "workflow_node_not_found",
                 "error": "node_ids must be exact nodes[].id values from the current canvas",
-                "available_node_ids": available_ids,
+                "available_ids": available_ids,
                 "agent_instruction": (
                     "Resolve the requested target from the structured canvas summary. "
                     "Prompt markers, display names, and external IDs are not node IDs. "
@@ -9531,7 +9531,7 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_group_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids", "group_id"),
     "freezone_select_nodes": (*_CANVAS_RESULT_FIELDS, "node_ids"),
     "freezone_run_node_action": (*_CANVAS_RESULT_FIELDS, "node_id", "action", "run_id"),
-    "freezone_run_workflow": (*_WORKFLOW_RESULT_FIELDS, "direction", "run_id"),
+    "freezone_run_workflow": (*_WORKFLOW_RESULT_FIELDS, "direction", "run_id", "available_ids"),
     "freezone_open_mainline_projection": (
         *_CANVAS_RESULT_FIELDS,
         "scope",

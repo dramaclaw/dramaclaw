@@ -753,7 +753,8 @@ def test_run_workflow_rejects_non_canvas_identity_before_emitting(monkeypatch, t
 
     assert emitted == []
     assert result["status"] == "workflow_node_not_found"
-    assert result["available_node_ids"] == ["recover-image"]
+    assert result["available_ids"] == ["recover-image"]
+    Draft202012Validator(plugin._output_schema("freezone_run_workflow")).validate(result)
 
 
 @pytest.mark.parametrize("node_id", ["recover-image", "RECOVER01_valid_node_id"])
