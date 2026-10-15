@@ -5576,6 +5576,7 @@ async def test_freezone_hermes_turn_cancels_undelivered_agent_product_admission(
     monkeypatch.setattr(
         chat_service, "_write_hermes_tool_mode", lambda *_args, **_kwargs: None
     )
+    monkeypatch.setattr(chat_service, "is_hermes_backend_available", lambda: True)
     monkeypatch.setattr(
         chat_service, "_cancel_turn_agent_product_operations", cancel_turn_operations
     )

@@ -262,12 +262,49 @@ def test_the_turn_settles_from_the_existing_finally() -> None:
     assert settles_in_finally, "the ledger is not settled from the turn's finally"
 
 
-def test_persisting_and_settling_cannot_block_each_other() -> None:
-    """A transcript failure must not strand the ledger, and vice versa."""
-    source = _service_source()
-    assert "try:\n            await _settle_turn_operation()\n        finally:\n            await persist_partial_reply()" in source, (
-        "the two cleanup steps are not nested, so one failing skips the other"
+def test_turn_cleanup_steps_cannot_block_each_other() -> None:
+    """Ledger, product-operation and transcript cleanup must all be nested."""
+    tree = ast.parse(_service_source())
+    outer = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_stream_assistant_reply_hermes"
     )
+
+    def awaits(statements: list[ast.stmt], function_name: str) -> bool:
+        return any(
+            isinstance(node, ast.Await)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == function_name
+            for statement in statements
+            for node in ast.walk(statement)
+        )
+
+    settlement_cleanup = next(
+        node
+        for node in ast.walk(outer)
+        if isinstance(node, ast.Try)
+        and awaits(node.body, "_settle_turn_operation")
+        and node.finalbody
+    )
+    operation_cleanup = next(
+        (
+            statement
+            for statement in settlement_cleanup.finalbody
+            if isinstance(statement, ast.Try)
+        ),
+        None,
+    )
+
+    assert operation_cleanup is not None, "product-operation cleanup is not nested"
+    assert awaits(
+        operation_cleanup.body, "_cancel_turn_agent_product_operations"
+    ), "product-operation cleanup can be skipped"
+    assert awaits(
+        operation_cleanup.finalbody, "persist_partial_reply"
+    ), "transcript persistence can be skipped"
 
 
 def test_the_submit_signal_follows_the_send_not_the_thread_start() -> None:

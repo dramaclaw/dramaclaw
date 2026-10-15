@@ -4238,8 +4238,12 @@ def _bind_recipe_audio_requirements(
         required = recipe.get("requires_generated_audio") is True or (
             isinstance(item_requirement, bool) and item_requirement
         )
-        if workflow_catalog.get("requiresGeneratedAudio") is not required:
-            workflow_catalog["requiresGeneratedAudio"] = required
+        cached_requirement = workflow_catalog.get("requiresGeneratedAudio")
+        if required and cached_requirement is not True:
+            workflow_catalog["requiresGeneratedAudio"] = True
+            changed = True
+        elif not required and cached_requirement is True:
+            workflow_catalog["requiresGeneratedAudio"] = False
             changed = True
     return changed
 

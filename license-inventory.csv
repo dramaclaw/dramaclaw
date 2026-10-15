@@ -2203,6 +2203,7 @@ src/novelvideo/freezone/canvas_lock.py,Elastic-2.0,2026 SuperTale contributors,R
 src/novelvideo/freezone/canvas_media_scope.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_static_urls.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_store.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/clarifications.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/history.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/html_artifacts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/image_node.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
