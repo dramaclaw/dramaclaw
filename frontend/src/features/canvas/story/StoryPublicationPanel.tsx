@@ -11,6 +11,9 @@ import {
   LoaderCircle,
   Upload,
   Play,
+  CircleAlert,
+  TriangleAlert,
+  LocateFixed,
 } from "lucide-react";
 import { authorPreviewSnapshot, authorPreviewUrl } from "./publication-ui";
 import { StoryCover } from "./StoryCover";
@@ -810,7 +813,10 @@ export function StoryPublicationPanel({
               {prepared && (
                 <div className="publication-inline-note" role="status">
                   <div className="publication-check-status">
-                    <strong>{t("storyPublication.publicationChecks")}</strong>
+                    <strong className="publication-check-heading">
+                      {t("storyPublication.publicationChecks")}
+                      {prepared.issues.length > 0 && <span className="publication-check-count">{prepared.issues.length}</span>}
+                    </strong>
                     <span>{t(systemCheckError ? "storyPublication.checkIncomplete" : draftChanged ? "storyPublication.needsRecheck" : `storyPublication.taskStatus.${prepared.status}`)}</span>
                   </div>
                   {prepared.status === "preparing" && <p>{t("storyPublication.preparingHint")}</p>}
@@ -819,22 +825,25 @@ export function StoryPublicationPanel({
               {prepared && (prepared.issues.length > 0 || prepared.error) && (
                 <section className="publication-prepared" aria-live="polite">
                   {prepared.issues.length > 0 && (
-                    <ul>
+                    <ul className="publication-issue-list">
                       {prepared.issues.map((issue, index) => (
                         <li
                           key={index}
-                          className={
-                            issue.severity === "error"
-                              ? "publication-error"
-                              : ""
-                          }
+                          className="publication-issue"
+                          data-severity={issue.severity}
                         >
-                          {t(`storyPublication.errors.${issue.code}`, {
-                            defaultValue: issue.code,
-                          })}
-                          {issue.entity_label && <p>{issue.entity_label}</p>}
+                          {issue.severity === "error"
+                            ? <CircleAlert className="publication-issue-icon" aria-hidden="true" />
+                            : <TriangleAlert className="publication-issue-icon" aria-hidden="true" />}
+                          <div className="publication-issue-copy">
+                            {issue.entity_label && <strong>{issue.entity_label}</strong>}
+                            <p>{t(`storyPublication.errors.${issue.code}`, {
+                              defaultValue: issue.code,
+                            })}</p>
+                          </div>
                           {issue.entity_id && (
-                            <button className="publication-button" onClick={() => locateIssue(issue.entity_id!)}>
+                            <button type="button" className="publication-button publication-issue-action" onClick={() => locateIssue(issue.entity_id!)}>
+                              <LocateFixed size={14} aria-hidden="true" />
                               {t("storyPublication.locateIssue")}
                             </button>
                           )}

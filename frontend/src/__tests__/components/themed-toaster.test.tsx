@@ -38,7 +38,7 @@ describe("ThemedToaster", () => {
 
   it.each([
     ["/", "60"],
-    ["/projects/demo/freezone", "94"],
+    ["/projects/demo/freezone", "102"],
     ["/projects/demo/characters", "102"],
     ["/login", "24"],
     ["/watch/demo", "24"],

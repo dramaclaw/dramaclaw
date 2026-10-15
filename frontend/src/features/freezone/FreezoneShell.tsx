@@ -119,6 +119,7 @@ import {
   useFreezoneViewMode,
 } from "@/features/freezone/useFreezoneViewMode";
 import { useFreezoneChatVisibility } from "./useFreezoneChatVisibility";
+import { useFreezoneDockOffset } from "./useFreezoneDockOffset";
 import {
   Tooltip,
   TooltipContent,
@@ -2485,6 +2486,7 @@ function FreezoneChatDock({
     height: window.innerHeight,
   }));
   const asideRef = useRef<HTMLElement | null>(null);
+  useFreezoneDockOffset(asideRef, isDesktop && !floating && panelVisible, resizingPane !== null);
   const dragCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => dragCleanupRef.current?.(), [floating, isDesktop, open]);
 

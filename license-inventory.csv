@@ -1177,6 +1177,7 @@ frontend/src/__tests__/features/freezone/skill-node-inputs.test.ts,Elastic-2.0,2
 frontend/src/__tests__/features/freezone/story-stage-nav-layout.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/use-canvas-sync-media-scope.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/use-canvas-sync.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/freezone/use-freezone-dock-offset.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/workflow-node-action-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/workflow-run-recovery-bar.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/piko-hover-video-load-recovery.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2272,6 +2273,7 @@ frontend/src/features/freezone/referenceRoles.ts,Elastic-2.0,2026 SuperTale cont
 frontend/src/features/freezone/shotMetadataStore.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/useCanvasSync.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/useFreezoneChatVisibility.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/freezone/useFreezoneDockOffset.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/useFreezoneViewMode.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/workflowQualityGate.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/workflowQualityGate.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

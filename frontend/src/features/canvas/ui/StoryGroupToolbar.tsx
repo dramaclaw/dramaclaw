@@ -3,7 +3,7 @@ import { StoryPublicationPanel } from '@/features/canvas/story/StoryPublicationP
 import { StoryOverviewPanel } from '@/components/canvas/StoryOverviewPanel';
 import { memo, useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, ListTree, Play, ScrollText, ShieldCheck, SlidersHorizontal, Upload } from 'lucide-react';
+import { Download, Play, ScrollText, ShieldCheck, SlidersHorizontal, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
@@ -79,16 +79,6 @@ function StoryGroupActions({ id, data, onPublish, onOverview }: { id: string; da
     }
   }, [t]);
 
-  const handleStoryGroupLive = useCallback((groupId: string) => {
-    const { nodes, edges } = useCanvasStore.getState();
-    try {
-      const compiled = compileStoryGroup(groupId, nodes, edges);
-      useStoryRuntimeStore.getState().enterPlay(compiled, { groupId, playKind: 'live' });
-    } catch (err) {
-      toast.error(err instanceof StoryCompileError ? err.message : t('canvas.story.error'));
-    }
-  }, [t]);
-
   const title = resolveNodeDisplayName(CANVAS_NODE_TYPES.group, data);
   return (
     <div
@@ -107,9 +97,6 @@ function StoryGroupActions({ id, data, onPublish, onOverview }: { id: string; da
       >
         <button type="button" className={ACTION_CLASS} onClick={() => handleStoryGroupPlay(id)}>
           <Play className="size-4" />{t('canvas.story.play')}
-        </button>
-        <button type="button" className={ACTION_CLASS} onClick={() => handleStoryGroupLive(id)}>
-          <ListTree className="size-4" />{t('canvas.story.playMode.live')}
         </button>
         <button type="button" className={ACTION_CLASS} onClick={onOverview}>
           <ScrollText className="size-4" />{t('canvas.story.overview.open')}

@@ -38,12 +38,10 @@ function ProjectSubmenu({ label, role, children }: { label: string; role?: 'tabl
   return <nav role={role} aria-label={label} style={{ height: PROJECT_SUBMENU_HEIGHT }} className={PROJECT_SUBMENU_CLASS}>{children}</nav>;
 }
 
-function ProjectSubmenuRow({ overlay = false, children }: { overlay?: boolean; children: ReactNode }) {
+function ProjectSubmenuRow({ children }: { children: ReactNode }) {
   return (
-    <div className={cn("z-30 flex justify-center", overlay
-      ? "absolute left-1/2 top-full -translate-x-1/2"
-      : "relative px-4")}
-      style={{ paddingTop: PROJECT_SUBMENU_TOP_GAP, paddingBottom: overlay ? 0 : PROJECT_SUBMENU_BOTTOM_GAP }}
+    <div className="relative z-30 flex justify-center px-4"
+      style={{ paddingTop: PROJECT_SUBMENU_TOP_GAP, paddingBottom: PROJECT_SUBMENU_BOTTOM_GAP }}
     >
       {children}
     </div>
@@ -58,7 +56,7 @@ export function ProjectXiahuaMenu() {
   const modes: FreezoneViewMode[] = ["workflow", "board"];
 
   return (
-    <ProjectSubmenuRow overlay>
+    <ProjectSubmenuRow>
       <ProjectSubmenu role="tablist" label={t("freezone.viewMode.label")}>
         {modes.map((mode, index) => (
           <button key={mode} type="button" role="tab"

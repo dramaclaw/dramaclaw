@@ -105,13 +105,17 @@ export function PendingOutlineCard({
   const [error, setError] = useState<string | null>(null);
   // Persist the collapsed version per canvas. The versioned outline key means
   // a newly generated proposal still opens automatically for review.
-  const [dismissedToken, setDismissedToken] = useState<string | null>(null);
+  const [dismissalOverride, setDismissalOverride] = useState<{
+    token: string;
+    dismissed: boolean;
+  } | null>(null);
   const outlineKey = `${outline.outline_id}:${outline.updated_at}`;
   const dismissalStorageKey = outlineDismissalStorageKey(projectId, canvasId);
   const dismissalToken = `${dismissalStorageKey}:${outlineKey}`;
   const dismissed =
-    dismissedToken === dismissalToken ||
-    readDismissedOutlineKey(dismissalStorageKey) === outlineKey;
+    dismissalOverride?.token === dismissalToken
+      ? dismissalOverride.dismissed
+      : readDismissedOutlineKey(dismissalStorageKey) === outlineKey;
   useEffect(() => {
     setError(null);
     const storedOutlineKey = readDismissedOutlineKey(dismissalStorageKey);
@@ -122,13 +126,15 @@ export function PendingOutlineCard({
 
   const collapse = useCallback(() => {
     writeDismissedOutlineKey(dismissalStorageKey, outlineKey);
-    setDismissedToken(dismissalToken);
+    setDismissalOverride({ token: dismissalToken, dismissed: true });
   }, [dismissalStorageKey, dismissalToken, outlineKey]);
 
   const reopen = useCallback(() => {
     writeDismissedOutlineKey(dismissalStorageKey, null);
-    setDismissedToken(null);
-  }, [dismissalStorageKey]);
+    // A persisted collapse starts with no in-memory override after refresh.
+    // Explicitly expand it so clearing storage also triggers a React render.
+    setDismissalOverride({ token: dismissalToken, dismissed: false });
+  }, [dismissalStorageKey, dismissalToken]);
 
   const refreshCanvas = useCallback(async () => {
     return await refreshRemoteFreezoneCanvas(projectId, canvasId, {

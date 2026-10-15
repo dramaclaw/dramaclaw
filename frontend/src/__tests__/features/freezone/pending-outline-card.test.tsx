@@ -262,6 +262,21 @@ describe("PendingOutlineCard collapse persistence", () => {
     await waitFor(() => expect(window.localStorage.length).toBe(0));
   });
 
+  it("reopens a persisted collapsed outline on the first click after refresh", () => {
+    const first = renderCard();
+    fireEvent.click(first.getByRole("button", { name: "freezone.outline.dismiss" }));
+    first.unmount();
+
+    const refreshed = renderCard();
+    fireEvent.click(refreshed.getByRole("button", { name: "freezone.outline.reopen" }));
+    expect(refreshed.getByRole("button", { name: "freezone.outline.confirm" })).toBeInTheDocument();
+    expect(refreshed.queryByRole("button", { name: "freezone.outline.reopen" })).toBeNull();
+    refreshed.unmount();
+
+    const reopened = renderCard();
+    expect(reopened.getByRole("button", { name: "freezone.outline.confirm" })).toBeInTheDocument();
+  });
+
   it("stores collapse state independently for each canvas", () => {
     const first = renderCard(outline(), "canvas-a");
     fireEvent.click(first.getByRole("button", { name: "freezone.outline.dismiss" }));

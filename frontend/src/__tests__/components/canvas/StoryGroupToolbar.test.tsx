@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { act, cleanup, render, within, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { StoryGroupToolbar } from '@/features/canvas/ui/StoryGroupToolbar';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
@@ -15,7 +16,24 @@ vi.mock('@/features/canvas/story/compileStoryGroup', () => ({ compileStoryGroup:
 vi.mock('inkjs/full', () => ({ Compiler: class { Compile() { return { ToJson: () => '{}' }; } } }));
 vi.mock('@/features/canvas/story/export/buildStoryZip', () => ({ buildStoryZip: exportMocks.zip }));
 vi.mock('@/lib/browserDownload', () => ({ downloadBlobAsFile: exportMocks.download }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.restoreAllMocks(); });
+
+it('launches play directly without a live-generation menu', async () => {
+  useStoryRuntimeStore.setState({ mode: 'edit' });
+  useCanvasStore.setState({ selectedNodeId: 'g', edges: [], nodes: [
+    { id: 'g', type: 'groupNode', position: { x: 0, y: 0 }, data: { storyGroup: true } },
+  ] as CanvasNode[] });
+  const enterPlay = vi.spyOn(useStoryRuntimeStore.getState(), 'enterPlay').mockImplementation(() => {});
+  const user = userEvent.setup();
+  const view = render(<StoryGroupToolbar />);
+  expect(view.queryByRole('button', { name: 'canvas.story.playMode.live' })).toBeNull();
+  expect(view.queryByRole('button', { name: 'canvas.story.playMode.entertainment' })).toBeNull();
+  await user.click(view.getByRole('button', { name: 'canvas.story.play' }));
+  expect(enterPlay).toHaveBeenCalledExactlyOnceWith({ ink: 'test' }, expect.objectContaining({
+    groupId: 'g', playKind: 'entertainment',
+  }));
+  expect(enterPlay.mock.calls[0][1]).toHaveProperty('saveKey');
+});
 
 it('故事组工具栏直接显示常用操作，包含离线 HTML 导出入口', () => {
   useStoryRuntimeStore.setState({ mode: 'edit' });
