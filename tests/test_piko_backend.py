@@ -5,8 +5,27 @@ import pytest
 from novelvideo.piko import backend
 
 
-def test_piko_backend_defaults_to_demo(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clear_backend_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PIKO_WORLD_BACKEND", raising=False)
+    monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
+    monkeypatch.delenv("ST_REDIS_URL", raising=False)
+
+
+def test_piko_backend_defaults_to_demo_without_shared_infrastructure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_backend_environment(monkeypatch)
+
+    assert backend.configured_backend() == "demo"
+
+
+def test_piko_backend_requires_explicit_distributed_mode_with_shared_infrastructure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_backend_environment(monkeypatch)
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://control-plane")
+    monkeypatch.setenv("ST_REDIS_URL", "redis://shared")
+
     assert backend.configured_backend() == "demo"
 
 

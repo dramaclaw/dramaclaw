@@ -62,6 +62,12 @@ async def wait_for_frame(socket: Socket, event: str) -> dict:
     return await asyncio.wait_for(wait(), timeout=3)
 
 
+async def test_snapshot_identifies_the_current_zone(connected_world):
+    for socket in connected_world.sockets:
+        snapshot = await wait_for_frame(socket, "world.snapshot")
+        assert snapshot["zone"] == 1
+
+
 @pytest.fixture(params=["demo", "distributed"])
 async def connected_world(request: pytest.FixtureRequest, tmp_path: Path):
     store = PikoCharacterStore(tmp_path / "world.db")

@@ -52,7 +52,7 @@ import {
   PIKO_WORLD_OVERLAY_TRANSITION_CLASS,
   pikoWorldOverlayVisibilityClass,
 } from "./piko-world-overlay-motion";
-import { savePikoCharacter, usePikoWorldConnection, type PikoCharacter } from "./piko-world-client";
+import { pikoZoneLabel, savePikoCharacter, usePikoWorldConnection, type PikoCharacter } from "./piko-world-client";
 
 const RETURN_CONTROL_SRC = "/piko/world/ui/piko-world-return-icon-v2.png";
 const CHAT_CONTROL_SRC = "/piko/world/ui/piko-world-chat-icon-v2.png";
@@ -415,6 +415,18 @@ export function PikoWorldShell({ character = null, playerGender, onMusicMapChang
           onRespond={world.respondToChatRequest} onSend={world.sendPrivateChat}
           active={entered && entryFade === "done" && !travelPending && mapTitleComplete && mapLoadState === "ready" && !settingsOpen && !profileOpen && !residentSelectorOpen}
           onOpenChange={setPrivateOpen} />
+        {entered && world.zone !== null && (
+          <div
+            className="pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full border border-amber-950/20 bg-amber-50/85 px-3 py-1 text-xs font-semibold text-amber-950 backdrop-blur-sm"
+            role="status"
+            aria-live="polite"
+          >
+            {t("pikoWorld.zoneLabel", {
+              mapName: t(pikoMapTitleKey(location.mapId)),
+              zone: pikoZoneLabel(world.zone),
+            })}
+          </div>
+        )}
         <nav
           className="absolute left-4 top-4 z-20 flex items-center gap-5"
           aria-label={t("pikoWorld.worldControls")}

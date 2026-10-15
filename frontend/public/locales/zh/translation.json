@@ -2539,6 +2539,7 @@
     "loadingBack": "返回工作台",
     "loadingRetry": "重新加载",
     "worldControls": "Piko Piko 世界控制",
+    "zoneLabel": "{{mapName}} · {{zone}}区",
     "returnToWorkbench": "回到工作台",
     "chatToggle": "打开或收起世界聊天",
     "chatToggleUnread": "打开或收起世界聊天，未读消息：{{count}}",

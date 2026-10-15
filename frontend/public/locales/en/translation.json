@@ -2539,6 +2539,7 @@
     "loadingBack": "Back to workbench",
     "loadingRetry": "Reload",
     "worldControls": "Piko Piko World controls",
+    "zoneLabel": "{{mapName}} · Zone {{zone}}",
     "returnToWorkbench": "Back to workbench",
     "chatToggle": "Open or collapse world chat",
     "chatToggleUnread": "Open or collapse world chat. Unread messages: {{count}}.",

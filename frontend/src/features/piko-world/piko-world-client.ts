@@ -65,6 +65,18 @@ export type PikoPrivateChatMessage = {
   client_message_id?: string;
 };
 
+export function pikoZoneLabel(zone: number | null): string | null {
+  if (zone === null || !Number.isInteger(zone) || zone < 1) return null;
+  let current = zone;
+  let label = "";
+  while (current > 0) {
+    current -= 1;
+    label = String.fromCharCode(65 + (current % 26)) + label;
+    current = Math.floor(current / 26);
+  }
+  return label;
+}
+
 export async function fetchPikoCharacter(): Promise<PikoCharacter | null> {
   const response = await apiClient.get("piko/character").json<{ character: PikoCharacter | null }>();
   return response.character;
@@ -169,6 +181,7 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
   const remotePlayersRef = useRef(remotePlayers);
   remotePlayersRef.current = remotePlayers;
   const [connected, setConnected] = useState(false);
+  const [zone, setZone] = useState<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const sceneRef = useRef(sceneId);
   const reconnectRef = useRef<number | undefined>(undefined);
@@ -290,6 +303,7 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
         }
         if (frame.type === "world.snapshot" && Array.isArray(frame.players)) {
           setRemotePlayers(frame.players.filter(validPlayer));
+          setZone(Number.isInteger(frame.zone) && Number(frame.zone) >= 1 ? Number(frame.zone) : 1);
           return;
         }
         if ((frame.type === "player.joined" || frame.type === "player.moved" || frame.type === "player.updated") && validPlayer(frame.player)) {
@@ -429,6 +443,7 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
       socketRef.current = null;
       // onclose ignores a socket this cleanup already detached, so drop what it owned here.
       setConnected(false);
+      setZone(null);
       setRemotePlayers([]);
       setChatRequests([]);
       setPrivateChatPeers([]);
@@ -439,6 +454,7 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
   useEffect(syncProfile, [characterId, character?.nickname, character?.bio, character?.gender, accessory, syncProfile]);
 
   useEffect(() => {
+    setZone(null);
     setRemotePlayers([]);
     lastPositionRef.current.seat_id = null;
     if (characterId) send({ type: "scene.join", scene_id: sceneId, ...lastPositionRef.current });
@@ -476,6 +492,6 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
   }, [sendConfirmed]);
   return {
     remotePlayers, chatMessages, chatRequests, privateChatPeers, privateChatMessages,
-    connected, move, chat, openPrivateChat, respondToChatRequest, sendPrivateChat,
+    connected, zone, move, chat, openPrivateChat, respondToChatRequest, sendPrivateChat,
   };
 }

@@ -2,6 +2,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  pikoZoneLabel,
   upsertRemotePlayer,
   updateRemotePlayerTaskStatus,
   usePikoWorldConnection,
@@ -58,6 +59,11 @@ const localCharacter: PikoCharacter = {
   scene_id: "welcome-courtyard", position_x: 1270, position_y: 480, facing: "south",
 };
 
+it.each([[1, "A"], [2, "B"], [26, "Z"], [27, "AA"]])(
+  "formats zone %i as %s",
+  (zone, expected) => expect(pikoZoneLabel(zone)).toBe(expected),
+);
+
 it("retains an active speech bubble while applying movement updates", () => {
   const speech = { id: "message-1", body: "大家好", expiresAt: 20_000 };
   const players = [remotePlayer({ speech })];
@@ -108,6 +114,15 @@ it("accepts task status in snapshots and consumes live task status events", () =
     task_status: null,
   }));
   expect(hook.result.current.remotePlayers[0].task_status).toBeNull();
+  hook.unmount();
+});
+
+it("exposes the current zone from a world snapshot", () => {
+  const hook = renderHook(() => usePikoWorldConnection(localCharacter, localCharacter.scene_id));
+  act(() => sockets[0].open());
+  act(() => sockets[0].receive({ type: "world.snapshot", players: [], zone: 2 }));
+
+  expect(hook.result.current.zone).toBe(2);
   hook.unmount();
 });
 

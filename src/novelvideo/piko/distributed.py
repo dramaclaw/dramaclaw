@@ -69,6 +69,14 @@ def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return value
 
 
+def _room_zone(room_id: str) -> int:
+    try:
+        zone = int(room_id.rsplit(":", 1)[1])
+    except (IndexError, ValueError):
+        return 1
+    return max(zone, 1)
+
+
 def _valid_coordinate(value: float) -> bool:
     return math.isfinite(value) and -10000 <= value <= 10000
 
@@ -251,7 +259,7 @@ class DistributedPikoWorldHub:
         self.store = store
         self.instance_id = os.environ.get("ST_WORKER_ID", "piko") + ":" + uuid.uuid4().hex[:10]
         self.scene_capacity = _env_int(
-            "PIKO_WORLD_SCENE_CAPACITY", 100, minimum=10, maximum=500
+            "PIKO_WORLD_SCENE_CAPACITY", 200, minimum=10, maximum=500
         )
         self.max_scene_instances = _env_int(
             "PIKO_WORLD_MAX_SCENE_INSTANCES", 1000, minimum=1, maximum=10000
@@ -360,7 +368,10 @@ class DistributedPikoWorldHub:
             await self._retire_connection(player)
             return player
         snapshot = await self._room_snapshot(room_id, exclude=character.id)
-        await self._safe_send(websocket, {"type": "world.snapshot", "players": snapshot})
+        await self._safe_send(
+            websocket,
+            {"type": "world.snapshot", "players": snapshot, "zone": _room_zone(room_id)},
+        )
         await self._publish(
             "room",
             {"type": "player.joined", "player": player.public_dict()},
@@ -598,7 +609,12 @@ class DistributedPikoWorldHub:
         )
         snapshot = await self._room_snapshot(player.instance_id, exclude=player.character_id)
         await self._safe_send(
-            player.websocket, {"type": "world.snapshot", "players": snapshot}
+            player.websocket,
+            {
+                "type": "world.snapshot",
+                "players": snapshot,
+                "zone": _room_zone(player.instance_id),
+            },
         )
         await self._publish(
             "room",

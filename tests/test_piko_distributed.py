@@ -76,6 +76,13 @@ def make_hub(server: fakeredis.FakeServer, store: FakeStore) -> DistributedPikoW
     return hub
 
 
+def test_scene_capacity_defaults_to_200(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PIKO_WORLD_SCENE_CAPACITY", raising=False)
+    hub = DistributedPikoWorldHub(FakeStore(), redis_url="redis://unused")  # type: ignore[arg-type]
+
+    assert hub.scene_capacity == 200
+
+
 async def open_private_chat(
     hub: DistributedPikoWorldHub,
     sender,
@@ -470,6 +477,7 @@ async def test_session_takeover_on_another_shard_leaves_the_previous_room() -> N
         player = await first_hub.join(
             sockets[2], user_id="user-3", character=character(3)  # type: ignore[arg-type]
         )
+        assert (await wait_for_frame(sockets[2], "world.snapshot"))["zone"] == 2
         observer = await first_hub.join(
             sockets[3], user_id="user-4", character=character(4)  # type: ignore[arg-type]
         )

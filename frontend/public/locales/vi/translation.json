@@ -144,6 +144,7 @@
     "loadingBack": "Về không gian làm việc",
     "loadingRetry": "Tải lại",
     "worldControls": "Điều khiển Thế giới Piko Piko",
+    "zoneLabel": "{{mapName}} · Khu {{zone}}",
     "returnToWorkbench": "Về không gian làm việc",
     "chatToggle": "Mở hoặc thu gọn trò chuyện thế giới",
     "chatToggleUnread": "Mở hoặc thu gọn trò chuyện thế giới. Tin chưa đọc: {{count}}.",

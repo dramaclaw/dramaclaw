@@ -288,7 +288,7 @@ class PikoWorldHub:
                         "type": "player.left", "character_id": previous.character_id,
                     })
                 await self._close_replaced(previous.websocket)
-        await websocket.send_json({"type": "world.snapshot", "players": snapshot})
+        await websocket.send_json({"type": "world.snapshot", "players": snapshot, "zone": 1})
         await self._broadcast_scene(
             player.scene_id, {"type": "player.joined", "player": player.public_dict()},
             exclude=websocket,
@@ -463,7 +463,7 @@ class PikoWorldHub:
                 current.public_dict() for current in self._players.values()
                 if current.scene_id == scene_id and current.websocket is not player.websocket
             ]
-        await player.websocket.send_json({"type": "world.snapshot", "players": snapshot})
+        await player.websocket.send_json({"type": "world.snapshot", "players": snapshot, "zone": 1})
         await self._broadcast_scene(
             scene_id, {"type": "player.joined", "player": player.public_dict()},
             exclude=player.websocket,
