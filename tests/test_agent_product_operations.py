@@ -16,6 +16,7 @@ from novelvideo.freezone.agent_product_operations import (
     read_agent_product_operation,
     save_agent_generation_session,
 )
+from novelvideo.i18n_message import message_payload
 
 
 def _create(project_dir, *, key="stable-key", kind="workflow_result"):
@@ -304,6 +305,9 @@ async def test_cancel_pending_operation_terminalizes_task_and_refunds_reservatio
     assert task.status == "cancelled"
     assert updates[0]["expected_task_id"] == "task-a"
     assert updates[0]["metadata"]["settlement_status"] == "refunded"
+    assert message_payload(updates[0]["current_task"]) == {
+        "code": "tasks.progress.cancelled"
+    }
     assert refunds == [
         (
             "reservation-a",
@@ -314,6 +318,43 @@ async def test_cancel_pending_operation_terminalizes_task_and_refunds_reservatio
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_failed_operation_terminalizes_task_with_localized_progress(monkeypatch):
+    from novelvideo.freezone import agent_product_operations as operations
+
+    task = SimpleNamespace(
+        task_id="task-a",
+        status="running",
+        metadata={},
+    )
+    failures = []
+
+    class Manager:
+        def get_task_for_project(self, *_args, **_kwargs):
+            return task
+
+        def fail_task_for_project(self, *_args, **kwargs):
+            failures.append(kwargs)
+
+    monkeypatch.setattr(operations, "get_task_manager", lambda: Manager())
+
+    await operations.terminalize_undelivered_agent_product_task(
+        ctx=SimpleNamespace(project_id="project-a"),
+        operation={
+            "status": "failed",
+            "product_kind": "workflow_result",
+            "task_type": "freezone_agent_workflow_result",
+            "project_id": "project-a",
+            "operation_id": "agent_product_failed",
+            "task_id": "task-a",
+        },
+    )
+
+    assert message_payload(failures[0]["current_task"]) == {
+        "code": "tasks.progress.agentProductDeliveryFailed"
+    }
 
 
 @pytest.mark.asyncio

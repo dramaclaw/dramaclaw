@@ -3246,6 +3246,7 @@
       "submitting": "任务正在投递",
       "queued": "任务已进入队列",
       "workflowDraftDeliveryFailed": "Agent 交付工作流草稿失败",
+      "agentProductDeliveryFailed": "Agent 产品交付失败",
       "characters": {
         "chunking": "切分原文...",
         "nothingToAnalyze": "无可分析内容",

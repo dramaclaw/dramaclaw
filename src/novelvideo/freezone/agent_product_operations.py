@@ -17,6 +17,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from novelvideo.i18n_message import lmsg
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 from novelvideo.task_backend.run_core import (
     refund_undelivered_feature_credit_reservation,
@@ -656,7 +657,7 @@ async def terminalize_undelivered_agent_product_task(
             0,
             scope=operation_id,
             progress=task.progress,
-            current_task="任务已取消",
+            current_task=lmsg("tasks.progress.cancelled", "任务已取消"),
             metadata=task_metadata,
             status="cancelled",
             expected_task_id=expected_task_id,
@@ -668,7 +669,10 @@ async def terminalize_undelivered_agent_product_task(
         0,
         scope=operation_id,
         error="Agent 产品未交付",
-        current_task="Agent 产品交付失败",
+        current_task=lmsg(
+            "tasks.progress.agentProductDeliveryFailed",
+            "Agent 产品交付失败",
+        ),
         metadata=task_metadata,
         expected_task_id=expected_task_id,
     )

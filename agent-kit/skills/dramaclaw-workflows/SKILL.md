@@ -129,7 +129,8 @@ The image/video choices are:
 Do not include audio voice-source selection in this preliminary clarification. Never ask the user
 to choose system voice versus custom voice. A speech node uses an already selected custom
 `voiceRef`; if none is selected, its generation is skipped as defined under Execution and
-completion.
+completion. A plan that requires that speech as voice-over or composition input must not be ready
+until a valid `voiceRef` is bound.
 
 Offer a recommended/default option so the user does not need to understand provider-specific
 fields. In either execution mode, do not draft, commit, approve, or run until the required
@@ -174,8 +175,10 @@ Use only the image or video keys relevant to the selected plan. For an exact cus
 shared confirmed choices may remain in `plan.inputs`; preparation applies each image/video choice
 to every matching generated node that leaves the field unset. Node `data` may instead pin the
 equivalent canvas or portable field for a step, and an explicit node value always takes
-precedence over the shared choice (the same rule the standard planner follows); only two aliases
-of the same setting with different values on one node are rejected. If a write returns
+precedence over the shared choice (the same rule the standard planner follows), except that the
+user-confirmed `video_generate_audio` choice is authoritative and replaces conflicting
+`generateAudio` values on every video node. Only two aliases of the same setting with different
+values on one node are rejected. If a write returns
 `code="generation_parameters_required"`, do not retry unchanged. Call
 `freezone_request_user_clarification` once for all returned missing choices, passing already
 confirmed choices (at least the model) in `answers` so the recommendation comes from the same
@@ -320,8 +323,10 @@ and `freezone_patch_workflow_draft`; do not fall back to another write after an 
   directly without reading node detail first; never downgrade it to `freezone_run_node_action`.
 - Freezone speech uses custom/reference voices only; never select or generate with a preset/system
   voice. Preserve an existing valid `voiceRef`. If no valid custom voice is selected, skip that
-  audio node without submitting TTS and continue the remaining workflow. Never select the first
-  available voice automatically or open `open_voice_picker` unless the user explicitly requests it.
+  audio node without submitting TTS and continue the remaining workflow. Required voice-over or
+  composition speech is blocked during draft preflight instead of being admitted and skipped.
+  Never select the first available voice automatically or open `open_voice_picker` unless the user
+  explicitly requests it.
 - Treat `awaiting_approval`, `accepted`, and `running` as non-final states. Do not claim that canvas
   creation or generation completed until the corresponding result says it did.
 - Use `operation_id`, `draft_id`, `revision`, and returned idempotency identifiers unchanged on
