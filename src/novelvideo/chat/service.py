@@ -1196,7 +1196,7 @@ async def _dispatch_exact_audio_node_action(
         "project_id": project,
         "canvas_id": canvas_id,
         "message": "Frontend canvas command timed out before reporting a result.",
-        "user_message": "画布操作等待超时，前端没有回写执行结果。",
+        "user_message": "画布操作等待超时，前端没有回写执行结果。",  # i18n-exempt
     }
     resolved = await asyncio.to_thread(
         wait_canvas_command_result,
@@ -5663,7 +5663,7 @@ async def _stream_assistant_reply_codex(
                     dispatch_result = {
                         "ok": False,
                         "applied": False,
-                        "message": "音频节点执行入口失败，未提交画布操作。",
+                        "message": "音频节点执行入口失败，未提交画布操作。",  # i18n-exempt
                     }
                 bridge_key = str(dispatch_result.get("bridge_key") or "").strip()
                 applied = (
@@ -5678,7 +5678,7 @@ async def _stream_assistant_reply_codex(
                     canvas_receipts.add((bridge_key, None))
                     assistant_text = json.dumps(
                         {
-                            "message": "已更新现有音频节点，并提交 generate_audio。",
+                            "message": "已更新现有音频节点，并提交 generate_audio。",  # i18n-exempt
                             "mode": "mutation",
                             "canvas_receipts": [
                                 {"bridge_key": bridge_key, "revision": None}
@@ -5692,7 +5692,7 @@ async def _stream_assistant_reply_codex(
                         dispatch_result.get("user_message")
                         or dispatch_result.get("message")
                         or (errors[0] if isinstance(errors, list) and errors else "")
-                        or "音频节点执行失败，前端没有返回有效回执。"
+                        or "音频节点执行失败，前端没有返回有效回执。"  # i18n-exempt
                     ).strip()
                     canvas_write_failures[orchestrated_call_id] = failure
                     assistant_text = json.dumps(
