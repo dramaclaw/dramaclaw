@@ -810,7 +810,7 @@ export function AssetLibraryPanel({
         <div
           className={`flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--ui-radius-lg)] border border-white/[0.10] bg-[rgb(var(--surface-rgb)/0.78)] shadow-[0_18px_52px_rgba(0,0,0,0.34)] backdrop-blur-[20px] transition-transform duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
             collapsed
-              ? "pointer-events-none -translate-x-[calc(100%+12px)]"
+              ? "pointer-events-none -translate-x-[calc(100%+28px)]"
               : "pointer-events-auto translate-x-0"
           }`}
           // marginTop 56：同上，给左上角那颗视图切换开关让出顶部窄带（把手在 52，卡片
