@@ -426,7 +426,28 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v31"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v32"
+
+_CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS = (
+    "You translate one explicit request for an existing Freezone audio node into the node data "
+    "that must be saved before its already-selected action runs. Do not call tools and do not "
+    "claim that execution happened. Return exactly one JSON object matching the supplied schema. "
+    "In text, preserve every concrete subject, purpose, instrument, mood, vocal, lyric, and other "
+    "creative constraint from the user's request. Use audio_kind=music for music and "
+    "audio_kind=speech only for spoken audio. Set force_instrumental=true exactly when the user "
+    "requires instrumental audio without vocals or lyrics."
+)
+
+_CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "audio_kind": {"type": "string", "enum": ["music", "speech"]},
+        "force_instrumental": {"type": "boolean"},
+    },
+    "required": ["text", "audio_kind", "force_instrumental"],
+}
 
 
 def _codex_agent_skill_locator_instructions(workspace: Path) -> str:
@@ -460,7 +481,10 @@ def _codex_developer_instructions(
     tool_mode: str | None,
     *,
     workspace: Path | None = None,
+    exact_audio_action_plan: bool = False,
 ) -> str:
+    if exact_audio_action_plan:
+        return _CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS
     if str(tool_mode or "").strip() == "freezone_canvas":
         from novelvideo.freezone.workflow_planning import WORKFLOW_PLANNING_INSTRUCTIONS
 
@@ -992,6 +1016,185 @@ def _freezone_exact_node_action_requested(prompt: str | None) -> bool:
         and _FREEZONE_EXISTING_EXECUTION_TARGET_RE.search(intent_text)
         and _FREEZONE_EXACT_NODE_ACTION_RE.search(intent_text)
     )
+
+
+def _freezone_exact_audio_action_target(
+    prompt: str | None,
+    *,
+    route_prompt: str | None = None,
+) -> tuple[str, str] | None:
+    """Resolve a safe deterministic audio action from the injected summary."""
+
+    user_text = str(route_prompt or prompt or "").split("[SUPERTALE_", 1)[0].strip()
+    intent_text = _FREEZONE_CANVAS_WRITE_NEGATION_RE.sub("", user_text)
+    if not (
+        _FREEZONE_EXISTING_EXECUTION_ACTION_RE.search(intent_text)
+        and _FREEZONE_EXISTING_EXECUTION_TARGET_RE.search(intent_text)
+        and re.search(r"\bgenerate_audio\b", intent_text, re.IGNORECASE)
+    ):
+        return None
+
+    summary_match = re.search(
+        r"\[SUPERTALE_CANVAS_ONTOLOGY_SUMMARY\](.*?)"
+        r"\[/SUPERTALE_CANVAS_ONTOLOGY_SUMMARY\]",
+        str(prompt or ""),
+        re.DOTALL,
+    )
+    if summary_match is None:
+        return None
+    summary_text = summary_match.group(1)
+    json_start, json_end = summary_text.find("{"), summary_text.rfind("}")
+    if json_start < 0 or json_end <= json_start:
+        return None
+    try:
+        summary = json.loads(summary_text[json_start : json_end + 1])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(summary, dict):
+        return None
+
+    audio_nodes = [
+        item
+        for item in summary.get("top_objects") or []
+        if isinstance(item, dict)
+        and str(item.get("node_id") or "").strip()
+        and str(item.get("node_type") or "").strip() == "audioNode"
+    ]
+    named = [
+        item
+        for item in audio_nodes
+        if any(
+            value and value in user_text
+            for value in (
+                str(item.get("label") or "").strip(),
+                str(item.get("display_name") or "").strip(),
+                str(item.get("node_id") or "").strip(),
+            )
+        )
+    ]
+    candidates = named if named else audio_nodes if len(audio_nodes) == 1 else []
+    if len(candidates) != 1:
+        return None
+    return str(candidates[0]["node_id"]).strip(), "generate_audio"
+
+
+def _exact_audio_action_node_data(value: str) -> dict[str, Any] | None:
+    """Validate the model's constrained audio plan before any canvas write."""
+
+    try:
+        plan = json.loads(str(value or ""))
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(plan, dict) or set(plan) != {
+        "text",
+        "audio_kind",
+        "force_instrumental",
+    }:
+        return None
+    text = str(plan.get("text") or "").strip()
+    audio_kind = str(plan.get("audio_kind") or "").strip()
+    force_instrumental = plan.get("force_instrumental")
+    if (
+        not text
+        or len(text) > 20_000
+        or audio_kind not in {"music", "speech"}
+        or not isinstance(force_instrumental, bool)
+    ):
+        return None
+    return {
+        "text": text,
+        "audioKind": audio_kind,
+        "forceInstrumental": force_instrumental,
+    }
+
+
+async def _dispatch_exact_audio_node_action(
+    *,
+    username: str,
+    project: str,
+    canvas_id: str,
+    agent_profile: str,
+    turn_id: str,
+    project_state_dir: str | Path | None,
+    node_id: str,
+    action: str,
+    node_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Submit one planned audio update-and-run through the protected browser bridge."""
+
+    from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
+    from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
+    from novelvideo.freezone.canvas_command_bridge import (
+        canvas_command_bridge_key,
+        put_pending_canvas_command,
+        wait_canvas_command_result,
+    )
+
+    commands = [
+        {"type": "update_node_data", "node_id": node_id, "data": node_data},
+        {"type": "run_node_action", "node_id": node_id, "action": action},
+    ]
+    profile = str(agent_profile or "freezone:main").strip() or "freezone:main"
+    agent_id = profile.removeprefix("freezone:").strip() or "main"
+    envelope = {
+        "schema_version": "canvas_chat_commands.v1",
+        "project_id": project,
+        "canvas_id": canvas_id,
+        "commands": commands,
+        "agent_id": agent_id,
+        "external_mcp_command": True,
+        "turn_id": turn_id,
+    }
+    hermes_home = ensure_user_hermes_workspace(
+        username,
+        profile="freezone",
+        project_state_dir=project_state_dir,
+    )
+    bridge_dir = canvas_bridge_dir_for_profile(hermes_home, profile)
+    bridge_key = canvas_command_bridge_key(
+        project_id=project,
+        canvas_id=canvas_id,
+        commands=commands,
+    )
+    immediate = await asyncio.to_thread(
+        put_pending_canvas_command,
+        key=bridge_key,
+        project_id=project,
+        canvas_id=canvas_id,
+        commands=commands,
+        envelope=envelope,
+        bridge_dir=bridge_dir,
+    )
+    if immediate is not None:
+        return immediate
+    try:
+        timeout_seconds = max(
+            1,
+            int(os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "600")),
+        )
+    except ValueError:
+        timeout_seconds = 600
+    timeout_result = {
+        "ok": False,
+        "tool_call_status": "failed",
+        "canvas_apply_status": "timeout",
+        "applied": False,
+        "cancelled": True,
+        "errors": ["Timed out waiting for frontend node action result."],
+        "bridge_key": bridge_key,
+        "project_id": project,
+        "canvas_id": canvas_id,
+        "message": "Frontend canvas command timed out before reporting a result.",
+        "user_message": "画布操作等待超时，前端没有回写执行结果。",
+    }
+    resolved = await asyncio.to_thread(
+        wait_canvas_command_result,
+        bridge_key,
+        timeout_seconds,
+        bridge_dir=bridge_dir,
+        timeout_result=timeout_result,
+    )
+    return resolved or timeout_result
 
 
 async def _bind_server_observed_agent_product_execution(
@@ -3645,6 +3848,7 @@ def _build_codex_thread(
     project_state_dir: str | Path | None = None,
     agent_token_file: str | Path | None = None,
     request_prompt: str | None = None,
+    exact_audio_action_plan: bool = False,
 ) -> AgentRuntimeThreadPort:
     workspace, _codex_home = ensure_user_codex_workspace(
         username,
@@ -3667,7 +3871,7 @@ def _build_codex_thread(
         agent_token_file=agent_token_file,
     )
     gateway_api_key, gateway_base_url = _codex_turn_gateway_credentials(authorization)
-    exact_node_action = str(
+    exact_node_action = not exact_audio_action_plan and str(
         tool_mode or ""
     ).strip() == "freezone_canvas" and _freezone_exact_node_action_requested(
         request_prompt
@@ -3679,9 +3883,12 @@ def _build_codex_thread(
         )
     else:
         node_config_overrides = _codex_gateway_config_overrides(gateway_base_url)
-    thread_config_overrides = _codex_mcp_config_overrides(
-        _dramaclaw_mcp_servers(tool_mode, prompt=request_prompt)
+    mcp_servers = (
+        {}
+        if exact_audio_action_plan
+        else _dramaclaw_mcp_servers(tool_mode, prompt=request_prompt)
     )
+    thread_config_overrides = _codex_mcp_config_overrides(mcp_servers)
     turn_metadata = {_CODEX_GATEWAY_KEY_METADATA: gateway_api_key}
     if control_capability:
         turn_metadata[_CODEX_CONTROL_CAPABILITY_METADATA] = control_capability
@@ -3694,11 +3901,16 @@ def _build_codex_thread(
         developer_instructions=_codex_developer_instructions(
             tool_mode,
             workspace=workspace,
+            exact_audio_action_plan=exact_audio_action_plan,
         ),
         config_overrides=node_config_overrides,
         thread_config_overrides=thread_config_overrides,
         turn_metadata=turn_metadata,
-        output_schema=CANVAS_REPLY_SCHEMA if tool_mode == "freezone_canvas" else None,
+        output_schema=(
+            _CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA
+            if exact_audio_action_plan
+            else CANVAS_REPLY_SCHEMA if tool_mode == "freezone_canvas" else None
+        ),
     )
     thread_id = _get_codex_thread_id(
         username,
@@ -3707,6 +3919,8 @@ def _build_codex_thread(
         canvas_id=canvas_id,
         project_state_dir=project_state_dir,
     )
+    if exact_audio_action_plan:
+        return client.thread_start()
     return client.thread_resume(thread_id) if thread_id else client.thread_start()
 
 
@@ -5047,6 +5261,11 @@ async def _stream_assistant_reply_codex(
     assistant_text = ""
     tool_text = ""
     structured_canvas_reply = str(tool_mode or "").strip() == "freezone_canvas"
+    exact_audio_action_target = (
+        _freezone_exact_audio_action_target(prompt, route_prompt=route_prompt)
+        if structured_canvas_reply
+        else None
+    )
     canvas_write_requested = structured_canvas_reply and _freezone_canvas_write_requested(
         route_prompt or prompt
     )
@@ -5137,6 +5356,7 @@ async def _stream_assistant_reply_codex(
             project_state_dir=project_state_dir,
             agent_token_file=token_file,
             request_prompt=route_prompt or prompt,
+            exact_audio_action_plan=exact_audio_action_target is not None,
         )
         agent_prompt = _prompt_with_user_context(
             username,
@@ -5159,6 +5379,7 @@ async def _stream_assistant_reply_codex(
                 yield event
             if not (
                 structured_canvas_reply
+                and exact_audio_action_target is None
                 and turn_disposition == "completed"
                 and needs_canvas_format_repair(
                     assistant_text,
@@ -5210,7 +5431,7 @@ async def _stream_assistant_reply_codex(
             if event.type == "thread_started":
                 codex_thread_id = str(event.thread_id or "").strip() or None
                 codex_turn_id = str(event.turn_id or "").strip() or None
-                if codex_thread_id:
+                if codex_thread_id and exact_audio_action_target is None:
                     _set_codex_thread_id(
                         username,
                         project,
@@ -5376,7 +5597,7 @@ async def _stream_assistant_reply_codex(
                 continue
             if event.type == "complete":
                 codex_thread_id = str(event.thread_id or "").strip() or None
-                if codex_thread_id:
+                if codex_thread_id and exact_audio_action_target is None:
                     _set_codex_thread_id(
                         username,
                         project,
@@ -5396,6 +5617,78 @@ async def _stream_assistant_reply_codex(
                         username,
                         project or "<home>",
                         agent_profile,
+                    )
+        if exact_audio_action_target is not None and turn_disposition == "completed":
+            node_id, action = exact_audio_action_target
+            node_data = _exact_audio_action_node_data(assistant_text)
+            orchestrated_call_id = "orchestrated:exact-audio-action"
+            canvas_write_attempts[orchestrated_call_id] = "failed"
+            if node_data is None:
+                canvas_write_failures[orchestrated_call_id] = (
+                    "音频执行参数无效，未提交画布操作。"
+                )
+            else:
+                try:
+                    dispatch_result = await _dispatch_exact_audio_node_action(
+                        username=username,
+                        project=project,
+                        canvas_id=str(canvas_id or ""),
+                        agent_profile=agent_profile,
+                        turn_id=business_turn_id,
+                        project_state_dir=project_state_dir,
+                        node_id=node_id,
+                        action=action,
+                        node_data=node_data,
+                    )
+                except Exception:
+                    logger.exception(
+                        "exact audio node action dispatch failed project=%s canvas=%s node=%s",
+                        project,
+                        canvas_id,
+                        node_id,
+                    )
+                    dispatch_result = {
+                        "ok": False,
+                        "applied": False,
+                        "message": "音频节点执行入口失败，未提交画布操作。",
+                    }
+                bridge_key = str(dispatch_result.get("bridge_key") or "").strip()
+                applied = (
+                    dispatch_result.get("ok") is True
+                    and dispatch_result.get("applied") is True
+                    and str(dispatch_result.get("canvas_apply_status") or "")
+                    in {"accepted", "applied", "direct_applied"}
+                    and bool(bridge_key)
+                )
+                if applied:
+                    canvas_write_attempts[orchestrated_call_id] = "succeeded"
+                    canvas_receipts.add((bridge_key, None))
+                    assistant_text = json.dumps(
+                        {
+                            "message": "已更新现有音频节点，并提交 generate_audio。",
+                            "mode": "mutation",
+                            "canvas_receipts": [
+                                {"bridge_key": bridge_key, "revision": None}
+                            ],
+                        },
+                        ensure_ascii=False,
+                    )
+                else:
+                    errors = dispatch_result.get("errors")
+                    failure = str(
+                        dispatch_result.get("user_message")
+                        or dispatch_result.get("message")
+                        or (errors[0] if isinstance(errors, list) and errors else "")
+                        or "音频节点执行失败，前端没有返回有效回执。"
+                    ).strip()
+                    canvas_write_failures[orchestrated_call_id] = failure
+                    assistant_text = json.dumps(
+                        {
+                            "message": failure,
+                            "mode": "blocked",
+                            "canvas_receipts": [],
+                        },
+                        ensure_ascii=False,
                     )
     finally:
         logger.info(

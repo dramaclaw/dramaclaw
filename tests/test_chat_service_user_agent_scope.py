@@ -1748,6 +1748,69 @@ def test_codex_exact_node_action_thread_enables_native_tool_search(
     assert captured["thread_config_overrides"] == ()
 
 
+def test_codex_exact_audio_planner_has_no_canvas_tools_and_uses_plan_schema(
+    monkeypatch, tmp_path
+):
+    captured = {}
+    mcp_inputs = []
+
+    class FakeCodexClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def thread_start(self):
+            return "planner-thread"
+
+        def thread_resume(self, _thread_id):
+            pytest.fail("the stateless exact-audio planner must not resume a chat thread")
+
+    monkeypatch.setattr(
+        chat_service,
+        "ensure_user_codex_workspace",
+        lambda *_args, **_kwargs: (tmp_path / "workspace", tmp_path / "codex-home"),
+    )
+    monkeypatch.setattr(chat_service, "_build_codex_env", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        chat_service,
+        "_codex_turn_gateway_credentials",
+        lambda _authorization: ("turn-key", "https://gateway.example/v1"),
+    )
+    monkeypatch.setattr(
+        chat_service, "_codex_gateway_config_overrides", lambda _url: ()
+    )
+
+    def fake_mcp_overrides(servers):
+        mcp_inputs.append(servers)
+        return ()
+
+    monkeypatch.setattr(
+        chat_service, "_codex_mcp_config_overrides", fake_mcp_overrides
+    )
+    monkeypatch.setattr(
+        chat_service, "_get_codex_thread_id", lambda *_args, **_kwargs: "old-thread"
+    )
+    monkeypatch.setattr(chat_service, "CodexClient", FakeCodexClient)
+
+    thread = chat_service._build_codex_thread(
+        "admin",
+        "project-a",
+        "agent-token",
+        authorization=None,
+        agent_profile="freezone:main",
+        tool_mode="freezone_canvas",
+        request_prompt="执行现有节点并运行 generate_audio",
+        exact_audio_action_plan=True,
+    )
+
+    assert thread == "planner-thread"
+    assert mcp_inputs == [{}]
+    assert (
+        captured["developer_instructions"]
+        == chat_service._CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS
+    )
+    assert captured["output_schema"] == chat_service._CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA
+
+
 def test_named_recipe_distinguishes_existing_output_from_external_media_input():
     for instructions in (
         chat_service._codex_developer_instructions("freezone_canvas"),
@@ -3435,6 +3498,293 @@ def test_freezone_exact_node_action_uses_one_batch_write_tool():
 
     assert set(servers) == {"dramaclaw"}
     assert servers["dramaclaw"]["enabled_tools"] == ["freezone_emit_canvas_command"]
+
+
+def test_freezone_exact_audio_action_resolves_unique_node_from_canvas_summary():
+    user_text = (
+        "请执行当前画布中名为『红杯展示背景音乐』的现有音频节点，"
+        "先更新音乐参数，再只运行 generate_audio 一次。"
+    )
+    prompt = (
+        user_text
+        + "\n\n[SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]\n"
+        + json.dumps(
+            {
+                "schema_version": "canvas_ontology_summary.v1",
+                "canvas_id": "canvas-a",
+                "top_objects": [
+                    {
+                        "node_id": "rcp05-music-result",
+                        "node_type": "audioNode",
+                        "label": "红杯展示背景音乐",
+                    },
+                    {
+                        "node_id": "other-audio",
+                        "node_type": "audioNode",
+                        "label": "片尾音乐",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n[/SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]"
+    )
+
+    assert chat_service._freezone_exact_audio_action_target(
+        prompt, route_prompt=user_text
+    ) == ("rcp05-music-result", "generate_audio")
+
+
+@pytest.mark.anyio
+async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    events = []
+    prompts = []
+    build_kwargs = []
+    dispatched = []
+
+    async def fake_authorize(**_kwargs):
+        return None
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, _token):
+            return None
+
+    class FakeThread:
+        async def stream(self, prompt):
+            prompts.append(prompt)
+            yield SimpleNamespace(
+                type="thread_started",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+            )
+            yield SimpleNamespace(
+                type="assistant_delta",
+                text=json.dumps(
+                    {
+                        "text": (
+                            "为红杯展示生成一段轻快、温暖的背景音乐，"
+                            "以木琴和轻柔鼓点为主，纯器乐、无人声、无歌词。"
+                        ),
+                        "audio_kind": "music",
+                        "force_instrumental": True,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            yield SimpleNamespace(
+                type="turn_completed",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+                status="completed",
+                disposition="completed",
+                error=None,
+            )
+            yield SimpleNamespace(type="complete", thread_id="codex-thread", text="")
+
+    async def fake_dispatch(**kwargs):
+        dispatched.append(kwargs)
+        return {
+            "ok": True,
+            "tool_call_status": "completed",
+            "canvas_apply_status": "accepted",
+            "applied": True,
+            "bridge_key": "bridge-audio",
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+        }
+
+    def fake_build_thread(*_args, **kwargs):
+        build_kwargs.append(kwargs)
+        return FakeThread()
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(
+        chat_service, "_create_page_agent_session_token", fake_create_token
+    )
+    monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
+    monkeypatch.setattr(
+        chat_service, "_dispatch_exact_audio_node_action", fake_dispatch
+    )
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    async def collect_event(event):
+        events.append(event)
+
+    user_text = (
+        "请执行当前画布中名为『红杯展示背景音乐』的现有音频节点。"
+        "它已绑定 short-drama-quick Skill 下的 drama-background-music Recipe；"
+        "必须先通过该 Recipe 编译音乐提示词，再只运行 generate_audio 一次并完成实际生成。"
+        "音乐应轻快、温暖，以木琴和轻柔鼓点为主，必须是纯器乐、无人声、无歌词。"
+    )
+    prompt = (
+        user_text
+        + "\n\n[SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]\n"
+        + json.dumps(
+            {
+                "schema_version": "canvas_ontology_summary.v1",
+                "canvas_id": "canvas-a",
+                "top_objects": [
+                    {
+                        "node_id": "rcp05-music-result",
+                        "node_type": "audioNode",
+                        "label": "红杯展示背景音乐",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n[/SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]"
+    )
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+    )
+
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        prompt,
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+        store_scope=scope,
+        turn_id="business-turn",
+        route_prompt=user_text,
+    )
+
+    assert len(prompts) == 1
+    assert build_kwargs[0]["exact_audio_action_plan"] is True
+    assert dispatched == [
+        {
+            "username": "admin",
+            "project": "project-a",
+            "canvas_id": "canvas-a",
+            "agent_profile": "freezone:main",
+            "turn_id": "business-turn",
+            "project_state_dir": tmp_path / "state" / "admin" / "project-a",
+            "node_id": "rcp05-music-result",
+            "action": "generate_audio",
+            "node_data": {
+                "text": (
+                    "为红杯展示生成一段轻快、温暖的背景音乐，"
+                    "以木琴和轻柔鼓点为主，纯器乐、无人声、无歌词。"
+                ),
+                "audioKind": "music",
+                "forceInstrumental": True,
+            },
+        }
+    ]
+    assert result["content"] == "已更新现有音频节点，并提交 generate_audio。"
+    assert [event["text"] for event in events if event["type"] == "assistant_delta"] == [
+        result["content"]
+    ]
+
+
+@pytest.mark.anyio
+async def test_exact_audio_dispatch_publishes_once_and_waits_for_same_receipt(
+    monkeypatch, tmp_path
+):
+    from novelvideo.chat import hermes_pool, hermes_workspace
+    from novelvideo.freezone import canvas_command_bridge
+
+    published = []
+    waited = []
+    bridge_dir = tmp_path / "bridge"
+
+    monkeypatch.setattr(
+        hermes_workspace,
+        "ensure_user_hermes_workspace",
+        lambda *_args, **_kwargs: tmp_path / "hermes-home",
+    )
+    monkeypatch.setattr(
+        hermes_pool,
+        "canvas_bridge_dir_for_profile",
+        lambda _home, _profile: bridge_dir,
+    )
+    monkeypatch.setattr(
+        canvas_command_bridge,
+        "canvas_command_bridge_key",
+        lambda **_kwargs: "bridge-audio",
+    )
+
+    def fake_put(**kwargs):
+        published.append(kwargs)
+        return None
+
+    def fake_wait(key, timeout_seconds, **kwargs):
+        waited.append((key, timeout_seconds, kwargs))
+        return {
+            "ok": True,
+            "tool_call_status": "completed",
+            "canvas_apply_status": "accepted",
+            "applied": True,
+            "bridge_key": key,
+        }
+
+    monkeypatch.setattr(canvas_command_bridge, "put_pending_canvas_command", fake_put)
+    monkeypatch.setattr(canvas_command_bridge, "wait_canvas_command_result", fake_wait)
+
+    result = await chat_service._dispatch_exact_audio_node_action(
+        username="admin",
+        project="project-a",
+        canvas_id="canvas-a",
+        agent_profile="freezone:main",
+        turn_id="turn-a",
+        project_state_dir=tmp_path / "state",
+        node_id="rcp05-music-result",
+        action="generate_audio",
+        node_data={
+            "text": "红杯展示，木琴和轻柔鼓点，纯器乐。",
+            "audioKind": "music",
+            "forceInstrumental": True,
+        },
+    )
+
+    commands = [
+        {
+            "type": "update_node_data",
+            "node_id": "rcp05-music-result",
+            "data": {
+                "text": "红杯展示，木琴和轻柔鼓点，纯器乐。",
+                "audioKind": "music",
+                "forceInstrumental": True,
+            },
+        },
+        {
+            "type": "run_node_action",
+            "node_id": "rcp05-music-result",
+            "action": "generate_audio",
+        },
+    ]
+    assert len(published) == 1
+    assert published[0]["commands"] == commands
+    assert published[0]["envelope"] == {
+        "schema_version": "canvas_chat_commands.v1",
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "commands": commands,
+        "agent_id": "main",
+        "external_mcp_command": True,
+        "turn_id": "turn-a",
+    }
+    assert published[0]["bridge_dir"] == bridge_dir
+    assert len(waited) == 1
+    assert waited[0][0] == "bridge-audio"
+    assert waited[0][2]["bridge_dir"] == bridge_dir
+    assert result["bridge_key"] == "bridge-audio"
 
 
 def test_freezone_non_execution_request_keeps_full_mcp_servers():
