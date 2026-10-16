@@ -364,12 +364,17 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
     monkeypatch, tmp_path
 ):
     """Record the complete Responses Tool Search chain across App Server + MCP."""
-    native_catalog = (
+    bundled_catalog = (
         Path(service.__file__).resolve().parents[3]
         / "deploy"
         / "codex"
         / "dramaclaw-model-catalog.json"
     )
+    catalog = json.loads(bundled_catalog.read_text(encoding="utf-8"))
+    for model in catalog["models"]:
+        model["supports_search_tool"] = True
+    native_catalog = tmp_path / "native-tool-search-models.json"
+    native_catalog.write_text(json.dumps(catalog), encoding="utf-8")
     monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(native_catalog))
     search_call_id = "search-call-1"
     tool_call_id = "mcp-call-1"
@@ -551,17 +556,17 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
 
 
 @pytest.mark.asyncio
-async def test_app_server_chat_compat_catalog_omits_native_tool_search(
+async def test_app_server_default_catalog_exposes_freezone_execution_tools(
     monkeypatch, tmp_path
 ):
-    """Responses-to-Chat gateways receive concrete MCP functions only."""
-    compat_catalog = (
+    """Freezone write turns can call their execution entry without a search round."""
+    default_catalog = (
         Path(service.__file__).resolve().parents[3]
         / "deploy"
         / "codex"
-        / "dramaclaw-model-catalog-chat-compat.json"
+        / "dramaclaw-model-catalog.json"
     )
-    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(compat_catalog))
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(default_catalog))
     scripted_responses = [
         _responses_sse(
             _response_created("response-compat"),
@@ -593,18 +598,24 @@ async def test_app_server_chat_compat_catalog_omits_native_tool_search(
             "DRAMACLAW_PROJECT_ID": "chat-compat-contract",
             "DRAMACLAW_USERNAME": "local",
             "DRAMACLAW_AGENT_TOKEN_FILE": str(token_file),
+            "DRAMACLAW_ROOT": str(Path(__file__).resolve().parents[1]),
+            "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+            "DRAMACLAW_CANVAS_ID": "canvas-a",
+            "DRAMACLAW_AGENT_PROFILE": "freezone:main",
+            "DRAMACLAW_CHAT_SURFACE": "freezone",
             "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
             "PYTHONDONTWRITEBYTECODE": "1",
         }
-        mcp_servers = service._dramaclaw_mcp_servers()
-        mcp_servers["dramaclaw"]["env_vars"].append("PYTHONPATH")
+        mcp_servers = service._dramaclaw_mcp_servers("freezone_canvas")
         client = backend_sdk.CodexClient(
             codex_bin=bundled_codex,
             cwd=tmp_path,
             env=env,
             model="DC-codex-agent-LLM",
             model_provider="dramaclaw_gateway",
-            developer_instructions=service._codex_developer_instructions("default"),
+            developer_instructions=service._codex_developer_instructions(
+                "freezone_canvas"
+            ),
             config_overrides=service._codex_gateway_config_overrides(gateway_url),
             thread_config_overrides=service._codex_mcp_config_overrides(mcp_servers),
             turn_metadata={"dramaclaw_gateway_api_key": "per-turn-contract-key"},
@@ -621,7 +632,24 @@ async def test_app_server_chat_compat_catalog_omits_native_tool_search(
     assert len(requests) == 1
     tools = requests[0]["body"]["tools"]
     assert not any(tool.get("type") == "tool_search" for tool in tools)
-    assert any(tool.get("type") == "function" for tool in tools)
+    concrete_names = {
+        str(tool.get("name") or "")
+        for tool in tools
+        if tool.get("type") == "function"
+    }
+    namespace_names = {
+        str(member.get("name") or "")
+        for tool in tools
+        if tool.get("type") == "namespace"
+        for member in tool.get("tools") or []
+    }
+    concrete_names.update(namespace_names)
+    assert any(
+        name.endswith("freezone_update_node_data") for name in concrete_names
+    )
+    assert any(
+        name.endswith("freezone_run_node_action") for name in concrete_names
+    )
     assert any(
         event.type == "complete" and event.text == "兼容模式正常。" for event in events
     )

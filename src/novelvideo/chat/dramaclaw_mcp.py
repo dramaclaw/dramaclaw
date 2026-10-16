@@ -459,8 +459,9 @@ def _workflow_plan_log_summary(arguments: Any) -> dict[str, Any]:
 
 @SERVER.list_tools()
 async def list_tools() -> list[types.Tool]:
-    # Native Responses Tool Search progressively loads these scope-filtered
-    # concrete tools and preserves their input/output schemas end to end.
+    # Codex receives these scope-filtered concrete tools directly by default.
+    # Deployments that opt into native Responses Tool Search load the same
+    # schemas progressively.
     result: list[types.Tool] = []
     for name, (schema, _handler) in sorted(_agent_tools().items()):
         parameters = schema.get("parameters") if isinstance(schema, dict) else None

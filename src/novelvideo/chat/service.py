@@ -3410,10 +3410,11 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         "memories.generate_memories=false",
         "memories.use_memories=false",
     ]
-    # The repository ships complete metadata for the default Gateway slug;
-    # deployments may replace it with another verified catalog. In particular,
-    # Responses-to-Chat gateways must use a catalog with search disabled so
-    # Codex advertises concrete MCP tools instead of the unsupported tool_search.
+    # The bundled catalog keeps search disabled so required MCP tools are
+    # callable on the first model request. A model may legally finish without
+    # choosing native tool_search, which makes write execution nondeterministic.
+    # Deployments may opt into search with another verified catalog when that
+    # extra discovery round is acceptable.
     bundled_catalog = (
         Path(__file__).resolve().parents[3]
         / "deploy"

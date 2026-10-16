@@ -3582,6 +3582,32 @@ def test_codex_gateway_accepts_disabled_tool_search_for_chat_compat(
     assert Path(json.loads(catalog_override.split("=", 1)[1])) == catalog_path
 
 
+def test_default_codex_gateway_uses_concrete_mcp_tools(monkeypatch):
+    bundled = (
+        Path(chat_service.__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / "dramaclaw-model-catalog.json"
+    )
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(bundled))
+
+    overrides = chat_service._codex_gateway_config_overrides(
+        "https://gateway.example/v1"
+    )
+
+    catalog_override = next(
+        item for item in overrides if item.startswith("model_catalog_json=")
+    )
+    configured_path = Path(json.loads(catalog_override.split("=", 1)[1]))
+    configured_catalog = json.loads(configured_path.read_text(encoding="utf-8"))
+
+    assert configured_path == bundled
+    assert {
+        model["slug"]: model["supports_search_tool"]
+        for model in configured_catalog["models"]
+    } == {"DC-codex-agent-LLM": False, "brainclaw": False}
+
+
 def test_codex_gateway_reasoning_effort_is_configurable(monkeypatch):
     monkeypatch.setenv("CODEX_REASONING_EFFORT", "high")
 
