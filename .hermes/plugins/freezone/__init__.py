@@ -12090,7 +12090,7 @@ TOOLS = (
         "freezone_emit_canvas_command",
         _schema(
             "freezone_emit_canvas_command",
-            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request to create a downstream media node and actually generate its output is a mixed operation: use add_next_node + run_node_action in this one batch, give add_next_node a client_id, and use that same alias as run_node_action.node_id. Do not ask the user to click Generate after only creating the node. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
+            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request to create a downstream media node and actually generate its output is a mixed operation: use add_next_node + run_node_action in this one batch, give add_next_node a client_id, and use that same alias as run_node_action.node_id. When an existing node must be edited and then generated, use update_node_data + run_node_action in this one batch so generation reads the updated data without another model turn. Do not ask the user to click Generate after only creating or editing the node. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
             {
                 **_CANVAS_COMMAND_TOOL_SCOPE_PROPS,
                 "commands": {
@@ -12187,9 +12187,11 @@ TOOLS = (
             "Single-operation tool only: edit fields without generating on exactly one existing "
             "Freezone node when the user explicitly asks for a node edit. This tool is not a "
             "substitute for Recipe generation; use freezone_run_node_action when the user asks "
-            "to generate through a named Recipe on an existing standalone node. For multi-node "
-            "edits or mixed edit+layout/link workflows, use one freezone_emit_canvas_command "
-            "batch. Inspect freezone_get_node_detail first when editable parameters or enum "
+            "to generate through a named Recipe on an existing standalone node. If the same "
+            "request needs this edit and generation, do not stop after this tool: use one "
+            "freezone_emit_canvas_command batch containing update_node_data + run_node_action. "
+            "For multi-node edits or mixed edit+layout/link workflows, use that batch too. "
+            "Inspect freezone_get_node_detail first when editable parameters or enum "
             "options are unclear.",
             {
                 **_SCOPE_PROPS,
@@ -12444,7 +12446,10 @@ TOOLS = (
             "and preserve the source node. If the standalone node has "
             "workflowConfigConfirmed=true, reuse its persisted generation parameters and do not "
             "ask the user to choose them again unless a required field is missing or the user "
-            "changed it. For non-default action parameters, inspect freezone_get_node_action_catalog "
+            "changed it. If node data must change before the requested action, use one "
+            "freezone_emit_canvas_command batch containing update_node_data + run_node_action; "
+            "do not spend a separate model turn on freezone_update_node_data. For non-default "
+            "action parameters, inspect freezone_get_node_action_catalog "
             "with the specific action first. For multiple standalone actions use one "
             "freezone_emit_canvas_command batch; never use that batch as a workflow runner.",
             {

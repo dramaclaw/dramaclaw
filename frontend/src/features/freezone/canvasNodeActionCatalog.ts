@@ -1333,7 +1333,7 @@ function addFrontendNodeActions(
       action: "generate_audio",
       execution: "frontend_node",
       command_type: "run_node_action",
-      description: "Submit this audio node using its current text/upstream text and audioKind. Speech uses only an explicitly selected custom/reference voice; when none is selected, skip this node without failing the remaining workflow. Music uses the text-to-music flow. If the node already has uploaded or generated audio, the new result replaces it.",
+      description: "Submit this audio node using its current text/upstream text and audioKind. If the requested music text or settings differ from the current node data, submit update_node_data + run_node_action together through freezone_emit_canvas_command so generation reads the update without another model turn. Speech uses only an explicitly selected custom/reference voice; when none is selected, skip this node without failing the remaining workflow. Music uses the text-to-music flow. If the node already has uploaded or generated audio, the new result replaces it.",
       parameters: { node_id: node.id },
     });
     if ((node.data as { audioKind?: unknown }).audioKind !== "music") {

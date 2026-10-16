@@ -1425,6 +1425,12 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
         )
         is False
     )
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "不要移动节点，只给我布局建议"
+        )
+        is False
+    )
     assert chat_service._freezone_canvas_write_requested("生成一张图片") is True
     assert (
         chat_service._freezone_canvas_write_requested("生成一张赛博朋克风格的图片")
@@ -1776,6 +1782,7 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "clarification_answered",
         "skill_saved",
         "read_only",
+        "false_read_only",
         "mixed",
         "wrong_scope",
         "preflight_retry",
@@ -1802,11 +1809,6 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setattr(
-        chat_service,
-        "_freezone_canvas_write_requested",
-        lambda *_: pytest.fail("Receipt enforcement must not classify user prose"),
-    )
     events = []
     revoked = []
 
@@ -2239,7 +2241,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         structured=retry_structured,
                         error=None,
                     )
-            elif tool_outcome not in {"missing", "blocked", "read_only"}:
+            elif tool_outcome not in {
+                "missing",
+                "blocked",
+                "read_only",
+                "false_read_only",
+            }:
                 result_payload = (
                     {
                         "ok": True,
@@ -2299,6 +2306,11 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
             )
             if tool_outcome == "read_only":
                 assistant_reply = "建议保持当前节点位置，先检查配置。"
+            if tool_outcome == "false_read_only":
+                assistant_reply = (
+                    "正在通过节点绑定的 drama-background-music Recipe 编译提示词并执行 "
+                    "generate_audio。"
+                )
             if tool_outcome == "clarification_answered":
                 assistant_reply = "参数已确认，尚未执行画布操作。"
             if tool_outcome.startswith("video_preflight"):
@@ -2340,7 +2352,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     "mode": (
                         "read_only"
                         if tool_outcome
-                        in {"skill_saved", "read_only", "clarification_answered"}
+                        in {
+                            "skill_saved",
+                            "read_only",
+                            "false_read_only",
+                            "clarification_answered",
+                        }
                         else "blocked" if tool_outcome == "blocked" else "mutation"
                     ),
                     "canvas_receipts": receipts,
@@ -2381,6 +2398,13 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     )
     if tool_outcome == "read_only":
         request_prompt = "不要移动节点，只给我布局建议"
+    elif tool_outcome == "false_read_only":
+        request_prompt = (
+            "请执行当前画布中名为「红杯展示背景音乐」的现有音频节点，"
+            "并只运行 generate_audio 一次。"
+        )
+    elif tool_outcome == "clarification_answered":
+        request_prompt = "确认当前参数"
     elif tool_outcome == "missing":
         request_prompt = "做个咖啡店宣传页"
     result = await chat_service._stream_assistant_reply_codex(
@@ -2460,6 +2484,11 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "read_only":
         assert result["content"] == "建议保持当前节点位置，先检查配置。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "false_read_only":
+        assert result["content"] == (
+            "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
+        )
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "mixed":
         assert result["content"] == "画布操作未完成：第二个节点未保存"

@@ -794,7 +794,7 @@ _FREEZONE_TEXT_ONLY_REQUEST_RE = re.compile(
     r"\s*[。！？!?．.]?\s*$",
     re.IGNORECASE,
 )
-_FREEZONE_SKILL_RUNTIME_NEGATION_RE = re.compile(
+_FREEZONE_CANVAS_WRITE_NEGATION_RE = re.compile(
     r"(?:"
     r"(?:暂不|暂时不|先不|不要|无需|不用|不再|不会|不)\s*"
     r"(?:直接|立即|马上|继续|再)?\s*"
@@ -804,7 +804,8 @@ _FREEZONE_SKILL_RUNTIME_NEGATION_RE = re.compile(
     r"(?:(?:directly|immediately|then)\s+)?"
     r"(?:run|execute|apply|use|generate|make|create|write|add|delete|remove|clear|"
     r"update|connect|move|layout|select|open)"
-    r")",
+    r")"
+    r"[^。！？!?，,；;\n]{0,32}",
     re.IGNORECASE,
 )
 _FREEZONE_INDEPENDENT_CANVAS_WRITE_RE = re.compile(
@@ -874,17 +875,18 @@ _FREEZONE_SKILL_RUNTIME_REQUEST_RE = re.compile(
 
 
 def _freezone_canvas_write_requested(prompt: str | None) -> bool:
-    """Legacy intent hint; never use this to enforce canvas receipt postconditions."""
+    """Recognize an explicit canvas mutation without matching negated actions."""
 
     raw_prompt = str(prompt or "")
     user_text = raw_prompt.split("[SUPERTALE_", 1)[0].strip()
     if not user_text:
         return False
-    has_action = bool(_FREEZONE_CANVAS_WRITE_ACTION_RE.search(user_text))
-    has_canvas_object = bool(_FREEZONE_CANVAS_WRITE_OBJECT_RE.search(user_text))
-    has_direct_media_write = bool(_FREEZONE_DIRECT_MEDIA_WRITE_RE.search(user_text))
+    intent_text = _FREEZONE_CANVAS_WRITE_NEGATION_RE.sub("", user_text)
+    has_action = bool(_FREEZONE_CANVAS_WRITE_ACTION_RE.search(intent_text))
+    has_canvas_object = bool(_FREEZONE_CANVAS_WRITE_OBJECT_RE.search(intent_text))
+    has_direct_media_write = bool(_FREEZONE_DIRECT_MEDIA_WRITE_RE.search(intent_text))
     has_node_reference = "[SUPERTALE_CANVAS_NODE_REFERENCES]" in raw_prompt
-    standalone_clear = bool(re.search(r"(?:清空|clear)", user_text, re.IGNORECASE))
+    standalone_clear = bool(re.search(r"(?:清空|clear)", intent_text, re.IGNORECASE))
     if _FREEZONE_CANVAS_KNOWLEDGE_QUESTION_RE.search(user_text):
         return False
     # Skill Studio authors catalog configuration. Media words inside a Skill
@@ -893,8 +895,7 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     # same request explicitly asks to use/run the Skill, add it to canvas, or
     # perform another independent canvas mutation.
     if _FREEZONE_SKILL_STUDIO_TRIGGER_RE.search(user_text):
-        runtime_text = _FREEZONE_SKILL_RUNTIME_NEGATION_RE.sub("", user_text)
-        intent_text = _FREEZONE_SKILL_CAPABILITY_RE.sub("", runtime_text)
+        intent_text = _FREEZONE_SKILL_CAPABILITY_RE.sub("", intent_text)
         return bool(
             _FREEZONE_SKILL_RUNTIME_REQUEST_RE.search(intent_text)
             or _FREEZONE_INDEPENDENT_CANVAS_WRITE_RE.search(intent_text)
@@ -4920,6 +4921,9 @@ async def _stream_assistant_reply_codex(
     assistant_text = ""
     tool_text = ""
     structured_canvas_reply = str(tool_mode or "").strip() == "freezone_canvas"
+    canvas_write_requested = structured_canvas_reply and _freezone_canvas_write_requested(
+        route_prompt or prompt
+    )
     canvas_write_attempts: dict[str, str] = {}
     canvas_receipts: set[tuple[str, int | None]] = set()
     canvas_write_failures: dict[str, str] = {}
@@ -5342,6 +5346,7 @@ async def _stream_assistant_reply_codex(
                 "",
             ),
             draft_ready=ready_workflow_draft is not None,
+            write_requested=canvas_write_requested,
         )
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
     assistant_text = _bounded_workflow_planning_reply(

@@ -3827,6 +3827,107 @@ describe("canvas chat commands", () => {
     expect(context).not.toContain("connect to true");
   });
 
+  it("guides edited audio generation through one canvas command batch", () => {
+    const nodeId = useCanvasStore.getState().addNode(
+      CANVAS_NODE_TYPES.audio,
+      { x: 0, y: 0 },
+      { audioKind: "music", text: "轻快背景音乐" },
+    );
+    const node = useCanvasStore
+      .getState()
+      .nodes.find((item) => item.id === nodeId);
+    if (!node) throw new Error("test node was not created");
+
+    const generateAudio = buildCanvasNodeActionCatalog(node).actions.find(
+      (action) => action.action === "generate_audio",
+    );
+
+    expect(generateAudio?.description).toContain(
+      "update_node_data + run_node_action",
+    );
+  });
+
+  it("dispatches audio generation with data updated earlier in the same batch", async () => {
+    const store = useCanvasStore.getState();
+    const nodeId = store.addNode(
+      CANVAS_NODE_TYPES.audio,
+      { x: 0, y: 0 },
+      {
+        audioKind: "music",
+        text: "旧音乐描述",
+        forceInstrumental: false,
+      },
+    );
+    let dispatchedData: Record<string, unknown> | undefined;
+    const unsubscribe = canvasEventBus.subscribe(
+      "freezone/run-node-action",
+      (payload) => {
+        if (payload.nodeId !== nodeId || payload.action !== "generate_audio") return;
+        dispatchedData = useCanvasStore
+          .getState()
+          .nodes.find((node) => node.id === nodeId)?.data;
+        if (!payload.requestId) return;
+        canvasEventBus.publish("freezone/node-action-accepted", {
+          requestId: payload.requestId,
+          nodeId,
+          action: payload.action,
+        });
+        useCanvasStore.getState().updateNodeData(nodeId, {
+          audioUrl: "/static/project/fixed-music.mp3",
+        });
+        canvasEventBus.publish("freezone/node-action-result", {
+          requestId: payload.requestId,
+          nodeId,
+          action: payload.action,
+          status: "success",
+          output: { audioUrl: "/static/project/fixed-music.mp3" },
+        });
+      },
+    );
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        [{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [
+            {
+              type: "update_node_data",
+              node_id: nodeId,
+              data: {
+                audioKind: "music",
+                text: "为红杯展示生成轻快温暖的木琴与轻柔鼓点纯音乐",
+                forceInstrumental: true,
+              },
+            },
+            {
+              type: "run_node_action",
+              node_id: nodeId,
+              action: "generate_audio",
+            },
+          ],
+        }],
+        { actionTimeoutMs: 200 },
+      );
+
+      expect(result.errors).toEqual([]);
+      expect(dispatchedData).toMatchObject({
+        audioKind: "music",
+        text: "为红杯展示生成轻快温暖的木琴与轻柔鼓点纯音乐",
+        forceInstrumental: true,
+      });
+      expect(result.commandResults).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "update_node_data", status: "success" }),
+        expect.objectContaining({
+          type: "run_node_action",
+          action: "generate_audio",
+          status: "success",
+        }),
+      ]));
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("limits frame upload picker actions to image files", () => {
     const nodeId = useCanvasStore.getState().addNode(
       CANVAS_NODE_TYPES.upload,

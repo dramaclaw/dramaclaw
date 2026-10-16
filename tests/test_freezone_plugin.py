@@ -9051,10 +9051,15 @@ def test_media_result_guidance_requires_add_next_and_run_in_one_batch():
 
     add_next = schemas["freezone_add_next_node"]["description"]
     emit = schemas["freezone_emit_canvas_command"]["description"]
+    update = schemas["freezone_update_node_data"]["description"]
+    run_action = schemas["freezone_run_node_action"]["description"]
 
     assert "does not generate media" in add_next
     assert "add_next_node + run_node_action" in add_next
     assert "add_next_node + run_node_action" in emit
+    assert "update_node_data + run_node_action" in emit
+    assert "update_node_data + run_node_action" in update
+    assert "update_node_data + run_node_action" in run_action
     assert "do not ask the user to click generate" in emit.lower()
 
 
