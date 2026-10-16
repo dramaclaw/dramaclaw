@@ -1022,7 +1022,7 @@ def _freezone_exact_audio_action_target(
     prompt: str | None,
     *,
     route_prompt: str | None = None,
-) -> tuple[str, str] | None:
+) -> tuple[str, str, str] | None:
     """Resolve a safe deterministic audio action from the injected summary."""
 
     user_text = str(route_prompt or prompt or "").split("[SUPERTALE_", 1)[0].strip()
@@ -1075,10 +1075,16 @@ def _freezone_exact_audio_action_target(
     candidates = named if named else audio_nodes if len(audio_nodes) == 1 else []
     if len(candidates) != 1:
         return None
-    return str(candidates[0]["node_id"]).strip(), "generate_audio"
+    label = str(candidates[0].get("label") or "").strip()
+    subject = re.sub(r"(?:背景音乐|配乐|音乐|音频)\s*$", "", label).strip() or label
+    return str(candidates[0]["node_id"]).strip(), "generate_audio", subject
 
 
-def _exact_audio_action_node_data(value: str) -> dict[str, Any] | None:
+def _exact_audio_action_node_data(
+    value: str,
+    *,
+    required_subject: str | None = None,
+) -> dict[str, Any] | None:
     """Validate the model's constrained audio plan before any canvas write."""
 
     try:
@@ -1094,12 +1100,17 @@ def _exact_audio_action_node_data(value: str) -> dict[str, Any] | None:
     text = str(plan.get("text") or "").strip()
     audio_kind = str(plan.get("audio_kind") or "").strip()
     force_instrumental = plan.get("force_instrumental")
+    subject = str(required_subject or "").strip()
     if (
         not text
-        or len(text) > 20_000
+        or len(subject) > 500
         or audio_kind not in {"music", "speech"}
         or not isinstance(force_instrumental, bool)
     ):
+        return None
+    if subject and subject not in text:
+        text = f"{subject}：{text}"
+    if len(text) > 20_000:
         return None
     return {
         "text": text,
@@ -5619,8 +5630,10 @@ async def _stream_assistant_reply_codex(
                         agent_profile,
                     )
         if exact_audio_action_target is not None and turn_disposition == "completed":
-            node_id, action = exact_audio_action_target
-            node_data = _exact_audio_action_node_data(assistant_text)
+            node_id, action, required_subject = exact_audio_action_target
+            node_data = _exact_audio_action_node_data(
+                assistant_text, required_subject=required_subject
+            )
             orchestrated_call_id = "orchestrated:exact-audio-action"
             canvas_write_attempts[orchestrated_call_id] = "failed"
             if node_data is None:

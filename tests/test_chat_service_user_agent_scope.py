@@ -3532,7 +3532,30 @@ def test_freezone_exact_audio_action_resolves_unique_node_from_canvas_summary():
 
     assert chat_service._freezone_exact_audio_action_target(
         prompt, route_prompt=user_text
-    ) == ("rcp05-music-result", "generate_audio")
+    ) == ("rcp05-music-result", "generate_audio", "红杯展示")
+
+
+def test_exact_audio_action_restores_target_subject_omitted_by_planner():
+    node_data = chat_service._exact_audio_action_node_data(
+        json.dumps(
+            {
+                "text": (
+                    "轻快温暖的展示背景音乐，以木琴和轻柔鼓点为主，"
+                    "纯器乐、无人声、无歌词。"
+                ),
+                "audio_kind": "music",
+                "force_instrumental": True,
+            },
+            ensure_ascii=False,
+        ),
+        required_subject="红杯展示",
+    )
+
+    assert node_data == {
+        "text": "红杯展示：轻快温暖的展示背景音乐，以木琴和轻柔鼓点为主，纯器乐、无人声、无歌词。",
+        "audioKind": "music",
+        "forceInstrumental": True,
+    }
 
 
 @pytest.mark.anyio
