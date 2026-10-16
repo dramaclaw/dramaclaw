@@ -1679,6 +1679,75 @@ def test_codex_freezone_thread_advertises_exact_agent_skill_locator(
     }
 
 
+def test_codex_exact_node_action_thread_enables_native_tool_search(
+    monkeypatch,
+    tmp_path,
+):
+    captured = {}
+    skill = (
+        tmp_path
+        / "workspace"
+        / ".agents"
+        / "skills"
+        / "dramaclaw-workflows"
+        / "SKILL.md"
+    )
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# Workflow skill\n", encoding="utf-8")
+
+    class FakeCodexClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def thread_start(self):
+            return "new-thread"
+
+    monkeypatch.setattr(
+        chat_service,
+        "ensure_user_codex_workspace",
+        lambda *_args, **_kwargs: (tmp_path / "workspace", tmp_path / "codex-home"),
+    )
+    monkeypatch.setattr(chat_service, "_build_codex_env", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        chat_service,
+        "_codex_turn_gateway_credentials",
+        lambda _authorization: ("turn-key", "https://gateway.example/v1"),
+    )
+    gateway_options = []
+
+    def fake_gateway_overrides(_url, **kwargs):
+        gateway_options.append(kwargs)
+        return ()
+
+    monkeypatch.setattr(
+        chat_service, "_codex_gateway_config_overrides", fake_gateway_overrides
+    )
+    monkeypatch.setattr(
+        chat_service, "_codex_mcp_config_overrides", lambda _servers: ()
+    )
+    monkeypatch.setattr(
+        chat_service, "_get_codex_thread_id", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(chat_service, "CodexClient", FakeCodexClient)
+
+    thread = chat_service._build_codex_thread(
+        "admin",
+        "project-a",
+        "agent-token",
+        authorization=None,
+        agent_profile="freezone:main",
+        tool_mode="freezone_canvas",
+        request_prompt=(
+            "请执行当前画布中名为『红杯展示背景音乐』的现有音频节点，"
+            "先更新音乐参数，再运行 generate_audio。"
+        ),
+    )
+
+    assert thread == "new-thread"
+    assert gateway_options == [{"native_tool_search": True}]
+    assert captured["thread_config_overrides"] == ()
+
+
 def test_named_recipe_distinguishes_existing_output_from_external_media_input():
     for instructions in (
         chat_service._codex_developer_instructions("freezone_canvas"),
@@ -3338,10 +3407,7 @@ def test_freezone_adds_independent_workflow_mcp_without_changing_default():
 def test_freezone_existing_execution_uses_focused_mcp_tools():
     servers = chat_service._dramaclaw_mcp_servers(
         "freezone_canvas",
-        prompt=(
-            "请执行当前画布中名为『红杯展示背景音乐』的现有音频节点，"
-            "先更新音乐参数，再运行 generate_audio。"
-        ),
+        prompt="请执行当前画布中名为『红杯展示背景音乐』的现有音频节点。",
     )
 
     assert set(servers) == {"dramaclaw"}
@@ -3358,6 +3424,19 @@ def test_freezone_existing_execution_uses_focused_mcp_tools():
     ]
 
 
+def test_freezone_exact_node_action_uses_one_batch_write_tool():
+    servers = chat_service._dramaclaw_mcp_servers(
+        "freezone_canvas",
+        prompt=(
+            "请执行当前画布中名为『红杯展示背景音乐』的现有音频节点，"
+            "先更新音乐参数，再运行 generate_audio。"
+        ),
+    )
+
+    assert set(servers) == {"dramaclaw"}
+    assert servers["dramaclaw"]["enabled_tools"] == ["freezone_emit_canvas_command"]
+
+
 def test_freezone_non_execution_request_keeps_full_mcp_servers():
     servers = chat_service._dramaclaw_mcp_servers(
         "freezone_canvas",
@@ -3372,7 +3451,13 @@ def test_freezone_execution_instruction_forbids_progress_reply_before_tool():
     instructions = chat_service._codex_developer_instructions("freezone_canvas")
 
     assert "An assistant message ends the current agent turn" in instructions
-    assert "Do not send a progress or status message before that tool call" in instructions
+    assert (
+        "Do not send a progress or status message before that tool call" in instructions
+    )
+    assert (
+        "update_node_data + run_node_action in one freezone_emit_canvas_command"
+        in instructions
+    )
 
 
 def test_chat_agent_api_url_defaults_to_rest_listener(monkeypatch):
@@ -3663,6 +3748,32 @@ def test_default_codex_gateway_uses_concrete_mcp_tools(monkeypatch):
         model["slug"]: model["supports_search_tool"]
         for model in configured_catalog["models"]
     } == {"DC-codex-agent-LLM": False, "brainclaw": False}
+
+
+def test_exact_node_action_gateway_enables_native_tool_search(monkeypatch):
+    bundled = (
+        Path(chat_service.__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / "dramaclaw-model-catalog.json"
+    )
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(bundled))
+
+    overrides = chat_service._codex_gateway_config_overrides(
+        "https://gateway.example/v1", native_tool_search=True
+    )
+
+    catalog_override = next(
+        item for item in overrides if item.startswith("model_catalog_json=")
+    )
+    configured_path = Path(json.loads(catalog_override.split("=", 1)[1]))
+    configured_catalog = json.loads(configured_path.read_text(encoding="utf-8"))
+
+    assert configured_path.name == "dramaclaw-model-catalog-tool-search.json"
+    assert {
+        model["slug"]: model["supports_search_tool"]
+        for model in configured_catalog["models"]
+    } == {"DC-codex-agent-LLM": True, "brainclaw": True}
 
 
 def test_codex_gateway_reasoning_effort_is_configurable(monkeypatch):

@@ -626,8 +626,7 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
 
         try:
             events = [
-                event
-                async for event in client.thread_start().stream(execution_prompt)
+                event async for event in client.thread_start().stream(execution_prompt)
             ]
         finally:
             codex_app_server.stop_shared_codex_runtime()
@@ -660,6 +659,122 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
     )
     assert any(
         event.type == "complete" and event.text == "兼容模式正常。" for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_app_server_exact_node_action_searches_only_batch_write_tool(
+    monkeypatch, tmp_path
+):
+    """Exact node actions discover one atomic update-and-run entry."""
+    monkeypatch.delenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", raising=False)
+    search_call_id = "search-batch-write"
+    final_reply = json.dumps(
+        {"message": "完成。", "mode": "read_only", "canvas_receipts": []},
+        ensure_ascii=False,
+    )
+    scripted_responses = [
+        _responses_sse(
+            _response_created("response-search"),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "tool_search_call",
+                    "call_id": search_call_id,
+                    "execution": "client",
+                    "arguments": {
+                        "query": "update an existing node and run its exact action in one batch",
+                        "limit": 5,
+                    },
+                },
+            },
+            _response_completed("response-search"),
+        ),
+        _responses_sse(
+            _response_created("response-final"),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "id": "message-final",
+                    "content": [{"type": "output_text", "text": final_reply}],
+                },
+            },
+            _response_completed("response-final"),
+        ),
+    ]
+
+    with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
+        bundled_codex = Path(
+            distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
+        )
+        token_file = tmp_path / "turn.token"
+        token_file.write_text("contract-test-token", encoding="utf-8")
+        token_file.chmod(0o600)
+        monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+        env = {
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+            "DRAMACLAW_PROJECT_ID": "focused-search-contract",
+            "DRAMACLAW_USERNAME": "local",
+            "DRAMACLAW_AGENT_TOKEN_FILE": str(token_file),
+            "DRAMACLAW_ROOT": str(Path(__file__).resolve().parents[1]),
+            "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+            "DRAMACLAW_CANVAS_ID": "canvas-a",
+            "DRAMACLAW_AGENT_PROFILE": "freezone:main",
+            "DRAMACLAW_CHAT_SURFACE": "freezone",
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        execution_prompt = (
+            "请执行当前画布里的现有音频节点，先更新音乐参数，再运行 generate_audio。"
+        )
+        mcp_servers = service._dramaclaw_mcp_servers(
+            "freezone_canvas", prompt=execution_prompt
+        )
+        client = backend_sdk.CodexClient(
+            codex_bin=bundled_codex,
+            cwd=tmp_path,
+            env=env,
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions=service._codex_developer_instructions(
+                "freezone_canvas"
+            ),
+            config_overrides=service._codex_gateway_config_overrides(
+                gateway_url, native_tool_search=True
+            ),
+            thread_config_overrides=service._codex_mcp_config_overrides(mcp_servers),
+            turn_metadata={"dramaclaw_gateway_api_key": "per-turn-contract-key"},
+            output_schema=service.CANVAS_REPLY_SCHEMA,
+        )
+
+        try:
+            events = [
+                event
+                async for event in client.thread_start().stream(execution_prompt)
+            ]
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+
+    assert len(requests) == 2
+    first, second = [request["body"] for request in requests]
+    assert any(tool.get("type") == "tool_search" for tool in first["tools"])
+    assert not any(tool.get("type") == "namespace" for tool in first["tools"])
+    search_output = next(
+        item for item in second["input"] if item.get("type") == "tool_search_output"
+    )
+    assert search_output["call_id"] == search_call_id
+    assert [tool["name"] for tool in search_output["tools"]] == ["mcp__dramaclaw"]
+    assert [
+        tool["name"]
+        for namespace in search_output["tools"]
+        for tool in namespace["tools"]
+    ] == ["freezone_emit_canvas_command"]
+    assert any(
+        event.type == "complete" and event.text == final_reply for event in events
     )
 
 

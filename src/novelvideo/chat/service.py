@@ -216,6 +216,11 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "canvas read or write, call the required tool before emitting any assistant message. Do "
     "not send a progress or status message before that tool call. Continue using tools until "
     "the requested operation is complete, then emit one final JSON response. "
+    "When the user names an exact action on an existing standalone node and also supplies changed "
+    "node content or settings, submit update_node_data + run_node_action in one "
+    "freezone_emit_canvas_command. The exact action name and the uniquely matching node_id from "
+    "the injected canvas summary are sufficient grounding; do not read the action catalog or node "
+    "detail first, and do not split the update and action across model turns. "
     "A successful freezone_begin_agent_product_generation is admission, not delivery. "
     "For product_kind=workflow_result, continue authoring the complete intent or plan and "
     "submit it through the matching freezone_prepare_workflow_draft or "
@@ -421,7 +426,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v30"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v31"
 
 
 def _codex_agent_skill_locator_instructions(workspace: Path) -> str:
@@ -826,6 +831,11 @@ _FREEZONE_EXISTING_EXECUTION_TARGET_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_FREEZONE_EXACT_NODE_ACTION_RE = re.compile(
+    r"\b(?:generate_audio|generate_image|generate_video)\b",
+    re.IGNORECASE,
+)
+_CODEX_FREEZONE_EXACT_NODE_ACTION_TOOLS = ("freezone_emit_canvas_command",)
 _CODEX_FREEZONE_EXECUTION_TOOLS = (
     "freezone_get_canvas_ontology",
     "freezone_get_node_action_catalog",
@@ -967,6 +977,20 @@ def _freezone_existing_execution_requested(prompt: str | None) -> bool:
     return bool(
         _FREEZONE_EXISTING_EXECUTION_ACTION_RE.search(intent_text)
         and _FREEZONE_EXISTING_EXECUTION_TARGET_RE.search(intent_text)
+    )
+
+
+def _freezone_exact_node_action_requested(prompt: str | None) -> bool:
+    """Recognize an explicit action id on an existing canvas node."""
+
+    user_text = str(prompt or "").split("[SUPERTALE_", 1)[0].strip()
+    if not user_text:
+        return False
+    intent_text = _FREEZONE_CANVAS_WRITE_NEGATION_RE.sub("", user_text)
+    return bool(
+        _FREEZONE_EXISTING_EXECUTION_ACTION_RE.search(intent_text)
+        and _FREEZONE_EXISTING_EXECUTION_TARGET_RE.search(intent_text)
+        and _FREEZONE_EXACT_NODE_ACTION_RE.search(intent_text)
     )
 
 
@@ -3367,10 +3391,17 @@ def _dramaclaw_mcp_servers(
         }
     }
     freezone_canvas = str(tool_mode or "").strip() == "freezone_canvas"
+    exact_node_action = freezone_canvas and _freezone_exact_node_action_requested(
+        prompt
+    )
     focused_execution = freezone_canvas and _freezone_existing_execution_requested(
         prompt
     )
-    if focused_execution:
+    if exact_node_action:
+        servers["dramaclaw"]["enabled_tools"] = list(
+            _CODEX_FREEZONE_EXACT_NODE_ACTION_TOOLS
+        )
+    elif focused_execution:
         servers["dramaclaw"]["enabled_tools"] = list(
             _CODEX_FREEZONE_EXECUTION_TOOLS
         )
@@ -3452,7 +3483,11 @@ def _codex_gateway_provider_overrides(
     )
 
 
-def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
+def _codex_gateway_config_overrides(
+    base_url: str,
+    *,
+    native_tool_search: bool = False,
+) -> tuple[str, ...]:
     """Node-safe Codex config containing no usable Gateway credential."""
     overrides = [
         *_codex_gateway_provider_overrides(
@@ -3473,20 +3508,35 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
         "memories.generate_memories=false",
         "memories.use_memories=false",
     ]
-    # The bundled catalog keeps search disabled so required MCP tools are
-    # callable on the first model request. A model may legally finish without
-    # choosing native tool_search, which makes write execution nondeterministic.
-    # Deployments may opt into search with another verified catalog when that
-    # extra discovery round is acceptable.
+    # Most turns use concrete MCP namespaces. Exact existing-node actions use
+    # the separately pinned native-search catalog because the deployed model
+    # reliably selects a discovered MCP function, while it may end a turn
+    # after merely describing a call to an eager namespace.
+    catalog_name = (
+        "dramaclaw-model-catalog-tool-search.json"
+        if native_tool_search
+        else "dramaclaw-model-catalog.json"
+    )
     bundled_catalog = (
         Path(__file__).resolve().parents[3]
         / "deploy"
         / "codex"
-        / "dramaclaw-model-catalog.json"
+        / catalog_name
     )
-    catalog_file = str(
-        os.environ.get("DRAMACLAW_CODEX_MODEL_CATALOG_FILE") or bundled_catalog
+    configured_catalog = str(
+        os.environ.get("DRAMACLAW_CODEX_MODEL_CATALOG_FILE") or ""
     ).strip()
+    if native_tool_search and configured_catalog:
+        configured_path = Path(configured_catalog).expanduser()
+        managed_search_catalog = configured_path.with_name(
+            "dramaclaw-model-catalog-tool-search.json"
+        )
+        if (
+            configured_path.name == "dramaclaw-model-catalog.json"
+            and managed_search_catalog.is_file()
+        ):
+            configured_catalog = str(managed_search_catalog)
+    catalog_file = configured_catalog or str(bundled_catalog)
     path = Path(catalog_file).expanduser()
     if not path.is_file() or not path.is_absolute():
         raise RuntimeError(
@@ -3617,7 +3667,18 @@ def _build_codex_thread(
         agent_token_file=agent_token_file,
     )
     gateway_api_key, gateway_base_url = _codex_turn_gateway_credentials(authorization)
-    node_config_overrides = _codex_gateway_config_overrides(gateway_base_url)
+    exact_node_action = str(
+        tool_mode or ""
+    ).strip() == "freezone_canvas" and _freezone_exact_node_action_requested(
+        request_prompt
+    )
+    if exact_node_action:
+        node_config_overrides = _codex_gateway_config_overrides(
+            gateway_base_url,
+            native_tool_search=True,
+        )
+    else:
+        node_config_overrides = _codex_gateway_config_overrides(gateway_base_url)
     thread_config_overrides = _codex_mcp_config_overrides(
         _dramaclaw_mcp_servers(tool_mode, prompt=request_prompt)
     )
