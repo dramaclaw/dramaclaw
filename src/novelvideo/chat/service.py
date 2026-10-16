@@ -212,6 +212,10 @@ _CODEX_DEVELOPER_INSTRUCTIONS = (
 )
 _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant inside the Xi画/Freezone canvas. "
+    "An assistant message ends the current agent turn. When the user's request requires a "
+    "canvas read or write, call the required tool before emitting any assistant message. Do "
+    "not send a progress or status message before that tool call. Continue using tools until "
+    "the requested operation is complete, then emit one final JSON response. "
     "A successful freezone_begin_agent_product_generation is admission, not delivery. "
     "For product_kind=workflow_result, continue authoring the complete intent or plan and "
     "submit it through the matching freezone_prepare_workflow_draft or "
@@ -417,7 +421,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v29"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v30"
 
 
 def _codex_agent_skill_locator_instructions(workspace: Path) -> str:
@@ -808,6 +812,31 @@ _FREEZONE_CANVAS_WRITE_NEGATION_RE = re.compile(
     r"[^。！？!?，,；;\n]{0,32}",
     re.IGNORECASE,
 )
+_FREEZONE_EXISTING_EXECUTION_ACTION_RE = re.compile(
+    r"(?:运行|执行|继续|恢复|run|execute|continue|resume)",
+    re.IGNORECASE,
+)
+_FREEZONE_EXISTING_EXECUTION_TARGET_RE = re.compile(
+    r"(?:"
+    r"(?:当前|现有|已有|这个|该|选中|指定)"
+    r"[^。！？!?，,；;\n]{0,32}(?:节点|工作流|node|workflow)"
+    r"|(?:节点|工作流|node|workflow)"
+    r"[^。！？!?，,；;\n]{0,32}(?:当前|现有|已有|这个|该|选中|指定)"
+    r"|(?:existing|current|selected|named)\s+(?:node|workflow)"
+    r")",
+    re.IGNORECASE,
+)
+_CODEX_FREEZONE_EXECUTION_TOOLS = (
+    "freezone_get_canvas_ontology",
+    "freezone_get_node_action_catalog",
+    "freezone_get_node_detail",
+    "freezone_get_workflow",
+    "freezone_observe_workflow_run",
+    "freezone_request_user_clarification",
+    "freezone_run_node_action",
+    "freezone_run_workflow",
+    "freezone_update_node_data",
+)
 _FREEZONE_INDEPENDENT_CANVAS_WRITE_RE = re.compile(
     r"(?:"
     r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|向[上下左右]移|"
@@ -927,6 +956,18 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
         or standalone_clear
     )
 
+
+def _freezone_existing_execution_requested(prompt: str | None) -> bool:
+    """Select the small tool surface for executing an object already on canvas."""
+
+    user_text = str(prompt or "").split("[SUPERTALE_", 1)[0].strip()
+    if not user_text:
+        return False
+    intent_text = _FREEZONE_CANVAS_WRITE_NEGATION_RE.sub("", user_text)
+    return bool(
+        _FREEZONE_EXISTING_EXECUTION_ACTION_RE.search(intent_text)
+        and _FREEZONE_EXISTING_EXECUTION_TARGET_RE.search(intent_text)
+    )
 
 
 async def _bind_server_observed_agent_product_execution(
@@ -3297,6 +3338,8 @@ def _build_claude_thread(
 
 def _dramaclaw_mcp_servers(
     tool_mode: str = "default",
+    *,
+    prompt: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     servers: dict[str, dict[str, Any]] = {
         "dramaclaw": {
@@ -3323,7 +3366,15 @@ def _dramaclaw_mcp_servers(
             ],
         }
     }
-    if str(tool_mode or "").strip() == "freezone_canvas":
+    freezone_canvas = str(tool_mode or "").strip() == "freezone_canvas"
+    focused_execution = freezone_canvas and _freezone_existing_execution_requested(
+        prompt
+    )
+    if focused_execution:
+        servers["dramaclaw"]["enabled_tools"] = list(
+            _CODEX_FREEZONE_EXECUTION_TOOLS
+        )
+    if freezone_canvas and not focused_execution:
         # The shared Workflow MCP owns portable discovery and deterministic
         # compilation only. Protected canvas writes stay on the existing
         # DramaClaw MCP server, preserving the Hermes approval boundary.
@@ -3354,6 +3405,9 @@ def _codex_mcp_config_overrides(
         env_vars = server.get("env_vars") or []
         if not isinstance(env_vars, list):
             raise ValueError(f"Codex MCP server {name} env_vars must be a list")
+        enabled_tools = server.get("enabled_tools")
+        if enabled_tools is not None and not isinstance(enabled_tools, list):
+            raise ValueError(f"Codex MCP server {name} enabled_tools must be a list")
         prefix = f"mcp_servers.{name}"
         overrides.append(f"{prefix}.command={json.dumps(command, ensure_ascii=False)}")
         overrides.append(
@@ -3364,6 +3418,15 @@ def _codex_mcp_config_overrides(
         )
         overrides.append(f"{prefix}.enabled=true")
         overrides.append(f"{prefix}.required=true")
+        if enabled_tools is not None:
+            overrides.append(
+                f"{prefix}.enabled_tools="
+                + json.dumps(
+                    [str(tool) for tool in enabled_tools],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
         # DramaClaw MCP is the sole business write boundary. Its short-lived,
         # project-scoped bearer token remains the authority for every call;
         # pre-approving this server avoids a separate Guardian model request
@@ -3531,6 +3594,7 @@ def _build_codex_thread(
     turn_id: str | None = None,
     project_state_dir: str | Path | None = None,
     agent_token_file: str | Path | None = None,
+    request_prompt: str | None = None,
 ) -> AgentRuntimeThreadPort:
     workspace, _codex_home = ensure_user_codex_workspace(
         username,
@@ -3555,7 +3619,7 @@ def _build_codex_thread(
     gateway_api_key, gateway_base_url = _codex_turn_gateway_credentials(authorization)
     node_config_overrides = _codex_gateway_config_overrides(gateway_base_url)
     thread_config_overrides = _codex_mcp_config_overrides(
-        _dramaclaw_mcp_servers(tool_mode)
+        _dramaclaw_mcp_servers(tool_mode, prompt=request_prompt)
     )
     turn_metadata = {_CODEX_GATEWAY_KEY_METADATA: gateway_api_key}
     if control_capability:
@@ -5011,6 +5075,7 @@ async def _stream_assistant_reply_codex(
             turn_id=business_turn_id,
             project_state_dir=project_state_dir,
             agent_token_file=token_file,
+            request_prompt=route_prompt or prompt,
         )
         agent_prompt = _prompt_with_user_context(
             username,

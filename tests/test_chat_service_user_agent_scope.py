@@ -3335,6 +3335,46 @@ def test_freezone_adds_independent_workflow_mcp_without_changing_default():
     }
 
 
+def test_freezone_existing_execution_uses_focused_mcp_tools():
+    servers = chat_service._dramaclaw_mcp_servers(
+        "freezone_canvas",
+        prompt=(
+            "请执行当前画布中名为『红杯展示背景音乐』的现有音频节点，"
+            "先更新音乐参数，再运行 generate_audio。"
+        ),
+    )
+
+    assert set(servers) == {"dramaclaw"}
+    assert servers["dramaclaw"]["enabled_tools"] == [
+        "freezone_get_canvas_ontology",
+        "freezone_get_node_action_catalog",
+        "freezone_get_node_detail",
+        "freezone_get_workflow",
+        "freezone_observe_workflow_run",
+        "freezone_request_user_clarification",
+        "freezone_run_node_action",
+        "freezone_run_workflow",
+        "freezone_update_node_data",
+    ]
+
+
+def test_freezone_non_execution_request_keeps_full_mcp_servers():
+    servers = chat_service._dramaclaw_mcp_servers(
+        "freezone_canvas",
+        prompt="请创建三个节点并连接成图片转视频工作流。",
+    )
+
+    assert "enabled_tools" not in servers["dramaclaw"]
+    assert "dramaclaw_workflows" in servers
+
+
+def test_freezone_execution_instruction_forbids_progress_reply_before_tool():
+    instructions = chat_service._codex_developer_instructions("freezone_canvas")
+
+    assert "An assistant message ends the current agent turn" in instructions
+    assert "Do not send a progress or status message before that tool call" in instructions
+
+
 def test_chat_agent_api_url_defaults_to_rest_listener(monkeypatch):
     for name in (
         "DRAMACLAW_API_URL",
@@ -3401,6 +3441,23 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
     assert "mcp_servers.dramaclaw.env_vars" not in thread._thread_config
     assert thread._model == "DC-codex-agent-LLM"
     assert thread._model_provider == "dramaclaw_gateway"
+
+
+def test_codex_mcp_config_renders_enabled_tools():
+    servers = chat_service._dramaclaw_mcp_servers(
+        "freezone_canvas",
+        prompt="执行这个现有节点。",
+    )
+
+    overrides = chat_service._codex_mcp_config_overrides(servers)
+
+    assert (
+        'mcp_servers.dramaclaw.enabled_tools=["freezone_get_canvas_ontology",'
+        '"freezone_get_node_action_catalog","freezone_get_node_detail",'
+        '"freezone_get_workflow","freezone_observe_workflow_run",'
+        '"freezone_request_user_clarification","freezone_run_node_action",'
+        '"freezone_run_workflow","freezone_update_node_data"]'
+    ) in overrides
 
 
 def test_codex_client_carries_freezone_scope_into_mcp_process(tmp_path):
@@ -7568,6 +7625,7 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
     prompts = []
+    build_kwargs = []
     events = []
     revoked = []
 
@@ -7597,9 +7655,11 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     monkeypatch.setattr(
         chat_service, "_create_page_agent_session_token", fake_create_token
     )
-    monkeypatch.setattr(
-        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
-    )
+    def fake_build_thread(*_args, **kwargs):
+        build_kwargs.append(kwargs)
+        return FakeThread()
+
+    monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
     monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
     monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
 
@@ -7629,6 +7689,7 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     )
 
     assert prompts[1:] == [chat_service.CANVAS_FORMAT_REPAIR_PROMPT]
+    assert build_kwargs[0]["request_prompt"] == request_prompt
     assert result["content"] == expected
     assert [
         event["text"] for event in events if event["type"] == "assistant_delta"

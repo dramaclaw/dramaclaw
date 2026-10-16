@@ -606,7 +606,10 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
             "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
             "PYTHONDONTWRITEBYTECODE": "1",
         }
-        mcp_servers = service._dramaclaw_mcp_servers("freezone_canvas")
+        execution_prompt = "请执行当前画布里的现有音频节点。"
+        mcp_servers = service._dramaclaw_mcp_servers(
+            "freezone_canvas", prompt=execution_prompt
+        )
         client = backend_sdk.CodexClient(
             codex_bin=bundled_codex,
             cwd=tmp_path,
@@ -624,7 +627,7 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
         try:
             events = [
                 event
-                async for event in client.thread_start().stream("查询当前项目状态。")
+                async for event in client.thread_start().stream(execution_prompt)
             ]
         finally:
             codex_app_server.stop_shared_codex_runtime()
@@ -632,23 +635,28 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
     assert len(requests) == 1
     tools = requests[0]["body"]["tools"]
     assert not any(tool.get("type") == "tool_search" for tool in tools)
-    concrete_names = {
-        str(tool.get("name") or "")
-        for tool in tools
-        if tool.get("type") == "function"
-    }
     namespace_names = {
         str(member.get("name") or "")
         for tool in tools
         if tool.get("type") == "namespace"
         for member in tool.get("tools") or []
     }
-    concrete_names.update(namespace_names)
-    assert any(
-        name.endswith("freezone_update_node_data") for name in concrete_names
-    )
-    assert any(
-        name.endswith("freezone_run_node_action") for name in concrete_names
+    expected_execution_tools = {
+        "freezone_get_canvas_ontology",
+        "freezone_get_node_action_catalog",
+        "freezone_get_node_detail",
+        "freezone_get_workflow",
+        "freezone_observe_workflow_run",
+        "freezone_request_user_clarification",
+        "freezone_run_node_action",
+        "freezone_run_workflow",
+        "freezone_update_node_data",
+    }
+    assert namespace_names == expected_execution_tools
+    assert not any(
+        tool.get("name") == "mcp__dramaclaw_workflows"
+        for tool in tools
+        if tool.get("type") == "namespace"
     )
     assert any(
         event.type == "complete" and event.text == "兼容模式正常。" for event in events
