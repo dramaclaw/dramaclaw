@@ -670,6 +670,75 @@ def _runpod_qwen_image_configured() -> bool:
     )
 
 
+# Dev-only: Qwen-Image-Edit-2511 on the same RunPod endpoint/worker as
+# RUNPOD_QWEN_IMAGE_* above, but a genuinely different model family — built on
+# the original 20B Qwen-Image architecture with a Qwen2.5-VL-7B text encoder,
+# not Qwen-Image-2.1's 7B/Qwen3-VL-8B pair, so it needs its own UNET/text
+# encoder/VAE files (none shared with RUNPOD_QWEN_IMAGE_*) and its own ComfyUI
+# node family (TextEncodeQwenImageEditPlus + Flux-Kontext nodes, not
+# TextEncodeQwenImage21/QwenImage21Cache). See nanobanana_grid.py
+# `_call_runpod_qwen_edit_image_api`. Used only for the "render" stage
+# (compositing a character identity onto an existing sketch) — verified
+# end-to-end 2026-10-14 to reliably preserve the sketch's pose/composition
+# while applying the character's identity, unlike Qwen-Image-2.1's edit mode
+# for this same task (see CLAUDE.md).
+RUNPOD_QWEN_EDIT_UNET = os.environ.get(
+    "RUNPOD_QWEN_EDIT_UNET", "qwen_image_edit_2511_int8_convrot.safetensors"
+)
+RUNPOD_QWEN_EDIT_TEXT_ENCODER = os.environ.get(
+    "RUNPOD_QWEN_EDIT_TEXT_ENCODER", "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+)
+RUNPOD_QWEN_EDIT_VAE = os.environ.get("RUNPOD_QWEN_EDIT_VAE", "qwen_image_vae.safetensors")
+
+
+def _runpod_qwen_edit_configured() -> bool:
+    return _runpod_qwen_image_configured()
+
+
+# Dev-only: MiniMax-H3 video on the same RunPod endpoint/R2 bucket as
+# RUNPOD_QWEN_IMAGE_* (photoreal-drama-h3, `a31613hf7l83r5`) — the only H3
+# path verified end-to-end (first frame + character-card reference images +
+# <d>[Vietnamese] dialogue + PDD 8-step acceleration + R2 mp4 with muxed
+# audio; see `movies/NgoaiTinhCongSo` in the photoreal project and
+# `.claude/CLAUDE.md`). Model files below come from that project's
+# `scripts/設定.json`; ported graph lives in `runpod_minimax_h3_video.py`.
+RUNPOD_H3_VIDEO_ENDPOINT_ID = os.environ.get(
+    "RUNPOD_H3_VIDEO_ENDPOINT_ID", RUNPOD_QWEN_IMAGE_ENDPOINT_ID
+)
+RUNPOD_H3_VIDEO_TIMEOUT_SECONDS = _env_float("RUNPOD_H3_VIDEO_TIMEOUT_SECONDS", 2400.0)
+RUNPOD_H3_UNET_REF2VA = os.environ.get(
+    "RUNPOD_H3_UNET_REF2VA", "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+)
+RUNPOD_H3_UNET_FL2VA = os.environ.get(
+    "RUNPOD_H3_UNET_FL2VA", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+)
+RUNPOD_H3_TEXT_ENCODER = os.environ.get(
+    "RUNPOD_H3_TEXT_ENCODER", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+)
+RUNPOD_H3_VIDEO_VAE = os.environ.get(
+    "RUNPOD_H3_VIDEO_VAE", "minimax_h3_video_vae_fp16.safetensors"
+)
+RUNPOD_H3_AUDIO_VAE = os.environ.get(
+    "RUNPOD_H3_AUDIO_VAE", "minimax_h3_audio_vae_fp32.safetensors"
+)
+# PDD acceleration (8-step) — only applies to ref2va; fl2va always runs the
+# base 20-step res_multistep/simple schedule (no PDD file exists for it).
+RUNPOD_H3_PDD_REF2VA = os.environ.get(
+    "RUNPOD_H3_PDD_REF2VA", "MiniMax-H3-Ref2VA-Acc-8Step.safetensors"
+)
+
+
+def _runpod_h3_video_configured() -> bool:
+    return bool(
+        RUNPOD_API_KEY
+        and RUNPOD_H3_VIDEO_ENDPOINT_ID
+        and R2_ENDPOINT
+        and R2_BUCKET
+        and R2_ACCESS_KEY_ID
+        and R2_SECRET_ACCESS_KEY
+    )
+
+
 SCENE_MASTER_IMAGE_PROVIDER = (
     os.environ.get("SCENE_MASTER_IMAGE_PROVIDER", "").strip().lower() or "newapi"
 )
@@ -1236,6 +1305,33 @@ IMAGE_GENERATION_SELECTIONS: dict[str, dict[str, str]] = {
         "model": "qwen-image-2.1",
         "image_size": "4K",
     },
+    # Dev-only, render-only: Qwen-Image-Edit-2511, not Qwen-Image-2.1 — a
+    # different checkpoint/node family, see `_runpod_qwen_edit_configured()`.
+    # No "image_size" here: the output canvas is the sketch's own size via
+    # VAEEncode, not a forced EmptyLatentImage (that's exactly what made the
+    # 2.1 render path unreliable — see CLAUDE.md). Not offered for
+    # sketch/character/scene/prop: Edit-2511 is an edit model, not a good
+    # fit for pure text-to-image generation.
+    "runpod_qwen_edit_render": {
+        "label": "Qwen Image Edit 2511 RunPod (render only)",
+        "provider": "runpod_qwen_edit",
+        "model": "qwen-image-edit-2511",
+    },
+    # Multi-character variant of the entry above: beats with more than one
+    # figure in the sketch need a mechanical, not text-prompt, way to pick
+    # which figure gets which identity — two single-pass color-in-the-prompt
+    # attempts both failed real testing on beat 6 (see
+    # `_qwen_edit_multi_character_render` in nanobanana_grid.py and
+    # CLAUDE.md). This runs two RunPod calls per detected identity instead
+    # of one, so it's roughly 2x the time/cost of `runpod_qwen_edit_render`
+    # — kept as a separate selection rather than auto-detecting "multiple
+    # figures" so the slower path is opt-in per beat.
+    "runpod_qwen_edit_render_multi": {
+        "label": "Qwen Image Edit 2511 RunPod (render, multi-character, ~2x thời gian)",
+        "provider": "runpod_qwen_edit",
+        "model": "qwen-image-edit-2511",
+        "multi_character": True,
+    },
 }
 
 GOOGLE_GEMINI_SELECTION_KEYS = (
@@ -1260,6 +1356,11 @@ RUNPOD_QWEN_IMAGE_SELECTION_KEYS = (
     "runpod_qwen_image_2k",
     "runpod_qwen_image_3k",
     "runpod_qwen_image_4k",
+)
+
+RUNPOD_QWEN_EDIT_SELECTION_KEYS = (
+    "runpod_qwen_edit_render",
+    "runpod_qwen_edit_render_multi",
 )
 
 VISIBLE_IMAGE_GENERATION_SELECTION_KEYS = (
@@ -1344,6 +1445,9 @@ def image_generation_selection_options() -> dict[str, str]:
     if _runpod_qwen_image_configured():
         for key in RUNPOD_QWEN_IMAGE_SELECTION_KEYS:
             options[key] = IMAGE_GENERATION_SELECTIONS[key]["label"]
+    if _runpod_qwen_edit_configured():
+        for key in RUNPOD_QWEN_EDIT_SELECTION_KEYS:
+            options[key] = IMAGE_GENERATION_SELECTIONS[key]["label"]
     return options
 
 
@@ -1369,6 +1473,8 @@ def _visible_image_generation_selection(value: str | None) -> str:
     if candidate in QWEN_IMAGE_SELECTION_KEYS and QWEN_API_KEY:
         return candidate
     if candidate in RUNPOD_QWEN_IMAGE_SELECTION_KEYS and _runpod_qwen_image_configured():
+        return candidate
+    if candidate in RUNPOD_QWEN_EDIT_SELECTION_KEYS and _runpod_qwen_edit_configured():
         return candidate
     alias = LEGACY_IMAGE_GENERATION_SELECTION_ALIASES.get(candidate)
     if (
@@ -1467,12 +1573,14 @@ def _image_provider_config(
     selection_override: str | None = None,
 ) -> dict:
     force_image_size: str | None = None
+    multi_character = False
     if selection_override:
         selection = normalize_image_generation_selection(selection_override)
         entry = IMAGE_GENERATION_SELECTIONS[selection]
         provider = entry["provider"]
         model = model_override or entry["model"]
         force_image_size = entry.get("image_size")
+        multi_character = bool(entry.get("multi_character"))
     else:
         provider = (provider or "openrouter").lower()
         model = model_override or ""
@@ -1537,6 +1645,15 @@ def _image_provider_config(
             "base_url": None,
             "force_image_size": force_image_size,
         }
+    if provider == "runpod_qwen_edit":
+        return {
+            "provider": provider,
+            "api_key": RUNPOD_API_KEY,
+            "model": model or "qwen-image-edit-2511",
+            "base_url": None,
+            "force_image_size": force_image_size,
+            "multi_character": multi_character,
+        }
 
     return {
         "provider": "google",
@@ -1593,6 +1710,7 @@ def get_grid_generation_config(
         "huimeng_image_quality": os.environ.get("HUIMENG_IMAGE_QUALITY", "medium"),
         "image_size": image_size_override or "1K",
         "force_image_size": provider_config.get("force_image_size"),
+        "multi_character": provider_config.get("multi_character", False),
         "mode": GRID_MODE,
         "rows": GRID_ROWS,
         "cols": GRID_COLS,

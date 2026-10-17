@@ -45,9 +45,11 @@ import {
   useVideoPool,
   useVideoPoolSelect,
   type Seedance2BeatStatus,
+  type SingleVideoRequestBody,
   type VideoBackendOption,
   type VideoInputCropTarget,
 } from "@/lib/queries/video";
+import { VideoReviewDialog } from "@/components/episode/beat-workbench/video-review-dialog";
 import {
   backendErrorToastMessage,
   BillingRuleNotConfiguredError,
@@ -313,6 +315,9 @@ export function VideoPane({
   const now = useNow();
   const seedance2UploadInputRef = useRef<HTMLInputElement>(null);
   const [regenConfirm, setRegenConfirm] = useState(false);
+  // Dev-only MiniMax H3 backend: confirm goes through a review dialog instead
+  // of the plain AlertDialog `regenConfirm` above.
+  const [h3ReviewOpen, setH3ReviewOpen] = useState(false);
   const [seedance2CropIntent, setSeedance2CropIntent] =
     useState<Seedance2CropIntent | null>(null);
   const [seedance2TrimAsset, setSeedance2TrimAsset] =
@@ -371,8 +376,16 @@ export function VideoPane({
   const showSeedance2Config = selectedBackend?.is_seedance2 === true;
   const showHappyHorseConfig = selectedBackend?.is_happyhorse === true;
   const showGrokVideoConfig = selectedBackend?.is_grok_video === true;
+  // Dev-only: MiniMax H3 on the user's own RunPod serverless endpoint. It has
+  // no dedicated inspector UI — it reuses the Seedance2-style prompt panel
+  // (prompt_guidance/final_prompt textareas + autosave) as-is, and regen goes
+  // through the H3-specific review dialog instead of the plain AlertDialog.
+  const showRunpodH3Config = selectedBackend?.is_runpod_h3 === true;
   const showPromptConfig =
-    showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig;
+    showSeedance2Config ||
+    showHappyHorseConfig ||
+    showGrokVideoConfig ||
+    showRunpodH3Config;
   const showReferenceDetails =
     showSeedance2Config ||
     showHappyHorseConfig ||
@@ -739,6 +752,10 @@ export function VideoPane({
     return true;
   };
   const openRegenConfirm = () => {
+    if (showRunpodH3Config) {
+      setH3ReviewOpen(true);
+      return;
+    }
     if (!validateVideoPromptReady()) return;
     setRegenConfirm(true);
   };
@@ -750,6 +767,56 @@ export function VideoPane({
     } catch {
       toast.error(t("episode.workbench.video.switchFailed"));
     }
+  };
+
+  // Shared tail of a regen request: POST the final body, start the task
+  // controller on success, surface a stale-review re-check for the H3 dialog
+  // flow (the only caller that ever sends `review_fingerprint`), and toast
+  // anything else. Both the plain-AlertDialog backends (via `handleRegen`
+  // below) and the H3 review dialog's confirm go through this one path so
+  // the actual regenerate + task-tracking wiring isn't duplicated.
+  const runRegenerate = async (
+    extra: Partial<SingleVideoRequestBody> = {},
+    options: { onInputStale?: (message: string) => void } = {},
+  ) => {
+    try {
+      const res = await regenerate.mutateAsync({
+        beatNum: beat.beat_number,
+        videoBackend: defaultBackend,
+        ...extra,
+      });
+      if (res.ok === false) {
+        if (res.error === "input_stale") {
+          const message =
+            "message" in res && typeof res.message === "string"
+              ? res.message
+              : t("episode.workbench.video.regenFailed");
+          if (options.onInputStale) {
+            options.onInputStale(message);
+          } else {
+            toast.error(message);
+          }
+          return;
+        }
+        toast.error(res.error || t("episode.workbench.video.regenFailed"));
+        return;
+      }
+      regenTask.start();
+      toast.success(t("episode.workbench.video.started", { n: beat.beat_number }));
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
+    }
+  };
+
+  const handleH3Confirm = (finalBody: SingleVideoRequestBody) => {
+    void runRegenerate(finalBody, {
+      onInputStale: (message) => {
+        toast.error(message);
+        // Re-open the review dialog so it refetches against current server
+        // state instead of silently retrying with stale inputs.
+        setH3ReviewOpen(true);
+      },
+    });
   };
 
   const handleRegen = async () => {
@@ -809,9 +876,7 @@ export function VideoPane({
           serializeGrokVideoConfig(normalizedDraft, seedance2Config),
         );
       }
-      const res = await regenerate.mutateAsync({
-        beatNum: beat.beat_number,
-        videoBackend: defaultBackend,
+      await runRegenerate({
         ...(showHappyHorseConfig && happyHorseDraft
           ? {
               resolution: happyHorseDraft.resolution,
@@ -834,12 +899,6 @@ export function VideoPane({
           ? { resolution: sd15Resolution, duration: sd15Duration }
           : {}),
       });
-      if (res.ok === false) {
-        toast.error(res.error || t("episode.workbench.video.regenFailed"));
-        return;
-      }
-      regenTask.start();
-      toast.success(t("episode.workbench.video.started", { n: beat.beat_number }));
     } catch (err) {
       toast.error(backendErrorToastMessage(err, t));
     }
@@ -2657,6 +2716,25 @@ export function VideoPane({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {showRunpodH3Config && (
+        <VideoReviewDialog
+          open={h3ReviewOpen}
+          onOpenChange={setH3ReviewOpen}
+          project={project}
+          episode={episode}
+          beatNum={beat.beat_number}
+          reviewBody={{
+            videoBackend: defaultBackend,
+            duration: seedance2Draft.duration,
+            ratio: seedance2Draft.ratio,
+            seedance2ConfigJson: JSON.stringify(
+              serializeSeedance2Config(seedance2Draft, seedance2Config),
+            ),
+          }}
+          onConfirm={handleH3Confirm}
+        />
+      )}
     </div>
   );
 }

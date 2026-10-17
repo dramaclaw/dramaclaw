@@ -18,6 +18,8 @@ export interface VideoBackendOption {
   is_seedance2: boolean;
   is_happyhorse?: boolean;
   is_grok_video?: boolean;
+  /** Dev-only: MiniMax H3 on the user's own RunPod serverless endpoint. */
+  is_runpod_h3?: boolean;
   dialogue_only: boolean;
   min_duration?: number | null;
   max_duration?: number | null;
@@ -710,6 +712,60 @@ export function useGenerateBeatVideoPrompt(project: string, episode: number) {
   });
 }
 
+// Shared body shape for both the single-video generate request
+// (`POST .../beats/{beatNum}/video`) and its dry-run counterpart
+// (`POST .../beats/{beatNum}/video/review`) — the review endpoint is
+// explicitly documented as taking "the same shape" plus the three
+// `h3_*`/`review_fingerprint` fields below (dev-only, MiniMax H3 backend).
+export interface SingleVideoRequestBody {
+  videoBackend?: string;
+  use_director_render?: boolean;
+  // seedance-1.5-pro 等非 seedance2 后端的清晰度/时长（视频时长须 >= 音频，后端兜底）。
+  resolution?: string;
+  duration?: number;
+  ratio?: string;
+  mode?: string;
+  seedance2ConfigJson?: string;
+  audioSetting?: string;
+  /** H3 review/regen flow: the user-edited prompt, saved into seedance2_config_json.final_prompt server-side. */
+  final_prompt?: string;
+  /** H3 review flow: ties a regen request back to the `/video/review` call it was confirmed from. */
+  review_fingerprint?: string;
+  h3_profile?: "formal" | "draft";
+  h3_reference_keys?: string[];
+}
+
+function buildSingleVideoRequestJson(body: SingleVideoRequestBody) {
+  return {
+    video_backend: body.videoBackend ?? DEFAULT_VIDEO_BACKEND,
+    use_director_render: body.use_director_render,
+    ...(body.resolution !== undefined ? { resolution: body.resolution } : {}),
+    ...(body.duration !== undefined ? { duration: body.duration } : {}),
+    ...(body.ratio !== undefined ? { ratio: body.ratio } : {}),
+    ...(body.mode !== undefined ? { mode: body.mode } : {}),
+    ...(body.seedance2ConfigJson !== undefined
+      ? { seedance2_config_json: body.seedance2ConfigJson }
+      : {}),
+    ...(body.audioSetting !== undefined ? { audio_setting: body.audioSetting } : {}),
+    ...(body.final_prompt !== undefined ? { final_prompt: body.final_prompt } : {}),
+    ...(body.review_fingerprint !== undefined
+      ? { review_fingerprint: body.review_fingerprint }
+      : {}),
+    ...(body.h3_profile !== undefined ? { h3_profile: body.h3_profile } : {}),
+    ...(body.h3_reference_keys !== undefined
+      ? { h3_reference_keys: body.h3_reference_keys }
+      : {}),
+  };
+}
+
+/** `POST .../video` response when a stale `review_fingerprint` no longer
+ * matches current server state — a plain 200, not an HTTP error. */
+export interface VideoInputStaleResponse {
+  ok: false;
+  error: "input_stale";
+  message: string;
+}
+
 export function useRegenerateBeatVideo(project: string, episode: number) {
   // Kick-off is an ack; the actual video_url lands on SSE task completion,
   // where the task controller handles invalidation. Invalidating here would
@@ -717,42 +773,108 @@ export function useRegenerateBeatVideo(project: string, episode: number) {
   return useMutation({
     mutationFn: ({
       beatNum,
-      videoBackend,
-      use_director_render,
-      resolution,
-      duration,
-      ratio,
-      mode,
-      seedance2ConfigJson,
-      audioSetting,
-    }: {
-      beatNum: number;
-      videoBackend?: string;
-      use_director_render?: boolean;
-      // seedance-1.5-pro 等非 seedance2 后端的清晰度/时长（视频时长须 >= 音频，后端兜底）。
-      resolution?: string;
-      duration?: number;
-      ratio?: string;
-      mode?: string;
-      seedance2ConfigJson?: string;
-      audioSetting?: string;
-    }) =>
-      jsonWithBackendError<TaskResponse | ErrorResponse>(
+      ...body
+    }: { beatNum: number } & SingleVideoRequestBody) =>
+      jsonWithBackendError<TaskResponse | ErrorResponse | VideoInputStaleResponse>(
         api.post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/video`,
           {
-            json: {
-              video_backend: videoBackend ?? DEFAULT_VIDEO_BACKEND,
-              use_director_render,
-              ...(resolution !== undefined ? { resolution } : {}),
-              ...(duration !== undefined ? { duration } : {}),
-              ...(ratio !== undefined ? { ratio } : {}),
-              ...(mode !== undefined ? { mode } : {}),
-              ...(seedance2ConfigJson !== undefined
-                ? { seedance2_config_json: seedance2ConfigJson }
-                : {}),
-              ...(audioSetting !== undefined ? { audio_setting: audioSetting } : {}),
-            },
+            json: buildSingleVideoRequestJson(body),
+            throwHttpErrors: false,
+          },
+        ),
+      ),
+  });
+}
+
+export interface VideoReviewReference {
+  tag: string;
+  kind: string;
+  identity_id: string;
+  name: string;
+  path: string;
+  appearance_details: string;
+}
+
+export interface VideoReviewLintItem {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+}
+
+export interface VideoReviewData {
+  ok: true;
+  backend: string;
+  mode: string;
+  prompt: string;
+  prompt_source: string;
+  duration: number;
+  ratio: string;
+  frame_path: string | null;
+  frame_missing: boolean;
+  references: VideoReviewReference[];
+  lint: VideoReviewLintItem[];
+  worker_status: unknown;
+  input_fingerprint: string;
+}
+
+export type VideoReviewResponse = VideoReviewData | ErrorResponse;
+
+/** `POST .../video/review` — read-only / dry-run preview for the H3 review
+ * dialog. Never enqueues a task. */
+export function useVideoReview(project: string, episode: number) {
+  return useMutation({
+    mutationFn: ({
+      beatNum,
+      body,
+    }: {
+      beatNum: number;
+      body: SingleVideoRequestBody;
+    }) =>
+      jsonWithBackendError<VideoReviewResponse>(
+        api.post(
+          p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/video/review`,
+          {
+            json: buildSingleVideoRequestJson(body),
+            throwHttpErrors: false,
+          },
+        ),
+      ),
+  });
+}
+
+export interface MiniMaxH3PromptResult {
+  ok: true;
+  prompt: string;
+  plan: Record<string, unknown>;
+  lint: VideoReviewLintItem[];
+  mode: string;
+  references: Array<{ tag: string; name: string; appearance_details: string }>;
+}
+
+export type MiniMaxH3PromptResponse = MiniMaxH3PromptResult | ErrorResponse;
+
+/** `POST .../minimax-h3-prompt/generate` — LLM rewrite of the beat into the
+ * MiniMax H3 prompt format. Saves server-side to seedance2_config_json.final_prompt. */
+export function useGenerateMiniMaxH3Prompt(project: string, episode: number) {
+  return useMutation({
+    mutationFn: ({
+      beatNum,
+      duration,
+    }: {
+      beatNum: number;
+      // Matches whatever duration `/video/review` is currently showing, so
+      // the rewritten prompt's own timestamps describe the same clip
+      // length that will actually be submitted — otherwise this route's
+      // own duration resolution (independent of the review dialog's) can
+      // silently disagree and the lint flags a timestamp mismatch.
+      duration?: number;
+    }) =>
+      jsonWithBackendError<MiniMaxH3PromptResponse>(
+        api.post(
+          p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/minimax-h3-prompt/generate`,
+          {
+            json: duration !== undefined ? { duration } : {},
             throwHttpErrors: false,
           },
         ),

@@ -4753,6 +4753,17 @@ def create_video_generator(
         kwargs.pop("egress_context", None)
         return HuimengVideoGenerator(model=huimeng_model, **kwargs)
 
+    if backend_str == "runpod_minimax_h3":
+        # Dev-only: the user's own RunPod serverless endpoint, not an
+        # org-billed path, so it is exempt from the org-egress checks the
+        # other direct-API backends above go through.
+        from novelvideo.generators.runpod_minimax_h3_video import (
+            RunPodMiniMaxH3VideoGenerator,
+        )
+
+        kwargs.pop("egress_context", None)
+        return RunPodMiniMaxH3VideoGenerator(**kwargs)
+
     try:
         backend_enum = VideoBackend(backend_str)
     except ValueError:

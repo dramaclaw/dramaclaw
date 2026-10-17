@@ -3823,6 +3823,105 @@ def _uses_gpt_image_sketch_profile(ctx: PromptContext) -> bool:
     return provider == "openrouter" and "gpt" in model and "image" in model
 
 
+def build_qwen_edit_render_prompt(
+    beats: List[dict], stage: str = "full"
+) -> str:
+    """Short, Qwen-Image-Edit-2511-specific render prompt — deliberately NOT
+    the shared UnifiedPromptBuilder/RenderModeStrategy output.
+
+    That shared prompt is written for Gemini-family models and uses
+    storyboard-grid wording ("!!! MANDATORY GRID FORMAT !!!", "regions",
+    "panels") even for a 1x1 render — Qwen-Image-Edit-2511 reads this far
+    more literally and was observed (2026-10-13/14) producing an unrelated
+    multi-panel collage when given that prompt. This also keeps the
+    character's physical description out of the text entirely — per
+    Qwen-Image-Edit-2511's own prompt-enhancer guidance, identity should
+    come from pointing at the reference image, not from describing features
+    in words (verbal descriptions make the model regenerate the face and
+    degrade the likeness the image reference would otherwise lock in).
+
+    `stage="full"` (default) is the single-character case: image1 is the
+    sketch/crop canvas, image2 is the identity portrait, output keeps the
+    pose/framing and swaps in that one person. This is the exact prompt
+    verified end-to-end 2026-10-14 for beat 4.
+
+    `stage="scene_only"` is pass 1 of the multi-character render (see
+    `_qwen_edit_multi_character_render` in nanobanana_grid.py): turn the
+    WHOLE sketch into a photorealistic photograph with no identity
+    reference at all, so every figure becomes a generic period-appropriate
+    person. Pass 2 then reruns `stage="inpaint"` on the WHOLE pass-1 image
+    (not a crop), with `SetLatentNoiseMask` constraining the edit to one
+    detected identity's own sketch-color region.
+
+    `stage="inpaint"` is pass 2's prompt. It replaced an earlier
+    crop-and-paste design (2026-10-14) that cropped a small region around
+    each identity, ran a full `TextEncodeQwenImageEditPlus` call on just
+    that crop, and pasted the result back by hand. That crop design failed
+    twice in real testing on beat 5 — once with wording that called
+    image1 "the mannequin figure" (wrong: a sketch mannequin isn't what's
+    in the crop, pass 1 already made it a photo) and once with wording
+    that called image1 "a photograph of a person" instead — both times
+    the model rendered a small, wrongly-scaled "picture in picture" inset
+    instead of replacing the crop in place. The common factor wasn't the
+    wording: it was that BOTH input images (the small person-crop and the
+    identity portrait) were equally photorealistic, so the model lost
+    whatever cue normally tells it which image is the editable canvas and
+    which is the reference — collage-like behavior followed in both
+    attempts. `stage="inpaint"` avoids this by never building a separate
+    crop at all: image1 stays the WHOLE pass-1 photo (matching what the
+    model's vision/text conditioning actually sees, consistent with the
+    single-character case that works), and `SetLatentNoiseMask` — a
+    sampler-level mechanism, not a prompt instruction — is what actually
+    restricts which pixels can change. Even if the text below doesn't
+    perfectly single out which person to replace, pixels outside the mask
+    are mechanically preserved by the sampler, not by the model
+    understanding the sentence.
+
+    Two earlier single-pass (no masking at all) attempts to handle
+    multi-character beats by naming the sketch's per-character mannequin
+    color in the text prompt (e.g. "the magenta-colored mannequin figure")
+    both failed in real testing on beat 6 (teacher + Tesla): the model
+    kept assigning Tesla's face to the visually-dominant standing teacher,
+    and in the second attempt it additionally painted a literal magenta
+    T-shirt onto an unrelated student — it read the color as a clothing
+    instruction, not a locator. That approach was removed; see CLAUDE.md
+    for the two failures.
+    """
+    beat = beats[0] if beats else {}
+    action = re.sub(r"\{\{[^}]*\}\}", "", str(beat.get("visual_description") or "")).strip()
+    if stage == "scene_only":
+        parts = [
+            "Image 1 is the canvas: keep its exact pose, camera framing, and "
+            "background composition unchanged. Render every figure in image 1 "
+            "as an ordinary, period-appropriate person — do not give any of "
+            "them a specific, recognizable identity.",
+            "Render the entire result as a photorealistic photograph, not "
+            "line art, not a sketch, not an illustration.",
+        ]
+    elif stage == "inpaint":
+        parts = [
+            "Image 1 is a photograph with one or more people. Replace one "
+            "of the people in image 1 with the person from image 2, "
+            "matching that person's exact pose and position, preserving "
+            "image 2's identity exactly. Keep every other person, the "
+            "background, and the framing of image 1 unchanged.",
+            "Keep the result a photorealistic photograph, matching image "
+            "1's lighting and style.",
+        ]
+    else:
+        parts = [
+            "Image 1 is the canvas: keep its exact pose, camera framing, and "
+            "background composition unchanged. Replace the mannequin figure in "
+            "image 1 with the person from image 2, preserving their identity "
+            "exactly.",
+            "Render the entire result as a photorealistic photograph, not "
+            "line art, not a sketch, not an illustration.",
+        ]
+    if action:
+        parts.append(f"Scene: {action}")
+    return " ".join(parts)
+
+
 def create_prompt_context(
     mode: PromptMode,
     beats: List[dict],

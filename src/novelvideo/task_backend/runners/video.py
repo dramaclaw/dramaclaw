@@ -231,6 +231,8 @@ async def _run_single_video_async(
         generate_kwargs["audio_setting"] = str(config["audio_setting"])
     if is_seedance2_backend:
         generate_kwargs["seedance2_config"] = seedance2_config
+    if backend_str == "runpod_minimax_h3" and config.get("profile"):
+        generate_kwargs["profile"] = str(config["profile"])
 
     result = await video_gen.generate(**generate_kwargs)
     if result.status.value != "done":
