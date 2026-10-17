@@ -189,6 +189,16 @@ class BeatVideoPromptGenerateRequest(BaseModel):
     language: str = "zh"
 
 
+class MiniMaxH3PromptGenerateRequest(BaseModel):
+    # Optional override so the rewritten prompt's timestamps match whatever
+    # duration the review dialog is currently showing (which may itself be
+    # overriding the beat's natural `resolve_target_video_duration`) —
+    # without it, this route and `/video/review` could silently disagree on
+    # the beat's duration and the written prompt would describe a clip
+    # longer or shorter than what actually gets submitted.
+    duration: Optional[float] = None
+
+
 class Seedance2AssetDeleteRequest(BaseModel):
     media_kind: Literal["images", "audios"]
     path: str
@@ -240,6 +250,7 @@ class VideoBackendOption(BaseModel):
     is_seedance2: bool = False
     is_happyhorse: bool = False
     is_grok_video: bool = False
+    is_runpod_h3: bool = False
     dialogue_only: bool = False
     min_duration: Optional[int] = None
     max_duration: Optional[int] = None
@@ -369,6 +380,14 @@ class SingleVideoRequest(BaseModel):
     text_overlay: Optional[dict[str, Any]] = None
     batch_id: Optional[str] = Field(default=None, max_length=100)
     batch_size: Optional[int] = Field(default=None, ge=1, le=9)
+    # Review screen support (see `/video/review`): `review_fingerprint` is
+    # echoed back from a prior review call so the route can detect the
+    # inputs changed underneath the user (409 `input_stale`); the rest let
+    # the review dialog override what the route would otherwise resolve
+    # from the beat, for the `runpod_minimax_h3` backend.
+    review_fingerprint: Optional[str] = None
+    h3_profile: Optional[Literal["formal", "draft"]] = None
+    h3_reference_keys: Optional[list[str]] = None
 
 
 # ── 风格 ──────────────────────────────────────────────────────────────────────

@@ -19,7 +19,10 @@ from pathlib import Path
 from typing import Optional
 
 from novelvideo.config import (
+    GOOGLE_AI_API_KEY,
     IMAGE_GENERATION_SELECTIONS,
+    QWEN_API_KEY,
+    RUNPOD_API_KEY,
     get_grid_generation_config,
     get_style_preset,
     IMAGE_DEFAULT_STYLE,
@@ -32,6 +35,8 @@ from novelvideo.shared.billing_errors import is_fatal_billing_error
 from novelvideo.generators.nanobanana_grid import (
     _call_newapi_image_api,
     _call_openai_image_api,
+    _call_qwen_image_api,
+    _call_runpod_qwen_image_api,
     _call_webai_chat_image_api,
     clamp_image_size,
     generate_text_to_image,
@@ -57,13 +62,15 @@ def resolve_prop_reference_image_model() -> str:
     return str(config.get("model") or "").strip()
 
 
-def _prop_reference_image_source(selection: str | None) -> tuple[str | None, str | None]:
+def _prop_reference_image_source(
+    selection: str | None,
+) -> tuple[str | None, str | None, str | None]:
     selection = str(selection or "").strip()
     if not selection:
-        return None, None
+        return None, None, None
     normalized = normalize_image_generation_selection(selection)
     image_source = IMAGE_GENERATION_SELECTIONS[normalized]
-    return image_source["provider"], image_source["model"]
+    return image_source["provider"], image_source["model"], image_source.get("image_size")
 
 
 def build_prop_reference_prompt(
@@ -165,7 +172,7 @@ async def generate_prop_reference(
     if egress_context is None:
         egress_context = ambient_organization_egress_context()
     if egress_context is not None and egress_context.is_organization:
-        _selected_provider, selected_model = _prop_reference_image_source(model)
+        _selected_provider, selected_model, _selected_image_size = _prop_reference_image_source(model)
         prompt = build_prop_reference_prompt(
             visual_prompt=visual_prompt,
             style_keywords=style_keywords,
@@ -194,7 +201,7 @@ async def generate_prop_reference(
         return output_path
 
     config = get_grid_generation_config()
-    selected_provider, selected_model = _prop_reference_image_source(model)
+    selected_provider, selected_model, selected_image_size = _prop_reference_image_source(model)
     prop_provider = (PROP_REF_IMAGE_PROVIDER or "").strip().lower()
     provider = (
         selected_provider
@@ -208,6 +215,25 @@ async def generate_prop_reference(
         api_key = gateway.api_key
         model = selected_model or resolve_prop_reference_image_model()
         base_url = gateway.base_url
+    elif provider == "google":
+        # Not config.get("api_key"): that dict comes from the unrelated
+        # default render selection (get_grid_generation_config() with no
+        # override), not from the selection the caller actually picked.
+        api_key = GOOGLE_AI_API_KEY
+        model = selected_model or resolve_prop_reference_image_model()
+        base_url = ""
+    elif provider == "qwen":
+        # Same reasoning as the "google" branch above: use the selection's
+        # own key, not config.get("api_key") (the unrelated default render
+        # selection's key).
+        api_key = QWEN_API_KEY
+        model = selected_model or resolve_prop_reference_image_model()
+        base_url = ""
+    elif provider == "runpod_qwen":
+        # Same reasoning as the "qwen"/"google" branches above.
+        api_key = RUNPOD_API_KEY
+        model = selected_model or resolve_prop_reference_image_model()
+        base_url = ""
     else:
         api_key = config.get("api_key")
         model = selected_model or resolve_prop_reference_image_model()
@@ -220,6 +246,10 @@ async def generate_prop_reference(
             key_name = "OPENAI_API_KEY"
         elif provider in {"newapi", "gemini_webai"}:
             key_name = "NEWAPI_API_KEY"
+        elif provider == "qwen":
+            key_name = "QWEN_API_KEY"
+        elif provider == "runpod_qwen":
+            key_name = "RUNPOD_API_KEY"
         else:
             key_name = "GOOGLE_AI_API_KEY"
         print(f"[PropRefGen] API key not set. Set {key_name} environment variable.")
@@ -269,12 +299,29 @@ async def generate_prop_reference(
                 model=model,
                 base_url=base_url,
             )
+        elif provider == "qwen":
+            result_path = await _generate_via_qwen(
+                prompt=prompt,
+                output_path=output_path,
+                api_key=api_key,
+                model=model,
+                image_size=selected_image_size,
+            )
+        elif provider == "runpod_qwen":
+            result_path = await _generate_via_runpod_qwen(
+                prompt=prompt,
+                output_path=output_path,
+                api_key=api_key,
+                model=model,
+                image_size=selected_image_size,
+            )
         else:
             result_path = await _generate_via_google(
                 prompt=prompt,
                 output_path=output_path,
                 api_key=api_key,
                 model=model,
+                image_size=selected_image_size,
             )
 
         elapsed = time.time() - start_time
@@ -297,6 +344,7 @@ async def _generate_via_google(
     output_path: str,
     api_key: str,
     model: str,
+    image_size: str | None = None,
 ) -> Optional[str]:
     """通过 Google AI Studio 直连生成图像。"""
     try:
@@ -312,7 +360,7 @@ async def _generate_via_google(
     if is_gemini3:
         image_config = types.ImageConfig(
             aspect_ratio=PROP_REF_ASPECT_RATIO,
-            image_size=clamp_image_size(PROP_REF_IMAGE_SIZE),
+            image_size=clamp_image_size(image_size or PROP_REF_IMAGE_SIZE),
         )
     else:
         image_config = types.ImageConfig(
@@ -466,6 +514,64 @@ async def _generate_via_webai(
         return output_path
 
     print(f"[PropRefGen] Gemini WebAI 生成失败: {error_text or 'No response'}")
+    return None
+
+
+async def _generate_via_qwen(
+    prompt: str,
+    output_path: str,
+    api_key: str,
+    model: str,
+    image_size: str | None = None,
+) -> Optional[str]:
+    """通过 DashScope 原生 Qwen-Image API 生成道具三视图。"""
+
+    image_bytes, _text_content, error_text = await _call_qwen_image_api(
+        api_key=api_key,
+        model=model,
+        prompt=prompt,
+        image_config={
+            "aspect_ratio": PROP_REF_ASPECT_RATIO,
+            "image_size": image_size or PROP_REF_IMAGE_SIZE,
+        },
+    )
+
+    if image_bytes:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(image_bytes)
+        return output_path
+
+    print(f"[PropRefGen] Qwen Image 生成失败: {error_text or 'No response'}")
+    return None
+
+
+async def _generate_via_runpod_qwen(
+    prompt: str,
+    output_path: str,
+    api_key: str,
+    model: str,
+    image_size: str | None = None,
+) -> Optional[str]:
+    """通过 RunPod Serverless 的 Qwen-Image 2.1（ComfyUI）生成道具三视图。"""
+
+    image_bytes, _text_content, error_text = await _call_runpod_qwen_image_api(
+        api_key=api_key,
+        model=model,
+        prompt=prompt,
+        image_config={
+            "aspect_ratio": PROP_REF_ASPECT_RATIO,
+            "image_size": image_size or PROP_REF_IMAGE_SIZE,
+        },
+    )
+
+    if image_bytes:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(image_bytes)
+        return output_path
+
+    print(f"[PropRefGen] RunPod Qwen Image 生成失败: {error_text or 'No response'}")
     return None
 
 

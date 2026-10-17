@@ -1,0 +1,7 @@
+# Temporary local override: swap only `web` to the locally built dev image
+# (dramaclaw-local/web, built via `docker compose -f docker-compose.yml build web`),
+# without pulling docker-compose.yml's other service overrides (api/newapi source
+# builds, which need sibling checkouts this machine doesn't have).
+services:
+  web:
+    image: dramaclaw-local/web

@@ -109,11 +109,13 @@ async def _run_scene_reference_asset(
         update(0.40, f"调用图像模型生成 {kind}...")
         provider = None
         model = None
+        force_image_size = None
         if model_selection:
             normalized_selection = normalize_image_generation_selection(model_selection)
             selected_image_source = IMAGE_GENERATION_SELECTIONS[normalized_selection]
             provider = selected_image_source["provider"]
             model = selected_image_source["model"]
+            force_image_size = selected_image_source.get("image_size")
         with scene_reference_feature_billing():
             output_path = await generate_scene_reference_image(
                 project_dir=output_dir,
@@ -126,6 +128,7 @@ async def _run_scene_reference_asset(
                 avoid_instructions=avoid_instructions,
                 base_scene=base_scene,
                 egress_context=egress_context,
+                force_image_size=force_image_size,
             )
         if kind == "spatial_layout":
             rel_path = str(Path(output_path).relative_to(output_dir))

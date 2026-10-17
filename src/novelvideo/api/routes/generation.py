@@ -36,6 +36,7 @@ from novelvideo.api.schemas import (
     BeatsRegenerateRequest,
     SketchRegenerateRequest,
     SingleVideoRequest,
+    MiniMaxH3PromptGenerateRequest,
     PoolSelectRequest,
     VideoPoolSelectRequest,
     GridCutRequest,
@@ -280,6 +281,17 @@ def _single_video_billing_metadata(
     resolution: str | None,
     duration: int | float | str | None,
 ) -> dict:
+    if _is_runpod_h3_backend(video_backend):
+        # Dev-only backend: runs on the user's own RunPod account, billed
+        # directly by RunPod, never through DramaClaw credits — it isn't
+        # (and shouldn't be) in `model_credits.py`'s known-backend list, so
+        # routing it through `_video_backend_feature_billing_params` would
+        # raise "invalid video backend" (confirmed: this crashed the real
+        # /video submission once the review/duration-fingerprint bugs above
+        # were fixed). An empty billing dict is the same "nothing to meter
+        # here" shape `run_core.py`'s settlement resolver already treats as
+        # `not_applicable` for every other no-charge task.
+        return {}
     from novelvideo.api.routes.model_credits import (
         _video_backend_feature_billing_params,
     )
@@ -771,6 +783,10 @@ def _is_happyhorse_backend(video_backend: str | None) -> bool:
 
 def _is_grok_video_backend(video_backend: str | None) -> bool:
     return _seedance2_model_from_backend(video_backend) == "grok-video-channel"
+
+
+def _is_runpod_h3_backend(video_backend: str | None) -> bool:
+    return str(video_backend or "").strip() == "runpod_minimax_h3"
 
 
 def _seedance2_api_resolution(resolution: str | None) -> str:
@@ -1736,6 +1752,21 @@ def _api_video_backend_options() -> list[VideoBackendOption]:
                 reference_image_max=7 if is_grok_video else 9 if is_happyhorse else None,
                 reference_video_max=0 if is_grok_video else 1 if is_happyhorse else None,
                 reference_audio_max=0 if is_grok_video or is_happyhorse else None,
+            )
+        )
+    from novelvideo.config import _runpod_h3_video_configured
+
+    if _runpod_h3_video_configured():
+        backend_options.append(
+            VideoBackendOption(
+                value="runpod_minimax_h3",
+                label="MiniMax-H3 (RunPod, dev)",
+                is_runpod_h3=True,
+                min_duration=5,
+                max_duration=12,
+                reference_image_max=9,
+                reference_video_max=0,
+                reference_audio_max=3,
             )
         )
     return backend_options
@@ -4780,6 +4811,7 @@ async def generate_single_video(
     is_seedance2 = _is_seedance2_backend(body.video_backend)
     is_happyhorse = _is_happyhorse_backend(body.video_backend)
     is_grok_video = _is_grok_video_backend(body.video_backend)
+    is_runpod_h3 = _is_runpod_h3_backend(body.video_backend)
 
     # 首帧路径
     from novelvideo.utils.path_resolver import PathResolver
@@ -4956,6 +4988,63 @@ async def generate_single_video(
             video_mode = "first_frame"
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
+    elif is_runpod_h3:
+        from novelvideo.seedance2_i2v.models import parse_seedance2_config
+
+        # Must mirror `review_single_video`'s own `body.duration` override
+        # exactly — the stale-input fingerprint check just below compares
+        # against the review's fingerprint, which was computed with this
+        # same override applied. Skipping it here (as a prior version of
+        # this branch did) meant the two fingerprints could legitimately
+        # disagree on duration alone, with every review+confirm reporting
+        # `input_stale` even though nothing the user saw had actually
+        # changed — and the job would have gone out at the wrong duration
+        # besides.
+        if body.duration is not None:
+            try:
+                video_duration = float(body.duration)
+            except (TypeError, ValueError):
+                pass
+        h3_config = parse_seedance2_config(body.seedance2_config_json or beat.get("seedance2_config_json"))
+        if body.final_prompt is not None:
+            h3_config.final_prompt = str(body.final_prompt).strip()
+            h3_config.prompt_source = "minimax_h3"
+        prompt = h3_config.final_prompt
+        if not prompt.strip():
+            return {
+                "ok": False,
+                "error": f"Beat {beat_num} 缺少 MiniMax H3 提示词，请先在视频预览里生成/编辑。",
+            }
+        if body.review_fingerprint:
+            character_map = await _build_character_map(
+                store, beats, username, project_name, episode_num=episode_num
+            )
+            resolved_refs = _h3_identity_references(character_map, beat)
+            if body.h3_reference_keys is not None:
+                wanted = set(body.h3_reference_keys)
+                resolved_refs = [r for r in resolved_refs if r["identity_id"] in wanted]
+            current_fingerprint = _video_review_fingerprint(
+                video_backend=body.video_backend,
+                prompt=prompt,
+                duration=float(video_duration),
+                ratio=h3_config.ratio or "9:16",
+                reference_paths=[r["path"] for r in resolved_refs],
+                frame_path=str(frame_path) if frame_path.exists() else None,
+            )
+            if current_fingerprint != body.review_fingerprint:
+                return {
+                    "ok": False,
+                    "error": "input_stale",
+                    "message": "提交前的输入已变化（首帧/参考图/提示词），请重新打开预览确认。",
+                }
+        if hasattr(store, "update_beat_asset"):
+            await store.update_beat_asset(
+                episode_number=episode_num,
+                beat_number=beat_num,
+                seedance2_config_json=h3_config.model_dump_json(),
+            )
+        seedance2_config_json = h3_config.model_dump_json()
+        video_mode = "first_frame"
     else:
         if not prompt.strip():
             return {"ok": False, "error": _missing_video_prompt_error(beat_num)}
@@ -5006,6 +5095,17 @@ async def generate_single_video(
     if is_grok_video:
         config["ratio"] = _grok_video_ratio_for_backend(grok_video_ratio)
         config["references"] = grok_video_references
+    if is_runpod_h3:
+        config["ratio"] = h3_config.ratio or "9:16"
+        config["references"] = [
+            {"type": "image", "path": p, "role": "角色/场景/道具参考"}
+            for p in h3_config.reference_image_paths
+        ] + [
+            {"type": "audio", "path": p, "role": "音色参考"}
+            for p in h3_config.reference_audio_paths
+        ]
+        if body.h3_profile:
+            config["profile"] = body.h3_profile
 
     billing_resolution = single_video_resolution or _seedance2_resolution_for_backend(
         body.video_backend,
@@ -5049,6 +5149,529 @@ async def generate_single_video(
         }
 
     return {"ok": False, "error": "单条视频生成需要 project context"}
+
+
+_VIETNAMESE_DIACRITICS_RE = re.compile(
+    "[ăâđêôơưĂÂĐÊÔƠƯ]|"
+    "[àáạảãằắặẳẵầấậẩẫèéẹẻẽềếệểễìíịỉĩòóọỏõồốộổỗờớợởỡùúụủũừứựửữỳýỵỷỹ]",
+    re.IGNORECASE,
+)
+
+
+_H3_IDENTITY_MARKER_RE = re.compile(r"\{\{([^}]+)\}\}\s*")
+
+
+def _h3_replace_identity_markers(text: str, character_map: dict) -> str:
+    """Replace every `{{identity_id}}` marker in `text` with that
+    character's plain display name (e.g. `{{Nam_幼年时期}}` -> `Nam`) — the
+    H3 prompt refers to characters by name/`<Subject N>`, not by the
+    sketch-color marker syntax other pipeline steps use. Any marker whose
+    identity isn't in `character_map` is left as the bare identity id
+    (still better than a raw `{{...}}` the LLM has no reason to parse)."""
+    if "{{" not in text:
+        return text
+
+    def _sub(match: re.Match) -> str:
+        identity_id = match.group(1).strip()
+        return _h3_char_name_for_identity(identity_id, character_map)
+
+    return _H3_IDENTITY_MARKER_RE.sub(_sub, text)
+
+
+def _h3_parse_dialogue_segment(
+    raw: str, character_map: dict
+) -> tuple[str, str]:
+    """Turn a beat's `narration_segment` for a dialogue beat into
+    (clean_text, speaker_label).
+
+    Most dialogue beats are a single plain line with the speaker already
+    named in `beat.speaker` — those pass through unchanged (empty
+    speaker_label, caller keeps using `beat.speaker`). Some ingested
+    beats instead merge more than one character's line into one beat,
+    marking each with a `{{identity}}` prefix right before it (e.g.
+    `"{{Nam_...}} line one\\n{{Ryan_...}} line two"`) and leave
+    `beat.speaker` empty — in that shape, `{{...}}` markers must be
+    stripped and the lines re-attributed here, for two reasons: (1) a
+    period-label identity id like `Nam_幼年时期` contains CJK characters
+    that would otherwise corrupt language detection on an all-English
+    line, and (2) the LLM needs a clean "Name: line" turn per speaker
+    rather than a raw, unparsed `{{...}}` token to transcribe verbatim.
+    """
+    matches = list(_H3_IDENTITY_MARKER_RE.finditer(raw))
+    if not matches:
+        return raw.strip(), ""
+
+    turns: list[str] = []
+    speakers: list[str] = []
+    for i, match in enumerate(matches):
+        identity_id = match.group(1).strip()
+        char_name = _h3_char_name_for_identity(identity_id, character_map)
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(raw)
+        line = raw[start:end].strip()
+        if not line:
+            continue
+        turns.append(f"{char_name}: {line}")
+        if char_name not in speakers:
+            speakers.append(char_name)
+    return "\n".join(turns), " / ".join(speakers)
+
+
+def _detect_h3_dialogue_language(text: str) -> str:
+    """Best-effort language tag for a MiniMax H3 `<d>[Language] ...</d>`
+    line. This repo's general asset-language contract
+    (`utils/source_language.detect_asset_language`) only distinguishes
+    zh/en, but H3's dialogue tag needs the actual spoken language name
+    (e.g. a Vietnamese short drama with Chinese-language source
+    narration/dialogue still needs `[Chinese]`, not `[Vietnamese]`) — so
+    this checks script/diacritics directly instead of reusing that
+    contract."""
+    sample = str(text or "")
+    if not sample.strip():
+        return "Vietnamese"
+    if _VIETNAMESE_DIACRITICS_RE.search(sample):
+        return "Vietnamese"
+    han = sum(1 for ch in sample if "一" <= ch <= "鿿")
+    if han:
+        return "Chinese"
+    return "English"
+
+
+def _h3_char_name_for_identity(identity_id: str, character_map: dict) -> str:
+    if identity_id in character_map:
+        return identity_id
+    for char_name in character_map:
+        if identity_id == char_name or identity_id.startswith(f"{char_name}_"):
+            return char_name
+    return identity_id
+
+
+def _h3_identity_references(character_map: dict, beat: dict) -> list[dict[str, str]]:
+    """Resolve `beat['detected_identities']` into reference entries this
+    beat can attach to a MiniMax H3 prompt (`<Picture N>` for images,
+    `<Audio N>` for a voice clip, if ever stored). Mirrors the
+    identity-to-character matching used for render identity-swap
+    (`_char_name_for_identity`/`_color_for_identity` in
+    `generators/nanobanana_grid.py`)."""
+    out: list[dict[str, str]] = []
+    for identity_id in beat.get("detected_identities") or []:
+        identity_id = str(identity_id)
+        char_name = _h3_char_name_for_identity(identity_id, character_map)
+        info = character_map.get(char_name)
+        if not info:
+            continue
+        identity_name = (
+            identity_id[len(char_name) + 1 :] if identity_id.startswith(f"{char_name}_") else ""
+        )
+        match = next(
+            (
+                ident
+                for ident in info.get("identities") or []
+                if ident.get("identity_name") == identity_name
+            ),
+            None,
+        )
+        path = (match or {}).get("primary_reference") or ""
+        appearance = (match or {}).get("appearance_details") or ""
+        if not path or not Path(path).exists():
+            path = info.get("portrait_path") or ""
+        if not appearance:
+            appearance = info.get("appearance_details") or ""
+        if not path or not Path(path).exists():
+            continue
+        out.append(
+            {
+                "identity_id": identity_id,
+                "name": char_name,
+                "path": str(path),
+                "appearance_details": appearance,
+            }
+        )
+    return out
+
+
+def _h3_display_url(ctx: Any, output_dir: str | Path, abs_path: str | None) -> str | None:
+    """Convert an absolute filesystem path under `output_dir` into the
+    browser-servable `/static/projects/{id}/...` URL the frontend's
+    `resolveMediaUrl()` actually accepts (it rejects a raw filesystem path
+    like `/data/output/local/{project}/...`, which isn't on any
+    `/static/`/`/api/` route). Falls back to the raw path, unchanged, if it
+    isn't under `output_dir` or `ctx` isn't available — same as before this
+    helper existed, so this never makes things worse."""
+    if not abs_path or not ctx:
+        return abs_path
+    try:
+        rel = Path(abs_path).relative_to(Path(output_dir)).as_posix()
+    except ValueError:
+        return abs_path
+    return make_static_url_for_context(ctx, rel, local_path=abs_path)
+
+
+def _video_review_fingerprint(
+    *,
+    video_backend: str,
+    prompt: str,
+    duration: float,
+    ratio: str,
+    reference_paths: list[str],
+    frame_path: str | None,
+) -> str:
+    """Cheap change-detection digest for the review → generate round trip.
+    Mtimes of referenced files are folded in so a regenerated portrait or
+    an edited `.env` picture invalidates a stale review without needing a
+    full plan/execute abstraction (see `render/plan`+`render/execute` for
+    that heavier pattern, not needed here since there's only ever one
+    beat in play)."""
+    import hashlib
+
+    parts = [video_backend, prompt, f"{duration:.2f}", ratio, frame_path or ""]
+    for p in reference_paths:
+        try:
+            parts.append(f"{p}:{Path(p).stat().st_mtime_ns}")
+        except OSError:
+            parts.append(p)
+    return hashlib.sha1("|".join(parts).encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+@router.post("/projects/{project}/episodes/{episode_num}/beats/{beat_num}/video/review")
+async def review_single_video(
+    project: str,
+    episode_num: int,
+    beat_num: int,
+    body: SingleVideoRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Dry-run preview of what `generate_single_video` would submit:
+    resolves the effective prompt, duration, ratio and (for
+    `runpod_minimax_h3`) the `<Picture N>` reference list and prompt
+    lint, without enqueuing a task or calling any provider. The frontend
+    review dialog calls this before every Generate/Regenerate video click
+    (see `.claude/CLAUDE.md` plan)."""
+    resolved = await _resolve_generation_project(project, user, required_role="editor")
+    ctx = resolved.ctx
+    username = resolved.username
+    project_name = resolved.project_name
+    output_dir = resolved.output_dir
+    store = (
+        await make_sqlite_store_for_context(ctx)
+        if ctx
+        else await make_sqlite_store(username, project_name)
+    )
+
+    beats = await store.get_beats_as_dicts(episode_num)
+    beat = next((b for b in beats if b.get("beat_number") == beat_num), None)
+    if not beat:
+        return {"ok": False, "error": f"Beat {beat_num} not found"}
+
+    from novelvideo.manual_shots import resolve_target_video_duration
+    from novelvideo.utils.path_resolver import PathResolver
+
+    paths = PathResolver(output_dir, episode_num)
+    frame_path = paths.first_frame_for_video(
+        beat_num, use_director_render=bool(body.use_director_render)
+    )
+    frame_exists = frame_path.exists()
+
+    audio_duration = await _api_audio_duration_seconds(output_dir, episode_num, beat_num)
+    video_duration = resolve_target_video_duration(beat, audio_duration)
+    if body.duration is not None:
+        try:
+            video_duration = float(body.duration)
+        except (TypeError, ValueError):
+            pass
+
+    is_runpod_h3 = _is_runpod_h3_backend(body.video_backend)
+    video_mode = beat.get("video_mode", "first_frame")
+    mode = video_mode
+    ratio = body.ratio or "9:16"
+    references_out: list[dict[str, Any]] = []
+    reference_paths: list[str] = []
+    lint_issues: list[dict[str, str]] = []
+    prompt_source = ""
+    worker_status: dict[str, Any] | None = None
+
+    if is_runpod_h3:
+        from novelvideo.agents.minimax_h3_prompt_lint import lint_minimax_h3_prompt
+        from novelvideo.seedance2_i2v.models import parse_seedance2_config
+
+        h3_config = parse_seedance2_config(
+            body.seedance2_config_json or beat.get("seedance2_config_json")
+        )
+        prompt = (
+            body.final_prompt if body.final_prompt is not None else h3_config.final_prompt
+        ) or ""
+        ratio = h3_config.ratio or ratio
+        prompt_source = h3_config.prompt_source
+
+        character_map = await _build_character_map(
+            store, beats, username, project_name, episode_num=episode_num
+        )
+        resolved_refs = _h3_identity_references(character_map, beat)
+        if body.h3_reference_keys is not None:
+            wanted = set(body.h3_reference_keys)
+            resolved_refs = [r for r in resolved_refs if r["identity_id"] in wanted]
+        reference_paths = [r["path"] for r in resolved_refs]
+        references_out = [
+            {"tag": f"<Picture {i + 2}>", "kind": "character", **r}
+            for i, r in enumerate(resolved_refs)
+        ]
+        mode = "ref2va" if references_out else "fl2va"
+        lint = lint_minimax_h3_prompt(
+            prompt,
+            mode=mode,
+            reference_count=len(references_out) + 1,
+            duration_seconds=video_duration,
+            expects_dialogue=str(beat.get("audio_type") or "") == "dialogue",
+        )
+        lint_issues = [
+            {"severity": i.severity, "code": i.code, "message": i.message} for i in lint.issues
+        ]
+
+        from novelvideo.config import _runpod_h3_video_configured
+
+        if _runpod_h3_video_configured():
+            try:
+                from novelvideo.runpod_worker_control import get_status
+
+                worker_status = await get_status()
+            except Exception as exc:  # noqa: BLE001
+                worker_status = {"error": str(exc)}
+    else:
+        prompt = _legacy_video_prompt_for_mode(beat, video_mode)
+
+    fingerprint = _video_review_fingerprint(
+        video_backend=body.video_backend,
+        prompt=prompt,
+        duration=float(video_duration),
+        ratio=ratio,
+        reference_paths=reference_paths,
+        frame_path=str(frame_path) if frame_exists else None,
+    )
+
+    references_display = [
+        {**r, "path": _h3_display_url(ctx, output_dir, r.get("path"))} for r in references_out
+    ]
+
+    return {
+        "ok": True,
+        "backend": body.video_backend,
+        "mode": mode,
+        "prompt": prompt,
+        "prompt_source": prompt_source,
+        "duration": video_duration,
+        "ratio": ratio,
+        "frame_path": _h3_display_url(
+            ctx, output_dir, str(frame_path) if frame_exists else None
+        ),
+        "frame_missing": not frame_exists,
+        "references": references_display,
+        "lint": lint_issues,
+        "worker_status": worker_status,
+        "input_fingerprint": fingerprint,
+    }
+
+
+@router.post(
+    "/projects/{project}/episodes/{episode_num}/beats/{beat_num}/minimax-h3-prompt/generate"
+)
+async def generate_minimax_h3_prompt(
+    project: str,
+    episode_num: int,
+    beat_num: int,
+    body: MiniMaxH3PromptGenerateRequest = MiniMaxH3PromptGenerateRequest(),
+    user: dict = Depends(get_api_user),
+):
+    """Rewrite this beat into the official MiniMax H3 prompt format (see
+    `agents/minimax_h3_prompt_builder.py`), save it to
+    `beat.seedance2_config_json.final_prompt`, and return it plus the
+    directing plan and lint for the review dialog."""
+    resolved = await _resolve_generation_project(project, user, required_role="editor")
+    ctx = resolved.ctx
+    username = resolved.username
+    project_name = resolved.project_name
+    output_dir = resolved.output_dir
+    store = (
+        await make_sqlite_store_for_context(ctx)
+        if ctx
+        else await make_sqlite_store(username, project_name)
+    )
+
+    beats = await store.get_beats_as_dicts(episode_num)
+    beat = next((b for b in beats if b.get("beat_number") == beat_num), None)
+    if not beat:
+        return {"ok": False, "error": f"Beat {beat_num} not found"}
+
+    from novelvideo.agents.minimax_h3_prompt_builder import (
+        MiniMaxH3BeatContext,
+        MiniMaxH3PromptResult,
+        MiniMaxH3Reference,
+        build_minimax_h3_prompt,
+    )
+    from novelvideo.agents.minimax_h3_prompt_lint import lint_minimax_h3_prompt
+    from novelvideo.manual_shots import resolve_target_video_duration
+    from novelvideo.seedance2_i2v.models import parse_seedance2_config
+    from novelvideo.utils.path_resolver import PathResolver
+
+    paths = PathResolver(output_dir, episode_num)
+    frame_path = paths.first_frame_for_video(beat_num)
+    if not frame_path.exists():
+        # The rewriter now looks at the actual first-frame image rather
+        # than describing it from `visual_description` text alone — same
+        # prerequisite `/video/review` already enforces before submission,
+        # just surfaced here too since this route can be called on its own.
+        return {
+            "ok": False,
+            "error": f"Beat {beat_num} 首帧不存在，请先生成预览再写 MiniMax H3 提示词。",
+        }
+    if body.duration is not None:
+        video_duration = float(body.duration)
+    else:
+        audio_duration = await _api_audio_duration_seconds(output_dir, episode_num, beat_num)
+        video_duration = resolve_target_video_duration(beat, audio_duration)
+
+    beat_index = beats.index(beat)
+    prev_beat = beats[beat_index - 1] if beat_index > 0 else None
+    next_beat = beats[beat_index + 1] if beat_index + 1 < len(beats) else None
+
+    character_map = await _build_character_map(
+        store, beats, username, project_name, episode_num=episode_num
+    )
+    resolved_refs = _h3_identity_references(character_map, beat)
+    references = [
+        MiniMaxH3Reference(
+            tag=f"<Picture {i + 2}>",
+            kind="character",
+            name=r["name"],
+            appearance_details=r["appearance_details"],
+            image_path=r["path"],
+        )
+        for i, r in enumerate(resolved_refs)
+    ]
+
+    audio_type = str(beat.get("audio_type") or "silence")
+    narration = str(beat.get("narration_segment") or "")
+    dialogue_line = ""
+    dialogue_speaker = str(beat.get("speaker") or "")
+    if audio_type == "dialogue":
+        dialogue_line, multi_speaker_label = _h3_parse_dialogue_segment(
+            narration, character_map
+        )
+        if multi_speaker_label:
+            # narration_segment carried its own {{identity}}-per-line
+            # markers (more than one speaker folded into this beat) —
+            # that labeling is more specific than beat.speaker.
+            dialogue_speaker = multi_speaker_label
+
+    context = MiniMaxH3BeatContext(
+        mode="ref2va" if references else "fl2va",
+        visual_description=_h3_replace_identity_markers(
+            str(beat.get("visual_description") or ""), character_map
+        ),
+        narration_segment=(
+            _h3_replace_identity_markers(narration, character_map)
+            if audio_type != "dialogue"
+            else ""
+        ),
+        dialogue_line=dialogue_line,
+        dialogue_speaker=dialogue_speaker,
+        dialogue_language=_detect_h3_dialogue_language(dialogue_line),
+        dialogue_on_screen=True,
+        duration_seconds=float(video_duration),
+        aspect_ratio="9:16",
+        prev_beat_narration=_h3_replace_identity_markers(
+            str((prev_beat or {}).get("narration_segment") or ""), character_map
+        ),
+        next_beat_narration=_h3_replace_identity_markers(
+            str((next_beat or {}).get("narration_segment") or ""), character_map
+        ),
+        existing_video_prompt=_legacy_video_prompt_for_mode(
+            beat, beat.get("video_mode", "first_frame")
+        ),
+        first_frame_path=str(frame_path),
+        references=references,
+    )
+
+    def _lint(prompt_text: str):
+        return lint_minimax_h3_prompt(
+            prompt_text,
+            mode=context.mode,
+            reference_count=len(references) + 1,
+            duration_seconds=video_duration,
+            expects_dialogue=audio_type == "dialogue",
+        )
+
+    # Up to 3 automatic self-correction retries (4 attempts total) — this
+    # rewriter's output has shown real run-to-run variance under a vision +
+    # "thinking mode" model: dropped dialogue, an uncited `<Picture N>`,
+    # stray quotes around `<d>`, and even an outright schema-validation
+    # failure from pydantic-ai ("Exceeded maximum output retries") on a
+    # malformed response. Each retry feeds back exactly what was wrong
+    # with the previous attempt (when there was one) and keeps whichever
+    # attempt had the fewest lint errors; an attempt that raises is
+    # treated as "worse than any attempt that returned something".
+    max_retries = 3
+    best_result: MiniMaxH3PromptResult | None = None
+    best_lint = None
+    last_exc: Exception | None = None
+    retry_context = context
+    for attempt in range(1 + max_retries):
+        try:
+            attempt_result = await build_minimax_h3_prompt(retry_context)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            retry_context = context.model_copy(
+                update={
+                    "retry_feedback": (
+                        "Your previous attempt failed to produce valid output "
+                        f"at all ({exc}). Write the plan and the full prompt "
+                        "more carefully this time, following the schema and "
+                        "every rule exactly."
+                    )
+                }
+            )
+            continue
+        attempt_lint = _lint(attempt_result.final_prompt)
+        if best_lint is None or len(attempt_lint.errors) < len(best_lint.errors):
+            best_result, best_lint = attempt_result, attempt_lint
+        if not attempt_lint.errors or attempt_lint.errors[0].code == "empty":
+            # Clean (or an outright-empty attempt isn't worth retrying
+            # against) — stop here rather than spend the remaining budget.
+            break
+        retry_context = context.model_copy(
+            update={
+                "retry_feedback": "\n".join(f"- {issue.message}" for issue in attempt_lint.errors)
+            }
+        )
+
+    if best_result is None:
+        return {"ok": False, "error": f"MiniMax H3 prompt 生成失败: {last_exc}"}
+    result, lint = best_result, best_lint
+
+    h3_config = parse_seedance2_config(beat.get("seedance2_config_json"))
+    h3_config.final_prompt = result.final_prompt
+    h3_config.prompt_source = "minimax_h3"
+    h3_config.reference_image_paths = [r["path"] for r in resolved_refs]
+    h3_config.ratio = context.aspect_ratio
+    if hasattr(store, "update_beat_asset"):
+        await store.update_beat_asset(
+            episode_number=episode_num,
+            beat_number=beat_num,
+            seedance2_config_json=h3_config.model_dump_json(),
+        )
+
+    return {
+        "ok": True,
+        "prompt": result.final_prompt,
+        "plan": result.plan.model_dump(),
+        "lint": [
+            {"severity": i.severity, "code": i.code, "message": i.message} for i in lint.issues
+        ],
+        "mode": context.mode,
+        "references": [
+            {"tag": r.tag, "name": r.name, "appearance_details": r.appearance_details}
+            for r in references
+        ],
+    }
 
 
 # ── 视频池查看 & 选择 ─────────────────────────────────────────────────────────

@@ -19,6 +19,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 from novelvideo.config import (
     GEMINI_WEBAI_MODEL,
+    GOOGLE_AI_API_KEY,
+    GOOGLE_AI_IMAGE_MODEL,
     HUIMENG_IMAGE_MODEL,
     NEWAPI_IMAGE_MODEL,
     OPENAI_IMAGE_MODEL,
@@ -31,6 +33,7 @@ from novelvideo.config import (
     get_style_preset,
 )
 from novelvideo.generators.nanobanana_grid import (
+    _call_google_genai_image_api,
     _call_huimeng_image_api,
     _call_newapi_image_api,
     _call_openai_image_api,
@@ -1097,6 +1100,24 @@ async def run(args: argparse.Namespace) -> int:
                 "image_size": args.image_size,
                 "quality": args.quality,
             },
+        )
+    elif provider == "google":
+        api_key = GOOGLE_AI_API_KEY
+        if not api_key:
+            raise RuntimeError("GOOGLE_AI_API_KEY is missing")
+        model = (
+            args.model
+            or os.environ.get("SCENE_360_IMAGE_MODEL")
+            or os.environ.get("GOOGLE_AI_IMAGE_MODEL")
+            or SCENE_360_IMAGE_MODEL
+            or GOOGLE_AI_IMAGE_MODEL
+        )
+        image_bytes, _text, error = await _call_google_genai_image_api(
+            api_key=api_key,
+            model=model,
+            prompt=prompt,
+            reference_images=reference_images,
+            image_config={"aspect_ratio": "2:1", "image_size": args.image_size},
         )
     else:
         raise ValueError(f"Unsupported scene 360 provider: {provider}")

@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from ulid import ULID
 
+from novelvideo.runpod_worker_control import runpod_worker_control_configured
 from novelvideo.shared import runtime_env
 
 router = APIRouter()
@@ -41,6 +42,7 @@ async def get_runtime_config():
                 "auth_required": edition == "ee",
                 "instance_id": _INSTANCE_ID,
                 "mcp_direct_canvas_apply": _mcp_direct_canvas_apply_enabled(),
+                "runpod_qwen_worker_control_enabled": runpod_worker_control_configured(),
             },
         }
     )

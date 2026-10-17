@@ -17,8 +17,10 @@ import {
   Maximize2,
   Minimize2,
   Pencil,
+  Play,
   Plus,
   RotateCw,
+  Square,
   Trash2,
 } from "lucide-react";
 
@@ -94,7 +96,12 @@ import {
   type MediaModelEntry,
   type MediaStorageProvider,
 } from "@/stores/settingsStore";
-import { isCeRuntime } from "@/lib/runtime-config";
+import { isCeRuntime, runpodQwenWorkerControlEnabled } from "@/lib/runtime-config";
+import {
+  useRunpodWorkerStatus,
+  useStartRunpodWorker,
+  useStopRunpodWorker,
+} from "@/lib/queries/runpod-worker";
 import { FreezoneSkillRecipeSettings } from "./freezone-skill-recipe-settings";
 
 interface SettingsDialogProps {
@@ -227,6 +234,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <div className="min-w-0 flex-1">
               <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
                 <ModelConfigSection open={open && page === "models"} />
+                {runpodQwenWorkerControlEnabled() && (
+                  <RunpodWorkerSection open={open && page === "models"} />
+                )}
                 {SHOW_CODEX_BRIDGE && <CodexBridgeSection />}
               </ScrollArea>
             </div>
@@ -6161,6 +6171,165 @@ function FieldRow({
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** Dev-only: start/stop the shared RunPod Qwen-Image 2.1 worker (workers.max
+ * 0⇄1). Invisible unless this machine's `.env` has RUNPOD_API_KEY/R2_*
+ * configured — see `runpod_qwen_worker_control_enabled` in GET /config. */
+function RunpodWorkerSection({ open }: { open: boolean }) {
+  const { t } = useTranslation();
+  const statusQuery = useRunpodWorkerStatus(open);
+  const status = statusQuery.data?.data;
+  const running = status?.running ?? false;
+  const live = status?.live;
+
+  const startWorker = useStartRunpodWorker();
+  const stopWorker = useStopRunpodWorker();
+  const pending = startWorker.isPending || stopWorker.isPending;
+
+  const handleStart = async () => {
+    try {
+      const response = await startWorker.mutateAsync();
+      if (response.ok === true) {
+        toast.success(t("settings.runpodWorker.startedToast"));
+      } else {
+        toast.error(
+          getResponseErrorMessage(
+            response,
+            t("settings.runpodWorker.startErrorFallback"),
+          ),
+        );
+      }
+    } catch (error) {
+      toast.error(
+        await getRequestErrorMessage(
+          error,
+          t("settings.runpodWorker.startErrorFallback"),
+        ),
+      );
+    }
+  };
+
+  const handleStop = async () => {
+    try {
+      const response = await stopWorker.mutateAsync();
+      if (response.ok === true) {
+        toast.success(t("settings.runpodWorker.stoppedToast"));
+      } else {
+        toast.error(
+          getResponseErrorMessage(
+            response,
+            t("settings.runpodWorker.stopErrorFallback"),
+          ),
+        );
+      }
+    } catch (error) {
+      toast.error(
+        await getRequestErrorMessage(
+          error,
+          t("settings.runpodWorker.stopErrorFallback"),
+        ),
+      );
+    }
+  };
+
+  return (
+    <section className="px-5 py-5">
+      <div className="flex items-center gap-2">
+        <span
+          className={cn(
+            "size-1.5 rounded-full",
+            running ? "bg-emerald-400" : "bg-muted-foreground",
+          )}
+        />
+        <h3 className="font-heading text-sm font-medium text-foreground">
+          {t("settings.runpodWorker.title")}
+        </h3>
+        <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+          {t("settings.runpodWorker.badge")}
+        </span>
+      </div>
+
+      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+        {t("settings.runpodWorker.description")}
+      </p>
+
+      <div className="mt-3 space-y-2 text-xs">
+        <div className="flex items-center gap-3">
+          <span className="w-[80px] shrink-0 text-muted-foreground">
+            {t("settings.runpodWorker.statusLabel")}
+          </span>
+          {statusQuery.isLoading ? (
+            <Loader2
+              className="size-3.5 animate-spin text-muted-foreground"
+              aria-hidden
+            />
+          ) : (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5",
+                running ? "text-emerald-400" : "text-muted-foreground",
+              )}
+            >
+              <span
+                className={cn(
+                  "size-1.5 rounded-full",
+                  running ? "bg-emerald-400" : "bg-muted-foreground",
+                )}
+              />
+              {running
+                ? t("settings.runpodWorker.statusRunning")
+                : t("settings.runpodWorker.statusStopped")}
+            </span>
+          )}
+        </div>
+        {live ? (
+          <div className="flex items-center gap-3">
+            <span className="w-[80px] shrink-0 text-muted-foreground">
+              {t("settings.runpodWorker.liveLabel")}
+            </span>
+            <span className="text-foreground">
+              {t("settings.runpodWorker.liveSummary", {
+                idle: live.idle,
+                initializing: live.initializing,
+                running: live.running,
+              })}
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mt-4 flex gap-2">
+        <Button
+          type="button"
+          size="sm"
+          onClick={handleStart}
+          disabled={pending || running}
+        >
+          {startWorker.isPending ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Play className="size-3.5" aria-hidden />
+          )}
+          {t("settings.runpodWorker.startButton")}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={handleStop}
+          disabled={pending || !running}
+        >
+          {stopWorker.isPending ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Square className="size-3.5" aria-hidden />
+          )}
+          {t("settings.runpodWorker.stopButton")}
+        </Button>
+      </div>
+    </section>
   );
 }
 

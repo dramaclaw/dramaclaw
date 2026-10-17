@@ -299,6 +299,14 @@ def resolve_scene_360_image_model(provider: str = "", model: str = "") -> str:
             or os.environ.get("OPENROUTER_GPT_IMAGE2_MODEL")
             or "openai/gpt-5.4-image-2"
         )
+    if resolved_provider == "google":
+        from novelvideo.config import GOOGLE_AI_IMAGE_MODEL
+
+        return (
+            os.environ.get("SCENE_360_IMAGE_MODEL")
+            or os.environ.get("GOOGLE_AI_IMAGE_MODEL")
+            or GOOGLE_AI_IMAGE_MODEL
+        )
     return ""
 
 

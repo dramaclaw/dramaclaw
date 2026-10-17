@@ -62,6 +62,9 @@ def video_duration_bounds_for_backend(
         "seedance_pro_silent": (4, 12),
         "seedance_2": (5, 15),
         "grok_720": (1, 15),
+        # MiniMax H3's frame grid is 17k+5 at 24fps, clamped to 124-294
+        # frames (~5.17-12.25s) — see `runpod_minimax_h3_video.py`.
+        "runpod_minimax_h3": (5, 12),
     }
     return legacy_bounds.get(str(backend or "").strip().lower(), (None, None))
 
