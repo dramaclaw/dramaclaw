@@ -21,7 +21,7 @@ import os
 import re
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Any, Dict, List, Optional, TypeAlias
+from typing import Any, Dict, List, Optional, Tuple, TypeAlias
 
 from pypinyin import pinyin, Style
 
@@ -3824,26 +3824,51 @@ def _uses_gpt_image_sketch_profile(ctx: PromptContext) -> bool:
 
 
 def build_qwen_edit_render_prompt(
-    beats: List[dict], stage: str = "full"
+    beats: List[dict], stage: str = "full", subject_hints: Optional[List[str]] = None
 ) -> str:
     """Short, Qwen-Image-Edit-2511-specific render prompt — deliberately NOT
     the shared UnifiedPromptBuilder/RenderModeStrategy output.
+
+    `subject_hints` is accepted only for call-site symmetry with
+    `build_qwen21_render_prompt` (same `RenderReviewStrategy.build_prompt`
+    signature in `render_review_registry.py`) — **unused here**. Added
+    2026-10-18 for Qwen 2.1's `scene_only` pass specifically, to counter a
+    real observed failure (toddler characters rendered as adults) tied to
+    that model's zero-latent + `reference_latents` conditioning design.
+    Edit-2511's `scene_only` pass uses a real `VAEEncode`'d canvas instead
+    and has not shown this bias in any beat verified so far — leave its
+    prompt untouched rather than risk the already-working path.
 
     That shared prompt is written for Gemini-family models and uses
     storyboard-grid wording ("!!! MANDATORY GRID FORMAT !!!", "regions",
     "panels") even for a 1x1 render — Qwen-Image-Edit-2511 reads this far
     more literally and was observed (2026-10-13/14) producing an unrelated
-    multi-panel collage when given that prompt. This also keeps the
-    character's physical description out of the text entirely — per
-    Qwen-Image-Edit-2511's own prompt-enhancer guidance, identity should
-    come from pointing at the reference image, not from describing features
-    in words (verbal descriptions make the model regenerate the face and
-    degrade the likeness the image reference would otherwise lock in).
+    multi-panel collage when given that prompt.
 
-    `stage="full"` (default) is the single-character case: image1 is the
-    sketch/crop canvas, image2 is the identity portrait, output keeps the
-    pose/framing and swaps in that one person. This is the exact prompt
-    verified end-to-end 2026-10-14 for beat 4.
+    **Default template follows Qwen-Image-Edit-2511's own official prompt
+    standard** (`QwenLM/Qwen-Image`'s `EDIT_SYSTEM_PROMPT`, copied verbatim
+    into `agents/prompts/qwen_edit_render_rules.md` — see that file for the
+    full rule set and the project-specific pitfalls below it), not an
+    ad-hoc wording:
+    - Images are referred to as **"Picture 1"/"Picture 2"**, matching the
+      literal tokens `TextEncodeQwenImageEditPlus` inserts ("Picture 1:
+      <image> Picture 2: <image>") — not "image 1"/"the first image".
+    - Each is a **Multi-Image** task per rule §2.6 ("clearly point out
+      which image's element is being modified") combined with **Human (ID)
+      Editing** per rule §2.3 (name the identity attributes to keep:
+      face/ethnicity/gender/age/hairstyle/outfit) for `full`/`inpaint`, or
+      **Style Conversion** per rule §2.4 for `scene_only` (no second
+      image — convert the whole first image's style).
+    - The instruction clause comes first, the style tail ("photorealistic
+      photograph...") comes last, per rule §2.4's "place the style
+      description at the end".
+    - `qwen_edit_render_prompt_lint.py` enforces these mechanically
+      (Picture-tag presence/absence per stage, no legacy "image N"
+      wording, no layout words).
+
+    `stage="full"` (default) is the single-character case: Picture 1 is the
+    sketch/crop canvas, Picture 2 is the identity portrait, output keeps the
+    pose/framing and swaps in that one person.
 
     `stage="scene_only"` is pass 1 of the multi-character render (see
     `_qwen_edit_multi_character_render` in nanobanana_grid.py): turn the
@@ -3858,9 +3883,9 @@ def build_qwen_edit_render_prompt(
     each identity, ran a full `TextEncodeQwenImageEditPlus` call on just
     that crop, and pasted the result back by hand. That crop design failed
     twice in real testing on beat 5 — once with wording that called
-    image1 "the mannequin figure" (wrong: a sketch mannequin isn't what's
+    Picture 1 "the mannequin figure" (wrong: a sketch mannequin isn't what's
     in the crop, pass 1 already made it a photo) and once with wording
-    that called image1 "a photograph of a person" instead — both times
+    that called Picture 1 "a photograph of a person" instead — both times
     the model rendered a small, wrongly-scaled "picture in picture" inset
     instead of replacing the crop in place. The common factor wasn't the
     wording: it was that BOTH input images (the small person-crop and the
@@ -3868,14 +3893,15 @@ def build_qwen_edit_render_prompt(
     whatever cue normally tells it which image is the editable canvas and
     which is the reference — collage-like behavior followed in both
     attempts. `stage="inpaint"` avoids this by never building a separate
-    crop at all: image1 stays the WHOLE pass-1 photo (matching what the
+    crop at all: Picture 1 stays the WHOLE pass-1 photo (matching what the
     model's vision/text conditioning actually sees, consistent with the
     single-character case that works), and `SetLatentNoiseMask` — a
     sampler-level mechanism, not a prompt instruction — is what actually
     restricts which pixels can change. Even if the text below doesn't
     perfectly single out which person to replace, pixels outside the mask
     are mechanically preserved by the sampler, not by the model
-    understanding the sentence.
+    understanding the sentence. Never mention a mask/crop/region in the
+    text — see the Multi-Image rule note in qwen_edit_render_rules.md.
 
     Two earlier single-pass (no masking at all) attempts to handle
     multi-character beats by naming the sketch's per-character mannequin
@@ -3889,36 +3915,327 @@ def build_qwen_edit_render_prompt(
     """
     beat = beats[0] if beats else {}
     action = re.sub(r"\{\{[^}]*\}\}", "", str(beat.get("visual_description") or "")).strip()
+    style_tail = (
+        "Photorealistic photograph: natural lighting, real skin texture — "
+        "not line art, not a sketch, not an illustration."
+    )
     if stage == "scene_only":
         parts = [
-            "Image 1 is the canvas: keep its exact pose, camera framing, and "
-            "background composition unchanged. Render every figure in image 1 "
-            "as an ordinary, period-appropriate person — do not give any of "
-            "them a specific, recognizable identity.",
-            "Render the entire result as a photorealistic photograph, not "
-            "line art, not a sketch, not an illustration.",
+            "Convert Picture 1 into a photorealistic photograph, keeping its "
+            "exact pose, camera framing and background composition "
+            "unchanged, rendering every figure in Picture 1 as an ordinary, "
+            "period-appropriate person — do not give any of them a "
+            "specific, recognizable identity.",
+            style_tail,
         ]
     elif stage == "inpaint":
         parts = [
-            "Image 1 is a photograph with one or more people. Replace one "
-            "of the people in image 1 with the person from image 2, "
-            "matching that person's exact pose and position, preserving "
-            "image 2's identity exactly. Keep every other person, the "
-            "background, and the framing of image 1 unchanged.",
-            "Keep the result a photorealistic photograph, matching image "
-            "1's lighting and style.",
+            "Replace the person in Picture 1 with the person from Picture 2, "
+            "keeping Picture 2's identity — face, ethnicity, gender, age, "
+            "hairstyle and outfit — unchanged, and keeping every other "
+            "person, the background, and the framing of Picture 1 "
+            "unchanged.",
+            style_tail,
         ]
     else:
         parts = [
-            "Image 1 is the canvas: keep its exact pose, camera framing, and "
-            "background composition unchanged. Replace the mannequin figure in "
-            "image 1 with the person from image 2, preserving their identity "
-            "exactly.",
-            "Render the entire result as a photorealistic photograph, not "
-            "line art, not a sketch, not an illustration.",
+            "Replace the mannequin figure in Picture 1 with the person from "
+            "Picture 2, keeping Picture 2's identity — face, ethnicity, "
+            "gender, age, hairstyle and outfit — unchanged, and keeping "
+            "Picture 1's pose, camera framing and background composition "
+            "unchanged.",
+            style_tail,
         ]
+    # `inpaint` deliberately does NOT get a "Scene: {action}" clause, unlike
+    # `full`/`scene_only`. `visual_description` describes the WHOLE beat —
+    # every character's action, not just the one identity this pass is
+    # swapping in — and this pass's pose is already locked mechanically by
+    # `SetLatentNoiseMask` (see module docstring above
+    # `_runpod_qwen_edit_image_graph`), not by text. Appending it here was
+    # exactly what caused a real multi-character misattribution found
+    # 2026-10-17 on beat 6 (teacher + Tesla): the AI rewriter, given the
+    # full "teacher stands lecturing; Tesla sits, defiant" description for
+    # EVERY identity's inpaint pass, wrote Tesla's inpaint prompt as if HE
+    # were the one "standing... lecturing" — the teacher's action, not
+    # his. Dropping the scene clause removes that failure mode's only
+    # input, instead of trying to word around it.
+    if action and stage != "inpaint":
+        parts.insert(-1, f"Scene: {action}.")
+    return " ".join(parts)
+
+
+def build_qwen21_render_prompt(
+    beats: List[dict], stage: str = "full", subject_hints: Optional[List[str]] = None
+) -> str:
+    """Short, Qwen-Image-2.1-specific render prompt — the fixed replacement
+    for the render dispatch's previous behavior of reusing the shared
+    Gemini-oriented `UnifiedPromptBuilder`/storyboard-grid prompt (which
+    contains literal "!!! MANDATORY GRID FORMAT" wording, nonsensical for a
+    single-image edit and very likely the real cause of the "unrelated
+    multi-panel collage" failures that got Qwen-Image 2.1 abandoned for
+    render on 2026-10-14 — see `.claude/CLAUDE.md` 2026-10-18 entry).
+
+    Deliberately NOT `build_qwen_edit_render_prompt()` reused as-is: that
+    function targets `TextEncodeQwenImageEditPlus` (Qwen-Image-Edit-2511),
+    which auto-injects its own "Picture 1: <image> Picture 2: <image>"
+    tokens ahead of the prompt text. `TextEncodeQwenImage21` (Qwen-Image
+    2.1) injects nothing — any multi-image tagging is purely a
+    prompt-writing convention, and the OFFICIAL one for this node, per the
+    ComfyUI workflow template `image_qwen_image_2_1_image_edit.json`'s own
+    embedded prompt-enhancer system prompt (fetched 2026-10-18, copied
+    verbatim into `agents/prompts/qwen21_render_rules.md`), is
+    **`<image1>`, `<image2>`** — lowercase, angle brackets — never
+    "Picture N" and never natural-language references. That same official
+    rule set also says: for single-image input (this function's
+    `scene_only` stage), do NOT tag at all.
+
+    Also follows the official "Attribute Disentanglement" principle (name
+    exactly the attribute(s) being changed, hold everything else at input
+    fidelity by naming it rather than re-describing it) and the rule that
+    an image's rendering medium (sketch vs. photograph) survives every edit
+    *unless explicitly targeted* — so the sketch-to-photo conversion must
+    be named as a targeted edit, not left implicit. No double quotes
+    (reserved for text that would be rendered into the output image — never
+    the case here) and no resolution/aspect-ratio tokens (official rule:
+    "output size is decided downstream, not by you").
+
+    `stage="full"`/`"scene_only"`/`"inpaint"` mirror
+    `build_qwen_edit_render_prompt()`'s three stages exactly (see that
+    function's docstring for the two-pass multi-character design these
+    feed into — `_qwen21_multi_character_render` in nanobanana_grid.py).
+    `inpaint` gets no `Scene:`/action-verb clause, same reasoning as the
+    Edit-2511 version: the beat's `visual_description` describes EVERY
+    character's action, not just the one identity this pass is swapping
+    in, and the pose is already locked by `SetLatentNoiseMask`, not by
+    text (confirmed failure mode 2026-10-17, beat 6: an earlier action
+    clause got one person's action attributed to a different identity).
+
+    `subject_hints` (added 2026-10-18, real failure: a multi-character beat
+    with two toddler characters rendered both as unrelated adults — wrong
+    age, wrong body proportions, gender wrong for one) are short, **non-
+    identifying** body-size/age descriptions (e.g. "a small child with a
+    toddler build" — never a name, never a face description, never tied to
+    a specific figure) used ONLY in `stage="scene_only"`, which is
+    deliberately identity-blind by design (see above) but was found to have
+    *zero* body-proportion signal at all, so it defaults to an adult
+    statistical prior. Listing hints generically (not bound to a specific
+    mannequin color/position) keeps that stage's "no recognizable identity"
+    guarantee intact while still telling it "some of these people are
+    children." Not used in `full`/`inpaint` — those already point straight
+    at a reference image for every other attribute including body size, and
+    this bias has not been observed there.
+    """
+    beat = beats[0] if beats else {}
+    action = re.sub(r"\{\{[^}]*\}\}", "", str(beat.get("visual_description") or "")).strip()
+    action = action.replace('"', "")
+    style_tail = (
+        "Convert the rendering medium from sketch to a photorealistic "
+        "photograph with natural lighting and real skin texture."
+    )
+    if stage == "scene_only":
+        parts = [
+            "Convert the sketch in the image into a photorealistic "
+            "photograph, rendering every mannequin figure as an ordinary, "
+            "period-appropriate person with no recognizable identity, and "
+            "keep the pose, body proportions and size, camera framing and "
+            "background composition unchanged.",
+            style_tail,
+        ]
+        if subject_hints:
+            hint_text = "; ".join(h.strip().rstrip(".") for h in subject_hints if h and h.strip())
+            if hint_text:
+                parts.insert(-1, f"The figures include: {hint_text}.")
+    elif stage == "inpaint":
+        parts = [
+            "Replace the person in <image1> with the person from <image2>, "
+            "taking face, ethnicity, gender, age, hairstyle and outfit "
+            "from <image2>; <image1> is the canvas, so keep every other "
+            "person, the background, lighting, framing, body proportions "
+            "and size unchanged.",
+            "Keep the result a photorealistic photograph.",
+        ]
+    else:
+        parts = [
+            "Replace the mannequin figure in <image1> with the person from "
+            "<image2>, taking face, ethnicity, gender, age, hairstyle and "
+            "outfit from <image2>; <image1> is the canvas, so keep its "
+            "pose, camera framing, background and every other element "
+            "unchanged.",
+            style_tail,
+        ]
+    if action and stage != "inpaint":
+        parts.insert(-1, f"Scene: {action}.")
+    return " ".join(parts)
+
+
+_COMPOSE_IDENTITY_MARKER_RE = re.compile(r"\{\{([^}]*)\}\}")
+_COMPOSE_PROP_MARKER_RE = re.compile(r"\[\[([^\]]*)\]\]")
+
+
+def build_qwen21_compose_prompt(
+    beat: dict,
+    *,
+    identity_images: List[Tuple[str, str]],
+    prop_images: List[Tuple[str, str]],
+    identity_names: Optional[Dict[str, str]] = None,
+    prop_names: Optional[Dict[str, str]] = None,
+) -> str:
+    """Qwen-Image 2.1 "compose" render prompt — sketch-FREE (added
+    2026-10-18): no mannequin sketch, no mask, no 2-pass inpaint at all.
+    Composes directly from a scene background photo + each identity's
+    portrait + each prop's reference photo + the beat's own text.
+
+    Built after the sketch+mask `build_qwen21_render_prompt()` design
+    correctly fixed render timing and toddler body-proportions but still
+    failed to transfer identity faithfully (faces/outfits came out
+    blended). A hand-written prompt of exactly this shape, tested
+    standalone against RunPod (not through this function), produced the
+    best real-GPU result of that whole investigation: correct background,
+    near-perfect identity match, exact prop match, fully photorealistic,
+    correct toddler proportions. This function generalizes that prompt to
+    any beat/character/prop combination.
+
+    `identity_images`/`prop_images` are `(id, display_name)` pairs **in
+    the exact order their actual reference images were uploaded** —
+    `<image1>` is always the background; `<image2>..<image{1+K}>` are the
+    identities in `identity_images` order; the remaining tags are the
+    props in `prop_images` order. The caller (`nanobanana_grid.py`'s
+    `_build_qwen21_compose_plan`) is the single source of truth for that
+    order — this function must not reorder or re-derive it.
+
+    `identity_names`/`prop_names` are a SUPERSET covering every
+    `{{id}}`/`[[prop]]` marker that might appear in `visual_description`,
+    including identities/props that have NO resolvable reference image
+    (named in the text, just not imaged) — `identity_images`/`prop_images`
+    cover only the subset that actually got a reference image uploaded.
+
+    Follows Qwen's official "scene generation with no canvas" rule (see
+    `agents/prompts/qwen21_render_rules.md`, Part 1 "Image Reference
+    Rules": for N=1 use no tags at all; for N>=2 every image is a
+    material/identity source, state each one's role individually, never
+    compress several into a group). Explicitly instructs "photorealistic
+    photograph" — omitting this caused a real, severe quality regression
+    in testing (the whole image degraded into line-art/ghosting) because
+    Qwen's own rule says rendering medium survives an edit unless
+    explicitly targeted, and with no sketch canvas there is nothing else
+    anchoring the output to "photograph."
+    """
+    identity_names = identity_names or {}
+    prop_names = prop_names or {}
+
+    identity_tag: Dict[str, str] = {}
+    prop_tag: Dict[str, str] = {}
+    next_idx = 2
+    for identity_id, _name in identity_images:
+        identity_tag[identity_id] = f"<image{next_idx}>"
+        next_idx += 1
+    for prop_id, _name in prop_images:
+        prop_tag[prop_id] = f"<image{next_idx}>"
+        next_idx += 1
+    total_images = next_idx - 1  # background (image1) + identities + props
+
+    parts: List[str] = []
+
+    if total_images <= 1:
+        parts.append(
+            "The reference image shows the location; use it only for the "
+            "setting, background elements, lighting and color palette, "
+            "not for any person or pose."
+        )
+        parts.append(
+            "Compose a new photorealistic photograph set in the location "
+            "shown in the image, matching its lighting and background "
+            "elements."
+        )
+    else:
+        parts.append(
+            "<image1> is a reference photo of the location; use it only "
+            "for the setting, background elements, lighting and color "
+            "palette, not for any person or pose."
+        )
+        for identity_id, name in identity_images:
+            tag = identity_tag[identity_id]
+            parts.append(
+                f"{tag} shows {name}; take {name}'s face, hairstyle, age, "
+                f"body proportions and outfit exactly from {tag}."
+            )
+        for prop_id, name in prop_images:
+            tag = prop_tag[prop_id]
+            parts.append(
+                f"{tag} shows the {name}; take its exact shape, material, "
+                f"color and surface details from {tag}."
+            )
+        parts.append(
+            "Compose a new photorealistic photograph set in the location "
+            "from <image1>, matching its lighting and background elements."
+        )
+
+    seen_identities: set = set()
+    seen_props: set = set()
+
+    def _replace_identity(match: "re.Match[str]") -> str:
+        # Parenthetical, not ", matching <tag> exactly," — a trailing
+        # comma collided with whatever punctuation immediately followed
+        # the marker in the beat's own text (real bug found via the free
+        # dry-run verification 2026-10-18, BabyStories beat 7: "{{Ryan}},"
+        # in the source produced "Ryan, matching <image3> exactly,," —
+        # doubled comma). Parentheses are self-contained and can't collide
+        # with surrounding punctuation either way.
+        marker_id = match.group(1)
+        name = identity_names.get(marker_id) or marker_id
+        tag = identity_tag.get(marker_id)
+        if tag and marker_id not in seen_identities:
+            seen_identities.add(marker_id)
+            return f"{name} (matching {tag} exactly)"
+        return name
+
+    def _replace_prop(match: "re.Match[str]") -> str:
+        # No self-added "the"/article — `[[prop]]` markers are a bare-noun
+        # substitution, same as `{{identity}}`; the beat's own text already
+        # supplies whatever article/determiner is grammatically right
+        # (real bug found via the free dry-run verification 2026-10-18,
+        # BabyStories beat 7: "holding up a [[bucket]]" + a self-added
+        # "the" produced "holding up a the bucket from <image4>").
+        marker_id = match.group(1)
+        name = prop_names.get(marker_id) or marker_id
+        tag = prop_tag.get(marker_id)
+        if tag and marker_id not in seen_props:
+            seen_props.add(marker_id)
+            return f"{name} (shown in {tag})"
+        return name
+
+    action = str(beat.get("visual_description") or "")
+    action = action.replace('"', "").replace("\n", " ")
+    action = _COMPOSE_IDENTITY_MARKER_RE.sub(_replace_identity, action)
+    action = _COMPOSE_PROP_MARKER_RE.sub(_replace_prop, action)
+    action = re.sub(r"\s+", " ", action).strip().rstrip(".")
     if action:
-        parts.append(f"Scene: {action}")
+        parts.append(f"Scene: {action}.")
+
+    identity_count = len(identity_images)
+    if identity_count == 1:
+        parts.append(f"Show exactly 1 person — {identity_images[0][1]} — appearing once.")
+    elif identity_count >= 2:
+        names_joined = ", ".join(name for _id, name in identity_images)
+        parts.append(
+            f"Show exactly {identity_count} people — {names_joined} — each appearing once."
+        )
+    elif not identity_names:
+        parts.append("No people appear in the image.")
+
+    if identity_count >= 1:
+        parts.append(
+            "Render the people and the scene as a real photograph with "
+            "natural skin texture, realistic lighting and depth, not as "
+            "a sketch, illustration, painting or 3D render."
+        )
+    else:
+        parts.append(
+            "Render the scene as a real photograph with natural lighting "
+            "and depth, not as a sketch, illustration, painting or 3D "
+            "render."
+        )
+
     return " ".join(parts)
 
 

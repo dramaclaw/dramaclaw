@@ -26,7 +26,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -63,6 +63,8 @@ from novelvideo.generators.prompt_builder import (
     PromptContext,
     PromptMode,
     UnifiedPromptBuilder,
+    build_qwen21_compose_prompt,
+    build_qwen21_render_prompt,
     build_qwen_edit_render_prompt,
     create_prompt_context,
 )
@@ -71,6 +73,7 @@ from novelvideo.models import (
     beat_scene_id,
     collect_prop_marker_ids_from_beat,
     real_detected_identities,
+    real_detected_props,
 )
 from novelvideo.manual_shots import beat_order_value
 from novelvideo.services.style_service import StyleService
@@ -5017,6 +5020,416 @@ async def _call_runpod_qwen_image_api(
     return data, "", ""
 
 
+async def _runpod_run_graph_job(
+    *,
+    api_key: str,
+    endpoint_id: str,
+    timeout_seconds: float,
+    graph: dict,
+    upload_batch: list[tuple[str, bytes, str]],
+    label: str,
+) -> tuple[bytes | None, str, str]:
+    """Shared submit/poll/cancel/download/verify logic for a RunPod ComfyUI
+    `action: "prompt"` job against one of this project's Qwen worker
+    endpoints. `label` prefixes every error message (e.g. "runpod qwen21
+    render image") so callers keep their existing error-message shape.
+
+    New callers should use this instead of duplicating the submit/poll loop
+    a third time. The two older callers
+    (`_call_runpod_qwen_image_api`/`_call_runpod_qwen_edit_image_api`) are
+    deliberately left with their own copies of this logic for now, to avoid
+    any risk to their already-verified behavior — only
+    `_call_runpod_qwen21_render_image_api` below uses this.
+    """
+    import httpx
+
+    if not api_key:
+        return None, "", f"{label}: RUNPOD_API_KEY is missing"
+    if not endpoint_id:
+        return None, "", f"{label}: endpoint id is missing"
+
+    try:
+        job_inputs = await asyncio.to_thread(_runpod_upload_inputs_sync, upload_batch)
+    except Exception as exc:
+        return None, "", f"{label} upload to R2 failed: {exc}"
+
+    base = "https://api.runpod.ai/v2"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    job_input = {"action": "prompt", "workflow": graph, "inputs": job_inputs, "free_first": False}
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            submit_response = await client.post(
+                f"{base}/{endpoint_id}/run",
+                headers=headers,
+                json={"input": job_input},
+            )
+            submit_response.raise_for_status()
+            job_id = submit_response.json()["id"]
+    except httpx.HTTPError as exc:
+        return None, "", f"{label} submit failed: {exc}"
+
+    # Same submit/poll split as the other RunPod callers, for the same
+    # reason: once the job exists on RunPod it keeps running regardless of
+    # what this client does, so a transient poll error must not abort the
+    # call and orphan the job.
+    deadline = time.monotonic() + timeout_seconds
+    status_resp: dict = {}
+    last_poll_error = ""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        while time.monotonic() < deadline:
+            await asyncio.sleep(5)
+            try:
+                status_response = await client.get(
+                    f"{base}/{endpoint_id}/status/{job_id}",
+                    headers=headers,
+                )
+                status_response.raise_for_status()
+                status_resp = status_response.json()
+            except httpx.HTTPError as exc:
+                last_poll_error = str(exc)
+                continue
+            if status_resp.get("status") not in ("IN_QUEUE", "IN_PROGRESS"):
+                break
+        else:
+            try:
+                await client.post(f"{base}/{endpoint_id}/cancel/{job_id}", headers=headers)
+            except httpx.HTTPError:
+                pass
+            status_note = status_resp.get("status", "IN_QUEUE")
+            poll_note = f"; last poll error: {last_poll_error}" if last_poll_error else ""
+            return (
+                None,
+                "",
+                f"{label} job {job_id} timed out after {timeout_seconds:.0f}s "
+                f"(still {status_note} — endpoint workers.max may be 0){poll_note}",
+            )
+
+    status = status_resp.get("status")
+    if status != "COMPLETED":
+        return None, "", f"{label} job {status}: {json.dumps(status_resp)[:800]}"
+
+    output = status_resp.get("output") or {}
+    if output.get("error"):
+        return None, "", f"{label} worker error: {output['error']}"
+    if output.get("node_errors"):
+        return None, "", f"{label} node_errors: {json.dumps(output['node_errors'])[:800]}"
+
+    image_item = None
+    for node_out in (output.get("outputs") or {}).values():
+        for lst in node_out.values():
+            if not isinstance(lst, list):
+                continue
+            for item in lst:
+                if isinstance(item, dict) and item.get("r2_key"):
+                    image_item = item
+                    break
+            if image_item:
+                break
+        if image_item:
+            break
+    if image_item is None:
+        return None, "", f"{label} job completed but had no output image"
+
+    try:
+        data = await asyncio.to_thread(_runpod_download_output_sync, image_item["r2_key"])
+    except Exception as exc:
+        return None, "", f"{label} download from R2 failed: {exc}"
+
+    sha = hashlib.sha256(data).hexdigest()
+    if image_item.get("sha256") and sha != image_item["sha256"]:
+        return None, "", f"{label} downloaded file sha256 mismatch"
+
+    return data, "", ""
+
+
+def _qwen21_prepare_render_image(
+    data: bytes, target_area: int, *, multiple: int = 32
+) -> tuple[bytes, tuple[int, int]]:
+    """Resize an image to roughly `target_area` total pixels with both sides
+    rounded to an exact multiple of 32 (default), re-encoded as PNG.
+
+    Needed because `TextEncodeQwenImage21`'s `resolution=0` mode only
+    ROUNDS each reference to the nearest multiple of 32 — it doesn't resize
+    to a fixed target. For the masked multi-character path, a separate
+    `VAEEncode` of the canvas must land on EXACTLY the size the node's own
+    rounding assumes for that same image, or the resulting latent won't
+    match — see `_runpod_qwen21_render_image_graph`'s docstring ("any other
+    size shifts the edit"). Pre-resizing to an already-exact multiple of 32
+    here means the node's own rounding is a no-op, so the two independently
+    computed sizes can never disagree.
+    """
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(data))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    width, height = img.size
+    if width <= 0 or height <= 0:
+        raise ValueError("invalid image dimensions")
+    scale = (target_area / (width * height)) ** 0.5
+    new_width = max(multiple, round(width * scale / multiple) * multiple)
+    new_height = max(multiple, round(height * scale / multiple) * multiple)
+    if (new_width, new_height) != (width, height):
+        img = img.resize((new_width, new_height), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue(), (new_width, new_height)
+
+
+# Dev-only, render-only, added 2026-10-18: Qwen-Image 2.1 (same RunPod
+# worker/model files as `_runpod_qwen_image_graph` above), fixed for
+# render/identity-swap — see `RUNPOD_QWEN21_RENDER_*` in config.py. Two bugs
+# made the project abandon 2.1 for render on 2026-10-14 without ever testing
+# both fixes together (see CLAUDE.md 2026-10-18 entry for the full story):
+#
+# 1. `_runpod_qwen_image_graph()`'s edit-mode branch feeds KSampler an
+#    `EmptyLatentImage` sized independently of the actual input image —
+#    correct for a fresh portrait at a target size (sketch/character/
+#    scene/prop generation, which this graph is NOT used for), wrong for an
+#    edit that must preserve an existing sketch's composition. The official
+#    upstream `TextEncodeQwenImage21` node (`comfy_extras/nodes_qwen.py`,
+#    re-read 2026-10-18) documents its own 3rd output's tooltip verbatim:
+#    "Empty latent on the first reference image's size, to match with
+#    sampling as any other size shifts the edit." This graph uses that
+#    output instead, for the no-mask (single-character) case.
+# 2. The shared render dispatch reused the Gemini-oriented storyboard-grid
+#    prompt, nonsensical for a single-image edit — fixed separately by
+#    `build_qwen21_render_prompt()` in prompt_builder.py, not by this graph.
+#
+# For the masked multi-character inpaint case, the text encoder's own
+# latent output (`["4", 2]`) must NOT be used as `SetLatentNoiseMask`'s
+# `samples` input: re-reading `TextEncodeQwenImage21.execute()`'s source
+# (upstream, 2026-10-18) shows that output is `torch.zeros(...)` — an EMPTY
+# latent, correctly sized, but with no real pixel content. Reference images
+# reach the model only via `reference_latents` appended to the conditioning,
+# never through this latent output. `SetLatentNoiseMask` only preserves
+# non-masked pixels when its `samples` input is a genuine `VAEEncode` of
+# the real canvas — feeding it zeros would make the "preserved" region
+# decode from nothing, reproducing bug 1 in a new form. So the masked path
+# adds an explicit `VAEEncode(canvas)` and masks THAT latent instead,
+# mirroring `_runpod_qwen_edit_image_graph`'s `"50"`→`"52"` pattern exactly.
+# `canvas_name` MUST already be pre-resized to an exact multiple of 32 (see
+# `_qwen21_prepare_render_image`) so this VAEEncode's output matches the
+# size `TextEncodeQwenImage21`'s own `resolution=0` rounding assumes for
+# the same image.
+def _runpod_qwen21_render_image_graph(
+    prompt: str,
+    canvas_name: str,
+    reference_names: list[str],
+    seed: int,
+    *,
+    mask_name: str | None = None,
+    steps: int,
+    cfg: float,
+    negative_prompt: str = "",
+) -> dict:
+    """Build the ComfyUI API graph for the RunPod Qwen-Image 2.1 worker,
+    render/identity-swap mode only (`runpod_qwen21_render(_multi)`
+    selections) — see the module-level comment above for why this is a
+    separate graph from `_runpod_qwen_image_graph()`.
+
+    `negative_prompt` defaults to `""`, matching the official recipe for
+    `cfg=1` ("negative_prompt unused while cfg is 1"). The masked
+    multi-character inpaint pass (`_qwen21_multi_character_render`) passes
+    a real one together with a raised `cfg` — see `RUNPOD_QWEN21_RENDER_
+    INPAINT_CFG`/`_INPAINT_NEGATIVE_PROMPT` in config.py and the 2026-10-18
+    CLAUDE.md entry: at `cfg=1` with no negative prompt, classifier-free
+    guidance provides ~no push away from a "generic adult" prior toward a
+    visually very different (e.g. toddler) reference identity.
+
+    `canvas_name` becomes `image_1` (the edit target, per the official
+    template: "image_1 is the edit target. The rest are references.").
+    `reference_names` become `image_2`+ — in practice this project only
+    ever passes one (the identity portrait). The `images.image_N` dotted
+    input-key convention matches `_runpod_qwen_image_graph()`'s own
+    (already verified working in production for character/scene/prop refs)
+    — `TextEncodeQwenImage21`'s `images` input is a ComfyUI "Autogrow" list
+    named `image_1`..`image_16`.
+    """
+    from novelvideo.config import (
+        RUNPOD_QWEN_IMAGE_TEXT_ENCODER,
+        RUNPOD_QWEN_IMAGE_UNET,
+        RUNPOD_QWEN_IMAGE_VAE,
+    )
+
+    graph: dict[str, Any] = {
+        "1": {
+            "class_type": "UNETLoader",
+            "inputs": {"unet_name": RUNPOD_QWEN_IMAGE_UNET, "weight_dtype": "default"},
+        },
+        "2": {
+            "class_type": "CLIPLoader",
+            "inputs": {
+                "clip_name": RUNPOD_QWEN_IMAGE_TEXT_ENCODER,
+                "type": "qwen_image",
+                "device": "default",
+            },
+        },
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": RUNPOD_QWEN_IMAGE_VAE}},
+        "9": {
+            "class_type": "QwenImage21Cache",
+            "inputs": {"model": ["1", 0], "device": "auto", "dtype": "default"},
+        },
+        "10": {"class_type": "LoadImage", "inputs": {"image": canvas_name}},
+    }
+    images_inputs: dict[str, Any] = {"images.image_1": ["10", 0]}
+    for k, name in enumerate(reference_names, start=2):
+        node_id = f"11{k}"
+        graph[node_id] = {"class_type": "LoadImage", "inputs": {"image": name}}
+        images_inputs[f"images.image_{k}"] = [node_id, 0]
+
+    graph["4"] = {
+        "class_type": "TextEncodeQwenImage21",
+        "inputs": {
+            "clip": ["2", 0],
+            "vae": ["3", 0],
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "resolution": 0,
+            **images_inputs,
+        },
+    }
+
+    latent_input = ["4", 2]
+    if mask_name:
+        graph["50"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["10", 0], "vae": ["3", 0]}}
+        graph["90"] = {"class_type": "LoadImage", "inputs": {"image": mask_name}}
+        graph["91"] = {
+            "class_type": "ImageToMask",
+            "inputs": {"image": ["90", 0], "channel": "red"},
+        }
+        graph["52"] = {
+            "class_type": "SetLatentNoiseMask",
+            "inputs": {"samples": ["50", 0], "mask": ["91", 0]},
+        }
+        latent_input = ["52", 0]
+
+    graph["6"] = {
+        "class_type": "KSampler",
+        "inputs": {
+            "model": ["9", 0],
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "positive": ["4", 0],
+            "negative": ["4", 1],
+            "latent_image": latent_input,
+            "denoise": 1.0,
+        },
+    }
+    graph["7"] = {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 0]}}
+    graph["8"] = {
+        "class_type": "SaveImage",
+        "inputs": {"images": ["7", 0], "filename_prefix": "dramaclaw_qwen21_render"},
+    }
+    return graph
+
+
+async def _call_runpod_qwen21_render_image_api(
+    *,
+    api_key: str,
+    model: str,
+    prompt: str,
+    reference_images: list[tuple[str, bytes, str]] | None = None,
+    image_config: dict | None = None,
+    base_url: str | None = None,
+    mask_image: tuple[str, bytes, str] | None = None,
+    cfg: float | None = None,
+    negative_prompt: str = "",
+) -> tuple[bytes | None, str, str]:
+    """Generate an image via the RunPod Qwen-Image 2.1 worker, render/
+    identity-swap mode only (see module comment above
+    `_runpod_qwen21_render_image_graph`).
+
+    `reference_images[0]` becomes `image_1` — the canvas / size-anchor
+    image. For the sketch+mask callers (`runpod_qwen21_render(_multi)`)
+    this MUST be the sketch/pose canvas (the edit target); for the
+    sketch-free "compose" caller (`runpod_qwen21_compose`, added
+    2026-10-18 — see `_build_qwen21_compose_plan()`) it is instead the
+    scene's master background photo, since there is no sketch at all in
+    that mode — the function itself doesn't care which, it just treats
+    `reference_images[0]` as `image_1` generically. The rest become
+    `image_2`+ (in practice just one, the identity portrait, for the
+    sketch-based callers; any number of identities/props for compose).
+    `model`/`base_url` are accepted
+    for call-site symmetry with the other `_call_*_image_api` helpers but
+    unused, same as the other RunPod Qwen callers — this worker always
+    runs the one Qwen-Image 2.1 checkpoint baked into its image.
+
+    `cfg`/`negative_prompt` default to `None`/`""`, which resolve to the
+    official single-character recipe (`RUNPOD_QWEN21_RENDER_CFG`, no
+    negative prompt). The masked multi-character inpaint pass passes its
+    own stronger values explicitly (see `RUNPOD_QWEN21_RENDER_INPAINT_CFG`/
+    `_INPAINT_NEGATIVE_PROMPT` in config.py) — added 2026-10-18 to counter
+    a real observed failure (toddler identities rendered as adults).
+
+    Every image (canvas, references, mask) is pre-resized to an exact
+    multiple of 32 before upload — see `_qwen21_prepare_render_image` and
+    the module comment above for why that matters for this specific graph.
+    """
+    from novelvideo.config import (
+        RUNPOD_QWEN21_RENDER_CFG,
+        RUNPOD_QWEN21_RENDER_IMAGE_SIZE,
+        RUNPOD_QWEN21_RENDER_STEPS,
+        RUNPOD_QWEN_IMAGE_ENDPOINT_ID,
+        RUNPOD_QWEN_IMAGE_TIMEOUT_SECONDS,
+    )
+
+    ref_images = reference_images or []
+    if not ref_images:
+        return None, "", "runpod qwen21 render image requires at least the canvas as reference_images[0]"
+
+    target_area = _RUNPOD_QWEN_IMAGE_SIZE_TARGET_AREA.get(
+        RUNPOD_QWEN21_RENDER_IMAGE_SIZE, _RUNPOD_QWEN_IMAGE_SIZE_TARGET_AREA["1K"]
+    )
+
+    canvas_name, canvas_data, _canvas_mime = ref_images[0]
+    canvas_bytes, canvas_size = _qwen21_prepare_render_image(canvas_data, target_area)
+    prepared: list[tuple[str, bytes, str]] = [(canvas_name, canvas_bytes, "image/png")]
+    for name, data, _mime in ref_images[1:]:
+        ref_bytes, _ref_size = _qwen21_prepare_render_image(data, target_area)
+        prepared.append((name, ref_bytes, "image/png"))
+
+    mask_prepared: tuple[str, bytes, str] | None = None
+    if mask_image:
+        mask_name, mask_data, _mask_mime = mask_image
+        from PIL import Image
+
+        mask_img = (
+            Image.open(io.BytesIO(mask_data)).convert("L").resize(canvas_size, Image.NEAREST)
+        )
+        mask_buf = io.BytesIO()
+        mask_img.save(mask_buf, format="PNG")
+        mask_prepared = (mask_name, mask_buf.getvalue(), "image/png")
+
+    graph = _runpod_qwen21_render_image_graph(
+        prompt,
+        prepared[0][0],
+        [name for name, _data, _mime in prepared[1:]],
+        uuid.uuid4().int & 0xFFFFFFFF,
+        mask_name=mask_prepared[0] if mask_prepared else None,
+        steps=RUNPOD_QWEN21_RENDER_STEPS,
+        cfg=cfg if cfg is not None else RUNPOD_QWEN21_RENDER_CFG,
+        negative_prompt=negative_prompt,
+    )
+
+    upload_batch = list(prepared)
+    if mask_prepared:
+        upload_batch.append(mask_prepared)
+
+    return await _runpod_run_graph_job(
+        api_key=api_key,
+        endpoint_id=RUNPOD_QWEN_IMAGE_ENDPOINT_ID,
+        timeout_seconds=RUNPOD_QWEN_IMAGE_TIMEOUT_SECONDS,
+        graph=graph,
+        upload_batch=upload_batch,
+        label="runpod qwen21 render image",
+    )
+
+
 # Dev-only, render-only: Qwen-Image-Edit-2511 on the same RunPod worker as
 # the Qwen-Image 2.1 provider above, but a genuinely different model/node
 # family (original 20B Qwen-Image architecture + Qwen2.5-VL-7B text
@@ -5405,8 +5818,414 @@ def _qwen_edit_identity_mask(
     return mask_img, bbox
 
 
-async def _qwen_edit_multi_character_render(
+def _qwen_edit_char_name_for_identity(identity_id: str, character_map: dict) -> str:
+    if identity_id in character_map:
+        return identity_id
+    for char_name in character_map:
+        if identity_id == char_name or identity_id.startswith(f"{char_name}_"):
+            return char_name
+    return identity_id
+
+
+def qwen_edit_identity_references(character_map: Dict[str, dict], beat: dict) -> list[dict]:
+    """Resolve `beat['detected_identities']` into `{identity_id, name, path,
+    appearance_details}` entries for the Qwen-Image-Edit-2511 render path
+    (single- and multi-character) AND its review endpoint
+    (`api/routes/generation.py`'s `render/review`) — the SAME resolution
+    both use, so the reference image(s) shown in review are exactly what
+    render/execute actually sends (previously the single-character path
+    sent whatever reference happened to be first in the Gemini-oriented
+    reference-image plan, which is not necessarily the tagged identity's
+    own portrait). Mirrors `_h3_identity_references` in
+    `api/routes/generation.py` (same identity->character_map matching) —
+    kept as a separate copy here because generators must not import from
+    api.routes.
+    """
+    out: list[dict] = []
+    for identity_id in real_detected_identities(beat.get("detected_identities")):
+        char_name = _qwen_edit_char_name_for_identity(identity_id, character_map)
+        info = character_map.get(char_name)
+        if not info:
+            continue
+        identity_name = (
+            identity_id[len(char_name) + 1 :] if identity_id.startswith(f"{char_name}_") else ""
+        )
+        match = next(
+            (
+                ident
+                for ident in info.get("identities") or []
+                if ident.get("identity_name") == identity_name
+            ),
+            None,
+        )
+        path = (match or {}).get("primary_reference") or ""
+        appearance = (match or {}).get("appearance_details") or ""
+        if not path or not os.path.exists(path):
+            path = info.get("portrait_path") or ""
+        if not appearance:
+            appearance = info.get("appearance_details") or ""
+        if not path or not os.path.exists(path):
+            continue
+        out.append(
+            {
+                "identity_id": identity_id,
+                "name": char_name,
+                "path": str(path),
+                "appearance_details": appearance,
+            }
+        )
+    return out
+
+
+def qwen_edit_subject_body_hints(character_map: Dict[str, dict], beat: dict) -> list[str]:
+    """Short, non-identifying body-size/age hints (e.g. "a small child with
+    a toddler build") for each identity detected in `beat`, used ONLY by
+    `build_qwen21_render_prompt(stage="scene_only")` — see that function's
+    docstring for why `scene_only` needs this but must stay identity-blind
+    (name, face description and portrait are never included here, only
+    `body_type` text).
+
+    Resolves identity -> character the same way `qwen_edit_identity_references`
+    does (incl. the identity-level lookup into `info["identities"]` matched
+    by `identity_name` — NOT the `identity_body_types`-dict shape
+    `agents/global_video_optimizer.py` builds for an unrelated, differently-
+    shaped `char_map`; this function's `character_map` comes from
+    `api/routes/generation.py:_build_character_map` /
+    `services/character_ref_service.py`, confirmed by a real live call
+    2026-10-18 after the first version of this function silently returned
+    no hints against that shape), then falls back to the character-level
+    `body_type`. Added 2026-10-18: a real multi-character render (two
+    toddler characters) came out as two unrelated adults, traced to
+    `scene_only` having zero body-proportion signal and defaulting to an
+    adult statistical prior — see `.claude/CLAUDE.md`.
+    """
+    hints: list[str] = []
+    seen: set[str] = set()
+    for identity_id in real_detected_identities(beat.get("detected_identities")):
+        char_name = _qwen_edit_char_name_for_identity(identity_id, character_map)
+        info = character_map.get(char_name)
+        if not info:
+            continue
+        identity_name = (
+            identity_id[len(char_name) + 1 :] if identity_id.startswith(f"{char_name}_") else ""
+        )
+        match = next(
+            (
+                ident
+                for ident in info.get("identities") or []
+                if ident.get("identity_name") == identity_name
+            ),
+            None,
+        )
+        body_type = (match or {}).get("body_type") or info.get("body_type", "")
+        body_type = str(body_type or "").strip()
+        if body_type and body_type not in seen:
+            seen.add(body_type)
+            hints.append(body_type)
+    return hints
+
+
+def qwen_edit_load_identity_ref_bytes(
+    character_map: Dict[str, dict], beat: dict
+) -> Optional[tuple]:
+    """First identity reference for the single-character
+    (`runpod_qwen_edit_render`) path, as `(filename, bytes, mime)` —
+    `None` if the beat has no detected identity with a resolvable
+    reference image (caller falls back to the old reference-plan-order
+    behavior in that case)."""
+    refs = qwen_edit_identity_references(character_map, beat)
+    if not refs:
+        return None
+    path = refs[0]["path"]
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    mime = mimetypes.guess_type(path)[0] or "image/png"
+    return os.path.basename(path), data, mime
+
+
+def _qwen21_compose_identity_name_map(character_map: Dict[str, dict], beat: dict) -> Dict[str, str]:
+    """ALL `{{id}}` markers in this beat -> plain character name, for
+    `build_qwen21_compose_prompt()`'s `identity_names` param — a superset
+    of `real_detected_identities(...)` that also covers identities with
+    NO resolvable portrait (named in the scene text, just not imaged).
+    Ports the `{{id}}`->name substitution `api/routes/generation.py`'s
+    `_h3_replace_identity_markers()` already does for the H3 video-prompt
+    rewriter — kept as a separate copy here because generators must not
+    import from api.routes (same precedent as
+    `qwen_edit_identity_references()`'s own docstring above)."""
+    ids = set(real_detected_identities(beat.get("detected_identities")))
+    visual_desc = str(beat.get("visual_description") or "")
+    ids.update(m.group(1) for m in re.finditer(r"\{\{([^}]*)\}\}", visual_desc))
+    return {
+        identity_id: _qwen_edit_char_name_for_identity(identity_id, character_map)
+        for identity_id in ids
+        if identity_id
+    }
+
+
+def _qwen21_compose_normalize_prop_name(value: str) -> str:
+    text = (value or "").strip()
+    text = re.sub(r"[·•．。,:：，、／/（）()\\-]+", "", text)
+    return text.lower()
+
+
+def _qwen21_compose_prop_name_map(beat: dict, prop_refs: list) -> Dict[str, str]:
+    """ALL `[[prop_id]]` markers in this beat -> plain prop display name.
+    Unlike identities there is no separate per-prop display-name
+    resolver anywhere in the codebase — `ResolvedAssetRef.base_id` IS
+    already the display name (the `props.name` DB column stores it
+    directly, e.g. "bucket", "Teddy bears" — see
+    `AssetResolver.resolve_props_for_beat()`), so this just collects
+    every marker/detected prop id and matches it to a resolved ref by
+    normalized name, falling back to the marker text itself when nothing
+    resolved (prop mentioned in text but has no reference image)."""
+    ids: set = set(real_detected_props(beat.get("detected_props")))
+    ids.update(collect_prop_marker_ids_from_beat(beat))
+    resolved_by_normalized = {
+        _qwen21_compose_normalize_prop_name(ref.base_id): ref.base_id
+        for ref in (prop_refs or [])
+        if getattr(ref, "asset_type", "") == "prop"
+    }
+    names: Dict[str, str] = {}
+    for prop_id in ids:
+        if not prop_id:
+            continue
+        names[prop_id] = resolved_by_normalized.get(
+            _qwen21_compose_normalize_prop_name(prop_id), prop_id
+        )
+    return names
+
+
+def _qwen21_compose_parse_aspect_ratio(value: str) -> Optional[float]:
+    try:
+        w_str, h_str = str(value or "").split(":")
+        w, h = float(w_str), float(h_str)
+        if w > 0 and h > 0:
+            return w / h
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
+def _qwen21_compose_center_crop_to_aspect(data: bytes, aspect_ratio: str) -> bytes:
+    """Center-crop image bytes to the given `W:H` aspect ratio string
+    (e.g. "2:3"), re-encoded as PNG. Used by `_build_qwen21_compose_plan`
+    to crop the scene master background to the project's render aspect
+    before it becomes `<image1>` — see `RUNPOD_QWEN21_COMPOSE_CROP_TO_
+    MODE_ASPECT` in config.py for why: the scene master's own aspect
+    (often 16:9) is otherwise unrelated to the project's render aspect
+    (e.g. 2:3), and unlike the sketch+mask path there is no sketch file
+    here to naturally pin the output's aspect. No-op (returns the
+    original bytes unchanged) if `aspect_ratio` can't be parsed."""
+    target = _qwen21_compose_parse_aspect_ratio(aspect_ratio)
+    if target is None:
+        return data
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(data))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    width, height = img.size
+    current = width / height if height else 0
+    if current > target:
+        new_width = max(1, round(height * target))
+        left = (width - new_width) // 2
+        img = img.crop((left, 0, left + new_width, height))
+    elif current < target:
+        new_height = max(1, round(width / target))
+        top = (height - new_height) // 2
+        img = img.crop((0, top, width, top + new_height))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@dataclass
+class Qwen21ComposePlan:
+    prompt: str
+    reference_images: List[tuple]  # [(filename, bytes, mime), ...], image1 first
+    audit_refs: List[dict]  # for submitted.json, mirrors other providers' shape
+
+
+def _build_qwen21_compose_plan(
     *,
+    beat: dict,
+    character_map: Dict[str, dict],
+    scene_refs: Dict[int, list],
+    prop_refs: Dict[int, list],
+    mode_key: Optional[str],
+) -> tuple:
+    """Build the full RunPod-ready plan (prompt + ordered unique-named
+    reference images) for the sketch-free "compose" render mode
+    (`runpod_qwen21_compose`, added 2026-10-18) — see that selection's
+    docstring in config.py for why this mode exists and what it fixes
+    over the sketch+mask `runpod_qwen21_render(_multi)` paths.
+
+    `scene_refs`/`prop_refs` are `generate_grid()`'s own already-resolved
+    `AssetResolver.resolve_all_for_beats()` output (1-based panel-index
+    dicts — render mode's single beat is always panel 1) — this function
+    does not re-resolve them, only picks the right entries out and reads
+    their files. Returns `(plan, "")` on success or `(None, error)`.
+
+    Reference order is always: scene background (`<image1>`), then every
+    identity with a resolvable portrait (`qwen_edit_identity_references()`
+    — the SAME resolver the sketch+mask path already uses, so review/
+    audit stays consistent), then every prop with a resolvable reference
+    image. Each gets a unique filename via `_webai_ref_filename(i, mime)`
+    — two references sharing a source basename (e.g. two characters both
+    having a file literally named `primary.png`) would otherwise collide
+    inside one RunPod job, since the worker's `LoadImage` reads by name,
+    not by the R2 object's sha256 key.
+    """
+    MAX_REFERENCE_IMAGES = 16  # TextEncodeQwenImage21's images.image_1..image_16 Autogrow cap
+
+    beat_scene_refs = (scene_refs or {}).get(1) or []
+    beat_prop_refs = (prop_refs or {}).get(1) or []
+
+    scene_ref = next(
+        (
+            ref
+            for ref in beat_scene_refs
+            if getattr(ref, "asset_type", "") == "scene"
+            and getattr(ref, "source_level", "") != "scene_master_detail"
+            and (ref.image_paths or [None])[0]
+            and os.path.exists((ref.image_paths or [None])[0])
+        ),
+        None,
+    )
+    if scene_ref is None:
+        return None, "Qwen 2.1 compose 需要场景主图（场景参考图未配置或文件缺失）"
+
+    identity_refs = qwen_edit_identity_references(character_map, beat)
+    prop_image_refs = [
+        ref
+        for ref in beat_prop_refs
+        if getattr(ref, "asset_type", "") == "prop"
+        and (ref.image_paths or [None])[0]
+        and os.path.exists((ref.image_paths or [None])[0])
+    ]
+
+    total = 1 + len(identity_refs) + len(prop_image_refs)
+    if total > MAX_REFERENCE_IMAGES:
+        keep_props = max(0, MAX_REFERENCE_IMAGES - 1 - len(identity_refs))
+        dropped = len(prop_image_refs) - keep_props
+        print(
+            f"[Qwen21Compose] 参考图超过 {MAX_REFERENCE_IMAGES} 张上限，"
+            f"丢弃 {dropped} 个道具参考（优先保留场景+身份）"
+        )
+        prop_image_refs = prop_image_refs[:keep_props]
+
+    scene_path = scene_ref.image_paths[0]
+    try:
+        with open(scene_path, "rb") as f:
+            scene_bytes = f.read()
+    except OSError as exc:
+        return None, f"Qwen 2.1 compose 场景主图读取失败: {exc}"
+
+    from novelvideo.config import RUNPOD_QWEN21_COMPOSE_CROP_TO_MODE_ASPECT
+
+    if RUNPOD_QWEN21_COMPOSE_CROP_TO_MODE_ASPECT and mode_key and mode_key in REGEN_MODE_CONFIGS:
+        aspect = REGEN_MODE_CONFIGS[mode_key].get("aspect_ratio") or ""
+        if aspect:
+            scene_bytes = _qwen21_compose_center_crop_to_aspect(scene_bytes, aspect)
+
+    scene_mime = mimetypes.guess_type(scene_path)[0] or "image/png"
+    reference_images: List[tuple] = [(_webai_ref_filename(0, scene_mime), scene_bytes, scene_mime)]
+    audit_refs: List[dict] = [
+        {"kind": "scene", "base_id": scene_ref.base_id, "path": scene_path, "image_tag": "<image1>"}
+    ]
+    identity_images: List[tuple] = []
+    prop_images: List[tuple] = []
+    idx = 1
+
+    for ref in identity_refs:
+        path = ref["path"]
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            continue
+        mime = mimetypes.guess_type(path)[0] or "image/png"
+        reference_images.append((_webai_ref_filename(idx, mime), data, mime))
+        audit_refs.append(
+            {
+                "kind": "identity",
+                "base_id": ref["identity_id"],
+                "path": path,
+                "image_tag": f"<image{idx + 1}>",
+            }
+        )
+        identity_images.append((ref["identity_id"], ref["name"]))
+        idx += 1
+
+    for ref in prop_image_refs:
+        path = ref.image_paths[0]
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            continue
+        mime = mimetypes.guess_type(path)[0] or "image/png"
+        reference_images.append((_webai_ref_filename(idx, mime), data, mime))
+        audit_refs.append(
+            {"kind": "prop", "base_id": ref.base_id, "path": path, "image_tag": f"<image{idx + 1}>"}
+        )
+        prop_images.append((ref.base_id, ref.base_id))
+        idx += 1
+
+    identity_names = _qwen21_compose_identity_name_map(character_map, beat)
+    prop_names = _qwen21_compose_prop_name_map(beat, beat_prop_refs)
+
+    prompt = build_qwen21_compose_prompt(
+        beat,
+        identity_images=identity_images,
+        prop_images=prop_images,
+        identity_names=identity_names,
+        prop_names=prop_names,
+    )
+
+    from novelvideo.agents.qwen21_compose_prompt_lint import lint_qwen21_compose_prompt
+
+    lint_issues = lint_qwen21_compose_prompt(prompt, len(reference_images))
+    if lint_issues:
+        print(f"[Qwen21Compose] prompt lint warnings: {lint_issues}")
+
+    return (
+        Qwen21ComposePlan(prompt=prompt, reference_images=reference_images, audit_refs=audit_refs),
+        "",
+    )
+
+
+def build_qwen_edit_mask_preview(canvas_bytes: bytes, hex_color: str) -> Optional[bytes]:
+    """PNG preview of `_qwen_edit_identity_mask`'s located region, as a red
+    translucent overlay on top of the sketch canvas — used by the render
+    review endpoint so the multi-character dialog can show, before
+    spending ~10 minutes of GPU time, which part of the sketch each
+    identity's inpaint pass will actually touch. Returns `None` if the
+    color wasn't found (same threshold as the real render path)."""
+    from PIL import Image
+
+    located = _qwen_edit_identity_mask(canvas_bytes, hex_color)
+    if not located:
+        return None
+    mask_img, _bbox = located
+    base = Image.open(io.BytesIO(canvas_bytes)).convert("RGBA")
+    overlay = Image.new("RGBA", base.size, (255, 0, 0, 0))
+    red_layer = Image.new("RGBA", base.size, (255, 32, 32, 140))
+    overlay.paste(red_layer, (0, 0), mask_img.resize(base.size))
+    composed = Image.alpha_composite(base, overlay)
+    buf = io.BytesIO()
+    composed.convert("RGB").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def _two_pass_multi_character_render(
+    *,
+    call_image_api: Callable[..., Awaitable[tuple]],
+    build_prompt: Callable[..., str],
     api_key: str,
     model: str,
     canvas_bytes: bytes,
@@ -5414,10 +6233,29 @@ async def _qwen_edit_multi_character_render(
     beats: List[dict],
     grid_capacity: int,
     character_map: Dict[str, dict],
-    submitted_refs: list,
+    scene_prompt_override: str = "",
+    inpaint_prompts_override: Optional[Dict[str, str]] = None,
 ) -> tuple:
-    """Two-pass Qwen-Image-Edit-2511 render for beats with more than one
-    character in the sketch.
+    """Two-pass masked-inpaint multi-character render, generic over which
+    RunPod Qwen image API/prompt-builder pair does the actual work.
+
+    Extracted 2026-10-18 from what was `_qwen_edit_multi_character_render`
+    (Qwen-Image-Edit-2511 only) so the same proven design — mechanical,
+    mask-based identity disambiguation, not a text-prompt guess — could be
+    reused for the Qwen-Image 2.1 render path
+    (`_qwen21_multi_character_render`) without copy-pasting ~150 lines.
+    `call_image_api` and `build_prompt` are the only provider-specific
+    pieces; everything else below (mask location/grow/feather, identity
+    resolution) is already provider-agnostic.
+
+    Two earlier single-pass attempts to disambiguate by naming the sketch's
+    per-character mannequin color in the text prompt (e.g. "the
+    magenta-colored mannequin figure") both failed in real testing on beat
+    6 (teacher + Tesla, 2026-10-14, Qwen-Image-Edit-2511): the model kept
+    assigning Tesla's face to the visually-dominant standing teacher, and
+    the second attempt additionally painted a literal magenta T-shirt onto
+    an unrelated student — it read the color as a clothing instruction, not
+    a locator.
 
     Two earlier single-pass attempts to disambiguate by naming the sketch's
     per-character mannequin color in the text prompt (e.g. "the
@@ -5429,10 +6267,9 @@ async def _qwen_edit_multi_character_render(
 
     This replaces that with a mechanical, graph-free approach in two RunPod
     calls:
-    - Pass 1 (`build_qwen_edit_render_prompt(stage="scene_only")`) turns
-      the WHOLE sketch into a photorealistic photo with no identity
-      reference at all, so every figure becomes a generic
-      period-appropriate person.
+    - Pass 1 (`build_prompt(stage="scene_only")`) turns the WHOLE sketch
+      into a photorealistic photo with no identity reference at all, so
+      every figure becomes a generic period-appropriate person.
     - Pass 2 crops pass 1's result around each detected identity's own
       sketch-mannequin color region (`_qwen_edit_identity_mask`, located in
       the ORIGINAL sketch canvas — the color only exists there, not in
@@ -5442,76 +6279,61 @@ async def _qwen_edit_multi_character_render(
       nothing left for the model to misidentify — then pastes the result
       back with a feathered mask so pixels outside the crop are untouched.
 
-    `submitted_refs` is the `generate_grid()` render-mode reference-image
-    audit list (kind/base_id/path per attached reference) already built
-    before the provider dispatch — reused here to resolve each identity's
-    own portrait file, instead of guessing index alignment in `ref_bytes`.
+    Identity portraits are resolved by `qwen_edit_identity_references()` —
+    the SAME resolution the render/review endpoint uses to show references
+    up front, so what pass 2 actually sends always matches what review
+    displayed (previously this looked up a character's portrait through
+    the Gemini-oriented `submitted_refs` reference-image audit list, which
+    keys only by base character name and could miss/mismatch an identity
+    with no entry there).
+
+    `scene_prompt_override`/`inpaint_prompts_override` (keyed by
+    identity_id), when given, replace `build_prompt()`'s defaults — set by
+    the caller from a saved/AI-rewritten/hand-edited prompt
+    (`generators/qwen_edit_prompt_store.py`).
     """
     scoped_beats = beats[:grid_capacity]
     render_beat = (scoped_beats or [None])[0] or {}
     identity_ids = real_detected_identities(render_beat.get("detected_identities"))
+    inpaint_prompts_override = inpaint_prompts_override or {}
 
-    scene_prompt = build_qwen_edit_render_prompt(scoped_beats, stage="scene_only")
+    subject_hints = qwen_edit_subject_body_hints(character_map, render_beat)
+    scene_prompt = scene_prompt_override or build_prompt(
+        scoped_beats, stage="scene_only", subject_hints=subject_hints
+    )
+    prompts_used: dict = {"scene_prompt": scene_prompt, "inpaint_prompts": {}}
     canvas_name = _webai_ref_filename(0, canvas_mime)
-    p1_bytes, _p1_text, p1_error = await _call_runpod_qwen_edit_image_api(
+    p1_bytes, _p1_text, p1_error = await call_image_api(
         api_key=api_key,
         model=model,
         prompt=scene_prompt,
         reference_images=[(canvas_name, canvas_bytes, canvas_mime)],
     )
     if not p1_bytes:
-        return None, "", f"multi-character pass 1 (scene_only) failed: {p1_error}"
+        return None, "", f"multi-character pass 1 (scene_only) failed: {p1_error}", prompts_used
     if not identity_ids:
-        return p1_bytes, "", ""
+        return p1_bytes, "", "", prompts_used
 
     from PIL import Image, ImageFilter
 
     result_img = Image.open(io.BytesIO(p1_bytes)).convert("RGB")
     result_w, result_h = result_img.size
 
-    # audit_refs/submitted_refs records "base_id" as the CHARACTER name
-    # (e.g. "Nikola Tesla"), not the per-period identity id (e.g. "Nikola
-    # Tesla_1893 Chicago时期") — _append_reference_parts_from_plan already
-    # resolved the correct identity-specific portrait file for whichever
-    # identity is in this beat, it just files the audit entry under the
-    # base character name. Key the lookup table by that base name and
-    # resolve each identity_id down to its base name the same way
-    # _color_for_identity() does, instead of matching identity_id directly
-    # (observed 2026-10-14: matching directly made every identity look up
-    # as "no portrait reference" and silently skip pass 2 entirely).
-    ref_by_char_name: dict = {}
-    for entry in submitted_refs:
-        if entry.get("kind") not in {"composite", "portrait_only", "identity_portrait"}:
-            continue
-        char_name = entry.get("base_id") or ""
-        path = entry.get("path") or ""
-        if not char_name or char_name in ref_by_char_name:
-            continue
-        if not path or not os.path.exists(path):
-            continue
+    ref_by_identity: dict = {}
+    for ref in qwen_edit_identity_references(character_map, render_beat):
+        path = ref["path"]
         mime = mimetypes.guess_type(path)[0] or "image/png"
-        with open(path, "rb") as f:
-            ref_by_char_name[char_name] = (os.path.basename(path), f.read(), mime)
+        try:
+            with open(path, "rb") as f:
+                ref_by_identity[ref["identity_id"]] = (os.path.basename(path), f.read(), mime)
+        except OSError:
+            continue
 
-    def _char_name_for_identity(identity_id: str) -> str:
-        if identity_id in character_map:
-            return identity_id
-        for char_name in character_map:
-            if identity_id == char_name or identity_id.startswith(f"{char_name}_"):
-                return char_name
-        return identity_id
-
-    # stage="inpaint", not "full"/"crop_identity" — image1 here is the
-    # WHOLE pass-1 photo (not a crop), and SetLatentNoiseMask (not prompt
-    # wording) is what actually constrains where pixels can change. See
-    # build_qwen_edit_render_prompt docstring and the module docstring
-    # above _runpod_qwen_edit_image_graph for why this replaced the
-    # crop-and-paste design (2026-10-14 collage artifact).
-    inpaint_prompt = build_qwen_edit_render_prompt(scoped_beats, stage="inpaint")
+    inpaint_prompt_default = build_prompt(scoped_beats, stage="inpaint")
     applied: list = []
     skipped: list = []
     for identity_id in identity_ids:
-        ref = ref_by_char_name.get(_char_name_for_identity(identity_id))
+        ref = ref_by_identity.get(identity_id)
         if not ref:
             skipped.append(f"{identity_id}(no portrait reference)")
             continue
@@ -5524,6 +6346,8 @@ async def _qwen_edit_multi_character_render(
             skipped.append(f"{identity_id}(color not found in sketch)")
             continue
         mask_img, _bbox = located
+        inpaint_prompt = inpaint_prompts_override.get(identity_id) or inpaint_prompt_default
+        prompts_used["inpaint_prompts"][identity_id] = inpaint_prompt
 
         # Mask is detected at the ORIGINAL sketch canvas's resolution (the
         # color only exists there) — resize to match the current result
@@ -5543,7 +6367,7 @@ async def _qwen_edit_multi_character_render(
         full_mask.save(mask_buf, format="PNG")
         ref_name, ref_bytes_data, ref_mime = ref
 
-        swap_bytes, _swap_text, swap_error = await _call_runpod_qwen_edit_image_api(
+        swap_bytes, _swap_text, swap_error = await call_image_api(
             api_key=api_key,
             model=model,
             prompt=inpaint_prompt,
@@ -5564,12 +6388,127 @@ async def _qwen_edit_multi_character_render(
         applied.append(identity_id)
 
     if skipped:
-        print(f"[NanoBananaPro] Qwen Edit 2511 multi-character: applied={applied} skipped={skipped}")
+        print(f"[NanoBananaPro] multi-character render: applied={applied} skipped={skipped}")
 
     out_buf = io.BytesIO()
     result_img.save(out_buf, format="PNG")
     error_note = f"applied={applied} skipped={skipped}" if skipped else ""
-    return out_buf.getvalue(), "", error_note
+    return out_buf.getvalue(), "", error_note, prompts_used
+
+
+async def _qwen_edit_multi_character_render(
+    *,
+    api_key: str,
+    model: str,
+    canvas_bytes: bytes,
+    canvas_mime: str,
+    beats: List[dict],
+    grid_capacity: int,
+    character_map: Dict[str, dict],
+    scene_prompt_override: str = "",
+    inpaint_prompts_override: Optional[Dict[str, str]] = None,
+) -> tuple:
+    """Qwen-Image-Edit-2511 multi-character render — thin wrapper over
+    `_two_pass_multi_character_render()`. See that function's docstring for
+    the design; this just supplies the Edit-2511-specific API caller and
+    prompt builder. Kept as its own function (same name, same signature,
+    same behavior as before the 2026-10-18 refactor) so every existing
+    caller/test keeps working unchanged."""
+    return await _two_pass_multi_character_render(
+        call_image_api=_call_runpod_qwen_edit_image_api,
+        build_prompt=build_qwen_edit_render_prompt,
+        api_key=api_key,
+        model=model,
+        canvas_bytes=canvas_bytes,
+        canvas_mime=canvas_mime,
+        beats=beats,
+        grid_capacity=grid_capacity,
+        character_map=character_map,
+        scene_prompt_override=scene_prompt_override,
+        inpaint_prompts_override=inpaint_prompts_override,
+    )
+
+
+async def _qwen21_render_call_image_api_for_multi_character(
+    *,
+    api_key: str,
+    model: str,
+    prompt: str,
+    reference_images: list[tuple[str, bytes, str]] | None = None,
+    image_config: dict | None = None,
+    base_url: str | None = None,
+    mask_image: tuple[str, bytes, str] | None = None,
+) -> tuple:
+    """`call_image_api` passed to `_two_pass_multi_character_render` by
+    `_qwen21_multi_character_render` only — identical to
+    `_call_runpod_qwen21_render_image_api` for pass 1 (`mask_image=None`,
+    the identity-blind `scene_only` call keeps the official `cfg=1`/no
+    negative prompt recipe), but for pass 2 (the masked identity-swap call)
+    raises `cfg` and adds a real negative prompt
+    (`RUNPOD_QWEN21_RENDER_INPAINT_CFG`/`_INPAINT_NEGATIVE_PROMPT` in
+    config.py). Added 2026-10-18: at the official `cfg=1`, there is
+    effectively no classifier-free guidance pushing the masked region's
+    output away from "generic adult, consistent with the rest of the
+    already-generated scene" and toward a visually very different
+    reference identity — confirmed by a real failure (two toddler
+    characters inpainted as unrelated adults). Kept as a separate wrapper
+    (not a change to `_call_runpod_qwen21_render_image_api`'s own defaults)
+    so the already-verified single-character `full` path is untouched."""
+    from novelvideo.config import (
+        RUNPOD_QWEN21_RENDER_INPAINT_CFG,
+        RUNPOD_QWEN21_RENDER_INPAINT_NEGATIVE_PROMPT,
+    )
+
+    extra: dict = {}
+    if mask_image is not None:
+        extra["cfg"] = RUNPOD_QWEN21_RENDER_INPAINT_CFG
+        extra["negative_prompt"] = RUNPOD_QWEN21_RENDER_INPAINT_NEGATIVE_PROMPT
+    return await _call_runpod_qwen21_render_image_api(
+        api_key=api_key,
+        model=model,
+        prompt=prompt,
+        reference_images=reference_images,
+        image_config=image_config,
+        base_url=base_url,
+        mask_image=mask_image,
+        **extra,
+    )
+
+
+async def _qwen21_multi_character_render(
+    *,
+    api_key: str,
+    model: str,
+    canvas_bytes: bytes,
+    canvas_mime: str,
+    beats: List[dict],
+    grid_capacity: int,
+    character_map: Dict[str, dict],
+    scene_prompt_override: str = "",
+    inpaint_prompts_override: Optional[Dict[str, str]] = None,
+) -> tuple:
+    """Qwen-Image 2.1 multi-character render — thin wrapper over
+    `_two_pass_multi_character_render()`, supplying the 2.1-specific API
+    caller and prompt builder. See `_runpod_qwen21_render_image_graph`'s
+    module comment for why 2.1's masked inpaint pass needs a real
+    `VAEEncode(canvas)` (handled inside `_call_runpod_qwen21_render_image_api`
+    via its `mask_image` parameter), not the text encoder's own zero latent.
+    Uses `_qwen21_render_call_image_api_for_multi_character` (not the bare
+    API caller) so the masked pass gets the boosted cfg/negative-prompt —
+    see that wrapper's docstring."""
+    return await _two_pass_multi_character_render(
+        call_image_api=_qwen21_render_call_image_api_for_multi_character,
+        build_prompt=build_qwen21_render_prompt,
+        api_key=api_key,
+        model=model,
+        canvas_bytes=canvas_bytes,
+        canvas_mime=canvas_mime,
+        beats=beats,
+        grid_capacity=grid_capacity,
+        character_map=character_map,
+        scene_prompt_override=scene_prompt_override,
+        inpaint_prompts_override=inpaint_prompts_override,
+    )
 
 
 async def _call_huimeng_image_api(
@@ -5719,6 +6658,10 @@ class NanoBananaGridGenerator:
                 key_name = "RUNPOD_API_KEY"
             elif self.provider == "runpod_qwen_edit":
                 key_name = "RUNPOD_API_KEY"
+            elif self.provider == "runpod_qwen21_render":
+                key_name = "RUNPOD_API_KEY"
+            elif self.provider == "runpod_qwen21_compose":
+                key_name = "RUNPOD_API_KEY"
             else:
                 key_name = "GOOGLE_AI_API_KEY"
             raise ValueError(f"API key not set. Set {key_name} environment variable.")
@@ -5772,6 +6715,7 @@ class NanoBananaGridGenerator:
             List[int]
         ] = None,  # 仅这些 beat 使用导演参考
         director_control_frames_dir: str | Path | None = None,
+        qwen_edit_prompts: Optional[dict] = None,  # runpod_qwen_edit only — saved/AI-rewritten/hand-edited prompt override, per beat
     ) -> GridGenerationResult:
         """生成网格图。
 
@@ -5879,6 +6823,7 @@ class NanoBananaGridGenerator:
             # 分流：Sketch 模式 vs Render 模式
             # 统一使用 UnifiedPromptBuilder 以确保导出和生成使用相同的提示词
             is_render_mode = False  # 标记是否为 Render 模式
+            compose_plan: Optional[Qwen21ComposePlan] = None  # runpod_qwen21_compose only
             project_dir = _infer_project_dir(output_path, sketch_dir)
             episode_number = (
                 int(explicit_episode_number)
@@ -6033,6 +6978,40 @@ class NanoBananaGridGenerator:
                 )
                 builder = UnifiedPromptBuilder(ctx)
                 prompt = builder.build()
+
+            elif self.provider == "runpod_qwen21_compose":
+                # Sketch-FREE "compose" render mode (added 2026-10-18) — see
+                # config.py's RUNPOD_QWEN21_COMPOSE_SELECTION_KEYS docstring
+                # and _build_qwen21_compose_plan()'s own docstring. Must be
+                # its own branch here, not just in the dispatch switch below
+                # (`elif self.provider == "runpod_qwen21_compose":` further
+                # down): every other branch in this chain either requires a
+                # sketch (`if sketch:`) or a sketch directory
+                # (`elif sketch_dir:`, falls through to the hard "需要 sketch
+                # 或 sketch_dir" error at the bottom otherwise) — this mode
+                # has neither, by design.
+                print("[NanoBananaPro] 进入 Qwen 2.1 Compose 模式（无草图）")
+                if len(beats[:grid_capacity]) != 1 or grid_capacity != 1:
+                    return GridGenerationResult(
+                        success=False,
+                        error="Qwen 2.1 compose 仅支持单 beat 1x1 渲染",
+                        generation_time=time.time() - start_time,
+                    )
+                compose_plan, compose_err = _build_qwen21_compose_plan(
+                    beat=beats[0],
+                    character_map=valid_character_map,
+                    scene_refs=scene_refs,
+                    prop_refs=prop_asset_refs,
+                    mode_key=mode_key,
+                )
+                if compose_plan is None:
+                    return GridGenerationResult(
+                        success=False,
+                        error=compose_err,
+                        generation_time=time.time() - start_time,
+                    )
+                prompt = compose_plan.prompt
+                is_render_mode = True
 
             elif sketch_dir:
                 # Render 模式：通过 find_sketch_for_beat_range 在草图目录中定位对应的草图
@@ -6299,6 +7278,14 @@ class NanoBananaGridGenerator:
                         verbose=True,
                         audit_refs=submitted_refs,
                     )
+            elif compose_plan is not None:
+                # Sketch-free compose mode: no `ctx` was ever built above
+                # (that only happens inside the `if sketch:`/`elif sketch_dir:`
+                # branches), so `resolve_render_reference_order(ctx, ...)`
+                # below would raise NameError for this path — its own plan
+                # already carries the full, correctly-ordered reference-image
+                # audit trail from `_build_qwen21_compose_plan()`.
+                submitted_refs.extend(compose_plan.audit_refs)
             else:
                 ordered_chars = resolve_render_reference_order(
                     ctx, beats, grid_capacity, valid_character_map
@@ -6589,16 +7576,21 @@ class NanoBananaGridGenerator:
                 if not ref_bytes:
                     return _usage_fail("RunPod Qwen Image Edit 2511 缺少草图输入")
                 _canvas_bytes, _canvas_mime = ref_bytes[0]
+                _qwen_edit_prompts_used: dict = {}
                 if self.qwen_edit_multi_character:
                     # Two-pass path for beats with more than one character
                     # in the sketch — see _qwen_edit_multi_character_render
                     # module docstring for why a single text-prompt pass
                     # (tried twice, both failed on beat 6) was replaced with
-                    # this. Uses `submitted_refs` (already built above by
-                    # _append_reference_parts_from_plan) to resolve each
-                    # identity's own portrait, instead of guessing index
-                    # alignment in ref_bytes.
-                    image_bytes, _text, runpod_edit_error = await _qwen_edit_multi_character_render(
+                    # this. Identity portraits are resolved by
+                    # qwen_edit_identity_references(), the same lookup the
+                    # render/review endpoint uses.
+                    (
+                        image_bytes,
+                        _text,
+                        runpod_edit_error,
+                        _qwen_edit_prompts_used,
+                    ) = await _qwen_edit_multi_character_render(
                         api_key=self.api_key,
                         model=self.model,
                         canvas_bytes=_canvas_bytes,
@@ -6606,24 +7598,189 @@ class NanoBananaGridGenerator:
                         beats=beats,
                         grid_capacity=grid_capacity,
                         character_map=character_map,
-                        submitted_refs=submitted_refs,
+                        scene_prompt_override=(qwen_edit_prompts or {}).get("scene_prompt", ""),
+                        inpaint_prompts_override=(qwen_edit_prompts or {}).get("inpaint_prompts"),
                     )
                 else:
-                    edit_prompt = build_qwen_edit_render_prompt(beats[:grid_capacity], stage="full")
-                    reference_images = [
-                        (_webai_ref_filename(i, mime), data, mime)
-                        for i, (data, mime) in enumerate(ref_bytes[:2])
-                    ]
+                    edit_prompt = (qwen_edit_prompts or {}).get(
+                        "full_prompt"
+                    ) or build_qwen_edit_render_prompt(beats[:grid_capacity], stage="full")
+                    _qwen_edit_prompts_used = {"full_prompt": edit_prompt}
+                    # Prefer the detected identity's own resolved portrait
+                    # (same lookup render/review uses) over whatever
+                    # happened to be first in the Gemini-oriented
+                    # reference-image plan.
+                    primary_beat = (beats[:grid_capacity] or [None])[0] or {}
+                    picked_ref = qwen_edit_load_identity_ref_bytes(character_map, primary_beat)
+                    if picked_ref:
+                        reference_images = [
+                            (_webai_ref_filename(0, _canvas_mime), _canvas_bytes, _canvas_mime),
+                            picked_ref,
+                        ]
+                    else:
+                        reference_images = [
+                            (_webai_ref_filename(i, mime), data, mime)
+                            for i, (data, mime) in enumerate(ref_bytes[:2])
+                        ]
                     image_bytes, _text, runpod_edit_error = await _call_runpod_qwen_edit_image_api(
                         api_key=self.api_key,
                         model=self.model,
                         prompt=edit_prompt,
                         reference_images=reference_images,
                     )
+                if output_path:
+                    try:
+                        submitted_file.write_text(
+                            json.dumps(
+                                {**submitted_payload, "qwen_edit_prompts_used": _qwen_edit_prompts_used},
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+                    except NameError:
+                        pass
                 if not image_bytes:
                     message = "RunPod Qwen Image Edit 2511 未返回图像数据"
                     if runpod_edit_error:
                         message = f"{message}: {runpod_edit_error}"
+                    return _usage_fail(message)
+            elif self.provider == "runpod_qwen21_render":
+                # Render-only (RUNPOD_QWEN21_RENDER_SELECTION_KEYS, config.py)
+                # — Qwen-Image 2.1, fixed for identity-swap-onto-sketch (see
+                # module comment above _runpod_qwen21_render_image_graph for
+                # the two bugs this fixes vs. the shared `runpod_qwen`
+                # sketch/character/scene/prop path). Mirrors the
+                # runpod_qwen_edit branch above exactly; only the
+                # API caller/prompt builder/multi-character wrapper differ.
+                if sketch:
+                    return _usage_fail("Qwen Image 2.1 render selection 只能用于 Render 阶段")
+                print(
+                    f"[NanoBananaPro] 调用 RunPod Qwen Image 2.1 (render) 生成网格图 "
+                    f"(比例: {aspect_ratio}, multi_character={self.qwen_edit_multi_character})..."
+                )
+                _prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
+                    contents,
+                    include_mime=True,
+                )
+                if not ref_bytes:
+                    return _usage_fail("RunPod Qwen Image 2.1 render 缺少草图输入")
+                _canvas_bytes, _canvas_mime = ref_bytes[0]
+                _qwen21_prompts_used: dict = {}
+                if self.qwen_edit_multi_character:
+                    (
+                        image_bytes,
+                        _text,
+                        runpod_qwen21_error,
+                        _qwen21_prompts_used,
+                    ) = await _qwen21_multi_character_render(
+                        api_key=self.api_key,
+                        model=self.model,
+                        canvas_bytes=_canvas_bytes,
+                        canvas_mime=_canvas_mime,
+                        beats=beats,
+                        grid_capacity=grid_capacity,
+                        character_map=character_map,
+                        scene_prompt_override=(qwen_edit_prompts or {}).get("scene_prompt", ""),
+                        inpaint_prompts_override=(qwen_edit_prompts or {}).get("inpaint_prompts"),
+                    )
+                else:
+                    render_prompt = (qwen_edit_prompts or {}).get(
+                        "full_prompt"
+                    ) or build_qwen21_render_prompt(beats[:grid_capacity], stage="full")
+                    _qwen21_prompts_used = {"full_prompt": render_prompt}
+                    primary_beat = (beats[:grid_capacity] or [None])[0] or {}
+                    picked_ref = qwen_edit_load_identity_ref_bytes(character_map, primary_beat)
+                    if picked_ref:
+                        reference_images = [
+                            (_webai_ref_filename(0, _canvas_mime), _canvas_bytes, _canvas_mime),
+                            picked_ref,
+                        ]
+                    else:
+                        reference_images = [
+                            (_webai_ref_filename(i, mime), data, mime)
+                            for i, (data, mime) in enumerate(ref_bytes[:2])
+                        ]
+                    (
+                        image_bytes,
+                        _text,
+                        runpod_qwen21_error,
+                    ) = await _call_runpod_qwen21_render_image_api(
+                        api_key=self.api_key,
+                        model=self.model,
+                        prompt=render_prompt,
+                        reference_images=reference_images,
+                    )
+                if output_path:
+                    try:
+                        submitted_file.write_text(
+                            json.dumps(
+                                {
+                                    **submitted_payload,
+                                    "qwen_edit_prompts_used": _qwen21_prompts_used,
+                                    "render_provider": "runpod_qwen21_render",
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+                    except NameError:
+                        pass
+                if not image_bytes:
+                    message = "RunPod Qwen Image 2.1 render 未返回图像数据"
+                    if runpod_qwen21_error:
+                        message = f"{message}: {runpod_qwen21_error}"
+                    return _usage_fail(message)
+            elif self.provider == "runpod_qwen21_compose":
+                # Sketch-free "compose" mode (added 2026-10-18, see
+                # RUNPOD_QWEN21_COMPOSE_SELECTION_KEYS in config.py and
+                # _build_qwen21_compose_plan()'s docstring). No mask, no
+                # 2-pass inpaint, no canvas-from-sketch — `compose_plan`
+                # was already fully built in the prompt-building chain
+                # above, so this just makes the one RunPod call with its
+                # ordered reference_images (scene background first). No
+                # graph/API-level changes were needed for this: today's
+                # real-GPU standalone test already exercised exactly this
+                # same `_call_runpod_qwen21_render_image_api()` call shape
+                # (reference_images[0] generically becomes `image_1`,
+                # whether it's a sketch or — here — a scene background).
+                if sketch or compose_plan is None:
+                    return _usage_fail("Qwen Image 2.1 compose selection 只能用于 Render 阶段")
+                print(
+                    f"[NanoBananaPro] 调用 RunPod Qwen Image 2.1 (compose, 无草图) 生成图像 "
+                    f"({len(compose_plan.reference_images)} 张参考图)..."
+                )
+                (
+                    image_bytes,
+                    _text,
+                    runpod_qwen21_error,
+                ) = await _call_runpod_qwen21_render_image_api(
+                    api_key=self.api_key,
+                    model=self.model,
+                    prompt=compose_plan.prompt,
+                    reference_images=compose_plan.reference_images,
+                )
+                if output_path:
+                    try:
+                        submitted_file.write_text(
+                            json.dumps(
+                                {
+                                    **submitted_payload,
+                                    "qwen21_compose_prompt": compose_plan.prompt,
+                                    "render_provider": "runpod_qwen21_compose",
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+                    except NameError:
+                        pass
+                if not image_bytes:
+                    message = "RunPod Qwen Image 2.1 compose 未返回图像数据"
+                    if runpod_qwen21_error:
+                        message = f"{message}: {runpod_qwen21_error}"
                     return _usage_fail(message)
             else:
                 # ===== Google 直连分支 =====
@@ -9403,6 +10560,7 @@ async def regenerate_selected_beats(
     force_image_size: Optional[str] = None,
     generator_config: Optional[dict] = None,
     progress_callback: Callable[[int, int], None] | None = None,
+    qwen_edit_prompts_by_beat: dict[int, dict] | None = None,
 ) -> List[GridGenerationResult]:
     """再生选中的 beats（支持 render 和 sketch 模式）。
 
@@ -9501,6 +10659,12 @@ async def regenerate_selected_beats(
         temp_sketch_path = (
             Path(output_path).parent / f"temp_sub_sketch_{Path(output_path).stem}.jpg"
         )
+        # qwen_edit_prompts_by_beat is keyed by beat_number — this provider
+        # is render-only and 1 grid = 1 beat in every real caller, so the
+        # first beat's number is the right (and only) key to look up.
+        qwen_edit_prompts = None
+        if qwen_edit_prompts_by_beat and beat_numbers:
+            qwen_edit_prompts = qwen_edit_prompts_by_beat.get(int(beat_numbers[0]))
         try:
             result = await generator.generate_grid(
                 beats=grid_beats,
@@ -9522,6 +10686,7 @@ async def regenerate_selected_beats(
                 prop_refs_override=prop_refs_override,
                 sketch_aspect_padding=sketch_aspect_padding,
                 force_image_size=force_image_size,
+                qwen_edit_prompts=qwen_edit_prompts,
             )
         finally:
             temp_sketch_path.unlink(missing_ok=True)

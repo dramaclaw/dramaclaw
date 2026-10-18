@@ -37,6 +37,9 @@ from novelvideo.api.schemas import (
     SketchRegenerateRequest,
     SingleVideoRequest,
     MiniMaxH3PromptGenerateRequest,
+    RenderReviewRequest,
+    QwenEditPromptGenerateRequest,
+    QwenEditPrompts,
     PoolSelectRequest,
     VideoPoolSelectRequest,
     GridCutRequest,
@@ -3419,18 +3422,23 @@ async def regenerate_beats(
     if detection_error:
         return {"ok": False, "error": detection_error}
 
+    from novelvideo.config import RUNPOD_QWEN21_COMPOSE_SELECTION_KEYS
+
+    is_sketch_free_compose = render_image_selection in RUNPOD_QWEN21_COMPOSE_SELECTION_KEYS
+
     sketch_paths = PathResolver(output_dir, episode_num)
-    missing_sketches = [
-        beat_num
-        for beat_num in body.beat_indices
-        if not sketch_paths.sketch(beat_num).is_file()
-    ]
-    if missing_sketches:
-        missing_labels = ", ".join(f"#{beat_num}" for beat_num in missing_sketches)
-        raise HTTPException(
-            422,
-            f"Render 前请先为 beat {missing_labels} 生成或上传草图。",
-        )
+    if not is_sketch_free_compose:
+        missing_sketches = [
+            beat_num
+            for beat_num in body.beat_indices
+            if not sketch_paths.sketch(beat_num).is_file()
+        ]
+        if missing_sketches:
+            missing_labels = ", ".join(f"#{beat_num}" for beat_num in missing_sketches)
+            raise HTTPException(
+                422,
+                f"Render 前请先为 beat {missing_labels} 生成或上传草图。",
+            )
 
     character_map = await _build_character_map(
         store,
@@ -3441,12 +3449,71 @@ async def regenerate_beats(
         use_detected_identities=True,
     )
 
-    # The selected sketch is the source of truth for a single Render. The
-    # client mode remains a compatibility fallback for missing legacy assets.
-    mode_key = (
-        _single_render_mode_from_sketch(output_dir, episode_num, body.beat_indices)
-        or body.mode_key
-    )
+    # Review screen support for any render-review-capable selection (see
+    # /render/review and generators/render_review_registry.py —
+    # runpod_qwen_edit* and, since 2026-10-18, runpod_qwen21_render*): only
+    # meaningful for a single beat — `review_fingerprint`/`qwen_edit_prompts`
+    # are both per-beat, same restriction the review dialog itself enforces
+    # (it's only wired up for the single-beat Render button, not the batch
+    # render-plan path).
+    from novelvideo.generators.render_review_registry import strategy_for_selection
+
+    render_review_strategy = strategy_for_selection(render_image_selection)
+    if render_review_strategy is not None and len(body.beat_indices) == 1:
+        from novelvideo.generators.nanobanana_grid import qwen_edit_identity_references
+        from novelvideo.generators.qwen_edit_prompt_store import save_qwen_edit_prompts
+
+        qwen_beat_num = body.beat_indices[0]
+        qwen_beat = next((b for b in selected_beats if b.get("beat_number") == qwen_beat_num), None)
+        if body.review_fingerprint is not None and qwen_beat is not None:
+            identity_refs = qwen_edit_identity_references(character_map, qwen_beat)
+            current_fingerprint = _qwen_edit_render_fingerprint(
+                selection=render_image_selection,
+                sketch_path=sketch_paths.sketch(qwen_beat_num),
+                identity_refs=identity_refs,
+            )
+            if current_fingerprint != body.review_fingerprint:
+                return {
+                    "ok": False,
+                    "error": "input_stale",
+                    "message": "提交前的草图/参考图已变化，请重新打开预览确认。",
+                }
+        if body.qwen_edit_prompts is not None:
+            overrides = body.qwen_edit_prompts.model_dump()
+            save_qwen_edit_prompts(
+                output_dir,
+                episode_num,
+                qwen_beat_num,
+                full_prompt=overrides.get("full_prompt", ""),
+                scene_prompt=overrides.get("scene_prompt", ""),
+                inpaint_prompts=overrides.get("inpaint_prompts") or {},
+                source="manual",
+                namespace=render_review_strategy.store_namespace,
+            )
+
+    if is_sketch_free_compose:
+        # No sketch exists for this mode (that's the whole point — see
+        # RUNPOD_QWEN21_COMPOSE_SELECTION_KEYS docstring in config.py), so
+        # a stale/leftover sketch file must never drive it via
+        # `_single_render_mode_from_sketch()`. Force a 1x1 mode key —
+        # `generate_grid()`'s compose branch hard-requires rows=cols=1 —
+        # from the client's own mode_key if it's already a valid 1x1
+        # option, else derived from the project's own render aspect_ratio
+        # (`project_config.py`'s `DEFAULT_ASPECT_RATIO`-shaped field).
+        if body.mode_key in {"1x1_16-9", "1x1_2-3"}:
+            mode_key = body.mode_key
+        else:
+            mode_key = (
+                "1x1_16-9" if proj_config.get("aspect_ratio") == "16:9" else "1x1_2-3"
+            )
+    else:
+        # The selected sketch is the source of truth for a single Render.
+        # The client mode remains a compatibility fallback for missing
+        # legacy assets.
+        mode_key = (
+            _single_render_mode_from_sketch(output_dir, episode_num, body.beat_indices)
+            or body.mode_key
+        )
     episode_obj = _episode_from_store_or_none(store, episode_num)
     prop_menu = await _runtime_prop_menu_with_global_props(store, episode_obj, beats)
     billing = _render_regen_billing_metadata(render_image_selection, mode_key)
@@ -5672,6 +5739,383 @@ async def generate_minimax_h3_prompt(
             for r in references
         ],
     }
+
+
+# ── RunPod Qwen-Image-Edit-2511 render review (parallels the H3 video
+# review above, same reasons: ~10 minutes of RunPod GPU time per render is
+# too expensive to spend blind on a sketch/reference mismatch) ──────────
+
+
+async def _qwen_edit_review_setup(
+    project: str, episode_num: int, beat_num: int, user: dict, image_generation_selection: str | None
+):
+    """Shared project/beat/selection resolution for both render-review
+    routes below — provider-agnostic since 2026-10-18 (Qwen-Image-Edit-2511
+    and Qwen-Image 2.1 both go through `render_review_registry`). Returns
+    `None` in `error` fields on success."""
+    from novelvideo.generators.render_review_registry import strategy_for_selection
+
+    resolved = await _resolve_generation_project(project, user, required_role="editor")
+    ctx = resolved.ctx
+    username = resolved.username
+    project_name = resolved.project_name
+    output_dir = resolved.output_dir
+    store = (
+        await make_sqlite_store_for_context(ctx)
+        if ctx
+        else await make_sqlite_store(username, project_name)
+    )
+
+    beats = await store.get_beats_as_dicts(episode_num)
+    beat = next((b for b in beats if b.get("beat_number") == beat_num), None)
+    if not beat:
+        return {"error": {"ok": False, "error": f"Beat {beat_num} not found"}}
+
+    proj_config = load_project_config(username, project_name)
+    selection = _resolve_render_image_selection(proj_config, image_generation_selection)
+    strategy = strategy_for_selection(selection)
+    if strategy is None:
+        return {"error": {"ok": True, "supported": False, "selection": selection}}
+
+    sketch_path = PathResolver(output_dir, episode_num).sketch(beat_num)
+    if not sketch_path.is_file():
+        return {
+            "error": {
+                "ok": False,
+                "error": f"Beat {beat_num} 还没有草图，请先生成草图再 Render。",
+            }
+        }
+
+    detection_error = render_ai_detection_error([beat])
+    if detection_error:
+        return {"error": {"ok": False, "error": detection_error}}
+
+    character_map = await _build_character_map(
+        store,
+        beats,
+        username,
+        project_name,
+        episode_num=episode_num,
+        use_detected_identities=True,
+    )
+
+    from novelvideo.config import IMAGE_GENERATION_SELECTIONS
+
+    multi_character = bool((IMAGE_GENERATION_SELECTIONS.get(selection) or {}).get("multi_character"))
+
+    return {
+        "error": None,
+        "ctx": ctx,
+        "output_dir": output_dir,
+        "store": store,
+        "beats": beats,
+        "beat": beat,
+        "selection": selection,
+        "strategy": strategy,
+        "sketch_path": sketch_path,
+        "character_map": character_map,
+        "multi_character": multi_character,
+    }
+
+
+def _qwen_edit_render_fingerprint(
+    *,
+    selection: str,
+    sketch_path: Path,
+    identity_refs: list[dict[str, str]],
+) -> str:
+    """Change-detection digest for the Qwen-Image-Edit-2511 render review —
+    deliberately does NOT include the prompt text (unlike a naive
+    "fingerprint everything" approach), because editing the prompt by hand
+    is exactly the thing this review screen exists to let the user do;
+    hashing the prompt would make every hand-edit immediately `input_stale`
+    (a real bug confirmed on the equivalent H3 video review, fixed by the
+    same omission there)."""
+    import hashlib
+
+    parts = [selection]
+    try:
+        parts.append(f"{sketch_path}:{sketch_path.stat().st_mtime_ns}")
+    except OSError:
+        parts.append(str(sketch_path))
+    for ref in identity_refs:
+        path = ref.get("path") or ""
+        try:
+            parts.append(f"{path}:{Path(path).stat().st_mtime_ns}")
+        except OSError:
+            parts.append(path)
+    return hashlib.sha1("|".join(parts).encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+@router.post("/projects/{project}/episodes/{episode_num}/beats/{beat_num}/render/review")
+async def review_qwen_edit_render(
+    project: str,
+    episode_num: int,
+    beat_num: int,
+    body: RenderReviewRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Dry-run preview of what the single-beat `beats/regenerate` route
+    would submit for a render-review-capable selection (`runpod_qwen_edit*`
+    or, since 2026-10-18, `runpod_qwen21_render*` — see
+    `generators/render_review_registry.py`): the sketch, the identity
+    reference(s) actually resolved (same lookup the generator itself uses
+    — `qwen_edit_identity_references()`), the effective prompt(s) (saved
+    sidecar / hand-edited override / official-template default), a mask
+    preview for the multi-character path, and lint — without enqueuing a
+    task or spending RunPod GPU time."""
+    from novelvideo.generators.nanobanana_grid import (
+        build_qwen_edit_mask_preview,
+        qwen_edit_identity_references,
+        qwen_edit_subject_body_hints,
+        _color_for_identity,
+    )
+    from novelvideo.generators.qwen_edit_prompt_store import load_qwen_edit_prompts
+    from novelvideo.models import real_detected_identities
+
+    setup = await _qwen_edit_review_setup(
+        project, episode_num, beat_num, user, body.image_generation_selection
+    )
+    if setup["error"] is not None:
+        return setup["error"]
+    ctx = setup["ctx"]
+    output_dir = setup["output_dir"]
+    beat = setup["beat"]
+    selection = setup["selection"]
+    strategy = setup["strategy"]
+    sketch_path: Path = setup["sketch_path"]
+    character_map = setup["character_map"]
+    multi_character = setup["multi_character"]
+
+    saved = load_qwen_edit_prompts(output_dir, episode_num, beat_num, namespace=strategy.store_namespace) or {}
+    override = body.qwen_edit_prompts.model_dump() if body.qwen_edit_prompts else {}
+
+    identity_refs = qwen_edit_identity_references(character_map, beat)
+    sketch_bytes = sketch_path.read_bytes()
+    lint_issues: list[dict[str, str]] = []
+
+    def _append_lint(prompt_text: str, stage: str, label: str) -> None:
+        result = strategy.lint(prompt_text, stage=stage)
+        for issue in result.issues:
+            lint_issues.append(
+                {"severity": issue.severity, "code": issue.code, "message": f"[{label}] {issue.message}"}
+            )
+
+    if multi_character:
+        scene_prompt = (
+            override.get("scene_prompt")
+            or saved.get("scene_prompt")
+            or strategy.build_prompt(
+                [beat], "scene_only", qwen_edit_subject_body_hints(character_map, beat)
+            )
+        )
+        _append_lint(scene_prompt, "scene_only", "scene")
+        saved_inpaint = saved.get("inpaint_prompts") or {}
+        override_inpaint = override.get("inpaint_prompts") or {}
+        default_inpaint = strategy.build_prompt([beat], "inpaint")
+
+        identities_out: list[dict[str, Any]] = []
+        prompts_dir = Path(output_dir) / "prompts" / strategy.store_namespace / f"ep{episode_num:03d}"
+        for idx, identity_id in enumerate(real_detected_identities(beat.get("detected_identities"))):
+            ref = next((r for r in identity_refs if r["identity_id"] == identity_id), None)
+            inpaint_prompt = override_inpaint.get(identity_id) or saved_inpaint.get(identity_id) or default_inpaint
+            _append_lint(inpaint_prompt, "inpaint", identity_id)
+            mask_url = None
+            mask_missing = True
+            if ref:
+                hex_color = _color_for_identity(identity_id, character_map, "")
+                mask_bytes = build_qwen_edit_mask_preview(sketch_bytes, hex_color) if hex_color else None
+                if mask_bytes:
+                    mask_missing = False
+                    mask_path = prompts_dir / f"beat_{beat_num:02d}_mask_{idx}.png"
+                    mask_path.parent.mkdir(parents=True, exist_ok=True)
+                    mask_path.write_bytes(mask_bytes)
+                    mask_url = _h3_display_url(ctx, output_dir, str(mask_path))
+            identities_out.append(
+                {
+                    "identity_id": identity_id,
+                    "name": (ref or {}).get("name", identity_id),
+                    "portrait_url": _h3_display_url(ctx, output_dir, (ref or {}).get("path")),
+                    "mask_preview_url": mask_url,
+                    "mask_missing": mask_missing,
+                    "inpaint_prompt": inpaint_prompt,
+                }
+            )
+        prompts_out = {"scene_prompt": scene_prompt, "identities": identities_out}
+    else:
+        full_prompt = (
+            override.get("full_prompt")
+            or saved.get("full_prompt")
+            or strategy.build_prompt([beat], "full")
+        )
+        _append_lint(full_prompt, "full", "full")
+        prompts_out = {"full_prompt": full_prompt}
+        identities_out = identity_refs[:1]
+
+    worker_status: dict[str, Any] | None = None
+    try:
+        from novelvideo.runpod_worker_control import get_status
+
+        worker_status = await get_status()
+    except Exception as exc:  # noqa: BLE001
+        worker_status = {"error": str(exc)}
+
+    fingerprint = _qwen_edit_render_fingerprint(
+        selection=selection, sketch_path=sketch_path, identity_refs=identity_refs
+    )
+    passes = (1 + len(identities_out)) if multi_character else 1
+    estimate_minutes = max(1, round(strategy.seconds_per_pass * passes / 60))
+
+    return {
+        "ok": True,
+        "supported": True,
+        "mode": "multi" if multi_character else "single",
+        "selection": selection,
+        "model_label": strategy.model_label,
+        "sketch_url": _h3_display_url(ctx, output_dir, str(sketch_path)),
+        "references": [
+            {**r, "path": _h3_display_url(ctx, output_dir, r.get("path"))} for r in identity_refs
+        ],
+        "prompts": prompts_out,
+        "lint": lint_issues,
+        "worker_status": worker_status,
+        "input_fingerprint": fingerprint,
+        "estimate_minutes": estimate_minutes,
+    }
+
+
+@router.post(
+    "/projects/{project}/episodes/{episode_num}/beats/{beat_num}/qwen-edit-prompt/generate"
+)
+async def generate_qwen_edit_render_prompt(
+    project: str,
+    episode_num: int,
+    beat_num: int,
+    body: QwenEditPromptGenerateRequest = QwenEditPromptGenerateRequest(),
+    user: dict = Depends(get_api_user),
+):
+    """AI-rewrite the render prompt(s) for this beat, following the
+    selected provider's own official prompt-enhancer standard (see
+    `generators/render_review_registry.py` — Qwen-Image-Edit-2511's
+    `{"Rewritten": ...}` JSON contract and Qwen-Image 2.1's plain-text
+    contract are genuinely different, dispatched via `strategy.rewrite`),
+    save them to the sidecar store, and return them plus lint for the
+    review dialog."""
+    from novelvideo.agents.qwen_edit_render_prompt_lint import LintResult
+    from novelvideo.generators.nanobanana_grid import (
+        qwen_edit_identity_references,
+        qwen_edit_subject_body_hints,
+    )
+    from novelvideo.generators.qwen_edit_prompt_store import save_qwen_edit_prompts
+    from novelvideo.models import real_detected_identities
+
+    setup = await _qwen_edit_review_setup(
+        project, episode_num, beat_num, user, body.image_generation_selection
+    )
+    if setup["error"] is not None:
+        return setup["error"]
+    output_dir = setup["output_dir"]
+    beat = setup["beat"]
+    strategy = setup["strategy"]
+    sketch_path: Path = setup["sketch_path"]
+    character_map = setup["character_map"]
+    multi_character = setup["multi_character"]
+
+    identity_refs = qwen_edit_identity_references(character_map, beat)
+    max_retries = 3
+
+    async def _rewrite_with_retries(
+        *, stage: str, default_prompt: str, image_2: str, image_2_label: str
+    ) -> tuple[str, LintResult]:
+        best_prompt = ""
+        best_lint: LintResult | None = None
+        retry_feedback = ""
+        for _attempt in range(1 + max_retries):
+            try:
+                candidate = await strategy.rewrite(
+                    stage=stage,
+                    default_prompt=default_prompt,
+                    image_1_path=str(sketch_path),
+                    image_2_path=image_2,
+                    image_2_label=image_2_label,
+                    retry_feedback=retry_feedback,
+                )
+            except Exception as exc:  # noqa: BLE001
+                retry_feedback = f"Your previous attempt failed to produce valid output at all ({exc})."
+                continue
+            candidate_lint = strategy.lint(candidate, stage=stage)
+            if best_lint is None or len(candidate_lint.errors) < len(best_lint.errors):
+                best_prompt, best_lint = candidate, candidate_lint
+            if not candidate_lint.errors:
+                break
+            retry_feedback = "\n".join(f"- {issue.message}" for issue in candidate_lint.errors)
+        if best_lint is None:
+            best_prompt, best_lint = default_prompt, strategy.lint(default_prompt, stage=stage)
+        return best_prompt, best_lint
+
+    lint_issues: list[dict[str, str]] = []
+
+    def _collect(result: LintResult, label: str) -> None:
+        for issue in result.issues:
+            lint_issues.append(
+                {"severity": issue.severity, "code": issue.code, "message": f"[{label}] {issue.message}"}
+            )
+
+    if multi_character:
+        scene_prompt, scene_lint = await _rewrite_with_retries(
+            stage="scene_only",
+            default_prompt=strategy.build_prompt(
+                [beat], "scene_only", qwen_edit_subject_body_hints(character_map, beat)
+            ),
+            image_2="",
+            image_2_label="",
+        )
+        _collect(scene_lint, "scene")
+
+        inpaint_prompts: dict[str, str] = {}
+        identities_out: list[dict[str, Any]] = []
+        for identity_id in real_detected_identities(beat.get("detected_identities")):
+            ref = next((r for r in identity_refs if r["identity_id"] == identity_id), None)
+            prompt_text, prompt_lint = await _rewrite_with_retries(
+                stage="inpaint",
+                default_prompt=strategy.build_prompt([beat], "inpaint"),
+                image_2=(ref or {}).get("path", ""),
+                image_2_label=(ref or {}).get("name", identity_id),
+            )
+            _collect(prompt_lint, identity_id)
+            inpaint_prompts[identity_id] = prompt_text
+            identities_out.append({"identity_id": identity_id, "inpaint_prompt": prompt_text})
+
+        save_qwen_edit_prompts(
+            output_dir,
+            episode_num,
+            beat_num,
+            scene_prompt=scene_prompt,
+            inpaint_prompts=inpaint_prompts,
+            source="ai",
+            namespace=strategy.store_namespace,
+        )
+        prompts_out = {"scene_prompt": scene_prompt, "identities": identities_out}
+    else:
+        ref = identity_refs[0] if identity_refs else None
+        full_prompt, full_lint = await _rewrite_with_retries(
+            stage="full",
+            default_prompt=strategy.build_prompt([beat], "full"),
+            image_2=(ref or {}).get("path", ""),
+            image_2_label=(ref or {}).get("name", "character"),
+        )
+        _collect(full_lint, "full")
+        save_qwen_edit_prompts(
+            output_dir,
+            episode_num,
+            beat_num,
+            full_prompt=full_prompt,
+            source="ai",
+            namespace=strategy.store_namespace,
+        )
+        prompts_out = {"full_prompt": full_prompt}
+
+    return {"ok": True, "prompts": prompts_out, "lint": lint_issues}
 
 
 # ── 视频池查看 & 选择 ─────────────────────────────────────────────────────────

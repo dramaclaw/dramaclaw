@@ -269,6 +269,72 @@ def test_single_render_inherits_canonical_sketch_aspect(
     assert calls[0]["payload"]["config"]["mode_key"] == expected_mode
 
 
+def test_render_regen_compose_mode_skips_sketch_precondition(monkeypatch, tmp_path):
+    # runpod_qwen21_compose (added 2026-10-18) is sketch-FREE by design —
+    # the normal 422 "please generate a sketch first" gate must not apply.
+    from novelvideo.api.routes import generation
+
+    client, calls = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        generation,
+        "_resolve_render_image_selection",
+        lambda proj_config, requested=None: "runpod_qwen21_compose",
+    )
+    (tmp_path / "sketches" / "ep002" / "beat_02.png").unlink()
+
+    response = client.post(
+        "/api/v1/projects/demo/episodes/2/beats/regenerate",
+        json={"beat_indices": [2], "mode_key": "1x1_2-3"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert len(calls) == 1
+    assert calls[0]["payload"]["config"]["image_generation_selection"] == "runpod_qwen21_compose"
+
+
+def test_render_regen_compose_mode_forces_1x1_mode_key_from_non_1x1_client_value(
+    monkeypatch, tmp_path
+):
+    from novelvideo.api.routes import generation
+
+    client, calls = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        generation,
+        "_resolve_render_image_selection",
+        lambda proj_config, requested=None: "runpod_qwen21_compose",
+    )
+
+    response = client.post(
+        "/api/v1/projects/demo/episodes/2/beats/regenerate",
+        json={"beat_indices": [1], "mode_key": "2x2"},
+    )
+
+    assert response.status_code == 200
+    assert calls[0]["payload"]["mode_key"] in {"1x1_16-9", "1x1_2-3"}
+    assert calls[0]["payload"]["config"]["mode_key"] in {"1x1_16-9", "1x1_2-3"}
+
+
+def test_render_regen_compose_mode_respects_valid_1x1_client_mode_key(monkeypatch, tmp_path):
+    from novelvideo.api.routes import generation
+
+    client, calls = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        generation,
+        "_resolve_render_image_selection",
+        lambda proj_config, requested=None: "runpod_qwen21_compose",
+    )
+
+    response = client.post(
+        "/api/v1/projects/demo/episodes/2/beats/regenerate",
+        json={"beat_indices": [1], "mode_key": "1x1_16-9"},
+    )
+
+    assert response.status_code == 200
+    assert calls[0]["payload"]["mode_key"] == "1x1_16-9"
+
+
 def test_render_selected_regen_checks_only_selected_beat_detection(monkeypatch, tmp_path):
     client, calls, seen_character_map_beats = _client_with_real_detection_guard(
         monkeypatch,

@@ -3,7 +3,9 @@
 Dev-only, gated by `config._runpod_h3_video_configured()`. Ported from the
 `photoreal-short-drama-generator` project's `scripts/comfy.py` `h3_ref`/
 `h3_i2v` ComfyUI API graph builders (reused model files, reused RunPod
-endpoint `photoreal-drama-h3` and R2 relay — see `.claude/CLAUDE.md`). That
+endpoint `a31613hf7l83r5` — RunPod display name `qwen-t2i-h3-i2v-ref2va`
+since 2026-10-18, was `photoreal-drama-h3`, id unchanged — and R2 relay;
+see `.claude/CLAUDE.md`). That
 project has verified this exact graph end-to-end on a real production beat:
 first frame + character/scene/prop reference images + a voice-timbre
 reference audio + `<d>[Vietnamese] ...</d>` dialogue + PDD 8-step

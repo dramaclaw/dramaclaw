@@ -64,13 +64,54 @@ export interface RenderGenerationSettings {
   sketchAspectPadding?: boolean;
 }
 
-function renderGenerationSettingsJson(settings: RenderGenerationSettings) {
+/** Prompt override for a render-review-capable selection — covers both
+ * `runpod_qwen_edit_render`/`_multi` (Qwen-Image-Edit-2511) and, since
+ * 2026-10-18, `runpod_qwen21_render`/`_multi` (Qwen-Image 2.1). See
+ * `/render/review` and `generators/qwen_edit_prompt_store.py`. */
+export interface QwenEditPrompts {
+  full_prompt?: string;
+  scene_prompt?: string;
+  inpaint_prompts?: Record<string, string>;
+}
+
+/** Whether `selection` goes through the render-review dialog (dry-run
+ * preview + AI rewrite + lint) instead of the plain AlertDialog — matches
+ * `generators/render_review_registry.py`'s selection keys on the backend. */
+export function isRenderReviewSelection(selection: string | null | undefined): boolean {
+  return Boolean(
+    selection?.startsWith("runpod_qwen_edit") || selection?.startsWith("runpod_qwen21_render"),
+  );
+}
+
+/** Sketch-free render selections (added 2026-10-18: `runpod_qwen21_compose`
+ * — composes directly from the scene background + character/prop
+ * reference photos, no mannequin-figure sketch at all). The Render button
+ * must not require an existing sketch for these, and the mode key should
+ * come from the project's own render aspect rather than a sketch file's
+ * pixel dimensions — matches `RUNPOD_QWEN21_COMPOSE_SELECTION_KEYS` on the
+ * backend (`config.py`). */
+export function isSketchFreeRenderSelection(selection: string | null | undefined): boolean {
+  return selection === "runpod_qwen21_compose";
+}
+
+function renderGenerationSettingsJson(
+  settings: RenderGenerationSettings & {
+    qwenEditPrompts?: QwenEditPrompts;
+    reviewFingerprint?: string;
+  },
+) {
   return {
     ...(settings.imageGenerationSelection
       ? { image_generation_selection: settings.imageGenerationSelection }
       : {}),
     ...(settings.sketchAspectPadding !== undefined
       ? { sketch_aspect_padding: settings.sketchAspectPadding }
+      : {}),
+    ...(settings.qwenEditPrompts !== undefined
+      ? { qwen_edit_prompts: settings.qwenEditPrompts }
+      : {}),
+    ...(settings.reviewFingerprint !== undefined
+      ? { review_fingerprint: settings.reviewFingerprint }
       : {}),
   };
 }
@@ -670,13 +711,25 @@ export function useRegenerateSketches(project: string, episode: number) {
   });
 }
 
+/** `POST .../beats/regenerate` response when a stale `review_fingerprint`
+ * no longer matches the current sketch/references — a plain 200, not an
+ * HTTP error. Mirrors `VideoInputStaleResponse` in `lib/queries/video.ts`. */
+export interface RenderInputStaleResponse {
+  ok: false;
+  error: "input_stale";
+  message: string;
+}
+
 export function useRegenerateRenderBeats(project: string, episode: number) {
   return useMutation({
     mutationFn: (params: {
       beatIndices: number[];
       modeKey?: string;
-    } & RenderGenerationSettings) =>
-      jsonWithBackendError<TaskResponse | ErrorResponse>(
+    } & RenderGenerationSettings & {
+      qwenEditPrompts?: QwenEditPrompts;
+      reviewFingerprint?: string;
+    }) =>
+      jsonWithBackendError<TaskResponse | ErrorResponse | RenderInputStaleResponse>(
         api.post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/regenerate`,
           {
@@ -685,6 +738,127 @@ export function useRegenerateRenderBeats(project: string, episode: number) {
               mode_key: params.modeKey ?? "1x1_2-3",
               ...renderGenerationSettingsJson(params),
             },
+            throwHttpErrors: false,
+          },
+        ),
+      ),
+  });
+}
+
+export interface RenderReviewReference {
+  identity_id: string;
+  name: string;
+  path: string;
+  appearance_details: string;
+}
+
+export interface RenderReviewIdentity {
+  identity_id: string;
+  name: string;
+  portrait_url: string | null;
+  mask_preview_url: string | null;
+  mask_missing: boolean;
+  inpaint_prompt: string;
+}
+
+export interface RenderReviewLintItem {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+}
+
+export interface RenderReviewData {
+  ok: true;
+  supported: true;
+  mode: "single" | "multi";
+  selection: string;
+  /** Human-readable model name for this selection's provider (e.g.
+   * "Qwen-Image-Edit-2511" or "Qwen-Image 2.1") — shown in the dialog
+   * title/AI-rewrite button instead of hardcoding one provider's name. */
+  model_label: string;
+  sketch_url: string | null;
+  references: RenderReviewReference[];
+  prompts: {
+    full_prompt?: string;
+    scene_prompt?: string;
+    identities?: RenderReviewIdentity[];
+  };
+  lint: RenderReviewLintItem[];
+  worker_status: unknown;
+  input_fingerprint: string;
+  estimate_minutes: number;
+}
+
+export interface RenderReviewUnsupported {
+  ok: true;
+  supported: false;
+  selection: string;
+}
+
+export type RenderReviewResponse = RenderReviewData | RenderReviewUnsupported | ErrorResponse;
+
+/** `POST .../render/review` — read-only / dry-run preview for the
+ * `runpod_qwen_edit*` render review dialog. Never enqueues a task or spends
+ * RunPod GPU time. Mirrors `useVideoReview` in `lib/queries/video.ts`. */
+export function useRenderReview(project: string, episode: number) {
+  return useMutation({
+    mutationFn: ({
+      beatNum,
+      imageGenerationSelection,
+      qwenEditPrompts,
+    }: {
+      beatNum: number;
+      imageGenerationSelection?: string;
+      qwenEditPrompts?: QwenEditPrompts;
+    }) =>
+      jsonWithBackendError<RenderReviewResponse>(
+        api.post(
+          p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/render/review`,
+          {
+            json: {
+              ...(imageGenerationSelection
+                ? { image_generation_selection: imageGenerationSelection }
+                : {}),
+              ...(qwenEditPrompts ? { qwen_edit_prompts: qwenEditPrompts } : {}),
+            },
+            throwHttpErrors: false,
+          },
+        ),
+      ),
+  });
+}
+
+export interface QwenEditPromptGenerateResult {
+  ok: true;
+  prompts: {
+    full_prompt?: string;
+    scene_prompt?: string;
+    identities?: Array<{ identity_id: string; inpaint_prompt: string }>;
+  };
+  lint: RenderReviewLintItem[];
+}
+
+export type QwenEditPromptGenerateResponse = QwenEditPromptGenerateResult | ErrorResponse;
+
+/** `POST .../qwen-edit-prompt/generate` — AI rewrite following
+ * Qwen-Image-Edit-2511's own official prompt standard. Saves server-side
+ * to the sidecar prompt store. */
+export function useGenerateQwenEditPrompt(project: string, episode: number) {
+  return useMutation({
+    mutationFn: ({
+      beatNum,
+      imageGenerationSelection,
+    }: {
+      beatNum: number;
+      imageGenerationSelection?: string;
+    }) =>
+      jsonWithBackendError<QwenEditPromptGenerateResponse>(
+        api.post(
+          p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/qwen-edit-prompt/generate`,
+          {
+            json: imageGenerationSelection
+              ? { image_generation_selection: imageGenerationSelection }
+              : {},
             throwHttpErrors: false,
           },
         ),

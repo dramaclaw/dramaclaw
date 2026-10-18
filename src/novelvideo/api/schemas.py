@@ -199,6 +199,39 @@ class MiniMaxH3PromptGenerateRequest(BaseModel):
     duration: Optional[float] = None
 
 
+class QwenEditPrompts(BaseModel):
+    """Prompt override for a render-review-capable RunPod render path —
+    `runpod_qwen_edit_render` / `_multi` (Qwen-Image-Edit-2511) and, since
+    2026-10-18, `runpod_qwen21_render` / `_multi` (Qwen-Image 2.1). Same
+    shape covers both providers (see
+    `generators/render_review_registry.py`'s `RenderReviewStrategy`) — see
+    `render/review` and `generators/qwen_edit_prompt_store.py`."""
+
+    full_prompt: str = ""
+    scene_prompt: str = ""
+    inpaint_prompts: dict[str, str] = Field(default_factory=dict)
+
+
+class RenderReviewRequest(BaseModel):
+    """Body for `POST .../beats/{b}/render/review` — a dry run, mirroring
+    `SingleVideoRequest`'s review fields for `/video/review`. Only
+    meaningful for render-review-capable selections (see
+    `generators/render_review_registry.py`); other selections get
+    `{"ok": true, "supported": false}` back."""
+
+    image_generation_selection: Optional[str] = None
+    qwen_edit_prompts: Optional[QwenEditPrompts] = None
+
+
+class QwenEditPromptGenerateRequest(BaseModel):
+    """Body for `POST .../beats/{b}/qwen-edit-prompt/generate` (AI
+    rewrite) — dispatches by selection via
+    `generators/render_review_registry.py`, not Edit-2511-specific despite
+    the route name."""
+
+    image_generation_selection: Optional[str] = None
+
+
 class Seedance2AssetDeleteRequest(BaseModel):
     media_kind: Literal["images", "audios"]
     path: str
@@ -320,6 +353,14 @@ class BeatsRegenerateRequest(BaseModel):
     sketch_aspect_padding: Optional[bool] = None
     batch_id: Optional[str] = Field(default=None, max_length=100)
     batch_size: Optional[int] = Field(default=None, ge=1, le=9)
+    # Review screen support (see `/render/review`): `review_fingerprint` is
+    # echoed back from a prior review call so the route can detect the
+    # sketch/references changed underneath the user (`input_stale`);
+    # `qwen_edit_prompts`, when given, is a hand-edited/AI-rewritten
+    # override for `runpod_qwen_edit*` selections, saved to the sidecar
+    # store before this request is enqueued.
+    review_fingerprint: Optional[str] = None
+    qwen_edit_prompts: Optional[QwenEditPrompts] = None
 
 
 class SketchRegenerateRequest(BaseModel):

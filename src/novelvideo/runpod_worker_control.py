@@ -7,9 +7,13 @@ same Cloudflare-dodging User-Agent on the CTRL host — see its module
 docstring) but only the pieces this UI needs: read the endpoint's current
 `workers` config plus live worker/job counts, and PATCH `workers.max`.
 
-This endpoint (`a31613hf7l83r5`, project name `photoreal-drama-h3`) is now
-dedicated to DramaClaw — the photoreal project only uses it for ad hoc
-testing, not production, so there is no conflicting owner to coordinate with.
+This endpoint (`a31613hf7l83r5`, RunPod display name `qwen-t2i-h3-i2v-ref2va`
+since 2026-10-18 — was `photoreal-drama-h3`, id unchanged, see
+`.claude/CLAUDE.md`) is shared with `~/Xuongphim/trends/comfy-trends` — that
+project only uses it for ad hoc testing, not production, so there is no
+conflicting owner to coordinate with. Don't match on the name string
+anywhere; `_status_payload()` below reads it live from the RunPod API
+precisely so a future rename like this one doesn't need a code change.
 """
 
 from __future__ import annotations

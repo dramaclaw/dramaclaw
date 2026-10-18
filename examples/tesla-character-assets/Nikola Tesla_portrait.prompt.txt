@@ -1,0 +1,37 @@
+Generate a face-only character identity reference portrait for identity locking.
+
+CHARACTER: [Nikola Tesla_cd2d] (Nikola Tesla)
+
+DEFAULT ETHNICITY (FALLBACK ONLY):
+Default ethnicity for unspecified people: Chinese. Use this only when the character description and reference images do not specify ethnicity, nationality, or regional appearance. If the character description says Western, Persian, Japanese, mixed-race, foreign, or any other explicit origin, follow that explicit description.
+
+FRAMING & CAMERA (CRITICAL):
+- FRONT-FACING: subject facing camera DIRECTLY, looking STRAIGHT at camera, symmetrical composition
+- Head-and-shoulders close-up, face fills 60-70% of the frame
+- Neutral expression, mouth closed
+- Solid matte gray seamless studio background — NO environment, NO scenery, NO props
+- Plain simple dark top (like a basic t-shirt), MINIMAL clothing visible
+- Do NOT show elaborate costumes, accessories, or period clothing
+- This should follow the project visual style while remaining clear enough for identity locking.
+
+FACIAL FEATURES TO CAPTURE (from character description):
+Nikola Tesla in his late twenties, 1880s, tall and thin, high forehead, sharp cheekbones, neat dark mustache, intense bright eyes, dark hair parted to the side, period Victorian clothing, realistic cinematic portrait
+
+VISUAL STYLE:
+Create a live-action Chinese period drama image with grounded historical realism when the beat or scene context calls for a period setting. Use natural lighting appropriate to the time of day with soft realistic falloff and restrained contrast. Ensure realistic skin texture with visible pores, subtle imperfections, and no beauty-retouching. Use a natural 50mm cinematic lens feel with moderate depth of field, not glossy fashion photography. Follow the beat, scene, character, and prop descriptions for exact era, wardrobe, architecture, technology, and materials; do not override explicit modern, foreign, or traversal-story details. Keep color grading restrained and filmic, avoiding poster-like polish or painterly haze.
+
+STRICT REQUIREMENTS:
+- This is a CHARACTER IDENTITY ANCHOR — face must be perfectly front-facing and clearly visible
+- High-quality, 4K resolution
+- Maintain strict facial fidelity to the character description
+- Keep facial structure, hairstyle, skin tone, and expression readable for downstream identity matching
+
+MUST AVOID:
+NOT anime, NOT cartoon, NOT illustration. No plastic skin or airbrushed texture. No AI artifacts or oversaturated HDR. No extra limbs, mutated hands, or deformed faces. No text, watermarks, or labels on image.
+- Do NOT turn the face to any side — must be perfectly FRONTAL
+- Do not include elaborate clothing or costumes
+- Do not show full body or lower body
+- Do NOT add ANY background: no rooms, no scenery, no furniture, no props — plain solid color only
+- Do not add text, watermarks, or signatures
+- Do not include multiple characters
+- Do NOT create beauty-filter skin, glamor retouching, fashion-magazine polish, doll-like skin, or cosmetic-ad aesthetics

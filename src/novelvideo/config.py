@@ -695,8 +695,68 @@ def _runpod_qwen_edit_configured() -> bool:
     return _runpod_qwen_image_configured()
 
 
+# Dev-only, render-only: Qwen-Image 2.1 (same checkpoint/endpoint as
+# RUNPOD_QWEN_IMAGE_* above) used for render/identity-swap, fixing two bugs
+# that made the project abandon 2.1 for render on 2026-10-14 (see
+# nanobanana_grid.py `_runpod_qwen21_render_image_graph` docstring + CLAUDE.md
+# 2026-10-18 entry): (1) the shared sketch/character/scene/prop graph feeds
+# KSampler an EmptyLatentImage sized independently of the input image, which
+# the official upstream TextEncodeQwenImage21 node's own latent-output
+# tooltip warns "shifts the edit" — this path uses that node's own latent
+# output instead; (2) the shared render dispatch reused the Gemini-oriented
+# storyboard-grid prompt, nonsensical for a single-image edit — this path
+# gets its own official-standard prompt (`build_qwen21_render_prompt`,
+# `<image1>`/`<image2>` tags, not Edit-2511's "Picture N"). No new model
+# files: `_runpod_qwen21_render_configured()` just reuses
+# `_runpod_qwen_image_configured()`. Official recipe (ComfyUI template
+# `image_qwen_image_2_1_image_edit.json`, fetched 2026-10-18): cfg=1
+# (negative prompt unused at cfg=1), steps 40-50 (official pipeline; the
+# template itself demos at 25 for speed — kept overridable here for the
+# same reason).
+RUNPOD_QWEN21_RENDER_STEPS = int(_env_float("RUNPOD_QWEN21_RENDER_STEPS", 40.0))
+RUNPOD_QWEN21_RENDER_CFG = _env_float("RUNPOD_QWEN21_RENDER_CFG", 1.0)
+RUNPOD_QWEN21_RENDER_IMAGE_SIZE = os.environ.get("RUNPOD_QWEN21_RENDER_IMAGE_SIZE", "1K")
+# Masked multi-character inpaint pass ONLY (not the single-character `full`
+# path, not `scene_only` — both already verified working well at cfg=1/no
+# negative prompt). Added 2026-10-18 after a real test (BabyStories beat 7)
+# showed two toddler characters rendered as unrelated adults — the official
+# template's own note says cfg=1 works specifically "because negative_prompt
+# is unused while cfg is 1" and to raise cfg only once a real negative
+# prompt is added; at cfg=1 there is ~no classifier-free guidance pushing
+# the masked region away from "generic adult consistent with the rest of
+# the already-generated scene" and toward a reference identity that looks
+# very different (e.g. a toddler). See nanobanana_grid.py
+# `_runpod_qwen21_render_image_graph` and CLAUDE.md 2026-10-18 entry.
+RUNPOD_QWEN21_RENDER_INPAINT_CFG = _env_float("RUNPOD_QWEN21_RENDER_INPAINT_CFG", 3.0)
+RUNPOD_QWEN21_RENDER_INPAINT_NEGATIVE_PROMPT = os.environ.get(
+    "RUNPOD_QWEN21_RENDER_INPAINT_NEGATIVE_PROMPT",
+    "adult, wrong age, mismatched body proportions, inconsistent identity, generic unrelated person",
+)
+
+# Sketch-free "compose" mode (`runpod_qwen21_compose`, 2026-10-18): the
+# scene master background photo has its own aspect ratio (often 16:9,
+# landscape) which generally does not match the project's render aspect
+# ratio (e.g. 2:3, portrait, for a vertical-video project) — unlike the
+# sketch+mask path, there is no sketch file here to naturally pin the
+# output's aspect. Default ON: center-crop the scene master to the
+# project's render mode aspect ratio before using it as `image_1`, so the
+# output stays consistent with what the downstream video step expects, at
+# the cost of losing some background width/resolution. Confirmed with the
+# user before implementing (2026-10-18) — toggle off only if this turns
+# out to hurt quality more than aspect-mismatch would.
+RUNPOD_QWEN21_COMPOSE_CROP_TO_MODE_ASPECT = _env_bool(
+    "RUNPOD_QWEN21_COMPOSE_CROP_TO_MODE_ASPECT", True
+)
+
+
+def _runpod_qwen21_render_configured() -> bool:
+    return _runpod_qwen_image_configured()
+
+
 # Dev-only: MiniMax-H3 video on the same RunPod endpoint/R2 bucket as
-# RUNPOD_QWEN_IMAGE_* (photoreal-drama-h3, `a31613hf7l83r5`) — the only H3
+# RUNPOD_QWEN_IMAGE_* (`a31613hf7l83r5`, RunPod display name
+# "qwen-t2i-h3-i2v-ref2va" since 2026-10-18 — was "photoreal-drama-h3", id
+# unchanged) — the only H3
 # path verified end-to-end (first frame + character-card reference images +
 # <d>[Vietnamese] dialogue + PDD 8-step acceleration + R2 mp4 with muxed
 # audio; see `movies/NgoaiTinhCongSo` in the photoreal project and
@@ -1332,6 +1392,50 @@ IMAGE_GENERATION_SELECTIONS: dict[str, dict[str, str]] = {
         "model": "qwen-image-edit-2511",
         "multi_character": True,
     },
+    # Dev-only, render-only, added 2026-10-18: Qwen-Image 2.1 (same
+    # checkpoint/endpoint as `runpod_qwen_image*` above), fixed for
+    # render/identity-swap — see `_runpod_qwen21_render_configured()` and
+    # `_runpod_qwen21_render_image_graph` in nanobanana_grid.py. 2.5-5x
+    # faster per call than Edit-2511 in this project's own measurements, so
+    # multi-character beats (sequential scene + N identity passes) have a
+    # real chance of finishing inside the 30-minute task timeout where
+    # Edit-2511 does not. No "image_size": the latent is sized from the
+    # canvas image itself (TextEncodeQwenImage21's own latent output), same
+    # reasoning as Edit-2511's VAEEncode-based sizing just above.
+    "runpod_qwen21_render": {
+        "label": "Qwen Image 2.1 RunPod (render only, nhanh)",
+        "provider": "runpod_qwen21_render",
+        "model": "qwen-image-2.1",
+    },
+    # Multi-character variant, same reasoning as runpod_qwen_edit_render_multi
+    # above (mechanical two-pass masked inpaint, not a single text-prompt
+    # pass) — ported from the Edit-2511 design, same mask-location machinery.
+    "runpod_qwen21_render_multi": {
+        "label": "Qwen Image 2.1 RunPod (render, multi-character)",
+        "provider": "runpod_qwen21_render",
+        "model": "qwen-image-2.1",
+        "multi_character": True,
+    },
+    # Dev-only, render-only, added 2026-10-18: sketch-FREE composition —
+    # no mannequin-figure sketch, no mask, no 2-pass inpaint at all. Built
+    # after the sketch+mask `runpod_qwen21_render_multi` path above fixed
+    # render timing and age/body-proportions but still failed to transfer
+    # identity faithfully (faces/outfits came out blended). A real-GPU
+    # standalone test (not this provider yet, a one-off script) composing
+    # directly from the scene's master background photo + each character's
+    # identity portrait + each prop's reference photo + the beat's own
+    # text (no sketch at all) produced the best result of the day: correct
+    # background, near-perfect identity match for 2 characters, an exact
+    # prop match, fully photorealistic, correct toddler proportions. This
+    # selection formalizes that into the real pipeline — see
+    # `_build_qwen21_compose_plan()`/`build_qwen21_compose_prompt()`.
+    # Uses the SAME RunPod worker/credential as `runpod_qwen21_render*`
+    # above (`_runpod_qwen21_render_configured()`), no new secret.
+    "runpod_qwen21_compose": {
+        "label": "Qwen Image 2.1 RunPod (render không cần sketch: background + identity)",
+        "provider": "runpod_qwen21_compose",
+        "model": "qwen-image-2.1",
+    },
 }
 
 GOOGLE_GEMINI_SELECTION_KEYS = (
@@ -1362,6 +1466,28 @@ RUNPOD_QWEN_EDIT_SELECTION_KEYS = (
     "runpod_qwen_edit_render",
     "runpod_qwen_edit_render_multi",
 )
+
+RUNPOD_QWEN21_RENDER_SELECTION_KEYS = (
+    "runpod_qwen21_render",
+    "runpod_qwen21_render_multi",
+)
+
+# Sketch-free "compose" mode (2026-10-18) — background + identity + prop
+# refs only, no sketch, no mask, no 2-pass inpaint. Deliberately NOT in
+# RUNPOD_QWEN21_RENDER_SELECTION_KEYS (that tuple's provider string is
+# "runpod_qwen21_render", a different provider than this one) and
+# deliberately NOT in RENDER_REVIEW_SELECTION_KEYS below for v1 — the
+# review dialog's prompt-rewrite machinery is hardcoded to exactly 2
+# images (sketch + 1 identity); this mode's image count varies with the
+# beat (1 background + N identities + M props). A free dry-run script
+# (see .claude/CLAUDE.md) gives equivalent pre-GPU visibility instead.
+RUNPOD_QWEN21_COMPOSE_SELECTION_KEYS = ("runpod_qwen21_compose",)
+
+# Every selection that gets the render-review dialog (dry-run preview, AI
+# rewrite, lint) — api/routes/generation.py's render/review and
+# qwen-edit-prompt/generate routes dispatch on this, not on either tuple
+# alone, so a new render-review-capable provider only needs adding here.
+RENDER_REVIEW_SELECTION_KEYS = RUNPOD_QWEN_EDIT_SELECTION_KEYS + RUNPOD_QWEN21_RENDER_SELECTION_KEYS
 
 VISIBLE_IMAGE_GENERATION_SELECTION_KEYS = (
     "newapi_gpt_image2",
@@ -1448,6 +1574,11 @@ def image_generation_selection_options() -> dict[str, str]:
     if _runpod_qwen_edit_configured():
         for key in RUNPOD_QWEN_EDIT_SELECTION_KEYS:
             options[key] = IMAGE_GENERATION_SELECTIONS[key]["label"]
+    if _runpod_qwen21_render_configured():
+        for key in RUNPOD_QWEN21_RENDER_SELECTION_KEYS:
+            options[key] = IMAGE_GENERATION_SELECTIONS[key]["label"]
+        for key in RUNPOD_QWEN21_COMPOSE_SELECTION_KEYS:
+            options[key] = IMAGE_GENERATION_SELECTIONS[key]["label"]
     return options
 
 
@@ -1475,6 +1606,10 @@ def _visible_image_generation_selection(value: str | None) -> str:
     if candidate in RUNPOD_QWEN_IMAGE_SELECTION_KEYS and _runpod_qwen_image_configured():
         return candidate
     if candidate in RUNPOD_QWEN_EDIT_SELECTION_KEYS and _runpod_qwen_edit_configured():
+        return candidate
+    if candidate in RUNPOD_QWEN21_RENDER_SELECTION_KEYS and _runpod_qwen21_render_configured():
+        return candidate
+    if candidate in RUNPOD_QWEN21_COMPOSE_SELECTION_KEYS and _runpod_qwen21_render_configured():
         return candidate
     alias = LEGACY_IMAGE_GENERATION_SELECTION_ALIASES.get(candidate)
     if (
@@ -1653,6 +1788,22 @@ def _image_provider_config(
             "base_url": None,
             "force_image_size": force_image_size,
             "multi_character": multi_character,
+        }
+    if provider == "runpod_qwen21_render":
+        return {
+            "provider": provider,
+            "api_key": RUNPOD_API_KEY,
+            "model": model or "qwen-image-2.1",
+            "base_url": None,
+            "force_image_size": force_image_size,
+            "multi_character": multi_character,
+        }
+    if provider == "runpod_qwen21_compose":
+        return {
+            "provider": provider,
+            "api_key": RUNPOD_API_KEY,
+            "model": model or "qwen-image-2.1",
+            "base_url": None,
         }
 
     return {

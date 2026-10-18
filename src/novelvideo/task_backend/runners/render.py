@@ -627,6 +627,29 @@ async def _run_selected_regen_async(
             progress=0.2 + 0.45 * ratio,
         )
 
+    # Render-review-capable providers only (runpod_qwen_edit,
+    # runpod_qwen21_render — see RENDER_PROMPT_NAMESPACE_BY_PROVIDER): the
+    # sidecar file is the source of truth for a beat's reviewed/AI-rewritten/
+    # hand-edited prompt — api/routes/generation.py's render/review +
+    # beats/regenerate routes already write it, so loading it here (rather
+    # than threading the prompt through the task payload) means the batch
+    # render-plan path picks up a saved prompt automatically too. See
+    # generators/qwen_edit_prompt_store.py.
+    qwen_edit_prompts_by_beat: dict[int, dict] | None = None
+    if not is_sketch:
+        from novelvideo.generators.qwen_edit_prompt_store import (
+            RENDER_PROMPT_NAMESPACE_BY_PROVIDER,
+            load_qwen_edit_prompts,
+        )
+
+        namespace = RENDER_PROMPT_NAMESPACE_BY_PROVIDER.get(generator_config.get("provider") or "")
+        if namespace:
+            qwen_edit_prompts_by_beat = {}
+            for beat_num in selected_beat_numbers:
+                saved = load_qwen_edit_prompts(output_dir, episode, int(beat_num), namespace=namespace)
+                if saved:
+                    qwen_edit_prompts_by_beat[int(beat_num)] = saved
+
     results = await regenerate_selected_beats(
         selected_beats=selected_beats,
         mode_key=mode_key,
@@ -640,6 +663,7 @@ async def _run_selected_regen_async(
         is_sketch=is_sketch,
         generator_config=generator_config,
         progress_callback=report_generation_progress,
+        qwen_edit_prompts_by_beat=qwen_edit_prompts_by_beat,
         **force_kwargs,
     )
 

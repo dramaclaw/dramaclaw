@@ -39,10 +39,14 @@ import {
   useUpdateBeatBackgroundAnchor,
   useUploadBeatImage,
   useUploadBeatBackgroundAnchor,
+  isRenderReviewSelection,
+  isSketchFreeRenderSelection,
   type BeatBackgroundAnchorItem,
   type BeatBackgroundReference,
   type PoolImage,
+  type QwenEditPrompts,
 } from "@/lib/queries/sketches";
+import { RenderReviewDialog } from "@/components/episode/beat-workbench/render-review-dialog";
 import {
   ThreeDDirectorDialog,
   type ThreeDDirectorCaptureMeta,
@@ -219,6 +223,18 @@ export function RenderSection({
   });
   const [stalePrompt, setStalePrompt] = useState<{ poolId: string; message: string } | null>(null);
   const [regenConfirm, setRegenConfirm] = useState(false);
+  // Any render-review-capable selection (runpod_qwen_edit_render(_multi),
+  // runpod_qwen21_render(_multi) — a multi-minute RunPod GPU render) gets a
+  // review-and-optionally-AI-rewrite dialog instead of the plain
+  // AlertDialog, mirroring the MiniMax H3 video review dialog's reasoning —
+  // see RenderReviewDialog.
+  const showQwenEditReview = isRenderReviewSelection(renderImageSelection);
+  // Sketch-free "compose" mode (runpod_qwen21_compose, added 2026-10-18)
+  // composes directly from the scene background + character/prop
+  // reference photos — the Render button must not be blocked by a
+  // missing sketch for this one selection.
+  const sketchFreeRender = isSketchFreeRenderSelection(renderImageSelection);
+  const [renderReviewOpen, setRenderReviewOpen] = useState(false);
   const [freezonePending, setFreezonePending] = useState(false);
   const [croppingAnchorId, setCroppingAnchorId] = useState<string | null>(null);
   const now = useNow();
@@ -289,7 +305,10 @@ export function RenderSection({
     }
   };
 
-  const handleRegen = async () => {
+  const handleRegen = async (overrides?: {
+    qwenEditPrompts?: QwenEditPrompts;
+    reviewFingerprint?: string;
+  }) => {
     try {
       const anchorId = currentBackgroundSource || "master";
       const backgroundRes = await updateBackgroundAnchor.mutateAsync({ anchorId });
@@ -301,8 +320,18 @@ export function RenderSection({
         beatIndices: [beat.beat_number],
         modeKey: singleRenderModeKey,
         imageGenerationSelection: renderImageSelection,
+        qwenEditPrompts: overrides?.qwenEditPrompts,
+        reviewFingerprint: overrides?.reviewFingerprint,
       });
       if (res.ok === false) {
+        if (res.error === "input_stale" && "message" in res) {
+          toast.error(res.message || t("episode.workbench.render.regenFailed"));
+          // Sketch/references changed under the user between review and
+          // Confirm — reopen the dialog so it re-fetches the current state
+          // instead of silently submitting a now-stale request.
+          setRenderReviewOpen(true);
+          return;
+        }
         toast.error(res.error || t("episode.workbench.render.regenFailed"));
         return;
       }
@@ -565,13 +594,19 @@ export function RenderSection({
                 <Button
                   size="xs"
                   variant="outline"
-                  onClick={() => setRegenConfirm(true)}
+                  onClick={() =>
+                    showQwenEditReview ? setRenderReviewOpen(true) : setRegenConfirm(true)
+                  }
                   // Also blocked while a regen this beat is NOT part of is
                   // running: all beats share one `selected_regen` registry
                   // entry, so starting a second run would repoint its scope/
                   // task id/beat coverage and the in-flight beat would lose its
                   // progress bar and Stop button.
-                  disabled={!hasCurrentSketch || regenerate.isPending || regenTask.started}
+                  disabled={
+                    (!hasCurrentSketch && !sketchFreeRender) ||
+                    regenerate.isPending ||
+                    regenTask.started
+                  }
                   className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
                 >
                   {regenerate.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
@@ -589,7 +624,7 @@ export function RenderSection({
                   />
                 </Button>
               )}
-              {!hasCurrentSketch && (
+              {!hasCurrentSketch && !sketchFreeRender && (
                 <span className="text-xs text-muted-foreground">
                   {t("episode.workbench.render.sketchRequired")}
                 </span>
@@ -720,6 +755,16 @@ export function RenderSection({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <RenderReviewDialog
+        open={renderReviewOpen}
+        onOpenChange={setRenderReviewOpen}
+        project={project}
+        episode={episode}
+        beatNum={beat.beat_number}
+        imageGenerationSelection={renderImageSelection}
+        onConfirm={(overrides) => void handleRegen(overrides)}
+      />
 
     </div>
   );
