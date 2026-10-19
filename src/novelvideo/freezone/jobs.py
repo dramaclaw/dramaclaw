@@ -63,6 +63,8 @@ async def run_freezone_gen(
     request_schema: Optional[dict[str, Any]] = None,
     output_task_type: str = "freezone_gen",
     egress_context: TrustedEgressContext | None = None,
+    result_metadata: dict[str, Any] | None = None,
+    midjourney_followup: dict[str, str] | None = None,
 ) -> Path:
     """text → image (with optional reference images).
 
@@ -119,6 +121,8 @@ async def run_freezone_gen(
         )
     cfg["newapi_model_params"] = model_params or {}
     cfg["newapi_request_schema"] = request_schema or {}
+    if midjourney_followup:
+        cfg["midjourney_followup"] = dict(midjourney_followup)
     if reference_paths:
         await generate_reference_edit_image(
             prompt=prompt,
@@ -131,6 +135,7 @@ async def run_freezone_gen(
             config=cfg,
             egress_context=egress_context,
             egress_capability="freezone.image.generate",
+            result_metadata=result_metadata,
         )
     else:
         await generate_text_to_image(
@@ -143,6 +148,7 @@ async def run_freezone_gen(
             config=cfg,
             egress_context=egress_context,
             egress_capability="freezone.image.generate",
+            result_metadata=result_metadata,
         )
     return out
 
@@ -323,6 +329,7 @@ async def run_freezone_edit(
     request_schema: Optional[dict[str, Any]] = None,
     output_task_type: str = "freezone_edit",
     egress_context: TrustedEgressContext | None = None,
+    result_metadata: dict[str, Any] | None = None,
 ) -> Path:
     """image + reference + prompt → new image.
 
@@ -377,6 +384,7 @@ async def run_freezone_edit(
         config=cfg,
         egress_context=egress_context,
         egress_capability="freezone.image.generate",
+        result_metadata=result_metadata,
     )
     return out
 
