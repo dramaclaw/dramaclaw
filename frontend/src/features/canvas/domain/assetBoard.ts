@@ -16,7 +16,7 @@ import { resolveNodeDisplayName } from './nodeDisplay';
 import { getStoryboardCellPreview, type StoryboardCellPreview } from './storyboardCellPreview';
 import { sortUpstreamByReferenceOrder } from '../nodes/referenceOrdering';
 
-export type AssetBoardColumn = 'text' | 'image' | 'video' | 'audio';
+export type AssetBoardColumn = 'text' | 'previz' | 'image' | 'video' | 'audio';
 
 export interface AssetBoardReference {
   /** 被引用的上游节点 id；节点自带参考图（referenceImageUrl）没有独立上游节点，为 null
@@ -34,7 +34,7 @@ export interface AssetBoardItem {
   mediaUrl: string | null;
   /** 卡片缩略图（图片本体 / 视频封面）；null → 渲染占位或视频首帧。 */
   thumbnailUrl: string | null;
-  /** 文本列正文预览（80 字截断）。 */
+  /** 文本列正文预览（80 字截断）；预演台列为场景摘要（对象数 · 帧数）。 */
   textPreview: string | null;
   /** 模型徽标（节点 data.model 原始 id）。 */
   model: string | null;
@@ -63,6 +63,7 @@ export interface AssetBoardItem {
 
 export interface AssetBoardData {
   text: AssetBoardItem[];
+  previz: AssetBoardItem[];
   image: AssetBoardItem[];
   video: AssetBoardItem[];
   audio: AssetBoardItem[];
@@ -95,6 +96,8 @@ function columnOf(node: CanvasNode): AssetBoardColumn | null {
     case CANVAS_NODE_TYPES.videoStory: // 分镜表：内容是镜头行，归文本列
     case CANVAS_NODE_TYPES.beatContext:
       return 'text';
+    case CANVAS_NODE_TYPES.previz:
+      return 'previz';
     case CANVAS_NODE_TYPES.upload:
     case CANVAS_NODE_TYPES.imageEdit:
     case CANVAS_NODE_TYPES.imageGen:
@@ -135,6 +138,16 @@ function textPreviewOf(node: CanvasNode, data: Record<string, unknown>): string 
     case CANVAS_NODE_TYPES.videoStory: {
       const rows = Array.isArray(data.rows) ? data.rows.length : 0;
       return rows > 0 ? `分镜表 · ${rows} 个镜头` : null;
+    }
+    case CANVAS_NODE_TYPES.previz: {
+      const summary = asRecord(data.summary);
+      const objects = num(summary.objectCount);
+      const frames = num(summary.durationFrames);
+      const parts = [
+        objects !== null ? `${objects} 个对象` : null,
+        frames !== null ? `${frames} 帧` : null,
+      ].filter(Boolean);
+      return parts.length > 0 ? parts.join(' · ') : null;
     }
     default:
       return null;
@@ -243,12 +256,12 @@ function referencesOf(
 }
 
 /**
- * 故事板视图的数据推导：把画布节点按媒介类型分进 text/image/video/audio 四桶。
+ * 故事板视图的数据推导：把画布节点按媒介类型分进 text/previz/image/video/audio 五桶。
  * 纯函数（对标 liblib「故事板 = 图数据第二投影」的机制），调用方用
  * `useMemo(() => buildAssetBoard(nodes, edges), [nodes, edges])` 订阅。
  */
 export function buildAssetBoard(nodes: CanvasNode[], edges: CanvasEdge[]): AssetBoardData {
-  const board: AssetBoardData = { text: [], image: [], video: [], audio: [] };
+  const board: AssetBoardData = { text: [], previz: [], image: [], video: [], audio: [] };
   const upstreamIndex = buildUpstreamIndex(nodes, edges);
   const previewCache = new Map<string, StoryboardCellPreview>();
 
@@ -271,7 +284,7 @@ export function buildAssetBoard(nodes: CanvasNode[], edges: CanvasEdge[]): Asset
       title: resolveNodeDisplayName(node.type, data as Partial<CanvasNodeData>),
       mediaUrl: mediaUrlOf(column, data, thumbnailUrl),
       thumbnailUrl,
-      textPreview: column === 'text' ? textPreviewOf(node, data) : null,
+      textPreview: column === 'text' || column === 'previz' ? textPreviewOf(node, data) : null,
       model: str(data.model),
       durationSec: durationSecOf(column, data),
       widthPx: num(data.widthPx),
@@ -299,6 +312,7 @@ export function buildAssetBoard(nodes: CanvasNode[], edges: CanvasEdge[]): Asset
   const newestFirst = (a: AssetBoardItem, b: AssetBoardItem) =>
     (creationOrder.get(b.nodeId) ?? -1) - (creationOrder.get(a.nodeId) ?? -1);
   board.text.sort(newestFirst);
+  board.previz.sort(newestFirst);
   board.image.sort(newestFirst);
   board.video.sort(newestFirst);
   board.audio.sort(newestFirst);

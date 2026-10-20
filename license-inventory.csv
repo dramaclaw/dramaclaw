@@ -913,6 +913,7 @@ frontend/src/__tests__/features/canvas/asset-board-generating-progress.test.tsx,
 frontend/src/__tests__/features/canvas/asset-board-image-gen-form.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-board-image-op-chip.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-board-image-ops.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/asset-board-previz-column.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-board-prompt-references.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-board-reference-dnd.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-board-text-audio-ops.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

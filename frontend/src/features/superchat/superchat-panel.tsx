@@ -10656,6 +10656,7 @@ function buildFreezoneSkillChipElement(skillId: string, label: string): HTMLElem
 
 const FREEZONE_NODE_CHIP_GLYPH: Record<AssetBoardColumn, string> = {
   text: "T",
+  previz: "◎",
   image: "▣",
   video: "▶",
   audio: "♪",

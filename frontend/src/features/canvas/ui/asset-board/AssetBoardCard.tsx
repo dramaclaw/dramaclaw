@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
-import { AlertCircle, ChevronRight, FileText, MapPin, ImageIcon, Loader2, Play } from 'lucide-react';
+import { AlertCircle, Camera, ChevronRight, FileText, MapPin, ImageIcon, Loader2, Play } from 'lucide-react';
 
 import {
   modelBadgeLabel,
@@ -49,6 +49,9 @@ const LOCATE_HIGHLIGHT_MS = 1200;
  */
 export const EMPTY_MEDIA_PLACEHOLDER_TEXT = '待确认后生成';
 
+/** 预演台空场景（还没摆任何对象）的占位文案。 */
+const PREVIZ_EMPTY_PLACEHOLDER_TEXT = '空场景';
+
 /**
  * 各栏生成耗时的经验预估（毫秒）——不是后端真实进度，后端不下发逐步进度事件，
  * 这里只是给 useEstimatedProgress 的时间线性插值一个量级参考：图片最快、视频
@@ -57,6 +60,7 @@ export const EMPTY_MEDIA_PLACEHOLDER_TEXT = '待确认后生成';
  */
 const ESTIMATED_GENERATION_DURATION_MS: Record<AssetBoardColumn, number> = {
   text: 10_000,
+  previz: 20_000,
   image: 20_000,
   audio: 30_000,
   video: 60_000,
@@ -202,6 +206,10 @@ export function AssetBoardCard({
     );
   }
   if (item.durationSec !== null) badges.push(<Chip key="dur">{`${item.durationSec}秒`}</Chip>);
+  // 预演台有封面时，场景摘要（对象数 · 帧数）挂成徽标；无封面时摘要已在占位里。
+  if (item.column === 'previz' && item.thumbnailUrl && item.textPreview) {
+    badges.push(<Chip key="previz">{item.textPreview}</Chip>);
+  }
   // 分辨率优先用节点记的尺寸；上传图等没记尺寸的节点退回图片实际加载出来的
   // 原始尺寸（卡片展示的就是原图，naturalWidth 即真实分辨率）。
   // 整对取舍而不是逐项回退：半残数据（只记了 widthPx）逐项回退会把存储的宽配上
@@ -343,6 +351,14 @@ export function AssetBoardCard({
                 </span>
               )}
             </>
+          ) : item.column === 'previz' && !item.thumbnailUrl ? (
+            // 预演台还没渲过封面：相机图标 + 场景摘要，空场景提示去画布里编辑。
+            <div className="flex flex-col items-center gap-1.5">
+              <Camera className="h-6 w-6 text-muted-foreground" />
+              <span className="text-[11px] text-muted-foreground">
+                {item.textPreview ?? PREVIZ_EMPTY_PLACEHOLDER_TEXT}
+              </span>
+            </div>
           ) : item.thumbnailUrl ? (
             <img
               src={item.thumbnailUrl}

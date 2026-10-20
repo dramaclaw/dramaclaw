@@ -39,6 +39,7 @@ function item(partial: Partial<AssetBoardItem> & Pick<AssetBoardItem, "nodeId" |
 
 const board: AssetBoardData = {
   text: [item({ nodeId: "t1", column: "text", title: "分镜表" })],
+  previz: [item({ nodeId: "p1", column: "previz", title: "预演台", thumbnailUrl: "https://x/p1.png" })],
   image: [item({ nodeId: "i1", column: "image", title: "多角度", thumbnailUrl: "https://x/i1.jpg" })],
   video: [item({ nodeId: "v1", column: "video", title: "视频节点5", mediaUrl: "https://x/v1.mp4" })],
   audio: [item({ nodeId: "a1", column: "audio", title: "背景音乐" })],
@@ -69,10 +70,10 @@ describe("getFreezoneNodeAtQuery", () => {
 });
 
 describe("buildFreezoneNodeSuggestions", () => {
-  it("flattens board in text→image→video→audio order with mapped fields", () => {
+  it("flattens board in text→previz→image→video→audio order with mapped fields", () => {
     const result = buildFreezoneNodeSuggestions(board);
-    expect(result.map((r) => r.nodeId)).toEqual(["t1", "i1", "v1", "a1"]);
-    expect(result[1]).toEqual({
+    expect(result.map((r) => r.nodeId)).toEqual(["t1", "p1", "i1", "v1", "a1"]);
+    expect(result[2]).toEqual({
       nodeId: "i1",
       column: "image",
       title: "多角度",
@@ -89,6 +90,7 @@ describe("buildFreezoneNodeSuggestions", () => {
         item({ nodeId: "t-scene", column: "text", title: "场景卡", keyElementCategory: "scene" }),
         item({ nodeId: "t-plain", column: "text", title: "普通文本" }),
       ],
+      previz: [],
       image: [item({ nodeId: "i-other", column: "image", title: "其他图", keyElementCategory: "other" })],
       video: [item({ nodeId: "v-char", column: "video", title: "主角视频", keyElementCategory: "character" })],
       audio: [item({ nodeId: "a-plain", column: "audio", title: "配乐" })],
@@ -101,6 +103,7 @@ describe("buildFreezoneNodeSuggestions", () => {
     // 同一分类内不重排：按扁平化栏目顺序（文本→图片→视频→音频）保持稳定。
     const sameCategory: AssetBoardData = {
       text: [item({ nodeId: "t-char", column: "text", title: "人物文本", keyElementCategory: "character" })],
+      previz: [],
       image: [item({ nodeId: "i-char", column: "image", title: "人物图片", keyElementCategory: "character" })],
       video: [],
       audio: [],
@@ -113,7 +116,7 @@ describe("buildFreezoneNodeSuggestions", () => {
 describe("filterFreezoneNodeSuggestions", () => {
   it("returns all items for empty query", () => {
     const all = buildFreezoneNodeSuggestions(board);
-    expect(filterFreezoneNodeSuggestions(all, "")).toHaveLength(4);
+    expect(filterFreezoneNodeSuggestions(all, "")).toHaveLength(5);
   });
   it("filters by case-insensitive title substring", () => {
     const all = buildFreezoneNodeSuggestions(board);

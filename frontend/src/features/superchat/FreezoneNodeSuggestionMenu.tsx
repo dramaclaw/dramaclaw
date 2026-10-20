@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef } from "react";
-import { FileText, Image as ImageIcon, Music, Play, type LucideIcon } from "lucide-react";
+import { Camera, FileText, Image as ImageIcon, Music, Play, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AssetBoardColumn } from "@/features/canvas/domain/assetBoard";
 import type { FreezoneNodeSuggestion } from "./freezone-node-suggestions";
@@ -9,6 +9,7 @@ import type { FreezoneNodeSuggestion } from "./freezone-node-suggestions";
 // 与 AssetBoardCard/AssetBoardDetail 的列图标保持一致（video 用 Play，非 Film）。
 const COLUMN_ICON: Record<AssetBoardColumn, LucideIcon> = {
   text: FileText,
+  previz: Camera,
   image: ImageIcon,
   video: Play,
   audio: Music,

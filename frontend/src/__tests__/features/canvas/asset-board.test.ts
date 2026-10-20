@@ -32,6 +32,28 @@ describe('buildAssetBoard', () => {
     expect(board.audio.map((i) => i.nodeId)).toEqual(['a1']);
   });
 
+  it('预演台节点进 previz 栏：封面取 previewImageUrl，摘要为「对象数 · 帧数」，空场景摘要为 null', () => {
+    const board = buildAssetBoard(
+      [
+        node('p1', CANVAS_NODE_TYPES.previz, {
+          previewImageUrl: '/static/p1.png',
+          summary: { objectCount: 3, durationFrames: 120 },
+        }),
+        node('p2', CANVAS_NODE_TYPES.previz, {}),
+      ],
+      [],
+    );
+    expect(board.text).toEqual([]);
+    expect(board.previz.map((i) => i.nodeId)).toEqual(['p2', 'p1']);
+    const [empty, filled] = board.previz;
+    expect(filled.column).toBe('previz');
+    expect(filled.thumbnailUrl).toContain('/static/p1.png');
+    expect(filled.textPreview).toBe('3 个对象 · 120 帧');
+    expect(filled.title).toBe('预演台');
+    expect(empty.thumbnailUrl).toBeNull();
+    expect(empty.textPreview).toBeNull();
+  });
+
   it('视频合成节点标记为成片(final)，普通视频节点为片段(clip)', () => {
     const board = buildAssetBoard(
       [

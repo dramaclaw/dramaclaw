@@ -35,12 +35,18 @@ function keyElementRank(category: KeyElementCategory | null): number {
 }
 
 /**
- * 把故事板四栏拍平成候选列表。默认排序：被标记为关键元素的节点按分类顺序
+ * 把故事板各栏拍平成候选列表。默认排序：被标记为关键元素的节点按分类顺序
  * （人物→场景→物品→其他，对齐 KeyElementsBar）置顶，其余节点保持栏目顺序
- * （文本→图片→视频→音频）。同档内保持稳定顺序。
+ * （文本→预演台→图片→视频→音频）。同档内保持稳定顺序。
  */
 export function buildFreezoneNodeSuggestions(board: AssetBoardData): FreezoneNodeSuggestion[] {
-  const flattened = [...board.text, ...board.image, ...board.video, ...board.audio].map((item) => ({
+  const flattened = [
+    ...board.text,
+    ...board.previz,
+    ...board.image,
+    ...board.video,
+    ...board.audio,
+  ].map((item) => ({
     nodeId: item.nodeId,
     column: item.column,
     title: item.title,
@@ -188,6 +194,7 @@ export function appendFreezoneNodeMentions(
 /** 栏目 → 悬浮预览里显示的中文类型标签。 */
 const FREEZONE_NODE_COLUMN_LABEL: Record<AssetBoardColumn, string> = {
   text: "文本",
+  previz: "预演台",
   image: "图片",
   video: "视频",
   audio: "音频",
