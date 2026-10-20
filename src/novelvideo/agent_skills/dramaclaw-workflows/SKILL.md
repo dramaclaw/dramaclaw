@@ -1,6 +1,6 @@
 ---
 name: dramaclaw-workflows
-description: Create, revise, confirm, run, or resume multi-node DramaClaw Freezone canvas workflows. Use for requests involving a workflow, several connected nodes, grouped production stages, storyboards, or text/image/video/audio pipelines; do not use for one standalone canvas operation.
+description: Create, revise, confirm, run, or resume multi-node DramaClaw Freezone canvas workflows. Use for requests involving a workflow, several connected nodes, grouped production stages, storyboards, or text/image/video/audio pipelines; do not use for one standalone canvas operation or for 预演台/previz scene blocking (edit a previzNode instead).
 ---
 
 # DramaClaw Workflows

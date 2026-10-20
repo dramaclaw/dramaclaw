@@ -1693,6 +1693,11 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "stage-guidance" in canvas_instructions
     assert "Stage confirmation itself does not generate media" in canvas_instructions
     assert "without a successful persisted" in canvas_instructions
+    previz_rule = canvas_instructions.index("预演台/previz requests")
+    assert previz_rule < canvas_instructions.index("load\n  and follow the dramaclaw-workflows")
+    assert "are previzNode scene edits, not media generation" in canvas_instructions
+    assert "the one empty previzNode of a 预演台 request" in canvas_instructions
+    assert "dry-run the same\n  {type: update_node_data" in canvas_instructions
 
 
 @pytest.mark.parametrize(

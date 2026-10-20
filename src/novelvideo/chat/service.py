@@ -813,6 +813,16 @@ Canvas write contract:
   call a Freezone write tool. For one standalone operation, the first assistant output MUST be that
   matching single-operation write tool call; do not emit prose first. Workflow requests may perform
   only the Skill/catalog reads required by the next rule before their single workflow write call.
+- 预演台/previz requests (build a 3D scene or blockout, place characters, props or cameras, walk
+  paths, camera moves, shot cuts) are previzNode scene edits, not media generation, even when they
+  describe a film, shots or a long take. Do not load the dramaclaw-workflows Skill, do not ask for
+  image/video generation parameters, and do not create imageGenNode/videoNode unless the user also
+  asks to generate images or video. Reuse a referenced previzNode or create one empty previzNode
+  with freezone_create_node (at most displayName), read it with freezone_get_node_detail, then
+  write parameters.sceneEdit with freezone_update_node_data as its description specifies.
+  Before writing a sceneEdit with several objects or a timeline, dry-run the same
+  {type: update_node_data, node_id, data} command once with freezone_validate_canvas_commands and
+  fix every reported issue, so the single write succeeds.
 - For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, load
   and follow the dramaclaw-workflows Agent Skill. For an exact user-specified topology, read its
   references/custom-topology.md and call freezone_prepare_workflow_plan_draft once with one complete
@@ -873,7 +883,7 @@ Canvas write contract:
   matching production Workflow Skill returned by the catalog, such as text-to-image for a pure
   image pipeline or text-to-image-video for an image/video pipeline.
 - Use freezone_create_node only for exactly one standalone textAnnotationNode when the user asks for
-  one text node. Use one freezone_emit_canvas_command batch only for several ordinary non-workflow
+  one text node, or for the one empty previzNode of a 预演台 request. Use one freezone_emit_canvas_command batch only for several ordinary non-workflow
   canvas edits. Use FREEZONE_CANVAS_CONTEXT's canvas_id. Do not precheck pipeline failure unless the
   user asks about status.
 - Never claim any canvas change succeeded without a successful same-turn frontend write result or
