@@ -45,33 +45,41 @@ export const canvasMenuIconMap: Record<MenuIconKey | "gamepad" | "megaphone", Lu
   videoBreakdown: ScanSearch,
 };
 
-// 可直接创建画布节点的类型及其菜单顺序。新增普通节点仍在这里登记。
+// 可直接创建画布节点的类型及其菜单顺序：按功能使用频率排列，高频节点在前。
+// 新增普通节点仍在这里登记。
 // 互动影游、互动广告属于打开虾导的创作动作，不是 CanvasNodeType，配置在 nodeCatalog.ts
 // 的 canvasCreationActions 中，由下方 CANVAS_ADD_MENU_ENTRIES 合并到同一个菜单。
 export const CANVAS_ADD_NODE_TYPES: readonly CanvasNodeType[] = [
-  CANVAS_NODE_TYPES.textAnnotation,
-  CANVAS_NODE_TYPES.beatContext,
   CANVAS_NODE_TYPES.imageGen,
   CANVAS_NODE_TYPES.video,
+  CANVAS_NODE_TYPES.textAnnotation,
   CANVAS_NODE_TYPES.videoCompose,
   CANVAS_NODE_TYPES.videoBreakdown,
+  CANVAS_NODE_TYPES.previz,
   CANVAS_NODE_TYPES.audio,
-  CANVAS_NODE_TYPES.script,
   CANVAS_NODE_TYPES.upload,
+];
+
+// 低频/辅助节点排在创作动作之后，让前两行留给高频节点和创作入口。
+const CANVAS_ADD_TRAILING_NODE_TYPES: readonly CanvasNodeType[] = [
+  CANVAS_NODE_TYPES.beatContext,
+  CANVAS_NODE_TYPES.script,
   CANVAS_NODE_TYPES.pano360Viewer,
   CANVAS_NODE_TYPES.threeDWorld,
-  CANVAS_NODE_TYPES.previz,
   CANVAS_NODE_TYPES.htmlArtifact,
 ];
 
-// 完整的「添加节点」菜单：普通节点在前，创作动作在后，共用按钮渲染与样式。
+const nodeMenuEntry = (type: CanvasNodeType) => {
+  const definition = nodeCatalog.getDefinition(type);
+  return definition ? [{ ...definition, id: type, entryType: "node" as const }] : [];
+};
+
+// 完整的「添加节点」菜单：高频节点 → 创作动作 → 低频/辅助节点，共用按钮渲染与样式。
 // entryType 区分点击行为：node 走节点创建，action 发事件交给虾导处理。
 const CANVAS_ADD_MENU_ENTRIES = [
-  ...CANVAS_ADD_NODE_TYPES.flatMap((type) => {
-    const definition = nodeCatalog.getDefinition(type);
-    return definition ? [{ ...definition, id: type, entryType: "node" as const }] : [];
-  }),
+  ...CANVAS_ADD_NODE_TYPES.flatMap(nodeMenuEntry),
   ...canvasCreationActions.map((action) => ({ ...action, entryType: "action" as const })),
+  ...CANVAS_ADD_TRAILING_NODE_TYPES.flatMap(nodeMenuEntry),
 ];
 
 export const CANVAS_MENU_ICON_CELL_CLASS =
