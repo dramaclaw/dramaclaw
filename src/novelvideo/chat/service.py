@@ -194,7 +194,7 @@ _MERGEABLE_MEDIA_SPEC_TYPES = presentation.MERGEABLE_MEDIA_SPEC_TYPES
 
 _CODEX_MODEL_PROVIDER = "dramaclaw_gateway"
 _DEFAULT_CODEX_MODEL = "DC-codex-agent-LLM"
-_DEFAULT_CODEX_REASONING_EFFORT = "medium"
+_DEFAULT_CODEX_REASONING_EFFORT = "low"
 _CODEX_REASONING_EFFORT_VALUES = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 )

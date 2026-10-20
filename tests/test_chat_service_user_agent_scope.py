@@ -4588,7 +4588,7 @@ def test_codex_gateway_overrides_use_responses_without_embedding_secret(
     assert "features.shell_tool=false" in overrides
     assert "memories.generate_memories=false" in overrides
     assert "memories.use_memories=false" in overrides
-    assert 'model_reasoning_effort="medium"' in overrides
+    assert 'model_reasoning_effort="low"' in overrides
     assert 'web_search="disabled"' in overrides
     catalog_override = next(
         item for item in overrides if item.startswith("model_catalog_json=")

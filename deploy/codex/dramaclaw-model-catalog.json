@@ -5,7 +5,7 @@
       "base_instructions": "You are Codex, the DramaClaw agent. Follow the developer instructions and use the available MCP tools to perform project and canvas work.",
       "display_name": "DramaClaw Codex Agent",
       "description": "DramaClaw Gateway alias with concrete MCP tools available on the first model request.",
-      "default_reasoning_level": "medium",
+      "default_reasoning_level": "low",
       "supported_reasoning_levels": [
         {"effort": "low", "description": "Fast responses with lighter reasoning"},
         {"effort": "medium", "description": "Balances speed and reasoning depth"},
@@ -56,7 +56,7 @@
       "base_instructions": "You are Codex, the DramaClaw agent. Follow the developer instructions and use the available MCP tools to perform project and canvas work.",
       "display_name": "BrainClaw",
       "description": "RelayClaw BrainClaw route with concrete MCP tools available on the first model request.",
-      "default_reasoning_level": "medium",
+      "default_reasoning_level": "low",
       "supported_reasoning_levels": [
         {"effort": "low", "description": "Fast responses with lighter reasoning"},
         {"effort": "medium", "description": "Balances speed and reasoning depth"},
