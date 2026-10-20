@@ -33,15 +33,32 @@ import { PROJECT_SUBMENU_HEIGHT, PROJECT_SUBMENU_TOP_GAP, PROJECT_SUBMENU_BOTTOM
 const XIAJI_DEFAULT_ROUTE = PROJECT_SECTION_ROUTES.ingest;
 const PROJECT_SUBMENU_CLASS = "backdrop-blur-tap flex items-center gap-3 whitespace-nowrap rounded-full border border-white/[0.08] bg-[rgb(var(--surface-rgb)/0.78)] px-3.5 py-px text-sidebar-foreground";
 const PROJECT_SUBMENU_ITEM_CLASS = "flex h-[26px] items-center px-1.5 text-[11px] font-semibold transition-colors duration-150 ease-[var(--ease-out-quint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring";
+type ProjectSubmenuPlacement = "flow" | "overlay";
 
 function ProjectSubmenu({ label, role, children }: { label: string; role?: 'tablist'; children: ReactNode }) {
   return <nav role={role} aria-label={label} style={{ height: PROJECT_SUBMENU_HEIGHT }} className={PROJECT_SUBMENU_CLASS}>{children}</nav>;
 }
 
-function ProjectSubmenuRow({ children }: { children: ReactNode }) {
+function ProjectSubmenuRow({
+  placement,
+  children,
+}: {
+  placement: ProjectSubmenuPlacement;
+  children: ReactNode;
+}) {
+  const isOverlay = placement === "overlay";
   return (
-    <div className="relative z-30 flex justify-center px-4"
-      style={{ paddingTop: PROJECT_SUBMENU_TOP_GAP, paddingBottom: PROJECT_SUBMENU_BOTTOM_GAP }}
+    <div
+      className={cn(
+        "z-30 flex justify-center",
+        isOverlay
+          ? "absolute left-1/2 top-full -translate-x-1/2"
+          : "relative px-4",
+      )}
+      style={{
+        paddingTop: PROJECT_SUBMENU_TOP_GAP,
+        paddingBottom: isOverlay ? 0 : PROJECT_SUBMENU_BOTTOM_GAP,
+      }}
     >
       {children}
     </div>
@@ -56,7 +73,7 @@ export function ProjectXiahuaMenu() {
   const modes: FreezoneViewMode[] = ["workflow", "board"];
 
   return (
-    <ProjectSubmenuRow>
+    <ProjectSubmenuRow placement="overlay">
       <ProjectSubmenu role="tablist" label={t("freezone.viewMode.label")}>
         {modes.map((mode, index) => (
           <button key={mode} type="button" role="tab"
@@ -241,7 +258,7 @@ export function ProjectXiajiMenu({ project }: { project: string }) {
   );
 
   return (
-    <ProjectSubmenuRow>
+    <ProjectSubmenuRow placement="flow">
       <ProjectSubmenu label={t("nav.xiajiMenu")}>
         {visibleMenuItems.map((item) => {
           const target =

@@ -6,6 +6,7 @@ import { Crosshair, X } from "lucide-react";
 
 import { useCanvasStore } from "@/stores/canvasStore";
 import { useCanvasPickStore } from "@/stores/canvasPickStore";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 
 /**
  * 「从画布选择」拾取模式的顶部提示条。
@@ -18,7 +19,6 @@ export function CanvasPickBanner() {
   const request = useCanvasPickStore((state) => state.request);
   const cancelPick = useCanvasPickStore((state) => state.cancelPick);
   const nodes = useCanvasStore((state) => state.nodes);
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const requestFocusNode = useCanvasStore((state) => state.requestFocusNode);
 
   const requesterNodeId = request?.requesterNodeId ?? null;
@@ -63,7 +63,7 @@ export function CanvasPickBanner() {
           type="button"
           className="ml-1 rounded-full border border-white/15 bg-white/[0.06] px-3 py-1 text-[12px] text-text-dark transition-colors hover:bg-white/[0.12]"
           onClick={() => {
-            setSelectedNode(request.requesterNodeId);
+            selectNodeExclusively(request.requesterNodeId);
             requestFocusNode(request.requesterNodeId);
           }}
         >

@@ -23,7 +23,6 @@ export function DerivedMediaNode({ id, data, selected, type }: NodeProps) {
     <div
       className={`group relative overflow-visible rounded-[var(--node-radius)] border ${CANVAS_NODE_PANEL_SURFACE_CLASS} ${canvasNodeFrameClass({ selected: Boolean(selected), mainline: false })}`}
       style={{ width: 360 }}
-      onClick={() => store.setSelectedNode(id)}
     >
       <Handle id="target" type="target" position={Position.Left} />
       <NodeHeader

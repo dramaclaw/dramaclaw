@@ -9,6 +9,7 @@ import {
 import { inheritMainlineFields } from '@/features/canvas/domain/inheritMainlineFields';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { selectNodeExclusively } from './nodeSelection';
 
 import { matteInWorker } from './matteClient';
 
@@ -79,7 +80,7 @@ export function matteImage(
     matteInitialData as unknown as Parameters<typeof store.addNode>[2],
   );
   store.addEdge(node.id, nextNodeId);
-  store.setSelectedNode(nextNodeId);
+  selectNodeExclusively(nextNodeId);
   store.requestFocusNode(nextNodeId);
 
   const sourceUrl = imageSource;

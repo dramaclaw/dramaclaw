@@ -13,11 +13,14 @@ import { OutpaintEditorOverlay } from "@/features/canvas/ui/OutpaintEditorOverla
 import type { CanvasNode } from "@/features/canvas/domain/canvasNodes";
 
 // NodeToolbar 要挂在真的 ReactFlow store 上才渲染内容，这里只关心工具条里的按钮，
-// 用透传壳替掉即可。
-vi.mock("@xyflow/react", () => ({
-  NodeToolbar: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Position: { Top: "top", Bottom: "bottom" },
-}));
+// 用透传壳替掉即可。其余导出保留真实实现：画布 store 会用到 applyNodeChanges。
+vi.mock("@xyflow/react", async () => {
+  const actual = await vi.importActual<typeof import("@xyflow/react")>("@xyflow/react");
+  return {
+    ...actual,
+    NodeToolbar: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  };
+});
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),

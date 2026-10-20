@@ -5,14 +5,23 @@ import { useRouterState } from "@tanstack/react-router";
 import { Toaster } from "sonner";
 
 import { projectSectionFromPath } from "@/components/layout/project-navigation-routes";
-import { APP_HEADER_HEIGHT, PROJECT_SUBMENU_ROW_HEIGHT } from "@/components/layout/layout-metrics";
+import {
+  APP_HEADER_HEIGHT,
+  PROJECT_SUBMENU_OVERLAY_HEIGHT,
+  PROJECT_SUBMENU_ROW_HEIGHT,
+} from "@/components/layout/layout-metrics";
 const TOAST_SAFE_GAP = 12;
 
 export function ThemedToaster() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const projectSection = projectSectionFromPath(pathname);
   const isAppRoute = pathname === "/" || pathname.startsWith("/projects/");
-  const subnavHeight = projectSection !== null ? PROJECT_SUBMENU_ROW_HEIGHT : 0;
+  const subnavHeight =
+    projectSection === "freezone"
+      ? PROJECT_SUBMENU_OVERLAY_HEIGHT
+      : projectSection !== null
+        ? PROJECT_SUBMENU_ROW_HEIGHT
+        : 0;
   const topOffset = isAppRoute
     ? APP_HEADER_HEIGHT + subnavHeight + TOAST_SAFE_GAP
     : 24;

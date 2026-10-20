@@ -108,28 +108,25 @@ interface CanvasAddNodeGridProps {
   onActionSelected?: () => void;
   onSelectNode: (type: CanvasNodeType, clientPosition?: { x: number; y: number }) => void;
   onItemPointerEnter?: () => void;
-  transitionDelayForIndex?: (index: number) => string | undefined;
 }
 
 export function CanvasAddNodeGrid({
   onActionSelected,
   onSelectNode,
   onItemPointerEnter,
-  transitionDelayForIndex,
 }: CanvasAddNodeGridProps) {
   const { t } = useTranslation();
 
   return (
-    <div className="grid grid-cols-4 justify-items-center gap-x-2 gap-y-5">
-      {CANVAS_ADD_MENU_ENTRIES.map((definition, index) => {
+    <div className="grid grid-cols-5 justify-items-center gap-x-3 gap-y-5">
+      {CANVAS_ADD_MENU_ENTRIES.map((definition) => {
         const Icon = canvasMenuIconMap[definition.menuIcon] ?? Image;
         return (
           <button
             key={definition.id}
             type="button"
             onMouseEnter={onItemPointerEnter}
-            className={`${CANVAS_MENU_ICON_CELL_CLASS} hover:bg-white/[0.075]`}
-            style={{ transitionDelay: transitionDelayForIndex?.(index) }}
+            className="flex w-full min-w-0 flex-col items-center gap-1.5 rounded-xl py-2 text-center transition-colors hover:bg-white/[0.075]"
             onClick={(event) => {
               if (definition.entryType === "node") {
                 onSelectNode(definition.type, { x: event.clientX, y: event.clientY });
@@ -143,7 +140,7 @@ export function CanvasAddNodeGrid({
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-300/[0.12]">
               <Icon className="h-4 w-4 text-cyan-200" />
             </div>
-            <span className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[13px] leading-5 text-white/82">
+            <span className="line-clamp-2 w-full break-words text-[13px] leading-5 text-white/82">
               {t(definition.menuLabelKey)}
             </span>
           </button>

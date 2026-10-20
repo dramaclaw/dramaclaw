@@ -39,6 +39,6 @@ export function selectNodeExclusively(nodeId: string): void {
       type: 'select' as const,
       selected: node.id === nodeId,
     }));
-  if (changes.length > 0) store.onNodesChange(changes);
-  store.setSelectedNode(nodeId);
+  if (changes.length > 0 && typeof store.onNodesChange === 'function') store.onNodesChange(changes);
+  if (typeof store.setSelectedNode === 'function') store.setSelectedNode(nodeId);
 }

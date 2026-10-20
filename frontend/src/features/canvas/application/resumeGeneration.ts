@@ -50,7 +50,7 @@ import { resumePersistedHtmlGeneration } from './workflowHtmlRuntime';
 
 export {
   generationTaskDescriptor,
-  handedOffGenerationTaskDescriptor,
+  sessionOwnedGenerationTaskDescriptor,
 } from './generationTaskDescriptor';
 export type { GenerationTaskDescriptor } from './generationTaskDescriptor';
 
@@ -257,8 +257,8 @@ export const CLEARED_GENERATION_TASK_FIELDS = {
 /** 白模落地要读节点上的最新数据（导入模式、编辑器关着时的场景），这一步之前的 patch 不够用。 */
 interface ResumeNodeContext {
   nodeId: string;
-  readNodeData: () => Record<string, unknown>;
-  /** 节点上的任务句柄还是不是这一个。取结果要等，等完得再问一次。 */
+  readNodeData: () => Record<string, unknown> | null | undefined;
+  /** 节点仍由这个任务持有（存在、在生成中、句柄未被替换）。取结果要等，等完得再问一次。 */
   stillOwnsTask: () => boolean;
 }
 
@@ -380,6 +380,7 @@ async function buildSuccessPatch(
       // 节点数据也要等结果回来再读：等的这段时间里用户可能改了场景并关掉编辑器，
       // 拿等之前读的那份去落地，会把刚存进节点的修改盖掉。
       const nodeData = context.readNodeData();
+      if (!nodeData) return null;
       const mode = nodeData.blockoutImportMode === 'append' ? 'append' : 'replace';
       return {
         ...CLEARED_GENERATION_TASK_FIELDS,
@@ -462,9 +463,12 @@ export async function resumeNodeGeneration(params: {
   }
 
   const readLatestNodeData = () =>
-    getNodeData?.(node.id)
-    ?? (node.data as Record<string, unknown>);
-  const stillOwnsTask = () => readLatestNodeData().generationTaskKey === taskKey;
+    getNodeData ? getNodeData(node.id) : data;
+  // 节点被删、被新任务接管或已落过结果（isGenerating 已清）时，这一轮都不该再写。
+  const stillOwnsTask = () => {
+    const latest = readLatestNodeData();
+    return latest?.isGenerating === true && latest.generationTaskKey === taskKey;
+  };
 
   // Quick pre-check: if the task no longer exists server-side (expired/cleaned),
   // avoid hanging on the full poll budget — clear the stuck 生成中 state now.
@@ -522,7 +526,7 @@ export async function resumeNodeGeneration(params: {
     }
     if (!stillOwnsTask()) return;
     if (kind === 'image' || kind === 'video' || kind === 'video-compose') {
-      const latestNodeData = readLatestNodeData();
+      const latestNodeData = readLatestNodeData()!;
       if (!shouldWriteGenerationError({ nodeData: latestNodeData, taskKey, error })) {
         updateNodeData(node.id, { ...CLEARED_GENERATION_TASK_FIELDS });
         return;
@@ -534,9 +538,11 @@ export async function resumeNodeGeneration(params: {
 }
 
 /**
- * Whether a node restored from storage needs {@link resumeNodeGeneration}. Returns
- * false for tasks already being awaited by an in-session flow (see
- * {@link sessionOwnedTaskKeys}).
+ * Whether a node restored from storage needs {@link resumeNodeGeneration}.
+ *
+ * 本会话提交的任务同样需要恢复：SPA 导航后原等待方可能已经不在了，而并发 wait
+ * 由 task API 合并成同一个 promise。只有提交方明确接管并自行落盘的流程（HTML）
+ * 会通过 {@link sessionOwnedGenerationTaskDescriptor} 跳过扫描。
  */
 export function nodeNeedsGenerationResume(node: CanvasNode): boolean {
   const data = node.data as Record<string, unknown>;

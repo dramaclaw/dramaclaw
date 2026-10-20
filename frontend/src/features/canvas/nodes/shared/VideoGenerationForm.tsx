@@ -35,6 +35,7 @@ import type {
   VideoNodeData,
 } from "@/features/canvas/domain/canvasNodes";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import type { UpstreamContent } from "@/features/canvas/application/ports";
 import type {
   FreezoneVideoAspectRatio,
@@ -1533,7 +1534,6 @@ export const VideoGenerationForm = memo((props: VideoGenerationFormProps) => {
   // node; this is only for the button's title, so a blocked member is told why.
   const modelTaskAccess = useModelTaskAccess();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const promptEditorRef = useRef<PromptMentionEditorHandle | null>(null);
 
   // 弹层与编辑器同在面板里、编辑器恒已挂载，故插入直接走命令式 API，回调保持稳定引用
@@ -1606,7 +1606,7 @@ export const VideoGenerationForm = memo((props: VideoGenerationFormProps) => {
             items={referenceMediaItems}
             caps={referenceCaps}
             genMode={genMode}
-            onFocus={(focusNodeId) => setSelectedNode(focusNodeId)}
+            onFocus={selectNodeExclusively}
             onDetach={onDetachUpstream}
             onReorder={(ids) => updateNodeData(nodeId, { referenceOrder: ids })}
           />

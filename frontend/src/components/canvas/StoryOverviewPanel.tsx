@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, CornerDownLeft, RotateCcw, X } from 'lucide-react';
 
 import { useCanvasStore } from '@/stores/canvasStore';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 import {
   FREEZONE_DOCK_OFFSET_ANIMATED_STYLE,
 } from '@/features/freezone/dockOffset';
@@ -103,7 +104,6 @@ export const StoryOverviewPanel = memo(function StoryOverviewPanel({
   const { t } = useTranslation();
   const nodes = useCanvasStore((s) => s.nodes);
   const edges = useCanvasStore((s) => s.edges);
-  const setSelectedNode = useCanvasStore((s) => s.setSelectedNode);
   const requestFocusNode = useCanvasStore((s) => s.requestFocusNode);
   const [top, setTop] = useState(64);
   const [width, setWidth] = useState(420);
@@ -170,7 +170,7 @@ export const StoryOverviewPanel = memo(function StoryOverviewPanel({
 
   if (!overview) return null;
   const locate = (nodeId: string) => {
-    setSelectedNode(nodeId);
+    selectNodeExclusively(nodeId);
     requestFocusNode(nodeId);
     onClose();
   };

@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { Check, CircleDashed, Loader, MinusCircle, MoreHorizontal } from 'lucide-react';
 
 import { useCanvasStore } from '@/stores/canvasStore';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 import { isVideoNode } from '@/features/canvas/domain/canvasNodes';
 import { lintStory } from '@/features/canvas/story/lintStory';
 import { STORY_CHOICE_EDGE_TYPE, type StoryFlag, type StoryVariable } from '@/features/canvas/story/storyTypes';
@@ -182,7 +183,6 @@ export function StoryStageNav({
   const { t } = useTranslation();
   const nodes = useCanvasStore((s) => s.nodes);
   const edges = useCanvasStore((s) => s.edges);
-  const setSelectedNode = useCanvasStore((s) => s.setSelectedNode);
   const requestFocusNode = useCanvasStore((s) => s.requestFocusNode);
 
   const model = useMemo(() => deriveStoryStageNav(nodes, edges, outline), [nodes, edges, outline]);
@@ -213,7 +213,7 @@ export function StoryStageNav({
 
   const focusStoryGroup = () => {
     if (!groupId) return;
-    setSelectedNode(groupId);
+    selectNodeExclusively(groupId);
     requestFocusNode(groupId);
   };
 

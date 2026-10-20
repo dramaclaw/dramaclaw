@@ -162,6 +162,7 @@ import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { CanvasOntologyContext } from "@/features/canvas/ontology/canvasOntology";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { useCanvasStore, type CanvasNode } from "@/stores/canvasStore";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import {
   CANVAS_NODE_TYPES,
   type AudioVoiceRef,
@@ -10311,17 +10312,8 @@ function CanvasReferenceVideoPreview({
 }
 
 function focusCanvasReferenceNode(nodeId: string): void {
-  const store = useCanvasStore.getState();
-  if (!store.nodes.some((node) => node.id === nodeId)) return;
-  store.onNodesChange(
-    store.nodes.map((node) => ({
-      id: node.id,
-      type: "select" as const,
-      selected: node.id === nodeId,
-    })),
-  );
-  store.setSelectedNode(nodeId);
-  store.requestFocusNode(nodeId);
+  selectNodeExclusively(nodeId);
+  useCanvasStore.getState().requestFocusNode(nodeId);
 }
 
 function removeCanvasReferenceNode(nodeId: string): void {

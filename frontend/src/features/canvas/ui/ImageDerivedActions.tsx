@@ -21,6 +21,7 @@ import {
   resolveNodeSourceImageUrl,
 } from "../domain/canvasNodes";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import { readUrl } from "@/lib/url-params";
 import {
   generateDerivedMedia,
@@ -116,7 +117,7 @@ export function ImageDerivedOverlay({
       },
     );
     store.addEdge(node.id, id);
-    store.setSelectedNode(id);
+    selectNodeExclusively(id);
     onClose();
     void generateDerivedMedia(
       project,

@@ -12,7 +12,7 @@ import {
 import { aspectRatioFromImageDimensions } from '@/features/canvas/application/imageNodeSizing';
 import { extractUpstreamContent } from '@/features/canvas/application/graphContentResolver';
 import { useUpstreamNodes } from '@/features/canvas/application/useUpstreamGraph';
-import { handedOffGenerationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import {
   CANVAS_NODE_TYPES,
   DEFAULT_ASPECT_RATIO,
@@ -190,7 +190,7 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
         });
         // 句柄一落到节点上，Canvas 的恢复扫描就会接管这个任务。
         useCanvasStore.getState().updateNodeData(nodeId, {
-          ...handedOffGenerationTaskDescriptor(job),
+          ...generationTaskDescriptor(job),
           isGenerating: true,
           generationStartedAt: Date.now(),
           blockoutImportMode: mode,

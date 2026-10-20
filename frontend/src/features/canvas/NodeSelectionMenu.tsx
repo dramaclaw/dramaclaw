@@ -347,7 +347,7 @@ export function NodeSelectionMenu({
     >
       <div
         ref={mainPanelRef}
-        className="w-[360px] max-w-[calc(100vw-32px)] overflow-hidden rounded-[18px] border border-white/[0.10] bg-[#101217]/72 backdrop-blur-2xl"
+        className="w-[420px] max-w-[calc(100vw-32px)] overflow-hidden rounded-[18px] border border-white/[0.10] bg-[#101217]/72 backdrop-blur-2xl"
       >
         {/*
           Inner scroll container. The outer wrapper keeps `overflow-hidden` so
@@ -361,7 +361,7 @@ export function NodeSelectionMenu({
           <>
             <CanvasMenuSectionHeader label={t('canvas.nodeMenu.referenceGenerate')} className="pb-4" />
             <div className="grid grid-cols-4 justify-items-center gap-x-2 gap-y-5">
-              {referenceGenerateItems.map((item, index) => {
+              {referenceGenerateItems.map((item) => {
                 const Icon = item.Icon;
                 return (
                   <button
@@ -372,7 +372,6 @@ export function NodeSelectionMenu({
                         ? 'cursor-not-allowed opacity-35'
                         : 'hover:bg-white/[0.075]'
                       }`}
-                    style={{ transitionDelay: isVisible ? `${index * 30}ms` : '0ms' }}
                     onClick={(event) => {
                       const selectedType = item.type;
                       if (!selectedType || item.disabled) {
@@ -399,7 +398,6 @@ export function NodeSelectionMenu({
               <CanvasAddNodeGrid
                 onActionSelected={handleClose}
                 onItemPointerEnter={scheduleSkillPanelClose}
-                transitionDelayForIndex={(index) => (isVisible ? `${index * 30}ms` : '0ms')}
                 onSelectNode={(type, clientPosition) => {
                   handleClose();
                   setTimeout(() => onSelect(type, clientPosition), UI_POPOVER_TRANSITION_MS + 10);
@@ -408,14 +406,13 @@ export function NodeSelectionMenu({
               {onSelectSkill && skillGroups.length > 0 && (
                 <>
                   <CanvasMenuSectionHeader label={t('node.menu.sectionSkillNode')} className="pb-3 pt-5" />
-                  {skillGroups.map((group, index) => (
+                  {skillGroups.map((group) => (
                     <button
                       key={group.provider}
                       type="button"
                       className={`${CANVAS_MENU_ROW_CLASS} hover:bg-white/[0.075] ${
                         activeSkillProvider === group.provider ? 'bg-white/[0.075]' : ''
                       }`}
-                      style={{ transitionDelay: isVisible ? `${(index + 10) * 30}ms` : '0ms' }}
                       onMouseEnter={() => {
                         cancelSkillPanelClose();
                         setActiveSkillProvider(group.provider);
@@ -462,12 +459,11 @@ export function NodeSelectionMenu({
             {translateSkillProviderLabel(activeSkillGroup.provider, t)}
           </div>
           <div className="ui-scrollbar max-h-[420px] overflow-y-auto px-3 pb-4 [scrollbar-gutter:stable]">
-            {activeSkillGroup.items.map((skill, index) => (
+            {activeSkillGroup.items.map((skill) => (
               <button
                 key={skill.id}
                 type="button"
                 className="flex w-full items-start gap-3 rounded-lg px-2 py-2.5 text-left transition-colors hover:bg-white/[0.04]"
-                style={{ transitionDelay: isVisible ? `${index * 30}ms` : '0ms' }}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
