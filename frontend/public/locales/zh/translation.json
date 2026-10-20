@@ -9223,6 +9223,15 @@
     "unavailableTitle": "功能未开放"
   },
   "previz": {
+    "board": {
+      "objectCount_one": "{{count}} 个对象",
+      "objectCount_other": "{{count}} 个对象",
+      "frameCount_one": "{{count}} 帧",
+      "frameCount_other": "{{count}} 帧",
+      "emptyScene": "空场景",
+      "emptyColumn": "画布中还没有预演台节点",
+      "switchFirstColumn": "切换第一栏"
+    },
     "node": {
       "open": "打开预演台",
       "hint": "在 3D 空间中搭建场景并进行多视角截图",

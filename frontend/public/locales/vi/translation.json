@@ -9196,6 +9196,15 @@
     "orderAlreadyCreated": "Đơn này đã tồn tại. Hãy kiểm tra lịch sử nạp."
   },
   "previz": {
+    "board": {
+      "objectCount_one": "{{count}} đối tượng",
+      "objectCount_other": "{{count}} đối tượng",
+      "frameCount_one": "{{count}} khung hình",
+      "frameCount_other": "{{count}} khung hình",
+      "emptyScene": "Cảnh trống",
+      "emptyColumn": "Chưa có nút previz nào trên canvas",
+      "switchFirstColumn": "Chuyển cột đầu tiên"
+    },
     "node": {
       "open": "Open Previz Stage",
       "hint": "Block out a scene in 3D and capture it from multiple angles",

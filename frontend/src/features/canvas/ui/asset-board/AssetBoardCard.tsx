@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import i18next from 'i18next';
 import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { AlertCircle, Camera, ChevronRight, FileText, MapPin, ImageIcon, Loader2, Play } from 'lucide-react';
 
@@ -49,8 +50,6 @@ const LOCATE_HIGHLIGHT_MS = 1200;
  */
 export const EMPTY_MEDIA_PLACEHOLDER_TEXT = '待确认后生成';
 
-/** 预演台空场景（还没摆任何对象）的占位文案。 */
-const PREVIZ_EMPTY_PLACEHOLDER_TEXT = '空场景';
 
 /**
  * 各栏生成耗时的经验预估（毫秒）——不是后端真实进度，后端不下发逐步进度事件，
@@ -356,7 +355,7 @@ export function AssetBoardCard({
             <div className="flex flex-col items-center gap-1.5">
               <Camera className="h-6 w-6 text-muted-foreground" />
               <span className="text-[11px] text-muted-foreground">
-                {item.textPreview ?? PREVIZ_EMPTY_PLACEHOLDER_TEXT}
+                {item.textPreview ?? i18next.t('previz.board.emptyScene')}
               </span>
             </div>
           ) : item.thumbnailUrl ? (

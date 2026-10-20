@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import i18next from "i18next";
+
 import type { AssetBoardColumn, AssetBoardData } from "@/features/canvas/domain/assetBoard";
 import { KEY_ELEMENT_CATEGORY_KEYS, type KeyElementCategory } from "@/features/canvas/domain/keyElements";
 
@@ -194,7 +196,9 @@ export function appendFreezoneNodeMentions(
 /** 栏目 → 悬浮预览里显示的中文类型标签。 */
 const FREEZONE_NODE_COLUMN_LABEL: Record<AssetBoardColumn, string> = {
   text: "文本",
-  previz: "预演台",
+  get previz() {
+    return i18next.t("previz.editor.title");
+  },
   image: "图片",
   video: "视频",
   audio: "音频",

@@ -9223,6 +9223,15 @@
     "unavailableTitle": "Feature unavailable"
   },
   "previz": {
+    "board": {
+      "objectCount_one": "{{count}} object",
+      "objectCount_other": "{{count}} objects",
+      "frameCount_one": "{{count}} frame",
+      "frameCount_other": "{{count}} frames",
+      "emptyScene": "Empty scene",
+      "emptyColumn": "No previz nodes on the canvas yet",
+      "switchFirstColumn": "Switch first column"
+    },
     "node": {
       "open": "Open Previz Stage",
       "hint": "Block out a scene in 3D and capture it from multiple angles",

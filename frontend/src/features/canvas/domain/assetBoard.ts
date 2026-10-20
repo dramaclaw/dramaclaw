@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import i18next from 'i18next';
+
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { resolveMediaUrl } from '@/lib/media-url';
 
@@ -144,8 +146,8 @@ function textPreviewOf(node: CanvasNode, data: Record<string, unknown>): string 
       const objects = num(summary.objectCount);
       const frames = num(summary.durationFrames);
       const parts = [
-        objects !== null ? `${objects} 个对象` : null,
-        frames !== null ? `${frames} 帧` : null,
+        objects !== null ? i18next.t('previz.board.objectCount', { count: objects }) : null,
+        frames !== null ? i18next.t('previz.board.frameCount', { count: frames }) : null,
       ].filter(Boolean);
       return parts.length > 0 ? parts.join(' · ') : null;
     }

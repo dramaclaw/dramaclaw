@@ -12,6 +12,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
+import i18next from 'i18next';
 import { Check, ChevronDown, ImageIcon, Maximize2, Minimize2, Play } from 'lucide-react';
 
 import {
@@ -339,10 +340,10 @@ export function AssetBoardView({ visible, rightInset, onLocateNode }: AssetBoard
       case 'previz':
         return (
           <BoardColumn
-            title="预演台"
+            title={i18next.t('previz.editor.title')}
             titleSlot={titleSlot}
             items={board.previz}
-            emptyText="画布中还没有预演台节点"
+            emptyText={i18next.t('previz.board.emptyColumn')}
             onOpen={openItem}
             onLocate={onLocateNode}
             onPreviewImage={previewImage}
@@ -465,7 +466,7 @@ export function AssetBoardView({ visible, rightInset, onLocateNode }: AssetBoard
       value={firstColumn}
       options={FIRST_COLUMN_OPTIONS}
       onSelect={setFirstColumn}
-      menuLabel="切换第一栏"
+      menuLabel={i18next.t('previz.board.switchFirstColumn')}
       triggerClassName={COLUMN_TITLE_SELECT_CLASS}
     />,
   );
@@ -629,7 +630,12 @@ type LeftColumn = 'text' | 'previz' | 'image' | 'video';
 
 const LEFT_COLUMN_OPTIONS: ReadonlyArray<{ value: LeftColumn; label: string }> = [
   { value: 'text', label: '文本' },
-  { value: 'previz', label: '预演台' },
+  {
+    value: 'previz',
+    get label() {
+      return i18next.t('previz.editor.title');
+    },
+  },
   { value: 'image', label: '图片' },
   { value: 'video', label: '视频' },
 ];
@@ -843,10 +849,10 @@ function BoardSelect<T extends string>({
   );
 }
 
-const FIRST_COLUMN_OPTIONS: ReadonlyArray<{ value: FirstColumn; label: string }> = [
-  { value: 'text', label: '文本' },
-  { value: 'previz', label: '预演台' },
-];
+const FIRST_COLUMN_OPTIONS = LEFT_COLUMN_OPTIONS.filter(
+  (option): option is { value: FirstColumn; label: string } =>
+    option.value === 'text' || option.value === 'previz',
+);
 
 /** 栏标题位置的切换下拉触发器样式（第一栏与详情态左窄列表共用）。 */
 const COLUMN_TITLE_SELECT_CLASS =
