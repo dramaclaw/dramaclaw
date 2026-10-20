@@ -237,6 +237,27 @@ def test_empty_claims_report_only_verified_browser_admission(mode):
     assert "视频已生成完毕" not in result
 
 
+def test_blocked_after_a_saved_write_reports_the_block_reason():
+    # Previz: the node was created, then the scene edit failed validation and the
+    # model gave up with mode=blocked. The user needs the reason, not a
+    # "claim does not match tool results" contract error.
+    result = finalize_canvas_reply(
+        reply("blocked", message="场景缩放超出上限（最大 100），未写入场景。"),
+        attempts={"create-previz": "succeeded"}, receipts={("bridge-a", None)},
+    )
+    assert result.startswith("本轮已有画布修改保存成功")
+    assert "场景缩放超出上限" in result
+    assert "操作声明与工具结果不一致" not in result
+
+
+def test_blocked_reply_cannot_carry_receipt_claims():
+    result = finalize_canvas_reply(
+        reply("blocked", [{"bridge_key": "bridge-a", "revision": None}]),
+        attempts={"create-previz": "succeeded"}, receipts={("bridge-a", None)},
+    )
+    assert "操作声明与工具结果不一致" in result
+
+
 @pytest.mark.parametrize("state", ["failed", "timeout", "cancelled", "in_progress"])
 def test_omitted_receipts_cannot_hide_an_unfinished_story_write(state):
     result = finalize_canvas_reply(

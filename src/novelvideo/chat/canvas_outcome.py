@@ -209,6 +209,12 @@ def finalize_canvas_reply(
     elif claims or attempts:
         if mode == "read_only" and not claims and attempts and receipts:
             return verified_status()
+        if mode == "blocked" and not claims:
+            # An earlier write in the turn succeeded, then a later step was
+            # refused (e.g. a scene edit failed validation). The block reason is
+            # what the user needs; the host prefix states what was really saved.
+            saved = "本轮已有画布修改保存成功，请查看画布结果。" if receipts else ""
+            return saved + message.strip()
         return _REPLY_CONTRACT_FAILURE + "操作声明与工具结果不一致，请重试。"
     return message.strip()
 
