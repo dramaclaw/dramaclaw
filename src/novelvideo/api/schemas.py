@@ -1822,12 +1822,22 @@ class FreezoneAudioMusicRequest(FreezoneWorkflowMediaLink):
 class FreezoneVideoComposeItem(BaseModel):
     item_id: str = Field(description="前端片段唯一标识")
     source_url: str = Field(description="源媒体静态地址")
-    timeline_start: float = Field(default=0.0, ge=0.0, description="片段在时间线上的开始秒数")
-    source_start: float = Field(default=0.0, ge=0.0, description="源媒体裁剪起始秒")
-    source_end: float = Field(gt=0.0, description="源媒体裁剪结束秒，必须大于 source_start")
-    volume: float = Field(default=1.0, ge=0.0, le=2.0, description="音量倍率")
+    timeline_start: float = Field(
+        default=0.0, ge=0.0, allow_inf_nan=False, description="片段在时间线上的开始秒数"
+    )
+    source_start: float = Field(
+        default=0.0, ge=0.0, allow_inf_nan=False, description="源媒体裁剪起始秒"
+    )
+    source_end: float = Field(
+        gt=0.0, allow_inf_nan=False, description="源媒体裁剪结束秒，必须大于 source_start"
+    )
+    volume: float = Field(
+        default=1.0, ge=0.0, le=2.0, allow_inf_nan=False, description="音量倍率"
+    )
     muted: bool = Field(default=False, description="是否静音")
-    speed: float = Field(default=1.0, gt=0.0, le=4.0, description="播放倍速")
+    speed: float = Field(
+        default=1.0, gt=0.0, le=4.0, allow_inf_nan=False, description="播放倍速"
+    )
 
 
 class FreezoneVideoComposeTrack(BaseModel):
@@ -1851,6 +1861,25 @@ class FreezoneVideoComposeRequest(BaseModel):
     )
     tracks: list[FreezoneVideoComposeTrack] = Field(
         default_factory=list, description="时间线轨道列表"
+    )
+
+
+class FreezoneVideoComposeStudioRequest(FreezoneVideoComposeRequest):
+    canvas_id: str = Field(min_length=1, description="来源画布 id")
+    node_id: str = Field(min_length=1, description="来源合成节点 id，用于定位 Studio 工程目录")
+    host_back: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("host_back", "hostBack"),
+        description="编辑器左上角返回按钮的去向地址",
+    )
+    host_back_label: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("host_back_label", "hostBackLabel"),
+        description="返回按钮文案",
+    )
+    rebuild: bool = Field(
+        default=False,
+        description="重新生成 film.html；默认复用上次的成片目录以保留 Studio 内编辑",
     )
 
 

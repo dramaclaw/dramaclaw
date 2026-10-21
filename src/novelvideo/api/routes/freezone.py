@@ -98,6 +98,7 @@ from novelvideo.api.schemas import (
     FreezoneVideoBreakdownRequest,
     FreezoneVideoCharacterLibraryItemRequest,
     FreezoneVideoComposeRequest,
+    FreezoneVideoComposeStudioRequest,
     FreezoneVideoEditRequest,
     FreezoneVideoExtendRequest,
     FreezoneVideoEraseRequest,
@@ -105,6 +106,7 @@ from novelvideo.api.schemas import (
     FreezoneVideoOmniGenRequest,
     FreezoneVideoUpscaleRequest,
     ImpactRequest,
+    OkResponse,
     PresetCanvasRequest,
     ProjectionPresetCanvasRequest,
     ProjectionRemoveRequest,
@@ -262,6 +264,11 @@ from novelvideo.freezone.recipe_runtime import (
     compile_recipe_prompt_batch,
     compile_recipe_prompt_result,
     generate_recipe_text,
+)
+from novelvideo.freezone.studio import (
+    StudioError,
+    build_studio_film,
+    ensure_studio_session,
 )
 from novelvideo.ports import get_usage_meter
 from novelvideo.ports.local.usage import NoOpUsageMeter
@@ -12230,6 +12237,48 @@ async def freezone_video_compose(
         project=project_name,
         job_id=job_id,
     )
+
+
+@router.post(
+    "/projects/{project}/freezone/video/compose/studio",
+    response_model=OkResponse,
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_video_compose_studio(
+    project: str,
+    body: FreezoneVideoComposeStudioRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：把时间线落成 OpenFilm 工程，返回可内嵌的 Studio 编辑器地址。
+
+    只负责编辑与预览；成片导出仍走 `/video/compose` 异步任务。
+    """
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+
+    try:
+        film_dir = await asyncio.to_thread(
+            build_studio_film,
+            project_dir=project_dir,
+            canvas_id=body.canvas_id,
+            node_id=body.node_id,
+            title=body.title,
+            resolution=body.resolution,
+            background_color=body.background_color,
+            keep_original_audio=body.keep_original_audio,
+            tracks=body.tracks,
+            rebuild=body.rebuild,
+        )
+        session = await ensure_studio_session(
+            film_dir,
+            host_back=body.host_back,
+            host_back_label=body.host_back_label,
+        )
+    except StudioError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+    return {"ok": True, "data": session}
 
 
 @router.post(
