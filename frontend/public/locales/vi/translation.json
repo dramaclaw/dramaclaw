@@ -8883,6 +8883,15 @@
       "reopen": "Mở lại",
       "resultName": "Video đã dựng"
     },
+    "studio": {
+      "title": "Không gian dựng video",
+      "loading": "Đang mở không gian chỉnh sửa…",
+      "retry": "Thử lại",
+      "backToCanvas": "Quay lại canvas",
+      "missingNode": "Không tìm thấy node dựng video này, có thể đã bị xóa.",
+      "noMedia": "Node dựng này chưa có media nguồn dùng được.",
+      "loadFailed": "Mở không gian chỉnh sửa thất bại."
+    },
     "undo": "Hoàn tác",
     "redo": "Làm lại",
     "split": "Cắt đôi",

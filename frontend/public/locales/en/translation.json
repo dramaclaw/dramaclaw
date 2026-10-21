@@ -9006,6 +9006,15 @@
       "reopen": "Reopen",
       "resultName": "Composed video"
     },
+    "studio": {
+      "title": "Video compose workspace",
+      "loading": "Opening the editing workspace…",
+      "retry": "Retry",
+      "backToCanvas": "Back to canvas",
+      "missingNode": "This video compose node no longer exists.",
+      "noMedia": "This compose node has no usable upstream media yet.",
+      "loadFailed": "Could not open the editing workspace."
+    },
     "undo": "Undo",
     "redo": "Redo",
     "split": "Split",

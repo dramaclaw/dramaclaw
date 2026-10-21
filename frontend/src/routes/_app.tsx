@@ -67,6 +67,15 @@ function AppLayout() {
   const params = useParams({ strict: false }) as { project?: string };
   const routeProject = params.project ?? null;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // 视频合成是整页工作区：Studio 自己的标题栏要和右侧虾导从 y=0 对齐，所以
+  // 这里让出顶栏和底部任务条，把整块高度交给画布宿主里的 Studio。
+  const isFreezoneCompose = useRouterState({
+    select: (s) => {
+      if (!/^\/projects\/[^/]+\/freezone$/.test(s.location.pathname)) return false;
+      const compose = (s.location.search as { compose?: unknown }).compose;
+      return typeof compose === "string" && compose.length > 0;
+    },
+  });
   const isProjectDashboard = pathname === "/";
   const projectSummaries = useAllProjectSummaries();
   const canonicalProject = routeProject
@@ -243,8 +252,8 @@ function AppLayout() {
                 <CinematicSideRays className="absolute inset-0 opacity-[0.46]" />
               </div>
             ) : null}
-            <Header ambientBackground={isProjectDashboard} />
-            <MyBuddyCompanion />
+            {!isFreezoneCompose && <Header ambientBackground={isProjectDashboard} />}
+            {!isFreezoneCompose && <MyBuddyCompanion />}
             <AccessoryUnlockPrompt />
             <VersionUpdateDialog />
             <PikoInspirationStation
@@ -310,7 +319,7 @@ function AppLayout() {
               ) : null}
             </div>
             <TaskPanel />
-            <TaskStatusBar />
+            {!isFreezoneCompose && <TaskStatusBar />}
           </div>
         </div>
       </div>

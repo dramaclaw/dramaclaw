@@ -9006,6 +9006,15 @@
       "reopen": "重新打开",
       "resultName": "合成视频"
     },
+    "studio": {
+      "title": "视频合成工作区",
+      "loading": "正在打开剪辑工作区…",
+      "retry": "重试",
+      "backToCanvas": "返回虾画",
+      "missingNode": "没有找到这个视频合成节点，可能已被删除。",
+      "noMedia": "这个合成节点还没有可用的上游素材。",
+      "loadFailed": "打开剪辑工作区失败。"
+    },
     "undo": "撤销",
     "redo": "重做",
     "split": "分割",

@@ -19,6 +19,8 @@ import {
   Search,
 } from "lucide-react";
 import { Canvas } from "@/features/canvas/Canvas";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
+import { VideoComposeWorkspace } from "@/features/canvas/compose/VideoComposeWorkspace";
 import { NodeReplaceDragPreview } from "@/features/canvas/ui/NodeReplaceDragPreview";
 import { AssetBoardView } from "@/features/canvas/ui/asset-board/AssetBoardView";
 import { CANVAS_PANEL_SURFACE_CLASS } from "@/features/canvas/ui/canvasControlStyles";
@@ -200,6 +202,8 @@ interface FreezoneShellProps {
    * （测试、未来的独立入口）保持原来的行为。
    */
   active?: boolean;
+  /** 视频合成节点 id（地址栏 `?compose=`）：打开页面级 Studio 工作区。 */
+  composeNodeId?: string | null;
 }
 
 type CurrentCanvasSelectionItem = {
@@ -214,6 +218,13 @@ const FREEZONE_AGENT_HISTORY_WIDTH_STORAGE_KEY = "freezone.chatDock.agentHistory
 const FREEZONE_CHAT_WIDTH_DEFAULT = 540;
 const FREEZONE_CHAT_WIDTH_MIN = 420;
 const FREEZONE_CHAT_WIDTH_MAX = 760;
+/**
+ * 视频合成页单独记住聊天宽度：默认按视口 26% 取 420–500，保证 1550 宽时左侧
+ * 剪辑器拿到完整的 1130；与故事板/工作流的宽度偏好互不影响。
+ */
+const FREEZONE_COMPOSE_CHAT_WIDTH_STORAGE_KEY = "freezone.chatDock.composeChatWidth";
+const FREEZONE_COMPOSE_CHAT_WIDTH_DEFAULT_MAX = 500;
+const FREEZONE_COMPOSE_CHAT_WIDTH_MAX = 560;
 const FREEZONE_AGENT_HISTORY_WIDTH_DEFAULT = 220;
 const FREEZONE_AGENT_HISTORY_WIDTH_MIN = 180;
 const FREEZONE_AGENT_HISTORY_WIDTH_MAX = 360;
@@ -272,6 +283,15 @@ function storePanelWidth(key: string, value: number): void {
   } catch {
     // Storage may be unavailable; keep the current in-memory width.
   }
+}
+
+function composeChatWidthDefault(): number {
+  if (typeof window === "undefined") return FREEZONE_CHAT_WIDTH_MIN;
+  return clampNumber(
+    Math.round(window.innerWidth * 0.26),
+    FREEZONE_CHAT_WIDTH_MIN,
+    FREEZONE_COMPOSE_CHAT_WIDTH_DEFAULT_MAX,
+  );
 }
 
 function loadChatDockMode(): FreezoneChatDockMode {
@@ -924,6 +944,7 @@ export function FreezoneShell({
   project,
   canvasId,
   active = true,
+  composeNodeId = null,
 }: FreezoneShellProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -947,7 +968,12 @@ export function FreezoneShell({
   const [assetPanelCollapsed, setAssetPanelCollapsed] = useState(true);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
   const [viewMode, setViewMode] = useFreezoneViewMode();
-  const [chatOpen, setChatOpen] = useFreezoneChatVisibility(viewMode, active);
+  const composeActive = active && Boolean(composeNodeId);
+  const [chatOpen, setChatOpen] = useFreezoneChatVisibility(
+    viewMode,
+    active,
+    composeActive,
+  );
   const [pendingChatAttachments, setPendingChatAttachments] = useState<ChatAttachment[]>([]);
   const [pendingChatNodeMentions, setPendingChatNodeMentions] = useState<string[]>([]);
   // 面板外「提交并继续」（如大纲确认后自动接龙）：drain 归 SuperChatPanel 的发送队列。
@@ -1252,6 +1278,13 @@ export function FreezoneShell({
     // 点画布空白不再自动关闭虾画 agent：用户要求它只能靠面板右上角的关闭按钮
     // （onOpenChange(false)）手动关，避免工作流中误点空白就丢掉对话。
   }, []);
+  // Studio 的返回按钮经 postMessage 回到这里：收起工作区，并把入口节点选中、带回视野。
+  const handleExitCompose = useCallback(() => {
+    writeUrl({ compose: null }, { replace: true });
+    if (!composeNodeId) return;
+    selectNodeExclusively(composeNodeId);
+    useCanvasStore.getState().requestFocusNode(composeNodeId);
+  }, [composeNodeId]);
 
   useEffect(() => {
     prefetchFreezoneImageModels(projectId);
@@ -2219,6 +2252,7 @@ export function FreezoneShell({
   // outline actions receive a null revision below while the save is in flight.
   const keepCanvasOverlaysMounted =
     active &&
+    !composeActive &&
     shouldKeepCanvasOverlaysMounted(sync.status, sync.hydratedCanvasId, canvasId);
 
   return (
@@ -2236,8 +2270,8 @@ export function FreezoneShell({
               // 保活到虾集时也算 suspended：Canvas 的 6 处 window/document 键盘
               // 监听（含 capture 阶段）都读这个开关，否则在虾集的输入框里打字会
               // 被画布快捷键截走。
-              suspended={!active || viewMode === "board" || Boolean(htmlTarget)}
-              assistantActive={active && chatOpen && viewMode === "workflow"}
+              suspended={!active || viewMode === "board" || Boolean(htmlTarget) || composeActive}
+              assistantActive={active && chatOpen && viewMode === "workflow" && !composeActive}
             />
           )}
           {showLoadingOverlay && <CanvasLoadingOverlay />}
@@ -2294,29 +2328,31 @@ export function FreezoneShell({
               onRehydrate={sync.retry}
             />
           )}
-          <AssetLibraryPanel
-            project={projectId}
-            metadata={sync.metadata}
-            collapsed={assetPanelCollapsed}
-            onCollapsedChange={setAssetPanelCollapsed}
-            currentCanvasId={canvasId}
-            reloadToken={assetLibraryReloadToken}
-            onRestoreMainlineDefault={async () => {
-              try {
-                await sync.restoreMainlineDefault();
-                setToast(t("freezone.shell.mainlineRestored"));
-              } catch (err) {
-                setToast(err instanceof Error ? err.message : String(err));
-              }
-            }}
-            onReplaced={(payload, message) => {
-              if (payload) {
-                refreshCommittedTargetNodes(payload.target, payload.result);
-                setAssetLibraryReloadToken((token) => token + 1);
-              }
-              setToast(message);
-            }}
-          />
+          {!composeActive && (
+            <AssetLibraryPanel
+              project={projectId}
+              metadata={sync.metadata}
+              collapsed={assetPanelCollapsed}
+              onCollapsedChange={setAssetPanelCollapsed}
+              currentCanvasId={canvasId}
+              reloadToken={assetLibraryReloadToken}
+              onRestoreMainlineDefault={async () => {
+                try {
+                  await sync.restoreMainlineDefault();
+                  setToast(t("freezone.shell.mainlineRestored"));
+                } catch (err) {
+                  setToast(err instanceof Error ? err.message : String(err));
+                }
+              }}
+              onReplaced={(payload, message) => {
+                if (payload) {
+                  refreshCommittedTargetNodes(payload.target, payload.result);
+                  setAssetLibraryReloadToken((token) => token + 1);
+                }
+                setToast(message);
+              }}
+            />
+          )}
           {/* 故事板视图：懒挂载 + 保活（对标 liblib，秒切且滚动/筛选状态保留）。 */}
           {!showBlockingLoading && boardMounted && (
             <AssetBoardView
@@ -2325,11 +2361,26 @@ export function FreezoneShell({
               // （AssetBoardView.tsx:435），会穿透宿主容器上的 invisible ——
               // 不接这个开关，故事板视图下切到虾集，它会浮在虾集页面上。
               // 顺带也停掉它对 canvas store 的订阅和媒体播放（paused={!visible}）。
-              visible={active && viewMode === "board" && !htmlTarget}
+              visible={active && viewMode === "board" && !htmlTarget && !composeActive}
               onLocateNode={handleLocateNode}
             />
           )}
           {htmlTarget && active && <HtmlArtifactEditor key={htmlTarget.artifactId} {...htmlTarget} onClose={() => setHtmlTarget(null)} />}
+          {composeActive && composeNodeId && hasRenderedCanvas && (
+            // 页面级工作区：左 Studio、右虾导。右侧留的量就是 dock 实际占的宽度
+            // （收起聊天时归零），Studio 因此不会钻到面板底下。
+            <div
+              className="absolute inset-y-0 left-0 z-30 overflow-hidden bg-[#0b0b0c]"
+              style={{ right: `var(${BOARD_CHAT_WIDTH_VAR}, 0px)` }}
+            >
+              <VideoComposeWorkspace
+                projectId={projectId}
+                canvasId={canvasId}
+                nodeId={composeNodeId}
+                onExit={handleExitCompose}
+              />
+            </div>
+          )}
         </main>
         {showChatDock && (
           <FreezoneChatDock
@@ -2345,7 +2396,8 @@ export function FreezoneShell({
             pendingExternalSubmit={pendingChatExternalSubmit}
             onPendingExternalSubmitConsumed={handlePendingChatExternalSubmitConsumed}
             open={chatOpen && active}
-            pushesBoard={viewMode === "board" && !htmlTarget}
+            pushesBoard={composeActive || (viewMode === "board" && !htmlTarget)}
+            compose={composeActive}
             boardWorkspaceRef={boardWorkspaceRef}
             onOpenChange={handleChatOpenChange}
             title={t("freezone.chat.title")}
@@ -2428,6 +2480,7 @@ function FreezoneChatDock({
   onPendingExternalSubmitConsumed,
   open,
   pushesBoard,
+  compose,
   boardWorkspaceRef,
   onOpenChange,
   title,
@@ -2447,6 +2500,8 @@ function FreezoneChatDock({
   onPendingExternalSubmitConsumed: () => void;
   open: boolean;
   pushesBoard: boolean;
+  /** 视频合成页：强制停靠、独立宽度偏好、不提供浮窗切换。 */
+  compose: boolean;
   boardWorkspaceRef: RefObject<HTMLDivElement | null>;
   onOpenChange: (open: boolean) => void;
   title: string;
@@ -2459,14 +2514,24 @@ function FreezoneChatDock({
   const [panelVisible, setPanelVisible] = useState(false);
   const [agentHistoryOpen, setAgentHistoryOpen] = useState(false);
   const [agentSearch, setAgentSearch] = useState("");
-  const [chatWidth, setChatWidth] = useState(() =>
-    loadStoredPanelWidth(
+  const [chatWidths, setChatWidths] = useState(() => ({
+    standard: loadStoredPanelWidth(
       FREEZONE_CHAT_WIDTH_STORAGE_KEY,
       FREEZONE_CHAT_WIDTH_DEFAULT,
       FREEZONE_CHAT_WIDTH_MIN,
       FREEZONE_CHAT_WIDTH_MAX,
     ),
-  );
+    compose: loadStoredPanelWidth(
+      FREEZONE_COMPOSE_CHAT_WIDTH_STORAGE_KEY,
+      composeChatWidthDefault(),
+      FREEZONE_CHAT_WIDTH_MIN,
+      FREEZONE_COMPOSE_CHAT_WIDTH_MAX,
+    ),
+  }));
+  const chatWidth = compose ? chatWidths.compose : chatWidths.standard;
+  const chatWidthMax = compose
+    ? FREEZONE_COMPOSE_CHAT_WIDTH_MAX
+    : FREEZONE_CHAT_WIDTH_MAX;
   const [agentHistoryWidth, setAgentHistoryWidth] = useState(() =>
     loadStoredPanelWidth(
       FREEZONE_AGENT_HISTORY_WIDTH_STORAGE_KEY,
@@ -2478,7 +2543,7 @@ function FreezoneChatDock({
   const [resizingPane, setResizingPane] = useState<"chat" | "history" | null>(null);
   const [dockMode, setDockMode] = useState<FreezoneChatDockMode>(loadChatDockMode);
   // 窄屏走 Sheet，没有浮窗一说。
-  const floating = isDesktop && dockMode === "floating";
+  const floating = isDesktop && dockMode === "floating" && !compose;
   const [floatPos, setFloatPos] = useState(loadChatFloatPos);
   const [draggingFloat, setDraggingFloat] = useState(false);
   const [viewportSize, setViewportSize] = useState(() => ({
@@ -2662,7 +2727,7 @@ function FreezoneChatDock({
       return clampNumber(
         value,
         FREEZONE_CHAT_WIDTH_MIN,
-        Math.min(FREEZONE_CHAT_WIDTH_MAX, maxByViewport),
+        Math.min(chatWidthMax, maxByViewport),
       );
     };
     const clampHistoryWidth = (value: number) => {
@@ -2736,9 +2801,17 @@ function FreezoneChatDock({
       // 取消掉的那帧里还压着最后一次 pointermove，先补算再落库，
       // 否则松手瞬间宽度会回跳一帧。
       measure();
-      setChatWidth(nextChatWidth);
+      setChatWidths((current) => ({
+        ...current,
+        [compose ? "compose" : "standard"]: nextChatWidth,
+      }));
       setAgentHistoryWidth(nextHistoryWidth);
-      storePanelWidth(FREEZONE_CHAT_WIDTH_STORAGE_KEY, nextChatWidth);
+      storePanelWidth(
+        compose
+          ? FREEZONE_COMPOSE_CHAT_WIDTH_STORAGE_KEY
+          : FREEZONE_CHAT_WIDTH_STORAGE_KEY,
+        nextChatWidth,
+      );
       storePanelWidth(FREEZONE_AGENT_HISTORY_WIDTH_STORAGE_KEY, nextHistoryWidth);
       setResizingPane(null);
       dragCleanupRef.current = null;
@@ -2756,7 +2829,7 @@ function FreezoneChatDock({
     window.addEventListener("blur", cleanup);
     target.addEventListener("lostpointercapture", cleanup);
     dragCleanupRef.current = cleanup;
-  }, [agentHistoryOpen, agentHistoryWidth, chatWidth, floating, minContentWidth]);
+  }, [agentHistoryOpen, agentHistoryWidth, chatWidth, chatWidthMax, compose, floating, minContentWidth]);
 
   const toggleDockMode = useCallback(() => {
     setDockMode((current) => {
@@ -2799,7 +2872,7 @@ function FreezoneChatDock({
           {agentHistoryOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
         </Button>
       )}
-      {isDesktop && (
+      {isDesktop && !compose && (
         <TooltipProvider delay={80}>
           <Tooltip>
             <TooltipTrigger

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo } from "react";
 import {
   Handle,
   Position,
@@ -34,13 +34,8 @@ import {
   NODE_PRIMARY_ACTION_DISABLED_CLASS,
   NODE_PRIMARY_ACTION_ENABLED_CLASS,
 } from "@/features/canvas/ui/nodeControlStyles";
-import { readUrl } from "@/lib/url-params";
-import {
-  buildInitialTimeline,
-  reconcileDraftWithUpstream,
-  resolveUnknownClipDurations,
-  VideoComposeModal,
-} from "@/features/canvas/compose/VideoComposeModal";
+import { readUrl, writeUrl } from "@/lib/url-params";
+import { resolveComposeTimeline } from "@/features/canvas/compose/VideoComposeModal";
 import {
   buildComposePayload,
   hasExportableClips,
@@ -71,8 +66,8 @@ type VideoComposeNodeProps = NodeProps & {
   selected?: boolean;
 };
 
-const NODE_WIDTH = 240;
-const NODE_HEIGHT = 136;
+const NODE_WIDTH = 360;
+const NODE_HEIGHT = 220;
 const MIN_UPSTREAM_VIDEOS = 2;
 const MIN_AUTO_COMPOSE_VIDEOS = 1;
 const MIN_AUTO_COMPOSE_MEDIA = 2;
@@ -83,7 +78,6 @@ export const VideoComposeNode = memo(
     const updateNodeInternals = useUpdateNodeInternals();
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const upstreamNodes = useUpstreamNodes(id);
-    const [isEditorOpen, setEditorOpen] = useState(false);
 
     const seedNodeIds = useMemo(
       () => orderedComposeSeedNodeIds(upstreamNodes, data.compositionInputOrder),
@@ -117,7 +111,8 @@ export const VideoComposeNode = memo(
       if (!project) return false;
       if (!canOpen) return false;
       selectNodeExclusively(id);
-      setEditorOpen(true);
+      // 整页工作区由地址栏驱动：刷新、后退都停在同一个合成节点上。
+      writeUrl({ compose: id });
       return true;
     }, [canOpen, id, project]);
 
@@ -127,11 +122,7 @@ export const VideoComposeNode = memo(
       }
       let taskCompleted = false;
       const draft = data.draftTimeline as ComposeTimelineState | undefined;
-      const timeline = await resolveUnknownClipDurations(
-        draft?.tracks?.length
-          ? reconcileDraftWithUpstream(draft, seedNodeIds)
-          : buildInitialTimeline(seedNodeIds),
-      );
+      const timeline = await resolveComposeTimeline(draft, seedNodeIds);
       if (!hasExportableClips(timeline)) throw new Error("视频合成没有可用素材");
       if (hasOverlappingVideoClips(timeline)) {
         throw new Error("视频轨道存在重叠片段，请先在时间线中调整");
@@ -307,47 +298,12 @@ export const VideoComposeNode = memo(
             >
               {t("videoCompose.node.open")}
             </button>
-            <span className="text-[12px] text-text-muted/90">
+            <span className="text-[12px] leading-5 text-text-muted/90">
               {t("videoCompose.node.hint", { min: MIN_UPSTREAM_VIDEOS })}
             </span>
           </div>
         </div>
 
-        {isEditorOpen && project && (
-          <VideoComposeModal
-            project={project}
-            canvasId={canvasId}
-            seedNodeIds={seedNodeIds}
-            initialTimeline={
-              (data.draftTimeline as ComposeTimelineState | undefined) ?? null
-            }
-            onPersistDraft={(timeline) =>
-              updateNodeData(id, { draftTimeline: timeline })
-            }
-            onClose={() => setEditorOpen(false)}
-            onComposed={(url, coverUrl) => {
-              // 合成完成：在本节点下游新建一个视频节点承载结果，并连边、聚焦。
-              // 封面（若设置）写进结果视频节点 + 本合成节点的 previewImageUrl。
-              const store = useCanvasStore.getState();
-              const position = store.findNodePosition(id, 580, 380);
-              const newId = store.addNode(CANVAS_NODE_TYPES.video, position, {
-                videoUrl: url,
-                previewImageUrl: coverUrl,
-                displayName: t("videoCompose.node.resultName"),
-                sourceFileName: null,
-                composeSourceNodeId: id,
-              } as Partial<CanvasNodeData>);
-              store.addEdge(id, newId);
-              selectNodeExclusively(newId);
-              store.requestFocusNode(newId);
-              updateNodeData(id, {
-                resultVideoUrl: url,
-                previewImageUrl: coverUrl,
-              });
-              setEditorOpen(false);
-            }}
-          />
-        )}
       </div>
     );
   },

@@ -13,29 +13,44 @@ function loadWorkflowChatOpen(): boolean {
   }
 }
 
-/** Storyboard auto-opening must not change the user's workflow preference. */
+/**
+ * Storyboard auto-opening must not change the user's workflow preference.
+ * Compose is a page of its own and always starts with the assistant open, but
+ * its closing must not overwrite that same workflow preference either.
+ */
 export function useFreezoneChatVisibility(
   viewMode: FreezoneViewMode,
   active: boolean,
+  compose = false,
 ): [boolean, (open: boolean) => void] {
   const [state, setState] = useState(() => ({
     viewMode,
     active,
+    compose,
     workflowOpen: loadWorkflowChatOpen(),
     boardOpen: true,
+    composeOpen: true,
   }));
 
   // Reconcile before rendering children: returning to workflow must never paint
-  // one frame with the storyboard's open state. Each board visit starts open.
+  // one frame with the storyboard's open state. Each board or compose visit
+  // starts open.
   let current = state;
-  if (state.viewMode !== viewMode || state.active !== active) {
+  if (
+    state.viewMode !== viewMode ||
+    state.active !== active ||
+    state.compose !== compose
+  ) {
     const enteringBoard = viewMode === 'board'
       && (state.viewMode !== 'board' || (active && !state.active));
+    const enteringCompose = compose && (!state.compose || (active && !state.active));
     current = {
       ...state,
       viewMode,
       active,
+      compose,
       boardOpen: enteringBoard ? true : state.boardOpen,
+      composeOpen: enteringCompose ? true : state.composeOpen,
     };
     setState(current);
   }
@@ -44,7 +59,11 @@ export function useFreezoneChatVisibility(
   // current view, even when they subscribed while another view was selected.
   const setOpen = useCallback((open: boolean) => {
     setState((previous) => {
-      const key = previous.viewMode === 'board' ? 'boardOpen' : 'workflowOpen';
+      const key = previous.compose
+        ? 'composeOpen'
+        : previous.viewMode === 'board'
+          ? 'boardOpen'
+          : 'workflowOpen';
       return previous[key] === open ? previous : { ...previous, [key]: open };
     });
   }, []);
@@ -57,5 +76,8 @@ export function useFreezoneChatVisibility(
     }
   }, [state.workflowOpen]);
 
-  return [viewMode === 'board' ? current.boardOpen : current.workflowOpen, setOpen];
+  return [
+    compose ? current.composeOpen : viewMode === 'board' ? current.boardOpen : current.workflowOpen,
+    setOpen,
+  ];
 }

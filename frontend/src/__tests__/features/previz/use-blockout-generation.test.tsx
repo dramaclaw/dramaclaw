@@ -149,7 +149,7 @@ beforeEach(() => {
   uploadFreezoneImage.mockReset().mockImplementation(async () => ({ url: "/static/ref.png" }));
   submitFreezoneImageToBlockout.mockReset().mockImplementation(async () => JOB);
   fetchFreezoneImageToBlockoutResult.mockReset().mockImplementation(async () => result(3));
-  vi.mocked(readUrl).mockReturnValue({ project: "demo", canvas: "board-1" });
+  vi.mocked(readUrl).mockReturnValue({ project: "demo", canvas: "board-1", compose: null });
   useCanvasStore.getState().setCanvasData([], []);
   usePrevizStore.getState().loadScene(createDefaultScene());
 });
@@ -368,7 +368,7 @@ describe("useBlockoutGeneration submits and hands the task to the canvas", () =>
   });
 
   it("falls back to the default canvas when the URL names none", async () => {
-    vi.mocked(readUrl).mockReturnValue({ project: "demo", canvas: null });
+    vi.mocked(readUrl).mockReturnValue({ project: "demo", canvas: null, compose: null });
     const { result: hook } = setup(addPrevizNode());
 
     await act(() => hook.current.start(request()));
@@ -463,7 +463,7 @@ describe("useBlockoutGeneration refuses before spending anything", () => {
   });
 
   it("needs a project in the URL", async () => {
-    vi.mocked(readUrl).mockReturnValue({ project: null, canvas: null });
+    vi.mocked(readUrl).mockReturnValue({ project: null, canvas: null, compose: null });
     const { result: hook } = setup(addPrevizNode());
 
     await act(() => hook.current.start(request()));

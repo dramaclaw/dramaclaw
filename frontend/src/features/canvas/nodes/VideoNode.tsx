@@ -267,6 +267,7 @@ import {
 } from "@/features/canvas/ui/NodeGenerationHistory";
 import type { FreezoneGenerationHistoryRecord } from "@/api/ops";
 import { readUrl } from "@/lib/url-params";
+import { mediaDurationMs } from "@/lib/media-duration";
 import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
 import { CreditCostPill } from "@/components/credits/credit-visual";
 import { NodeHistoryRail } from "@/features/canvas/ui/NodeHistoryRail";
@@ -3749,8 +3750,9 @@ export const VideoNode = memo(
                     updates.widthPx = el.videoWidth;
                   if (data.heightPx !== el.videoHeight)
                     updates.heightPx = el.videoHeight;
-                  if (data.durationMs !== Math.round(el.duration * 1000)) {
-                    updates.durationMs = Math.round(el.duration * 1000);
+                  const durationMs = mediaDurationMs(el.duration);
+                  if (durationMs !== null && data.durationMs !== durationMs) {
+                    updates.durationMs = durationMs;
                   }
                   if (Object.keys(updates).length > 0) {
                     updateNodeData(id, updates);
