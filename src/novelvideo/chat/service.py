@@ -4273,6 +4273,10 @@ def _build_codex_thread(
             if exact_audio_action_plan
             else CANVAS_REPLY_SCHEMA if tool_mode == "freezone_canvas" else None
         ),
+        # Canvas turns call tools, and gateway models stop calling tools once a
+        # native response format is attached; the schema still reaches them as
+        # prompt text. The tool-less audio planner keeps the native schema.
+        native_output_schema=exact_audio_action_plan,
     )
     thread_id = _get_codex_thread_id(
         username,
@@ -5798,7 +5802,10 @@ async def _stream_assistant_reply_codex(
             original_text, original_disposition = assistant_text, turn_disposition
             assistant_text, turn_disposition = "", _DEFAULT_TURN_DISPOSITION
             try:
-                async for event in thread.stream(CANVAS_FORMAT_REPAIR_PROMPT):
+                # The repair calls no tools, so it can carry the native schema.
+                async for event in thread.stream(
+                    CANVAS_FORMAT_REPAIR_PROMPT, native_output_schema=True
+                ):
                     yield event
             except Exception:
                 logger.warning("codex canvas reply format repair failed", exc_info=True)

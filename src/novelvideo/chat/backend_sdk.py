@@ -1178,6 +1178,7 @@ def _start_codex_turn(
     turn_metadata: dict[str, str],
     output_schema: dict[str, Any] | None = None,
     images: Sequence[str] = (),
+    native_output_schema: bool = True,
 ) -> Any:
     """Start a turn with metadata omitted by the 0.147 generated facade.
 
@@ -1185,7 +1186,10 @@ def _start_codex_turn(
     generated Python convenience method lagged behind the protocol. Sending a
     raw params mapping keeps the credential scoped to the turn context instead
     of the long-lived thread configuration. ``images`` are data URLs sent as
-    image input after the prompt text.
+    image input after the prompt text. With ``native_output_schema=False`` the
+    schema reaches the model only as prompt text: gateway models such as
+    DeepSeek and GLM stop calling tools once a turn carries a native response
+    format, so tool-calling turns must not send ``outputSchema``.
     """
 
     from openai_codex._inputs import ImageInput, TextInput, _to_wire_input
@@ -1209,7 +1213,7 @@ def _start_codex_turn(
     params: dict[str, Any] = {}
     if turn_metadata:
         params["responsesapiClientMetadata"] = dict(turn_metadata)
-    if output_schema is not None:
+    if output_schema is not None and native_output_schema:
         params["outputSchema"] = output_schema
     started = thread._client.turn_start(
         thread.id,
@@ -1233,6 +1237,7 @@ class CodexClient:
         thread_config_overrides: tuple[str, ...] | None = None,
         turn_metadata: dict[str, str] | None = None,
         output_schema: dict[str, Any] | None = None,
+        native_output_schema: bool = True,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -1249,6 +1254,7 @@ class CodexClient:
         self._thread_config = _codex_thread_config(effective_thread_overrides, env)
         self._turn_metadata = dict(turn_metadata or {})
         self._output_schema = output_schema
+        self._native_output_schema = native_output_schema
 
     def thread_start(self) -> "CodexThread":
         return CodexThread(
@@ -1262,6 +1268,7 @@ class CodexClient:
             thread_config=self._thread_config,
             turn_metadata=self._turn_metadata,
             output_schema=self._output_schema,
+            native_output_schema=self._native_output_schema,
             thread_id=None,
         )
 
@@ -1277,6 +1284,7 @@ class CodexClient:
             thread_config=self._thread_config,
             turn_metadata=self._turn_metadata,
             output_schema=self._output_schema,
+            native_output_schema=self._native_output_schema,
             thread_id=thread_id,
         )
 
@@ -1296,6 +1304,7 @@ class CodexThread:
         turn_metadata: dict[str, str],
         thread_id: str | None,
         output_schema: dict[str, Any] | None = None,
+        native_output_schema: bool = True,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -1307,11 +1316,19 @@ class CodexThread:
         self._thread_config = dict(thread_config)
         self._turn_metadata = dict(turn_metadata)
         self._output_schema = output_schema
+        self._native_output_schema = native_output_schema
         self.id = thread_id
 
     async def stream(
-        self, prompt: str, *, images: Sequence[str] = ()
+        self,
+        prompt: str,
+        *,
+        images: Sequence[str] = (),
+        native_output_schema: bool | None = None,
     ) -> AsyncIterator[ChatBackendEvent]:
+        """Run one turn; ``native_output_schema`` overrides the thread default."""
+        if native_output_schema is None:
+            native_output_schema = self._native_output_schema
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         current_turn_id: str | None = None
@@ -1391,6 +1408,7 @@ class CodexThread:
                     self._turn_metadata,
                     self._output_schema,
                     images=images,
+                    native_output_schema=native_output_schema,
                 )
                 nonlocal current_turn_id
                 current_turn_id = turn.id

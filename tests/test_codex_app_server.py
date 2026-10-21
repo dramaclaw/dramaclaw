@@ -13,6 +13,10 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from novelvideo.chat import backend_sdk, codex_app_server, dramaclaw_mcp, service
+from novelvideo.chat.canvas_outcome import (
+    CANVAS_FINAL_RESPONSE_INSTRUCTIONS,
+    CANVAS_REPLY_SCHEMA,
+)
 from novelvideo.chat.backend_sdk import (
     CodexThread,
     _start_codex_turn,
@@ -255,6 +259,31 @@ def test_output_schema_is_sent_even_without_turn_metadata():
     schema = {"type": "object"}
     assert _start_codex_turn(thread, "hello", {}, schema).id == "turn-schema"
     assert calls == [{"outputSchema": schema}]
+
+
+def test_prompt_only_output_schema_keeps_the_contract_but_not_the_native_format():
+    calls = []
+
+    class FakeClient:
+        def turn_start(self, thread_id, input_items, params=None):
+            calls.append((input_items, params))
+            return SimpleNamespace(turn=SimpleNamespace(id="turn-prompt-schema"))
+
+    thread = SimpleNamespace(id="thread-schema", _client=FakeClient())
+    _start_codex_turn(
+        thread,
+        "hello",
+        {"dramaclaw_gateway_api_key": "turn-secret"},
+        CANVAS_REPLY_SCHEMA,
+        native_output_schema=False,
+    )
+
+    ((items, params),) = calls
+    assert CANVAS_FINAL_RESPONSE_INSTRUCTIONS in items[0]["text"]
+    assert json.dumps(CANVAS_REPLY_SCHEMA, ensure_ascii=False) in items[0]["text"]
+    assert params == {
+        "responsesapiClientMetadata": {"dramaclaw_gateway_api_key": "turn-secret"}
+    }
 
 
 @pytest.mark.parametrize("output_schema", [None, {"type": "object"}])
@@ -975,6 +1004,72 @@ def test_shared_codex_private_sdk_bridge_is_compatible(monkeypatch, tmp_path):
         assert calls == ["start", "initialize"]
 
     assert calls == ["start", "initialize", "close"]
+
+
+@pytest.mark.asyncio
+async def test_codex_stream_native_output_schema_defaults_per_thread_and_overrides_per_turn(
+    monkeypatch, tmp_path
+):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    native_flags = []
+
+    class FakeTurn:
+        id = "turn-1"
+
+        def stream(self):
+            return iter(
+                [
+                    Notification(
+                        method="turn/completed",
+                        payload=v2.TurnCompletedNotification.model_validate(
+                            {
+                                "threadId": "thread-1",
+                                "turn": {"id": "turn-1", "items": [], "status": "completed"},
+                            }
+                        ),
+                    )
+                ]
+            )
+
+        def interrupt(self):
+            return None
+
+    def fake_start_turn(*_args, native_output_schema, **_kwargs):
+        native_flags.append(native_output_schema)
+        return FakeTurn()
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield object()
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_or_resume_codex_thread",
+        lambda *_args, **_kwargs: SimpleNamespace(id="thread-1"),
+    )
+    monkeypatch.setattr(backend_sdk, "_start_codex_turn", fake_start_turn)
+
+    thread = CodexThread(
+        codex_bin=None,
+        cwd=tmp_path,
+        env={},
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="Use DramaClaw MCP only.",
+        config_overrides=(),
+        thread_config={},
+        turn_metadata={},
+        thread_id=None,
+        output_schema=CANVAS_REPLY_SCHEMA,
+        native_output_schema=False,
+    )
+    [event async for event in thread.stream("Create a node")]
+    [event async for event in thread.stream("Repair", native_output_schema=True)]
+
+    assert native_flags == [False, True]
 
 
 @pytest.mark.asyncio
