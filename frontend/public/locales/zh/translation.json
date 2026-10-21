@@ -1498,6 +1498,8 @@
   },
   "credits": {
     "transactionSource": {
+      "subscriptionGrant": "订阅积分发放",
+      "subscriptionReceived": "订阅已付款周期积分到账",
       "orgAllocate": "组织分配积分",
       "orgReduce": "组织收回积分",
       "orgDepartureSweep": "离职积分回收",
@@ -1667,6 +1669,7 @@
       },
       "descriptions": {
         "packages": "购买固定积分套餐，积分永久有效。",
+        "subscriptions": "通过支付账户自动续费，按套餐规则发放积分。",
         "custom": "按需要选择积分数量并完成充值。",
         "benefits": "查看当前账户可享受的促销和专属权益。",
         "orders": "查看充值、到账、退款和异常订单。",
@@ -8541,5 +8544,81 @@
     "aligncenter": "居中",
     "alignright": "右对齐",
     "selectLeaf": "请选择最内层文字元素修改内容，避免覆盖内部排版。"
+  },
+  "subscriptions": {
+    "membershipActive": "{{name}} 会员有效，截止 {{date}}。",
+    "membershipInactive": "当前没有已生效的付费会员期限。",
+    "renewAfterIntro": "前 {{cycles}} 个优惠周期结束后，每 {{months}} 个月按 {{price}} 自动续费。",
+    "monthlyEquivalent": "续费价格约合每月 {{price}}，实际按整个周期一次收款。",
+    "introCycles": "前 {{cycles}} 个扣款周期，每期按 {{price}} 付款。",
+    "title": "订阅会员",
+    "intro": "通过支付账户自动续费，按套餐规则发放积分，已发放积分永久有效。",
+    "refresh": "刷新",
+    "loadError": "暂时无法读取订阅信息。",
+    "createUnconfirmed": "请求结果尚未确认，请先刷新订阅记录再重试，不要重复下单。",
+    "noPlans": "暂时没有开放购买的订阅套餐。",
+    "mine": "我的订阅",
+    "details": "查看详情",
+    "paidUntil": "已付款周期结束时间",
+    "cancel": "取消自动续费",
+    "retryPayment": "重试本期续费",
+    "retryUnconfirmed": "暂未确认重试结果，请查看账单状态后再操作。",
+    "cancelExplain": "取消后停止未来续费扣款，已付款周期及该周期已购买的每月积分发放继续有效。此操作不申请退款。",
+    "confirmCancel": "确认取消续费",
+    "keep": "保留订阅",
+    "cancelUnconfirmed": "暂时无法确认取消结果，请刷新查看状态。",
+    "continueCheckout": "继续签约并支付",
+    "invoices": "订阅账单",
+    "period": "服务周期",
+    "amount": "套餐金额／实际付款",
+    "dodoQuote": "按当前汇率 {{rate}} 换算，Dodo 支付 {{price}}（未计适用税费）。以签约页确认金额为准。",
+    "dodoPaid": "Dodo 实际付款 {{price}}",
+    "quoteChanged": "汇率报价已更新，尚未创建订阅。请核对新的付款金额并重新确认协议。",
+    "creationRejected": "支付渠道暂时无法按当前报价签约，尚未发起签约或扣款。请联系管理员核对渠道配置。",
+    "state": "状态",
+    "grants": "积分发放记录",
+    "method": "支付方式",
+    "renewPrice": "此后每 {{months}} 个月按 {{price}} 自动续费。",
+    "monthlyCredits": "每月发放 {{credits}} 积分，永久有效。",
+    "upfrontCredits": "付款后一次性发放 {{credits}} 积分，永久有效。",
+    "taxNote": "如有适用税费，将在收银台展示。",
+    "customerName": "支付宝订阅客户姓名",
+    "customerEmail": "支付宝订阅客户邮箱",
+    "consent": "我授权自动续费，并已阅读及同意",
+    "terms": "订阅服务协议",
+    "subscribe": "签约并订阅",
+    "methods": {
+      "alipay": "支付宝",
+      "wxpay": "微信支付",
+      "dodo": "Dodo"
+    },
+    "cycle": {
+      "1": "/月",
+      "3": "/季",
+      "12": "/年"
+    },
+    "status": {
+      "review": "付款待核查，已停止未来续费",
+      "cancelling": "已申请取消，等待支付平台确认",
+      "cancelled": "已取消未来续费，已购买权益保留",
+      "confirming": "签约或付款结果确认中",
+      "awaitingPayment": "等待签约或首次付款",
+      "active": "自动续费已开启",
+      "paymentFailed": "续费扣款失败，请检查支付账户"
+    },
+    "invoiceStatus": {
+      "pending": "待处理",
+      "processing": "扣款处理中",
+      "paid": "已付款",
+      "failed": "扣款失败",
+      "refunded": "已退款"
+    },
+    "grantStatus": {
+      "pending": "待发放",
+      "credited": "已发放",
+      "blocked": "等待补发",
+      "held": "待核查"
+    }
   }
+
 }

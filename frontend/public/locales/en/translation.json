@@ -1498,6 +1498,8 @@
   },
   "credits": {
     "transactionSource": {
+      "subscriptionGrant": "Subscription credit grant",
+      "subscriptionReceived": "Credits granted for your paid subscription",
       "orgAllocate": "Credits allocated by organization",
       "orgReduce": "Credits reclaimed by organization",
       "orgDepartureSweep": "Credits reclaimed on departure",
@@ -1667,6 +1669,7 @@
       },
       "descriptions": {
         "packages": "Purchase credit packages with no expiration date.",
+        "subscriptions": "Renew automatically through your payment account and receive credits according to the plan.",
         "custom": "Choose the number of credits you need.",
         "benefits": "Review promotions and benefits available to this account.",
         "orders": "Review recharge, fulfillment, refund, and exception records.",
@@ -8541,5 +8544,81 @@
     "aligncenter": "Center",
     "alignright": "Align right",
     "selectLeaf": "Select the innermost text element to preserve nested formatting."
+  },
+  "subscriptions": {
+    "membershipActive": "{{name}} membership is valid until {{date}}.",
+    "membershipInactive": "No paid membership period is currently active.",
+    "renewAfterIntro": "After the first {{cycles}} cycles, renews every {{months}} month(s) at {{price}}.",
+    "monthlyEquivalent": "Equivalent to approximately {{price}} per month; the full period is charged at once.",
+    "introCycles": "First {{cycles}} billing cycles at {{price}} each.",
+    "title": "Subscriptions",
+    "intro": "Automatic renewal uses your payment account. Credits are granted under the plan rules and remain permanently valid.",
+    "refresh": "Refresh",
+    "loadError": "Unable to load subscriptions.",
+    "createUnconfirmed": "The request result is not confirmed. Refresh your subscriptions before retrying; do not place another order.",
+    "noPlans": "No subscription plans are currently available.",
+    "mine": "My subscriptions",
+    "details": "Details",
+    "paidUntil": "Paid period ends",
+    "cancel": "Cancel automatic renewal",
+    "retryPayment": "Retry this renewal",
+    "retryUnconfirmed": "Retry is not confirmed. Check the invoice status before trying again.",
+    "cancelExplain": "Stop future renewal charges. Your paid service period and already purchased monthly credit grants will continue. This does not request a refund.",
+    "confirmCancel": "Confirm cancellation",
+    "keep": "Keep subscription",
+    "cancelUnconfirmed": "Cancellation could not be confirmed. Refresh to check its status.",
+    "continueCheckout": "Continue authorization and payment",
+    "invoices": "Billing records",
+    "period": "Service period",
+    "amount": "Plan price / payment",
+    "dodoQuote": "At the configured exchange rate {{rate}}, Dodo payment is {{price}} before applicable tax. Confirm the amount at checkout.",
+    "dodoPaid": "Dodo payment {{price}}",
+    "quoteChanged": "The exchange-rate quote changed. No subscription was created. Review the updated payment amount and confirm the terms again.",
+    "creationRejected": "The payment channel cannot authorize this quote. No agreement or charge was requested. Ask an administrator to check the channel configuration.",
+    "state": "Status",
+    "grants": "Credit grants",
+    "method": "Payment method",
+    "renewPrice": "Renews every {{months}} month(s) at {{price}}.",
+    "monthlyCredits": "{{credits}} credits each month, permanently valid.",
+    "upfrontCredits": "{{credits}} credits granted after payment, permanently valid.",
+    "taxNote": "Applicable taxes, if any, are displayed at checkout.",
+    "customerName": "Name for Alipay subscription",
+    "customerEmail": "Email for Alipay subscription",
+    "consent": "I authorize automatic renewal and have read and accepted the",
+    "terms": "subscription terms",
+    "subscribe": "Authorize and subscribe",
+    "methods": {
+      "alipay": "Alipay",
+      "wxpay": "WeChat Pay",
+      "dodo": "Dodo"
+    },
+    "cycle": {
+      "1": "per month",
+      "3": "per quarter",
+      "12": "per year"
+    },
+    "status": {
+      "review": "Payment needs review; future renewal is stopped",
+      "cancelling": "Cancellation requested; awaiting provider confirmation",
+      "cancelled": "Future renewal cancelled; paid benefits remain",
+      "confirming": "Authorization or payment result is being confirmed",
+      "awaitingPayment": "Awaiting authorization or first payment",
+      "active": "Automatic renewal enabled",
+      "paymentFailed": "Renewal payment failed; check your payment account"
+    },
+    "invoiceStatus": {
+      "pending": "Pending",
+      "processing": "Processing",
+      "paid": "Paid",
+      "failed": "Failed",
+      "refunded": "Refunded"
+    },
+    "grantStatus": {
+      "pending": "Scheduled",
+      "credited": "Granted",
+      "blocked": "Awaiting fulfillment",
+      "held": "Held for review"
+    }
   }
+
 }

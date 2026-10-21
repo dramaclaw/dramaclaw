@@ -56,8 +56,11 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 import { businessWechatQrUrl } from "@/components/login/cinematic/media";
+import { SubscriptionPanel } from "@/components/credits/SubscriptionPanel";
 
 const TRANSACTION_SOURCE_COPY = new Map<string, [string, string]>([
+  ["subscription_grant", ["subscriptionGrant", "subscriptionReceived"]],
+  ["subscription_org_grant", ["subscriptionGrant", "subscriptionReceived"]],
   ["payment_org_member_recharge", ["orgRecharge", "paymentReceived"]],
   ["payment_personal_recharge", ["personalRecharge", "paymentReceived"]],
   ["admin_credit_increase", ["adminIncrease", "adminAdjustment"]],
@@ -70,6 +73,7 @@ const TRANSACTION_SOURCE_COPY = new Map<string, [string, string]>([
 ]);
 
 export type CreditCenterTab =
+  | "subscriptions"
   | "packages"
   | "custom"
   | "benefits"
@@ -133,6 +137,7 @@ const NAV_GROUPS: Array<{
     label: "credits.centerModal.groups.recharge",
     items: [
       { tab: "packages", icon: Gift },
+      { tab: "subscriptions", icon: History },
       { tab: "custom", icon: WalletCards },
     ],
   },
@@ -150,7 +155,7 @@ const NAV_GROUPS: Array<{
   },
 ];
 
-const PAYMENT_TABS = new Set<CreditCenterTab>(["packages", "custom", "orders"]);
+const PAYMENT_TABS = new Set<CreditCenterTab>(["packages", "custom", "orders", "subscriptions"]);
 
 export function CreditCenterDialog({
   open,
@@ -244,7 +249,7 @@ export function CreditCenterDialog({
                       )}
                     >
                       <Icon className="size-4" strokeWidth={1.75} />
-                      {t(`credits.centerModal.tabs.${tab}`)}
+                      {tab === "subscriptions" ? t("subscriptions.title") : t(`credits.centerModal.tabs.${tab}`)}
                     </button>
                   ))}
                 </div>
@@ -257,7 +262,7 @@ export function CreditCenterDialog({
           <header className="flex shrink-0 items-center justify-between border-b border-white/8 px-5 py-4 pr-14 md:px-7">
             <div>
               <h2 className="text-lg font-semibold">
-                {t(`credits.centerModal.tabs.${visibleActiveTab}`)}
+                {visibleActiveTab === "subscriptions" ? t("subscriptions.title") : t(`credits.centerModal.tabs.${visibleActiveTab}`)}
               </h2>
               <p className="mt-1 text-xs text-white/45">
                 {t(`credits.centerModal.descriptions.${visibleActiveTab}`)}
@@ -282,12 +287,14 @@ export function CreditCenterDialog({
                   visibleActiveTab === tab ? "bg-white text-black" : "bg-white/6 text-white/55",
                 )}
               >
-                {t(`credits.centerModal.tabs.${tab}`)}
+                {tab === "subscriptions" ? t("subscriptions.title") : t(`credits.centerModal.tabs.${tab}`)}
               </button>
             ))}
           </div>
 
           <div className="ui-scrollbar min-h-0 flex-1 overflow-y-auto p-5 md:p-7">
+            {visibleActiveTab === "subscriptions" ? <SubscriptionPanel enabled={paymentAvailable}
+              initialId={new URLSearchParams(window.location.search).get("subscription_id")} /> : null}
             {visibleActiveTab === "packages" ? (
               <PackageTab
                 packages={packages}

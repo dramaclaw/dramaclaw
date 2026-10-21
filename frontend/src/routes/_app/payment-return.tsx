@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -148,5 +148,12 @@ export function PaymentReturnPage() {
 }
 
 export const Route = createFileRoute("/_app/payment-return")({
+  beforeLoad: ({ location }) => {
+    const id = new URLSearchParams(location.searchStr).get("business_subscription_id");
+    if (id && /^[A-Za-z0-9._:-]{1,128}$/.test(id)) {
+      // Navigation hint only. Credits page fetches the authenticated owner's record.
+      throw redirect({ href: `/credits?subscription_id=${encodeURIComponent(id)}`, replace: true });
+    }
+  },
   component: PaymentReturnPage,
 });
