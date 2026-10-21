@@ -89,24 +89,6 @@ def test_plain_success_claim_is_still_rejected_without_receipts():
     )
 
 
-@pytest.mark.parametrize(
-    ("receipt", "expected"),
-    [(("", 7), "本轮画布修改已保存。"), (("bridge-a", None), "本轮画布执行请求已受理")],
-)
-def test_malformed_reply_after_verified_writes_reports_saved_status(receipt, expected):
-    result = finalize_canvas_reply(
-        "我先创建节点。", attempts={"call-a": "succeeded"}, receipts={receipt}
-    )
-    assert result.startswith(expected)
-    assert "未返回结构化结果" not in result
-
-
-def test_malformed_reply_after_failed_write_stays_a_failure():
-    assert finalize_canvas_reply(
-        "图片节点已创建成功。", attempts={"call-a": "failed"}, receipts=set()
-    ).startswith("画布操作未完成")
-
-
 def test_catalog_only_success_needs_no_canvas_receipt():
     assert (
         finalize_canvas_reply(

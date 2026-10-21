@@ -186,9 +186,7 @@ def finalize_canvas_reply(
 
     reply, envelope_error = _parse_canvas_envelope(text)
     if reply is None:
-        # Every attempted write already succeeded with a receipt, so a reply
-        # in the wrong format must not read as a failed operation.
-        return verified_status() if attempts and receipts else envelope_error
+        return envelope_error
     message, mode, claims = reply["message"], reply["mode"], reply["canvas_receipts"]
     if write_requested and mode == "read_only" and not attempts:
         return "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"

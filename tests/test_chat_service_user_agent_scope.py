@@ -1957,9 +1957,6 @@ def test_codex_freezone_thread_advertises_exact_agent_skill_locator(
     )
     assert thread == "new-thread"
     assert match is not None
-    # Canvas turns call tools, so the schema travels only as prompt text.
-    assert captured["output_schema"] == chat_service.CANVAS_REPLY_SCHEMA
-    assert captured["native_output_schema"] is False
     assert json.loads(match.group(1)) == {
         "agent_skills": [
             {
@@ -2102,7 +2099,6 @@ def test_codex_exact_audio_planner_has_no_canvas_tools_and_uses_plan_schema(
         == chat_service._CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS
     )
     assert captured["output_schema"] == chat_service._CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA
-    assert captured["native_output_schema"] is True
 
 
 def test_named_recipe_distinguishes_existing_output_from_external_media_input():
@@ -8696,7 +8692,6 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
     prompts = []
-    native_flags = []
     build_kwargs = []
     events = []
     revoked = []
@@ -8712,9 +8707,8 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
             revoked.append(token)
 
     class FakeThread:
-        async def stream(self, prompt, *, native_output_schema=None):
+        async def stream(self, prompt):
             prompts.append(prompt)
-            native_flags.append(native_output_schema)
             if len(prompts) == 1:
                 turn = _codex_turn_events(_READ_ONLY_ANSWER, tool=_READ_NODE_DETAIL)
             elif isinstance(repair, Exception):
@@ -8762,8 +8756,6 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     )
 
     assert prompts[1:] == [chat_service.CANVAS_FORMAT_REPAIR_PROMPT]
-    # Only the tool-less repair turn carries the native response format.
-    assert native_flags == [None, True]
     assert build_kwargs[0]["request_prompt"] == request_prompt
     assert result["content"] == expected
     assert [
