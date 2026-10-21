@@ -1,4 +1,7 @@
 import asyncio
+import hashlib
+import json
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
 from pathlib import Path
@@ -27,11 +30,146 @@ def ladybug_without_json_extension(monkeypatch):
     monkeypatch.setattr(Connection, "execute", execute)
 
 
+@pytest.fixture
+def json_extension_bundle(monkeypatch, tmp_path):
+    from novelvideo import ladybug_json_extension as json_extension
+
+    root = tmp_path / "bundle'with-quote"
+    library = root / "0.16.0" / "libjson-linux_amd64.lbug_extension"
+    library.parent.mkdir(parents=True)
+    library.write_bytes(b"native library")
+    (root / "0.16.0" / "SHA256SUMS").write_text(
+        f"{hashlib.sha256(b'native library').hexdigest()}  {library.name}\n"
+    )
+    monkeypatch.setattr(json_extension, "_BUNDLE_DIR", root)
+    monkeypatch.setattr(json_extension.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(json_extension.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(json_extension, "version", lambda package: "0.16.0")
+    return json_extension, library
+
+
+def test_ladybug_loads_bundled_json_extension_without_installing(monkeypatch, json_extension_bundle):
+    from novelvideo.cognee import ladybug_access
+
+    _, library = json_extension_bundle
+    calls = []
+
+    class FakeConnection:
+        def __init__(self, database):
+            calls.append(("connection", database))
+
+        def execute(self, query):
+            calls.append(("execute", query))
+
+        def close(self):
+            calls.append(("close",))
+
+    def no_install(*args):
+        pytest.fail("A bundled JSON extension must not be downloaded")
+
+    monkeypatch.setattr(ladybug_access, "_install_ladybug_json_extension", no_install)
+    database = object()
+    ladybug_access._load_ladybug_json_extension(
+        database, database_class=no_install, connection_class=FakeConnection
+    )
+    assert calls == [
+        ("connection", database),
+        ("execute", f"LOAD EXTENSION {json.dumps(str(library))};"),
+        ("close",),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        ("sha256", "SHA256 mismatch"),
+        ("missing", "is missing"),
+        ("version", "No bundled Ladybug JSON extension for Ladybug 0.17.0"),
+    ],
+)
+def test_ladybug_rejects_invalid_bundle_without_downloading(
+    monkeypatch, json_extension_bundle, failure, message
+):
+    from novelvideo.cognee import ladybug_access
+
+    json_extension, library = json_extension_bundle
+    if failure == "sha256":
+        library.write_bytes(b"corrupted native library")
+    elif failure == "missing":
+        library.unlink()
+    else:
+        monkeypatch.setattr(json_extension, "version", lambda package: "0.17.0")
+
+    def no_native_call(*args):
+        pytest.fail("An invalid bundle must fail before loading or downloading")
+
+    monkeypatch.setattr(ladybug_access, "_install_ladybug_json_extension", no_native_call)
+    with pytest.raises(RuntimeError, match=message):
+        ladybug_access._load_ladybug_json_extension(
+            object(), database_class=no_native_call, connection_class=no_native_call
+        )
+
+
+def test_ladybug_bundle_load_failure_closes_connection_without_downloading(
+    monkeypatch, json_extension_bundle
+):
+    from novelvideo.cognee import ladybug_access
+
+    calls = []
+
+    class FakeConnection:
+        def __init__(self, database):
+            pass
+
+        def execute(self, query):
+            raise RuntimeError("native ABI mismatch")
+
+        def close(self):
+            calls.append("closed")
+
+    def no_install(*args):
+        pytest.fail("A native load failure must not fall back to downloading")
+
+    monkeypatch.setattr(ladybug_access, "_install_ladybug_json_extension", no_install)
+    with pytest.raises(RuntimeError, match="could not be loaded") as error:
+        ladybug_access._load_ladybug_json_extension(
+            object(), database_class=no_install, connection_class=FakeConnection
+        )
+    assert str(error.value.__cause__) == "native ABI mismatch"
+    assert calls == ["closed"]
+
+
+def test_ladybug_without_a_bundle_for_the_platform_keeps_native_install(
+    monkeypatch, json_extension_bundle
+):
+    json_extension, _ = json_extension_bundle
+    monkeypatch.setattr(json_extension.platform, "machine", lambda: "riscv64")
+    assert json_extension.bundled_json_extension() is None
+
+
+def test_real_bundled_json_extension_loads_with_an_empty_user_cache(monkeypatch, tmp_path):
+    from novelvideo import ladybug_json_extension as json_extension
+
+    if (json_extension.platform.system(), json_extension.platform.machine()) not in json_extension._PLATFORMS:
+        pytest.skip("No bundled Ladybug JSON extension for this platform")
+    home = tmp_path / "empty-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    bundle = tmp_path / "离线 'quoted-\"bundle"
+    shutil.copytree(json_extension._BUNDLE_DIR, bundle)
+    monkeypatch.setattr(json_extension, "_BUNDLE_DIR", bundle)
+    json_extension.verify_bundled_json_extension()
+    assert not list(home.rglob("*.lbug_extension"))
+
+
 def test_read_only_ladybug_installs_missing_json_extension_in_disposable_db(
     monkeypatch,
     tmp_path,
 ):
     from novelvideo.cognee import ladybug_access
+
+    monkeypatch.setattr(ladybug_access, "bundled_json_extension", lambda: None)
 
     calls = []
     project_database = object()
@@ -88,6 +226,8 @@ def test_read_only_ladybug_reports_json_extension_install_failure(
     tmp_path,
 ):
     from novelvideo.cognee import ladybug_access
+
+    monkeypatch.setattr(ladybug_access, "bundled_json_extension", lambda: None)
 
     project_database = object()
 

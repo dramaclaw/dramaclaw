@@ -24,6 +24,10 @@ from novelvideo.graph_preview import (
     acquire_graph_preview_lock_async,
     release_graph_preview_lock,
 )
+from novelvideo.ladybug_json_extension import (
+    bundled_json_extension,
+    load_bundled_json_extension,
+)
 
 
 @dataclass
@@ -323,7 +327,18 @@ def _load_ladybug_json_extension(
     database_class: type,
     connection_class: type,
 ) -> None:
-    """Load JSON, installing its process-host binary on first use if needed."""
+    """Load the bundled JSON library; download only on platforms without one."""
+
+    library = bundled_json_extension()
+    if library is not None:
+        connection = connection_class(database)
+        try:
+            load_bundled_json_extension(connection, library)
+        except Exception as exc:
+            raise RuntimeError("Bundled Ladybug JSON extension could not be loaded") from exc
+        finally:
+            connection.close()
+        return
 
     connection = connection_class(database)
     try:

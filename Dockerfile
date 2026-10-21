@@ -128,6 +128,7 @@ RUN set -eux; \
         uv sync --frozen --no-dev \
           --no-install-package openai-codex-cli-bin; \
     fi; \
+    /app/.venv/bin/python -m novelvideo.ladybug_json_extension; \
     mkdir -p /data; \
     apt-get purge -y git; \
     apt-get autoremove -y; \

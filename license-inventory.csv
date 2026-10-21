@@ -80,6 +80,7 @@ Dockerfile,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotati
 GOVERNANCE.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 LICENSES/Apache-2.0.txt,Apache-2.0,Apache Software Foundation,Apache License 2.0 text
 LICENSES/Elastic-2.0.txt,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+LICENSES/MIT.txt,MIT,2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.,upstream MIT license text
 NOTICE,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 REUSE.toml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2006,6 +2007,14 @@ src/novelvideo/api/upload_workers.py,Elastic-2.0,2026 SuperTale contributors,REU
 src/novelvideo/api/viewer_manifests.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/api/wsgi.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/assets/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/assets/ladybug-json/0.16.0/SHA256SUMS,MIT,2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan,unmodified upstream Ladybug JSON extension (links yyjson); see bundled LICENSE.txt and SHA256SUMS
+src/novelvideo/assets/ladybug-json/0.16.0/libjson-linux_amd64.lbug_extension,MIT,2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan,unmodified upstream Ladybug JSON extension (links yyjson); see bundled LICENSE.txt and SHA256SUMS
+src/novelvideo/assets/ladybug-json/0.16.0/libjson-linux_arm64.lbug_extension,MIT,2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan,unmodified upstream Ladybug JSON extension (links yyjson); see bundled LICENSE.txt and SHA256SUMS
+src/novelvideo/assets/ladybug-json/0.16.0/libjson-osx_amd64.lbug_extension,MIT,2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan,unmodified upstream Ladybug JSON extension (links yyjson); see bundled LICENSE.txt and SHA256SUMS
+src/novelvideo/assets/ladybug-json/0.16.0/libjson-osx_arm64.lbug_extension,MIT,2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan,unmodified upstream Ladybug JSON extension (links yyjson); see bundled LICENSE.txt and SHA256SUMS
+src/novelvideo/assets/ladybug-json/0.16.0/libjson-win_amd64.lbug_extension,MIT,2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan,unmodified upstream Ladybug JSON extension (links yyjson); see bundled LICENSE.txt and SHA256SUMS
+src/novelvideo/assets/ladybug-json/LICENSE.txt,MIT,2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan,unmodified upstream Ladybug JSON extension (links yyjson); see bundled LICENSE.txt and SHA256SUMS
+src/novelvideo/assets/ladybug-json/README.md,MIT,2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan,unmodified upstream Ladybug JSON extension (links yyjson); see bundled LICENSE.txt and SHA256SUMS
 src/novelvideo/assets/login_bg.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/assets/login_bg_v1.mp4,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/assets/login_bg_v2.mp4,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2279,6 +2288,7 @@ src/novelvideo/i18n_message.py,Elastic-2.0,2026 SuperTale contributors,REUSE.tom
 src/novelvideo/identity_prerequisites.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/image_request_usage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/knowledge_pipeline.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/ladybug_json_extension.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/llm_instrumentation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/manual_shots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/media_archive_copy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

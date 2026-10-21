@@ -215,3 +215,22 @@ def test_write_sbom_is_idempotent_for_same_inputs(tmp_path: Path, monkeypatch) -
     second = (tmp_path / "sbom.spdx.json").read_text(encoding="utf-8")
 
     assert second == first
+
+
+def test_bundled_ladybug_json_keeps_upstream_license_when_regenerated(tmp_path, monkeypatch):
+    monkeypatch.setattr(generator, "ROOT", tmp_path)
+    files = [
+        "src/novelvideo/assets/ladybug-json/LICENSE.txt",
+        "src/novelvideo/assets/ladybug-json/0.16.0/SHA256SUMS",
+        "src/novelvideo/assets/ladybug-json/0.16.0/libjson-linux_amd64.lbug_extension",
+    ]
+    generator.write_license_inventory(files)
+    generator.write_reuse_toml()
+    rows = {row["path"]: row for row in csv.DictReader((tmp_path / "license-inventory.csv").open())}
+    for path in files:
+        assert rows[path]["license_expression"] == "MIT"
+        assert "YaoYuan" in rows[path]["copyright"]
+    annotations = tomllib.loads((tmp_path / "REUSE.toml").read_text())["annotations"]
+    bundle = next(item for item in annotations if "src/novelvideo/assets/ladybug-json/**" in item["path"])
+    assert bundle["precedence"] == "override"
+    assert bundle["SPDX-License-Identifier"] == "MIT"

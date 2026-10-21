@@ -26,6 +26,18 @@ SBOM_CREATED = "2026-06-25T00:00:00Z"
 # prefix (relative to repo root). Keep in sync with frontend/REUSE.toml.
 THIRD_PARTY_PATH_OVERRIDES: tuple[tuple[str, str, str, str], ...] = (
     (
+        "LICENSES/MIT.txt",
+        "MIT",
+        "2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.",
+        "upstream MIT license text",
+    ),
+    (
+        "src/novelvideo/assets/ladybug-json/",
+        "MIT",
+        "2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan",
+        "unmodified upstream Ladybug JSON extension (links yyjson); see bundled LICENSE.txt and SHA256SUMS",
+    ),
+    (
         "LICENSES/Apache-2.0.txt",
         "Apache-2.0",
         "Apache Software Foundation",
@@ -343,6 +355,15 @@ SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
 path = [
+    "src/novelvideo/assets/ladybug-json/**",
+    "LICENSES/MIT.txt",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = [
     "**",
 ]
 precedence = "aggregate"
@@ -380,6 +401,7 @@ def write_license_inventory(files: list[str]) -> None:
         for path in sorted(set(files + [
             "REUSE.toml",
             "LICENSES/Apache-2.0.txt",
+            "LICENSES/MIT.txt",
             "LICENSES/Elastic-2.0.txt",
             "license-inventory.csv",
             "NOTICE",
@@ -559,6 +581,7 @@ def write_notice(packages: list[PackageLicense]) -> None:
         [
             "- @playcanvas/splat-transform ^2.0.3: MIT; optional world asset conversion tool",
             "- ffmpeg/ffprobe: external system executables; license depends on the user's system build",
+            "- Ladybug JSON extension 0.16.0 (links yyjson): MIT; unmodified upstream libraries, notices in src/novelvideo/assets/ladybug-json",
             "",
             "Restricted Optional Components",
             "The optional world feature can use apple/ml-sharp and its model assets. The source",
