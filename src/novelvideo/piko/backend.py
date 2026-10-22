@@ -14,7 +14,16 @@ DISTRIBUTED_BACKEND: Final[str] = "distributed"
 
 def configured_backend() -> str:
     # Literal name: the env-config ratchet only recognises literal reads.
-    backend = os.environ.get("PIKO_WORLD_BACKEND", DEMO_BACKEND).strip().lower()
+    backend = os.environ.get("PIKO_WORLD_BACKEND", "").strip().lower()
+    if not backend:
+        # A deployment with shared control-plane infrastructure must not silently
+        # fall back to process-local rooms: every Gunicorn worker would otherwise
+        # expose a different set of online players. Selecting distributed when
+        # either dependency is present also makes partial configuration fail loud
+        # in build_backend() instead of degrading to split rooms.
+        has_control_plane = bool(os.environ.get("ST_CONTROL_PLANE_DSN", "").strip())
+        has_redis = bool(os.environ.get("ST_REDIS_URL", "").strip())
+        backend = DISTRIBUTED_BACKEND if has_control_plane or has_redis else DEMO_BACKEND
     if backend not in {DEMO_BACKEND, DISTRIBUTED_BACKEND}:
         raise RuntimeError(
             f"{BACKEND_ENV} must be either {DEMO_BACKEND!r} or {DISTRIBUTED_BACKEND!r}"

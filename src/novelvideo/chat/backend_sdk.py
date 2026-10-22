@@ -112,6 +112,13 @@ def interrupt_live_codex_turn(thread_id: str, turn_id: str) -> bool:
     return True
 
 
+def _is_missing_codex_thread_error(exc: Exception) -> bool:
+    message = str(getattr(exc, "message", exc) or "").lower()
+    return "no rollout found for thread id" in message or (
+        "thread" in message and "not found" in message
+    )
+
+
 def control_codex_runtime(
     *,
     codex_bin: Path,
@@ -146,13 +153,22 @@ def control_codex_runtime(
         elif operation == "archive":
             client.thread_archive(thread_id)
         else:
+            from openai_codex.errors import InvalidRequestError
             from openai_codex.generated.v2_all import ThreadDeleteResponse
 
-            client.request(
-                "thread/delete",
-                {"threadId": thread_id},
-                response_model=ThreadDeleteResponse,
-            )
+            try:
+                client.request(
+                    "thread/delete",
+                    {"threadId": thread_id},
+                    response_model=ThreadDeleteResponse,
+                )
+            except InvalidRequestError as exc:
+                # Project purge is idempotent: a stale session index may point
+                # at a rollout that was already removed. Treat only that
+                # explicit not-found response as success; transport, auth and
+                # other runtime failures must still abort and roll back purge.
+                if not _is_missing_codex_thread_error(exc):
+                    raise
     return True
 
 
@@ -1163,11 +1179,7 @@ def _start_or_resume_codex_thread(
     try:
         return codex.thread_resume(thread_id, **thread_options)
     except InvalidRequestError as exc:
-        message = str(getattr(exc, "message", exc) or "").lower()
-        stale_pointer = "no rollout found for thread id" in message or (
-            "thread" in message and "not found" in message
-        )
-        if not stale_pointer:
+        if not _is_missing_codex_thread_error(exc):
             raise
         return codex.thread_start(**thread_options)
 

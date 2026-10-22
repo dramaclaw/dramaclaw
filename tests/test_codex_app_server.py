@@ -66,6 +66,56 @@ def test_control_rpc_uses_shared_app_server_for_lifecycle(monkeypatch, tmp_path)
     ]
 
 
+def test_delete_treats_missing_thread_as_already_cleaned(monkeypatch, tmp_path):
+    from openai_codex.errors import InvalidRequestError
+
+    class FakeClient:
+        def request(self, method, payload, *, response_model):
+            raise InvalidRequestError(
+                -32600,
+                f"thread not found: {payload['threadId']}",
+            )
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield SimpleNamespace(_client=FakeClient())
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+
+    assert control_codex_runtime(
+        codex_bin=tmp_path / "codex",
+        cwd=tmp_path,
+        env={},
+        config_overrides=(),
+        operation="delete",
+        thread_id="stale-thread",
+    )
+
+
+def test_delete_does_not_hide_other_runtime_errors(monkeypatch, tmp_path):
+    from openai_codex.errors import InvalidRequestError
+
+    class FakeClient:
+        def request(self, method, payload, *, response_model):
+            raise InvalidRequestError(-32600, "permission profile is invalid")
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield SimpleNamespace(_client=FakeClient())
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+
+    with pytest.raises(InvalidRequestError, match="permission profile is invalid"):
+        control_codex_runtime(
+            codex_bin=tmp_path / "codex",
+            cwd=tmp_path,
+            env={},
+            config_overrides=(),
+            operation="delete",
+            thread_id="thread-a",
+        )
+
+
 def test_legacy_log_sanitizer_removes_turn_secrets_from_sqlite(tmp_path):
     database = tmp_path / "logs_2.sqlite"
     connection = sqlite3.connect(database)

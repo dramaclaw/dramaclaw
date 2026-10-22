@@ -417,7 +417,7 @@ export function PikoWorldShell({ character = null, playerGender, onMusicMapChang
           onOpenChange={setPrivateOpen} />
         {entered && world.zone !== null && (
           <div
-            className="pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full border border-amber-950/20 bg-amber-50/85 px-3 py-1 text-xs font-semibold text-amber-950 backdrop-blur-sm"
+            className="pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full border border-amber-950/20 bg-amber-50/85 px-3 py-1 text-xs font-semibold text-amber-950 shadow-sm backdrop-blur-sm"
             role="status"
             aria-live="polite"
           >

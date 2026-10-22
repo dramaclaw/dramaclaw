@@ -19,7 +19,7 @@
 
 ## 多人聊天维护边界
 
-默认 `PIKO_WORLD_BACKEND=demo` 使用 SQLite 和进程内房间，只适用于单个 API worker。`distributed` 使用 PostgreSQL 和 Redis，并依赖完整的 EE 控制平面端口。部署必须在完成 PostgreSQL 建表、数据迁移和就绪验证后显式设置 `PIKO_WORLD_BACKEND=distributed`，不能仅凭存在 `ST_CONTROL_PLANE_DSN` 或 `ST_REDIS_URL` 自动切换持久化后端。
+`PIKO_WORLD_BACKEND=demo` 使用 SQLite 和进程内房间，只适用于单个 API worker。`distributed` 使用 PostgreSQL 和 Redis，并依赖完整的 EE 控制平面端口。未显式设置后端时，没有共享基础设施的本地环境使用 `demo`；只要存在 `ST_CONTROL_PLANE_DSN` 或 `ST_REDIS_URL` 就选择 `distributed`，缺少其中一项会拒绝启动，避免多个 worker 静默形成互不可见的房间。显式设置 `demo` 仍会覆盖自动选择。
 
 分布式模式下，同一场景优先装满当前房间再创建下一房间，默认容量为 200 人，可通过 `PIKO_WORLD_SCENE_CAPACITY` 调整（范围 10–500）。服务端随世界快照返回从 1 开始的分区号，界面在地图名称旁显示为 A区、B区；单机模式固定显示 A区。
 
