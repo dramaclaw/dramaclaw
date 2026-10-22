@@ -7,6 +7,8 @@ import type { OkResponse } from "@/types/api";
 
 export type SubscriptionMethod = "alipay" | "wxpay" | "dodo";
 export interface SubscriptionOffer {
+  available?: boolean;
+  unavailable_reason?: string;
   payment_method: SubscriptionMethod;
   currency: "CNY";
   amount_minor: number;
@@ -20,17 +22,51 @@ export interface SubscriptionPlan {
   version: number;
   name: string;
   description: string;
+  group_id?: string | null;
+  badge?: string;
+  sort_order?: number;
   billing_months: 1 | 3 | 12;
   intro_cycles?: number;
   credits_per_month: number;
   grant_mode: "monthly" | "upfront";
+  org_id?: string | null;
   terms_url: string;
   offers: SubscriptionOffer[];
+}
+export interface SubscriptionPlanGroup {
+  group_id: string;
+  name: string;
+  description: string;
+  badge: string;
+  sort_order: number;
+  options: SubscriptionPlan[];
+}
+export function groupSubscriptionPlans(
+  plans: SubscriptionPlan[],
+): SubscriptionPlanGroup[] {
+  const groups = new Map<string, SubscriptionPlanGroup>();
+  for (const plan of plans) {
+    const id = plan.group_id ?? plan.plan_id;
+    const group = groups.get(id) ?? {
+      group_id: id,
+      name: plan.name,
+      description: plan.description,
+      badge: plan.badge ?? "",
+      sort_order: plan.sort_order ?? 0,
+      options: [],
+    };
+    group.options.push(plan);
+    groups.set(id, group);
+  }
+  return [...groups.values()].sort(
+    (a, b) =>
+      a.sort_order - b.sort_order || a.group_id.localeCompare(b.group_id),
+  );
 }
 export interface SubscriptionInvoice {
   invoice_id: string;
   cycle_index: number;
-  status: "pending" | "processing" | "paid" | "failed" | "refunded";
+  status: "pending" | "processing" | "paid" | "failed" | "refunded" | "closed";
   amount_minor: number;
   currency: string;
   payment_amount_minor: number;
@@ -67,17 +103,25 @@ export interface Subscription {
 }
 export type SubscriptionStatus =
   | "review"
+  | "cancellingSetup"
   | "cancelling"
   | "cancelled"
   | "confirming"
   | "awaitingPayment"
+  | "setupFailed"
   | "paymentFailed"
   | "active";
 export function subscriptionStatus(value: Subscription): SubscriptionStatus {
   if (value.review_required) return "review";
+  if (value.checkout_state === "failed" && !value.paid_until)
+    return "setupFailed";
   if (value.authorization_status === "failed") return "paymentFailed";
-  if (!value.auto_renew)
-    return value.cancellation_confirmed_at ? "cancelled" : "cancelling";
+  if (!value.auto_renew) {
+    if (value.cancellation_confirmed_at) return "cancelled";
+    if (value.authorization_status === "pending" && !value.paid_until)
+      return "cancellingSetup";
+    return "cancelling";
+  }
   if (["creating", "unknown"].includes(value.checkout_state))
     return "confirming";
   if (value.billing_status === "failed") return "paymentFailed";
@@ -168,9 +212,12 @@ export function useSubscriptionPlans(enabled: boolean) {
     queryKey: ["subscriptions", scope, "plans"],
     enabled,
     queryFn: ({ signal }) =>
-      api
-        .get("api/v1/payments/subscriptions/plans", { signal })
-        .json<OkResponse<{ items: SubscriptionPlan[] }>>(),
+      api.get("api/v1/payments/subscriptions/plans", { signal }).json<
+        OkResponse<{
+          items: SubscriptionPlan[];
+          groups?: SubscriptionPlanGroup[];
+        }>
+      >(),
     retry: false,
     staleTime: 30_000,
   });
@@ -226,7 +273,7 @@ export function useCreateSubscription() {
       plan: SubscriptionPlan;
       method: SubscriptionMethod;
       key: string;
-      customer?: { name: string; email: string };
+      termsAccepted: true;
     }) =>
       api
         .post("api/v1/payments/subscriptions", {
@@ -236,8 +283,7 @@ export function useCreateSubscription() {
             plan_id: input.plan.plan_id,
             plan_version: input.plan.version,
             payment_method: input.method,
-            terms_accepted: true,
-            ...(input.customer ? { customer: input.customer } : {}),
+            terms_accepted: input.termsAccepted,
             ...(input.method === "dodo"
               ? {
                   quote: (() => {

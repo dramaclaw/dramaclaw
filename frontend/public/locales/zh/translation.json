@@ -18,18 +18,29 @@
     "confirm": "确认创建"
   },
   "referenceValidation": {
-    "firstFrame": "首帧", "lastFrame": "尾帧",
-    "title": "参考素材不符合模型要求", "hint": "请修正以下素材后重新生成。可定位到对应画布节点。", "locate": "定位素材",
-    "image": "参考图", "audio": "参考音频", "video": "参考视频",
+    "firstFrame": "首帧",
+    "lastFrame": "尾帧",
+    "title": "参考素材不符合模型要求",
+    "hint": "请修正以下素材后重新生成。可定位到对应画布节点。",
+    "locate": "定位素材",
+    "image": "参考图",
+    "audio": "参考音频",
+    "video": "参考视频",
     "format": "实际格式：{{actual}}；支持格式：{{expected}}。",
     "unreadable": "无法读取或识别该素材，请重新上传有效文件。",
     "maxMB": "实际体积 {{actual}} MB；最多 {{expected}} MB。",
-    "minWidth": "实际宽度 {{actual}} px；至少 {{expected}} px。", "maxWidth": "实际宽度 {{actual}} px；最多 {{expected}} px。",
-    "minHeight": "实际高度 {{actual}} px；至少 {{expected}} px。", "maxHeight": "实际高度 {{actual}} px；最多 {{expected}} px。",
-    "minAspectRatio": "实际宽高比 {{actual}}；至少 {{expected}}。", "maxAspectRatio": "实际宽高比 {{actual}}；最多 {{expected}}。",
-    "minFPS": "实际帧率 {{actual}} fps；至少 {{expected}} fps。", "maxFPS": "实际帧率 {{actual}} fps；最多 {{expected}} fps。",
-    "minDuration": "实际时长 {{actual}} 秒；单条至少 {{expected}} 秒。", "maxDuration": "实际时长 {{actual}} 秒；单条最多 {{expected}} 秒。",
-    "totalMinDuration": "参考素材总时长 {{actual}} 秒；至少 {{expected}} 秒。", "totalMaxDuration": "参考素材总时长 {{actual}} 秒；最多 {{expected}} 秒。"
+    "minWidth": "实际宽度 {{actual}} px；至少 {{expected}} px。",
+    "maxWidth": "实际宽度 {{actual}} px；最多 {{expected}} px。",
+    "minHeight": "实际高度 {{actual}} px；至少 {{expected}} px。",
+    "maxHeight": "实际高度 {{actual}} px；最多 {{expected}} px。",
+    "minAspectRatio": "实际宽高比 {{actual}}；至少 {{expected}}。",
+    "maxAspectRatio": "实际宽高比 {{actual}}；最多 {{expected}}。",
+    "minFPS": "实际帧率 {{actual}} fps；至少 {{expected}} fps。",
+    "maxFPS": "实际帧率 {{actual}} fps；最多 {{expected}} fps。",
+    "minDuration": "实际时长 {{actual}} 秒；单条至少 {{expected}} 秒。",
+    "maxDuration": "实际时长 {{actual}} 秒；单条最多 {{expected}} 秒。",
+    "totalMinDuration": "参考素材总时长 {{actual}} 秒；至少 {{expected}} 秒。",
+    "totalMaxDuration": "参考素材总时长 {{actual}} 秒；最多 {{expected}} 秒。"
   },
   "app": {
     "title": "SuperTale",
@@ -464,32 +475,32 @@
     "account": {
       "open": "打开个人信息",
       "changeAvatar": "更换头像",
-        "changePassword": "修改密码",
-        "setPassword": "设置密码",
-        "selectLanguage": "选择语言",
-        "languageChinese": "中文",
-        "languageEnglish": "English",
-        "languageVietnamese": "Tiếng Việt",
-        "phoneBinding": {
-          "title": "绑定手机号",
-          "description": "验证当前密码和手机号，绑定到现有账号。绑定后支持验证码登录，不支持换绑或解绑。",
-          "submit": "确认绑定",
-          "success": "手机号已绑定，原有账号和密码仍可使用。",
-          "inUse": "该手机号已属于其他账号，无法绑定。账号不会自动合并。",
-          "alreadyBound": "当前账号已绑定手机号，请刷新页面。",
-          "error": "绑定失败，请重试。"
-        },
-        "avatarDialog": {
-          "title": "更换头像",
-          "description": "选择一张图片作为你的头像，建议使用清晰的正方形图片。",
-          "previewHint": "当前使用账号首字母头像",
-          "choose": "选择图片",
-          "replace": "更换图片",
-          "fileHint": "支持 PNG、JPG、WebP、GIF",
-          "save": "保存头像",
-          "saving": "保存中…",
-          "error": "头像上传失败，请重试"
-        },
+      "changePassword": "修改密码",
+      "setPassword": "设置密码",
+      "selectLanguage": "选择语言",
+      "languageChinese": "中文",
+      "languageEnglish": "English",
+      "languageVietnamese": "Tiếng Việt",
+      "phoneBinding": {
+        "title": "绑定手机号",
+        "description": "验证当前密码和手机号，绑定到现有账号。绑定后支持验证码登录，不支持换绑或解绑。",
+        "submit": "确认绑定",
+        "success": "手机号已绑定，原有账号和密码仍可使用。",
+        "inUse": "该手机号已属于其他账号，无法绑定。账号不会自动合并。",
+        "alreadyBound": "当前账号已绑定手机号，请刷新页面。",
+        "error": "绑定失败，请重试。"
+      },
+      "avatarDialog": {
+        "title": "更换头像",
+        "description": "选择一张图片作为你的头像，建议使用清晰的正方形图片。",
+        "previewHint": "当前使用账号首字母头像",
+        "choose": "选择图片",
+        "replace": "更换图片",
+        "fileHint": "支持 PNG、JPG、WebP、GIF",
+        "save": "保存头像",
+        "saving": "保存中…",
+        "error": "头像上传失败，请重试"
+      },
       "passwordDialog": {
         "title": "修改密码",
         "description": "修改成功后会退出所有设备，需要使用新密码重新登录。",
@@ -1505,7 +1516,6 @@
       "orgDepartureSweep": "离职积分回收",
       "orgRefundSweep": "离职后退款积分回收",
       "orgTransfer": "组织积分调整",
-
       "orgRecharge": "组织积分充值",
       "personalRecharge": "积分充值",
       "paymentReceived": "支付成功，积分到账",
@@ -1614,8 +1624,8 @@
       "createFailed": "支付订单创建失败，请稍后重试",
       "errors": {
         "tooManyPending": "当前已有多笔待支付订单，请先完成支付或等待订单关闭后再试",
-        "packageUnavailable": "该充值套餐已不可用，请刷新后选择其他套餐",
-        "purchaseLimit": "该充值套餐已达到购买次数限制",
+        "packageUnavailable": "该积分礼包已不可用，请刷新后选择其他礼包",
+        "purchaseLimit": "该积分礼包已达到购买次数限制",
         "methodUnavailable": "当前无法使用所选支付方式",
         "orgCreditsInsufficient": "组织积分不足，无法完成本次购买",
         "accountUnavailable": "当前账号不符合该充值方式的使用条件",
@@ -1660,7 +1670,7 @@
         "support": "帮助与支持"
       },
       "tabs": {
-        "packages": "充值套餐",
+        "packages": "积分礼包",
         "custom": "充值积分",
         "benefits": "我的权益",
         "orders": "账单记录",
@@ -1668,7 +1678,7 @@
         "help": "充值问题"
       },
       "descriptions": {
-        "packages": "购买固定积分套餐，积分永久有效。",
+        "packages": "一次性购买积分礼包，积分永久有效。",
         "subscriptions": "通过支付账户自动续费，按套餐规则发放积分。",
         "custom": "按需要选择积分数量并完成充值。",
         "benefits": "查看当前账户可享受的促销和专属权益。",
@@ -1683,10 +1693,10 @@
       "giftCredits": "赠送积分",
       "totalCredits": "到账积分",
       "buyNow": "立即购买",
-      "packagesUnavailable": "当前暂无可购买的充值套餐",
+      "packagesUnavailable": "当前暂无可购买的积分礼包",
       "pendingConfiguration": "待配置",
       "packageViews": {
-        "packages": "积分套餐",
+        "packages": "积分礼包",
         "enterprise": "企业版"
       },
       "packageTiers": {
@@ -8491,7 +8501,6 @@
     "invalidFile": "请选择完整的 HTML 网页文件",
     "fileTooLarge": "HTML 文件不能超过 2 MiB",
     "uploadRecoveryConflict": "该节点已有一次内容不同的上传完成。请重新选择原文件进行恢复，或新建 HTML 节点上传当前文件。",
-
     "references": "引用的上游节点",
     "activeCanvasRequired": "请先打开项目画布",
     "readyToGenerate": "填写网页要求并点击生成，或运行工作流",
@@ -8551,7 +8560,7 @@
     "renewAfterIntro": "前 {{cycles}} 个优惠周期结束后，每 {{months}} 个月按 {{price}} 自动续费。",
     "monthlyEquivalent": "续费价格约合每月 {{price}}，实际按整个周期一次收款。",
     "introCycles": "前 {{cycles}} 个扣款周期，每期按 {{price}} 付款。",
-    "title": "订阅会员",
+    "title": "订阅套餐",
     "intro": "通过支付账户自动续费，按套餐规则发放积分，已发放积分永久有效。",
     "refresh": "刷新",
     "loadError": "暂时无法读取订阅信息。",
@@ -8582,11 +8591,9 @@
     "monthlyCredits": "每月发放 {{credits}} 积分，永久有效。",
     "upfrontCredits": "付款后一次性发放 {{credits}} 积分，永久有效。",
     "taxNote": "如有适用税费，将在收银台展示。",
-    "customerName": "支付宝订阅客户姓名",
-    "customerEmail": "支付宝订阅客户邮箱",
     "consent": "我授权自动续费，并已阅读及同意",
     "terms": "订阅服务协议",
-    "subscribe": "签约并订阅",
+    "subscribe": "订阅",
     "methods": {
       "alipay": "支付宝",
       "wxpay": "微信支付",
@@ -8599,10 +8606,12 @@
     },
     "status": {
       "review": "付款待核查，已停止未来续费",
-      "cancelling": "已申请取消，等待支付平台确认",
+      "cancellingSetup": "开通未完成，已请求取消；签约结果尚未确认",
+      "cancelling": "已申请停止自动续费，正在确认{{method}}的解约结果",
       "cancelled": "已取消未来续费，已购买权益保留",
       "confirming": "签约或付款结果确认中",
       "awaitingPayment": "等待签约或首次付款",
+      "setupFailed": "开通失败，可重新选择套餐",
       "active": "自动续费已开启",
       "paymentFailed": "续费扣款失败，请检查支付账户"
     },
@@ -8611,14 +8620,106 @@
       "processing": "扣款处理中",
       "paid": "已付款",
       "failed": "扣款失败",
-      "refunded": "已退款"
+      "refunded": "已退款",
+      "closed": "已关闭"
     },
     "grantStatus": {
       "pending": "待发放",
       "credited": "已发放",
       "blocked": "等待补发",
       "held": "待核查"
-    }
+    },
+    "catalog": "订阅套餐",
+    "billingPeriod": "扣款周期",
+    "perMonth": "/月",
+    "billingTotal": {
+      "1": "每月扣款 {{price}}",
+      "3": "每季扣款 {{price}}",
+      "12": "每年扣款 {{price}}"
+    },
+    "chooseTier": "选择 {{name}} 的每月积分档位",
+    "creditsLabel": "每月积分",
+    "grantLabel": "积分发放",
+    "periodUnavailable": "此选项暂不可订阅",
+    "billingPeriodLabels": {
+      "1": "月付",
+      "3": "季付",
+      "12": "年付"
+    },
+    "allPeriods": "全部周期",
+    "periodCredits": "每周期积分",
+    "grantModeShort": {
+      "monthly": "逐月发放",
+      "upfront": "一次发放"
+    },
+    "renewalNote": "自动续费 · 积分永久有效",
+    "purchaseBlocked": "当前账号已有订阅或正在处理的开通申请，请在下方「我的订阅」查看和管理。"
+  },
+  "subscriptionCheckout": {
+    "selectPlan": "选择套餐",
+    "renewal": "自动续费：每 {{months}} 个月 {{price}}",
+    "amountDue": "本期应付金额",
+    "renewalTiming": "首期付款确认后开始计算服务周期；具体下次续费日期将在订阅生效后显示。",
+    "membership": "本期会员期限",
+    "months": "{{months}} 个月",
+    "periodCredits": "本期积分总额",
+    "monthlyGrants": "每月发放 {{credits}} 积分，本期共 {{count}} 次；已发积分永久有效。",
+    "upfrontGrants": "付款确认后一次性发放 {{credits}} 积分，永久有效。",
+    "fullPeriod": "实际按整期金额付款。",
+    "account": "订阅权益所属账号",
+    "cancelPolicy": "可在订阅管理中取消后续自动续费。取消后，已付款周期的会员期限和计划内积分发放继续保留；取消不等于退款。",
+    "existing": "已有订阅或签约正在确认，请先到订阅管理查看。",
+    "planChanged": "套餐版本已更新，请返回重新选择并确认价格和权益。",
+    "confirm": "确认订阅并前往支付",
+    "channelUnavailable": "当前暂时无法使用此渠道签约，请选择其他支付方式或稍后重试。",
+    "phoneRequiredTitle": "请先绑定手机号",
+    "phoneRequired": "使用当前支付宝订阅方式前，请先在工作台右上角账号菜单中绑定手机号，再回到本页点击「重新检查」。你也可以选择其他支付方式。",
+    "recheck": "重新检查",
+    "checking": "正在检查…",
+    "dodoDetails": "如需邮箱或账单资料，请在 Dodo 收银台填写或确认。"
+  },
+  "subscriptionReturn": {
+    "states": {
+      "confirming": {
+        "title": "正在确认签约和付款",
+        "description": "正在查询服务端记录，请勿重复订阅。返回本页不代表付款成功。"
+      },
+      "authorized": {
+        "title": "签约已确认，等待首期付款",
+        "description": "自动续费授权已确认，首期付款尚未确认，会员和积分尚未生效。"
+      },
+      "paid": {
+        "title": "本期已付款，积分发放处理中",
+        "description": "已确认本期付款及会员期限，当前应发积分正在处理。请勿重复付款。"
+      },
+      "active": {
+        "title": "订阅已生效",
+        "description": "本期付款、会员期限和当前应发积分均已确认。后续积分按下方计划继续发放。"
+      },
+      "failed": {
+        "title": "签约或付款未完成",
+        "description": "请查看订阅记录中的失败原因，确认原请求结果后再操作。"
+      },
+      "cancelled": {
+        "title": "签约已取消",
+        "description": "已确认渠道取消授权。已付款权益请在订阅管理查看。"
+      },
+      "review": {
+        "title": "订阅需要核查",
+        "description": "付款或权益存在异常，请勿重复付款，到订阅管理查看处理情况。"
+      },
+      "refunded": {
+        "title": "订阅账单已退款",
+        "description": "退款与权益的最终处理情况请在订阅账单中查看。"
+      },
+      "unavailable": {
+        "title": "暂时无法查询订阅结果",
+        "description": "请重新查询或到订阅管理查看，查询失败不代表付款失败。"
+      }
+    },
+    "number": "订阅编号",
+    "manage": "查看订阅与账单",
+    "renewal": "下次续费周期起始日：{{date}}。具体扣费时间以渠道规则为准。",
+    "notRenewing": "自动续费已关闭，已付款权益继续保留。"
   }
-
 }

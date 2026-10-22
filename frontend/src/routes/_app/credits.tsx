@@ -15,7 +15,7 @@ export function CreditsPage() {
   return (
     <CreditCenterDialog
       open
-      initialTab={new URLSearchParams(window.location.search).has("subscription_id") ? "subscriptions" : "usage"}
+      initialTab="subscriptions"
       paymentAvailable={paymentAvailable}
       onOpenChange={(open) => {
         if (!open) void navigate({ to: "/", replace: true });

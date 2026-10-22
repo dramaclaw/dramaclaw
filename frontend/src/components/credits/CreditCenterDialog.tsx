@@ -56,6 +56,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 import { businessWechatQrUrl } from "@/components/login/cinematic/media";
+import { PricingCard, PricingCardPrice, PricingCardDetails, PricingCardNote, PricingCardAction } from "./PricingCard";
 import { SubscriptionPanel } from "@/components/credits/SubscriptionPanel";
 
 const TRANSACTION_SOURCE_COPY = new Map<string, [string, string]>([
@@ -121,6 +122,7 @@ function beginCheckout(draft: CheckoutDraft): void {
   clearPaymentAttempt();
   sessionStorage.removeItem(PAYMENT_RETURN_ORDER_ID_KEY);
   sessionStorage.removeItem(PAYMENT_RETURN_ORDER_KEY);
+  sessionStorage.removeItem("dramaclaw-subscription-return");
   sessionStorage.setItem(CHECKOUT_DRAFT_KEY, JSON.stringify(draft));
   sessionStorage.setItem(
     CHECKOUT_RETURN_KEY,
@@ -136,8 +138,8 @@ const NAV_GROUPS: Array<{
   {
     label: "credits.centerModal.groups.recharge",
     items: [
-      { tab: "packages", icon: Gift },
       { tab: "subscriptions", icon: History },
+      { tab: "packages", icon: Gift },
       { tab: "custom", icon: WalletCards },
     ],
   },
@@ -160,7 +162,7 @@ const PAYMENT_TABS = new Set<CreditCenterTab>(["packages", "custom", "orders", "
 export function CreditCenterDialog({
   open,
   onOpenChange,
-  initialTab = "packages",
+  initialTab = "subscriptions",
   paymentAvailable,
 }: {
   open: boolean;
@@ -467,28 +469,16 @@ function PackageTab({
             if (!option) return null;
             const totalCredits = option.base_credits + option.gift_credits;
             return (
-              <article
+              <PricingCard
                 key={group.id}
-                className={cn(
-                  "flex min-h-[430px] flex-col rounded-lg border border-white/10 bg-white/[0.035] p-5",
-                  (group.badge || groupIndex === 1) && "border-primary/40 ring-1 ring-inset ring-primary/12",
-                )}
+                name={group.name}
+                description={group.description}
+                badge={group.badge}
+                highlighted={!!group.badge || groupIndex === 1}
               >
-                <div className="flex min-h-7 items-start justify-between gap-3">
-                  <h3 className="text-lg font-semibold">{group.name}</h3>
-                  {group.badge ? (
-                    <span className="rounded-full bg-primary/15 px-2 py-1 text-[10px] font-medium text-primary">
-                      {group.badge}
-                    </span>
-                  ) : null}
-                </div>
-                <p className="mt-1 min-h-9 text-xs leading-5 text-white/38">
-                  {group.description}
-                </p>
-                <div className="mt-5 text-3xl font-semibold tabular-nums">
+                <PricingCardPrice caption={group.validity}>
                   {formatMoney(option.amount_cents, language)}
-                </div>
-                <div className="mt-1 text-xs text-white/40">{group.validity}</div>
+                </PricingCardPrice>
 
                 {group.options.length > 1 ? (
                   <div className="mt-5">
@@ -512,7 +502,7 @@ function PackageTab({
                   </div>
                 ) : <div className="mt-5 h-[37px]" />}
 
-                <dl className="mt-5 space-y-3 rounded-md border border-white/8 bg-white/[0.035] p-4 text-sm">
+                <PricingCardDetails>
                   <div className="flex items-center justify-between">
                     <dt className="text-white/45">{t("credits.centerModal.baseCredits")}</dt>
                     <dd className="tabular-nums">{formatNumber(option.base_credits, language)}</dd>
@@ -525,19 +515,17 @@ function PackageTab({
                     <dt>{t("credits.centerModal.totalCredits")}</dt>
                     <dd className="tabular-nums text-primary">{formatNumber(totalCredits, language)}</dd>
                   </div>
-                </dl>
-                <p className="mt-4 text-center text-xs text-white/35">
+                </PricingCardDetails>
+                <PricingCardNote>
                   {group.purchaseNote}
-                </p>
-                <button
-                  type="button"
+                </PricingCardNote>
+                <PricingCardAction
                   disabled={loading}
                   onClick={() => onCheckout(option.package_id)}
-                  className="mt-auto inline-flex h-10 items-center justify-center rounded-md bg-white px-4 text-sm font-semibold text-black transition-colors hover:bg-white/88 disabled:cursor-not-allowed disabled:bg-white/8 disabled:text-white/30"
                 >
                   {t("credits.centerModal.buyNow")}
-                </button>
-              </article>
+                </PricingCardAction>
+              </PricingCard>
             );
           })}
         </div>

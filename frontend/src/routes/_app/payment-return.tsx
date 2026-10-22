@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -26,10 +26,16 @@ import {
   paymentOrderNumberFromSearch,
   safePaymentReturnPath,
 } from "@/lib/payment-navigation";
-import { resolvePaymentReturnState, type PaymentReturnState } from "@/lib/payment-return";
+import {
+  resolvePaymentReturnState,
+  type PaymentReturnState,
+} from "@/lib/payment-return";
 import { useRechargeOrder, useRechargeOrders } from "@/lib/queries/payments";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
+import { PaymentResultShell } from "@/components/credits/PaymentResultShell";
+import { SubscriptionPaymentReturn } from "@/components/credits/SubscriptionPaymentReturn";
+import { subscriptionReturnId } from "@/lib/subscription-checkout";
 
 const STATE_PRESENTATION: Record<
   PaymentReturnState,
@@ -40,21 +46,32 @@ const STATE_PRESENTATION: Record<
   closed: { icon: Clock3, tone: "text-white/55" },
   failed: { icon: XCircle, tone: "text-destructive" },
   fulfillment_failed: { icon: TriangleAlert, tone: "text-warning" },
-	manual_review: { icon: TriangleAlert, tone: "text-warning" },
+  manual_review: { icon: TriangleAlert, tone: "text-warning" },
   refunded: { icon: RotateCcw, tone: "text-white/65" },
   unavailable: { icon: TriangleAlert, tone: "text-warning" },
 };
 
 export function PaymentReturnPage() {
+  const id = subscriptionReturnId(window.location.search);
+  return id ? (
+    <SubscriptionPaymentReturn id={id} />
+  ) : (
+    <RechargePaymentReturnPage />
+  );
+}
+
+function RechargePaymentReturnPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const refreshedCreditedOrderRef = useRef<string | null>(null);
-  const expectedOrderNo = sessionStorage.getItem(PAYMENT_RETURN_ORDER_KEY)?.trim() || null;
+  const expectedOrderNo =
+    sessionStorage.getItem(PAYMENT_RETURN_ORDER_KEY)?.trim() || null;
   const providerOrderNo = paymentOrderNumberFromSearch(window.location.search);
   const merchantOrderNo = providerOrderNo ?? expectedOrderNo;
-  const expectedOrderId = !providerOrderNo || providerOrderNo === expectedOrderNo
-    ? sessionStorage.getItem(PAYMENT_RETURN_ORDER_ID_KEY)?.trim() || null
-    : null;
+  const expectedOrderId =
+    !providerOrderNo || providerOrderNo === expectedOrderNo
+      ? sessionStorage.getItem(PAYMENT_RETURN_ORDER_ID_KEY)?.trim() || null
+      : null;
   const orderQuery = useRechargeOrder(expectedOrderId);
   const ordersQuery = useRechargeOrders({
     pollForMerchantOrderNo: merchantOrderNo,
@@ -62,8 +79,12 @@ export function PaymentReturnPage() {
   });
   const order =
     orderQuery.data?.data ??
-    ordersQuery.data?.data.items.find((item) => item.merchant_order_no === merchantOrderNo);
-  const activeQueryFailed = expectedOrderId ? orderQuery.isError : ordersQuery.isError;
+    ordersQuery.data?.data.items.find(
+      (item) => item.merchant_order_no === merchantOrderNo,
+    );
+  const activeQueryFailed = expectedOrderId
+    ? orderQuery.isError
+    : ordersQuery.isError;
   const state = resolvePaymentReturnState(
     order,
     activeQueryFailed || (!expectedOrderId && !merchantOrderNo),
@@ -74,7 +95,11 @@ export function PaymentReturnPage() {
 
   useEffect(() => {
     const orderId = order?.order_id;
-    if (state !== "credited" || !orderId || refreshedCreditedOrderRef.current === orderId) {
+    if (
+      state !== "credited" ||
+      !orderId ||
+      refreshedCreditedOrderRef.current === orderId
+    ) {
       return;
     }
     refreshedCreditedOrderRef.current = orderId;
@@ -82,7 +107,9 @@ export function PaymentReturnPage() {
   }, [order?.order_id, queryClient, state]);
 
   const returnToDramaClaw = () => {
-    const returnPath = safePaymentReturnPath(sessionStorage.getItem(CHECKOUT_RETURN_KEY));
+    const returnPath = safePaymentReturnPath(
+      sessionStorage.getItem(CHECKOUT_RETURN_KEY),
+    );
     sessionStorage.setItem(OPEN_CREDIT_CENTER_KEY, "1");
     sessionStorage.setItem(CREDIT_CENTER_TAB_KEY, "orders");
     sessionStorage.removeItem(CHECKOUT_DRAFT_KEY);
@@ -93,67 +120,64 @@ export function PaymentReturnPage() {
   };
 
   return (
-    <div className="flex min-h-full flex-col">
-      <button
-        type="button"
-        onClick={returnToDramaClaw}
-        className="inline-flex h-9 w-fit items-center gap-2 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-white/[0.05] hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" />
-        {t("paymentReturn.back")}
-      </button>
-
-      <section className="mx-auto flex w-full max-w-xl flex-1 flex-col items-center justify-center px-4 pb-20 text-center">
-        <span
-          className={cn(
-            "flex size-14 items-center justify-center rounded-full bg-white/[0.05]",
-            presentation.tone,
-          )}
-        >
-          <StatusIcon className={cn("size-7", state === "confirming" && "animate-spin")} />
-        </span>
-        <h1 className="mt-5 text-xl font-semibold">
-          {t(`paymentReturn.states.${state}.title`)}
-        </h1>
-        <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-          {t(`paymentReturn.states.${state}.description`)}
-        </p>
-        {displayOrderNo ? (
-          <div className="mt-5 text-xs text-white/35">
-            {t("paymentReturn.orderNumber")}: {displayOrderNo}
-          </div>
-        ) : null}
-        {state === "unavailable" ? (
-          <button
-            type="button"
-            onClick={() =>
-              void (expectedOrderId ? orderQuery.refetch() : ordersQuery.refetch())
-            }
-            className="mt-6 inline-flex h-10 items-center gap-2 rounded-md border border-white/12 bg-white/[0.04] px-4 text-sm font-medium hover:bg-white/[0.08]"
-          >
-            <RefreshCw className="size-4" />
-            {t("paymentReturn.retry")}
-          </button>
-        ) : null}
+    <PaymentResultShell
+      back={
         <button
           type="button"
           onClick={returnToDramaClaw}
-          className="mt-8 h-11 min-w-44 rounded-md bg-primary px-5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+          className="inline-flex h-9 w-fit items-center gap-2 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-white/[0.05] hover:text-foreground"
         >
-          {t("paymentReturn.returnButton")}
+          <ArrowLeft className="size-4" />
+          {t("paymentReturn.back")}
         </button>
-      </section>
-    </div>
+      }
+    >
+      <span
+        className={cn(
+          "flex size-14 items-center justify-center rounded-full bg-white/[0.05]",
+          presentation.tone,
+        )}
+      >
+        <StatusIcon
+          className={cn("size-7", state === "confirming" && "animate-spin")}
+        />
+      </span>
+      <h1 className="mt-5 text-xl font-semibold">
+        {t(`paymentReturn.states.${state}.title`)}
+      </h1>
+      <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+        {t(`paymentReturn.states.${state}.description`)}
+      </p>
+      {displayOrderNo ? (
+        <div className="mt-5 text-xs text-white/35">
+          {t("paymentReturn.orderNumber")}: {displayOrderNo}
+        </div>
+      ) : null}
+      {state === "unavailable" ? (
+        <button
+          type="button"
+          onClick={() =>
+            void (expectedOrderId
+              ? orderQuery.refetch()
+              : ordersQuery.refetch())
+          }
+          className="mt-6 inline-flex h-10 items-center gap-2 rounded-md border border-white/12 bg-white/[0.04] px-4 text-sm font-medium hover:bg-white/[0.08]"
+        >
+          <RefreshCw className="size-4" />
+          {t("paymentReturn.retry")}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        onClick={returnToDramaClaw}
+        className="mt-8 h-11 min-w-44 rounded-md bg-primary px-5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+      >
+        {t("paymentReturn.returnButton")}
+      </button>
+    </PaymentResultShell>
   );
 }
 
 export const Route = createFileRoute("/_app/payment-return")({
-  beforeLoad: ({ location }) => {
-    const id = new URLSearchParams(location.searchStr).get("business_subscription_id");
-    if (id && /^[A-Za-z0-9._:-]{1,128}$/.test(id)) {
-      // Navigation hint only. Credits page fetches the authenticated owner's record.
-      throw redirect({ href: `/credits?subscription_id=${encodeURIComponent(id)}`, replace: true });
-    }
-  },
   component: PaymentReturnPage,
 });

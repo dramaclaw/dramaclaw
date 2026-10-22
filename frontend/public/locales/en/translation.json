@@ -18,18 +18,29 @@
     "confirm": "Confirm creation"
   },
   "referenceValidation": {
-    "firstFrame": "First frame", "lastFrame": "Last frame",
-    "title": "Reference media does not meet model requirements", "hint": "Correct the listed media before generating. Locate opens the corresponding canvas node.", "locate": "Locate media",
-    "image": "Image", "audio": "Audio", "video": "Video",
+    "firstFrame": "First frame",
+    "lastFrame": "Last frame",
+    "title": "Reference media does not meet model requirements",
+    "hint": "Correct the listed media before generating. Locate opens the corresponding canvas node.",
+    "locate": "Locate media",
+    "image": "Image",
+    "audio": "Audio",
+    "video": "Video",
     "format": "Actual format: {{actual}}; supported: {{expected}}.",
     "unreadable": "Unable to read or identify this media. Please upload a valid file.",
     "maxMB": "Actual size: {{actual}} MB; maximum: {{expected}} MB.",
-    "minWidth": "Width: {{actual}} px; minimum: {{expected}} px.", "maxWidth": "Width: {{actual}} px; maximum: {{expected}} px.",
-    "minHeight": "Height: {{actual}} px; minimum: {{expected}} px.", "maxHeight": "Height: {{actual}} px; maximum: {{expected}} px.",
-    "minAspectRatio": "Aspect ratio: {{actual}}; minimum: {{expected}}.", "maxAspectRatio": "Aspect ratio: {{actual}}; maximum: {{expected}}.",
-    "minFPS": "Frame rate: {{actual}} fps; minimum: {{expected}} fps.", "maxFPS": "Frame rate: {{actual}} fps; maximum: {{expected}} fps.",
-    "minDuration": "Duration: {{actual}} s; each clip must be at least {{expected}} s.", "maxDuration": "Duration: {{actual}} s; each clip must be at most {{expected}} s.",
-    "totalMinDuration": "Total reference duration: {{actual}} s; minimum: {{expected}} s.", "totalMaxDuration": "Total reference duration: {{actual}} s; maximum: {{expected}} s."
+    "minWidth": "Width: {{actual}} px; minimum: {{expected}} px.",
+    "maxWidth": "Width: {{actual}} px; maximum: {{expected}} px.",
+    "minHeight": "Height: {{actual}} px; minimum: {{expected}} px.",
+    "maxHeight": "Height: {{actual}} px; maximum: {{expected}} px.",
+    "minAspectRatio": "Aspect ratio: {{actual}}; minimum: {{expected}}.",
+    "maxAspectRatio": "Aspect ratio: {{actual}}; maximum: {{expected}}.",
+    "minFPS": "Frame rate: {{actual}} fps; minimum: {{expected}} fps.",
+    "maxFPS": "Frame rate: {{actual}} fps; maximum: {{expected}} fps.",
+    "minDuration": "Duration: {{actual}} s; each clip must be at least {{expected}} s.",
+    "maxDuration": "Duration: {{actual}} s; each clip must be at most {{expected}} s.",
+    "totalMinDuration": "Total reference duration: {{actual}} s; minimum: {{expected}} s.",
+    "totalMaxDuration": "Total reference duration: {{actual}} s; maximum: {{expected}} s."
   },
   "app": {
     "title": "SuperTale",
@@ -464,32 +475,32 @@
     "account": {
       "open": "Open account menu",
       "changeAvatar": "Change avatar",
-        "changePassword": "Change password",
-        "setPassword": "Set password",
-        "selectLanguage": "Select language",
-        "languageChinese": "中文",
-        "languageEnglish": "English",
-        "languageVietnamese": "Tiếng Việt",
-        "phoneBinding": {
-          "title": "Bind phone number",
-          "description": "Verify your current password and phone to link it to this account. You can then sign in by code. The phone cannot be changed or unlinked.",
-          "submit": "Confirm binding",
-          "success": "Phone linked. Your existing account and password still work.",
-          "inUse": "This phone belongs to another account and cannot be linked. Accounts are not merged automatically.",
-          "alreadyBound": "This account already has a phone. Refresh the page.",
-          "error": "Could not link the phone. Try again."
-        },
-        "avatarDialog": {
-          "title": "Change avatar",
-          "description": "Choose an image for your avatar. A clear square image works best.",
-          "previewHint": "Currently using the account initial avatar",
-          "choose": "Choose image",
-          "replace": "Replace image",
-          "fileHint": "PNG, JPG, WebP, or GIF",
-          "save": "Save avatar",
-          "saving": "Saving…",
-          "error": "Avatar upload failed, please try again"
-        },
+      "changePassword": "Change password",
+      "setPassword": "Set password",
+      "selectLanguage": "Select language",
+      "languageChinese": "中文",
+      "languageEnglish": "English",
+      "languageVietnamese": "Tiếng Việt",
+      "phoneBinding": {
+        "title": "Bind phone number",
+        "description": "Verify your current password and phone to link it to this account. You can then sign in by code. The phone cannot be changed or unlinked.",
+        "submit": "Confirm binding",
+        "success": "Phone linked. Your existing account and password still work.",
+        "inUse": "This phone belongs to another account and cannot be linked. Accounts are not merged automatically.",
+        "alreadyBound": "This account already has a phone. Refresh the page.",
+        "error": "Could not link the phone. Try again."
+      },
+      "avatarDialog": {
+        "title": "Change avatar",
+        "description": "Choose an image for your avatar. A clear square image works best.",
+        "previewHint": "Currently using the account initial avatar",
+        "choose": "Choose image",
+        "replace": "Replace image",
+        "fileHint": "PNG, JPG, WebP, or GIF",
+        "save": "Save avatar",
+        "saving": "Saving…",
+        "error": "Avatar upload failed, please try again"
+      },
       "passwordDialog": {
         "title": "Change password",
         "description": "Changing your password signs you out on every device. Sign in again with the new password.",
@@ -1505,7 +1516,6 @@
       "orgDepartureSweep": "Credits reclaimed on departure",
       "orgRefundSweep": "Refunded credits reclaimed after departure",
       "orgTransfer": "Organization credit adjustment",
-
       "orgRecharge": "Organization credit recharge",
       "personalRecharge": "Credit recharge",
       "paymentReceived": "Payment received, credits added",
@@ -1597,10 +1607,10 @@
     },
     "recharge": {
       "title": "Add credits",
-      "subtitle": "Choose a package and payment method. The order status is the source of truth.",
-      "loading": "Loading recharge packages…",
+      "subtitle": "Choose a credit pack and payment method. The order status is the source of truth.",
+      "loading": "Loading credit packs…",
       "unavailable": "Recharge is temporarily unavailable",
-      "empty": "No recharge packages are currently available",
+      "empty": "No credit packs are currently available",
       "credits": "{{count}} credits",
       "gift": "includes {{count}} bonus",
       "paymentMethod": "Payment method",
@@ -1614,8 +1624,8 @@
       "createFailed": "Could not create the payment order. Try again later.",
       "errors": {
         "tooManyPending": "You already have several unpaid orders. Complete or wait for them to close before trying again.",
-        "packageUnavailable": "This recharge package is no longer available. Refresh and choose another package.",
-        "purchaseLimit": "This recharge package has already reached its purchase limit.",
+        "packageUnavailable": "This credit pack is no longer available. Refresh and choose another pack.",
+        "purchaseLimit": "This credit pack has already reached its purchase limit.",
         "methodUnavailable": "The selected payment method is currently unavailable.",
         "orgCreditsInsufficient": "The organization does not have enough credits for this purchase.",
         "accountUnavailable": "This account is not eligible for the selected recharge.",
@@ -1635,7 +1645,7 @@
         "transactionTime": "Transaction time",
         "content": "Description",
         "time": "Created",
-        "package": "Package",
+        "package": "Credit pack",
         "amount": "Amount",
         "credits": "Credits",
         "status": "Status"
@@ -1660,7 +1670,7 @@
         "support": "Help and support"
       },
       "tabs": {
-        "packages": "Credit packages",
+        "packages": "Credit packs",
         "custom": "Custom recharge",
         "benefits": "My benefits",
         "orders": "Billing history",
@@ -1668,7 +1678,7 @@
         "help": "Recharge help"
       },
       "descriptions": {
-        "packages": "Purchase credit packages with no expiration date.",
+        "packages": "Make a one-time purchase of a credit pack. Credits never expire.",
         "subscriptions": "Renew automatically through your payment account and receive credits according to the plan.",
         "custom": "Choose the number of credits you need.",
         "benefits": "Review promotions and benefits available to this account.",
@@ -1683,10 +1693,10 @@
       "giftCredits": "Bonus credits",
       "totalCredits": "Credits received",
       "buyNow": "Buy now",
-      "packagesUnavailable": "No recharge packages are currently available",
+      "packagesUnavailable": "No credit packs are currently available",
       "pendingConfiguration": "Pending setup",
       "packageViews": {
-        "packages": "Credit packages",
+        "packages": "Credit packs",
         "enterprise": "Enterprise"
       },
       "packageTiers": {
@@ -1837,16 +1847,16 @@
   },
   "rechargeLink": {
     "title": "Recharge credits",
-    "subtitle": "Choose a recharge package and payment method.",
+    "subtitle": "Choose a credit pack and payment method.",
     "checking": "Checking your account…",
-    "loading": "Loading recharge packages…",
+    "loading": "Loading credit packs…",
     "loginTitle": "Sign in to continue",
     "loginRequired": "This recharge link is bound to an account or organization. Sign in with the intended account before paying.",
     "login": "Sign in",
     "invalidTitle": "Invalid recharge link",
     "invalid": "The recharge token is missing or malformed. Ask the issuer for a new link.",
     "unavailableTitle": "Recharge link unavailable",
-    "unavailable": "This link has expired, was disabled, does not belong to this account, or has no active package.",
+    "unavailable": "This link has expired, was disabled, does not belong to this account, or has no active credit pack.",
     "credits": "{{count}} credits",
     "methods": {
       "alipay": "Alipay",
@@ -8491,7 +8501,6 @@
     "invalidFile": "Choose a complete HTML document",
     "fileTooLarge": "HTML file must not exceed 2 MiB",
     "uploadRecoveryConflict": "A previous upload completed for this node with different content. Re-select the original file to recover it, or create a new HTML node for this file.",
-
     "references": "Connected inputs",
     "activeCanvasRequired": "Open a project canvas first",
     "readyToGenerate": "Enter webpage requirements and generate, or run the workflow",
@@ -8551,7 +8560,7 @@
     "renewAfterIntro": "After the first {{cycles}} cycles, renews every {{months}} month(s) at {{price}}.",
     "monthlyEquivalent": "Equivalent to approximately {{price}} per month; the full period is charged at once.",
     "introCycles": "First {{cycles}} billing cycles at {{price}} each.",
-    "title": "Subscriptions",
+    "title": "Subscription plans",
     "intro": "Automatic renewal uses your payment account. Credits are granted under the plan rules and remain permanently valid.",
     "refresh": "Refresh",
     "loadError": "Unable to load subscriptions.",
@@ -8582,11 +8591,9 @@
     "monthlyCredits": "{{credits}} credits each month, permanently valid.",
     "upfrontCredits": "{{credits}} credits granted after payment, permanently valid.",
     "taxNote": "Applicable taxes, if any, are displayed at checkout.",
-    "customerName": "Name for Alipay subscription",
-    "customerEmail": "Email for Alipay subscription",
     "consent": "I authorize automatic renewal and have read and accepted the",
     "terms": "subscription terms",
-    "subscribe": "Authorize and subscribe",
+    "subscribe": "Subscribe",
     "methods": {
       "alipay": "Alipay",
       "wxpay": "WeChat Pay",
@@ -8599,10 +8606,12 @@
     },
     "status": {
       "review": "Payment needs review; future renewal is stopped",
-      "cancelling": "Cancellation requested; awaiting provider confirmation",
+      "cancellingSetup": "Setup is incomplete and cancellation was requested; authorization is still unconfirmed",
+      "cancelling": "Automatic renewal cancellation requested; checking the cancellation result with {{method}}",
       "cancelled": "Future renewal cancelled; paid benefits remain",
       "confirming": "Authorization or payment result is being confirmed",
       "awaitingPayment": "Awaiting authorization or first payment",
+      "setupFailed": "Setup failed; you can select a plan again",
       "active": "Automatic renewal enabled",
       "paymentFailed": "Renewal payment failed; check your payment account"
     },
@@ -8611,14 +8620,106 @@
       "processing": "Processing",
       "paid": "Paid",
       "failed": "Failed",
-      "refunded": "Refunded"
+      "refunded": "Refunded",
+      "closed": "Closed"
     },
     "grantStatus": {
       "pending": "Scheduled",
       "credited": "Granted",
       "blocked": "Awaiting fulfillment",
       "held": "Held for review"
-    }
+    },
+    "catalog": "Subscription plans",
+    "billingPeriod": "Billing period",
+    "perMonth": "/month",
+    "billingTotal": {
+      "1": "Billed {{price}} monthly",
+      "3": "Billed {{price}} quarterly",
+      "12": "Billed {{price}} annually"
+    },
+    "chooseTier": "Choose monthly credits for {{name}}",
+    "creditsLabel": "Monthly credits",
+    "grantLabel": "Credit delivery",
+    "periodUnavailable": "Unavailable for this option",
+    "billingPeriodLabels": {
+      "1": "Monthly",
+      "3": "Quarterly",
+      "12": "Yearly"
+    },
+    "allPeriods": "All periods",
+    "periodCredits": "Credits per period",
+    "grantModeShort": {
+      "monthly": "Monthly",
+      "upfront": "Upfront"
+    },
+    "renewalNote": "Auto renewal · Credits never expire",
+    "purchaseBlocked": "Your account has a subscription or a pending signup. View and manage it under My subscriptions below."
+  },
+  "subscriptionCheckout": {
+    "selectPlan": "Select plan",
+    "renewal": "Automatic renewal: {{price}} every {{months}} month(s)",
+    "amountDue": "Due for this billing period",
+    "renewalTiming": "The service period starts when the first payment is confirmed. The next renewal date appears after activation.",
+    "membership": "Paid membership period",
+    "months": "{{months}} month(s)",
+    "periodCredits": "Credits for this period",
+    "monthlyGrants": "{{credits}} credits per month, {{count}} grants this period. Granted credits remain permanently valid.",
+    "upfrontGrants": "{{credits}} credits granted after payment confirmation, permanently valid.",
+    "fullPeriod": "The full period is charged at once.",
+    "account": "Account receiving subscription benefits",
+    "cancelPolicy": "Cancel future automatic renewal in subscription management. Paid membership and scheduled grants for the paid period remain. Cancellation does not request a refund.",
+    "existing": "An existing subscription or authorization is pending. Check subscription management first.",
+    "planChanged": "The plan version changed. Return and select it again to confirm the price and benefits.",
+    "confirm": "Confirm subscription and continue to payment",
+    "channelUnavailable": "This channel is currently unavailable. Choose another payment method or try again later.",
+    "phoneRequiredTitle": "Bind a phone number first",
+    "phoneRequired": "To use the current Alipay subscription method, bind a phone number from the account menu at the top right of the workspace. Then return here and select Check again. You can also choose another payment method.",
+    "recheck": "Check again",
+    "checking": "Checking…",
+    "dodoDetails": "If email or billing details are needed, enter or confirm them at Dodo checkout."
+  },
+  "subscriptionReturn": {
+    "states": {
+      "confirming": {
+        "title": "Confirming authorization and payment",
+        "description": "Checking the server record. Do not subscribe again. Returning here does not confirm payment."
+      },
+      "authorized": {
+        "title": "Authorized; awaiting first payment",
+        "description": "Renewal authorization is confirmed. The first payment and benefits are not yet confirmed."
+      },
+      "paid": {
+        "title": "Period paid; credit grant processing",
+        "description": "Payment and membership are confirmed. Credits currently due are being processed. Do not pay again."
+      },
+      "active": {
+        "title": "Subscription active",
+        "description": "Payment, membership, and credits currently due are confirmed. Future grants follow the schedule below."
+      },
+      "failed": {
+        "title": "Authorization or payment incomplete",
+        "description": "Check the failure reason and confirm the original request result before retrying."
+      },
+      "cancelled": {
+        "title": "Authorization cancelled",
+        "description": "The channel confirmed cancellation. Check paid benefits in subscription management."
+      },
+      "review": {
+        "title": "Subscription needs review",
+        "description": "A payment or benefit requires review. Do not pay again; check subscription management."
+      },
+      "refunded": {
+        "title": "Subscription invoice refunded",
+        "description": "Check subscription invoices for the final refund and benefit outcome."
+      },
+      "unavailable": {
+        "title": "Subscription result unavailable",
+        "description": "Retry or check subscription management. A query failure does not mean payment failed."
+      }
+    },
+    "number": "Subscription ID",
+    "manage": "View subscription and invoices",
+    "renewal": "Next renewal period starts {{date}}. Charge timing follows channel rules.",
+    "notRenewing": "Automatic renewal is off. Paid benefits remain."
   }
-
 }
