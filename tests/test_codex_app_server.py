@@ -764,10 +764,7 @@ async def test_app_server_exact_node_action_searches_only_batch_write_tool(
     """Exact node actions discover one atomic update-and-run entry."""
     monkeypatch.delenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", raising=False)
     search_call_id = "search-batch-write"
-    final_reply = json.dumps(
-        {"message": "完成。", "mode": "read_only", "canvas_receipts": []},
-        ensure_ascii=False,
-    )
+    final_reply = "完成。"
     scripted_responses = [
         _responses_sse(
             _response_created("response-search"),
@@ -843,7 +840,6 @@ async def test_app_server_exact_node_action_searches_only_batch_write_tool(
             ),
             thread_config_overrides=service._codex_mcp_config_overrides(mcp_servers),
             turn_metadata={"dramaclaw_gateway_api_key": "per-turn-contract-key"},
-            output_schema=service.CANVAS_REPLY_SCHEMA,
         )
 
         try:

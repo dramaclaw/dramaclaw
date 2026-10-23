@@ -1601,8 +1601,9 @@ async def test_canvas_command_union_error_names_missing_type_without_echoing_htm
     assert raw_payload["path"] == "commands[0].type"
     assert payload["message"] == "commands[0].type: field is required"
     assert html not in json.dumps(raw_payload, ensure_ascii=False)
-def test_successful_canvas_tool_instructs_json_final_response():
+def test_successful_canvas_tool_instructs_plain_text_final_response():
     from novelvideo.chat import dramaclaw_mcp
+    from novelvideo.chat.canvas_outcome import CANVAS_FINAL_RESPONSE_INSTRUCTIONS
 
     result = json.loads(dramaclaw_mcp._adapt_external_agent_tool_result(
         "freezone_confirm_workflow_draft",
@@ -1610,6 +1611,6 @@ def test_successful_canvas_tool_instructs_json_final_response():
                     "bridge_key": "receipt-a", "agent_instruction": "Report success briefly."}),
     ))
     instruction = result["agent_instruction"]
-    assert "JSON object" in instruction
-    assert "canvas_receipts" in instruction
-    assert "message field" in instruction
+    assert instruction.startswith(CANVAS_FINAL_RESPONSE_INSTRUCTIONS)
+    assert instruction.endswith("Report success briefly.")
+    assert "message field" not in instruction

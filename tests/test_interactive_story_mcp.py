@@ -280,10 +280,10 @@ async def test_chat_outline_confirmation_persists_then_allows_create(monkeypatch
         assert receipt is not None
         receipts.add(receipt_reference(receipt))
     assert receipts == {("", 2), ("", 3)}
-    assert finalize_canvas_reply(json.dumps({
-        "message": "大纲已确认，剧本已创建。", "mode": "mutation",
-        "canvas_receipts": [{"bridge_key": None, "revision": r} for _, r in sorted(receipts)],
-    }), attempts={"confirm": "succeeded", "create": "succeeded"}, receipts=receipts) == "大纲已确认，剧本已创建。"
+    assert finalize_canvas_reply(
+        "大纲已确认，剧本已创建。",
+        attempts={"confirm": "succeeded", "create": "succeeded"}, receipts=receipts,
+    ) == "大纲已确认，剧本已创建。"
     assert service.get_outline("canvas-a").outline.status == "linked"
 
 

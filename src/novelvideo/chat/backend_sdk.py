@@ -1210,13 +1210,12 @@ def _start_codex_turn(
     from openai_codex.api import TurnHandle
 
     if output_schema is not None:
-        from novelvideo.chat.canvas_outcome import CANVAS_FINAL_RESPONSE_INSTRUCTIONS, CANVAS_REPLY_SCHEMA
-
-        contract = (
-            CANVAS_FINAL_RESPONSE_INSTRUCTIONS if output_schema == CANVAS_REPLY_SCHEMA
-            else "Your final response must be exactly one JSON object matching the supplied schema."
+        # Only program-consumed answers (e.g. the exact audio action plan) carry a
+        # schema; canvas chat replies are plain text (#862).
+        prompt += (
+            "\n\nYour final response must be exactly one JSON object matching the supplied schema."
+            "\nFinal response JSON schema: " + json.dumps(output_schema, ensure_ascii=False)
         )
-        prompt += "\n\n" + contract + "\nFinal response JSON schema: " + json.dumps(output_schema, ensure_ascii=False)
     wire_input = _to_wire_input([TextInput(prompt), *map(ImageInput, images)])
     params: dict[str, Any] = {}
     if turn_metadata:

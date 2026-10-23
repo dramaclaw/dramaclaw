@@ -226,10 +226,7 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         result["agent_instruction"] = (
             CANVAS_FINAL_RESPONSE_INSTRUCTIONS
             + " "
-            + str(result.get("agent_instruction") or "").replace(
-                "Report success briefly",
-                "Report success briefly in the JSON message field",
-            )
+            + str(result.get("agent_instruction") or "")
         )
         return json.dumps(result, ensure_ascii=False)
     if name not in {

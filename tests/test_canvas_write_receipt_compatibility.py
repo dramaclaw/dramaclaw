@@ -14,7 +14,6 @@ from novelvideo.chat.service import (
     _codex_freezone_write_receipt,
     _codex_freezone_write_result_succeeded,
     _codex_story_revision_conflict,
-    _codex_story_validation_receipt_alias,
     _codex_story_write_intent,
 )
 
@@ -133,32 +132,6 @@ def test_story_outline_revision_conflict_identifies_a_rebased_retry():
         "outline-key",
     )
 
-
-def test_valid_story_readback_can_alias_only_its_same_turn_write_revision():
-    event = _event(
-        {
-            "ok": True,
-            "valid": True,
-            "canvas_id": "canvas-a",
-            "story_id": "story-a",
-            "revision": 5,
-        },
-        name="dramaclaw_validate_interactive_story",
-    )
-
-    assert _codex_story_validation_receipt_alias(
-        event,
-        canvas_id="canvas-a",
-        story_receipts={"story-a": ("", 4)},
-    ) == (("", 5), ("", 4))
-    assert (
-        _codex_story_validation_receipt_alias(
-            event,
-            canvas_id="another-canvas",
-            story_receipts={"story-a": ("", 4)},
-        )
-        is None
-    )
 
 
 @pytest.mark.parametrize(

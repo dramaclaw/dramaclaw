@@ -33,12 +33,8 @@ from novelvideo.chat.backend_sdk import (
     interrupt_live_codex_turn,
 )
 from novelvideo.chat.canvas_outcome import (
-    CANVAS_FORMAT_REPAIR_PROMPT,
-    CANVAS_REPLY_SCHEMA,
     CANVAS_FINAL_RESPONSE_INSTRUCTIONS,
     finalize_canvas_reply,
-    recover_unstructured_canvas_message,
-    needs_canvas_format_repair,
     receipt_reference,
 )
 from novelvideo.chat.display_fallback import (
@@ -229,7 +225,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "An assistant message ends the current agent turn. When the user's request requires a "
     "canvas read or write, call the required tool before emitting any assistant message. Do "
     "not send a progress or status message before that tool call. Continue using tools until "
-    "the requested operation is complete, then emit one final JSON response. "
+    "the requested operation is complete, then emit one final plain-text response. "
     "When the user names an exact action on an existing standalone node and also supplies changed "
     "node content or settings, submit update_node_data + run_node_action in one "
     "freezone_emit_canvas_command. The exact action name and the uniquely matching node_id from "
@@ -489,7 +485,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v4"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v35"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v36"
 
 _CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS = (
     "You translate one explicit request for an existing Freezone audio node into the node data "
@@ -562,28 +558,12 @@ def _codex_developer_instructions(
             + "\n"
             + _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS
         )
-        return instructions_prefix + (
-            " "
+        return (
+            instructions_prefix
+            + " "
             + WORKFLOW_PLANNING_INSTRUCTIONS
             + " "
             + CANVAS_FINAL_RESPONSE_INSTRUCTIONS
-            + " Your final response MUST be a JSON object, not plain text or Markdown. "
-            "This applies even to greetings and ordinary conversation. "
-            'For a greeting, return {"message":"你好！有什么我可以帮你的吗？",'
-            '"mode":"read_only","canvas_receipts":[]}. '
-            "Use mode=read_only for explanations, checks, proposals, clarification answers, "
-            "and catalog-only Skill saves, with canvas_receipts=[]. Never claim a canvas "
-            "mutation in a read_only message. Use mode=blocked when no canvas operation was "
-            "performed because of a limitation, also with canvas_receipts=[]. Use mode=mutation "
-            "only after all attempted canvas writes returned successful persistence receipts; "
-            "list their exact bridge_key (browser apply) or revision (direct apply), using null "
-            "for the unused field. Never invent receipt identities, reuse historical receipts, "
-            "or claim nodes exist when only a workflow draft is ready for approval. "
-            "A canvas receipt proves apply/submission, not generated-media completion. "
-            "Put the user-facing answer in message, not raw JSON inside message. "
-            "The complete final-response schema is included here because compatibility "
-            "gateways may not expose the transport outputSchema to the model:\n"
-            + json.dumps(CANVAS_REPLY_SCHEMA, ensure_ascii=False)
         )
     return _CODEX_DEVELOPER_INSTRUCTIONS
 
@@ -1500,40 +1480,6 @@ def _codex_story_revision_conflict(
                 and revision != intent[2]
             ):
                 return intent[0], intent[1], revision, intent[3]
-    return None
-
-
-def _codex_story_validation_receipt_alias(
-    event: Any,
-    *,
-    canvas_id: str,
-    story_receipts: dict[str, tuple[str, int | None]],
-) -> tuple[tuple[str, int | None], tuple[str, int | None]] | None:
-    """Map a later valid readback revision to its same-turn story write receipt."""
-
-    if _codex_freezone_tool_name(event) != "dramaclaw_validate_interactive_story":
-        return None
-    status = str(getattr(event, "status", "") or "").strip().lower()
-    if status not in {"completed", "success", "succeeded"} or getattr(
-        event, "error", None
-    ):
-        return None
-    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
-        for payload in _json_objects_from_codex_tool_value(value):
-            story_id = payload.get("story_id")
-            revision = payload.get("revision")
-            canonical = story_receipts.get(story_id) if isinstance(story_id, str) else None
-            if (
-                payload.get("ok") is True
-                and payload.get("valid") is True
-                and payload.get("canvas_id") == canvas_id
-                and canonical is not None
-                and canonical[0] == ""
-                and type(canonical[1]) is int
-                and type(revision) is int
-                and revision >= canonical[1]
-            ):
-                return ("", revision), canonical
     return None
 
 
@@ -4269,9 +4215,7 @@ def _build_codex_thread(
         thread_config_overrides=thread_config_overrides,
         turn_metadata=turn_metadata,
         output_schema=(
-            _CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA
-            if exact_audio_action_plan
-            else CANVAS_REPLY_SCHEMA if tool_mode == "freezone_canvas" else None
+            _CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA if exact_audio_action_plan else None
         ),
     )
     thread_id = _get_codex_thread_id(
@@ -5638,10 +5582,6 @@ async def _stream_assistant_reply_codex(
     preflight_rejections: dict[str, tuple[str, str | None]] = {}
     story_conflicts: dict[str, tuple[tuple[str, str, int, str], str]] = {}
     canvas_receipts: set[tuple[str, int | None]] = set()
-    story_receipts: dict[str, tuple[str, int | None]] = {}
-    canvas_receipt_aliases: dict[
-        tuple[str, int | None], tuple[str, int | None]
-    ] = {}
     canvas_write_failures: dict[str, str] = {}
     canvas_generation_preflights: dict[str, str] = {}
     stage_confirmation_expected = False
@@ -5770,45 +5710,7 @@ async def _stream_assistant_reply_codex(
         # adapters implement the plain ``stream(prompt)`` port.
         stream_kwargs = {"images": turn_images} if turn_images else {}
 
-        async def turn_events():
-            nonlocal assistant_text, turn_disposition
-            async for event in thread.stream(agent_prompt, **stream_kwargs):
-                yield event
-            if not (
-                structured_canvas_reply
-                and exact_audio_action_target is None
-                and turn_disposition == "completed"
-                and needs_canvas_format_repair(
-                    assistant_text,
-                    attempts=canvas_write_attempts,
-                    receipts=canvas_receipts,
-                    draft_ready=ready_workflow_draft is not None,
-                )
-            ):
-                return
-            # A no-write turn answered outside the envelope (#680). Ask once,
-            # on the same thread, for the same answer in the required format;
-            # its events go through the same write tracking as the first turn.
-            logger.info(
-                "codex canvas reply format repair user=%s project=%s turn=%s",
-                username,
-                project or "<home>",
-                business_turn_id,
-            )
-            original_text, original_disposition = assistant_text, turn_disposition
-            assistant_text, turn_disposition = "", _DEFAULT_TURN_DISPOSITION
-            try:
-                async for event in thread.stream(CANVAS_FORMAT_REPAIR_PROMPT):
-                    yield event
-            except Exception:
-                logger.warning("codex canvas reply format repair failed", exc_info=True)
-                turn_disposition = "failed"
-            if turn_disposition not in {"completed", "cancelled"}:
-                # A failed repair must not surface a transport error in place
-                # of the original contract failure.
-                assistant_text, turn_disposition = original_text, original_disposition
-
-        async for event in turn_events():
+        async for event in thread.stream(agent_prompt, **stream_kwargs):
             logger.debug(
                 "codex event user=%s project=%s profile=%s type=%s thread=%s turn=%s",
                 username,
@@ -5898,14 +5800,6 @@ async def _stream_assistant_reply_codex(
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft
-                    validation_alias = _codex_story_validation_receipt_alias(
-                        event,
-                        canvas_id=canvas_id or "default",
-                        story_receipts=story_receipts,
-                    )
-                    if validation_alias is not None:
-                        alias, canonical = validation_alias
-                        canvas_receipt_aliases[alias] = canonical
                 if _codex_freezone_is_write_event(event):
                     is_stage_confirmation = (
                         _codex_freezone_tool_name(event)
@@ -5980,9 +5874,6 @@ async def _stream_assistant_reply_codex(
                                     stage_confirmation_succeeded = True
                                 reference = receipt_reference(receipt)
                                 canvas_receipts.add(reference)
-                                receipt_story_id = receipt.get("story_id")
-                                if isinstance(receipt_story_id, str) and receipt_story_id.strip():
-                                    story_receipts[receipt_story_id.strip()] = reference
                                 target = (
                                     _codex_freezone_tool_name(event),
                                     receipt.get("story_id"),
@@ -6142,16 +6033,7 @@ async def _stream_assistant_reply_codex(
                 if applied:
                     canvas_write_attempts[orchestrated_call_id] = "succeeded"
                     canvas_receipts.add((bridge_key, None))
-                    assistant_text = json.dumps(
-                        {
-                            "message": "已更新现有音频节点，并提交 generate_audio。",  # i18n-exempt
-                            "mode": "mutation",
-                            "canvas_receipts": [
-                                {"bridge_key": bridge_key, "revision": None}
-                            ],
-                        },
-                        ensure_ascii=False,
-                    )
+                    assistant_text = "已更新现有音频节点，并提交 generate_audio。"  # i18n-exempt
                 else:
                     errors = dispatch_result.get("errors")
                     failure = str(
@@ -6161,14 +6043,7 @@ async def _stream_assistant_reply_codex(
                         or "音频节点执行失败，前端没有返回有效回执。"  # i18n-exempt
                     ).strip()
                     canvas_write_failures[orchestrated_call_id] = failure
-                    assistant_text = json.dumps(
-                        {
-                            "message": failure,
-                            "mode": "blocked",
-                            "canvas_receipts": [],
-                        },
-                        ensure_ascii=False,
-                    )
+                    assistant_text = failure
     finally:
         logger.info(
             "codex turn cleanup user=%s project=%s profile=%s disposition=%s had_text=%s had_tool=%s",
@@ -6247,20 +6122,14 @@ async def _stream_assistant_reply_codex(
                 canvas_id=canvas_id,
                 project_state_dir=project_state_dir,
             )
-            assistant_text = json.dumps(
-                {
-                    "message": _stage_confirmation_not_written_message(prompt),
-                    "mode": "blocked",
-                    "canvas_receipts": [],
-                },
-                ensure_ascii=False,
-            )
-        raw_assistant_text = assistant_text.strip()
+            assistant_text = _stage_confirmation_not_written_message(prompt)
+            # A host-authored notice: the canvas write guard below must not
+            # replace it with the generic missing-receipt message.
+            canvas_write_requested = False
         assistant_text = finalize_canvas_reply(
             assistant_text,
             attempts=canvas_write_attempts,
             receipts=canvas_receipts,
-            receipt_aliases=canvas_receipt_aliases,
             failure=next(
                 (
                     canvas_write_failures.get(call_id, "")
@@ -6272,44 +6141,6 @@ async def _stream_assistant_reply_codex(
             draft_ready=ready_workflow_draft is not None,
             write_requested=canvas_write_requested,
         )
-        if not canvas_write_attempts and assistant_text.startswith(
-            "回复未通过操作结果校验："
-        ):
-            # A hidden unstructured proposal must not be resumed as approval.
-            logger.warning(
-                "freezone canvas reply format rejected turn_id=%s chars=%d json_like=%s reason=%s",
-                turn_id,
-                len(raw_assistant_text),
-                raw_assistant_text.startswith(("{", "[")),
-                assistant_text,
-            )
-            reset_codex_scope_thread(
-                username,
-                project,
-                agent_profile=agent_profile,
-                canvas_id=canvas_id,
-                project_state_dir=project_state_dir,
-            )
-            # Preserve an unstructured proposal only when there were no tool
-            # results to ground a format repair. Contradictory receipt claims
-            # and failed repairs of a tool-backed answer stay contract errors.
-            if (
-                raw_assistant_text
-                and not tool_text.strip()
-                and needs_canvas_format_repair(
-                    raw_assistant_text,
-                    attempts=canvas_write_attempts,
-                    receipts=canvas_receipts,
-                )
-            ):
-                recovered_message = recover_unstructured_canvas_message(
-                    raw_assistant_text
-                )
-                assistant_text = (
-                    "本轮未执行画布写入。以下是未通过格式校验的回复内容，"
-                    "供你审核；其中的完成表述不代表实际操作结果：\n\n"
-                    + (recovered_message or raw_assistant_text)[:12000]
-                )
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
     assistant_text = _bounded_workflow_planning_reply(
         assistant_text,

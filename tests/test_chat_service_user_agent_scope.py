@@ -1816,7 +1816,7 @@ async def test_codex_stage_confirmation_is_bound_to_existing_story_and_user_inte
         async def revoke_agent_session(self, token):
             assert token == "agent-token"
 
-    reply = {"message": "正常画布回复。", "mode": "read_only", "canvas_receipts": []}
+    reply_text = "正常画布回复。"
     confirmation = None
     if confirm_written:
         receipt = {
@@ -1839,13 +1839,10 @@ async def test_codex_stage_confirmation_is_bound_to_existing_story_and_user_inte
             structured=receipt,
             error=None,
         )
-        reply.update(
-            mode="mutation", canvas_receipts=[{"bridge_key": None, "revision": 2}]
-        )
 
     class Thread:
         async def stream(self, request):
-            for event in _codex_turn_events(json.dumps(reply), tool=confirmation):
+            for event in _codex_turn_events(reply_text, tool=confirmation):
                 yield event
 
     monkeypatch.setattr(chat_service, "authorize_hermes_launch", authorize)
@@ -1883,11 +1880,12 @@ async def test_codex_stage_confirmation_is_bound_to_existing_story_and_user_inte
     if blocked:
         assert result["content"].startswith("阶段确认未写入")
     elif chat_service._freezone_canvas_write_requested(prompt):
-        # A requested canvas write that ends read-only without a receipt keeps
-        # the canvas write guard; it is still not a stage-confirmation block.
-        assert result["content"] == "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
+        # A requested canvas write that ends without a receipt keeps the canvas
+        # write guard; it is still not a stage-confirmation block.
+        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
+        assert result["content"].endswith(reply_text)
     else:
-        assert result["content"] == reply["message"]
+        assert result["content"] == reply_text
     assert [
         event["text"] for event in events if event["type"] == "assistant_delta"
     ] == [result["content"]]
@@ -2951,60 +2949,13 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 "draft_confirm_policy_unverified_retry",
             }:
                 assistant_reply = "工作流已提交创建。"
-            receipts = []
-            if tool_outcome in {
-                "single_run_retry",
-                "workflow_run_retry",
-                "single_run_only_update",
-            }:
-                receipts.append({"bridge_key": "bridge-update", "revision": None})
-            if tool_outcome in {
-                "success",
-                "preflight_retry",
-                "video_preflight_retry",
-                "video_preflight_other_failure",
-                "preflight_other_success",
-                "single_run_retry",
-                "workflow_run_retry",
-                "draft_confirm_retry",
-                "draft_confirm_other_success",
-                "draft_confirm_policy_retry",
-                "draft_confirm_policy_skip_patch",
-                "draft_confirm_policy_unverified_retry",
-            }:
-                receipts.append({"bridge_key": "bridge-call-1", "revision": None})
-            if tool_outcome in {"story_retry", "story_create_missing_id_retry", "story_wrong_retry"}:
-                receipts.append({"bridge_key": None, "revision": 4})
-            if tool_outcome in {"story_conflict_retry", "story_conflict_wrong_retry"}:
-                receipts.append({"bridge_key": None, "revision": 36})
-            if tool_outcome in {"story_conflict_chain_retry", "story_conflict_changed_payload"}:
-                receipts.append({"bridge_key": None, "revision": 98})
-            if tool_outcome == "story_validate_after_create":
-                receipts.append({"bridge_key": None, "revision": 5})
-            if tool_outcome == "outline_conflict_retry":
-                receipts.append({"bridge_key": None, "revision": 2})
-            structured_reply = json.dumps(
-                {
-                    "message": assistant_reply,
-                    "mode": (
-                        "read_only"
-                        if tool_outcome
-                        in {
-                            "skill_saved",
-                            "read_only",
-                            "false_read_only",
-                            "clarification_answered",
-                        }
-                        else "blocked" if tool_outcome == "blocked" else "mutation"
-                    ),
-                    "canvas_receipts": receipts,
-                },
-            )
+            reply_text = assistant_reply
             if tool_outcome == "unstructured_proposal":
-                structured_reply = "## 互动广告方案\n先展示口香糖，再让用户选择。"
+                reply_text = "## 互动广告方案\n先展示口香糖，再让用户选择。"
             if tool_outcome == "unstructured_json_proposal":
-                structured_reply = '{"message":"视频按九段规划。","mode":"read_only","canvas_receipts":[]'
-            yield SimpleNamespace(type="assistant_delta", text=structured_reply)
+                # A thread opened before #862 may still answer in the old envelope.
+                reply_text = '{"message":"视频按九段规划。","mode":"read_only","canvas_receipts":[]'
+            yield SimpleNamespace(type="assistant_delta", text=reply_text)
             yield SimpleNamespace(
                 type="complete",
                 thread_id="codex-thread",
@@ -3104,11 +3055,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert result["content"] == "画布操作未完成：文本节点缺少 content 字段"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "missing":
-        assert "已创建" not in result["content"]
-        assert (
-            result["content"]
-            == "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
-        )
+        # #862 trade-off: the prompt is not recognised as a canvas write request
+        # and no tool ran, so the host has no evidence to contradict the reply
+        # and delivers it as written. Prompt intent detection
+        # (_freezone_canvas_write_requested) is the only guard left for
+        # zero-write turns; the model's self-declared mode no longer exists.
+        assert result["content"] == "好的，已创建一个图片节点。"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome in {"draft_ready", "plan_draft_ready"}:
         assert result["content"] == (
@@ -3127,9 +3079,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert result["content"] == "建议保持当前节点位置，先检查配置。"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "false_read_only":
-        assert result["content"] == (
-            "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
-        )
+        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
+        assert result["content"].endswith("generate_audio。")
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "mixed":
         assert result["content"] == "画布操作未完成：第二个节点未保存"
@@ -3159,19 +3110,25 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert result["content"] == "画布操作未完成：canvas revision conflict"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "unstructured_proposal":
-        assert result["content"].startswith("本轮未执行画布写入。")
-        assert "## 互动广告方案\n先展示口香糖，再让用户选择。" in result["content"]
+        # Markdown is a valid reply shape; only the missing write is reported.
+        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
+        assert result["content"].endswith("## 互动广告方案\n先展示口香糖，再让用户选择。")
+        # No format rejection, so the thread is kept.
         assert chat_service._get_codex_thread_id(
             "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
             project_state_dir=tmp_path / "state" / "admin" / "project-a",
-        ) is None
+        ) == "codex-thread"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "unstructured_json_proposal":
-        assert result["content"].startswith("本轮未执行画布写入。")
+        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
         assert result["content"].endswith("视频按九段规划。")
+        assert "canvas_receipts" not in result["content"]
         assert assistant_deltas == [result["content"]]
     else:
-        assert result["content"] == ("未能创建工作流：找不到匹配的 Workflow Skill。")
+        # "blocked": the model explains why nothing was written; the host still
+        # leads with the verified outcome because a write was requested.
+        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
+        assert result["content"].endswith("未能创建工作流：找不到匹配的 Workflow Skill。")
         assert assistant_deltas == [result["content"]]
     assert revoked == ["agent-token"]
 
@@ -8435,7 +8392,8 @@ def test_fmv_skill_guidance_is_only_appended_to_canvas_instructions():
     )
     assert WORKFLOW_PLANNING_INSTRUCTIONS in instructions
     assert chat_service.CANVAS_FINAL_RESPONSE_INSTRUCTIONS in instructions
-    assert json.dumps(chat_service.CANVAS_REPLY_SCHEMA, ensure_ascii=False) in instructions
+    assert "canvas_receipts=[]" not in instructions
+    assert '"type": "object"' not in instructions
     for mode in (None, "", "default"):
         assert chat_service._codex_developer_instructions(mode) == chat_service._CODEX_DEVELOPER_INSTRUCTIONS
     assert "list_mcp_resources" in guidance
@@ -8479,7 +8437,10 @@ _READ_NODE_DETAIL = SimpleNamespace(
 )
 
 _READ_ONLY_ANSWER = "工作流失败，未生成视频。"
-_FORMAT_FAILURE = "回复未通过操作结果校验：未返回结构化结果，请重试。"
+_LEGACY_ENVELOPE = json.dumps(
+    {"message": _READ_ONLY_ANSWER, "mode": "read_only", "canvas_receipts": []},
+    ensure_ascii=False,
+)
 
 
 def _completed_tool_event(name, *, call_id, tool_input, structured):
@@ -8651,43 +8612,17 @@ def test_pending_workflow_clarification_is_not_cancelled(clarification_status):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("repair", "expected"),
+    "reply_text",
     [
-        (
-            _codex_turn_events(
-                json.dumps(
-                    {
-                        "message": _READ_ONLY_ANSWER,
-                        "mode": "read_only",
-                        "canvas_receipts": [],
-                    },
-                    ensure_ascii=False,
-                )
-            ),
-            _READ_ONLY_ANSWER,
-        ),
-        # The repair cannot turn a no-write turn into a claimed mutation.
-        (
-            _codex_turn_events(
-                json.dumps(
-                    {
-                        "message": "图片节点已创建成功。",
-                        "mode": "mutation",
-                        "canvas_receipts": [{"bridge_key": "forged", "revision": None}],
-                    },
-                    ensure_ascii=False,
-                )
-            ),
-            "画布操作未完成：本轮没有可验证的画布写入回执，请重试。",
-        ),
-        (_codex_turn_events(_READ_ONLY_ANSWER), _FORMAT_FAILURE),
-        (_codex_turn_events("", disposition="timeout"), _FORMAT_FAILURE),
-        (RuntimeError("Codex turn failed with status failed"), _FORMAT_FAILURE),
+        _READ_ONLY_ANSWER,
+        # Threads opened before #862 may still answer in the old envelope.
+        _LEGACY_ENVELOPE,
+        "```json\n" + _LEGACY_ENVELOPE + "\n```",
     ],
-    ids=["repaired", "forged_mutation", "still_plain", "timeout", "error"],
+    ids=["plain", "legacy_envelope", "fenced_legacy_envelope"],
 )
-async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
-    monkeypatch, tmp_path, repair, expected
+async def test_codex_freezone_read_only_reply_is_delivered_in_one_turn(
+    monkeypatch, tmp_path, reply_text
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
@@ -8709,19 +8644,14 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     class FakeThread:
         async def stream(self, prompt):
             prompts.append(prompt)
-            if len(prompts) == 1:
-                turn = _codex_turn_events(_READ_ONLY_ANSWER, tool=_READ_NODE_DETAIL)
-            elif isinstance(repair, Exception):
-                raise repair
-            else:
-                turn = repair
-            for event in turn:
+            for event in _codex_turn_events(reply_text, tool=_READ_NODE_DETAIL):
                 yield event
 
     monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
     monkeypatch.setattr(
         chat_service, "_create_page_agent_session_token", fake_create_token
     )
+
     def fake_build_thread(*_args, **kwargs):
         build_kwargs.append(kwargs)
         return FakeThread()
@@ -8733,13 +8663,14 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     async def collect_event(event):
         events.append(event)
 
+    project_state_dir = tmp_path / "state" / "admin" / "project-a"
     scope = ChatScope(
         kind="project",
         id="project-a",
         surface="freezone",
         canvas_id="canvas-a",
         agent_id="main",
-        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+        state_dir=str(project_state_dir),
     )
     request_prompt = "检查刚才工作流的真实状态，只回答一句话。"
     result = await chat_service._stream_assistant_reply_codex(
@@ -8747,7 +8678,7 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
         "project-a",
         request_prompt,
         collect_event,
-        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        project_state_dir=project_state_dir,
         tool_mode="freezone_canvas",
         surface_context={"freezone_canvas_id": "canvas-a"},
         store_scope=scope,
@@ -8755,41 +8686,32 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
         route_prompt=request_prompt,
     )
 
-    assert prompts[1:] == [chat_service.CANVAS_FORMAT_REPAIR_PROMPT]
+    # One model turn: no format-repair prompt, no output schema, no thread reset.
+    assert len(prompts) == 1
     assert build_kwargs[0]["request_prompt"] == request_prompt
-    assert result["content"] == expected
+    assert build_kwargs[0].get("output_schema") is None
+    assert result["content"] == _READ_ONLY_ANSWER
     assert [
         event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == [expected]
+    ] == [_READ_ONLY_ANSWER]
     assert revoked == ["agent-token"]
+    assert chat_service._get_codex_thread_id(
+        "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
+        project_state_dir=project_state_dir,
+    ) == "codex-thread"
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     "first_turn",
     [
-        _codex_turn_events(
-            json.dumps(
-                {"message": "建议保持布局。", "mode": "read_only", "canvas_receipts": []},
-                ensure_ascii=False,
-            )
-        ),
-        _codex_turn_events(
-            json.dumps(
-                {
-                    "message": "图片节点已创建成功。",
-                    "mode": "read_only",
-                    "canvas_receipts": [{"bridge_key": "forged", "revision": None}],
-                },
-                ensure_ascii=False,
-            )
-        ),
         _codex_turn_events(_READ_ONLY_ANSWER, disposition="timeout"),
         _codex_turn_events(_READ_ONLY_ANSWER, disposition="interrupted"),
+        _codex_turn_events("图片节点已创建成功。"),
     ],
-    ids=["valid_envelope", "forged_read_only_receipts", "timeout", "interrupted"],
+    ids=["timeout", "interrupted", "unverified_claim"],
 )
-async def test_codex_freezone_format_repair_only_follows_completed_contract_failure(
+async def test_codex_freezone_turn_never_sends_a_second_prompt(
     monkeypatch, tmp_path, first_turn
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
@@ -8828,7 +8750,7 @@ async def test_codex_freezone_format_repair_only_follows_completed_contract_fail
     result = await chat_service._stream_assistant_reply_codex(
         "admin",
         "project-a",
-        "只给我布局建议",
+        "创建一个图片节点",
         collect_event,
         project_state_dir=tmp_path / "state" / "admin" / "project-a",
         tool_mode="freezone_canvas",
@@ -8842,8 +8764,10 @@ async def test_codex_freezone_format_repair_only_follows_completed_contract_fail
             state_dir=str(tmp_path / "state" / "admin" / "project-a"),
         ),
         turn_id="business-turn",
-        route_prompt="只给我布局建议",
+        route_prompt="创建一个图片节点",
     )
 
     assert len(prompts) == 1
-    assert "已创建成功" not in result["content"]
+    # A requested write with no receipt is reported by the host, whatever the
+    # model said; the claim is never delivered as the outcome.
+    assert not result["content"].startswith("图片节点已创建成功")
