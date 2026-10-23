@@ -18,18 +18,29 @@
     "confirm": "Confirm creation"
   },
   "referenceValidation": {
-    "firstFrame": "First frame", "lastFrame": "Last frame",
-    "title": "Reference media does not meet model requirements", "hint": "Correct the listed media before generating. Locate opens the corresponding canvas node.", "locate": "Locate media",
-    "image": "Image", "audio": "Audio", "video": "Video",
+    "firstFrame": "First frame",
+    "lastFrame": "Last frame",
+    "title": "Reference media does not meet model requirements",
+    "hint": "Correct the listed media before generating. Locate opens the corresponding canvas node.",
+    "locate": "Locate media",
+    "image": "Image",
+    "audio": "Audio",
+    "video": "Video",
     "format": "Actual format: {{actual}}; supported: {{expected}}.",
     "unreadable": "Unable to read or identify this media. Please upload a valid file.",
     "maxMB": "Actual size: {{actual}} MB; maximum: {{expected}} MB.",
-    "minWidth": "Width: {{actual}} px; minimum: {{expected}} px.", "maxWidth": "Width: {{actual}} px; maximum: {{expected}} px.",
-    "minHeight": "Height: {{actual}} px; minimum: {{expected}} px.", "maxHeight": "Height: {{actual}} px; maximum: {{expected}} px.",
-    "minAspectRatio": "Aspect ratio: {{actual}}; minimum: {{expected}}.", "maxAspectRatio": "Aspect ratio: {{actual}}; maximum: {{expected}}.",
-    "minFPS": "Frame rate: {{actual}} fps; minimum: {{expected}} fps.", "maxFPS": "Frame rate: {{actual}} fps; maximum: {{expected}} fps.",
-    "minDuration": "Duration: {{actual}} s; each clip must be at least {{expected}} s.", "maxDuration": "Duration: {{actual}} s; each clip must be at most {{expected}} s.",
-    "totalMinDuration": "Total reference duration: {{actual}} s; minimum: {{expected}} s.", "totalMaxDuration": "Total reference duration: {{actual}} s; maximum: {{expected}} s."
+    "minWidth": "Width: {{actual}} px; minimum: {{expected}} px.",
+    "maxWidth": "Width: {{actual}} px; maximum: {{expected}} px.",
+    "minHeight": "Height: {{actual}} px; minimum: {{expected}} px.",
+    "maxHeight": "Height: {{actual}} px; maximum: {{expected}} px.",
+    "minAspectRatio": "Aspect ratio: {{actual}}; minimum: {{expected}}.",
+    "maxAspectRatio": "Aspect ratio: {{actual}}; maximum: {{expected}}.",
+    "minFPS": "Frame rate: {{actual}} fps; minimum: {{expected}} fps.",
+    "maxFPS": "Frame rate: {{actual}} fps; maximum: {{expected}} fps.",
+    "minDuration": "Duration: {{actual}} s; each clip must be at least {{expected}} s.",
+    "maxDuration": "Duration: {{actual}} s; each clip must be at most {{expected}} s.",
+    "totalMinDuration": "Total reference duration: {{actual}} s; minimum: {{expected}} s.",
+    "totalMaxDuration": "Total reference duration: {{actual}} s; maximum: {{expected}} s."
   },
   "app": {
     "title": "SuperTale",
@@ -464,32 +475,32 @@
     "account": {
       "open": "Open account menu",
       "changeAvatar": "Change avatar",
-        "changePassword": "Change password",
-        "setPassword": "Set password",
-        "selectLanguage": "Select language",
-        "languageChinese": "中文",
-        "languageEnglish": "English",
-        "languageVietnamese": "Tiếng Việt",
-        "phoneBinding": {
-          "title": "Bind phone number",
-          "description": "Verify your current password and phone to link it to this account. You can then sign in by code. The phone cannot be changed or unlinked.",
-          "submit": "Confirm binding",
-          "success": "Phone linked. Your existing account and password still work.",
-          "inUse": "This phone belongs to another account and cannot be linked. Accounts are not merged automatically.",
-          "alreadyBound": "This account already has a phone. Refresh the page.",
-          "error": "Could not link the phone. Try again."
-        },
-        "avatarDialog": {
-          "title": "Change avatar",
-          "description": "Choose an image for your avatar. A clear square image works best.",
-          "previewHint": "Currently using the account initial avatar",
-          "choose": "Choose image",
-          "replace": "Replace image",
-          "fileHint": "PNG, JPG, WebP, or GIF",
-          "save": "Save avatar",
-          "saving": "Saving…",
-          "error": "Avatar upload failed, please try again"
-        },
+      "changePassword": "Change password",
+      "setPassword": "Set password",
+      "selectLanguage": "Select language",
+      "languageChinese": "中文",
+      "languageEnglish": "English",
+      "languageVietnamese": "Tiếng Việt",
+      "phoneBinding": {
+        "title": "Bind phone number",
+        "description": "Verify your current password and phone to link it to this account. You can then sign in by code. The phone cannot be changed or unlinked.",
+        "submit": "Confirm binding",
+        "success": "Phone linked. Your existing account and password still work.",
+        "inUse": "This phone belongs to another account and cannot be linked. Accounts are not merged automatically.",
+        "alreadyBound": "This account already has a phone. Refresh the page.",
+        "error": "Could not link the phone. Try again."
+      },
+      "avatarDialog": {
+        "title": "Change avatar",
+        "description": "Choose an image for your avatar. A clear square image works best.",
+        "previewHint": "Currently using the account initial avatar",
+        "choose": "Choose image",
+        "replace": "Replace image",
+        "fileHint": "PNG, JPG, WebP, or GIF",
+        "save": "Save avatar",
+        "saving": "Saving…",
+        "error": "Avatar upload failed, please try again"
+      },
       "passwordDialog": {
         "title": "Change password",
         "description": "Changing your password signs you out on every device. Sign in again with the new password.",
@@ -512,7 +523,8 @@
         "initializePartialSuccess": "Password set. Sign in again; some sessions are still being signed out.",
         "initializeExpired": "This OTP sign-in is no longer recent enough. Sign in with a new code and try again.",
         "error": "Could not change the password. Try again."
-      }
+      },
+      "languagePortuguese": "Português"
     }
   },
   "organization": {
@@ -1512,7 +1524,6 @@
       "orgDepartureSweep": "Credits reclaimed on departure",
       "orgRefundSweep": "Refunded credits reclaimed after departure",
       "orgTransfer": "Organization credit adjustment",
-
       "orgRecharge": "Organization credit recharge",
       "personalRecharge": "Credit recharge",
       "paymentReceived": "Payment received, credits added",
@@ -8508,7 +8519,6 @@
     "invalidFile": "Choose a complete HTML document",
     "fileTooLarge": "HTML file must not exceed 2 MiB",
     "uploadRecoveryConflict": "A previous upload completed for this node with different content. Re-select the original file to recover it, or create a new HTML node for this file.",
-
     "references": "Connected inputs",
     "activeCanvasRequired": "Open a project canvas first",
     "readyToGenerate": "Enter webpage requirements and generate, or run the workflow",

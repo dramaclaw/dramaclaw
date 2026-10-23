@@ -583,6 +583,7 @@ const LANGUAGE_LABEL_KEYS: Record<Supported, string> = {
   zh: "header.account.languageChinese",
   en: "header.account.languageEnglish",
   vi: "header.account.languageVietnamese",
+  pt: "header.account.languagePortuguese",
 };
 
 function AccountPanel({

@@ -18,18 +18,29 @@
     "confirm": "确认创建"
   },
   "referenceValidation": {
-    "firstFrame": "首帧", "lastFrame": "尾帧",
-    "title": "参考素材不符合模型要求", "hint": "请修正以下素材后重新生成。可定位到对应画布节点。", "locate": "定位素材",
-    "image": "参考图", "audio": "参考音频", "video": "参考视频",
+    "firstFrame": "首帧",
+    "lastFrame": "尾帧",
+    "title": "参考素材不符合模型要求",
+    "hint": "请修正以下素材后重新生成。可定位到对应画布节点。",
+    "locate": "定位素材",
+    "image": "参考图",
+    "audio": "参考音频",
+    "video": "参考视频",
     "format": "实际格式：{{actual}}；支持格式：{{expected}}。",
     "unreadable": "无法读取或识别该素材，请重新上传有效文件。",
     "maxMB": "实际体积 {{actual}} MB；最多 {{expected}} MB。",
-    "minWidth": "实际宽度 {{actual}} px；至少 {{expected}} px。", "maxWidth": "实际宽度 {{actual}} px；最多 {{expected}} px。",
-    "minHeight": "实际高度 {{actual}} px；至少 {{expected}} px。", "maxHeight": "实际高度 {{actual}} px；最多 {{expected}} px。",
-    "minAspectRatio": "实际宽高比 {{actual}}；至少 {{expected}}。", "maxAspectRatio": "实际宽高比 {{actual}}；最多 {{expected}}。",
-    "minFPS": "实际帧率 {{actual}} fps；至少 {{expected}} fps。", "maxFPS": "实际帧率 {{actual}} fps；最多 {{expected}} fps。",
-    "minDuration": "实际时长 {{actual}} 秒；单条至少 {{expected}} 秒。", "maxDuration": "实际时长 {{actual}} 秒；单条最多 {{expected}} 秒。",
-    "totalMinDuration": "参考素材总时长 {{actual}} 秒；至少 {{expected}} 秒。", "totalMaxDuration": "参考素材总时长 {{actual}} 秒；最多 {{expected}} 秒。"
+    "minWidth": "实际宽度 {{actual}} px；至少 {{expected}} px。",
+    "maxWidth": "实际宽度 {{actual}} px；最多 {{expected}} px。",
+    "minHeight": "实际高度 {{actual}} px；至少 {{expected}} px。",
+    "maxHeight": "实际高度 {{actual}} px；最多 {{expected}} px。",
+    "minAspectRatio": "实际宽高比 {{actual}}；至少 {{expected}}。",
+    "maxAspectRatio": "实际宽高比 {{actual}}；最多 {{expected}}。",
+    "minFPS": "实际帧率 {{actual}} fps；至少 {{expected}} fps。",
+    "maxFPS": "实际帧率 {{actual}} fps；最多 {{expected}} fps。",
+    "minDuration": "实际时长 {{actual}} 秒；单条至少 {{expected}} 秒。",
+    "maxDuration": "实际时长 {{actual}} 秒；单条最多 {{expected}} 秒。",
+    "totalMinDuration": "参考素材总时长 {{actual}} 秒；至少 {{expected}} 秒。",
+    "totalMaxDuration": "参考素材总时长 {{actual}} 秒；最多 {{expected}} 秒。"
   },
   "app": {
     "title": "SuperTale",
@@ -464,32 +475,32 @@
     "account": {
       "open": "打开个人信息",
       "changeAvatar": "更换头像",
-        "changePassword": "修改密码",
-        "setPassword": "设置密码",
-        "selectLanguage": "选择语言",
-        "languageChinese": "中文",
-        "languageEnglish": "English",
-        "languageVietnamese": "Tiếng Việt",
-        "phoneBinding": {
-          "title": "绑定手机号",
-          "description": "验证当前密码和手机号，绑定到现有账号。绑定后支持验证码登录，不支持换绑或解绑。",
-          "submit": "确认绑定",
-          "success": "手机号已绑定，原有账号和密码仍可使用。",
-          "inUse": "该手机号已属于其他账号，无法绑定。账号不会自动合并。",
-          "alreadyBound": "当前账号已绑定手机号，请刷新页面。",
-          "error": "绑定失败，请重试。"
-        },
-        "avatarDialog": {
-          "title": "更换头像",
-          "description": "选择一张图片作为你的头像，建议使用清晰的正方形图片。",
-          "previewHint": "当前使用账号首字母头像",
-          "choose": "选择图片",
-          "replace": "更换图片",
-          "fileHint": "支持 PNG、JPG、WebP、GIF",
-          "save": "保存头像",
-          "saving": "保存中…",
-          "error": "头像上传失败，请重试"
-        },
+      "changePassword": "修改密码",
+      "setPassword": "设置密码",
+      "selectLanguage": "选择语言",
+      "languageChinese": "中文",
+      "languageEnglish": "English",
+      "languageVietnamese": "Tiếng Việt",
+      "phoneBinding": {
+        "title": "绑定手机号",
+        "description": "验证当前密码和手机号，绑定到现有账号。绑定后支持验证码登录，不支持换绑或解绑。",
+        "submit": "确认绑定",
+        "success": "手机号已绑定，原有账号和密码仍可使用。",
+        "inUse": "该手机号已属于其他账号，无法绑定。账号不会自动合并。",
+        "alreadyBound": "当前账号已绑定手机号，请刷新页面。",
+        "error": "绑定失败，请重试。"
+      },
+      "avatarDialog": {
+        "title": "更换头像",
+        "description": "选择一张图片作为你的头像，建议使用清晰的正方形图片。",
+        "previewHint": "当前使用账号首字母头像",
+        "choose": "选择图片",
+        "replace": "更换图片",
+        "fileHint": "支持 PNG、JPG、WebP、GIF",
+        "save": "保存头像",
+        "saving": "保存中…",
+        "error": "头像上传失败，请重试"
+      },
       "passwordDialog": {
         "title": "修改密码",
         "description": "修改成功后会退出所有设备，需要使用新密码重新登录。",
@@ -512,7 +523,8 @@
         "initializePartialSuccess": "密码已设置，请重新登录；部分会话正在同步退出。",
         "initializeExpired": "本次验证码登录已超过可设置密码的时限，请重新用验证码登录后再试。",
         "error": "密码修改失败，请重试。"
-      }
+      },
+      "languagePortuguese": "Português"
     }
   },
   "organization": {
@@ -1512,7 +1524,6 @@
       "orgDepartureSweep": "离职积分回收",
       "orgRefundSweep": "离职后退款积分回收",
       "orgTransfer": "组织积分调整",
-
       "orgRecharge": "组织积分充值",
       "personalRecharge": "积分充值",
       "paymentReceived": "支付成功，积分到账",
@@ -8508,7 +8519,6 @@
     "invalidFile": "请选择完整的 HTML 网页文件",
     "fileTooLarge": "HTML 文件不能超过 2 MiB",
     "uploadRecoveryConflict": "该节点已有一次内容不同的上传完成。请重新选择原文件进行恢复，或新建 HTML 节点上传当前文件。",
-
     "references": "引用的上游节点",
     "activeCanvasRequired": "请先打开项目画布",
     "readyToGenerate": "填写网页要求并点击生成，或运行工作流",
