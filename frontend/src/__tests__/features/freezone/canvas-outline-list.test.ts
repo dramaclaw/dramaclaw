@@ -427,4 +427,17 @@ describe("outline meta", () => {
     expect(metas[0]).toContain("14:32");
     expect(metas[1]).toContain("14:37");
   });
+
+  it("labels the type without the node's auto-title number", () => {
+    // autoTitleIndex 是「默认名」的一部分，不是类型名。元信息里冒出「视频3」，
+    // 读起来像这个节点就叫视频3，和用户刚改的标题对不上。
+    const meta = metaOf({
+      displayName: "海边的黄昏",
+      autoTitleIndex: 3,
+      createdAt: CREATED_AT,
+    });
+
+    expect(meta).toContain("视频");
+    expect(meta).not.toContain("视频3");
+  });
 });

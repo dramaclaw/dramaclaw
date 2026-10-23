@@ -41,7 +41,7 @@ export default {
     const base = serviceUrl('PIXABAY', 'https://pixabay.com');
     /* a key it does not take is a 400, said like any refused key */
     const res = await call(NAME, `${base}/api/?${query}`, {}, ctx).catch((e) => {
-      throw /Invalid or missing API key/i.test(e.message) ? new Error(`${NAME} did not accept your key. Check it in Studio: Settings (the OpenFilm logo at the top left) → Providers.`) : e;
+      throw /Invalid or missing API key/i.test(e.message) ? new Error(`${NAME} did not accept your key. Check it in Studio: Settings (the gear at the top left) → Providers.`) : e;
     });
     const body = /** @type {any} */ (await res.json());
     const hits = (Array.isArray(body?.hits) ? body.hits : []).flatMap((/** @type {any} */ h) => {

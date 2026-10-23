@@ -6705,11 +6705,11 @@
       "sectionAddResource": "Thêm tài nguyên",
       "sectionSkillNode": "Node kỹ năng",
       "placeholderVideo": "Video",
-      "placeholderVideoCompose": "Dựng video",
+      "placeholderVideoCompose": "Dựng & chỉnh video",
       "placeholderAudio": "Âm thanh",
       "placeholderScript": "Kịch bản",
       "betaTag": "Beta",
-      "videoCompose": "Dựng video",
+      "videoCompose": "Dựng & chỉnh video",
       "previz": "Previz Stage",
       "videoBreakdown": "Phân tích từng khung hình",
       "htmlArtifact": "Trang web"
@@ -7443,7 +7443,7 @@
       "videoNode": "Video",
       "audioNode": "Âm thanh",
       "videoStoryNode": "Video có chuyện",
-      "videoComposeNode": "Dựng video",
+      "videoComposeNode": "Dựng & chỉnh video",
       "scriptNode": "Bộ tạo kịch bản",
       "pano360ViewerNode": "Trình xem toàn cảnh 360°",
       "threeDWorldNode": "Thế giới 3D",
@@ -8830,7 +8830,7 @@
     }
   },
   "videoCompose": {
-    "title": "Dựng video",
+    "title": "Dựng & chỉnh video",
     "export": "Xuất file",
     "exporting": "Đang xuất…",
     "exportLocation": "Xuất tới",
@@ -8879,18 +8879,25 @@
     "node": {
       "hint": "Nối ít nhất {{min}} node video để mở được",
       "counts": "Video {{video}} · Âm thanh {{audio}}",
-      "open": "Mở phần dựng video",
+      "open": "Mở dựng & chỉnh video",
       "reopen": "Mở lại",
       "resultName": "Video đã dựng"
     },
     "studio": {
-      "title": "Không gian dựng video",
+      "title": "Không gian dựng & chỉnh video",
       "loading": "Đang mở không gian chỉnh sửa…",
       "retry": "Thử lại",
       "backToCanvas": "Quay lại canvas",
-      "missingNode": "Không tìm thấy node dựng video này, có thể đã bị xóa.",
+      "missingNode": "Không tìm thấy node dựng & chỉnh video này, có thể đã bị xóa.",
       "noMedia": "Node dựng này chưa có media nguồn dùng được.",
-      "loadFailed": "Mở không gian chỉnh sửa thất bại."
+      "noMediaHint": "Hãy kết nối video hoặc ảnh vào node này trên canvas rồi mở lại.",
+      "loadFailed": "Mở không gian chỉnh sửa thất bại.",
+      "errorNotFound": "Không tìm thấy dự án hoặc canvas này. Hãy quay lại canvas và thử lại.",
+      "errorAuth": "Phiên đăng nhập có thể đã hết hạn. Hãy tải lại trang và thử lại.",
+      "errorUnavailable": "Dịch vụ chỉnh sửa tạm thời không khả dụng. Vui lòng thử lại sau.",
+      "editedTitle": "Cần tạo lại bản dựng để áp dụng thay đổi trên canvas?",
+      "editedBody": "Những chỉnh sửa bạn đã thực hiện trong trình dựng sẽ bị ghi đè và không thể khôi phục.",
+      "editedRebuild": "Tạo lại"
     },
     "undo": "Hoàn tác",
     "redo": "Làm lại",

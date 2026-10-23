@@ -204,7 +204,7 @@ export function framing(stage, frame, fill, out, alpha) {
 
 /* ── names ──────────────────────────────────────────────────────────────── */
 
-const safeName = (/** @type {string} */ text) => text.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'OpenFilm';
+const safeName = (/** @type {string} */ text) => text.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Dramaclaw';
 
 /** A name in `dir` that is free: `name.ext`, else `name 2.ext`… */
 function freeFile(/** @type {string} */ dir, /** @type {string} */ name, /** @type {string} */ ext) {

@@ -80,7 +80,7 @@ try {
   console.error(e);
   process.exit(1);
 }
-console.log(`OpenFilm Studio · ${studio.origin}`);
+console.log(`Dramaclaw Studio · ${studio.origin}`);
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 

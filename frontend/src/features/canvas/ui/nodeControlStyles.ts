@@ -19,8 +19,9 @@ export const NODE_PRIMARY_ACTION_BASE_CLASS =
 export const NODE_PRIMARY_ACTION_ENABLED_CLASS =
   'border-[rgb(var(--accent-rgb)/0.52)] bg-[rgb(var(--accent-rgb)/0.12)] text-[rgb(var(--accent-rgb))] hover:border-[rgb(var(--accent-rgb)/0.72)] hover:bg-[rgb(var(--accent-rgb)/0.18)]';
 
+// 禁用入口按钮不接收指针事件，点击穿透到节点卡片，保证节点仍可选中。
 export const NODE_PRIMARY_ACTION_DISABLED_CLASS =
-  'cursor-not-allowed border-white/10 bg-white/[0.025] text-text-muted/55';
+  'pointer-events-none border-white/10 bg-white/[0.025] text-text-muted/55';
 
 export const NODE_CONTROL_ICON_CLASS = 'h-3 w-3';
 

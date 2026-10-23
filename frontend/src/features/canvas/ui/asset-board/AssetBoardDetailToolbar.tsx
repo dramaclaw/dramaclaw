@@ -865,7 +865,7 @@ export function AssetBoardVideoDetailToolbar({
             title={
               isCompose && !canOpenCompose
                 ? '需要至少 2 个已就绪的上游视频素材'
-                : '打开视频合成时间线'
+                : '打开视频合成与剪辑'
             }
             onClick={openCompose}
           />

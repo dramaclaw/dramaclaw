@@ -12274,6 +12274,7 @@ async def freezone_video_compose_studio(
             film_dir,
             host_back=body.host_back,
             host_back_label=body.host_back_label,
+            lang=body.lang,
         )
     except StudioError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc

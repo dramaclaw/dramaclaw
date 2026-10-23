@@ -30,7 +30,7 @@ import { alignTranslation, replacePiece, segmentLine } from './subtitle-segments
  */
 
 /** The note at the top of a transcript whose lines are each one subtitle, as the person cut them. */
-export const CUT_NOTE = 'NOTE Each cue is one subtitle, as cut by hand in OpenFilm Studio.';
+export const CUT_NOTE = 'NOTE Each cue is one subtitle, as cut by hand in Dramaclaw.';
 const CUT_NOTE_RE = /^NOTE Each cue is one subtitle\b/;
 
 /** The transcript of `src` (a path in the project), in `language` when given: its translation. @param {string} src @param {string} [language] */

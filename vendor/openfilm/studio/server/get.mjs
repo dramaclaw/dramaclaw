@@ -129,7 +129,7 @@ export const VERBS = /** @type {Record<string, VerbSpec>} */ ({
 export const WEB_VERBS = ['web-search', 'web-fetch'];
 
 /** Where the person connects a service and picks its models, said the same way everywhere. */
-export const WHERE_TO_CONNECT = 'In Studio, the OpenFilm logo at the top left opens Settings: connect a service under Providers, '
+export const WHERE_TO_CONNECT = 'In Studio, the gear at the top left opens Settings: connect a service under Providers, '
   + 'with the person\'s own key, then choose the model for each kind of media under Services.';
 /** The services that make `verb`, by name: "fal.ai, Google or OpenAI". @param {string} verb */
 const makers = (verb) => {
@@ -147,7 +147,7 @@ const nothing = () => 'Nothing is connected for media here: each kind works only
   + `\`openfilm get <what> --help\` shows what one kind takes (${Object.keys(VERBS).filter((v) => !WEB_VERBS.includes(v) && offered(v)).join(', ')}).`;
 
 /** What `call` says when the person has added no service of their own. */
-const NO_OWN_SERVICES = 'The person has added no services of their own. In Studio, the OpenFilm logo at the top left opens Settings: '
+const NO_OWN_SERVICES = 'The person has added no services of their own. In Studio, the gear at the top left opens Settings: '
   + 'they add one under Providers (its address, its key if it takes one, and what it does).';
 
 /** Each kind of media, in words (finding voices is part of voice-over). */

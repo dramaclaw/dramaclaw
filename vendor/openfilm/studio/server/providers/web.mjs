@@ -161,7 +161,7 @@ export async function readPage(url, ctx) {
     let res;
     try {
       res = await fetch(at, { redirect: 'manual', signal: ctx.signal, headers: {
-        accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5', 'user-agent': 'Mozilla/5.0 (compatible; OpenFilm)',
+        accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5', 'user-agent': 'Mozilla/5.0 (compatible; Dramaclaw)',
       } });
     } catch (e) {
       if (ctx.signal.aborted) throw e;

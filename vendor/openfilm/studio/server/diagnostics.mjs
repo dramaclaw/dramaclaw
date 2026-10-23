@@ -106,7 +106,7 @@ export async function codexLogAround(dir, times) {
 /** A name for the file, by the time: `OpenFilm diagnostics 2026-10-18 1013.zip`. @param {Date} now */
 export function diagnosticsName(now) {
   const pad = (/** @type {number} */ n) => String(n).padStart(2, '0');
-  return `OpenFilm diagnostics ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}${pad(now.getMinutes())}.zip`;
+  return `Dramaclaw diagnostics ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}${pad(now.getMinutes())}.zip`;
 }
 
 /**

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -69,6 +70,24 @@ def _tracks(project_dir: Path) -> list[FreezoneVideoComposeTrack]:
                 )
             ],
         ),
+    ]
+
+
+def _later_tracks(project_dir: Path) -> list[FreezoneVideoComposeTrack]:
+    """A timeline that no longer matches the film on disk: the host has to regenerate, so the
+    hand-edit check is what decides whether it may."""
+    return [
+        FreezoneVideoComposeTrack(
+            track_id="video-1",
+            kind="video",
+            items=[
+                FreezoneVideoComposeItem(
+                    item_id="later",
+                    source_url=_source(project_dir, "later.mp4"),
+                    source_end=2.0,
+                )
+            ],
+        )
     ]
 
 
@@ -141,25 +160,116 @@ def test_reuses_the_folder_until_the_timeline_changes(tmp_path: Path):
     assert "studio edit" not in (film_dir / "film.html").read_text()
 
 
+def test_a_studio_edit_survives_a_deleted_asset(tmp_path: Path):
+    """Replacing or deleting media in Studio leaves the host's asset list stale. That must not
+    read as "rebuild": the next open would rewrite film.html and the cut would be gone."""
+    film_dir = _build(tmp_path)
+    document = (film_dir / "film.html").read_text()
+    (film_dir / "assets" / "clip-1-second.mov").unlink()
+    (film_dir / "film.html").write_text(
+        document.replace("</body>", "<p>studio edit</p></body>")
+    )
+
+    assert _build(tmp_path) == film_dir
+
+    html = (film_dir / "film.html").read_text()
+    assert "studio edit" in html
+    assert not (film_dir / "assets" / "clip-1-second.mov").exists()
+
+
+def test_an_untouched_film_is_still_rebuilt_when_an_asset_goes_missing(tmp_path: Path):
+    """The asset check still protects a film nobody cut by hand: restore whatever went missing."""
+    film_dir = _build(tmp_path)
+    (film_dir / "assets" / "clip-1-second.mov").unlink()
+
+    _build(tmp_path)
+
+    assert (film_dir / "assets" / "clip-1-second.mov").is_file()
+
+
+def test_a_rename_does_not_turn_a_hand_free_film_into_an_edited_one(tmp_path: Path):
+    """Retitling is the host's own write, so it must not retire the asset check by accident."""
+    film_dir = _build(tmp_path, title="视频合成1")
+    _build(tmp_path, title="我的短片")
+    (film_dir / "assets" / "clip-1-second.mov").unlink()
+
+    _build(tmp_path, title="我的短片")
+
+    assert (film_dir / "assets" / "clip-1-second.mov").is_file()
+
+
+def test_a_changed_timeline_asks_before_replacing_a_studio_edit(tmp_path: Path):
+    """A canvas change that regenerates the film must not quiet-delete a hand-cut one: refuse
+    unless the caller explicitly agrees to rebuild."""
+    film_dir = _build(tmp_path)
+    document = (film_dir / "film.html").read_text()
+    (film_dir / "film.html").write_text(
+        document.replace("</body>", "<p>studio edit</p></body>")
+    )
+    tracks = _later_tracks(tmp_path)
+
+    with pytest.raises(StudioError) as error:
+        _build(tmp_path, tracks=tracks)
+    assert error.value.status_code == 409
+    assert "studio edit" in (film_dir / "film.html").read_text()
+
+    _build(tmp_path, tracks=tracks, rebuild=True)
+    assert "studio edit" not in (film_dir / "film.html").read_text()
+    assert (film_dir / "assets" / "clip-0-later.mp4").is_file()
+
+
+def test_a_film_without_a_hash_baseline_is_treated_as_edited(tmp_path: Path):
+    """Film folders written before manifest["document_hash"] carry no baseline to compare against.
+    Reading that as "nobody cut this" would let the next canvas change quiet-delete a real edit,
+    so the missing baseline has to ask first — the same way an edited one does."""
+    film_dir = _build(tmp_path)
+    manifest_path = film_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("document_hash")
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    document = (film_dir / "film.html").read_text()
+
+    with pytest.raises(StudioError) as error:
+        _build(tmp_path, tracks=_later_tracks(tmp_path))
+    assert error.value.status_code == 409
+    assert (film_dir / "film.html").read_text() == document
+
+
+def test_reopening_after_a_node_rename_retitles_the_film(tmp_path: Path):
+    """The editor shows the film's own <title> as its heading, so a node renamed on the canvas
+    has to move it too — rewriting the document would throw away what was cut in Studio."""
+    film_dir = _build(tmp_path, title="视频合成1")
+    document = (film_dir / "film.html").read_text()
+    (film_dir / "film.html").write_text(document.replace("</body>", "<p>studio edit</p></body>"))
+
+    _build(tmp_path, title="我的短片")
+
+    html = (film_dir / "film.html").read_text()
+    assert "<title>我的短片</title>" in html
+    assert "studio edit" in html
+    assert '<video id="clip-0"' in html
+    # The manifest is the ledger the host reads to find an orphaned film; a title that stayed at its
+    # old value there would attribute the folder to a node that no longer exists.
+    manifest = json.loads((film_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["title"] == "我的短片"
+
+
+def test_a_renamed_title_cannot_escape_the_head(tmp_path: Path):
+    film_dir = _build(tmp_path, title="视频合成1")
+
+    _build(tmp_path, title='A "film" <b>&')
+
+    html = (film_dir / "film.html").read_text()
+    assert "<title>A &quot;film&quot; &lt;b&gt;&amp;</title>" in html
+    assert "<b>" not in html
+
+
 def test_rebuild_drops_assets_that_left_the_timeline(tmp_path: Path):
     film_dir = _build(tmp_path)
     assets = film_dir / "assets"
     assert (assets / "clip-0-first.mp4").is_file()
 
-    tracks = [
-        FreezoneVideoComposeTrack(
-            track_id="video-1",
-            kind="video",
-            items=[
-                FreezoneVideoComposeItem(
-                    item_id="later",
-                    source_url=_source(tmp_path, "later.mp4"),
-                    source_end=2.0,
-                )
-            ],
-        )
-    ]
-    _build(tmp_path, tracks=tracks)
+    _build(tmp_path, tracks=_later_tracks(tmp_path))
 
     # Studio 素材库按 assets 目录扫描；旧片段的拷贝留着就会一条片段出现两份。
     assert (assets / "clip-0-later.mp4").is_file()
@@ -245,6 +355,34 @@ def test_builds_the_open_url_with_the_host_back_target():
     assert inner["hostBackLabel"] == ["返回虾画"]
 
 
+def _open_url_target(**kwargs) -> dict[str, list[str]]:
+    url = studio_open_url(
+        origin="http://127.0.0.1:4747",
+        key="a" * 48,
+        project_id="abc123",
+        host_back="http://127.0.0.1:5173/projects/abc123/freezone",
+        **kwargs,
+    )
+    target = parse_qs(urlsplit(url).query)["to"][0]
+    return parse_qs(urlsplit(target).query)
+
+
+def test_open_url_pins_the_host_language():
+    """The editor guesses from `navigator.languages`, which a cross-site iframe gets
+    reduced to the alternative locale — so the host has to say the language outright."""
+    assert _open_url_target(lang="zh")["lang"] == ["zh-CN"]
+    assert _open_url_target(lang="en")["lang"] == ["en"]
+    # Studio has no Vietnamese catalogue; English is what it would have fallen back to.
+    assert _open_url_target(lang="vi")["lang"] == ["en"]
+
+
+def test_open_url_leaves_the_language_to_the_editor_when_unknown():
+    """A language we cannot map must not break the open, and must not fake a default."""
+    target = _open_url_target(lang="fr")
+    assert "lang" not in target
+    assert "lang" not in _open_url_target()
+
+
 def test_rejects_a_non_http_host_back_target():
     with pytest.raises(StudioError):
         studio_open_url(
@@ -253,6 +391,19 @@ def test_rejects_a_non_http_host_back_target():
             project_id="abc123",
             host_back="javascript:alert(1)",
         )
+
+
+def test_open_url_requires_the_host_back():
+    """Every suppression the embed relies on — the projects list, the rename box, the About panel,
+    the GitHub footer, the splash — keys off `hostBack`. An open without it is the branded editor
+    with a studio key in the address bar, so the host has to refuse rather than quietly ship one."""
+    with pytest.raises(StudioError):
+        studio_open_url(
+            origin="http://127.0.0.1:4747",
+            key="a" * 48,
+            project_id="abc123",
+        )
+    assert _open_url_target()["hostBack"] == ["http://127.0.0.1:5173/projects/abc123/freezone"]
 
 
 def test_rebuild_leaves_unrelated_assets_alone(tmp_path: Path):

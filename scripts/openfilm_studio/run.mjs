@@ -12,6 +12,18 @@ const port = Number(process.env.OPENFILM_STUDIO_PORT || 4747);
 const key = process.env.OPENFILM_STUDIO_KEY || "";
 const editorDir = process.env.OPENFILM_STUDIO_EDITOR_DIR || resolve(repoRoot, "vendor/openfilm/studio/ui/dist");
 
+/* Three routes the hosted editor must never offer, forced rather than inherited: a deployment that
+   forgets an env var would otherwise leave them open.
+   - `/api/update` runs `npx -y openfilm@latest update`, rewriting vendor/openfilm — this launcher,
+     the vendored server and Dramaclaw's patched chunk included — and running upstream code on the host.
+   - `PATCH /api/projects/:id` moves the project folder, and the host looks a film up by that folder's
+     name — its node id — so a rename quietly orphans the cut inside it.
+   - the boot-time examples index is fetched from GitHub, so a shared server would phone home for every
+     tenant that opens the editor. */
+process.env.OPENFILM_NO_UPDATE_CHECK = "1";
+process.env.OPENFILM_NO_RENAME = "1";
+process.env.OPENFILM_NO_EXAMPLES = "1";
+
 if (!key) {
   console.error("OPENFILM_STUDIO_KEY is required");
   process.exit(2);

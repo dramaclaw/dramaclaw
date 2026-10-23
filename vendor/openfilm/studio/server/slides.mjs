@@ -5,6 +5,10 @@
  * The deck is written here, OOXML by hand (a blank layout, one full-bleed picture per slide, the scene's name in the
  * speaker notes), zipped with zip.mjs: no library. The PDF is Chromium's own printing of a page with one picture per
  * sheet, each sheet the picture's size.
+ *
+ * Dramaclaw patch: the theme scheme names, `dc:creator` and `Application` say Dramaclaw, not the vendored
+ * editor's name. The deck leaves the product and is opened on someone else's machine, where those fields are
+ * the only trace of where it came from.
  */
 import { launch } from '../../src/host.mjs';
 import { zipFiles } from './zip.mjs';
@@ -40,9 +44,9 @@ function themeXml(/** @type {string} */ name) {
   const fill = '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>';
   const line = (/** @type {number} */ w) => `<a:ln w="${w}" cap="flat" cmpd="sng" algn="ctr">${fill}<a:prstDash val="solid"/><a:miter lim="800000"/></a:ln>`;
   return `${HEAD}<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="${esc(name)}"><a:themeElements>`
-    + `<a:clrScheme name="OpenFilm">${colors}</a:clrScheme>`
-    + `<a:fontScheme name="OpenFilm"><a:majorFont>${font('Helvetica Neue')}</a:majorFont><a:minorFont>${font('Helvetica Neue')}</a:minorFont></a:fontScheme>`
-    + `<a:fmtScheme name="OpenFilm"><a:fillStyleLst>${fill}${fill}${fill}</a:fillStyleLst><a:lnStyleLst>${line(6350)}${line(12700)}${line(19050)}</a:lnStyleLst>`
+    + `<a:clrScheme name="Dramaclaw">${colors}</a:clrScheme>`
+    + `<a:fontScheme name="Dramaclaw"><a:majorFont>${font('Helvetica Neue')}</a:majorFont><a:minorFont>${font('Helvetica Neue')}</a:minorFont></a:fontScheme>`
+    + `<a:fmtScheme name="Dramaclaw"><a:fillStyleLst>${fill}${fill}${fill}</a:fillStyleLst><a:lnStyleLst>${line(6350)}${line(12700)}${line(19050)}</a:lnStyleLst>`
     + '<a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>'
     + `<a:bgFillStyleLst>${fill}${fill}${fill}</a:bgFillStyleLst></a:fmtScheme>`
     + '</a:themeElements><a:objectDefaults/><a:extraClrSchemeLst/></a:theme>';
@@ -113,12 +117,12 @@ export function pptxParts(pages, title) {
   parts.push({
     name: 'docProps/core.xml',
     data: xml(`${HEAD}<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">`
-      + `<dc:title>${esc(title)}</dc:title><dc:creator>OpenFilm</dc:creator>`
+      + `<dc:title>${esc(title)}</dc:title><dc:creator>Dramaclaw</dc:creator>`
       + `<dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`),
   });
   parts.push({
     name: 'docProps/app.xml',
-    data: xml(`${HEAD}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>OpenFilm</Application><Slides>${pages.length}</Slides><Notes>${pages.length}</Notes></Properties>`),
+    data: xml(`${HEAD}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Dramaclaw</Application><Slides>${pages.length}</Slides><Notes>${pages.length}</Notes></Properties>`),
   });
 
   parts.push({
@@ -147,8 +151,8 @@ export function pptxParts(pages, title) {
     data: xml(`${HEAD}<p:viewPr ${NS}><p:normalViewPr><p:restoredLeft sz="15620"/><p:restoredTop sz="94660"/></p:normalViewPr><p:gridSpacing cx="76200" cy="76200"/></p:viewPr>`),
   });
   parts.push({ name: 'ppt/tableStyles.xml', data: xml(`${HEAD}<a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" def="{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"/>`) });
-  parts.push({ name: 'ppt/theme/theme1.xml', data: xml(themeXml('OpenFilm')) });
-  parts.push({ name: 'ppt/theme/theme2.xml', data: xml(themeXml('OpenFilm Notes')) });
+  parts.push({ name: 'ppt/theme/theme1.xml', data: xml(themeXml('Dramaclaw')) });
+  parts.push({ name: 'ppt/theme/theme2.xml', data: xml(themeXml('Dramaclaw Notes')) });
 
   parts.push({
     name: 'ppt/slideMasters/slideMaster1.xml',

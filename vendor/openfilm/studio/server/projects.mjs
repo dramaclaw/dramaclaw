@@ -198,13 +198,24 @@ const describe = (/** @type {Recent} */ r) => {
   const cover = coverAt(r.path);
   return {
     /* `missing`: its folder is gone (one that only lost its film.html is still there, and still opens) */
-    id: r.id, path: r.path, name: basename(r.path), openedAt: r.openedAt, missing: !created?.isDirectory(),
+    id: r.id, path: r.path, name: filmTitle(r.path) ?? basename(r.path), openedAt: r.openedAt, missing: !created?.isDirectory(),
     createdAt: created ? Math.round(created.birthtimeMs || created.ctimeMs) : r.openedAt,
     ...(duration != null ? { duration } : {}),
     ...(r.folderId ? { folderId: r.folderId } : {}),
     ...(cover != null ? { cover } : {}),
   };
 };
+
+/** The film's own title — what the host named the cut. Null when the document has none to give. */
+function filmTitle(/** @type {string} */ folder) {
+  try {
+    const found = /<title>([^<]*)<\/title>/i.exec(readFileSync(join(folder, FILM_FILE), 'utf8'));
+    const title = found?.[1]
+      ?.replace(/&#39;|&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+      .trim();
+    return title || null;
+  } catch { return null; }
+}
 
 /** The film's length as Studio last learnt it (pageframes.mjs FILM_DURATION), if film.html has not changed since. */
 function filmDuration(/** @type {string} */ folder) {

@@ -208,7 +208,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
       if (whenIdle && exports.busy()) return json(res, 409, { error: 'an export is running' });
       if (whenIdle && making) return json(res, 409, { error: 'media is being made' });
       /* not busy, but kept (423, not 409: the app asks its own Studio whether it is busy this way) */
-      if (stays) return json(res, 423, { error: 'it is the OpenFilm app\'s, which keeps it' });
+      if (stays) return json(res, 423, { error: 'it is the Dramaclaw app\'s, which keeps it' });
       json(res, 200, { pages: editorPages.size });
       setImmediate(() => (onQuit ?? (() => { void studio.close(); }))());
       return;
@@ -246,7 +246,11 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
     /* this Studio's version, and the latest on npm (Settings → General; `?check=1` asks npm now) */
     if (parts[0] === 'version' && parts.length === 1 && req.method === 'GET') {
       const now = url.searchParams.get('check') === '1';
-      const { latest, checkedAt } = await npmOpenfilm({ force: now, waitMs: 4000 });
+      /* Dramaclaw patch: with update checks off there is nothing to ask npm for, and every page load
+         hits this route — skip the lookup instead of only hiding its result. */
+      const { latest, checkedAt } = process.env.OPENFILM_NO_UPDATE_CHECK
+        ? {}
+        : await npmOpenfilm({ force: now, waitMs: 4000 });
       return json(res, 200, { version: VERSION, latest, newer: Boolean(latest && olderThanThis(VERSION, latest)), checkedAt, checking: !process.env.OPENFILM_NO_UPDATE_CHECK && !FROM_SOURCE, source: FROM_SOURCE,
         ...(updating ? { update: updating } : {}) });
     }
@@ -274,6 +278,9 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
        on the new version and reload. Not while an export runs or media is made. `/api/version` says how it goes */
     if (parts[0] === 'update' && parts.length === 1 && req.method === 'POST') {
       if (stays || FROM_SOURCE) return json(res, 409, { error: 'this Studio does not update itself', code: stays ? 'app' : 'source' });
+      /* Dramaclaw patch: `/api/version` hides the button under this flag, but the flag has to close the
+         route as well — this call rewrites vendor/openfilm (patched chunk included) and runs npm code. */
+      if (process.env.OPENFILM_NO_UPDATE_CHECK) return json(res, 409, { error: 'update checks are off', code: 'off' });
       if (exports.busy()) return json(res, 409, { error: 'an export is running', code: 'exporting' });
       if (making) return json(res, 409, { error: 'media is being made', code: 'making' });
       if (updating?.status === 'updating') return json(res, 202, { update: updating });
@@ -412,7 +419,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
       return json(res, 200, { ...listing, ...places });
     }
     /* the example films (examples.mjs): none when the index cannot be read */
-    if (parts[0] === 'examples' && parts.length === 1 && req.method === 'GET') return json(res, 200, { examples: await listExamples() });
+    if (parts[0] === 'examples' && parts.length === 1 && req.method === 'GET') return json(res, 200, { examples: process.env.OPENFILM_NO_EXAMPLES ? [] : await listExamples() });
     /* a poster or preview beside an index read from this computer (examples.mjs exampleFile) */
     if (parts[0] === 'examples' && parts[1] === 'file' && parts.length > 2 && req.method === 'GET') {
       return sendMedia(req, res, exampleFile(parts.slice(2).map(decodeURIComponent).join('/')), { keep: true });
@@ -570,6 +577,10 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
         return json(res, 200, { project, folder: pages.folderUrl(project), ...film });
       }
       if (req.method === 'PATCH') {
+        /* Dramaclaw patch: a rename moves the project folder, and the host looks a film up by that
+           folder's name — its node id — so renaming orphans the cut left inside it. The embed already
+           shows the name as a label; the route has to refuse as well, because the frame holds the key. */
+        if (process.env.OPENFILM_NO_RENAME) throw new HttpError(409, 'this Studio does not rename projects', { code: 'off' });
         const { name } = /** @type {{ name?: string }} */ (await readJson(req));
         if (agentIn(project.path)) throw new HttpError(409, 'An agent is running in this project: stop it first, then rename the project.', { code: 'agent-running' });
         if (exports.list(project.id).some((job) => job.status === 'waiting' || job.status === 'running')) {
@@ -1006,7 +1017,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
   });
   await new Promise((done, fail) => { editor.once('error', fail); editor.listen(port, '127.0.0.1', () => done(undefined)); });
   /* the examples index is asked for as Studio starts, so the Examples tab has GitHub's newest when it opens */
-  void listExamples().catch(() => {});
+  if (!process.env.OPENFILM_NO_EXAMPLES) void listExamples().catch(() => {});
   const address = /** @type {import('node:net').AddressInfo} */ (editor.address());
   origin = `http://127.0.0.1:${address.port}`;
   COOKIE = cookieName(address.port);
@@ -1117,7 +1128,7 @@ function sendEditor(/** @type {Res} */ res, /** @type {string} */ dir, /** @type
   const page = join(root, 'index.html');
   /* no referrer: the page's address holds the key, and a link it opens must not carry it to another site */
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', ...headers });
-  res.end(existsSync(page) ? readFileSync(page) : '<!doctype html><meta charset="utf-8"><title>OpenFilm Studio</title><p>The editor is not built: run <code>npm run build:ui</code>.</p>');
+  res.end(existsSync(page) ? readFileSync(page) : '<!doctype html><meta charset="utf-8"><title>Dramaclaw Studio</title><p>The editor is not built: run <code>npm run build:ui</code>.</p>');
 }
 
 /** A file in the system's file manager, selected. */

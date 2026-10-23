@@ -1055,6 +1055,8 @@ export interface FreezoneVideoComposeStudioPayload
   hostBackLabel?: string;
   /** Regenerate film.html and discard edits made inside the editor. */
   rebuild?: boolean;
+  /** App UI language, so the editor does not have to guess it from the browser. */
+  lang?: string;
 }
 
 export interface FreezoneVideoComposeStudioSession {
@@ -1070,6 +1072,7 @@ export async function openFreezoneVideoComposeStudio(
     ...freezoneVideoComposeBody(payload),
     host_back: payload.hostBack ?? null,
     host_back_label: payload.hostBackLabel ?? null,
+    lang: payload.lang ?? null,
     rebuild: payload.rebuild ?? false,
   };
   const said = await apiCall<{ url: string; origin: string }>(

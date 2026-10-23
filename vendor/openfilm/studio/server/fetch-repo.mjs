@@ -254,7 +254,7 @@ export async function fetchFilm(source, { library, onProgress = () => {}, signal
   const notThere = (/** @type {string[]} */ folder) => {
     const place = folder.length ? `“${folder.join('/')}”` : 'that repository';
     return skill ? new FetchError(`There is no ${SKILL_FILE} in ${place}: it is not a skill.`, 422, 'no-skill')
-      : new FetchError(`There is no film.html in ${place}: it is not an OpenFilm film.`, 422, 'no-film');
+      : new FetchError(`There is no film.html in ${place}: it is not a Dramaclaw film.`, 422, 'no-film');
   };
   const tooBig = () => new FetchError(`It is bigger than ${Math.max(1, Math.round(maxBytes / 1024 / 1024))} MB, so it was stopped.`, 413, 'too-big');
   /** @type {FetchProgress} */

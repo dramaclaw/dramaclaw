@@ -1,0 +1,22 @@
+diff --git a/packages/openfilm/studio/ui/src/App.tsx b/packages/openfilm/studio/ui/src/App.tsx
+index bb1e431..9578f15 100644
+--- a/packages/openfilm/studio/ui/src/App.tsx
++++ b/packages/openfilm/studio/ui/src/App.tsx
+@@ -25,10 +25,16 @@ import { LIST_WAIT_MS, within } from './lib/projects-page';
+  * with the key a copied address opens Studio in any browser on this machine, or in an agent's preview.
+  */
+ const keepKey = (to: string) => {
+-  const key = new URLSearchParams(location.search).get('key');
++  const search = new URLSearchParams(location.search);
++  const key = search.get('key');
+   if (!key) return to;
+   const at = new URL(to, location.origin);
+   at.searchParams.set('key', key);
++  /* a host that embedded Studio keeps its way back across Studio's own navigation */
++  for (const name of ['hostBack', 'hostBackLabel', 'lang']) {
++    const value = search.get(name);
++    if (value) at.searchParams.set(name, value);
++  }
+   return at.pathname + at.search;
+ };
+ 

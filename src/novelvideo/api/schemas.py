@@ -1877,6 +1877,11 @@ class FreezoneVideoComposeStudioRequest(FreezoneVideoComposeRequest):
         validation_alias=AliasChoices("host_back_label", "hostBackLabel"),
         description="返回按钮文案",
     )
+    lang: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("lang", "language"),
+        description="编辑器界面语言（虾画的 zh / en / vi）。无法映射时由编辑器自行判断。",
+    )
     rebuild: bool = Field(
         default=False,
         description="重新生成 film.html；默认复用上次的成片目录以保留 Studio 内编辑",

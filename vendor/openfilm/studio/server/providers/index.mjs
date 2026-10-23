@@ -51,7 +51,7 @@ async function named(id, verb, settings, strict) {
   const fail = (/** @type {string} */ why) => { if (strict) throw new Error(why); return null; };
   if (!provider) return fail(`There is no provider "${id}": use ${OWN.map((p) => p.id).join(', ')}.`);
   if (!provider.verbs.includes(verb)) return fail(`${provider.name} does not do ${verb}.`);
-  if (!providerKey(provider, settings)) return fail(`There is no ${provider.name} key: add one in Studio (the OpenFilm logo at the top left opens Settings → Providers) or set ${provider.env}.`);
+  if (!providerKey(provider, settings)) return fail(`There is no ${provider.name} key: add one in Studio (the gear at the top left opens Settings → Providers) or set ${provider.env}.`);
   return provider;
 }
 

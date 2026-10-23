@@ -49,7 +49,7 @@ const pause = (ms, signal) => new Promise((done) => {
 async function request(url, { signal, accept }) {
   for (let tries = 1; ; tries++) {
     try {
-      return await fetch(url, { signal, headers: { accept: accept ?? 'application/vnd.github+json', 'user-agent': 'OpenFilm-Studio' } });
+      return await fetch(url, { signal, headers: { accept: accept ?? 'application/vnd.github+json', 'user-agent': 'Dramaclaw-Studio' } });
     } catch (e) {
       if (signal?.aborted) throw e;
       if (tries >= TRIES) throw new FetchError('Could not reach GitHub: check your internet connection.', 502, 'network');

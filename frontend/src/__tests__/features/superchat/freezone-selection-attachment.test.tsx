@@ -64,6 +64,48 @@ function setFreezoneComposerText(input: HTMLElement, value: string): void {
   fireEvent.input(input);
 }
 
+function composeDraftNode(
+  id: string,
+  displayName: string,
+  thumbUrl: string | null,
+): CanvasNode {
+  return {
+    id,
+    type: "videoComposeNode",
+    position: { x: 0, y: 0 },
+    selected: true,
+    data: {
+      displayName,
+      draftTimeline: {
+        resolution: "1080p",
+        tracks: [
+          {
+            id: "track-1",
+            kind: "video",
+            clips: [
+              {
+                id: "clip-1",
+                nodeId: "video-node-1",
+                kind: "video",
+                sourceUrl: "/static/clip.mp4",
+                displayName: null,
+                thumbUrl,
+                durationMs: 5000,
+                timelineStartMs: 0,
+                trimStartMs: 0,
+                trimEndMs: 5000,
+                volume: 1,
+                muted: false,
+                speed: 1,
+              },
+            ],
+          },
+        ],
+      },
+    },
+  } satisfies Partial<CanvasNode> as CanvasNode;
+}
+
 vi.mock("react-i18next", () => ({
   initReactI18next: {
     type: "3rdParty",
@@ -397,6 +439,52 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     expect(screen.queryByText("本轮会使用")).not.toBeInTheDocument();
     expect(useCanvasStore.getState().nodes[0]?.selected).toBe(false);
     expect(useCanvasStore.getState().selectedNodeId).toBeNull();
+  });
+
+  it("uses the compose draft as the thumbnail for a selected video-compose node", () => {
+    const node = composeDraftNode("compose-node-1", "合成草稿", "/static/cover.jpg");
+
+    useCanvasStore.getState().setCanvasData([node], []);
+    useCanvasStore.getState().setSelectedNode(node.id);
+
+    render(
+      <SuperChatPanel
+        variant="freezone"
+        canvasId="canvas-a"
+        currentCanvasSelection={[]}
+        currentCanvasOntologyContext={buildCanvasOntologyContext([node], [], {
+          canvasId: "canvas-a",
+          selectedNodeIds: [node.id],
+        })}
+        pendingAttachments={[]}
+      />,
+    );
+
+    const thumb = screen.getByLabelText("合成草稿 · compose-node-1");
+    expect(thumb.querySelector("img")).toHaveAttribute("src", "/static/cover.jpg");
+  });
+
+  it("falls back to the first video clip when the compose draft has no thumbnail", () => {
+    const node = composeDraftNode("compose-node-2", "无封面合成", null);
+
+    useCanvasStore.getState().setCanvasData([node], []);
+    useCanvasStore.getState().setSelectedNode(node.id);
+
+    render(
+      <SuperChatPanel
+        variant="freezone"
+        canvasId="canvas-a"
+        currentCanvasSelection={[]}
+        currentCanvasOntologyContext={buildCanvasOntologyContext([node], [], {
+          canvasId: "canvas-a",
+          selectedNodeIds: [node.id],
+        })}
+        pendingAttachments={[]}
+      />,
+    );
+
+    const thumb = screen.getByLabelText("无封面合成 · compose-node-2");
+    expect(thumb.querySelector("video")).toHaveAttribute("src", "/static/clip.mp4#t=0.1");
   });
 
   it("lets the user remove all selected canvas nodes from current-turn context", () => {

@@ -26,7 +26,7 @@ export async function call(service, url, init, ctx) {
   if (res.ok) return res;
   const text = await res.text().catch(() => '');
   if (outOfBalance(res.status, text)) throw noBalance(service);
-  if (res.status === 401 || res.status === 403) throw new Error(`${service} did not accept your key (${res.status}). Check it in Studio: Settings (the OpenFilm logo at the top left) → Providers.`);
+  if (res.status === 401 || res.status === 403) throw new Error(`${service} did not accept your key (${res.status}). Check it in Studio: Settings (the gear at the top left) → Providers.`);
   const reason = reasonOf(text).split(ctx.key).join('•••').slice(0, 500);
   throw new Error(`${service} answered ${res.status}${reason ? `: ${reason}` : ''}`);
 }

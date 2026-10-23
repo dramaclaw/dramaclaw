@@ -63,6 +63,7 @@ _SESSION_LOCK = asyncio.Lock()
 _STUDIO_ENV_PASSTHROUGH = (
     "PATH",
     "HOME",
+    "PLAYWRIGHT_BROWSERS_PATH",
     "TMPDIR",
     "TMP",
     "TEMP",
@@ -183,16 +184,86 @@ def _read_manifest(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _document_hash(document: str) -> str:
+    return hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+
+def _document_differs_from_build(film_dir: Path, manifest: dict[str, Any]) -> bool:
+    """Studio saves edits straight into film.html, so a document that no longer hashes to what
+    this module wrote was cut by hand."""
+    built = manifest.get("document_hash")
+    document_path = film_dir / "film.html"
+    if not document_path.is_file():
+        return False
+    if not built:
+        # 升级前生成的 film 没留下基线，判断不了是不是手改。宁可多问一次，也不静默覆盖。
+        return True
+    try:
+        document = document_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return _document_hash(document) != built
+
+
+def _film_was_edited(film_dir: Path) -> bool:
+    manifest = _read_manifest(film_dir / "manifest.json")
+    return bool(manifest) and _document_differs_from_build(film_dir, manifest)
+
+
 def _can_reuse(film_dir: Path, request_hash: str) -> bool:
     manifest = _read_manifest(film_dir / "manifest.json")
     if not manifest or manifest.get("request_hash") != request_hash:
         return False
     if not (film_dir / "film.html").is_file():
         return False
+    # A hand-cut film keeps its cut. The asset list below only says what the host copied in:
+    # media replaced or deleted in Studio would fail it, and rebuilding would rewrite the
+    # document — the one thing the editor cannot give back.
+    if _document_differs_from_build(film_dir, manifest):
+        return True
     assets = manifest.get("assets")
     if not isinstance(assets, list):
         return False
     return all((film_dir / "assets" / str(name)).is_file() for name in assets)
+
+
+_TITLE_TAG = re.compile(r"(?is)<title>.*?</title>")
+
+
+def _sync_title(film_dir: Path, title: str) -> None:
+    """Follow a canvas rename onto a film that is kept as it is. The editor shows the film's own
+    ``<title>`` as its heading, and rebuilding the document to change one word would throw away
+    whatever was cut in it by hand."""
+    name = (title or "").strip()
+    if not name:
+        return
+    document_path = film_dir / "film.html"
+    try:
+        document = document_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return
+    updated, hits = _TITLE_TAG.subn(
+        lambda _match: f"<title>{html.escape(name)}</title>", document, count=1
+    )
+    retitled = bool(hits) and updated != document
+    if retitled:
+        _write_text_atomic(document_path, updated)
+    manifest = _read_manifest(film_dir / "manifest.json")
+    if manifest is None:
+        return
+    changes: dict[str, Any] = {}
+    if manifest.get("title") != name:
+        changes["title"] = name
+    # Retitling is this module's own write, so a film nobody cut by hand keeps its asset check;
+    # one that was already edited keeps the older baseline and stays on the keep path.
+    built = manifest.get("document_hash")
+    if retitled and built and _document_hash(document) == built:
+        changes["document_hash"] = _document_hash(updated)
+    if changes:
+        _write_text_atomic(
+            film_dir / "manifest.json",
+            json.dumps({**manifest, **changes}, ensure_ascii=False, indent=2) + "\n",
+        )
 
 
 def _resolve_source(source_url: str, project_dir: Path) -> Path:
@@ -354,7 +425,14 @@ def build_studio_film(
 
     with _BUILD_LOCK:
         if not rebuild and _can_reuse(film_dir, request_hash):
+            _sync_title(film_dir, title)
             return film_dir
+        # Regenerating would replace a film someone cut by hand; the host asks first and
+        # resends with rebuild=True once they agree.
+        if not rebuild and _film_was_edited(film_dir):
+            raise StudioError(
+                "the film was edited in Studio; pass rebuild to replace it", 409
+            )
 
         resolved: list[tuple[Any, Path]] = []
         for track in tracks:
@@ -409,6 +487,7 @@ def build_studio_film(
         manifest = {
             **request,
             "request_hash": request_hash,
+            "document_hash": _document_hash(document),
             "canvas_id": canvas_id,
             "node_id": node_id,
             "title": title,
@@ -434,6 +513,18 @@ def _validate_host_back(value: str | None) -> str | None:
     return target
 
 
+# Dramaclaw's locale tags → the codes OpenFilm actually ships a catalogue for.
+# Vietnamese has no Studio catalogue, so it gets the fallback the editor would
+# have picked anyway; anything unmapped is dropped rather than guessed at.
+_STUDIO_LANGUAGES = {"zh": "zh-CN", "en": "en", "vi": "en"}
+
+
+def _studio_language(value: str | None) -> str | None:
+    if not value:
+        return None
+    return _STUDIO_LANGUAGES.get(value.strip()[:16].lower().split("-")[0])
+
+
 def studio_open_url(
     *,
     origin: str,
@@ -441,6 +532,7 @@ def studio_open_url(
     project_id: str,
     host_back: str | None = None,
     host_back_label: str | None = None,
+    lang: str | None = None,
 ) -> str:
     """The Studio address that signs the frame in and remembers the host's way back."""
     if not re.fullmatch(r"[\w-]{1,64}", project_id or ""):
@@ -448,10 +540,14 @@ def studio_open_url(
     target = f"/projects/{project_id}"
     extra: dict[str, str] = {}
     back = _validate_host_back(host_back)
-    if back:
-        extra["hostBack"] = back
-        if host_back_label and host_back_label.strip():
-            extra["hostBackLabel"] = host_back_label.strip()[:60]
+    if not back:
+        raise StudioError("host_back is required: the editor only runs embedded", 400)
+    extra["hostBack"] = back
+    if host_back_label and host_back_label.strip():
+        extra["hostBackLabel"] = host_back_label.strip()[:60]
+    language = _studio_language(lang)
+    if language:
+        extra["lang"] = language
     if extra:
         target = f"{target}?{urlencode(extra)}"
     query = urlencode({"key": key, "to": target})
@@ -695,8 +791,13 @@ async def ensure_studio_session(
     *,
     host_back: str | None = None,
     host_back_label: str | None = None,
+    lang: str | None = None,
 ) -> dict[str, Any]:
     """Open the film folder in Studio and return a signed editor address."""
+    # 先把宿主回址验掉：参数不对就直接 400，不必先拉起 Node 进程、登记项目目录。
+    back = _validate_host_back(host_back)
+    if not back:
+        raise StudioError("host_back is required: the editor only runs embedded", 400)
     state = await _ensure_studio()
     said = await _studio_post(
         state,
@@ -712,8 +813,9 @@ async def ensure_studio_session(
             origin=str(state["origin"]),
             key=str(state["key"]),
             project_id=project_id,
-            host_back=host_back,
+            host_back=back,
             host_back_label=host_back_label,
+            lang=lang,
         ),
         "origin": str(state["origin"]),
     }
