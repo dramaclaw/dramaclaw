@@ -8676,7 +8676,9 @@
     "phoneRequired": "使用当前支付宝订阅方式前，请先在工作台右上角账号菜单中绑定手机号，再回到本页点击「重新检查」。你也可以选择其他支付方式。",
     "recheck": "重新检查",
     "checking": "正在检查…",
-    "dodoDetails": "如需邮箱或账单资料，请在 Dodo 收银台填写或确认。"
+    "dodoDetails": "如需邮箱或账单资料，请在 Dodo 收银台填写或确认。",
+    "agreementChanged": "协议版本已变化或暂不可用，请重新核对后确认。",
+    "agreementUnavailable": "该套餐尚未关联已发布的服务协议，暂时无法订阅。"
   },
   "subscriptionReturn": {
     "states": {
@@ -8721,5 +8723,24 @@
     "manage": "查看订阅与账单",
     "renewal": "下次续费周期起始日：{{date}}。具体扣费时间以渠道规则为准。",
     "notRenewing": "自动续费已关闭，已付款权益继续保留。"
+  },
+  "subscriptionAgreementDialog": {
+    "description": "阅读协议后，勾选同意并确认，即可继续当前订单。",
+    "body": "协议正文",
+    "closeLabel": "关闭协议",
+    "close": "关闭",
+    "consent": "我已阅读并同意本协议，并授权按所选套餐自动续费。",
+    "confirm": "确认并返回结算",
+    "changed": "协议内容与当前套餐不一致或尚未生效，请关闭窗口并重新确认套餐信息。"
+  },
+  "subscriptionAgreementPage": {
+    "back": "返回",
+    "backToSubscriptions": "返回订阅套餐",
+    "loading": "正在读取协议…",
+    "unavailable": "暂时无法查看此协议",
+    "unavailableHint": "该版本可能尚未发布，或暂时无法读取。请稍后重试。",
+    "version": "版本 v{{version}}",
+    "effectiveAt": "生效时间：{{date}}",
+    "upcoming": "该版本尚未到生效时间。"
   }
 }

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { HTTPError } from "ky";
 import { CheckoutShell } from "@/components/credits/CheckoutShell";
+import { SubscriptionAgreementDialog } from "@/components/credits/SubscriptionAgreementDialog";
 import {
   creditOrgOf,
   creditScopeOf,
@@ -51,6 +52,7 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
   const submitting = useRef(false);
   const [method, setMethod] = useState<SubscriptionMethod>("alipay");
   const [consent, setConsent] = useState<string | null>(null);
+  const [agreementOpen, setAgreementOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [customerUnavailable, setCustomerUnavailable] = useState(false);
   const [createdId, setCreatedId] = useState<string | null>(() => {
@@ -97,6 +99,9 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
     plan?.plan_id,
     plan?.version,
     plan?.terms_url,
+    plan?.terms_agreement_id,
+    plan?.terms_agreement_version,
+    plan?.terms_content_hash,
     plan?.billing_months,
     plan?.credits_per_month,
     plan?.grant_mode,
@@ -117,6 +122,8 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
     offer &&
     subjectMatches &&
     versionMatches &&
+    plan.terms_agreement_id &&
+    plan.terms_agreement_version &&
     !blocked &&
     !needsPhone &&
     offer.available !== false &&
@@ -208,6 +215,13 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
           ? error.data.detail
           : null;
       if (
+        detail === "SUBSCRIPTION_AGREEMENT_CHANGED" ||
+        detail === "SUBSCRIPTION_AGREEMENT_UNAVAILABLE"
+      ) {
+        setConsent(null);
+        setNotice("subscriptionCheckout.agreementChanged");
+        void plans.refetch();
+      } else if (
         detail === "SUBSCRIPTION_QUOTE_CHANGED" ||
         detail === "SUBSCRIPTION_PLAN_CHANGED"
       ) {
@@ -472,9 +486,11 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
       <p className="mt-5 text-sm leading-6 text-white/60">
         {t("subscriptionCheckout.cancelPolicy")}
       </p>
-      <label className="mt-5 flex items-start gap-3 text-sm leading-6">
+      <div className="mt-5 flex items-start gap-3 text-sm leading-6">
         <input
+          id="subscription-renewal-consent"
           type="checkbox"
+          aria-label={`${t("subscriptions.consent")} ${t("subscriptions.terms")}`}
           checked={accepted}
           disabled={create.isPending || Boolean(createdId)}
           onChange={(event) =>
@@ -483,17 +499,29 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
           className="mt-1 accent-primary"
         />
         <span>
-          {t("subscriptions.consent")}{" "}
-          <a
-            href={plan.terms_url}
-            target="_blank"
-            rel="noopener noreferrer"
+          <label htmlFor="subscription-renewal-consent">
+            {t("subscriptions.consent")}{" "}
+          </label>
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            onClick={() => setAgreementOpen(true)}
             className="text-primary underline"
           >
             {t("subscriptions.terms")}
-          </a>
+          </button>
+          {plan.terms_agreement_version && (
+            <span className="ml-1 text-xs text-muted-foreground">
+              v{plan.terms_agreement_version}
+            </span>
+          )}
         </span>
-      </label>
+      </div>
+      {!plan.terms_agreement_id && (
+        <p role="alert" className="mt-3 text-sm text-muted-foreground">
+          {t("subscriptionCheckout.agreementUnavailable")}
+        </p>
+      )}
       {blocked && (
         <p role="alert" className="mt-4 text-sm text-warning">
           {t("subscriptionCheckout.existing")}
@@ -537,6 +565,17 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
         <ShieldCheck className="size-3.5" />
         {t("checkout.footerSecurity")}
       </p>
+      {agreementOpen && (
+        <SubscriptionAgreementDialog
+          agreementId={plan.terms_agreement_id}
+          version={plan.terms_agreement_version}
+          contentHash={plan.terms_content_hash}
+          fingerprint={fingerprint}
+          disabled={create.isPending || Boolean(createdId)}
+          onClose={() => setAgreementOpen(false)}
+          onAccept={() => setConsent(fingerprint)}
+        />
+      )}
     </CheckoutShell>
   );
 }

@@ -236,7 +236,7 @@ describe("subscription pricing cards", () => {
       screen.getByText("subscriptions.billingTotal.12: CN¥360"),
     ).toBeInTheDocument();
     expect(screen.queryByRole("slider")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button"));
+    fireEvent.click(within(screen.getByRole("article")).getByRole("button"));
     expect(select).toHaveBeenCalledWith(catalog[0].options[2]);
   });
 
@@ -255,7 +255,9 @@ describe("subscription pricing cards", () => {
           onSelect={vi.fn()}
         />,
       );
-      expect(screen.getByRole("button")).toBeDisabled();
+      expect(
+        within(screen.getByRole("article")).getByRole("button"),
+      ).toBeDisabled();
     },
   );
 

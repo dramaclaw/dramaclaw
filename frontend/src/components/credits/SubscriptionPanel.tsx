@@ -121,13 +121,9 @@ export function SubscriptionPanel({
           groupSubscriptionPlans(plans.data?.data.items ?? [])
         }
         disabled={blocked}
+        loaded={plans.isSuccess}
         onSelect={(plan) => beginSubscriptionCheckout(plan, username ?? "")}
       />
-      {plans.isSuccess && !plans.data.data.items.length && (
-        <p className="text-sm text-muted-foreground">
-          {t("subscriptions.noPlans")}
-        </p>
-      )}
       <section className="space-y-3">
         <h3 className="font-semibold">{t("subscriptions.mine")}</h3>
         {rows.map((row) => (
@@ -259,6 +255,18 @@ export function SubscriptionPanel({
           <h4 className="text-sm font-semibold">
             {t("subscriptions.invoices")}
           </h4>
+          {selected.offer.terms_agreement_id &&
+            selected.offer.terms_agreement_version && (
+              <p className="text-sm">
+                <a
+                  className="text-primary underline"
+                  href={`/terms/subscription/${encodeURIComponent(selected.offer.terms_agreement_id)}/${selected.offer.terms_agreement_version}`}
+                >
+                  {t("subscriptions.terms")} · v
+                  {selected.offer.terms_agreement_version}
+                </a>
+              </p>
+            )}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>

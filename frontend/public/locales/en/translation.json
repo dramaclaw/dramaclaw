@@ -8676,7 +8676,9 @@
     "phoneRequired": "To use the current Alipay subscription method, bind a phone number from the account menu at the top right of the workspace. Then return here and select Check again. You can also choose another payment method.",
     "recheck": "Check again",
     "checking": "Checking…",
-    "dodoDetails": "If email or billing details are needed, enter or confirm them at Dodo checkout."
+    "dodoDetails": "If email or billing details are needed, enter or confirm them at Dodo checkout.",
+    "agreementChanged": "Agreement terms changed or are unavailable. Review the current terms and confirm again.",
+    "agreementUnavailable": "This plan does not have published service terms and cannot be subscribed to yet."
   },
   "subscriptionReturn": {
     "states": {
@@ -8721,5 +8723,24 @@
     "manage": "View subscription and invoices",
     "renewal": "Next renewal period starts {{date}}. Charge timing follows channel rules.",
     "notRenewing": "Automatic renewal is off. Paid benefits remain."
+  },
+  "subscriptionAgreementDialog": {
+    "description": "Read the agreement, select the consent checkbox, and confirm to continue your current order.",
+    "body": "Agreement text",
+    "closeLabel": "Close agreement",
+    "close": "Close",
+    "consent": "I have read and agree to this agreement and authorize automatic renewal of my selected plan.",
+    "confirm": "Confirm and return to checkout",
+    "changed": "This agreement does not match the current plan or is not effective yet. Close this window and review the plan information."
+  },
+  "subscriptionAgreementPage": {
+    "back": "Back",
+    "backToSubscriptions": "Back to subscription plans",
+    "loading": "Loading agreement…",
+    "unavailable": "Agreement unavailable",
+    "unavailableHint": "This version may not be published or could not be loaded. Please retry later.",
+    "version": "Version v{{version}}",
+    "effectiveAt": "Effective: {{date}}",
+    "upcoming": "This version is not effective yet."
   }
 }

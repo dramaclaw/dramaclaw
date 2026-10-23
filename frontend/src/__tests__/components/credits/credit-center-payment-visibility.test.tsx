@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreditCenterDialog } from "@/components/credits/CreditCenterDialog";
 
 const rechargeOrdersQuery = vi.hoisted(() => vi.fn());
+const subscriptionPanel = vi.hoisted(() => vi.fn());
 const creditState = vi.hoisted(() => ({ summary: undefined as Record<string, unknown> | undefined, transactions: [] as Record<string, unknown>[] }));
 
 vi.mock("react-i18next", () => ({
@@ -39,10 +40,13 @@ vi.mock("@/lib/queries/payments", () => ({
   useCustomRechargeConfig: () => ({ data: undefined, isPending: false }),
   useRechargeOrders: rechargeOrdersQuery,
 }));
+vi.mock("@/components/credits/SubscriptionPanel", () => ({
+  SubscriptionPanel: subscriptionPanel,
+}));
 
 function renderDialog(
   paymentAvailable: boolean,
-  initialTab: "benefits" | "orders" = "benefits",
+  initialTab: "benefits" | "orders" | "subscriptions" = "benefits",
 ) {
   return render(
     <CreditCenterDialog
@@ -60,6 +64,8 @@ describe("CreditCenterDialog payment visibility", () => {
     creditState.transactions = [];
     rechargeOrdersQuery.mockReset();
     rechargeOrdersQuery.mockReturnValue({ data: undefined, isPending: false });
+    subscriptionPanel.mockClear();
+    subscriptionPanel.mockReturnValue(<div>Subscription catalog and enterprise</div>);
   });
 
   it("hides all recharge surfaces and skips loading orders when payment is disabled", () => {
@@ -68,6 +74,8 @@ describe("CreditCenterDialog payment visibility", () => {
     expect(screen.queryByRole("button", { name: "credits.centerModal.tabs.packages" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "credits.centerModal.tabs.custom" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "credits.centerModal.tabs.orders" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "subscriptions.title" })).not.toBeInTheDocument();
+    expect(subscriptionPanel).not.toHaveBeenCalled();
     expect(screen.getAllByRole("button", { name: "credits.centerModal.tabs.usage" })).not.toHaveLength(0);
     expect(rechargeOrdersQuery).toHaveBeenCalledWith({ enabled: false });
   });
@@ -83,12 +91,28 @@ describe("CreditCenterDialog payment visibility", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("keeps a stale subscription entry hidden and removes an open catalog when visibility changes", () => {
+    const view = renderDialog(false, "subscriptions");
+    expect(screen.getByRole("heading", { name: "credits.centerModal.tabs.usage" })).toBeInTheDocument();
+    expect(subscriptionPanel).not.toHaveBeenCalled();
+
+    const dialog = (paymentAvailable: boolean) => (
+      <CreditCenterDialog open onOpenChange={vi.fn()} initialTab="subscriptions" paymentAvailable={paymentAvailable} />
+    );
+    view.rerender(dialog(true));
+    expect(screen.getByText("Subscription catalog and enterprise")).toBeInTheDocument();
+    view.rerender(dialog(false));
+    expect(screen.queryByText("Subscription catalog and enterprise")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "credits.centerModal.tabs.usage" })).toBeInTheDocument();
+  });
+
   it("shows recharge and billing history when payment is enabled", () => {
     renderDialog(true);
 
     expect(screen.getAllByRole("button", { name: "credits.centerModal.tabs.packages" })).not.toHaveLength(0);
     expect(screen.getAllByRole("button", { name: "credits.centerModal.tabs.custom" })).not.toHaveLength(0);
     expect(screen.getAllByRole("button", { name: "credits.centerModal.tabs.orders" })).not.toHaveLength(0);
+    expect(screen.getAllByRole("button", { name: "subscriptions.title" })).not.toHaveLength(0);
     expect(rechargeOrdersQuery).toHaveBeenCalledWith({ enabled: true });
   });
 

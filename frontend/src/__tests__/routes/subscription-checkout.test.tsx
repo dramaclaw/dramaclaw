@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import ky from "ky";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +14,7 @@ import { server } from "@/__mocks__/msw/server";
 import { zhT } from "@/__tests__/helpers/i18n-fixtures";
 import { useAuthStore } from "@/stores/auth-store";
 import { CHECKOUT_DRAFT_KEY } from "@/lib/payment-navigation";
+import { queryKeys } from "@/lib/query-keys";
 import { CheckoutPage } from "@/routes/checkout";
 import { SubscriptionPanel } from "@/components/credits/SubscriptionPanel";
 import { PaymentReturnPage } from "@/routes/_app/payment-return";
@@ -38,6 +45,9 @@ const plan = {
   credits_per_month: 1000,
   grant_mode: "monthly",
   terms_url: "https://app.example.test/terms",
+  terms_agreement_id: "terms-test",
+  terms_agreement_version: 1,
+  terms_content_hash: "a".repeat(64),
   offers: [
     {
       payment_method: "alipay",
@@ -69,6 +79,13 @@ let keys: string[];
 let onceCalls: number;
 let currentPlan: typeof plan;
 const endpoint = "http://localhost:3000/api/v1/payments/";
+const surfacesEndpoint = "http://localhost:3000/api/v1/product-surfaces/me";
+function surfaceResponse(available = true) {
+  return HttpResponse.json({ ok: true, data: { items: [{
+    surface_code: "payment", label: "积分充值", available,
+    unavailable_message: "订阅及积分购买仅对测试组开放",
+  }] } });
+}
 beforeEach(() => {
   sessionStorage.clear();
   sessionStorage.setItem(
@@ -87,6 +104,7 @@ beforeEach(() => {
   onceCalls = 0;
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   server.use(
+    http.get(surfacesEndpoint, () => surfaceResponse()),
     http.get(endpoint + "subscriptions/plans", () =>
       HttpResponse.json({ ok: true, data: { items: [currentPlan] } }),
     ),
@@ -95,6 +113,23 @@ beforeEach(() => {
     ),
     http.get(endpoint + "subscriptions/membership", () =>
       HttpResponse.json({ ok: true, data: { active: false } }),
+    ),
+    http.get(
+      "*/api/v1/payments/subscriptions/agreements/terms-test/versions/:version",
+      ({ params }) => {
+        const version = Number(params.version);
+        return HttpResponse.json({
+          ok: true,
+          data: {
+            agreement_id: "terms-test",
+            version,
+            title: `测试订阅协议 v${version}`,
+            body: `协议正文版本 ${version}`,
+            effective_at: "2020-01-01T00:00:00Z",
+            content_hash: (version === 2 ? "b" : "a").repeat(64),
+          },
+        });
+      },
     ),
     http.post(endpoint + "subscriptions", async ({ request }) => {
       submitted.push((await request.json()) as Record<string, unknown>);
@@ -127,11 +162,120 @@ function mount(content = <CheckoutPage />) {
 }
 
 describe("subscription checkout", () => {
+  it.each([
+    { kind: "subscription", planId: "plan-annual", planVersion: 1, username: "test-user" },
+    { kind: "package", packageId: "package-a" },
+    { kind: "custom", credits: 3000 },
+  ])("applies payment entry visibility to a saved $kind checkout", async (draft) => {
+    const paymentRequests: string[] = [];
+    server.use(
+      http.get(surfacesEndpoint, () => surfaceResponse(false)),
+      http.all(endpoint + "*", ({ request }) => {
+        paymentRequests.push(request.url);
+        return HttpResponse.json({}, { status: 503 });
+      }),
+    );
+    sessionStorage.setItem(CHECKOUT_DRAFT_KEY, JSON.stringify(draft));
+    mount();
+    expect(await screen.findByText("订阅及积分购买仅对测试组开放")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回" })).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认订阅并前往支付" })).not.toBeInTheDocument();
+    expect(paymentRequests).toHaveLength(0);
+    expect(submitted).toHaveLength(0);
+    expect(sessionStorage.getItem(CHECKOUT_DRAFT_KEY)).toBe(JSON.stringify(draft));
+  });
+
+  it("waits for entry visibility before loading subscription plans", async () => {
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { release = resolve; });
+    let planReads = 0;
+    server.use(
+      http.get(surfacesEndpoint, async () => { await ready; return surfaceResponse(); }),
+      http.get(endpoint + "subscriptions/plans", () => {
+        planReads++;
+        return HttpResponse.json({ ok: true, data: { items: [currentPlan] } });
+      }),
+    );
+    mount();
+    try {
+      expect(screen.getByRole("status")).toHaveTextContent(zhT("checkout.loading"));
+      expect(planReads).toBe(0);
+      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    } finally {
+      release();
+    }
+    expect(await screen.findByRole("button", { name: "确认订阅并前往支付" })).toBeDisabled();
+    expect(planReads).toBe(1);
+  });
+
+  it.each(["failed", "missing"])("keeps checkout unavailable when entry configuration is %s and allows retry", async (reason) => {
+    let reads = 0;
+    server.use(http.get(surfacesEndpoint, () => {
+      reads++;
+      if (reads > 1) return surfaceResponse();
+      return reason === "failed"
+        ? HttpResponse.json({}, { status: 503 })
+        : HttpResponse.json({ ok: true, data: { items: [] } });
+    }));
+    mount();
+    expect(await screen.findByText(zhT(reason === "failed" ? "productSurface.statusUnknown" : "productSurface.misconfigured"))).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(submitted).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
+    expect(await screen.findByRole("button", { name: "确认订阅并前往支付" })).toBeDisabled();
+    expect(reads).toBe(2);
+  });
+
+  it("removes an open checkout when the shared visibility becomes unavailable", async () => {
+    mount();
+    const action = await screen.findByRole("button", { name: "确认订阅并前往支付" });
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(action).toBeEnabled();
+    server.use(http.get(surfacesEndpoint, () => surfaceResponse(false)));
+    await client.invalidateQueries({ queryKey: queryKeys.productSurfaces() });
+    expect(await screen.findByText("订阅及积分购买仅对测试组开放")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认订阅并前往支付" })).not.toBeInTheDocument();
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("clears consent when only the agreement version changes", async () => {
+    mount();
+    const action = await screen.findByRole("button", {
+      name: "确认订阅并前往支付",
+    });
+    fireEvent.click(screen.getByRole("checkbox"));
+    await waitFor(() => expect(action).toBeEnabled());
+    currentPlan = {
+      ...currentPlan,
+      terms_agreement_version: 2,
+      terms_content_hash: "b".repeat(64),
+      terms_url: "/terms/subscription/terms-test/2",
+    };
+    await client.invalidateQueries({ queryKey: ["subscriptions"] });
+    await waitFor(() => expect(screen.getByRole("checkbox")).not.toBeChecked());
+    fireEvent.click(screen.getByRole("button", { name: "订阅服务协议" }));
+    expect(await screen.findByText("协议正文版本 2")).toBeInTheDocument();
+    expect(action).toBeDisabled();
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("does not allow a plan without published agreement metadata", async () => {
+    currentPlan = { ...currentPlan, terms_agreement_id: "" };
+    mount();
+    const action = await screen.findByRole("button", {
+      name: "确认订阅并前往支付",
+    });
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(action).toBeDisabled();
+    expect(
+      await screen.findByText(/尚未关联已发布的服务协议/),
+    ).toBeInTheDocument();
+    expect(submitted).toHaveLength(0);
+  });
   it("keeps channels, contact fields and consent off the plan cards", async () => {
     mount(<SubscriptionPanel />);
-    expect(
-      await screen.findByRole("button", { name: /^订阅$/ }),
-    ).toBeEnabled();
+    expect(await screen.findByRole("button", { name: /^订阅$/ })).toBeEnabled();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
@@ -147,10 +291,9 @@ describe("subscription checkout", () => {
     expect(
       screen.getByText(/每月发放 1,000 积分，本期共 12 次/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "订阅服务协议" })).toHaveAttribute(
-      "href",
-      plan.terms_url,
-    );
+    expect(
+      screen.getByRole("button", { name: "订阅服务协议" }),
+    ).toHaveAttribute("aria-haspopup", "dialog");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(action);
@@ -160,6 +303,8 @@ describe("subscription checkout", () => {
       plan_version: 1,
       payment_method: "alipay",
       terms_accepted: true,
+      terms_agreement_id: "terms-test",
+      terms_agreement_version: 1,
     });
     expect(submitted[0]).not.toHaveProperty("customer");
     await waitFor(() => expect(action).toBeEnabled());
@@ -180,6 +325,145 @@ describe("subscription checkout", () => {
       queryKey: ["subscriptions", "test-user", "plans"],
     });
     await waitFor(() => expect(screen.getByRole("checkbox")).not.toBeChecked());
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("reads terms in a dialog and preserves the selected payment method when consent is confirmed", async () => {
+    mount();
+    const action = await screen.findByRole("button", {
+      name: "确认订阅并前往支付",
+    });
+    const consent = screen.getByRole("checkbox");
+    const method = screen.getByRole("button", { name: "微信支付" });
+    fireEvent.click(method);
+    const location = window.location.href;
+    fireEvent.click(screen.getByRole("button", { name: "订阅服务协议" }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText("协议正文版本 1");
+    const confirm = within(dialog).getByRole("button", {
+      name: "确认并返回结算",
+    });
+    expect(confirm).toBeDisabled();
+    expect(consent).not.toBeChecked();
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    expect(consent).not.toBeChecked();
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(consent).toBeChecked();
+    expect(method).toHaveAttribute("aria-pressed", "true");
+    expect(action).toBeEnabled();
+    expect(window.location.href).toBe(location);
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("does not accept or remember an unconfirmed checkbox when the dialog is closed", async () => {
+    mount();
+    await screen.findByRole("button", { name: "订阅服务协议" });
+    const consent = screen.getByRole("checkbox");
+    fireEvent.click(screen.getByRole("button", { name: "订阅服务协议" }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText("协议正文版本 1");
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(consent).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "订阅服务协议" }));
+    expect(
+      within(await screen.findByRole("dialog")).getByRole("checkbox"),
+    ).not.toBeChecked();
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("disables dialog consent while loading and after a failure, and permits retry", async () => {
+    let fail: (() => void) | undefined;
+    server.use(
+      http.get(
+        "*/api/v1/payments/subscriptions/agreements/terms-test/versions/1",
+        async () => {
+          await new Promise<void>((resolve) => {
+            fail = resolve;
+          });
+          return HttpResponse.json({}, { status: 404 });
+        },
+      ),
+    );
+    mount();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "订阅服务协议" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByRole("status");
+    const confirm = within(dialog).getByRole("button", {
+      name: "确认并返回结算",
+    });
+    expect(within(dialog).getByRole("checkbox")).toBeDisabled();
+    expect(confirm).toBeDisabled();
+    await waitFor(() => expect(fail).toBeDefined());
+    fail!();
+    await within(dialog).findByRole("alert");
+    expect(confirm).toBeDisabled();
+    server.use(
+      http.get(
+        "*/api/v1/payments/subscriptions/agreements/terms-test/versions/1",
+        () =>
+          HttpResponse.json({
+            ok: true,
+            data: {
+              agreement_id: "terms-test",
+              version: 1,
+              title: "重试后的协议",
+              body: "重试成功的协议正文",
+              effective_at: "2020-01-01T00:00:00Z",
+              content_hash: "a".repeat(64),
+            },
+          }),
+      ),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "刷新" }));
+    await within(dialog).findByText("重试成功的协议正文");
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    expect(confirm).toBeEnabled();
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("rejects a published body whose hash differs from the displayed plan", async () => {
+    currentPlan.terms_content_hash = "b".repeat(64);
+    mount();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "订阅服务协议" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText(/协议内容与当前套餐不一致/);
+    expect(within(dialog).getByRole("checkbox")).toBeDisabled();
+    expect(
+      within(dialog).getByRole("button", { name: "确认并返回结算" }),
+    ).toBeDisabled();
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("requires fresh agreement consent when the plan changes while the reader is open", async () => {
+    mount();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "订阅服务协议" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText("协议正文版本 1");
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    currentPlan = {
+      ...currentPlan,
+      terms_agreement_version: 2,
+      terms_content_hash: "b".repeat(64),
+    };
+    await client.invalidateQueries({ queryKey: ["subscriptions"] });
+    await within(dialog).findByText("协议正文版本 2");
+    expect(within(dialog).getByRole("checkbox")).not.toBeChecked();
+    expect(
+      within(dialog).getByRole("button", { name: "确认并返回结算" }),
+    ).toBeDisabled();
     expect(submitted).toHaveLength(0);
   });
   it("sends the exact displayed Dodo quote through the subscription API", async () => {

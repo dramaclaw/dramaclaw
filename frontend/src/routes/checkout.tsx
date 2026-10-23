@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  ArrowLeft,
   CircleAlert,
   Check,
   CreditCard,
@@ -19,6 +20,7 @@ import { toast } from "sonner";
 import { CreditSparkIcon } from "@/components/credits/credit-visual";
 import { CheckoutShell } from "@/components/credits/CheckoutShell";
 import { SubscriptionCheckout } from "@/components/credits/SubscriptionCheckout";
+import { ProductSurfaceUnavailable } from "@/components/product-surface-unavailable";
 import type { SubscriptionDraft } from "@/lib/subscription-checkout";
 import {
   creditOrgOf,
@@ -55,6 +57,7 @@ import {
   paymentErrorToastMessage,
   paymentQuoteNeedsRefresh,
 } from "@/lib/payment-errors";
+import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -122,7 +125,45 @@ function number(value: number, language: string): string {
 }
 
 export function CheckoutPage() {
+  const { t } = useTranslation();
+  const surfaces = useProductSurfaces();
+  const payment = surfaceAccess(surfaces.data, "payment");
   const draft = useMemo(readCheckoutDraft, []);
+  // Check the shared entry setting before mounting either checkout, including
+  // drafts saved before the entry was hidden. This is UI visibility, not API auth.
+  if (surfaces.isPending || surfaces.isError || payment?.available !== true) {
+    return (
+      <main className="flex h-dvh flex-col overflow-y-auto bg-background text-foreground">
+        <a
+          href="/"
+          className="m-5 inline-flex h-9 w-fit shrink-0 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground sm:m-8"
+        >
+          <ArrowLeft className="size-4" aria-hidden="true" />
+          {t("checkout.back")}
+        </a>
+        <div className="min-h-0 flex-1">
+          {surfaces.isPending ? (
+            <div
+              role="status"
+              className="flex h-full items-center justify-center px-6 text-sm text-muted-foreground"
+            >
+              {t("checkout.loading")}
+            </div>
+          ) : (
+            <ProductSurfaceUnavailable
+              message={
+                surfaces.isError
+                  ? t("productSurface.statusUnknown")
+                  : (payment?.unavailable_message ??
+                    t("productSurface.misconfigured"))
+              }
+              retry={() => void surfaces.refetch()}
+            />
+          )}
+        </div>
+      </main>
+    );
+  }
   if (draft?.kind === "subscription")
     return <SubscriptionCheckout draft={draft} />;
   return <RechargeCheckoutPage />;

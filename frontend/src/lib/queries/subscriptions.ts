@@ -31,6 +31,9 @@ export interface SubscriptionPlan {
   grant_mode: "monthly" | "upfront";
   org_id?: string | null;
   terms_url: string;
+  terms_agreement_id?: string | null;
+  terms_agreement_version?: number | null;
+  terms_content_hash?: string | null;
   offers: SubscriptionOffer[];
 }
 export interface SubscriptionPlanGroup {
@@ -284,6 +287,8 @@ export function useCreateSubscription() {
             plan_version: input.plan.version,
             payment_method: input.method,
             terms_accepted: input.termsAccepted,
+            terms_agreement_id: input.plan.terms_agreement_id,
+            terms_agreement_version: input.plan.terms_agreement_version,
             ...(input.method === "dodo"
               ? {
                   quote: (() => {
