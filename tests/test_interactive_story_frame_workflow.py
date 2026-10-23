@@ -15,7 +15,7 @@ from novelvideo.freezone.agent_workflows.catalog import (
     validate_agent_workflow_plan,
 )
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
-from novelvideo.freezone.workflow_external_inputs import resolve_external_image_inputs
+from novelvideo.freezone.workflow_external_inputs import resolve_external_inputs
 from novelvideo.freezone.workflow_schema import workflow_plan_json_schema
 from novelvideo.freezone.workflow_story_targets import (
     is_story_image_production_plan,
@@ -309,7 +309,7 @@ def test_story_frames_compile_as_one_group_and_one_run() -> None:
     assert not validated["preflight"]["blockers"], validated["preflight"]
     assert validated["plan"]["source_context"] == plan["source_context"]
 
-    binding = resolve_external_image_inputs(
+    binding = resolve_external_inputs(
         validated["plan"],
         {
             "project_id": "project-1",

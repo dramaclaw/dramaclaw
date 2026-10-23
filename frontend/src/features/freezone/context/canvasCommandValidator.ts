@@ -56,6 +56,24 @@ const RESERVED_DATA_KEYS = new Set([
 const AUDIO_DOWNLOAD_FORMATS = new Set(["source", "mp3", "m4a", "wav"]);
 const VIDEO_UPSCALE_RESOLUTION_VALUES = new Set<string>(VIDEO_UPSCALE_RESOLUTIONS);
 
+/** Error when a workflow external input no longer holds the media its draft verified. */
+export function workflowExternalSourceMismatch(
+  source: CanvasNode | undefined,
+  sourceId: string,
+  expected: { imageUrl?: unknown; videoUrl?: unknown },
+): string | null {
+  const content = source ? extractUpstreamContent(source) : undefined;
+  if (typeof expected.videoUrl === "string" && expected.videoUrl.trim() &&
+    content?.videoUrl !== expected.videoUrl) {
+    return `workflow source video changed: ${sourceId}`;
+  }
+  if (typeof expected.imageUrl === "string" && expected.imageUrl.trim() &&
+    content?.imageUrl !== expected.imageUrl) {
+    return `workflow source image changed: ${sourceId}`;
+  }
+  return null;
+}
+
 function hasReservedKeys(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   return Object.keys(value as Partial<CanvasNodeData>).filter(
@@ -402,12 +420,12 @@ export function validateCanvasChatCommandEnvelopes(
         case "create_edge": {
           if (!isKnownNodeRef(command.source)) addIssue(issues, path, missingNodeMessage(command.source, "source"));
           if (!isKnownNodeRef(command.target)) addIssue(issues, path, missingNodeMessage(command.target, "target"));
-          if (command.expected_source_image_url &&
-            (nodeById.get(command.source)
-              ? extractUpstreamContent(nodeById.get(command.source)!).imageUrl
-              : undefined) !== command.expected_source_image_url) {
-            addIssue(issues, path, `workflow source image changed: ${command.source}`);
-          }
+          const sourceMismatch = workflowExternalSourceMismatch(
+            nodeById.get(command.source),
+            command.source,
+            { imageUrl: command.expected_source_image_url, videoUrl: command.expected_source_video_url },
+          );
+          if (sourceMismatch) addIssue(issues, path, sourceMismatch);
           const linkType = normalizeCanvasEdgeSemanticKind(command.link_type);
           if (!linkType) {
             addIssue(

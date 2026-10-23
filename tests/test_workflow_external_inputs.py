@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from novelvideo.freezone.agent_workflows import catalog
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
-from novelvideo.freezone.workflow_external_inputs import resolve_external_image_inputs
+from novelvideo.freezone.workflow_external_inputs import resolve_external_inputs
 from novelvideo.freezone.workflow_drafts import create_workflow_draft
 from novelvideo.freezone.workflow_schema import (
     workflow_intent_json_schema,
@@ -94,7 +94,7 @@ def test_existing_image_compiles_to_real_media_edge_without_copy(
     assert not list(
         Draft202012Validator(workflow_plan_json_schema()).iter_errors(result["plan"])
     )
-    binding = resolve_external_image_inputs(
+    binding = resolve_external_inputs(
         result["plan"], _canvas(), project_id="project-a"
     )
     draft = create_workflow_draft(
@@ -173,24 +173,24 @@ def test_existing_image_compiles_to_real_media_edge_without_copy(
 def test_external_image_change_fails_before_confirmation(change) -> None:
     plan = {"external_inputs": [EXTERNAL]}
     original = _canvas()
-    binding = resolve_external_image_inputs(plan, original, project_id="project-a")
+    binding = resolve_external_inputs(plan, original, project_id="project-a")
     changed = deepcopy(original)
     change(changed)
     with pytest.raises(ValueError):
-        resolve_external_image_inputs(
+        resolve_external_inputs(
             plan, changed, project_id="project-a", expected=binding
         )
 
 
 def test_external_image_wrong_project_fails_closed() -> None:
     with pytest.raises(ValueError):
-        resolve_external_image_inputs(
+        resolve_external_inputs(
             {"external_inputs": [EXTERNAL]},
             _canvas(),
             project_id="project-b",
         )
     with pytest.raises(ValueError):
-        resolve_external_image_inputs(
+        resolve_external_inputs(
             {"external_inputs": [EXTERNAL]},
             _canvas(),
             project_id="project-a",
@@ -198,8 +198,8 @@ def test_external_image_wrong_project_fails_closed() -> None:
         )
     video = _canvas()
     video["nodes"][0]["data"]["videoUrl"] = "/static/projects/project-a/clip.mp4"
-    with pytest.raises(ValueError, match="not an image"):
-        resolve_external_image_inputs(
+    with pytest.raises(ValueError, match='media_kind "video"'):
+        resolve_external_inputs(
             {"external_inputs": [EXTERNAL]},
             video,
             project_id="project-a",
@@ -220,7 +220,7 @@ def test_uploaded_image_without_generated_output_is_external_input(
     source = canvas["nodes"][0]
     source["type"] = node_type
     source["data"][media_field] = source["data"].pop("imageUrl")
-    binding = resolve_external_image_inputs(
+    binding = resolve_external_inputs(
         {"external_inputs": [EXTERNAL]}, canvas, project_id="project-a"
     )
     assert binding["cup"]["media_url"] == "/static/projects/project-a/red-cup.png"
@@ -275,3 +275,147 @@ async def test_draft_route_rechecks_source_before_claim(monkeypatch) -> None:
             require_verified=True,
         )
     assert error.value.status_code == 409
+    assert error.value.detail["code"] == "workflow_external_input_unavailable"
+    assert "tell the user" in error.value.detail["message"]
+
+
+VIDEO_EXTERNAL = {"id": "camera", "node_id": "previz-recording", "media_kind": "video"}
+
+
+def _video_canvas() -> dict:
+    canvas = _canvas()
+    canvas["nodes"].append(
+        {
+            "id": "previz-recording",
+            "type": "videoNode",
+            "data": {
+                "videoUrl": "/static/projects/project-a/previz.mp4",
+                "displayName": "预演台全局录制",
+            },
+        }
+    )
+    return canvas
+
+
+def _video_plan(target_type: str = "videoNode") -> dict:
+    return {
+        "schema_version": "freezone_workflow_plan.v1",
+        "external_inputs": [deepcopy(VIDEO_EXTERNAL)],
+        "nodes": [{"id": "shot", "node_type": target_type, "data": {}}],
+        "edges": [
+            {"source": "camera", "target": "shot", "link_type": "media_input_for"}
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"type": "videoNode", "data": {"videoUrl": "/static/projects/project-a/previz.mp4"}},
+        {
+            "type": "uploadNode",
+            "data": {
+                "videoUrl": "/static/projects/project-a/previz.mp4",
+                "previewImageUrl": "/static/projects/project-a/poster.png",
+            },
+        },
+    ],
+)
+def test_existing_video_resolves_as_external_input(node: dict) -> None:
+    canvas = _canvas()
+    canvas["nodes"].append({"id": "previz-recording", **node})
+    binding = resolve_external_inputs(
+        {"external_inputs": [VIDEO_EXTERNAL]}, canvas, project_id="project-a"
+    )
+    assert binding["camera"]["media_url"] == "/static/projects/project-a/previz.mp4"
+
+
+def test_video_declared_as_image_names_the_right_media_kind() -> None:
+    with pytest.raises(ValueError, match='media_kind "video"'):
+        resolve_external_inputs(
+            {"external_inputs": [{**VIDEO_EXTERNAL, "media_kind": "image"}]},
+            _video_canvas(),
+            project_id="project-a",
+        )
+    with pytest.raises(ValueError, match='media_kind "image"'):
+        resolve_external_inputs(
+            {"external_inputs": [{**EXTERNAL, "media_kind": "video"}]},
+            _canvas(),
+            project_id="project-a",
+        )
+
+
+def test_video_without_persistent_media_fails_closed() -> None:
+    canvas = _video_canvas()
+    canvas["nodes"][-1]["data"]["videoUrl"] = ""
+    with pytest.raises(ValueError, match="no persistent media"):
+        resolve_external_inputs(
+            {"external_inputs": [VIDEO_EXTERNAL]}, canvas, project_id="project-a"
+        )
+
+
+def test_video_external_input_plan_emits_video_url_guard() -> None:
+    from novelvideo.freezone.workflow_plan import validate_workflow_plan
+
+    plan = _video_plan()
+    assert not [
+        error
+        for error in Draft202012Validator(workflow_plan_json_schema()).iter_errors(plan)
+        if "external_inputs" in error.absolute_path
+    ]
+    assert validate_workflow_plan(plan)["ok"] is True
+    graph = build_workflow_graph_commands(
+        {
+            "plan": plan,
+            "external_media_urls": {"camera": "/static/projects/project-a/previz.mp4"},
+        }
+    )
+    assert graph["ok"] is True, graph.get("errors")
+    assert [
+        command for command in graph["commands"] if command["type"] == "create_edge"
+    ] == [
+        {
+            "type": "create_edge",
+            "source": "previz-recording",
+            "target": "shot",
+            "link_type": "media_input_for",
+            "expected_source_video_url": "/static/projects/project-a/previz.mp4",
+        }
+    ]
+
+
+def test_video_external_input_only_feeds_video_nodes() -> None:
+    from novelvideo.freezone.workflow_plan import validate_workflow_plan
+
+    errors = validate_workflow_plan(_video_plan("imageGenNode"))["errors"]
+    assert any(
+        "external video input can only reference a videoNode" in issue["message"]
+        for issue in errors
+    )
+
+
+def test_custom_plan_binding_accepts_external_video() -> None:
+    plan = {
+        "nodes": [{"id": "shot", "node_type": "videoNode", "data": {}}],
+        "external_inputs": [VIDEO_EXTERNAL],
+        "edges": [],
+    }
+    bound = bind_workflow_inputs(
+        plan, [{"source": "camera", "target": "shot", "usage": "reference"}]
+    )
+    assert bound["edges"] == [
+        {"source": "camera", "target": "shot", "link_type": "media_input_for"}
+    ]
+
+
+def test_intent_accepts_external_video_kind() -> None:
+    intent = _intent()
+    intent["external_inputs"] = [{**VIDEO_EXTERNAL, "media_kind": "audio"}]
+    result = catalog.compile_workflow_intent(intent)
+    assert result["ok"] is False
+    assert "media_kind must be image or video" in str(result)
+    assert not list(
+        Draft202012Validator(workflow_intent_json_schema()).iter_errors(
+            {**_intent(), "external_inputs": [VIDEO_EXTERNAL]}
+        )
+    )

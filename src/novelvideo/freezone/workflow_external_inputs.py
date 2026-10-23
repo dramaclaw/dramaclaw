@@ -6,8 +6,22 @@ from typing import Any
 
 from novelvideo.freezone.canvas_media_scope import scan_foreign_media_refs
 
+_IMAGE_NODE_TYPES = {"uploadNode", "imageGenNode", "imageNode", "exportImageNode"}
 
-def resolve_external_image_inputs(
+
+def _node_media_kind(node_type: Any, data: dict[str, Any]) -> str | None:
+    """Media a downstream reference reads from this node (frontend extractUpstreamContent)."""
+    if data.get("media_kind") == "audio":
+        return None
+    has_video = isinstance(data.get("videoUrl"), str) and bool(data["videoUrl"].strip())
+    if node_type == "videoNode" or (node_type == "uploadNode" and has_video):
+        return "video"
+    if node_type in _IMAGE_NODE_TYPES and not has_video and data.get("media_kind") != "video":
+        return "image"
+    return None
+
+
+def resolve_external_inputs(
     plan: dict[str, Any],
     canvas: dict[str, Any] | None,
     *,
@@ -38,35 +52,38 @@ def resolve_external_image_inputs(
     resolved: dict[str, dict[str, Any]] = {}
     for source in declarations:
         alias, node_id = source["id"], source["node_id"]
+        media_kind = source.get("media_kind")
         node = nodes.get(node_id)
-        if node is None or node.get("type") not in {
-            "uploadNode",
-            "imageGenNode",
-            "imageNode",
-            "exportImageNode",
-        }:
-            raise ValueError(f"workflow external image node is unavailable: {node_id}")
+        if node is None:
+            raise ValueError(f"workflow external {media_kind} node is unavailable: {node_id}")
         data = node.get("data") if isinstance(node.get("data"), dict) else {}
-        if (
-            isinstance(data.get("videoUrl"), str) and data["videoUrl"].strip()
-        ) or data.get("media_kind") in {"video", "audio"}:
-            raise ValueError(f"workflow external node is not an image: {node_id}")
-        media_url = data.get("imageUrl") or data.get("previewImageUrl")
-        if not media_url and node.get("type") == "imageGenNode":
-            media_url = data.get("referenceImageUrl")
-        if not media_url and node.get("type") == "uploadNode":
-            media_url = data.get("source_url")
+        actual_kind = _node_media_kind(node.get("type"), data)
+        if actual_kind is None:
+            raise ValueError(f"workflow external node has no image or video: {node_id}")
+        if actual_kind != media_kind:
+            raise ValueError(
+                f"workflow external node {node_id} holds a {actual_kind}, "
+                f"declare it with media_kind \"{actual_kind}\""
+            )
+        if media_kind == "video":
+            media_url = data.get("videoUrl")
+        else:
+            media_url = data.get("imageUrl") or data.get("previewImageUrl")
+            if not media_url and node.get("type") == "imageGenNode":
+                media_url = data.get("referenceImageUrl")
+            if not media_url and node.get("type") == "uploadNode":
+                media_url = data.get("source_url")
         if (
             not isinstance(media_url, str)
             or not media_url.strip()
             or data.get("assetMigration")
         ):
             raise ValueError(
-                f"workflow external image has no persistent media: {node_id}"
+                f"workflow external {media_kind} has no persistent media: {node_id}"
             )
         if scan_foreign_media_refs({"nodes": [node]}, project_id=project_id):
             raise ValueError(
-                f"workflow external image belongs to another project: {node_id}"
+                f"workflow external {media_kind} belongs to another project: {node_id}"
             )
         resolved[alias] = {
             "node_id": node_id,
@@ -78,6 +95,6 @@ def resolve_external_image_inputs(
         }
     if expected is not None and resolved != expected:
         raise ValueError(
-            "workflow external image or canvas changed; prepare a new draft"
+            "workflow external input or canvas changed; prepare a new draft"
         )
     return resolved

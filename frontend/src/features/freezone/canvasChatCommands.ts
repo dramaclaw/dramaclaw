@@ -1,7 +1,6 @@
 import { STORY_CHOICE_EDGE_TYPE } from "@/features/canvas/story/storyTypes";
 import i18next from "i18next";
 import { executeWorkflowHtmlNode } from "@/features/canvas/application/workflowHtmlRuntime";
-import { extractUpstreamContent } from "@/features/canvas/application/graphContentResolver";
 import { type HtmlArtifactCommand, parseHtmlArtifactCommand, executeHtmlArtifactCommand } from '@/features/html-artifacts/commands';
 import { executeHtmlNodeWriteAction } from '@/features/html-artifacts/nodeActions';
 import {
@@ -57,7 +56,10 @@ import {
   normalizeCanvasCommandCreateNodeData,
   normalizeCanvasCommandNodeData,
 } from "@/features/freezone/canvasCommandNodeData";
-import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
+import {
+  validateCanvasChatCommandEnvelopes,
+  workflowExternalSourceMismatch,
+} from "@/features/freezone/context/canvasCommandValidator";
 import {
   normalizeCanvasEdgeSemanticKind,
   type CanvasEdgeSemanticKind,
@@ -145,6 +147,7 @@ export type CanvasChatCommand =
       target: string;
       link_type: CanvasEdgeSemanticKind;
       expected_source_image_url?: string;
+      expected_source_video_url?: string;
     }
   | {
       type: "layout_nodes";
@@ -1033,6 +1036,8 @@ function parseCommand(value: unknown): CanvasChatCommand | null {
           link_type: linkType,
           expected_source_image_url: typeof value.expected_source_image_url === "string"
             ? value.expected_source_image_url : undefined,
+          expected_source_video_url: typeof value.expected_source_video_url === "string"
+            ? value.expected_source_video_url : undefined,
         };
       }
     case "layout_nodes":
@@ -1397,7 +1402,11 @@ function chooseNextNodeType(sourceNode: CanvasNode, requestedType?: CanvasNodeTy
 function connectNodes(
   source: string,
   target: string,
-  options: { link_type?: CanvasEdgeSemanticKind; external_input_image_url?: string } = {},
+  options: {
+    link_type?: CanvasEdgeSemanticKind;
+    external_input_image_url?: string;
+    external_input_video_url?: string;
+  } = {},
 ): string | null {
   if (source === target) throw new Error("connection requires two different nodes");
   const store = useCanvasStore.getState();
@@ -1407,6 +1416,9 @@ function connectNodes(
   }
   if (options.external_input_image_url) {
     data.workflowExternalInputImageUrl = options.external_input_image_url;
+  }
+  if (options.external_input_video_url) {
+    data.workflowExternalInputVideoUrl = options.external_input_video_url;
   }
   if (Object.keys(data).length > 0) {
     return store.addEdgeWithData(source, target, {
@@ -1827,9 +1839,9 @@ function expandWorkflowNodeIds(
   const upstreamByNodeId = new Map<string, string[]>();
   const downstreamByNodeId = new Map<string, string[]>();
   for (const edge of state.edges) {
-    // A Recipe consumes the existing image at this edge. Traversing back into
-    // its source would also reach unrelated branches that share that image.
-    if (!edge.data?.workflowExternalInputImageUrl) {
+    // A Recipe consumes the existing media at this edge. Traversing back into
+    // its source would also reach unrelated branches that share that media.
+    if (!edge.data?.workflowExternalInputImageUrl && !edge.data?.workflowExternalInputVideoUrl) {
       const upstream = upstreamByNodeId.get(edge.target) ?? [];
       upstream.push(edge.source);
       upstreamByNodeId.set(edge.target, upstream);
@@ -1915,7 +1927,7 @@ function isWorkflowUserInputNode(node: CanvasNode | undefined): boolean {
   return ["workflow_input", "user_input", "user_requirement"].includes(stepId);
 }
 
-function workflowExternalImageSourceIds(
+function workflowExternalSourceIds(
   edges: CanvasEdge[],
   scopedNodeIds: Set<string>,
   nodes: CanvasNode[],
@@ -1925,15 +1937,16 @@ function workflowExternalImageSourceIds(
   const externalSources = new Set<string>();
   const ordinarySources = new Set<string>();
   for (const edge of scopedEdges) {
-    const expectedUrl = edge.data?.workflowExternalInputImageUrl;
-    if (typeof expectedUrl !== "string" || !expectedUrl.trim()) {
+    const expected = {
+      imageUrl: edge.data?.workflowExternalInputImageUrl,
+      videoUrl: edge.data?.workflowExternalInputVideoUrl,
+    };
+    if (![expected.imageUrl, expected.videoUrl].some((url) => typeof url === "string" && url.trim())) {
       ordinarySources.add(edge.source);
       continue;
     }
-    const source = nodeById.get(edge.source);
-    if (!source || extractUpstreamContent(source).imageUrl !== expectedUrl) {
-      throw new Error(`workflow source image changed: ${edge.source}`);
-    }
+    const mismatch = workflowExternalSourceMismatch(nodeById.get(edge.source), edge.source, expected);
+    if (mismatch) throw new Error(mismatch);
     externalSources.add(edge.source);
   }
   return new Set([...externalSources].filter((sourceId) => !ordinarySources.has(sourceId)));
@@ -2072,7 +2085,7 @@ function workflowNodeActions(
   const expandedNodeIds = expandWorkflowNodeIds(initialNodeIds, directions);
   const nodeByIdMap = new Map(useCanvasStore.getState().nodes.map((node) => [node.id, node] as const));
   const scopedNodeIds = new Set(expandedNodeIds);
-  const externalImageSourceIds = workflowExternalImageSourceIds(
+  const externalImageSourceIds = workflowExternalSourceIds(
     state.edges, scopedNodeIds, state.nodes,
   );
   const protectedUpstreamNodeIds = satisfiedVideoComposeUpstreamNodeIds(
@@ -2139,7 +2152,7 @@ function directNodeActionQueue(
   const upstreamNodeIds = includeUpstream
     ? expandWorkflowNodeIds([nodeId], ["upstream"])
     : [nodeId];
-  const externalImageSourceIds = workflowExternalImageSourceIds(
+  const externalImageSourceIds = workflowExternalSourceIds(
     state.edges, new Set(upstreamNodeIds), state.nodes,
   );
   const upstreamActions = upstreamNodeIds
@@ -4606,13 +4619,12 @@ function* applyCanvasChatCommandsInternal(
           case "create_edge": {
             const source = resolveNodeId(command.source, clientIdMap);
             const target = resolveNodeId(command.target, clientIdMap);
-            if (command.expected_source_image_url) {
-              const sourceNode = useCanvasStore.getState().nodes.find((node) => node.id === source);
-              if (!sourceNode ||
-                extractUpstreamContent(sourceNode).imageUrl !== command.expected_source_image_url) {
-                throw new Error(`workflow source image changed: ${source}`);
-              }
-            }
+            const sourceMismatch = workflowExternalSourceMismatch(
+              useCanvasStore.getState().nodes.find((node) => node.id === source),
+              source,
+              { imageUrl: command.expected_source_image_url, videoUrl: command.expected_source_video_url },
+            );
+            if (sourceMismatch) throw new Error(sourceMismatch);
             const invalidReason = invalidConnectionReason(source, target);
             if (invalidReason) {
               if (isMissingOrFatalConnectionReason(invalidReason)) throw new Error(invalidReason);
@@ -4629,6 +4641,7 @@ function* applyCanvasChatCommandsInternal(
             const edgeId = connectNodes(source, target, {
               link_type: command.link_type,
               external_input_image_url: command.expected_source_image_url,
+              external_input_video_url: command.expected_source_video_url,
             });
             if (!edgeId) throw new Error(`edge rejected: ${command.source} -> ${command.target}`);
             syncStoryVideoReferencePrompt(target);
