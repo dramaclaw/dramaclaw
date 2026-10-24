@@ -120,10 +120,14 @@ def resolve_source_timing(store, source: dict) -> dict | None:
 
 
 def snapshot_confirmed_dialogue(direction: dict, *, previous: dict | None,
-                                message_content: str | None) -> dict:
+                                message_content: str | None, _amendment: bool = False) -> dict:
     """Check semantic speech against host-owned human input before publication.
 
     Exact membership validates provenance, never classifies speech or captions.
+    When `_amendment=True`, the caller has already authenticated the amendment
+    via `apply_requirement_amendment`; skip the `message_content` provenance
+    check so amended dialogue can update `locked_turns` even though the user's
+    confirmation message doesn't repeat the new dialogue text verbatim.
     """
     direction = dict(direction)
     requirements = normalize_requirements(direction.get('requirements', {}))
@@ -145,33 +149,40 @@ def snapshot_confirmed_dialogue(direction: dict, *, previous: dict | None,
         if isinstance(message_content, str) and len(message_content) > 200_000:
             raise ValueError('confirmed spoken text message exceeds evidence limit')
 
-        # Each state maps an old-snapshot offset to the least current-message
-        # offset consumed so far. A larger message offset at the same old offset
-        # can never permit more future matches, so retain only the smaller one.
-        # This bounds the search to at most 81 states for each of at most 80 turns.
-        # Try BOTH sources: greedily retaining a moved line can consume old
-        # evidence needed by a later unchanged line.
-        states = {0: 0}
-        for turn in turns:
-            next_states: dict[int, int] = {}
-            for prior_offset, message_offset in states.items():
-                retained_index = next((i for i in range(prior_offset, len(prior_turns))
-                                       if prior_turns[i] == turn), None)
-                if retained_index is not None:
-                    next_offset = retained_index + 1
-                    next_states[next_offset] = min(next_states.get(next_offset, message_offset), message_offset)
-                if (isinstance(message_content, str)
-                        and (not turn['speaker'] or turn['speaker'] in message_content)):
-                    index = message_content.find(turn['text'], message_offset)
-                    if index >= 0:
-                        next_offset = index + len(turn['text'])
-                        next_states[prior_offset] = min(next_states.get(prior_offset, next_offset), next_offset)
-            if not next_states:
-                raise ValueError('confirmed spoken text differs from authenticated message')
-            states = next_states
+        # Amendment flow: user confirmed the change via authenticated channel,
+        # so skip the message_content provenance check.
+        if not _amendment:
+            # Each state maps an old-snapshot offset to the least current-message
+            # offset consumed so far. A larger message offset at the same old offset
+            # can never permit more future matches, so retain only the smaller one.
+            # This bounds the search to at most 81 states for each of at most 80 turns.
+            # Try BOTH sources: greedily retaining a moved line can consume old
+            # evidence needed by a later unchanged line.
+            states = {0: 0}
+            for turn in turns:
+                next_states: dict[int, int] = {}
+                for prior_offset, message_offset in states.items():
+                    retained_index = next((i for i in range(prior_offset, len(prior_turns))
+                                           if prior_turns[i] == turn), None)
+                    if retained_index is not None:
+                        next_offset = retained_index + 1
+                        next_states[next_offset] = min(next_states.get(next_offset, message_offset), message_offset)
+                    if (isinstance(message_content, str)
+                            and (not turn['speaker'] or turn['speaker'] in message_content)):
+                        index = message_content.find(turn['text'], message_offset)
+                        if index >= 0:
+                            next_offset = index + len(turn['text'])
+                            next_states[prior_offset] = min(next_states.get(prior_offset, next_offset), next_offset)
+                if not next_states:
+                    raise ValueError('confirmed spoken text differs from authenticated message')
+                states = next_states
         direction['locked_turns'] = [dict(turn) for turn in turns]
-    elif 'dialogue' in requirements:
-        direction.pop('locked_turns', None)
+    elif dialogue.get('mode') == 'preserve_source':
+        # Amendment with preserve_source: if confirmed_turns provided, lock them
+        if _amendment and dialogue.get('confirmed_turns'):
+            direction['locked_turns'] = [dict(turn) for turn in dialogue['confirmed_turns']]
+        else:
+            direction.pop('locked_turns', None)
     if 'requirements' in direction:
         direction['requirements'] = requirements
     return direction
@@ -287,13 +298,20 @@ def resolve_production_requirements(store, *, commission: dict,
     result: dict = {'requirements': requirements, 'requirements_provenance': provenance}
     dialogue = requirements.get('dialogue', {})
     if dialogue.get('mode') == 'preserve_source':
+        # Always fetch transcript for provenance
         turns, transcript_ref = source_dialogue(store, provenance['analysis_ref'])
-        requested = dialogue.get('source_turn_ids', [t['id'] for t in turns])
-        if len(set(requested)) != len(requested) or any(i not in {t['id'] for t in turns} for i in requested):
-            raise ValueError('source_turn_ids must name actual turns in this bound analysis transcript')
-        requirements['dialogue']['source_turn_ids'] = requested
-        result['locked_turns'] = [{k: t[k] for k in ('speaker', 'text')} for t in turns if t['id'] in requested]
         provenance['transcript_ref'] = transcript_ref
+        # Amendment flow may have updated `locked_turns` in the direction record.
+        # Use it when present instead of always re-parsing from original transcript.
+        locked = current['direction'].get('locked_turns')
+        if locked:
+            result['locked_turns'] = [dict(turn) for turn in locked]
+        else:
+            requested = dialogue.get('source_turn_ids', [t['id'] for t in turns])
+            if len(set(requested)) != len(requested) or any(i not in {t['id'] for t in turns} for i in requested):
+                raise ValueError('source_turn_ids must name actual turns in this bound analysis transcript')
+            requirements['dialogue']['source_turn_ids'] = requested
+            result['locked_turns'] = [{k: t[k] for k in ('speaker', 'text')} for t in turns if t['id'] in requested]
     elif dialogue.get('mode') == 'use_confirmed_text':
         turns = current['direction'].get('locked_turns')
         if dialogue.get('confirmed_turns') is not None and turns != dialogue['confirmed_turns']:

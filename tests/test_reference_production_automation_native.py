@@ -364,6 +364,44 @@ def test_pending_candidate_check_does_not_hold_independent_source(tmp_path,monke
     assert result is packets['second']
 
 
+def test_unresolved_provider_claim_is_not_dispatched_again(tmp_path,monkeypatch):
+    import hashlib
+    from test_reference_remix_continuation import write_canvas
+    from novelvideo.freezone.remix.store import RemixArtifactStore
+    from novelvideo.freezone.remix.reference_commission import create_reference_commission
+    from novelvideo.freezone.remix import source_speech
+    from novelvideo.freezone import canvas_store
+    ctx=context(tmp_path)
+    write_canvas(ctx)
+    artifacts=RemixArtifactStore(ctx.output_dir,ctx.project_id,created_by=ctx.requester_user_id)
+    commission=create_reference_commission(artifacts,canvas_id='canvas',requester_user_id='actor',analysis_node_id='analysis',goal='g',analysis_evidence={'task_id':'t','result_fingerprint':'h'})
+    control.enroll_production_automation(ctx,canvas_id='canvas',commission_ref=commission['commission_ref'],command_id='human')
+    canvas=canvas_store.read_canvas(ctx.state_dir,'canvas')
+    scope=source_speech.candidate_scope(ctx,canvas,'canvas')
+    packets={}
+    for identity in ['stuck','fresh']:
+        media=ctx.output_dir/(identity+'.wav');media.write_bytes(identity.encode())
+        resource=dict(media_path=media.name,media_hash=hashlib.sha256(media.read_bytes()).hexdigest(),duration_us=1000,has_audio=True,node_id=identity,media_kind='audio')
+        payload=dict(scope=scope,resource=resource,language='auto',provider_signature='test',step_id=identity,work_ref={'artifact_id':'work','revision':1})
+        packets[identity]={'task_payload':payload,'normalized_parameters':{'action':'analyze_material_speech','payload':payload}}
+    stuck=packets['stuck']['task_payload']
+    key=source_speech.source_speech_key(scope=stuck['scope'],media_hash=stuck['resource']['media_hash'],
+        stream_index=0,language=stuck['language'],provider_signature=stuck['provider_signature'])
+    speech_store=RemixArtifactStore(ctx.output_dir,ctx.project_id)
+    with pytest.raises(TimeoutError):
+        source_speech.observe_source_speech(speech_store,scope=stuck['scope'],resource=stuck['resource'],
+            language=stuck['language'],provider_signature=stuck['provider_signature'],
+            aligner=type('Engine',(),{'transcribe':lambda *_: (_ for _ in ()).throw(TimeoutError('unknown'))})())
+    assert source_speech.unresolved_source_speech_claim(speech_store,key)=='unknown'
+    work={'id':'work','revision':1,'payload':{'steps':[dict(id=x,node_id=x,media_kind='audio',status='candidate') for x in packets],
+        'requirements':[{'final_step_id':x,'turn_ids':[x+'-turn']} for x in packets]}}
+    monkeypatch.setattr(RemixArtifactStore,'read_latest',lambda *a:work)
+    monkeypatch.setattr(source_speech,'prepare_material_speech',lambda *a,**kw:packets[kw['step_id']])
+    result=control._prepare_next_candidate_check(ctx,{'canvas_id':'canvas','agent_id':'main','commission_ref':commission['commission_ref']},
+        {'phase':'preparing_materials','plan_ref':{'artifact_id':'plan','revision':1},'work_ref':{'artifact_id':'work','revision':1},'blockers':[]})
+    assert result is packets['fresh']
+
+
 def test_background_music_without_declared_dialogue_never_prepares_asr(tmp_path,monkeypatch):
     from test_reference_remix_continuation import write_canvas
     from novelvideo.freezone.remix.store import RemixArtifactStore

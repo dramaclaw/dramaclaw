@@ -44,6 +44,50 @@ def _observation(event, evidence):
     return {'event':event,'event_key':'production:' + digest}
 
 
+def _record_advancement_failure(run: dict, exc: Exception) -> None:
+    failed_runs = _observation_failures.get()
+    if failed_runs is not None:
+        failed_runs.add(id(run))
+    log_reference_runtime_failure(component='reference_production_observer',
+        scope=run, stage='automatic_advancement', error=exc,
+        refs={'commission_ref': run.get('commission_ref')})
+
+
+def _transient_advancement_error(exc: Exception) -> bool:
+    """Lock contention and timeouts clear on their own; deterministic errors do not."""
+    from novelvideo.freezone.canvas_lock import CanvasLockBusy
+    if isinstance(exc, (CanvasLockBusy, TimeoutError)):
+        return True
+    return type(exc).__name__ in {'OperationalError', 'DatabaseBusy'}
+
+
+def _advancement_failure_observation(run: dict, exc: Exception,
+                                     previous: dict | None = None) -> dict:
+    """Stable wake receipt for a failed automatic action.
+
+    A previously delivered stage-ready notice must not hide a later
+    acceptance/binding failure, and a failure without any stage event must
+    still wake the Agent: silently retrying the same action leaves production
+    stalled with no one to correct it. Identity is the error plus the saved
+    stage, so one failure wakes once instead of every poll.
+    """
+    previous = previous or {}
+    cause = ' '.join(str(exc).split())[:240]
+    evidence = {
+        'observation': previous.get('event_key') or 'automatic_advancement',
+        'stage_event': (previous.get('event') or {}).get('type'),
+        'phase': run.get('commission_phase'),
+        'automatic_advancement_failure': type(exc).__name__,
+        'cause': cause,
+    }
+    observed = _observation(None, {'commission': run.get('commission_ref'), **evidence})
+    observed['evidence'] = evidence
+    observed['notice'] = (previous.get('notice', '')
+        + ' 自动推进未完成，当前素材与确认记录已保留；请检查工作包后继续。'
+        + (f' 原因：{cause}。' if cause else ''))
+    return observed
+
+
 def _plan_presentation_retry_event(run: dict, decision_ref: dict,
                                    *, presented: bool) -> dict | None:
     if presented or run.get('status') not in {*WAITING_PHASES, 'resume_failed'}:
@@ -683,7 +727,12 @@ class ReferenceProductionObserver:
         if not getattr(ctx, 'requester_username', None):
             return
         from novelvideo.freezone.remix.conversation_cards import publish_conversation_cards
+        from novelvideo.freezone.remix.director_notifications import broadcast_director_update
         await publish_conversation_cards(ctx, canvas_id=run['canvas_id'], runs=[run])
+        # An automatic acceptance changes the work package without a new card.
+        # Direct readers of /production-state only refresh on this event.
+        await broadcast_director_update(ctx, canvas_id=run['canvas_id'],
+            agent_ids=[run.get('agent_id')])
 
     async def observe_run(self, run: dict[str, Any], *, batch=None) -> bool:
         batch = batch if batch is not None else _observation_batch.get()
@@ -846,9 +895,14 @@ class ReferenceProductionObserver:
             observed = await asyncio.to_thread(_native_delivery_failure_observation,
                 ctx, canvas, commission)
         if control and control['active']:
-            if await self._advance_automation(ctx, run, observed):
+            advanced, failure = await self._advance_automation(ctx, run, observed)
+            if advanced:
                 await self._publish_cards(ctx, run)
                 return True
+            if failure is not None:
+                observed = failure
+                if observed['event_key'] in run.get('commission_event_receipts', []):
+                    return False
         from novelvideo.chat.reference_remix_continuation import native_submission_blocks
         native_active = any((task.get('status') if isinstance(task, dict) else getattr(task, 'status', None))
                             in {'submitting', 'queued', 'running'}
@@ -912,31 +966,23 @@ class ReferenceProductionObserver:
         return True
 
     async def _advance_automation(self, ctx, run, observed):
-        """An optional next action must not swallow an already verified notice."""
+        """Run at most one native action; return (advanced, failure receipt).
+
+        Transient locking keeps retrying silently. A deterministic failure with
+        no stage event becomes a wake receipt, because the same action would
+        otherwise be retried unchanged forever and no Agent would correct it.
+        """
         from novelvideo.freezone.remix.production_automation import advance_enrolled_production
         try:
             runs = await asyncio.to_thread(self.coordinator.store.list_for_actor,
                 ctx, run['canvas_id'], run.get('agent_id', 'main'))
-            return await advance_enrolled_production(ctx, run, runs=runs)
+            return bool(await advance_enrolled_production(ctx, run, runs=runs)), None
         except Exception as exc:
-            if not observed:
+            if not observed and _transient_advancement_error(exc):
+                _record_advancement_failure(run, exc)
                 raise
-            failed_runs = _observation_failures.get()
-            if failed_runs is not None:
-                failed_runs.add(id(run))
-            log_reference_runtime_failure(component='reference_production_observer',
-                scope=run, stage='automatic_advancement', error=exc,
-                refs={'commission_ref': run.get('commission_ref')})
-            # A previously delivered stage-ready notice must not hide a later
-            # acceptance/binding failure. This distinct, stable failure receipt
-            # wakes once, even if the original stage receipt is already consumed.
-            observed.update(_observation(observed.get('event'), {
-                'observation': observed['event_key'],
-                'automatic_advancement_failure': type(exc).__name__,
-            }))
-            observed['notice'] = (observed.get('notice', '')
-                + ' 自动推进未完成，当前素材与确认记录已保留；请检查工作包后继续。')
-            return False
+            _record_advancement_failure(run, exc)
+            return False, _advancement_failure_observation(run, exc, observed)
 
     def _advance_observed(self, ctx, run, store, commission, event, control):
         from novelvideo.freezone import canvas_store
@@ -1103,9 +1149,12 @@ class ReferenceProductionObserver:
                     continue
                 observed = await asyncio.to_thread(production_event,store,canvas,child,tasks,workflow_state_dir=ctx.state_dir, check_scheduler=check_scheduler, consumed_event_keys=consumed_plan_events)
                 if child_control and child_control['active']:
-                    if await self._advance_automation(ctx, child_run, observed):
+                    child_advanced, child_failure = await self._advance_automation(ctx, child_run, observed)
+                    if child_advanced:
                         advanced = True
                         observed = None  # The preceding observation is now superseded.
+                    elif child_failure is not None:
+                        observed = child_failure
                 if observed and observed['event']:
                     await asyncio.to_thread(self.coordinator._assert_current,ctx,run,completed=True)
                     child = await asyncio.to_thread(self._advance_observed, ctx, child_run if child_control else run,

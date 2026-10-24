@@ -150,6 +150,78 @@ def test_one_reviewed_final_source_can_complete_several_distinct_saved_placement
     assert {row['resource_id'] for row in targets} == {resource['id']}
 
 
+def test_graphic_targets_are_not_bound_and_do_not_block_completion(tmp_path):
+    """Authored graphic layers carry no media; binding them fails every retry."""
+    from novelvideo.freezone.remix.material_execution import review_material_candidate, confirm_material_review
+    from novelvideo.freezone.remix.material_work import bind_accepted_materials
+
+    store = RemixArtifactStore(tmp_path, 'project', created_by='alice')
+    payload = plan_payload()
+    picture = payload['placements'][0]
+    payload['placements'].append({**picture, 'id': 'card', 'kind': 'graphic', 'role': 'effect',
+                                  'track_id': 'graphics',
+                                  'graphic': {'template': 'question_card', 'text': '为什么？'}})
+    saved = store.create('production_plan.v2', payload, [])
+    plan_ref = {'artifact_id': saved['id'], 'revision': saved['revision']}
+    work = prepare_material_work(store, plan_ref,
+        [{'id': 'final', 'placement_ids': ['picture', 'card'], 'description': 'Opening shot',
+          'media_kind': 'image', 'final_step_id': 'image'}],
+        [{'id': 'image', 'label': 'Opening shot', 'source': 'existing',
+          'node_id': 'n', 'media_kind': 'image'}], 'graphic-target')
+    Image.new('RGB', (16, 12), 'red').save(tmp_path / 'picture.png')
+    canvas = {'nodes': [{'id': 'n', 'data': {'imageUrl': '/static/projects/project/picture.png'}}]}
+    review = review_material_candidate(store, work['work_ref'], 'image', canvas, 'n')
+    confirmed = confirm_material_review(store, review['review_ref'], canvas,
+                                        canvas_id='canvas', requester_user_id='alice')
+    accepted = accept_material_candidate(store, work['work_ref'], 'image',
+        confirmed['review']['resource'], confirmed['review_ref'], 'accept-graphic-target')
+    assert accepted['binding_candidates'][0]['placement_ids'] == ['picture']
+
+    result = bind_accepted_materials(store, accepted['work_ref'], plan_ref, 'bind-graphic-target')
+    plan = store.read(result['plan_ref']['artifact_id'], result['plan_ref']['revision'])
+    current = store.read_latest(result['work_ref']['artifact_id'])
+    assert 'card' not in {row['id'] for row in plan['payload']['placements'] if row.get('resource_id')}
+    validate_material_completion(store, current, plan['payload'])
+
+
+def test_intermediate_reference_without_final_target_completes_without_a_plan_resource(tmp_path):
+    """One shared identity image feeds several shots; no placement owns it."""
+    from novelvideo.freezone.remix.material_execution import review_material_candidate, confirm_material_review
+    from novelvideo.freezone.remix.material_work import bind_accepted_materials
+
+    store, plan_ref, _ = _plan(tmp_path)
+    work = prepare_material_work(store, plan_ref,
+        [{'id': 'identity', 'placement_ids': [], 'description': 'Shared identity reference',
+          'media_kind': 'image', 'final_step_id': 'reference'},
+         {'id': 'opening', 'placement_ids': ['picture'], 'description': 'Opening shot',
+          'media_kind': 'image', 'final_step_id': 'opening'}],
+        [{'id': 'reference', 'label': 'Shared identity', 'source': 'existing',
+          'node_id': 'n', 'media_kind': 'image'},
+         {'id': 'opening', 'label': 'Opening shot', 'source': 'existing',
+          'node_id': 'shot', 'media_kind': 'image',
+          'references': [{'step_id': 'reference', 'role': 'identity'}]}], 'shared-identity')
+    Image.new('RGB', (16, 12), 'red').save(tmp_path / 'picture.png')
+    canvas = {'nodes': [{'id': node, 'data': {'imageUrl': '/static/projects/project/picture.png'}}
+                        for node in ('n', 'shot')]}
+
+    def accept_step(ref, step_id, command_id):
+        review = review_material_candidate(store, ref, step_id, canvas, 'n' if step_id == 'reference' else 'shot')
+        confirmed = confirm_material_review(store, review['review_ref'], canvas,
+                                            canvas_id='canvas', requester_user_id='alice')
+        return accept_material_candidate(store, ref, step_id, confirmed['review']['resource'],
+                                          confirmed['review_ref'], command_id)
+
+    accepted = accept_step(work['work_ref'], 'reference', 'accept-identity')
+    assert accepted['binding_candidates'][0]['placement_ids'] == []
+    final = accept_step(accepted['work_ref'], 'opening', 'accept-opening')
+    bound = bind_accepted_materials(store, final['work_ref'], plan_ref, 'bind-shared-identity')
+    current_plan = store.read(bound['plan_ref']['artifact_id'], bound['plan_ref']['revision'])
+    current_work = store.read(bound['work_ref']['artifact_id'], bound['work_ref']['revision'])
+    identity = next(step for step in current_work['payload']['steps'] if step['id'] == 'reference')
+    assert identity['accepted_resource']['id'] not in {row['id'] for row in current_plan['payload']['resources']}
+    validate_material_completion(store, current_work, current_plan['payload'])
+
+
 def test_advisory_content_binds_into_plan_without_browser_confirmation(tmp_path):
     from novelvideo.freezone.remix.material_execution import review_material_candidate
     from novelvideo.freezone.remix.material_work import bind_accepted_materials

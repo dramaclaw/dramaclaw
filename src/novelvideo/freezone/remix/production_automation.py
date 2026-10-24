@@ -343,7 +343,8 @@ def _read_automation_state(ctx, run, runs):
 
 def _prepare_next_candidate_check(ctx, run, state):
     """Inspect available current speech candidates before their human review."""
-    from .source_speech import prepare_material_speech, source_speech_key, read_source_speech_observation
+    from .source_speech import (prepare_material_speech, source_speech_key,
+        read_source_speech_observation, unresolved_source_speech_claim)
     if not state.get('plan_ref') or not state.get('work_ref') or state.get('phase') not in {'preparing_materials', 'aligning_speech'}:
         return None
     if state.get('plan_review_valid') is False or any(b.get('kind') in {'plan_edit_conflict', 'review_production_plan', 'selected_work_unavailable'} for b in state.get('blockers', [])):
@@ -378,6 +379,8 @@ def _prepare_next_candidate_check(ctx, run, state):
                     continue
                 except FileNotFoundError:
                     pass
+                if unresolved_source_speech_claim(store, key):
+                    continue  # The provider outcome is still unclaimed; retrying would only fail again.
                 guard.reassert()
                 return prepared
             except (ValueError, FileNotFoundError):

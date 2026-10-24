@@ -109,6 +109,31 @@ def test_timeout_is_durable_and_never_repeats_unknown_provider(tmp_path):
     assert len(calls) == 1
 
 
+def test_unresolved_claim_is_visible_until_a_result_is_saved(tmp_path):
+    from novelvideo.freezone.remix.source_speech import (observe_source_speech, source_speech_key,
+        unresolved_source_speech_claim)
+    from novelvideo.freezone.remix.store import RemixArtifactStore
+    media = resource(tmp_path)
+    store = RemixArtifactStore(tmp_path, 'project')
+    class Engine:
+        def transcribe(self, path, language):
+            return {'status': 'completed', 'transcript': 'one', 'words': [
+                {'text': 'one', 'start': 0, 'end': 4.1}]}
+    key = source_speech_key(scope=SCOPE, media_hash=media['media_hash'], stream_index=0,
+                            language='en', provider_signature='p')
+    assert unresolved_source_speech_claim(store, key) is None
+    with pytest.raises(TimeoutError):
+        observe_source_speech(store, scope=SCOPE, resource=media, language='en',
+                              provider_signature='p', aligner=type('E', (), {
+                                  'transcribe': lambda *_: (_ for _ in ()).throw(TimeoutError('unknown'))})())
+    assert unresolved_source_speech_claim(store, key) == 'unknown'
+    observe_source_speech(store, scope=SCOPE, resource=media, language='en',
+                          provider_signature='p2', aligner=Engine())
+    resolved = source_speech_key(scope=SCOPE, media_hash=media['media_hash'], stream_index=0,
+                                 language='en', provider_signature='p2')
+    assert unresolved_source_speech_claim(store, resolved) is None
+
+
 def test_segment_recognition_has_no_fabricated_word_times(tmp_path):
     from novelvideo.freezone.remix.source_speech import observe_source_speech
     from novelvideo.freezone.remix.store import RemixArtifactStore

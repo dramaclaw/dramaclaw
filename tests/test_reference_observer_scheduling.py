@@ -715,6 +715,25 @@ async def test_partial_branch_material_revision_does_not_wake_again(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_automatic_acceptance_wakes_direct_production_readers(monkeypatch):
+    from novelvideo.chat import reference_production_observer as module
+    from novelvideo.freezone.remix import director_notifications
+    published = []
+    async def publish(*args, **kwargs):
+        published.append((args, kwargs))
+    async def broadcast(ctx, *, canvas_id, agent_ids, canvas_changed=False):
+        published.append(('director', canvas_id, list(agent_ids), canvas_changed))
+    monkeypatch.setattr('novelvideo.freezone.remix.conversation_cards.publish_conversation_cards', publish)
+    monkeypatch.setattr(director_notifications, 'broadcast_director_update', broadcast)
+    observer = ReferenceProductionObserver(SimpleNamespace())
+    ctx = SimpleNamespace(requester_username='local', project_id='project')
+    await observer._publish_cards(ctx, {'run_id': 'run', 'canvas_id': 'canvas', 'agent_id': 'main'})
+    director = published[-1]
+    assert director[0] == 'director' and director[1] == 'canvas' and director[2] == ['main']
+    assert director[3] is False
+
+
+@pytest.mark.asyncio
 async def test_verified_observation_survives_automatic_advancement_error(monkeypatch):
     from novelvideo.freezone.remix import production_automation
     async def unavailable(*_args, **_kwargs):
@@ -725,14 +744,46 @@ async def test_verified_observation_survives_automatic_advancement_error(monkeyp
     run = {'run_id': 'run', 'canvas_id': 'canvas',
            'commission_ref': {'artifact_id': 'commission', 'revision': 1}}
     observed = {'event_key': 'verified', 'event': None}
-    assert await observer._advance_automation(None, run, observed) is False
-    assert observed['event_key'] != 'verified'
-    assert '自动推进未完成' in observed['notice']
+    advanced, failure = await observer._advance_automation(None, run, observed)
+    assert advanced is False and failure is not None
+    assert failure['event_key'] != 'verified'
+    assert '自动推进未完成' in failure['notice']
     retry = {'event_key': 'verified', 'event': None}
-    assert await observer._advance_automation(None, run, retry) is False
-    assert retry['event_key'] == observed['event_key']
-    with pytest.raises(RuntimeError, match='advancement unavailable'):
-        await observer._advance_automation(None, run, None)
+    assert (await observer._advance_automation(None, run, retry))[1]['event_key'] == failure['event_key']
+
+
+@pytest.mark.asyncio
+async def test_deterministic_advancement_failure_without_event_wakes_agent(monkeypatch):
+    """A stalled system action must name its cause instead of retrying silently."""
+    from novelvideo.freezone.remix import production_automation
+    async def rejected(*_args, **_kwargs):
+        raise ValueError('this placement cannot bind media')
+    monkeypatch.setattr(production_automation, 'advance_enrolled_production', rejected)
+    observer = ReferenceProductionObserver(SimpleNamespace(
+        store=SimpleNamespace(list_for_actor=lambda *_args: [])))
+    run = {'run_id': 'run', 'canvas_id': 'canvas', 'commission_phase': 'preparing_materials',
+           'commission_ref': {'artifact_id': 'commission', 'revision': 6}}
+    advanced, failure = await observer._advance_automation(None, run, None)
+    assert advanced is False
+    assert failure['evidence']['automatic_advancement_failure'] == 'ValueError'
+    assert 'this placement cannot bind media' in failure['notice']
+    assert failure['notice'].endswith('原因：this placement cannot bind media。')
+    again = (await observer._advance_automation(None, run, None))[1]
+    assert again['event_key'] == failure['event_key']
+
+
+@pytest.mark.asyncio
+async def test_transient_advancement_lock_error_still_raises_for_retry(monkeypatch):
+    from novelvideo.freezone.remix import production_automation
+    from novelvideo.freezone.canvas_lock import CanvasLockBusy
+    async def busy(*_args, **_kwargs):
+        raise CanvasLockBusy('canvas')
+    monkeypatch.setattr(production_automation, 'advance_enrolled_production', busy)
+    observer = ReferenceProductionObserver(SimpleNamespace(
+        store=SimpleNamespace(list_for_actor=lambda *_args: [])))
+    with pytest.raises(CanvasLockBusy):
+        await observer._advance_automation(None, {'run_id': 'run', 'canvas_id': 'canvas',
+                                                  'commission_ref': {'artifact_id': 'c'}}, None)
 
 
 def test_observer_does_not_adopt_unique_unselected_work(tmp_path):

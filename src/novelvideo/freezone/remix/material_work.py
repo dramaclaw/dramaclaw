@@ -22,6 +22,32 @@ def material_content_blocks(review: dict[str, Any]) -> bool:
     return (review.get("content") or {}).get("status") == "rejected"
 
 
+_BINDABLE_PLACEMENT_KINDS = frozenset({"visual", "audio"})
+
+
+def bindable_placement_ids(plan: dict[str, Any], requirement: dict[str, Any]) -> list[str]:
+    """Placements a material step can own: media layers only.
+
+    Subtitle and graphic placements are drawn from authored text. ``bind_media``
+    refuses them, so a plan listing them as final targets would otherwise fail
+    every automatic binding retry forever.
+    """
+    placements = {row.get("id"): row for row in plan.get("placements", [])}
+    return [placement_id for placement_id in requirement.get("placement_ids", [])
+            if (placements.get(placement_id) or {}).get("kind") in _BINDABLE_PLACEMENT_KINDS]
+
+
+def binds_final_media(plan: dict[str, Any], requirement: dict[str, Any]) -> bool:
+    """Whether this requirement hands its media to a placement or take.
+
+    A requirement with neither final target is an intermediate reference, such
+    as one shared identity image feeding several shots. Its step is still
+    accepted and reviewed on its own, but no plan resource carries it, so
+    completion must not require it to be registered in the plan.
+    """
+    return bool(bindable_placement_ids(plan, requirement) or requirement.get("take_ids"))
+
+
 class _Value(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -281,7 +307,9 @@ def validate_material_completion(store, work: dict, plan: dict) -> None:
     for requirement in work['payload']['requirements']:
         step = steps[requirement['final_step_id']]
         resource = step.get('accepted_resource')
-        if step['status'] != 'accepted' or not resource or resources.get(resource['id']) != resource:
+        if step['status'] != 'accepted' or not resource:
+            raise ValueError('material acceptance was invalidated or is not bound')
+        if binds_final_media(plan, requirement) and resources.get(resource['id']) != resource:
             raise ValueError('material acceptance was invalidated or is not bound')
         review_ref = step.get('review_ref') or {}
         review = store._read(review_ref.get('artifact_id', ''), review_ref.get('revision', 0))
@@ -301,9 +329,11 @@ def validate_material_completion(store, work: dict, plan: dict) -> None:
         evidence = review['payload']
         if review['schema'] != 'material_review.v1' or evidence['technical']['status'] != 'passed' or material_content_blocks(evidence) or evidence['resource'] != resource or evidence['step_id'] != step['id'] or evidence['work_ref']['artifact_id'] != work['id']:
             raise ValueError('material acceptance requires its actual passed review')
-        for field, entities in (('placement_ids', placements), ('take_ids', takes)):
-            if any(entities.get(identity, {}).get('resource_id') != resource['id'] for identity in requirement.get(field, [])):
-                raise ValueError('material final binding differs from current plan')
+        if any(placements[placement_id].get('resource_id') != resource['id']
+               for placement_id in bindable_placement_ids(plan, requirement)):
+            raise ValueError('material final binding differs from current plan')
+        if any(takes.get(take_id, {}).get('resource_id') != resource['id'] for take_id in requirement.get('take_ids', [])):
+            raise ValueError('material final binding differs from current plan')
 
 
 def _confirmed_visual_choices(direction: dict | None) -> set[str]:
@@ -1068,6 +1098,10 @@ class _IndependentMaterialReviewContinuity:
             self._validated_work.add(revision)
         return saved
 
+    def _plan(self, work):
+        plan_ref = work['plan_ref']
+        return self._read(plan_ref['artifact_id'], plan_ref['revision'])['payload']
+
     def _review(self, review, step_id, resource, previous_revision):
         from .material_review import validate_material_review_lineage
         payload = review['payload']
@@ -1119,9 +1153,10 @@ class _IndependentMaterialReviewContinuity:
         target.update(status='accepted', accepted_resource=request['resource'], review_ref=ref,
                       node_id=request['resource']['node_id'])
         target['candidates'].append({'command_id': receipt['command_id'], 'resource': request['resource'], 'review_ref': ref})
+        plan = self._plan(old)
         result = {'work_ref': {'artifact_id': self.current['id'], 'revision': revision},
                   'ready_step_ids': ready_material_steps(expected),
-                  'binding_candidates': [{'placement_ids': r['placement_ids'], 'take_ids': r['take_ids'],
+                  'binding_candidates': [{'placement_ids': bindable_placement_ids(plan, r), 'take_ids': r['take_ids'],
                                           'resource': request['resource']}
                                          for r in expected['requirements'] if r['final_step_id'] == step['id']]}
         expected['command_receipts'].append({'command_id': receipt['command_id'], 'request': request, 'result': result})
@@ -1389,7 +1424,7 @@ def prepare_material_acceptance(store, work_ref: dict, step_id: str, resource: d
     step["candidates"].append({"command_id": command_id, "resource": resource, "review_ref": review_ref})
     result = {"work_ref": {"artifact_id": current["id"], "revision": current["revision"] + 1},
               "ready_step_ids": ready_material_steps(work),
-              "binding_candidates": [{"placement_ids": r["placement_ids"], "take_ids": r["take_ids"], "resource": resource}
+              "binding_candidates": [{"placement_ids": bindable_placement_ids(plan["payload"], r), "take_ids": r["take_ids"], "resource": resource}
                                      for r in work["requirements"] if r["final_step_id"] == step_id]}
     work.setdefault("command_receipts", []).append({"command_id": command_id, "request": request, "result": result})
     validated = MaterialWorkPackageV1.model_validate(work).model_dump(mode="json", exclude_none=True)
@@ -1669,7 +1704,7 @@ def material_binding_commands(store, work: dict, plan: dict) -> list[dict]:
             raise ValueError('final material review is no longer current and passed')
         from .material_review import validate_material_review_lineage
         validate_material_review_lineage(store, review['payload'], review['upstream_refs'])
-        target_ids = list(requirement['placement_ids'])
+        target_ids = bindable_placement_ids(plan, requirement)
         for take_id in requirement['take_ids']:
             take = takes.get(take_id)
             if not take or not take.get('origin_placement_id'):

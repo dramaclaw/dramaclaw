@@ -248,14 +248,18 @@ def advance_reference_commission(store: RemixArtifactStore, commission_ref: dict
             resolve_direction_review_contract(direction)
             if 'requirements' in direction:
                 from .production_requirements import snapshot_confirmed_dialogue
+                # Amendment flow: user confirmed via authenticated channel, skip message_content check
                 direction = snapshot_confirmed_dialogue(direction, previous=payload.get('direction'),
-                    message_content=host_evidence.message_content)
+                    message_content=host_evidence.message_content, _amendment=_amended_plan_ref is not None)
             if _amended_plan_ref is not None and _amended_plan_ref != payload.get('plan_ref'):
                 raise ValueError('amendment must preserve the already bound plan')
             kept_plan = _amended_plan_ref or (payload['plan_ref'] if payload.get('parent_commission_ref') else None)
-            payload.update(direction=direction, direction_revision=payload['direction_revision'] + 1, plan_ref=kept_plan, review_ref=None, work_ref=None, manifest_ref=None, output_review_ref=None, plan_branches=[], direction_fingerprint=hashlib.sha256(json.dumps(direction, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest(), phase='drafting_plan')
+            # Amendment flow: preserve review and work refs so the production can
+            # continue without losing the already-approved plan review.
             if _amended_plan_ref is not None:
-                payload['phase'] = 'awaiting_plan_review'
+                payload.update(direction=direction, direction_revision=payload['direction_revision'] + 1, plan_ref=kept_plan, manifest_ref=None, output_review_ref=None, plan_branches=[], direction_fingerprint=hashlib.sha256(json.dumps(direction, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest(), phase='awaiting_plan_review')
+            else:
+                payload.update(direction=direction, direction_revision=payload['direction_revision'] + 1, plan_ref=kept_plan, review_ref=None, work_ref=None, manifest_ref=None, output_review_ref=None, plan_branches=[], direction_fingerprint=hashlib.sha256(json.dumps(direction, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest(), phase='drafting_plan')
             receipt.update(direction=direction, direction_revision=payload['direction_revision'])
         elif kind == 'plan_confirmed':
             if payload['phase'] != 'awaiting_plan_confirmation' or event.get('plan_ref') != payload['plan_ref']:
@@ -402,11 +406,17 @@ def advance_reference_commission(store: RemixArtifactStore, commission_ref: dict
             for requirement in work['payload']['requirements']:
                 step = steps[requirement['final_step_id']]
                 resource = step.get('accepted_resource')
-                if step['status'] != 'accepted' or not resource or resources.get(resource['id']) != resource:
+                if step['status'] != 'accepted' or not resource:
                     raise ValueError('final material has not been accepted and bound')
-                for field, bindings in (('placement_ids', placements), ('take_ids', takes)):
-                    if any(bindings.get(identity, {}).get('resource_id') != resource['id'] for identity in requirement.get(field, [])):
-                        raise ValueError('final material binding differs from plan')
+                from .material_work import bindable_placement_ids, binds_final_media
+                if binds_final_media(plan['payload'], requirement) and resources.get(resource['id']) != resource:
+                    raise ValueError('final material has not been accepted and bound')
+                if any(placements[placement_id].get('resource_id') != resource['id']
+                       for placement_id in bindable_placement_ids(plan['payload'], requirement)):
+                    raise ValueError('final material binding differs from plan')
+                if any(takes.get(take_id, {}).get('resource_id') != resource['id']
+                       for take_id in requirement.get('take_ids', [])):
+                    raise ValueError('final material binding differs from plan')
             payload.update(work_ref=ref, plan_ref=accepted_ref, phase='aligning_speech')
         elif kind == 'speech_aligned':
             if payload['phase'] not in {'aligning_speech', 'preparing_materials'} or event.get('plan_ref') != accepted_ref:

@@ -187,6 +187,23 @@ def _connection(store):
     return connection
 
 
+def unresolved_source_speech_claim(store, source_key: str) -> str | None:
+    """Return the durable claim status when no provider result is saved yet.
+
+    Automation reads this before preparing another paid recognition. An operator
+    still resubmits explicitly; only the automatic checker defers.
+    """
+    conn = _connection(store)
+    try:
+        row = conn.execute('SELECT status, result_json, artifact_ref FROM observations WHERE source_key=?',
+                           (source_key,)).fetchone()
+    finally:
+        conn.close()
+    if not row or row[1] or row[2]:
+        return None
+    return row[0]
+
+
 def observe_source_speech(store, *, scope: dict, resource: dict, language: str,
                           provider_signature: str, aligner=None) -> dict:
     from novelvideo.freezone.canvas_lock import CanvasLockBusy

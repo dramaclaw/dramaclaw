@@ -456,13 +456,17 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       setIsUploading(true);
       try {
         const result = await uploadFreezoneImage(projectId, file, file.name);
-        // 参考图在显示优先级里排最后（previewImageUrl → imageUrl → referenceImageUrl），
-        // 只有节点还没有生成结果时它才会顶到主体上——这时旧的失败横幅盖的是新图，得清掉。
-        // 已经有生成图时主体不变，失败信息仍然对得上那张图，保留；等用户真正重新提交，
-        // handleSubmit 自己会清。
-        mutateGenerationRequest({
-          referenceImageUrl: result.url,
-          ...(hasGeneratedResult ? {} : GENERATION_ERROR_CLEARED_PATCH),
+        // 上传的图片直接作为节点输出（imageUrl），与 uploadNode 行为一致。
+        // 用户如需 AI 图生图，应创建上游节点并通过连线引用，在提示词中 @图片N。
+        updateNodeData(id, {
+          imageUrl: result.url,
+          previewImageUrl: result.url,
+          referenceImageUrl: null,
+          remixVisualOutputCurrent: true,
+          remixVisualRequestRevision: null,
+          generationError: null,
+          generationErrorDetails: null,
+          generationErrorRequestId: null,
         });
       } catch (error) {
         console.error('[image-gen] upload failed', error);
@@ -470,7 +474,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         setIsUploading(false);
       }
     },
-    [hasGeneratedResult, mutateGenerationRequest],
+    [id],
   );
 
   const handleClearReference = useCallback(() => {

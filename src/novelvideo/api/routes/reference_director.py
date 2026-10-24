@@ -991,17 +991,13 @@ async def _notify_commission(ctx, canvas_id, commission, event_key):
 
 
 async def _emit_director_update(ctx, canvas_id, *, canvas_changed=False):
-    from novelvideo.chat.live_events import broadcast_chat_scope_event
-    from novelvideo.chat.store import ChatScope
     from novelvideo.chat.reference_remix_continuation import coordinator
-    runs = await asyncio.to_thread(coordinator.production_for_actor, ctx, canvas_id, None)
     from novelvideo.freezone.remix.conversation_cards import publish_conversation_cards
+    from novelvideo.freezone.remix.director_notifications import broadcast_director_update
+    runs = await asyncio.to_thread(coordinator.production_for_actor, ctx, canvas_id, None)
     await publish_conversation_cards(ctx, canvas_id=canvas_id, runs=runs)
-    agent_ids = {run.get('agent_id') or 'main' for run in runs} or {'main'}
-    for agent_id in agent_ids:
-        scope = ChatScope(kind="project", id=ctx.project_id, surface="freezone", canvas_id=canvas_id, agent_id=agent_id)
-        await broadcast_chat_scope_event(username=ctx.requester_username, scope=scope,
-            payload={"type": "reference.director.updated", "scope": scope.to_dict(), "project_id": ctx.project_id, "canvas_id": canvas_id, "agent_id": agent_id, "canvas_changed": canvas_changed})
+    await broadcast_director_update(ctx, canvas_id=canvas_id,
+        agent_ids=[run.get('agent_id') for run in runs], canvas_changed=canvas_changed)
 
 
 class AdvanceProductionRequest(BaseModel):
