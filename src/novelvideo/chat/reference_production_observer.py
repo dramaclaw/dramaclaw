@@ -30,7 +30,7 @@ from novelvideo.chat.reference_runtime_diagnostics import (
 logger = logging.getLogger(__name__)
 _observation_batch = ContextVar("reference_observation_batch", default=None)
 _observation_failures = ContextVar("reference_observation_failures", default=None)
-POLL_SECONDS = 5.0
+POLL_SECONDS = 30.0
 WAITING_PHASES = ('drafting_plan', 'awaiting_plan_review', 'awaiting_plan_confirmation',
                   'preparing_materials', 'aligning_speech', 'composing', 'reviewing_output')
 

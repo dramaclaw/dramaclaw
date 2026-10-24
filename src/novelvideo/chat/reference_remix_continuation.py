@@ -43,7 +43,7 @@ from novelvideo.sqlite_pragmas import configure_sqlite_connection
 from novelvideo.task_state import get_task_manager
 
 logger = logging.getLogger(__name__)
-POLL_SECONDS = 2.0
+POLL_SECONDS = 10.0
 LEASE_SECONDS = 60.0
 HEARTBEAT_SECONDS = 15.0
 DRAFT_RECOVERY_TIMEOUT_SECONDS = 5.0
@@ -3004,7 +3004,7 @@ class ReferenceRemixCoordinator:
                         raise ValueError("reference continuation lease was lost")
                     return
             if commission["phase"] != "drafting_plan":
-                run.update(status=commission["phase"], error=None)
+                run.update(status=commission["phase"], error=None, pending_stage_observation=False)
                 if not await asyncio.to_thread(self.store.update_owned, run, self.owner_token):
                     raise ValueError("reference continuation lease was lost")
                 return
