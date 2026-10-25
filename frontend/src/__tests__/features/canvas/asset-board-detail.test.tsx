@@ -12,14 +12,10 @@ vi.mock('@/lib/model-task-access', () => ({
   useModelTaskAccess: () => ({ blocked: false, denialReason: null, message: null }),
 }));
 
-vi.mock('react-i18next', () => ({
-  // 第二参数可能是插值对象（如 t(key, { count })，视频生成表单的「生成数量」用到），
-  // 只有字符串才当默认文案；否则会把对象当 React 子节点渲染而炸掉整棵树。
-  useTranslation: () => ({
-    t: (key: string, fallback?: unknown) =>
-      typeof fallback === 'string' ? fallback : key,
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 // 宫格活价（M2）用了 react-query 的 useGenerationCreditCost，测试树没有
 // QueryClientProvider —— 直接 mock 掉，让组件退回硬编码 cost 兜底展示。

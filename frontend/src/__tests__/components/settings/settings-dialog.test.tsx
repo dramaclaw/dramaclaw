@@ -110,7 +110,9 @@ vi.mock("sonner", () => ({
   },
 }));
 
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async () => {
+  const { zhT } = await import("@/__tests__/helpers/i18n-fixtures");
+  return {
   useTranslation: () => ({
     t: (
       key: string,
@@ -342,9 +344,10 @@ vi.mock("react-i18next", () => ({
         "settings.freezoneCatalog.newRecipe.copyRawJson": "复制 JSON",
         "settings.freezoneCatalog.newRecipe.rawJsonCopied": "Recipe JSON 已复制",
         "settings.freezoneCatalog.newRecipe.rawJsonCopyFailed": "复制失败，请手动复制",
-      })[key] ?? options?.defaultValue ?? key,
+      })[key] ?? zhT(key, options),
   }),
-}));
+  };
+});
 
 function renderSettingsDialog() {
   return render(

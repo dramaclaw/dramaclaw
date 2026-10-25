@@ -322,6 +322,40 @@
     "third": {
       "title": "Let the story be the starting point",
       "subtitle": "Import a novel, script or per-episode text and the system parses it automatically, laying the groundwork for asset extraction, episode planning and shot breakdown."
+    },
+    "works": {
+      "luban": {
+        "title": "Luban",
+        "logline": "Machinery and ancient craft re-engage on the same timeline."
+      },
+      "guilingsi": {
+        "title": "Ghost Bureau",
+        "logline": "Every reflective surface in the city acts up at once; the spirit collector is forced to trace the source inside the mirror."
+      },
+      "shixiongButianle": {
+        "title": "Sidekick No More",
+        "logline": "The first thing after rebirth is refusing to keep playing fate's supporting role."
+      },
+      "tianmingbukeqi": {
+        "title": "Fate Cannot Be Deceived",
+        "logline": "On the wedding day, the way home and the dynasty's secret surface together."
+      },
+      "wulongxiantu": {
+        "title": "Wulong Immortal Path",
+        "logline": "The ascension system finally activates, but sends the cultivation path toward another absurd direction."
+      },
+      "feiyiZhouwu": {
+        "title": "Intangible Heritage Dance",
+        "logline": "Traditional posture, rhythm and shots are re-choreographed into watchable fragments."
+      },
+      "3dAnimeMontage": {
+        "title": "3D Anime Montage",
+        "logline": "Multiple animation clips are cut into the same high-density rhythm."
+      },
+      "dongtaiDadou": {
+        "title": "Dynamic Fight",
+        "logline": "Action, speed lines and camera pressure push continuously through the short."
+      }
     }
   },
   "downloadPage": {
@@ -1002,12 +1036,84 @@
         "noAnswersSkipped": "These questions were skipped.",
         "noAnswersSubmitted": "No specific options were submitted.",
         "cancelledRequest": "The user cancelled this request."
-      }
+      },
+      "canvasCommandsCancelled": "Canvas operation timed out and was cancelled automatically.",
+      "command": {
+        "validateCanvasCommands": "Validate canvas commands",
+        "invalidCanvasCommand": "Invalid canvas command",
+        "updateShotContextDraft": {
+          "description": "Update the shot-context node draft fields. Only {{fields}} are allowed in data; appearing identity and props are not open to agent editing."
+        },
+        "syncShotContextDraft": {
+          "description": "Sync the current shot-context node draft to the mainline. This mainline write currently can only be manually confirmed by the user in the UI; the agent must not execute it."
+        },
+        "openSplitStoryboard": {
+          "description": "Open the split-storyboard panel so the user can manually set rows, columns, and split lines and run the extraction. This only opens the UI and does not directly generate a new storyboard image."
+        },
+        "matting": {
+          "description": "Matting / remove background / transparent background: run foreground matting on this image node, create a transparent-background PNG, and add a downstream export image node."
+        },
+        "panorama": {
+          "description": "Panorama / 360 panorama: submit 360° panorama generation from this image node with default parameters. Creates an export image node and a 360 viewer node. Use this when the user asks to use the panorama feature."
+        },
+        "multiAngle": {
+          "description": "Multi-dimensional / multi-angle / multi-view / multi-perspective: open the multi-angle panel for this image node. The current chat can request this to open the UI; it does not directly run generation or export."
+        },
+        "serialStoryboard": {
+          "description": "Generate a new 25-frame serial storyboard image from this image node with default parameters. Does not open UI. This is not split-storyboard extraction; if the user says “split storyboard / extract panels / open split”, use open_split_storyboard_tool instead."
+        },
+        "openUploadFilePicker": {
+          "description": "Open the local file picker for this upload node. After the user selects a file, the frontend reuses the original upload-node flow and returns the selection/upload result to the agent; the agent cannot directly specify a local file path."
+        },
+        "videoBreakdown": {
+          "description": "Frame-by-frame breakdown: create a downstream video breakdown node connected to this video, matching the toolbar frame-by-frame entry. By default it only creates the node. Pass auto_start=true when the user asked to actually run the breakdown now; it then submits the paid breakdown task (several minutes) and lands storyboard / motion / music result groups downstream of the new node.",
+          "autoStart": {
+            "label": "Start Breakdown Now"
+          }
+        },
+        "videoCrop": {
+          "description": "Frame crop: enter crop mode for this video node. The user drags the crop box and confirms through the existing frontend crop UI; the cropped video lands as a new node."
+        },
+        "smartExtend": {
+          "description": "Smart extend: enter the range-pick mode on this video node. The user picks the leading segment to continue from and confirms; the frontend then creates a downstream Seedance 2.5 video node for the continuation. It does not generate anything by itself."
+        },
+        "depthMotionCapture": {
+          "description": "Depth motion capture: compute a per-frame depth video in the browser and land it as a new downstream video node, matching the toolbar action. Runs locally (WebGPU preferred), takes a while, and only supports videos up to {{maxDuration}} seconds. The action returns once the task has started; progress shows on the new node."
+        },
+        "startBreakdown": {
+          "description": "Start breakdown: submit the paid frame-by-frame breakdown for this node's source video, matching the node's start-breakdown button. Takes several minutes; the action returns once the task is submitted and the storyboard / motion / music result groups land downstream of this node when it finishes."
+        },
+        "clearCanvas": {
+          "description": "Clear normal nodes and connections from the current canvas. This must go through approval; do not turn “clear canvas” into an empty delete_nodes. Mainline projection / system-management nodes will be kept and explicitly reported."
+        },
+        "posterWorkflow": {
+          "label": "Poster Generation Workflow"
+        }
+      },
+      "reference": {
+        "oldFormat": {
+          "title": "Old Format"
+        },
+        "posterImage": {
+          "displayName": "Poster Image"
+        },
+        "publicServiceBrief": {
+          "title": "Public Service Advertisement Brief"
+        }
+      },
+      "resizeWidth": "Resize chat width"
     },
     "workflowRecovery": {
       "safetyReviewFailed": "Some nodes did not pass safety review",
       "editPrompt": "Edit prompt",
-      "skipNode": "Skip node"
+      "skipNode": "Skip node",
+      "discovered": "Unfinished workflow found",
+      "progress": "Completed {{completed}}/{{total}}, {{remaining}} nodes remaining",
+      "retryFailedOnly": "Retry failed only",
+      "resumeDownstream": "Resume downstream",
+      "dismiss": "Dismiss",
+      "resumeFailed": "Failed to resume workflow execution",
+      "retryFailed": "Failed to retry the node"
     },
     "canvases": {
       "defaultSection": "Default canvas",
@@ -1451,7 +1557,19 @@
       },
       "loading": "Loading canvas...",
       "syncFailed": "Canvas sync failed",
-      "retry": "Retry"
+      "retry": "Retry",
+      "mode": {
+        "workflow": "Workflow",
+        "storyboard": "Storyboard"
+      },
+      "toggleCanvasView": "Toggle canvas view",
+      "newAgent": "New Agent",
+      "collapseAgentHistory": "Collapse agent history",
+      "expandAgentHistory": "Open agent history",
+      "resizeChatWidth": "Adjust chat width",
+      "resizeAgentHistoryWidth": "Adjust agent history width",
+      "searchSessions": "Search sessions…",
+      "noMatchingAgents": "No matching agents"
     },
     "assetBrowser": {
       "loading": "Loading…",
@@ -1493,6 +1611,301 @@
       "metaFetchFailed": "Failed to read the director metadata: {{status}}",
       "metaInvalid": "The director metadata is malformed",
       "missingTargetPath": "The director composite was written but has no target path"
+    },
+    "canvasDebug": {
+      "historyItemIdUnrecognized": "Could not identify the id of this history item (the list response did not contain any of the fields id / history_id / filename / name). Please check the console.",
+      "confirmRestore": "Confirm restore to {{historyId}}? The current version will be saved to history first.",
+      "restoreFailed": "Restore failed: {{message}}",
+      "panelTitle": "Canvas Debug Panel (development only)",
+      "toggle": "Debug",
+      "notFetched": "Not fetched yet; click GET to query.",
+      "fetch": "Fetch",
+      "emptyHistory": "Empty (no history snapshots yet)",
+      "restoreThisVersion": "Restore this version",
+      "missingHistoryId": "Missing history_id; cannot restore",
+      "restoring": "Restoring…",
+      "restore": "Restore",
+      "debugHint": "For debugging only · “Endpoint not live” will appear here when the backend history endpoint is not deployed."
+    },
+    "canvasCommand": {
+      "lastShotEndFrame": "Previous shot end frame",
+      "workflowAlreadyRunning": "Workflow is already running; duplicate start ignored",
+      "alreadyHasResultSkipped": "(result already exists, skipped)",
+      "workflowExistsSkipCreation": "Workflow already exists; skipping duplicate creation",
+      "reuseExistingWorkflowNode": "Reuse existing workflow node",
+      "skipInvalidConnection": "Skip invalid connection",
+      "workflowCompletedNoRegen": "Workflow completed; not regenerated",
+      "workflowGroup": "Workflow group",
+      "createNormalGroup": "Create normal group",
+      "validateLabel": "Validate canvas commands",
+      "commandValidation": "Command validation",
+      "invalidFormat": "Canvas command format is invalid or does not belong to this canvas; frontend did not execute.",
+      "unparseable": "Unable to parse canvas_chat_commands.v1 command; please check the command field is at the correct level.",
+      "invalidCommand": "Invalid canvas command",
+      "prevalidationFailed": "Canvas command pre-validation failed; no confirmation card was shown and nothing was executed.",
+      "externalAgent": "External Agent",
+      "unparseableContextRequest": "Unable to parse canvas_context_request.v1 request.",
+      "contextReadFailed": "Failed to read canvas context: {{message}}",
+      "canvasContext": "Canvas context"
+    },
+    "canvasEdge": {
+      "context": {
+        "description": "Background, constraint, or explanatory relationship between text/script planning nodes, used to organize creative ideas; does not directly drive media generation."
+      },
+      "prompt": {
+        "description": "Upstream text/script is the direct prompt, copy, line, or task input for the target generation node."
+      },
+      "sequence": {
+        "description": "Upstream nodes only control the execution order of the target node; the target node does not consume their output."
+      },
+      "reference": {
+        "description": "Upstream images/videos/audio serve as media input or reference material for the target node."
+      },
+      "derivation": {
+        "description": "Target media is the result of editing, cropping, upscaling, variation, exporting, or restoring upstream media."
+      },
+      "composition": {
+        "description": "Upstream text, image, video, or audio clips enter the target composition/timeline node as final cut material."
+      }
+    },
+    "nodeAction": {
+      "parameter": {
+        "model": "Model",
+        "modelDescription": "Optional. Must use the model id from options; leave blank to use the default model for this action. Do not write colloquial names or backend apiModel.",
+        "upscaleFactor": "Upscale factor",
+        "default2": "Default 2.",
+        "quality": "Quality",
+        "default2K": "Default 2K.",
+        "targetAspectRatio": "Target aspect ratio",
+        "defaultOriginal": "Default original.",
+        "generateCount": "Generation count",
+        "default1": "Default 1.",
+        "resolution": "Resolution",
+        "default1080p": "Default 1080p.",
+        "breakdownDimension": "Breakdown dimension",
+        "displayName": "Display name",
+        "resolutionDescription": "Target resolution in the video upscaling panel; update upscaleResolution when changing the upscale resolution.",
+        "imageModelDescription": "Image model must use the model id from options; do not use colloquial names or backend apiModel, e.g. do not write nanobanana.",
+        "resolutionOptionsDescription": "Use the original resolution options returned by the selected image model catalog.",
+        "qualityUnsupported": "The selected model does not support quality levels; please omit quality.",
+        "qualityUseSupported": "Only use the quality levels supported by the selected image model.",
+        "aspectRatio": "Aspect ratio",
+        "videoModelDescription": "Video model must use the model id from options; do not use colloquial names or backend apiModel.",
+        "videoAspectRatio": "Video aspect ratio",
+        "videoAspectRatioDescription": "Aspect ratio in the bottom parameters of the video node; update aspectRatio when changing the video aspect ratio, do not change the model to achieve this indirectly.",
+        "clarity": "Clarity",
+        "clarityDescription": "Clarity in the bottom parameters of the video node; use the original resolution options returned by the selected model catalog.",
+        "durationSeconds": "Duration in seconds",
+        "durationSecDescription": " Update durationSec when modifying.",
+        "videoGenMode": "Video generation mode",
+        "videoGenModeDescription": "Only use the options of the model selected for the current node; after switching models you must re-query the mode options, and must not apply another node's mode. Determines how the video node consumes upstream input. textToVideo=use only the current prompt; imageToVideo=use a single image as overall frame reference; firstFrame=lock the first frame with a single image (not equivalent to imageToVideo; keep whichever the user specifies and do not swap); firstLastFrame=requires first and last frames; allReference=can reference images/videos/audio simultaneously; imageReference=use images as reference constraints. Update genMode when changing the video mode, do not mistakenly change “mode” to model.",
+        "voiceReference": "Voice reference",
+        "voiceReferenceDescription": "Audio nodes use the voiceRef object to select a voice when speechMode=clone, not the voiceId string. Before changing voice, you must first return the canvas_context_request.v1 specified by context_request; after obtaining options, use the data in the options as-is for update_node_data, and set speechMode=clone at the same time. Do not use run_node_action to fetch voice options.",
+        "startFrame": "Start frame"
+      },
+      "description": {
+        "generateMainSketchFromBackground": "Generate main-line sketch candidates based on Beat context and current background.",
+        "generateMainSketchFromDirectorComp": "Generate main-line sketch candidates from Beat context and director composition image.",
+        "generateMainStoryboardCandidates": "Generate main-line storyboard candidates based on Beat context, sketch, and reference material.",
+        "setBackgroundImage": "Set the explicitly specified image as the background of the current Beat.",
+        "setDirectorCompositionImage": "Set the explicitly specified image as the 3GS director composition of the current Beat.",
+        "generateScenePanorama": "Generate 2:1 scene panorama candidates based on the main scene image.",
+        "reviewStoryboardCandidates": "Review storyboard candidates based on Beat context."
+      },
+      "shotContext": {
+        "startFrameDraft": {
+          "description": "Starting-frame draft for the shot-context node. Only edits the canvas-local draft; to write it back to the mainline, use the manual entry in the UI."
+        },
+        "scene": {
+          "label": "Scene",
+          "description": "Scene draft for the shot-context node, in the format {scene_id, variant_id}. Only this field may be edited; do not change the appearing identity or props."
+        },
+        "time": {
+          "label": "Time",
+          "description": "Time draft for the shot-context node. Must be chosen from the enum; an empty string means not set."
+        }
+      },
+      "textAnnotation": {
+        "title": {
+          "label": "Title"
+        },
+        "content": {
+          "label": "Content"
+        }
+      },
+      "common": {
+        "text": {
+          "label": "Text"
+        },
+        "semanticRole": {
+          "label": "Semantic Output Role"
+        }
+      },
+      "generator": {
+        "displayName": {
+          "label": "Display Name"
+        },
+        "prompt": {
+          "label": "Prompt"
+        },
+        "negativePrompt": {
+          "label": "Negative Prompt"
+        },
+        "count": {
+          "label": "Generation Count"
+        }
+      },
+      "image": {
+        "displayName": {
+          "label": "Display Name"
+        },
+        "prompt": {
+          "label": "Prompt"
+        },
+        "negativePrompt": {
+          "label": "Negative Prompt"
+        },
+        "count": {
+          "label": "Generation Count"
+        }
+      },
+      "video": {
+        "displayName": {
+          "label": "Display Name"
+        },
+        "prompt": {
+          "label": "Prompt"
+        },
+        "realPersonReview": {
+          "label": "Real-Person Review",
+          "description": "Enable real-person content review for image-to-video generation when the model supports it."
+        },
+        "count": {
+          "label": "Generation Count"
+        }
+      },
+      "audio": {
+        "label": "Generate Audio",
+        "displayName": {
+          "label": "Display Name"
+        },
+        "kind": {
+          "label": "Audio Kind",
+          "description": "speech means text-to-speech; music means text-to-music generation."
+        },
+        "voiceMode": {
+          "label": "Voice Mode",
+          "description": "Only takes effect when audioKind=speech. Xiahua only uses custom voice lines; voice generation is skipped when no valid voiceRef is selected."
+        },
+        "text": {
+          "label": "Text"
+        },
+        "emotionPrompt": {
+          "label": "Emotion Prompt"
+        },
+        "voiceName": {
+          "label": "Voice Name",
+          "description": "Display name of the voice, usually written from the data of the audio_voice_options option together with voiceRef."
+        },
+        "language": {
+          "label": "Language",
+          "description": "Language tag of the voice, usually written from the data of the audio_voice_options option together with voiceRef."
+        },
+        "musicDurationMs": {
+          "label": "Music Duration (ms)",
+          "description": "Only takes effect when audioKind=music; the page defaults to 30000 ms."
+        },
+        "instrumental": {
+          "label": "Instrumental",
+          "description": "Only takes effect when audioKind=music; defaults to true."
+        },
+        "followSegmentDuration": {
+          "label": "Follow Segment Duration",
+          "description": "Only takes effect when audioKind=music; defaults to true."
+        }
+      },
+      "story": {
+        "displayName": {
+          "label": "Display Name"
+        },
+        "prompt": {
+          "label": "Generation Prompt",
+          "description": "Main input for the story-script generation node; use textAnnotationNode.content for ordinary free-form text."
+        },
+        "content": {
+          "label": "Content"
+        }
+      },
+      "world3d": {
+        "displayName": {
+          "label": "Display Name"
+        },
+        "title": {
+          "label": "Title"
+        },
+        "sourceType": {
+          "label": "3GS Source Type",
+          "description": "master/reverse generates single-sided 3GS; pano means the upstream is a 360° panorama."
+        }
+      },
+      "custom": {
+        "displayName": {
+          "label": "Display Name"
+        },
+        "prompt": {
+          "label": "Prompt",
+          "description": "Note/generation hint for the 3D world node; current 3GS generation mainly depends on the upstream image."
+        }
+      },
+      "generic": {
+        "displayName": {
+          "label": "Display Name"
+        },
+        "parameters": {
+          "label": "Parameters"
+        }
+      },
+      "upload": {
+        "displayName": {
+          "label": "Display Name"
+        }
+      },
+      "default": {
+        "displayName": {
+          "label": "Display Name"
+        }
+      }
+    },
+    "context": {
+      "operation": {
+        "beatSketch": {
+          "label": "Beat to Sketch"
+        },
+        "directorCompositeSketch": {
+          "label": "Director Composite to Sketch"
+        },
+        "backgroundAnchorSketch": {
+          "label": "Background Anchor to Sketch"
+        },
+        "generateStoryboardFromMainline": {
+          "label": "Generate Storyboard from Mainline Context"
+        }
+      },
+      "mainlineContext": "Mainline Context",
+      "mainlineContextHint": "Only appears when identity / scene / Beat match"
+    },
+    "viewMode": {
+      "workflow": "Workflow",
+      "board": "Storyboard",
+      "toggle": "Toggle canvas view"
+    },
+    "agent": {
+      "create": "New Agent",
+      "collapseHistory": "Collapse agent history",
+      "expandHistory": "Expand agent history",
+      "resizeHistoryWidth": "Resize agent history width",
+      "searchSessions": "Search sessions...",
+      "noMatches": "No matching agents"
     }
   },
   "theme": {
@@ -2692,7 +3105,7 @@
         "left": "Left",
         "right": "Right",
         "back": "Back",
-        "light": "Lighting",
+        "light": "Light source",
         "material": "Material / style",
         "forbidden": "Forbidden elements"
       },
@@ -2839,7 +3252,8 @@
     "pause": "Pause",
     "retry": "Retry",
     "requestId": "Request ID",
-    "listSeparator": ", "
+    "listSeparator": ", ",
+    "processing": "Processing…"
   },
   "ingest": {
     "title": "Story Source",
@@ -2965,7 +3379,9 @@
       "characterSeparator": ", ",
       "unknownLocation": "Scene location not detected",
       "empty": "No scene text is available in this chapter",
-      "unparsedBody": "Text outside recognized scenes"
+      "unparsedBody": "Text outside recognized scenes",
+      "rowCount": "{{count}} scenes",
+      "count": "{{count}} scenes"
     },
     "chapterDetails": {
       "open": "View the text of {{chapter}}",
@@ -3330,6 +3746,10 @@
   },
   "taskCenter": {
     "title": "Task Center",
+    "batchProgress": "Batch progress {{settled}}/{{expected}}",
+    "runningCount": "Running {{count}}",
+    "waitingCount": "Waiting {{count}}",
+    "batchFailed": "{{failed}}/{{expected}} tasks failed",
     "cancel": {
       "title": "Cancel generation task",
       "description": "Cancel “{{name}}”? Running tasks usually are not refunded after cancellation.",
@@ -4592,7 +5012,14 @@
         "invalidBeats": "Selected beats are not in this episode",
         "noBeats": "This episode has no beats yet"
       },
-      "paddingCount": "+{{count}} empty"
+      "paddingCount": "+{{count}} empty",
+      "partial": {
+        "reason": {
+          "unknown": "Some tasks have not been dispatched yet."
+        },
+        "summary": "Dispatched {{ok}} / rejected {{fail}}",
+        "continue": "Continue"
+      }
     },
     "renderSettings": {
       "model": "Render model",
@@ -5040,7 +5467,9 @@
         "createHint": "Ready to use for filing and uploading assets as soon as it exists",
         "renameHint": "The new name shows up across the asset library"
       },
-      "commitDragHint": "Hold and drag to the asset library on the left to replace assets of the same type"
+      "commitDragHint": "Hold and drag to the asset library on the left to replace assets of the same type",
+      "itemCount": "{{count}} assets",
+      "bulkSelected": "{{count}} selected (only locally uploaded assets can be deleted)"
     },
     "referencePick": {
       "kind": {
@@ -5405,7 +5834,17 @@
       "batchDelete": "Delete all",
       "arrangeGrid": "Grid layout",
       "arrangeHorizontal": "Horizontal layout",
-      "arrangeVertical": "Vertical layout"
+      "arrangeVertical": "Vertical layout",
+      "workflowRunning": "Workflow is running",
+      "workflowRunningShort": "Running",
+      "workflowStoppedNext": "Next nodes stopped",
+      "workflowStopNextTitle": "Stop launching subsequent workflow nodes",
+      "workflowWaitingCurrent": "Waiting for current node",
+      "workflowStopNext": "Stop subsequent nodes",
+      "workflowCompleted": "Workflow completed",
+      "workflowRun": "Run workflow",
+      "workflowRerunAllTitle": "Rerun every workflow node",
+      "workflowRerunAll": "Rerun all"
     },
     "nodeToolbar": {
       "mainlineLocked": "Mainline projection · locked",
@@ -5423,7 +5862,9 @@
       "arrangeGrid": "Grid",
       "arrangeHorizontal": "Horizontal",
       "arrangeVertical": "Vertical",
-      "commitHint": "Write this node's content back to the mainline asset"
+      "commitHint": "Write this node's content back to the mainline asset",
+      "recipeFallbackTitle": "Recipe model compilation timed out; generation continued with the stable fallback prompt",
+      "recipeFallbackLabel": "Recipe compiled with fallback"
     },
     "style": {
       "chip": "Style",
@@ -5811,7 +6252,9 @@
       "m4aSourceOnlyHint": "m4a source only",
       "m4aSourceOnly": "Source isn't m4a, so it can't be converted to m4a",
       "downloadFailed": "Audio download failed"
-    }
+    },
+    "copyNodeId": "Copy node ID",
+    "nodeId": "ID"
   },
   "multiAngleEditor": {
     "title": "Multi-Dimension Editor",
@@ -6022,7 +6465,147 @@
     "thinkingHigh": "High",
     "noModelsAvailable": "No image model has been configured by the administrator"
   },
+  "assetBoard": {
+    "referenceMaterials": "Reference materials",
+    "zoomImage": "View larger image",
+    "prompt": "Prompt",
+    "nodeMissing": "This node no longer exists",
+    "clickToEdit": "Click to edit",
+    "noText": "No text content",
+    "noScript": "No script content",
+    "noShots": "No shot rows",
+    "noDisplayContent": "No content available to display",
+    "shotNumber": "Shot",
+    "duration": "Duration",
+    "visualDescription": "Visual description",
+    "dialogue": "Dialogue",
+    "contentSummary": "Content summary",
+    "resolution": "Resolution",
+    "referenceActions": "{{name}} actions",
+    "edit": "Edit",
+    "locate": "Locate",
+    "m4aOnly": "M4A source only",
+    "noKeyElements": "No key elements in this category",
+    "referenceDropHint": "Drag assets, images, or videos here to add them as references",
+    "imageOpChipHint": "Click to switch function; press Backspace to remove",
+    "upscaleResult": "Upscaled image",
+    "cropResult": "Crop result",
+    "rotateResult": "Rotation result",
+    "crop": "Crop",
+    "rotate": "Rotate",
+    "panoramaConfirm": "Generate a 360° panorama from this image?",
+    "panoramaResult": "360° panorama",
+    "durationSeconds": "{{count}}s",
+    "generatingProgress": "Generating {{percent}}%...",
+    "generating": "Generating",
+    "assetDetail": "Asset details",
+    "back": "Back",
+    "nodeActions": "Node actions",
+    "duplicate": "Duplicate",
+    "delete": "Delete",
+    "closeDetail": "Close details",
+    "text": "Text",
+    "image": "Image",
+    "video": "Video",
+    "relightEditor": "Relighting editor",
+    "multiAngleEditor": "Multi-angle editor",
+    "ownReferenceImage": "Node reference image",
+    "removeReferenceImage": "Remove reference image",
+    "panorama": "Panorama",
+    "panoramaTitle": "Generate a 360° panorama from this image and add a panorama viewer node",
+    "multiAngle": "Multi-angle",
+    "multiAngleTitle": "Open the multi-angle editor (camera sphere, quality, and prompt)",
+    "relight": "Relight",
+    "relightTitle": "Open the relighting editor (direction, brightness/color temperature, and smart mode)",
+    "moreActions": "More actions",
+    "download": "Download",
+    "regenerate": "Regenerate",
+    "retryGeneration": "Resubmit this generation (retry after failure)",
+    "gridTemplate": "Generate from this image using a grid or multi-view template",
+    "editVideo": "Edit",
+    "composedVideo": "Composed video",
+    "upscaledVideoName": "Upscaled ({{resolution}})",
+    "composeNeedsTwoVideos": "At least two ready upstream video assets are required",
+    "openComposeTimeline": "Open the video composition timeline",
+    "upscale": "Upscale",
+    "upscaleTitle": "Increase the resolution by creating a new upscale result node on the canvas",
+    "fullscreen": "Fullscreen",
+    "fullscreenTitle": "Play in fullscreen",
+    "resolution": "Resolution",
+    "submitUpscale": "Submit upscale",
+    "submitUpscaleTitle": "Create an upscale result node on the canvas and submit the task",
+    "locateOnCanvas": "Locate on canvas",
+    "generationFailed": "Generation failed",
+    "downloadConvert": "Download / convert format",
+    "resizeColumn": "Resize column",
+    "all": "All",
+    "finalVideos": "Final videos",
+    "clips": "Clips",
+    "noTextNodes": "There are no text nodes on the canvas",
+    "noImageNodes": "There are no image nodes on the canvas",
+    "noVideoNodes": "There are no video nodes on the canvas",
+    "noMatchingVideos": "No videos match the current filter",
+    "filterVideos": "Filter videos",
+    "switchColumn": "Switch column",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "pendingGeneration": "Generate after confirmation",
+    "sourceNotM4a": "The source file is not M4A and cannot be converted to M4A",
+    "audioDownloadFailed": "Audio download failed",
+    "downloadAs": "Download as {{format}}",
+    "keyElements": "Key elements",
+    "setKeyElement": "Set key element",
+    "clearKeyElement": "Clear key element",
+    "current": "Current",
+    "audioLabel": "Audio",
+    "categoryCharacter": "Character",
+    "categoryScene": "Scene",
+    "categoryObject": "Object",
+    "categoryOther": "Other",
+    "audio": {
+      "musicDescription": "Music description",
+      "speechText": "Text to synthesize",
+      "musicPlaceholder": "Describe the music: style, instruments, rhythm, atmosphere…",
+      "speechPlaceholder": "Enter the text to synthesize",
+      "fillerWords": "Delivery guidance (optional)",
+      "fillerWordsPlaceholder": "For example: tense, lower voice, slightly frightened",
+      "chooseVoice": "Choose a custom voice",
+      "changeVoice": "Change custom voice",
+      "voice": "Voice",
+      "voiceNotSelected": "Not selected (generation will be skipped)",
+      "customVoice": "Custom voice",
+      "musicDuration": "Music duration",
+      "forceInstrumental": "Force instrumental only",
+      "respectSectionDurations": "Respect section durations",
+      "textToMusic": "Text-to-music",
+      "customVoiceNarration": "Custom-voice narration",
+      "voiceSettings": "Voice settings (current: {{voice}})",
+      "notSelected": "Not selected",
+      "advancedSettings": "Advanced settings",
+      "enterMusicFirst": "Enter a music description first",
+      "enterSpeechFirst": "Enter text to synthesize first",
+      "regenerate": "Regenerate",
+      "generate": "Generate"
+    }
+  },
   "node": {
+    "imageGeneration": {
+      "quality": "Quality",
+      "resolution": "Resolution",
+      "aspectRatio": "Aspect ratio",
+      "assetLibrary": "Asset library",
+      "assetLibraryHint": "Select a reference image from the asset library (character / scene / prop)",
+      "upstreamReference": "From upstream · {{name}}",
+      "detachReference": "Detach this reference"
+    },
+    "stylePicker": {
+      "title": "Style",
+      "other": "Other",
+      "clear": "Clear",
+      "close": "Close",
+      "loading": "Loading…",
+      "empty": "No style templates available"
+    },
     "menu": {
       "uploadImage": "Upload Resource",
       "image": "Image",
@@ -6517,7 +7100,8 @@
           "noProject": "No current project found, so the result cannot be saved",
           "alreadyRunning": "Depth capture for this video is still in progress. Wait for it to finish"
         }
-      }
+      },
+      "billingRuleMissingSubmit": "Video generation did not start: billing rule is not configured. Please ask an administrator to set up the credit rule and try again."
     },
     "pano360": {
       "captureGroup2x2": "Panorama capture set (4)",
@@ -6839,6 +7423,7 @@
     },
     "videoOps": {
       "referenceGroupLabel": "Asset reference group",
+      "externalMedia": "External media",
       "upstreamPlaceholder": "Upstream content attached automatically — add more prompt details…",
       "humanReviewTitle": "Enable when the material contains real faces. Review may take longer and approval is not guaranteed.",
       "humanReviewLabel": "Human review",
@@ -6931,6 +7516,9 @@
       "directorCaptureSizeFailed": "Could not read the director world capture dimensions",
       "directorElement": "Director element",
       "directorExportLabel": "Director world export"
+    },
+    "imageGenNode": {
+      "billingRuleMissingSubmit": "Image generation did not start: billing rule is not configured. Please ask an administrator to set up the credit rule and try again."
     }
   },
   "viewer": {
@@ -7603,7 +8191,8 @@
         "copyRawJson": "Copy JSON",
         "rawJsonCopied": "Recipe JSON copied",
         "rawJsonCopyFailed": "Copy failed; copy manually"
-      }
+      },
+      "customizedShort": "Custom"
     },
     "modelConfig": {
       "title": "Model Config",
@@ -7871,7 +8460,8 @@
           "NARRATED_SCENE_ASSET": "Plan narrated-drama scene assets",
           "STAGING_PROP": "Plan temporary Director World props",
           "COGNEE": "① Content Understanding & Knowledge Extraction (LLM)"
-        }
+        },
+        "addChannel": "Add channel"
       },
       "embeddingModel": {
         "title": "② Vectorization & Semantic Search (Embedding)",
@@ -8104,13 +8694,54 @@
     "checkingUpdate": "Checking for updates...",
     "checkUpdateHasUpdate": "New version detected.",
     "checkUpdateUpToDate": "You are on the latest version.",
-    "checkUpdateFailed": "Update check failed. Please try again later."
+    "checkUpdateFailed": "Update check failed. Please try again later.",
+    "freezoneSkillRecipe": {
+      "editTag": "Edit {{tag}}",
+      "deleteTag": "Delete {{tag}}",
+      "collapseAssociatedRecipes": "Collapse associated Recipes",
+      "expandAssociatedRecipes": "Expand associated Recipes",
+      "associatedRecipesCount": "{{count}} associated Recipe{{missing}}",
+      "noAssociatedRecipes": "This skill has no associated recipes yet",
+      "addRecipe": "Add Recipe",
+      "localRecipeNotFound": "Local Recipe config not found; this association ID will still be kept when saving.",
+      "view": "View",
+      "removeRecipe": "Remove {{recipeId}}",
+      "addIdManually": "Add ID manually",
+      "enterRecipeId": "Enter Recipe ID",
+      "add": "Add",
+      "noRecipesToAdd": "No recipes to add",
+      "createSkillHint": "You can ask XiaDao to summarize the current canvas, or describe a workflow to create your own Skill.",
+      "videoGeneration": "Video generation",
+      "audioGeneration": "Audio generation",
+      "associatedRecipesMissing": ", {{count}} config not found",
+      "searchRecipe": "Search Recipe",
+      "noDescription": "No description",
+      "close": "Close",
+      "noSkills": "No Skills here yet",
+      "generationType": {
+        "textGeneration": "Text generation",
+        "imageGeneration": "Image generation",
+        "videoGeneration": "Video generation",
+        "audioGeneration": "Audio generation"
+      },
+      "closeRecipeDetailBackground": "Close Recipe detail backdrop",
+      "closeRecipeDetail": "Close Recipe detail",
+      "detail": {
+        "description": "Description",
+        "resultSummary": "Result summary",
+        "planningPrompt": "Planning prompt",
+        "mustHaveItems": "Must-have items"
+      },
+      "mineTab": "Mine",
+      "use": "Use"
+    }
   },
   "pricing": {
     "nativePrice": "Native: {{value}}",
     "originalPrice": "Original: {{value}}",
     "pointsCost": "Credits: {{count}}",
-    "grsaiTier": "Pack: CNY {{price}} / {{credits}} credits"
+    "grsaiTier": "Pack: CNY {{price}} / {{credits}} credits",
+    "perRunSuffix": "/run"
   },
   "update": {
     "dialogTitle": "Update Available",
@@ -8411,6 +9042,10 @@
     }
   },
   "superchat": {
+    "nodeSuggestions": {
+      "title": "Nodes",
+      "noMatches": "No matching nodes"
+    },
     "spec": {
       "characterFallback": "Character {{index}}",
       "roleLabel": "Role",
@@ -8584,5 +9219,39 @@
     "loadFailed": "Unable to load the original image. Please retry.",
     "saveFailed": "Unable to create the result. Check the image and current project.",
     "invalidSize": "Enter positive integers. Maximum edge: 16384 pixels; maximum total: 40 million pixels."
+  },
+  "login": {
+    "community": {
+      "work": {
+        "luban": {
+          "title": "Luban"
+        },
+        "guilingsi": {
+          "title": "Guilingsi",
+          "description": "Reflective objects across the city act up at once, and faces vanish into thin air! Lu Lingxi, the strongest spirit collector of Guilingsi, is ordered to investigate—only to discover she herself is the source of this spirit disaster: the mirror spirit has sought its master for a thousand years."
+        },
+        "seniorBrotherNoLongerSimping": {
+          "title": "Senior Brother, Why Aren't You Simping Anymore?",
+          "description": "Lin Yuan, the dignified sect leader of Tiandao Sect, made rejecting the simp life his very first act after rebirth!"
+        },
+        "heavensWillCannotBeDeceived": {
+          "title": "Heaven's Will Cannot Be Deceived",
+          "description": "On the day of the grand wedding, internal strife and external threats erupt simultaneously. The Imperial Ancestral Temple delivers a “way home” back to the modern era and reveals a shocking secret to Yun Zhizhi…"
+        },
+        "wulongImmortalPath": {
+          "title": "Wulong's Immortal Path",
+          "description": "After eighteen years in this world, the ascension system finally activates—only to turn out to be a total scam."
+        },
+        "intangibleHeritageZhouDance": {
+          "title": "Intangible Heritage: Zhou Dance"
+        },
+        "threeDAnimeMashup": {
+          "title": "3D Anime Mashup"
+        },
+        "dynamicCombat": {
+          "title": "Dynamic Combat"
+        }
+      }
+    }
   }
 }

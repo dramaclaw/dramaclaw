@@ -16,5 +16,5 @@ export type Supported = (typeof SUPPORTED)[number];
 
 export function normalize(lng: string | undefined): Supported {
   const two = (lng ?? "").slice(0, 2).toLowerCase();
-  return (SUPPORTED as readonly string[]).includes(two) ? (two as Supported) : "zh";
+  return (SUPPORTED as readonly string[]).includes(two) ? (two as Supported) : "en";
 }

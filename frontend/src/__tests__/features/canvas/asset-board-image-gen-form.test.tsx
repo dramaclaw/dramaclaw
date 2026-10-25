@@ -8,11 +8,10 @@ import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/can
 import { AssetBoardView } from '@/features/canvas/ui/asset-board/AssetBoardView';
 import { useCanvasStore } from '@/stores/canvasStore';
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 // 算力询价走 react-query，测试树里没有 QueryClientProvider —— 直接短路。
 vi.mock('@/lib/queries/generation-credit-cost', () => ({
@@ -193,7 +192,7 @@ describe('故事板详情 · 图片生成表单', () => {
     expect(within(detail).queryByRole('group', { name: '参考素材' })).not.toBeInTheDocument();
     // 共用表单不渲自带参考图，宿主在表单区补一枚 chip（用 referenceImageUrl），
     // 保证自带参考图不因底部行隐藏而消失。
-    const ownRef = within(detail).getByAltText('参考图');
+    const ownRef = within(detail).getByAltText('参考素材');
     expect(ownRef).toHaveAttribute('src', '/static/own-ref.png');
   });
 
@@ -208,7 +207,7 @@ describe('故事板详情 · 图片生成表单', () => {
     openDetail('带参考图的节点');
 
     const detail = detailPanel();
-    expect(within(detail).getByAltText('参考图')).toBeInTheDocument();
+    expect(within(detail).getByAltText('参考素材')).toBeInTheDocument();
     // 移除按钮默认 hover 才显现（display:none），用 title 直接取到并点击。
     fireEvent.click(within(detail).getByTitle('移除参考图'));
 

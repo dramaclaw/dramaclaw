@@ -322,6 +322,40 @@
     "third": {
       "title": "Faça da história o ponto de partida",
       "subtitle": "Importe um romance, um guião ou texto por episódio e o sistema analisa-o automaticamente, preparando a extração de recursos, o planeamento de episódios e a decomposição em planos."
+    },
+    "works": {
+      "luban": {
+        "title": "Luban",
+        "logline": "A maquinaria e a arte antiga voltam a encaixar na mesma linha temporal."
+      },
+      "guilingsi": {
+        "title": "Departamento das Almas",
+        "logline": "Todas as superfícies refletoras da cidade agem ao mesmo tempo; o coletor de espíritos é forçado a rastrear a origem no espelho."
+      },
+      "shixiongButianle": {
+        "title": "Deixar de Ser Coadjuvante",
+        "logline": "A primeira coisa após renascer é recusar continuar a fazer de figurante do destino."
+      },
+      "tianmingbukeqi": {
+        "title": "O Destino Não se Engana",
+        "logline": "No dia do casamento, o caminho para casa e o segredo da dinastia vêm à superfície ao mesmo tempo."
+      },
+      "wulongxiantu": {
+        "title": "Caminho Imortal Wulong",
+        "logline": "O sistema de ascensão finalmente ativa, mas leva o caminho de cultivo noutra direção absurda."
+      },
+      "feiyiZhouwu": {
+        "title": "Dança do Património Imaterial",
+        "logline": "Postura, ritmo e planos tradicionais são reencenados em fragmentos visualizáveis."
+      },
+      "3dAnimeMontage": {
+        "title": "Montagem de Anime 3D",
+        "logline": "Vários clipes de animação são cortados no mesmo ritmo de alta densidade."
+      },
+      "dongtaiDadou": {
+        "title": "Luta Dinâmica",
+        "logline": "Ação, linhas de velocidade e pressão da câmara avançam continuamente ao longo do curta."
+      }
     }
   },
   "downloadPage": {
@@ -1002,12 +1036,84 @@
         "noAnswersSkipped": "Estas perguntas foram ignoradas.",
         "noAnswersSubmitted": "Não foram enviadas opções específicas.",
         "cancelledRequest": "O utilizador cancelou este pedido."
-      }
+      },
+      "canvasCommandsCancelled": "A operação da área de trabalho excedeu o tempo limite e foi cancelada automaticamente.",
+      "command": {
+        "validateCanvasCommands": "Validar comandos do canvas",
+        "invalidCanvasCommand": "Comando do canvas inválido",
+        "updateShotContextDraft": {
+          "description": "Atualizar os campos de rascunho do nó de contexto do plano. Só é permitido que data contenha {{fields}}; a identidade e os adereços de entrada em cena não estão abertos a edição pelo agente."
+        },
+        "syncShotContextDraft": {
+          "description": "Sincronizar o rascunho atual do nó de contexto do plano para a linha principal. Esta escrita na linha principal só pode ser confirmada manualmente pelo utilizador na interface; o agente não a deve executar."
+        },
+        "openSplitStoryboard": {
+          "description": "Abrir o painel de extração de painéis para permitir que o utilizador defina manualmente as linhas, colunas e linhas de separação e execute a extração. Isto só abre a interface e não gera diretamente uma nova imagem de storyboard."
+        },
+        "matting": {
+          "description": "Cortar / remover fundo / fundo transparente: executar corte de primeiro plano neste nó de imagem, criar um PNG com fundo transparente e adicionar um nó de exportação de imagem a jusante."
+        },
+        "panorama": {
+          "description": "Panorâmica / panorâmica 360°: submeter a geração de panorâmica 360° a partir deste nó de imagem com parâmetros predefinidos. Cria um nó de exportação de imagem e um nó de visualização 360°. Utilize quando o utilizador pedir a funcionalidade de panorâmica."
+        },
+        "multiAngle": {
+          "description": "Multidimensional / multiângulo / multivista / multiperspetiva: abrir o painel multiângulo para este nó de imagem. O chat atual pode pedir para abrir a interface; não executa diretamente geração nem exportação."
+        },
+        "serialStoryboard": {
+          "description": "Gerar uma nova imagem de storyboard sequencial de 25 fotogramas a partir deste nó de imagem com parâmetros predefinidos. Não abre a interface. Não é extração de painéis; se o utilizador disser “extrair painéis / abrir divisão”, utilize open_split_storyboard_tool em vez disso."
+        },
+        "openUploadFilePicker": {
+          "description": "Abrir o selecionador de ficheiros locais para este nó de carregamento. Depois de o utilizador selecionar um ficheiro, a interface reutiliza o fluxo original do nó de carregamento e devolve o resultado da seleção/carregamento ao agente; o agente não pode especificar diretamente um caminho de ficheiro local."
+        },
+        "videoBreakdown": {
+          "description": "Análise fotograma a fotograma: criar um nó de análise de vídeo a jusante ligado a este vídeo, correspondendo à entrada da barra de ferramentas. Por omissão, apenas cria o nó. Passe auto_start=true quando o utilizador pedir para executar a análise agora; submete-se então a tarefa de análise paga (vários minutos) e os grupos de resultados storyboard / movimento / música ficam a jusante do novo nó.",
+          "autoStart": {
+            "label": "Iniciar análise agora"
+          }
+        },
+        "videoCrop": {
+          "description": "Corte de fotograma: entrar no modo de corte para este nó de vídeo. O utilizador arrasta a caixa de corte e confirma através da interface de corte existente; o vídeo cortado aparece como um novo nó."
+        },
+        "smartExtend": {
+          "description": "Extensão inteligente: entrar no modo de seleção de intervalo neste nó de vídeo. O utilizador escolhe o segmento inicial a continuar e confirma; a interface cria depois um nó de vídeo Seedance 2.5 a jusante para a continuação. Não gera nada por si só."
+        },
+        "depthMotionCapture": {
+          "description": "Captura de movimento por profundidade: calcular um vídeo de profundidade fotograma a fotograma no navegador e colocá-lo como um novo nó de vídeo a jusante, correspondendo à ação da barra de ferramentas. Executa localmente (WebGPU preferido), demora algum tempo e só suporta vídeos até {{maxDuration}} segundos. A ação devolve assim que a tarefa inicia; o progresso aparece no novo nó."
+        },
+        "startBreakdown": {
+          "description": "Iniciar análise: submeter a análise fotograma a fotograma paga para o vídeo de origem deste nó, correspondendo ao botão do nó. Demora vários minutos; a ação devolve assim que a tarefa é submetida e os grupos de resultados storyboard / movimento / música ficam a jusante deste nó quando termina."
+        },
+        "clearCanvas": {
+          "description": "Limpar os nós e ligações comuns da tela atual. Deve passar por aprovação; não converta “limpar tela” num delete_nodes vazio. Os nós de projeção da linha principal / gestão de sistema são mantidos e reportados explicitamente."
+        },
+        "posterWorkflow": {
+          "label": "Fluxo de geração de posters"
+        }
+      },
+      "reference": {
+        "oldFormat": {
+          "title": "Formato antigo"
+        },
+        "posterImage": {
+          "displayName": "Imagem do poster"
+        },
+        "publicServiceBrief": {
+          "title": "Briefing de anúncio de serviço público"
+        }
+      },
+      "resizeWidth": "Ajustar largura do chat"
     },
     "workflowRecovery": {
       "safetyReviewFailed": "Alguns nós não passaram na revisão de segurança",
       "editPrompt": "Editar pedido",
-      "skipNode": "Ignorar nó"
+      "skipNode": "Ignorar nó",
+      "discovered": "Encontrado fluxo de trabalho inacabado",
+      "progress": "Concluído {{completed}}/{{total}}, {{remaining}} nós restantes",
+      "retryFailedOnly": "Tentar novamente apenas os falhados",
+      "resumeDownstream": "Continuar a jusante",
+      "dismiss": "Ignorar",
+      "resumeFailed": "Não foi possível retomar a execução do fluxo de trabalho",
+      "retryFailed": "Não foi possível repetir o nó"
     },
     "canvases": {
       "defaultSection": "Ecrã predefinido",
@@ -1451,7 +1557,19 @@
       },
       "loading": "A carregar a área de trabalho...",
       "syncFailed": "Falha na sincronização da área de trabalho",
-      "retry": "Tentar novamente"
+      "retry": "Tentar novamente",
+      "mode": {
+        "workflow": "Fluxo de trabalho",
+        "storyboard": "Storyboard"
+      },
+      "toggleCanvasView": "Alternar vista do canvas",
+      "newAgent": "Novo agente",
+      "collapseAgentHistory": "Recolher histórico de agentes",
+      "expandAgentHistory": "Abrir histórico de agentes",
+      "resizeChatWidth": "Ajustar largura do chat",
+      "resizeAgentHistoryWidth": "Ajustar largura do histórico de agentes",
+      "searchSessions": "Procurar sessões…",
+      "noMatchingAgents": "Nenhum agente correspondente"
     },
     "assetBrowser": {
       "loading": "A carregar…",
@@ -1493,6 +1611,301 @@
       "metaFetchFailed": "Falha ao ler os metadados do realizador: {{status}}",
       "metaInvalid": "Os metadados do realizador estão malformados",
       "missingTargetPath": "A composição do realizador foi guardada, mas não tem um caminho de destino"
+    },
+    "canvasDebug": {
+      "historyItemIdUnrecognized": "Não foi possível identificar o id deste item do histórico (a resposta da lista não continha nenhum dos campos id / history_id / filename / name). Consulte a consola.",
+      "confirmRestore": "Confirmar a restauração para {{historyId}}? A versão atual será guardada no histórico primeiro.",
+      "restoreFailed": "Falha ao restaurar: {{message}}",
+      "panelTitle": "Painel de depuração do canvas (apenas para desenvolvimento)",
+      "toggle": "Depurar",
+      "notFetched": "Ainda não foi obtido; clique em GET para consultar.",
+      "fetch": "Obter",
+      "emptyHistory": "Vazio (ainda sem instantâneos de histórico)",
+      "restoreThisVersion": "Restaurar esta versão",
+      "missingHistoryId": "Falta history_id; não é possível restaurar",
+      "restoring": "A restaurar…",
+      "restore": "Restaurar",
+      "debugHint": "Apenas para depuração · \"Endpoint indisponível\" será mostrado aqui quando o endpoint de histórico do backend não estiver implementado."
+    },
+    "canvasCommand": {
+      "lastShotEndFrame": "Último fotograma da cena anterior",
+      "workflowAlreadyRunning": "O fluxo de trabalho já está em execução; início duplicado ignorado",
+      "alreadyHasResultSkipped": "(já existe resultado, ignorado)",
+      "workflowExistsSkipCreation": "O fluxo de trabalho já existe; a ignorar criação duplicada",
+      "reuseExistingWorkflowNode": "Reutilizar nó de fluxo de trabalho existente",
+      "skipInvalidConnection": "Ignorar ligação inválida",
+      "workflowCompletedNoRegen": "Fluxo de trabalho concluído; não regenerado",
+      "workflowGroup": "Grupo de fluxo de trabalho",
+      "createNormalGroup": "Criar grupo normal",
+      "validateLabel": "Validar comandos da área de trabalho",
+      "commandValidation": "Validação de comandos",
+      "invalidFormat": "O formato do comando da área de trabalho é inválido ou não pertence a esta área de trabalho; o frontend não executou.",
+      "unparseable": "Não foi possível analisar o comando canvas_chat_commands.v1; verifique se o campo command está no nível correto.",
+      "invalidCommand": "Comando da área de trabalho inválido",
+      "prevalidationFailed": "Pré-validação do comando da área de trabalho falhou; nenhum cartão de confirmação foi mostrado e nada foi executado.",
+      "externalAgent": "Agente externo",
+      "unparseableContextRequest": "Não foi possível analisar o pedido canvas_context_request.v1.",
+      "contextReadFailed": "Falha ao ler o contexto da área de trabalho: {{message}}",
+      "canvasContext": "Contexto da área de trabalho"
+    },
+    "canvasEdge": {
+      "context": {
+        "description": "Relação de contexto, restrição ou explicação entre nós de planeamento de texto/guion, utilizada para organizar ideias criativas; não impulsiona diretamente a geração de media."
+      },
+      "prompt": {
+        "description": "O texto/guion a montante é o prompt, texto, diálogo ou entrada de tarefa direta do nó de geração de destino."
+      },
+      "sequence": {
+        "description": "Os nós a montante controlam apenas a ordem de execução do nó de destino; o nó de destino não consome o resultado deles."
+      },
+      "reference": {
+        "description": "Imagens/vídeos/áudio a montante servem como entrada de media ou material de referência para o nó de destino."
+      },
+      "derivation": {
+        "description": "O media de destino é o resultado de editar, cortar, melhorar a definição, variar, exportar ou restaurar media a montante."
+      },
+      "composition": {
+        "description": "Fragmentos de texto, imagem, vídeo ou áudio a montante entram no nó de composição/linha temporal de destino como material do corte final."
+      }
+    },
+    "nodeAction": {
+      "parameter": {
+        "model": "Modelo",
+        "modelDescription": "Opcional. Tem de utilizar o id do modelo presente em options; deixe em branco para utilizar o modelo predefinido desta ação. Não escreva nomes coloquiais nem apiModel do backend.",
+        "upscaleFactor": "Fator de ampliação",
+        "default2": "Predefinição: 2.",
+        "quality": "Qualidade de imagem",
+        "default2K": "Predefinição: 2K.",
+        "targetAspectRatio": "Proporção de aspeto de destino",
+        "defaultOriginal": "Predefinição: original.",
+        "generateCount": "Quantidade a gerar",
+        "default1": "Predefinição: 1.",
+        "resolution": "Resolução",
+        "default1080p": "Predefinição: 1080p.",
+        "breakdownDimension": "Dimensão de decomposição",
+        "displayName": "Nome a apresentar",
+        "resolutionDescription": "Resolução de destino no painel de processamento de vídeo de alta definição; atualize upscaleResolution ao alterar a resolução de alta definição.",
+        "imageModelDescription": "O modelo de imagem tem de utilizar o id do modelo presente em options; não utilize nomes coloquiais nem apiModel do backend, por exemplo, não escreva nanobanana.",
+        "resolutionOptionsDescription": "Utilize as opções de resolução originais devolvidas pelo catálogo do modelo de imagem selecionado.",
+        "qualityUnsupported": "O modelo selecionado não suporta níveis de qualidade; omita quality.",
+        "qualityUseSupported": "Utilize apenas os níveis de qualidade suportados pelo modelo de imagem selecionado.",
+        "aspectRatio": "Proporção",
+        "videoModelDescription": "O modelo de vídeo tem de utilizar o id do modelo presente em options; não utilize nomes coloquiais nem apiModel do backend.",
+        "videoAspectRatio": "Proporção do vídeo",
+        "videoAspectRatioDescription": "Proporção nos parâmetros inferiores do nó de vídeo; atualize aspectRatio ao alterar a proporção do vídeo, não altere o modelo para o fazer indiretamente.",
+        "clarity": "Definição",
+        "clarityDescription": "Definição nos parâmetros inferiores do nó de vídeo; utilize as opções de resolução originais devolvidas pelo catálogo do modelo selecionado.",
+        "durationSeconds": "Duração em segundos",
+        "durationSecDescription": " Atualize durationSec ao modificar.",
+        "videoGenMode": "Modo de geração de vídeo",
+        "videoGenModeDescription": "Utilize apenas as options do modelo selecionado para o nó atual; após alterar o modelo tem de voltar a consultar as opções de modo e não aplicar o modo de outro nó. Determina como o nó de vídeo consome a entrada a montante. textToVideo=utilizar apenas o prompt atual; imageToVideo=utilizar uma única imagem como referência geral do enquadramento; firstFrame=bloquear o primeiro fotograma com uma única imagem (não equivale a imageToVideo; mantenha o que o utilizador indicar e não troque); firstLastFrame=requer o primeiro e o último fotograma; allReference=pode referenciar imagens/vídeos/áudio em simultâneo; imageReference=utilizar imagens como restrições de referência. Atualize genMode ao alterar o modo de vídeo, não confunda \"modo\" com model.",
+        "voiceReference": "Referência de voz",
+        "voiceReferenceDescription": "Os nós de áudio utilizam o objeto voiceRef para selecionar uma voz quando speechMode=clone, não a string voiceId. Antes de alterar a voz, tem primeiro de retornar o canvas_context_request.v1 especificado por context_request; após obter as options, utilize o campo data das opções inalterado para update_node_data e defina speechMode=clone em simultâneo. Não utilize run_node_action para obter opções de voz.",
+        "startFrame": "Fotograma inicial"
+      },
+      "description": {
+        "generateMainSketchFromBackground": "Gerar candidatos a esboço da linha principal com base no contexto do Beat e no fundo atual.",
+        "generateMainSketchFromDirectorComp": "Gerar candidatos a esboço da linha principal a partir do contexto do Beat e da imagem de composição do realizador.",
+        "generateMainStoryboardCandidates": "Gerar candidatos a storyboard da linha principal com base no contexto do Beat, esboço e material de referência.",
+        "setBackgroundImage": "Definir a imagem explicitamente especificada como fundo do Beat atual.",
+        "setDirectorCompositionImage": "Definir a imagem explicitamente especificada como composição do realizador 3GS do Beat atual.",
+        "generateScenePanorama": "Gerar candidatos a panorama de cena 2:1 com base na imagem principal da cena.",
+        "reviewStoryboardCandidates": "Revisar candidatos a storyboard com base no contexto do Beat."
+      },
+      "shotContext": {
+        "startFrameDraft": {
+          "description": "Rascunho do quadro inicial do nó de contexto do plano. Apenas modifica o rascunho local da tela; para o reescrever na linha principal, utilize a entrada manual na interface."
+        },
+        "scene": {
+          "label": "Cenário",
+          "description": "Rascunho do cenário do nó de contexto do plano, no formato {scene_id, variant_id}. Só é permitido modificar este campo; não altere a identidade ou os adereços de entrada em cena."
+        },
+        "time": {
+          "label": "Tempo",
+          "description": "Rascunho do tempo do nó de contexto do plano. Deve ser escolhido a partir da enumeração; uma cadeia vazia significa que não está definido."
+        }
+      },
+      "textAnnotation": {
+        "title": {
+          "label": "Título"
+        },
+        "content": {
+          "label": "Conteúdo"
+        }
+      },
+      "common": {
+        "text": {
+          "label": "Texto"
+        },
+        "semanticRole": {
+          "label": "Papel semântico de saída"
+        }
+      },
+      "generator": {
+        "displayName": {
+          "label": "Nome a apresentar"
+        },
+        "prompt": {
+          "label": "Prompt"
+        },
+        "negativePrompt": {
+          "label": "Prompt negativo"
+        },
+        "count": {
+          "label": "Quantidade a gerar"
+        }
+      },
+      "image": {
+        "displayName": {
+          "label": "Nome a apresentar"
+        },
+        "prompt": {
+          "label": "Prompt"
+        },
+        "negativePrompt": {
+          "label": "Prompt negativo"
+        },
+        "count": {
+          "label": "Quantidade a gerar"
+        }
+      },
+      "video": {
+        "displayName": {
+          "label": "Nome a apresentar"
+        },
+        "prompt": {
+          "label": "Prompt"
+        },
+        "realPersonReview": {
+          "label": "Revisão de pessoa real",
+          "description": "Ativar a revisão de conteúdo com pessoa real na geração de vídeo a partir de imagem, quando o modelo o suportar."
+        },
+        "count": {
+          "label": "Quantidade a gerar"
+        }
+      },
+      "audio": {
+        "label": "Gerar áudio",
+        "displayName": {
+          "label": "Nome a apresentar"
+        },
+        "kind": {
+          "label": "Tipo de áudio",
+          "description": "speech significa texto-para-voz; music significa geração de música a partir de texto."
+        },
+        "voiceMode": {
+          "label": "Modo de voz",
+          "description": "Só tem efeito quando audioKind=speech. Xiahua utiliza apenas linhas de voz personalizadas; a geração de voz é ignorada quando não é selecionado um voiceRef válido."
+        },
+        "text": {
+          "label": "Texto"
+        },
+        "emotionPrompt": {
+          "label": "Prompt de emoção"
+        },
+        "voiceName": {
+          "label": "Nome da voz",
+          "description": "Nome de apresentação do timbre, normalmente escrito a partir dos dados da opção audio_voice_options juntamente com voiceRef."
+        },
+        "language": {
+          "label": "Idioma",
+          "description": "Etiqueta de idioma do timbre, normalmente escrita a partir dos dados da opção audio_voice_options juntamente com voiceRef."
+        },
+        "musicDurationMs": {
+          "label": "Duração da música (ms)",
+          "description": "Só tem efeito quando audioKind=music; a página utiliza 30000 ms por omissão."
+        },
+        "instrumental": {
+          "label": "Música instrumental",
+          "description": "Só tem efeito quando audioKind=music; o valor por omissão é true."
+        },
+        "followSegmentDuration": {
+          "label": "Respeitar a duração do segmento",
+          "description": "Só tem efeito quando audioKind=music; o valor por omissão é true."
+        }
+      },
+      "story": {
+        "displayName": {
+          "label": "Nome a apresentar"
+        },
+        "prompt": {
+          "label": "Prompt de geração",
+          "description": "Entrada principal do nó de geração do guião de história; utilize textAnnotationNode.content para texto livre comum."
+        },
+        "content": {
+          "label": "Conteúdo"
+        }
+      },
+      "world3d": {
+        "displayName": {
+          "label": "Nome a apresentar"
+        },
+        "title": {
+          "label": "Título"
+        },
+        "sourceType": {
+          "label": "Tipo de origem 3GS",
+          "description": "master/reverse gera 3GS de face única; pano significa que a origem é uma panorâmica 360°."
+        }
+      },
+      "custom": {
+        "displayName": {
+          "label": "Nome a apresentar"
+        },
+        "prompt": {
+          "label": "Prompt",
+          "description": "Nota/pista de geração do nó de mundo 3D; a geração 3GS atual depende principalmente da imagem a montante."
+        }
+      },
+      "generic": {
+        "displayName": {
+          "label": "Nome a apresentar"
+        },
+        "parameters": {
+          "label": "Parâmetros"
+        }
+      },
+      "upload": {
+        "displayName": {
+          "label": "Nome a apresentar"
+        }
+      },
+      "default": {
+        "displayName": {
+          "label": "Nome a apresentar"
+        }
+      }
+    },
+    "context": {
+      "operation": {
+        "beatSketch": {
+          "label": "Beat para esboço"
+        },
+        "directorCompositeSketch": {
+          "label": "Composição do realizador para esboço"
+        },
+        "backgroundAnchorSketch": {
+          "label": "Âncora de fundo para esboço"
+        },
+        "generateStoryboardFromMainline": {
+          "label": "Gerar storyboard a partir do contexto principal"
+        }
+      },
+      "mainlineContext": "Contexto principal",
+      "mainlineContextHint": "Aparece apenas quando identidade / cenário / Beat coincidem"
+    },
+    "viewMode": {
+      "workflow": "Fluxo de trabalho",
+      "board": "Storyboard",
+      "toggle": "Alternar vista da área de trabalho"
+    },
+    "agent": {
+      "create": "Criar agente",
+      "collapseHistory": "Recolher histórico de agentes",
+      "expandHistory": "Expandir histórico de agentes",
+      "resizeHistoryWidth": "Ajustar largura do histórico de agentes",
+      "searchSessions": "Procurar sessões...",
+      "noMatches": "Nenhum agente correspondente"
     }
   },
   "theme": {
@@ -2691,8 +3104,8 @@
         "front": "Frente",
         "left": "Esquerda",
         "right": "Direita",
-        "back": "Traseira",
-        "light": "Iluminação",
+        "back": "Trás",
+        "light": "Fonte de luz",
         "material": "Material / estilo",
         "forbidden": "Elementos proibidos"
       },
@@ -2839,7 +3252,8 @@
     "pause": "Pausar",
     "retry": "Tentar novamente",
     "requestId": "ID do pedido",
-    "listSeparator": ", "
+    "listSeparator": ", ",
+    "processing": "A processar…"
   },
   "ingest": {
     "title": "Fonte da história",
@@ -2965,7 +3379,9 @@
       "characterSeparator": ", ",
       "unknownLocation": "Localização da cena não detectada",
       "empty": "Nenhum texto de cena está disponível neste capítulo",
-      "unparsedBody": "Texto fora das cenas reconhecidas"
+      "unparsedBody": "Texto fora das cenas reconhecidas",
+      "rowCount": "{{count}} cenas",
+      "count": "{{count}} cenas"
     },
     "chapterDetails": {
       "open": "Ver o texto de {{chapter}}",
@@ -3330,6 +3746,10 @@
   },
   "taskCenter": {
     "title": "Centro de tarefas",
+    "batchProgress": "Progresso do lote {{settled}}/{{expected}}",
+    "runningCount": "Em execução: {{count}}",
+    "waitingCount": "Em espera: {{count}}",
+    "batchFailed": "Falharam {{failed}} de {{expected}} tarefas",
     "cancel": {
       "title": "Cancelar tarefa de geração",
       "description": "Cancelar “{{name}}”? Normalmente, as tarefas em execução não são reembolsadas após o cancelamento.",
@@ -4592,7 +5012,14 @@
         "invalidBeats": "As batidas selecionadas não pertencem a este episódio",
         "noBeats": "Este episódio ainda não tem batidas"
       },
-      "paddingCount": "+{{count}} espaços vazios"
+      "paddingCount": "+{{count}} espaços vazios",
+      "partial": {
+        "reason": {
+          "unknown": "Algumas tarefas ainda não foram enviadas."
+        },
+        "summary": "Enviadas {{ok}} / rejeitadas {{fail}}",
+        "continue": "Continuar"
+      }
     },
     "renderSettings": {
       "model": "Modelo de renderização",
@@ -5040,7 +5467,9 @@
         "createHint": "Fica disponível para organizar e carregar recursos assim que for criada",
         "renameHint": "O novo nome aparece em toda a biblioteca de recursos"
       },
-      "commitDragHint": "Mantém premido e arrasta para a biblioteca de recursos à esquerda para substituir recursos do mesmo tipo"
+      "commitDragHint": "Mantém premido e arrasta para a biblioteca de recursos à esquerda para substituir recursos do mesmo tipo",
+      "itemCount": "{{count}} recursos",
+      "bulkSelected": "{{count}} selecionados (só é possível eliminar recursos carregados localmente)"
     },
     "referencePick": {
       "kind": {
@@ -5405,7 +5834,17 @@
       "batchDelete": "Eliminar tudo",
       "arrangeGrid": "Disposição em grelha",
       "arrangeHorizontal": "Disposição horizontal",
-      "arrangeVertical": "Disposição vertical"
+      "arrangeVertical": "Disposição vertical",
+      "workflowRunning": "O fluxo de trabalho está em execução",
+      "workflowRunningShort": "Em execução",
+      "workflowStoppedNext": "Nós seguintes interrompidos",
+      "workflowStopNextTitle": "Impedir o arranque dos nós seguintes do fluxo de trabalho",
+      "workflowWaitingCurrent": "A aguardar o nó actual",
+      "workflowStopNext": "Parar nós seguintes",
+      "workflowCompleted": "Fluxo de trabalho concluído",
+      "workflowRun": "Executar fluxo de trabalho",
+      "workflowRerunAllTitle": "Executar novamente todos os nós do fluxo de trabalho",
+      "workflowRerunAll": "Executar tudo novamente"
     },
     "nodeToolbar": {
       "mainlineLocked": "Projeção da linha principal · bloqueada",
@@ -5423,7 +5862,9 @@
       "arrangeGrid": "Grelha",
       "arrangeHorizontal": "Horizontal",
       "arrangeVertical": "Vertical",
-      "commitHint": "Escrever novamente o conteúdo deste nó no recurso da linha principal"
+      "commitHint": "Escrever novamente o conteúdo deste nó no recurso da linha principal",
+      "recipeFallbackTitle": "A compilação do modelo Recipe excedeu o tempo limite; a geração continuou com o prompt alternativo estável",
+      "recipeFallbackLabel": "Recipe compilada com alternativa"
     },
     "style": {
       "chip": "Estilo",
@@ -5811,7 +6252,9 @@
       "m4aSourceOnlyHint": "Apenas ficheiros de origem m4a",
       "m4aSourceOnly": "A fonte não está em m4a, pelo que não pode ser convertida para m4a",
       "downloadFailed": "Falha na transferência do áudio"
-    }
+    },
+    "copyNodeId": "Copiar ID do nó",
+    "nodeId": "ID"
   },
   "multiAngleEditor": {
     "title": "Editor multidimensional",
@@ -6022,7 +6465,147 @@
     "thinkingHigh": "Elevado",
     "noModelsAvailable": "O administrador não configurou nenhum modelo de imagem"
   },
+  "assetBoard": {
+    "referenceMaterials": "Materiais de referência",
+    "zoomImage": "Ampliar imagem",
+    "prompt": "Prompt",
+    "nodeMissing": "Este nó já não existe",
+    "clickToEdit": "Clicar para editar",
+    "noText": "Sem conteúdo de texto",
+    "noScript": "Sem conteúdo de guião",
+    "noShots": "Sem linhas de planos",
+    "noDisplayContent": "Não existe conteúdo para apresentar",
+    "shotNumber": "Plano",
+    "duration": "Duração",
+    "visualDescription": "Descrição visual",
+    "dialogue": "Diálogo",
+    "contentSummary": "Resumo do conteúdo",
+    "resolution": "Resolução",
+    "referenceActions": "Ações de {{name}}",
+    "edit": "Editar",
+    "locate": "Localizar",
+    "m4aOnly": "Apenas fonte M4A",
+    "noKeyElements": "Não existem elementos principais nesta categoria",
+    "referenceDropHint": "Arraste recursos, imagens ou vídeos para aqui para os adicionar como referências",
+    "imageOpChipHint": "Clique para mudar de função; prima Backspace para remover",
+    "upscaleResult": "Imagem com resolução aumentada",
+    "cropResult": "Resultado do recorte",
+    "rotateResult": "Resultado da rotação",
+    "crop": "Recortar",
+    "rotate": "Rodar",
+    "panoramaConfirm": "Gerar um panorama de 360° a partir desta imagem?",
+    "panoramaResult": "Panorama de 360°",
+    "durationSeconds": "{{count}} s",
+    "generatingProgress": "A gerar {{percent}}%...",
+    "generating": "A gerar",
+    "assetDetail": "Detalhes do recurso",
+    "back": "Voltar",
+    "nodeActions": "Ações do nó",
+    "duplicate": "Criar cópia",
+    "delete": "Eliminar",
+    "closeDetail": "Fechar detalhes",
+    "text": "Texto",
+    "image": "Imagem",
+    "video": "Vídeo",
+    "relightEditor": "Editor de iluminação",
+    "multiAngleEditor": "Editor de vários ângulos",
+    "ownReferenceImage": "Imagem de referência do nó",
+    "removeReferenceImage": "Remover imagem de referência",
+    "panorama": "Panorama",
+    "panoramaTitle": "Gerar um panorama de 360° a partir desta imagem e adicionar um nó de visualização panorâmica",
+    "multiAngle": "Vários ângulos",
+    "multiAngleTitle": "Abrir o editor de vários ângulos (esfera de câmara, qualidade e prompt)",
+    "relight": "Alterar iluminação",
+    "relightTitle": "Abrir o editor de iluminação (direção, luminosidade/temperatura de cor e modo inteligente)",
+    "moreActions": "Mais ações",
+    "download": "Transferir",
+    "regenerate": "Gerar novamente",
+    "retryGeneration": "Submeter novamente esta geração (repetir após falha)",
+    "gridTemplate": "Gerar a partir desta imagem com um modelo de grelha ou várias vistas",
+    "editVideo": "Editar",
+    "composedVideo": "Vídeo composto",
+    "upscaledVideoName": "Resolução aumentada ({{resolution}})",
+    "composeNeedsTwoVideos": "São necessários pelo menos dois vídeos de origem prontos",
+    "openComposeTimeline": "Abrir a linha temporal de composição de vídeo",
+    "upscale": "Aumentar resolução",
+    "upscaleTitle": "Aumentar a resolução criando um novo nó de resultado na área de trabalho",
+    "fullscreen": "Ecrã inteiro",
+    "fullscreenTitle": "Reproduzir em ecrã inteiro",
+    "resolution": "Resolução",
+    "submitUpscale": "Submeter aumento de resolução",
+    "submitUpscaleTitle": "Criar um nó de resultado com maior resolução na área de trabalho e submeter a tarefa",
+    "locateOnCanvas": "Localizar na área de trabalho",
+    "generationFailed": "Falha na geração",
+    "downloadConvert": "Transferir / converter formato",
+    "resizeColumn": "Ajustar largura da coluna",
+    "all": "Tudo",
+    "finalVideos": "Vídeos finais",
+    "clips": "Clipes",
+    "noTextNodes": "Não existem nós de texto na área de trabalho",
+    "noImageNodes": "Não existem nós de imagem na área de trabalho",
+    "noVideoNodes": "Não existem nós de vídeo na área de trabalho",
+    "noMatchingVideos": "Nenhum vídeo corresponde ao filtro atual",
+    "filterVideos": "Filtrar vídeos",
+    "switchColumn": "Mudar de coluna",
+    "expand": "Ampliar",
+    "collapse": "Recolher",
+    "pendingGeneration": "Gerar após confirmação",
+    "sourceNotM4a": "O ficheiro de origem não é M4A e não pode ser convertido para M4A",
+    "audioDownloadFailed": "Falha ao transferir o áudio",
+    "downloadAs": "Transferir como {{format}}",
+    "keyElements": "Elementos principais",
+    "setKeyElement": "Definir como elemento principal",
+    "clearKeyElement": "Remover dos elementos principais",
+    "current": "Atual",
+    "audioLabel": "Áudio",
+    "categoryCharacter": "Personagem",
+    "categoryScene": "Cena",
+    "categoryObject": "Objeto",
+    "categoryOther": "Outros",
+    "audio": {
+      "musicDescription": "Descrição da música",
+      "speechText": "Texto a sintetizar",
+      "musicPlaceholder": "Descreva a música pretendida: estilo, instrumentos, ritmo, ambiente…",
+      "speechPlaceholder": "Introduza o texto a sintetizar",
+      "fillerWords": "Indicações de interpretação (opcional)",
+      "fillerWordsPlaceholder": "Por exemplo: tenso, voz baixa, ligeiramente assustado",
+      "chooseVoice": "Escolher uma voz personalizada",
+      "changeVoice": "Alterar a voz personalizada",
+      "voice": "Voz",
+      "voiceNotSelected": "Não selecionada (a geração será ignorada)",
+      "customVoice": "Voz personalizada",
+      "musicDuration": "Duração da música",
+      "forceInstrumental": "Forçar apenas instrumental",
+      "respectSectionDurations": "Respeitar a duração das secções",
+      "textToMusic": "Texto para música",
+      "customVoiceNarration": "Narração com voz personalizada",
+      "voiceSettings": "Definições da voz (atual: {{voice}})",
+      "notSelected": "Não selecionada",
+      "advancedSettings": "Definições avançadas",
+      "enterMusicFirst": "Introduza primeiro uma descrição da música",
+      "enterSpeechFirst": "Introduza primeiro o texto a sintetizar",
+      "regenerate": "Gerar novamente",
+      "generate": "Gerar"
+    }
+  },
   "node": {
+    "imageGeneration": {
+      "quality": "Qualidade",
+      "resolution": "Resolução",
+      "aspectRatio": "Proporção",
+      "assetLibrary": "Biblioteca de recursos",
+      "assetLibraryHint": "Selecionar uma imagem de referência da biblioteca de recursos (personagem / cena / adereço)",
+      "upstreamReference": "Da origem · {{name}}",
+      "detachReference": "Remover esta referência"
+    },
+    "stylePicker": {
+      "title": "Estilo",
+      "other": "Outros",
+      "clear": "Limpar",
+      "close": "Fechar",
+      "loading": "A carregar…",
+      "empty": "Não existem modelos de estilo"
+    },
     "menu": {
       "uploadImage": "Carregar recurso",
       "image": "Imagem",
@@ -6517,7 +7100,8 @@
           "noProject": "Não foi encontrado nenhum projeto atual, pelo que não é possível guardar o resultado",
           "alreadyRunning": "A captura de profundidade deste vídeo ainda está em curso. Aguarde até terminar"
         }
-      }
+      },
+      "billingRuleMissingSubmit": "A geração de vídeo não foi iniciada: a regra de faturação não está configurada. Peça a um administrador para configurar a regra de créditos e tente novamente."
     },
     "pano360": {
       "captureGroup2x2": "Conjunto de capturas panorâmicas (4)",
@@ -6839,6 +7423,7 @@
     },
     "videoOps": {
       "referenceGroupLabel": "Grupo de referências de recursos",
+      "externalMedia": "Conteúdo multimédia externo",
       "upstreamPlaceholder": "Conteúdo de nós anteriores anexado automaticamente — adicione mais detalhes ao prompt…",
       "humanReviewTitle": "Ative quando o material contiver rostos reais. A revisão pode demorar mais tempo e a aprovação não é garantida.",
       "humanReviewLabel": "Revisão humana",
@@ -6931,6 +7516,9 @@
       "directorCaptureSizeFailed": "Não foi possível ler as dimensões da captura do mundo do realizador",
       "directorElement": "Elemento do realizador",
       "directorExportLabel": "Exportação do mundo do realizador"
+    },
+    "imageGenNode": {
+      "billingRuleMissingSubmit": "A geração de imagens não foi iniciada: a regra de faturação não está configurada. Peça a um administrador para configurar a regra de créditos e tente novamente."
     }
   },
   "viewer": {
@@ -7603,7 +8191,8 @@
         "copyRawJson": "Copiar JSON",
         "rawJsonCopied": "JSON da Receita copiado",
         "rawJsonCopyFailed": "Não foi possível copiar; copie manualmente"
-      }
+      },
+      "customizedShort": "Personalizado"
     },
     "modelConfig": {
       "title": "Configuração de modelos",
@@ -7871,7 +8460,8 @@
           "NARRATED_SCENE_ASSET": "Planear os recursos das cenas de dramas narrados",
           "STAGING_PROP": "Planear adereços temporários do Director World",
           "COGNEE": "① Compreensão de conteúdo e extração de conhecimento (LLM)"
-        }
+        },
+        "addChannel": "Adicionar canal"
       },
       "embeddingModel": {
         "title": "② Vetorização e pesquisa semântica (Embedding)",
@@ -8104,13 +8694,54 @@
     "checkingUpdate": "A procurar atualizações...",
     "checkUpdateHasUpdate": "Foi detetada uma nova versão.",
     "checkUpdateUpToDate": "Está a utilizar a versão mais recente.",
-    "checkUpdateFailed": "Não foi possível procurar atualizações. Tente novamente mais tarde."
+    "checkUpdateFailed": "Não foi possível procurar atualizações. Tente novamente mais tarde.",
+    "freezoneSkillRecipe": {
+      "editTag": "Editar {{tag}}",
+      "deleteTag": "Eliminar {{tag}}",
+      "collapseAssociatedRecipes": "Recolher Recipes associadas",
+      "expandAssociatedRecipes": "Expandir Recipes associadas",
+      "associatedRecipesCount": "{{count}} Recipe associada{{missing}}",
+      "noAssociatedRecipes": "Esta Skill ainda não tem nenhuma Recipe associada",
+      "addRecipe": "Adicionar Recipe",
+      "localRecipeNotFound": "Configuração local da Recipe não encontrada; este ID de associação será mantido ao guardar.",
+      "view": "Ver",
+      "removeRecipe": "Remover {{recipeId}}",
+      "addIdManually": "Adicionar ID manualmente",
+      "enterRecipeId": "Introduzir ID da Recipe",
+      "add": "Adicionar",
+      "noRecipesToAdd": "Não há Recipes para adicionar",
+      "createSkillHint": "Podes pedir ao XiaDao para resumir a tela atual, ou descrever um fluxo de trabalho para criar a tua própria Skill.",
+      "videoGeneration": "Geração de vídeo",
+      "audioGeneration": "Geração de áudio",
+      "associatedRecipesMissing": ", {{count}} definição não encontrada",
+      "searchRecipe": "Procurar Recipe",
+      "noDescription": "Sem descrição",
+      "close": "Fechar",
+      "noSkills": "Ainda não há Skills aqui",
+      "generationType": {
+        "textGeneration": "Geração de texto",
+        "imageGeneration": "Geração de imagem",
+        "videoGeneration": "Geração de vídeo",
+        "audioGeneration": "Geração de áudio"
+      },
+      "closeRecipeDetailBackground": "Fechar fundo dos detalhes da Recipe",
+      "closeRecipeDetail": "Fechar detalhes da Recipe",
+      "detail": {
+        "description": "Descrição",
+        "resultSummary": "Resumo do resultado",
+        "planningPrompt": "Prompt de planeamento",
+        "mustHaveItems": "Itens obrigatórios"
+      },
+      "mineTab": "Minhas",
+      "use": "Utilizar"
+    }
   },
   "pricing": {
     "nativePrice": "Na moeda de origem: {{value}}",
     "originalPrice": "Original: {{value}}",
     "pointsCost": "Créditos: {{count}}",
-    "grsaiTier": "Pacote: CNY {{price}} / {{credits}} créditos"
+    "grsaiTier": "Pacote: CNY {{price}} / {{credits}} créditos",
+    "perRunSuffix": "/execução"
   },
   "update": {
     "dialogTitle": "Atualização disponível",
@@ -8411,6 +9042,10 @@
     }
   },
   "superchat": {
+    "nodeSuggestions": {
+      "title": "Nós",
+      "noMatches": "Não existem nós correspondentes"
+    },
     "spec": {
       "characterFallback": "Personagem {{index}}",
       "roleLabel": "Papel",
@@ -8584,5 +9219,39 @@
     "loadFailed": "Não foi possível carregar a imagem original. Tente novamente.",
     "saveFailed": "Não foi possível criar o resultado. Verifique a imagem e o projeto atual.",
     "invalidSize": "Introduza números inteiros positivos. Aresta máxima: 16384 píxeis; total máximo: 40 milhões de píxeis."
+  },
+  "login": {
+    "community": {
+      "work": {
+        "luban": {
+          "title": "Luban"
+        },
+        "guilingsi": {
+          "title": "Guilingsi",
+          "description": "Objetos refletores por toda a cidade agem ao mesmo tempo e rostos desaparecem no ar! Lu Lingxi, a mais forte recolhedora de espíritos da Guilingsi, é chamada a investigar — só para descobrir que ela própria é a fonte deste desastre espiritual: o espírito do espelho procura o seu mestre há mil anos."
+        },
+        "seniorBrotherNoLongerSimping": {
+          "title": "Irmão Sénior, Porque é que Já Não Estás a Adular?",
+          "description": "Lin Yuan, o digno líder da seita Tiandao, tornou a recusa de viver como um adulador a sua primeira ação após renascer!"
+        },
+        "heavensWillCannotBeDeceived": {
+          "title": "A Vontade do Céu Não Pode Ser Enganada",
+          "description": "No dia do grande casamento, conflitos internos e ameaças externas eclodem simultaneamente. O Templo Ancestral Imperial entrega um “caminho para casa” de regresso à era moderna e revela um segredo chocante a Yun Zhizhi…"
+        },
+        "wulongImmortalPath": {
+          "title": "O Caminho Imortal de Wulong",
+          "description": "Após dezoito anos neste mundo, o sistema de ascensão finalmente ativa — só para se revelar uma fraude total."
+        },
+        "intangibleHeritageZhouDance": {
+          "title": "Património Imaterial: Dança Zhou"
+        },
+        "threeDAnimeMashup": {
+          "title": "Mashup de Anime 3D"
+        },
+        "dynamicCombat": {
+          "title": "Combate Dinâmico"
+        }
+      }
+    }
   }
 }

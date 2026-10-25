@@ -7,8 +7,7 @@ import {
   useRef,
   useState,
   type MouseEvent,
-  type ReactNode,
-} from 'react';
+  type ReactNode} from 'react';
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import { Boxes, Camera, Crop, FileText, Loader2, Play } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -17,8 +16,7 @@ import { toast } from 'sonner';
 import { uploadFreezoneImage } from '@/api/ops';
 import {
   getSceneAssetsForBeat,
-  type SceneAssetsForBeat,
-} from '@/api/sceneAssets';
+  type SceneAssetsForBeat} from '@/api/sceneAssets';
 import { getBeatDirectorStageManifest } from '@/api/viewerManifests';
 import {
   getSkillRegistry,
@@ -26,55 +24,46 @@ import {
   runSkill,
   type SkillErrorEnvelope,
   type SkillRunOutput,
-  type SkillRunResult,
-} from '@/api/skills';
+  type SkillRunResult} from '@/api/skills';
 import { awaitTaskCompletion } from '@/api/tasks';
 import { backendErrorToastMessage } from '@/lib/api-errors';
 import {
-  stageSelectedBackgroundOutputForSkill,
-} from '@/features/canvas/application/selectedBackgroundSlot';
+  stageSelectedBackgroundOutputForSkill} from '@/features/canvas/application/selectedBackgroundSlot';
 import {
   publishNodeActionAccepted,
   publishNodeActionError,
   publishNodeActionSuccess,
-  subscribeNodeAction,
-} from '@/features/canvas/application/nodeActionResult';
+  subscribeNodeAction} from '@/features/canvas/application/nodeActionResult';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import {
   type CanvasEdge,
   type CanvasNode,
   type CanvasNodeData,
-  type SkillNodeData,
-} from '@/features/canvas/domain/canvasNodes';
+  type SkillNodeData} from '@/features/canvas/domain/canvasNodes';
 import { isSystemManagedNodeData } from '@/features/canvas/domain/mainlineNodeFlags';
 import { BackgroundCropperDialog } from '@/features/canvas/ui/BackgroundCropperDialog';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NODE_INLINE_ERROR_MESSAGE_CLASS } from '@/features/canvas/ui/nodeControlStyles';
 import {
   normalizedSkillParameters,
-  skillParameterEntries,
-} from '@/features/canvas/nodes/skillNodeParameters';
+  skillParameterEntries} from '@/features/canvas/nodes/skillNodeParameters';
 import {
   ThreeDDirectorDialog,
-  type ThreeDDirectorCaptureMeta,
-} from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
+  type ThreeDDirectorCaptureMeta} from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
 import type {
   DirectorControlFrameBundle,
   DirectorStageManifest,
-  DirectorWorldSource,
-} from '@/features/viewer-kit/three-d/directorManifest';
+  DirectorWorldSource} from '@/features/viewer-kit/three-d/directorManifest';
 import { isSkillReadyToSubmit, resolveInputsForSkill } from '@/features/freezone/context/skillNodeInputs';
 import { getCurrentBeatContextFromNode } from '@/features/freezone/context/currentBeatContext';
 import {
   nodeDataForOutput,
   nodeTypeForOutput,
   outputLabel,
-  outputText,
-} from '@/features/freezone/context/skillNodeOutputs';
+  outputText} from '@/features/freezone/context/skillNodeOutputs';
 import type {
   SkillDefinition,
-  SkillInputRole,
-} from '@/features/freezone/context/skillRoles';
+  SkillInputRole} from '@/features/freezone/context/skillRoles';
 import {
   translateSkillDescription,
   translateSkillCardinality,
@@ -84,8 +73,7 @@ import {
   translateSkillParameterLabel,
   translateSkillParameterOption,
   translateSkillRequirement,
-  translateSkillProviderLabel,
-} from '@/features/freezone/context/skillI18n';
+  translateSkillProviderLabel} from '@/features/freezone/context/skillI18n';
 import type { MainlineContext } from '@/features/freezone/context/mainlineContext';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -373,8 +361,7 @@ function beatContextListsFromNode(node: CanvasNode | undefined): {
     props: realProps(propItems),
     noCharacter: identityItems.includes('__NO_CHARACTER__'),
     noProp: propItems.includes('__NO_PROP__'),
-    visualDescription: visual || undefined,
-  };
+    visualDescription: visual || undefined};
 }
 
 function referenceHandleId(role: 'identity' | 'prop', id: string): string {
@@ -409,13 +396,10 @@ function mergeManifestWithCanvasBeatContext(
       beat: target.beat,
       visual_description: context.visualDescription ?? manifest.beat_context?.visual_description,
       detected_identities: identities,
-      detected_props: props,
-    },
+      detected_props: props},
     palette: {
       ...manifest.palette,
-      anonymous_colors: [],
-    },
-  };
+      anonymous_colors: []}};
 }
 
 function sceneAssetsFromSkillData(value: unknown): SceneAssetsForBeat | null {
@@ -433,8 +417,7 @@ function sceneAssetsFromSkillData(value: unknown): SceneAssetsForBeat | null {
     reverse_url: normalizeUrl('reverse_url'),
     director_env_only_url: normalizeUrl('director_env_only_url'),
     pano_360_url: normalizeUrl('pano_360_url'),
-    ply_url: null,
-  };
+    ply_url: null};
 }
 
 function directorSourceUrl(source: DirectorWorldSource): string | null {
@@ -469,8 +452,7 @@ function manifestSourceToWorldSource(manifest: DirectorStageManifest): DirectorW
     pano_url: manifest.source.pano_url,
     pano_fs: manifest.source.pano_fs,
     collision_glb_url: manifest.source.collision_glb_url,
-    current: true,
-  };
+    current: true};
 }
 
 function manifestOptionToWorldSource(
@@ -488,8 +470,7 @@ function manifestOptionToWorldSource(
     pano_fs: option.pano_fs,
     slot_kind: option.slot_kind,
     fs: option.fs,
-    current: option.current,
-  };
+    current: option.current};
 }
 
 function directorManifestWithScenePanoSource(
@@ -512,16 +493,14 @@ function directorManifestWithScenePanoSource(
     label: '360',
     url: assets.pano_360_url,
     pano_url: assets.pano_360_url,
-    slot_kind: 'scene_director_pano_360',
-  };
+    slot_kind: 'scene_director_pano_360'};
   if (!sources.some((source) => directorSourceUrl(source) === assets.pano_360_url)) {
     sources.push(panoSource);
   }
   return {
     ...manifest,
     sources,
-    active_source_id: manifest.active_source_id ?? sources.find((source) => source.current)?.id,
-  };
+    active_source_id: manifest.active_source_id ?? sources.find((source) => source.current)?.id};
 }
 
 function SourceActionButton({
@@ -530,8 +509,7 @@ function SourceActionButton({
   detail,
   disabled,
   onClick,
-  className = '',
-}: {
+  className = ''}: {
   icon: ReactNode;
   title: string;
   detail: string;
@@ -570,8 +548,7 @@ const SKILL_CARD_CLASS = 'rounded-[8px] border border-white/10 bg-white/[0.04] p
 function SkillInputHandle({
   id,
   emphasized = false,
-  leftOffset = SKILL_INPUT_HANDLE_LEFT,
-}: {
+  leftOffset = SKILL_INPUT_HANDLE_LEFT}: {
   id: string;
   emphasized?: boolean;
   leftOffset?: number;
@@ -843,8 +820,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       {
         sourceSkillNodeId: id,
         label,
-        extraData,
-      },
+        extraData},
     );
     if (!outputNodeId) {
       setSourcePickerError(t('viewer.threeD.skillNoSelectedBackgroundOutput'));
@@ -854,8 +830,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       canvasEventBus.publish('freezone/commit-node', {
         nodeId: outputNodeId,
         auto: true,
-        successMessage: t('viewer.threeD.selectedBackgroundCommitSuccess', { episode, beat }),
-      });
+        successMessage: t('viewer.threeD.selectedBackgroundCommitSuccess', { episode, beat })});
     }
     return outputNodeId;
   };
@@ -924,9 +899,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
     updateNodeData(id, {
       parameters: {
         ...currentParameters,
-        [key]: value,
-      },
-    });
+        [key]: value}});
   };
 
   const handleDirectorCombinedCaptureSuccess = async (
@@ -955,8 +928,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       episode: beatTarget.episode,
       beat: beatTarget.beat,
       role: 'director_combined',
-      sourceUrl: imageUrl,
-    } satisfies MainlineContext;
+      sourceUrl: imageUrl} satisfies MainlineContext;
     const output: SkillRunOutput = {
       schema_version: 'skill.v1',
       role: 'director_combined',
@@ -966,22 +938,18 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       image_url: imageUrl,
       label: t('viewer.threeD.directorCombinedOutputLabel', {
         episode: beatTarget.episode,
-        beat: beatTarget.beat,
-      }),
+        beat: beatTarget.beat}),
       slot_target: {
         kind: 'director_render',
         episode: beatTarget.episode,
-        beat: beatTarget.beat,
-      },
+        beat: beatTarget.beat},
       mainline_context: [
         directorCombinedContext,
       ],
       ...(bundle ? {
         director_control_bundle: bundle,
         committed: true,
-        committed_slot_url: imageUrl,
-      } : {}),
-    };
+        committed_slot_url: imageUrl} : {})};
     materializeOutputs([output], projectId, canvasId, null, null);
     const outputNodeId = useCanvasStore
       .getState()
@@ -992,17 +960,14 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       updateNodeData(outputNodeId, {
         director_control_bundle: bundle,
         committed_at: new Date().toISOString(),
-        committed_slot_url: imageUrl,
-      });
+        committed_slot_url: imageUrl});
     } else if (mainlineManaged && outputNodeId) {
       canvasEventBus.publish('freezone/commit-node', {
         nodeId: outputNodeId,
         auto: true,
         successMessage: t('viewer.threeD.directorCombinedCommitSuccess', {
           episode: beatTarget.episode,
-          beat: beatTarget.beat,
-        }),
-      });
+          beat: beatTarget.beat})});
     }
     setSourcePickerError(null);
   };
@@ -1077,8 +1042,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
               : {}),
             ...(recordValue(output.director_control_bundle)
               ? { director_control_bundle: output.director_control_bundle }
-              : {}),
-          };
+              : {})};
           if (output.media_type === 'image') {
             patch.imageUrl = output.image_url ?? null;
             patch.previewImageUrl = output.image_url ?? null;
@@ -1105,8 +1069,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
         nodeTypeForOutput(output),
         {
           x: sourcePosition.x + OUTPUT_X_OFFSET,
-          y: startY + index * OUTPUT_Y_SPACING,
-        },
+          y: startY + index * OUTPUT_Y_SPACING},
         nodeDataForOutput(output, data.skill_id, id),
       );
       const edgeId = addEdgeWithData(
@@ -1116,13 +1079,11 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
           edgeKind: 'role_binding',
           role: output.role,
           label: outputLabel(output),
-          propagates: false,
-        },
+          propagates: false},
         {
           id: `e-${id}-${targetId}-${output.role}`,
           sourceHandle: output.role,
-          targetHandle: 'target',
-        },
+          targetHandle: 'target'},
       );
       if (!edgeId) {
         useCanvasStore.getState().deleteNode(targetId);
@@ -1162,8 +1123,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
           await awaitTaskCompletion(taskKey, projectId, {
             // 续接时用持久化的类型取同一份预算（见 pollTimeoutForTaskType）。
             taskType:
-              typeof data.generationTaskType === 'string' ? data.generationTaskType : null,
-          });
+              typeof data.generationTaskType === 'string' ? data.generationTaskType : null});
         }
         const result = await awaitSkillRunResult(projectId, runId);
         if (cancelled) {
@@ -1179,8 +1139,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
           generationError: null,
           generationTaskKey: null,
           generationTaskType: null,
-          generationTaskJobId: null,
-        });
+          generationTaskJobId: null});
       } catch (error) {
         if (!cancelled) {
           updateNodeData(id, {
@@ -1189,8 +1148,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
             generationError: errorMessage(error),
             generationTaskKey: null,
             generationTaskType: null,
-            generationTaskJobId: null,
-          });
+            generationTaskJobId: null});
         }
       } finally {
         if (resumeRunRef.current === resumeKey) {
@@ -1281,8 +1239,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
           `background_director_world_${Date.now()}.png`,
           t('viewer.threeD.selectedBackgroundOutputLabel', {
             episode: beatTarget?.episode ?? '',
-            beat: beatTarget?.beat ?? '',
-          }),
+            beat: beatTarget?.beat ?? ''}),
         );
       } else {
         await handleDirectorCombinedCaptureSuccess(blob, meta);
@@ -1340,8 +1297,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       );
       const inputSignature = skillInputSignature({
         inputs: resolvedInputs,
-        parameters: currentParameters,
-      });
+        parameters: currentParameters});
       const idempotencyKey = skillRunIdempotencyKey(
         canvasId,
         id,
@@ -1359,15 +1315,13 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
         skillRunId: null,
         generationTaskKey: null,
         generationTaskType: null,
-        generationTaskJobId: null,
-      });
+        generationTaskJobId: null});
       const response = await runSkill(projectId, data.skill_id, {
         skill_node_id: id,
         canvas_id: canvasId,
         idempotency_key: idempotencyKey,
         resolved_inputs: resolvedInputs,
-        parameters: currentParameters,
-      });
+        parameters: currentParameters});
       runAccepted = true;
       const runKey = `${projectId}:${canvasId}:${id}:${response.run_id}`;
       activeRunKey = runKey;
@@ -1377,15 +1331,13 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
         skillRunId: response.run_id,
         generationTaskKey: response.task_key ?? null,
         generationTaskType: response.task_type ?? null,
-        generationTaskJobId: response.job_id ?? null,
-      });
+        generationTaskJobId: response.job_id ?? null});
       if (response.task_key) {
         setTaskRecordGraceUntil(Date.now() + TASK_RECORD_GRACE_MS);
         setSubmitInFlight(false);
         submitInFlightRef.current = false;
         await awaitTaskCompletion(response.task_key, projectId, {
-          taskType: response.task_type ?? null,
-        });
+          taskType: response.task_type ?? null});
       }
       const result = await awaitSkillRunResult(projectId, response.run_id);
       if (isFailureStatus(result.status)) {
@@ -1398,8 +1350,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
         generationError: null,
         generationTaskKey: null,
         generationTaskType: null,
-        generationTaskJobId: null,
-      });
+        generationTaskJobId: null});
       submitInFlightRef.current = false;
       setSubmitInFlight(false);
       setTaskRecordGraceUntil(0);
@@ -1429,8 +1380,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
           generationError: rejectedOnSubmit ? null : errorMessage(error),
           generationTaskKey: null,
           generationTaskType: null,
-          generationTaskJobId: null,
-        });
+          generationTaskJobId: null});
       }
       throw error;
     }
@@ -1562,8 +1512,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
                       <div
                         className="nodrag nopan grid gap-1 rounded-[6px] bg-black/35 p-1"
                         style={{
-                          gridTemplateColumns: `repeat(${optionColumnCount}, minmax(0, 1fr))`,
-                        }}
+                          gridTemplateColumns: `repeat(${optionColumnCount}, minmax(0, 1fr))`}}
                         onPointerDown={(event) => event.stopPropagation()}
                         onClick={(event) => event.stopPropagation()}
                       >
@@ -1618,9 +1567,9 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
                 const usesRowHandles = referenceHandles.length > 0;
                 const emphasizedInput = EMPHASIZED_INPUT_ROLES.has(input.role);
                 const noReferenceLabel = input.role === 'identity' && beatContextReferences.noCharacter
-                  ? t('viewer.threeD.skillInputNoCharacter', { defaultValue: '无角色' })
+                  ? t('viewer.threeD.skillInputNoCharacter')
                   : input.role === 'prop' && beatContextReferences.noProp
-                    ? t('viewer.threeD.skillInputNoProp', { defaultValue: '无道具' })
+                    ? t('viewer.threeD.skillInputNoProp')
                     : null;
                 const renderBoundChip = (edge: CanvasEdge) => {
                   const sourceNode = nodeById.get(edge.source);
@@ -1784,8 +1733,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
                     icon={<Crop className="h-3.5 w-3.5" />}
                     title={t('viewer.threeD.cropDirectorBackground')}
                     detail={t('viewer.threeD.cropDirectorBackgroundDetail', {
-                      aspects: SELECTED_BACKGROUND_CROP_ASPECT_OPTIONS.join(' / '),
-                    })}
+                      aspects: SELECTED_BACKGROUND_CROP_ASPECT_OPTIONS.join(' / ')})}
                     disabled={!beatTarget || sourcePickerBusy}
                     onClick={() => void handlePickFlatSource('director_background')}
                   />
@@ -1793,8 +1741,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
                     icon={<Crop className="h-3.5 w-3.5" />}
                     title={t('viewer.threeD.cropMaster')}
                     detail={t('viewer.threeD.cropMasterDetail', {
-                      aspects: SELECTED_BACKGROUND_CROP_ASPECT_OPTIONS.join(' / '),
-                    })}
+                      aspects: SELECTED_BACKGROUND_CROP_ASPECT_OPTIONS.join(' / ')})}
                     disabled={!beatTarget || sourcePickerBusy}
                     onClick={() => void handlePickFlatSource('master')}
                   />
@@ -1802,8 +1749,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
                     icon={<Crop className="h-3.5 w-3.5" />}
                     title={t('viewer.threeD.cropReverse')}
                     detail={t('viewer.threeD.cropReverseDetail', {
-                      aspects: SELECTED_BACKGROUND_CROP_ASPECT_OPTIONS.join(' / '),
-                    })}
+                      aspects: SELECTED_BACKGROUND_CROP_ASPECT_OPTIONS.join(' / ')})}
                     disabled={!beatTarget || sourcePickerBusy}
                     onClick={() => void handlePickFlatSource('reverse')}
                   />
@@ -1882,8 +1828,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
         ) : (
           <div className="flex flex-1 items-center justify-center p-4 text-center text-xs text-text-muted">
             {t('viewer.threeD.skillStatus.missingSkill', {
-              id: data.skill_id || t('viewer.threeD.skillStatus.emptySkillId'),
-            })}
+              id: data.skill_id || t('viewer.threeD.skillStatus.emptySkillId')})}
           </div>
         )}
       </div>
@@ -1900,8 +1845,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
               filename,
               t('viewer.threeD.selectedBackgroundOutputLabel', {
                 episode: beatTarget.episode,
-                beat: beatTarget.beat,
-              }),
+                beat: beatTarget.beat}),
             )
           }
           onCandidateSuccess={() => setSourcePickerError(null)}

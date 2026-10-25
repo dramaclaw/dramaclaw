@@ -1,3 +1,4 @@
+import i18n from "@/i18n";
 import type { ChatAttachment } from "@/features/superchat/types";
 import {
   CANVAS_NODE_TYPES,
@@ -1056,7 +1057,7 @@ function buildCanvasCommandCatalog(canvasId: string): Record<string, unknown> {
       allowed_node_types: AGENT_CREATABLE_CANVAS_NODE_TYPES,
       invalid_example: {
         command: "create_node",
-        data: { nodeType: "textAnnotationNode", title: "旧格式" },
+        data: { nodeType: "textAnnotationNode", title: i18n.t("freezone.chat.reference.oldFormat.title") },
       },
       example: {
         type: "create_node",
@@ -1070,7 +1071,7 @@ function buildCanvasCommandCatalog(canvasId: string): Record<string, unknown> {
         client_id: "poster_1",
         node_type: CANVAS_NODE_TYPES.imageGen,
         data: {
-          displayName: "海报图",
+          displayName: i18n.t("freezone.chat.reference.posterImage.displayName"),
           prompt: "成都文化主题海报，国潮水墨风",
           quality: "high",
           aspectRatio: "2:3",
@@ -1110,7 +1111,7 @@ function buildCanvasCommandCatalog(canvasId: string): Record<string, unknown> {
       example: {
         type: "update_node_data",
         node_id: "brief_1",
-        data: { title: "公益广告简报" },
+        data: { title: i18n.t("freezone.chat.reference.publicServiceBrief.title") },
       },
     },
     {
@@ -1147,8 +1148,7 @@ function buildCanvasCommandCatalog(canvasId: string): Record<string, unknown> {
       typed_tool: "freezone_clear_canvas",
       required: ["type"],
       optional: [],
-      description:
-        "清空当前画布中的普通节点和连接。必须走审批；不要把‘清空画布’转换为空的 delete_nodes。主线投影/系统管理节点会保留并明确报告。",
+      description: i18n.t("freezone.chat.command.clearCanvas.description"),
       example: { type: "clear_canvas" },
     },
     {
@@ -1196,7 +1196,7 @@ function buildCanvasCommandCatalog(canvasId: string): Record<string, unknown> {
       example: {
         type: "group_nodes",
         node_ids: ["brief_1", "image_1"],
-        label: "海报生成流程",
+        label: i18n.t("freezone.chat.command.posterWorkflow.label"),
       },
     },
     {

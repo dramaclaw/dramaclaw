@@ -152,7 +152,7 @@ function WatchPage() {
         <div className={styles.watchBrandGroup}>
           <Brand className={styles.watchBrand} />
           <div className={styles.watchMeta}>
-            <h1>{activeWork.title}</h1>
+            <h1>{t(activeWork.titleKey)}</h1>
           </div>
         </div>
         <div className={styles.watchActions}>
@@ -173,7 +173,7 @@ function WatchPage() {
         </div>
       </header>
 
-      <section className={styles.watchStage} aria-label={activeWork.title}>
+      <section className={styles.watchStage} aria-label={t(activeWork.titleKey)}>
         <video
           key={activeEntry.railId}
           className={styles.watchVideo}
@@ -260,7 +260,7 @@ function WatchPage() {
         <WatchPlayer
           src={activeWork.preview}
           poster={activeWork.cover}
-          title={activeWork.title}
+          title={t(activeWork.titleKey)}
           onClose={() => setPlayerOpen(false)}
         />
       ) : null}

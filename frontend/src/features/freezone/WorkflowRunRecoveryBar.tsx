@@ -5,8 +5,7 @@ import { useTranslation } from "react-i18next";
 import {
   listFreezoneWorkflowRuns,
   updateFreezoneWorkflowRun,
-  type FreezoneWorkflowRun,
-} from "@/api/canvas";
+  type FreezoneWorkflowRun} from "@/api/canvas";
 import { Button } from "@/components/ui/button";
 import type { WorkflowRunUpdatedDetail } from "@/features/canvas/application/workflowExecutionActivity";
 import {
@@ -14,8 +13,7 @@ import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
   FREEZONE_WORKFLOW_RUN_UPDATED_EVENT,
   hasGeneratedResult,
-  isNodeActionGenerationPending,
-} from "@/features/freezone/canvasChatCommands";
+  isNodeActionGenerationPending} from "@/features/freezone/canvasChatCommands";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { useTaskCenterStore } from "@/task-center/store";
 
@@ -109,8 +107,7 @@ function latestResumableRun(
 
 export function WorkflowRunRecoveryBar({
   projectId,
-  canvasId,
-}: {
+  canvasId}: {
   projectId: string;
   canvasId: string;
 }) {
@@ -257,13 +254,11 @@ export function WorkflowRunRecoveryBar({
             type: "run_workflow",
             node_ids: nodeIds,
             direction: "downstream",
-            regenerate: false,
-          }],
-        }],
+            regenerate: false}]}],
         { projectId, canvasId },
       );
       if (result.errors.length > 0) {
-        setError(result.errors[0] ?? "恢复执行失败");
+        setError(result.errors[0] ?? t("freezone.workflowRecovery.resumeFailed"));
       }
       await refresh();
     } catch (resumeError) {
@@ -287,13 +282,11 @@ export function WorkflowRunRecoveryBar({
             type: "run_workflow",
             node_ids: failedNodeIds,
             direction: "node",
-            regenerate: true,
-          }],
-        }],
+            regenerate: true}]}],
         { projectId, canvasId },
       );
       if (result.errors.length > 0) {
-        setError(result.errors[0] ?? "节点重试失败");
+        setError(result.errors[0] ?? t("freezone.workflowRecovery.retryFailed"));
       }
       await refresh();
     } catch (retryError) {
@@ -325,8 +318,7 @@ export function WorkflowRunRecoveryBar({
           error: "用户选择跳过安全审核失败节点", // i18n-exempt -- workflow payload
         }));
       const updated = await updateFreezoneWorkflowRun(projectId, canvasId, run.run_id, {
-        action_updates: updates,
-      });
+        action_updates: updates});
       setRuns((current) => current.map((item) => item.run_id === run.run_id ? updated : item));
     } catch (skipError) {
       setError(skipError instanceof Error ? skipError.message : String(skipError));
@@ -339,9 +331,9 @@ export function WorkflowRunRecoveryBar({
   return (
     <div className="pointer-events-auto absolute left-1/2 top-4 z-30 flex max-w-[calc(100%-32px)] -translate-x-1/2 items-center gap-3 rounded-md border border-border/70 bg-background/95 px-3 py-2 shadow-lg backdrop-blur">
       <div className="min-w-0 text-sm">
-        <div className="truncate font-medium">发现未完成的工作流</div>
+        <div className="truncate font-medium">{t("freezone.workflowRecovery.discovered")}</div>
         <div className="truncate text-xs text-muted-foreground">
-          已完成 {completedCount}/{run.actions.length}，剩余 {nodeIds.length} 个节点
+          {t("freezone.workflowRecovery.progress", { completed: completedCount, total: run.actions.length, remaining: nodeIds.length })}
         </div>
         {error && <div className="mt-1 max-w-[420px] truncate text-xs text-destructive">{error}</div>}
       </div>
@@ -349,15 +341,15 @@ export function WorkflowRunRecoveryBar({
         <>
           <div className="inline-flex items-center gap-1 text-xs text-amber-200">
             <AlertTriangle className="size-3.5" />
-            {t("freezone.workflowRecovery.safetyReviewFailed", { defaultValue: "有节点未通过安全审核" })}
+            {t("freezone.workflowRecovery.safetyReviewFailed")}
           </div>
           <Button type="button" variant="outline" size="sm" onClick={handleEditSafetyPrompt} disabled={busy}>
             <Pencil className="size-4" />
-            {t("freezone.workflowRecovery.editPrompt", { defaultValue: "修改提示词" })}
+            {t("freezone.workflowRecovery.editPrompt")}
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={() => void handleSkipSafetyNodes()} disabled={busy}>
             <SkipForward className="size-4" />
-            {t("freezone.workflowRecovery.skipNode", { defaultValue: "跳过节点" })}
+            {t("freezone.workflowRecovery.skipNode")}
           </Button>
         </>
       )}
@@ -370,20 +362,20 @@ export function WorkflowRunRecoveryBar({
           disabled={busy}
         >
           <RotateCcw className="size-4" />
-          仅重试失败
+          {t("freezone.workflowRecovery.retryFailedOnly")}
         </Button>
       )}
       <Button type="button" size="sm" onClick={() => void handleResume()} disabled={busy}>
         {busy ? <LoaderCircle className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
-        继续下游
+        {t("freezone.workflowRecovery.resumeDownstream")}
       </Button>
       <Button
         type="button"
         variant="ghost"
         size="icon-sm"
         onClick={() => setDismissedRunId(run.run_id)}
-        aria-label="暂时忽略"
-        title="暂时忽略"
+        aria-label={t("freezone.workflowRecovery.dismiss")}
+        title={t("freezone.workflowRecovery.dismiss")}
       >
         <X className="size-4" />
       </Button>

@@ -346,7 +346,7 @@ describe('AssetBoardCard', () => {
         onPreviewImage={() => {}}
       />,
     );
-    const badge = screen.getByText('失败');
+    const badge = screen.getByText('生成失败');
     expect(badge.closest('[title]')?.getAttribute('title')).toBe('算力不足，生成失败');
   });
 
@@ -359,7 +359,7 @@ describe('AssetBoardCard', () => {
         onPreviewImage={() => {}}
       />,
     );
-    const badge = screen.getByText('失败');
+    const badge = screen.getByText('生成失败');
     expect(badge.closest('[title]')?.getAttribute('title')).toBe('生成超时');
   });
 

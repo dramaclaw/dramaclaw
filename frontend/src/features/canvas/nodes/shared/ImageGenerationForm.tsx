@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowUp,
   Camera,
@@ -21,10 +22,7 @@ import type {
   ImageSize,
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
-import {
-  IMAGE_QUALITY_OPTIONS,
-  resolveNearestAspectOption,
-} from '@/features/canvas/nodes/shared/imageGenerationOptions';
+import { resolveNearestAspectOption } from '@/features/canvas/nodes/shared/imageGenerationOptions';
 import type { UpstreamContent } from '@/features/canvas/application/ports';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextChip';
@@ -109,6 +107,7 @@ function AspectSizeChip({
   showQuality,
   onChange,
 }: AspectSizeChipProps) {
+  const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -129,9 +128,10 @@ function AspectSizeChip({
   }, [isOpen]);
 
   const nearestAspect = resolveNearestAspectOption(aspectRatio, aspectOptions);
-  const aspectLabel = nearestAspect.label;
-  const qualityLabel = IMAGE_QUALITY_OPTIONS.find((option) => option.value === quality)?.label
-    ?? quality;
+  const aspectLabel = nearestAspect.value === 'auto'
+    ? t('node.imageGen.aspect.auto')
+    : nearestAspect.label;
+  const qualityLabel = t(`node.imageGen.quality.${quality}`, { defaultValue: quality });
 
   return (
     <div className="relative">
@@ -164,11 +164,10 @@ function AspectSizeChip({
         >
           {showQuality && (
             <>
-              <div className={IMAGE_PARAM_LABEL_CLASS}>画质</div>
+              <div className={IMAGE_PARAM_LABEL_CLASS}>{t("node.imageGeneration.quality")}</div>
               <div className={IMAGE_PARAM_ROW_CLASS}>
                 {qualityOptions.map((value) => {
-                  const label =
-                    IMAGE_QUALITY_OPTIONS.find((option) => option.value === value)?.label ?? value;
+                  const label = t(`node.imageGen.quality.${value}`, { defaultValue: value });
                   const isActive = quality === value;
                   return (
                     <button
@@ -188,7 +187,7 @@ function AspectSizeChip({
               </div>
             </>
           )}
-          <div className={IMAGE_PARAM_LABEL_CLASS}>分辨率</div>
+          <div className={IMAGE_PARAM_LABEL_CLASS}>{t("node.imageGeneration.resolution")}</div>
           <div className={IMAGE_PARAM_ROW_CLASS}>
             {sizeOptions.map((option) => {
               const isActive = size === option;
@@ -209,7 +208,7 @@ function AspectSizeChip({
             })}
           </div>
 
-          <div className={IMAGE_PARAM_LABEL_CLASS}>比例</div>
+          <div className={IMAGE_PARAM_LABEL_CLASS}>{t("node.imageGeneration.aspectRatio")}</div>
           <div className="grid grid-cols-4 gap-2">
             {aspectOptions.map((option) => {
               const isActive = nearestAspect.value === option.value;
@@ -224,7 +223,7 @@ function AspectSizeChip({
                       : IMAGE_PARAM_IDLE_BUTTON_CLASS
                   }`}
                 >
-                  {option.label}
+                  {option.value === 'auto' ? t('node.imageGen.aspect.auto') : option.label}
                 </button>
               );
             })}
@@ -243,6 +242,7 @@ interface StyleChipProps {
 }
 
 function StyleChip({ selectedId, selectedLabel, onChange, onOpenChange }: StyleChipProps) {
+  const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -271,7 +271,8 @@ function StyleChip({ selectedId, selectedLabel, onChange, onOpenChange }: StyleC
   }, [isOpen]);
 
   const isActive = Boolean(selectedId);
-  const label = isActive ? selectedLabel ?? '风格' : '风格';
+  const fallbackLabel = t('node.stylePicker.title');
+  const label = isActive ? selectedLabel ?? fallbackLabel : fallbackLabel;
 
   return (
     <div className="relative">
@@ -282,7 +283,7 @@ function StyleChip({ selectedId, selectedLabel, onChange, onOpenChange }: StyleC
           event.stopPropagation();
           setIsOpen((prev) => !prev);
         }}
-        title={isActive ? selectedLabel ?? undefined : '风格'}
+        title={isActive ? selectedLabel ?? undefined : t('node.stylePicker.title')}
         className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} max-w-[160px]`}
       >
         <Palette className={`${NODE_TEXT_CONTROL_ICON_CLASS} shrink-0`} />
@@ -315,6 +316,7 @@ interface CameraChipProps {
 }
 
 function CameraChip({ selection, summary, onChange }: CameraChipProps) {
+  const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -361,7 +363,7 @@ function CameraChip({ selection, summary, onChange }: CameraChipProps) {
   }, [isOpen, syncPopoverPosition]);
 
   const isActive = Boolean(selection) && summary != null;
-  const label = isActive && summary ? summary : '摄像机';
+  const label = isActive && summary ? summary : t('node.imageGen.camera');
 
   return (
     <div className="relative">
@@ -372,7 +374,7 @@ function CameraChip({ selection, summary, onChange }: CameraChipProps) {
           event.stopPropagation();
           setIsOpen((prev) => !prev);
         }}
-        title={isActive ? summary ?? undefined : '摄像机'}
+        title={isActive ? summary ?? undefined : t('node.imageGen.camera')}
         className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} max-w-[220px]`}
       >
         <Camera className={`${NODE_TEXT_CONTROL_ICON_CLASS} shrink-0`} />
@@ -410,6 +412,7 @@ interface CountSelectProps {
 }
 
 function CountSelect({ value, onChange }: CountSelectProps) {
+  const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -440,7 +443,7 @@ function CountSelect({ value, onChange }: CountSelectProps) {
         }}
         className={NODE_TEXT_CONTROL_TRIGGER_CLASS}
       >
-        <span>{value}张</span>
+        <span>{t('freezone.chat.generationParams.imageCount', { count: value })}</span>
         <ChevronDown className="h-3 w-3 text-text-muted/90" />
       </button>
       {isOpen && (
@@ -464,7 +467,7 @@ function CountSelect({ value, onChange }: CountSelectProps) {
                     : 'text-text-muted/95 hover:bg-white/[0.11] hover:text-text-dark'
                 }`}
               >
-                {option}张
+                {t('freezone.chat.generationParams.imageCount', { count: option })}
               </button>
             );
           })}
@@ -575,6 +578,7 @@ export interface ImageGenerationFormProps {
  * 这些是节点几何 / 选中态相关的展示逻辑，不属于表单本身。
  */
 export const ImageGenerationForm = memo((props: ImageGenerationFormProps) => {
+  const { t } = useTranslation();
   const {
     nodeId,
     styleTemplateId,
@@ -673,10 +677,10 @@ export const ImageGenerationForm = memo((props: ImageGenerationFormProps) => {
             onOpenAssetLibrary();
           }}
           className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} group/asset px-1.5`}
-          title="从资产库选择参考图（人物 / 场景 / 道具）"
+          title={t("node.imageGeneration.assetLibraryHint")}
         >
           <Library className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/asset:text-text-dark`} />
-          <span>资产库</span>
+          <span>{t("node.imageGeneration.assetLibrary")}</span>
         </button>
         {upstreamTextContents.map((content) => (
           <ReferenceTextChip
@@ -695,7 +699,9 @@ export const ImageGenerationForm = memo((props: ImageGenerationFormProps) => {
                 <div
                   key={`upstream-image-${content.nodeId}`}
                   className={NODE_REFERENCE_MEDIA_CHIP_CLASS}
-                  title={`来自上游 · ${content.displayName ?? content.nodeType}`}
+                  title={t("node.imageGeneration.upstreamReference", {
+                    name: content.displayName ?? content.nodeType,
+                  })}
                   onMouseEnter={(event) => {
                     setRefHover({
                       imageUrl: url,
@@ -714,7 +720,7 @@ export const ImageGenerationForm = memo((props: ImageGenerationFormProps) => {
                       「图片」，序号只存在于提交给后端的 prompt（@图片N）里。 */}
                   <button
                     type="button"
-                    title="取消引用此素材"
+                    title={t("node.imageGeneration.detachReference")}
                     className={NODE_REFERENCE_MEDIA_DETACH_CLASS}
                     onMouseDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
@@ -744,8 +750,8 @@ export const ImageGenerationForm = memo((props: ImageGenerationFormProps) => {
         placeholder={
           promptPlaceholder
           ?? (upstreamTextJoined.length > 0
-            ? '上游内容已自动接入，可继续补充提示词…'
-            : '描述你想要生成的画面内容，@引用素材')
+            ? t('node.imageGen.promptPlaceholderUpstream')
+            : t('node.imageGen.promptPlaceholder'))
         }
         className={`nodrag nowheel min-h-0 w-full flex-1 overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent px-3 py-2 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
       />
@@ -791,7 +797,7 @@ export const ImageGenerationForm = memo((props: ImageGenerationFormProps) => {
           )}
           <button
             type="button"
-            title="翻译提示词（中英文互译）"
+            title={t('node.imageGen.translatePrompt')}
             disabled={isTranslatingPrompt || isGenerating || prompt.trim().length === 0}
             onClick={(event) => {
               event.stopPropagation();
@@ -820,7 +826,7 @@ export const ImageGenerationForm = memo((props: ImageGenerationFormProps) => {
           <button
             type="button"
             disabled={submitDisabled}
-            title={selectedModelReferenceError ?? '生成'}
+            title={selectedModelReferenceError ?? t('node.imageGen.generate')}
             onClick={(event) => {
               event.stopPropagation();
               onSubmit();

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import i18n from "i18next";
-import { initReactI18next } from "react-i18next";
+import * as reactI18next from "react-i18next";
 import HttpBackend from "i18next-http-backend";
 import { useAppStore } from "@/stores/app-store";
 import { BUILD_ID } from "@/lib/app-version";
@@ -14,17 +14,18 @@ function initialLanguage(): Supported {
     const queryLanguage = new URLSearchParams(window.location.search).get("lng");
     if (queryLanguage) return normalize(queryLanguage);
   }
-  return normalize(useAppStore.getState().language || "zh");
+  return normalize(useAppStore.getState().language || "en");
 }
 
-i18n
-  .use(HttpBackend)
-  .use(initReactI18next)
-  .init({
+const configuredI18n = i18n.use(HttpBackend);
+if ("initReactI18next" in reactI18next) {
+  configuredI18n.use(reactI18next.initReactI18next);
+}
+void configuredI18n.init({
     // Default to Chinese unless the user explicitly selects another supported
     // language via URL or the app language setting.
     lng: initialLanguage(),
-    fallbackLng: "zh",
+    fallbackLng: "en",
     supportedLngs: [...SUPPORTED],
     // `zh-CN` / `en-US` / `vi-VN` collapse to `zh` / `en` / `vi`, so the
     // backend loader only has to serve one translation file per language.

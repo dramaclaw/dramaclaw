@@ -17,6 +17,7 @@ import {
 } from "@/features/superchat/superchat-panel";
 import { looksLikeCanvasExecutionNarration } from "@/features/superchat/canvas-execution-narration";
 import { upsertAssistantMessageForTest } from "@/features/superchat/use-superchat";
+import { zhT } from "@/__tests__/helpers/i18n-fixtures";
 
 describe("assistant success summary", () => {
   it("recognizes only the standalone generation success summary", () => {
@@ -115,7 +116,7 @@ describe("background canvas generation status", () => {
           ...(status === "failed" ? { user_error: "生成失败" } : {}),
         }],
       },
-      ((_key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? _key) as never,
+      zhT as never,
     );
 
     expect(result.commandResults[0]).toEqual(expect.objectContaining({

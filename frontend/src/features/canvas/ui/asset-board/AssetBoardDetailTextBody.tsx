@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useState, type ReactElement } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { useTranslation } from 'react-i18next';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 
@@ -83,6 +84,7 @@ interface RowTableProps {
 
 /** 分镜/脚本的简单行表：镜号等窄列 + 内容宽列。 */
 function RowTable({ headers, rows, onCellCommit }: RowTableProps): ReactElement {
+  const { t } = useTranslation();
   // 同一时刻只有一格在编辑（坐标 + 草稿），与 VideoStoryNode 的表格编辑同语义。
   const [editing, setEditing] = useState<{ row: number; col: number } | null>(null);
   const [draft, setDraft] = useState('');
@@ -142,7 +144,7 @@ function RowTable({ headers, rows, onCellCommit }: RowTableProps): ReactElement 
                     className={`border-b border-white/5 px-2 py-2 align-top leading-5 ${
                       editable ? 'cursor-text rounded transition-colors hover:bg-white/[0.06]' : ''
                     }`}
-                    title={editable ? '点击编辑' : undefined}
+                    title={editable ? t('assetBoard.clickToEdit') : undefined}
                     onClick={
                       editable
                         ? () => {
@@ -207,13 +209,14 @@ export function AssetBoardDetailTextBody({
   title,
   onCellCommit,
 }: AssetBoardDetailTextBodyProps): ReactElement {
+  const { t } = useTranslation();
   let body: ReactElement;
   if (isTextAnnotationNode(node) || isBeatContextNode(node)) {
     const content = str(node.data.content);
     body = content ? (
       <MarkdownBody content={content} />
     ) : (
-      <p className="py-8 text-center text-[13px] text-muted-foreground">暂无文本内容</p>
+      <p className="py-8 text-center text-[13px] text-muted-foreground">{t('assetBoard.noText')}</p>
     );
   } else if (isScriptNode(node)) {
     const rows = scriptRowsOf(node.data.scriptResult);
@@ -223,7 +226,12 @@ export function AssetBoardDetailTextBody({
         {scriptTitle && <h2 className="text-base font-semibold text-foreground">{scriptTitle}</h2>}
         {rows.length > 0 ? (
           <RowTable
-            headers={['镜号', '时长', '画面描述', '对白']}
+            headers={[
+              t('assetBoard.shotNumber'),
+              t('assetBoard.duration'),
+              t('assetBoard.visualDescription'),
+              t('assetBoard.dialogue'),
+            ]}
             onCellCommit={onCellCommit}
             rows={rows.map((row, index) => [
               cell(str(row.shot_no) ?? String(index + 1), 'shot_no'),
@@ -233,7 +241,7 @@ export function AssetBoardDetailTextBody({
             ])}
           />
         ) : (
-          <p className="py-8 text-center text-[13px] text-muted-foreground">暂无脚本内容</p>
+          <p className="py-8 text-center text-[13px] text-muted-foreground">{t('assetBoard.noScript')}</p>
         )}
       </div>
     );
@@ -242,7 +250,11 @@ export function AssetBoardDetailTextBody({
     body =
       rows.length > 0 ? (
         <RowTable
-          headers={['镜号', '时长', '内容摘要']}
+          headers={[
+            t('assetBoard.shotNumber'),
+            t('assetBoard.duration'),
+            t('assetBoard.contentSummary'),
+          ]}
           onCellCommit={onCellCommit}
           rows={rows.map((row, index) => [
             cell(
@@ -256,11 +268,11 @@ export function AssetBoardDetailTextBody({
           ])}
         />
       ) : (
-        <p className="py-8 text-center text-[13px] text-muted-foreground">暂无镜头行</p>
+        <p className="py-8 text-center text-[13px] text-muted-foreground">{t('assetBoard.noShots')}</p>
       );
   } else {
     // 文本栏兜底（未知文本类节点）：无结构化渲染路径。
-    body = <p className="py-8 text-center text-[13px] text-muted-foreground">暂无可展示的内容</p>;
+    body = <p className="py-8 text-center text-[13px] text-muted-foreground">{t('assetBoard.noDisplayContent')}</p>;
   }
 
   return (

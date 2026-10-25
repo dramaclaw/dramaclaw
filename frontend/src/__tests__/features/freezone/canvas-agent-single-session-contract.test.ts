@@ -13,14 +13,14 @@ describe("Freezone canvas Agent session UI", () => {
     );
 
     expect(shell).toContain("const FREEZONE_MULTI_AGENT_SESSION_UI_ENABLED = false");
-    expect(shell).toContain("新建 Agent");
+    expect(shell).toContain('t("freezone.agent.create")');
     expect(shell).toContain("addFreezoneCanvasAgent");
     expect(shell).toContain("initializeEmptyFreezoneAgentChat");
     expect(shell).toContain("onAdd={handleAddAgent}");
     expect(shell).toContain("selectFreezoneCanvasAgent(projectId, canvasId, DEFAULT_FREEZONE_AGENT_ID)");
     expect(shell).toContain("const explicitAgentId = FREEZONE_MULTI_AGENT_SESSION_UI_ENABLED");
     expect(shell).toContain("preferServerActive:");
-    expect(shell).toContain('aria-label={agentHistoryOpen ? "收起历史 Agent" : "打开历史 Agent"}');
+    expect(shell).toContain('aria-label={agentHistoryOpen ? t("freezone.agent.collapseHistory") : t("freezone.agent.expandHistory")}');
     expect(shell.match(/FREEZONE_MULTI_AGENT_SESSION_UI_ENABLED &&/g)?.length).toBeGreaterThanOrEqual(5);
   });
 });

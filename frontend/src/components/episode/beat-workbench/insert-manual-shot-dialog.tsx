@@ -11,8 +11,7 @@ import {
   DialogContent,
   DialogFooter,
   DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  DialogTitle} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,21 +20,18 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  SelectValue} from "@/components/ui/select";
 import { MentionTextarea } from "@/components/episode/beat-workbench/mention-textarea";
 import {
   GLASS_DIALOG_CONTENT_CLASS,
-  TRANSPARENT_DIALOG_FOOTER_CLASS,
-} from "@/lib/dialog-styles";
+  TRANSPARENT_DIALOG_FOOTER_CLASS} from "@/lib/dialog-styles";
 import { cn } from "@/lib/utils";
 import { useEpisodeBeats, useEpisodeDetail, useInsertManualShot } from "@/lib/queries/episodes";
 import {
   extractIdentityMarkers,
   extractPropMarkers,
   mentionsToProgramMarkers,
-  programMarkersToMentions,
-} from "@/lib/mention-markers";
+  programMarkersToMentions} from "@/lib/mention-markers";
 import { sceneNameToRef, sceneRefToName } from "@/lib/scene-ref";
 import { timeOfDayLabel, timeOfDayOptions } from "@/lib/time-of-day";
 
@@ -86,8 +82,7 @@ export function InsertManualShotDialog({
   episode,
   spineTemplate = "drama",
   afterBeatNumber,
-  onInserted,
-}: InsertManualShotDialogProps) {
+  onInserted}: InsertManualShotDialogProps) {
   const { t } = useTranslation();
   const insertMutation = useInsertManualShot(project, episode);
 
@@ -105,8 +100,7 @@ export function InsertManualShotDialog({
         scene_id: item.scene_id,
         base_scene_id: item.base_scene_id,
         variant_id: item.variant_id,
-        time_of_day: item.time_of_day,
-      })),
+        time_of_day: item.time_of_day})),
     [episodeQuery.data],
   );
   const locationOptions = useMemo(() => {
@@ -215,8 +209,7 @@ export function InsertManualShotDialog({
     );
     const normalizedVisual = mentionsToProgramMarkers(trimmedVisual, {
       identities: identityOptions,
-      props: propOptions,
-    });
+      props: propOptions});
     const submittedVisual =
       normalizedVisual.trim().length > 0
         ? normalizedVisual
@@ -247,8 +240,7 @@ export function InsertManualShotDialog({
         detected_props: detectedProps.length > 0 ? detectedProps : null,
         audio_type: audioType,
         speaker: isNarratedProject && audioType === "dialogue" ? selectedSpeaker : null,
-        narration_segment: audioType === "silence" ? null : trimmedNarration,
-      });
+        narration_segment: audioType === "silence" ? null : trimmedNarration});
       if (res.ok === false) {
         toast.error(res.error || t("common.error"));
         return;
@@ -288,8 +280,7 @@ export function InsertManualShotDialog({
     );
     const normalized = mentionsToProgramMarkers(displayText, {
       identities: identityOptions,
-      props: propOptions,
-    });
+      props: propOptions});
     const detectedIdentities = extractIdentityMarkers(normalized);
     const detectedProps = extractPropMarkers(normalized);
     if (!identityManuallyEdited) {
@@ -465,9 +456,7 @@ export function InsertManualShotDialog({
             </Field>
 
             <Field
-              label={t("episode.workbench.insertManual.sceneVariant", {
-                defaultValue: "变体",
-              })}
+              label={t("episode.workbench.insertManual.sceneVariant")}
             >
               <Select
                 value={locationVariant || NO_VARIANT_SENTINEL}
@@ -479,23 +468,17 @@ export function InsertManualShotDialog({
                 disabled={!location}
               >
                 <SelectTrigger
-                  aria-label={t("episode.workbench.insertManual.sceneVariant", {
-                    defaultValue: "变体",
-                  })}
+                  aria-label={t("episode.workbench.insertManual.sceneVariant")}
                   className={`h-8 w-full text-xs ${FIELD_SURFACE_CLASS}`}
                 >
                   <SelectValue>
                     {locationVariant ||
-                      t("episode.workbench.insertManual.noSceneVariant", {
-                        defaultValue: "无变体",
-                      })}
+                      t("episode.workbench.insertManual.noSceneVariant")}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NO_VARIANT_SENTINEL}>
-                    {t("episode.workbench.insertManual.noSceneVariant", {
-                      defaultValue: "无变体",
-                    })}
+                    {t("episode.workbench.insertManual.noSceneVariant")}
                   </SelectItem>
                   {locationVariantChoices.map((variant) => (
                     <SelectItem key={variant} value={variant}>
@@ -553,8 +536,7 @@ export function InsertManualShotDialog({
                 placeholder={
                   placeholderIdentities
                     ? t("episode.workbench.insertManual.identitiesPlaceholder", {
-                        example: placeholderIdentities,
-                      })
+                        example: placeholderIdentities})
                     : t("episode.workbench.insertManual.identitiesPlaceholderEmpty")
                 }
                 className={INPUT_CLASS}
@@ -562,9 +544,7 @@ export function InsertManualShotDialog({
             </Field>
 
             <Field
-              label={t("episode.workbench.insertManual.props", {
-                defaultValue: "出场道具",
-              })}
+              label={t("episode.workbench.insertManual.props")}
             >
               <Input
                 value={propsText}
@@ -575,12 +555,8 @@ export function InsertManualShotDialog({
                 placeholder={
                   placeholderProps
                     ? t("episode.workbench.insertManual.propsPlaceholder", {
-                        example: placeholderProps,
-                        defaultValue: "逗号分隔，如 {{example}}；留空自动从画面描述提取",
-                      })
-                    : t("episode.workbench.insertManual.propsPlaceholderEmpty", {
-                        defaultValue: "逗号分隔道具ID；留空自动从画面描述提取",
-                      })
+                        example: placeholderProps})
+                    : t("episode.workbench.insertManual.propsPlaceholderEmpty")
                 }
                 className={INPUT_CLASS}
               />
@@ -612,8 +588,7 @@ export function InsertManualShotDialog({
 function Field({
   label,
   required,
-  children,
-}: {
+  children}: {
   label: string;
   required?: boolean;
   children: React.ReactNode;

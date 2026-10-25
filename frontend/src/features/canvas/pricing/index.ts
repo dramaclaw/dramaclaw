@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import i18n from '@/i18n';
 import type { ImageModelDefinition } from '@/features/canvas/models/types';
 
 import {
@@ -66,8 +67,15 @@ function convertCurrency(amount: number, from: PriceCurrency, to: PriceCurrency,
   return amount / safeRate;
 }
 
+function pricingLocale(language: string): string {
+  if (language.startsWith('zh')) return 'zh-CN';
+  if (language.startsWith('pt')) return 'pt-PT';
+  if (language.startsWith('vi')) return 'vi-VN';
+  return 'en-US';
+}
+
 function formatCurrency(amount: number, currency: PriceCurrency, language: string): string {
-  const locale = language.startsWith('zh') ? 'zh-CN' : 'en-US';
+  const locale = pricingLocale(language);
 
   return new Intl.NumberFormat(locale, {
     style: 'currency',
@@ -89,7 +97,8 @@ export function resolvePriceDisplayCurrency(
     return 'USD';
   }
 
-  return language.startsWith('zh') ? 'CNY' : 'USD';
+  if (language.startsWith('zh')) return 'CNY';
+  return 'USD';
 }
 
 export function getGrsaiCreditTier(
@@ -212,7 +221,7 @@ export function resolveModelPriceDisplay(
     displayCurrency,
     pricingSettings.usdToCnyRate
   );
-  const perRunSuffix = options.language.startsWith('zh') ? '/次' : '/run'; // i18n-exempt —— 已按语言分支
+  const perRunSuffix = i18n.t('pricing.perRunSuffix', { defaultValue: '/run' });
   const nativeLabel =
     quote.currency === displayCurrency
       ? undefined

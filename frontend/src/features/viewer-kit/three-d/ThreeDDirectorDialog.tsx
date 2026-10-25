@@ -15,23 +15,20 @@ import {
   Play,
   RotateCcw,
   Trash2,
-  X,
-} from "lucide-react";
+  X} from "lucide-react";
 
 import {
   generateAiStagingProp,
   getBeatDirectorStageOverlay,
   saveBeatDirectorControlFrame,
-  saveBeatDirectorStageOverlay,
-} from "@/api/viewerManifests";
+  saveBeatDirectorStageOverlay} from "@/api/viewerManifests";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  DialogTitle} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { useViewerImmersiveBody } from "../useViewerImmersiveBody";
@@ -45,13 +42,11 @@ import type {
   DirectorStageOverlayStatus,
   DirectorStageSourceKind,
   DirectorStageSourceType,
-  DirectorWorldSource,
-} from "./directorManifest";
+  DirectorWorldSource} from "./directorManifest";
 import {
   DEFAULT_DIRECTOR_WORLD_SOURCE_TRANSFORM,
   constrainSourceTransformForType,
-  type DirectorWorldSourceTransform,
-} from "./sourceTransform";
+  type DirectorWorldSourceTransform} from "./sourceTransform";
 import { ThreeDStageCanvas } from "./ThreeDStageCanvas";
 import {
   POSES,
@@ -59,14 +54,12 @@ import {
   requirePoseName,
   SHAPE_HINT_NAMES,
   type PoseName,
-  type ShapeHintName,
-} from "./engine/viewerApp";
+  type ShapeHintName} from "./engine/viewerApp";
 import type {
   MarkerCounts,
   SelectionState,
   ThreeDSceneSnapshot,
-  ViewerApp,
-} from "./engine/viewerApp";
+  ViewerApp} from "./engine/viewerApp";
 import { dataUrlToBlob as decodeDataUrl } from "@/features/canvas/application/imageData";
 
 type FrameAspect = "16:9" | "2:3" | "9:16" | "1:1" | "4:3";
@@ -81,17 +74,14 @@ const SOURCE_CALIBRATION_RANGES = {
     offsetStep: 0.1,
     scaleMin: 0.2,
     scaleMax: 3,
-    scaleStep: 0.05,
-  },
+    scaleStep: 0.05},
   pano360: {
     offsetMin: -240,
     offsetMax: 240,
     offsetStep: 1,
     scaleMin: 0.1,
     scaleMax: 8,
-    scaleStep: 0.05,
-  },
-} as const;
+    scaleStep: 0.05}} as const;
 type DirectorSourceOption = NonNullable<DirectorStageManifest["source_options"]>[number];
 type NormalizedDirectorSource = {
   id: string;
@@ -162,18 +152,15 @@ function blankDirectorWorldManifest(displayName: string): DirectorStageManifest 
     display_name: displayName,
     source: {
       source_type: "sog",
-      source_kind: "custom",
-    },
+      source_kind: "custom"},
     sources: [],
     active_source_id: EMPTY_DIRECTOR_WORLD_SOURCE_ID,
     palette: {
       actors: [],
       props: [],
       anonymous_colors: [],
-      anonymous_prop_colors: [],
-    },
-    allowed_destinations: ["view"],
-  };
+      anonymous_prop_colors: []},
+    allowed_destinations: ["view"]};
 }
 
 function colorFromCreationPalette(palette: readonly string[], index: number): string {
@@ -254,8 +241,7 @@ function normalizeDirectorSource(
     slot_kind: source.slot_kind,
     fs: source.fs,
     current: source.current,
-    transform: source.transform,
-  };
+    transform: source.transform};
 }
 
 function normalizeLegacySourceOption(
@@ -268,8 +254,7 @@ function normalizeLegacySourceOption(
     {
       ...source,
       source_kind: source.kind,
-      id: fallbackId,
-    },
+      id: fallbackId},
     fallbackId,
     seen,
   );
@@ -287,8 +272,7 @@ function normalizeManifestSource(
       source_type: sourceType,
       source_kind: source.source_kind,
       label: source.source_kind,
-      current: true,
-    },
+      current: true},
     "source",
     seen,
   );
@@ -383,8 +367,7 @@ function markerSnapshotFromOverlayItem(item: unknown, fallbackColor: string): Ma
     color: String(data.color ?? data.marker_color ?? fallbackColor),
     position: numberTuple3(data.position, [0, 0, 0]),
     yawDeg: Number.isFinite(yaw) ? yaw : 0,
-    scale: numberTuple3(scaleValue, [uniformScale, uniformScale, uniformScale]),
-  };
+    scale: numberTuple3(scaleValue, [uniformScale, uniformScale, uniformScale])};
 }
 
 function actorSnapshotFromOverlayItem(item: unknown, fallbackColor: string): MarkerSnapshot {
@@ -402,24 +385,21 @@ function actorSnapshotFromOverlayItem(item: unknown, fallbackColor: string): Mar
   return {
     ...base,
     pose,
-    ...(typeof actionPlaying === "boolean" ? { actionPlaying } : {}),
-  };
+    ...(typeof actionPlaying === "boolean" ? { actionPlaying } : {})};
 }
 
 function propSnapshotFromOverlayItem(item: unknown, fallbackColor: string): MarkerSnapshot {
   const data = objectRecord(item);
   return {
     ...markerSnapshotFromOverlayItem(item, fallbackColor),
-    shapeHint: shapeHintFromOverlayItem(data, "box"),
-  };
+    shapeHint: shapeHintFromOverlayItem(data, "box")};
 }
 
 function stagingSnapshotFromOverlayItem(item: unknown, fallbackColor: string): MarkerSnapshot {
   const data = objectRecord(item);
   return {
     ...markerSnapshotFromOverlayItem(item, fallbackColor),
-    shapeHint: shapeHintFromOverlayItem(data, "generic_large"),
-  };
+    shapeHint: shapeHintFromOverlayItem(data, "generic_large")};
 }
 
 function snapshotFromOverlay(
@@ -472,8 +452,7 @@ function snapshotFromOverlay(
     props: propItems.map((item) => propSnapshotFromOverlayItem(item, "#ffd34d")),
     stagings: stagingItems.map((item) => stagingSnapshotFromOverlayItem(item, "#4587ff")),
     camera: overlay.camera as ThreeDSceneSnapshot["camera"],
-    world: overlaySourceId ? { activeSourceId: overlaySourceId } : undefined,
-  };
+    world: overlaySourceId ? { activeSourceId: overlaySourceId } : undefined};
 }
 
 function overlayItemId(label: string, index: number, prefix: string) {
@@ -490,21 +469,18 @@ function snapshotToDirectorObjectLayer(
         space: "pano_view",
         yaw_deg: item.placement.yawDeg,
         pitch_deg: item.placement.pitchDeg,
-        distance: item.placement.distance,
-      };
+        distance: item.placement.distance};
     }
     if (item.placement?.space === "world") {
       return {
         space: "world",
         position: item.placement.position,
-        yaw_deg: item.placement.yawDeg,
-      };
+        yaw_deg: item.placement.yawDeg};
     }
     return {
       space: "world",
       position: item.position,
-      yaw_deg: item.yawDeg,
-    };
+      yaw_deg: item.yawDeg};
   };
   return {
     source_id: activeSourceId,
@@ -516,16 +492,14 @@ function snapshotToDirectorObjectLayer(
       scale: item.scale,
       placement: markerPlacement(item),
       ...(item.pose ? { pose: item.pose } : {}),
-      ...(typeof item.actionPlaying === "boolean" ? { action_playing: item.actionPlaying } : {}),
-    })),
+      ...(typeof item.actionPlaying === "boolean" ? { action_playing: item.actionPlaying } : {})})),
     props: snapshot.props.map((item, index) => ({
       id: overlayItemId(item.label, index, "prop"),
       kind: "prop",
       label: item.label,
       color: item.color,
       scale: item.scale,
-      placement: markerPlacement(item),
-    })),
+      placement: markerPlacement(item)})),
     stagings: snapshot.stagings.map((item, index) => ({
       id: overlayItemId(item.label, index, "staging"),
       kind: "staging",
@@ -536,9 +510,7 @@ function snapshotToDirectorObjectLayer(
       semantic_label: item.label,
       scale: item.scale,
       placement: markerPlacement(item),
-      ...(item.shapeHint ? { shape_hint: item.shapeHint } : {}),
-    })),
-  };
+      ...(item.shapeHint ? { shape_hint: item.shapeHint } : {})}))};
 }
 
 function frameMetaFromSnapshot({
@@ -546,8 +518,7 @@ function frameMetaFromSnapshot({
   frameAspect,
   snapshot,
   beatContext,
-  cameraMode = "sog",
-}: {
+  cameraMode = "sog"}: {
   source: DirectorFrameMeta["source"];
   frameAspect: FrameAspect;
   snapshot: ThreeDSceneSnapshot;
@@ -562,8 +533,7 @@ function frameMetaFromSnapshot({
     label: item.label,
     ...(item.pose ? { state: item.pose } : {}),
     ...(typeof item.action_playing === "boolean" ? { action_playing: item.action_playing } : {}),
-    marker_color: item.color,
-  }));
+    marker_color: item.color}));
   const props = layer.props.map((item) => ({
     id: item.id,
     prop_id: item.label,
@@ -572,8 +542,7 @@ function frameMetaFromSnapshot({
     type: "prop_hero" as const,
     category: "hero" as const,
     marker_color: item.color,
-    semantic_label: item.label,
-  }));
+    semantic_label: item.label}));
   const stagings = layer.stagings.map((item) => ({
     id: item.id,
     prop_id: item.id,
@@ -583,22 +552,19 @@ function frameMetaFromSnapshot({
     category: "staging" as const,
     marker_color: item.color,
     semantic_label: item.label,
-    ...(item.shape_hint ? { shape_hint: item.shape_hint } : {}),
-  }));
+    ...(item.shape_hint ? { shape_hint: item.shape_hint } : {})}));
   return {
     schema_version: "director_frame_meta_v1",
     source,
     camera: {
       mode: cameraMode,
       frame_aspect: frameAspect,
-      state: snapshot.camera ? { ...snapshot.camera } : {},
-    },
+      state: snapshot.camera ? { ...snapshot.camera } : {}},
     layer,
     actors,
     props: [...props, ...stagings],
     stagings,
-    ...(beatContext ? { beat_context: beatContext } : {}),
-  };
+    ...(beatContext ? { beat_context: beatContext } : {})};
 }
 
 function richOverlayFromSnapshot(
@@ -621,8 +587,7 @@ function richOverlayFromSnapshot(
       marker_color: item.color,
       position: item.position,
       yaw: item.yawDeg,
-      scale: item.scale,
-    };
+      scale: item.scale};
   });
   const props = snapshot.props.map((item, index) => {
     const paletteItem = manifest.palette.props.find(
@@ -643,8 +608,7 @@ function richOverlayFromSnapshot(
       yaw: item.yawDeg,
       scale: item.scale,
       tracking: "tracked_marker",
-      asset_scope: "scene",
-    };
+      asset_scope: "scene"};
   });
   const stagings = snapshot.stagings.map((item, index) => {
     const label = item.label ?? `staging_${index + 1}`;
@@ -664,15 +628,13 @@ function richOverlayFromSnapshot(
       attached_to: "staging",
       tracking: "scene_placeholder",
       asset_scope: "scene",
-      is_global_asset: false,
-    };
+      is_global_asset: false};
   });
   return {
     camera: snapshot.camera ?? {},
     actors,
     props,
-    stagings,
-  };
+    stagings};
 }
 
 function sceneSnapshotForPersistence(
@@ -684,9 +646,7 @@ function sceneSnapshotForPersistence(
         ...snapshot,
         world: {
           ...snapshot.world,
-          activeSourceId,
-        },
-      }
+          activeSourceId}}
     : snapshot;
 }
 
@@ -761,8 +721,7 @@ export function ThreeDDirectorDialog({
   initialScenesBySourceId,
   onSaveScene,
   registerSaveSceneHandler,
-  onClearScene,
-}: ThreeDDirectorDialogProps) {
+  onClearScene}: ThreeDDirectorDialogProps) {
   const { t } = useTranslation();
   const dialogTitle = title ?? t("viewer.threeD.title");
   const dialogDescription = description ?? t("viewer.threeD.description");
@@ -819,8 +778,7 @@ function ThreeDDirectorSurface({
   onSaveScene,
   registerSaveSceneHandler,
   onClearScene,
-  onClose,
-}: {
+  onClose}: {
   manifest: DirectorStageManifest;
   onCaptureSelectedBackground?: (blob: Blob, meta: ThreeDDirectorCaptureMeta) => void | Promise<void>;
   onCaptureCanvasNode?: (blob: Blob, meta: ThreeDDirectorCaptureMeta) => void | Promise<void>;
@@ -880,8 +838,7 @@ function ThreeDDirectorSurface({
         kind: "custom" as const,
         source_kind: "custom" as const,
         label: t("viewer.threeD.emptySource"),
-        source_type: "sog" as const,
-      },
+        source_type: "sog" as const},
     ],
     [manifest, t],
   );
@@ -907,8 +864,7 @@ function ThreeDDirectorSurface({
     );
     savedScenesBySourceRef.current = {
       ...next,
-      ...savedScenesBySourceRef.current,
-    };
+      ...savedScenesBySourceRef.current};
   }, [activeSourceId, initialScene, initialScenesBySourceId, manifest.active_source_id]);
   useEffect(() => {
     lastRestoredSourceIdRef.current = null;
@@ -945,16 +901,14 @@ function ThreeDDirectorSurface({
     return {
       identity_id: `anonymous_actor_${nextNumber}`,
       label: t("viewer.threeD.anonymousActor", { n: nextNumber }),
-      color: colorFromCreationPalette(anonymousActorPalette, anonymousSequence.actor),
-    };
+      color: colorFromCreationPalette(anonymousActorPalette, anonymousSequence.actor)};
   }, [anonymousActorPalette, anonymousSequence.actor, t]);
   const nextAnonymousProp = useMemo(() => {
     const nextNumber = anonymousSequence.prop + 1;
     return {
       prop_id: `anonymous_prop_${nextNumber}`,
       label: t("viewer.threeD.anonymousProp", { n: nextNumber }),
-      color: nextPropLikeColor,
-    };
+      color: nextPropLikeColor};
   }, [anonymousSequence.prop, nextPropLikeColor, t]);
 
   const [actorId, setActorId] = useState(actorChoices[0]?.identity_id ?? "");
@@ -1042,8 +996,7 @@ function ThreeDDirectorSurface({
     pano_fs: activeSource?.pano_fs,
     collision_glb_url: activeCollisionUrl ?? undefined,
     slot_kind: activeSource?.slot_kind,
-    fs: activeSource?.fs,
-  };
+    fs: activeSource?.fs};
   const savedSceneForActiveSource =
     (activeSceneSourceId && savedScenesBySourceRef.current[activeSceneSourceId]) ||
     (
@@ -1163,8 +1116,7 @@ function ThreeDDirectorSurface({
       if (sourceId) {
         savedScenesBySourceRef.current = {
           ...savedScenesBySourceRef.current,
-          [sourceId]: snapshot,
-        };
+          [sourceId]: snapshot};
         lastRestoredSourceIdRef.current = sourceId;
       }
       await onSaveScene(snapshot, sourceId);
@@ -1234,8 +1186,7 @@ function ThreeDDirectorSurface({
       if (snapshotSourceId) {
         savedScenesBySourceRef.current = {
           ...savedScenesBySourceRef.current,
-          [snapshotSourceId]: snapshot,
-        };
+          [snapshotSourceId]: snapshot};
       }
       if (canSelectSnapshotSource && snapshotSourceId !== activeSourceIdRef.current) {
         setActiveSourceId(snapshotSourceId);
@@ -1488,8 +1439,7 @@ function ThreeDDirectorSurface({
     const placed = viewerRef.current?.placeMarker("actor", {
       color,
       label: activeActor.label,
-      scale: actorScale,
-    }) ?? false;
+      scale: actorScale}) ?? false;
     if (placed && manifest.mode !== "beat") {
       setAnonymousSequence((prev) => ({ ...prev, actor: prev.actor + 1 }));
     }
@@ -1501,8 +1451,7 @@ function ThreeDDirectorSurface({
     const color = manifest.mode === "beat" ? activeProp.color : propLikeColor;
     const placed = viewerRef.current?.placeMarker("prop", {
       color,
-      label: activeProp.label,
-    }) ?? false;
+      label: activeProp.label}) ?? false;
     if (placed && manifest.mode !== "beat") {
       setAnonymousSequence((prev) => ({ ...prev, prop: prev.prop + 1 }));
     }
@@ -1514,8 +1463,7 @@ function ThreeDDirectorSurface({
     if (!label) return;
     const placed = viewerRef.current?.placeMarker("staging", {
       color: propLikeColor,
-      label,
-    }) ?? false;
+      label}) ?? false;
     if (placed) {
       setAnonymousSequence((prev) => ({ ...prev, prop: prev.prop + 1 }));
     }
@@ -1539,8 +1487,7 @@ function ThreeDDirectorSurface({
           beat_context: manifest.beat_context ?? null,
           crosshair_target: viewerApp.getCrosshairTarget(),
           state: sceneSnapshotForPersistence(viewerApp.exportSceneSnapshot(), activeSceneSourceId),
-          renderer_backend: "playcanvas_3gs",
-        });
+          renderer_backend: "playcanvas_3gs"});
         payload = (generated.prop ?? null) as Record<string, unknown> | null;
       } catch (aiError) {
         setError(aiError instanceof Error ? aiError.message : String(aiError));
@@ -1570,8 +1517,7 @@ function ThreeDDirectorSurface({
         label: name,
         scale,
         ...(normalizedShapeHint ? { shapeHint: normalizedShapeHint } : {}),
-        ...(position ? { position } : {}),
-      });
+        ...(position ? { position } : {})});
       if (placed) {
         setAnonymousSequence((prev) => ({ ...prev, prop: prev.prop + 1 }));
         setToolMode("staging");
@@ -1579,8 +1525,7 @@ function ThreeDDirectorSurface({
         recordCommand("ai_staging", {
           hint: hint.trim(),
           name,
-          source: payload ? "buildergpt_ai_staging" : "local_fallback",
-        });
+          source: payload ? "buildergpt_ai_staging" : "local_fallback"});
       }
     } finally {
       setAiStagingBusy(false);
@@ -1606,8 +1551,7 @@ function ThreeDDirectorSurface({
   const captureFrameOptions = useCallback((options?: { directorBundle?: boolean }) => ({
     frameAspect,
     frameRectCss: frameGuideRef.current?.getBoundingClientRect(),
-    ...(options?.directorBundle ? { maxLongEdge: DIRECTOR_CONTROL_FRAME_MAX_LONG_EDGE } : {}),
-  }), [frameAspect]);
+    ...(options?.directorBundle ? { maxLongEdge: DIRECTOR_CONTROL_FRAME_MAX_LONG_EDGE } : {})}), [frameAspect]);
 
   const capture = useCallback(
     async (kind: CaptureKind, destination: CaptureDestination) => {
@@ -1618,8 +1562,7 @@ function ThreeDDirectorSurface({
         const directorBundleCapture = destination === "director_combined";
         const dataUrl = viewerApp.captureScreenshot({
           renderMode: kind,
-          ...captureFrameOptions({ directorBundle: directorBundleCapture }),
-        });
+          ...captureFrameOptions({ directorBundle: directorBundleCapture })});
         if (!dataUrl) {
           setError(t("viewer.threeD.captureFailed"));
           return;
@@ -1637,13 +1580,11 @@ function ThreeDDirectorSurface({
           ply_url: activeSplatUrl ?? undefined,
           url: activeSourceUrl ?? undefined,
           pano_url: activeSourceType === "pano360" ? activeSourceUrl ?? undefined : manifest.source.pano_url,
-          source_kind: activeSourceKind,
-        };
+          source_kind: activeSourceKind};
         const meta: ThreeDDirectorCaptureMeta = {
           kind,
           snapshot,
-          source: captureSource,
-        };
+          source: captureSource};
         if (destination === "selected_background") {
           if (manifest.mode === "beat" && manifest.beat_context) {
             const frameMeta = frameMetaFromSnapshot({
@@ -1651,8 +1592,7 @@ function ThreeDDirectorSurface({
               frameAspect,
               snapshot,
               beatContext: manifest.beat_context,
-              cameraMode: activeSourceType === "pano360" ? "pano" : "sog",
-            });
+              cameraMode: activeSourceType === "pano360" ? "pano" : "sog"});
             const richOverlay = richOverlayFromSnapshot(snapshot, manifest);
             const overlayStatus = await saveBeatDirectorStageOverlay(
               manifest.project,
@@ -1669,11 +1609,9 @@ function ThreeDDirectorSurface({
                   {
                     kind: "capture_selected_background",
                     at: new Date().toISOString(),
-                    source: "react_three_d_director_dialog",
-                  },
+                    source: "react_three_d_director_dialog"},
                 ],
-                deleted_keys: [],
-              },
+                deleted_keys: []},
             );
             applyOverlayStatus(overlayStatus);
           }
@@ -1685,14 +1623,12 @@ function ThreeDDirectorSurface({
           ? dataUrl
           : viewerApp.captureScreenshot({
               renderMode: "combined",
-              ...captureFrameOptions({ directorBundle: directorBundleCapture }),
-            });
+              ...captureFrameOptions({ directorBundle: directorBundleCapture })});
         const envOnlyDataUrl = kind === "env_only"
           ? dataUrl
           : viewerApp.captureScreenshot({
               renderMode: "env_only",
-              ...captureFrameOptions({ directorBundle: directorBundleCapture }),
-            });
+              ...captureFrameOptions({ directorBundle: directorBundleCapture })});
         if (!combinedDataUrl || !envOnlyDataUrl) {
           setError(t("viewer.threeD.captureFailed"));
           return;
@@ -1707,9 +1643,7 @@ function ThreeDDirectorSurface({
             frameAspect,
             snapshot,
             beatContext: manifest.beat_context,
-            cameraMode: activeSourceType === "pano360" ? "pano" : "sog",
-          }),
-        };
+            cameraMode: activeSourceType === "pano360" ? "pano" : "sog"})};
         if (destination === "director_combined" && manifest.mode === "beat" && manifest.beat_context && canWriteDirectorBundle) {
           const richOverlay = richOverlayFromSnapshot(snapshot, manifest);
           const overlayStatus = await saveBeatDirectorStageOverlay(
@@ -1727,11 +1661,9 @@ function ThreeDDirectorSurface({
                 {
                     kind: "submit_director_combined",
                   at: new Date().toISOString(),
-                  source: "react_three_d_director_dialog",
-                },
+                  source: "react_three_d_director_dialog"},
               ],
-              deleted_keys: [],
-            },
+              deleted_keys: []},
           );
           applyOverlayStatus(overlayStatus);
           const result = await saveBeatDirectorControlFrame(
@@ -1744,11 +1676,9 @@ function ThreeDDirectorSurface({
               frame_meta: meta.captureBundle.frame_meta,
               images: {
                 combined: combinedDataUrl,
-                env_only: envOnlyDataUrl,
-              },
+                env_only: envOnlyDataUrl},
               snapshot,
-              ...richOverlay,
-            },
+              ...richOverlay},
           );
           meta.controlFrameUrl = result.urls?.combined;
           meta.controlFrameRelPath = result.rel_paths.combined;
@@ -1759,8 +1689,7 @@ function ThreeDDirectorSurface({
             rel_paths: result.rel_paths,
             urls: result.urls,
             source: activeFrameSource,
-            frame_meta: meta.captureBundle.frame_meta,
-          };
+            frame_meta: meta.captureBundle.frame_meta};
         }
         if (destination === "director_combined") {
           if (!onSubmitDirectorCombined) return;
@@ -1806,12 +1735,10 @@ function ThreeDDirectorSurface({
     try {
       const combined = viewerApp.captureScreenshot({
         renderMode: "combined",
-        ...captureFrameOptions({ directorBundle: true }),
-      });
+        ...captureFrameOptions({ directorBundle: true })});
       const envOnly = viewerApp.captureScreenshot({
         renderMode: "env_only",
-        ...captureFrameOptions({ directorBundle: true }),
-      });
+        ...captureFrameOptions({ directorBundle: true })});
       if (!combined || !envOnly) {
         setError(t("viewer.threeD.captureFailed"));
         return;
@@ -1823,8 +1750,7 @@ function ThreeDDirectorSurface({
         frameAspect,
         snapshot,
         beatContext: manifest.beat_context,
-        cameraMode: activeSourceType === "pano360" ? "pano" : "sog",
-      });
+        cameraMode: activeSourceType === "pano360" ? "pano" : "sog"});
       const overlayStatus = await saveBeatDirectorStageOverlay(
         manifest.project,
         manifest.beat_context.episode,
@@ -1840,11 +1766,9 @@ function ThreeDDirectorSurface({
             {
               kind: "export_control_frames",
               at: new Date().toISOString(),
-              source: "react_three_d_director_dialog",
-            },
+              source: "react_three_d_director_dialog"},
           ],
-          deleted_keys: [],
-        },
+          deleted_keys: []},
       );
       applyOverlayStatus(overlayStatus);
       const result = await saveBeatDirectorControlFrame(
@@ -1857,15 +1781,12 @@ function ThreeDDirectorSurface({
           frame_meta: frameMeta,
           images: {
             combined,
-            env_only: envOnly,
-          },
+            env_only: envOnly},
           snapshot,
-          ...richOverlay,
-        },
+          ...richOverlay},
       );
       setExportStatus(t("viewer.threeD.exportControlFrameSuccess", {
-        path: result.rel_paths.combined ?? result.dir,
-      }));
+        path: result.rel_paths.combined ?? result.dir}));
       recordCommand("export_control_frames", { dir: result.dir });
       if (onSubmitDirectorCombined) {
         const combinedBlob = await dataUrlToBlob(combined);
@@ -1879,8 +1800,7 @@ function ThreeDDirectorSurface({
             ply_url: activeSplatUrl ?? undefined,
             url: activeSourceUrl ?? undefined,
             pano_url: activeSourceType === "pano360" ? activeSourceUrl ?? undefined : manifest.source.pano_url,
-            source_kind: activeSourceKind,
-          },
+            source_kind: activeSourceKind},
           controlFrameUrl: result.urls?.combined,
           controlFrameRelPath: result.rel_paths.combined,
           controlFrameBundle: {
@@ -1890,14 +1810,11 @@ function ThreeDDirectorSurface({
             rel_paths: result.rel_paths,
             urls: result.urls,
             source: activeFrameSource,
-            frame_meta: frameMeta,
-          },
+            frame_meta: frameMeta},
           captureBundle: {
             combined: combinedBlob,
             env_only: envOnlyBlob,
-            frame_meta: frameMeta,
-          },
-        });
+            frame_meta: frameMeta}});
       }
     } catch (exportError) {
       setError(exportError instanceof Error ? exportError.message : String(exportError));
@@ -1941,8 +1858,7 @@ function ThreeDDirectorSurface({
     const next = constrainSourceTransformForType(
       {
         ...sourceTransformStateRef.current,
-        ...patch,
-      },
+        ...patch},
       activeSourceType,
     );
     syncSourceTransformState(next);
@@ -1971,8 +1887,7 @@ function ThreeDDirectorSurface({
         frameAspect,
         snapshot,
         beatContext: manifest.beat_context,
-        cameraMode: activeSourceType === "pano360" ? "pano" : "sog",
-      });
+        cameraMode: activeSourceType === "pano360" ? "pano" : "sog"});
       const next = await saveBeatDirectorStageOverlay(
         manifest.project,
         manifest.beat_context.episode,
@@ -1988,11 +1903,9 @@ function ThreeDDirectorSurface({
             {
               kind: "save_overlay",
               at: new Date().toISOString(),
-              source: "react_three_d_director_dialog",
-            },
+              source: "react_three_d_director_dialog"},
           ],
-          deleted_keys: [],
-        },
+          deleted_keys: []},
       );
       recordCommand("save_overlay");
       applyOverlayStatus(next);
@@ -2047,8 +1960,7 @@ function ThreeDDirectorSurface({
         frameAspect: copiedFrameAspect,
         snapshot: nextSnapshot,
         beatContext: manifest.beat_context,
-        cameraMode: overlaySource.source_type === "pano360" ? "pano" : "sog",
-      });
+        cameraMode: overlaySource.source_type === "pano360" ? "pano" : "sog"});
       const next = await saveBeatDirectorStageOverlay(
         manifest.project,
         manifest.beat_context.episode,
@@ -2068,21 +1980,17 @@ function ThreeDDirectorSurface({
               source_beat: sourceBeatNumber,
               target_beat: targetBeatNumber,
               at: new Date().toISOString(),
-              source: "react_three_d_director_dialog",
-            },
+              source: "react_three_d_director_dialog"},
           ],
-          deleted_keys: [],
-        },
+          deleted_keys: []},
       );
       recordCommand("copy_overlay", {
         source_beat: sourceBeatNumber,
-        target_beat: targetBeatNumber,
-      });
+        target_beat: targetBeatNumber});
       applyOverlayStatus(next, targetBeatNumber);
       setStatus(t("viewer.threeD.beatOverlay.copySelectedSuccess", {
         sourceBeat: sourceBeatNumber,
-        targetBeat: targetBeatNumber,
-      }));
+        targetBeat: targetBeatNumber}));
     } catch (copyError) {
       setError(copyError instanceof Error ? copyError.message : String(copyError));
     } finally {
@@ -2169,8 +2077,7 @@ function ThreeDDirectorSurface({
               ariaLabel={t("viewer.threeD.sourceCalibration.directionBall")}
               ariaValueText={t("viewer.threeD.sourceCalibration.directionValue", {
                 yaw: Math.round(sourceTransformState.yawDeg),
-                pitch: Math.round(sourceTransformState.pitchDeg),
-              })}
+                pitch: Math.round(sourceTransformState.pitchDeg)})}
               yawDeg={sourceTransformState.yawDeg}
               pitchDeg={sourceTransformState.pitchDeg}
               onChange={(next) => updateSourceTransform(next)}
@@ -2265,8 +2172,7 @@ function ThreeDDirectorSurface({
         <PanelSection title={t("viewer.threeD.sections.add")}>
           <div className="rounded-[12px] border border-white/[0.08] bg-black/20 px-3 py-2 text-[12px] text-white/54">
             {t("viewer.threeD.currentCreate", {
-              type: toolMode === "actor" ? t("viewer.threeD.actor") : toolMode === "prop" ? t("viewer.threeD.prop") : t("viewer.threeD.staging"),
-            })}
+              type: toolMode === "actor" ? t("viewer.threeD.actor") : toolMode === "prop" ? t("viewer.threeD.prop") : t("viewer.threeD.staging")})}
           </div>
           {toolMode === "actor" && (
             <div className="mt-3 space-y-2">
@@ -2293,7 +2199,7 @@ function ThreeDDirectorSurface({
               )}
               {manifest.mode !== "beat" && (
                 <ColorPaletteField
-                  label={t("viewer.threeD.actorColor", { defaultValue: "人物颜色" })}
+                  label={t("viewer.threeD.actorColor")}
                   value={actorColor}
                   palette={anonymousActorPalette}
                   onChange={setActorColor}
@@ -2512,8 +2418,7 @@ function ThreeDDirectorSurface({
             <div className="mt-2 rounded-[12px] border border-white/[0.08] bg-black/20 px-3 py-2 text-[12px] leading-5 text-white/58">
               {t("viewer.threeD.beatOverlay.copyFlow", {
                 sourceBeat: selectedOverlayBeat || "-",
-                targetBeat: manifest.beat_context?.beat ?? "-",
-              })}
+                targetBeat: manifest.beat_context?.beat ?? "-"})}
             </div>
             <div className="mt-2 grid gap-2">
               <Button size="sm" onClick={() => void saveOverlay()} disabled={overlayBusy || !viewer}>
@@ -2621,8 +2526,7 @@ function ThreeDDirectorSurface({
             {t("viewer.threeD.counts", {
               actor: counts.actor,
               prop: counts.prop,
-              staging: counts.staging,
-            })}
+              staging: counts.staging})}
           </div>
           <div className="truncate">{status}</div>
           {error && <div className="mt-1 text-red-300">{error}</div>}
@@ -2668,15 +2572,13 @@ function ThreeDDirectorSurface({
                   title: t("viewer.threeD.actionActorTitle"),
                   value: activeActor?.label ?? t("viewer.threeD.actionPresetsValue", { count: actorChoices.length }),
                   active: toolMode === "actor",
-                  onClick: cycleActorChoice,
-                },
+                  onClick: cycleActorChoice},
                 {
                   key: "2",
                   title: t("viewer.threeD.actionPropTitle"),
                   value: activeProp?.label ?? t("viewer.threeD.actionPresetsValue", { count: propChoices.length }),
                   active: toolMode === "prop",
-                  onClick: cyclePropChoice,
-                },
+                  onClick: cyclePropChoice},
                 {
                   key: "3",
                   title: t("viewer.threeD.actionStagingTitle"),
@@ -2687,8 +2589,7 @@ function ThreeDDirectorSurface({
                   onClick: () => {
                     setToolMode("staging");
                     viewer?.cycleSelection("staging");
-                  },
-                },
+                  }},
               ].map((slot) => (
                 <button
                   key={slot.key}
@@ -2797,8 +2698,7 @@ function SourceDirectionBall({
   ariaValueText,
   yawDeg,
   pitchDeg,
-  onChange,
-}: {
+  onChange}: {
   ariaLabel: string;
   ariaValueText: string;
   yawDeg: number;
@@ -2816,8 +2716,7 @@ function SourceDirectionBall({
     const y = clamp((event.clientY - top) / height, 0, 1);
     onChange({
       yawDeg: Math.round((x - 0.5) * 360),
-      pitchDeg: Math.round((0.5 - y) * 180),
-    });
+      pitchDeg: Math.round((0.5 - y) * 180)});
   };
   const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
     activePointerIdRef.current = event.pointerId;
@@ -2880,8 +2779,7 @@ function SelectField({
   value,
   onChange,
   children,
-  disabled,
-}: {
+  disabled}: {
   label: string;
   value: string;
   onChange: (value: string) => void;
@@ -2895,8 +2793,7 @@ function SelectField({
       const props = child.props as { value?: unknown; children?: React.ReactNode };
       return {
         value: String(props.value ?? ""),
-        label: props.children,
-      };
+        label: props.children};
     });
   const selectedLabel =
     options.find((option) => option.value === value)?.label ?? value;
@@ -2975,8 +2872,7 @@ function RangeField({
   max,
   step,
   value,
-  onChange,
-}: {
+  onChange}: {
   label: string;
   min: number;
   max: number;
@@ -3004,8 +2900,7 @@ function ColorPaletteField({
   label,
   value,
   palette,
-  onChange,
-}: {
+  onChange}: {
   label: string;
   value: string;
   palette: readonly string[];
@@ -3032,8 +2927,7 @@ function ColorPaletteField({
     const viewportPadding = 12;
     setPickerPosition({
       left: Math.min(rect.right + gap, window.innerWidth - pickerWidth - viewportPadding),
-      top: Math.max(viewportPadding, rect.bottom - pickerHeight),
-    });
+      top: Math.max(viewportPadding, rect.bottom - pickerHeight)});
   }, []);
   useEffect(() => {
     if (!pickerOpen) return undefined;
@@ -3142,8 +3036,7 @@ function hexToHsv(hex: string): { h: number; s: number; v: number } {
   return {
     h,
     s: max === 0 ? 0 : delta / max,
-    v: max,
-  };
+    v: max};
 }
 
 function hsvToHex({ h, s, v }: { h: number; s: number; v: number }): string {
@@ -3183,8 +3076,7 @@ const FrameGuide = forwardRef<HTMLDivElement, { aspect: FrameAspect }>(function 
           width: `min(calc(100% - 32px), calc((100dvh - 64px) * ${ratio}))`,
           maxHeight: "calc(100% - 32px)",
           border: "1px solid rgba(255, 255, 255, 0.34)",
-          boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.16), 0 0 18px rgba(0, 0, 0, 0.42)",
-        }}
+          boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.16), 0 0 18px rgba(0, 0, 0, 0.42)"}}
       >
         <div className="absolute left-[10px] top-2 rounded-full bg-black/45 px-2 py-1 text-[11px] font-semibold text-white/56">
           {aspect}
@@ -3209,8 +3101,7 @@ function Crosshair() {
 function SelectionBadge({
   viewer,
   selection,
-  selectedKindLabel,
-}: {
+  selectedKindLabel}: {
   viewer: ViewerApp | null;
   selection: SelectionState | null;
   selectedKindLabel: string | null;

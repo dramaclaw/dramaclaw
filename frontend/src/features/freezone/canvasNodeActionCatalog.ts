@@ -157,28 +157,28 @@ function imageModelParameterSchema(): CanvasEditableFieldSchema {
   const snapshot = getFreezoneImageModelsSnapshot();
   return {
     type: "enum",
-    label: "模型",
+    label: i18next.t("freezone.nodeAction.parameter.model"),
     options: snapshot.models.map((model) => model.id),
     option_labels: modelOptionLabels(snapshot.models),
     source: "GET /api/v1/projects/{project}/freezone/image/models",
     loading: snapshot.isLoading,
     fallback: snapshot.isFallback,
-    description: "可选。必须使用 options 里的模型 id；不填使用该动作默认模型，不要写口语名或后端 apiModel。",
+    description: i18next.t("freezone.nodeAction.parameter.modelDescription"),
   };
 }
 
 const UPSCALE_PARAMETER_SCHEMA = {
   scale_factor: {
     type: "number",
-    label: "放大倍率",
+    label: i18next.t("freezone.nodeAction.parameter.upscaleFactor"),
     options: [2, 4, 6],
-    description: "默认 2。",
+    description: i18next.t("freezone.nodeAction.parameter.default2"),
   },
   image_size: {
     type: "enum",
-    label: "画质",
+    label: i18next.t("freezone.nodeAction.parameter.quality"),
     options: IMAGE_ACTION_SIZE_OPTIONS,
-    description: "默认 2K。",
+    description: i18next.t("freezone.nodeAction.parameter.default2K"),
   },
   get model() {
     return imageModelParameterSchema();
@@ -188,21 +188,21 @@ const UPSCALE_PARAMETER_SCHEMA = {
 const OUTPAINT_PARAMETER_SCHEMA = {
   target_aspect_ratio: {
     type: "enum",
-    label: "目标比例",
+    label: i18next.t("freezone.nodeAction.parameter.targetAspectRatio"),
     options: ["original", "1:1", "4:3", "3:4", "16:9", "9:16"],
-    description: "默认 original。",
+    description: i18next.t("freezone.nodeAction.parameter.defaultOriginal"),
   },
   num_images: {
     type: "number",
-    label: "生成数量",
+    label: i18next.t("freezone.nodeAction.parameter.generateCount"),
     options: [1, 2, 3, 4],
-    description: "默认 1。",
+    description: i18next.t("freezone.nodeAction.parameter.default1"),
   },
   image_size: {
     type: "enum",
-    label: "画质",
+    label: i18next.t("freezone.nodeAction.parameter.quality"),
     options: IMAGE_ACTION_SIZE_OPTIONS,
-    description: "默认 2K。",
+    description: i18next.t("freezone.nodeAction.parameter.default2K"),
   },
   get model() {
     return imageModelParameterSchema();
@@ -212,20 +212,20 @@ const OUTPAINT_PARAMETER_SCHEMA = {
 const VIDEO_UPSCALE_PARAMETER_SCHEMA = {
   resolution: {
     type: "enum",
-    label: "分辨率",
+    label: i18next.t("freezone.nodeAction.parameter.resolution"),
     options: VIDEO_UPSCALE_RESOLUTIONS,
     option_labels: {
       "1080p": "1080P",
       "2k": "2K",
       "4k": "4K",
     },
-    description: "默认 1080p。",
+    description: i18next.t("freezone.nodeAction.parameter.default1080p"),
   },
 };
 
 const VIDEO_BREAKDOWN_DIMENSIONS_PARAMETER = {
   type: "array",
-  label: "拆解维度",
+  label: i18next.t("freezone.nodeAction.parameter.breakdownDimension"),
   options: [...VIDEO_BREAKDOWN_DIMENSIONS],
   option_labels: {
     storyboard: "分镜",
@@ -241,14 +241,14 @@ function videoUpscaleEditableSchema(node: CanvasNode): Record<string, CanvasEdit
     upscaleResolution?: unknown;
   };
   return {
-    displayName: { type: "string", label: "显示名称" },
+    displayName: { type: "string", label: i18next.t("freezone.nodeAction.parameter.displayName") },
     upscaleResolution: {
       type: "enum",
-      label: "分辨率",
+      label: i18next.t("freezone.nodeAction.parameter.resolution"),
       options: VIDEO_UPSCALE_RESOLUTIONS,
       option_labels: VIDEO_UPSCALE_RESOLUTION_LABEL,
       current_value: typeof data.upscaleResolution === "string" ? data.upscaleResolution : "1080p",
-      description: "视频高清处理面板里的目标分辨率；修改高清分辨率时更新 upscaleResolution。",
+      description: i18next.t("freezone.nodeAction.parameter.resolutionDescription"),
     },
   };
 }
@@ -292,7 +292,7 @@ const KNOWN_SKILL_DEFINITIONS: Record<string, SkillDefinition> = {
     id: "freezone.sketch_from_context",
     provider: "freezone_mainline",
     display_name: "根据当前背景生成草图",
-    description: "根据 Beat 上下文和当前背景生成主线草图候选。",
+    description: i18next.t("freezone.nodeAction.description.generateMainSketchFromBackground"),
     inputs: [minimalInput("beat_context", true), minimalInput("background", true)],
     outputs: [],
   },
@@ -300,7 +300,7 @@ const KNOWN_SKILL_DEFINITIONS: Record<string, SkillDefinition> = {
     id: "freezone.sketch_from_director_combined",
     provider: "freezone_mainline",
     display_name: "从导演合成图生成草图",
-    description: "从 Beat 上下文和导演合成图生成主线草图候选。",
+    description: i18next.t("freezone.nodeAction.description.generateMainSketchFromDirectorComp"),
     inputs: [minimalInput("beat_context", true), minimalInput("director_combined", true)],
     outputs: [],
   },
@@ -308,7 +308,7 @@ const KNOWN_SKILL_DEFINITIONS: Record<string, SkillDefinition> = {
     id: "freezone.frame_from_context",
     provider: "freezone_mainline",
     display_name: "从镜头上下文生成分镜",
-    description: "根据 Beat 上下文、草图和参考素材生成主线分镜候选。",
+    description: i18next.t("freezone.nodeAction.description.generateMainStoryboardCandidates"),
     inputs: [
       minimalInput("beat_context", true),
       minimalInput("sketch", true),
@@ -322,7 +322,7 @@ const KNOWN_SKILL_DEFINITIONS: Record<string, SkillDefinition> = {
     id: "freezone.set_selected_background",
     provider: "freezone_mainline",
     display_name: "设为当前背景",
-    description: "将明确指定的图片设为当前 Beat 的背景。",
+    description: i18next.t("freezone.nodeAction.description.setBackgroundImage"),
     inputs: [minimalInput("beat_context", true), minimalInput("source_image", true)],
     outputs: [],
   },
@@ -330,7 +330,7 @@ const KNOWN_SKILL_DEFINITIONS: Record<string, SkillDefinition> = {
     id: "freezone.set_director_combined",
     provider: "freezone_mainline",
     display_name: "设为导演合成图",
-    description: "将明确指定的图片设为当前 Beat 的 3GS 导演合成图。",
+    description: i18next.t("freezone.nodeAction.description.setDirectorCompositionImage"),
     inputs: [minimalInput("beat_context", true), minimalInput("source_image", true)],
     outputs: [],
   },
@@ -338,7 +338,7 @@ const KNOWN_SKILL_DEFINITIONS: Record<string, SkillDefinition> = {
     id: "freezone.scene_360",
     provider: "freezone_mainline",
     display_name: "生成场景 360 全景",
-    description: "根据场景主图生成 2:1 场景全景候选。",
+    description: i18next.t("freezone.nodeAction.description.generateScenePanorama"),
     inputs: [
       minimalInput("scene", false),
       minimalInput("scene_master", true),
@@ -350,7 +350,7 @@ const KNOWN_SKILL_DEFINITIONS: Record<string, SkillDefinition> = {
     id: "agent.review_frame",
     provider: "agent",
     display_name: "审核分镜",
-    description: "根据 Beat 上下文审核分镜候选。",
+    description: i18next.t("freezone.nodeAction.description.reviewStoryboardCandidates"),
     inputs: [minimalInput("beat_context", true), minimalInput("frame", true)],
     outputs: [],
   },
@@ -536,14 +536,14 @@ function imageModelSchema(node: CanvasNode): CanvasEditableFieldSchema {
   const snapshot = getFreezoneImageModelsSnapshot();
   return {
     type: "enum",
-    label: "模型",
+    label: i18next.t("freezone.nodeAction.parameter.model"),
     options: snapshot.models.map((model) => model.id),
     option_labels: modelOptionLabels(snapshot.models),
     source: "GET /api/v1/projects/{project}/freezone/image/models",
     loading: snapshot.isLoading,
     fallback: snapshot.isFallback,
     current_value: (node.data as { model?: unknown }).model ?? null,
-    description: "图片模型必须使用 options 里的 model id；不要使用口语名或后端 apiModel，例如不要写 nanobanana。",
+    description: i18next.t("freezone.nodeAction.parameter.imageModelDescription"),
   };
 }
 
@@ -559,9 +559,9 @@ function imageSizeSchema(node: CanvasNode): CanvasEditableFieldSchema {
     .map((value) => value.trim()).filter(Boolean);
   return {
     type: "enum",
-    label: "分辨率",
+    label: i18next.t("freezone.nodeAction.parameter.resolution"),
     options: options.length > 0 ? options : [...IMAGE_SIZE_OPTIONS],
-    description: "使用所选图片模型目录返回的原始分辨率选项。",
+    description: i18next.t("freezone.nodeAction.parameter.resolutionOptionsDescription"),
   };
 }
 
@@ -570,11 +570,11 @@ function imageQualitySchema(node: CanvasNode): CanvasEditableFieldSchema {
   const options = (model?.qualityOptions ?? []).map((value) => value.trim()).filter(Boolean);
   return {
     type: "enum",
-    label: "画质",
+    label: i18next.t("freezone.nodeAction.parameter.quality"),
     options: model ? options : [...IMAGE_QUALITY_OPTIONS],
     description: model && options.length === 0
-      ? "所选模型不支持画质档位；请省略 quality。"
-      : "仅使用所选图片模型支持的画质档位。",
+      ? i18next.t("freezone.nodeAction.parameter.qualityUnsupported")
+      : i18next.t("freezone.nodeAction.parameter.qualityUseSupported"),
   };
 }
 
@@ -583,7 +583,7 @@ function imageAspectRatioSchema(node: CanvasNode, label: string): CanvasEditable
     .map((value) => value.trim()).filter(Boolean);
   return {
     type: "enum",
-    label: "比例",
+    label: i18next.t("freezone.nodeAction.parameter.aspectRatio"),
     options: options.length > 0 ? options : [...IMAGE_ASPECT_RATIO_OPTIONS],
     description: label,
   };
@@ -593,14 +593,14 @@ function videoModelSchema(node: CanvasNode): CanvasEditableFieldSchema {
   const snapshot = getFreezoneVideoModelsSnapshot();
   return {
     type: "enum",
-    label: "模型",
+    label: i18next.t("freezone.nodeAction.parameter.model"),
     options: snapshot.models.map((model) => model.id),
     option_labels: modelOptionLabels(snapshot.models),
     source: "GET /api/v1/projects/{project}/freezone/video/models",
     loading: snapshot.isLoading,
     fallback: snapshot.isFallback,
     current_value: (node.data as { model?: unknown }).model ?? null,
-    description: "视频模型必须使用 options 里的 model id；不要使用口语名或后端 apiModel。",
+    description: i18next.t("freezone.nodeAction.parameter.videoModelDescription"),
   };
 }
 
@@ -613,10 +613,10 @@ function videoAspectRatioSchema(node: CanvasNode): CanvasEditableFieldSchema {
   const options = (model?.ratioOptions ?? []).map((value) => value.trim()).filter(Boolean);
   return {
     type: "enum",
-    label: "视频比例",
+    label: i18next.t("freezone.nodeAction.parameter.videoAspectRatio"),
     options: options.length > 0 ? options : [...VIDEO_ASPECT_RATIO_OPTIONS],
     current_value: (node.data as { aspectRatio?: unknown }).aspectRatio ?? "auto",
-    description: "视频节点底部参数里的比例；修改视频比例时更新 aspectRatio，不要改模型来间接实现。",
+    description: i18next.t("freezone.nodeAction.parameter.videoAspectRatioDescription"),
   };
 }
 
@@ -633,10 +633,10 @@ function videoQualitySchema(node: CanvasNode): CanvasEditableFieldSchema {
   const resolvedOptions = options.length > 0 ? options : [...VIDEO_QUALITY_OPTIONS];
   return {
     type: "enum",
-    label: "清晰度",
+    label: i18next.t("freezone.nodeAction.parameter.clarity"),
     options: resolvedOptions,
     current_value: (node.data as { quality?: unknown }).quality ?? null,
-    description: "视频节点底部参数里的清晰度；使用所选模型目录返回的原始分辨率选项。",
+    description: i18next.t("freezone.nodeAction.parameter.clarityDescription"),
   };
 }
 
@@ -658,7 +658,7 @@ function videoDurationSchema(node: CanvasNode): CanvasEditableFieldSchema {
     : "当前模型的可用时长区间由前端节点约束。";
   return {
     type: "number",
-    label: "时长秒数",
+    label: i18next.t("freezone.nodeAction.parameter.durationSeconds"),
     current_value: (node.data as { durationSec?: unknown }).durationSec ?? null,
     description: `${durationHint} 修改时更新 durationSec。`,
   };
@@ -678,7 +678,7 @@ function videoGenModeSchema(node: CanvasNode): CanvasEditableFieldSchema {
     : [];
   return {
     type: "enum",
-    label: "视频生成模式",
+    label: i18next.t("freezone.nodeAction.parameter.videoGenMode"),
     options,
     option_labels: Object.fromEntries(
       options.map((mode) => [mode, i18next.t(`node.videoNode.tabs.${mode}`)]),
@@ -686,7 +686,7 @@ function videoGenModeSchema(node: CanvasNode): CanvasEditableFieldSchema {
     loading: snapshot.isLoading,
     current_value: (node.data as { genMode?: unknown }).genMode ?? "textToVideo",
     description:
-      "仅可使用当前节点所选模型的 options；切换模型后必须重新查询模式选项，不得套用其他节点的模式。决定视频节点如何消费上游输入。textToVideo=只用当前提示词；imageToVideo=以单张图片作为整体画面参考；firstFrame=以单张图片锁定首帧（与 imageToVideo 不等价，用户指定哪种就保持哪种，不要互相替换）；firstLastFrame=需要首帧和尾帧；allReference=可同时参考图片/视频/音频；imageReference=以图片作为参考约束。改视频模式时更新 genMode，不要把“模式”误改成 model。",
+      i18next.t("freezone.nodeAction.parameter.videoGenModeDescription"),
   };
 }
 
@@ -694,7 +694,7 @@ function audioVoiceRefSchema(node: CanvasNode): CanvasEditableFieldSchema {
   const data = node.data as { voiceRef?: unknown };
   return {
     type: "object",
-    label: "音色引用",
+    label: i18next.t("freezone.nodeAction.parameter.voiceReference"),
     source: "canvas_context_request.v1 audio_voice_options",
     context_request: {
       schema_version: "canvas_context_request.v1",
@@ -702,7 +702,7 @@ function audioVoiceRefSchema(node: CanvasNode): CanvasEditableFieldSchema {
     },
     current_value: data.voiceRef ?? null,
     description:
-      "音频节点在 speechMode=clone 时使用 voiceRef 对象选择音色，不使用 voiceId 字符串。更换音色前必须先返回 context_request 指定的 canvas_context_request.v1；拿到 options 后，把选项里的 data 原样用于 update_node_data，并同时设置 speechMode=clone。不要用 run_node_action 获取音色选项。",
+      i18next.t("freezone.nodeAction.parameter.voiceReferenceDescription"),
   };
 }
 
@@ -747,28 +747,28 @@ function beatContextEditableSchema(node: CanvasNode): Record<string, CanvasEdita
   return {
     visual_description: {
       type: "string",
-      label: "起始画面",
+      label: i18next.t("freezone.nodeAction.parameter.startFrame"),
       current_value:
         stringOrNull(editFields.visual_description) ??
         stringOrNull(snapshot.visualDescription) ??
         stringOrNull(data.content) ??
         "",
-      description: "镜头上下文节点的起始画面草稿。只修改画布本地草稿；如需写回主线，请使用界面中的手动入口。",
+      description: i18next.t("freezone.nodeAction.shotContext.startFrameDraft.description"),
     },
     scene_ref: {
       type: "object",
-      label: "场景",
+      label: i18next.t("freezone.nodeAction.shotContext.scene.label"),
       options: sceneOptions,
       current_value: { scene_id: currentSceneId, variant_id: currentVariantId },
-      description: "镜头上下文节点的场景草稿，格式为 {scene_id, variant_id}。只允许修改这个字段，不要修改出场身份或出场道具。",
+      description: i18next.t("freezone.nodeAction.shotContext.scene.description"),
     },
     time_of_day: {
       type: "enum",
-      label: "时间",
+      label: i18next.t("freezone.nodeAction.shotContext.time.label"),
       options: ["", ...STANDARD_TIME_OF_DAY_OPTIONS],
       option_labels: { "": "未设置" },
       current_value: currentTimeOfDay,
-      description: "镜头上下文节点的时间草稿。必须从枚举中选择；空字符串表示未设置。",
+      description: i18next.t("freezone.nodeAction.shotContext.time.description"),
     },
   };
 }
@@ -779,12 +779,12 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
     case CANVAS_NODE_TYPES.textAnnotation:
       return {
         displayName: { type: "string", label: "Display name" },
-        title: { type: "string", label: "标题" },
-        content: { type: "string", label: "内容" },
-        text: { type: "string", label: "文本" },
+        title: { type: "string", label: i18next.t("freezone.nodeAction.textAnnotation.title.label") },
+        content: { type: "string", label: i18next.t("freezone.nodeAction.textAnnotation.content.label") },
+        text: { type: "string", label: i18next.t("freezone.nodeAction.common.text.label") },
         semanticOutputRole: {
           type: "enum",
-          label: "语义输出角色",
+          label: i18next.t("freezone.nodeAction.common.semanticRole.label"),
           options: ["planning_text", "input_text", "context_text"],
           description:
             "How downstream nodes should interpret this text: planning_text for briefs, outlines, notes, or planning material; input_text for direct prompts or scripts consumed by generators; context_text for auxiliary background, constraints, style guides, or reference notes.",
@@ -794,33 +794,33 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
       return beatContextEditableSchema(node);
     case CANVAS_NODE_TYPES.imageGen:
       return {
-        displayName: { type: "string", label: "显示名称" },
-        prompt: { type: "string", label: "提示词", description: GENERATOR_PROMPT_DESCRIPTION },
-        negativePrompt: { type: "string", label: "反向提示词" },
+        displayName: { type: "string", label: i18next.t("freezone.nodeAction.generator.displayName.label") },
+        prompt: { type: "string", label: i18next.t("freezone.nodeAction.generator.prompt.label"), description: GENERATOR_PROMPT_DESCRIPTION },
+        negativePrompt: { type: "string", label: i18next.t("freezone.nodeAction.generator.negativePrompt.label") },
         model: imageModelSchema(node),
         size: imageSizeSchema(node),
         quality: imageQualitySchema(node),
         aspectRatio: imageAspectRatioSchema(node, "图片节点底部参数里的比例；修改分辨率时不要顺手改比例。"),
-        count: { type: "enum", label: "生成数量", options: [...IMAGE_COUNT_OPTIONS] },
+        count: { type: "enum", label: i18next.t("freezone.nodeAction.generator.count.label"), options: [...IMAGE_COUNT_OPTIONS] },
       };
     case CANVAS_NODE_TYPES.imageEdit:
       return {
-        displayName: { type: "string", label: "显示名称" },
-        prompt: { type: "string", label: "提示词", description: GENERATOR_PROMPT_DESCRIPTION },
-        negativePrompt: { type: "string", label: "反向提示词" },
+        displayName: { type: "string", label: i18next.t("freezone.nodeAction.image.displayName.label") },
+        prompt: { type: "string", label: i18next.t("freezone.nodeAction.image.prompt.label"), description: GENERATOR_PROMPT_DESCRIPTION },
+        negativePrompt: { type: "string", label: i18next.t("freezone.nodeAction.image.negativePrompt.label") },
         model: imageModelSchema(node),
         size: imageSizeSchema(node),
         quality: imageQualitySchema(node),
         requestAspectRatio: imageAspectRatioSchema(node, "图片编辑节点使用 requestAspectRatio 保存目标比例。"),
-        count: { type: "enum", label: "生成数量", options: [...IMAGE_COUNT_OPTIONS] },
+        count: { type: "enum", label: i18next.t("freezone.nodeAction.image.count.label"), options: [...IMAGE_COUNT_OPTIONS] },
       };
     case CANVAS_NODE_TYPES.video:
       if ((node.data as { isUpscaleNode?: unknown }).isUpscaleNode === true) {
         return videoUpscaleEditableSchema(node);
       }
       return {
-        displayName: { type: "string", label: "显示名称" },
-        prompt: { type: "string", label: "提示词", description: GENERATOR_PROMPT_DESCRIPTION },
+        displayName: { type: "string", label: i18next.t("freezone.nodeAction.video.displayName.label") },
+        prompt: { type: "string", label: i18next.t("freezone.nodeAction.video.prompt.label"), description: GENERATOR_PROMPT_DESCRIPTION },
         genMode: videoGenModeSchema(node),
         model: videoModelSchema(node),
         aspectRatio: videoAspectRatioSchema(node),
@@ -828,105 +828,105 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
         durationSec: videoDurationSchema(node),
         generateAudio: {
           type: "boolean",
-          label: "生成音频",
+          label: i18next.t("freezone.nodeAction.audio.label"),
           current_value: (node.data as { generateAudio?: unknown }).generateAudio ?? false,
         },
         humanReview: {
           type: "boolean",
-          label: "真人审核",
+          label: i18next.t("freezone.nodeAction.video.realPersonReview.label"),
           current_value: (node.data as { humanReview?: unknown }).humanReview ?? false,
-          description: "图生视频时在模型支持的情况下启用真人内容审核。",
+          description: i18next.t("freezone.nodeAction.video.realPersonReview.description"),
         },
         count: {
           type: "enum",
-          label: "生成数量",
+          label: i18next.t("freezone.nodeAction.video.count.label"),
           options: [...VIDEO_COUNT_OPTIONS],
           current_value: (node.data as { count?: unknown }).count ?? 1,
         },
       };
     case CANVAS_NODE_TYPES.audio:
       return {
-        displayName: { type: "string", label: "显示名称" },
+        displayName: { type: "string", label: i18next.t("freezone.nodeAction.audio.displayName.label") },
         audioKind: {
           type: "enum",
-          label: "音频类型",
+          label: i18next.t("freezone.nodeAction.audio.kind.label"),
           options: ["speech", "music"],
-          description: "speech 表示文本转语音；music 表示文字生成音乐。",
+          description: i18next.t("freezone.nodeAction.audio.kind.description"),
         },
         speechMode: {
           type: "enum",
-          label: "语音模式",
+          label: i18next.t("freezone.nodeAction.audio.voiceMode.label"),
           options: ["clone"],
           description:
-            "仅 audioKind=speech 时生效。虾画只使用自定义声线；未选择有效 voiceRef 时跳过语音生成。",
+            i18next.t("freezone.nodeAction.audio.voiceMode.description"),
         },
-        text: { type: "string", label: "文本" },
-        emotionPrompt: { type: "string", label: "情绪提示" },
+        text: { type: "string", label: i18next.t("freezone.nodeAction.audio.text.label") },
+        emotionPrompt: { type: "string", label: i18next.t("freezone.nodeAction.audio.emotionPrompt.label") },
         voiceRef: audioVoiceRefSchema(node),
         voiceLabel: {
           type: "string",
-          label: "音色名称",
-          description: "音色展示名，通常随 voiceRef 一起从 audio_voice_options 选项的 data 中写入。",
+          label: i18next.t("freezone.nodeAction.audio.voiceName.label"),
+          description: i18next.t("freezone.nodeAction.audio.voiceName.description"),
         },
         voiceLanguage: {
           type: "string",
-          label: "语言",
-          description: "音色语言标签，通常随 voiceRef 一起从 audio_voice_options 选项的 data 中写入。",
+          label: i18next.t("freezone.nodeAction.audio.language.label"),
+          description: i18next.t("freezone.nodeAction.audio.language.description"),
         },
         musicLengthMs: {
           type: "number",
-          label: "音乐时长毫秒",
-          description: "仅 audioKind=music 时生效；页面默认 30000ms。",
+          label: i18next.t("freezone.nodeAction.audio.musicDurationMs.label"),
+          description: i18next.t("freezone.nodeAction.audio.musicDurationMs.description"),
         },
         forceInstrumental: {
           type: "boolean",
-          label: "纯音乐",
-          description: "仅 audioKind=music 时生效；默认 true。",
+          label: i18next.t("freezone.nodeAction.audio.instrumental.label"),
+          description: i18next.t("freezone.nodeAction.audio.instrumental.description"),
         },
         respectSectionsDurations: {
           type: "boolean",
-          label: "遵守段落时长",
-          description: "仅 audioKind=music 时生效；默认 true。",
+          label: i18next.t("freezone.nodeAction.audio.followSegmentDuration.label"),
+          description: i18next.t("freezone.nodeAction.audio.followSegmentDuration.description"),
         },
       };
     case CANVAS_NODE_TYPES.script:
       return {
-        displayName: { type: "string", label: "显示名称" },
+        displayName: { type: "string", label: i18next.t("freezone.nodeAction.story.displayName.label") },
         prompt: {
           type: "string",
-          label: "生成提示词",
-          description: "故事脚本生成节点的主要输入；普通自由格式文本请使用 textAnnotationNode.content。",
+          label: i18next.t("freezone.nodeAction.story.prompt.label"),
+          description: i18next.t("freezone.nodeAction.story.prompt.description"),
         },
-        content: { type: "string", label: "内容" },
+        content: { type: "string", label: i18next.t("freezone.nodeAction.story.content.label") },
       };
     case CANVAS_NODE_TYPES.videoCompose:
       return {
-        displayName: { type: "string", label: "显示名称" },
-        title: { type: "string", label: "标题" },
+        displayName: { type: "string", label: i18next.t("freezone.nodeAction.world3d.displayName.label") },
+        title: { type: "string", label: i18next.t("freezone.nodeAction.world3d.title.label") },
       };
     case CANVAS_NODE_TYPES.threeDWorld:
       return {
-        displayName: { type: "string", label: "显示名称" },
+        displayName: { type: "string", label: i18next.t("freezone.nodeAction.custom.displayName.label") },
         prompt: {
           type: "string",
-          label: "提示词",
-          description: "3D 世界节点的备注/生成提示；当前 3GS 生成主要依赖上游图片。",
+          label: i18next.t("freezone.nodeAction.custom.prompt.label"),
+          description: i18next.t("freezone.nodeAction.custom.prompt.description"),
         },
         plyKind: {
           type: "enum",
-          label: "3GS 来源类型",
+          label: i18next.t("freezone.nodeAction.world3d.sourceType.label"),
           options: ["master", "reverse", "pano"],
-          description: "master/reverse 生成单面 3GS；pano 表示上游是 360 全景图。",
+          description: i18next.t("freezone.nodeAction.world3d.sourceType.description"),
         },
       };
     case CANVAS_NODE_TYPES.skill:
       return {
-        displayName: { type: "string", label: "显示名称" },
-        parameters: { type: "object", label: "参数" },
+        displayName: { type: "string", label: i18next.t("freezone.nodeAction.generic.displayName.label") },
+        parameters: { type: "object", label: i18next.t("freezone.nodeAction.generic.parameters.label") },
       };
     case CANVAS_NODE_TYPES.htmlArtifact:
       return {
-        displayName: { type: "string", label: "显示名称" },
+        displayName: { type: "string", label: i18next.t("freezone.nodeAction.upload.displayName.label") },
         prompt: {
           type: "string",
           label: "Webpage requirements",
@@ -935,7 +935,7 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
         },
       };
     default:
-      return { displayName: { type: "string", label: "显示名称" } };
+      return { displayName: { type: "string", label: i18next.t("freezone.nodeAction.default.displayName.label") } };
   }
 }
 
@@ -1012,7 +1012,7 @@ function addChatCommandActions(node: CanvasNode, actions: CanvasNodeActionCatalo
       action: "sync_beat_context_to_mainline",
       execution: "manual_ui",
       command_type: "run_node_action",
-      description: "把当前镜头上下文节点草稿同步到主线。该主线写入目前只能由用户在界面中手动确认，Agent 不得执行。",
+      description: i18next.t("freezone.chat.command.syncShotContextDraft.description"),
       parameters: {
         node_id: node.id,
       },
@@ -1258,7 +1258,7 @@ function addFrontendNodeActions(
       execution: "manual_ui",
       command_type: "run_node_action",
       description:
-        "打开该上传节点的本地文件选择器。用户选择文件后，前端复用上传节点原流程处理，并把选择/上传结果返回给 agent；agent 不能直接指定本地文件路径。",
+        i18next.t("freezone.chat.command.openUploadFilePicker.description"),
       parameters: {
         node_id: node.id,
         accept: uploadPickerAcceptForNode(node),
@@ -1518,7 +1518,7 @@ function addMediaActions(
           dimensions: VIDEO_BREAKDOWN_DIMENSIONS_PARAMETER,
           auto_start: {
             type: "boolean",
-            label: "立即开始拉片",
+            label: i18next.t("freezone.chat.command.videoBreakdown.autoStart.label"),
             description: "true = start the breakdown on the new node right away; default false.",
           },
         },

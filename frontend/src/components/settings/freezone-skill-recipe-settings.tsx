@@ -66,12 +66,18 @@ const NODE_SCOPE_OPTIONS = [
   "audioGeneration",
 ] as const;
 
-const NODE_SCOPE_LABELS: Record<(typeof NODE_SCOPE_OPTIONS)[number], string> = {
-  textGeneration: "文本生成",
-  imageGeneration: "图片生成",
-  videoGeneration: "视频生成",
-  audioGeneration: "音频生成",
-};
+function getNodeScopeLabel(
+  scope: (typeof NODE_SCOPE_OPTIONS)[number],
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
+  const keyMap: Record<(typeof NODE_SCOPE_OPTIONS)[number], string> = {
+    textGeneration: "settings.freezoneSkillRecipe.generationType.textGeneration",
+    imageGeneration: "settings.freezoneSkillRecipe.generationType.imageGeneration",
+    videoGeneration: "settings.freezoneSkillRecipe.generationType.videoGeneration",
+    audioGeneration: "settings.freezoneSkillRecipe.generationType.audioGeneration",
+  };
+  return t(keyMap[scope]);
+}
 
 function getBodyPortalContainer() {
   return typeof document === "undefined" ? null : document.body;
@@ -1614,6 +1620,7 @@ function TagInputField({
   required?: boolean;
   value: string[];
 }) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState("");
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -1668,7 +1675,7 @@ function TagInputField({
             {editingIndex === index ? (
               <input
                 ref={editInputRef}
-                aria-label={`编辑 ${tag}`}
+                aria-label={t("settings.freezoneSkillRecipe.editTag", { tag })}
                 value={editingDraft}
                 onChange={(event) => setEditingDraft(event.target.value)}
                 onBlur={commitEditTag}
@@ -1695,7 +1702,7 @@ function TagInputField({
             ) : (
               <button
                 type="button"
-                aria-label={`编辑 ${tag}`}
+                aria-label={t("settings.freezoneSkillRecipe.editTag", { tag })}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => beginEditTag(index, tag)}
                 className={cn(
@@ -1708,8 +1715,8 @@ function TagInputField({
             )}
             <button
               type="button"
-              aria-label={`删除 ${tag}`}
-              onClick={() => removeTag(index)}
+                aria-label={t("settings.freezoneSkillRecipe.deleteTag", { tag })}
+                onClick={() => removeTag(index)}
               className="grid size-3.5 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:text-foreground"
             >
               <X className="size-3" />
@@ -1769,6 +1776,7 @@ function AllowedRecipesEditor({
   pickerOpen: boolean;
   value: string[];
 }) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [manualRecipeId, setManualRecipeId] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -1825,7 +1833,7 @@ function AllowedRecipesEditor({
         <div className="flex items-center gap-3 px-3 py-2.5">
           <button
             type="button"
-            aria-label={expanded ? "收起关联 Recipes" : "展开关联 Recipes"}
+            aria-label={expanded ? t("settings.freezoneSkillRecipe.collapseAssociatedRecipes") : t("settings.freezoneSkillRecipe.expandAssociatedRecipes")}
             onClick={() => setExpanded((value) => !value)}
             className="flex min-w-0 flex-1 items-center gap-2 text-left"
           >
@@ -1838,8 +1846,11 @@ function AllowedRecipesEditor({
               <span className="block text-xs font-medium text-foreground">{label}</span>
               <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
                 {linkedIds.length > 0
-                  ? `已关联 ${linkedIds.length} 个 Recipe${missingRecipeCount > 0 ? `，${missingRecipeCount} 个未找到配置` : ""}`
-                  : "这个 Skill 暂时没有关联 Recipe"}
+                  ? t("settings.freezoneSkillRecipe.associatedRecipesCount", {
+                      count: linkedIds.length,
+                      missing: missingRecipeCount > 0 ? t("settings.freezoneSkillRecipe.associatedRecipesMissing", { count: missingRecipeCount }) : "",
+                    })
+                  : t("settings.freezoneSkillRecipe.noAssociatedRecipes")}
               </span>
             </span>
           </button>
@@ -1851,7 +1862,7 @@ function AllowedRecipesEditor({
             className="h-8 shrink-0"
           >
             <Plus className="size-3.5" />
-            添加 Recipe
+            {t("settings.freezoneSkillRecipe.addRecipe")}
           </Button>
         </div>
         {hint ? (
@@ -1884,7 +1895,7 @@ function AllowedRecipesEditor({
                         </span>
                       </div>
                       <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
-                        {recipe?.description || "未找到本地 Recipe 配置，保存时仍会保留这个关联 ID。"}
+                        {recipe?.description || t("settings.freezoneSkillRecipe.localRecipeNotFound")}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
@@ -1897,11 +1908,11 @@ function AllowedRecipesEditor({
                         className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
                       >
                         <Eye className="size-3.5" />
-                        查看
+                        {t("settings.freezoneSkillRecipe.view")}
                       </Button>
                       <button
                         type="button"
-                        aria-label={`移除 ${recipeId}`}
+                        aria-label={t("settings.freezoneSkillRecipe.removeRecipe", { recipeId })}
                         onClick={() => removeRecipe(recipeId)}
                         className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.05] hover:text-foreground"
                       >
@@ -1913,7 +1924,7 @@ function AllowedRecipesEditor({
               })
             ) : (
               <div className="px-3 py-3 text-xs text-muted-foreground">
-                这个 Skill 暂时没有关联 Recipe
+                {t("settings.freezoneSkillRecipe.noAssociatedRecipes")}
               </div>
             )}
           </div>
@@ -1926,11 +1937,11 @@ function AllowedRecipesEditor({
           className="max-w-[520px] gap-0 overflow-hidden rounded-lg border-border bg-black p-0"
         >
           <DialogHeader className="border-b border-border px-5 py-4">
-            <DialogTitle className="text-base">添加 Recipe</DialogTitle>
+            <DialogTitle className="text-base">{t("settings.freezoneSkillRecipe.addRecipe")}</DialogTitle>
           </DialogHeader>
           <div className="p-5">
             <div className="mb-3 grid gap-2 rounded-md border border-border/70 bg-white/[0.02] p-3">
-              <div className="text-[11px] font-medium text-foreground">手动添加 ID</div>
+              <div className="text-[11px] font-medium text-foreground">{t("settings.freezoneSkillRecipe.addIdManually")}</div>
               <div className="flex gap-2">
                 <Input
                   value={manualRecipeId}
@@ -1941,7 +1952,7 @@ function AllowedRecipesEditor({
                       addManualRecipe();
                     }
                   }}
-                  placeholder="输入 Recipe ID"
+                  placeholder={t("settings.freezoneSkillRecipe.enterRecipeId")}
                   className="h-9 rounded-md border-input/80 bg-input/20 text-foreground"
                 />
                 <Button
@@ -1950,7 +1961,7 @@ function AllowedRecipesEditor({
                   disabled={!manualRecipeId.trim()}
                   onClick={addManualRecipe}
                 >
-                  添加
+                  {t("settings.freezoneSkillRecipe.add")}
                 </Button>
               </div>
             </div>
@@ -1959,7 +1970,7 @@ function AllowedRecipesEditor({
               <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索 Recipe"
+                placeholder={t("settings.freezoneSkillRecipe.searchRecipe")}
                 className="h-9 rounded-md border-input/80 bg-input/20 pl-9 text-foreground"
               />
             </div>
@@ -1986,20 +1997,20 @@ function AllowedRecipesEditor({
                       </span>
                     </div>
                     <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
-                      {recipe.description || "暂无描述"}
+                      {recipe.description || t("settings.freezoneSkillRecipe.noDescription")}
                     </p>
                   </button>
                 ))
               ) : (
                 <div className="px-3 py-8 text-center text-xs text-muted-foreground">
-                  没有可添加的 Recipe
+                  {t("settings.freezoneSkillRecipe.noRecipesToAdd")}
                 </div>
               )}
             </div>
           </div>
           <DialogFooter className="border-t border-border px-5 py-4">
             <Button type="button" variant="outline" onClick={() => onPickerOpenChange(false)}>
-              关闭
+              {t("settings.freezoneSkillRecipe.close")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2015,6 +2026,7 @@ function RecipeDetailDrawer({
   onClose: () => void;
   recipe: ManagedCatalogItem | null;
 }) {
+  const { t } = useTranslation();
   if (!recipe) return null;
   const payload = recipe.payload;
   const actionKeys = getStringArray(payload.action_keys);
@@ -2025,7 +2037,7 @@ function RecipeDetailDrawer({
 
   return (
     <div className="absolute inset-0 z-20 flex justify-end bg-black/35">
-      <button type="button" aria-label="关闭 Recipe 详情背景" className="flex-1" onClick={onClose} />
+      <button type="button" aria-label={t("settings.freezoneSkillRecipe.closeRecipeDetailBackground")} className="flex-1" onClick={onClose} />
       <aside className="flex h-full w-[min(430px,92vw)] flex-col border-l border-border bg-black shadow-2xl">
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div className="min-w-0">
@@ -2046,7 +2058,7 @@ function RecipeDetailDrawer({
           </div>
           <button
             type="button"
-            aria-label="关闭 Recipe 详情"
+            aria-label={t("settings.freezoneSkillRecipe.closeRecipeDetail")}
             onClick={onClose}
             className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.05] hover:text-foreground"
           >
@@ -2054,16 +2066,16 @@ function RecipeDetailDrawer({
           </button>
         </div>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
-          <RecipeDetailBlock title="描述">
-            <p>{recipe.description || "暂无描述"}</p>
+          <RecipeDetailBlock title={t("settings.freezoneSkillRecipe.detail.description")}>
+            <p>{recipe.description || t("settings.freezoneSkillRecipe.noDescription")}</p>
           </RecipeDetailBlock>
           {resultSummary ? (
-            <RecipeDetailBlock title="结果摘要">
+            <RecipeDetailBlock title={t("settings.freezoneSkillRecipe.detail.resultSummary")}>
               <p>{resultSummary}</p>
             </RecipeDetailBlock>
           ) : null}
           {planningPrompt ? (
-            <RecipeDetailBlock title="规划提示">
+            <RecipeDetailBlock title={t("settings.freezoneSkillRecipe.detail.planningPrompt")}>
               <p>{planningPrompt}</p>
             </RecipeDetailBlock>
           ) : null}
@@ -2079,7 +2091,7 @@ function RecipeDetailDrawer({
             </RecipeDetailBlock>
           ) : null}
           {mustHaveItems.length > 0 ? (
-            <RecipeDetailBlock title="必含项">
+            <RecipeDetailBlock title={t("settings.freezoneSkillRecipe.detail.mustHaveItems")}>
               <ul className="space-y-1">
                 {mustHaveItems.map((item) => (
                   <li key={item} className="rounded bg-white/[0.04] px-2 py-1">
@@ -2420,6 +2432,7 @@ function NodeScopeOptionsField({
   onChange: (value: string[]) => void;
   value: string[];
 }) {
+  const { t } = useTranslation();
   const selected = Array.isArray(value) ? value.filter(Boolean) : [];
   const selectedSet = new Set(selected);
 
@@ -2452,7 +2465,7 @@ function NodeScopeOptionsField({
                 onCheckedChange={(nextChecked) => toggleScope(scope, nextChecked === true)}
               />
               <span className="min-w-0">
-                <span className="block text-xs font-medium">{NODE_SCOPE_LABELS[scope]}</span>
+                <span className="block text-xs font-medium">{getNodeScopeLabel(scope, t)}</span>
                 {" "}
                 <span className="block truncate font-mono text-[10px] text-muted-foreground">
                   {scope}
@@ -2929,7 +2942,7 @@ export function CommunitySkillDialog({
                     )}
                     onClick={() => onModeChange?.("mine")}
                   >
-                    我的
+                    {t("settings.freezoneSkillRecipe.mineTab")}
                   </button>
                 </div>
               ) : (
@@ -3024,10 +3037,10 @@ export function CommunitySkillDialog({
               <div className="grid h-full min-h-80 place-items-center text-center">
                 <div>
                   <p className="text-sm font-medium text-white">
-                    这里暂时没有 Skill
+                    {t("settings.freezoneSkillRecipe.noSkills")}
                   </p>
                   <p className="mx-auto mt-1 max-w-[360px] text-xs leading-relaxed text-white/70">
-                    可以先让虾导总结当前画布，或描述工作流来创建自己的 Skill。
+                    {t("settings.freezoneSkillRecipe.createSkillHint")}
                   </p>
                 </div>
               </div>
@@ -3067,7 +3080,7 @@ export function CommunitySkillDialog({
                       className="shrink-0"
                       onClick={() => onSelectLocalSkill?.(item.id)}
                     >
-                      使用
+                      {t("settings.freezoneSkillRecipe.use")}
                     </Button>
                   </article>
                 ))}
@@ -3469,7 +3482,7 @@ function CatalogList({
               ) : null}
               {item.customized ? (
                 <span className="shrink-0 rounded border border-white/[0.08] bg-white/[0.025] px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground/70">
-                  {t("settings.freezoneCatalog.customizedShort", { defaultValue: "定制" })}
+                  {t("settings.freezoneCatalog.customizedShort")}
                 </span>
               ) : null}
             </div>

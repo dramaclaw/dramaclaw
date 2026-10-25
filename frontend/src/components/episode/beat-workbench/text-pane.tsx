@@ -12,8 +12,7 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  SelectValue} from "@/components/ui/select";
 import { saveScopes, trackSave } from "@/stores/save-status-store";
 import { useNavigateToAsset } from "@/hooks/use-assets-deep-link";
 import { useUpdateBeat } from "@/lib/queries/scripts";
@@ -23,13 +22,11 @@ import {
   extractIdentityMarkers,
   extractPropMarkers,
   mentionsToProgramMarkers,
-  programMarkersToMentions,
-} from "@/lib/mention-markers";
+  programMarkersToMentions} from "@/lib/mention-markers";
 import {
   sceneNameToRef,
   sceneRefToName,
-  type SceneRefRecordLike,
-} from "@/lib/scene-ref";
+  type SceneRefRecordLike} from "@/lib/scene-ref";
 import { identityRefLabel } from "@/lib/identity-period";
 import { timeOfDayLabel, timeOfDayOptions } from "@/lib/time-of-day";
 import { cn } from "@/lib/utils";
@@ -111,14 +108,12 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
         name: scene.name,
         base_scene_id: scene.base_scene_id,
         variant_id: scene.variant_id,
-        time_of_day: scene.time_of_day,
-      })),
+        time_of_day: scene.time_of_day})),
       ...(episodeQuery.data?.data?.scene_menu ?? []).map((item) => ({
         scene_id: item.scene_id,
         base_scene_id: item.base_scene_id,
         variant_id: item.variant_id,
-        time_of_day: item.time_of_day,
-      })),
+        time_of_day: item.time_of_day})),
     ],
     [scenesQuery.data, episodeQuery.data],
   );
@@ -146,8 +141,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
     visual: false,
     sceneRef: false,
     timeOfDay: false,
-    speaker: false,
-  });
+    speaker: false});
   const clearDirtyForPatch = (patch: BeatUpdate) => {
     if ("narration_segment" in patch) dirtyRef.current.narration = false;
     if ("visual_description" in patch) dirtyRef.current.visual = false;
@@ -172,8 +166,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
       visual: false,
       sceneRef: false,
       timeOfDay: false,
-      speaker: false,
-    };
+      speaker: false};
   }, [beat.beat_number]);
 
   const saveField = async (patch: BeatUpdate) => {
@@ -196,8 +189,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
   const normalizeMentionText = (text: string) =>
     mentionsToProgramMarkers(text, {
       identities: episodeIdentityIds,
-      props: episodePropIds,
-    });
+      props: episodePropIds});
   const markerPatchForVisual = (text: string): Pick<
     BeatUpdate,
     "detected_identities" | "detected_props"
@@ -218,8 +210,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
     if (normalized === (beat.visual_description ?? "")) return;
     saveField({
       visual_description: normalized,
-      ...markerPatchForVisual(normalized),
-    });
+      ...markerPatchForVisual(normalized)});
   };
 
   const currentSceneRef = useMemo(
@@ -264,12 +255,9 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
       const patch: BeatUpdate = {
         scene_ref: {
           scene_id: nextBase,
-          variant_id: nextVariant,
-        },
-      };
+          variant_id: nextVariant}};
       saveField({
-        ...patch,
-      });
+        ...patch});
     }
   };
   const baseSceneChoices = useMemo(() => {
@@ -310,8 +298,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
     timeOfDay,
     speaker,
     identityIds: episodeIdentityIds,
-    propIds: episodePropIds,
-  });
+    propIds: episodePropIds});
   useEffect(() => {
     latestRef.current = {
       narration,
@@ -321,8 +308,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
       timeOfDay,
       speaker,
       identityIds: episodeIdentityIds,
-      propIds: episodePropIds,
-    };
+      propIds: episodePropIds};
   });
 
   // Flush any dirty fields on beat switch / unmount.
@@ -342,12 +328,10 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
       const patches: BeatUpdate = {};
       const normalizedNarration = mentionsToProgramMarkers(latest.narration, {
         identities: latest.identityIds,
-        props: latest.propIds,
-      });
+        props: latest.propIds});
       const normalizedVisual = mentionsToProgramMarkers(latest.visual, {
         identities: latest.identityIds,
-        props: latest.propIds,
-      });
+        props: latest.propIds});
       const dirty = dirtyRef.current;
       if (dirty.narration && normalizedNarration !== (capturedBeat.narration_segment ?? ""))
         patches.narration_segment = normalizedNarration;
@@ -363,8 +347,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
       const capturedSceneRef = capturedBeat.scene_ref
         ? {
             scene_id: capturedBeat.scene_ref.scene_id || "",
-            variant_id: capturedBeat.scene_ref.variant_id || "",
-          }
+            variant_id: capturedBeat.scene_ref.variant_id || ""}
         : { scene_id: capturedSceneId, variant_id: "" };
       if (
         dirty.sceneRef &&
@@ -373,8 +356,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
       ) {
         patches.scene_ref = {
           scene_id: latest.sceneRef.scene_id,
-          variant_id: latest.sceneRef.variant_id,
-        };
+          variant_id: latest.sceneRef.variant_id};
       }
       if (dirty.timeOfDay && latest.timeOfDay !== (capturedBeat.time_of_day ?? ""))
         patches.time_of_day = latest.timeOfDay;
@@ -388,8 +370,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
         void trackSave(capturedScope, () =>
           capturedMut.mutateAsync({
             beatNum: capturedBeat.beat_number,
-            data: patches,
-          }),
+            data: patches}),
         ).catch(() => {
           // Error state already written by trackSave; swallow the rejection.
         });
@@ -430,8 +411,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
   // 落库的 detected_identities、@提及 token 用的都还是原 id，只有这层显示本地化。
   const identityBadgeLabels = useMemo(() => {
     const map: Record<string, string> = {
-      [NO_CHARACTER_MARKER]: t("episode.workbench.text.noCharacter"),
-    };
+      [NO_CHARACTER_MARKER]: t("episode.workbench.text.noCharacter")};
     for (const id of [...identityOptions, ...identities]) {
       if (id === NO_CHARACTER_MARKER) continue;
       map[id] = identityRefLabel(id, t);
@@ -563,7 +543,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
               </SelectContent>
             </Select>
           </Field>
-          <Field label={t("episode.workbench.text.sceneVariant", { defaultValue: "变体" })}>
+          <Field label={t("episode.workbench.text.sceneVariant")}>
             <Select
               value={currentSceneRef.variant_id || NO_SCENE_VARIANT_MARKER}
               onValueChange={(v) => {
@@ -580,14 +560,12 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
               disabled={!currentSceneRef.scene_id}
             >
               <SelectTrigger
-                aria-label={t("episode.workbench.text.sceneVariant", { defaultValue: "变体" })}
+                aria-label={t("episode.workbench.text.sceneVariant")}
                 className={cn(COMPACT_CONTROL_CLASS, "w-full")}
               >
                 <SelectValue>
                   {currentSceneRef.variant_id ||
-                    t("episode.workbench.text.noSceneVariant", {
-                      defaultValue: "无变体",
-                    })}
+                    t("episode.workbench.text.noSceneVariant")}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent
@@ -599,9 +577,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
                   value={NO_SCENE_VARIANT_MARKER}
                   className={SELECT_ITEM_CLASS}
                 >
-                  {t("episode.workbench.text.noSceneVariant", {
-                    defaultValue: "无变体",
-                  })}
+                  {t("episode.workbench.text.noSceneVariant")}
                 </SelectItem>
                 {sceneVariantChoices.map((variant) => (
                   <SelectItem
@@ -714,8 +690,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
               onJump={(id) => navigateToAsset("prop", id)}
               noJumpIds={[NO_PROP_MARKER]}
               labels={{
-                [NO_PROP_MARKER]: t("episode.workbench.text.noProp"),
-              }}
+                [NO_PROP_MARKER]: t("episode.workbench.text.noProp")}}
               jumpLabel={t("assets.common.jumpToAsset", { name: "" }).trim()}
               emptyMessage={t("episode.workbench.text.propsNotPlanned")}
               ariaLabel={t("episode.workbench.text.props")}
@@ -794,8 +769,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
 function Field({
   label,
   action,
-  children,
-}: {
+  children}: {
   label: string;
   action?: React.ReactNode;
   children: React.ReactNode;
@@ -823,8 +797,7 @@ function IdentityBadgeGroup({
   labels,
   emptyMessage,
   ariaLabel,
-  removedLabel,
-}: {
+  removedLabel}: {
   options: string[];
   selected: string[];
   onToggle: (id: string) => void;

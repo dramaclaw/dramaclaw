@@ -30,7 +30,7 @@ function CommunityCard({ work }: { work: LoginCommunityWork }) {
       style={style}
       to="/watch/$work"
       params={{ work: work.id }}
-      aria-label={t("auth.community.openWork", { title: work.title })}
+      aria-label={t("auth.community.openWork", { title: t(work.titleKey) })}
     >
       <div
         className={styles.communityCover}
@@ -64,9 +64,9 @@ function CommunityCard({ work }: { work: LoginCommunityWork }) {
         ) : null}
         <div className={styles.communityCoverShade} aria-hidden="true" />
       </div>
-      <h2 className={styles.communityTitle}>{work.title}</h2>
-      {work.description ? (
-        <p className={styles.communityDescription}>{work.description}</p>
+      <h2 className={styles.communityTitle}>{t(work.titleKey)}</h2>
+      {work.descriptionKey ? (
+        <p className={styles.communityDescription}>{t(work.descriptionKey)}</p>
       ) : null}
     </Link>
   );

@@ -37,8 +37,7 @@ import {
   Wrench,
   X,
   Volume2,
-  VolumeX,
-} from "lucide-react";
+  VolumeX} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
   Children,
@@ -48,16 +47,14 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
-} from "react";
+  useState} from "react";
 import type {
   CSSProperties,
   DragEvent as ReactDragEvent,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactElement,
-  ReactNode,
-} from "react";
+  ReactNode} from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components as MarkdownComponents } from "react-markdown";
 import { useTranslation } from "react-i18next";
@@ -68,8 +65,7 @@ import { attachBorderBeam, type BorderBeamController } from "border-beam-vanilla
 import {
   SpecRenderer,
   SpecRendererProvider,
-  VideoDetailModal,
-} from "dramaclaw-spec-render";
+  VideoDetailModal} from "dramaclaw-spec-render";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -86,19 +82,16 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  DropdownMenuTrigger} from "@/components/ui/dropdown-menu";
 import { apiCall } from "@/api/client";
 import {
   getFreezoneWorkflowRun,
-  type FreezoneWorkflowRun,
-} from "@/api/canvas";
+  type FreezoneWorkflowRun} from "@/api/canvas";
 import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  DialogTitle} from "@/components/ui/dialog";
 import { useAuthStore } from "@/stores/auth-store";
 import { cn } from "@/lib/utils";
 import { resolveMediaUrl } from "@/lib/media-url";
@@ -109,15 +102,13 @@ import { p } from "@/lib/api-path";
 import { validateFreezoneAgentConfigPayload } from "@/lib/freezone-agent-config-schema";
 import {
   SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT,
-  useSuperChat,
-} from "@/features/superchat/use-superchat";
+  useSuperChat} from "@/features/superchat/use-superchat";
 import { buildChatTaskLabel } from "@/features/superchat/task-notification-label";
 import { resolveMessagePresentation } from "@/features/superchat/message-presentation";
 import {
   buildChatTaskBatchNotification,
   resolveChatTaskBatchSummary,
-  taskBatchId,
-} from "@/features/superchat/task-notification-batch";
+  taskBatchId} from "@/features/superchat/task-notification-batch";
 import {
   activateDirectorEpisodeAuto,
   awaitDirectorEpisodeAutoConfirmation,
@@ -136,8 +127,7 @@ import {
   saveDirectorRunState,
   type DirectorAutoRunState,
   type DirectorRunMode,
-  type DirectorVoicePolicy,
-} from "@/features/superchat/director-run-mode";
+  type DirectorVoicePolicy} from "@/features/superchat/director-run-mode";
 import { ComposerWaitingStatus } from "@/features/superchat/composer-waiting-status";
 import { ChatTaskStatusBar } from "@/features/superchat/chat-task-status-bar";
 import { calculateTimelineContextDelta } from "@/features/superchat/timeline-scroll";
@@ -148,15 +138,13 @@ import {
   isUiSpec,
   looksLikeStructuredRenderText,
   type StructuredBlock,
-  type UiSpec,
-} from "@/features/superchat/spec-extract";
+  type UiSpec} from "@/features/superchat/spec-extract";
 import type { ChatMessage, ChatMessagePart } from "@/features/superchat/types";
 import type { ApprovalDecision, ApprovalRequest, ChatAttachment } from "@/features/superchat/types";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import type { FormatCheck, UploadResult } from "@/lib/queries/ingest";
 import type {
-  FreezoneVideoUpscaleResolution,
-} from "@/api/ops";
+  FreezoneVideoUpscaleResolution} from "@/api/ops";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { CanvasOntologyContext } from "@/features/canvas/ontology/canvasOntology";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
@@ -166,14 +154,12 @@ import {
   type AudioVoiceRef,
   type CanvasEdge,
   type CanvasNodeType,
-  type VideoGenQuality,
-} from "@/features/canvas/domain/canvasNodes";
+  type VideoGenQuality} from "@/features/canvas/domain/canvasNodes";
 import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
 import { VIDEO_GENERATION_ASPECT_RATIOS } from "@/features/canvas/application/imageData";
 import {
   VIDEO_UPSCALE_RESOLUTIONS,
-  VIDEO_UPSCALE_RESOLUTION_LABEL,
-} from "@/features/canvas/application/videoUpscale";
+  VIDEO_UPSCALE_RESOLUTION_LABEL} from "@/features/canvas/application/videoUpscale";
 import { useFreezoneImageModels } from "@/features/canvas/hooks/useFreezoneImageModels";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { VoiceSelectionModal } from "@/features/canvas/nodes/VoiceSelectionModal";
@@ -183,8 +169,7 @@ import type {
   CanvasChatCommandApplyResult,
   CanvasCommandApprovalEventDetail,
   CanvasCommandResultEventDetail,
-  CanvasChatCommandEnvelope,
-} from "@/features/freezone/canvasChatCommands";
+  CanvasChatCommandEnvelope} from "@/features/freezone/canvasChatCommands";
 import {
   applyCanvasChatCommandsAsync,
   canvasCommandEnvelopesRunInBackground,
@@ -194,8 +179,7 @@ import {
   isGeneratedCanvasClientId,
   subscribeCanvasCommandApprovals,
   waitForImmediateCanvasCommandResult,
-  workflowGenerationTargetsForPreflight,
-} from "@/features/freezone/canvasChatCommands";
+  workflowGenerationTargetsForPreflight} from "@/features/freezone/canvasChatCommands";
 import { FREEZONE_CANVAS_WRITE_TOOL_NAME_SET } from "@/features/freezone/canvasCommandTools";
 import { flushFreezoneCanvasRuntime } from "@/features/freezone/canvasSyncRuntime";
 import { canvasCommandUserMessageFromResult } from "@/features/freezone/canvasCommandUserMessages";
@@ -203,8 +187,7 @@ import {
   FREEZONE_CANVAS_CONTEXT_ACTIVITY_EVENT,
   FREEZONE_CANVAS_CONTEXT_TOOL_RESULT_EVENT,
   type CanvasContextActivityPayload,
-  type CanvasContextToolResultPayload,
-} from "@/features/freezone/canvasContextToolResult";
+  type CanvasContextToolResultPayload} from "@/features/freezone/canvasContextToolResult";
 import { reportCanvasCommandToolResult } from "@/features/freezone/canvasCommandToolResult";
 import {
   buildCanvasChatCommandContext,
@@ -215,12 +198,10 @@ import {
   isCanvasNodeReferenceAttachment,
   mergeCanvasNodeReferenceAttachments,
   pruneCanvasNodeReferenceAttachments,
-  shouldIncludeCanvasSummary,
-} from "@/features/freezone/chatNodeReferences";
+  shouldIncludeCanvasSummary} from "@/features/freezone/chatNodeReferences";
 import {
   visibleStructuredBlocksForMessage,
-  type CanvasCommandExecutionMode,
-} from "@/features/superchat/canvas-command-display";
+  type CanvasCommandExecutionMode} from "@/features/superchat/canvas-command-display";
 import { looksLikeCanvasExecutionNarration } from "@/features/superchat/canvas-execution-narration";
 import {
   filterFreezoneSkillSuggestions,
@@ -233,8 +214,7 @@ import {
   moveFreezoneSkillSuggestionIndex,
   shouldShowFreezoneSkillSuggestionMenu,
   splitFreezoneSkillMentionText,
-  toFreezoneSkillSuggestions,
-} from "@/features/superchat/freezone-skill-suggestions";
+  toFreezoneSkillSuggestions} from "@/features/superchat/freezone-skill-suggestions";
 import { buildAssetBoard, type AssetBoardColumn } from "@/features/canvas/domain/assetBoard";
 import {
   FREEZONE_NODE_SUGGESTION_PAGE,
@@ -251,14 +231,12 @@ import {
   sanitizeFreezoneNodeLabel,
   stripFreezoneNodeAtQuery,
   type FreezoneNodeMentionLookup,
-  type FreezoneNodePreviewInfo,
-} from "@/features/superchat/freezone-node-suggestions";
+  type FreezoneNodePreviewInfo} from "@/features/superchat/freezone-node-suggestions";
 import { FreezoneNodeSuggestionMenu } from "@/features/superchat/FreezoneNodeSuggestionMenu";
 import {
   freezoneAgentConfigQueryKey,
   type FreezoneAgentConfigKind,
-  type FreezoneAgentConfigPayload,
-} from "@/lib/queries/freezone-agent-config";
+  type FreezoneAgentConfigPayload} from "@/lib/queries/freezone-agent-config";
 
 type SpecMediaDetailSection = {
   title: string;
@@ -371,117 +349,88 @@ function isHistoricalToolMessage(message: ChatMessage): boolean {
 const FREEZONE_TOOL_DISPLAY: Record<string, { title: string; description: string }> = {
   freezone_emit_canvas_command: {
     title: "准备画布操作",
-    description: "生成可执行的画布修改命令",
-  },
+    description: "生成可执行的画布修改命令"},
   freezone_create_node: {
     title: "创建节点",
-    description: "准备创建一个画布节点",
-  },
+    description: "准备创建一个画布节点"},
   freezone_add_next_node: {
     title: "追加节点",
-    description: "准备在节点后创建下游节点",
-  },
+    description: "准备在节点后创建下游节点"},
   freezone_update_node_data: {
     title: "更新节点",
-    description: "准备修改节点数据",
-  },
+    description: "准备修改节点数据"},
   freezone_create_edge: {
     title: "创建连线",
-    description: "准备连接两个画布节点",
-  },
+    description: "准备连接两个画布节点"},
   freezone_delete_nodes: {
     title: "删除节点",
-    description: "准备删除画布节点",
-  },
+    description: "准备删除画布节点"},
   freezone_clear_canvas: {
     title: "清空画布",
-    description: "准备清空普通画布节点和连接",
-  },
+    description: "准备清空普通画布节点和连接"},
   freezone_delete_edges: {
     title: "断开连线",
-    description: "准备断开画布连线",
-  },
+    description: "准备断开画布连线"},
   freezone_move_nodes: {
     title: "移动节点",
-    description: "准备移动画布节点",
-  },
+    description: "准备移动画布节点"},
   freezone_layout_nodes: {
     title: "整理布局",
-    description: "准备整理画布节点布局",
-  },
+    description: "准备整理画布节点布局"},
   freezone_group_nodes: {
     title: "创建分组",
-    description: "准备把节点放入视觉分组",
-  },
+    description: "准备把节点放入视觉分组"},
   freezone_select_nodes: {
     title: "选择节点",
-    description: "准备选中或聚焦画布节点",
-  },
+    description: "准备选中或聚焦画布节点"},
   freezone_run_node_action: {
     title: "运行节点动作",
-    description: "准备运行节点前端动作",
-  },
+    description: "准备运行节点前端动作"},
   freezone_get_canvas_ontology: {
     title: "读取画布 Ontology",
-    description: "获取当前画布详细 ontology",
-  },
+    description: "获取当前画布详细 ontology"},
   freezone_get_canvas_snapshot: {
     title: "读取画布",
-    description: "获取当前画布节点和连线信息",
-  },
+    description: "获取当前画布节点和连线信息"},
   freezone_get_selection: {
     title: "读取选择",
-    description: "获取当前选中的画布节点",
-  },
+    description: "获取当前选中的画布节点"},
   freezone_get_node_detail: {
     title: "读取节点",
-    description: "获取单个节点详情",
-  },
+    description: "获取单个节点详情"},
   freezone_get_neighbor_graph: {
     title: "读取上下游",
-    description: "获取节点邻近关系",
-  },
+    description: "获取节点邻近关系"},
   freezone_get_node_action_catalog: {
     title: "读取节点能力",
-    description: "获取单个节点可用动作",
-  },
+    description: "获取单个节点可用动作"},
   freezone_get_node_create_schema: {
     title: "读取创建参数",
-    description: "获取节点创建参数",
-  },
+    description: "获取节点创建参数"},
   freezone_get_audio_voice_options: {
     title: "读取音色",
-    description: "获取音频节点音色选项",
-  },
+    description: "获取音频节点音色选项"},
   freezone_get_slot_candidates: {
     title: "读取槽位",
-    description: "获取当前可提交槽位",
-  },
+    description: "获取当前可提交槽位"},
   freezone_get_mainline_projection_assets: {
     title: "读取主线资产",
-    description: "获取可映射到画布的主线资产",
-  },
+    description: "获取可映射到画布的主线资产"},
   freezone_get_canvas_action_catalog: {
     title: "查询画布能力",
-    description: "获取画布级 action catalog",
-  },
+    description: "获取画布级 action catalog"},
   freezone_get_canvas_command_catalog: {
     title: "读取命令规则",
-    description: "获取批量画布命令字段规则",
-  },
+    description: "获取批量画布命令字段规则"},
   freezone_get_link_type_catalog: {
     title: "读取连线类型",
-    description: "获取普通节点连线类型",
-  },
+    description: "获取普通节点连线类型"},
   freezone_validate_canvas_commands: {
     title: "校验画布命令",
-    description: "预校验 canvas_chat_commands",
-  },
+    description: "预校验 canvas_chat_commands"},
   freezone_summarize_canvas: {
     title: "总结画布",
-    description: "整理当前画布结构摘要",
-  },
-};
+    description: "整理当前画布结构摘要"}};
 
 const AGENT_TOOL_TITLE_OVERRIDES: Record<string, string> = {
   skill: "加载 Skill",
@@ -502,8 +451,7 @@ const AGENT_TOOL_TITLE_OVERRIDES: Record<string, string> = {
   freezone_put_agent_catalog_skill: "生成 Skill 配置",
   freezone_put_agent_catalog_recipe: "生成 Recipe 配置",
   freezone_patch_agent_catalog_draft: "调整 Skill 草稿",
-  freezone_finish_agent_catalog_draft: "展示 Skill 草稿",
-};
+  freezone_finish_agent_catalog_draft: "展示 Skill 草稿"};
 
 function toolRawRecord(message: ChatMessage): Record<string, unknown> | null {
   return message.raw && typeof message.raw === "object"
@@ -643,7 +591,7 @@ function freezoneToolMeta(message: ChatMessage): string[] {
 }
 
 function normalizeMessageText(text: string): string {
-  return text.trim().replace(/\n{3,}/g, "\n\n");
+  return text.trim().replace(/\n{3}/g, "\n\n");
 }
 
 // 这两个必须是模块级常量：react-markdown 会把 components 里的函数当组件类型用，
@@ -719,8 +667,7 @@ const MARKDOWN_COMPONENTS: MarkdownComponents = {
   hr: () => <hr className="my-4 border-0 border-t border-white/[0.08]" />,
   blockquote: ({ children }) => (
     <blockquote className="my-2 border-l-2 border-border pl-3 text-muted-foreground">{children}</blockquote>
-  ),
-};
+  )};
 
 const PlainMessageText = memo(function PlainMessageText({ text }: { text: string }) {
   const paragraphs = normalizeMessageText(text)
@@ -754,8 +701,7 @@ const MarkdownMessageText = memo(function MarkdownMessageText({ text }: { text: 
 
 function MessageText({
   text,
-  markdown = false,
-}: {
+  markdown = false}: {
   text: string;
   markdown?: boolean;
 }) {
@@ -766,8 +712,7 @@ function MessageText({
 
 function FreezoneSkillMentionChip({
   label,
-  title,
-}: {
+  title}: {
   label: string;
   title?: string;
 }) {
@@ -787,8 +732,7 @@ function FreezoneSkillMentionChip({
 
 function FreezoneUserMessageText({
   text,
-  suggestions,
-}: {
+  suggestions}: {
   text: string;
   suggestions: FreezoneSkillSuggestion[];
 }) {
@@ -1034,8 +978,7 @@ function extractUnifiedMediaItems(spec: UiSpec): UnifiedMediaItem[] {
         title: textProp(props.overlayTitle, props.title, props.caption, props.alt, id),
         description: textProp(props.overlayDescription, props.description),
         src,
-        poster: textProp(props.poster, props.thumbnail),
-      });
+        poster: textProp(props.poster, props.thumbnail)});
       continue;
     }
 
@@ -1046,8 +989,7 @@ function extractUnifiedMediaItems(spec: UiSpec): UnifiedMediaItem[] {
         title: textProp(props.overlayTitle, props.title, props.caption, props.alt, id),
         description: textProp(props.overlayDescription, props.description),
         src,
-        poster: textProp(props.poster, props.thumbnail),
-      });
+        poster: textProp(props.poster, props.thumbnail)});
       continue;
     }
 
@@ -1058,8 +1000,7 @@ function extractUnifiedMediaItems(spec: UiSpec): UnifiedMediaItem[] {
         title: textProp(props.overlayTitle, props.title, props.caption, props.alt, id),
         description: textProp(props.overlayDescription, props.description),
         src,
-        poster: textProp(props.poster, props.thumbnail),
-      });
+        poster: textProp(props.poster, props.thumbnail)});
     }
   }
   return items;
@@ -1081,8 +1022,7 @@ function extractKeyframeVideoPreviewItems(spec: UiSpec): KeyframeVideoPreviewIte
         title: textProp(props.overlayTitle, props.caption, props.alt, id),
         description: textProp(props.overlayDescription, props.description),
         poster: textProp(props.poster),
-        videoSrc,
-      }];
+        videoSrc}];
     });
 }
 
@@ -1241,8 +1181,7 @@ function KeyframeVideoPreviewCard({ item }: { item: KeyframeVideoPreviewItem }) 
 
 function UnifiedMediaCard({
   item,
-  onOpenMedia,
-}: {
+  onOpenMedia}: {
   item: UnifiedMediaItem;
   onOpenMedia?: (detail: SpecMediaDetail) => void;
 }) {
@@ -1265,8 +1204,7 @@ function UnifiedMediaCard({
         src,
         poster,
         title: item.title,
-        description: item.description,
-      });
+        description: item.description});
     }
   };
 
@@ -1350,8 +1288,7 @@ function UnifiedMediaCard({
 
 function UnifiedMediaGrid({
   spec,
-  onOpenMedia,
-}: {
+  onOpenMedia}: {
   spec: UiSpec;
   onOpenMedia?: (detail: SpecMediaDetail) => void;
 }) {
@@ -1394,8 +1331,7 @@ function extractPendingKeyframeVideoItem(spec: UiSpec): KeyframeVideoPreviewItem
     title,
     description,
     status,
-    progress,
-  };
+    progress};
 }
 
 function KeyframeVideoPreview({ spec }: { spec: UiSpec }) {
@@ -1420,8 +1356,7 @@ function KeyframeVideoPreview({ spec }: { spec: UiSpec }) {
 
 function UiSpecRenderer({
   spec,
-  onOpenMedia,
-}: {
+  onOpenMedia}: {
   spec: UiSpec;
   onOpenMedia?: (detail: SpecMediaDetail) => void;
 }) {
@@ -1453,8 +1388,7 @@ function UiSpecRenderer({
 function JsonNode({
   name,
   value,
-  depth = 0,
-}: {
+  depth = 0}: {
   name?: string;
   value: unknown;
   depth?: number;
@@ -1498,8 +1432,7 @@ function JsonNode({
 
 function StructuredRenderer({
   blocks,
-  onOpenMedia,
-}: {
+  onOpenMedia}: {
   blocks: StructuredBlock[];
   onOpenMedia?: (detail: SpecMediaDetail) => void;
 }) {
@@ -1551,8 +1484,7 @@ function StructuredRenderer({
 function SpecMediaDetailModal({
   detail,
   onClose,
-  onOpenMedia,
-}: {
+  onOpenMedia}: {
   detail: SpecMediaDetail | null;
   onClose: () => void;
   onOpenMedia: (detail: SpecMediaDetail) => void;
@@ -1677,8 +1609,7 @@ function SpecMediaDetailModal({
                             ...detail,
                             kind: "image",
                             src: candidate.src,
-                            title: candidate.label || detail.title,
-                          })}
+                            title: candidate.label || detail.title})}
                           className="block w-16 shrink-0 overflow-hidden rounded-lg border border-white/15 bg-black"
                           title={candidate.label}
                         >
@@ -1925,8 +1856,7 @@ function agentUsageSummaryFromMessage(message: ChatMessage): AgentUsageSummary |
   return {
     entries,
     label,
-    title: titleLines.join("\n"),
-  };
+    title: titleLines.join("\n")};
 }
 
 function messageIdForThinkingCanvasContextActivity(
@@ -1971,8 +1901,7 @@ function groupAssistantOrderedParts(parts: ChatMessagePart[]): AssistantPartGrou
     groups.push({
       kind,
       key: `${kind}:${part.id}`,
-      parts: [part],
-    });
+      parts: [part]});
   }
   return groups;
 }
@@ -2034,9 +1963,7 @@ function mergeAdjacentAgentThoughtParts(parts: ChatMessagePart[]): ChatMessagePa
           text,
           status: currentEvent.status === "running" || previousEvent.status === "running"
             ? "running"
-            : currentEvent.status ?? previousEvent.status,
-        },
-      };
+            : currentEvent.status ?? previousEvent.status}};
       continue;
     }
     merged.push(part);
@@ -2157,8 +2084,7 @@ function mergeAdjacentToolStatusParts(parts: ChatMessagePart[]): RuntimeDisplayP
         ...previous,
         id: `${previous.id}+${part.id}`,
         seq: typeof previous.seq === "number" ? previous.seq : part.seq,
-        repeatCount: (previous.repeatCount ?? 1) + 1,
-      };
+        repeatCount: (previous.repeatCount ?? 1) + 1};
       continue;
     }
     merged.push(part);
@@ -2180,8 +2106,7 @@ function agentThoughtRuntimePresentation(
   return {
     label: active ? "思考中" : "思考过程",
     initiallyExpanded: active,
-    running,
-  };
+    running};
 }
 
 export const agentThoughtRuntimePresentationForTest = agentThoughtRuntimePresentation;
@@ -2284,8 +2209,7 @@ function AgentThoughtRuntimeItem({ part, streaming }: { part: AgentThoughtRuntim
 function AgentRuntimeTimeline({
   parts,
   streaming,
-  hideSettledToolStatus = false,
-}: {
+  hideSettledToolStatus = false}: {
   parts: ChatMessagePart[];
   streaming: boolean;
   hideSettledToolStatus?: boolean;
@@ -2438,8 +2362,7 @@ const APPROVAL_GENERATION_ACTION_BY_NODE_TYPE: Partial<Record<CanvasNodeType, st
   imageGenNode: "generate_image",
   videoNode: "generate_video",
   audioNode: "generate_audio",
-  textAnnotationNode: "generate_text",
-};
+  textAnnotationNode: "generate_text"};
 
 function generationCommandNodeIds(
   envelopes: CanvasChatCommandEnvelope[],
@@ -2561,15 +2484,13 @@ function imageApprovalParamGroups(
       quality: normalizeImageQualityForApproval(nodeData?.quality, qualityOptions),
       count: typeof nodeData?.count === "number" && CANVAS_APPROVAL_IMAGE_COUNT_OPTIONS.includes(nodeData.count as 1 | 2 | 4)
         ? nodeData.count
-        : 1,
-    };
+        : 1};
     const signature = JSON.stringify({
       model: params.model,
       aspectRatio: params.aspectRatio,
       size: params.size,
       quality: params.quality,
-      count: params.count,
-    });
+      count: params.count});
     const existing = groups.get(signature);
     if (existing) existing.nodeIds = [...(existing.nodeIds ?? []), nodeId];
     else groups.set(signature, params);
@@ -2851,8 +2772,7 @@ function videoApprovalParamGroups(
         : Boolean(nodeData?.generateAudio),
       humanReview: requiresHumanReviewConfirmation || Boolean(nodeData?.humanReview),
       requiresHumanReviewConfirmation,
-      count: isCanvasApprovalVideoCount(nodeData?.count) ? nodeData.count : 1,
-    };
+      count: isCanvasApprovalVideoCount(nodeData?.count) ? nodeData.count : 1};
     const signature = JSON.stringify({
       model: params.model,
       aspectRatio: params.aspectRatio,
@@ -2860,8 +2780,7 @@ function videoApprovalParamGroups(
       durationSec: params.durationSec,
       generateAudio: params.generateAudio,
       humanReview: params.humanReview,
-      count: params.count,
-    });
+      count: params.count});
     const existing = groups.get(signature);
     if (existing) existing.nodeIds = [...(existing.nodeIds ?? []), nodeId];
     else groups.set(signature, params);
@@ -2909,8 +2828,7 @@ function textApprovalInitialParams(
       ? catalog.recipeLabel.trim()
       : typeof catalog?.recipeId === "string" && catalog.recipeId.trim()
         ? catalog.recipeId.trim()
-        : "工作流文案 Recipe",
-  };
+        : "工作流文案 Recipe"};
 }
 
 function audioApprovalInitialParams(
@@ -2942,8 +2860,7 @@ function audioApprovalInitialParams(
         typeof nodeData.musicLengthMs === "number" ? nodeData.musicLengthMs / 1000 : 30,
       )),
       forceInstrumental: nodeData.forceInstrumental !== false,
-      respectSectionsDurations: nodeData.respectSectionsDurations !== false,
-    };
+      respectSectionsDurations: nodeData.respectSectionsDurations !== false};
     const signature = JSON.stringify({
       audioKind: params.audioKind,
       speechMode: params.speechMode,
@@ -2954,8 +2871,7 @@ function audioApprovalInitialParams(
       emotionPrompt: params.emotionPrompt,
       musicLengthSec: params.musicLengthSec,
       forceInstrumental: params.forceInstrumental,
-      respectSectionsDurations: params.respectSectionsDurations,
-    });
+      respectSectionsDurations: params.respectSectionsDurations});
     const existing = groups.get(signature);
     if (existing) existing.nodeIds = [...(existing.nodeIds ?? []), nodeId];
     else groups.set(signature, params);
@@ -2974,8 +2890,7 @@ function videoUpscaleApprovalInitialParams(
   if (nodeData.isUpscaleNode !== true) return null;
   return {
     nodeId,
-    resolution: normalizeVideoUpscaleResolutionForApproval(nodeData.upscaleResolution),
-  };
+    resolution: normalizeVideoUpscaleResolutionForApproval(nodeData.upscaleResolution)};
 }
 
 function canvasApprovalVideoCandidateNodeIds(
@@ -3043,8 +2958,7 @@ function amendCanvasApprovalWithGenerationData(
         if (command.type === "update_node_data" && targets.has(command.node_id)) {
           return {
             ...command,
-            data: { ...(command.data ?? {}), ...data },
-          };
+            data: { ...(command.data ?? {}), ...data }};
         }
         if (
           (command.type === "create_node" || command.type === "add_next_node")
@@ -3054,13 +2968,10 @@ function amendCanvasApprovalWithGenerationData(
           remaining.delete(command.client_id);
           return {
             ...command,
-            data: { ...(command.data ?? {}), ...data },
-          };
+            data: { ...(command.data ?? {}), ...data }};
         }
         return command;
-      }),
-    })),
-  };
+      })}))};
   if (remaining.size === 0) return withCreatedNodeData;
   return {
     ...withCreatedNodeData,
@@ -3076,13 +2987,10 @@ function amendCanvasApprovalWithGenerationData(
           return {
             type: "update_node_data" as const,
             node_id: nodeId,
-            data: { ...data },
-          };
+            data: { ...data }};
         });
         return [...updates, command];
-      }),
-    })),
-  };
+      })}))};
 }
 
 function amendCanvasApprovalWithImageParams(
@@ -3095,8 +3003,7 @@ function amendCanvasApprovalWithImageParams(
     aspectRatio: params.aspectRatio,
     size: params.size,
     ...(params.quality ? { quality: params.quality } : {}),
-    count: params.count,
-  };
+    count: params.count};
   return amendCanvasApprovalWithGenerationData(
     approval,
     params.nodeIds ?? [params.nodeId],
@@ -3117,8 +3024,7 @@ function amendCanvasApprovalWithVideoParams(
     durationSec: params.durationSec,
     generateAudio: params.generateAudio,
     humanReview: params.humanReview,
-    count: params.count,
-  };
+    count: params.count};
   return amendCanvasApprovalWithGenerationData(
     approval,
     params.nodeIds ?? [params.nodeId],
@@ -3138,8 +3044,7 @@ function amendCanvasApprovalWithAudioParams(
       model: "suno_music",
       musicLengthMs: params.musicLengthSec * 1000,
       forceInstrumental: params.forceInstrumental,
-      respectSectionsDurations: params.respectSectionsDurations,
-    }
+      respectSectionsDurations: params.respectSectionsDurations}
     : {
       audioKind: "speech",
       speechMode: "clone",
@@ -3149,15 +3054,12 @@ function amendCanvasApprovalWithAudioParams(
         ? {
           voiceRef: params.voiceRef,
           voiceAvailable: params.voiceAvailable === true,
-          voiceLabel: params.voiceLabel,
-        }
+          voiceLabel: params.voiceLabel}
         : {
           voiceRef: null,
           voiceAvailable: false,
           voiceLabel: "未选择自定义声线", // i18n-exempt -- node data payload
-          voiceLanguage: "",
-        }),
-    };
+          voiceLanguage: ""})};
   return amendCanvasApprovalWithGenerationData(
     approval,
     params.nodeIds ?? [params.nodeId],
@@ -3173,8 +3075,7 @@ function amendCanvasApprovalWithVideoUpscaleParams(
   if (!params) return approval;
   let inserted = false;
   const videoData = {
-    upscaleResolution: params.resolution,
-  };
+    upscaleResolution: params.resolution};
   return {
     ...approval,
     envelopes: approval.envelopes.map((envelope) => ({
@@ -3193,13 +3094,10 @@ function amendCanvasApprovalWithVideoUpscaleParams(
           {
             type: "update_node_data" as const,
             node_id: params.nodeId,
-            data: videoData,
-          },
+            data: videoData},
           command,
         ];
-      }),
-    })),
-  };
+      })}))};
 }
 
 function amendCanvasApprovalWithHumanReview(
@@ -3224,13 +3122,10 @@ function amendCanvasApprovalWithHumanReview(
           ...nodeIds.map((nodeId) => ({
             type: "update_node_data" as const,
             node_id: nodeId,
-            data: { humanReview: enabled },
-          })),
+            data: { humanReview: enabled }})),
           command,
         ];
-      }),
-    })),
-  };
+      })}))};
 }
 
 export const amendCanvasApprovalWithImageParamsForTest = amendCanvasApprovalWithImageParams;
@@ -3259,8 +3154,7 @@ function CanvasApprovalImageParamSelect({
   icon,
   onChange,
   options,
-  value,
-}: {
+  value}: {
   ariaLabel: string;
   disabled?: boolean;
   icon?: ReactNode;
@@ -3293,8 +3187,7 @@ function CanvasApprovalVideoConfigChip({
   onChange,
   params,
   qualityOptions,
-  supportsGenerateAudio,
-}: {
+  supportsGenerateAudio}: {
   aspectOptions: readonly string[];
   disabled?: boolean;
   durationBounds: { min: number; max: number };
@@ -3318,8 +3211,7 @@ function CanvasApprovalVideoConfigChip({
     setPopoverStyle({
       left: Math.min(rect.left, window.innerWidth - 244),
       top: rect.bottom + 8,
-      width: 244,
-    });
+      width: 244});
   }, []);
 
   useLayoutEffect(() => {
@@ -3476,8 +3368,7 @@ function CanvasCommandApprovalCard({
   approval,
   isExecuting = false,
   onApply,
-  onCancel,
-}: {
+  onCancel}: {
   approval: PendingCanvasCommandApproval;
   isExecuting?: boolean;
   onApply: (approval: PendingCanvasCommandApproval) => void;
@@ -3625,8 +3516,7 @@ function CanvasCommandApprovalCard({
         quality: normalizeImageQualityForApproval(
           next.quality,
           imageQualityOptionsForApproval(model),
-        ),
-      };
+        )};
     }));
   }, [imageModels.models]);
   const videoModelOptionsFor = useCallback((params: CanvasApprovalVideoParams) => {
@@ -3652,8 +3542,7 @@ function CanvasCommandApprovalCard({
         aspectRatio: normalizeApprovalStringOption(next.aspectRatio, aspectOptions, "16:9"),
         quality: normalizeVideoQualityForApproval(next.quality, qualityOptions),
         durationSec: clampVideoDurationForApproval(next.durationSec, durationBounds),
-        generateAudio: model?.supportsGenerateAudio === false ? false : next.generateAudio,
-      };
+        generateAudio: model?.supportsGenerateAudio === false ? false : next.generateAudio};
     }));
   }, [videoModels.models]);
   const updateVideoUpscaleParams = useCallback((patch: Partial<CanvasApprovalVideoUpscaleParams>) => {
@@ -3662,8 +3551,7 @@ function CanvasCommandApprovalCard({
       return {
         ...current,
         ...patch,
-        resolution: normalizeVideoUpscaleResolutionForApproval(patch.resolution ?? current.resolution),
-      };
+        resolution: normalizeVideoUpscaleResolutionForApproval(patch.resolution ?? current.resolution)};
     });
   }, []);
   const updateAudioParams = useCallback((index: number, patch: Partial<CanvasApprovalAudioParams>) => {
@@ -3681,18 +3569,16 @@ function CanvasCommandApprovalCard({
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium text-foreground">
             {isExecuting
-              ? t("freezone.chat.canvasExecuting", { defaultValue: "执行中..." })
+              ? t("freezone.chat.canvasExecuting")
               : approval.requiresUserChoice
-              ? t("freezone.chat.audioApproval.chooseVoiceTitle", { defaultValue: "请选择旁白声线" })
+              ? t("freezone.chat.audioApproval.chooseVoiceTitle")
               : "待确认的画布操作"}
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {isExecuting
               ? t("freezone.chat.canvasConfirmedExecuting")
               : approval.requiresUserChoice
-              ? t("freezone.chat.audioApproval.chooseVoiceDescription", {
-                  defaultValue: "请选择自定义声线；如果暂不选择，本次将跳过旁白生成。",
-                })
+              ? t("freezone.chat.audioApproval.chooseVoiceDescription")
               : `Agent 计划执行 ${approval.commandCount} 个操作，确认后才会应用到画布。`}
           </p>
         </div>
@@ -3771,8 +3657,7 @@ function CanvasCommandApprovalCard({
               onChange={(value) => updateImageParams(imageParamIndex, { aspectRatio: value })}
               options={imageAspectOptions.map((option) => ({
                 value: option,
-                label: option === "auto" ? "自动比例" : option,
-              }))}
+                label: option === "auto" ? "自动比例" : option}))}
             />
             <span className="h-4 w-px bg-white/[0.12]" />
             <CanvasApprovalImageParamSelect
@@ -3860,12 +3745,10 @@ function CanvasCommandApprovalCard({
               disabled={isExecuting}
               value={videoUpscaleParams.resolution}
               onChange={(value) => updateVideoUpscaleParams({
-                resolution: normalizeVideoUpscaleResolutionForApproval(value),
-              })}
+                resolution: normalizeVideoUpscaleResolutionForApproval(value)})}
               options={VIDEO_UPSCALE_RESOLUTIONS.map((value) => ({
                 value,
-                label: VIDEO_UPSCALE_RESOLUTION_LABEL[value] ?? value,
-              }))}
+                label: VIDEO_UPSCALE_RESOLUTION_LABEL[value] ?? value}))}
             />
           </div>
         </div>
@@ -3876,8 +3759,8 @@ function CanvasCommandApprovalCard({
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground">
               <Volume2 className="size-3" />
               {audioParam.audioKind === "music"
-                ? t("freezone.chat.audioApproval.music", { defaultValue: "音乐" })
-                : t("freezone.chat.audioApproval.narration", { defaultValue: "旁白" })}
+                ? t("freezone.chat.audioApproval.music")
+                : t("freezone.chat.audioApproval.narration")}
               {(audioParam.nodeIds?.length ?? 1) > 1 ? ` ×${audioParam.nodeIds?.length}` : ""}
             </span>
             <span className="h-4 w-px bg-white/[0.12]" />
@@ -3890,32 +3773,27 @@ function CanvasCommandApprovalCard({
                   className="inline-flex h-7 items-center rounded-full border border-white/[0.16] bg-white/[0.065] px-2.5 text-[11px] font-medium text-foreground hover:border-white/30 hover:bg-white/[0.1] disabled:opacity-60"
                 >
                   {audioParam.voiceAvailable === true
-                    ? t("freezone.chat.audioApproval.changeVoice", { defaultValue: "更换自定义声线" })
-                    : t("freezone.chat.audioApproval.chooseVoice", { defaultValue: "选择自定义声线" })}
+                    ? t("freezone.chat.audioApproval.changeVoice")
+                    : t("freezone.chat.audioApproval.chooseVoice")}
                 </button>
                 <span className="text-[10px] text-muted-foreground">
                   {audioParam.voiceAvailable === true
                     ? t("freezone.chat.audioApproval.selectedVoice", {
-                        defaultValue: "已选择：{{voice}}",
-                        voice: audioParam.voiceLabel.trim() || t(
-                          "freezone.chat.audioApproval.customVoice",
-                          { defaultValue: "自定义声线" },
-                        ),
-                      })
-                    : t("freezone.chat.audioApproval.noVoiceSkip", {
-                        defaultValue: "未选择，本次将跳过旁白生成",
-                      })}
+                                            voice: audioParam.voiceLabel.trim() || t(
+                                              "freezone.chat.audioApproval.customVoice",
+                                            ),
+                                          })
+                    : t("freezone.chat.audioApproval.noVoiceSkip")}
                 </span>
               </>
             ) : (
               <span className="text-[10px] text-muted-foreground">
                 {t("freezone.chat.audioApproval.musicSummary", {
-                  defaultValue: "{{seconds}} 秒 · {{mode}}",
-                  seconds: audioParam.musicLengthSec,
-                  mode: audioParam.forceInstrumental
-                    ? t("freezone.chat.audioApproval.instrumental", { defaultValue: "纯音乐" })
-                    : t("freezone.chat.audioApproval.vocalsAllowed", { defaultValue: "允许人声" }),
-                })}
+                                  seconds: audioParam.musicLengthSec,
+                                  mode: audioParam.forceInstrumental
+                                    ? t("freezone.chat.audioApproval.instrumental")
+                                    : t("freezone.chat.audioApproval.vocalsAllowed"),
+                                })}
               </span>
             )}
           </div>
@@ -3934,10 +3812,10 @@ function CanvasCommandApprovalCard({
           onClick={() => onApply(amendedApproval)}
         >
           {isExecuting
-            ? t("freezone.chat.canvasExecuting", { defaultValue: "执行中..." })
+            ? t("freezone.chat.canvasExecuting")
             : approval.requiresUserChoice
-              ? t("freezone.chat.audioApproval.continue", { defaultValue: "使用所选声线继续" })
-              : t("freezone.chat.canvasConfirmExecution", { defaultValue: "确认执行" })}
+              ? t("freezone.chat.audioApproval.continue")
+              : t("freezone.chat.canvasConfirmExecution")}
         </Button>
       </div>
       {voicePickerAudioParams && (
@@ -3952,8 +3830,7 @@ function CanvasCommandApprovalCard({
                 speechMode: "clone",
                 voiceRef: ref,
                 voiceAvailable: true,
-                voiceLabel: label,
-              });
+                voiceLabel: label});
             }
             setVoicePickerAudioIndex(null);
           }}
@@ -4026,11 +3903,11 @@ function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback, t: T
   if (firstFailedStep?.label === "已取消" || canvasCommandFeedbackIsUserCancelled(feedback)) return "画布操作已取消";
   if (canvasCommandFeedbackHasPending(feedback)) {
     if (canvasCommandFeedbackBackgroundRunning(feedback)) {
-      return t("freezone.chat.backgroundGenerationRunningLabel", { defaultValue: "后台生成中" });
+      return t("freezone.chat.backgroundGenerationRunningLabel");
     }
     return canvasCommandFeedbackReconciliationPending(feedback)
-      ? t("freezone.chat.workflowReconciliationPendingLabel", { defaultValue: "对账中" })
-      : t("freezone.chat.workflowOutputSyncPendingLabel", { defaultValue: "产物待同步" });
+      ? t("freezone.chat.workflowReconciliationPendingLabel")
+      : t("freezone.chat.workflowOutputSyncPendingLabel");
   }
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成图片")) return "生成图片失败";
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成视频")) return "生成视频失败";
@@ -4051,8 +3928,7 @@ function expiredCanvasApprovalFeedback(approval: PendingCanvasCommandApproval): 
         type: "validate",
         status: "error",
         label: "已取消",
-        error,
-      },
+        error},
     ],
     key: `expired:${approval.key}`,
     plans: approval.plans,
@@ -4060,14 +3936,12 @@ function expiredCanvasApprovalFeedback(approval: PendingCanvasCommandApproval): 
     cancelled: true,
     cancelReason: "timeout",
     anchorTextPrefix: approval.anchorTextPrefix ?? undefined,
-    surfaceOrder: approval.surfaceOrder ?? approval.receivedAt,
-  };
+    surfaceOrder: approval.surfaceOrder ?? approval.receivedAt};
 }
 
 function CanvasCommandFeedbackCard({
   feedback,
-  onRetry,
-}: {
+  onRetry}: {
   feedback: CanvasCommandFeedback;
   onRetry?: (feedback: CanvasCommandFeedback) => void;
 }) {
@@ -4089,26 +3963,16 @@ function CanvasCommandFeedbackCard({
   const compactTitle = canvasCommandFeedbackCompactTitle(feedback, t);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
   const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
-    ? t("freezone.chat.canvasTimeoutCancelled", {
-        defaultValue: "画布操作因等待超时已取消，没有应用到画布。",
-      })
+    ? t("freezone.chat.canvasTimeoutCancelled")
     : canvasCommandFeedbackIsUserCancelled(feedback)
-      ? t("freezone.chat.canvasManuallyCancelled", {
-          defaultValue: "画布操作已手动取消，没有应用到画布。",
-        })
+      ? t("freezone.chat.canvasManuallyCancelled")
       : null;
   const userFailureMessage = pending
     ? canvasCommandFeedbackBackgroundRunning(feedback)
-      ? t("freezone.chat.backgroundGenerationRunningMessage", {
-          defaultValue: "任务已提交，正在后台生成。完成或失败后会自动更新这里的状态。",
-        })
+      ? t("freezone.chat.backgroundGenerationRunningMessage")
       : canvasCommandFeedbackReconciliationPending(feedback)
-      ? t("freezone.chat.workflowReconciliationPendingMessage", {
-          defaultValue: "画布产物已生成，服务端仍在核对任务产物；请稍后检查运行状态，暂勿重复生成。",
-        })
-      : t("freezone.chat.workflowOutputSyncPendingMessage", {
-          defaultValue: "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。",
-        })
+      ? t("freezone.chat.workflowReconciliationPendingMessage")
+      : t("freezone.chat.workflowOutputSyncPendingMessage")
     : failed
     ? cancellationMessage ?? canvasCommandUserMessageFromResult(
         feedback.errors,
@@ -4294,8 +4158,7 @@ const CLARIFICATION_SOURCE_BY_QUESTION_ID: Record<string, ClarificationOptionsSo
   video_resolution: "selected_video_model_resolutions",
   video_duration_seconds: "selected_video_model_durations",
   video_generate_audio: "selected_video_model_audio",
-  video_variants_per_node: "video_variant_counts",
-};
+  video_variants_per_node: "video_variant_counts"};
 
 export function assistantClarificationIsGenerationCard(
   questions: AssistantClarificationQuestion[],
@@ -4451,8 +4314,7 @@ function clarificationOptions(
     return {
       id,
       label: labelFor(value),
-      ...(existing?.description ? { description: existing.description } : {}),
-    };
+      ...(existing?.description ? { description: existing.description } : {})};
   });
 }
 
@@ -4506,10 +4368,8 @@ function clarificationQuestionsWithLiveModelCatalogs(
           return {
             id: model.id,
             label: model.label ?? model.id,
-            ...(existing?.description ? { description: existing.description } : {}),
-          };
-        }),
-      };
+            ...(existing?.description ? { description: existing.description } : {})};
+        })};
     }
     let values: readonly (string | number | boolean)[] | null = null;
     let labelFor: (value: string | number | boolean) => string = String;
@@ -4547,8 +4407,7 @@ function clarificationQuestionsWithLiveModelCatalogs(
     } else if (source === "image_variant_counts") {
       values = CANVAS_APPROVAL_IMAGE_COUNT_OPTIONS;
       labelFor = (value) => String(t?.("freezone.chat.generationParams.imageCount", {
-        count: Number(value),
-      }) ?? `${value} images`);
+        count: Number(value)}) ?? `${value} images`);
     } else if (source === "selected_video_model_ratios") {
       values = clarificationCapabilityOptions(
         selectedVideoModel?.ratioOptions,
@@ -4570,8 +4429,7 @@ function clarificationQuestionsWithLiveModelCatalogs(
         const end = Number.isFinite(max) && max >= start ? Math.floor(max) : CANVAS_APPROVAL_VIDEO_DURATION_MAX;
         values = Array.from({ length: end - start + 1 }, (_, index) => start + index);
         labelFor = (value) => String(t?.("freezone.chat.generationParams.durationSeconds", {
-          count: Number(value),
-        }) ?? `${value} seconds`);
+          count: Number(value)}) ?? `${value} seconds`);
       } else values = [];
     } else if (source === "selected_video_model_audio") {
       values = selectedVideoModel && selectedVideoModel.supportsGenerateAudio !== false
@@ -4585,16 +4443,14 @@ function clarificationQuestionsWithLiveModelCatalogs(
     } else if (source === "video_variant_counts") {
       values = CANVAS_APPROVAL_VIDEO_COUNT_OPTIONS;
       labelFor = (value) => String(t?.("freezone.chat.generationParams.videoCount", {
-        count: Number(value),
-      }) ?? `${value} videos`);
+        count: Number(value)}) ?? `${value} videos`);
     }
     if (values === null) return question;
     return {
       ...question,
       options_source: source,
       options: clarificationOptions(values, existingOptions, labelFor),
-      allow_custom: false,
-    };
+      allow_custom: false};
   }).filter((question) => {
     const questionId = normalizedClarificationId(question.id);
     if (questionId === "image_quality" && selectedImageModel) {
@@ -4786,8 +4642,7 @@ function mergeUiEventsByStableKey<T>(events: T[]): T[] {
       merged[existingIndex] = {
         ...(merged[existingIndex] as Record<string, unknown>),
         ...(event as Record<string, unknown>),
-        ...(firstReceivedAt == null ? {} : { received_at: firstReceivedAt }),
-      } as T;
+        ...(firstReceivedAt == null ? {} : { received_at: firstReceivedAt })} as T;
     } else {
       merged.push(event);
     }
@@ -4967,8 +4822,7 @@ function reorderAssistantInteractionParts(parts: ChatMessagePart[], text: string
       reorderedContentParts.push({
         id: `anchored-text-${textIndex}`,
         type: "text",
-        text: item.text,
-      });
+        text: item.text});
       textIndex += 1;
       return;
     }
@@ -5243,8 +5097,7 @@ const skillStudioDraftFieldLabels = {
     domainRules: "领域规则",
     ratingBands: "评分档位",
     visualReviewItems: "视觉评审项",
-    textReviewItems: "文案评审项",
-  },
+    textReviewItems: "文案评审项"},
   recipe: {
     id: "ID",
     name: "名称",
@@ -5257,9 +5110,7 @@ const skillStudioDraftFieldLabels = {
     requires_source_media: "依赖上游多模态输入",
     enabled: "启用",
     force_enhancement: "强制增强",
-    skip_detail_check: "跳过细节检查",
-  },
-};
+    skip_detail_check: "跳过细节检查"}};
 
 export const skillStudioDraftFieldLabelsForTest = skillStudioDraftFieldLabels;
 
@@ -5329,14 +5180,12 @@ function buildAssistantInteractionFlowItems(
       kind: "clarification",
       key: `clarification:${event.bridge_key || event.clarification_id || index}`,
       order: index,
-      event,
-    })),
+      event})),
     ...skillStudioEvents.map((event, index): AssistantInteractionFlowEvent => ({
       kind: "skill_studio",
       key: `skill_studio:${event.type}:${uiEventRecordString(event as Record<string, unknown>, "bridge_key") ?? uiEventRecordString(event as Record<string, unknown>, "skill_studio_session_id") ?? index}`,
       order: clarificationEvents.length + index,
-      event,
-    })),
+      event})),
   ].sort((left, right) => {
     const leftIndex = assistantInteractionEventAnchorEndIndex(text, left);
     const rightIndex = assistantInteractionEventAnchorEndIndex(text, right);
@@ -5372,8 +5221,7 @@ function canvasContextActivityCollapseKey(activity: CanvasContextActivity): stri
   if (activity.errors.length > 0) return null;
   return JSON.stringify({
     status: activity.status,
-    labels: activity.labels,
-  });
+    labels: activity.labels});
 }
 
 function mergeRepeatedCanvasContextActivity(
@@ -5382,8 +5230,7 @@ function mergeRepeatedCanvasContextActivity(
 ): CanvasContextActivity {
   return {
     ...existing,
-    repeatCount: (existing.repeatCount ?? 1) + (next.repeatCount ?? 1),
-  };
+    repeatCount: (existing.repeatCount ?? 1) + (next.repeatCount ?? 1)};
 }
 
 function collapseRepeatedCanvasStatusFlowItems(items: CanvasCommandFlowItem[]): CanvasCommandFlowItem[] {
@@ -5398,8 +5245,7 @@ function collapseRepeatedCanvasStatusFlowItems(items: CanvasCommandFlowItem[]): 
         collapsed[collapsed.length - 1] = {
           ...previous,
           key: `${previous.key}+${item.key}`,
-          activity: mergeRepeatedCanvasContextActivity(previous.activity, item.activity),
-        };
+          activity: mergeRepeatedCanvasContextActivity(previous.activity, item.activity)};
         continue;
       }
     }
@@ -5433,8 +5279,7 @@ function collapseRepeatedCanvasStatusParts(parts: ChatMessagePart[]): ChatMessag
         collapsed[collapsed.length - 1] = {
           ...previous,
           id: `${previous.id}+${part.id}`,
-          event: mergeRepeatedCanvasContextActivity(previousActivity, currentActivity),
-        };
+          event: mergeRepeatedCanvasContextActivity(previousActivity, currentActivity)};
         continue;
       }
     }
@@ -5556,8 +5401,7 @@ function skillStudioReferencedRecipes(
         enabled: recipe?.enabled !== false,
         forceEnhancement: recipe?.force_enhancement === true,
         skipDetailCheck: recipe?.skip_detail_check === true,
-        missing: !recipe,
-      };
+        missing: !recipe};
     });
 }
 
@@ -5621,8 +5465,7 @@ function parseSkillStudioReviewItemList(value: string[]): Array<Record<string, u
     return {
       name,
       ...(Number.isFinite(weight) ? { weight } : {}),
-      description,
-    };
+      description};
   });
 }
 
@@ -5632,8 +5475,7 @@ function skillStudioEvaluationDraftFields(evaluation: Record<string, unknown>) {
     domainConstraints: stringListField(evaluation.domain_constraints),
     ratingBands: skillStudioRatingBandList(evaluation.rating_bands),
     visualReviewItems: skillStudioReviewItemList(evaluation.visual_review_items),
-    textReviewItems: skillStudioReviewItemList(evaluation.text_review_items),
-  };
+    textReviewItems: skillStudioReviewItemList(evaluation.text_review_items)};
 }
 
 export const skillStudioEvaluationDraftFieldsForTest = skillStudioEvaluationDraftFields;
@@ -5706,8 +5548,7 @@ function normalizedSkillStudioSkillPayload(skill: Record<string, unknown>): Free
       keywords: cleanStringArray(triggers.keywords),
       node_scopes: cleanStringArray(
         triggers.node_scopes ?? triggers.nodeTypes ?? triggers.node_types,
-      ),
-    },
+      )},
     allowed_recipe_ids: cleanStringArray(
       skill.allowed_recipe_ids ?? skill.allowedRecipeIds,
     ),
@@ -5717,13 +5558,11 @@ function normalizedSkillStudioSkillPayload(skill: Record<string, unknown>): Free
     planning: {
       planning_notes: firstNonEmptyText(planning.planning_notes, planning.metaPlanningHints),
       prompt_guide: firstNonEmptyText(planning.prompt_guide, planning.promptStyleGuide),
-      conduct_rules: cleanStringArray(planning.conduct_rules ?? planning.behaviorRules),
-    },
+      conduct_rules: cleanStringArray(planning.conduct_rules ?? planning.behaviorRules)},
     evaluation: {
       rating_bands: getRecordArray(evaluation.rating_bands ?? evaluation.scoreAnchors).map((item) => ({
         score: optionalFiniteNumber(item.score) ?? 0,
-        description: textField(item.description),
-      })),
+        description: textField(item.description)})),
       quality_threshold: optionalFiniteNumber(evaluation.quality_threshold ?? evaluation.passingScore),
       domain_constraints: cleanStringArray(evaluation.domain_constraints ?? evaluation.domainRules),
       visual_review_items: getRecordArray(
@@ -5731,9 +5570,7 @@ function normalizedSkillStudioSkillPayload(skill: Record<string, unknown>): Free
       ).map(normalizedSkillStudioReviewItem),
       text_review_items: getRecordArray(
         evaluation.text_review_items ?? text.dimensions,
-      ).map(normalizedSkillStudioReviewItem),
-    },
-  };
+      ).map(normalizedSkillStudioReviewItem)}};
   return payload;
 }
 
@@ -5741,8 +5578,7 @@ function normalizedSkillStudioReviewItem(item: Record<string, unknown>) {
   return {
     name: textField(item.name),
     weight: optionalFiniteNumber(item.weight) ?? 1,
-    description: textField(item.description),
-  };
+    description: textField(item.description)};
 }
 
 function normalizedSkillStudioRecipePayload(recipe: Record<string, unknown>): FreezoneAgentConfigPayload {
@@ -5762,8 +5598,7 @@ function normalizedSkillStudioRecipePayload(recipe: Record<string, unknown>): Fr
     result_summary: textField(recipe.result_summary),
     requires_source_media: recipe.requires_source_media === true,
     force_enhancement: recipe.force_enhancement === true,
-    skip_detail_check: recipe.skip_detail_check === true,
-  };
+    skip_detail_check: recipe.skip_detail_check === true};
 }
 
 function SkillStudioListField({
@@ -5771,8 +5606,7 @@ function SkillStudioListField({
   label,
   onChange,
   placeholder,
-  value,
-}: {
+  value}: {
   disabled?: boolean;
   label: string;
   onChange: (value: string[]) => void;
@@ -6020,8 +5854,7 @@ function skillStudioSelectionHasAnswer(selection: SkillStudioQuestionSelections[
 
 function QuestionOptionSelectionMark({
   selected,
-  mode,
-}: {
+  mode}: {
   selected: boolean;
   mode: "single" | "multiple";
 }) {
@@ -6055,8 +5888,7 @@ function skillStudioSelectionForMode(
   const normalizedOptionIds = selectionMode === "multiple" ? optionIds : optionIds.slice(0, 1);
   return {
     option_ids: normalizedOptionIds,
-    custom_text: customText,
-  };
+    custom_text: customText};
 }
 
 function formatSkillStudioOption(option: SkillStudioQuestionOption): string {
@@ -6111,8 +5943,7 @@ function buildSkillStudioQuestionTimelineItems(
         key,
         title: question.title || question.question || `问题 ${index + 1}`,
         summary: hasAnswer ? selectedSkillStudioOptionLabel(question, index, selections) : actionSummary ?? "未选择",
-        answered: hasAnswer || Boolean(actionSummary),
-      };
+        answered: hasAnswer || Boolean(actionSummary)};
     });
 }
 
@@ -6137,8 +5968,7 @@ function visibleAssistantClarificationTimelineItems(
       key: skillStudioQuestionKey(question, index),
       title: question.title || question.question || `问题 ${index + 1}`,
       summary: selectedSkillStudioOptionLabel(question, index, answers),
-      answered: true,
-    }));
+      answered: true}));
 }
 
 export const visibleAssistantClarificationTimelineItemsForTest =
@@ -6188,8 +6018,7 @@ export function buildSkillStudioQuestionToolResultForTest(
     ok: true,
     action: "submit",
     selections: safeSelections,
-    message: buildSkillStudioQuestionResponseForTest(event, safeSelections),
-  };
+    message: buildSkillStudioQuestionResponseForTest(event, safeSelections)};
 }
 
 export function buildAssistantClarificationResponseForTest(
@@ -6253,8 +6082,7 @@ export function buildAssistantClarificationToolResultForTest(
     ok: true,
     action: "submit",
     answers: safeAnswers,
-    message,
-  };
+    message};
 }
 
 function buildPersistedAssistantClarificationEvent(
@@ -6265,8 +6093,7 @@ function buildPersistedAssistantClarificationEvent(
     clarificationStatus,
     receivedAt,
     skipped,
-    usedRecommended,
-  }: {
+    usedRecommended}: {
     action: string;
     answers: AssistantClarificationAnswers;
     clarificationStatus: string;
@@ -6294,8 +6121,7 @@ function buildPersistedAssistantClarificationEvent(
     clarification_status: clarificationStatus,
     answers,
     skipped,
-    used_recommended: usedRecommended,
-  };
+    used_recommended: usedRecommended};
 }
 
 export const buildPersistedAssistantClarificationEventForTest = buildPersistedAssistantClarificationEvent;
@@ -6317,8 +6143,7 @@ function skillStudioResultClientDebug(
     agent_id: typeof record.agent_id === "string" ? record.agent_id : null,
     page_url: typeof window !== "undefined" ? window.location.href : null,
     sent_at: new Date().toISOString(),
-    ...extra,
-  };
+    ...extra};
 }
 
 function draftPayloadFromEvent(event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>) {
@@ -6328,15 +6153,13 @@ function draftPayloadFromEvent(event: Extract<SkillStudioUiEvent, { type: "skill
       summary: typeof draft.summary === "string" ? draft.summary : event.summary || "",
       skill: draft.skill && typeof draft.skill === "object" && !Array.isArray(draft.skill) ? draft.skill as Record<string, unknown> : {},
       recipes: Array.isArray(draft.recipes) ? draft.recipes : [],
-      warnings: Array.isArray(draft.warnings) ? draft.warnings : [],
-    };
+      warnings: Array.isArray(draft.warnings) ? draft.warnings : []};
   }
   return {
     summary: event.summary || "",
     skill: event.skill && typeof event.skill === "object" ? event.skill : {},
     recipes: Array.isArray(event.recipes) ? event.recipes : [],
-    warnings: Array.isArray(event.warnings) ? event.warnings : [],
-  };
+    warnings: Array.isArray(event.warnings) ? event.warnings : []};
 }
 
 function normalizeSkillStudioDraftForCatalog(draft: Record<string, unknown>): Record<string, unknown> {
@@ -6384,8 +6207,7 @@ function normalizeSkillStudioDraftForCatalog(draft: Record<string, unknown>): Re
   }
   return {
     ...draft,
-    skill,
-  };
+    skill};
 }
 
 export const normalizeSkillStudioDraftForCatalogForTest = normalizeSkillStudioDraftForCatalog;
@@ -6426,8 +6248,7 @@ export function buildSkillStudioDraftToolResultForTest(
       textField(skill.id) ? `Skill：${textField(skill.id)}` : "",
       savedRecipeIds.length > 0 ? `Recipes：${savedRecipeIds.join("、")}` : "",
       "该 Skill / Recipe 已写入虾画配置，可立即使用。请不要再要求用户保存为正式能力。",
-    ].filter(Boolean).join("\n"),
-  };
+    ].filter(Boolean).join("\n")};
 }
 
 interface SkillStudioToolResultResponse {
@@ -6469,8 +6290,7 @@ export function buildSkillStudioDraftCancelToolResultForTest(
       "Do not resubmit, recreate, revise, display, or save this draft.",
       "Do not call any Skill Studio creation, patch, finish, or save tools.",
       "Reply only that the draft was cancelled and will not be saved.",
-    ].join(" "),
-  };
+    ].join(" ")};
 }
 
 export function buildSkillStudioDraftRevisionToolResultForTest(
@@ -6486,8 +6306,7 @@ export function buildSkillStudioDraftRevisionToolResultForTest(
     skill_id: textField(skill.id) || null,
     skill_name: textField(skill.name) || null,
     summary: textField(draft.summary) || event.summary || null,
-    recipe_count: recipes.length,
-  };
+    recipe_count: recipes.length};
   return {
     turn_id: event.turn_id ?? undefined,
     bridge_key: event.bridge_key ?? "",
@@ -6519,15 +6338,13 @@ export function buildSkillStudioDraftRevisionToolResultForTest(
       "用户回答修改方向后，如果回答仍是泛泛分类，继续追问；只有回答包含具体目标和改法时，才基于当前完整草稿进行局部 patch 或分片输出更新草稿。",
       "不要在单个 tool_call 里传完整 Skill / Recipe catalog。",
       "不要用普通文本总结修改结果；不要只说明改了什么；未输出更新草稿前不要让用户保存。",
-    ].filter(Boolean).join("\n"),
-  };
+    ].filter(Boolean).join("\n")};
 }
 
 function skillStudioDraftFooterText({
   submitted,
   cancelled,
-  revisionPending,
-}: {
+  revisionPending}: {
   submitted: boolean;
   cancelled: boolean;
   revisionPending: boolean;
@@ -6577,8 +6394,7 @@ export const skillStudioEventMatchesForTest = skillStudioEventMatches;
 
 function SkillStudioQuestionsCard({
   event,
-  onSubmit,
-}: {
+  onSubmit}: {
   event: Extract<SkillStudioUiEvent, { type: "skill_studio.questions" }>;
   onSubmit?: (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.questions" }>,
@@ -6642,8 +6458,7 @@ function SkillStudioQuestionsCard({
         : [optionKey];
       const next = {
         ...current,
-        [questionKey]: skillStudioSelectionForMode(question, optionIds, currentSelection.customText),
-	      };
+        [questionKey]: skillStudioSelectionForMode(question, optionIds, currentSelection.customText)};
 	      return next;
 	    });
 	    if (selectionMode === "single" && activeQuestionPosition < selectableQuestions.length - 1) {
@@ -6661,8 +6476,7 @@ function SkillStudioQuestionsCard({
       const currentSelection = normalizedSkillStudioQuestionSelection(current[questionKey]);
       return {
         ...current,
-        [questionKey]: skillStudioSelectionForMode(question, currentSelection.optionIds, customText),
-      };
+        [questionKey]: skillStudioSelectionForMode(question, currentSelection.optionIds, customText)};
     });
   }, [submitted]);
   const readOnly = submitted;
@@ -6978,8 +6792,7 @@ function AssistantClarificationSummaryCard({ event }: { event: AssistantClarific
 
 function AssistantClarificationInputCard({
   event,
-  onSubmit,
-}: {
+  onSubmit}: {
   event: AssistantClarificationUiEvent;
   onSubmit?: (event: AssistantClarificationUiEvent, answers: AssistantClarificationAnswers) => Promise<boolean>;
 }) {
@@ -7064,8 +6877,7 @@ function AssistantClarificationInputCard({
         : [optionKey];
 	      const nextAnswers = {
         ...current,
-	        [questionKey]: skillStudioSelectionForMode(question, optionIds, currentSelection.customText),
-	      };
+	        [questionKey]: skillStudioSelectionForMode(question, optionIds, currentSelection.customText)};
 	      const questionId = normalizedClarificationId(question.id);
 	      if (questionId === "image_model") {
 	        for (const key of ["image_aspect_ratio", "image_resolution", "image_quality"]) {
@@ -7088,8 +6900,7 @@ function AssistantClarificationInputCard({
       const currentSelection = normalizedSkillStudioQuestionSelection(current[questionKey]);
       return {
         ...current,
-        [questionKey]: skillStudioSelectionForMode(question, currentSelection.optionIds, customText),
-      };
+        [questionKey]: skillStudioSelectionForMode(question, currentSelection.optionIds, customText)};
     });
   }, []);
   const submitResponse = useCallback(async (responseAnswers: AssistantClarificationAnswers) => {
@@ -7289,8 +7100,7 @@ function SkillStudioDraftCard({
   onStartRevision,
   onDraftChange,
   onCancel,
-  onPreserveScrollAnchor,
-}: {
+  onPreserveScrollAnchor}: {
   event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>;
   recipeCatalog?: FreezoneAgentConfigPayload[];
   onSubmit?: (
@@ -7346,9 +7156,7 @@ function SkillStudioDraftCard({
       ...current,
       skill: {
         ...getRecord(current.skill),
-        [key]: value,
-      },
-    }));
+        [key]: value}}));
   }, [syncDraftObject]);
   const updateNestedSkillField = useCallback((
     section: "triggers" | "planning" | "evaluation",
@@ -7361,8 +7169,7 @@ function SkillStudioDraftCard({
       const currentSection = getRecord(currentSkill[section]);
       const nextSection = {
         ...currentSection,
-        [key]: value,
-      };
+        [key]: value};
       for (const removeKey of removeKeys) {
         delete nextSection[removeKey];
       }
@@ -7370,9 +7177,7 @@ function SkillStudioDraftCard({
         ...current,
         skill: {
           ...currentSkill,
-          [section]: nextSection,
-        },
-      };
+          [section]: nextSection}};
     });
   }, [syncDraftObject]);
   const updateRecipeField = useCallback((recipeIndex: number, key: string, value: unknown) => {
@@ -7382,8 +7187,7 @@ function SkillStudioDraftCard({
         ...current,
         recipes: currentRecipes.map((recipe, index) => index === recipeIndex
           ? { ...getRecord(recipe), ...(key === "output_kind" ? recipeOutputFields(value as RecipeOutputChoice) : {[key]: value}) }
-          : recipe),
-      };
+          : recipe)};
     });
   }, [syncDraftObject]);
   const submitDraft = useCallback(() => {
@@ -8127,8 +7931,7 @@ function SkillStudioEventCard({
   onStartDraftRevision,
   onDraftChange,
   onCancelDraft,
-  onPreserveScrollAnchor,
-}: {
+  onPreserveScrollAnchor}: {
   event: SkillStudioUiEvent;
   recipeCatalog?: FreezoneAgentConfigPayload[];
   onSubmitQuestionResponse?: (
@@ -8196,8 +7999,7 @@ export const MessageBubble = memo(function MessageBubble({
   onCancelSkillStudioDraft,
   onPreserveScrollAnchor,
   freezoneSkillSuggestions = [],
-  freezoneRecipeCatalog = [],
-}: {
+  freezoneRecipeCatalog = []}: {
   message: ChatMessage;
   variant?: SuperChatPanelVariant;
   onOpenDetail: (message: ChatMessage) => void;
@@ -8260,8 +8062,7 @@ export const MessageBubble = memo(function MessageBubble({
     role: message.role,
     tool: isTool,
     error: isErrorReply,
-    streaming,
-  });
+    streaming});
   const { t } = useTranslation();
   const shouldWaitForStructuredRender =
     deferStructuredRender && !isUser && !isTool && looksLikeStructuredRenderText(message.text);
@@ -8269,8 +8070,7 @@ export const MessageBubble = memo(function MessageBubble({
   const visibleBlocks = visibleStructuredBlocksForMessage(blocks, {
     isFreezoneLayout,
     isUser,
-    isTool,
-  });
+    isTool});
   const skillStudioEvents = !isUser && !isTool
     ? visibleSkillStudioEventsForMessage(message)
     : [];
@@ -8867,15 +8667,13 @@ function buildTimelineTurns(messages: ChatMessage[]): TimelineTurn[] {
         preview,
         timestamp: message.timestamp,
         hasAttachment,
-        hasImage,
-      };
+        hasImage};
     });
 }
 
 function ChatTimeline({
   messages,
-  scrollRef,
-}: {
+  scrollRef}: {
   messages: ChatMessage[];
   scrollRef: React.RefObject<HTMLDivElement | null>;
 }) {
@@ -8895,8 +8693,7 @@ function ChatTimeline({
     if (!list) return;
     const next = {
       up: list.scrollTop > 1,
-      down: list.scrollTop + list.clientHeight < list.scrollHeight - 1,
-    };
+      down: list.scrollTop + list.clientHeight < list.scrollHeight - 1};
     setScrollEdges((current) => current.up === next.up && current.down === next.down ? current : next);
   }, []);
 
@@ -8973,8 +8770,7 @@ function ChatTimeline({
       viewportHeight: list.clientHeight,
       nodeCenter: buttonRect.top - listRect.top + buttonRect.height / 2,
       scrollTop: list.scrollTop,
-      scrollHeight: list.scrollHeight,
-    });
+      scrollHeight: list.scrollHeight});
     if (Math.abs(delta) < 1) return;
     list.scrollTo({ top: list.scrollTop + delta, behavior: "smooth" });
   }, []);
@@ -9004,8 +8800,7 @@ function ChatTimeline({
                 setHoveredTurn({
                   index,
                   top: rect.top + rect.height / 2,
-                  right: window.innerWidth - rect.left + 12,
-                });
+                  right: window.innerWidth - rect.left + 12});
               }}
               onMouseLeave={() => setHoveredTurn(null)}
               aria-label={`Turn ${index + 1}: ${turn.preview}`}
@@ -9058,8 +8853,7 @@ function ChatTimeline({
             <div className="mt-1 text-muted-foreground">
               {new Date(turns[hoveredTurn.index].timestamp).toLocaleTimeString([], {
                 hour: "numeric",
-                minute: "2-digit",
-              })}
+                minute: "2-digit"})}
             </div>
           </div>
         </div>,
@@ -9072,8 +8866,7 @@ function ChatTimeline({
 function AttachmentList({
   attachments,
   align = "start",
-  compact = false,
-}: {
+  compact = false}: {
   attachments?: ChatAttachment[];
   align?: "start" | "end";
   compact?: boolean;
@@ -9108,8 +8901,7 @@ type SentCanvasNodeReferencePreview = ReturnType<typeof canvasNodeReferenceAttac
 
 function CanvasNodeReferenceCard({
   node,
-  compact = false,
-}: {
+  compact = false}: {
   node: SentCanvasNodeReferencePreview;
   compact?: boolean;
 }) {
@@ -9251,8 +9043,7 @@ function isVideoAttachment(attachment: ChatAttachment): boolean {
 
 function ApprovalCard({
   approval,
-  onResolve,
-}: {
+  onResolve}: {
   approval: ApprovalRequest;
   onResolve: (decision: ApprovalDecision) => void;
 }) {
@@ -9331,8 +9122,7 @@ function ControlBar({
   chat,
   compact = false,
   searchOpen,
-  onToggleSearch,
-}: {
+  onToggleSearch}: {
   chat: ReturnType<typeof useSuperChat>;
   compact?: boolean;
   searchOpen: boolean;
@@ -9428,8 +9218,7 @@ function ControlBar({
             variant="ghost"
             size="icon-sm"
             onClick={() => chat.setSettings({
-              showStructuredSourceWhileStreaming: !chat.settings.showStructuredSourceWhileStreaming,
-            })}
+              showStructuredSourceWhileStreaming: !chat.settings.showStructuredSourceWhileStreaming})}
             aria-pressed={chat.settings.showStructuredSourceWhileStreaming}
             aria-label={t("aiAssistant.showStructuredSourceWhileStreaming")}
             title={t("aiAssistant.showStructuredSourceWhileStreaming")}
@@ -9446,8 +9235,7 @@ function ControlBar({
 function HeaderControlPortal({
   chat,
   searchOpen,
-  onToggleSearch,
-}: {
+  onToggleSearch}: {
   chat: ReturnType<typeof useSuperChat>;
   searchOpen: boolean;
   onToggleSearch: () => void;
@@ -9473,8 +9261,7 @@ function HeaderControlPortal({
 function SearchBar({
   query,
   onChange,
-  onClose,
-}: {
+  onClose}: {
   query: string;
   onChange: (query: string) => void;
   onClose: () => void;
@@ -9510,8 +9297,7 @@ function SearchBar({
 function PinnedPanel({
   messages,
   onClear,
-  onTogglePin,
-}: {
+  onTogglePin}: {
   messages: ChatMessage[];
   onClear: () => void;
   onTogglePin: (id: string) => void;
@@ -9549,8 +9335,7 @@ function PinnedPanel({
 function MessageDetailPanel({
   message,
   onClose,
-  onOpenMedia,
-}: {
+  onOpenMedia}: {
   message: ChatMessage | null;
   onClose: () => void;
   onOpenMedia: (detail: SpecMediaDetail) => void;
@@ -9726,8 +9511,7 @@ function uploadedFileFromPrepared(item: PreparedIngestAttachment): UploadedInges
     size: item.upload.size,
     totalChars: item.upload.total_chars,
     chapterCount: item.upload.count,
-    uploadedAt: Date.now(),
-  };
+    uploadedAt: Date.now()};
 }
 
 function buildUploadedFilesContext(project: string | undefined, files: UploadedIngestFile[]): string {
@@ -9801,8 +9585,7 @@ function dataUrlToAttachmentBlob(attachment: ChatAttachment): AttachmentBlob | n
   }
   return {
     blob: new Blob([bytes], { type: mime }),
-    filename: attachment.fileName || "novel.txt",
-  };
+    filename: attachment.fileName || "novel.txt"};
 }
 
 function dataUrlToText(attachment: ChatAttachment): string | null {
@@ -9858,9 +9641,7 @@ function surfaceFormatCheckWarnings(
     toast.warning(fc.summary, {
       action: {
         label: t("aiAssistant.formatCheck.viewDetails"),
-        onClick: () => onViewDetails(fc, filename),
-      },
-    });
+        onClick: () => onViewDetails(fc, filename)}});
   }
 }
 
@@ -9891,17 +9672,14 @@ async function uploadAttachmentsForIngest(
         attachment: {
           ...attachmentMetadata,
           fileName: upload.filename,
-          fileSize: upload.size,
-        },
-      });
+          fileSize: upload.size}});
     } catch (error) {
       const message = backendErrorToastMessage(error, t);
       const { content: _content, ...attachmentMetadata } = attachment;
       prepared.push({
         original: attachment,
         attachment: attachmentMetadata,
-        error: message,
-      });
+        error: message});
     }
   }
 
@@ -9917,9 +9695,7 @@ async function startNovelIngest(
     api.post(p`api/v1/projects/${project}/ingest/start`, {
       json: {
         filename,
-        rebuild: options.rebuild ?? false,
-      },
-    }),
+        rebuild: options.rebuild ?? false}}),
   );
   if (!response.ok) {
     throw new Error(response.error);
@@ -10125,8 +9901,7 @@ function canvasNodeToReferencePreview(node: CanvasNode): CanvasNodeReferencePrev
     nodeType: node.type ?? null,
     mediaType: canvasReferenceMediaType(node),
     sourceUrl: canvasReferenceSourceUrl(node),
-    previewUrl: canvasReferencePreviewUrl(node),
-  };
+    previewUrl: canvasReferencePreviewUrl(node)};
 }
 
 function getSelectedFreezoneNodes(nodes: CanvasNode[], selectedNodeId: string | null): CanvasNode[] {
@@ -10175,8 +9950,7 @@ function canvasReferenceFallbackKind(node: CanvasNodeReferencePreview): CanvasRe
 
 function CanvasReferenceFallbackIcon({
   kind,
-  className,
-}: {
+  className}: {
   kind: CanvasReferenceFallbackKind;
   className: string;
 }) {
@@ -10192,8 +9966,7 @@ function CanvasReferenceVideoPreview({
   src,
   title,
   iconClassName = "size-5",
-  animated = false,
-}: {
+  animated = false}: {
   src: string;
   title: string;
   iconClassName?: string;
@@ -10231,8 +10004,7 @@ function focusCanvasReferenceNode(nodeId: string): void {
     store.nodes.map((node) => ({
       id: node.id,
       type: "select" as const,
-      selected: node.id === nodeId,
-    })),
+      selected: node.id === nodeId})),
   );
   store.setSelectedNode(nodeId);
   store.requestFocusNode(nodeId);
@@ -10259,8 +10031,7 @@ function handleCanvasReferenceKeyDown(
 
 function CanvasNodeReferenceThumb({
   node,
-  onRemove,
-}: {
+  onRemove}: {
   node: CanvasNodeReferencePreview;
   onRemove?: () => void;
 }) {
@@ -10569,8 +10340,7 @@ const FREEZONE_NODE_CHIP_GLYPH: Record<AssetBoardColumn, string> = {
   text: "T",
   image: "▣",
   video: "▶",
-  audio: "♪",
-};
+  audio: "♪"};
 
 /** 草稿无节点提及时复用的空查表，避免每帧新建 Map 触发编辑器重渲染。 */
 const EMPTY_FREEZONE_NODE_MENTION_LOOKUP: FreezoneNodeMentionLookup = new Map();
@@ -10640,8 +10410,7 @@ function renderFreezoneSkillEditorContent(
     mentions.push({
       start,
       end: start + skillId.length + 1,
-      build: () => buildFreezoneSkillChipElement(skillId, suggestion.label),
-    });
+      build: () => buildFreezoneSkillChipElement(skillId, suggestion.label)});
   }
 
   for (const mention of parseFreezoneNodeMentions(value)) {
@@ -10649,8 +10418,7 @@ function renderFreezoneSkillEditorContent(
       start: mention.start,
       end: mention.end,
       build: () =>
-        buildFreezoneNodeChipElement(mention.nodeId, mention.label, nodeLookup.get(mention.nodeId) ?? null),
-    });
+        buildFreezoneNodeChipElement(mention.nodeId, mention.label, nodeLookup.get(mention.nodeId) ?? null)});
   }
 
   mentions.sort((a, b) => a.start - b.start);
@@ -10729,8 +10497,7 @@ function FreezoneSkillInlineEditor({
   onChange,
   onFocus,
   onBlur,
-  onKeyDown,
-}: FreezoneSkillInlineEditorProps): ReactElement {
+  onKeyDown}: FreezoneSkillInlineEditorProps): ReactElement {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const lastEmittedValueRef = useRef(value);
   const lastRenderedSuggestionsKeyRef = useRef("");
@@ -10817,8 +10584,7 @@ function FreezoneSkillInlineEditor({
         ...info,
         left,
         top: placement === "above" ? rect.top - 8 : rect.bottom + 8,
-        placement,
-      });
+        placement});
     },
     [nodeLookup],
   );
@@ -10913,8 +10679,7 @@ const CANVAS_CONTEXT_REQUEST_LABELS: Record<string, string> = {
   mainline_projection_assets: "主线资产",
   selection_detail: "当前选择",
   link_type_catalog: "连线类型",
-  validate_canvas_commands: "命令校验",
-};
+  validate_canvas_commands: "命令校验"};
 const CANVAS_CONTEXT_THINKING_LABEL = "正在思考中";
 type CanvasContextActivity = {
   key: string;
@@ -11111,14 +10876,12 @@ const DIRECTOR_RUN_MODE_OPTIONS: ReadonlyArray<{
     value: "manual_confirm",
     icon: ShieldAlert,
     label: "手动模式",
-    description: "每个生成步骤执行前由你确认",
-  },
+    description: "每个生成步骤执行前由你确认"},
   {
     value: "episode_auto",
     icon: Gauge,
     label: "本集自动",
-    description: "二次确认后自动推进本集，失败或成片完成时停止",
-  },
+    description: "二次确认后自动推进本集，失败或成片完成时停止"},
 ];
 
 type DirectorAutoServerResponse = {
@@ -11146,8 +10909,7 @@ async function getDirectorVoicePreflight(
     ? { episode: String(episode) }
     : undefined;
   const response = await api.get(p`api/v1/projects/${project}/pipeline/status`, {
-    searchParams,
-  }).json<{
+    searchParams}).json<{
     data?: {
       current_episode?: number | null;
       episode_status?: { tts?: boolean } | null;
@@ -11173,8 +10935,7 @@ async function getDirectorVoicePreflight(
     errors: (prerequisites?.errors ?? [])
       .map((item) => String(item || "").trim())
       .filter(Boolean)
-      .slice(0, 8),
-  };
+      .slice(0, 8)};
 }
 
 async function startDirectorAutoServer(
@@ -11183,8 +10944,7 @@ async function startDirectorAutoServer(
   voicePolicy: DirectorVoicePolicy | null,
 ): Promise<void> {
   await api.post(p`api/v1/projects/${project}/chat/director-auto/start`, {
-    json: { episode, voice_policy: voicePolicy },
-  }).json<DirectorAutoServerResponse>();
+    json: { episode, voice_policy: voicePolicy }}).json<DirectorAutoServerResponse>();
 }
 
 async function pauseDirectorAutoServer(project: string): Promise<void> {
@@ -11209,14 +10969,12 @@ const CANVAS_COMMAND_EXECUTION_MODE_OPTIONS: ReadonlyArray<{
     value: "manual_confirm",
     icon: ShieldAlert,
     label: "手动确认",
-    description: "Agent 在执行画布命令前都会请求确认",
-  },
+    description: "Agent 在执行画布命令前都会请求确认"},
   {
     value: "auto_execute",
     icon: Wrench,
     label: "自动生成",
-    description: "Agent 会自动执行安全命令并反馈结果",
-  },
+    description: "Agent 会自动执行安全命令并反馈结果"},
 ];
 
 function loadCanvasCommandExecutionMode(): CanvasCommandExecutionMode {
@@ -11394,8 +11152,7 @@ function canvasCommandPlansFromEnvelopes(envelopes: CanvasChatCommandEnvelope[] 
         label: canvasCommandPlanLabel(command),
         primary: canvasCommandPlanPrimary(command),
         details: canvasCommandPlanDetails(command),
-        destructive: canvasCommandIsDestructive(command),
-      });
+        destructive: canvasCommandIsDestructive(command)});
       index += 1;
     }
   }
@@ -11422,10 +11179,7 @@ function backgroundCanvasCommandPendingResult(
       output: {
         pending: true,
         reason: "background_generation_running",
-        ...(workflowRunId ? { workflow_run_id: workflowRunId } : {}),
-      },
-    })),
-  };
+        ...(workflowRunId ? { workflow_run_id: workflowRunId } : {})}}))};
 }
 
 export const backgroundCanvasCommandPendingResultForTest = backgroundCanvasCommandPendingResult;
@@ -11436,17 +11190,11 @@ function canvasCommandResultFromWorkflowRun(
   t: TFunction,
 ): CanvasChatCommandApplyResult {
   const terminalError = run.status === "failed"
-    ? t("freezone.chat.backgroundGenerationFailed", {
-        defaultValue: "后台生成失败，请检查任务详情后重试。",
-      })
+    ? t("freezone.chat.backgroundGenerationFailed")
     : run.status === "cancelled"
-      ? t("freezone.chat.backgroundGenerationCancelled", {
-          defaultValue: "后台生成已取消。",
-        })
+      ? t("freezone.chat.backgroundGenerationCancelled")
       : run.status === "interrupted"
-        ? t("freezone.chat.backgroundGenerationInterrupted", {
-            defaultValue: "后台生成已中断，请恢复任务或重试。",
-          })
+        ? t("freezone.chat.backgroundGenerationInterrupted")
         : null;
   const commandResults = (feedback.commandResults ?? []).map((step, index): CanvasChatCommandApplyStep => {
     const action = run.actions[index];
@@ -11461,9 +11209,7 @@ function canvasCommandResultFromWorkflowRun(
       ...(actionError ? { error: actionError } : {}),
       output: {
         workflow_run_id: run.run_id,
-        workflow_run_status: run.status,
-      },
-    };
+        workflow_run_status: run.status}};
   });
   const errors = commandResults
     .map((step) => step.error)
@@ -11475,8 +11221,7 @@ function canvasCommandResultFromWorkflowRun(
     openedUiActions: 0,
     createdNodeIds: [],
     errors: dedupeGenerationErrors(errors),
-    commandResults,
-  };
+    commandResults};
 }
 
 export const canvasCommandResultFromWorkflowRunForTest = canvasCommandResultFromWorkflowRun;
@@ -11541,8 +11286,7 @@ function canvasContextActivityFromUiEvent(event: unknown, fallbackIndex = 0): Ca
       ? value.anchor_text_prefix
       : typeof value.anchorTextPrefix === "string"
         ? value.anchorTextPrefix
-        : null,
-  };
+        : null};
 }
 
 function canvasContextActivitiesFromUiEvents(events: unknown[] | undefined): CanvasContextActivity[] {
@@ -11568,8 +11312,7 @@ function mergeCanvasContextActivity(current: CanvasContextActivity[] | undefined
         ? activity.surfaceOrder
         : activity.surfaceOrder == null
           ? next[index].surfaceOrder
-          : Math.min(next[index].surfaceOrder, activity.surfaceOrder),
-  };
+          : Math.min(next[index].surfaceOrder, activity.surfaceOrder)};
   return next;
 }
 
@@ -11591,8 +11334,7 @@ function createThinkingCanvasContextActivity(turnId: string): CanvasContextActiv
     bridgeKey: null,
     status: "running",
     labels: [CANVAS_CONTEXT_THINKING_LABEL],
-    errors: [],
-  };
+    errors: []};
 }
 
 function canvasContextActivityIsValidation(activity: CanvasContextActivity): boolean {
@@ -11757,10 +11499,8 @@ function canvasCommandFeedbackDedupeKey(feedback: CanvasCommandFeedback): string
       nodeId: step.nodeId,
       action: step.action,
       output: step.output,
-      error: step.error,
-    })),
-    plans: feedback.plans,
-  });
+      error: step.error})),
+    plans: feedback.plans});
 }
 
 function dedupeCanvasCommandFeedbacks(feedbacks: CanvasCommandFeedback[]): CanvasCommandFeedback[] {
@@ -11783,8 +11523,7 @@ function dedupeCanvasCommandFeedbacks(feedbacks: CanvasCommandFeedback[]): Canva
             ? feedback.surfaceOrder
             : feedback.surfaceOrder == null
               ? existing.surfaceOrder
-              : Math.min(existing.surfaceOrder, feedback.surfaceOrder),
-      };
+              : Math.min(existing.surfaceOrder, feedback.surfaceOrder)};
       continue;
     }
     indexByKey.set(key, deduped.length);
@@ -11809,36 +11548,31 @@ function buildCanvasCommandFlowItems(
       key: `approval:${approval.id}`,
       order: approval.surfaceOrder ?? index,
       anchorTextPrefix: approval.anchorTextPrefix,
-      approval,
-    })),
+      approval})),
     ...dedupedFeedbacks.map((feedback, index): CanvasCommandSurfaceEvent => ({
       kind: "feedback",
       key: `feedback:${feedback.key}`,
       order: feedback.surfaceOrder ?? approvals.length + index,
       anchorTextPrefix: feedback.anchorTextPrefix,
-      feedback,
-    })),
+      feedback})),
     ...contextActivities.map((activity, index): CanvasCommandSurfaceEvent => ({
       kind: "context",
       key: `context:${activity.key}`,
       order: activity.surfaceOrder ?? approvals.length + feedbacks.length + index,
       anchorTextPrefix: activity.anchorTextPrefix,
-      activity,
-    })),
+      activity})),
     ...skillStudioEvents.map((event, index): CanvasCommandSurfaceEvent => ({
       kind: "skill_studio",
       key: `skill_studio:${event.type}:${index}`,
       order: uiEventReceivedAt(event) ?? approvals.length + feedbacks.length + contextActivities.length + index,
       anchorTextPrefix: typeof event.anchor_text_prefix === "string" ? event.anchor_text_prefix : null,
-      event,
-    })),
+      event})),
     ...clarificationEvents.map((event, index): CanvasCommandSurfaceEvent => ({
       kind: "clarification",
       key: `clarification:${event.bridge_key || event.clarification_id || index}`,
       order: uiEventReceivedAt(event) ?? approvals.length + feedbacks.length + contextActivities.length + skillStudioEvents.length + index,
       anchorTextPrefix: typeof event.anchor_text_prefix === "string" ? event.anchor_text_prefix : null,
-      event,
-    })),
+      event})),
   ].sort((left, right) => {
     const leftIndex = canvasCommandSurfaceEventAnchorEndIndex(text, left);
     const rightIndex = canvasCommandSurfaceEventAnchorEndIndex(text, right);
@@ -11938,8 +11672,7 @@ function mergeCanvasCommandFeedbackValue(
     commandResults: mergeCanvasCommandResults(previous?.commandResults, result.commandResults),
     plans: [...(previous?.plans ?? []), ...plans],
     anchorTextPrefix: previous?.anchorTextPrefix ?? nextAnchorTextPrefix,
-    surfaceOrder: previous?.surfaceOrder ?? surfaceOrder,
-  };
+    surfaceOrder: previous?.surfaceOrder ?? surfaceOrder};
 }
 
 function replaceCanvasCommandFeedbackCard(
@@ -12011,8 +11744,7 @@ function canvasCommandApplyResultFromUnknown(value: unknown): CanvasChatCommandA
         typeof item === "object" &&
         typeof (item as CanvasChatCommandApplyStep).label === "string" &&
         typeof (item as CanvasChatCommandApplyStep).status === "string",
-    ),
-  };
+    )};
 }
 
 function canvasCommandFeedbacksFromUiEvents(events: unknown[] | undefined): CanvasCommandFeedback[] {
@@ -12098,8 +11830,7 @@ function canvasCommandApprovalDetailsFromUiEvents(events: unknown[] | undefined)
       envelopes: value.envelopes as CanvasChatCommandEnvelope[],
       receivedAt,
       autoExpires: true,
-      externalMcpCommand: value.external_mcp_command === true || value.externalMcpCommand === true,
-    });
+      externalMcpCommand: value.external_mcp_command === true || value.externalMcpCommand === true});
   }
   return approvals;
 }
@@ -12345,8 +12076,7 @@ function mergePendingCanvasCommandApproval(
     turnId: preferredTurnId,
     bridgeKey: approval.bridgeKey ?? previous.bridgeKey,
     anchorTextPrefix: previous.anchorTextPrefix ?? approval.anchorTextPrefix,
-    surfaceOrder: previous.surfaceOrder ?? approval.surfaceOrder,
-  };
+    surfaceOrder: previous.surfaceOrder ?? approval.surfaceOrder};
   return next;
 }
 
@@ -12496,8 +12226,7 @@ export function SuperChatPanel({
   onPendingNodeMentionsConsumed,
   onRequestClose,
   freezoneHeaderActions,
-  onFreezoneUserMessage,
-}: SuperChatPanelProps = {}) {
+  onFreezoneUserMessage}: SuperChatPanelProps = {}) {
   const { t } = useTranslation();
   const params = useParams({ strict: false }) as { project?: string };
   const queryClient = useQueryClient();
@@ -12596,8 +12325,7 @@ export function SuperChatPanel({
     surface: variant === "freezone" ? "freezone" : undefined,
     freezoneCanvasId: variant === "freezone" ? freezoneCanvasId ?? canvasId : null,
     freezoneAgentId: variant === "freezone" ? freezoneAgentId : null,
-    connectionEnabled,
-  });
+    connectionEnabled});
   const updateChatUiEvent = chat.updateUiEvent;
   const [pendingCanvasCommandApprovals, setPendingCanvasCommandApprovals] = useState<PendingCanvasCommandApproval[]>([]);
   const [cancelledWorkflowDrafts, setCancelledWorkflowDrafts] = useState<Record<string, CancelledWorkflowDraft>>({});
@@ -12631,8 +12359,7 @@ export function SuperChatPanel({
     onConnectionStateChangeRef.current?.({
       busy: chat.busy,
       connected: chat.connected,
-      connecting: chat.connecting,
-    });
+      connecting: chat.connecting});
   }, [chat.busy, chat.connected, chat.connecting]);
 
   const setDraftInputElement = useCallback((element: HTMLElement | null) => {
@@ -12666,8 +12393,7 @@ export function SuperChatPanel({
   const showFreezoneSkillSuggestions = shouldShowFreezoneSkillSuggestionMenu({
     explicitOpen: freezoneSkillMenuExplicitOpen,
     isFreezoneLayout,
-    slashQuery: freezoneSkillSlashQuery,
-  });
+    slashQuery: freezoneSkillSlashQuery});
   const insertFreezoneSkillSuggestion = useCallback((skillId: string) => {
     setDraft((current) => insertFreezoneSkillMention(current, skillId));
     setFreezoneSkillMenuExplicitOpen(false);
@@ -12812,8 +12538,7 @@ export function SuperChatPanel({
       const menuWidth = 380;
       setFreezoneSkillMenuPosition({
         left: Math.max(8, Math.min(rect.left - 8, window.innerWidth - menuWidth - 8)),
-        bottom: Math.max(8, window.innerHeight - rect.top + 10),
-      });
+        bottom: Math.max(8, window.innerHeight - rect.top + 10)});
     };
     updatePosition();
     window.addEventListener("resize", updatePosition);
@@ -12998,8 +12723,7 @@ export function SuperChatPanel({
           ...confirmDirectorEpisodeAuto(loaded),
           episode: server.episode ?? loaded.episode ?? 1,
           activatedAt: server.activated_at ? Date.parse(server.activated_at) : Date.now(),
-          voicePolicy: server.voice_policy ?? loaded.voicePolicy,
-        };
+          voicePolicy: server.voice_policy ?? loaded.voicePolicy};
         directorRunStateRef.current = confirmed;
         setDirectorRunState(confirmed);
         saveDirectorRunState(directorRunProject, confirmed);
@@ -13009,8 +12733,7 @@ export function SuperChatPanel({
           confirmationStage: "awaiting_intervention" as const,
           episode: server.episode ?? loaded.episode ?? 1,
           activatedAt: server.activated_at ? Date.parse(server.activated_at) : Date.now(),
-          voicePolicy: server.voice_policy ?? loaded.voicePolicy,
-        };
+          voicePolicy: server.voice_policy ?? loaded.voicePolicy};
         directorRunStateRef.current = suspended;
         setDirectorRunState(suspended);
         saveDirectorRunState(directorRunProject, suspended);
@@ -13060,8 +12783,7 @@ export function SuperChatPanel({
         updateDirectorRunState({
           ...confirmDirectorEpisodeAuto(current),
           episode: detail.episode ?? current.episode ?? 1,
-          voicePolicy: detail.voicePolicy ?? current.voicePolicy,
-        });
+          voicePolicy: detail.voicePolicy ?? current.voicePolicy});
         return;
       }
       if (detail?.status === "awaiting_confirmation") {
@@ -13070,8 +12792,7 @@ export function SuperChatPanel({
           ...confirmDirectorEpisodeAuto(current),
           confirmationStage: "awaiting_intervention",
           episode: detail.episode ?? current.episode ?? 1,
-          voicePolicy: detail.voicePolicy ?? current.voicePolicy,
-        });
+          voicePolicy: detail.voicePolicy ?? current.voicePolicy});
         toast.info("本集自动已暂停后续推进，等待你确认是否修改", { duration: 10000 });
         return;
       }
@@ -13092,8 +12813,7 @@ export function SuperChatPanel({
     if (mode === "episode_auto") {
       updateDirectorRunState(activateDirectorEpisodeAuto());
       toast.success("已选择本集自动；发送开始指令后，还需再次确认才会执行", {
-        duration: 10000,
-      });
+        duration: 10000});
     } else {
       updateDirectorRunState(defaultDirectorRunState());
       const project = params.project?.trim();
@@ -13200,8 +12920,7 @@ export function SuperChatPanel({
         plans,
         anchorTextPrefix,
         surfaceOrder,
-      ),
-    }));
+      )}));
   }, []);
 
   const replaceCanvasCommandFeedback = useCallback((
@@ -13221,8 +12940,7 @@ export function SuperChatPanel({
         plans,
         anchorTextPrefix,
         surfaceOrder,
-      ),
-    }));
+      )}));
   }, []);
 
   const buildApprovalFromDetail = useCallback((detail: CanvasCommandApprovalEventDetail): PendingCanvasCommandApproval | null => {
@@ -13237,8 +12955,7 @@ export function SuperChatPanel({
       messages: activeMessages,
       turnId,
       latestAssistantMessageId,
-      receivedAt: detail.receivedAt,
-    });
+      receivedAt: detail.receivedAt});
     const key = canvasCommandApprovalKey(bridgeKey, turnId, detail.envelopes, detail.receivedAt);
     const commandCount = detail.envelopes.reduce((sum, envelope) => sum + envelope.commands.length, 0);
     const receivedAt = detail.receivedAt ?? Date.now();
@@ -13266,8 +12983,7 @@ export function SuperChatPanel({
       commandCount,
       plans: canvasCommandPlansFromEnvelopes(detail.envelopes),
       externalMcpCommand: detail.externalMcpCommand === true,
-      requiresUserChoice: detail.requiresUserChoice === true,
-    };
+      requiresUserChoice: detail.requiresUserChoice === true};
   }, [activeMessages, effectiveFreezoneCanvasId, freezoneAgentMatches, latestAssistantMessageId, variant]);
 
   const handleCanvasCommandApproval = useCallback((detail: CanvasCommandApprovalEventDetail) => {
@@ -13294,8 +13010,7 @@ export function SuperChatPanel({
       {
         id: canvasApprovalPartId(approval),
         type: "canvas_approval",
-        event: approval,
-      },
+        event: approval},
     );
     return true;
   }, [
@@ -13314,8 +13029,7 @@ export function SuperChatPanel({
     const handleEvent = (event: Event) => {
       handleCanvasCommandApproval({
         ...(event as CustomEvent<CanvasCommandApprovalEventDetail>).detail,
-        autoExpires: true,
-      });
+        autoExpires: true});
     };
     window.addEventListener(FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT, handleEvent);
     return () => window.removeEventListener(FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT, handleEvent);
@@ -13337,8 +13051,7 @@ export function SuperChatPanel({
         for (const detail of canvasCommandApprovalDetailsFromUiEvents(messageUiEvents(message))) {
           const approval = buildApprovalFromDetail({
             ...detail,
-            turnId: detail.turnId ?? message.turnId ?? null,
-          });
+            turnId: detail.turnId ?? message.turnId ?? null});
           if (!approval) continue;
           if (
             persistedResolutionKeys.has(approval.key)
@@ -13377,8 +13090,7 @@ export function SuperChatPanel({
       messages: activeMessages,
       turnId,
       latestAssistantMessageId,
-      receivedAt: detail.receivedAt,
-    });
+      receivedAt: detail.receivedAt});
     const feedbackKey = canvasCommandFeedbackKey(detail.bridgeKey, turnId, detail.receivedAt);
     const envelopes = detail.envelopes ?? [];
     const plans = canvasCommandPlansFromEnvelopes(envelopes);
@@ -13396,8 +13108,7 @@ export function SuperChatPanel({
       key: feedbackKey,
       plans,
       anchorTextPrefix: detail.anchorTextPrefix ?? undefined,
-      surfaceOrder: detail.receivedAt,
-    };
+      surfaceOrder: detail.receivedAt};
     for (const approval of pendingCanvasCommandApprovals) {
       if (!pendingCanvasCommandApprovalMatches(approval, {
         id: canvasCommandApprovalKey(detail.bridgeKey, turnId, envelopes, detail.receivedAt),
@@ -13409,8 +13120,7 @@ export function SuperChatPanel({
         receivedAt: detail.receivedAt ?? Date.now(),
         envelopes,
         commandCount: envelopes.reduce((sum, envelope) => sum + envelope.commands.length, 0),
-        plans,
-      })) continue;
+        plans})) continue;
       chat.removeAssistantMessagePart(
         { messageId: approval.messageId, turnId: approval.turnId },
         canvasApprovalPartId(approval),
@@ -13421,8 +13131,7 @@ export function SuperChatPanel({
       {
         id: canvasFeedbackPartId(feedback),
         type: "canvas_feedback",
-        event: feedback,
-      },
+        event: feedback},
     );
     setPendingCanvasCommandApprovals((current) => removePendingCanvasCommandApprovalsForResult(current, detail));
   }, [activeMessages, appendCanvasCommandFeedback, chat, effectiveFreezoneCanvasId, freezoneAgentMatches, latestAssistantMessageId, pendingCanvasCommandApprovals, variant]);
@@ -13483,19 +13192,16 @@ export function SuperChatPanel({
           labels,
           errors: [],
           anchorTextPrefix,
-          surfaceOrder,
-        };
+          surfaceOrder};
         setCanvasContextActivitiesByMessageId((current) => ({
           ...current,
-          [turnId]: mergeCanvasContextActivity(current[turnId], activity),
-        }));
+          [turnId]: mergeCanvasContextActivity(current[turnId], activity)}));
         chat.upsertAssistantMessagePart(
           { turnId },
           {
             id: canvasContextPartId(activity),
             type: "canvas_context",
-            event: activity,
-          },
+            event: activity},
         );
       }
     };
@@ -13531,19 +13237,16 @@ export function SuperChatPanel({
         errors: detail.errors,
         anchorTextPrefix: detail.anchor_text_prefix,
         surfaceOrder: detail.surface_order ?? detail.received_at,
-        externalMcpCommand: detail.external_mcp_command === true,
-      };
+        externalMcpCommand: detail.external_mcp_command === true};
       setCanvasContextActivitiesByMessageId((current) => ({
         ...current,
-        [messageId]: mergeCanvasContextActivity(current[messageId], activity),
-      }));
+        [messageId]: mergeCanvasContextActivity(current[messageId], activity)}));
       chat.upsertAssistantMessagePart(
         { messageId, turnId: activity.turnId },
         {
           id: canvasContextPartId(activity),
           type: "canvas_context",
-          event: activity,
-        },
+          event: activity},
       );
     };
     const handleCanvasContextResult = (event: Event) => {
@@ -13567,8 +13270,7 @@ export function SuperChatPanel({
         labels,
         errors: detail.errors ?? [],
         anchorTextPrefix: detail.anchor_text_prefix ?? null,
-        surfaceOrder: detail.received_at ?? Date.now(),
-      };
+        surfaceOrder: detail.received_at ?? Date.now()};
       setCanvasContextActivitiesByMessageId((current) => {
         const next = { ...current };
         let updated = false;
@@ -13587,8 +13289,7 @@ export function SuperChatPanel({
           {
             id: canvasContextPartId(activity),
             type: "canvas_context",
-            event: activity,
-          },
+            event: activity},
         );
         return next;
       });
@@ -13615,19 +13316,15 @@ export function SuperChatPanel({
             kind: "project",
             id: params.project,
             surface: "freezone",
-            canvasId: effectiveFreezoneCanvasId,
-          },
+            canvasId: effectiveFreezoneCanvasId},
           turn_id: turnId,
-          event,
-        },
-      })
+          event}})
       .then(() => true)
       .catch((error) => {
         console.warn("[freezone-canvas-command] failed to persist superchat canvas event", {
           canvasId: effectiveFreezoneCanvasId,
           turnId,
-          error,
-        });
+          error});
         return false;
       });
   }, [effectiveFreezoneCanvasId, params.project]);
@@ -13683,15 +13380,13 @@ export function SuperChatPanel({
             const terminalFeedback: CanvasCommandFeedback = {
               ...feedback,
               ...result,
-              commandResults: result.commandResults,
-            };
+              commandResults: result.commandResults};
             chat.upsertAssistantMessagePart(
               { messageId, turnId: feedback.turnId },
               {
                 id: canvasFeedbackPartId(terminalFeedback),
                 type: "canvas_feedback",
-                event: terminalFeedback,
-              },
+                event: terminalFeedback},
             );
             await persistCanvasCommandUiEvent(feedback.turnId, {
               schema_version: "canvas_command_result.v1",
@@ -13702,8 +13397,7 @@ export function SuperChatPanel({
               envelopes: feedback.envelopes,
               result,
               anchor_text_prefix: feedback.anchorTextPrefix ?? null,
-              received_at: Date.now(),
-            });
+              received_at: Date.now()});
             return;
           }
         } finally {
@@ -13740,17 +13434,13 @@ export function SuperChatPanel({
             id: params.project,
             surface: "freezone",
             canvasId: effectiveFreezoneCanvasId,
-            agentId: typeof event.agent_id === "string" ? event.agent_id : effectiveFreezoneAgentId,
-          },
+            agentId: typeof event.agent_id === "string" ? event.agent_id : effectiveFreezoneAgentId},
           turn_id: turnId,
-          event,
-        },
-      }).catch((error) => {
+          event}}).catch((error) => {
         console.warn("[skill-studio] failed to persist superchat ui event", {
           canvasId: effectiveFreezoneCanvasId,
           turnId,
-          error,
-        });
+          error});
       });
     };
     if (!options.debounce) {
@@ -13801,8 +13491,7 @@ export function SuperChatPanel({
           bridge_key: approval.bridgeKey ?? null,
           envelopes: approval.envelopes,
           decision: "confirmed",
-          received_at: receivedAt,
-        });
+          received_at: receivedAt});
         const applyKey = canvasCommandApprovalApplyKey(approval);
         const canRepeatApproval = canvasCommandApprovalCanRepeat(approval);
         if (!canRepeatApproval && appliedCanvasCommandApprovalKeysRef.current.has(applyKey)) {
@@ -13833,8 +13522,7 @@ export function SuperChatPanel({
             onWorkflowRunPersisted: (runId) => {
               persistedWorkflowRunId = runId;
               resolveWorkflowRunPersisted?.(runId);
-            },
-          });
+            }});
           if (runsInBackground) {
             const immediateResult = await waitForImmediateCanvasCommandResult(
               execution,
@@ -13851,8 +13539,7 @@ export function SuperChatPanel({
                 projectId: params.project,
                 canvasId: effectiveFreezoneCanvasId,
                 agentId: approval.agentId ?? effectiveFreezoneAgentId,
-                accepted: true,
-              });
+                accepted: true});
               const pendingResult = backgroundCanvasCommandPendingResult(
                 approval.plans,
                 persistedWorkflowRunId,
@@ -13885,16 +13572,14 @@ export function SuperChatPanel({
                 surfaceOrder: receivedAt,
                 workflowRunId: persistedWorkflowRunId ?? undefined,
                 turnId: approval.turnId ?? undefined,
-                bridgeKey: approval.bridgeKey ?? undefined,
-              };
+                bridgeKey: approval.bridgeKey ?? undefined};
               chat.replaceAssistantMessagePart(
                 { messageId: approval.messageId, turnId: approval.turnId },
                 canvasApprovalPartId(approval),
                 {
                   id: canvasFeedbackPartId(pendingFeedback),
                   type: "canvas_feedback",
-                  event: pendingFeedback,
-                },
+                  event: pendingFeedback},
               );
               void persistCanvasCommandUiEvent(approval.turnId, {
                 schema_version: "canvas_command_result.v1",
@@ -13906,8 +13591,7 @@ export function SuperChatPanel({
                 envelopes: approval.envelopes,
                 result: pendingResult,
                 anchor_text_prefix: approval.anchorTextPrefix ?? null,
-                received_at: receivedAt,
-              });
+                received_at: receivedAt});
               setPendingCanvasCommandApprovals((current) =>
                 removePendingCanvasCommandApproval(current, approval));
               result = await execution;
@@ -13929,10 +13613,8 @@ export function SuperChatPanel({
                 type: "validate",
                 status: "error",
                 label: "画布执行异常",
-                error: errorMessage,
-              },
-            ],
-          };
+                error: errorMessage},
+            ]};
         }
 
         // Apply the local store mutation first, then flush the registered
@@ -13950,8 +13632,7 @@ export function SuperChatPanel({
           canvasId: effectiveFreezoneCanvasId,
           agentId: approval.agentId ?? effectiveFreezoneAgentId,
           result,
-          followup: backgroundAccepted,
-        });
+          followup: backgroundAccepted});
         const updateFeedback = backgroundAccepted
           ? replaceCanvasCommandFeedback
           : appendCanvasCommandFeedback;
@@ -13979,13 +13660,11 @@ export function SuperChatPanel({
           key: feedbackKey,
           plans: approval.plans,
           anchorTextPrefix: approval.anchorTextPrefix ?? undefined,
-          surfaceOrder: receivedAt,
-        };
+          surfaceOrder: receivedAt};
         const feedbackPart = {
           id: canvasFeedbackPartId(feedback),
           type: "canvas_feedback" as const,
-          event: feedback,
-        };
+          event: feedback};
         if (backgroundAccepted) {
           chat.upsertAssistantMessagePart(
             { messageId: approval.messageId, turnId: approval.turnId },
@@ -14008,8 +13687,7 @@ export function SuperChatPanel({
           envelopes: approval.envelopes,
           result,
           anchor_text_prefix: approval.anchorTextPrefix ?? null,
-          received_at: receivedAt,
-        });
+          received_at: receivedAt});
         setPendingCanvasCommandApprovals((current) => removePendingCanvasCommandApproval(current, approval));
       } finally {
         executingCanvasCommandApprovalIdsRef.current.delete(approval.id);
@@ -14033,7 +13711,9 @@ export function SuperChatPanel({
       );
     }
     const receivedAt = Date.now();
-    const cancelMessage = reason === "timeout" ? "画布操作等待超时，已自动取消" : t("freezone.chat.canvasCommandsCancelled");
+    const cancelMessage = reason === "timeout"
+      ? t("freezone.chat.canvasCommandsCancelled")
+      : t("freezone.chat.canvasManuallyCancelled");
     const result: CanvasChatCommandApplyResult = {
       applied: 0,
       openedUiActions: 0,
@@ -14044,11 +13724,9 @@ export function SuperChatPanel({
           commandIndex: -1,
           type: "validate",
           status: "error",
-          label: "已取消",
-          error: cancelMessage,
-        },
-      ],
-    };
+          label: t("freezone.chat.clarification.cancelled"),
+          error: cancelMessage},
+      ]};
     reportCanvasCommandToolResult({
       bridgeKey: approval.bridgeKey,
       turnId: approval.turnId,
@@ -14057,8 +13735,7 @@ export function SuperChatPanel({
       canvasId: effectiveFreezoneCanvasId,
       agentId: approval.agentId ?? effectiveFreezoneAgentId,
       result,
-      cancelled: true,
-    });
+      cancelled: true});
     const feedbackKey = canvasCommandFeedbackKey(approval.bridgeKey, approval.turnId, undefined, approval.key);
     void persistCanvasCommandUiEvent(approval.turnId, {
       schema_version: "canvas_command_approval_resolution.v1",
@@ -14068,8 +13745,7 @@ export function SuperChatPanel({
       bridge_key: approval.bridgeKey ?? null,
       envelopes: approval.envelopes,
       decision: reason === "timeout" ? "timeout" : "cancelled",
-      received_at: receivedAt,
-    });
+      received_at: receivedAt});
     void persistCanvasCommandUiEvent(approval.turnId, {
       schema_version: "canvas_command_result.v1",
       type: "canvas_command_result",
@@ -14080,8 +13756,7 @@ export function SuperChatPanel({
       anchor_text_prefix: approval.anchorTextPrefix ?? null,
       received_at: receivedAt,
       cancelled: true,
-      cancel_reason: reason,
-    });
+      cancel_reason: reason});
     appendCanvasCommandFeedback(
       approval.messageId,
       feedbackKey,
@@ -14109,16 +13784,14 @@ export function SuperChatPanel({
       cancelled: true,
       cancelReason: reason,
       anchorTextPrefix: approval.anchorTextPrefix ?? undefined,
-      surfaceOrder: receivedAt,
-    };
+      surfaceOrder: receivedAt};
     chat.replaceAssistantMessagePart(
       { messageId: approval.messageId, turnId: approval.turnId },
       canvasApprovalPartId(approval),
       {
         id: canvasFeedbackPartId(feedback),
         type: "canvas_feedback",
-        event: feedback,
-      },
+        event: feedback},
     );
     setPendingCanvasCommandApprovals((current) => removePendingCanvasCommandApproval(current, approval));
   }, [appendCanvasCommandFeedback, chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistCanvasCommandUiEvent, t]);
@@ -14215,15 +13888,13 @@ export function SuperChatPanel({
   const activeClarificationEvent = useMemo(
     () => latestPendingAssistantClarificationEventForActiveTurn(visibleMessages, {
       busy: chat.busy,
-      activeTurnId: chat.activeTurnId,
-    }),
+      activeTurnId: chat.activeTurnId}),
     [chat.activeTurnId, chat.busy, visibleMessages],
   );
   const activeSkillStudioQuestionEvent = useMemo(
     () => latestPendingSkillStudioQuestionEventForActiveTurn(visibleMessages, {
       busy: chat.busy,
-      activeTurnId: chat.activeTurnId,
-    }),
+      activeTurnId: chat.activeTurnId}),
     [chat.activeTurnId, chat.busy, visibleMessages],
   );
   const hasActiveComposerPrompt = Boolean(activeSkillStudioQuestionEvent || activeClarificationEvent);
@@ -14678,9 +14349,7 @@ export function SuperChatPanel({
                 hasCanvasContent:
                   currentCanvasOntologyContext == null
                     ? undefined
-                    : currentCanvasOntologyContext.summary.object_count > 0,
-              }),
-            })
+                    : currentCanvasOntologyContext.summary.object_count > 0})})
           : null;
       const videoIntent = VIDEO_CREATION_RE.test(text);
       const hasNovelAttachments = ordinaryAttachments.some(isNovelAttachment);
@@ -14699,8 +14368,7 @@ export function SuperChatPanel({
 
           const nextPending = {
             ...reingestConfirmation,
-            stage: "confirm_clear" as const,
-          };
+            stage: "confirm_clear" as const};
           setReingestConfirmation(nextPending);
           return sendPreparedMessage(
             text,
@@ -14731,8 +14399,7 @@ export function SuperChatPanel({
             taskType: started.task_type,
             taskKey: started.task_key,
             message: started.message,
-            rebuild: true,
-          });
+            rebuild: true});
           toast.success(t("aiAssistant.ingestAutomationStarted", { filename: reingestConfirmation.filename }));
           setReingestConfirmation(null);
           return sendPreparedMessage(text, canvasReferenceAttachments, nextText);
@@ -14770,8 +14437,7 @@ export function SuperChatPanel({
               stage: "choose_overwrite",
               filename: uploaded.filename,
               project,
-              originalText: text,
-            };
+              originalText: text};
             setReingestConfirmation(pending);
             nextText = appendAttachmentAnalysisContext(
               text,
@@ -14785,8 +14451,7 @@ export function SuperChatPanel({
             taskType: started.task_type,
             taskKey: started.task_key,
             message: started.message,
-            rebuild: false,
-          });
+            rebuild: false});
           toast.success(t("aiAssistant.ingestAutomationStarted", { filename: uploaded.filename }));
         } catch (error) {
           const message = backendErrorToastMessage(error, t);
@@ -14809,8 +14474,7 @@ export function SuperChatPanel({
               stage: "choose_overwrite",
               filename: uploaded.filename,
               project,
-              originalText: text,
-            };
+              originalText: text};
             setReingestConfirmation(pending);
             nextText = appendAttachmentAnalysisContext(
               text,
@@ -14824,8 +14488,7 @@ export function SuperChatPanel({
             taskType: started.task_type,
             taskKey: started.task_key,
             message: started.message,
-            rebuild: false,
-          });
+            rebuild: false});
           toast.success(t("aiAssistant.ingestAutomationStarted", { filename: uploaded.filename }));
         } catch (error) {
           const message = backendErrorToastMessage(error, t);
@@ -14886,20 +14549,17 @@ export function SuperChatPanel({
             voicePreflight = {
               episode: state.episode ?? 1,
               choiceRequired: true,
-              errors: [],
-            };
+              errors: []};
           }
           const awaiting = {
             ...awaitDirectorEpisodeAutoConfirmation(state),
             episode: voicePreflight.episode,
             voiceChoiceRequired: voicePreflight.choiceRequired,
-            voicePrerequisiteErrors: voicePreflight.errors,
-          };
+            voicePrerequisiteErrors: voicePreflight.errors};
           updateDirectorRunState(awaiting);
           nextText = directorAutoConfirmationTransportText(nextText, {
             voiceChoiceRequired: voicePreflight.choiceRequired,
-            voiceErrors: voicePreflight.errors,
-          });
+            voiceErrors: voicePreflight.errors});
         } else if (
           state.confirmationStage === "awaiting_confirmation"
           && (isDirectorEpisodeAutoStartIntent(text) || selectedVoicePolicy !== null)
@@ -14956,8 +14616,7 @@ export function SuperChatPanel({
       active: false,
       borderRadius: 16,
       strength: 0.9,
-      duration: 1.96,
-    });
+      duration: 1.96});
     composerBeamRef.current = beam;
     return () => {
       composerBeamRef.current = null;
@@ -15063,8 +14722,7 @@ export function SuperChatPanel({
           id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           text,
           attachments: queuedAttachments,
-          createdAt: Date.now(),
-        },
+          createdAt: Date.now()},
       ]);
       setDraft("");
       setAttachments([]);
@@ -15240,15 +14898,13 @@ export function SuperChatPanel({
         client_debug: skillStudioResultClientDebug(event, "questions_card_ws", {
           selected_action: action,
           active_turn_id: chat.activeTurnId,
-          chat_busy: chat.busy,
-        }),
+          chat_busy: chat.busy}),
         message:
           action === "recommended"
             ? buildSkillStudioRecommendedResponse(event)
             : action === "skip"
               ? buildSkillStudioSkipResponse(event)
-              : buildSkillStudioQuestionResponseForTest(event, selections),
-      };
+              : buildSkillStudioQuestionResponseForTest(event, selections)};
       if (!chat.submitSkillStudioResult(payload)) {
         toast.error("Skill Studio 连接未就绪，请重试");
         return false;
@@ -15269,8 +14925,7 @@ export function SuperChatPanel({
           questions: event.questions,
           submitted: true,
           action,
-          selections: payload.selections,
-        };
+          selections: payload.selections};
         updateChatUiEvent(
           event.turn_id,
           (candidate) => skillStudioEventMatches(candidate, event),
@@ -15279,8 +14934,7 @@ export function SuperChatPanel({
             received_at: uiEventFirstReceivedAt(candidate, event),
             submitted: true,
             action,
-            selections: payload.selections,
-          }),
+            selections: payload.selections}),
         );
         persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       }
@@ -15328,21 +14982,18 @@ export function SuperChatPanel({
           skillStudioRevision,
           projectId: params.project || undefined,
           canvasId: effectiveFreezoneCanvasId || undefined,
-          agentId: effectiveFreezoneAgentId || undefined,
-        }),
+          agentId: effectiveFreezoneAgentId || undefined}),
         action,
         clarification_status: action === "submit" ? "answered" : action,
         skipped: action === "skip",
-        used_recommended: action === "recommended",
-      };
+        used_recommended: action === "recommended"};
       const result = await apiCall<{
         ok?: boolean;
         message?: string | null;
         errors?: string[];
       }>("chat/clarification-tool-result", {
         method: "POST",
-        json: payload,
-      });
+        json: payload});
       if (result.ok === false) {
         submittedAssistantClarificationKeysRef.current.delete(submissionKey);
         toast.error(result.errors?.find(Boolean) || result.message || "提交补充信息失败，请重试");
@@ -15357,8 +15008,7 @@ export function SuperChatPanel({
           clarificationStatus: actionStatus,
           receivedAt,
           skipped: action === "skip",
-          usedRecommended: action === "recommended",
-        });
+          usedRecommended: action === "recommended"});
         updateChatUiEvent(
           event.turn_id,
           (candidate) =>
@@ -15380,8 +15030,7 @@ export function SuperChatPanel({
             answers: payload.answers,
             skipped: action === "skip",
             used_recommended: action === "recommended",
-            anchor_text_prefix: event.anchor_text_prefix ?? null,
-          }),
+            anchor_text_prefix: event.anchor_text_prefix ?? null}),
         );
         persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       }
@@ -15412,9 +15061,7 @@ export function SuperChatPanel({
         ...buildSkillStudioDraftToolResultForTest(event, draftPayload),
         client_debug: skillStudioResultClientDebug(event, "draft_confirm_add_http", {
           active_turn_id: chat.activeTurnId,
-          chat_busy: chat.busy,
-        }),
-      };
+          chat_busy: chat.busy})};
       console.info("[superchat] submit skill_studio.result via http", {
         turn_id: payload.turn_id,
         bridge_key: payload.bridge_key,
@@ -15423,12 +15070,10 @@ export function SuperChatPanel({
         saved_to_catalog: payload.saved_to_catalog,
         saved_skill_ids: payload.saved_skill_ids,
         saved_recipe_ids: payload.saved_recipe_ids,
-        client_debug: payload.client_debug,
-      });
+        client_debug: payload.client_debug});
       const result = await apiCall<SkillStudioToolResultResponse>("chat/skill-studio-tool-result", {
         method: "POST",
-        json: payload,
-      });
+        json: payload});
       if (!result.ok || !result.saved_to_catalog) {
         const errorText = result.errors?.find(Boolean) || result.message || "后端没有确认保存成功";
         const partiallySaved = Boolean(result.saved_skill_ids?.length || result.saved_recipe_ids?.length);
@@ -15443,8 +15088,7 @@ export function SuperChatPanel({
       ]);
       for (const kind of savedKinds) {
         void queryClient.invalidateQueries({
-          queryKey: freezoneAgentConfigQueryKey(kind),
-        });
+          queryKey: freezoneAgentConfigQueryKey(kind)});
       }
       if (savedKinds.has("recipes")) {
         setFreezoneRecipeCatalogLoaded(false);
@@ -15474,8 +15118,7 @@ export function SuperChatPanel({
           saved_to_catalog: payload.saved_to_catalog,
           saved_skill_ids: payload.saved_skill_ids,
           saved_recipe_ids: payload.saved_recipe_ids,
-          action: payload.action,
-        };
+          action: payload.action};
         updateChatUiEvent(
           event.turn_id,
           (candidate) => skillStudioEventMatches(candidate, event),
@@ -15487,8 +15130,7 @@ export function SuperChatPanel({
               saved_to_catalog: payload.saved_to_catalog,
               saved_skill_ids: payload.saved_skill_ids,
               saved_recipe_ids: payload.saved_recipe_ids,
-              action: payload.action,
-            }),
+              action: payload.action}),
           );
         persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       }
@@ -15517,16 +15159,14 @@ export function SuperChatPanel({
       anchor_text_prefix: event.anchor_text_prefix ?? null,
       received_at: receivedAt,
       mode: event.mode,
-      draft: draftPayload,
-    };
+      draft: draftPayload};
     updateChatUiEvent(
       event.turn_id,
       (candidate) => skillStudioEventMatches(candidate, event),
       (candidate) => ({
         ...(candidate as Record<string, unknown>),
         received_at: uiEventFirstReceivedAt(candidate, event),
-        draft: draftPayload,
-      }),
+        draft: draftPayload}),
     );
     persistSkillStudioUiEvent(event.turn_id, persistedEvent, { debounce: true });
   }, [effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, updateChatUiEvent]);
@@ -15545,9 +15185,7 @@ export function SuperChatPanel({
         ...buildSkillStudioDraftRevisionToolResultForTest(event, draftPayload),
         client_debug: skillStudioResultClientDebug(event, "draft_start_revision_button_ws", {
           active_turn_id: chat.activeTurnId,
-          chat_busy: chat.busy,
-        }),
-      };
+          chat_busy: chat.busy})};
       if (!chat.submitSkillStudioResult(payload)) {
         toast.error("Skill Studio 连接未就绪，请重试");
         return false;
@@ -15566,8 +15204,7 @@ export function SuperChatPanel({
         draft: payload.draft,
         revision_pending: true,
         action: payload.action,
-        skill_studio_status: payload.skill_studio_status,
-      };
+        skill_studio_status: payload.skill_studio_status};
       updateChatUiEvent(
         event.turn_id,
         (candidate) => skillStudioEventMatches(candidate, event),
@@ -15577,8 +15214,7 @@ export function SuperChatPanel({
           draft: payload.draft,
           revision_pending: true,
           action: payload.action,
-          skill_studio_status: payload.skill_studio_status,
-        }),
+          skill_studio_status: payload.skill_studio_status}),
       );
       persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       return true;
@@ -15602,9 +15238,7 @@ export function SuperChatPanel({
       ...buildSkillStudioDraftCancelToolResultForTest(event),
       client_debug: skillStudioResultClientDebug(event, "draft_cancel_button_ws", {
         active_turn_id: chat.activeTurnId,
-        chat_busy: chat.busy,
-      }),
-    };
+        chat_busy: chat.busy})};
     if (!chat.submitSkillStudioResult(payload)) {
       toast.error("Skill Studio 连接未就绪，请重试");
       return;
@@ -15620,8 +15254,7 @@ export function SuperChatPanel({
       anchor_text_prefix: event.anchor_text_prefix ?? null,
       received_at: receivedAt,
       draft: draftPayload,
-      cancelled: true,
-    };
+      cancelled: true};
     updateChatUiEvent(
       event.turn_id,
       (candidate) => skillStudioEventMatches(candidate, event),
@@ -15629,8 +15262,7 @@ export function SuperChatPanel({
         ...(candidate as Record<string, unknown>),
         received_at: uiEventFirstReceivedAt(candidate, event),
         draft: draftPayload,
-        cancelled: true,
-      }),
+        cancelled: true}),
     );
     persistSkillStudioUiEvent(event.turn_id, persistedEvent);
   }, [chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, updateChatUiEvent]);
@@ -15702,8 +15334,7 @@ export function SuperChatPanel({
             mimeType: file.type || "application/octet-stream",
             fileName: file.name,
             fileSize: file.size,
-            content: dataUrl,
-          },
+            content: dataUrl},
         ]);
       });
       reader.readAsDataURL(file);
@@ -15987,8 +15618,7 @@ export function SuperChatPanel({
                       id: "streaming",
                       role: "assistant",
                       text: chat.streamText,
-                      timestamp: Date.now(),
-                    }}
+                      timestamp: Date.now()}}
                     variant={variant}
                     onOpenDetail={setDetailMessage}
                     onOpenMedia={setMediaDetail}
@@ -16016,8 +15646,7 @@ export function SuperChatPanel({
                       text: "",
                       displayName: "Agent",
                       timestamp: Date.now(),
-                      turnId: surface.turnId ?? undefined,
-                    }}
+                      turnId: surface.turnId ?? undefined}}
                     variant={variant}
                     onOpenDetail={setDetailMessage}
                     onOpenMedia={setMediaDetail}
@@ -16076,8 +15705,7 @@ export function SuperChatPanel({
                       role: "assistant",
                       text: "",
                       timestamp: Date.now(),
-                      turnId: thinkingCanvasContextActivity.turnId ?? undefined,
-                    }}
+                      turnId: thinkingCanvasContextActivity.turnId ?? undefined}}
                     variant={variant}
                     onOpenDetail={setDetailMessage}
                     onOpenMedia={setMediaDetail}
@@ -16684,8 +16312,7 @@ export function SuperChatPanel({
           className="fixed z-[1000] w-[min(380px,calc(100vw-16px))] overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#18191d]/95 p-3 text-foreground shadow-[0_18px_48px_rgba(0,0,0,0.52)] backdrop-blur-xl"
           style={{
             left: freezoneSkillMenuPosition.left,
-            bottom: freezoneSkillMenuPosition.bottom,
-          }}
+            bottom: freezoneSkillMenuPosition.bottom}}
         >
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="text-sm font-semibold leading-6 text-foreground/95">

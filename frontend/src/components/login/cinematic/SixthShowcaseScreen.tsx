@@ -24,8 +24,8 @@ function FilmShowcase({ sequenceProgress }: { sequenceProgress: number }) {
               <span>{work.stat}</span>
             </div>
             <div className={styles.filmCopy}>
-              <h3>{work.title}</h3>
-              <p>{work.logline}</p>
+              <h3>{t(work.titleKey)}</h3>
+              <p>{t(work.loglineKey)}</p>
             </div>
             <a
               className={styles.watchButton}

@@ -1,3 +1,4 @@
+import i18n from "@/i18n";
 import { CANVAS_NODE_TYPES, type CanvasEdge, type CanvasNode, type CanvasNodeType } from "@/features/canvas/domain/canvasNodes";
 import {
   getCanvasNodePrimaryOutputRole,
@@ -41,7 +42,7 @@ export const CANVAS_LINK_TYPE_CATALOG: CanvasLinkTypeCatalogItem[] = [
     category: "context",
     source_object_types: ["TextNode", "ScriptNode"],
     target_object_types: ["TextNode", "ScriptNode"],
-    description: "文本/剧本规划节点之间的背景、约束或说明关系，用于组织创作思路，不直接驱动媒体生成。",
+    description: i18n.t("freezone.canvasEdge.context.description"),
     instruction: "Use only when a text/script/context node provides background or constraints to another text/script planning node. Never use context_for for image/video/audio generation targets; use prompt_for when text drives generation.",
   },
   {
@@ -49,7 +50,7 @@ export const CANVAS_LINK_TYPE_CATALOG: CanvasLinkTypeCatalogItem[] = [
     category: "generation_input",
     source_object_types: ["TextNode"],
     target_object_types: ["ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"],
-    description: "上游文本/脚本是目标生成节点的直接提示词、文案、台词或任务输入。",
+    description: i18n.t("freezone.canvasEdge.prompt.description"),
     instruction: "Use when upstream text is direct generation input, such as text-to-image, text-to-video, text-to-audio, script generation, or another direct textual instruction. A plain textAnnotationNode with no semanticOutputRole may be connected with prompt_for and will be treated as direct input text for that edge. If the source text is explicitly planning_text and is only a brief, plan, requirement note, or contextual documentation, keep it as planning_text and group it with the generator instead of connecting it directly, or create a separate input_text prompt node.",
   },
   {
@@ -57,7 +58,7 @@ export const CANVAS_LINK_TYPE_CATALOG: CanvasLinkTypeCatalogItem[] = [
     category: "context",
     source_object_types: ["TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode"],
     target_object_types: ["TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"],
-    description: "上游节点只控制目标节点的执行顺序，目标节点不会消费其输出。",
+    description: i18n.t("freezone.canvasEdge.sequence.description"),
     instruction: "Use only for execution ordering when the target must wait for the source but must not send the source output to a generation provider. Never use it for actual prompts, media references, or composition inputs.",
   },
   {
@@ -65,7 +66,7 @@ export const CANVAS_LINK_TYPE_CATALOG: CanvasLinkTypeCatalogItem[] = [
     category: "generation_input",
     source_object_types: ["ImageNode", "VideoNode", "AudioNode"],
     target_object_types: ["TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"],
-    description: "上游图片/视频/音频作为目标节点的媒体输入或参考素材。",
+    description: i18n.t("freezone.canvasEdge.reference.description"),
     instruction: "Use for image/video/audio inputs or references consumed by the target node, including image-to-video, image editing, visual references, media analysis, audio separation, or direct media processing.",
   },
   {
@@ -73,7 +74,7 @@ export const CANVAS_LINK_TYPE_CATALOG: CanvasLinkTypeCatalogItem[] = [
     category: "derivation",
     source_object_types: ["ImageNode", "VideoNode", "AudioNode"],
     target_object_types: ["ImageNode", "VideoNode", "AudioNode"],
-    description: "目标媒体是从上游媒体编辑、裁剪、高清、变体、导出或修复得到的结果。",
+    description: i18n.t("freezone.canvasEdge.derivation.description"),
     instruction: "Use for produced derivative artifacts, not for a generator merely using a reference.",
   },
   {
@@ -81,7 +82,7 @@ export const CANVAS_LINK_TYPE_CATALOG: CanvasLinkTypeCatalogItem[] = [
     category: "composition",
     source_object_types: ["VideoNode", "AudioNode"],
     target_object_types: ["VideoNode"],
-    description: "上游文本、图片、视频或音频片段进入目标合成/时间线节点，作为最终成片素材。",
+    description: i18n.t("freezone.canvasEdge.composition.description"),
     instruction: "Use primarily for inputs into videoComposeNode or other composition/timeline nodes.",
   },
 ];

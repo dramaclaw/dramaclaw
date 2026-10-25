@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Check, X } from 'lucide-react';
 
 import type { FreezoneStyleTemplate } from '@/api/ops';
@@ -18,6 +19,7 @@ export function StylePickerPopover({
   onSelect,
   onClose,
 }: StylePickerPopoverProps) {
+  const { t } = useTranslation();
   const { templates, isLoading } = useFreezoneStyleTemplates();
 
   // Stable groups: backend `category` first (insertion order), un-categorized
@@ -34,10 +36,10 @@ export function StylePickerPopover({
     }
     return Array.from(buckets.entries()).map(([key, items]) => ({
       key,
-      label: key === '__other__' ? '其他' : key,
+      label: key === '__other__' ? t('node.stylePicker.other') : key,
       items,
     }));
-  }, [templates]);
+  }, [t, templates]);
 
   return (
     <div
@@ -46,7 +48,7 @@ export function StylePickerPopover({
       onClick={(event) => event.stopPropagation()}
     >
       <div className="flex h-11 shrink-0 items-center justify-between px-4">
-        <span className="text-sm font-medium text-text-dark">风格</span>
+        <span className="text-sm font-medium text-text-dark">{t('node.stylePicker.title')}</span>
         <div className="flex items-center gap-1">
           {selectedId && (
             <button
@@ -54,14 +56,14 @@ export function StylePickerPopover({
               onClick={() => onSelect(null)}
               className="h-7 rounded-md px-2 text-[11px] font-medium text-text-dark/78 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
             >
-              清除
+              {t('node.stylePicker.clear')}
             </button>
           )}
           <button
             type="button"
             onClick={onClose}
             className="flex size-6 items-center justify-center rounded-md text-text-muted/90 transition-colors hover:bg-white/[0.08] hover:text-text-dark"
-            aria-label="关闭"
+            aria-label={t('node.stylePicker.close')}
           >
             <X className="size-3.5" />
           </button>
@@ -71,12 +73,12 @@ export function StylePickerPopover({
       <div className="ui-scrollbar nowheel flex-1 overflow-y-auto px-4 pb-3 pt-1">
         {isLoading && templates.length === 0 && (
           <div className="flex h-20 items-center justify-center text-[11px] text-text-muted">
-            加载中…
+            {t('node.stylePicker.loading')}
           </div>
         )}
         {!isLoading && templates.length === 0 && (
           <div className="flex h-20 items-center justify-center text-[11px] text-text-muted">
-            暂无风格模板
+            {t('node.stylePicker.empty')}
           </div>
         )}
         {grouped.map((group) => (

@@ -85,16 +85,16 @@ export function AssetBoardImageGenForm({ nodeId }: { nodeId: string }): ReactEle
               同一 patch）。仅在存在自带参考图时出现。 */}
           {referenceImageUrl && (
             <div className="flex shrink-0 items-center gap-1.5 pl-3 pt-3">
-              <div className={NODE_REFERENCE_MEDIA_CHIP_CLASS} title="节点自带参考图">
+              <div className={NODE_REFERENCE_MEDIA_CHIP_CLASS} title={t('assetBoard.ownReferenceImage')}>
                 <img
                   src={resolveImageDisplayUrl(referenceImageUrl)}
-                  alt="参考图"
+                  alt={t('assetBoard.referenceMaterials')}
                   className="h-full w-full object-cover"
                   draggable={false}
                 />
                 <button
                   type="button"
-                  title="移除参考图"
+                  title={t('assetBoard.removeReferenceImage')}
                   className={NODE_REFERENCE_MEDIA_DETACH_CLASS}
                   onClick={() => updateNodeData(nodeId, { referenceImageUrl: null })}
                 >
