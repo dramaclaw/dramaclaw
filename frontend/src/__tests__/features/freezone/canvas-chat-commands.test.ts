@@ -6570,6 +6570,76 @@ describe("canvas chat commands", () => {
     }
   });
 
+  it("runs only the Recipe target with an external video source", async () => {
+    const store = useCanvasStore.getState();
+    const sourceId = store.addNode(
+      CANVAS_NODE_TYPES.video,
+      { x: 0, y: 0 },
+      { prompt: "", videoUrl: "/static/project/previz.mp4" },
+    );
+    const targetId = store.addNode(
+      CANVAS_NODE_TYPES.video,
+      { x: 360, y: 0 },
+      { prompt: "沿用录制视频的运镜", genMode: "allReference" },
+    );
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+      if (!payload.requestId) return;
+      store.updateNodeData(payload.nodeId, { videoUrl: "/static/project/result.mp4" });
+      canvasEventBus.publish("freezone/node-action-result", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+        status: "success",
+      });
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [
+            { type: "create_edge", source: sourceId, target: targetId,
+              link_type: "media_input_for",
+              expected_source_video_url: "/static/project/previz.mp4" },
+            { type: "run_workflow", node_ids: [targetId] },
+          ],
+        }]),
+        { canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+      expect(result.errors).toEqual([]);
+      expect(events).toEqual([targetId]);
+      expect(useCanvasStore.getState().edges.find((edge) => edge.source === sourceId)?.data)
+        .toMatchObject({ workflowExternalInputVideoUrl: "/static/project/previz.mp4" });
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("rejects an external video source replaced before the edge is created", async () => {
+    const store = useCanvasStore.getState();
+    const sourceId = store.addNode(
+      CANVAS_NODE_TYPES.video,
+      { x: 0, y: 0 },
+      { prompt: "", videoUrl: "/static/project/rerecorded.mp4" },
+    );
+    const targetId = store.addNode(CANVAS_NODE_TYPES.video, { x: 360, y: 0 }, { prompt: "运镜" });
+    const result = await applyCanvasChatCommandsAsync(
+      extractCanvasChatCommandEnvelopes([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [
+          { type: "create_edge", source: sourceId, target: targetId,
+            link_type: "media_input_for",
+            expected_source_video_url: "/static/project/previz.mp4" },
+        ],
+      }]),
+      { canvasId: "canvas-a", actionTimeoutMs: 100 },
+    );
+    expect(result.errors.join("\n")).toContain("workflow source video changed");
+    expect(useCanvasStore.getState().edges.some((edge) => edge.source === sourceId)).toBe(false);
+  });
+
   it("skips downstream queued actions when an upstream generation fails", async () => {
     const store = useCanvasStore.getState();
     const imageNodeId = store.addNode(

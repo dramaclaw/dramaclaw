@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from novelvideo.freezone.workflow_schema import (
+    EXTERNAL_INPUT_NODE_TYPES,
     LINK_TYPE_VALUES as PORTABLE_LINK_TYPE_VALUES,
     NODE_TYPE_VALUES,
 )
@@ -212,7 +213,8 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             return {"ok": False, "status": "invalid_external_input", "commands": [],
                     "skipped_edges": [], "warnings": [], "error": "external input alias is invalid"}
         node_by_plan_id[alias] = {
-            "plan_id": alias, "client_id": node_id, "node_type": "imageGenNode",
+            "plan_id": alias, "client_id": node_id,
+            "node_type": EXTERNAL_INPUT_NODE_TYPES.get(source.get("media_kind"), "imageGenNode"),
             "raw": source, "external": True,
         }
         external_input_aliases.add(alias)
@@ -357,7 +359,9 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
         if source.get("external"):
             media_urls = args.get("external_media_urls") or {}
             if isinstance(media_urls, dict) and media_urls.get(source["plan_id"]):
-                command["expected_source_image_url"] = media_urls[source["plan_id"]]
+                field = ("expected_source_video_url" if source["node_type"] == "videoNode"
+                         else "expected_source_image_url")
+                command[field] = media_urls[source["plan_id"]]
         commands.append(command)
 
     groups = _groups(

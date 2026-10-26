@@ -15241,7 +15241,7 @@ async def _resolve_workflow_draft_external_inputs(
     compiled: dict, *, state_dir: Path, canvas_id: str, project_id: str,
     expected: dict | None = None, require_verified: bool = False,
 ) -> dict:
-    from novelvideo.freezone.workflow_external_inputs import resolve_external_image_inputs
+    from novelvideo.freezone.workflow_external_inputs import resolve_external_inputs
 
     plan = compiled.get("plan") or {}
     if not plan.get("external_inputs"):
@@ -15250,11 +15250,20 @@ async def _resolve_workflow_draft_external_inputs(
         raise HTTPException(409, "workflow external input binding is missing")
     canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
     try:
-        return resolve_external_image_inputs(
+        return resolve_external_inputs(
             plan, canvas, project_id=project_id, canvas_id=canvas_id, expected=expected,
         )
     except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
+        raise HTTPException(409, {
+            "code": "workflow_external_input_unavailable",
+            "error": str(exc),
+            # Agents have dropped the user's named source and claimed it was used.
+            "message": (
+                "Do not drop this input silently. Fix external_inputs as the error says "
+                "and prepare again; if it still cannot be used, tell the user which "
+                "referenced media was not used and why."
+            ),
+        }) from exc
 
 
 async def _validate_workflow_draft_story_targets(

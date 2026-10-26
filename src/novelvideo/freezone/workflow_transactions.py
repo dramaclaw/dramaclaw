@@ -16,6 +16,7 @@ from novelvideo.freezone.agent_workflows.catalog import (
 )
 from novelvideo.freezone.agent_workflows.drafts import build_workflow_draft_patch
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
+from novelvideo.freezone.workflow_schema import EXTERNAL_INPUT_NODE_TYPES
 from novelvideo.freezone.workflow_semantics import text_edge_error
 
 CONTRACT_VERSION = "dramaclaw.workflow-operations.v1"
@@ -167,8 +168,12 @@ def bind_workflow_inputs(plan: dict, bindings: Any) -> dict:
     nodes = _node_index(plan)
     external_ids: set[str] = set()
     for source in plan.get("external_inputs") or []:
-        if isinstance(source, dict) and source.get("media_kind") == "image":
-            nodes[source["id"]] = {"id": source["id"], "node_type": "imageGenNode", "data": {}}
+        node_type = (
+            EXTERNAL_INPUT_NODE_TYPES.get(source.get("media_kind"))
+            if isinstance(source, dict) else None
+        )
+        if node_type:
+            nodes[source["id"]] = {"id": source["id"], "node_type": node_type, "data": {}}
             external_ids.add(source["id"])
     for binding in bindings:
         if not isinstance(binding, dict) or set(binding) - {
@@ -184,7 +189,7 @@ def bind_workflow_inputs(plan: dict, bindings: Any) -> dict:
         if not isinstance(source_id, str) or not isinstance(target_id, str):
             raise WorkflowOperationError("binding source and target must be node ids")
         if target_id in external_ids or (source_id in external_ids and binding.get("usage") != "reference"):
-            raise WorkflowOperationError("external image input only supports outgoing reference usage")
+            raise WorkflowOperationError("external input only supports outgoing reference usage")
         source, target = nodes.get(source_id), nodes.get(target_id)
         if source is None or target is None or source_id == target_id:
             raise WorkflowOperationError(

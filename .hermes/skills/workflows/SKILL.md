@@ -36,7 +36,9 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 用户指定已有画布图片作为 Recipe 参考图时，在 intent 或 Plan 顶层声明
 `external_inputs: [{"id":"source_image","node_id":"真实画布节点 ID","media_kind":"image"}]`，
 并在目标 item 的 `reference_inputs` 或 Plan 的 `media_input_for` 边中引用 `source_image`。
-不要把已有图片写进 `nodes`、复制源节点或手填图片 URL；服务端在准备和确认时校验源图。
+已有视频（videoNode 或装视频的上传节点）声明为 `"media_kind":"video"`，只能参考到 videoNode。
+不要把已有图片写进 `nodes`、复制源节点或手填图片 URL；服务端在准备和确认时校验源素材。
+外部输入被拒时按报错修正；不得悄悄去掉用户指定的素材，确实用不上时必须在回复里告诉用户。
 
 如果用户只是咨询或分析，只展示一般性说明，不创建草稿或写画布。用户提出具体创建需求后，先读取当前已选的唯一 Skill 紧凑规划包并生成结构化 `intent`，再调用 `freezone_prepare_workflow_draft`。只有用户明确要求 Skill 蓝图无法表达的自定义拓扑，或已有互动故事需要按已确认资产用途制作角色／场景图、按逐镜头映射制作分镜图时，才使用 `freezone_prepare_workflow_plan_draft(plan=...)`，并继续走同一草稿确认入口；后一种 Plan 只生成图片，不把现有视频节点纳入图中。
 

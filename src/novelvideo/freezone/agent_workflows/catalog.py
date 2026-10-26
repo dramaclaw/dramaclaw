@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.freezone.workflow_schema import (
+    EXTERNAL_INPUT_NODE_TYPES,
     PORTABLE_VIDEO_GENERATION_MODES,
     WORKFLOW_INTENT_SCHEMA_VERSION,
     WORKFLOW_PLAN_SCHEMA_VERSION,
@@ -2943,10 +2944,13 @@ def _compile_dynamic_recipe_items_intent(
         alias = _text(source.get("id"))
         if (not alias or _safe_id(alias) != alias or alias == "workflow_input"
                 or alias in external_ids or not _text(source.get("node_id"))
-                or source.get("media_kind") != "image"):
-            return _intent_error("invalid external image input", path=f"external_inputs.{index}")
+                or source.get("media_kind") not in EXTERNAL_INPUT_NODE_TYPES):
+            return _intent_error(
+                "invalid external input; media_kind must be image or video",
+                path=f"external_inputs.{index}",
+            )
         external_ids.add(alias)
-        node_types[alias] = "imageGenNode"
+        node_types[alias] = EXTERNAL_INPUT_NODE_TYPES[source["media_kind"]]
     phases: list[str] = []
     include_audio = _intent_bool(intent, "include_audio", True)
     planner = intent.get("planner") if isinstance(intent.get("planner"), dict) else {}

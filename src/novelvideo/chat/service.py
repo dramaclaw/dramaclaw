@@ -275,7 +275,9 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "preserve it as an external workflow input: use Workflow Skill discovery and draft with "
     "external_inputs and reference_inputs; never use freezone_get_node_action_catalog, "
     "freezone_run_node_action, freezone_add_next_node, or freezone_emit_canvas_command for that "
-    "request, and do not recreate or copy the source node. "
+    "request, and do not recreate or copy the source node. Declare an existing video with "
+    "media_kind video. Never drop a source the user named and still claim it was used; if it "
+    "cannot be used, say which one and why. "
     "If the user asks only to edit fields on one existing standalone node without generating, "
     "use freezone_update_node_data; do not call freezone_run_node_action. "
     "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
@@ -855,7 +857,9 @@ Canvas write contract:
   it as an external workflow input: use Workflow Skill discovery and draft with external_inputs and
   reference_inputs; never use freezone_get_node_action_catalog, freezone_run_node_action,
   freezone_add_next_node, or freezone_emit_canvas_command for that request, and do not recreate or
-  copy the source node.
+  copy the source node. Declare an existing video with media_kind video.
+- Never drop a reference the user named and still claim it was used. If a named source cannot be
+  used, say in the reply which one and why.
 - If the user asks only to edit fields on one existing standalone node without generating, use
   freezone_update_node_data; do not call freezone_run_node_action.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never

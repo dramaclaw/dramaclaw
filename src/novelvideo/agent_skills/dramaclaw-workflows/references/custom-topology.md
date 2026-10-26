@@ -95,8 +95,12 @@ order) stays an agent-authored draft with the difference recorded in
    or `respectSectionsDurations`; if supported by the live node schema, put them under `data`.
 4. Put all new nodes and semantic edges in the same plan. To consume an existing canvas image,
    declare `external_inputs: [{"id":"source_image","node_id":"<existing canvas node id>","media_kind":"image"}]`
-   and use `source_image` as the source of a `media_input_for` edge. The server verifies the real
-   node and its media at prepare and confirmation. Do not copy the source into `nodes`, put its URL
+   and use `source_image` as the source of a `media_input_for` edge. An existing video (a
+   `videoNode`, or an upload holding a video) uses `"media_kind":"video"` and may only feed a
+   `videoNode` in a reference-capable mode such as `allReference`. The server verifies the real
+   node and its media at prepare and confirmation. If it rejects an external input, fix the
+   declaration as the error says; never drop a source the user named and still claim it was used.
+   When it cannot be used, say so in the reply. Do not copy the source into `nodes`, put its URL
    in the target data, or include it in `run_workflow` selection. Other references use logical plan
    IDs; the compiler turns new nodes into same-batch `client_id` values.
    Before choosing an edge `link_type`, use the injected compatibility information or call

@@ -33,7 +33,7 @@ describe("workflow draft continuation", () => {
       {id: "cup", node_id: "red-cup-source", display_name: "红杯原图"},
     ]}});
     render(<WorkflowDraftContinuation {...props()} />);
-    expect(await screen.findByText("参考图片: 红杯原图")).toBeInTheDocument();
+    expect(await screen.findByText("参考素材: 红杯原图")).toBeInTheDocument();
   });
   it("recovers a qualified MCP draft result but ignores failures and unrelated tools", () => {
     expect(latestWorkflowDraftId(messages())).toBe("draft-a");
