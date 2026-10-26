@@ -88,6 +88,7 @@ def test_freezone_policy_names_are_published_by_the_freezone_plugin() -> None:
         tool_policy.FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS,
         tool_policy.FREEZONE_WORKFLOW_DRAFT_TOOLS,
         tool_policy.AGENT_PRODUCT_RESULT_TOOLS,
+        tool_policy.FREEZONE_STUDIO_TOOLS,
     ):
         assert set(policy) <= published, sorted(set(policy) - published)
 
@@ -122,6 +123,9 @@ def test_policy_sets_are_internally_consistent() -> None:
         < tool_policy.FREEZONE_WORKFLOW_DRAFT_TOOLS
     )
     assert "freezone_confirm_workflow_draft" in tool_policy.FREEZONE_CANVAS_WRITE_TOOLS
+    # Studio tools cut the film server-side; they are never bridge-backed canvas writes.
+    assert not (tool_policy.FREEZONE_STUDIO_TOOLS & tool_policy.FREEZONE_CANVAS_WRITE_TOOLS)
+    assert not (tool_policy.FREEZONE_STUDIO_TOOLS & tool_policy.AGENT_PRODUCT_RESULT_TOOLS)
     assert not (tool_policy.DISPLAY_TOOL_NAMES & tool_policy.DRAMACLAW_WRITE_TOOLS)
 
 

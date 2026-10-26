@@ -443,6 +443,10 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "run_freezone_video_compose": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
+    # Studio 导出：只打本机回环的 OpenFilm Studio 进程，由它的 Chromium + ffmpeg 落盘。
+    "run_freezone_studio_export": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
+    ),
     "run_freezone_video_erase": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
@@ -1484,6 +1488,7 @@ async def _run_freezone_video_compose_async(
     from novelvideo.api.deps import make_static_url_for_context
     from novelvideo.freezone.jobs import (
         ensure_freezone_dirs,
+        run_freezone_studio_export,
         run_freezone_video_compose,
     )
 
@@ -1492,21 +1497,37 @@ async def _run_freezone_video_compose_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     cover_url = str(payload.get("cover_url") or payload.get("coverUrl") or "").strip()
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_video_compose", job_id, 0.1, "开始合成视频时间线...")
-    output_path = await _call_freezone_leaf(
-        envelope,
-        run_freezone_video_compose,
-        "run_freezone_video_compose",
-        project_dir=project_dir,
-        job_id=job_id,
-        title=str(payload.get("title") or ""),
-        canvas_id=str(payload.get("canvas_id") or ""),
-        resolution=str(payload.get("resolution") or "1080p"),
-        fps=int(payload.get("fps") or 30),
-        background_color=str(payload.get("background_color") or "#000000"),
-        keep_original_audio=bool(payload.get("keep_original_audio", True)),
-        tracks=list(payload.get("tracks") or []),
-    )
+    studio_film_dir = str(payload.get("studio_film_dir") or "").strip()
+    if studio_film_dir:
+        # The node was cut in the OpenFilm workspace (by hand or by the agent):
+        # the film is the cut, so Studio renders it. Untouched nodes keep the
+        # timeline path below unchanged.
+        _update(ctx, "freezone_video_compose", job_id, 0.1, "开始导出剪辑成片...")
+        output_path = await _call_freezone_leaf(
+            envelope,
+            run_freezone_studio_export,
+            "run_freezone_studio_export",
+            project_dir=project_dir,
+            job_id=job_id,
+            film_dir=studio_film_dir,
+            fps=int(payload.get("fps") or 30),
+        )
+    else:
+        _update(ctx, "freezone_video_compose", job_id, 0.1, "开始合成视频时间线...")
+        output_path = await _call_freezone_leaf(
+            envelope,
+            run_freezone_video_compose,
+            "run_freezone_video_compose",
+            project_dir=project_dir,
+            job_id=job_id,
+            title=str(payload.get("title") or ""),
+            canvas_id=str(payload.get("canvas_id") or ""),
+            resolution=str(payload.get("resolution") or "1080p"),
+            fps=int(payload.get("fps") or 30),
+            background_color=str(payload.get("background_color") or "#000000"),
+            keep_original_audio=bool(payload.get("keep_original_audio", True)),
+            tracks=list(payload.get("tracks") or []),
+        )
     rel = output_path.relative_to(project_dir).as_posix()
     result = {
         "job_id": job_id,

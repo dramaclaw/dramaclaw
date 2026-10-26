@@ -35,6 +35,13 @@ def freezone_canvas_id_from_context(
     )
 
 
+def freezone_compose_node_id_from_context(
+    surface_context: dict[str, Any] | None,
+) -> str:
+    """The videoComposeNode whose compose workspace the user is in, else ``""``."""
+    return str((surface_context or {}).get("freezone_compose_node_id") or "").strip()
+
+
 def freezone_canvas_execution_mode_from_context(
     surface_context: dict[str, Any] | None,
 ) -> str:
@@ -154,6 +161,20 @@ FREEZONE_WORKFLOW_DRAFT_TOOLS: frozenset[str] = (
     )
 )
 """Workflow draft tools. Repeated reads of these are legitimate and exempt from the read guard."""
+
+FREEZONE_STUDIO_TOOLS: frozenset[str] = frozenset(
+    {
+        "freezone_studio_get_film",
+        "freezone_studio_edit_film",
+        "freezone_studio_import_media",
+        "freezone_studio_export_film",
+    }
+)
+"""Compose-workspace tools that read and cut a node's OpenFilm film server-side.
+
+They edit the film through Studio and never touch canvas nodes, so they are not
+canvas writes: no browser bridge receipt, no draft, no product operation.
+"""
 
 AGENT_PRODUCT_RESULT_TOOLS: frozenset[str] = frozenset(
     {

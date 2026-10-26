@@ -19,6 +19,7 @@ import time
 import uuid
 from copy import deepcopy
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlparse
@@ -9797,6 +9798,15 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "request",
     ),
     "freezone_get_link_type_catalog": ("link_types", "count"),
+    "freezone_studio_get_film": ("node_id", "rev", "problems", "film", "media", "studio"),
+    "freezone_studio_edit_film": (
+        "node_id", "rev", "rebased", "ops_applied", "film", "media",
+    ),
+    "freezone_studio_import_media": ("node_id", "asset_path", "kind", "media", "source"),
+    "freezone_studio_export_film": (
+        "node_id", "task_type", "job_id", "task_key", "task_episode", "task_scope",
+        "backend", "queue", "task_id",
+    ),
 }
 
 
@@ -9816,6 +9826,10 @@ _SKILL_STUDIO_FRONTEND_REQUIRED = (
 
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
     **_STORY_SUCCESS_REQUIRED,
+    "freezone_studio_get_film": ("rev", "film"),
+    "freezone_studio_edit_film": ("rev", "film"),
+    "freezone_studio_import_media": ("asset_path",),
+    "freezone_studio_export_film": ("job_id", "task_key"),
     "freezone_observe_workflow_run": (
         "run_id",
         "run_status",
@@ -11446,6 +11460,280 @@ _STORY_CANVAS_TOOLS = (
 ) if _INCLUDE_INTERACTIVE_STORY else ()
 
 
+
+# ---------------------------------------------------------------------------
+# Compose workspace: the node's OpenFilm film, edited through Studio by clip id.
+# These are server-side edits of the film file, not canvas writes: no bridge
+# receipt, no draft, no product operation, and the node's draftTimeline is
+# never touched.
+# ---------------------------------------------------------------------------
+
+_STUDIO_OPS_SCHEMA = {
+    "type": "array",
+    "minItems": 1,
+    "maxItems": 200,
+    "description": (
+        "OpenFilm Studio operations, applied in order, each naming a clip by the id "
+        "returned by freezone_studio_get_film. Times are film seconds. Shapes: "
+        "{op:'set', clip, field, value} (field: at | time:[in,out] source seconds | "
+        "speed 0.25-4 | volume | box {x,y,w,h} | overrides; value null removes); "
+        "{op:'move', clip, at, track?}; "
+        "{op:'insert', clip:{src:'assets/<file>', at, time?:[in,out], volume?, speed?}, "
+        "track? | newTrack?, after?}; "
+        "{op:'remove', clip}; "
+        "{op:'split', clip, at, time:[in,cut], restTime:[cut,out]}; "
+        "{op:'props', edits:[{clip, prop:'fade', value:[in,out]}]}; "
+        "{op:'track', track, field:'locked'|'hidden'|'muted', value}; "
+        "{op:'reorder', from, to}; {op:'stage', w, h}."
+    ),
+    "items": {
+        "type": "object",
+        "properties": {"op": {"type": "string", "minLength": 1}},
+        "required": ["op"],
+        "additionalProperties": True,
+    },
+}
+
+_STUDIO_NODE_PROP = {
+    "node_id": {
+        "type": "string",
+        "description": (
+            "The videoComposeNode id, exactly as compose_node_id in the "
+            "[FREEZONE_COMPOSE_WORKSPACE] context block."
+        ),
+    },
+}
+
+
+def _studio_scope(args: dict[str, Any]) -> tuple[str, str, str]:
+    project = _project_from_args(args)
+    canvas = _canvas_from_args(args)
+    node_id = str(args.get("node_id") or "").strip()
+    if not node_id:
+        raise ValueError(
+            "node_id is required: the videoComposeNode open in the compose workspace"
+        )
+    return project, canvas, node_id
+
+
+def _studio_api_path(project: str, canvas: str, node_id: str, suffix: str) -> str:
+    return (
+        f"/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}"
+        f"/compose/{quote(node_id, safe='')}/studio/{suffix}"
+    )
+
+
+def _studio_tool_result(response: dict[str, Any], *, node_id: str) -> dict[str, Any]:
+    result = {key: value for key, value in response.items() if key != "status_code"}
+    result.setdefault("node_id", node_id)
+    if "ok" not in result:
+        result["ok"] = 200 <= int(response.get("status_code") or 0) < 300
+    if not result.get("status"):
+        result["status"] = "ok" if result.get("ok") else "failed"
+    if not result.get("ok") and int(response.get("status_code") or 0) == 404:
+        result.setdefault(
+            "agent_instruction",
+            "The compose node has no Studio film yet. Ask the user to open the node's "
+            "compose workspace once; do not rebuild the timeline through canvas commands.",
+        )
+    return result
+
+
+def _handle_studio_tool(
+    args: dict[str, Any],
+    *,
+    tool_name: str,
+    method: str,
+    suffix: str,
+    body: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> str:
+    try:
+        project, canvas, node_id = _studio_scope(args)
+    except ValueError as exc:
+        return _structured_tool_result(
+            {"ok": False, "status": "invalid_arguments", "code": "invalid_arguments", "error": str(exc)},
+            tool_name=tool_name,
+        )
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return _structured_tool_result(mismatch, tool_name=tool_name)
+    try:
+        payload = body(args) if body is not None else None
+    except ValueError as exc:
+        return _structured_tool_result(
+            {"ok": False, "status": "invalid_arguments", "code": "invalid_arguments", "error": str(exc)},
+            tool_name=tool_name,
+        )
+    response = _request(
+        method, _studio_api_path(project, canvas, node_id, suffix), body=payload
+    )
+    return _structured_tool_result(
+        _studio_tool_result(response, node_id=node_id), tool_name=tool_name
+    )
+
+
+def _handle_studio_get_film(args: dict[str, Any], **_: Any) -> str:
+    return _handle_studio_tool(
+        args, tool_name="freezone_studio_get_film", method="GET", suffix="film"
+    )
+
+
+def _studio_edit_body(args: dict[str, Any]) -> dict[str, Any]:
+    ops = args.get("ops")
+    if not isinstance(ops, list) or not ops:
+        raise ValueError("ops must be a non-empty list of Studio operations")
+    base_rev = str(args.get("base_rev") or "").strip()
+    if not base_rev:
+        raise ValueError(
+            "base_rev is required: pass the rev returned by freezone_studio_get_film"
+        )
+    return {"base_rev": base_rev, "ops": ops}
+
+
+def _handle_studio_edit_film(args: dict[str, Any], **_: Any) -> str:
+    return _handle_studio_tool(
+        args,
+        tool_name="freezone_studio_edit_film",
+        method="POST",
+        suffix="edit",
+        body=_studio_edit_body,
+    )
+
+
+def _studio_import_body(args: dict[str, Any]) -> dict[str, Any]:
+    source_url = str(args.get("source_url") or "").strip()
+    source_node_id = str(args.get("source_node_id") or "").strip()
+    if not source_url and not source_node_id:
+        raise ValueError("source_node_id or source_url is required")
+    return {
+        "source_url": source_url or None,
+        "source_node_id": source_node_id or None,
+        "label": str(args.get("label") or "").strip()[:120],
+    }
+
+
+def _handle_studio_import_media(args: dict[str, Any], **_: Any) -> str:
+    return _handle_studio_tool(
+        args,
+        tool_name="freezone_studio_import_media",
+        method="POST",
+        suffix="media",
+        body=_studio_import_body,
+    )
+
+
+def _studio_export_body(args: dict[str, Any]) -> dict[str, Any]:
+    fps = args.get("fps")
+    body: dict[str, Any] = {"title": str(args.get("title") or "").strip()[:200]}
+    if fps is not None:
+        if isinstance(fps, bool) or not isinstance(fps, (int, float)) or not 1 <= fps <= 60:
+            raise ValueError("fps must be a number from 1 to 60")
+        body["fps"] = int(fps)
+    return body
+
+
+def _handle_studio_export_film(args: dict[str, Any], **_: Any) -> str:
+    return _handle_studio_tool(
+        args,
+        tool_name="freezone_studio_export_film",
+        method="POST",
+        suffix="export",
+        body=_studio_export_body,
+    )
+
+
+_STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
+    (
+        "freezone_studio_get_film",
+        _schema(
+            "freezone_studio_get_film",
+            "Compose workspace only: read the OpenFilm film of the open videoComposeNode. "
+            "Returns the film rev, the stage size, every track with its clips by id (kind, "
+            "src, at, time=[in,out] source seconds, duration, end, speed, volume, fade, box) "
+            "and each clip's canvas source (item_id, node_id, label), plus probed media "
+            "durations. Always call this before freezone_studio_edit_film and whenever an "
+            "edit reports a conflict. Read-only.",
+            {**_SCOPE_PROPS, **_STUDIO_NODE_PROP},
+            ["node_id"],
+            reject_unknown=True,
+        ),
+        _handle_studio_get_film,
+    ),
+    (
+        "freezone_studio_edit_film",
+        _schema(
+            "freezone_studio_edit_film",
+            "Compose workspace only: cut the open videoComposeNode's film through Studio with "
+            "clip-id operations (trim, move, reorder, split, remove, insert, fade, volume, "
+            "speed, track flags). Pass base_rev from the latest freezone_studio_get_film. The "
+            "person sees the change in the editor at once and can undo it. On "
+            "studio_edit_conflict re-read the film and rebuild the operations from the new "
+            "clip ids; on studio_edit_invalid fix the operations. Never use canvas commands "
+            "or draftTimeline to change the cut.",
+            {
+                **_SCOPE_PROPS,
+                **_STUDIO_NODE_PROP,
+                "base_rev": {
+                    "type": "string",
+                    "description": "rev returned by the latest freezone_studio_get_film.",
+                },
+                "ops": _STUDIO_OPS_SCHEMA,
+            },
+            ["node_id", "base_rev", "ops"],
+            reject_unknown=True,
+        ),
+        _handle_studio_edit_film,
+    ),
+    (
+        "freezone_studio_import_media",
+        _schema(
+            "freezone_studio_import_media",
+            "Compose workspace only: copy a canvas node's finished media (video, audio or "
+            "image) or a project media URL into the film's assets. Returns asset_path and the "
+            "probed duration; then insert it with freezone_studio_edit_film "
+            "({op:'insert', clip:{src: asset_path, at, time}}). Use source_node_id for "
+            "canvas nodes; it does not create or change canvas nodes.",
+            {
+                **_SCOPE_PROPS,
+                **_STUDIO_NODE_PROP,
+                "source_node_id": {
+                    "type": "string",
+                    "description": "Canvas node whose finished media to import.",
+                },
+                "source_url": {
+                    "type": "string",
+                    "description": "Project media URL, when the media is not a canvas node's.",
+                },
+                "label": {"type": "string", "description": "Optional display name."},
+            },
+            ["node_id"],
+            reject_unknown=True,
+        ),
+        _handle_studio_import_media,
+    ),
+    (
+        "freezone_studio_export_film",
+        _schema(
+            "freezone_studio_export_film",
+            "Compose workspace only: render the open videoComposeNode's film to the final "
+            "video through Studio. Starts an asynchronous export task and returns job_id / "
+            "task_key; the finished video is written to the compose node automatically. Call "
+            "it once per export request, only when the user asks to export, render or "
+            "produce the final video; do not poll.",
+            {
+                **_SCOPE_PROPS,
+                **_STUDIO_NODE_PROP,
+                "fps": {"type": "integer", "minimum": 1, "maximum": 60},
+                "title": {"type": "string", "description": "Optional title for the export."},
+            },
+            ["node_id"],
+            reject_unknown=True,
+        ),
+        _handle_studio_export_film,
+    ),
+)
+
+
 TOOLS = (
     *_INTERACTIVE_STORY_TOOLS,
     *_STORY_CANVAS_TOOLS,
@@ -12848,6 +13136,7 @@ TOOLS = (
         ),
         _handle_run_node_action,
     ),
+    *_STUDIO_TOOLS,
 )
 
 

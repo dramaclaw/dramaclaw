@@ -8802,3 +8802,41 @@ async def test_codex_freezone_turn_never_sends_a_second_prompt(
     # A requested write with no receipt is reported by the host, whatever the
     # model said; the claim is never delivered as the outcome.
     assert not result["content"].startswith("图片节点已创建成功")
+
+
+def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+
+    inside = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "把第二段提前一秒",
+        tool_mode="freezone_canvas",
+        surface_context={
+            "freezone_canvas_id": "canvas-a",
+            "freezone_compose_node_id": "compose-1",
+        },
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" in inside
+    assert "compose_node_id: compose-1" in inside
+    assert "freezone_studio_get_film" in inside
+    assert "Never rewrite this node's draftTimeline" in inside
+    assert "canvas_id: canvas-a" in inside
+
+    outside = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "把第二段提前一秒",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" not in outside
+    assert "[FREEZONE_CANVAS_CONTEXT]" in outside
+
+    mainline = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "hello",
+        surface_context={"freezone_compose_node_id": "compose-1"},
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" not in mainline

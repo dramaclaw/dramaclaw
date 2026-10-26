@@ -46,6 +46,7 @@ AUDITED_LOCAL_LEAVES = frozenset(
     {
         "run_freezone_audio_separate",
         "run_freezone_extract_frames",
+        "run_freezone_studio_export",
         "run_freezone_video_compose",
         "run_freezone_video_erase",
     }
@@ -521,7 +522,9 @@ def test_every_dispatch_site_names_a_classified_leaf() -> None:
     # 19 → 20：`origin/staging` 的 f33ac189（#279）带进来的
     # `generate_freezone_text`，正是上一条用例点名预言的那个形状。
     # 白模生成与逐帧拉片均通过 leaf 分发器，合并后共 22 个调用点。
-    assert len(named) == 22
+    # 23：合成节点在 OpenFilm 工作区里剪过时，成片改由 Studio 渲染
+    # （`run_freezone_studio_export`，本机回环，EG-20a）。
+    assert len(named) == 23
     assert set(named) <= set(FREEZONE_LEAF_EGRESS)
 
 
