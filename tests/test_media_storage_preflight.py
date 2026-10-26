@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import requests
 
 from novelvideo.model_gateway_settings import EffectiveMediaRelayConfig
 from novelvideo.ports.local.usage import NoOpUsageMeter
@@ -358,3 +359,44 @@ async def test_bad_storage_prevents_preset_speech_submission(
             api_key="test-gateway-key",
             base_url="https://gateway.test/v1",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "request_error,expected",
+    [
+        (requests.exceptions.ConnectTimeout, "MEDIA_STORAGE_TIMEOUT"),
+        (requests.exceptions.ReadTimeout, "MEDIA_STORAGE_TIMEOUT"),
+        (requests.exceptions.ConnectionError, "MEDIA_STORAGE_UNAVAILABLE"),
+    ],
+)
+async def test_oss_sdk_errors_block_speech_with_safe_classification(
+    monkeypatch, tmp_path, storage_config, request_error, expected
+):
+    from novelvideo.freezone.audio_node import _write_newapi_audio_speech
+
+    monkeypatch.setattr(
+        preflight, "effective_media_storage_config", lambda: storage_config
+    )
+
+    def fail_request(self, method, url, **kwargs):
+        # Let the real oss2 SDK wrap the requests exception in RequestError.
+        raise request_error("test-secret and https://storage.test?signature=secret")
+
+    async def paid_post(self, *args, **kwargs):
+        pytest.fail("paid speech request submitted despite storage failure")
+
+    monkeypatch.setattr(requests.Session, "request", fail_request)
+    monkeypatch.setattr(httpx.AsyncClient, "post", paid_post)
+    with pytest.raises(preflight.MediaStorageUnavailable) as exc:
+        await _write_newapi_audio_speech(
+            output_path=tmp_path / "speech.mp3",
+            model="tts-test",
+            input_text="hello",
+            api_key="test-gateway-key",
+            base_url="https://gateway.test/v1",
+        )
+    assert exc.value.code == expected
+    assert "test-secret" not in str(exc.value)
+    assert "signature" not in str(exc.value)
+    assert preflight._verified_config is None

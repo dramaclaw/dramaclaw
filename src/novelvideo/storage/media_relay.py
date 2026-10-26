@@ -172,7 +172,16 @@ class AliyunOSSRelay:
         )
         if not _is_safe_object_key(key):
             raise ServiceEgressDenied("object-key")
-        self._bucket.put_object(key, data)
+        import oss2
+
+        try:
+            self._bucket.put_object(key, data)
+        except oss2.exceptions.RequestError as exc:
+            from requests.exceptions import Timeout
+
+            if isinstance(exc.exception, Timeout):
+                raise TimeoutError("OSS media relay upload timed out") from None
+            raise
         return self._bucket.sign_url("GET", key, int(ttl), slash_safe=True)
 
     def upload_file(self, path: str | Path, *, ttl: int = 1800) -> str:
