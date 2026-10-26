@@ -55,7 +55,10 @@ import {
   SUPERCHAT_CANVAS_COMMAND_EVENT,
   SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT,
 } from "@/features/superchat/use-superchat";
-import { mcpDirectCanvasApplyEnabled } from "@/lib/runtime-config";
+import {
+  mcpDirectCanvasApplyEnabled,
+  openFilmStudioEnabled,
+} from "@/lib/runtime-config";
 import { SuperChatPanel } from "@/features/superchat/superchat-panel";
 import type { ChatAttachment } from "@/features/superchat/types";
 import { CommitDialog } from "./commit/CommitDialog";
@@ -968,7 +971,7 @@ export function FreezoneShell({
   const [assetPanelCollapsed, setAssetPanelCollapsed] = useState(true);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
   const [viewMode, setViewMode] = useFreezoneViewMode();
-  const composeActive = active && Boolean(composeNodeId);
+  const composeActive = active && openFilmStudioEnabled() && Boolean(composeNodeId);
   const [chatOpen, setChatOpen] = useFreezoneChatVisibility(
     viewMode,
     active,

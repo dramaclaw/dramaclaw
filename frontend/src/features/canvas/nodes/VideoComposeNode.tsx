@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { memo, useCallback, useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Handle,
   Position,
@@ -35,7 +35,11 @@ import {
   NODE_PRIMARY_ACTION_ENABLED_CLASS,
 } from "@/features/canvas/ui/nodeControlStyles";
 import { readUrl, writeUrl } from "@/lib/url-params";
-import { resolveComposeTimeline } from "@/features/canvas/compose/VideoComposeModal";
+import {
+  resolveComposeTimeline,
+  VideoComposeModal,
+} from "@/features/canvas/compose/VideoComposeModal";
+import { openFilmStudioEnabled } from "@/lib/runtime-config";
 import {
   buildComposePayload,
   hasExportableClips,
@@ -78,6 +82,7 @@ export const VideoComposeNode = memo(
     const updateNodeInternals = useUpdateNodeInternals();
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const upstreamNodes = useUpstreamNodes(id);
+    const [isEditorOpen, setEditorOpen] = useState(false);
 
     const seedNodeIds = useMemo(
       () => orderedComposeSeedNodeIds(upstreamNodes, data.compositionInputOrder),
@@ -111,8 +116,14 @@ export const VideoComposeNode = memo(
       if (!project) return false;
       if (!canOpen) return false;
       selectNodeExclusively(id);
-      // 整页工作区由地址栏驱动：刷新、后退都停在同一个合成节点上。
-      writeUrl({ compose: id });
+      if (openFilmStudioEnabled()) {
+        // 本机显式启用时，整页工作区由地址栏驱动：刷新、后退仍停在此节点。
+        writeUrl({ compose: id });
+      } else {
+        // 默认和远程部署保留原时间线编辑器；Studio 只监听后端回环地址，不能把
+        // 该地址交给另一台机器上的浏览器，也不能以公开共享端口绕过租户隔离。
+        setEditorOpen(true);
+      }
       return true;
     }, [canOpen, id, project]);
 
@@ -304,6 +315,39 @@ export const VideoComposeNode = memo(
           </div>
         </div>
 
+        {isEditorOpen && project && (
+          <VideoComposeModal
+            project={project}
+            canvasId={canvasId}
+            seedNodeIds={seedNodeIds}
+            initialTimeline={
+              (data.draftTimeline as ComposeTimelineState | undefined) ?? null
+            }
+            onPersistDraft={(timeline) =>
+              updateNodeData(id, { draftTimeline: timeline })
+            }
+            onClose={() => setEditorOpen(false)}
+            onComposed={(url, coverUrl) => {
+              const store = useCanvasStore.getState();
+              const position = store.findNodePosition(id, 580, 380);
+              const newId = store.addNode(CANVAS_NODE_TYPES.video, position, {
+                videoUrl: url,
+                previewImageUrl: coverUrl,
+                displayName: t("videoCompose.node.resultName"),
+                sourceFileName: null,
+                composeSourceNodeId: id,
+              } as Partial<CanvasNodeData>);
+              store.addEdge(id, newId);
+              selectNodeExclusively(newId);
+              store.requestFocusNode(newId);
+              updateNodeData(id, {
+                resultVideoUrl: url,
+                previewImageUrl: coverUrl,
+              });
+              setEditorOpen(false);
+            }}
+          />
+        )}
       </div>
     );
   },

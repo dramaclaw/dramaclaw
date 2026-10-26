@@ -16,6 +16,7 @@ def test_runtime_config_includes_stable_instance_id(monkeypatch, edition) -> Non
     else:
         monkeypatch.setenv("ST_EDITION", edition)
     monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", raising=False)
 
     app = FastAPI()
     app.include_router(config.router, prefix="/api/v1")
@@ -35,6 +36,7 @@ def test_runtime_config_includes_stable_instance_id(monkeypatch, edition) -> Non
     assert first_data["instance_id"]
     assert second_data["instance_id"] == first_data["instance_id"]
     assert first_data["mcp_direct_canvas_apply"] is False
+    assert first_data["openfilm_studio_enabled"] is False
 
 
 def test_runtime_config_exposes_direct_mcp_canvas_apply(monkeypatch) -> None:
@@ -52,18 +54,38 @@ def test_runtime_config_exposes_direct_mcp_canvas_apply(monkeypatch) -> None:
     assert response.json()["data"]["mcp_direct_canvas_apply"] is True
 
 
+def test_runtime_config_exposes_explicit_openfilm_studio_opt_in(monkeypatch) -> None:
+    from novelvideo.api.routes import config
+    from novelvideo.shared import runtime_env
+
+    monkeypatch.setattr(runtime_env, "load_project_dotenv", lambda override=False: None)
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "true")
+
+    app = FastAPI()
+    app.include_router(config.router, prefix="/api/v1")
+    response = TestClient(app).get("/api/v1/config")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["openfilm_studio_enabled"] is True
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
         (None, None),
         ("", None),
-        ("https://cdn.example.com/browser-models/", "https://cdn.example.com/browser-models"),
+        (
+            "https://cdn.example.com/browser-models/",
+            "https://cdn.example.com/browser-models",
+        ),
         ("  http://127.0.0.1:9000/models  ", "http://127.0.0.1:9000/models"),
         ("cdn.example.com/browser-models", None),
         ("javascript:alert(1)", None),
     ],
 )
-def test_runtime_config_exposes_browser_model_asset_base(monkeypatch, raw, expected) -> None:
+def test_runtime_config_exposes_browser_model_asset_base(
+    monkeypatch, raw, expected
+) -> None:
     monkeypatch.delenv("BROWSER_MODEL_HF_ENDPOINT", raising=False)
     monkeypatch.delenv("BROWSER_ORT_WASM_BASE", raising=False)
     from novelvideo.api.routes import config

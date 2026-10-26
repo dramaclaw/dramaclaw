@@ -122,3 +122,8 @@ editor. What it needs instead, per deployment:
 
 Until those land, treat 「视频合成与剪辑」 as a local/single-tenant feature and say so when someone
 reports "编辑器打不开" on a hosted deployment.
+
+The product therefore keeps the legacy timeline editor by default. Set
+`SUPERTALE_OPENFILM_STUDIO_ENABLED=1` on the DramaClaw API process only for a local or otherwise
+co-located browser deployment to expose the Studio workspace. The flag is delivered through the
+runtime config endpoint, so changing it does not require rebuilding the frontend bundle.
