@@ -100,6 +100,8 @@ export interface UseImageGenerationFormOptions {
    * 记录条；不关心历史的宿主可以不传。
    */
   onGenerationSettled?: () => void;
+  /** 首个任务受理成功时触发（用于节点收起大面板等交互）。 */
+  onTaskAccepted?: () => void;
 }
 
 export interface UseImageGenerationFormResult {
@@ -152,7 +154,8 @@ export function useImageGenerationForm(
   options?: UseImageGenerationFormOptions,
 ): UseImageGenerationFormResult {
   const { t } = useTranslation();
-  const onGenerationSettled = options?.onGenerationSettled;
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   const id = nodeId;
 
   const data = (useCanvasStore(
@@ -658,6 +661,7 @@ export function useImageGenerationForm(
       job_id: string;
     }> = [];
     type GenerationRunOutcome = 'completed' | 'submitted' | 'ignored' | 'handled';
+    let panelCollapsedAfterSubmit = false;
     const runOne = async (runIndex: number): Promise<GenerationRunOutcome> => {
       let taskKey: string | null = null;
       try {
@@ -667,6 +671,10 @@ export function useImageGenerationForm(
           nodeId: id,
         });
         taskKey = ref.task_key;
+        if (!panelCollapsedAfterSubmit && isCurrentGenerationAttempt()) {
+          panelCollapsedAfterSubmit = true;
+          optionsRef.current?.onTaskAccepted?.();
+        }
         // Persist the task handle so a page refresh can resume polling this
         // job. With N concurrent runs on one node only one handle can persist —
         // keep the first (main-image) run's.
@@ -679,7 +687,9 @@ export function useImageGenerationForm(
           job_id: ref.job_id,
         });
         const completeTask = async (): Promise<'completed' | 'ignored'> => {
-          const completed = await awaitTaskCompletion(ref.task_key, projectId);
+          const completed = await awaitTaskCompletion(ref.task_key, projectId, {
+            taskType: ref.task_type,
+          });
           let url = resolveOutputUrl(completed.result as Record<string, unknown> | null);
           if (!url) {
             try {
@@ -843,7 +853,7 @@ export function useImageGenerationForm(
     // Backend records each attempt (success or failure); pull the new entries.
     // Failures are surfaced directly on the failing node (request-id banner),
     // set per-target inside runOne's catch — no global modal.
-    onGenerationSettled?.();
+    optionsRef.current?.onGenerationSettled?.();
     if (completedUrls.length > 0) {
       actionOutput = {
         ...(submittedRefs[0] ? {
@@ -921,7 +931,6 @@ export function useImageGenerationForm(
     updateNodeData,
     upstreamContents,
     upstreamTextJoined,
-    onGenerationSettled,
     t,
   ]);
 

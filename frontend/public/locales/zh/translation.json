@@ -6931,10 +6931,6 @@
       "uploading": "上传中",
       "uploadingEllipsis": "上传中…",
       "removeReference": "移除参考图",
-      "history": {
-        "generatingNew": "新图片生成中…",
-        "back": "返回"
-      },
       "emptyState": {
         "tryLabel": "试试：",
         "imageToImageTitle": "新建一个上游图片节点用作参考",
@@ -7280,10 +7276,6 @@
         "download": "下载这条视频",
         "mainVideo": "主视频",
         "generating": "生成中…"
-      },
-      "history": {
-        "generatingNew": "新视频生成中…",
-        "back": "返回"
       },
       "error": {
         "requestId": "请求ID"

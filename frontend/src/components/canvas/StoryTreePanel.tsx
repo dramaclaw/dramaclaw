@@ -9,6 +9,7 @@ import { isVideoNode } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
 import { selectGroupStoryFlags, selectGroupStoryVariables } from '@/features/canvas/story/storyVariableSelectors';
 import { buildStoryTree, type StoryTreeRow } from '@/features/canvas/story/buildStoryTree';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 
 /** 剧情树面板:故事组的只读俯瞰大纲 + 校验,点击行聚焦画布节点。 */
 export const StoryTreePanel = memo(function StoryTreePanel({
@@ -23,7 +24,6 @@ export const StoryTreePanel = memo(function StoryTreePanel({
   const edges = useCanvasStore((s) => s.edges);
   const variables = useCanvasStore(useShallow((s) => selectGroupStoryVariables(s.nodes, groupId)));
   const flags = useCanvasStore(useShallow((s) => selectGroupStoryFlags(s.nodes, groupId)));
-  const setSelectedNode = useCanvasStore((s) => s.setSelectedNode);
   const requestFocusNode = useCanvasStore((s) => s.requestFocusNode);
 
   const model = useMemo(() => {
@@ -44,7 +44,7 @@ export const StoryTreePanel = memo(function StoryTreePanel({
     });
 
   const focus = (nodeId: string) => {
-    setSelectedNode(nodeId);
+    selectNodeExclusively(nodeId);
     requestFocusNode(nodeId);
   };
 

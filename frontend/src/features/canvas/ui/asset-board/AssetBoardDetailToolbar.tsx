@@ -90,6 +90,7 @@ import type { ComposeTimelineState } from '@/features/canvas/compose/timelineMod
 import { downloadUrlAsFile } from '@/lib/browserDownload';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 
 // 按钮组件本体在 AssetBoardToolbarButton（打断与 AssetBoardImageEditMenu 的循环
 // import）；这里再导出一次，保持既有 import 路径（文本/视频工具条等）不变。
@@ -768,7 +769,7 @@ export function AssetBoardVideoDetailToolbar({
       } as Partial<CanvasNodeData>);
       store.addEdge(node.id, newId);
       if (isCompose) {
-        store.setSelectedNode(newId);
+        selectNodeExclusively(newId);
         store.requestFocusNode(newId);
         store.updateNodeData(node.id, {
           resultVideoUrl: url,

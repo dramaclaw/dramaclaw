@@ -11,6 +11,7 @@ import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
 import { selectGroupStoryFlags, selectGroupStoryVariables } from '@/features/canvas/story/storyVariableSelectors';
 import { lintStory, type StoryIssue, type StoryIssueSeverity } from '@/features/canvas/story/lintStory';
 import { storyDurationRange } from '@/features/canvas/story/storyDurationRange';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 
 const SEVERITY_ICON: Record<StoryIssueSeverity, typeof Info> = {
   error: AlertCircle,
@@ -36,7 +37,6 @@ export const StoryLintPanel = memo(function StoryLintPanel({
   const edges = useCanvasStore((s) => s.edges);
   const variables = useCanvasStore(useShallow((s) => selectGroupStoryVariables(s.nodes, groupId)));
   const flags = useCanvasStore(useShallow((s) => selectGroupStoryFlags(s.nodes, groupId)));
-  const setSelectedNode = useCanvasStore((s) => s.setSelectedNode);
   const requestFocusNode = useCanvasStore((s) => s.requestFocusNode);
 
   const { issues, members, storyEdges, durationRange, videoReady, promptReady, loopReady, loopTotal } = useMemo(() => {
@@ -86,7 +86,7 @@ export const StoryLintPanel = memo(function StoryLintPanel({
   const handleClick = (issue: StoryIssue) => {
     const target = focusTarget(issue);
     if (target) {
-      setSelectedNode(target);
+      selectNodeExclusively(target);
       requestFocusNode(target);
     }
     onClose();

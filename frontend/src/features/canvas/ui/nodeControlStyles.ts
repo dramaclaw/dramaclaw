@@ -10,6 +10,18 @@ export const NODE_CONTROL_PARAMS_CHIP_CLASS = '!w-auto !justify-start !shrink-0'
 export const NODE_CONTROL_PRIMARY_BUTTON_CLASS =
   '!h-6 !rounded-md !px-2 !text-[11px] !gap-1 border border-transparent';
 
+// Entry actions for nodes that open an editor or workspace. Keep the ready and
+// unavailable states explicit so a usable node does not look disabled beside an
+// empty or locked node.
+export const NODE_PRIMARY_ACTION_BASE_CLASS =
+  'flex h-10 w-full items-center justify-center rounded-[12px] border px-4 text-center text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent-rgb)/0.45)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#282828]';
+
+export const NODE_PRIMARY_ACTION_ENABLED_CLASS =
+  'border-[rgb(var(--accent-rgb)/0.52)] bg-[rgb(var(--accent-rgb)/0.12)] text-[rgb(var(--accent-rgb))] hover:border-[rgb(var(--accent-rgb)/0.72)] hover:bg-[rgb(var(--accent-rgb)/0.18)]';
+
+export const NODE_PRIMARY_ACTION_DISABLED_CLASS =
+  'cursor-not-allowed border-white/10 bg-white/[0.025] text-text-muted/55';
+
 export const NODE_CONTROL_ICON_CLASS = 'h-3 w-3';
 
 export const NODE_TEXT_CONTROL_TRIGGER_CLASS =

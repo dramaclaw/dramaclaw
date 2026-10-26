@@ -109,6 +109,7 @@ import {
 import { GROUP_COLOR_PRESETS } from "@/features/canvas/domain/groupColors";
 import { StoryboardGroupToolbar } from "@/features/canvas/ui/StoryboardGroupToolbar";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import {
   dispatchNodeAction,
   publishNodeActionAccepted,
@@ -202,7 +203,14 @@ const toolIconMap: Record<ToolIconKey, typeof Crop> = {
   split: Scissors,
 };
 
-import { TOOLBAR_NEUTRAL_BUTTON_CLASS, TOOLBAR_BUTTON_RADIUS_CLASS, TOOLBAR_TEXT_BUTTON_CLASS, TOOLBAR_MENU_CONTENT_CLASS, TOOLBAR_MENU_ITEM_CLASS } from "./nodeToolbarStyles";
+import {
+  NODE_FLOATING_TOOLBAR_SURFACE_CLASS,
+  TOOLBAR_NEUTRAL_BUTTON_CLASS,
+  TOOLBAR_BUTTON_RADIUS_CLASS,
+  TOOLBAR_TEXT_BUTTON_CLASS,
+  TOOLBAR_MENU_CONTENT_CLASS,
+  TOOLBAR_MENU_ITEM_CLASS,
+} from "./nodeToolbarStyles";
 import { DerivedMediaActions } from "./DerivedMediaActions";
 
 type BeatMainlineContext = MainlineContext & {
@@ -577,12 +585,9 @@ export const NodeActionToolbar = memo(
       () => workflowGroupState(groupWorkflowNodes),
       [groupWorkflowNodes],
     );
-    const deleteNode = useCanvasStore((state) => state.deleteNode);
     const addNode = useCanvasStore((state) => state.addNode);
     const findNodePosition = useCanvasStore((state) => state.findNodePosition);
     const addEdge = useCanvasStore((state) => state.addEdge);
-    const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
-    const onNodesChange = useCanvasStore((state) => state.onNodesChange);
     const requestFocusNode = useCanvasStore((state) => state.requestFocusNode);
     const ungroupNode = useCanvasStore((state) => state.ungroupNode);
     const arrangeGroupChildren = useCanvasStore(
@@ -976,8 +981,8 @@ export const NodeActionToolbar = memo(
       updateNodeData(node.id, {
         isClipMode: true,
       });
-      setSelectedNode(node.id);
-    }, [node.id, requireVideoUrl, setSelectedNode, updateNodeData]);
+      selectNodeExclusively(node.id);
+    }, [node.id, requireVideoUrl, updateNodeData]);
 
     const handleOpenVideoViewer = useCallback(() => {
       const url = requireVideoUrl();
@@ -1076,19 +1081,13 @@ export const NodeActionToolbar = memo(
       if (!upscaleNodeId) {
         throw new Error("无法创建视频高清节点");
       }
-      onNodesChange([
-        { id: node.id, type: "select", selected: false },
-        { id: upscaleNodeId, type: "select", selected: true },
-      ]);
-      setSelectedNode(upscaleNodeId);
+      selectNodeExclusively(upscaleNodeId);
       requestFocusNode(upscaleNodeId);
     }, [
       node.id,
-      onNodesChange,
       requestFocusNode,
       requireVideoUrl,
       resolveVideoUpscaleParams,
-      setSelectedNode,
       t,
     ]);
 
@@ -1103,29 +1102,21 @@ export const NodeActionToolbar = memo(
       if (!result) {
         throw new Error("无法启动视频解析");
       }
-      onNodesChange([
-        { id: node.id, type: "select", selected: false },
-        { id: result.nodeId, type: "select", selected: true },
-      ]);
-      setSelectedNode(result.nodeId);
+      selectNodeExclusively(result.nodeId);
       requestFocusNode(result.nodeId);
       return result;
-    }, [node.data, node.id, onNodesChange, requestFocusNode, requireVideoUrl, setSelectedNode]);
+    }, [node.data, node.id, requestFocusNode, requireVideoUrl]);
 
     const handleSeparateVideoAudio = useCallback(async () => {
       const url = requireVideoUrl();
       const result = await separateVideoAudio(node.id, { sourceUrl: url });
       const focusNodeId = result.videoNodeId ?? result.audioNodeId ?? null;
       if (focusNodeId) {
-        onNodesChange([
-          { id: node.id, type: "select", selected: false },
-          { id: focusNodeId, type: "select", selected: true },
-        ]);
-        setSelectedNode(focusNodeId);
+        selectNodeExclusively(focusNodeId);
         requestFocusNode(focusNodeId);
       }
       return result;
-    }, [node.id, onNodesChange, requestFocusNode, requireVideoUrl, setSelectedNode]);
+    }, [node.id, requestFocusNode, requireVideoUrl]);
 
     const handleOpenVideoSubtitleErase = useCallback(
       (mode: "smart" | "box") => {
@@ -1135,9 +1126,9 @@ export const NodeActionToolbar = memo(
           subtitleEraseBox: null,
           isClipMode: false,
         });
-        setSelectedNode(node.id);
+        selectNodeExclusively(node.id);
       },
-      [node.id, requireVideoUrl, setSelectedNode, updateNodeData],
+      [node.id, requireVideoUrl, updateNodeData],
     );
 
     // 逐帧拉片：在下游落一个空的拉片节点并连边就完事 —— 节点自己会顺着
@@ -1192,8 +1183,8 @@ export const NodeActionToolbar = memo(
         subtitleEraseMode: null,
       });
       requestVideoCropFocus(node.id);
-      setSelectedNode(node.id);
-    }, [node.id, requireVideoUrl, setSelectedNode, t, updateNodeData]);
+      selectNodeExclusively(node.id);
+    }, [node.id, requireVideoUrl, t, updateNodeData]);
 
     // 智能续写：入口不建节点，只是把源节点切进「截前置视频」态 ——
     // 底下浮出一条只能选一段的轨道，用户确认区间后才由 VideoNode 建
@@ -1207,8 +1198,8 @@ export const NodeActionToolbar = memo(
         throw new Error(t("node.videoNode.crop.busy"));
       }
       updateNodeData(node.id, { isExtendPickMode: true, isCropMode: false });
-      setSelectedNode(node.id);
-    }, [extendModel, node.id, requireVideoUrl, setSelectedNode, t, updateNodeData]);
+      selectNodeExclusively(node.id);
+    }, [extendModel, node.id, requireVideoUrl, t, updateNodeData]);
 
     // 深度动作捕捉：浏览器里逐帧算深度，产物是一条新视频，所以先在下游落一个
     // 处理态视频节点（referenceOnly，不挂生成面板），任务在节点上显示进度，
@@ -1269,11 +1260,7 @@ export const NodeActionToolbar = memo(
         } as unknown as Parameters<typeof addNode>[2],
       );
       addEdge(node.id, depthNodeId);
-      onNodesChange([
-        { id: node.id, type: "select", selected: false },
-        { id: depthNodeId, type: "select", selected: true },
-      ]);
-      setSelectedNode(depthNodeId);
+      selectNodeExclusively(depthNodeId);
       void startDepthCapture({
         nodeId: depthNodeId,
         projectId,
@@ -1286,9 +1273,7 @@ export const NodeActionToolbar = memo(
       findNodePosition,
       node.data,
       node.id,
-      onNodesChange,
       requireVideoUrl,
-      setSelectedNode,
       t,
     ]);
 
@@ -1329,14 +1314,13 @@ export const NodeActionToolbar = memo(
         },
       );
       addEdge(node.id, nextNodeId);
-      setSelectedNode(nextNodeId);
+      selectNodeExclusively(nextNodeId);
     }, [
       addEdge,
       addNode,
       closeDownloadMenu,
       imageSource,
       node,
-      setSelectedNode,
       t,
     ]);
     // 同上：保留 handleCreateAiEditNode 等待恢复 AI 改图按钮
@@ -1375,7 +1359,7 @@ export const NodeActionToolbar = memo(
           initialData as unknown as Parameters<typeof addNode>[2],
         );
         addEdge(node.id, nextNodeId);
-        setSelectedNode(nextNodeId);
+        selectNodeExclusively(nextNodeId);
       },
       [
         addEdge,
@@ -1383,7 +1367,6 @@ export const NodeActionToolbar = memo(
         closeDownloadMenu,
         imageSource,
         node,
-        setSelectedNode,
         t,
       ],
     );
@@ -1586,7 +1569,7 @@ export const NodeActionToolbar = memo(
           ),
         );
         if (existing?.id) {
-          setSelectedNode(String(existing.id));
+          selectNodeExclusively(String(existing.id));
           requestFocusNode(String(existing.id));
           return;
         }
@@ -1602,7 +1585,7 @@ export const NodeActionToolbar = memo(
           },
           beatContextNodeData(extractableBeatContext, t),
         );
-        setSelectedNode(contextNodeId);
+        selectNodeExclusively(contextNodeId);
         requestFocusNode(contextNodeId);
       },
       [
@@ -1613,7 +1596,6 @@ export const NodeActionToolbar = memo(
         node.position.y,
         node.width,
         requestFocusNode,
-        setSelectedNode,
         t,
       ],
     );
@@ -1644,6 +1626,27 @@ export const NodeActionToolbar = memo(
       return <StoryboardGroupToolbar node={node} />;
     }
 
+    // Some nodes only had the generic delete chip. Once deletion moves to the
+    // canvas Delete/Backspace shortcut, avoid mounting an empty floating panel
+    // for those nodes.
+    const hasToolbarActions = Boolean(
+      isPresetLocked ||
+        recipeCompileFellBack ||
+        (extractableBeatContext && node.type !== CANVAS_NODE_TYPES.beatContext) ||
+        canHandleImage ||
+        node.type === CANVAS_NODE_TYPES.vectorSvg ||
+        node.type === CANVAS_NODE_TYPES.animatedGif ||
+        canCopyStoryboardText ||
+        canCopyGenerationError ||
+        isVideoNode(node) ||
+        isAudioNode(node) ||
+        isAdjustableGroup ||
+        (node.type === CANVAS_NODE_TYPES.htmlArtifact && Boolean(node.data.artifactId)) ||
+        protectedProjectionKey ||
+        canCommitNode,
+    );
+    if (!hasToolbarActions) return null;
+
     return (
       <>
         <ReactFlowNodeToolbar
@@ -1657,7 +1660,7 @@ export const NodeActionToolbar = memo(
           <ZoomScaledToolbar origin="bottom center" mode="counter" counterMax={1}>
           {/* 节点激活时，顶部菜单从节点上沿淡入+轻微上滑浮现（而非生硬地直接出现），
               与下方操作区的入场动画呼应。motion-reduce 下退化为无动画。 */}
-          <UiPanel className="flex animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 items-center gap-1.5 rounded-[18px] !border-white/10 !bg-[#242426]/95 px-2 py-1.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl duration-200 ease-out motion-reduce:animate-none [&_svg]:h-4 [&_svg]:w-4">
+          <UiPanel className={`flex animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 items-center gap-1.5 px-2 py-1.5 text-sm duration-200 ease-out motion-reduce:animate-none [&_svg]:h-4 [&_svg]:w-4 ${NODE_FLOATING_TOOLBAR_SURFACE_CLASS}`}>
             {/* Mainline lock indicator — shown as a leading pill when the
                 node is preset-managed (or canvas-level fallback applies).
                 The chips below remain visible for spawn-style edits; the
@@ -2249,11 +2252,7 @@ export const NodeActionToolbar = memo(
                   if (!upscaleNodeId) {
                     return;
                   }
-                  onNodesChange([
-                    { id: node.id, type: "select", selected: false },
-                    { id: upscaleNodeId, type: "select", selected: true },
-                  ]);
-                  setSelectedNode(upscaleNodeId);
+                  selectNodeExclusively(upscaleNodeId);
                 };
 
                 const isSeparatingAv = Boolean(videoData.isSeparatingAv);
@@ -2477,7 +2476,7 @@ export const NodeActionToolbar = memo(
                               isClipMode: false,
                               isCropMode: false,
                             });
-                            setSelectedNode(node.id);
+                            selectNodeExclusively(node.id);
                           }}
                         >
                           <Wand2 className="h-4 w-4" />
@@ -2497,7 +2496,7 @@ export const NodeActionToolbar = memo(
                               isClipMode: false,
                               isCropMode: false,
                             });
-                            setSelectedNode(node.id);
+                            selectNodeExclusively(node.id);
                           }}
                         >
                           <Crop className="h-4 w-4" />
@@ -2937,26 +2936,20 @@ export const NodeActionToolbar = memo(
                 } catch (error) { toast.error(String(error)); }
               }}><Upload className="h-3.5 w-3.5"/>{t("htmlArtifact.export")}</UiChipButton>
             </>}
-            {!isImageGenNode(node) && !isVideoNode(node) && !isAudioNode(node) && (
+            {protectedProjectionKey && (
               <UiChipButton
-                key="node-delete"
-                className={`h-9 ${TOOLBAR_BUTTON_RADIUS_CLASS} !border-transparent !bg-transparent px-3 text-sm text-rose-200/85 hover:!bg-white/[0.08] hover:!text-rose-100`}
+                key="projection-remove"
+                className={`${TOOLBAR_TEXT_BUTTON_CLASS} text-rose-200/85 hover:!bg-white/[0.08] hover:!text-rose-100`}
                 onClick={(event) => {
                   event.stopPropagation();
                   closeDownloadMenu();
-                  if (protectedProjectionKey) {
-                    canvasEventBus.publish("freezone/projection-remove", {
-                      projectionKey: protectedProjectionKey,
-                    });
-                    return;
-                  }
-                  deleteNode(node.id);
+                  canvasEventBus.publish("freezone/projection-remove", {
+                    projectionKey: protectedProjectionKey,
+                  });
                 }}
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                {protectedProjectionKey
-                  ? t("freezone.projections.remove")
-                  : t("common.delete")}
+                {t("freezone.projections.remove")}
               </UiChipButton>
             )}
             {canCommitNode && (

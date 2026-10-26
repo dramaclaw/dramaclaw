@@ -235,11 +235,10 @@ function ProjectCard({
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
       className={cn(
-        "group relative flex h-full flex-col rounded-lg border border-border/65 bg-card/50 transition-all duration-300 ease-out",
+        "group relative flex h-full flex-col rounded-lg border border-white/10 bg-white/[0.04] transition-all duration-300 ease-out",
         PROJECT_CARD_MIN_HEIGHT_CLASS,
         sm ? "p-2 pt-4" : "p-3 pt-5",
-        clickable &&
-          "cursor-pointer hover:border-foreground/15 hover:bg-card/65 hover:shadow-lg hover:shadow-black/10",
+        clickable && "cursor-pointer hover:border-foreground/15 hover:bg-white/[0.08]",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
         isArchived && "opacity-70",
         isDeleted && "opacity-50",
@@ -451,7 +450,7 @@ function CreateProjectCard({ onCreate }: { onCreate: () => void }) {
       className={cn(
         "group flex h-full w-full flex-col items-center justify-center rounded-lg border border-white/10 bg-transparent p-3 text-center text-muted-foreground transition-all duration-300 ease-out",
         PROJECT_CARD_MIN_HEIGHT_CLASS,
-        "hover:border-white/15 hover:bg-white/[0.03] hover:shadow-lg hover:shadow-black/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+        "hover:border-white/15 hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
       )}
     >
       <Plus

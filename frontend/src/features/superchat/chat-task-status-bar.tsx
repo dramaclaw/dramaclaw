@@ -42,6 +42,7 @@ import { confirmDialog } from "@/components/confirm-dialog-host";
 import { useCancelTask } from "@/lib/queries/tasks";
 import { useAppStore } from "@/stores/app-store";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import { displayLabel, isActive, isTerminal } from "@/task-center/derivations";
 import { useTaskCenterStore } from "@/task-center/store";
 import type { TaskState, TaskStatus } from "@/task-center/types";
@@ -901,15 +902,7 @@ export function ChatTaskStatusBar({
 
   const locateNode = (nodeId: string) => {
     const store = useCanvasStore.getState();
-    if (!store.nodes.some((node) => node.id === nodeId)) return;
-    store.onNodesChange(
-      store.nodes.map((node) => ({
-        id: node.id,
-        type: "select" as const,
-        selected: node.id === nodeId,
-      })),
-    );
-    store.setSelectedNode(nodeId);
+    selectNodeExclusively(nodeId);
     store.requestFocusNode(nodeId);
   };
   const linkedWorkflowTaskKeys = new Set(

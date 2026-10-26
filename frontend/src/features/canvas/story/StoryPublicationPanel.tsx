@@ -29,6 +29,7 @@ import { flushFreezoneCanvasRuntime } from "@/features/freezone/canvasSyncRuntim
 import { readUrl } from "@/lib/url-params";
 import { StoryExperience } from "./StoryExperience";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { clearCanvasSelection, selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import { useStoryRuntimeStore } from "@/stores/storyRuntimeStore";
 import {
   compilePlayback,
@@ -428,7 +429,11 @@ export function StoryPublicationPanel({
       return;
     }
     close();
-    state.setSelectedNode(edge ? null : nodeId);
+    if (edge) {
+      clearCanvasSelection();
+    } else {
+      selectNodeExclusively(nodeId);
+    }
     useCanvasStore.setState({ edges: state.edges.map((item) => ({ ...item, selected: item.id === edge?.id })) });
     state.requestFocusNode(nodeId);
   }

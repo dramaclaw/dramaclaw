@@ -42,6 +42,7 @@ import {
   NODE_HEADER_FLOATING_POSITION_CLASS,
 } from '@/features/canvas/ui/NodeHeader';
 import { AddNodeToChatButton } from '@/features/canvas/ui/AddNodeToChatButton';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { PanelExpandButton } from '@/features/canvas/ui/PanelExpandButton';
 import { OperationPanelShell } from '@/features/canvas/ui/OperationPanelShell';
@@ -82,7 +83,10 @@ import type { DirectorStageManifest } from '@/features/viewer-kit/three-d/direct
 import { readUrl } from '@/lib/url-params';
 import { useNodeGenerationHistory } from '@/features/canvas/hooks/useNodeGenerationHistory';
 import { NodeHistoryRail } from '@/features/canvas/ui/NodeHistoryRail';
-import { nodeImageViewerUrls } from '@/features/canvas/application/nodeMediaViewer';
+import {
+  nodeImageViewerUrls,
+  openNodeImageViewer,
+} from '@/features/canvas/application/nodeMediaViewer';
 import {
   AssetLibraryModal,
   type AssetLibrarySelection,
@@ -171,7 +175,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     closeReferenceErrors,
     openReferenceErrors,
     invalidateInFlightGeneration,
-  } = useImageGenerationForm(id, { onGenerationSettled: refreshHistory });
+  } = useImageGenerationForm(id, {
+    onGenerationSettled: refreshHistory,
+    onTaskAccepted: () => setPanelExpanded(false),
+  });
 
   // 功能节点（工具条「九宫格」下拉点某一项后建出来的那种）：输入框里多一枚可切可删
   // 的功能 chip、功能说明当占位文案、↑ 走对应模板。与故事板详情共用同一个 hook，
@@ -206,21 +213,19 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     }
   }, [generationError, generationErrorDetails, generationErrorRequestId]);
 
-  // 生成进行中时，点击历史记录走「非破坏性预览」：不覆写 imageUrl、不打断在途
-  // 任务，仅把这张历史图临时显示在主体上（见 isGenerating 渲染分支）。新图生成
-  // 完成后由下方 effect 自动清空，回到最新结果。非生成态恢复历史时也清掉它。
-  const [historyPreviewUrl, setHistoryPreviewUrl] = useState<string | null>(null);
-
   const handleRestoreHistory = useCallback(
     (record: Parameters<typeof historyRecordOutputUrl>[0]) => {
       const url = historyRecordOutputUrl(record);
       if (!url) return;
-      // 生成进行中：仅做非破坏性预览，绝不动 imageUrl，也不打断在途任务。
+      // 生成进行中只查看历史，不替换节点主体，也不打断在途任务。
       if (isGenerating) {
-        setHistoryPreviewUrl(url);
+        void openNodeImageViewer(
+          url,
+          id,
+          nodeImageViewerUrls(url, [], historyRecords),
+        );
         return;
       }
-      setHistoryPreviewUrl(null);
       // 用户挑的这张历史图作数，上一批还在结算的请求全部作废——否则它们回来会把
       // 刚恢复的图盖掉。
       invalidateInFlightGeneration();
@@ -236,13 +241,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         ...GENERATION_ERROR_CLEARED_PATCH,
       });
     },
-    [id, invalidateInFlightGeneration, isGenerating, updateNodeData],
+    [historyRecords, id, invalidateInFlightGeneration, isGenerating, updateNodeData],
   );
-
-  // 生成结束（成功/失败）后清掉临时历史预览，让主体回到最新结果。
-  useEffect(() => {
-    if (!isGenerating) setHistoryPreviewUrl(null);
-  }, [isGenerating]);
 
   const freezoneSource = (data.__freezone_source as
     | { role?: string; meta?: Record<string, unknown> }
@@ -425,9 +425,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         aspectRatio: data.aspectRatio,
         user_spawned: true,
       } as Partial<ImageGenNodeData>);
-      setSelectedNode(newNodeId);
+      selectNodeExclusively(newNodeId);
     },
-    [addNodeAction, data.aspectRatio, id, resolvedWidth, setSelectedNode],
+    [addNodeAction, data.aspectRatio, id, resolvedWidth],
   );
 
   const handleDownloadAlbumImage = useCallback(
@@ -489,8 +489,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     };
     const newNodeId = addNodeAction(CANVAS_NODE_TYPES.imageGen, position);
     addEdgeAction(newNodeId, id);
-    setSelectedNode(newNodeId);
-  }, [addEdgeAction, addNodeAction, id, setSelectedNode]);
+    selectNodeExclusively(newNodeId);
+  }, [addEdgeAction, addNodeAction, id]);
 
   useEffect(() => {
     updateNodeInternals(id);
@@ -643,7 +643,6 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       ref={albumRootRef}
       className="group relative h-full w-full overflow-visible"
       style={{ width: resolvedWidth, height: resolvedHeight }}
-      onClick={() => setSelectedNode(id)}
     >
       <ReferenceValidationDialog issues={referenceErrors} open={referenceErrorsOpen} onClose={closeReferenceErrors} />
       {referenceErrors.length > 0 && (
@@ -850,36 +849,6 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               </button>
             )}
           </>
-        ) : isGenerating && historyPreviewUrl ? (
-          // 生成进行中，但用户点了历史记录预览：临时显示那张历史图，新图仍在
-          // 后台生成。顶部 pill 提示「生成中」，右上「返回」回到 loading 遮罩。
-          // 用原生 <img>（非 CanvasNodeImage）避免 onLoad 按预览图改节点尺寸。
-          <div className="relative h-full w-full">
-            <img
-              src={resolveImageDisplayUrl(historyPreviewUrl)}
-              alt=""
-              className="h-full w-full object-contain"
-              draggable={false}
-              onClick={(event) => event.stopPropagation()}
-            />
-            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-2 p-2">
-              <span className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[11px] text-white/90 backdrop-blur">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                {t('node.imageGen.history.generatingNew')}
-              </span>
-              <button
-                type="button"
-                className="nodrag pointer-events-auto inline-flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1 text-[11px] text-white/90 backdrop-blur transition-colors hover:bg-black/75"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setHistoryPreviewUrl(null);
-                }}
-              >
-                <X className="h-3 w-3" />
-                {t('node.imageGen.history.back')}
-              </button>
-            </div>
-          </div>
         ) : isGenerating ? (
           <div className="h-full w-full" />
         ) : generationError ? (
@@ -938,7 +907,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           }}
         />
 
-        {isGenerating && !historyPreviewUrl && (
+        {isGenerating && (
           <NodeGenerationOverlay
             startedAt={data.generationStartedAt ?? null}
             durationMs={data.generationDurationMs}
@@ -1157,7 +1126,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               isActive={(record) => {
                 const url = historyRecordOutputUrl(record);
                 if (!url) return false;
-                if (isGenerating && historyPreviewUrl) return url === historyPreviewUrl;
+                if (isGenerating) return false;
                 return url === data.imageUrl;
               }}
             />

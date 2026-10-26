@@ -137,7 +137,7 @@ export function CanvasAddNodePanel({
       onPointerLeave={scheduleSkillPanelClose}
     >
       <div
-        className="w-[360px] max-w-[calc(100vw-32px)] overflow-hidden rounded-[18px] border border-white/[0.10] bg-[#101217]/72 backdrop-blur-2xl"
+        className="w-[420px] max-w-[calc(100vw-32px)] overflow-hidden rounded-[18px] border border-white/[0.10] bg-[#101217]/72 backdrop-blur-2xl"
       >
         <div className="ui-scrollbar max-h-[min(560px,70vh)] overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
           <CanvasMenuSectionHeader label={t('node.menu.sectionAddNode')} className="pb-4" />

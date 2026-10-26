@@ -628,7 +628,6 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
   const resumeRunRef = useRef<string | null>(null);
   const submitInFlightRef = useRef(false);
   const updateNodeInternals = useUpdateNodeInternals();
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const addNode = useCanvasStore((state) => state.addNode);
   const addEdgeWithData = useCanvasStore((state) => state.addEdgeWithData);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
@@ -1451,7 +1450,6 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
     <div
       className="group relative w-full overflow-visible"
       style={{ width: resolvedWidth }}
-      onClick={() => setSelectedNode(id)}
     >
       {outputHandleIds.map((handleId, index) => (
         <Handle

@@ -11,6 +11,7 @@ import { Film } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useCanvasStore } from "@/stores/canvasStore";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import { useUpstreamNodes } from "@/features/canvas/application/useUpstreamGraph";
 import {
   CANVAS_NODE_TYPES,
@@ -28,6 +29,11 @@ import {
   canvasNodeFrameClass,
 } from "@/features/canvas/ui/nodeFrameStyles";
 import { AddNodeToChatButton } from "@/features/canvas/ui/AddNodeToChatButton";
+import {
+  NODE_PRIMARY_ACTION_BASE_CLASS,
+  NODE_PRIMARY_ACTION_DISABLED_CLASS,
+  NODE_PRIMARY_ACTION_ENABLED_CLASS,
+} from "@/features/canvas/ui/nodeControlStyles";
 import { readUrl } from "@/lib/url-params";
 import {
   buildInitialTimeline,
@@ -75,7 +81,6 @@ export const VideoComposeNode = memo(
   ({ id, data, selected }: VideoComposeNodeProps) => {
     const { t } = useTranslation();
     const updateNodeInternals = useUpdateNodeInternals();
-    const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const upstreamNodes = useUpstreamNodes(id);
     const [isEditorOpen, setEditorOpen] = useState(false);
@@ -111,10 +116,10 @@ export const VideoComposeNode = memo(
     const handleOpen = useCallback(() => {
       if (!project) return false;
       if (!canOpen) return false;
-      setSelectedNode(id);
+      selectNodeExclusively(id);
       setEditorOpen(true);
       return true;
-    }, [canOpen, id, project, setSelectedNode]);
+    }, [canOpen, id, project]);
 
     const handleAutoCompose = useCallback(async () => {
       if (!project || !canAutoCompose) {
@@ -262,7 +267,6 @@ export const VideoComposeNode = memo(
       <div
         className="group relative h-full w-full overflow-visible"
         style={{ width: NODE_WIDTH, height: NODE_HEIGHT }}
-        onClick={() => setSelectedNode(id)}
       >
         <Handle
           type="target"
@@ -299,7 +303,7 @@ export const VideoComposeNode = memo(
                 event.stopPropagation();
                 handleOpen();
               }}
-              className="flex h-10 w-full items-center justify-center rounded-[12px] border border-white/15 bg-white/[0.04] px-4 text-center text-[13px] text-text-dark transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+              className={`${NODE_PRIMARY_ACTION_BASE_CLASS} ${canOpen ? NODE_PRIMARY_ACTION_ENABLED_CLASS : NODE_PRIMARY_ACTION_DISABLED_CLASS}`}
             >
               {t("videoCompose.node.open")}
             </button>
@@ -334,7 +338,7 @@ export const VideoComposeNode = memo(
                 composeSourceNodeId: id,
               } as Partial<CanvasNodeData>);
               store.addEdge(id, newId);
-              store.setSelectedNode(newId);
+              selectNodeExclusively(newId);
               store.requestFocusNode(newId);
               updateNodeData(id, {
                 resultVideoUrl: url,

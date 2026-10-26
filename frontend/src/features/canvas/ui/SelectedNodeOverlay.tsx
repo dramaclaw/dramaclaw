@@ -22,6 +22,7 @@ import {
 } from '@/api/ops';
 import { awaitTaskCompletion } from '@/api/tasks';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import {
   publishNodeActionAccepted,
@@ -77,6 +78,11 @@ import type { GridActionRequest } from './NodeActionToolbar';
 import { spawnAssetBoardImageOpNode } from '@/features/canvas/application/assetBoardImageOps';
 import { readUrl } from '@/lib/url-params';
 import { inheritMainlineFields } from '../domain/inheritMainlineFields';
+import { NODE_TOOLBAR_OFFSET } from './nodeToolbarConfig';
+import {
+  NODE_FLOATING_TOOLBAR_GAP,
+  NODE_FLOATING_TOOLBAR_HEIGHT,
+} from './nodeToolbarStyles';
 
 // 这些类型的卡片**有可能**在右上角自带「替换」按钮（NodeMediaReplaceButton），
 // 拖到素材库的手势由那颗一并承接，因此不再挂外侧的 AssetCommitHandle。
@@ -129,12 +135,38 @@ function nodeHasResourceForToolbar(node: CanvasNode): boolean {
   return true;
 }
 
+// These nodes expose their main action inside the card (or in a dedicated
+// editor) and otherwise only inherited the generic delete chip. Keeping them
+// out of the floating toolbar also lets the Node ID badge sit close to the node
+// when there is no second toolbar row.
+const NODE_TYPES_WITHOUT_ACTION_TOOLBAR = new Set<string>([
+  CANVAS_NODE_TYPES.beatContext,
+  CANVAS_NODE_TYPES.script,
+  CANVAS_NODE_TYPES.videoCompose,
+  CANVAS_NODE_TYPES.videoBreakdown,
+  CANVAS_NODE_TYPES.previz,
+  CANVAS_NODE_TYPES.threeDWorld,
+  CANVAS_NODE_TYPES.skill,
+  CANVAS_NODE_TYPES.style,
+  CANVAS_NODE_TYPES.textAnnotation,
+]);
+
+function nodeHasActionToolbar(node: CanvasNode): boolean {
+  if (NODE_TYPES_WITHOUT_ACTION_TOOLBAR.has(node.type)) return false;
+  if (node.type === CANVAS_NODE_TYPES.htmlArtifact) {
+    return Boolean(node.data.artifactId);
+  }
+  return nodeHasResourceForToolbar(node);
+}
+
 const SCENE_360_FOCUS_ZOOM = 1.2;
 const SCENE_360_FOCUS_DURATION = 320;
 const SCENE_360_DEFAULT_NODE_HEIGHT = 320;
 const PANO_VIEWER_LAYOUT_WIDTH = 720;
 const PANO_VIEWER_LAYOUT_HEIGHT = 420;
-const NODE_ID_BADGE_OFFSET = 88;
+const NODE_ID_BADGE_OFFSET_WITH_ACTIONS =
+  NODE_TOOLBAR_OFFSET + NODE_FLOATING_TOOLBAR_HEIGHT + NODE_FLOATING_TOOLBAR_GAP;
+const NODE_ID_BADGE_OFFSET = NODE_TOOLBAR_OFFSET;
 const DEFAULT_OUTPAINT_ASPECT_RATIO: FreezoneOutpaintAspectRatio = 'original';
 const DEFAULT_OUTPAINT_IMAGE_SIZE = '2K';
 
@@ -227,21 +259,10 @@ export const SelectedNodeOverlay = memo(() => {
     );
   }, [nodes, onNodesChange]);
 
-  const selectAndFocusCanvasNode = useCallback(
-    (nodeId: string) => {
-      const currentNodes = useCanvasStore.getState().nodes;
-      onNodesChange(
-        currentNodes.map((node) => ({
-          id: node.id,
-          type: 'select' as const,
-          selected: node.id === nodeId,
-        })),
-      );
-      setSelectedNode(nodeId);
-      useCanvasStore.getState().requestFocusNode(nodeId);
-    },
-    [onNodesChange, setSelectedNode],
-  );
+  const selectAndFocusCanvasNode = useCallback((nodeId: string) => {
+    selectNodeExclusively(nodeId);
+    useCanvasStore.getState().requestFocusNode(nodeId);
+  }, []);
   const [multiAngleNodeId, setMultiAngleNodeId] = useState<string | null>(null);
   const activeLightEditorNodeId = useCanvasStore((state) => state.activeLightEditorNodeId);
   const setLightEditorNodeId = useCanvasStore((state) => state.setActiveLightEditorNodeId);
@@ -1018,9 +1039,13 @@ export const SelectedNodeOverlay = memo(() => {
           isVisible
           position={Position.Top}
           align={
-            nodeHasResourceForToolbar(selectedNode) ? "center" : "start"
+            nodeHasActionToolbar(selectedNode) ? "center" : "start"
           }
-          offset={NODE_ID_BADGE_OFFSET}
+          offset={
+            nodeHasActionToolbar(selectedNode)
+              ? NODE_ID_BADGE_OFFSET_WITH_ACTIONS
+              : NODE_ID_BADGE_OFFSET
+          }
         >
           <NodeIdBadge nodeId={selectedNode.id} />
         </ReactFlowNodeToolbar>
@@ -1029,7 +1054,7 @@ export const SelectedNodeOverlay = memo(() => {
         && !rotateNodeId
         && !effectiveOverlayNodeId
         && !selectedIsStoryPlayer
-        && nodeHasResourceForToolbar(selectedNode) && (
+        && nodeHasActionToolbar(selectedNode) && (
         <NodeActionToolbar
           // 按节点 id 重挂载，确保每次「激活某个节点」都重放顶部菜单的入场动画
           // ——否则直接在两个节点间切换时组件实例复用，CSS 动画只在首次挂载时跑。

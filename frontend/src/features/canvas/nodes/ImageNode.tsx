@@ -87,7 +87,6 @@ function resolveNodeDimension(value: number | undefined, fallback: number): numb
 export const ImageNode = memo(({ id, data, selected, type, width, height }: ImageNodeProps) => {
   const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const updateNodeSize = useCanvasStore((state) => state.updateNodeSize);
   // 只订阅连到本节点的边(useShallow 逐元素比较),避免拖动无关节点触发重渲染。
@@ -288,7 +287,6 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
           : canvasNodeFrameClass({ selected, mainline: hasMainlineContext })}
       `}
       style={{ width: resolvedWidth, height: resolvedHeight }}
-      onClick={() => setSelectedNode(id)}
     >
       <NodeHeader
         className={NODE_HEADER_FLOATING_POSITION_CLASS}

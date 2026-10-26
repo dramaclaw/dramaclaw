@@ -6931,10 +6931,6 @@
       "uploading": "Uploading",
       "uploadingEllipsis": "Uploading…",
       "removeReference": "Remove reference image",
-      "history": {
-        "generatingNew": "Generating a new image…",
-        "back": "Back"
-      },
       "emptyState": {
         "tryLabel": "Try:",
         "imageToImageTitle": "Add an upstream image node to use as a reference",
@@ -7280,10 +7276,6 @@
         "download": "Download this video",
         "mainVideo": "Main video",
         "generating": "Generating…"
-      },
-      "history": {
-        "generatingNew": "Generating a new video…",
-        "back": "Back"
       },
       "error": {
         "requestId": "Request ID"

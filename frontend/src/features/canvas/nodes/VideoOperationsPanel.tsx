@@ -63,6 +63,7 @@ import { ReferenceDetachButton } from "@/features/canvas/nodes/shared/ReferenceD
 import { ReferencePickChip } from "@/features/canvas/nodes/shared/ReferencePickChip";
 import { ReferenceMentionButton } from "@/features/canvas/nodes/shared/ReferenceMentionButton";
 import { focusReferenceNode } from "@/features/canvas/application/viewportReturnStore";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import { collectReferenceMaterials } from "@/features/canvas/application/referencePick";
 import { attachReferenceEdge } from "@/features/canvas/application/attachReference";
 import {
@@ -308,7 +309,6 @@ export function VideoOperationsPanel({
     // this is only for the button's title, so a blocked member is told why.
     const modelTaskAccess = useModelTaskAccess();
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
-    const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const addNode = useCanvasStore((state) => state.addNode);
     const addEdge = useCanvasStore((state) => state.addEdge);
     const deleteEdge = useCanvasStore((state) => state.deleteEdge);
@@ -983,7 +983,7 @@ export function VideoOperationsPanel({
                       caps={referenceCaps}
                       genMode={genMode}
                       mentionNames={mentionNameByNodeId}
-                      onFocus={(nodeId) => setSelectedNode(nodeId)}
+                      onFocus={selectNodeExclusively}
                       onMention={handleMentionReference}
                       onJump={handleJumpToReference}
                       onDetach={handleDetachUpstream}
@@ -1004,7 +1004,7 @@ export function VideoOperationsPanel({
                     caps={referenceCaps}
                     genMode={genMode}
                     mentionNames={mentionNameByNodeId}
-                    onFocus={(nodeId) => setSelectedNode(nodeId)}
+                    onFocus={selectNodeExclusively}
                     onMention={handleMentionReference}
                     onJump={handleJumpToReference}
                     onDetach={handleDetachUpstream}

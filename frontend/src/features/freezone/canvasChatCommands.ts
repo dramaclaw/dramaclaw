@@ -66,6 +66,7 @@ import {
 } from "@/features/freezone/canvasEdgeSemantics";
 import { landNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import { placeGroupsOutsideStory } from "@/features/canvas/application/storyGroupPlacement";
 import { deterministicNodeOutputIssue } from "@/features/freezone/workflowQualityGate";
 import {
@@ -4145,16 +4146,8 @@ function commandPrimaryNodeId(command: CanvasChatCommand): string | undefined {
 }
 
 function selectAndFocusNode(nodeId: string): void {
-  const store = useCanvasStore.getState();
-  store.onNodesChange(
-    store.nodes.map((node) => ({
-      id: node.id,
-      type: "select" as const,
-      selected: node.id === nodeId,
-    })),
-  );
-  store.setSelectedNode(nodeId);
-  store.requestFocusNode(nodeId);
+  selectNodeExclusively(nodeId);
+  useCanvasStore.getState().requestFocusNode(nodeId);
 }
 
 function commandNodeRefs(command: CanvasChatCommand): string[] {

@@ -31,6 +31,7 @@ import {
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 import {
   FREEZONE_REDRAW_ASPECT_RATIOS,
   fetchFreezoneJobResult,
@@ -96,7 +97,6 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
   const { t } = useTranslation();
   const addNode = useCanvasStore((state) => state.addNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const findNodePosition = useCanvasStore((state) => state.findNodePosition);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const { zoom } = useViewport();
@@ -568,7 +568,7 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
         y: base.y + i * (EXPORT_RESULT_NODE_LAYOUT_HEIGHT + RESULT_STACK_GAP),
       }),
     );
-    setSelectedNode(nodeIds[0]);
+    selectNodeExclusively(nodeIds[0]);
     onClose();
 
     try {
@@ -607,7 +607,6 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
     numImages,
     onClose,
     runEraseGeneration,
-    setSelectedNode,
     submitting,
     updateNodeData,
   ]);

@@ -6808,10 +6808,6 @@
       "uploading": "Đang tải lên",
       "uploadingEllipsis": "Đang tải lên…",
       "removeReference": "Bỏ ảnh tham chiếu",
-      "history": {
-        "generatingNew": "Đang tạo ảnh mới…",
-        "back": "Quay lại"
-      },
       "emptyState": {
         "tryLabel": "Thử:",
         "imageToImageTitle": "Thêm một node ảnh phía trên để làm tham chiếu",
@@ -7157,10 +7153,6 @@
         "download": "Tải video này về",
         "mainVideo": "Video chính",
         "generating": "Đang tạo…"
-      },
-      "history": {
-        "generatingNew": "Đang tạo video mới…",
-        "back": "Quay lại"
       },
       "error": {
         "requestId": "Request ID"

@@ -355,7 +355,6 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     { start: number; end: number } | null
   >(null);
 
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const addNode = useCanvasStore((state) => state.addNode);
   const findNodePosition = useCanvasStore((state) => state.findNodePosition);
@@ -1098,7 +1097,6 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         ${canvasNodeFrameClass({ selected })}
       `}
       style={{ width: `${resolvedWidth}px`, height: `${resolvedHeight}px` }}
-      onClick={() => setSelectedNode(id)}
     >
       <NodeHeader
         className={NODE_HEADER_FLOATING_POSITION_CLASS}

@@ -4,6 +4,7 @@ import { useVideoContinuityMode } from "@/features/canvas/nodes/shared/useVideoC
 import { ensureVideoContinuity, videoContinuitySources } from "@/features/canvas/application/videoContinuity";
 import { selectVideoModel } from "@/features/canvas/domain/catalogVideoModels";
 import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import {
   memo,
   useCallback,
@@ -727,13 +728,6 @@ export const VideoNode = memo(
       enabled: Boolean(selected) && !storyPlayerMode,
     });
 
-    // 生成进行中时，点击历史记录走「非破坏性预览」：不覆写 videoUrl、不打断在途
-    // 任务，仅把这条历史视频临时显示在主体上（见 isGenerating 渲染分支）。新视频
-    // 生成完成后由下方 effect 自动清空，回到最新结果。非生成态恢复历史时也清掉它。
-    const [historyPreviewUrl, setHistoryPreviewUrl] = useState<string | null>(
-      null,
-    );
-
     // 导入互动影游占位片段的旁白(narration)就地编辑态。双击进入,
     // 失焦 / ⌘+回车保存,Esc 取消。
     const [isEditingNarration, setIsEditingNarration] = useState(false);
@@ -964,21 +958,20 @@ export const VideoNode = memo(
         ? data.generationErrorRequestId
         : "";
 
-    // 生成结束（成功/失败）后清掉临时历史预览，让主体回到最新结果。
-    useEffect(() => {
-      if (!isGenerating) setHistoryPreviewUrl(null);
-    }, [isGenerating]);
-
-    const handleRestoreHistory = useCallback(
+    const handleHistorySelect = useCallback(
       (record: FreezoneGenerationHistoryRecord) => {
         const url = historyRecordOutputUrl(record);
         if (!url) return;
-        // 生成进行中：仅做非破坏性预览，绝不动 videoUrl，也不打断在途任务。
+        // 生成进行中只查看历史，不替换节点主体，也不打断在途任务。
         if (isGenerating) {
-          setHistoryPreviewUrl(url);
+          void openNodeVideoViewer(
+            url,
+            id,
+            nodeMediaViewerUrls(url, [], historyRecords, "video"),
+            data.displayName ?? undefined,
+          );
           return;
         }
-        setHistoryPreviewUrl(null);
         updateNodeData(id, {
           videoUrl: url,
           isGenerating: false,
@@ -991,7 +984,7 @@ export const VideoNode = memo(
           generationBatch: null,
         });
       },
-      [id, isGenerating, updateNodeData],
+      [data.displayName, historyRecords, id, isGenerating, updateNodeData],
     );
 
     // ------ upstream reference images ----------------------------------------
@@ -1291,11 +1284,7 @@ export const VideoNode = memo(
         addEdge(id, newNodeId);
         updateNodeData(id, { isExtendPickMode: false });
         // 选中态要同时改 React Flow 自己那份，否则新节点的操作面板不浮出来。
-        store.onNodesChange([
-          { id, type: "select", selected: false },
-          { id: newNodeId, type: "select", selected: true },
-        ]);
-        setSelectedNode(newNodeId);
+        selectNodeExclusively(newNodeId);
       },
       [
         addEdge,
@@ -1303,7 +1292,6 @@ export const VideoNode = memo(
         availableVideoModels,
         id,
         resolvedTitle,
-        setSelectedNode,
         updateNodeData,
       ],
     );
@@ -1352,7 +1340,7 @@ export const VideoNode = memo(
         label: resolvedTitle,
       });
       const store = useCanvasStore.getState();
-      store.setSelectedNode(requesterId);
+      selectNodeExclusively(requesterId);
       store.requestFocusNode(requesterId);
       cancelPick();
     }, [
@@ -1467,9 +1455,9 @@ export const VideoNode = memo(
           aspectRatio: data.aspectRatio,
           user_spawned: true,
         } as Partial<VideoNodeData>);
-        setSelectedNode(newNodeId);
+        selectNodeExclusively(newNodeId);
       },
-      [addNode, data.aspectRatio, id, resolvedWidth, setSelectedNode],
+      [addNode, data.aspectRatio, id, resolvedWidth],
     );
 
     const handleDownloadAlbumVideo = useCallback(
@@ -3520,7 +3508,6 @@ export const VideoNode = memo(
         ref={albumRootRef}
         className="group relative h-full w-full overflow-visible"
         style={{ width: resolvedWidth, height: resolvedHeight }}
-        onClick={() => setSelectedNode(id)}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
       >
@@ -3661,7 +3648,7 @@ export const VideoNode = memo(
             storyFramePointer.current = null;
             if (!storyPlayerMode || isUploading || subtitleEraseMode) return;
             if (!canOpenStoryFrameEditor(event.target as Element, event.currentTarget, Boolean(point?.dragged))) return;
-            setSelectedNode(id);
+            selectNodeExclusively(id);
             setStoryEditNode(id);
           }}
           onKeyDown={(event) => {
@@ -3669,18 +3656,18 @@ export const VideoNode = memo(
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault();
               event.stopPropagation();
-              setSelectedNode(id);
+              selectNodeExclusively(id);
               setStoryEditNode(id);
             }
           }}
           onDoubleClick={(event) => {
             if ((event.target as HTMLElement).closest('button, input') || storyPlayerMode || isClipMode || subtitleEraseMode || isUploading) return;
-            const url = isGenerating ? historyPreviewUrl : videoSource;
+            const url = videoSource;
             if (!url) return;
             event.stopPropagation();
             void openNodeVideoViewer(url, id, nodeMediaViewerUrls(url, albumUrls, historyRecords, 'video'), data.displayName ?? undefined);
           }}
-          className={`relative flex h-full w-full items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${videoSource || storyPlayerMode ? "overflow-hidden" : "overflow-visible"} rounded-[var(--node-radius)] ${videoSource || historyPreviewUrl ? CANVAS_NODE_MEDIA_FRAME_CLASS : "border"} ${bodySurfaceClass} transition-colors ${bodyFrameClass} ${
+          className={`relative flex h-full w-full items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${videoSource || storyPlayerMode ? "overflow-hidden" : "overflow-visible"} rounded-[var(--node-radius)] ${videoSource ? CANVAS_NODE_MEDIA_FRAME_CLASS : "border"} ${bodySurfaceClass} transition-colors ${bodyFrameClass} ${
             // 画册展开时藏起节点本体——半透明的画册容器盖不严，底下的视频会透出来。
             albumExpanded && hasAlbum ? "invisible" : ""
           }`}
@@ -3723,12 +3710,10 @@ export const VideoNode = memo(
                 alt=""
                 className="h-full w-full object-contain"
                 draggable={false}
-                onClick={() => setSelectedNode(id)}
               />
             ) : (
               <div
                 className="flex h-full w-full items-center justify-center bg-black/40"
-                onClick={() => setSelectedNode(id)}
               >
                 <VideoIcon className="h-1/4 max-h-10 w-1/4 max-w-10 text-white/25" />
               </div>
@@ -3749,10 +3734,6 @@ export const VideoNode = memo(
               onPause={() => {
                 isVideoPlayingRef.current = false;
                 setNodeMediaActive(id, false);
-              }}
-              onClick={() => {
-                // 点击视频本体只负责选中节点 —— 播放/暂停统一交给左下角按钮。
-                setSelectedNode(id);
               }}
               onLoadedMetadata={(event) => {
                 const el = event.currentTarget;
@@ -3789,40 +3770,6 @@ export const VideoNode = memo(
               <span className="px-4 text-center text-[12px] leading-6">
                 {t("node.videoNode.uploading")}
               </span>
-            </div>
-          ) : isGenerating && historyPreviewUrl ? (
-            // 生成进行中，但用户点了历史记录预览：临时播放那条历史视频，新视频
-            // 仍在后台生成。顶部 pill 提示「生成中」，右上「返回」回到 loading。
-            <div className="relative h-full w-full">
-              <NodeGenerationOverlay
-                startedAt={data.generationStartedAt ?? null}
-                durationMs={data.generationDurationMs}
-              />
-              <video
-                src={resolveImageDisplayUrl(historyPreviewUrl)}
-                className="h-full w-full object-contain"
-                controls
-                playsInline
-                preload="metadata"
-                onClick={(event) => event.stopPropagation()}
-              />
-              <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-2 p-2">
-                <span className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[11px] text-white/90 backdrop-blur">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  {t("node.videoNode.history.generatingNew")}
-                </span>
-                <button
-                  type="button"
-                  className="nodrag pointer-events-auto inline-flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1 text-[11px] text-white/90 backdrop-blur transition-colors hover:bg-black/75"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setHistoryPreviewUrl(null);
-                  }}
-                >
-                  <XIcon className="h-3 w-3" />
-                  {t("node.videoNode.history.back")}
-                </button>
-              </div>
             </div>
           ) : isGenerating ? (
             <div className="relative h-full w-full">
@@ -4342,15 +4289,13 @@ export const VideoNode = memo(
               <NodeHistoryRail
                 records={historyRecords}
                 isLoading={historyLoading}
-                onRestore={handleRestoreHistory}
+                onRestore={handleHistorySelect}
                 onRefresh={() => void refreshHistory()}
                 isActive={(record) => {
                   const url = historyRecordOutputUrl(record);
                   if (!url) return false;
-                  // 预览态下高亮正在预览的历史条，否则高亮当前主视频。
-                  if (isGenerating && historyPreviewUrl) {
-                    return url === historyPreviewUrl;
-                  }
+                  // 生成中不标记旧结果；任务完成后只标记当前主视频。
+                  if (isGenerating) return false;
                   return url === data.videoUrl;
                 }}
               />

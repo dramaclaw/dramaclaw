@@ -18,6 +18,11 @@ import {
   CANVAS_NODE_INPUT_SURFACE_CLASS,
   canvasNodeFrameClass,
 } from "@/features/canvas/ui/nodeFrameStyles";
+import {
+  NODE_PRIMARY_ACTION_BASE_CLASS,
+  NODE_PRIMARY_ACTION_DISABLED_CLASS,
+  NODE_PRIMARY_ACTION_ENABLED_CLASS,
+} from "@/features/canvas/ui/nodeControlStyles";
 import { buildNodeScenePatch, loadNodeScene } from "@/features/previz/nodeScene";
 import { createDefaultScene, type PrevizScene } from "@/features/previz/domain/scene";
 import {
@@ -56,7 +61,6 @@ const NODE_HEIGHT = 210;
 
 export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
   const { t } = useTranslation();
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const [isEditorOpen, setEditorOpen] = useState(false);
   /**
@@ -150,7 +154,6 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
     <div
       className="group relative h-full w-full overflow-visible"
       style={{ width: NODE_WIDTH, height: NODE_HEIGHT }}
-      onClick={() => setSelectedNode(id)}
     >
       <Handle
         type="target"
@@ -176,7 +179,7 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
       <div
         className={`relative flex h-full w-full flex-col overflow-hidden rounded-[var(--node-radius)] border ${CANVAS_NODE_INPUT_SURFACE_CLASS} transition-colors ${canvasNodeFrameClass({ selected })}`}
       >
-        <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-5 py-4 text-center">
+        <div className="flex h-full w-full flex-col items-center justify-center gap-2.5 px-5 py-4 text-center">
           <button
             type="button"
             disabled={!loaded.ok}
@@ -184,12 +187,12 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
               event.stopPropagation();
               openEditor();
             }}
-            className="flex h-10 w-full items-center justify-center rounded-[12px] border border-white/15 bg-white/[0.04] px-4 text-center text-[13px] text-text-dark transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+            className={`${NODE_PRIMARY_ACTION_BASE_CLASS} ${loaded.ok ? NODE_PRIMARY_ACTION_ENABLED_CLASS : NODE_PRIMARY_ACTION_DISABLED_CLASS}`}
           >
             {t("previz.node.open")}
           </button>
 
-          <span className="text-[12px] text-text-muted/90">
+          <span className="text-[12px] font-medium leading-5 text-text-muted/90">
             {!loaded.ok
               ? t("previz.node.versionTooNew")
               : data.summary
@@ -202,12 +205,12 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
 
           {data.isGenerating ? (
             // 白模任务在途：句柄在节点上，画布的恢复路径正在等它，进度见任务中心。
-            <span className="flex items-center gap-1.5 text-[11px] text-text-muted/90">
+            <span className="flex items-center gap-1.5 text-[11px] leading-4 text-text-muted/90">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white/70" />
               {t("previz.node.generating")}
             </span>
           ) : (
-            <span className="text-[11px] text-text-muted/70">{t("previz.node.hint")}</span>
+            <span className="max-w-[250px] text-[11px] leading-4 text-text-muted/65">{t("previz.node.hint")}</span>
           )}
         </div>
       </div>

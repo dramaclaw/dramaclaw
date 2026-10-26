@@ -10,6 +10,7 @@ import { storySaveKey } from '@/features/canvas/story/storySave';
 import { StoryPlayer } from '@/features/canvas/story/StoryPlayer';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 import { resolveMediaUrl } from '@/lib/media-url';
 import { StoryExperience } from '@/features/canvas/story/StoryExperience';
@@ -72,14 +73,10 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const handleEditCurrentNode = useCallback(() => {
     if (!currentNodeId) return;
     const canvas = useCanvasStore.getState();
-    // Keep ReactFlow selection in sync, otherwise Canvas restores the old selection.
-    canvas.onNodesChange(canvas.nodes.map((node) => ({
-      type: 'select' as const, id: node.id, selected: node.id === currentNodeId,
-    })));
+    selectNodeExclusively(currentNodeId);
     canvas.onEdgesChange(canvas.edges.filter((edge) => edge.selected).map((edge) => ({
       type: 'select' as const, id: edge.id, selected: false,
     })));
-    canvas.setSelectedNode(currentNodeId);
     canvas.setStoryEditNode(currentNodeId);
     canvas.requestFocusNode(currentNodeId);
     exitPlay();

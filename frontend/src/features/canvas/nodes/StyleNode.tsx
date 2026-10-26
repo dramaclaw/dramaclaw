@@ -56,7 +56,6 @@ const STYLE_NODE_PLACEHOLDER_KEYS: Record<StyleSelectionState, string> = {
 
 export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
   const { t } = useTranslation();
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const [galleryOpen, setGalleryOpen] = useState(false);
 
@@ -127,7 +126,6 @@ export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
     <div
       className="group relative h-full w-full overflow-visible"
       style={{ width: STYLE_NODE_WIDTH, height: STYLE_NODE_HEIGHT }}
-      onClick={() => setSelectedNode(id)}
     >
       <Handle
         type="source"

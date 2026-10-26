@@ -143,6 +143,7 @@ import { CanvasFileDropOverlay } from './ui/CanvasFileDropOverlay';
 import { NodeToolDialog } from './ui/NodeToolDialog';
 import { ImageViewerModal } from './ui/ImageViewerModal';
 import { openNodeVideoViewer } from './application/nodeMediaViewer';
+import { selectNodeExclusively } from './application/nodeSelection';
 import { VideoViewerModal } from './ui/VideoViewerModal';
 import { CanvasZoomControl } from './ui/CanvasZoomControl';
 import { useEdgeVisibilityStore } from './ui/edgeVisibilityStore';
@@ -2276,7 +2277,7 @@ export function Canvas({
         }),
         pendingNodePlacement.initialData,
       );
-      setSelectedNode(newNodeId);
+      selectNodeExclusively(newNodeId);
       focusNewNodeIfLowZoom(newNodeId);
       if (pendingNodePlacement.skill) {
         bindSingleBeatContextInput(newNodeId, pendingNodePlacement.skill);
@@ -2295,7 +2296,6 @@ export function Canvas({
       pendingNodePlacement,
       reactFlowInstance,
       scheduleCanvasPersist,
-      setSelectedNode,
       triggerPlacementConfirm,
     ],
   );
@@ -2844,7 +2844,7 @@ export function Canvas({
       });
 
       if (lastNodeId) {
-        setSelectedNode(lastNodeId);
+        selectNodeExclusively(lastNodeId);
         focusNewNodeIfLowZoom(lastNodeId);
       }
       scheduleCanvasPersist(0);
@@ -2860,7 +2860,6 @@ export function Canvas({
     reactFlowInstance,
     scheduleCanvasPersist,
     selectedUploadNodeId,
-    setSelectedNode,
   ]);
 
   const handleOrganizeCanvas = useCallback(() => {
@@ -3187,7 +3186,7 @@ export function Canvas({
             hydratedPayload,
             basePosition,
           );
-          setSelectedNode(newNodeId);
+          selectNodeExclusively(newNodeId);
           scheduleCanvasPersist(0);
         })();
         return;
@@ -3232,7 +3231,7 @@ export function Canvas({
       });
 
       if (lastNodeId) {
-        setSelectedNode(lastNodeId);
+        selectNodeExclusively(lastNodeId);
         // 与其他「凭空新建节点」的入口一致：低缩放档下把视口拉到新节点（zoom 提到
         // ≥0.6），否则用户在 10% 下只看到一个几十像素的灰块。
         focusNewNodeIfLowZoom(lastNodeId);
@@ -3245,7 +3244,6 @@ export function Canvas({
       hasDraggedAnyPayload,
       reactFlowInstance,
       scheduleCanvasPersist,
-      setSelectedNode,
     ]
   );
 
@@ -3446,7 +3444,7 @@ export function Canvas({
   const handleQuickAddNode = useCallback(
     (type: CanvasNodeType) => {
       const newNodeId = addNode(type, spawnAtViewportCenter());
-      setSelectedNode(newNodeId);
+      selectNodeExclusively(newNodeId);
       focusNewNodeIfLowZoom(newNodeId);
       scheduleCanvasPersist(0);
     },
@@ -3454,7 +3452,6 @@ export function Canvas({
       addNode,
       focusNewNodeIfLowZoom,
       scheduleCanvasPersist,
-      setSelectedNode,
       spawnAtViewportCenter,
     ],
   );
@@ -3520,7 +3517,7 @@ export function Canvas({
         skill_schema_version: skill.schema_version ?? SKILL_SCHEMA_VERSION,
         displayName: skill.display_name,
       } as Partial<CanvasNodeData>);
-      setSelectedNode(newNodeId);
+      selectNodeExclusively(newNodeId);
       focusNewNodeIfLowZoom(newNodeId);
       bindSingleBeatContextInput(newNodeId, skill);
       scheduleCanvasPersist(0);
@@ -3530,7 +3527,6 @@ export function Canvas({
       bindSingleBeatContextInput,
       focusNewNodeIfLowZoom,
       scheduleCanvasPersist,
-      setSelectedNode,
       spawnAtViewportCenter,
     ],
   );
@@ -3573,10 +3569,10 @@ export function Canvas({
             })()
           : origin;
       const newNodeId = spawnAssetNode(useCanvasStore.getState(), payload, position);
-      setSelectedNode(newNodeId);
+      selectNodeExclusively(newNodeId);
       scheduleCanvasPersist(0);
     },
-    [scheduleCanvasPersist, setSelectedNode, spawnAtViewportCenter],
+    [scheduleCanvasPersist, spawnAtViewportCenter],
   );
 
   // 历史资产弹窗「删除」：从画布移除该资产对应的源节点。
@@ -4201,11 +4197,11 @@ export function Canvas({
         applyNodesChange(allChanges);
       }
       if (altCopyState.copiedNodeIds.length > 0) {
-        setSelectedNode(altCopyState.copiedNodeIds[0]);
+        selectNodeExclusively(altCopyState.copiedNodeIds[0]);
       }
       scheduleCanvasPersist(0);
     },
-    [applyNodesChange, exitNodeDragFocus, scheduleCanvasPersist, setSelectedNode]
+    [applyNodesChange, exitNodeDragFocus, scheduleCanvasPersist]
   );
 
   // 拖「选区框」整体移动多选节点时，React Flow 走 onSelectionDrag* 而非 onNodeDrag*，
@@ -5057,6 +5053,10 @@ export function Canvas({
         onNodeDragStop={handleNodeDragStop}
         onSelectionDragStart={handleSelectionDragStart}
         onSelectionDragStop={handleSelectionDragStop}
+        // Keep selection tied to a click. Dragging an unselected node should
+        // move it without opening its node panels on release.
+        selectNodesOnDrag={false}
+        nodeDragThreshold={4}
         onPaneClick={handlePaneClick}
         onMove={handleMove}
         onMoveStart={handleMoveStart}
