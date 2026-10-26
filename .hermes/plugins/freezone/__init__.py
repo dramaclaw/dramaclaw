@@ -6691,7 +6691,9 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
         "Wait for user confirmation and end this turn without another workflow write. "
         "Only after a later user message explicitly requests a change, call "
         "freezone_patch_workflow_draft on this draft with changes.step_updates and/or "
-        "changes.bindings and its expected_revision. Confirm the exact draft_id and revision "
+        "changes.bindings and its expected_revision; when the change alters what the plan "
+        "summary or analysis describes, also send the revised changes.summary and "
+        "changes.analysis. Confirm the exact draft_id and revision "
         "only after confirmation; never prepare a replacement draft or fall back to direct "
         "canvas commands."
     )
@@ -12246,7 +12248,7 @@ TOOLS = (
         "freezone_revise_workflow",
         _schema(
             "freezone_revise_workflow",
-            "Revise a persisted draft with one server request. Send draft_id, expected_revision and only changes. Compact drafts accept changed intent fields. Exact plans accept step_updates [{node_id,prompt?,settings?}] or bindings. Never silently adopt a conflicting revision; query and review it first. No canvas execution.",
+            "Revise a persisted draft with one server request. Send draft_id, expected_revision and only changes. Compact drafts accept changed intent fields. Exact plans accept step_updates [{node_id,prompt?,settings?}], bindings, summary and analysis (send revised ones whenever the change makes them inaccurate). Never silently adopt a conflicting revision; query and review it first. No canvas execution.",
             {
                 **_SCOPE_PROPS,
                 "draft_id": {"type": "string"},
@@ -12319,7 +12321,8 @@ TOOLS = (
             (
                 "Apply a small user-requested change to an existing workflow draft and return "
                 "the updated preview. Keep the selected skill_id unchanged. For an exact Plan, "
-                "send changes.step_updates and/or changes.bindings; for compact Intent, send "
+                "send changes.step_updates and/or changes.bindings, plus changes.summary and "
+                "changes.analysis when the change alters what they describe; for compact Intent, send "
                 "only changed intent fields. Do not prepare a replacement draft."
             ),
             {
@@ -12333,7 +12336,10 @@ TOOLS = (
                     "type": "object",
                     "description": (
                         "Exact Plan: step_updates (array of objects with node_id, optional prompt "
-                        "and settings) and/or bindings (array of source, target, usage objects). "
+                        "and settings) and/or bindings (array of source, target, usage objects), "
+                        "plus summary (revised plan summary text, shown as the preview title) "
+                        "and analysis (the complete revised analysis object) whenever the "
+                        "change makes the current ones inaccurate. "
                         "Settings: model, aspect_ratio, quality, resolution, duration_seconds, "
                         "generate_audio, variants, voice_ref, generation_mode, as supported by "
                         "the node type. Do not mix these with compact-intent fields. "

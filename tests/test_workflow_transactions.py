@@ -462,6 +462,24 @@ def test_text_prompt_update_does_not_leave_old_recipe_prompt():
     assert result["nodes"][0]["data"]["semanticOutputRole"] == "planning_text"
 
 
+def test_step_prompt_update_also_replaces_node_level_prompt_alias():
+    plan = _plan()
+    plan["nodes"][0]["prompt"] = "Old planning alias"
+    plan["nodes"][1]["prompt"] = "Old image alias"
+    result = update_workflow_steps(
+        plan,
+        [
+            {"node_id": "brief", "prompt": "New planning"},
+            {"node_id": "image", "prompt": "New image"},
+        ],
+    )
+    assert result["nodes"][0]["prompt"] == "New planning"
+    assert result["nodes"][1]["prompt"] == "New image"
+    assert result["nodes"][1]["data"]["prompt"] == "New image"
+    untouched = update_workflow_steps(_plan(), [{"node_id": "image", "prompt": "New image"}])
+    assert "prompt" not in untouched["nodes"][1]
+
+
 def test_compact_intent_preparation_and_revision_use_authenticated_catalog(monkeypatch):
     from novelvideo.freezone.workflow_transactions import revise_workflow_source
 

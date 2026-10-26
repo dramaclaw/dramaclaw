@@ -297,6 +297,9 @@ def update_workflow_steps(plan: dict, updates: Any) -> dict:
             data[field] = prompt
             if node_type == "textAnnotationNode" and "prompt" in data:
                 data["prompt"] = prompt
+            # A node-level prompt is a planning alias; leaving it would keep the old wording.
+            if "prompt" in node:
+                node["prompt"] = prompt
         settings = update.get("settings", {})
         if not isinstance(settings, dict):
             raise WorkflowOperationError("settings must be an object")
@@ -511,13 +514,27 @@ def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dic
         )
         return {**prepared, "run_after_create": policy,
                 "last_changes": {**prepared.get("last_changes", {}), "run_after_create": policy}}
-    graph_fields = {"step_updates", "bindings"}
+    exact_plan = isinstance(payload.get("intent", {}).get("plan"), dict)
+    # An exact plan's summary (its preview title) and analysis describe its steps, so they are
+    # revised together with them.
+    graph_fields = {"step_updates", "bindings"} | (
+        {"summary", "analysis"} if exact_plan else set()
+    )
     if graph_fields & set(changes):
         if set(changes) - graph_fields:
             raise WorkflowOperationError(
                 "do not mix step/binding changes with compact intent fields"
             )
         plan = deepcopy(payload["compiled"]["plan"])
+        if "summary" in changes:
+            summary = changes["summary"]
+            if not isinstance(summary, str) or not summary.strip():
+                raise WorkflowOperationError("summary must be non-empty text")
+            plan["summary"] = summary
+        if "analysis" in changes:
+            if not isinstance(changes["analysis"], dict):
+                raise WorkflowOperationError("analysis must be an object")
+            plan["analysis"] = deepcopy(changes["analysis"])
         stored = payload["compiled"].get("mode_confirmations")
         confirmations = dict(stored) if isinstance(stored, dict) else {}
         if "step_updates" in changes:
@@ -529,8 +546,8 @@ def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dic
             {"plan": plan}, username=username, mode_confirmations=confirmations
         )
         return {**prepared, "last_changes": deepcopy(changes)}
-    if isinstance(payload.get("intent", {}).get("plan"), dict):
-        raise WorkflowOperationError("exact plans accept step_updates or bindings")
+    if exact_plan:
+        raise WorkflowOperationError("exact plans accept step_updates, bindings, summary or analysis")
     with workflow_catalog_scope(username):
         patched, error = build_workflow_draft_patch(
             payload=payload,

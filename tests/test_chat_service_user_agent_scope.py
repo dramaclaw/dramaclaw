@@ -4001,6 +4001,37 @@ def test_freezone_existing_execution_uses_focused_mcp_tools():
     ]
 
 
+@pytest.mark.parametrize("prompt", [
+    (
+        "明确使用 text-to-image-video（文生图生视频）Skill，规划一条最小可执行的"
+        "文本→图片→视频链路。唯一 general-video 节点以该图片为首帧生成 5 秒视频。"
+        "请准备 run_after_create=true 的完整待确认工作流草稿；"
+        "现在不要创建画布节点或执行任何任务，等我确认后再自动执行。"
+    ),
+    "请先规划当前工作流，等我确认后再自动执行。",
+    "请准备当前工作流的可执行草稿，等待确认。",
+    "Prepare the current workflow with run_after_create=true.",
+    "Prepare the current workflow. After I confirm execute it.",
+])
+def test_freezone_draft_planning_with_deferred_execution_keeps_workflow_mcp(prompt):
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas", prompt=prompt)
+
+    assert "dramaclaw_workflows" in servers
+    assert "enabled_tools" not in servers["dramaclaw"]
+
+
+@pytest.mark.parametrize("prompt", [
+    "当前工作流已经确认，请立即执行。",
+    "Run the current workflow now.",
+    "等我确认后再自动执行当前工作流。现在先执行当前工作流。",
+])
+def test_freezone_immediate_execution_keeps_focused_tools(prompt):
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas", prompt=prompt)
+
+    assert set(servers) == {"dramaclaw"}
+    assert "freezone_run_workflow" in servers["dramaclaw"]["enabled_tools"]
+
+
 def test_freezone_exact_node_action_uses_one_batch_write_tool():
     servers = chat_service._dramaclaw_mcp_servers(
         "freezone_canvas",
