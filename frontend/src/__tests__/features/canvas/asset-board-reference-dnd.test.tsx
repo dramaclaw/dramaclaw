@@ -8,10 +8,12 @@ import { AssetBoardView } from '@/features/canvas/ui/asset-board/AssetBoardView'
 import { REFERENCE_DROP_HINT_TEXT } from '@/features/canvas/ui/asset-board/AssetBoardReferenceDropZone';
 import { BOARD_REFERENCE_DRAG_MIME } from '@/features/canvas/ui/asset-board/boardReferenceDrag';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { zhT } from '@/__tests__/helpers/i18n-fixtures';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
+    t: (key: string, options?: string | Record<string, unknown>) =>
+      typeof options === 'string' ? options : zhT(key, { defaultValue: key, ...options }),
   }),
 }));
 

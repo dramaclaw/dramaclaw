@@ -8,6 +8,7 @@ import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { AssetBoardView } from '@/features/canvas/ui/asset-board/AssetBoardView';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { zhT } from '@/__tests__/helpers/i18n-fixtures';
 
 /** 收集本段内 publish 出来的 freezone/add-nodes-to-chat 载荷。 */
 function captureAddToChat(run: () => void): string[][] {
@@ -25,7 +26,8 @@ function captureAddToChat(run: () => void): string[][] {
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
+    t: (key: string, options?: string | Record<string, unknown>) =>
+      typeof options === 'string' ? options : zhT(key, { defaultValue: key, ...options }),
   }),
 }));
 

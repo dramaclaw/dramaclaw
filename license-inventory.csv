@@ -572,6 +572,7 @@ frontend/src/__tests__/features/canvas/history-assets-buckets.test.ts,Elastic-2.
 frontend/src/__tests__/features/canvas/history-search-keyboard.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-billing.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-editor-overlays-empty-catalog.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/image-form-i18n.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-gen-director-world-entry.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-gen-error-notification.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-gen-error-notification.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
