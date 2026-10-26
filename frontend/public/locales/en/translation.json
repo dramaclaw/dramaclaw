@@ -801,6 +801,15 @@
     "noSessions": "No sessions yet",
     "chatTitle": "Xia Director",
     "globalScope": "Global",
+    "directorRunMode": {
+      "manualLabel": "Manual mode",
+      "manualDescription": "Confirm each generation step before it runs",
+      "autoLabel": "Auto-run episode",
+      "autoDescription": "After a second confirmation, advance this episode automatically until a failure or the final video is complete",
+      "running": "Auto-run episode · Running",
+      "awaitingIntervention": "Auto-run episode · Awaiting change confirmation",
+      "awaitingConfirmation": "Auto-run episode · Awaiting confirmation"
+    },
     "connected": "Connected",
     "connecting": "Connecting",
     "reconnecting": "Reconnecting",
@@ -938,6 +947,31 @@
         "continue": "Continue with selected voice"
       },
       "canvasExecuting": "Executing...",
+      "currentSelection": "Current selection",
+      "usedThisTurn": "Used this turn",
+      "removeReference": "Remove canvas reference",
+      "removeAllReferences": "Remove all canvas references",
+      "clearReferences": "Clear all",
+      "selectSkill": "Choose a Skill",
+      "skillMenu": {
+        "title": "Skills",
+        "create": "Create",
+        "search": "Search Skills",
+        "noMatches": "No matching Skills",
+        "empty": "No Skills here yet",
+        "unavailable": "No Skills available yet",
+        "emptyHelp": "Ask the agent to turn the current canvas into a Skill, or describe your workflow to create a custom Skill.",
+        "actions": {
+          "summarize-canvas": "Turn canvas into a Skill",
+          "create-with-agent": "Create a Skill with the agent"
+        }
+      },
+      "executionMode": {
+        "manualLabel": "Manual confirmation",
+        "manualDescription": "The agent asks for confirmation before executing canvas commands",
+        "autoLabel": "Auto-generate",
+        "autoDescription": "The agent automatically executes safe commands and reports the results"
+      },
       "canvasConfirmedExecuting": "Parameters confirmed. Execution is in progress; no further confirmation is needed.",
       "canvasConfirmExecution": "Confirm execution",
       "canvasTimeoutCancelled": "The canvas operation timed out and was cancelled without being applied.",
@@ -5737,6 +5771,8 @@
     "copy": "Copy",
     "copyText": "Copy Text",
     "copyErrorReport": "Copy Error",
+    "nodeId": "Node ID",
+    "copyNodeId": "Copy node ID",
     "copied": "Copied",
     "download": "Download",
     "ungroup": "Ungroup",
@@ -7969,6 +8005,15 @@
       "saveSuccess": "OSS config saved",
       "cloudinarySaveSuccess": "Cloudinary config saved",
       "saveFailed": "Failed to save OSS config",
+      "errors": {
+        "MEDIA_STORAGE_TIMEOUT": "Media storage connection timed out. Check your network and try again.",
+        "MEDIA_STORAGE_AUTH_INVALID": "Media storage credentials are invalid. Check your AccessKey / API Key.",
+        "MEDIA_STORAGE_ACCESS_DENIED": "Media storage access denied. Check your credentials and upload/read permissions.",
+        "MEDIA_STORAGE_TARGET_INVALID": "Media storage destination is unavailable. Check the bucket, endpoint, or folder.",
+        "MEDIA_STORAGE_CONFIG_INVALID": "Media storage configuration is incomplete or the upload failed. Check the selected storage settings.",
+        "MEDIA_STORAGE_UNAVAILABLE": "Media storage read/write verification failed. Check your connection and settings, then try again.",
+        "MEDIA_STORAGE_READ_MISMATCH": "Media storage read verification failed. Check the storage access settings."
+      },
       "cloudinaryFieldsHint": "Saved values are stored in the local CE settings database; full API Key / Secret values are not returned. Leave saved credentials blank and enter only the fields you want to replace. API Folder is optional; leave it empty to upload to the Cloudinary root.",
       "cloudinaryRegisterLink": "Register at Cloudinary",
       "testUpload": "Test upload",

@@ -159,7 +159,7 @@ import type {
 } from "@/api/ops";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { CanvasOntologyContext } from "@/features/canvas/ontology/canvasOntology";
-import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
+import { localizeNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { useCanvasStore, type CanvasNode } from "@/stores/canvasStore";
 import {
   CANVAS_NODE_TYPES,
@@ -10055,9 +10055,9 @@ async function writeClipboardText(text: string): Promise<boolean> {
   }
 }
 
-function getCanvasNodeLabel(node: CanvasNode): string {
+function getCanvasNodeLabel(node: CanvasNode, t: TFunction): string {
   if (!node.type) return node.id;
-  return resolveNodeDisplayName(node.type as CanvasNodeType, node.data);
+  return localizeNodeDisplayName(node.type as CanvasNodeType, node.data, t);
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -10118,10 +10118,10 @@ function canvasReferencePreviewUrl(node: CanvasNode): string | null {
   return stringOrNull(data.previewImageUrl) || stringOrNull(data.imageUrl) || stringOrNull(data.referenceImageUrl);
 }
 
-function canvasNodeToReferencePreview(node: CanvasNode): CanvasNodeReferencePreview {
+function canvasNodeToReferencePreview(node: CanvasNode, t: TFunction): CanvasNodeReferencePreview {
   return {
     nodeId: node.id,
-    label: getCanvasNodeLabel(node),
+    label: getCanvasNodeLabel(node, t),
     nodeType: node.type ?? null,
     mediaType: canvasReferenceMediaType(node),
     sourceUrl: canvasReferenceSourceUrl(node),
@@ -10264,6 +10264,7 @@ function CanvasNodeReferenceThumb({
   node: CanvasNodeReferencePreview;
   onRemove?: () => void;
 }) {
+  const { t } = useTranslation();
   const thumbRef = useRef<HTMLDivElement | null>(null);
   const [previewPosition, setPreviewPosition] = useState<{ left: number; top: number } | null>(null);
   const mediaSrc = canvasReferenceResolvedUrl(node.sourceUrl);
@@ -10329,7 +10330,7 @@ function CanvasNodeReferenceThumb({
       <button
         type="button"
         className="absolute right-0.5 top-0.5 z-20 flex size-4 items-center justify-center rounded-full bg-black/70 text-white/75 opacity-0 shadow-sm backdrop-blur transition hover:bg-black/85 hover:text-white group-hover:opacity-100 group-focus-within:opacity-100"
-        aria-label="移除画布引用"
+        aria-label={t("freezone.chat.removeReference")}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -11104,20 +11105,20 @@ const CANVAS_COMMAND_APPROVAL_TIMEOUT_MS = 300_000;
 const DIRECTOR_RUN_MODE_OPTIONS: ReadonlyArray<{
   value: DirectorRunMode;
   icon: LucideIcon;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
 }> = [
   {
     value: "manual_confirm",
     icon: ShieldAlert,
-    label: "手动模式",
-    description: "每个生成步骤执行前由你确认",
+    labelKey: "aiAssistant.directorRunMode.manualLabel",
+    descriptionKey: "aiAssistant.directorRunMode.manualDescription",
   },
   {
     value: "episode_auto",
     icon: Gauge,
-    label: "本集自动",
-    description: "二次确认后自动推进本集，失败或成片完成时停止",
+    labelKey: "aiAssistant.directorRunMode.autoLabel",
+    descriptionKey: "aiAssistant.directorRunMode.autoDescription",
   },
 ];
 
@@ -11202,20 +11203,20 @@ async function getDirectorAutoServer(project: string): Promise<DirectorAutoServe
 const CANVAS_COMMAND_EXECUTION_MODE_OPTIONS: ReadonlyArray<{
   value: CanvasCommandExecutionMode;
   icon: LucideIcon;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
 }> = [
   {
     value: "manual_confirm",
     icon: ShieldAlert,
-    label: "手动确认",
-    description: "Agent 在执行画布命令前都会请求确认",
+    labelKey: "freezone.chat.executionMode.manualLabel",
+    descriptionKey: "freezone.chat.executionMode.manualDescription",
   },
   {
     value: "auto_execute",
     icon: Wrench,
-    label: "自动生成",
-    description: "Agent 会自动执行安全命令并反馈结果",
+    labelKey: "freezone.chat.executionMode.autoLabel",
+    descriptionKey: "freezone.chat.executionMode.autoDescription",
   },
 ];
 
@@ -12906,8 +12907,8 @@ export function SuperChatPanel({
   const canSend = hasSendableContent && chat.connected && !preparingSend;
   const composerWaiting = chat.busy && (!hasSendableContent || !chat.connected || preparingSend);
   const selectedFreezoneNodePreviews = useMemo(
-    () => selectedFreezoneNodes.map((node) => canvasNodeToReferencePreview(node)),
-    [selectedFreezoneNodes],
+    () => selectedFreezoneNodes.map((node) => canvasNodeToReferencePreview(node, t)),
+    [selectedFreezoneNodes, t],
   );
   const deselectFreezoneNodeReferences = useCallback((nodeIds: ReadonlySet<string>) => {
     if (!isFreezoneLayout) return;
@@ -16214,7 +16215,7 @@ export function SuperChatPanel({
             {!hasActiveComposerPrompt && showFreezoneSkillSuggestions && !showClearCommandSuggestion && !freezoneSkillMenuExplicitOpen && (
               <div className="border-b border-white/10 bg-black/20 px-3 py-2.5">
                 <div className="mb-1.5 px-0.5 text-xs text-muted-foreground/85">
-                  技能
+                  {t("freezone.chat.skillMenu.title")}
                 </div>
                 <div className="max-h-52 overflow-y-auto pr-1">
                   {visibleFreezoneSkillSuggestions.length > 0 ? (
@@ -16251,10 +16252,10 @@ export function SuperChatPanel({
                   ) : (
                     <div className="px-0.5 pb-2 pt-0.5 text-xs leading-5 text-muted-foreground/65">
                       <div className="font-normal text-muted-foreground/72">
-                        还没有可用技能
+                        {t("freezone.chat.skillMenu.unavailable")}
                       </div>
                       <div className="mt-1 max-w-[30rem] text-[11px] leading-4 text-muted-foreground/45">
-                        可以让 Agent 把当前画布总结成 Skill，也可以直接描述你的工作流，让它帮你创建专属技能。
+                        {t("freezone.chat.skillMenu.emptyHelp")}
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {FREEZONE_SKILL_EMPTY_ACTIONS.map((action) => (
@@ -16267,7 +16268,7 @@ export function SuperChatPanel({
                             }}
                             onClick={() => insertFreezoneSkillEmptyAction(action.prompt)}
                           >
-                            {action.label}
+                            {t(`freezone.chat.skillMenu.actions.${action.id}`, { defaultValue: action.label })}
                           </button>
                         ))}
                       </div>
@@ -16360,17 +16361,17 @@ export function SuperChatPanel({
             {!hasActiveComposerPrompt && isFreezoneLayout && selectedFreezoneNodes.length > 0 && (
               <div className={cn("px-4", visibleComposerAttachments.length > 0 ? "pt-2" : "pt-3")}>
                 <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
-                  <span>当前选中</span>
+                  <span>{t("freezone.chat.currentSelection")}</span>
                   <div className="flex items-center gap-2">
-                    <span>本轮会使用</span>
+                    <span>{t("freezone.chat.usedThisTurn")}</span>
                     {selectedFreezoneNodes.length > 1 && (
                       <button
                         type="button"
                         onClick={deselectAllSelectedFreezoneNodeReferences}
                         className="rounded-sm px-1.5 py-0.5 text-[11px] font-medium text-destructive transition hover:bg-destructive/10 hover:text-destructive"
-                        aria-label="取消全部画布引用"
+                        aria-label={t("freezone.chat.removeAllReferences")}
                       >
-                        全部取消
+                        {t("freezone.chat.clearReferences")}
                       </button>
                     )}
                   </div>
@@ -16452,15 +16453,15 @@ export function SuperChatPanel({
                             <>
                               <Gauge className="size-3.5" />
                               {directorRunState.confirmationStage === "confirmed"
-                                ? "本集自动 · 运行中"
+                                ? t("aiAssistant.directorRunMode.running")
                                 : directorRunState.confirmationStage === "awaiting_intervention"
-                                  ? "本集自动 · 待修改确认"
-                                : "本集自动 · 待确认"}
+                                  ? t("aiAssistant.directorRunMode.awaitingIntervention")
+                                : t("aiAssistant.directorRunMode.awaitingConfirmation")}
                             </>
                           ) : (
                             <>
                               <ShieldAlert className="size-3.5" />
-                              手动模式
+                              {t("aiAssistant.directorRunMode.manualLabel")}
                             </>
                           )}
                         </DropdownMenuTrigger>
@@ -16485,9 +16486,9 @@ export function SuperChatPanel({
                               >
                                 <option.icon className="mt-0.5 shrink-0 text-muted-foreground" />
                                 <span className="min-w-0 flex-1">
-                                  <span className="block text-sm font-medium">{option.label}</span>
+                                  <span className="block text-sm font-medium">{t(option.labelKey)}</span>
                                   <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
-                                    {option.description}
+                                    {t(option.descriptionKey)}
                                   </span>
                                 </span>
                               </DropdownMenuRadioItem>
@@ -16518,12 +16519,12 @@ export function SuperChatPanel({
                             {canvasCommandExecutionMode === "manual_confirm" ? (
                               <>
                                 <ShieldAlert className="size-3.5" />
-                                手动确认
+                                {t("freezone.chat.executionMode.manualLabel")}
                               </>
                             ) : (
                               <>
                                 <Wrench className="size-3.5" />
-                                自动生成
+                                {t("freezone.chat.executionMode.autoLabel")}
                               </>
                             )}
                           </DropdownMenuTrigger>
@@ -16561,9 +16562,9 @@ export function SuperChatPanel({
                                 >
                                   <option.icon className="mt-0.5 shrink-0 text-muted-foreground" />
                                   <span className="min-w-0 flex-1">
-                                    <span className="block text-sm font-medium">{option.label}</span>
+                                    <span className="block text-sm font-medium">{t(option.labelKey)}</span>
                                     <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
-                                      {option.description}
+                                      {t(option.descriptionKey)}
                                     </span>
                                   </span>
                                 </DropdownMenuRadioItem>
@@ -16593,8 +16594,8 @@ export function SuperChatPanel({
                             setActiveFreezoneSkillSuggestionIndex(0);
                             restoreDraftFocusRef.current = true;
                           }}
-                          aria-label="选择 Skill"
-                          title="选择 Skill"
+                          aria-label={t("freezone.chat.selectSkill")}
+                          title={t("freezone.chat.selectSkill")}
                           aria-expanded={showFreezoneSkillSuggestions}
                         >
                           <Package className="size-4" />
@@ -16707,7 +16708,7 @@ export function SuperChatPanel({
                   aria-expanded={freezoneSkillCreateMenuOpen}
                 >
                   <Plus className="size-3.5" />
-                  创建
+                  {t("freezone.chat.skillMenu.create")}
                   <ChevronDown className={cn("size-3 transition", freezoneSkillCreateMenuOpen && "rotate-180")} />
                 </button>
                 {freezoneSkillCreateMenuOpen && (
@@ -16731,7 +16732,7 @@ export function SuperChatPanel({
                         ) : (
                           <Plus className="size-4 shrink-0 text-muted-foreground/80" />
                         )}
-                        <span>{action.label}</span>
+                        <span>{t(`freezone.chat.skillMenu.actions.${action.id}`, { defaultValue: action.label })}</span>
                       </button>
                     ))}
                   </div>
@@ -16774,7 +16775,7 @@ export function SuperChatPanel({
                   );
                 }
               }}
-              placeholder="搜索 Skill"
+              placeholder={t("freezone.chat.skillMenu.search")}
               className="h-9 w-full rounded-[8px] border border-white/[0.08] bg-white/[0.06] pl-8 pr-3 text-sm text-foreground outline-none placeholder:text-white/32 transition focus:border-white/[0.18] focus:bg-white/[0.08]"
             />
           </label>
@@ -16812,12 +16813,12 @@ export function SuperChatPanel({
             ) : (
               <div className="px-1 pb-1 pt-0.5 text-xs leading-5 text-muted-foreground/78">
                 <div className="font-medium text-foreground/78">
-                  {freezoneSkillMenuSearch.trim() ? "没有匹配的 Skill" : "这里暂时没有 Skill"}
+                  {t(freezoneSkillMenuSearch.trim() ? "freezone.chat.skillMenu.noMatches" : "freezone.chat.skillMenu.empty")}
                 </div>
                 {!freezoneSkillMenuSearch.trim() && (
                   <>
                     <div className="mt-1 text-muted-foreground/62">
-                      可以让 Agent 把当前画布总结成 Skill，也可以描述你的工作流来创建专属技能。
+                      {t("freezone.chat.skillMenu.emptyHelp")}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {FREEZONE_SKILL_EMPTY_ACTIONS.map((action) => (
@@ -16827,7 +16828,7 @@ export function SuperChatPanel({
                           className="rounded-full border border-white/[0.10] bg-white/[0.07] px-3 py-1.5 text-[11px] leading-4 text-foreground/78 shadow-[0_8px_18px_rgba(0,0,0,0.24)] transition hover:border-white/[0.16] hover:bg-white/[0.11] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
                           onClick={() => insertFreezoneSkillEmptyAction(action.prompt)}
                         >
-                          {action.label}
+                          {t(`freezone.chat.skillMenu.actions.${action.id}`, { defaultValue: action.label })}
                         </button>
                       ))}
                     </div>

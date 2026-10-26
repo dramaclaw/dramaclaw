@@ -801,6 +801,15 @@
     "noSessions": "暂无会话",
     "chatTitle": "虾导",
     "globalScope": "全局",
+    "directorRunMode": {
+      "manualLabel": "手动模式",
+      "manualDescription": "每个生成步骤执行前由你确认",
+      "autoLabel": "本集自动",
+      "autoDescription": "二次确认后自动推进本集，失败或成片完成时停止",
+      "running": "本集自动 · 运行中",
+      "awaitingIntervention": "本集自动 · 待修改确认",
+      "awaitingConfirmation": "本集自动 · 待确认"
+    },
     "connected": "已连接",
     "connecting": "连接中",
     "reconnecting": "重新连接中",
@@ -938,6 +947,31 @@
         "continue": "使用所选声线继续"
       },
       "canvasExecuting": "执行中...",
+      "currentSelection": "当前选中",
+      "usedThisTurn": "本轮会使用",
+      "removeReference": "移除画布引用",
+      "removeAllReferences": "取消全部画布引用",
+      "clearReferences": "全部取消",
+      "selectSkill": "选择 Skill",
+      "skillMenu": {
+        "title": "技能",
+        "create": "创建",
+        "search": "搜索 Skill",
+        "noMatches": "没有匹配的 Skill",
+        "empty": "这里暂时没有 Skill",
+        "unavailable": "还没有可用技能",
+        "emptyHelp": "可以让 Agent 把当前画布总结成 Skill，也可以描述你的工作流来创建专属技能。",
+        "actions": {
+          "summarize-canvas": "总结画布为 Skill",
+          "create-with-agent": "和 Agent 创建 Skill"
+        }
+      },
+      "executionMode": {
+        "manualLabel": "手动确认",
+        "manualDescription": "Agent 在执行画布命令前都会请求确认",
+        "autoLabel": "自动生成",
+        "autoDescription": "Agent 会自动执行安全命令并反馈结果"
+      },
       "canvasConfirmedExecuting": "参数已确认，正在执行，无需再次确认。",
       "canvasConfirmExecution": "确认执行",
       "canvasTimeoutCancelled": "画布操作因等待超时已取消，没有应用到画布。",
@@ -5737,6 +5771,8 @@
     "copy": "复制",
     "copyText": "复制文本",
     "copyErrorReport": "复制报错",
+    "nodeId": "节点 ID",
+    "copyNodeId": "复制节点 ID",
     "copied": "已复制",
     "download": "下载",
     "ungroup": "解散",
@@ -7969,6 +8005,15 @@
       "saveSuccess": "OSS 配置已保存",
       "cloudinarySaveSuccess": "Cloudinary 配置已保存",
       "saveFailed": "OSS 配置保存失败",
+      "errors": {
+        "MEDIA_STORAGE_TIMEOUT": "媒体存储连接超时，请检查网络后重试。",
+        "MEDIA_STORAGE_AUTH_INVALID": "媒体存储凭据无效，请检查 AccessKey / API Key。",
+        "MEDIA_STORAGE_ACCESS_DENIED": "媒体存储拒绝访问，请检查凭据及上传、读取权限。",
+        "MEDIA_STORAGE_TARGET_INVALID": "媒体存储目标不可用，请检查 bucket、endpoint 或文件夹。",
+        "MEDIA_STORAGE_CONFIG_INVALID": "媒体存储配置不完整或上传失败，请检查所选存储配置。",
+        "MEDIA_STORAGE_UNAVAILABLE": "媒体存储读写验证失败，请检查连接和配置后重试。",
+        "MEDIA_STORAGE_READ_MISMATCH": "媒体存储读取校验失败，请检查存储访问配置。"
+      },
       "cloudinaryFieldsHint": "保存后写入 CE 本地配置库；后端不会回传完整 API Key / Secret。留空保持已保存值，只填写需要替换的字段即可。API 文件夹可留空，留空时上传到 Cloudinary 根目录。",
       "cloudinaryRegisterLink": "前往 Cloudinary 注册",
       "testUpload": "测试上传",

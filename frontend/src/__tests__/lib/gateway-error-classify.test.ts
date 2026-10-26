@@ -7,7 +7,32 @@ import {
   classifyGatewayError,
   humanizeTaskError,
   providerErrorMessage,
+  mediaStorageErrorMessage,
 } from "@/lib/api-errors";
+import { enT, zhT } from "@/__tests__/helpers/i18n-fixtures";
+
+describe("media storage error localization", () => {
+  const raw = "DramaClawAPI image generation failed: 请求异常: MediaStorageUnavailable: " +
+    "MediaStorageUnavailable('MEDIA_STORAGE_READ_MISMATCH: 媒体存储读取校验失败。'); model=example";
+
+  it("translates wrapped backend failures without exposing Chinese exception wrappers", () => {
+    expect(humanizeTaskError(raw, enT)).toBe(
+      "MEDIA_STORAGE_READ_MISMATCH: Media storage read verification failed. Check the storage access settings.",
+    );
+    expect(backendErrorToastMessage(new Error(raw), enT)).toBe(humanizeTaskError(raw, enT));
+    expect(humanizeTaskError(raw, zhT)).toBe(
+      "MEDIA_STORAGE_READ_MISMATCH: 媒体存储读取校验失败，请检查存储访问配置。",
+    );
+    expect(raw).toContain("请求异常");
+  });
+
+  it("preserves unknown codes and unrelated provider errors", () => {
+    for (const raw of ["MEDIA_STORAGE_UNKNOWN: original detail", "disk full"]) {
+      expect(mediaStorageErrorMessage(raw, enT)).toBeNull();
+      expect(humanizeTaskError(raw, enT)).toBe(raw);
+    }
+  });
+});
 
 // A stub TFunction: return the key, unless a `defaultValue` is supplied and
 // the key is unknown. Our two keys are "known", so return a marker per key.

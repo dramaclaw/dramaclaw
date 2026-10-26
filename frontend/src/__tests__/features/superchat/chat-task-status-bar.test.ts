@@ -25,6 +25,7 @@ import {
   type CanvasNode,
 } from "@/features/canvas/domain/canvasNodes";
 import type { TaskState } from "@/task-center/types";
+import { enT, zhT } from "@/__tests__/helpers/i18n-fixtures";
 
 const NOW = Date.parse("2026-07-27T08:00:00.000Z");
 
@@ -88,6 +89,20 @@ function workflowRun(overrides: Partial<FreezoneWorkflowRun> = {}): FreezoneWork
 }
 
 describe("selectChatTaskItems", () => {
+  it("translates numbered default node names for the task bar but preserves custom names", () => {
+    const namedNode = node({
+      type: CANVAS_NODE_TYPES.imageGen,
+      data: { displayName: "图片节点16", autoTitleIndex: 16, generationTaskKey: "task-1" },
+    });
+    expect(selectChatTaskItems([task()], [namedNode], "canvas-1", NOW, "canvas", enT)[0].nodeLabel)
+      .toBe("Image node16");
+    expect(selectChatTaskItems([task()], [namedNode], "canvas-1", NOW, "canvas", zhT)[0].nodeLabel)
+      .toBe("图片节点16");
+    expect(selectChatTaskItems([task()], [node()], "canvas-1", NOW, "canvas", enT)[0].nodeLabel)
+      .toBe("商品主图");
+    expect(namedNode.data.displayName).toBe("图片节点16");
+  });
+
   it("matches a task through the canvas node generation key", () => {
     const result = selectChatTaskItems([task()], [node()], "canvas-1", NOW);
 
@@ -590,6 +605,16 @@ describe("workflowStatusCounts", () => {
 });
 
 describe("selectWorkflowActivityLabels", () => {
+  it("uses localized node names in workflow activity labels", () => {
+    expect(selectWorkflowActivityLabels(
+      [{ node_id: "node-1", action: "generate_image", status: "running", phase: "generating" }],
+      [node({ type: CANVAS_NODE_TYPES.imageGen, data: { displayName: "图片节点16", autoTitleIndex: 16 } })],
+      (label) => label,
+      new Map(),
+      enT,
+    )).toEqual(["Image node16"]);
+  });
+
   it("returns active node names and excludes actions that are still waiting", () => {
     const actions: FreezoneWorkflowRun["actions"] = [
       {

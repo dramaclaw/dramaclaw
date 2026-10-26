@@ -783,6 +783,15 @@
     "noSessions": "Chưa có phiên nào",
     "chatTitle": "Xia Director",
     "globalScope": "Toàn cục",
+    "directorRunMode": {
+      "manualLabel": "Chế độ thủ công",
+      "manualDescription": "Xác nhận từng bước tạo nội dung trước khi thực hiện",
+      "autoLabel": "Tự động chạy tập",
+      "autoDescription": "Sau lần xác nhận thứ hai, tự động xử lý tập này cho đến khi xảy ra lỗi hoặc hoàn thành video cuối cùng",
+      "running": "Tự động chạy tập · Đang chạy",
+      "awaitingIntervention": "Tự động chạy tập · Chờ xác nhận thay đổi",
+      "awaitingConfirmation": "Tự động chạy tập · Chờ xác nhận"
+    },
     "connected": "Đã kết nối",
     "connecting": "Đang kết nối",
     "reconnecting": "Đang kết nối lại",
@@ -920,6 +929,31 @@
         "continue": "Tiếp tục với giọng đã chọn"
       },
       "canvasExecuting": "Đang thực hiện...",
+      "currentSelection": "Đang chọn",
+      "usedThisTurn": "Dùng trong lượt này",
+      "removeReference": "Xóa tham chiếu bảng vẽ",
+      "removeAllReferences": "Xóa tất cả tham chiếu bảng vẽ",
+      "clearReferences": "Xóa tất cả",
+      "selectSkill": "Chọn Skill",
+      "skillMenu": {
+        "title": "Kỹ năng",
+        "create": "Tạo",
+        "search": "Tìm Skill",
+        "noMatches": "Không có Skill phù hợp",
+        "empty": "Chưa có Skill ở đây",
+        "unavailable": "Chưa có Skill khả dụng",
+        "emptyHelp": "Yêu cầu Agent biến bảng vẽ hiện tại thành Skill, hoặc mô tả quy trình để tạo Skill riêng.",
+        "actions": {
+          "summarize-canvas": "Tạo Skill từ bảng vẽ",
+          "create-with-agent": "Tạo Skill cùng Agent"
+        }
+      },
+      "executionMode": {
+        "manualLabel": "Xác nhận thủ công",
+        "manualDescription": "Agent yêu cầu xác nhận trước khi thực hiện lệnh trên bảng vẽ",
+        "autoLabel": "Tạo tự động",
+        "autoDescription": "Agent tự động thực hiện các lệnh an toàn và báo cáo kết quả"
+      },
       "canvasConfirmedExecuting": "Đã xác nhận tham số. Đang thực hiện, không cần xác nhận thêm.",
       "canvasConfirmExecution": "Xác nhận thực hiện",
       "canvasTimeoutCancelled": "Thao tác trên canvas đã hết thời gian chờ và bị huỷ, chưa áp dụng thay đổi.",
@@ -5623,6 +5657,8 @@
     "copy": "Sao chép",
     "copyText": "Sao chép văn bản",
     "copyErrorReport": "Sao chép lỗi",
+    "nodeId": "ID nút",
+    "copyNodeId": "Sao chép ID nút",
     "copied": "Đã sao chép",
     "download": "Tải về",
     "ungroup": "Bỏ nhóm",
@@ -7623,6 +7659,15 @@
       "saveSuccess": "Đã lưu cấu hình OSS",
       "cloudinarySaveSuccess": "Đã lưu cấu hình Cloudinary",
       "saveFailed": "Lưu cấu hình OSS thất bại",
+      "errors": {
+        "MEDIA_STORAGE_TIMEOUT": "Kết nối lưu trữ media quá hạn. Hãy kiểm tra mạng và thử lại.",
+        "MEDIA_STORAGE_AUTH_INVALID": "Thông tin xác thực lưu trữ media không hợp lệ. Hãy kiểm tra AccessKey / API Key.",
+        "MEDIA_STORAGE_ACCESS_DENIED": "Bị từ chối truy cập lưu trữ media. Hãy kiểm tra thông tin xác thực và quyền tải lên/đọc.",
+        "MEDIA_STORAGE_TARGET_INVALID": "Đích lưu trữ media không khả dụng. Hãy kiểm tra bucket, endpoint hoặc thư mục.",
+        "MEDIA_STORAGE_CONFIG_INVALID": "Cấu hình lưu trữ media chưa đầy đủ hoặc tải lên thất bại. Hãy kiểm tra cài đặt lưu trữ đã chọn.",
+        "MEDIA_STORAGE_UNAVAILABLE": "Xác minh đọc/ghi lưu trữ media thất bại. Hãy kiểm tra kết nối và cài đặt rồi thử lại.",
+        "MEDIA_STORAGE_READ_MISMATCH": "Xác minh đọc lưu trữ media thất bại. Hãy kiểm tra cài đặt truy cập lưu trữ."
+      },
       "cloudinaryFieldsHint": "Giá trị đã lưu được cất trong CSDL cài đặt CE cục bộ; API Key / Secret đầy đủ không được trả về. Hãy để trống các thông tin đã lưu và chỉ nhập những trường bạn muốn thay. API Folder là tuỳ chọn; để trống thì sẽ tải lên thư mục gốc của Cloudinary.",
       "cloudinaryRegisterLink": "Đăng ký tài khoản Cloudinary",
       "testUpload": "Thử tải lên",

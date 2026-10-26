@@ -48,6 +48,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { safeLocalStorageSet } from "@/lib/localStorageQuota";
 import { cn } from "@/lib/utils";
+import { mediaStorageErrorMessage } from "@/lib/api-errors";
 import {
   FEATURE_MODEL_GROUPS,
   FEATURE_MODEL_PRODUCT_GROUPS,
@@ -274,29 +275,33 @@ async function getRequestErrorMessage(
   error: unknown,
   fallback: string,
 ): Promise<string> {
-  const response = (error as { response?: Response } | null)?.response;
-  if (response) {
-    const body = await response
-      .clone()
-      .json()
-      .catch(() => null);
-    if (body && typeof body === "object") {
-      const data = body as {
-        detail?: unknown;
-        error?: unknown;
-        message?: unknown;
-      };
-      for (const value of [data.detail, data.error, data.message]) {
-        if (typeof value === "string" && value.trim()) return value.trim();
+  const requestError = error as {
+    data?: unknown;
+    response?: Response;
+    message?: unknown;
+  } | null;
+  // Ky 2 consumes the response body and exposes the parsed payload as error.data.
+  const data = requestError?.data;
+  if (typeof data === "string" && data.trim()) return data.trim();
+  const dataMessage = getResponseErrorMessage(data, "");
+  if (dataMessage) return dataMessage;
+
+  const response = requestError?.response;
+  if (response && !response.bodyUsed) {
+    try {
+      const text = (await response.clone().text()).trim();
+      if (text) {
+        try {
+          return getResponseErrorMessage(JSON.parse(text), text);
+        } catch {
+          return text;
+        }
       }
+    } catch {
+      // Cloning can throw synchronously; error reporting must still reach the toast.
     }
-    const text = await response
-      .clone()
-      .text()
-      .catch(() => "");
-    if (text.trim()) return text.trim();
   }
-  const message = (error as { message?: unknown } | null)?.message;
+  const message = requestError?.message;
   return typeof message === "string" && message.trim()
     ? message.trim()
     : fallback;
@@ -6029,6 +6034,8 @@ function MediaStorageSection() {
   const configuredProvider = hasConfiguredMediaRelay
     ? mediaRelay?.provider
     : provider;
+  const localizeStorageError = (message: string) =>
+    mediaStorageErrorMessage(message, t) ?? message;
   const handleSave = async () => {
     const ttl = Number(ttlSeconds.trim() || "0");
     if (!Number.isFinite(ttl) || ttl <= 0) {
@@ -6064,7 +6071,7 @@ function MediaStorageSection() {
             },
       );
       if (!res.ok) {
-        toast.error(res.error);
+        toast.error(localizeStorageError(res.error));
         return;
       }
       if (provider === "cloudinary") {
@@ -6079,9 +6086,11 @@ function MediaStorageSection() {
       );
     } catch (error) {
       toast.error(
-        await getRequestErrorMessage(
-          error,
-          t("settings.mediaStorage.saveFailed"),
+        localizeStorageError(
+          await getRequestErrorMessage(
+            error,
+            t("settings.mediaStorage.saveFailed"),
+          ),
         ),
       );
     }

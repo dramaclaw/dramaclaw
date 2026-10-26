@@ -4,14 +4,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
+import ky from "ky";
 
 import { SettingsDialog } from "@/components/settings/settings-dialog";
+import { enT, zhT } from "@/__tests__/helpers/i18n-fixtures";
 
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: true }));
+const localeState = vi.hoisted(() => ({ language: "zh" }));
 const modelGatewayMocks = vi.hoisted(() => ({
   config: undefined as Record<string, unknown> | undefined,
   saveAgent: vi.fn(),
   saveBrainClaw: vi.fn(),
+  saveMediaRelay: vi.fn(),
   setCustomLlmMode: vi.fn(),
 }));
 const freezoneAgentConfigMocks = vi.hoisted(() => ({
@@ -92,7 +96,10 @@ vi.mock("@/lib/queries/model-gateway", () => ({
   useSaveEmbeddingModel: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveMediaModels: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveProviderChannels: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useSaveMediaRelayConfig: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSaveMediaRelayConfig: () => ({
+    mutateAsync: modelGatewayMocks.saveMediaRelay,
+    isPending: false,
+  }),
   useSyncProviderChannel: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useChannelModels: () => ({
     data: undefined,
@@ -124,7 +131,9 @@ vi.mock("react-i18next", () => ({
         sharedCount?: number;
       },
     ) =>
-      ({
+      key.startsWith("settings.mediaStorage.errors.")
+        ? (localeState.language === "en" ? enT : zhT)(key, options)
+        : ({
         "settings.title": "设置",
         "settings.close": "关闭",
         "settings.navigationLabel": "设置导航",
@@ -361,9 +370,13 @@ function openRecipesManagement() {
 
 beforeEach(() => {
   runtimeState.isCeRuntime = true;
+  localeState.language = "zh";
   modelGatewayMocks.config = undefined;
   modelGatewayMocks.saveAgent.mockReset();
   modelGatewayMocks.saveBrainClaw.mockReset();
+  modelGatewayMocks.saveMediaRelay.mockReset();
+  vi.mocked(toast.error).mockClear();
+  vi.mocked(toast.success).mockClear();
   modelGatewayMocks.setCustomLlmMode.mockReset();
   modelGatewayMocks.setCustomLlmMode.mockResolvedValue({ ok: true });
   freezoneAgentConfigMocks.delete.mockReset();
@@ -384,6 +397,148 @@ beforeEach(() => {
 });
 
 describe("SettingsDialog pages", () => {
+  it.each([
+    {
+      language: "en",
+      expected: "MEDIA_STORAGE_ACCESS_DENIED: Media storage access denied. Check your credentials and upload/read permissions.",
+    },
+    {
+      language: "zh",
+      expected: "MEDIA_STORAGE_ACCESS_DENIED: 媒体存储拒绝访问，请检查凭据及上传、读取权限。",
+    },
+  ])("shows the $language storage error after Ky consumes the HTTP response", async ({ language, expected }) => {
+    localeState.language = language;
+    const detail = "MEDIA_STORAGE_ACCESS_DENIED: 媒体存储拒绝访问";
+    let requestError: unknown;
+    try {
+      await ky
+        .post("https://storage.example.test/config", {
+          retry: 0,
+          fetch: async () =>
+            new Response(JSON.stringify({ detail }), {
+              status: 400,
+              headers: { "content-type": "application/json" },
+            }),
+        })
+        .json();
+    } catch (error) {
+      requestError = error;
+    }
+    expect(requestError).toMatchObject({
+      data: { detail },
+      response: { bodyUsed: true },
+    });
+    modelGatewayMocks.saveMediaRelay.mockRejectedValue(requestError);
+
+    renderSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
+    fireEvent.click(
+      screen.getByRole("tab", {
+        name: "settings.mediaStorage.providerAliyunOss",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.mediaStorage.save" }),
+    );
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expected));
+    expect(modelGatewayMocks.saveMediaRelay).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "aliyun_oss" }),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["MEDIA_STORAGE_TIMEOUT", "Media storage connection timed out. Check your network and try again."],
+    ["MEDIA_STORAGE_AUTH_INVALID", "Media storage credentials are invalid. Check your AccessKey / API Key."],
+    ["MEDIA_STORAGE_ACCESS_DENIED", "Media storage access denied. Check your credentials and upload/read permissions."],
+    ["MEDIA_STORAGE_TARGET_INVALID", "Media storage destination is unavailable. Check the bucket, endpoint, or folder."],
+    ["MEDIA_STORAGE_CONFIG_INVALID", "Media storage configuration is incomplete or the upload failed. Check the selected storage settings."],
+    ["MEDIA_STORAGE_UNAVAILABLE", "Media storage read/write verification failed. Check your connection and settings, then try again."],
+    ["MEDIA_STORAGE_READ_MISMATCH", "Media storage read verification failed. Check the storage access settings."],
+  ])("translates %s in failed save responses", async (code, message) => {
+    localeState.language = "en";
+    modelGatewayMocks.saveMediaRelay.mockResolvedValue({
+      ok: false,
+      error: `${code}: 后端中文错误`,
+    });
+    renderSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
+    fireEvent.click(
+      screen.getByRole("tab", {
+        name: "settings.mediaStorage.providerAliyunOss",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.mediaStorage.save" }),
+    );
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(`${code}: ${message}`));
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "parsed text payload",
+      error: () => ({ data: "  Storage unavailable  " }),
+      expected: "Storage unavailable",
+    },
+    {
+      name: "unknown storage error code",
+      error: () => ({ data: { detail: "MEDIA_STORAGE_NEW_ERROR: Original error" } }),
+      expected: "MEDIA_STORAGE_NEW_ERROR: Original error",
+    },
+    {
+      name: "unconsumed legacy response",
+      error: () => ({
+        response: new Response(JSON.stringify({ detail: "Legacy storage error" })),
+      }),
+      expected: "Legacy storage error",
+    },
+    {
+      name: "consumed response without parsed data",
+      error: async () => {
+        const response = new Response("unavailable");
+        await response.text();
+        return { response, message: "Storage request failed" };
+      },
+      expected: "Storage request failed",
+    },
+    {
+      name: "synchronous response cloning failure",
+      error: () => ({
+        response: {
+          bodyUsed: false,
+          clone: () => {
+            throw new TypeError("Cannot clone response");
+          },
+        },
+        message: "Storage request failed",
+      }),
+      expected: "Storage request failed",
+    },
+    {
+      name: "missing error details",
+      error: () => ({}),
+      expected: "settings.mediaStorage.saveFailed",
+    },
+  ])("shows a storage save error for $name", async ({ error, expected }) => {
+    modelGatewayMocks.saveMediaRelay.mockRejectedValue(await error());
+    renderSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
+    fireEvent.click(
+      screen.getByRole("tab", {
+        name: "settings.mediaStorage.providerAliyunOss",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.mediaStorage.save" }),
+    );
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expected));
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
   it("opens on the model settings page", () => {
     renderSettingsDialog();
 
