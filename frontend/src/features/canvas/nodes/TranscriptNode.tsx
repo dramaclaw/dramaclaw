@@ -1,9 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
-import { AudioLines, FileText, Maximize2, Pause, Play, Volume2, VolumeX } from 'lucide-react';
+import { AudioLines, ChevronDown, FileText, Maximize2, Pause, Play, Volume2, VolumeX } from 'lucide-react';
 import { fetchRemixArtifact, fetchRemixOperation, fetchRemixTaskStatus, submitRemixProcessAction, type RemixArtifactRef, type RemixProcessRequest } from '@/api/remix';
 import type { TranscriptNodeData } from '@/features/canvas/domain/canvasNodes';
-import { correctedTimeline, readableTranscript, RealignmentRequiredError, sourceMediaForTranscript, sourceScriptForTranscript, speechReviewItems, timelineWords, transcriptPlaybackParts, transcriptSrt, type SpeechMatchReport, type SpeechMismatch, type TranscriptTimeline } from '@/features/canvas/remix/transcriptModel';
+import { correctedTimeline, readableTranscript, RealignmentRequiredError, segmentWordGroups, sourceMediaForTranscript, sourceScriptForTranscript, speechReviewItems, timelineSegments, timelineWords, transcriptPlaybackParts, transcriptSrt, type SpeechMatchReport, type SpeechMismatch, type TranscriptTimeline } from '@/features/canvas/remix/transcriptModel';
 import { reviseTranscriptArtifact } from '@/features/canvas/remix/transcriptArtifactApi';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
@@ -25,6 +25,12 @@ function transcriptLanguage(value: unknown): TranscriptLanguage {
 function stamp(us: number): string {
   const ms = Math.max(0, Math.floor(us / 1_000));
   return `${String(Math.floor(ms / 60_000)).padStart(2, '0')}:${String(Math.floor(ms / 1_000) % 60).padStart(2, '0')}.${String(ms % 1_000).padStart(3, '0')}`;
+}
+
+/** Gutters only need enough precision to find the line, not to cut frames. */
+function stampShort(us: number): string {
+  const tenths = Math.max(0, Math.floor(us / 100_000));
+  return `${String(Math.floor(tenths / 600)).padStart(2, '0')}:${String(Math.floor(tenths / 10) % 60).padStart(2, '0')}.${tenths % 10}`;
 }
 
 function playbackTime(seconds: number): string {
@@ -56,6 +62,8 @@ export const TranscriptNode = memo(({ id, data, selected }: Props) => {
   const [showWordDetails, setShowWordDetails] = useState(false);
   const [confirmedTiming, setConfirmedTiming] = useState(false);
   const [activePartIndex, setActivePartIndex] = useState(-1);
+  const [activeSegmentIndex, setActiveSegmentIndex] = useState(-1);
+  const [expandedSegments, setExpandedSegments] = useState<number[]>([]);
   const [mediaTime, setMediaTime] = useState(0);
   const [mediaDuration, setMediaDuration] = useState(0);
   const [mediaPlaying, setMediaPlaying] = useState(false);
@@ -77,6 +85,9 @@ export const TranscriptNode = memo(({ id, data, selected }: Props) => {
     : data.words.map((word) => word.text).join('');
   const displayTranscript = useMemo(() => readableTranscript(transcriptText, data.words), [transcriptText, data.words]);
   const playbackParts = useMemo(() => transcriptPlaybackParts(displayTranscript, data.words), [displayTranscript, data.words]);
+  const segments = useMemo(() => (Array.isArray(data.segments) ? data.segments : []), [data.segments]);
+  const segmentGroups = useMemo(() => segmentWordGroups(segments, data.words), [segments, data.words]);
+  const reviewingWords = Boolean(showWordDetails) || expandedSegments.length > 0;
   const speechMismatch = data.speechMismatch as SpeechMismatch | null | undefined;
   const speechMatchReport = data.speechMatchReport as SpeechMatchReport | null | undefined;
   const speechReview = useMemo(() => speechReviewItems(speechMismatch, speechMatchReport), [speechMatchReport, speechMismatch]);
@@ -98,6 +109,8 @@ export const TranscriptNode = memo(({ id, data, selected }: Props) => {
       const index = playbackParts.findIndex((part) => part.startUs !== undefined && part.endUs !== undefined
         && timeUs >= part.startUs && timeUs < part.endUs);
       setActivePartIndex((current) => current === index ? current : index);
+      const segment = segments.findIndex((item) => timeUs >= item.startUs && timeUs < item.endUs);
+      setActiveSegmentIndex((current) => current === segment ? current : segment);
     };
     const tick = () => {
       sync();
@@ -127,7 +140,7 @@ export const TranscriptNode = memo(({ id, data, selected }: Props) => {
       media.removeEventListener('seeking', sync);
       media.removeEventListener('timeupdate', sync);
     };
-  }, [playbackParts, source?.url]);
+  }, [playbackParts, segments, source?.url]);
   useEffect(() => {
     const media = mediaRef.current;
     if (!media) return;
@@ -148,16 +161,21 @@ export const TranscriptNode = memo(({ id, data, selected }: Props) => {
     };
   }, [source?.url, source?.kind]);
   useEffect(() => {
-    if (!project || !artifactRef || data.transcriptText || data.words.length === 0) return;
+    const needsText = !data.transcriptText;
+    const needsSegments = !Array.isArray(data.segments);
+    if (!project || !artifactRef || data.words.length === 0 || (!needsText && !needsSegments)) return;
     let cancelled = false;
     void fetchRemixArtifact(project, artifactRef).then((artifact) => {
       const payload = artifact.payload as TranscriptTimeline;
-      if (!cancelled && artifact.schema === 'word_timeline.v1' && typeof payload.transcript === 'string') {
-        updateNodeData(id, { transcriptText: payload.transcript });
-      }
+      if (cancelled || artifact.schema !== 'word_timeline.v1') return;
+      const patch: Record<string, unknown> = {};
+      if (needsText && typeof payload.transcript === 'string') patch.transcriptText = payload.transcript;
+      const segments = timelineSegments(payload);
+      if (needsSegments) patch.segments = segments;
+      if (Object.keys(patch).length) updateNodeData(id, patch);
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [artifactRef?.artifactId, artifactRef?.revision, data.transcriptText, data.words.length, id, project, updateNodeData]);
+  }, [artifactRef?.artifactId, artifactRef?.revision, data.segments, data.transcriptText, data.words.length, id, project, updateNodeData]);
   useEffect(() => {
     const aligned = data.alignedScriptRef as RemixArtifactRef | null | undefined;
     if (artifactRef && aligned && (!scriptRef || aligned.artifactId !== scriptRef.artifactId || aligned.revision !== scriptRef.revision)) {
@@ -200,7 +218,7 @@ export const TranscriptNode = memo(({ id, data, selected }: Props) => {
         if (useCanvasStore.getState().nodes.find(node => node.id === id)?.data.operationId === task.operation_id) setOperationId(task.operation_id);
         return;
       }
-      updateNodeData(id, { transcriptSubmissionPending: null, transcriptSubmissionRequest: null, operationId: task.operation_id, sourceMediaPath: request.mediaPath, nodeRevision: request.nodeRevision, status: 'needs_review', unresolved: [], artifactRef: null, reviewArtifactRef: null, speechMismatch: null, speechMatchReport: null, words: [], transcriptText: null, pendingScriptRef: request.action === 'align_script' ? request.scriptRef : null, alignedScriptRef: null, alignmentStale: false });
+      updateNodeData(id, { transcriptSubmissionPending: null, transcriptSubmissionRequest: null, operationId: task.operation_id, sourceMediaPath: request.mediaPath, nodeRevision: request.nodeRevision, status: 'needs_review', unresolved: [], artifactRef: null, reviewArtifactRef: null, speechMismatch: null, speechMatchReport: null, words: [], segments: [], transcriptText: null, pendingScriptRef: request.action === 'align_script' ? request.scriptRef : null, alignedScriptRef: null, alignmentStale: false });
       setShowWordDetails(false);
       setOperationId(task.operation_id);
     } catch (caught) {
@@ -284,8 +302,9 @@ export const TranscriptNode = memo(({ id, data, selected }: Props) => {
         }
         const words = timelineWords(payload);
         if (payload.status !== 'completed' || words.length === 0) throw new Error('没有识别到人声，请检查素材');
-        updateNodeData(id, { artifactRef: { artifactId: artifact.id, revision: artifact.revision }, words, transcriptText: typeof payload.transcript === 'string' ? payload.transcript : words.map((word) => word.text).join(''), speechMismatch: null, speechMatchReport: payload.match_report ?? null, status: 'completed', unresolved: [], operationId: null, alignedScriptRef: saved?.pendingScriptRef ?? null, pendingScriptRef: null, alignmentStale: false });
+        updateNodeData(id, { artifactRef: { artifactId: artifact.id, revision: artifact.revision }, words, segments: timelineSegments(payload), transcriptText: typeof payload.transcript === 'string' ? payload.transcript : words.map((word) => word.text).join(''), speechMismatch: null, speechMatchReport: payload.match_report ?? null, status: 'completed', unresolved: [], operationId: null, alignedScriptRef: saved?.pendingScriptRef ?? null, pendingScriptRef: null, alignmentStale: false });
         setShowWordDetails(false);
+        setExpandedSegments([]);
         setOperationId(null);
       } catch (caught) {
         if (!cancelled) {
@@ -312,7 +331,7 @@ export const TranscriptNode = memo(({ id, data, selected }: Props) => {
       if (!Array.isArray(rawRefs) && (data.alignedScriptRef || payload.script_ref)) throw new Error('无法确认对齐脚本版本，请重新对齐');
       const upstreamRefs = (rawRefs ?? []).map((upstream) => ({ artifactId: upstream.artifact_id, revision: upstream.revision }));
       const saved = await reviseTranscriptArtifact(project, artifactRef, revised, upstreamRefs);
-      updateNodeData(id, { artifactRef: { artifactId: saved.id, revision: saved.revision }, words: timelineWords(revised), transcriptText: revised.transcript, status: 'completed', pendingCorrectionText: null });
+      updateNodeData(id, { artifactRef: { artifactId: saved.id, revision: saved.revision }, words: timelineWords(revised), segments: timelineSegments(revised), transcriptText: revised.transcript, status: 'completed', pendingCorrectionText: null });
       setConfirmedTiming(false);
     } catch (caught) {
       if (caught instanceof RealignmentRequiredError) {
@@ -407,17 +426,43 @@ export const TranscriptNode = memo(({ id, data, selected }: Props) => {
             <button type="button" disabled={!scriptRef || busy || Boolean(operationId || data.managedOperationId || data.transcriptSubmissionPending) || !source} onClick={() => void start('align')} className={`${NODE_CONTEXT_CONTROL_TRIGGER_CLASS} disabled:opacity-50`}>重新对齐</button>
           </div>
         </div>}
-        {data.words.length > 0 && <><p className="whitespace-pre-wrap text-sm leading-6 text-text-dark">{playbackParts.map((part, index) => part.startUs === undefined
-          ? <span key={index}>{part.text}</span>
-          : <button key={index} type="button" aria-label={`跳转到 ${part.text}，${stamp(part.startUs)}`} aria-current={activePartIndex === index ? 'true' : undefined} onClick={() => { if (mediaRef.current) mediaRef.current.currentTime = part.startUs! / 1_000_000; setActivePartIndex(index); }} className={`nodrag rounded-sm text-inherit hover:bg-[rgb(var(--accent-rgb)/0.12)] focus-visible:outline focus-visible:outline-1 focus-visible:outline-[rgb(var(--accent-rgb))] ${activePartIndex === index ? 'bg-[rgb(var(--accent-rgb)/0.2)]' : ''}`}>{part.text}</button>)}</p><button type="button" onClick={() => setShowWordDetails((current) => !current)} className={`${NODE_CONTEXT_CONTROL_TRIGGER_CLASS} mt-3`}>{showWordDetails ? '收起逐词校对' : `展开逐词校对（${data.words.length}）`}</button></>}
-        {showWordDetails && data.words.map((word, index) => <div key={`${word.startUs}-${index}`} className="flex items-center gap-2 rounded-md px-2 py-1 text-[12px] text-text-dark">
-          <button type="button" className="w-[145px] shrink-0 text-left font-mono text-[11px] text-text-muted" onClick={() => { if (mediaRef.current) mediaRef.current.currentTime = word.startUs / 1_000_000; }}>{stamp(word.startUs)} – {stamp(word.endUs)}</button>
-          <input aria-label={`第 ${index + 1} 个字词`} value={edited[index] ?? word.text} onChange={(event) => { setConfirmedTiming(false); setEdited((current) => current.map((text, position) => position === index ? event.target.value : text)); }} className="nodrag min-w-0 flex-1 rounded-[12px] border border-white/10 bg-surface-field px-2 py-1 outline-none focus:border-white/25" />
-          {typeof word.confidence === 'number' && word.confidence < 0.6 && <span className="shrink-0 text-amber-300">低置信度</span>}
-        </div>)}
+        {data.words.length > 0 && (segmentGroups.length > 0 ? <>
+          <div className="space-y-px">{segmentGroups.map(({ segment, words }, index) => {
+            const open = expandedSegments.includes(index);
+            const active = activeSegmentIndex === index;
+            return <div key={`${segment.startUs}-${index}`} className="group/seg relative">
+              <div className={`relative flex items-start gap-2 rounded-[6px] transition-colors ${active ? 'bg-[rgb(var(--accent-rgb)/0.08)]' : 'hover:bg-white/[0.035]'}`}>
+                {active && <span aria-hidden="true" className="absolute bottom-1 left-0 top-1 w-[2px] rounded-full bg-[rgb(var(--accent-rgb))]" />}
+                <button type="button" aria-label={`跳转到第 ${index + 1} 句，${stamp(segment.startUs)}`} aria-current={active ? 'true' : undefined} onClick={() => { if (mediaRef.current) mediaRef.current.currentTime = segment.startUs / 1_000_000; setActiveSegmentIndex(index); }} className="nodrag group/line flex min-w-0 flex-1 items-start gap-2.5 rounded-[6px] py-[3px] pl-2 text-left focus-visible:outline focus-visible:outline-1 focus-visible:outline-[rgb(var(--accent-rgb))]">
+                  <span className={`w-[42px] shrink-0 pt-px font-mono text-[10px] tabular-nums transition-colors ${active ? 'text-[rgb(var(--accent-rgb))]' : 'text-text-muted/70 group-hover/line:text-text-muted'}`}>{stampShort(segment.startUs)}</span>
+                  <span className={`min-w-0 flex-1 whitespace-pre-wrap text-[13px] leading-[1.6] ${active ? 'text-text-dark' : 'text-text-dark/80 group-hover/line:text-text-dark'}`}>{segment.text}</span>
+                </button>
+                {words.length > 0 && <button type="button" aria-expanded={open} aria-label={`${open ? '收起' : '展开'}第 ${index + 1} 句逐词校对（${words.length}）`} onClick={() => setExpandedSegments((current) => open ? current.filter((item) => item !== index) : [...current, index])} className={`nodrag mr-1 mt-[3px] flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-text-muted transition-opacity hover:bg-white/10 hover:text-text-dark focus-visible:outline focus-visible:outline-1 focus-visible:outline-[rgb(var(--accent-rgb))] ${open ? 'opacity-100' : 'opacity-35 group-hover/seg:opacity-100 focus-visible:opacity-100'}`}>
+                  <ChevronDown aria-hidden="true" className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+                </button>}
+              </div>
+              {open && <div className="mb-1 ml-[58px] mt-0.5 border-l border-white/[0.09] pl-2">{words.map(({ word, index: wordIndex }) => <div key={`${word.startUs}-${wordIndex}`} className="group/word flex items-center gap-2 rounded-[4px] py-[1px] pr-1 transition-colors hover:bg-white/[0.05]">
+                <button type="button" title={`跳到 ${stamp(word.startUs)}`} className="w-[38px] shrink-0 rounded-[4px] text-right font-mono text-[10px] tabular-nums text-text-muted/60 transition-colors group-hover/word:text-text-muted hover:!text-[rgb(var(--accent-rgb))] focus-visible:outline focus-visible:outline-1 focus-visible:outline-[rgb(var(--accent-rgb))]" onClick={() => { if (mediaRef.current) mediaRef.current.currentTime = word.startUs / 1_000_000; }}>{stampShort(word.startUs)}</button>
+                <input aria-label={`第 ${wordIndex + 1} 个字词`} value={edited[wordIndex] ?? word.text} onChange={(event) => { setConfirmedTiming(false); setEdited((current) => current.map((text, position) => position === wordIndex ? event.target.value : text)); }} className={`nodrag min-w-0 flex-1 rounded-[4px] border-b bg-transparent px-0.5 py-[1px] text-[12.5px] leading-[1.45] text-text-dark outline-none transition-colors ${edited[wordIndex] !== undefined && edited[wordIndex] !== word.text ? 'border-[rgb(var(--accent-rgb)/0.55)]' : 'border-transparent hover:border-white/12 focus:border-[rgb(var(--accent-rgb)/0.6)]'}`} />
+                {typeof word.confidence === 'number' && word.confidence < 0.6 && <span title="低置信度" aria-label="低置信度" className="mr-1 h-[5px] w-[5px] shrink-0 rounded-full bg-amber-300/70" />}
+              </div>)}</div>}
+            </div>;
+          })}</div>
+          <button type="button" onClick={() => setExpandedSegments((current) => current.length === segmentGroups.length ? [] : segmentGroups.map((_, index) => index))} className={`${NODE_CONTEXT_CONTROL_TRIGGER_CLASS} mt-2`}>{expandedSegments.length === segmentGroups.length ? '收起逐词校对' : `展开逐词校对（${data.words.length}）`}</button>
+        </> : <>
+          <p className="whitespace-pre-wrap text-sm leading-6 text-text-dark">{playbackParts.map((part, index) => part.startUs === undefined
+            ? <span key={index}>{part.text}</span>
+            : <button key={index} type="button" aria-label={`跳转到 ${part.text}，${stamp(part.startUs)}`} aria-current={activePartIndex === index ? 'true' : undefined} onClick={() => { if (mediaRef.current) mediaRef.current.currentTime = part.startUs! / 1_000_000; setActivePartIndex(index); }} className={`nodrag rounded-sm text-inherit hover:bg-[rgb(var(--accent-rgb)/0.12)] focus-visible:outline focus-visible:outline-1 focus-visible:outline-[rgb(var(--accent-rgb))] ${activePartIndex === index ? 'bg-[rgb(var(--accent-rgb)/0.2)]' : ''}`}>{part.text}</button>)}</p>
+          <button type="button" onClick={() => setShowWordDetails((current) => !current)} className={`${NODE_CONTEXT_CONTROL_TRIGGER_CLASS} mt-3`}>{showWordDetails ? '收起逐词校对' : `展开逐词校对（${data.words.length}）`}</button>
+          {showWordDetails && data.words.map((word, index) => <div key={`${word.startUs}-${index}`} className="flex items-center gap-2 rounded-md px-2 py-1 text-[12px] text-text-dark">
+            <button type="button" className="w-[145px] shrink-0 text-left font-mono text-[11px] text-text-muted" onClick={() => { if (mediaRef.current) mediaRef.current.currentTime = word.startUs / 1_000_000; }}>{stamp(word.startUs)} – {stamp(word.endUs)}</button>
+            <input aria-label={`第 ${index + 1} 个字词`} value={edited[index] ?? word.text} onChange={(event) => { setConfirmedTiming(false); setEdited((current) => current.map((text, position) => position === index ? event.target.value : text)); }} className="nodrag min-w-0 flex-1 rounded-[12px] border border-white/10 bg-surface-field px-2 py-1 outline-none focus:border-white/25" />
+            {typeof word.confidence === 'number' && word.confidence < 0.6 && <span className="shrink-0 text-amber-300">低置信度</span>}
+          </div>)}
+        </>)}
         {data.words.length === 0 && <p className="px-2 py-3 text-[12px] text-text-muted">{data.status === 'no_speech' ? '这段素材未识别到人声，原片拆解会继续分析画面。' : '暂无转写内容'}</p>}
       </div>
-      {artifactRef && showWordDetails && <div className="border-t border-white/[0.08] p-3 text-xs"><label className="mb-2 flex items-center gap-2 text-text-muted"><input type="checkbox" checked={confirmedTiming} onChange={(event) => setConfirmedTiming(event.target.checked)} />仅校正同一发音和词边界，保留原时间</label><button type="button" disabled={!canSave || busy} onClick={() => void saveCorrections()} className={`${NODE_CONTEXT_CONTROL_TRIGGER_CLASS} disabled:opacity-50`}>保存校字</button></div>}
+      {artifactRef && reviewingWords && <div className="border-t border-white/[0.08] p-3 text-xs"><label className="mb-2 flex items-center gap-2 text-text-muted"><input type="checkbox" checked={confirmedTiming} onChange={(event) => setConfirmedTiming(event.target.checked)} />仅校正同一发音和词边界，保留原时间</label><button type="button" disabled={!canSave || busy} onClick={() => void saveCorrections()} className={`${NODE_CONTEXT_CONTROL_TRIGGER_CLASS} disabled:opacity-50`}>保存校字</button></div>}
       {error && error !== data.unresolved?.[0] && <p role="alert" className="px-3 pb-2 text-xs text-red-300">{error}</p>}
     </div>
   </div>;

@@ -240,6 +240,35 @@ describe('TranscriptNode', () => {
     expect(audio.currentTime).toBe(2.1);
   });
 
+  it('shows provider sentences as separate cards and reviews one sentence at a time', () => {
+    state.nodes[1].data = {
+      words: [
+        { text: '你吃榴莲', startUs: 0, endUs: 2_260_000, confidence: 0.9 },
+        { text: '干嘛', startUs: 2_260_000, endUs: 3_160_000, confidence: 0.4 },
+      ],
+      segments: [
+        { text: '你吃榴莲', startUs: 0, endUs: 2_260_000 },
+        { text: '干嘛', startUs: 2_260_000, endUs: 3_160_000 },
+      ],
+      transcriptText: '你吃榴莲干嘛', status: 'completed', artifactRef: { artifactId: 'words-1', revision: 1 },
+    };
+    const { container } = render(<TranscriptNode {...flowProps} id="transcript" data={state.nodes[1].data as never} selected={false} />);
+    const audio = container.querySelector('audio')!;
+
+    expect(screen.getByRole('button', { name: '跳转到第 1 句，00:00.000' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '跳转到第 2 句，00:02.260' })).toBeTruthy();
+    expect(screen.queryByDisplayValue('干嘛')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '跳转到第 2 句，00:02.260' }));
+    expect(audio.currentTime).toBe(2.26);
+
+    fireEvent.click(screen.getByRole('button', { name: '展开第 2 句逐词校对（1）' }));
+    expect(screen.getByDisplayValue('干嘛')).toBeTruthy();
+    expect(screen.queryByDisplayValue('你吃榴莲')).toBeNull();
+    expect(screen.getByRole('button', { name: '收起第 2 句逐词校对（1）' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '保存校字' })).toBeTruthy();
+  });
+
   it('keeps video playback usable in the compact transcript media panel', () => {
     state.nodes[0] = { id: 'video', type: 'videoNode', data: { remixMedia: { media_path: 'clip.mp4', media_kind: 'video', has_audio: true, url: '/media/clip.mp4' } } };
     state.edges.splice(0, state.edges.length, { source: 'video', target: 'transcript' });

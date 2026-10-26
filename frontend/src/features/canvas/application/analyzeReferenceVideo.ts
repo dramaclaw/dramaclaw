@@ -2,7 +2,7 @@ import { attachRemixMedia, fetchRemixArtifact, type RemixArtifactRef, type Remix
 import { apiCall } from '@/api/client';
 import { captureFreezoneCanvasScope, flushFreezoneCanvasRuntime } from '@/features/freezone/canvasSyncRuntime';
 import type { ReferenceAnalysisRun } from '@/api/referenceAnalysisRuns';
-import { timelineWords, type TranscriptTimeline } from '@/features/canvas/remix/transcriptModel';
+import { timelineSegments, timelineWords, type TranscriptTimeline } from '@/features/canvas/remix/transcriptModel';
 import { refreshProductionCanvas } from '@/features/superchat/productionCanvasRefresh';
 import { normalizeVideoStoryRows } from './videoStoryNormalizer';
 import { CANVAS_NODE_TYPES, VIDEO_STORY_NODE_DEFAULT_SIZE } from '@/features/canvas/domain/canvasNodes';
@@ -66,12 +66,13 @@ async function displayReferenceTranscript(project: string, sourceId: string, sto
     || timeline.status !== 'completed') throw new Error('转写产物与原片不匹配');
   const words = timelineWords(timeline);
   if (!words.length) throw new Error('原片转写缺少真实时间词');
+  const segments = timelineSegments(timeline);
   const store = useCanvasStore.getState();
   const existing = selectedTranscriptId ? store.nodes.find(node => node.id === selectedTranscriptId) : store.nodes.find(node => node.type === CANVAS_NODE_TYPES.transcript
     && node.data.sourceMediaPath === media.media_path && node.data.sourceMediaHash === media.media_hash
     && store.edges.some(edge => edge.source === sourceId && edge.target === node.id));
   const data = {
-    displayName: '原片转写', artifactRef: ref, words, transcriptText: timeline.transcript ?? words.map(word => word.text).join(''),
+    displayName: '原片转写', artifactRef: ref, words, segments, transcriptText: timeline.transcript ?? words.map(word => word.text).join(''),
     sourceMediaPath: media.media_path, sourceMediaHash: media.media_hash, transcriptLanguage: timeline.language,
     status: 'completed', unresolved: [], autoStartMode: null, operationId: null, managedOperationId: null,
   };

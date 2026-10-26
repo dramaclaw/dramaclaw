@@ -163,6 +163,20 @@ class MatchReport(_Contract):
     asr_is_ground_truth: Literal[False] = False
 
 
+class SegmentSpan(_Contract):
+    """A provider sentence boundary; it never outranks the timed words."""
+
+    text: str = Field(min_length=1)
+    start_us: int = Field(ge=0)
+    end_us: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> "SegmentSpan":
+        if self.end_us <= self.start_us:
+            raise ValueError("recognized segment must have positive duration")
+        return self
+
+
 class WordTimeline(_Contract):
     schema_name: Literal["word_timeline.v1"] | None = Field(
         default=None, alias="schema"
@@ -176,6 +190,7 @@ class WordTimeline(_Contract):
     transcript: str | None = None
     confidence_available: bool | None = None
     words: list[WordSpan]
+    segments: list[SegmentSpan] | None = None
     recognized_transcript: str | None = None
     recognized_words: list[WordSpan] | None = None
     mismatch: dict[str, Any] | None = None

@@ -223,7 +223,7 @@ class NewApiSpeechTranscriber:
             raise TranscriptionPreDispatchError("Could not read audio for transcription") from exc
         request_digest = canonical_request_digest({
             "model": MODEL, "media_sha256": media_digest, "language": language,
-            "response_format": "verbose_json", "timestamp_granularity": "word",
+            "response_format": "verbose_json", "timestamp_granularity": ["word", "segment"],
         })
         capability = "audio.transcription.gateway"
         business_task_id = next_model_gateway_business_task_id(
@@ -256,7 +256,11 @@ class NewApiSpeechTranscriber:
         form = {
             "model": MODEL,
             "response_format": "verbose_json",
-            "timestamp_granularities[]": "word",
+            # Word and sentence granularity in one request: words carry the exact
+            # timing, segments carry the provider's own sentence boundaries. The
+            # gateway rejects diarization for this model, so speaker identity is
+            # never requested here.
+            "timestamp_granularities[]": ["word", "segment"],
         }
         if language != "auto":
             form["language"] = language
@@ -288,24 +292,42 @@ class NewApiSpeechTranscriber:
             payload = response.json()
         except ValueError as exc:
             raise RuntimeError("NewAPI audio-transcribe returned invalid JSON") from exc
-        if self.allow_segments and isinstance(payload, dict) and not payload.get("words"):
-            text = payload.get("text", "")
-            segments = payload.get("segments", [])
-            if not isinstance(text, str) or not isinstance(segments, list):
+        segments = _normalized_segments(payload)
+        if not isinstance(payload, dict) or not payload.get("words"):
+            if not self.allow_segments:
+                return _timed_transcript(payload, language)
+            text = payload.get("text", "") if isinstance(payload, dict) else ""
+            if not isinstance(text, str):
                 raise RuntimeError("NewAPI returned invalid segment recognition")
-            normalized = []
-            for segment in segments:
-                if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
-                    raise RuntimeError("NewAPI returned invalid recognition segment")
-                start, end = segment.get("start"), segment.get("end")
-                if (isinstance(start, bool) or isinstance(end, bool) or not isinstance(start, (int, float))
-                    or not isinstance(end, (int, float)) or not math.isfinite(start) or not math.isfinite(end)
-                    or start < 0 or end <= start):
-                    raise RuntimeError("NewAPI returned invalid recognition segment times")
-                normalized.append({"text": segment["text"], "start": start, "end": end})
-            return {"status": "completed" if text.strip() or normalized else "no_speech", "language": language,
-                    "transcript": text, "words": [], "segments": normalized}
-        return _timed_transcript(payload, language)
+            return {"status": "completed" if text.strip() or segments else "no_speech", "language": language,
+                    "transcript": text, "words": [], "segments": segments}
+        # Word timing stays authoritative; segments only add the provider's own
+        # sentence boundaries. They never replace or retime the spoken words.
+        recognized = _timed_transcript(payload, language)
+        if segments:
+            recognized["segments"] = segments
+        return recognized
+
+
+def _normalized_segments(payload: object) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    raw_segments = payload.get("segments")
+    if raw_segments is None:
+        return []
+    if not isinstance(raw_segments, list):
+        raise RuntimeError("NewAPI returned invalid recognition segments")
+    segments: list[dict[str, Any]] = []
+    for segment in raw_segments:
+        if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
+            raise RuntimeError("NewAPI returned invalid recognition segment")
+        start, end = segment.get("start"), segment.get("end")
+        if (isinstance(start, bool) or isinstance(end, bool) or not isinstance(start, (int, float))
+            or not isinstance(end, (int, float)) or not math.isfinite(start) or not math.isfinite(end)
+            or start < 0 or end <= start):
+            raise RuntimeError("NewAPI returned invalid recognition segment times")
+        segments.append({"text": segment["text"], "start": start, "end": end})
+    return segments
 
 
 def _timed_transcript(payload: object, language: str) -> dict[str, Any]:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { correctedTimeline, readableTranscript, sourceMediaForTranscript, sourceScriptForTranscript, transcriptPlaybackParts, transcriptSrt, timelineWords } from './transcriptModel';
+import { correctedTimeline, readableTranscript, segmentWordGroups, sourceMediaForTranscript, sourceScriptForTranscript, timelineSegments, transcriptPlaybackParts, transcriptSrt, timelineWords } from './transcriptModel';
 
 const timeline = {
   schema: 'word_timeline.v1', media_hash: 'hash', language: 'zh', status: 'completed', transcript: '你好',
@@ -140,6 +140,51 @@ describe('transcript node model', () => {
 
   it('exports playable SRT timing', () => {
     expect(transcriptSrt(timelineWords(timeline))).toBe('1\n00:00:00,000 --> 00:00:00,500\n你\n\n2\n00:00:00,500 --> 00:00:01,000\n好\n');
+  });
+
+  it('keeps provider sentences in reading order and ignores empty or backwards ones', () => {
+    const segments = timelineSegments({
+      ...timeline,
+      segments: [
+        { text: '第二句', start_us: 2_000_000, end_us: 3_000_000 },
+        { text: '第一句', start_us: 0, end_us: 1_000_000 },
+        { text: '   ', start_us: 1_000_000, end_us: 2_000_000 },
+        { text: '倒序', start_us: 5_000_000, end_us: 4_000_000 },
+      ],
+    } as never);
+
+    expect(segments).toEqual([
+      { text: '第一句', startUs: 0, endUs: 1_000_000 },
+      { text: '第二句', startUs: 2_000_000, endUs: 3_000_000 },
+    ]);
+    expect(timelineSegments(timeline as never)).toEqual([]);
+  });
+
+  it('groups words by sentence while keeping each word global index', () => {
+    const words = timelineWords(timeline);
+    const groups = segmentWordGroups(timelineSegments({
+      ...timeline,
+      segments: [
+        { text: '你', start_us: 0, end_us: 500_000 },
+        { text: '好', start_us: 500_000, end_us: 1_000_000 },
+      ],
+    } as never), words);
+
+    expect(groups.map((group) => group.segment.text)).toEqual(['你', '好']);
+    expect(groups.map((group) => group.words.map(({ word, index }) => [word.text, index]))).toEqual([[['你', 0]], [['好', 1]]]);
+  });
+
+  it('assigns a word straddling a sentence boundary to the sentence containing its midpoint', () => {
+    const words = [
+      { text: '跨', startUs: 400_000, endUs: 1_200_000 },
+      { text: '句', startUs: 1_200_000, endUs: 1_500_000 },
+    ];
+    const groups = segmentWordGroups([
+      { text: '前', startUs: 0, endUs: 1_000_000 },
+      { text: '后', startUs: 1_000_000, endUs: 2_000_000 },
+    ], words);
+
+    expect(groups.map((group) => group.words.map(({ word, index }) => [word.text, index]))).toEqual([[['跨', 0]], [['句', 1]]]);
   });
 });
 

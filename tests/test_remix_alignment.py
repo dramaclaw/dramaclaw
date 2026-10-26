@@ -84,6 +84,61 @@ def test_transcribe_explicitly_returns_no_speech(tmp_path: Path) -> None:
     assert result["confidence_available"] is False
 
 
+def test_transcribe_keeps_provider_segments_next_to_timed_words(tmp_path: Path) -> None:
+    media = tmp_path / "dialogue.wav"
+    media.write_bytes(b"dialogue")
+
+    result = transcribe_media(
+        media,
+        "zh",
+        allow_segments=True,
+        aligner=FakeSpeechAligner(transcription={
+            "status": "completed",
+            "transcript": "你吃榴莲把嗓子扎着了对啊 干嘛",
+            "words": [
+                {"text": "你", "start": 0.0, "end": 0.3},
+                {"text": "吃", "start": 0.3, "end": 0.6},
+                {"text": "榴莲", "start": 0.6, "end": 1.2},
+                {"text": "把", "start": 1.2, "end": 1.5},
+                {"text": "嗓子", "start": 1.5, "end": 1.9},
+                {"text": "扎着了", "start": 1.9, "end": 2.26},
+                {"text": "对啊", "start": 2.26, "end": 2.8},
+                {"text": " 干嘛", "start": 2.8, "end": 3.16},
+            ],
+            "segments": [
+                {"text": "你吃榴莲把嗓子扎着了", "start": 0.0, "end": 2.26},
+                {"text": "对啊 干嘛", "start": 2.26, "end": 3.16},
+            ],
+        }),
+    )
+
+    assert len(result["words"]) == 8
+    assert result["segments"] == [
+        {"text": "你吃榴莲把嗓子扎着了", "start_us": 0, "end_us": 2_260_000},
+        {"text": "对啊 干嘛", "start_us": 2_260_000, "end_us": 3_160_000},
+    ]
+
+
+def test_transcribe_drops_segments_that_disagree_with_the_transcript(tmp_path: Path) -> None:
+    media = tmp_path / "dialogue.wav"
+    media.write_bytes(b"dialogue")
+
+    result = transcribe_media(
+        media,
+        "zh",
+        allow_segments=True,
+        aligner=FakeSpeechAligner(transcription={
+            "status": "completed",
+            "transcript": "你吃榴莲把嗓子扎着了",
+            "words": [{"text": "你吃榴莲把嗓子扎着了", "start": 0.0, "end": 2.26}],
+            "segments": [{"text": "完全不同的句子", "start": 0.0, "end": 2.26}],
+        }),
+    )
+
+    assert "segments" not in result
+    assert len(result["words"]) == 1
+
+
 def test_speech_engine_calls_have_a_process_wide_single_slot(tmp_path: Path) -> None:
     media = tmp_path / "speech.wav"
     media.write_bytes(b"audio")

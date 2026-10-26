@@ -1,4 +1,4 @@
-import type { TranscriptWord } from '@/features/canvas/domain/canvasNodes';
+import type { TranscriptSegment, TranscriptWord } from '@/features/canvas/domain/canvasNodes';
 import type { RemixArtifactRef } from '@/api/remix';
 import { projectMediaPathFromUrl } from './remixMediaPath';
 
@@ -51,9 +51,16 @@ interface TimelineWord extends Record<string, unknown> {
   end_us: number;
 }
 
+interface TimelineSegment extends Record<string, unknown> {
+  text: string;
+  start_us: number;
+  end_us: number;
+}
+
 export interface TranscriptTimeline extends Record<string, unknown> {
   status: string;
   words: TimelineWord[];
+  segments?: TimelineSegment[] | null;
   transcript?: string | null;
   mismatch?: SpeechMismatch | null;
   match_report?: SpeechMatchReport | null;
@@ -105,6 +112,49 @@ export function timelineWords(payload: TranscriptTimeline): TranscriptWord[] {
       startChar: Number.isInteger(word.start_char) ? Number(word.start_char) : undefined,
       endChar: Number.isInteger(word.end_char) ? Number(word.end_char) : undefined,
       confidence: typeof word.confidence === 'number' ? word.confidence : null }));
+}
+
+/**
+ * Provider sentence boundaries. Empty when the artifact predates segment capture,
+ * so callers fall back to the plain transcript instead of inventing sentences.
+ */
+export function timelineSegments(payload: TranscriptTimeline): TranscriptSegment[] {
+  if (payload.status !== 'completed' || !Array.isArray(payload.segments)) return [];
+  return payload.segments
+    .filter((segment) => typeof segment?.text === 'string' && segment.text.trim()
+      && Number.isFinite(segment.start_us) && Number.isFinite(segment.end_us) && segment.end_us > segment.start_us)
+    .map((segment) => ({ text: segment.text, startUs: segment.start_us, endUs: segment.end_us }))
+    // A provider can emit a boundary that runs backwards; keep reading order.
+    .sort((left, right) => left.startUs - right.startUs);
+}
+
+export interface SegmentWordGroup {
+  segment: TranscriptSegment;
+  /** Global word index is kept so a correction still targets the whole timeline. */
+  words: Array<{ word: TranscriptWord; index: number }>;
+}
+
+/**
+ * Split words into the provider's sentences. A word is assigned by its midpoint
+ * so a boundary that lands inside a word cannot drop it from both sentences;
+ * words falling in a gap go to the closest sentence instead of a fixed end.
+ */
+export function segmentWordGroups(segments: TranscriptSegment[], words: TranscriptWord[]): SegmentWordGroup[] {
+  if (!segments.length) return [];
+  const groups: SegmentWordGroup[] = segments.map((segment) => ({ segment, words: [] }));
+  words.forEach((word, index) => {
+    const midpoint = word.startUs + Math.max(0, word.endUs - word.startUs) / 2;
+    let target = groups.findIndex(({ segment }) => midpoint >= segment.startUs && midpoint < segment.endUs);
+    if (target < 0) {
+      let nearest = Infinity;
+      groups.forEach(({ segment }, position) => {
+        const distance = midpoint < segment.startUs ? segment.startUs - midpoint : midpoint - segment.endUs;
+        if (distance < nearest) { nearest = distance; target = position; }
+      });
+    }
+    groups[target].words.push({ word, index });
+  });
+  return groups;
 }
 
 /** Recover visible word boundaries in transcripts saved by the old NewAPI adapter. */

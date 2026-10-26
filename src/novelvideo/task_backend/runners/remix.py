@@ -85,7 +85,7 @@ def run_remix_transcribe_media(envelope: dict[str, Any], ctx: ProjectContext) ->
     language = payload.get("language")
     if not isinstance(language, str) or not language:
         raise ValueError("remix transcription language is required")
-    timeline = transcribe_media(media_path, language)
+    timeline = transcribe_media(media_path, language, allow_segments=True)
     artifact = RemixArtifactStore(project_dir, ctx.project_id).create(
         schema="word_timeline.v1", payload=timeline, upstream_refs=[]
     )

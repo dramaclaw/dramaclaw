@@ -50,26 +50,52 @@ def transcribe_media(
     else:
         with _SPEECH_ENGINE_SLOT:
             raw = aligner.transcribe(media_path, language)
-    if allow_segments and raw.get("status") == "completed" and not raw.get("words"):
-        segments = []
-        for segment in raw.get("segments", []):
-            if not isinstance(segment, dict) or not isinstance(segment.get("text"), str) or not segment["text"]:
-                raise ValueError("recognized segment text is required")
-            start, end = _word_times(segment)
-            segments.append({"text": segment["text"], "start_us": start, "end_us": end})
+    if raw.get("status") == "completed" and not raw.get("words"):
+        segments = _normalize_segments(raw.get("segments"), transcript=raw.get("transcript"))
         transcript = raw.get("transcript", "")
         if not isinstance(transcript, str):
             raise ValueError("recognized transcript must be text")
         return {"media_hash": _sha256(media_path), "language": raw.get("language", language),
                 "status": "completed" if transcript or segments else "no_speech",
                 "transcript": transcript, "words": [], "segments": segments}
-    return _normalize_result(
+    normalized = _normalize_result(
         raw,
         media_path=media_path,
         language=language,
         script_revision=None,
         script_text=None,
     )
+    if allow_segments and normalized.get("status") == "completed":
+        # Sentence boundaries are extra evidence, never a substitute for the
+        # timed words that downstream alignment depends on.
+        segments = _normalize_segments(raw.get("segments"), transcript=normalized.get("transcript"))
+        if segments:
+            normalized["segments"] = segments
+    return normalized
+
+
+def _normalize_segments(raw_segments: object, *, transcript: object) -> list[dict[str, Any]]:
+    if raw_segments is None:
+        return []
+    if not isinstance(raw_segments, list):
+        raise ValueError("recognized segments must be a list")
+    segments: list[dict[str, Any]] = []
+    for segment in raw_segments:
+        if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
+            raise ValueError("recognized segment text is required")
+        # Whisper models emit a trailing blank or artifact-only segment; it must
+        # not become a reviewable sentence without spoken text.
+        if not segment["text"].strip():
+            continue
+        start, end = _word_times(segment)
+        segments.append({"text": segment["text"], "start_us": start, "end_us": end})
+    if segments and isinstance(transcript, str) and transcript.strip():
+        joined = "".join(part["text"] for part in segments)
+        if "".join(joined.split()) != "".join(transcript.split()):
+            # Segment text that disagrees with the transcript cannot be trusted
+            # for sentence display, so leave the words as the only evidence.
+            return []
+    return segments
 
 
 def align_script(

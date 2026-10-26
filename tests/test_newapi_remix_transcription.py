@@ -82,6 +82,7 @@ def test_newapi_transcription_publishes_real_word_times(tmp_path: Path) -> None:
         body = request.read()
         assert b'name="model"' in body and b"audio-transcribe" in body
         assert b'name="timestamp_granularities[]"' in body and b"word" in body
+        assert b'name="timestamp_granularities[]"' in body and b"segment" in body
         assert b'name="language"' not in body  # auto-detect
         assert b"audio" in body
         return httpx.Response(200, json={

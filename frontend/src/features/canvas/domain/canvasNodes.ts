@@ -833,10 +833,18 @@ export interface TranscriptWord {
   confidence?: number | null;
 }
 
+/** A provider sentence boundary used for reading; words keep the exact timing. */
+export interface TranscriptSegment {
+  text: string;
+  startUs: number;
+  endUs: number;
+}
+
 export interface TranscriptNodeData extends NodeDisplayData {
   /** Immutable transcript artifact, retained when the canvas is saved and reloaded. */
   artifactRef?: { artifactId: string; revision: number } | null;
   words: TranscriptWord[];
+  segments?: TranscriptSegment[];
   transcriptText?: string | null;
   status: 'completed' | 'needs_review' | 'no_speech' | 'failed';
   unresolved?: string[];
