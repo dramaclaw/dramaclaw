@@ -59,8 +59,10 @@ its generator rather than connected as a prompt.
 - Exact plan: `step_updates` and/or `bindings`. A step update contains `node_id`, optional `prompt`,
   and optional `settings`. Settings include supported model, aspect_ratio, resolution, quality,
   duration_seconds, generate_audio, generation_mode, variants, or voice_ref for that node type.
-  Existing custom voice and generation-parameter rules still apply. Do not mix these changes with
-  compact intent fields.
+  Existing custom voice and generation-parameter rules still apply. An exact plan also accepts
+  `summary` (its preview title) and `analysis` (the complete replacement object); send revised ones
+  whenever a step change makes the current ones inaccurate. Do not mix these changes with compact
+  intent fields.
 
 All edits are revalidated before a compare-and-swap revision update. Unknown fields and invalid
 edges are rejected without modifying the stored draft. A revision conflict requires reading and

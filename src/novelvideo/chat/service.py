@@ -951,8 +951,21 @@ _FREEZONE_CANVAS_WRITE_NEGATION_RE = re.compile(
     r"[^。！？!?，,；;\n]{0,32}",
     re.IGNORECASE,
 )
+# “等我确认后再自动执行” defers execution to a later confirmation; like a
+# negation, it is not a request to run anything in this turn.
+_FREEZONE_DEFERRED_EXECUTION_RE = re.compile(
+    r"(?:"
+    r"(?:等|待)?[^。！？!?，,；;\n]{0,8}确认(?:之后|以后|后)"
+    r"[^。！？!?，,；;\n]{0,8}?(?:运行|执行)"
+    r"|(?:after|once|when)\s+(?:i|we|you)\s+confirm"
+    r"[^.!?,;\n]{0,24}?(?:run|execute)"
+    r")",
+    re.IGNORECASE,
+)
+# “可执行”/“可运行” are adjectives, and identifiers such as run_after_create
+# are field names; neither asks to run anything.
 _FREEZONE_EXISTING_EXECUTION_ACTION_RE = re.compile(
-    r"(?:运行|执行|继续|恢复|run|execute|continue|resume)",
+    r"(?:(?<!可)(?:运行|执行)|继续|恢复|\b(?:run|execute|continue|resume)\b)",
     re.IGNORECASE,
 )
 _FREEZONE_EXISTING_EXECUTION_TARGET_RE = re.compile(
@@ -1106,6 +1119,7 @@ def _freezone_existing_execution_requested(prompt: str | None) -> bool:
     if not user_text:
         return False
     intent_text = _FREEZONE_CANVAS_WRITE_NEGATION_RE.sub("", user_text)
+    intent_text = _FREEZONE_DEFERRED_EXECUTION_RE.sub("", intent_text)
     return bool(
         _FREEZONE_EXISTING_EXECUTION_ACTION_RE.search(intent_text)
         and _FREEZONE_EXISTING_EXECUTION_TARGET_RE.search(intent_text)

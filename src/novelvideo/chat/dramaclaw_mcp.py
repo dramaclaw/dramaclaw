@@ -257,7 +257,10 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
     instruction += (
         "Only after a later user message explicitly requests a change, call "
         "freezone_patch_workflow_draft on this draft with changes.step_updates and/or "
-        "changes.bindings and its expected_revision. If waiting for review, end this turn "
+        "changes.bindings and its expected_revision; when the change alters what the plan "
+        "summary or analysis describes, also send the revised changes.summary and "
+        "changes.analysis. If waiting for review, "
+        "end this turn "
         "without another workflow write."
         if name == "freezone_prepare_workflow_plan_draft"
         else (
