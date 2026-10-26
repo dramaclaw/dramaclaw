@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowLeftRight,
   FastForward,
@@ -109,6 +110,7 @@ export function AssetBoardImageOpChip({
   // 功能被切走 / 被删掉时顺手收起面板，避免它挂在原地指向一个已经不在的 chip。
   useEffect(() => setAnchor(null), [opKey]);
 
+  const { t } = useTranslation();
   const def = ASSET_BOARD_IMAGE_OP_MAP[opKey];
   const Icon = ASSET_BOARD_IMAGE_OP_ICONS[opKey];
 
@@ -127,7 +129,7 @@ export function AssetBoardImageOpChip({
       <button
         ref={triggerRef}
         type="button"
-        title={`${def.label} · 点击切换功能，退格删除`}
+        title={`${def.label} · ${t('assetBoard.imageOpChipHint')}`}
         disabled={disabled}
         // 别让 mousedown 走默认行为：那会把光标挪到 chip 上（它是 contenteditable=false
         // 的原子块），用户接着打字会落在意料之外的位置。

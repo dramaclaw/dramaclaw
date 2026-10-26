@@ -11,7 +11,7 @@ import {
 } from "@/features/freezone/chatNodeReferences";
 import type { ChatAttachment, ChatMessage } from "@/features/superchat/types";
 import { useCanvasStore } from "@/stores/canvasStore";
-import { enT, zhT } from "@/__tests__/helpers/i18n-fixtures";
+import { enT } from "@/__tests__/helpers/i18n-fixtures";
 
 const localeState = vi.hoisted(() => ({ language: "zh" }));
 
@@ -67,10 +67,12 @@ function setFreezoneComposerText(input: HTMLElement, value: string): void {
   fireEvent.input(input);
 }
 
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async () => {
+  const { zhT } = await import("@/__tests__/helpers/i18n-fixtures");
+  return {
   initReactI18next: {
-    type: "3rdParty",
-    init: vi.fn(),
+    type: "3rdParty" as const,
+    init: () => undefined,
   },
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
@@ -83,7 +85,7 @@ vi.mock("react-i18next", () => ({
         "aiAssistant.queuedCount": "待发送 {{count}} 条",
         "freezone.chat.currentSelection": "当前选中",
         "freezone.chat.usedThisTurn": "本轮会使用",
-        "freezone.chat.canvasCommandsCancelled": "已取消画布操作",
+
         "freezone.chat.canvasRetryPrompt": "请重新检查并继续刚才未完成的画布操作。先核对已有节点和运行状态，保留已完成结果；补齐生成参数后再提交新的审批。",
         "freezone.chat.canvasRetryDisplay": "重新检查并继续未完成的画布操作",
         "freezone.chat.generationParams.imageQuality": "图片画质",
@@ -91,20 +93,13 @@ vi.mock("react-i18next", () => ({
         "freezone.chat.generationParams.audioOn": "有声",
         "freezone.chat.generationParams.audioOff": "静音",
       };
-      const localizedComposerKey = key.startsWith("freezone.chat.executionMode.")
-        || key.startsWith("freezone.chat.skillMenu.")
-        || key.startsWith("aiAssistant.directorRunMode.")
-        || key.startsWith("node.displayName.")
-        || ["removeReference", "removeAllReferences", "clearReferences", "selectSkill"]
-          .some((name) => key === `freezone.chat.${name}`);
-      const template = translations[key]
-        ?? (localizedComposerKey
-          ? zhT(key, { defaultValue: key, ...options })
-          : typeof options?.defaultValue === "string" ? options.defaultValue : key);
+      const template = translations[key] ?? zhT(key, options);
+      if (typeof template !== "string") return template;
       return template.replace(/{{(\w+)}}/g, (_match, name: string) => String(options?.[name] ?? ""));
     },
   }),
-}));
+  };
+});
 
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => ({ project: "project-a" }),
@@ -714,7 +709,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
       />,
     );
 
-    const copyButton = screen.getByRole("button", { name: "aiAssistant.actions.copy" });
+    const copyButton = screen.getByRole("button", { name: "复制" });
     // 工具条靠 top-full + mt-1 悬浮在气泡下方的消息间距里，容器不再用 hover:pb-10
     // 给它预留高度——hover 改高度会触发消息列表的 ResizeObserver，贴底时整条列表
     // 会往上抖（见「消除虾导消息 hover 时列表跳动」）。
@@ -787,7 +782,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
       />,
     );
 
-    const copyButton = screen.getByLabelText("aiAssistant.actions.copy");
+    const copyButton = screen.getByLabelText("复制");
     const actionBar = copyButton.parentElement;
     // main 的展示语义将助手操作栏放在正文下方的正常文档流中，避免覆盖后续消息。
     expect(actionBar).toHaveClass("mt-1.5");
@@ -1709,7 +1704,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
                 applied: 0,
                 openedUiActions: 0,
                 createdNodeIds: [],
-                errors: ["已取消画布操作"],
+                errors: ["画布操作已手动取消，没有应用到画布。"],
                 commandResults: [
                   {
                     commandIndex: -1,
@@ -1781,7 +1776,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
                 applied: 0,
                 openedUiActions: 0,
                 createdNodeIds: [],
-                errors: ["画布操作等待超时，已自动取消"],
+                errors: ["画布操作等待超时，已自动取消。"],
                 commandResults: [
                   {
                     commandIndex: -1,
@@ -1886,7 +1881,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
           turn_id: "turn-a",
           canvas_apply_status: "cancelled_by_user",
           cancelled: true,
-          errors: ["已取消画布操作"],
+          errors: ["画布操作已手动取消，没有应用到画布。"],
         }),
       })),
     );
@@ -1958,7 +1953,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
           turn_id: "turn-a",
           canvas_apply_status: "cancelled_by_user",
           cancelled: true,
-          errors: ["画布操作等待超时，已自动取消"],
+          errors: ["画布操作等待超时，已自动取消。"],
         }),
       })),
     );

@@ -71,7 +71,30 @@ export interface ChatTaskBatchWaitingItem {
   representative: ChatTaskItem;
 }
 
-function aggregateChatTaskBatch(items: ChatTaskItem[]): ChatTaskItem {
+type BatchTranslate = (
+  key: string,
+  values: Record<string, number>,
+) => string;
+
+const defaultBatchTranslate: BatchTranslate = (key, values) => {
+  switch (key) {
+    case "taskCenter.batchProgress":
+      return `Batch progress ${values.settled}/${values.expected}`;
+    case "taskCenter.runningCount":
+      return `Running ${values.count}`;
+    case "taskCenter.waitingCount":
+      return `Waiting ${values.count}`;
+    case "taskCenter.batchFailed":
+      return `${values.failed}/${values.expected} tasks failed`;
+    default:
+      return key;
+  }
+};
+
+function aggregateChatTaskBatch(
+  items: ChatTaskItem[],
+  t: BatchTranslate,
+): ChatTaskItem {
   const expected = Math.max(...items.map(({ task }) => taskBatchSize(task)));
   const representative = items[0];
   const active = items.filter(({ task }) => isActive(task));
@@ -101,16 +124,21 @@ function aggregateChatTaskBatch(items: ChatTaskItem[]): ChatTaskItem {
       status,
       progress,
       current_task: [
-        `批次进度 ${settled}/${expected}`,
-        active.length > 0 ? `运行 ${active.length}` : "",
-        waiting > 0 ? `等待 ${waiting}` : "",
+        t("taskCenter.batchProgress", { settled, expected }),
+        active.length > 0 ? t("taskCenter.runningCount", { count: active.length }) : "",
+        waiting > 0 ? t("taskCenter.waitingCount", { count: waiting }) : "",
       ].filter(Boolean).join(" · "),
-      error: failed > 0 ? `${failed}/${expected} 个任务失败` : representative.task.error,
+      error: failed > 0
+        ? t("taskCenter.batchFailed", { failed, expected })
+        : representative.task.error,
     },
   };
 }
 
-export function aggregateChatTaskBatchItems(items: ChatTaskItem[]): ChatTaskItem[] {
+export function aggregateChatTaskBatchItems(
+  items: ChatTaskItem[],
+  t: BatchTranslate = defaultBatchTranslate,
+): ChatTaskItem[] {
   const standalone: ChatTaskItem[] = [];
   const batches = new Map<string, ChatTaskItem[]>();
   for (const item of items) {
@@ -125,7 +153,7 @@ export function aggregateChatTaskBatchItems(items: ChatTaskItem[]): ChatTaskItem
   }
   return [
     ...standalone,
-    ...[...batches.values()].map(aggregateChatTaskBatch),
+    ...[...batches.values()].map((batch) => aggregateChatTaskBatch(batch, t)),
   ].sort((left, right) => {
     const activeDelta = Number(isActive(right.task)) - Number(isActive(left.task));
     if (activeDelta) return activeDelta;
@@ -156,7 +184,7 @@ export function chatTaskBatchWaitingItems(
   return [...batches.entries()].flatMap(([batchId, batch]) => {
     const expected = Math.max(...batch.map(({ task }) => taskBatchSize(task)));
     const waiting = Math.max(expected - batch.length, 0);
-    if (waiting === 0 || !isActive(aggregateChatTaskBatch(batch).task)) return [];
+    if (waiting === 0 || !isActive(aggregateChatTaskBatch(batch, defaultBatchTranslate).task)) return [];
     return [{
       batchId,
       expected,
@@ -547,8 +575,8 @@ export function ChatTaskStatusBar({
     [tasks, taskProjectId, nodes, canvasId, now, projectId, scope, t],
   );
   const items = useMemo(
-    () => aggregateChatTaskBatchItems(taskItems),
-    [taskItems],
+    () => aggregateChatTaskBatchItems(taskItems, t),
+    [taskItems, t],
   );
   const selectedWorkflowRun = useMemo(
     () => selectChatWorkflowRun(workflowRuns, now),
@@ -787,13 +815,12 @@ export function ChatTaskStatusBar({
     );
   const cancelOneTask = async (task: TaskState) => {
     const confirmed = await confirmDialog({
-      title: t("taskCenter.cancel.title", { defaultValue: "取消生成任务" }),
+      title: t("taskCenter.cancel.title"),
       description: t("taskCenter.cancel.description", {
-        defaultValue: "确定取消“{{name}}”吗？运行中的任务取消后通常不退款。",
         name: displayLabel(task, t),
       }),
-      confirmText: t("taskCenter.cancel.confirm", { defaultValue: "确认取消" }),
-      cancelText: t("taskCenter.cancel.keep", { defaultValue: "继续生成" }),
+      confirmText: t("taskCenter.cancel.confirm"),
+      cancelText: t("taskCenter.cancel.keep"),
       confirmVariant: "destructive",
     });
     if (!confirmed) return;
@@ -807,12 +834,13 @@ export function ChatTaskStatusBar({
         scope: task.scope ?? undefined,
         confirmed: true,
       });
-      toast.success(t("taskCenter.cancel.submitted", { defaultValue: "任务已提交取消" }));
+      toast.success(t("taskCenter.cancel.submitted"));
     } catch (error) {
-      toast.error(t("taskCenter.cancel.failed", {
-        defaultValue: "取消任务失败：{{error}}",
-        error: error instanceof Error ? error.message : String(error),
-      }));
+      toast.error(
+        t("taskCenter.cancel.failed", {
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
     } finally {
       setCancelling(false);
     }
@@ -823,13 +851,10 @@ export function ChatTaskStatusBar({
     const count = activeStandaloneTasks.length + (workflowActive ? 1 : 0);
     if (count === 0 || cancelling) return;
     const confirmed = await confirmDialog({
-      title: t("taskCenter.cancelAll.title", { defaultValue: "全部取消生成任务" }),
-      description: t("taskCenter.cancelAll.description", {
-        defaultValue: "确定取消当前列表中的 {{count}} 项任务吗？运行中的任务取消后通常不退款，已完成的任务不会回滚。",
-        count,
-      }),
-      confirmText: t("taskCenter.cancelAll.confirm", { defaultValue: "确认全部取消" }),
-      cancelText: t("taskCenter.cancel.keep", { defaultValue: "继续生成" }),
+      title: t("taskCenter.cancelAll.title"),
+      description: t("taskCenter.cancelAll.description", { count }),
+      confirmText: t("taskCenter.cancelAll.confirm"),
+      cancelText: t("taskCenter.cancel.keep"),
       confirmVariant: "destructive",
     });
     if (!confirmed) return;
@@ -841,30 +866,30 @@ export function ChatTaskStatusBar({
         });
       }
       const results = await Promise.allSettled(
-        activeStandaloneTasks.map((task) => cancelTask.mutateAsync({
-          type: task.task_type,
-          project: projectId ?? task.project_id ?? task.project,
-          episode: task.episode,
-          beatNum: task.beat_num ?? undefined,
-          scope: task.scope ?? undefined,
-          confirmed: true,
-        })),
+        activeStandaloneTasks.map((task) =>
+          cancelTask.mutateAsync({
+            type: task.task_type,
+            project: projectId ?? task.project_id ?? task.project,
+            episode: task.episode,
+            beatNum: task.beat_num ?? undefined,
+            scope: task.scope ?? undefined,
+            confirmed: true,
+          }),
+        ),
       );
       const failed = results.filter((result) => result.status === "rejected").length;
       if (failed > 0) {
-        toast.error(t("taskCenter.cancelAll.partialFailure", {
-          defaultValue: "{{count}} 项任务取消失败，请到任务中心查看",
-          count: failed,
-        }));
+        toast.error(t("taskCenter.cancelAll.partialFailure", { count: failed }));
       } else {
-        toast.success(t("taskCenter.cancelAll.submitted", { defaultValue: "已提交全部取消" }));
+        toast.success(t("taskCenter.cancelAll.submitted"));
       }
       await refreshWorkflowRuns();
     } catch (error) {
-      toast.error(t("taskCenter.cancel.failed", {
-        defaultValue: "取消任务失败：{{error}}",
-        error: error instanceof Error ? error.message : String(error),
-      }));
+      toast.error(
+        t("taskCenter.cancel.failed", {
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
     } finally {
       setCancelling(false);
     }
@@ -1009,11 +1034,11 @@ export function ChatTaskStatusBar({
               variant="ghost"
               className="h-7 shrink-0 gap-1 px-2 text-xs text-destructive hover:text-destructive"
               disabled={cancelling}
-              title={t("taskCenter.cancelAll.short", { defaultValue: "全部取消" })}
+              title={t("taskCenter.cancelAll.short")}
               onClick={() => void cancelAll()}
             >
               {cancelling ? <LoaderCircle className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
-              {t("taskCenter.cancelAll.short", { defaultValue: "全部取消" })}
+              {t("taskCenter.cancelAll.short")}
             </Button>
           ) : null}
           <Button
@@ -1093,8 +1118,8 @@ export function ChatTaskStatusBar({
                     size="icon"
                     variant="ghost"
                     className="size-7 shrink-0 text-destructive hover:text-destructive"
-                    title={t("taskCenter.cancel.short", { defaultValue: "取消任务" })}
-                    aria-label={t("taskCenter.cancel.short", { defaultValue: "取消任务" })}
+                    title={t("taskCenter.cancel.short")}
+                    aria-label={t("taskCenter.cancel.short")}
                     disabled={cancelling}
                     onClick={() => void cancelOneTask(task)}
                   >
@@ -1158,8 +1183,8 @@ export function ChatTaskStatusBar({
                     size="icon"
                     variant="ghost"
                     className="size-7 shrink-0 text-destructive hover:text-destructive"
-                    title={t("taskCenter.cancel.short", { defaultValue: "取消任务" })}
-                    aria-label={t("taskCenter.cancel.short", { defaultValue: "取消任务" })}
+                    title={t("taskCenter.cancel.short")}
+                    aria-label={t("taskCenter.cancel.short")}
                     disabled={cancelling}
                     onClick={() => void cancelOneTask(task)}
                   >

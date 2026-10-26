@@ -11,6 +11,8 @@ import {
   type ReactElement,
   type RefObject,
 } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { createPortal } from 'react-dom';
 import {
   ChevronDown,
@@ -73,7 +75,6 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import {
   KEY_ELEMENT_CATEGORY_KEYS,
-  KEY_ELEMENT_CATEGORY_LABEL,
   readKeyElementCategory,
 } from '@/features/canvas/domain/keyElements';
 import { CANVAS_NODE_TOOLBAR_SURFACE_CLASS } from '@/features/canvas/ui/nodeFrameStyles';
@@ -175,18 +176,23 @@ function placeSubmenu(key: string, anchor: HTMLElement): SubmenuPlacement {
 export function keyElementMenuEntry(
   node: CanvasNode,
   updateNodeData: (nodeId: string, patch: Partial<CanvasNodeData>) => void,
+  t: TFunction,
 ): MoreMenuSubmenu {
   const current = readKeyElementCategory(node.data as Record<string, unknown>);
+  const categoryLabel = (category: (typeof KEY_ELEMENT_CATEGORY_KEYS)[number]): string =>
+    t(`assetBoard.category${category.charAt(0).toUpperCase()}${category.slice(1)}`);
   return {
     kind: 'submenu',
     key: 'keyElement',
     icon: Star,
-    label: current ? `关键元素 · ${KEY_ELEMENT_CATEGORY_LABEL[current]}` : '设置关键元素',
+    label: current
+      ? `${t('assetBoard.keyElements')} · ${categoryLabel(current)}`
+      : t('assetBoard.setKeyElement'),
     children: [
       ...KEY_ELEMENT_CATEGORY_KEYS.map((category) => ({
         key: `key-${category}`,
-        label: KEY_ELEMENT_CATEGORY_LABEL[category],
-        hint: current === category ? '当前' : undefined,
+        label: categoryLabel(category),
+        hint: current === category ? t('assetBoard.current') : undefined,
         onSelect: () =>
           updateNodeData(node.id, { keyElementCategory: category } as Partial<CanvasNodeData>),
       })),
@@ -194,7 +200,7 @@ export function keyElementMenuEntry(
         ? [
             {
               key: 'key-clear',
-              label: '取消关键元素',
+              label: t('assetBoard.clearKeyElement'),
               onSelect: () =>
                 updateNodeData(node.id, { keyElementCategory: null } as Partial<CanvasNodeData>),
             },
@@ -222,7 +228,7 @@ export function keyElementMenuEntry(
 export function DetailMoreMenu({
   entries,
   triggerClassName,
-  triggerLabel = '更多',
+  triggerLabel,
 }: {
   entries: MoreMenuEntry[];
   /** 触发器样式：默认工具条按钮；详情头部那颗传 header 图标按钮的类。 */
@@ -234,6 +240,8 @@ export function DetailMoreMenu({
    */
   triggerLabel?: string;
 }): ReactElement {
+  const { t } = useTranslation();
+  const resolvedTriggerLabel = triggerLabel ?? t('assetBoard.moreActions');
   const [open, setOpen] = useState(false);
   const [submenu, setSubmenu] = useState<SubmenuPlacement | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -306,10 +314,10 @@ export function DetailMoreMenu({
       <button
         ref={triggerRef}
         type="button"
-        aria-label={triggerLabel}
+        aria-label={resolvedTriggerLabel}
         aria-haspopup="true"
         aria-expanded={open}
-        title={triggerLabel}
+        title={resolvedTriggerLabel}
         onClick={() => (open ? closeNow() : openNow())}
         className={triggerClassName ?? DETAIL_TOOLBAR_BUTTON_CLASS}
       >
@@ -317,7 +325,7 @@ export function DetailMoreMenu({
       </button>
       {open && (
         <div
-          aria-label="更多操作"
+          aria-label={t('assetBoard.moreActions')}
           className="absolute right-0 top-full z-50 mt-1.5 min-w-[210px] rounded-lg border border-white/10 bg-[#2e2e2e] p-1 text-white/85 shadow-xl"
         >
           {entries.map((entry) => {
@@ -419,18 +427,17 @@ export function DetailMoreMenu({
 const GRID_ACTION_DEFS: Array<{
   key: GridActionKey;
   icon: LucideIcon;
-  label: string;
 }> = [
-  { key: 'multiCameraGrid', icon: Grid3x3, label: '多机位九宫格' },
-  { key: 'plotFourGrid', icon: Grid2x2, label: '剧情推演四宫格' },
-  { key: 'faceThreeView', icon: User, label: '角色脸部三视图' },
-  { key: 'productThreeView', icon: Package, label: '产品三视图' },
-  { key: 'serialStoryboard25', icon: LayoutDashboard, label: '25宫格连贯分镜' },
-  { key: 'cinematicLightCorrection', icon: Film, label: '电影级光影校正' },
-  { key: 'characterThreeView', icon: Users, label: '角色三视图生成' },
-  { key: 'sceneSettingSheet', icon: Mountain, label: '场景设定图' },
-  { key: 'frameProjection3sLater', icon: FastForward, label: '画面推演 - 3秒后' },
-  { key: 'frameProjection5sEarlier', icon: Rewind, label: '画面推演 - 5秒前' },
+  { key: 'multiCameraGrid', icon: Grid3x3 },
+  { key: 'plotFourGrid', icon: Grid2x2 },
+  { key: 'faceThreeView', icon: User },
+  { key: 'productThreeView', icon: Package },
+  { key: 'serialStoryboard25', icon: LayoutDashboard },
+  { key: 'cinematicLightCorrection', icon: Film },
+  { key: 'characterThreeView', icon: Users },
+  { key: 'sceneSettingSheet', icon: Mountain },
+  { key: 'frameProjection3sLater', icon: FastForward },
+  { key: 'frameProjection5sEarlier', icon: Rewind },
 ];
 
 /**
@@ -453,6 +460,7 @@ export function AssetBoardImageDetailToolbar({
   node: CanvasNode;
   onOpenNode?: (nodeId: string) => void;
 }): ReactElement {
+  const { t } = useTranslation();
   const data = node.data as Record<string, unknown>;
   const imageSource = useMemo(() => resolveNodeSourceImageUrl(node), [node]);
   const isImageEdit = isImageEditNode(node);
@@ -517,7 +525,7 @@ export function AssetBoardImageDetailToolbar({
       <div className="flex flex-wrap items-center justify-center gap-1.5">
         <DetailToolbarButton
           icon={Download}
-          label="下载"
+          label={t('assetBoard.download')}
           busy={isDownloading}
           disabled={!imageSource}
           onClick={() => void handleDownload()}
@@ -525,9 +533,9 @@ export function AssetBoardImageDetailToolbar({
         {canRegenerate && (
           <DetailToolbarButton
             icon={RefreshCw}
-            label="重新生成"
+            label={t('assetBoard.regenerate')}
             busy={isGenerating}
-            title="重新提交这次生成（失败重试）"
+            title={t('assetBoard.retryGeneration')}
             onClick={() => void regenerateExportImageNode(node.id)}
           />
         )}
@@ -545,11 +553,11 @@ export function AssetBoardImageDetailToolbar({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                title="基于本图套用宫格 / 多视图模板生成"
+                title={t('assetBoard.gridTemplate')}
                 className={DETAIL_TOOLBAR_BUTTON_CLASS}
               >
                 <LayoutGrid className="h-3.5 w-3.5" />
-                宫格模板
+                {t('nodeToolbar.gridMenu.trigger')}
                 <ChevronDown className="h-3 w-3" />
               </button>
             </DropdownMenuTrigger>
@@ -567,7 +575,7 @@ export function AssetBoardImageDetailToolbar({
                     onSelect={() => handleGridAction(def)}
                   >
                     <Icon className="h-4 w-4 shrink-0" />
-                    <span className="flex-1">{def.label}</span>
+                    <span className="flex-1">{t(`nodeToolbar.gridMenu.${def.key}`)}</span>
                   </DropdownMenuItem>
                 );
               })}
@@ -697,6 +705,7 @@ export function AssetBoardVideoDetailToolbar({
   /** 详情正文里那个活的 <video>：「全屏」直接对它发 requestFullscreen。 */
   playerRef?: RefObject<HTMLVideoElement | null>;
 }): ReactElement {
+  const { t } = useTranslation();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const data = node.data as Record<string, unknown>;
   const isVideo = isVideoNode(node);
@@ -763,7 +772,7 @@ export function AssetBoardVideoDetailToolbar({
       const newId = store.addNode(CANVAS_NODE_TYPES.video, position, {
         videoUrl: url,
         previewImageUrl: coverUrl,
-        displayName: '合成视频',
+        displayName: t('assetBoard.composedVideo'),
         sourceFileName: null,
       } as Partial<CanvasNodeData>);
       store.addEdge(node.id, newId);
@@ -777,7 +786,7 @@ export function AssetBoardVideoDetailToolbar({
       }
       setComposeSeeds(null);
     },
-    [isCompose, node.id],
+    [isCompose, node.id, t],
   );
 
   const handleDownload = useCallback(async () => {
@@ -802,7 +811,9 @@ export function AssetBoardVideoDetailToolbar({
   const handleUpscaleSubmit = useCallback(() => {
     if (!videoUrl || isSubmittingUpscale) return;
     // 沿用工作流「先建 isUpscaleNode 结果节点」语义，配置在详情选好后直接提交。
-    const displayName = `高清（${VIDEO_UPSCALE_RESOLUTION_LABEL[upscaleResolution]}）`;
+    const displayName = t('assetBoard.upscaledVideoName', {
+      resolution: VIDEO_UPSCALE_RESOLUTION_LABEL[upscaleResolution],
+    });
     const upscaleNodeId = createVideoUpscaleResultNode(node.id, {
       sourceUrl: videoUrl,
       displayName,
@@ -819,7 +830,7 @@ export function AssetBoardVideoDetailToolbar({
       sourceUrl: videoUrl,
       resolution: upscaleResolution,
     }).finally(() => setIsSubmittingUpscale(false));
-  }, [isSubmittingUpscale, node.id, upscaleResolution, videoUrl]);
+  }, [isSubmittingUpscale, node.id, t, upscaleResolution, videoUrl]);
 
   // 全屏：直接对正文那个活的播放器发 requestFullscreen（不是把详情面板整块放大——
   // 用户要的是「看片」）。iOS Safari 的 <video> 没有标准 API，退到它自家的
@@ -858,40 +869,40 @@ export function AssetBoardVideoDetailToolbar({
         <div className={VIDEO_FLOAT_PILL_CLASS}>
           <VideoFloatButton
             icon={Scissors}
-            label="剪辑"
+            label={t('assetBoard.editVideo')}
             showLabel
             disabled={!project || !canOpenCompose}
             title={
               isCompose && !canOpenCompose
-                ? '需要至少 2 个已就绪的上游视频素材'
-                : '打开视频合成时间线'
+                ? t('assetBoard.composeNeedsTwoVideos')
+                : t('assetBoard.openComposeTimeline')
             }
             onClick={openCompose}
           />
           {isVideo && (
             <VideoFloatButton
               icon={ImageUpscale}
-              label="高清"
+              label={t('assetBoard.upscale')}
               showLabel
               busy={isSubmittingUpscale}
               disabled={!videoUrl}
-              title="放大分辨率（在画布上新建高清结果节点）"
+              title={t('assetBoard.upscaleTitle')}
               onClick={() => setUpscaleOpen((open) => !open)}
             />
           )}
           <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-white/12" />
           <VideoFloatButton
             icon={Download}
-            label="下载"
+            label={t('assetBoard.download')}
             busy={isDownloading}
             disabled={!videoUrl}
             onClick={() => void handleDownload()}
           />
           <VideoFloatButton
             icon={Maximize2}
-            label="全屏"
+            label={t('assetBoard.fullscreen')}
             disabled={!videoUrl}
-            title="全屏播放"
+            title={t('assetBoard.fullscreenTitle')}
             onClick={handleFullscreen}
           />
         </div>
@@ -900,7 +911,7 @@ export function AssetBoardVideoDetailToolbar({
             挪进头部之后，那一行没地方摆了）。z-50 压过下方正文。 */}
         {upscaleOpen && isVideo && (
           <div className="absolute left-1/2 top-full z-50 mt-2 flex -translate-x-1/2 flex-wrap items-center justify-center gap-3 whitespace-nowrap rounded-xl border border-white/10 bg-[#282828] px-3 py-2 shadow-[0_10px_24px_rgba(0,0,0,0.32)]">
-            <span className="text-[12px] text-white/40">分辨率</span>
+            <span className="text-[12px] text-white/40">{t('assetBoard.resolution')}</span>
             <div className="inline-flex items-center gap-0.5 rounded-md border border-white/10 bg-white/[0.04] p-0.5">
               {VIDEO_UPSCALE_RESOLUTIONS.map((value) => (
                 <button
@@ -919,10 +930,10 @@ export function AssetBoardVideoDetailToolbar({
             </div>
             <DetailToolbarButton
               icon={Wand2}
-              label="提交高清"
+              label={t('assetBoard.submitUpscale')}
               busy={isSubmittingUpscale}
               disabled={!videoUrl}
-              title="在画布上新建高清结果节点并提交任务"
+              title={t('assetBoard.submitUpscaleTitle')}
               onClick={handleUpscaleSubmit}
             />
           </div>

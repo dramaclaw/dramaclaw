@@ -414,9 +414,7 @@ export function RenderPlanDialog({
       const fail = partial.rejected.filter((item) => item.reason === reason).length;
       const copy = PARTIAL_REASON_COPY[reason];
       if (!copy) {
-        return t("episode.renderPlan.partial.reason.unknown", {
-          defaultValue: "部分任务暂未投递",
-        });
+        return t("episode.renderPlan.partial.reason.unknown");
       }
       return t(copy.key, { defaultValue: copy.defaultValue, fail });
     });
@@ -498,7 +496,6 @@ export function RenderPlanDialog({
           >
             <AlertTriangle className="mr-1 inline size-3" />
             {t("episode.renderPlan.partial.summary", {
-              defaultValue: "已投 {{ok}} / 被拒 {{fail}}",
               ok: partial.ok,
               fail: partial.rejected.length,
             })}
@@ -537,7 +534,7 @@ export function RenderPlanDialog({
               onClick={() => void redispatch(partial)}
               disabled={retrying || loading}
             >
-              {t("episode.renderPlan.partial.continue", { defaultValue: "继续" })}
+              {t("episode.renderPlan.partial.continue")}
             </AlertDialogAction>
           )}
           <AlertDialogAction

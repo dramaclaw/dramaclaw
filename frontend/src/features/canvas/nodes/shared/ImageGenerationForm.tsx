@@ -22,9 +22,7 @@ import type {
   ImageSize,
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
-import {
-  resolveNearestAspectOption,
-} from '@/features/canvas/nodes/shared/imageGenerationOptions';
+import { resolveNearestAspectOption } from '@/features/canvas/nodes/shared/imageGenerationOptions';
 import type { UpstreamContent } from '@/features/canvas/application/ports';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextChip';

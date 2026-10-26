@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { type ReactElement } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { LightEditorContent } from '@/features/canvas/ui/LightEditorContent';
@@ -33,10 +34,11 @@ export function AssetBoardRelightDialog({
   onClose,
   onSubmitted,
 }: AssetBoardRelightDialogProps): ReactElement {
+  const { t } = useTranslation();
   // 外壳与内容层必须共用同一个包装后的关闭回调，见 useCloseOnce 的说明。
   const close = useCloseOnce(onClose);
   return (
-    <AssetBoardEditorDialog label="打光效果编辑器" onClose={close}>
+    <AssetBoardEditorDialog label={t('assetBoard.relightEditor')} onClose={close}>
       <LightEditorContent
         node={node}
         imageSource={imageSource}

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useState, type ReactElement } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertCircle, Download, Loader2, Music } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -52,6 +53,7 @@ export function AssetBoardAudioChip({
   /** 顶部音频条（音频切换器）里当前详情项的选中高亮。 */
   selected?: boolean;
 }): ReactElement {
+  const { t } = useTranslation();
   const [converting, setConverting] = useState<AudioDownloadFormat | null>(null);
   // 节点没记 durationMs 时（生成/上传路径大多不写），用一个隐藏 <audio preload="metadata">
   // 探测真实时长——否则 chip 上永远空着。
@@ -70,7 +72,7 @@ export function AssetBoardAudioChip({
   const handleDownload = async (format: AudioDownloadFormat) => {
     if (!audioUrl || converting) return;
     if (!canProduceFormat(format, sourceExt)) {
-      toast.error('源文件不是 m4a，无法转换为 m4a 格式');
+      toast.error(t('assetBoard.sourceNotM4a'));
       return;
     }
     try {
@@ -81,7 +83,7 @@ export function AssetBoardAudioChip({
       });
     } catch (error) {
       console.error('[asset-board] audio download failed', error);
-      toast.error('音频下载失败');
+      toast.error(t('assetBoard.audioDownloadFailed'));
     }
   };
 
@@ -138,7 +140,7 @@ export function AssetBoardAudioChip({
 
         {failure && (
           <span
-            aria-label="生成失败"
+            aria-label={t('assetBoard.generationFailed')}
             title={failure}
             className="pointer-events-none absolute left-1 top-1 inline-flex"
           >
@@ -151,8 +153,8 @@ export function AssetBoardAudioChip({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label={`下载 ${item.title}`}
-                title="下载 / 格式转换"
+                aria-label={`${t('assetBoard.download')} ${item.title}`}
+                title={t('assetBoard.downloadConvert')}
                 disabled={converting !== null}
                 className={cn(
                   'absolute right-1 top-1 rounded-md bg-black/50 p-1 text-white/80 transition-opacity hover:bg-black/70 disabled:cursor-not-allowed',
@@ -186,8 +188,8 @@ export function AssetBoardAudioChip({
                     ) : (
                       <Download className="h-4 w-4" />
                     )}
-                    <span className="flex-1">下载为 {format.toUpperCase()}</span>
-                    {!available && <span className="text-[10px] opacity-60">仅 m4a 源</span>}
+                    <span className="flex-1">{t('assetBoard.downloadAs', { format: format.toUpperCase() })}</span>
+                    {!available && <span className="text-[10px] opacity-60">{t('assetBoard.m4aOnly')}</span>}
                   </DropdownMenuItem>
                 );
               })}

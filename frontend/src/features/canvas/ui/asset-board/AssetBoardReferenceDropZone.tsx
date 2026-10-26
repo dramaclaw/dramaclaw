@@ -8,6 +8,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { useCanvasStore } from '@/stores/canvasStore';
 
@@ -16,8 +17,7 @@ import {
   readBoardReferenceDragPayload,
 } from './boardReferenceDrag';
 
-/** 拖拽悬停时 drop 区的提示文案（对齐参考图 58 的占位文案）。 */
-export const REFERENCE_DROP_HINT_TEXT = '可将资产、图片、视频拖拽到此，添加为参考';
+export const REFERENCE_DROP_HINT_KEY = 'assetBoard.referenceDropHint';
 
 /**
  * 故事板详情里包住「图片/视频生成表单」的一层放置区：把左列表拖来的**既有节点卡片**
@@ -40,6 +40,7 @@ export function AssetBoardReferenceDropZone({
   nodeId: string;
   children: ReactNode;
 }): ReactElement {
+  const { t } = useTranslation();
   const [isDragActive, setIsDragActive] = useState(false);
   // 嵌套子元素会各自冒泡 dragenter/dragleave，用进出计数消抖，避免划过内部元素时闪烁。
   const depthRef = useRef(0);
@@ -93,10 +94,10 @@ export function AssetBoardReferenceDropZone({
       {isDragActive && (
         <div
           role="status"
-          aria-label={REFERENCE_DROP_HINT_TEXT}
+          aria-label={t(REFERENCE_DROP_HINT_KEY)}
           className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center rounded-[var(--node-radius)] border-2 border-dashed border-primary/70 bg-[#262626]/85 px-4 text-center text-[13px] font-medium text-white/85"
         >
-          {REFERENCE_DROP_HINT_TEXT}
+          {t(REFERENCE_DROP_HINT_KEY)}
         </div>
       )}
     </div>

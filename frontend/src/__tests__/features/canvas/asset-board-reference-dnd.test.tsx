@@ -5,17 +5,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { CANVAS_NODE_TYPES, type CanvasEdge, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { AssetBoardView } from '@/features/canvas/ui/asset-board/AssetBoardView';
-import { REFERENCE_DROP_HINT_TEXT } from '@/features/canvas/ui/asset-board/AssetBoardReferenceDropZone';
+import { REFERENCE_DROP_HINT_KEY } from '@/features/canvas/ui/asset-board/AssetBoardReferenceDropZone';
+import { zhT } from '@/__tests__/helpers/i18n-fixtures';
 import { BOARD_REFERENCE_DRAG_MIME } from '@/features/canvas/ui/asset-board/boardReferenceDrag';
 import { useCanvasStore } from '@/stores/canvasStore';
-import { zhT } from '@/__tests__/helpers/i18n-fixtures';
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, options?: string | Record<string, unknown>) =>
-      typeof options === 'string' ? options : zhT(key, { defaultValue: key, ...options }),
-  }),
-}));
+const REFERENCE_DROP_HINT_TEXT = zhT(REFERENCE_DROP_HINT_KEY);
+
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 // 算力询价走 react-query，测试树里没有 QueryClientProvider —— 直接短路。
 vi.mock('@/lib/queries/generation-credit-cost', () => ({

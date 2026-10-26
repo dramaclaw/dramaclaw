@@ -10,8 +10,8 @@ const nodeSource = readFileSync(
 
 describe("canvas script node credit contract", () => {
   it("quotes the story-script feature even when the input has zero characters", () => {
-    expect(nodeSource).toContain(
-      "useGenerationCreditCost(\n    'feature',\n    STORY_SCRIPT_FEATURE_KEY,",
+    expect(nodeSource).toMatch(
+      /useGenerationCreditCost\(\s*['"]feature['"],\s*STORY_SCRIPT_FEATURE_KEY,/,
     );
     expect(nodeSource).toContain("{ surface: 'canvas', quantity: storyBillableChars }");
     expect(nodeSource).not.toContain(

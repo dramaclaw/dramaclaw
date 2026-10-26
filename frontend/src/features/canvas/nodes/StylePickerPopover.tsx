@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMemo } from 'react';
-import { Check, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Check, X } from 'lucide-react';
 
 import type { FreezoneStyleTemplate } from '@/api/ops';
 import { useFreezoneStyleTemplates } from '@/features/canvas/hooks/useFreezoneStyleTemplates';

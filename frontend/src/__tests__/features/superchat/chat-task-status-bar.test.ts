@@ -233,7 +233,7 @@ describe("selectChatTaskItems", () => {
     expect(result[0].task).toMatchObject({
       status: "running",
       progress: 0.75,
-      current_task: "批次进度 1/2 · 运行 1",
+      current_task: "Batch progress 1/2 · Running 1",
     });
   });
 
@@ -251,9 +251,9 @@ describe("selectChatTaskItems", () => {
     const result = aggregateChatTaskBatchItems(items);
 
     expect(result).toHaveLength(1);
-    expect(result[0].task.current_task).toBe("批次进度 0/9 · 运行 3 · 等待 6");
+    expect(result[0].task.current_task).toBe("Batch progress 0/9 · Running 3 · Waiting 6");
     expect(chatTaskBatchStatusSummary(result)).toBe(
-      "批次进度 0/9 · 运行 3 · 等待 6",
+      "Batch progress 0/9 · Running 3 · Waiting 6",
     );
     expect(chatTaskBatchWaitingItems(items)).toMatchObject([{
       batchId: "first-frame-batch",

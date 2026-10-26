@@ -1424,8 +1424,8 @@ describe("VideoNode 接线：素材撤空 → 文生视频", () => {
   });
 
   it("提交闸门把提示词与素材拆成两条并列判定", () => {
-    expect(source).toContain(
-      "(videoModeRequiresPrompt(genMode) && !hasPromptText) ||\n      (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode);",
+    expect(source).toMatch(
+      /\(videoModeRequiresPrompt\(genMode\)\s*&&\s*!hasPromptText\)\s*\|\|\s*\(videoModeRequiresMedia\(genMode\)\s*&&\s*!hasRequiredMediaForMode\);/,
     );
     // 旧的三元写法：要提示词的模式就不再看素材 —— 全能参考因此漏网。
     expect(source).not.toContain(

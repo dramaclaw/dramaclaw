@@ -117,7 +117,9 @@ vi.mock("sonner", () => ({
   },
 }));
 
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async () => {
+  const { zhT } = await import("@/__tests__/helpers/i18n-fixtures");
+  return {
   useTranslation: () => ({
     t: (
       key: string,
@@ -351,9 +353,10 @@ vi.mock("react-i18next", () => ({
         "settings.freezoneCatalog.newRecipe.copyRawJson": "复制 JSON",
         "settings.freezoneCatalog.newRecipe.rawJsonCopied": "Recipe JSON 已复制",
         "settings.freezoneCatalog.newRecipe.rawJsonCopyFailed": "复制失败，请手动复制",
-      })[key] ?? options?.defaultValue ?? key,
+      })[key] ?? zhT(key, options),
   }),
-}));
+  };
+});
 
 function renderSettingsDialog() {
   return render(
@@ -434,11 +437,11 @@ describe("SettingsDialog pages", () => {
     fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
     fireEvent.click(
       screen.getByRole("tab", {
-        name: "settings.mediaStorage.providerAliyunOss",
+        name: zhT("settings.mediaStorage.providerAliyunOss"),
       }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "settings.mediaStorage.save" }),
+      screen.getByRole("button", { name: zhT("settings.mediaStorage.save") }),
     );
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expected));
@@ -466,11 +469,11 @@ describe("SettingsDialog pages", () => {
     fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
     fireEvent.click(
       screen.getByRole("tab", {
-        name: "settings.mediaStorage.providerAliyunOss",
+        name: zhT("settings.mediaStorage.providerAliyunOss"),
       }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "settings.mediaStorage.save" }),
+      screen.getByRole("button", { name: zhT("settings.mediaStorage.save") }),
     );
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(`${code}: ${message}`));
@@ -520,7 +523,7 @@ describe("SettingsDialog pages", () => {
     {
       name: "missing error details",
       error: () => ({}),
-      expected: "settings.mediaStorage.saveFailed",
+      expected: zhT("settings.mediaStorage.saveFailed"),
     },
   ])("shows a storage save error for $name", async ({ error, expected }) => {
     modelGatewayMocks.saveMediaRelay.mockRejectedValue(await error());
@@ -528,11 +531,11 @@ describe("SettingsDialog pages", () => {
     fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
     fireEvent.click(
       screen.getByRole("tab", {
-        name: "settings.mediaStorage.providerAliyunOss",
+        name: zhT("settings.mediaStorage.providerAliyunOss"),
       }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "settings.mediaStorage.save" }),
+      screen.getByRole("button", { name: zhT("settings.mediaStorage.save") }),
     );
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expected));

@@ -18,18 +18,29 @@
     "confirm": "Confirm creation"
   },
   "referenceValidation": {
-    "firstFrame": "First frame", "lastFrame": "Last frame",
-    "title": "Reference media does not meet model requirements", "hint": "Correct the listed media before generating. Locate opens the corresponding canvas node.", "locate": "Locate media",
-    "image": "Image", "audio": "Audio", "video": "Video",
+    "firstFrame": "First frame",
+    "lastFrame": "Last frame",
+    "title": "Reference media does not meet model requirements",
+    "hint": "Correct the listed media before generating. Locate opens the corresponding canvas node.",
+    "locate": "Locate media",
+    "image": "Image",
+    "audio": "Audio",
+    "video": "Video",
     "format": "Actual format: {{actual}}; supported: {{expected}}.",
     "unreadable": "Unable to read or identify this media. Please upload a valid file.",
     "maxMB": "Actual size: {{actual}} MB; maximum: {{expected}} MB.",
-    "minWidth": "Width: {{actual}} px; minimum: {{expected}} px.", "maxWidth": "Width: {{actual}} px; maximum: {{expected}} px.",
-    "minHeight": "Height: {{actual}} px; minimum: {{expected}} px.", "maxHeight": "Height: {{actual}} px; maximum: {{expected}} px.",
-    "minAspectRatio": "Aspect ratio: {{actual}}; minimum: {{expected}}.", "maxAspectRatio": "Aspect ratio: {{actual}}; maximum: {{expected}}.",
-    "minFPS": "Frame rate: {{actual}} fps; minimum: {{expected}} fps.", "maxFPS": "Frame rate: {{actual}} fps; maximum: {{expected}} fps.",
-    "minDuration": "Duration: {{actual}} s; each clip must be at least {{expected}} s.", "maxDuration": "Duration: {{actual}} s; each clip must be at most {{expected}} s.",
-    "totalMinDuration": "Total reference duration: {{actual}} s; minimum: {{expected}} s.", "totalMaxDuration": "Total reference duration: {{actual}} s; maximum: {{expected}} s."
+    "minWidth": "Width: {{actual}} px; minimum: {{expected}} px.",
+    "maxWidth": "Width: {{actual}} px; maximum: {{expected}} px.",
+    "minHeight": "Height: {{actual}} px; minimum: {{expected}} px.",
+    "maxHeight": "Height: {{actual}} px; maximum: {{expected}} px.",
+    "minAspectRatio": "Aspect ratio: {{actual}}; minimum: {{expected}}.",
+    "maxAspectRatio": "Aspect ratio: {{actual}}; maximum: {{expected}}.",
+    "minFPS": "Frame rate: {{actual}} fps; minimum: {{expected}} fps.",
+    "maxFPS": "Frame rate: {{actual}} fps; maximum: {{expected}} fps.",
+    "minDuration": "Duration: {{actual}} s; each clip must be at least {{expected}} s.",
+    "maxDuration": "Duration: {{actual}} s; each clip must be at most {{expected}} s.",
+    "totalMinDuration": "Total reference duration: {{actual}} s; minimum: {{expected}} s.",
+    "totalMaxDuration": "Total reference duration: {{actual}} s; maximum: {{expected}} s."
   },
   "app": {
     "title": "SuperTale",
@@ -464,32 +475,32 @@
     "account": {
       "open": "Open account menu",
       "changeAvatar": "Change avatar",
-        "changePassword": "Change password",
-        "setPassword": "Set password",
-        "selectLanguage": "Select language",
-        "languageChinese": "中文",
-        "languageEnglish": "English",
-        "languageVietnamese": "Tiếng Việt",
-        "phoneBinding": {
-          "title": "Bind phone number",
-          "description": "Verify your current password and phone to link it to this account. You can then sign in by code. The phone cannot be changed or unlinked.",
-          "submit": "Confirm binding",
-          "success": "Phone linked. Your existing account and password still work.",
-          "inUse": "This phone belongs to another account and cannot be linked. Accounts are not merged automatically.",
-          "alreadyBound": "This account already has a phone. Refresh the page.",
-          "error": "Could not link the phone. Try again."
-        },
-        "avatarDialog": {
-          "title": "Change avatar",
-          "description": "Choose an image for your avatar. A clear square image works best.",
-          "previewHint": "Currently using the account initial avatar",
-          "choose": "Choose image",
-          "replace": "Replace image",
-          "fileHint": "PNG, JPG, WebP, or GIF",
-          "save": "Save avatar",
-          "saving": "Saving…",
-          "error": "Avatar upload failed, please try again"
-        },
+      "changePassword": "Change password",
+      "setPassword": "Set password",
+      "selectLanguage": "Select language",
+      "languageChinese": "中文",
+      "languageEnglish": "English",
+      "languageVietnamese": "Tiếng Việt",
+      "phoneBinding": {
+        "title": "Bind phone number",
+        "description": "Verify your current password and phone to link it to this account. You can then sign in by code. The phone cannot be changed or unlinked.",
+        "submit": "Confirm binding",
+        "success": "Phone linked. Your existing account and password still work.",
+        "inUse": "This phone belongs to another account and cannot be linked. Accounts are not merged automatically.",
+        "alreadyBound": "This account already has a phone. Refresh the page.",
+        "error": "Could not link the phone. Try again."
+      },
+      "avatarDialog": {
+        "title": "Change avatar",
+        "description": "Choose an image for your avatar. A clear square image works best.",
+        "previewHint": "Currently using the account initial avatar",
+        "choose": "Choose image",
+        "replace": "Replace image",
+        "fileHint": "PNG, JPG, WebP, or GIF",
+        "save": "Save avatar",
+        "saving": "Saving…",
+        "error": "Avatar upload failed, please try again"
+      },
       "passwordDialog": {
         "title": "Change password",
         "description": "Changing your password signs you out on every device. Sign in again with the new password.",
@@ -512,7 +523,8 @@
         "initializePartialSuccess": "Password set. Sign in again; some sessions are still being signed out.",
         "initializeExpired": "This OTP sign-in is no longer recent enough. Sign in with a new code and try again.",
         "error": "Could not change the password. Try again."
-      }
+      },
+      "languagePortuguese": "Português"
     }
   },
   "organization": {
@@ -1024,12 +1036,21 @@
         "noAnswersSkipped": "These questions were skipped.",
         "noAnswersSubmitted": "No specific options were submitted.",
         "cancelledRequest": "The user cancelled this request."
-      }
+      },
+      "canvasCommandsCancelled": "Canvas operation timed out and was cancelled automatically.",
+      "resizeWidth": "Resize chat width"
     },
     "workflowRecovery": {
       "safetyReviewFailed": "Some nodes did not pass safety review",
       "editPrompt": "Edit prompt",
-      "skipNode": "Skip node"
+      "skipNode": "Skip node",
+      "discovered": "Unfinished workflow found",
+      "progress": "Completed {{completed}}/{{total}}, {{remaining}} nodes remaining",
+      "retryFailedOnly": "Retry failed only",
+      "resumeDownstream": "Resume downstream",
+      "dismiss": "Dismiss",
+      "resumeFailed": "Failed to resume workflow execution",
+      "retryFailed": "Failed to retry the node"
     },
     "canvases": {
       "defaultSection": "Default canvas",
@@ -1515,6 +1536,23 @@
       "metaFetchFailed": "Failed to read the director metadata: {{status}}",
       "metaInvalid": "The director metadata is malformed",
       "missingTargetPath": "The director composite was written but has no target path"
+    },
+    "canvasCommand": {
+      "commandValidation": "Command validation",
+      "canvasContext": "Canvas context"
+    },
+    "viewMode": {
+      "workflow": "Workflow",
+      "board": "Storyboard",
+      "toggle": "Toggle canvas view"
+    },
+    "agent": {
+      "create": "New Agent",
+      "collapseHistory": "Collapse agent history",
+      "expandHistory": "Expand agent history",
+      "resizeHistoryWidth": "Resize agent history width",
+      "searchSessions": "Search sessions...",
+      "noMatches": "No matching agents"
     }
   },
   "theme": {
@@ -1546,7 +1584,6 @@
       "orgDepartureSweep": "Credits reclaimed on departure",
       "orgRefundSweep": "Refunded credits reclaimed after departure",
       "orgTransfer": "Organization credit adjustment",
-
       "orgRecharge": "Organization credit recharge",
       "personalRecharge": "Credit recharge",
       "paymentReceived": "Payment received, credits added",
@@ -2862,7 +2899,8 @@
     "pause": "Pause",
     "retry": "Retry",
     "requestId": "Request ID",
-    "listSeparator": ", "
+    "listSeparator": ", ",
+    "processing": "Processing…"
   },
   "ingest": {
     "title": "Story Source",
@@ -2988,7 +3026,9 @@
       "characterSeparator": ", ",
       "unknownLocation": "Scene location not detected",
       "empty": "No scene text is available in this chapter",
-      "unparsedBody": "Text outside recognized scenes"
+      "unparsedBody": "Text outside recognized scenes",
+      "rowCount": "{{count}} scenes",
+      "count": "{{count}} scenes"
     },
     "chapterDetails": {
       "open": "View the text of {{chapter}}",
@@ -3520,7 +3560,11 @@
       "sketchBackgroundIdentityProps": "Sketch + background + identities/props",
       "sketchCandidate": "Sketch candidate",
       "storyboardCandidate": "Storyboard candidate"
-    }
+    },
+    "batchProgress": "Batch progress {{settled}}/{{expected}}",
+    "runningCount": "Running {{count}}",
+    "waitingCount": "Waiting {{count}}",
+    "batchFailed": "{{failed}}/{{expected}} tasks failed"
   },
   "pikoMiniGame": {
     "statusEntry": "Piko Break",
@@ -4615,7 +4659,14 @@
         "invalidBeats": "Selected beats are not in this episode",
         "noBeats": "This episode has no beats yet"
       },
-      "paddingCount": "+{{count}} empty"
+      "paddingCount": "+{{count}} empty",
+      "partial": {
+        "reason": {
+          "unknown": "Some tasks have not been dispatched yet."
+        },
+        "summary": "Dispatched {{ok}} / rejected {{fail}}",
+        "continue": "Continue"
+      }
     },
     "renderSettings": {
       "model": "Render model",
@@ -5063,7 +5114,9 @@
         "createHint": "Ready to use for filing and uploading assets as soon as it exists",
         "renameHint": "The new name shows up across the asset library"
       },
-      "commitDragHint": "Hold and drag to the asset library on the left to replace assets of the same type"
+      "commitDragHint": "Hold and drag to the asset library on the left to replace assets of the same type",
+      "itemCount": "{{count}} assets",
+      "bulkSelected": "{{count}} selected (only locally uploaded assets can be deleted)"
     },
     "referencePick": {
       "kind": {
@@ -5428,7 +5481,17 @@
       "batchDelete": "Delete all",
       "arrangeGrid": "Grid layout",
       "arrangeHorizontal": "Horizontal layout",
-      "arrangeVertical": "Vertical layout"
+      "arrangeVertical": "Vertical layout",
+      "workflowRunning": "Workflow is running",
+      "workflowRunningShort": "Running",
+      "workflowStoppedNext": "Next nodes stopped",
+      "workflowStopNextTitle": "Stop launching subsequent workflow nodes",
+      "workflowWaitingCurrent": "Waiting for current node",
+      "workflowStopNext": "Stop subsequent nodes",
+      "workflowCompleted": "Workflow completed",
+      "workflowRun": "Run workflow",
+      "workflowRerunAllTitle": "Rerun every workflow node",
+      "workflowRerunAll": "Rerun all"
     },
     "nodeToolbar": {
       "mainlineLocked": "Mainline projection · locked",
@@ -5446,7 +5509,9 @@
       "arrangeGrid": "Grid",
       "arrangeHorizontal": "Horizontal",
       "arrangeVertical": "Vertical",
-      "commitHint": "Write this node's content back to the mainline asset"
+      "commitHint": "Write this node's content back to the mainline asset",
+      "recipeFallbackTitle": "Recipe model compilation timed out; generation continued with the stable fallback prompt",
+      "recipeFallbackLabel": "Recipe compiled with fallback"
     },
     "style": {
       "chip": "Style",
@@ -6542,7 +6607,8 @@
           "noProject": "No current project found, so the result cannot be saved",
           "alreadyRunning": "Depth capture for this video is still in progress. Wait for it to finish"
         }
-      }
+      },
+      "billingRuleMissingSubmit": "Video generation did not start: billing rule is not configured. Please ask an administrator to set up the credit rule and try again."
     },
     "pano360": {
       "captureGroup2x2": "Panorama capture set (4)",
@@ -6924,7 +6990,8 @@
       },
       "extendLockReason": "Smart extend always uses Seedance 2.5; the model and mode cannot be changed",
       "extendPlaceholder": "Enter what you want to extend with",
-      "modeRestrictedDefault": "This node doesn't support switching generation mode"
+      "modeRestrictedDefault": "This node doesn't support switching generation mode",
+      "externalMedia": "External media"
     },
     "threeDWorld": {
       "upstreamNodeFallback": "Upstream node",
@@ -6956,6 +7023,26 @@
       "directorCaptureSizeFailed": "Could not read the director world capture dimensions",
       "directorElement": "Director element",
       "directorExportLabel": "Director world export"
+    },
+    "imageGeneration": {
+      "quality": "Quality",
+      "resolution": "Resolution",
+      "aspectRatio": "Aspect ratio",
+      "assetLibrary": "Asset library",
+      "assetLibraryHint": "Select a reference image from the asset library (character / scene / prop)",
+      "upstreamReference": "From upstream · {{name}}",
+      "detachReference": "Detach this reference"
+    },
+    "stylePicker": {
+      "title": "Style",
+      "other": "Other",
+      "clear": "Clear",
+      "close": "Close",
+      "loading": "Loading…",
+      "empty": "No style templates available"
+    },
+    "imageGenNode": {
+      "billingRuleMissingSubmit": "Image generation did not start: billing rule is not configured. Please ask an administrator to set up the credit rule and try again."
     }
   },
   "viewer": {
@@ -7628,7 +7715,8 @@
         "copyRawJson": "Copy JSON",
         "rawJsonCopied": "Recipe JSON copied",
         "rawJsonCopyFailed": "Copy failed; copy manually"
-      }
+      },
+      "customizedShort": "Custom"
     },
     "modelConfig": {
       "title": "Model Config",
@@ -7896,7 +7984,8 @@
           "NARRATED_SCENE_ASSET": "Plan narrated-drama scene assets",
           "STAGING_PROP": "Plan temporary Director World props",
           "COGNEE": "① Content Understanding & Knowledge Extraction (LLM)"
-        }
+        },
+        "addChannel": "Add channel"
       },
       "embeddingModel": {
         "title": "② Vectorization & Semantic Search (Embedding)",
@@ -8138,13 +8227,52 @@
     "checkingUpdate": "Checking for updates...",
     "checkUpdateHasUpdate": "New version detected.",
     "checkUpdateUpToDate": "You are on the latest version.",
-    "checkUpdateFailed": "Update check failed. Please try again later."
+    "checkUpdateFailed": "Update check failed. Please try again later.",
+    "freezoneSkillRecipe": {
+      "editTag": "Edit {{tag}}",
+      "deleteTag": "Delete {{tag}}",
+      "collapseAssociatedRecipes": "Collapse associated Recipes",
+      "expandAssociatedRecipes": "Expand associated Recipes",
+      "associatedRecipesCount": "{{count}} associated Recipe{{missing}}",
+      "noAssociatedRecipes": "This skill has no associated recipes yet",
+      "addRecipe": "Add Recipe",
+      "localRecipeNotFound": "Local Recipe config not found; this association ID will still be kept when saving.",
+      "view": "View",
+      "removeRecipe": "Remove {{recipeId}}",
+      "addIdManually": "Add ID manually",
+      "enterRecipeId": "Enter Recipe ID",
+      "add": "Add",
+      "noRecipesToAdd": "No recipes to add",
+      "createSkillHint": "You can ask XiaDao to summarize the current canvas, or describe a workflow to create your own Skill.",
+      "associatedRecipesMissing": ", {{count}} config not found",
+      "searchRecipe": "Search Recipe",
+      "noDescription": "No description",
+      "close": "Close",
+      "noSkills": "No Skills here yet",
+      "generationType": {
+        "textGeneration": "Text generation",
+        "imageGeneration": "Image generation",
+        "videoGeneration": "Video generation",
+        "audioGeneration": "Audio generation"
+      },
+      "closeRecipeDetailBackground": "Close Recipe detail backdrop",
+      "closeRecipeDetail": "Close Recipe detail",
+      "detail": {
+        "description": "Description",
+        "resultSummary": "Result summary",
+        "planningPrompt": "Planning prompt",
+        "mustHaveItems": "Must-have items"
+      },
+      "mineTab": "Mine",
+      "use": "Use"
+    }
   },
   "pricing": {
     "nativePrice": "Native: {{value}}",
     "originalPrice": "Original: {{value}}",
     "pointsCost": "Credits: {{count}}",
-    "grsaiTier": "Pack: CNY {{price}} / {{credits}} credits"
+    "grsaiTier": "Pack: CNY {{price}} / {{credits}} credits",
+    "perRunSuffix": "/run"
   },
   "update": {
     "dialogTitle": "Update Available",
@@ -8449,6 +8577,10 @@
       "characterFallback": "Character {{index}}",
       "roleLabel": "Role",
       "descriptionLabel": "Description"
+    },
+    "nodeSuggestions": {
+      "title": "Nodes",
+      "noMatches": "No matching nodes"
     }
   },
   "productSurface": {
@@ -8553,7 +8685,6 @@
     "invalidFile": "Choose a complete HTML document",
     "fileTooLarge": "HTML file must not exceed 2 MiB",
     "uploadRecoveryConflict": "A previous upload completed for this node with different content. Re-select the original file to recover it, or create a new HTML node for this file.",
-
     "references": "Connected inputs",
     "activeCanvasRequired": "Open a project canvas first",
     "readyToGenerate": "Enter webpage requirements and generate, or run the workflow",
@@ -8619,5 +8750,127 @@
     "loadFailed": "Unable to load the original image. Please retry.",
     "saveFailed": "Unable to create the result. Check the image and current project.",
     "invalidSize": "Enter positive integers. Maximum edge: 16384 pixels; maximum total: 40 million pixels."
+  },
+  "assetBoard": {
+    "referenceMaterials": "Reference materials",
+    "zoomImage": "View larger image",
+    "prompt": "Prompt",
+    "nodeMissing": "This node no longer exists",
+    "clickToEdit": "Click to edit",
+    "noText": "No text content",
+    "noScript": "No script content",
+    "noShots": "No shot rows",
+    "noDisplayContent": "No content available to display",
+    "shotNumber": "Shot",
+    "duration": "Duration",
+    "visualDescription": "Visual description",
+    "dialogue": "Dialogue",
+    "contentSummary": "Content summary",
+    "resolution": "Resolution",
+    "referenceActions": "{{name}} actions",
+    "edit": "Edit",
+    "locate": "Locate",
+    "m4aOnly": "M4A source only",
+    "noKeyElements": "No key elements in this category",
+    "referenceDropHint": "Drag assets, images, or videos here to add them as references",
+    "imageOpChipHint": "Click to switch function; press Backspace to remove",
+    "upscaleResult": "Upscaled image",
+    "cropResult": "Crop result",
+    "rotateResult": "Rotation result",
+    "crop": "Crop",
+    "rotate": "Rotate",
+    "panoramaConfirm": "Generate a 360° panorama from this image?",
+    "panoramaResult": "360° panorama",
+    "durationSeconds": "{{count}}s",
+    "generatingProgress": "Generating {{percent}}%...",
+    "generating": "Generating",
+    "assetDetail": "Asset details",
+    "back": "Back",
+    "nodeActions": "Node actions",
+    "duplicate": "Duplicate",
+    "delete": "Delete",
+    "closeDetail": "Close details",
+    "text": "Text",
+    "image": "Image",
+    "video": "Video",
+    "relightEditor": "Relighting editor",
+    "multiAngleEditor": "Multi-angle editor",
+    "ownReferenceImage": "Node reference image",
+    "removeReferenceImage": "Remove reference image",
+    "panorama": "Panorama",
+    "panoramaTitle": "Generate a 360° panorama from this image and add a panorama viewer node",
+    "multiAngle": "Multi-angle",
+    "multiAngleTitle": "Open the multi-angle editor (camera sphere, quality, and prompt)",
+    "relight": "Relight",
+    "relightTitle": "Open the relighting editor (direction, brightness/color temperature, and smart mode)",
+    "moreActions": "More actions",
+    "download": "Download",
+    "regenerate": "Regenerate",
+    "retryGeneration": "Resubmit this generation (retry after failure)",
+    "gridTemplate": "Generate from this image using a grid or multi-view template",
+    "editVideo": "Edit",
+    "composedVideo": "Composed video",
+    "upscaledVideoName": "Upscaled ({{resolution}})",
+    "composeNeedsTwoVideos": "At least two ready upstream video assets are required",
+    "openComposeTimeline": "Open the video composition timeline",
+    "upscale": "Upscale",
+    "upscaleTitle": "Increase the resolution by creating a new upscale result node on the canvas",
+    "fullscreen": "Fullscreen",
+    "fullscreenTitle": "Play in fullscreen",
+    "submitUpscale": "Submit upscale",
+    "submitUpscaleTitle": "Create an upscale result node on the canvas and submit the task",
+    "locateOnCanvas": "Locate on canvas",
+    "generationFailed": "Generation failed",
+    "downloadConvert": "Download / convert format",
+    "resizeColumn": "Resize column",
+    "all": "All",
+    "finalVideos": "Final videos",
+    "clips": "Clips",
+    "noTextNodes": "There are no text nodes on the canvas",
+    "noImageNodes": "There are no image nodes on the canvas",
+    "noVideoNodes": "There are no video nodes on the canvas",
+    "noMatchingVideos": "No videos match the current filter",
+    "filterVideos": "Filter videos",
+    "switchColumn": "Switch column",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "pendingGeneration": "Generate after confirmation",
+    "sourceNotM4a": "The source file is not M4A and cannot be converted to M4A",
+    "audioDownloadFailed": "Audio download failed",
+    "downloadAs": "Download as {{format}}",
+    "keyElements": "Key elements",
+    "setKeyElement": "Set key element",
+    "clearKeyElement": "Clear key element",
+    "current": "Current",
+    "audioLabel": "Audio",
+    "categoryCharacter": "Character",
+    "categoryScene": "Scene",
+    "categoryObject": "Object",
+    "categoryOther": "Other",
+    "audio": {
+      "musicDescription": "Music description",
+      "speechText": "Text to synthesize",
+      "musicPlaceholder": "Describe the music: style, instruments, rhythm, atmosphere…",
+      "speechPlaceholder": "Enter the text to synthesize",
+      "fillerWords": "Delivery guidance (optional)",
+      "fillerWordsPlaceholder": "For example: tense, lower voice, slightly frightened",
+      "chooseVoice": "Choose a custom voice",
+      "changeVoice": "Change custom voice",
+      "voice": "Voice",
+      "voiceNotSelected": "Not selected (generation will be skipped)",
+      "customVoice": "Custom voice",
+      "musicDuration": "Music duration",
+      "forceInstrumental": "Force instrumental only",
+      "respectSectionDurations": "Respect section durations",
+      "textToMusic": "Text-to-music",
+      "customVoiceNarration": "Custom-voice narration",
+      "voiceSettings": "Voice settings (current: {{voice}})",
+      "notSelected": "Not selected",
+      "advancedSettings": "Advanced settings",
+      "enterMusicFirst": "Enter a music description first",
+      "enterSpeechFirst": "Enter text to synthesize first",
+      "regenerate": "Regenerate",
+      "generate": "Generate"
+    }
   }
 }

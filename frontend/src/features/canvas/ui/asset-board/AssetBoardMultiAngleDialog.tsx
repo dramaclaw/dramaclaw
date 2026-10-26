@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { type ReactElement } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { MultiAngleEditorContent } from '@/features/canvas/ui/MultiAngleEditorContent';
@@ -34,10 +35,11 @@ export function AssetBoardMultiAngleDialog({
   onClose,
   onSubmitted,
 }: AssetBoardMultiAngleDialogProps): ReactElement {
+  const { t } = useTranslation();
   // 外壳与内容层必须共用同一个包装后的关闭回调，见 useCloseOnce 的说明。
   const close = useCloseOnce(onClose);
   return (
-    <AssetBoardEditorDialog label="多维度编辑器" onClose={close}>
+    <AssetBoardEditorDialog label={t('assetBoard.multiAngleEditor')} onClose={close}>
       <MultiAngleEditorContent
         node={node}
         imageSource={imageSource}

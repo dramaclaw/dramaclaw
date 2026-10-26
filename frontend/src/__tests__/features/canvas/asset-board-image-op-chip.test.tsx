@@ -8,14 +8,11 @@ import { submitFreezoneTemplateEdit } from '@/api/ops';
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { AssetBoardView } from '@/features/canvas/ui/asset-board/AssetBoardView';
 import { useCanvasStore } from '@/stores/canvasStore';
-import { zhT } from '@/__tests__/helpers/i18n-fixtures';
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, options?: string | Record<string, unknown>) =>
-      typeof options === 'string' ? options : zhT(key, { defaultValue: key, ...options }),
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 vi.mock('@/lib/queries/generation-credit-cost', () => ({
   useGenerationCreditCost: () => ({ data: undefined }),
@@ -111,7 +108,7 @@ async function pickGridOp(label: string) {
   useCanvasStore.getState().setCanvasData([SOURCE_NODE], []);
   render(<AssetBoardView visible onLocateNode={() => {}} />);
   fireEvent.click(screen.getByRole('button', { name: '源图' }));
-  await user.click(within(detailPanel()).getByRole('button', { name: '宫格模板' }));
+  await user.click(within(detailPanel()).getByRole('button', { name: '九宫格' }));
   await user.click(await screen.findByRole('menuitem', { name: new RegExp(label) }));
   return user;
 }

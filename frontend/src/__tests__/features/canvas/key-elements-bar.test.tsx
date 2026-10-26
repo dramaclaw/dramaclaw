@@ -8,7 +8,6 @@ import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { AssetBoardView } from '@/features/canvas/ui/asset-board/AssetBoardView';
 import { useCanvasStore } from '@/stores/canvasStore';
-import { zhT } from '@/__tests__/helpers/i18n-fixtures';
 
 /** 收集本段内 publish 出来的 freezone/add-nodes-to-chat 载荷。 */
 function captureAddToChat(run: () => void): string[][] {
@@ -24,12 +23,10 @@ function captureAddToChat(run: () => void): string[][] {
   return seen;
 }
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, options?: string | Record<string, unknown>) =>
-      typeof options === 'string' ? options : zhT(key, { defaultValue: key, ...options }),
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 vi.mock('@/lib/queries/generation-credit-cost', () => ({
   useGenerationCreditCost: () => ({ data: undefined }),

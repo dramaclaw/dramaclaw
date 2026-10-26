@@ -27,14 +27,10 @@ vi.mock('@/lib/model-task-access', () => ({
   useModelTaskAccess: () => ({ blocked: false, denialReason: null, message: null }),
 }));
 
-vi.mock('react-i18next', () => ({
-  // 第二参数可能是插值对象（如 t(key, { count })，视频生成表单的「生成数量」用到），
-  // 只有字符串才当默认文案；否则会把对象当 React 子节点渲染而炸掉整棵树。
-  useTranslation: () => ({
-    t: (key: string, fallback?: unknown) =>
-      typeof fallback === 'string' ? fallback : key,
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 // busy 态隔离测试用：返回可控的 { nodeId, completion }，避免真实全景生成链（网络）。
 const scene360ImageMock = vi.hoisted(() => vi.fn());
@@ -132,7 +128,7 @@ function detailPanel() {
 // 编辑三项（高清/裁剪/旋转）住在「...」更多菜单里——先展开它。
 // （宫格模板是常显工具条上的独立下拉，不在此菜单内。）
 function openMoreMenu(detail: HTMLElement) {
-  fireEvent.click(within(detail).getByRole('button', { name: '更多' }));
+  fireEvent.click(within(detail).getByRole('button', { name: '更多操作' }));
 }
 
 describe('AssetBoard 详情工具条（第一批装配）', () => {
@@ -149,7 +145,7 @@ describe('AssetBoard 详情工具条（第一批装配）', () => {
 
     const detail = detailPanel();
     // 常显项直接可见（宫格模板已从「...」挪到常显下拉）。
-    for (const label of ['下载', '全景', '多角度', '重打光', '宫格模板', '更多']) {
+    for (const label of ['下载', '全景', '多角度', '重打光', '九宫格', '更多操作']) {
       expect(within(detail).getByRole('button', { name: label })).toBeInTheDocument();
     }
     // 「编辑」下拉已删除，它的三项就是现在「...」里的内容。
@@ -180,7 +176,7 @@ describe('AssetBoard 详情工具条（第一批装配）', () => {
     // 展开前子模板不可见。
     expect(screen.queryByRole('menuitem', { name: /多机位九宫格/ })).not.toBeInTheDocument();
     // 点常显「宫格模板」下拉（Radix 菜单 portal 到 body，项走 menuitem 角色）。
-    await user.click(within(detail).getByRole('button', { name: '宫格模板' }));
+    await user.click(within(detail).getByRole('button', { name: '九宫格' }));
     for (const label of ['多机位九宫格', '剧情推演四宫格', '25宫格连贯分镜']) {
       expect(await screen.findByRole('menuitem', { name: new RegExp(label) })).toBeInTheDocument();
     }
@@ -262,7 +258,7 @@ describe('AssetBoard 详情工具条（第一批装配）', () => {
 
     const detail = detailPanel();
     expect(within(detail).queryByRole('button', { name: '下载' })).not.toBeInTheDocument();
-    expect(within(detail).queryByRole('button', { name: '更多' })).not.toBeInTheDocument();
+    expect(within(detail).queryByRole('button', { name: '更多操作' })).not.toBeInTheDocument();
   });
 
   it('生成失败的视频节点：工具条不渲染（四项操作全要片源，摆一排灰按钮只是噪音）', () => {

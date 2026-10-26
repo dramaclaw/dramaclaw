@@ -1618,9 +1618,9 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
                 const usesRowHandles = referenceHandles.length > 0;
                 const emphasizedInput = EMPHASIZED_INPUT_ROLES.has(input.role);
                 const noReferenceLabel = input.role === 'identity' && beatContextReferences.noCharacter
-                  ? t('viewer.threeD.skillInputNoCharacter', { defaultValue: '无角色' })
+                  ? t('viewer.threeD.skillInputNoCharacter')
                   : input.role === 'prop' && beatContextReferences.noProp
-                    ? t('viewer.threeD.skillInputNoProp', { defaultValue: '无道具' })
+                    ? t('viewer.threeD.skillInputNoProp')
                     : null;
                 const renderBoundChip = (edge: CanvasEdge) => {
                   const sourceNode = nodeById.get(edge.source);
