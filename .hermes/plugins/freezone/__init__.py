@@ -31,6 +31,14 @@ from tools.registry import tool_error, tool_result
 _INCLUDE_INTERACTIVE_STORY = not bool(globals().get("_MCP_EXCLUDE_INTERACTIVE_STORY", False))
 
 
+def _openfilm_studio_enabled() -> bool:
+    return os.environ.get("SUPERTALE_OPENFILM_STUDIO_ENABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
 
 _STRUCTURED_RESULT_INPUT_HASH: ContextVar[Any] = ContextVar(
     "freezone_structured_result_input_hash", default=None
@@ -13136,7 +13144,7 @@ TOOLS = (
         ),
         _handle_run_node_action,
     ),
-    *_STUDIO_TOOLS,
+    *(_STUDIO_TOOLS if _openfilm_studio_enabled() else ()),
 )
 
 

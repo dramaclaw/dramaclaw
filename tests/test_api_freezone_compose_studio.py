@@ -17,6 +17,7 @@ def studio_client(monkeypatch, tmp_path: Path) -> TestClient:
 
     ctx = SimpleNamespace(project_id="proj_demo", requester_user_id="u-alice")
     app_state = {"calls": []}
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
 
     async def fake_resolve(project: str, user: dict, **_kwargs):
         return ctx, "alice", "demo", tmp_path, str(tmp_path)
@@ -45,6 +46,18 @@ def studio_client(monkeypatch, tmp_path: Path) -> TestClient:
         "username": "alice",
     }
     return TestClient(app)
+
+
+def test_studio_route_is_hidden_when_feature_is_disabled(
+    studio_client: TestClient, monkeypatch
+):
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", raising=False)
+    response = studio_client.post(
+        "/api/v1/projects/demo/freezone/video/compose/studio",
+        json={"canvas_id": "canvas-1", "node_id": "node-1", "tracks": []},
+    )
+    assert response.status_code == 404
+    assert studio_client.app.state.studio_calls == []
 
 
 def test_studio_route_returns_the_canonical_envelope(studio_client: TestClient):
@@ -186,6 +199,7 @@ def agent_client(monkeypatch, tmp_path: Path) -> tuple[TestClient, dict]:
         project_id="proj_demo", requester_user_id="u-alice", state_dir=str(state_dir)
     )
     seen: dict = {"state_dir": state_dir, "project_dir": tmp_path}
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
 
     async def fake_resolve(project: str, user: dict, **_kwargs):
         return ctx, "alice", "demo", tmp_path, str(tmp_path)
@@ -210,6 +224,26 @@ def agent_client(monkeypatch, tmp_path: Path) -> tuple[TestClient, dict]:
     app.include_router(freezone.router, prefix="/api/v1")
     app.dependency_overrides[get_api_user] = lambda: {"id": "u-alice", "username": "alice"}
     return TestClient(app), seen
+
+
+def test_agent_studio_route_is_hidden_when_feature_is_disabled(
+    agent_client, monkeypatch
+):
+    from novelvideo.api.routes import freezone
+
+    client, seen = agent_client
+
+    async def fake_read(**kwargs):
+        seen["read"] = kwargs
+        return {"ok": True}
+
+    monkeypatch.setattr(freezone, "read_studio_film", fake_read)
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", raising=False)
+    response = client.get(
+        "/api/v1/projects/demo/freezone/canvases/canvas-1/compose/node-1/studio/film"
+    )
+    assert response.status_code == 404
+    assert "read" not in seen
 
 
 def test_film_route_returns_the_studio_summary(agent_client, monkeypatch):
@@ -401,7 +435,11 @@ def test_compose_export_only_switches_to_studio_for_a_hand_cut_film(agent_client
         seen["enqueue"] = kwargs
         return {
             "ok": True,
-            "data": {"task_type": kwargs["task_type"], "job_id": kwargs["job_id"], "task_key": "tk"},
+            "data": {
+                "task_type": kwargs["task_type"],
+                "job_id": kwargs["job_id"],
+                "task_key": "tk",
+            },
         }
 
     monkeypatch.setattr(freezone, "_enqueue_or_start_freezone_media_job", fake_enqueue)
@@ -427,3 +465,47 @@ def test_compose_export_only_switches_to_studio_for_a_hand_cut_film(agent_client
     response = client.post("/api/v1/projects/demo/freezone/video/compose", json=body)
     assert response.status_code == 200, response.text
     assert seen["enqueue"]["payload"]["studio_film_dir"] == str(film_dir)
+
+
+def test_compose_export_skips_studio_film_when_feature_is_disabled(agent_client, monkeypatch):
+    from novelvideo.api.routes import freezone
+
+    client, seen = agent_client
+    (seen["project_dir"] / "freezone" / "_uploads").mkdir(parents=True)
+    (seen["project_dir"] / "freezone" / "_uploads" / "a.mp4").write_bytes(b"a")
+
+    async def fake_enqueue(**kwargs):
+        seen["enqueue"] = kwargs
+        return {
+            "ok": True,
+            "data": {"task_type": kwargs["task_type"], "job_id": kwargs["job_id"], "task_key": "tk"},
+        }
+
+    def unexpected_studio_film(*_args):
+        raise AssertionError("disabled Studio film must not be inspected")
+
+    monkeypatch.setattr(freezone, "_enqueue_or_start_freezone_media_job", fake_enqueue)
+    monkeypatch.setattr(freezone, "studio_export_film_dir", unexpected_studio_film)
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", raising=False)
+    response = client.post(
+        "/api/v1/projects/demo/freezone/video/compose",
+        json={
+            "canvas_id": "canvas-1",
+            "node_id": "node-1",
+            "tracks": [
+                {
+                    "track_id": "video-1",
+                    "kind": "video",
+                    "items": [
+                        {
+                            "item_id": "clip-1",
+                            "source_url": "/freezone/_uploads/a.mp4",
+                            "source_end": 1.0,
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert seen["enqueue"]["payload"]["studio_film_dir"] == ""

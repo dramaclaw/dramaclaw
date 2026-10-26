@@ -172,6 +172,7 @@ from novelvideo.chat.tool_policy import (
     tool_mode_for_surface as _tool_mode_for_surface,
 )
 from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
+from novelvideo.freezone.studio import openfilm_studio_enabled
 from novelvideo.ports import get_auth_session_port
 from novelvideo.project_context import ProjectContext
 from novelvideo.utils.document_parsers import count_billable_text_chars
@@ -2108,7 +2109,7 @@ def _prompt_with_user_context(
         "the final video, call freezone_studio_export_film. Never rewrite this node's "
         "draftTimeline or rebuild its timeline through canvas commands while the workspace is open.\n"
         "[/FREEZONE_COMPOSE_WORKSPACE]\n"
-        if compose_node_id
+        if compose_node_id and openfilm_studio_enabled()
         else ""
     )
     canvas_context = (

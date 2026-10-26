@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from ulid import ULID
 
 from novelvideo.shared import runtime_env
+from novelvideo.freezone.studio import openfilm_studio_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +28,6 @@ def _runtime_edition() -> RuntimeEdition:
 
 def _mcp_direct_canvas_apply_enabled() -> bool:
     return os.environ.get("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
-def _openfilm_studio_enabled() -> bool:
-    """Expose the local-only editor only after an operator explicitly opts in."""
-    return os.environ.get("SUPERTALE_OPENFILM_STUDIO_ENABLED", "").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -79,7 +70,7 @@ async def get_runtime_config():
                 "auth_required": edition == "ee",
                 "instance_id": _INSTANCE_ID,
                 "mcp_direct_canvas_apply": _mcp_direct_canvas_apply_enabled(),
-                "openfilm_studio_enabled": _openfilm_studio_enabled(),
+                "openfilm_studio_enabled": openfilm_studio_enabled(),
                 "browser_model_asset_base": _browser_model_url(
                     "BROWSER_MODEL_ASSET_BASE"
                 ),

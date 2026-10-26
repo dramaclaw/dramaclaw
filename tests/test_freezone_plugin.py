@@ -10687,6 +10687,7 @@ def _as_result(value):
 
 
 def _studio_plugin(monkeypatch):
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
     monkeypatch.setenv("DRAMACLAW_API_URL", "http://api.test")
     monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN", "token")
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "proj-1")
@@ -10702,7 +10703,8 @@ def _studio_plugin(monkeypatch):
     return plugin, requests
 
 
-def test_studio_tools_are_published_with_strict_schemas():
+def test_studio_tools_are_published_with_strict_schemas(monkeypatch):
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
     plugin = _load_plugin_module()
     schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
     for name in (
@@ -10722,6 +10724,16 @@ def test_studio_tools_are_published_with_strict_schemas():
     ]
     # none of them is a bridge-backed canvas write
     assert not ({name for name in schemas if name.startswith("freezone_studio_")} & set(plugin._CANVAS_RESULT_TOOLS))
+
+
+def test_studio_tools_are_not_published_when_feature_is_disabled(monkeypatch):
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", raising=False)
+    plugin = _load_plugin_module()
+    assert not {
+        name
+        for name, _schema, _handler in plugin.TOOLS
+        if name.startswith("freezone_studio_")
+    }
 
 
 def test_studio_get_film_reads_the_bound_canvas_scope(monkeypatch):

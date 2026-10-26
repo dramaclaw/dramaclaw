@@ -275,6 +275,7 @@ from novelvideo.freezone.studio import (
     ensure_studio_session,
     film_dir_for_node,
     import_media_to_film,
+    openfilm_studio_enabled,
     read_studio_film,
     studio_export_film_dir,
     studio_film_exists,
@@ -12216,7 +12217,11 @@ async def freezone_video_compose(
 
     # 节点若在剪辑工作区里被手改过（人或 agent 经 Studio），film.html 才是真实的剪辑，
     # 成片按 film 渲染；没进过工作区或没改过的节点，时间线路径一字不动。
-    studio_film = studio_export_film_dir(project_dir, body.canvas_id, body.node_id)
+    studio_film = (
+        studio_export_film_dir(project_dir, body.canvas_id, body.node_id)
+        if openfilm_studio_enabled()
+        else None
+    )
 
     try:
         job_id = _new_job_id()
@@ -12280,6 +12285,7 @@ async def freezone_video_compose_studio(
 
     只负责编辑与预览；成片导出仍走 `/video/compose` 异步任务。
     """
+    _require_openfilm_studio_enabled()
     _ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)
     )
@@ -12311,6 +12317,12 @@ async def freezone_video_compose_studio(
 
 _STUDIO_NODE_ID_RE = re.compile(r"^[A-Za-z0-9_.:\-]{1,128}$")
 _STUDIO_MEDIA_URL_KEYS = ("resultVideoUrl", "videoUrl", "audioUrl", "imageUrl")
+
+
+def _require_openfilm_studio_enabled() -> None:
+    """Hide every Studio API unless the local-only feature was explicitly enabled."""
+    if not openfilm_studio_enabled():
+        raise HTTPException(404, "not found")
 
 
 def _studio_route_scope(canvas_id: str, node_id: str) -> None:
@@ -12422,6 +12434,7 @@ async def freezone_studio_film(
     user: dict = Depends(get_api_user),
 ):
     """剪辑工作区：读取合成节点的 OpenFilm film（按 clip id 的轨道/片段摘要与 rev）。"""
+    _require_openfilm_studio_enabled()
     _studio_route_scope(canvas_id, node_id)
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)
@@ -12449,6 +12462,7 @@ async def freezone_studio_film_edit(
     user: dict = Depends(get_api_user),
 ):
     """剪辑工作区：按 clip id 编辑 film。冲突或非法编辑以 200 + ok=false 返回原因。"""
+    _require_openfilm_studio_enabled()
     _studio_route_scope(canvas_id, node_id)
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)
@@ -12478,6 +12492,7 @@ async def freezone_studio_import_media(
     user: dict = Depends(get_api_user),
 ):
     """剪辑工作区：把画布节点的成品媒体（或项目内媒体地址）拷进 film 素材库。"""
+    _require_openfilm_studio_enabled()
     _studio_route_scope(canvas_id, node_id)
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)
@@ -12517,6 +12532,7 @@ async def freezone_studio_export(
     user: dict = Depends(get_api_user),
 ):
     """剪辑工作区：用 OpenFilm Studio 渲染 film 成片，结果回写到合成节点。"""
+    _require_openfilm_studio_enabled()
     _studio_route_scope(canvas_id, node_id)
     ctx, username, project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)

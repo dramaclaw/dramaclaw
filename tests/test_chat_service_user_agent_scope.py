@@ -8806,6 +8806,7 @@ async def test_codex_freezone_turn_never_sends_a_second_prompt(
 
 def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
 
     inside = chat_service._prompt_with_user_context(
         "admin",
@@ -8832,6 +8833,19 @@ def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypat
     )
     assert "[FREEZONE_COMPOSE_WORKSPACE]" not in outside
     assert "[FREEZONE_CANVAS_CONTEXT]" in outside
+
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", raising=False)
+    disabled = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "把第二段提前一秒",
+        tool_mode="freezone_canvas",
+        surface_context={
+            "freezone_canvas_id": "canvas-a",
+            "freezone_compose_node_id": "compose-1",
+        },
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" not in disabled
 
     mainline = chat_service._prompt_with_user_context(
         "admin",

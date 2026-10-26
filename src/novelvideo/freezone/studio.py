@@ -78,6 +78,16 @@ _STUDIO_ENV_PASSTHROUGH = (
 _STALE_CLIP_NAME = re.compile(r"^clip-\d+-")
 
 
+def openfilm_studio_enabled() -> bool:
+    """Return whether the local-only Studio bridge is explicitly enabled."""
+    return os.environ.get("SUPERTALE_OPENFILM_STUDIO_ENABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 class StudioError(RuntimeError):
     """A user-facing Studio bridge failure with an HTTP status."""
 
