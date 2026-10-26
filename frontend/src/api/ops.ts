@@ -1009,11 +1009,10 @@ export interface FreezoneVideoComposePayload {
   tracks: FreezoneVideoComposeTrackPayload[];
 }
 
-export async function submitFreezoneVideoCompose(
-  project: string,
+function freezoneVideoComposeBody(
   payload: FreezoneVideoComposePayload,
-): Promise<FreezoneJobRef> {
-  const body: Record<string, unknown> = {
+): Record<string, unknown> {
+  return {
     title: payload.title ?? "",
     canvas_id: payload.canvasId ?? "",
     node_id: payload.nodeId ?? "",
@@ -1037,10 +1036,50 @@ export async function submitFreezoneVideoCompose(
       })),
     })),
   };
+}
+
+export async function submitFreezoneVideoCompose(
+  project: string,
+  payload: FreezoneVideoComposePayload,
+): Promise<FreezoneJobRef> {
   return await apiCall<FreezoneJobRef>(
     `projects/${encodeURIComponent(project)}/freezone/video/compose`,
+    { method: "POST", json: freezoneVideoComposeBody(payload) },
+  );
+}
+
+export interface FreezoneVideoComposeStudioPayload
+  extends FreezoneVideoComposePayload {
+  /** Absolute canvas address the editor's back button returns to. */
+  hostBack?: string;
+  hostBackLabel?: string;
+  /** Regenerate film.html and discard edits made inside the editor. */
+  rebuild?: boolean;
+  /** App UI language, so the editor does not have to guess it from the browser. */
+  lang?: string;
+}
+
+export interface FreezoneVideoComposeStudioSession {
+  url: string;
+  origin: string;
+}
+
+export async function openFreezoneVideoComposeStudio(
+  project: string,
+  payload: FreezoneVideoComposeStudioPayload,
+): Promise<FreezoneVideoComposeStudioSession> {
+  const body: Record<string, unknown> = {
+    ...freezoneVideoComposeBody(payload),
+    host_back: payload.hostBack ?? null,
+    host_back_label: payload.hostBackLabel ?? null,
+    lang: payload.lang ?? null,
+    rebuild: payload.rebuild ?? false,
+  };
+  const said = await apiCall<{ url: string; origin: string }>(
+    `projects/${encodeURIComponent(project)}/freezone/video/compose/studio`,
     { method: "POST", json: body },
   );
+  return { url: said.url, origin: said.origin };
 }
 
 // /freezone/video/audio-separate ----------------------------------------- //

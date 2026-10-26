@@ -9,6 +9,7 @@ from typing import Any
 
 from novelvideo import config
 from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.freezone.studio import openfilm_studio_enabled
 from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
 from novelvideo.ports.egress_operations import (
     OperationClaimResult,
@@ -216,6 +217,8 @@ def build_hermes_child_env(
         "NEWAPI_BASE_URL": authorization.credential.base_url,
         GATEWAY_CREDENTIAL_MODE_ENV: PER_TURN_CREDENTIAL_MODE,
     }
+    if openfilm_studio_enabled():
+        env["SUPERTALE_OPENFILM_STUDIO_ENABLED"] = "1"
     env.update(
         {
             key: value

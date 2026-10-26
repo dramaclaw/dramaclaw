@@ -80,7 +80,8 @@ def test_tool_policy_is_a_stdlib_only_leaf() -> None:
     )
 
 
-def test_freezone_policy_names_are_published_by_the_freezone_plugin() -> None:
+def test_freezone_policy_names_are_published_by_the_freezone_plugin(monkeypatch) -> None:
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", raising=False)
     published = _published_tool_names(_load_hermes_plugin("freezone"))
     for policy in (
         tool_policy.FREEZONE_CANVAS_WRITE_TOOLS,
@@ -90,6 +91,11 @@ def test_freezone_policy_names_are_published_by_the_freezone_plugin() -> None:
         tool_policy.AGENT_PRODUCT_RESULT_TOOLS,
     ):
         assert set(policy) <= published, sorted(set(policy) - published)
+    assert not (tool_policy.FREEZONE_STUDIO_TOOLS & published)
+
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
+    enabled = _published_tool_names(_load_hermes_plugin("freezone"))
+    assert tool_policy.FREEZONE_STUDIO_TOOLS <= enabled
 
 
 def test_mainline_policy_names_are_published_by_the_dramaclaw_plugin() -> None:
@@ -122,6 +128,9 @@ def test_policy_sets_are_internally_consistent() -> None:
         < tool_policy.FREEZONE_WORKFLOW_DRAFT_TOOLS
     )
     assert "freezone_confirm_workflow_draft" in tool_policy.FREEZONE_CANVAS_WRITE_TOOLS
+    # Studio tools cut the film server-side; they are never bridge-backed canvas writes.
+    assert not (tool_policy.FREEZONE_STUDIO_TOOLS & tool_policy.FREEZONE_CANVAS_WRITE_TOOLS)
+    assert not (tool_policy.FREEZONE_STUDIO_TOOLS & tool_policy.AGENT_PRODUCT_RESULT_TOOLS)
     assert not (tool_policy.DISPLAY_TOOL_NAMES & tool_policy.DRAMACLAW_WRITE_TOOLS)
 
 

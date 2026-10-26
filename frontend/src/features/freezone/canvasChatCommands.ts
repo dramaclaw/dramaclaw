@@ -4059,7 +4059,7 @@ function commandLabel(command: CanvasChatCommand): string {
       if (command.action === "open_voice_picker") return "打开音色选择";
       if (command.action === "generate_video") return "生成视频";
       if (command.action === "run_skill") return "运行技能";
-      if (command.action === "open_video_compose_modal") return "打开视频合成";
+      if (command.action === "open_video_compose_modal") return "打开视频合成与剪辑";
       if (command.action === "auto_compose_video") return "自动合成视频";
       if (command.action === "open_director_world") return "打开导演世界";
       if (command.action === "generate_3gs_world") return "生成 3GS 世界";

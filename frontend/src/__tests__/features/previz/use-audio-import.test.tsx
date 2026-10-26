@@ -242,7 +242,7 @@ describe('useAudioImport local file', () => {
   });
 
   it('does not upload when the page has no project context', async () => {
-    vi.mocked(readUrl).mockReturnValueOnce({ project: null, canvas: null });
+    vi.mocked(readUrl).mockReturnValueOnce({ project: null, canvas: null, compose: null });
     const { result } = renderHook(() => useAudioImport('previz-1'));
     await act(() => result.current.addFile(file('take.mp3')));
     expect(uploadFreezoneAudio).not.toHaveBeenCalled();

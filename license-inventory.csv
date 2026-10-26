@@ -47,6 +47,7 @@ path,license_expression,copyright,evidence
 .hermes/skills/freezone/references/canvas-command-guide.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/skills/freezone/references/canvas-modeling-guide.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/skills/freezone/references/skill-studio-authoring-guide.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+.hermes/skills/freezone/references/studio-editing-guide.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/skills/sketch-correction-worker/SKILL.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/skills/sketch-correction-worker/references/output_schema.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/skills/sketch-correction-worker/references/select_result_schema.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -82,6 +83,7 @@ GOVERNANCE.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annot
 LICENSES/Apache-2.0.txt,Apache-2.0,Apache Software Foundation,Apache License 2.0 text
 LICENSES/Elastic-2.0.txt,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 LICENSES/MIT.txt,MIT,2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.,upstream MIT license text
+LICENSES/OFL-1.1.txt,OFL-1.1,SIL International,SIL Open Font License 1.1 text
 NOTICE,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 REUSE.toml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -322,9 +324,9 @@ frontend/public/brand/dramaclaw-wordmark.png,Elastic-2.0,2026 SuperTale contribu
 frontend/public/brand/logo-d.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/brand/party-founding-105.mp4,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/favicon.svg,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/public/fonts/OFL.txt,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/public/fonts/OFL.txt,OFL-1.1,SIL International,SIL Open Font License 1.1 text
 frontend/public/fonts/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/public/fonts/piko-countdown-pixel.woff,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/public/fonts/piko-countdown-pixel.woff,OFL-1.1,2021 TakWolf,"frontend/public/fonts/OFL.txt (Ark Pixel subset, SIL Open Font License 1.1)"
 frontend/public/icons.svg,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/images/aperture/f-1-4.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/images/aperture/f-11.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1017,6 +1019,7 @@ frontend/src/__tests__/features/canvas/mention-display-label.test.ts,Elastic-2.0
 frontend/src/__tests__/features/canvas/natural-size-record-trust.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/natural-size-record-write.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/node-body-image-variant.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/node-display-localize.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/node-generation-history.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/node-generation-progress.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/node-image-viewer.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1113,6 +1116,7 @@ frontend/src/__tests__/features/canvas/video-breakdown-lifecycle.test.ts,Elastic
 frontend/src/__tests__/features/canvas/video-breakdown-spawn.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-clip-panel.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-compose-upstream-reconcile.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/video-compose-workspace.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-continuity-mode.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-cost-probe-scope.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-crop-in-flight.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1844,6 +1848,7 @@ frontend/src/features/canvas/application/workflowRecipeRuntime.test.ts,Elastic-2
 frontend/src/features/canvas/application/workflowRecipeRuntime.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/compose/CoverEditor.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/compose/VideoComposeModal.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/compose/VideoComposeWorkspace.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/compose/audioPeaks.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/compose/composeInputOrdering.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/compose/coverCapture.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2760,6 +2765,7 @@ frontend/src/lib/login-community.ts,Elastic-2.0,2026 SuperTale contributors,REUS
 frontend/src/lib/login-posters.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/mask-highlight.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/mask-highlight.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/lib/media-duration.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/media-model-catalog-types.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/media-model-catalog-types.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/media-url.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3115,6 +3121,19 @@ scripts/lint_banned_words.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml 
 scripts/lint_ce_imports.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/lint_ee_terms.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/migrate_docker_output.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/patch_studio_ui.mjs,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/revendor.mjs,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/run.mjs,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/smoke.mjs,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/source-patches/0001-project-view-embed.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/source-patches/0002-app-keep-host-back.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/source-patches/0003-host-chrome-fallback.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/source-patches/0004-export-branding.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/source-patches/0005-update-gate.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/source-patches/0006-project-name-from-film-title.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/source-patches/0007-server-copy-branding.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/source-patches/0008-host-route-gates.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_arm_rig.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_gait.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_leg_rig.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3447,6 +3466,7 @@ src/novelvideo/freezone/skill_import_retrieval.py,Elastic-2.0,2026 SuperTale con
 src/novelvideo/freezone/skill_registry.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/slots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/stale.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/studio.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/style_templates.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/style_templates.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/text_node.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3830,6 +3850,7 @@ tests/test_api_freezone_agent_bundles.py,Elastic-2.0,2026 SuperTale contributors
 tests/test_api_freezone_asset_library_folders.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_freezone_asset_library_items.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_freezone_canvas_from_preset.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_api_freezone_compose_studio.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_freezone_projection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_freezone_workflow_runs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_generation_sketches.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3997,6 +4018,8 @@ tests/test_freezone_recipe_timeout_message.py,Elastic-2.0,2026 SuperTale contrib
 tests/test_freezone_reference_file_upload.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_relight_prompt.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_skill_parameters.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_freezone_studio_agent.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_freezone_studio_film.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_text_backend.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_video_backend.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_video_breakdown_backend.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4075,6 +4098,12 @@ tests/test_newapi_provider_sync.py,Elastic-2.0,2026 SuperTale contributors,REUSE
 tests/test_newapi_text_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_no_nicegui_character_ref_imports.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openapi_edition_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_openfilm_studio_export_branding.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_openfilm_studio_image.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_openfilm_studio_route_guards.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_openfilm_studio_server_copy_branding.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_openfilm_studio_ui_patch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_openfilm_studio_update_guard.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openresty_upload_limit.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_org_relay_failure_diagnosability.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_org_relay_granted_prefix.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4256,3 +4285,110 @@ tests/test_workspace_holds_no_gateway_key.py,Elastic-2.0,2026 SuperTale contribu
 tests/test_wysiwyg_consistency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_wysiwyg_neo4j.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 uv.lock,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+vendor/openfilm/LICENSE,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/README.md,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/SPEC.md,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/THIRD_PARTY_NOTICES.md,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/package-lock.json,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/package.json,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/product.json,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/doctor.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/encoders.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/film-doc.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/film-doc.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/host.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/host.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/locations.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/look.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/look.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/media-links.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/overrides.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/problems.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/rate.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/render.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/seekable.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/shared.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/shared.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/skills-cli.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/skills.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/src/timeline.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/client.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/atomic.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/bridge.js,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/browse.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/captions.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/closure.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/cover.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/custom-services.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/derived.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/diagnostics.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/examples.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/exports.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/fcpxml.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/fetch-error.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/fetch-github.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/fetch-repo.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/files.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/film-subtitle.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/film.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/folder-picker.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/fonts.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/get.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/history-migrate.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/history-store.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/history.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/http.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/jianying.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/keys.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/main.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/markers.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/nle.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/ops.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/page-links.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/pageframes.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/pages.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/prefs.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/preview-cache.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/project-fonts.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/project-settings.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/projects.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/azure.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/brave.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/common.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/contract.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/doubao.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/elevenlabs.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/fal.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/google.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/groq.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/index.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/openai.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/pexels.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/pixabay.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/tavily.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/web.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/proxies.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/render-worker.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/saved.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/server.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/slides.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/stage.js,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/subtitle-edits.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/subtitle-segments.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/track-layout.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/transcripts.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/transition-pages.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/trash.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/watch.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/websocket.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/zip.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/ui/dist/assets/index-4w_4bVMU.css,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/ui/dist/assets/index-D1xgKltC.dramaclaw12.js,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/ui/dist/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
+vendor/openfilm/studio/ui/dist/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
+vendor/openfilm/studio/ui/dist/assets/inter-greek-ext-wght-normal-DlzME5K_.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
+vendor/openfilm/studio/ui/dist/assets/inter-greek-wght-normal-CkhJZR-_.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
+vendor/openfilm/studio/ui/dist/assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
+vendor/openfilm/studio/ui/dist/assets/inter-latin-wght-normal-Dx4kXJAl.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
+vendor/openfilm/studio/ui/dist/assets/inter-vietnamese-wght-normal-CBcvBZtf.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
+vendor/openfilm/studio/ui/dist/index.html,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"

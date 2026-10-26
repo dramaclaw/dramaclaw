@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from ulid import ULID
 
 from novelvideo.shared import runtime_env
+from novelvideo.freezone.studio import openfilm_studio_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,9 @@ def _browser_model_url(env_name: str) -> str | None:
         return None
     parts = urlsplit(base)
     if parts.scheme not in {"http", "https"} or not parts.netloc:
-        logger.warning("%s 不是 http(s) 地址，已忽略；浏览器端模型仍走默认源。", env_name)
+        logger.warning(
+            "%s 不是 http(s) 地址，已忽略；浏览器端模型仍走默认源。", env_name
+        )
         return None
     return base
 
@@ -67,8 +70,13 @@ async def get_runtime_config():
                 "auth_required": edition == "ee",
                 "instance_id": _INSTANCE_ID,
                 "mcp_direct_canvas_apply": _mcp_direct_canvas_apply_enabled(),
-                "browser_model_asset_base": _browser_model_url("BROWSER_MODEL_ASSET_BASE"),
-                "browser_model_hf_endpoint": _browser_model_url("BROWSER_MODEL_HF_ENDPOINT"),
+                "openfilm_studio_enabled": openfilm_studio_enabled(),
+                "browser_model_asset_base": _browser_model_url(
+                    "BROWSER_MODEL_ASSET_BASE"
+                ),
+                "browser_model_hf_endpoint": _browser_model_url(
+                    "BROWSER_MODEL_HF_ENDPOINT"
+                ),
                 "browser_ort_wasm_base": _browser_model_url("BROWSER_ORT_WASM_BASE"),
             },
         }

@@ -49,6 +49,7 @@ from novelvideo.chat.hermes_workspace import (
     ensure_user_hermes_workspace,
     freezone_python_hook_dir,
 )
+from novelvideo.freezone.studio import openfilm_studio_enabled
 from novelvideo.ports import get_auth_session_port
 from novelvideo.ports.auth_contract import AgentSessionToken
 
@@ -1079,6 +1080,8 @@ class HermesPool:
             "SUPERTALE_AGENT_TOKEN_EXPIRES_AT": str(token.exp),
             "SUPERTALE_API_URL": self._api_url,
         }
+        if openfilm_studio_enabled():
+            env["SUPERTALE_OPENFILM_STUDIO_ENABLED"] = "1"
         if surface:
             env["DRAMACLAW_CHAT_SURFACE"] = surface
             env["SUPERTALE_CHAT_SURFACE"] = surface

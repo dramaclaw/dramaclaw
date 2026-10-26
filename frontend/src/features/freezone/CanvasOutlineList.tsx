@@ -48,7 +48,7 @@ import {
 } from "@/features/canvas/domain/canvasNodes";
 import { resolveNodePrimaryAsset } from "@/features/canvas/domain/canvasAssets";
 import {
-  localizeDefaultNodeDisplayName,
+  localizeDefaultNodeTypeLabel,
   localizeNodeDisplayName,
   resolveNodeDisplayName,
 } from "@/features/canvas/domain/nodeDisplay";
@@ -154,7 +154,7 @@ function outlineMeta(
   t: TFunction,
 ): string | null {
   const parts: string[] = [];
-  const typeLabel = localizeDefaultNodeDisplayName(type, node.data, t);
+  const typeLabel = localizeDefaultNodeTypeLabel(type, node.data, t);
   if (typeLabel && typeLabel !== name) {
     parts.push(typeLabel);
   }

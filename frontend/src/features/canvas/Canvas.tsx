@@ -180,6 +180,9 @@ const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 const DEFAULT_EDGE_OPTIONS = { type: 'disconnectableEdge' };
 const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true };
 const CANVAS_NODE_DRAG_FOCUS_CLASS = 'canvas-node-drag-focus';
+// 节点的 click 容差必须与拖拽阈值一致（屏幕像素）：小于它会留下「click 被吞、
+// 节点也不动」的死区；大于它会让已经开始的拖拽在松手后又触发 click。
+const CANVAS_NODE_GESTURE_SLOP_PX = 4;
 // 拖线吸附半径(px,以光标到目标 handle 的距离计)。节点的 target handle 在左边
 // 缘的一个小点上,而节点本身宽 300~400px;半径太小(默认 20 / 旧值 50)时,把线
 // 拖到节点中部就已超出 handle 的吸附范围,既不自动吸附也没有「会连上」的视觉反
@@ -5056,7 +5059,8 @@ export function Canvas({
         // Keep selection tied to a click. Dragging an unselected node should
         // move it without opening its node panels on release.
         selectNodesOnDrag={false}
-        nodeDragThreshold={4}
+        nodeClickDistance={CANVAS_NODE_GESTURE_SLOP_PX}
+        nodeDragThreshold={CANVAS_NODE_GESTURE_SLOP_PX}
         onPaneClick={handlePaneClick}
         onMove={handleMove}
         onMoveStart={handleMoveStart}

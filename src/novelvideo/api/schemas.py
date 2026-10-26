@@ -1822,12 +1822,22 @@ class FreezoneAudioMusicRequest(FreezoneWorkflowMediaLink):
 class FreezoneVideoComposeItem(BaseModel):
     item_id: str = Field(description="前端片段唯一标识")
     source_url: str = Field(description="源媒体静态地址")
-    timeline_start: float = Field(default=0.0, ge=0.0, description="片段在时间线上的开始秒数")
-    source_start: float = Field(default=0.0, ge=0.0, description="源媒体裁剪起始秒")
-    source_end: float = Field(gt=0.0, description="源媒体裁剪结束秒，必须大于 source_start")
-    volume: float = Field(default=1.0, ge=0.0, le=2.0, description="音量倍率")
+    timeline_start: float = Field(
+        default=0.0, ge=0.0, allow_inf_nan=False, description="片段在时间线上的开始秒数"
+    )
+    source_start: float = Field(
+        default=0.0, ge=0.0, allow_inf_nan=False, description="源媒体裁剪起始秒"
+    )
+    source_end: float = Field(
+        gt=0.0, allow_inf_nan=False, description="源媒体裁剪结束秒，必须大于 source_start"
+    )
+    volume: float = Field(
+        default=1.0, ge=0.0, le=2.0, allow_inf_nan=False, description="音量倍率"
+    )
     muted: bool = Field(default=False, description="是否静音")
-    speed: float = Field(default=1.0, gt=0.0, le=4.0, description="播放倍速")
+    speed: float = Field(
+        default=1.0, gt=0.0, le=4.0, allow_inf_nan=False, description="播放倍速"
+    )
 
 
 class FreezoneVideoComposeTrack(BaseModel):
@@ -1852,6 +1862,68 @@ class FreezoneVideoComposeRequest(BaseModel):
     tracks: list[FreezoneVideoComposeTrack] = Field(
         default_factory=list, description="时间线轨道列表"
     )
+
+
+class FreezoneVideoComposeStudioRequest(FreezoneVideoComposeRequest):
+    canvas_id: str = Field(min_length=1, description="来源画布 id")
+    node_id: str = Field(min_length=1, description="来源合成节点 id，用于定位 Studio 工程目录")
+    host_back: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("host_back", "hostBack"),
+        description="编辑器左上角返回按钮的去向地址",
+    )
+    host_back_label: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("host_back_label", "hostBackLabel"),
+        description="返回按钮文案",
+    )
+    lang: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("lang", "language"),
+        description="编辑器界面语言（虾画的 zh / en / vi）。无法映射时由编辑器自行判断。",
+    )
+    rebuild: bool = Field(
+        default=False,
+        description="重新生成 film.html；默认复用上次的成片目录以保留 Studio 内编辑",
+    )
+
+
+
+class FreezoneStudioFilmEditRequest(BaseModel):
+    """Agent edit of a compose node's OpenFilm film, by clip id."""
+
+    base_rev: str | None = Field(
+        default=None,
+        description="上次读到的 film rev；Studio 据此在文件已变化时检测冲突",
+    )
+    ops: list[dict[str, Any]] = Field(
+        min_length=1,
+        max_length=200,
+        description="OpenFilm Studio 的编辑操作列表（set / move / insert / remove / split / props / track / reorder / stage），每项按 clip id 寻址",
+    )
+
+
+class FreezoneStudioMediaImportRequest(BaseModel):
+    """Copy project media into a compose node's film assets."""
+
+    source_url: str | None = Field(default=None, description="项目内媒体静态地址")
+    source_node_id: str | None = Field(
+        default=None, description="画布节点 id；取该节点的成品媒体地址（视频 / 音频 / 图片）"
+    )
+    label: str = Field(default="", max_length=120, description="素材名，仅用于文件名和回溯")
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "FreezoneStudioMediaImportRequest":
+        if not (self.source_url or "").strip() and not (self.source_node_id or "").strip():
+            raise ValueError("source_url or source_node_id is required")
+        return self
+
+
+class FreezoneStudioExportRequest(BaseModel):
+    """Render a compose node's film through OpenFilm Studio."""
+
+    fps: int = Field(default=30, ge=1, le=60, description="输出帧率")
+    title: str = Field(default="", max_length=200, description="成片标题，可为空")
 
 
 FreezoneVideoGenRequest.model_rebuild()

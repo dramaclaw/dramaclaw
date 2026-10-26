@@ -1477,7 +1477,8 @@ function addFrontendNodeActions(
       action: "open_video_compose_modal",
       execution: "manual_ui",
       command_type: "run_node_action",
-      description: "Open the video compose timeline editor for this node. After it opens, the user edits and exports manually in the modal.",
+      description:
+        "Open this node's 视频合成与剪辑 workspace (the embedded OpenFilm editor). Use it whenever the user asks to open, enter or show the compose / editing workspace for this node; never substitute select_nodes or focus. Once open, cut the film with the freezone_studio_* tools.",
       parameters: { node_id: node.id },
     });
   }

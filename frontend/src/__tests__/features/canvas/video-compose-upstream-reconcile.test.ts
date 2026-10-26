@@ -8,6 +8,7 @@ import {
   reconcileDraftWithUpstream,
   resolveUnknownClipDurations,
 } from '@/features/canvas/compose/VideoComposeModal';
+import { mediaDurationMs } from '@/lib/media-duration';
 import { orderedComposeSeedNodeIds } from '@/features/canvas/compose/composeInputOrdering';
 import {
   CANVAS_NODE_TYPES,
@@ -266,6 +267,17 @@ describe('orderedComposeSeedNodeIds', () => {
       'shot-3',
       'shot-4',
     ])).toEqual(['shot-1', 'shot-2', 'shot-3', 'shot-4']);
+  });
+});
+
+describe('mediaDurationMs', () => {
+  it('rounds fractional media seconds down so film ranges never exceed the file', () => {
+    // 14.066667s rounded to 14067ms produced #t=0,14.067, which Studio rejects.
+    expect(mediaDurationMs(14.066667)).toBe(14_066);
+    expect(mediaDurationMs(18.633333)).toBe(18_633);
+    expect(mediaDurationMs(5)).toBe(5_000);
+    expect(mediaDurationMs(0)).toBeNull();
+    expect(mediaDurationMs(Number.NaN)).toBeNull();
   });
 });
 

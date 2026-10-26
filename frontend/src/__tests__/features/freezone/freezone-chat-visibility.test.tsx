@@ -6,6 +6,7 @@ import { useFreezoneChatVisibility } from '@/features/freezone/useFreezoneChatVi
 import type { FreezoneViewMode } from '@/features/freezone/useFreezoneViewMode';
 
 type ViewProps = { mode: FreezoneViewMode; active: boolean };
+type ComposeProps = ViewProps & { compose: boolean };
 
 function renderVisibility(mode: FreezoneViewMode = 'workflow') {
   return renderHook(({ mode, active }: ViewProps) => useFreezoneChatVisibility(mode, active), {
@@ -86,6 +87,50 @@ describe('freezone chat visibility per view', () => {
     act(() => setOpen(true));
     expect(result.current[0]).toBe(true);
     expect(localStorage.getItem('st.freezone.chatOpen')).toBe('1');
+  });
+
+  it('opens compose by default, honors closing, and reopens on the next entry', () => {
+    const { result, rerender } = renderHook(
+      ({ mode, active, compose }: ComposeProps) =>
+        useFreezoneChatVisibility(mode, active, compose),
+      {
+        initialProps: {
+          mode: 'workflow' as FreezoneViewMode,
+          active: true,
+          compose: false,
+        },
+      },
+    );
+    expect(result.current[0]).toBe(false);
+    rerender({ mode: 'workflow', active: true, compose: true });
+    expect(result.current[0]).toBe(true);
+    act(() => result.current[1](false));
+    expect(result.current[0]).toBe(false);
+    expect(localStorage.getItem('st.freezone.chatOpen')).toBe('0');
+    rerender({ mode: 'workflow', active: true, compose: false });
+    expect(result.current[0]).toBe(false);
+    rerender({ mode: 'workflow', active: true, compose: true });
+    expect(result.current[0]).toBe(true);
+  });
+
+  it('leaves the saved workflow preference untouched while composing', () => {
+    localStorage.setItem('st.freezone.chatOpen', '1');
+    const { result, rerender } = renderHook(
+      ({ mode, active, compose }: ComposeProps) =>
+        useFreezoneChatVisibility(mode, active, compose),
+      {
+        initialProps: {
+          mode: 'workflow' as FreezoneViewMode,
+          active: true,
+          compose: true,
+        },
+      },
+    );
+    expect(result.current[0]).toBe(true);
+    act(() => result.current[1](false));
+    expect(localStorage.getItem('st.freezone.chatOpen')).toBe('1');
+    rerender({ mode: 'workflow', active: true, compose: false });
+    expect(result.current[0]).toBe(true);
   });
 
   it('keeps in-memory behavior when storage is unavailable', () => {

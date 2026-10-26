@@ -11,6 +11,8 @@ export interface FreezoneUrl {
   /** SuperTale project_id. Display names are not accepted by project-scoped APIs. */
   project: string | null;
   canvas: string | null;
+  /** Video-compose node shown in the page-level Studio workspace. */
+  compose: string | null;
 }
 
 export interface WriteUrlOptions {
@@ -30,12 +32,32 @@ function canvasFromRouterSearch(router: NonNullable<ReturnType<typeof getAppRout
   return typeof canvas === "string" && canvas.length > 0 ? canvas : null;
 }
 
+function composeFromRouterSearch(router: NonNullable<ReturnType<typeof getAppRouter>>): string | null {
+  const compose = (router.state.location.search as { compose?: unknown }).compose;
+  return typeof compose === "string" && compose.length > 0 ? compose : null;
+}
+
 export function readUrl(): FreezoneUrl {
   const params = new URLSearchParams(window.location.search);
   return {
     project: projectFromPathname() ?? params.get("p"),
     canvas: params.get("canvas"),
+    compose: params.get("compose"),
   };
+}
+
+/** Absolute canvas address without the compose param — the Studio's way back. */
+export function canvasUrlFor(
+  projectId: string,
+  canvasId: string | null,
+): string {
+  const params = new URLSearchParams();
+  if (canvasId) params.set("canvas", canvasId);
+  const search = params.toString();
+  return new URL(
+    `/projects/${encodeURIComponent(projectId)}/freezone${search ? `?${search}` : ""}`,
+    window.location.origin,
+  ).toString();
 }
 
 export function writeUrl(next: Partial<FreezoneUrl>, options: WriteUrlOptions = {}) {
@@ -55,13 +77,18 @@ export function writeUrl(next: Partial<FreezoneUrl>, options: WriteUrlOptions = 
   if (!pathProject) return;
 
   const current: FreezoneUrl = router
-    ? { project: pathProject, canvas: canvasFromRouterSearch(router) }
+    ? {
+        project: pathProject,
+        canvas: canvasFromRouterSearch(router),
+        compose: composeFromRouterSearch(router),
+      }
     : readUrl();
   // 显式区分"未传"和"传 null"：?? 会把 null 当作回退到 current，导致
   // writeUrl({ project: null }) 这种"清空字段"的语义失效（例如返回项目列表）。
   const merged: FreezoneUrl = {
     project: "project" in next ? next.project ?? null : current.project,
     canvas: "canvas" in next ? next.canvas ?? null : current.canvas,
+    compose: "compose" in next ? next.compose ?? null : current.compose,
   };
   if (router) {
     // Route THROUGH tanstack so this navigation joins the router's throttled
@@ -75,7 +102,10 @@ export function writeUrl(next: Partial<FreezoneUrl>, options: WriteUrlOptions = 
         ? "/projects/$project/freezone"
         : "/projects/$project/ingest",
       params: { project: pathProject },
-      search: merged.canvas ? { canvas: merged.canvas } : {},
+      search: {
+        ...(merged.canvas ? { canvas: merged.canvas } : {}),
+        ...(merged.compose ? { compose: merged.compose } : {}),
+      },
       replace: options.replace ?? false,
       resetScroll: false,
     });
@@ -84,6 +114,7 @@ export function writeUrl(next: Partial<FreezoneUrl>, options: WriteUrlOptions = 
 
   const params = new URLSearchParams();
   if (merged.canvas) params.set("canvas", merged.canvas);
+  if (merged.compose) params.set("compose", merged.compose);
   const search = params.toString();
   const pathname =
     pathProject && merged.project

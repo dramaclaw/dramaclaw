@@ -1,0 +1,11 @@
+{
+  "name": "dramaclaw-openfilm-studio",
+  "private": true,
+  "version": "0.2.4",
+  "description": "OpenFilm Studio runtime vendored for Dramaclaw",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "1.61.1"
+  }
+}

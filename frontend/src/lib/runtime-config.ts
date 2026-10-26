@@ -10,6 +10,7 @@ export const RuntimeConfigResponse = z.object({
     auth_required: z.boolean(),
     instance_id: z.string().optional(),
     mcp_direct_canvas_apply: z.boolean().optional(),
+    openfilm_studio_enabled: z.boolean().optional(),
     browser_model_asset_base: z.string().nullable().optional(),
     browser_model_hf_endpoint: z.string().nullable().optional(),
     browser_ort_wasm_base: z.string().nullable().optional(),
@@ -29,6 +30,7 @@ export interface RuntimeConfig {
   phoneOtpEntryVisible: boolean;
   instanceId?: string;
   mcpDirectCanvasApply: boolean;
+  openFilmStudioEnabled: boolean;
   /** 浏览器端推理模型与 wasm 的来源；全为 null 表示走 transformers.js 默认源。 */
   browserModelSource: BrowserModelSourceConfig;
 }
@@ -43,6 +45,7 @@ let runtimeConfig: RuntimeConfig = {
   edition: "ee",
   authRequired: true,
   mcpDirectCanvasApply: false,
+  openFilmStudioEnabled: false,
   phoneOtpEntryVisible: false,
   browserModelSource: DEFAULT_BROWSER_MODEL_SOURCE,
 };
@@ -54,6 +57,7 @@ function fallbackRuntimeConfig(): RuntimeConfig {
         authRequired: false,
         phoneOtpEntryVisible: false,
         mcpDirectCanvasApply: false,
+        openFilmStudioEnabled: false,
         browserModelSource: DEFAULT_BROWSER_MODEL_SOURCE,
       }
     : {
@@ -61,6 +65,7 @@ function fallbackRuntimeConfig(): RuntimeConfig {
         authRequired: true,
         phoneOtpEntryVisible: false,
         mcpDirectCanvasApply: false,
+        openFilmStudioEnabled: false,
         browserModelSource: DEFAULT_BROWSER_MODEL_SOURCE,
       };
 }
@@ -96,6 +101,7 @@ export async function loadRuntimeConfig(): Promise<void> {
       phoneOtpEntryVisible,
       instanceId: parsed.data.instance_id,
       mcpDirectCanvasApply: parsed.data.mcp_direct_canvas_apply ?? false,
+      openFilmStudioEnabled: parsed.data.openfilm_studio_enabled ?? false,
       browserModelSource: {
         assetBase: parsed.data.browser_model_asset_base || null,
         hfEndpoint: parsed.data.browser_model_hf_endpoint || null,
@@ -119,6 +125,10 @@ export function authRequired(): boolean {
 
 export function mcpDirectCanvasApplyEnabled(): boolean {
   return runtimeConfig.mcpDirectCanvasApply;
+}
+
+export function openFilmStudioEnabled(): boolean {
+  return runtimeConfig.openFilmStudioEnabled;
 }
 
 export function phoneOtpEntryVisible(): boolean {

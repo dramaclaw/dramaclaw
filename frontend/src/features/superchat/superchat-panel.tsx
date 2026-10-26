@@ -171,6 +171,7 @@ import {
   type VideoGenQuality,
 } from "@/features/canvas/domain/canvasNodes";
 import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
+import type { ComposeTimelineState } from "@/features/canvas/compose/timelineModel";
 import { VIDEO_GENERATION_ASPECT_RATIOS } from "@/features/canvas/application/imageData";
 import {
   VIDEO_UPSCALE_RESOLUTIONS,
@@ -10202,7 +10203,42 @@ function canvasReferencePreviewUrl(node: CanvasNode): string | null {
   if (node.type === "videoNode") {
     return stringOrNull(data.previewImageUrl) || stringOrNull(data.videoUrl);
   }
-  return stringOrNull(data.previewImageUrl) || stringOrNull(data.imageUrl) || stringOrNull(data.referenceImageUrl);
+  const preview =
+    stringOrNull(data.previewImageUrl) ||
+    stringOrNull(data.imageUrl) ||
+    stringOrNull(data.referenceImageUrl);
+  if (preview) return preview;
+  if (node.type === "videoComposeNode") {
+    return composeDraftPreviewUrl(data as Record<string, unknown>);
+  }
+  return null;
+}
+
+/**
+ * A compose node has no media of its own until an auto-compose writes a result
+ * cover back; what it does have is the draft timeline it was opened with. Read
+ * that timeline so the selection chip shows the film's first frame instead of a
+ * bare play icon.
+ */
+function composeDraftPreviewUrl(data: Record<string, unknown>): string | null {
+  const timeline = data.draftTimeline as Partial<ComposeTimelineState> | undefined;
+  const cover = stringOrNull(timeline?.cover?.url);
+  if (cover) return cover;
+  const tracks = timeline?.tracks ?? [];
+  for (const track of tracks) {
+    for (const clip of track.clips ?? []) {
+      const thumb = stringOrNull(clip.thumbUrl);
+      if (thumb) return thumb;
+    }
+  }
+  for (const track of tracks) {
+    if (track.kind !== "video") continue;
+    for (const clip of track.clips ?? []) {
+      const source = stringOrNull(clip.sourceUrl);
+      if (source) return source;
+    }
+  }
+  return null;
 }
 
 function canvasNodeToReferencePreview(node: CanvasNode): CanvasNodeReferencePreview {
@@ -11367,7 +11403,7 @@ function canvasCommandPlanLabel(command: CanvasChatCommand): string {
     case "run_node_action":
       if (command.action === "generate_image") return "生成图片";
       if (command.action === "generate_video") return "生成视频";
-      if (command.action === "open_video_compose_modal") return "打开视频合成";
+      if (command.action === "open_video_compose_modal") return "打开视频合成与剪辑";
       if (command.action === "auto_compose_video") return "自动合成视频";
       if (command.action === "open_video_viewer") return "打开视频";
       return "执行节点动作";
@@ -12534,6 +12570,8 @@ interface SuperChatPanelProps {
   variant?: SuperChatPanelVariant;
   freezoneCanvasId?: string | null;
   freezoneAgentId?: string | null;
+  /** 视频合成与剪辑工作区里正在剪的 videoComposeNode；仅工作区打开时传入。 */
+  freezoneComposeNodeId?: string | null;
   connectionEnabled?: boolean;
   workflowStatusEnabled?: boolean;
   onConnectionStateChange?: (state: {
@@ -12579,6 +12617,7 @@ export function SuperChatPanel({
   variant = "default",
   freezoneCanvasId = null,
   freezoneAgentId = null,
+  freezoneComposeNodeId = null,
   connectionEnabled = true,
   workflowStatusEnabled = true,
   onConnectionStateChange,
@@ -12694,6 +12733,7 @@ export function SuperChatPanel({
     surface: variant === "freezone" ? "freezone" : undefined,
     freezoneCanvasId: variant === "freezone" ? freezoneCanvasId ?? canvasId : null,
     freezoneAgentId: variant === "freezone" ? freezoneAgentId : null,
+    freezoneComposeNodeId: variant === "freezone" ? freezoneComposeNodeId : null,
     connectionEnabled,
   });
   const updateChatUiEvent = chat.updateUiEvent;

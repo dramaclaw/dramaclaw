@@ -6828,11 +6828,11 @@
       "sectionAddResource": "Add Resource",
       "sectionSkillNode": "Skill Nodes",
       "placeholderVideo": "Video",
-      "placeholderVideoCompose": "Video Compose",
+      "placeholderVideoCompose": "Video Compose & Edit",
       "placeholderAudio": "Audio",
       "placeholderScript": "Script",
       "betaTag": "Beta",
-      "videoCompose": "Video Compose",
+      "videoCompose": "Video Compose & Edit",
       "previz": "Previz Stage",
       "videoBreakdown": "Frame-by-Frame",
       "htmlArtifact": "Webpage"
@@ -7566,7 +7566,7 @@
       "videoNode": "Video",
       "audioNode": "Audio",
       "videoStoryNode": "Video story",
-      "videoComposeNode": "Video compose",
+      "videoComposeNode": "Video compose & edit",
       "scriptNode": "Script generator",
       "pano360ViewerNode": "360° panorama viewer",
       "threeDWorldNode": "3D world",
@@ -8953,7 +8953,7 @@
     }
   },
   "videoCompose": {
-    "title": "Video Compose",
+    "title": "Video Compose & Edit",
     "export": "Export",
     "exporting": "Exporting…",
     "exportLocation": "Export to",
@@ -9002,9 +9002,25 @@
     "node": {
       "hint": "Connect at least {{min}} video nodes to open",
       "counts": "Video {{video}} · Audio {{audio}}",
-      "open": "Open video compose",
+      "open": "Open video compose & edit",
       "reopen": "Reopen",
       "resultName": "Composed video"
+    },
+    "studio": {
+      "title": "Video compose & edit workspace",
+      "loading": "Opening the editing workspace…",
+      "retry": "Retry",
+      "backToCanvas": "Back to canvas",
+      "missingNode": "This video compose & edit node no longer exists.",
+      "noMedia": "This compose node has no usable upstream media yet.",
+      "noMediaHint": "Connect video or image clips to this node on the canvas, then open it again.",
+      "loadFailed": "Could not open the editing workspace.",
+      "errorNotFound": "This project or canvas could not be found. Go back to the canvas and try again.",
+      "errorAuth": "Your session may have expired. Refresh the page and try again.",
+      "errorUnavailable": "The editing service is unavailable right now. Please try again shortly.",
+      "editedTitle": "Regenerate the cut to apply your canvas changes?",
+      "editedBody": "Adjustments you made in the editor will be replaced and cannot be recovered.",
+      "editedRebuild": "Regenerate"
     },
     "undo": "Undo",
     "redo": "Redo",

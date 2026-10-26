@@ -56,8 +56,8 @@ type PrevizNodeProps = NodeProps & {
   selected?: boolean;
 };
 
-const NODE_WIDTH = 340;
-const NODE_HEIGHT = 210;
+const NODE_WIDTH = 360;
+const NODE_HEIGHT = 220;
 
 export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
   const { t } = useTranslation();
@@ -179,7 +179,7 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
       <div
         className={`relative flex h-full w-full flex-col overflow-hidden rounded-[var(--node-radius)] border ${CANVAS_NODE_INPUT_SURFACE_CLASS} transition-colors ${canvasNodeFrameClass({ selected })}`}
       >
-        <div className="flex h-full w-full flex-col items-center justify-center gap-2.5 px-5 py-4 text-center">
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-5 py-4 text-center">
           <button
             type="button"
             disabled={!loaded.ok}
@@ -192,7 +192,7 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
             {t("previz.node.open")}
           </button>
 
-          <span className="text-[12px] font-medium leading-5 text-text-muted/90">
+          <span className="text-[12px] leading-5 text-text-muted/90">
             {!loaded.ok
               ? t("previz.node.versionTooNew")
               : data.summary
@@ -205,12 +205,12 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
 
           {data.isGenerating ? (
             // 白模任务在途：句柄在节点上，画布的恢复路径正在等它，进度见任务中心。
-            <span className="flex items-center gap-1.5 text-[11px] leading-4 text-text-muted/90">
+            <span className="flex items-center gap-1.5 text-[12px] leading-5 text-text-muted/90">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white/70" />
               {t("previz.node.generating")}
             </span>
           ) : (
-            <span className="max-w-[250px] text-[11px] leading-4 text-text-muted/65">{t("previz.node.hint")}</span>
+            <span className="text-[12px] leading-5 text-text-muted/65">{t("previz.node.hint")}</span>
           )}
         </div>
       </div>

@@ -3953,6 +3953,7 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_USERNAME",
         "NOVELVIDEO_OUTPUT_DIR",
         "PYTHONPATH",
+        "SUPERTALE_OPENFILM_STUDIO_ENABLED",
     ]
 
 
@@ -4410,7 +4411,8 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_ROOT","DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
         '"DRAMACLAW_TURN_ID","DRAMACLAW_USERNAME",'
-        '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH"]' in overrides
+        '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH",'
+        '"SUPERTALE_OPENFILM_STUDIO_ENABLED"]' in overrides
     )
     assert "mcp_servers.dramaclaw.required=true" in overrides
     assert 'mcp_servers.dramaclaw.default_tools_approval_mode="approve"' in overrides
@@ -8802,3 +8804,55 @@ async def test_codex_freezone_turn_never_sends_a_second_prompt(
     # A requested write with no receipt is reported by the host, whatever the
     # model said; the claim is never delivered as the outcome.
     assert not result["content"].startswith("图片节点已创建成功")
+
+
+def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
+
+    inside = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "把第二段提前一秒",
+        tool_mode="freezone_canvas",
+        surface_context={
+            "freezone_canvas_id": "canvas-a",
+            "freezone_compose_node_id": "compose-1",
+        },
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" in inside
+    assert "compose_node_id: compose-1" in inside
+    assert "freezone_studio_get_film" in inside
+    assert "Never rewrite this node's draftTimeline" in inside
+    assert "canvas_id: canvas-a" in inside
+
+    outside = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "把第二段提前一秒",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" not in outside
+    assert "[FREEZONE_CANVAS_CONTEXT]" in outside
+
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", raising=False)
+    disabled = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "把第二段提前一秒",
+        tool_mode="freezone_canvas",
+        surface_context={
+            "freezone_canvas_id": "canvas-a",
+            "freezone_compose_node_id": "compose-1",
+        },
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" not in disabled
+
+    mainline = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "hello",
+        surface_context={"freezone_compose_node_id": "compose-1"},
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" not in mainline

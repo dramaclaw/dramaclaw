@@ -4,7 +4,8 @@
 # markup, config, locale JSON, binary assets).
 #
 # NOT covered here (resolve before public release — see docs/changes):
-#   - public/fonts/*   bundled third-party font (license verification pending)
+#   - public/fonts/*   bundled third-party font; licensed OFL-1.1 by the root REUSE.toml
+#     (generated with the rest of the台账 by scripts/compliance/generate_p0b_artifacts.py)
 #   - worker/, wrangler.jsonc, .github/workflows/*, .env*  stripped on the
 #     public mirror branch (FE-EXC), not licensed for the open-source artifact.
 version = 1

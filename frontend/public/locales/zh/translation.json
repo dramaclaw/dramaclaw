@@ -6828,11 +6828,11 @@
       "sectionAddResource": "添加资源",
       "sectionSkillNode": "技能节点",
       "placeholderVideo": "视频",
-      "placeholderVideoCompose": "视频合成",
+      "placeholderVideoCompose": "视频合成与剪辑",
       "placeholderAudio": "音频",
       "placeholderScript": "脚本",
       "betaTag": "Beta",
-      "videoCompose": "视频合成",
+      "videoCompose": "视频合成与剪辑",
       "previz": "预演台",
       "videoBreakdown": "逐帧拉片",
       "htmlArtifact": "网页"
@@ -7566,7 +7566,7 @@
       "videoNode": "视频",
       "audioNode": "音频",
       "videoStoryNode": "视频故事",
-      "videoComposeNode": "视频合成",
+      "videoComposeNode": "视频合成与剪辑",
       "scriptNode": "脚本生成器",
       "pano360ViewerNode": "360° 全景查看器",
       "threeDWorldNode": "3D 世界",
@@ -8953,7 +8953,7 @@
     }
   },
   "videoCompose": {
-    "title": "视频合成",
+    "title": "视频合成与剪辑",
     "export": "导出",
     "exporting": "导出中…",
     "exportLocation": "导出位置",
@@ -9002,9 +9002,25 @@
     "node": {
       "hint": "连接至少 {{min}} 个视频节点后可打开",
       "counts": "视频 {{video}} · 音频 {{audio}}",
-      "open": "打开视频合成",
+      "open": "打开视频合成与剪辑",
       "reopen": "重新打开",
       "resultName": "合成视频"
+    },
+    "studio": {
+      "title": "视频合成与剪辑工作区",
+      "loading": "正在打开剪辑工作区…",
+      "retry": "重试",
+      "backToCanvas": "返回虾画",
+      "missingNode": "没有找到这个视频合成与剪辑节点，可能已被删除。",
+      "noMedia": "这个合成节点还没有可用的上游素材。",
+      "noMediaHint": "先在画布上给这个节点连接视频或图片素材，再重新打开。",
+      "loadFailed": "打开剪辑工作区失败。",
+      "errorNotFound": "没有找到这个项目或画布，请返回画布后重试。",
+      "errorAuth": "登录状态可能已过期，请刷新页面后重试。",
+      "errorUnavailable": "剪辑服务暂时不可用，请稍后重试。",
+      "editedTitle": "画布上的改动需要重新生成剪辑",
+      "editedBody": "你在编辑器里对这条时间线做过的调整会被覆盖，且无法恢复。",
+      "editedRebuild": "重新生成"
     },
     "undo": "撤销",
     "redo": "重做",
