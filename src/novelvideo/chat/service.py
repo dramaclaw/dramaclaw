@@ -168,6 +168,7 @@ from novelvideo.chat.tool_policy import (
     allows_mainline_media_ui_specs as _allows_mainline_media_ui_specs,
     freezone_canvas_execution_mode_from_context as _freezone_canvas_execution_mode_from_context,
     freezone_canvas_id_from_context as _freezone_canvas_id_from_context,
+    freezone_compose_node_id_from_context as _freezone_compose_node_id_from_context,
     tool_mode_for_surface as _tool_mode_for_surface,
 )
 from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
@@ -2077,11 +2078,27 @@ def _prompt_with_user_context(
             "asking for another create/run confirmation. Use the MCP clarification tool, never built-in "
             "request_user_input.\n"
         )
+    compose_node_id = _freezone_compose_node_id_from_context(surface_context)
+    compose_context = (
+        "\n[FREEZONE_COMPOSE_WORKSPACE]\n"
+        f"compose_node_id: {compose_node_id}\n"
+        "The user is inside the video compose and editing workspace of this videoComposeNode; "
+        "its OpenFilm film is the cut. For trimming, moving, reordering, splitting, removing, "
+        "fades, volume or speed, call freezone_studio_get_film first, then "
+        "freezone_studio_edit_film with the returned rev and clip ids. To add media from the "
+        "canvas, call freezone_studio_import_media and insert the returned asset_path. To render "
+        "the final video, call freezone_studio_export_film. Never rewrite this node's "
+        "draftTimeline or rebuild its timeline through canvas commands while the workspace is open.\n"
+        "[/FREEZONE_COMPOSE_WORKSPACE]\n"
+        if compose_node_id
+        else ""
+    )
     canvas_context = (
         "\n\n[FREEZONE_CANVAS_CONTEXT]\n"
         f"canvas_id: {canvas_id}\n"
         "Use this canvas_id for Freezone canvas tools unless the user explicitly names another canvas.\n"
-        "[/FREEZONE_CANVAS_CONTEXT]\n\n"
+        "[/FREEZONE_CANVAS_CONTEXT]\n"
+        f"{compose_context}\n"
         "[FREEZONE_CANVAS_EXECUTION_MODE]\n"
         f"mode: {canvas_execution_mode}\n"
         f"{generation_parameter_policy}"

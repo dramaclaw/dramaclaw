@@ -5264,6 +5264,93 @@ describe("useSuperChat websocket lifecycle", () => {
     }));
   });
 
+  it("names the open compose node in the chat context only while the workspace is open", async () => {
+    localStorage.setItem("freezone.canvasCommandExecutionMode", "manual_confirm");
+    const sentFrames: string[] = [];
+    class TestWebSocket {
+      static OPEN = 1;
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+
+      constructor() {
+        sockets.push(this);
+      }
+
+      send(frame: string) {
+        sentFrames.push(frame);
+      }
+
+      close() {}
+    }
+    const sockets: TestWebSocket[] = [];
+    Object.defineProperty(globalThis, "WebSocket", {
+      value: TestWebSocket,
+      writable: true,
+      configurable: true,
+    });
+
+    const hook = renderHook(
+      ({ composeNodeId }: { composeNodeId: string | null }) =>
+        useSuperChat({
+          project: "project-a",
+          displayName: "Tester",
+          surface: "freezone",
+          freezoneCanvasId: "canvas-a",
+          freezoneComposeNodeId: composeNodeId,
+        }),
+      { initialProps: { composeNodeId: "compose-1" } },
+    );
+
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => {
+      sockets[0]?.onopen?.();
+      sockets[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: "scope.changed",
+          scope: {
+            kind: "project",
+            id: "project-a",
+            surface: "freezone",
+            canvasId: "canvas-a",
+          },
+          history: [],
+        }),
+      } as MessageEvent);
+    });
+    await waitFor(() => expect(hook.result.current.connected).toBe(true));
+
+    act(() => {
+      hook.result.current.send("把第二段提前一秒");
+    });
+    const inside = sentFrames
+      .map((frame) => JSON.parse(frame) as Record<string, unknown>)
+      .filter((frame) => frame.type === "chat.message");
+    expect(inside.at(-1)).toEqual(expect.objectContaining({
+      context: {
+        freezone_canvas_id: "canvas-a",
+        canvas_command_execution_mode: "manual_confirm",
+        freezone_compose_node_id: "compose-1",
+      },
+    }));
+
+    hook.rerender({ composeNodeId: null });
+    act(() => {
+      hook.result.current.send("看看画布");
+    });
+    const outside = sentFrames
+      .map((frame) => JSON.parse(frame) as Record<string, unknown>)
+      .filter((frame) => frame.type === "chat.message");
+    expect(outside.at(-1)).toEqual(expect.objectContaining({
+      context: {
+        freezone_canvas_id: "canvas-a",
+        canvas_command_execution_mode: "manual_confirm",
+      },
+    }));
+  });
+
   it("cancels only the active business turn in the current scope", async () => {
     apiPostMock.mockClear();
     const sentFrames: string[] = [];

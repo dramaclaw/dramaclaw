@@ -12626,6 +12626,8 @@ interface SuperChatPanelProps {
   variant?: SuperChatPanelVariant;
   freezoneCanvasId?: string | null;
   freezoneAgentId?: string | null;
+  /** 视频合成与剪辑工作区里正在剪的 videoComposeNode；仅工作区打开时传入。 */
+  freezoneComposeNodeId?: string | null;
   connectionEnabled?: boolean;
   workflowStatusEnabled?: boolean;
   onConnectionStateChange?: (state: {
@@ -12671,6 +12673,7 @@ export function SuperChatPanel({
   variant = "default",
   freezoneCanvasId = null,
   freezoneAgentId = null,
+  freezoneComposeNodeId = null,
   connectionEnabled = true,
   workflowStatusEnabled = true,
   onConnectionStateChange,
@@ -12786,6 +12789,7 @@ export function SuperChatPanel({
     surface: variant === "freezone" ? "freezone" : undefined,
     freezoneCanvasId: variant === "freezone" ? freezoneCanvasId ?? canvasId : null,
     freezoneAgentId: variant === "freezone" ? freezoneAgentId : null,
+    freezoneComposeNodeId: variant === "freezone" ? freezoneComposeNodeId : null,
     connectionEnabled,
   });
   const updateChatUiEvent = chat.updateUiEvent;

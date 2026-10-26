@@ -23,7 +23,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
 
@@ -373,9 +373,7 @@ def _film_html(
         for item in track.items:
             if track.kind == "video":
                 has_video = True
-            muted = item.muted or (
-                track.kind == "video" and not keep_original_audio
-            )
+            muted = item.muted or (track.kind == "video" and not keep_original_audio)
             lines.append(
                 _clip_markup(
                     kind=track.kind,
@@ -672,9 +670,7 @@ def _spawn_studio() -> dict[str, Any]:
                 stdin=subprocess.DEVNULL,
             )
         except OSError as exc:
-            raise StudioError(
-                f"could not start OpenFilm Studio: {exc}", 503
-            ) from exc
+            raise StudioError(f"could not start OpenFilm Studio: {exc}", 503) from exc
 
     deadline = time.monotonic() + 25
     while time.monotonic() < deadline:
@@ -708,9 +704,7 @@ def _spawn_studio() -> dict[str, Any]:
         _stop_process(proc)
         raise StudioError("OpenFilm Studio did not start in time", 503)
     tail = _log_tail()
-    raise StudioError(
-        f"OpenFilm Studio failed to start: {tail or 'no log'}", 503
-    )
+    raise StudioError(f"OpenFilm Studio failed to start: {tail or 'no log'}", 503)
 
 
 async def _health(origin: str) -> dict[str, Any] | None:
@@ -819,3 +813,647 @@ async def ensure_studio_session(
         ),
         "origin": str(state["origin"]),
     }
+
+
+# ---------------------------------------------------------------------------
+# Agent access to a compose node's film.
+#
+# Once a compose node has been opened in the workspace, its film.html is the
+# truth of the cut: the person edits it in Studio and the agent edits it through
+# Studio's clip-id operations below. Nothing here touches the node's
+# draftTimeline, so the canvas seed and the hand-cut film never fight.
+# ---------------------------------------------------------------------------
+
+_IMPORT_SUFFIXES = _MEDIA_SUFFIXES | {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+_STILL_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+_SOUND_SUFFIXES = {
+    ".m4a",
+    ".mp3",
+    ".wav",
+    ".aac",
+    ".flac",
+    ".ogg",
+    ".opus",
+    ".aiff",
+    ".wma",
+}
+_IMPORT_PREFIX = "import-"
+_PROBE_LIMIT = 40
+_MAX_EDIT_OPS = 200
+_EXPORT_POLL_SECONDS = 1.0
+_EXPORT_TIMEOUT_SECONDS = 30 * 60
+_EXPORT_TERMINAL = {"done", "failed", "cancelled"}
+
+
+def film_dir_for_node(project_dir: Path, canvas_id: str, node_id: str) -> Path:
+    """The film folder a compose node is cut in (it may not exist yet)."""
+    return _film_dir(Path(project_dir), canvas_id, node_id)
+
+
+def studio_film_exists(film_dir: Path) -> bool:
+    return (Path(film_dir) / "film.html").is_file()
+
+
+def studio_film_was_edited(film_dir: Path) -> bool:
+    """Whether the film no longer hashes to what the canvas timeline built.
+
+    An export of such a node must render the film, not the canvas timeline:
+    the timeline no longer describes the cut.
+    """
+    return _film_was_edited(Path(film_dir))
+
+
+def studio_export_film_dir(
+    project_dir: Path, canvas_id: str, node_id: str
+) -> Path | None:
+    """The film to render for a compose export, or None to keep the ffmpeg path.
+
+    Only a film that was cut by hand (in Studio, or by the agent through it)
+    takes over the export; an untouched film is the timeline itself, and the
+    timeline keeps rendering exactly as before.
+    """
+    if not canvas_id or not node_id:
+        return None
+    try:
+        film_dir = _film_dir(Path(project_dir), canvas_id, node_id)
+    except StudioError:
+        return None
+    if not studio_film_exists(film_dir) or not studio_film_was_edited(film_dir):
+        return None
+    return film_dir
+
+
+def _require_film(project_dir: Path, canvas_id: str, node_id: str) -> Path:
+    film_dir = _film_dir(Path(project_dir), canvas_id, node_id)
+    if not studio_film_exists(film_dir):
+        raise StudioError(
+            "this compose node has no Studio film yet: open its compose workspace "
+            "once so the timeline becomes a film",
+            404,
+        )
+    return film_dir
+
+
+async def _studio_request(
+    state: dict[str, Any],
+    method: str,
+    path: str,
+    body: dict[str, Any] | None = None,
+    *,
+    timeout: float = 20.0,
+) -> tuple[int, Any]:
+    """One call to Studio's API. Returns (status, decoded body); 4xx is the caller's."""
+    origin = str(state["origin"]).rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            response = await client.request(
+                method,
+                f"{origin}{path}",
+                json=body,
+                headers={"x-studio-key": str(state["key"])},
+            )
+    except httpx.HTTPError as exc:
+        raise StudioError(f"OpenFilm Studio request failed: {exc}", 502) from exc
+    try:
+        said = response.json()
+    except ValueError:
+        said = {"error": response.text[:500]}
+    return response.status_code, said
+
+
+def _studio_error_text(said: Any, fallback: str) -> str:
+    if isinstance(said, dict):
+        for key in ("error", "message"):
+            value = said.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return fallback
+
+
+async def _studio_project_id(state: dict[str, Any], film_dir: Path) -> str:
+    said = await _studio_post(
+        state, "/api/projects", {"path": str(film_dir), "create": True}
+    )
+    project = said.get("project")
+    project_id = project.get("id") if isinstance(project, dict) else None
+    if not isinstance(project_id, str) or not project_id:
+        raise StudioError("OpenFilm Studio returned no project id", 502)
+    return project_id
+
+
+def _project_api(project_id: str, suffix: str = "") -> str:
+    path = f"/api/projects/{quote(project_id, safe='')}"
+    return f"{path}/{suffix}" if suffix else path
+
+
+def _clip_kind(src: str, raw: dict[str, Any]) -> str:
+    if raw.get("sound") is True:
+        return "sound"
+    suffix = Path(str(src).split("#", 1)[0]).suffix.lower()
+    if suffix in _SOUND_SUFFIXES:
+        return "sound"
+    if suffix in _STILL_SUFFIXES:
+        return "still"
+    if suffix in _MEDIA_SUFFIXES:
+        return "video"
+    return "page"
+
+
+def _number_or_none(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if number == number and abs(number) != float("inf") else None
+
+
+def _pair_or_none(value: Any) -> list[float] | None:
+    if not isinstance(value, list) or len(value) != 2:
+        return None
+    first, second = _number_or_none(value[0]), _number_or_none(value[1])
+    if first is None or second is None:
+        return None
+    return [first, second]
+
+
+def _node_label(node: dict[str, Any] | None) -> str:
+    data = node.get("data") if isinstance(node, dict) else None
+    if not isinstance(data, dict):
+        return ""
+    for key in ("label", "displayName", "title", "name"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _source_index(film_dir: Path, canvas: dict[str, Any] | None, node_id: str):
+    """Map an asset path to the canvas it came from: item ids, node ids, labels."""
+    manifest = _read_manifest(film_dir / "manifest.json") or {}
+    items: list[dict[str, Any]] = []
+    for track in manifest.get("tracks") or []:
+        if isinstance(track, dict):
+            items.extend(
+                item for item in track.get("items") or [] if isinstance(item, dict)
+            )
+    sources: dict[str, dict[str, Any]] = {}
+    assets = manifest.get("assets") if isinstance(manifest.get("assets"), list) else []
+    for index, asset_name in enumerate(assets):
+        item = items[index] if index < len(items) else {}
+        sources[f"assets/{asset_name}"] = {
+            "item_id": str(item.get("item_id") or ""),
+            "source_url": str(item.get("source_url") or ""),
+        }
+    imports = manifest.get("imports")
+    if isinstance(imports, dict):
+        for asset_name, info in imports.items():
+            if isinstance(info, dict):
+                sources[f"assets/{asset_name}"] = {
+                    "item_id": "",
+                    "source_url": str(info.get("source_url") or ""),
+                    "node_id": str(info.get("node_id") or ""),
+                    "label": str(info.get("label") or ""),
+                }
+
+    nodes_by_id: dict[str, dict[str, Any]] = {}
+    draft_clips: dict[str, dict[str, Any]] = {}
+    if isinstance(canvas, dict):
+        for node in canvas.get("nodes") or []:
+            if isinstance(node, dict) and isinstance(node.get("id"), str):
+                nodes_by_id[node["id"]] = node
+        compose = nodes_by_id.get(node_id)
+        data = compose.get("data") if isinstance(compose, dict) else None
+        draft = data.get("draftTimeline") if isinstance(data, dict) else None
+        tracks = draft.get("tracks") if isinstance(draft, dict) else None
+        for track in tracks or []:
+            if not isinstance(track, dict):
+                continue
+            for clip in track.get("clips") or []:
+                if isinstance(clip, dict) and isinstance(clip.get("id"), str):
+                    draft_clips[clip["id"]] = clip
+
+    for info in sources.values():
+        item_id = info.get("item_id") or ""
+        clip = draft_clips.get(item_id) if item_id else None
+        if clip is not None:
+            source_node = str(clip.get("nodeId") or "")
+            if source_node:
+                info["node_id"] = source_node
+            name = clip.get("displayName")
+            if isinstance(name, str) and name.strip():
+                info["label"] = name.strip()
+        source_node = info.get("node_id") or ""
+        if source_node and not info.get("label"):
+            info["label"] = _node_label(nodes_by_id.get(source_node))
+        info.setdefault("node_id", "")
+        info.setdefault("label", "")
+    return sources
+
+
+def _summarize_film(
+    doc: Any,
+    *,
+    sources: dict[str, dict[str, Any]],
+    probes: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    stage_raw = doc.get("stage") if isinstance(doc, dict) else None
+    stage = {
+        "width": (
+            int(stage_raw.get("w"))
+            if isinstance(stage_raw, dict) and _number_or_none(stage_raw.get("w"))
+            else 1920
+        ),
+        "height": (
+            int(stage_raw.get("h"))
+            if isinstance(stage_raw, dict) and _number_or_none(stage_raw.get("h"))
+            else 1080
+        ),
+    }
+    tracks_out: list[dict[str, Any]] = []
+    film_end = 0.0
+    raw_tracks = doc.get("tracks") if isinstance(doc, dict) else None
+    for index, track in enumerate(raw_tracks or []):
+        if not isinstance(track, dict):
+            continue
+        clips_out: list[dict[str, Any]] = []
+        for raw in track.get("clips") or []:
+            if not isinstance(raw, dict):
+                continue
+            src = str(raw.get("src") or "")
+            kind = _clip_kind(src, raw)
+            at = _number_or_none(raw.get("at")) or 0.0
+            time = _pair_or_none(raw.get("time"))
+            speed = _number_or_none(raw.get("speed")) or 1.0
+            probe = probes.get(src.split("#", 1)[0], {})
+            source_duration = _number_or_none(probe.get("duration"))
+            if time is not None:
+                length = max(0.0, time[1] - time[0])
+            elif isinstance(raw.get("time"), list) and len(raw["time"]) == 1:
+                start = _number_or_none(raw["time"][0]) or 0.0
+                length = max(0.0, source_duration - start) if source_duration else None
+            else:
+                length = source_duration
+            duration = (length / speed) if length is not None and speed > 0 else None
+            fade = None
+            overrides = raw.get("overrides")
+            if isinstance(overrides, list):
+                for entry in overrides:
+                    if isinstance(entry, dict) and "at" not in entry:
+                        fade = _pair_or_none(entry.get("fade"))
+            clip: dict[str, Any] = {
+                "id": str(raw.get("id") or ""),
+                "kind": kind,
+                "src": src,
+                "at": round(at, 3),
+                "time": time,
+                "duration": round(duration, 3) if duration is not None else None,
+                "end": round(at + duration, 3) if duration is not None else None,
+                "speed": speed,
+                "volume": _number_or_none(raw.get("volume")),
+                "fade": fade,
+                "box": raw.get("box") if isinstance(raw.get("box"), dict) else None,
+                "source": sources.get(src.split("#", 1)[0]) or {},
+            }
+            if duration is not None:
+                film_end = max(film_end, at + duration)
+            clips_out.append(clip)
+        tracks_out.append(
+            {
+                "index": index,
+                "locked": bool(track.get("locked")),
+                "hidden": bool(track.get("hidden")),
+                "muted": bool(track.get("muted")),
+                "clips": clips_out,
+            }
+        )
+    return {"stage": stage, "duration": round(film_end, 3), "tracks": tracks_out}
+
+
+def _clip_sources(doc: Any) -> list[str]:
+    seen: list[str] = []
+    raw_tracks = doc.get("tracks") if isinstance(doc, dict) else None
+    for track in raw_tracks or []:
+        if not isinstance(track, dict):
+            continue
+        for raw in track.get("clips") or []:
+            if not isinstance(raw, dict):
+                continue
+            src = str(raw.get("src") or "").split("#", 1)[0]
+            if src and src not in seen and _clip_kind(src, raw) != "page":
+                seen.append(src)
+    return seen
+
+
+async def _probe_media(
+    state: dict[str, Any], project_id: str, paths: list[str]
+) -> dict[str, dict[str, Any]]:
+    probes: dict[str, dict[str, Any]] = {}
+    for path in paths[:_PROBE_LIMIT]:
+        query = urlencode({"path": path, "what": "probe"})
+        try:
+            status, said = await _studio_request(
+                state, "GET", f"{_project_api(project_id, 'media')}?{query}"
+            )
+        except StudioError:
+            continue
+        if status < 400 and isinstance(said, dict):
+            probes[path] = {
+                key: said.get(key)
+                for key in ("duration", "width", "height", "fps", "audio")
+                if key in said
+            }
+    return probes
+
+
+def _media_list(probes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{"path": path, **facts} for path, facts in probes.items()]
+
+
+async def read_studio_film(
+    *,
+    project_dir: Path,
+    state_dir: Path,
+    canvas_id: str,
+    node_id: str,
+) -> dict[str, Any]:
+    """The film of a compose node as the agent reads it: clips by id, with where they came from."""
+    from novelvideo.freezone import canvas_store
+
+    film_dir = _require_film(project_dir, canvas_id, node_id)
+    state = await _ensure_studio()
+    project_id = await _studio_project_id(state, film_dir)
+    status, said = await _studio_request(state, "GET", _project_api(project_id))
+    if status >= 400 or not isinstance(said, dict):
+        raise StudioError(
+            f"OpenFilm Studio could not read the film: {_studio_error_text(said, str(status))}",
+            502,
+        )
+    doc = said.get("doc") if isinstance(said.get("doc"), dict) else said.get("value")
+    try:
+        canvas = canvas_store.read_canvas(Path(state_dir), canvas_id)
+    except Exception:  # noqa: BLE001 - a corrupt canvas only loses the labels
+        canvas = None
+    sources = _source_index(film_dir, canvas, node_id)
+    probes = await _probe_media(state, project_id, _clip_sources(doc))
+    problems = said.get("problems") if isinstance(said.get("problems"), list) else []
+    return {
+        "ok": True,
+        "status": "studio_film",
+        "node_id": node_id,
+        "rev": str(said.get("rev") or ""),
+        "problems": problems,
+        "film": _summarize_film(doc, sources=sources, probes=probes),
+        "media": _media_list(probes),
+        "studio": {
+            "project_id": project_id,
+            "edited_by_hand": studio_film_was_edited(film_dir),
+        },
+    }
+
+
+def _check_ops(ops: Any) -> list[dict[str, Any]]:
+    if not isinstance(ops, list) or not ops:
+        raise StudioError("ops must be a non-empty list of film operations", 400)
+    if len(ops) > _MAX_EDIT_OPS:
+        raise StudioError(f"at most {_MAX_EDIT_OPS} operations per edit", 400)
+    clean: list[dict[str, Any]] = []
+    for index, op in enumerate(ops):
+        if not isinstance(op, dict) or not isinstance(op.get("op"), str):
+            raise StudioError(f"ops[{index}] must be an object with an 'op' name", 400)
+        clean.append(op)
+    return clean
+
+
+async def edit_studio_film(
+    *,
+    project_dir: Path,
+    state_dir: Path,
+    canvas_id: str,
+    node_id: str,
+    base_rev: str | None,
+    ops: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Apply clip-id operations to the film through Studio.
+
+    A conflict (the film changed since ``base_rev`` and an operation names a
+    clip that is gone) or an invalid edit comes back as ``ok: False`` with the
+    reason, never as an exception: the agent re-reads the film and decides.
+    """
+    from novelvideo.freezone import canvas_store
+
+    clean_ops = _check_ops(ops)
+    film_dir = _require_film(project_dir, canvas_id, node_id)
+    state = await _ensure_studio()
+    project_id = await _studio_project_id(state, film_dir)
+    status, said = await _studio_request(
+        state,
+        "POST",
+        _project_api(project_id, "edit"),
+        {"base": base_rev or None, "ops": clean_ops},
+    )
+    if status in {409, 422}:
+        conflict = status == 409
+        return {
+            "ok": False,
+            "status": "studio_edit_conflict" if conflict else "studio_edit_invalid",
+            "code": "studio_edit_conflict" if conflict else "studio_edit_invalid",
+            "error": _studio_error_text(said, "Studio refused the edit"),
+            "node_id": node_id,
+            "rev": str(said.get("rev") or "") if isinstance(said, dict) else "",
+            "retryable": conflict,
+            "next_action": ("reread_film_and_retry" if conflict else "fix_operations"),
+        }
+    if status >= 400 or not isinstance(said, dict):
+        raise StudioError(
+            f"OpenFilm Studio refused the edit: {_studio_error_text(said, str(status))}",
+            502,
+        )
+    doc = said.get("doc") if isinstance(said.get("doc"), dict) else said.get("value")
+    try:
+        canvas = canvas_store.read_canvas(Path(state_dir), canvas_id)
+    except Exception:  # noqa: BLE001
+        canvas = None
+    sources = _source_index(film_dir, canvas, node_id)
+    probes = await _probe_media(state, project_id, _clip_sources(doc))
+    return {
+        "ok": True,
+        "status": "studio_film_edited",
+        "node_id": node_id,
+        "rev": str(said.get("rev") or ""),
+        "rebased": bool(said.get("rebased")),
+        "ops_applied": len(clean_ops),
+        "film": _summarize_film(doc, sources=sources, probes=probes),
+        "media": _media_list(probes),
+    }
+
+
+def _resolve_import_source(source_url: str, project_dir: Path) -> Path:
+    try:
+        path = resolve_static_url_to_path(source_url, project_dir)
+    except ValueError as exc:
+        raise StudioError(str(exc), 400) from exc
+    if not path.exists():
+        raise StudioError(f"media source not found: {source_url}", 404)
+    if not path.is_file():
+        raise StudioError(f"media source is not a file: {source_url}", 400)
+    suffix = path.suffix.lower()
+    if suffix not in _IMPORT_SUFFIXES:
+        raise StudioError(f"unsupported media type: {suffix or 'none'}", 400)
+    return path
+
+
+def _record_import(
+    film_dir: Path, asset_name: str, *, source_url: str, node_id: str, label: str
+) -> None:
+    manifest = _read_manifest(film_dir / "manifest.json")
+    if manifest is None:
+        return
+    imports = (
+        manifest.get("imports") if isinstance(manifest.get("imports"), dict) else {}
+    )
+    imports = {
+        **imports,
+        asset_name: {"source_url": source_url, "node_id": node_id, "label": label},
+    }
+    _write_text_atomic(
+        film_dir / "manifest.json",
+        json.dumps({**manifest, "imports": imports}, ensure_ascii=False, indent=2)
+        + "\n",
+    )
+
+
+async def import_media_to_film(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    node_id: str,
+    source_url: str,
+    source_node_id: str = "",
+    label: str = "",
+) -> dict[str, Any]:
+    """Copy a project media file into the film's assets so a clip can use it."""
+    film_dir = _require_film(project_dir, canvas_id, node_id)
+    source = _resolve_import_source(source_url, Path(project_dir))
+    digest = hashlib.sha1(source_url.encode("utf-8")).hexdigest()[:8]
+    stem = _safe_segment((label or source.stem)[:24], "media")[:24]
+    asset_name = f"{_IMPORT_PREFIX}{digest}-{stem}{source.suffix.lower()}"
+    destination = film_dir / "assets" / asset_name
+    with _BUILD_LOCK:
+        if not destination.is_file():
+            _copy_asset(source, destination)
+        _record_import(
+            film_dir,
+            asset_name,
+            source_url=source_url,
+            node_id=source_node_id,
+            label=label,
+        )
+    kind = _clip_kind(asset_name, {})
+    facts: dict[str, Any] = {}
+    try:
+        state = await _ensure_studio()
+        project_id = await _studio_project_id(state, film_dir)
+        facts = (await _probe_media(state, project_id, [f"assets/{asset_name}"])).get(
+            f"assets/{asset_name}", {}
+        )
+    except StudioError:
+        facts = {}
+    return {
+        "ok": True,
+        "status": "studio_media_imported",
+        "node_id": node_id,
+        "asset_path": f"assets/{asset_name}",
+        "kind": kind,
+        "media": [{"path": f"assets/{asset_name}", **facts}],
+        "source": {"source_url": source_url, "node_id": source_node_id, "label": label},
+    }
+
+
+async def export_studio_film(
+    *,
+    film_dir: Path,
+    output_path: Path,
+    fps: int = 30,
+    poll_seconds: float = _EXPORT_POLL_SECONDS,
+    timeout_seconds: float = _EXPORT_TIMEOUT_SECONDS,
+) -> Path:
+    """Render the film through Studio's export queue into ``output_path`` (an mp4).
+
+    Studio keeps its own list of exports and offers to open each file where it
+    wrote it, so the render stays in ``studio-exports/`` beside the job output;
+    the job's mp4 is a hard link to it (a copy when the disk cannot link).
+    """
+    film_dir = Path(film_dir)
+    if not studio_film_exists(film_dir):
+        raise StudioError("the compose node has no Studio film to export", 404)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    folder = output_path.parent / "studio-exports"
+    folder.mkdir(parents=True, exist_ok=True)
+
+    state = await _ensure_studio()
+    project_id = await _studio_project_id(state, film_dir)
+    ask: dict[str, Any] = {"kind": "video", "codec": "h264"}
+    if fps:
+        ask["fps"] = int(fps)
+    status, said = await _studio_request(
+        state,
+        "POST",
+        _project_api(project_id, "exports"),
+        {"jobs": [ask], "folder": str(folder)},
+    )
+    if status >= 400 or not isinstance(said, dict):
+        raise StudioError(
+            f"OpenFilm Studio refused the export: {_studio_error_text(said, str(status))}",
+            502,
+        )
+    jobs = said.get("exports")
+    job = (
+        jobs[0]
+        if isinstance(jobs, list) and jobs and isinstance(jobs[0], dict)
+        else None
+    )
+    job_id = str(job.get("id") or "") if job else ""
+    if not job_id:
+        raise StudioError("OpenFilm Studio returned no export job", 502)
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        status, said = await _studio_request(
+            state, "GET", _project_api(project_id, "exports")
+        )
+        current = None
+        if status < 400 and isinstance(said, dict):
+            for entry in said.get("exports") or []:
+                if isinstance(entry, dict) and entry.get("id") == job_id:
+                    current = entry
+                    break
+        if current is None:
+            raise StudioError("OpenFilm Studio lost the export job", 502)
+        state_name = str(current.get("status") or "")
+        if state_name in _EXPORT_TERMINAL:
+            if state_name != "done":
+                raise StudioError(
+                    f"OpenFilm Studio export {state_name}: "
+                    f"{str(current.get('error') or '').strip() or 'no detail'}",
+                    502,
+                )
+            outputs = [
+                Path(str(item))
+                for item in current.get("outputs") or []
+                if isinstance(item, str) and str(item).lower().endswith(".mp4")
+            ]
+            rendered = next((item for item in outputs if item.is_file()), None)
+            if rendered is None:
+                raise StudioError("OpenFilm Studio export produced no mp4", 502)
+            output_path.unlink(missing_ok=True)
+            try:
+                os.link(rendered, output_path)
+            except OSError:
+                shutil.copyfile(rendered, output_path)
+            return output_path
+        if time.monotonic() > deadline:
+            await _studio_request(
+                state, "DELETE", _project_api(project_id, f"exports/{job_id}")
+            )
+            raise StudioError("OpenFilm Studio export timed out", 504)
+        await asyncio.sleep(poll_seconds)

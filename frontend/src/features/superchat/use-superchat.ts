@@ -1914,6 +1914,7 @@ export function useSuperChat({
   canvasId,
   freezoneCanvasId,
   freezoneAgentId,
+  freezoneComposeNodeId = null,
   connectionEnabled = true,
 }: {
   project?: string;
@@ -1922,9 +1923,12 @@ export function useSuperChat({
   canvasId?: string | null;
   freezoneCanvasId?: string | null;
   freezoneAgentId?: string | null;
+  /** 视频合成与剪辑工作区里正在剪的节点；不在工作区时为 null，不随消息发送。 */
+  freezoneComposeNodeId?: string | null;
   connectionEnabled?: boolean;
 }) {
   const normalizedFreezoneCanvasId = canvasId ?? freezoneCanvasId ?? null;
+  const normalizedComposeNodeId = freezoneComposeNodeId?.trim() || null;
   const desiredScope = useMemo(
     () => scopeForProject(project, surface, normalizedFreezoneCanvasId, freezoneAgentId),
     [freezoneAgentId, normalizedFreezoneCanvasId, project, surface],
@@ -3068,11 +3072,14 @@ export function useSuperChat({
           ? {
               freezone_canvas_id: normalizedFreezoneCanvasId,
               canvas_command_execution_mode: freezoneCanvasCommandExecutionMode(),
+              ...(normalizedComposeNodeId
+                ? { freezone_compose_node_id: normalizedComposeNodeId }
+                : {}),
             }
           : undefined,
     });
     return true;
-  }, [connected, desiredScope, displayName, markTurnActive, normalizedFreezoneCanvasId, sendFrame, surface]);
+  }, [connected, desiredScope, displayName, markTurnActive, normalizedComposeNodeId, normalizedFreezoneCanvasId, sendFrame, surface]);
 
   const appendNotification = useCallback(async (text: string): Promise<boolean> => {
     const trimmed = text.trim();

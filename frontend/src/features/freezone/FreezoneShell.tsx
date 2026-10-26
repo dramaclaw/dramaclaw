@@ -2398,6 +2398,7 @@ export function FreezoneShell({
             open={chatOpen && active}
             pushesBoard={composeActive || (viewMode === "board" && !htmlTarget)}
             compose={composeActive}
+            composeNodeId={composeActive ? composeNodeId : null}
             boardWorkspaceRef={boardWorkspaceRef}
             onOpenChange={handleChatOpenChange}
             title={t("freezone.chat.title")}
@@ -2481,6 +2482,7 @@ function FreezoneChatDock({
   open,
   pushesBoard,
   compose,
+  composeNodeId,
   boardWorkspaceRef,
   onOpenChange,
   title,
@@ -2502,6 +2504,8 @@ function FreezoneChatDock({
   pushesBoard: boolean;
   /** 视频合成页：强制停靠、独立宽度偏好、不提供浮窗切换。 */
   compose: boolean;
+  /** 正在剪的合成节点 id：随消息发给虾导，让它改 film 而不是画布时间线。 */
+  composeNodeId: string | null;
   boardWorkspaceRef: RefObject<HTMLDivElement | null>;
   onOpenChange: (open: boolean) => void;
   title: string;
@@ -2920,6 +2924,7 @@ function FreezoneChatDock({
           variant="freezone"
           freezoneCanvasId={canvasId}
           freezoneAgentId={agent.id}
+          freezoneComposeNodeId={composeNodeId}
           connectionEnabled={connectionEnabled}
           workflowStatusEnabled={active}
           currentCanvasMetadata={currentCanvasMetadata}

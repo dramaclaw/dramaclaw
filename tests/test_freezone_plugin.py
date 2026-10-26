@@ -10674,3 +10674,132 @@ def test_mcp_prepare_preserves_missing_execution_policy(monkeypatch, name, polic
     assert ("run_after_create" in captured[0]) is (policy is not None)
     if policy is not None:
         assert captured[0]["run_after_create"] is policy
+
+
+# ---------------------------------------------------------------------------
+# Compose workspace tools: the node's OpenFilm film through Studio.
+# ---------------------------------------------------------------------------
+
+
+def _as_result(value):
+    """The registry stub returns the dict itself; Hermes gets it serialised."""
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def _studio_plugin(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_API_URL", "http://api.test")
+    monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN", "token")
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "proj-1")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-1")
+    plugin = _load_plugin_module()
+    requests = []
+
+    def fake_request(method, path, *, query=None, body=None):
+        requests.append((method, path, body))
+        return {"status_code": 200, "ok": True, "status": "studio_film", "rev": "r1", "film": {"tracks": []}}
+
+    monkeypatch.setattr(plugin, "_request", fake_request)
+    return plugin, requests
+
+
+def test_studio_tools_are_published_with_strict_schemas():
+    plugin = _load_plugin_module()
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+    for name in (
+        "freezone_studio_get_film",
+        "freezone_studio_edit_film",
+        "freezone_studio_import_media",
+        "freezone_studio_export_film",
+    ):
+        assert name in schemas, name
+        assert schemas[name]["parameters"]["additionalProperties"] is False
+        assert "node_id" in schemas[name]["parameters"]["required"]
+        assert schemas[name]["output_schema"]["x-dramaclaw-tool"] == name
+    assert schemas["freezone_studio_edit_film"]["parameters"]["required"] == [
+        "node_id",
+        "base_rev",
+        "ops",
+    ]
+    # none of them is a bridge-backed canvas write
+    assert not ({name for name in schemas if name.startswith("freezone_studio_")} & set(plugin._CANVAS_RESULT_TOOLS))
+
+
+def test_studio_get_film_reads_the_bound_canvas_scope(monkeypatch):
+    plugin, requests = _studio_plugin(monkeypatch)
+    handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_get_film"]
+
+    result = _as_result(handler({"node_id": "node-1"}))
+
+    assert requests == [
+        ("GET", "/projects/proj-1/freezone/canvases/canvas-1/compose/node-1/studio/film", None)
+    ]
+    assert result["ok"] is True and result["rev"] == "r1" and result["node_id"] == "node-1"
+    assert "status_code" not in result
+
+
+def test_studio_tools_refuse_a_canvas_outside_the_bound_scope(monkeypatch):
+    plugin, requests = _studio_plugin(monkeypatch)
+    handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_get_film"]
+
+    result = _as_result(handler({"node_id": "node-1", "canvas_id": "other"}))
+
+    assert result["ok"] is False and requests == []
+    assert "canvas-1" in json.dumps(result)
+
+
+def test_studio_edit_requires_a_base_rev_and_forwards_ops(monkeypatch):
+    plugin, requests = _studio_plugin(monkeypatch)
+    handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_edit_film"]
+
+    missing = _as_result(handler({"node_id": "node-1", "ops": [{"op": "remove", "clip": "c"}]}))
+    assert missing["ok"] is False and missing["status"] == "invalid_arguments"
+    assert requests == []
+
+    ops = [{"op": "move", "clip": "clip-1", "at": 2.5}]
+    _as_result(handler({"node_id": "node-1", "base_rev": "r1", "ops": ops}))
+    assert requests == [
+        (
+            "POST",
+            "/projects/proj-1/freezone/canvases/canvas-1/compose/node-1/studio/edit",
+            {"base_rev": "r1", "ops": ops},
+        )
+    ]
+
+
+def test_studio_import_and_export_bodies(monkeypatch):
+    plugin, requests = _studio_plugin(monkeypatch)
+    handlers = dict((name, handler) for name, _schema, handler in plugin.TOOLS)
+
+    _as_result(handlers["freezone_studio_import_media"]({"node_id": "node-1", "source_node_id": "video-a"}))
+    _as_result(handlers["freezone_studio_export_film"]({"node_id": "node-1", "fps": 24}))
+    bad = _as_result(handlers["freezone_studio_export_film"]({"node_id": "node-1", "fps": 500}))
+    none = _as_result(handlers["freezone_studio_import_media"]({"node_id": "node-1"}))
+
+    assert requests == [
+        (
+            "POST",
+            "/projects/proj-1/freezone/canvases/canvas-1/compose/node-1/studio/media",
+            {"source_url": None, "source_node_id": "video-a", "label": ""},
+        ),
+        (
+            "POST",
+            "/projects/proj-1/freezone/canvases/canvas-1/compose/node-1/studio/export",
+            {"title": "", "fps": 24},
+        ),
+    ]
+    assert bad["status"] == "invalid_arguments" and none["status"] == "invalid_arguments"
+
+
+def test_studio_tools_explain_a_missing_film(monkeypatch):
+    plugin, _requests = _studio_plugin(monkeypatch)
+    handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_get_film"]
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_a, **_k: {"ok": False, "status": "failed", "status_code": 404, "error": "no film"},
+    )
+
+    result = _as_result(handler({"node_id": "node-1"}))
+
+    assert result["ok"] is False
+    assert "compose workspace" in result["agent_instruction"]

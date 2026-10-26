@@ -1888,6 +1888,44 @@ class FreezoneVideoComposeStudioRequest(FreezoneVideoComposeRequest):
     )
 
 
+
+class FreezoneStudioFilmEditRequest(BaseModel):
+    """Agent edit of a compose node's OpenFilm film, by clip id."""
+
+    base_rev: str | None = Field(
+        default=None,
+        description="上次读到的 film rev；Studio 据此在文件已变化时检测冲突",
+    )
+    ops: list[dict[str, Any]] = Field(
+        min_length=1,
+        max_length=200,
+        description="OpenFilm Studio 的编辑操作列表（set / move / insert / remove / split / props / track / reorder / stage），每项按 clip id 寻址",
+    )
+
+
+class FreezoneStudioMediaImportRequest(BaseModel):
+    """Copy project media into a compose node's film assets."""
+
+    source_url: str | None = Field(default=None, description="项目内媒体静态地址")
+    source_node_id: str | None = Field(
+        default=None, description="画布节点 id；取该节点的成品媒体地址（视频 / 音频 / 图片）"
+    )
+    label: str = Field(default="", max_length=120, description="素材名，仅用于文件名和回溯")
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "FreezoneStudioMediaImportRequest":
+        if not (self.source_url or "").strip() and not (self.source_node_id or "").strip():
+            raise ValueError("source_url or source_node_id is required")
+        return self
+
+
+class FreezoneStudioExportRequest(BaseModel):
+    """Render a compose node's film through OpenFilm Studio."""
+
+    fps: int = Field(default=30, ge=1, le=60, description="输出帧率")
+    title: str = Field(default="", max_length=200, description="成片标题，可为空")
+
+
 FreezoneVideoGenRequest.model_rebuild()
 FreezoneImageToVideoRequest.model_rebuild()
 FreezoneKeyframeVideoRequest.model_rebuild()

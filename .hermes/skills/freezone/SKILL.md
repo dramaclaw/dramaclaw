@@ -10,6 +10,7 @@ compatibility: Requires Freezone/虾画 chat surface with frontend-injected curr
 
 - 这个 skill 是虾画/Freezone 的总入口，负责判断当前是不是画布场景、用户意图属于咨询还是画布操作，以及用户可见回复应该怎么说。
 - 具体节点职责、连线语义、视频节点和合成节点的产品建模，读取 `references/canvas-modeling-guide.md`。
+- 系统提示里出现 `[FREEZONE_COMPOSE_WORKSPACE]`（用户正在某个合成节点的「视频合成与剪辑」工作区里）时，剪辑类请求读取 `references/studio-editing-guide.md`，用 `freezone_studio_*` 工具改该节点的 film，不改画布时间线。
 - 只有复杂批量命令的字段不明确时，才读取 `references/canvas-command-guide.md`。删除、选择、布局等参数已经明确的单步操作禁止先读取该指南。
 
 ## 互动影游边界
@@ -28,6 +29,7 @@ compatibility: Requires Freezone/虾画 chat surface with frontend-injected curr
 - **创意咨询**：可以自然语言回答；如果用户希望"落到画布"，使用画布工具创建可继续工作的材料。
 - **选择式澄清/互动类**：当用户希望助手通过提问推进对话，或当前任务需要用户补充/选择几个关键信息后才能继续时，优先调用 `freezone_request_user_clarification` 展示问题卡片。适用场景包括：帮用户理清想法、做偏好选择、做小测验/问答互动、确认方向、收集必要条件。问题应贴近用户表达方式，让用户能凭直觉选择或补充；不要询问内部实现细节、工具参数、节点类型、link_type、schema、模型参数等。若只是普通闲聊、简单知识问答、单个自然追问，或用户已经给出明确指令，则直接自然语言回复，不要强行发卡片。
 - **全局画布请求**：用户说"看看画布""整理当前画布"时，优先使用当前注入的画布上下文；不足时再读取。
+- **剪辑工作区内的剪辑请求**：`[FREEZONE_COMPOSE_WORKSPACE]` 存在且用户要剪、挪、删、分割、淡入淡出、调音量/变速、加素材或导出成片时，先 `freezone_studio_get_film`，再 `freezone_studio_edit_film` / `freezone_studio_import_media` / `freezone_studio_export_film`；禁止改该节点的 `draftTimeline`、禁止用画布命令或新工作流重建这条时间线。详见 `references/studio-editing-guide.md`。
 - **运行已有工作流**：复用已有节点、内容和连线，优先运行已有工作流；不要重新规划一套重复节点，除非用户明确要求新增、重写或替换。
 - **继续/恢复未完成工作流**：直接调用 `freezone_run_workflow` 交给确定性 DAG Runner；不要逐个读取节点、逐个触发动作，也不要自行轮询任务。一次运行返回失败后，根据返回的错误类别暂停并说明下一步，不要在同一请求或后续自动恢复中反复修改节点。
 - **单节点工作流仍是工作流**：用户明确要求运行、执行、继续或恢复工作流时，即使其中只有一个可执行节点，也直接调用 `freezone_run_workflow`；不要读取子节点后改用 `freezone_run_node_action`。
