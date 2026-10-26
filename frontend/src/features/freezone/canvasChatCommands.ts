@@ -1325,7 +1325,7 @@ async function ensureVideoContinuityTailFrames(
         fallbackDurationSec: durationMs !== null ? durationMs / 1000 : null,
       }),
       projectId,
-      displayName: i18next.t("freezone.canvasCommand.lastShotEndFrame"),
+      displayName: "上一镜尾帧",
     });
     if (!result.nodeId) {
       throw new Error(result.error ?? "上一镜尾帧抽取失败，已停止启动下一镜视频。");
@@ -2809,7 +2809,7 @@ async function executeQueuedNodeActions(
         commandIndex,
         type: "run_workflow",
         status: "success",
-        label: i18next.t("freezone.canvasCommand.workflowAlreadyRunning"),
+        label: "工作流正在运行，已忽略重复启动",
         output: {
           skipped: true,
           reason: "workflow_already_running",
@@ -2840,7 +2840,7 @@ async function executeQueuedNodeActions(
           commandIndex: action.commandIndex,
           type: "run_node_action",
           status: "success",
-          label: `${action.label} ${i18next.t("freezone.canvasCommand.alreadyHasResultSkipped")}`,
+          label: `${action.label}（已有结果，已跳过）`,
           nodeId: action.nodeId,
           action: action.action,
           output: {
@@ -3842,7 +3842,7 @@ function commandLabel(command: CanvasChatCommand): string {
     case "layout_nodes":
       return "整理布局";
     case "group_nodes":
-      return i18next.t("freezone.canvasCommand.createNormalGroup");
+      return "创建普通组";
     case "move_nodes":
       return "移动节点";
     case "select_nodes":
@@ -4140,7 +4140,7 @@ function* applyCanvasChatCommandsInternal(
       commandIndex: -1,
       type: "validate",
       status: "error",
-      label: i18next.t("freezone.chat.command.validateCanvasCommands"),
+      label: "校验画布命令",
       error: result.errors.join("; "),
     });
     return result;
@@ -4156,7 +4156,7 @@ function* applyCanvasChatCommandsInternal(
           commandIndex,
           type: command.type,
           status: "success",
-          label: i18next.t("freezone.canvasCommand.workflowExistsSkipCreation"),
+          label: "工作流已存在，跳过重复创建",
           nodeId: commandPrimaryNodeId(command),
           output: {
             skipped: true,
@@ -4211,7 +4211,7 @@ function* applyCanvasChatCommandsInternal(
                 commandIndex: currentCommandIndex,
                 type: command.type,
                 status: "success",
-                label: i18next.t("freezone.canvasCommand.reuseExistingWorkflowNode"),
+                label: "复用已有工作流节点",
                 nodeId: command.client_id,
                 createdNodeId: existingWorkflowNode.id,
                 output: {
@@ -4371,7 +4371,7 @@ function* applyCanvasChatCommandsInternal(
                 commandIndex: currentCommandIndex,
                 type: command.type,
                 status: "success",
-                label: i18next.t("freezone.canvasCommand.skipInvalidConnection"),
+                label: "跳过无效连接",
                 nodeId: source,
                 error: invalidReason,
               });
@@ -4590,7 +4590,7 @@ function* applyCanvasChatCommandsInternal(
                 commandIndex: currentCommandIndex,
                 type: command.type,
                 status: "success",
-                label: i18next.t("freezone.canvasCommand.workflowCompletedNoRegen"),
+                label: "工作流已完成，未重新生成",
                 nodeId: allActions[0]?.nodeId,
                 output: {
                   skipped: true,
@@ -4685,7 +4685,7 @@ function* applyCanvasChatCommandsInternal(
           commandIndex,
           type: "group_nodes",
           status: "success",
-          label: i18next.t("freezone.canvasCommand.createNormalGroup"),
+          label: "创建普通组",
           nodeId: targetNodeIds[0],
           createdNodeId: groupId,
         });
@@ -4713,7 +4713,7 @@ function* applyCanvasChatCommandsInternal(
           commandIndex,
           type: "group_nodes",
           status: "success",
-          label: i18next.t("freezone.canvasCommand.createNormalGroup"),
+          label: "创建普通组",
           nodeId: targetNodeIds[0],
           createdNodeId: groupId,
         });

@@ -97,8 +97,7 @@ export function resolvePriceDisplayCurrency(
     return 'USD';
   }
 
-  if (language.startsWith('zh')) return 'CNY';
-  return 'USD';
+  return language.startsWith('zh') ? 'CNY' : 'USD';
 }
 
 export function getGrsaiCreditTier(
@@ -221,7 +220,7 @@ export function resolveModelPriceDisplay(
     displayCurrency,
     pricingSettings.usdToCnyRate
   );
-  const perRunSuffix = i18n.t('pricing.perRunSuffix', { defaultValue: '/run' });
+  const perRunSuffix = i18n.t('pricing.perRunSuffix', { lng: options.language, defaultValue: '/run' });
   const nativeLabel =
     quote.currency === displayCurrency
       ? undefined

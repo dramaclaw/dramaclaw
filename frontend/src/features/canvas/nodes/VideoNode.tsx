@@ -12,16 +12,19 @@ import {
   useSyncExternalStore,
   type ChangeEvent,
   type DragEvent,
-  type PointerEvent as ReactPointerEvent} from "react";
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   Handle,
   Position,
   useStore,
   useUpdateNodeInternals,
-  type NodeProps} from "@xyflow/react";
+  type NodeProps,
+} from "@xyflow/react";
 import {
   isLowDetailZoom,
-  setNodeMediaActive} from "@/features/canvas/application/canvasLod";
+  setNodeMediaActive,
+} from "@/features/canvas/application/canvasLod";
 import {
   AlertTriangle,
   ArrowUp,
@@ -42,7 +45,8 @@ import {
   Volume2,
   VolumeX,
   X as XIcon,
-  type LucideIcon} from "lucide-react";
+  type LucideIcon,
+} from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
@@ -61,12 +65,14 @@ import {
   type VideoGenCount,
   type VideoGenMode,
   type VideoGenQuality,
-  type VideoNodeData} from "@/features/canvas/domain/canvasNodes";
+  type VideoNodeData,
+} from "@/features/canvas/domain/canvasNodes";
 import {
   publishNodeActionAccepted,
   publishNodeActionError,
   publishNodeActionSuccess,
-  subscribeNodeAction} from "@/features/canvas/application/nodeActionResult";
+  subscribeNodeAction,
+} from "@/features/canvas/application/nodeActionResult";
 import {
   audioReferenceDurationRejection,
   MAX_AUDIO_REFERENCE_DURATION_MS,
@@ -92,19 +98,23 @@ import {
   videoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
-  type VideoEmptyStateCtaMode} from "@/features/canvas/nodes/shared/videoModelCapabilities";
+  type VideoEmptyStateCtaMode,
+} from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import {
   VIDEO_GENERATION_ASPECT_RATIOS,
   resolveImageDisplayUrl,
-  snapToAllowedAspectRatio} from "@/features/canvas/application/imageData";
+  snapToAllowedAspectRatio,
+} from "@/features/canvas/application/imageData";
 import {
   captureVideoFrameBlob,
   getLodStill,
   requestLodStill,
-  subscribeLodStills} from "@/features/canvas/application/videoFrameCapture";
+  subscribeLodStills,
+} from "@/features/canvas/application/videoFrameCapture";
 import {
   FALLBACK_VIDEO_ASPECT_OPTIONS,
-  FALLBACK_VIDEO_RESOLUTION_OPTIONS} from "@/features/canvas/domain/mediaModelOptions";
+  FALLBACK_VIDEO_RESOLUTION_OPTIONS,
+} from "@/features/canvas/domain/mediaModelOptions";
 import { ensureWebSafeVideo } from "@/features/canvas/application/videoTranscode";
 import {
   fitRatioBox,
@@ -112,7 +122,8 @@ import {
   resolveCropRatio,
   toEvenSourceRect,
   type CropBox,
-  type CropRatioId} from "@/features/canvas/application/videoCrop/cropMath";
+  type CropRatioId,
+} from "@/features/canvas/application/videoCrop/cropMath";
 import { VideoCropError, type VideoCropErrorCode } from "@/features/canvas/application/videoCrop/cropVideo";
 import { cropAndUploadVideo } from "@/features/canvas/application/videoCrop/runVideoCrop";
 import {
@@ -120,7 +131,8 @@ import {
   clearVideoCropInFlight,
   isVideoCropInFlight,
   markVideoCropInFlight,
-  useVideoCropInFlight} from "@/features/canvas/application/videoCrop/videoCropInFlight";
+  useVideoCropInFlight,
+} from "@/features/canvas/application/videoCrop/videoCropInFlight";
 import { VideoCropOverlay } from "@/features/canvas/nodes/VideoCropOverlay";
 import { VideoCropPanel } from "@/features/canvas/nodes/VideoCropPanel";
 import { isVideoFile, VIDEO_FILE_ACCEPT } from "@/features/canvas/application/videoFileTypes";
@@ -130,30 +142,36 @@ import { downloadUrlAsFile } from "@/lib/browserDownload";
 import { useModelTaskAccess } from "@/lib/model-task-access";
 import {
   setAlbumPendingTotal,
-  useAlbumPendingTotal} from "@/features/canvas/nodes/shared/albumPendingTotals";
+  useAlbumPendingTotal,
+} from "@/features/canvas/nodes/shared/albumPendingTotals";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import { useExternalFileHandoff } from "@/features/canvas/hooks/useExternalFileHandoff";
 import {
   extractUpstreamContent,
-  joinUpstreamText} from "@/features/canvas/application/graphContentResolver";
+  joinUpstreamText,
+} from "@/features/canvas/application/graphContentResolver";
 import { useUpstreamNodes } from "@/features/canvas/application/useUpstreamGraph";
 import {
   sortUpstreamByReferenceOrder,
-  upstreamNodesInEdgeOrder} from "@/features/canvas/nodes/referenceOrdering";
+  upstreamNodesInEdgeOrder,
+} from "@/features/canvas/nodes/referenceOrdering";
 import { useReferenceMentionSync } from "@/features/canvas/nodes/useReferenceMentionSync";
 import { useNodeGenerationTaskState } from "@/features/canvas/application/useNodeGenerationTaskState";
 import {
   resolveErrorContent,
   showErrorDialog,
-  notifyTaskStillRunning} from "@/features/canvas/application/errorDialog";
+  notifyTaskStillRunning,
+} from "@/features/canvas/application/errorDialog";
 import {
   BillingRuleNotConfiguredError,
-  backendErrorToastMessage} from "@/lib/api-errors";
+  backendErrorToastMessage,
+} from "@/lib/api-errors";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { resolveGenerationErrorDiagnostics } from "@/features/canvas/application/generationErrorReport";
 import {
   NodeHeader,
-  NODE_HEADER_FLOATING_POSITION_CLASS} from "@/features/canvas/ui/NodeHeader";
+  NODE_HEADER_FLOATING_POSITION_CLASS,
+} from "@/features/canvas/ui/NodeHeader";
 import { NodeResizeHandle } from "@/features/canvas/ui/NodeResizeHandle";
 import { NODE_OPS_PANEL_ENTER_CLASS } from "@/features/canvas/ui/OperationPanelShell";
 import { NodeGenerationOverlay } from "@/features/canvas/ui/NodeGenerationOverlay";
@@ -164,24 +182,29 @@ import {
   CANVAS_NODE_OPS_PANEL_CLASS,
   CANVAS_NODE_PANEL_SURFACE_CLASS,
   CANVAS_NODE_TOOLBAR_PILL_CLASS,
-  canvasNodeFrameClass} from "@/features/canvas/ui/nodeFrameStyles";
+  canvasNodeFrameClass,
+} from "@/features/canvas/ui/nodeFrameStyles";
 import {
   hasMainlineContexts,
-  NodeContextBadges} from "@/features/freezone/context/NodeContextBadges";
+  NodeContextBadges,
+} from "@/features/freezone/context/NodeContextBadges";
 import { RegenerateButton } from "@/features/canvas/ui/RegenerateButton";
 import { DepthCaptureBody } from "@/features/canvas/nodes/DepthCaptureBody";
 import {
   NODE_CREDIT_PILL_FLAT_CLASS,
   NODE_GENERATE_BUTTON_BASE_CLASS,
   NODE_GENERATE_BUTTON_DISABLED_CLASS,
-  NODE_GENERATE_BUTTON_ENABLED_CLASS} from "@/features/canvas/ui/nodeControlStyles";
+  NODE_GENERATE_BUTTON_ENABLED_CLASS,
+} from "@/features/canvas/ui/nodeControlStyles";
 import {
   NODE_SIDE_ACTION_BUTTON_CLASS,
   NODE_SIDE_ACTION_ICON_CLASS,
-  NodeSideActionRail} from "@/features/canvas/ui/NodeSideActionRail";
+  NodeSideActionRail,
+} from "@/features/canvas/ui/NodeSideActionRail";
 import { NodeMediaReplaceButton } from "@/features/canvas/ui/NodeMediaReplaceButton";
 import {
-  useAssetCommitDragById} from "@/features/canvas/ui/useAssetCommitDrag";
+  useAssetCommitDragById,
+} from "@/features/canvas/ui/useAssetCommitDrag";
 import { VideoClipPanel } from "@/features/canvas/nodes/VideoClipPanel";
 import { VideoExtendPanel } from "@/features/canvas/nodes/VideoExtendPanel";
 import {
@@ -189,15 +212,18 @@ import {
   extendPromptPrefix,
   extendPromptPrefixTrimmed,
   extendRangeNeedsTrim,
-  type ExtendClipRange} from "@/features/canvas/application/videoExtendClip";
+  type ExtendClipRange,
+} from "@/features/canvas/application/videoExtendClip";
 import { trimAndUploadExtendClip } from "@/features/canvas/application/videoExtendTrim";
 import {
   submitVideoUpscale,
-  VIDEO_UPSCALE_RESOLUTIONS} from "@/features/canvas/application/videoUpscale";
+  VIDEO_UPSCALE_RESOLUTIONS,
+} from "@/features/canvas/application/videoUpscale";
 import {
   CAMERA_MOVEMENT_PRESETS,
   findCameraMovementPreset,
-  type CameraMovementPreset} from "@/features/canvas/domain/cameraMovementPresets";
+  type CameraMovementPreset,
+} from "@/features/canvas/domain/cameraMovementPresets";
 import { useFreezoneVideoCameraTemplates } from "@/features/canvas/hooks/useFreezoneVideoCameraTemplates";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { useCanvasStore, useIsBoxSelecting } from "@/stores/canvasStore";
@@ -220,17 +246,20 @@ import {
   type FreezoneVideoAspectRatio,
   type FreezoneVideoReferenceItem,
   type FreezoneVideoResolution,
-  type FreezoneVideoUpscaleResolution} from "@/api/ops";
+  type FreezoneVideoUpscaleResolution,
+} from "@/api/ops";
 import {
   awaitTaskCompletion,
   isTaskCancelledError,
-  isTaskPollTimeoutError} from "@/api/tasks";
+  isTaskPollTimeoutError,
+} from "@/api/tasks";
 import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
 import { useNodeGenerationHistory } from "@/features/canvas/hooks/useNodeGenerationHistory";
 import {
   NodeGenerationHistory,
   hasCompletedHistoryRecords,
-  historyRecordOutputUrl} from "@/features/canvas/ui/NodeGenerationHistory";
+  historyRecordOutputUrl,
+} from "@/features/canvas/ui/NodeGenerationHistory";
 import type { FreezoneGenerationHistoryRecord } from "@/api/ops";
 import { readUrl } from "@/lib/url-params";
 import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
@@ -252,7 +281,8 @@ const VIDEO_CROP_ERROR_KEYS: Record<Exclude<VideoCropErrorCode, "canceled">, str
   noVideoTrack: "node.videoNode.crop.errors.noVideoTrack",
   cannotDecode: "node.videoNode.crop.errors.cannotDecode",
   fetchFailed: "node.videoNode.crop.errors.fetchFailed",
-  failed: "node.videoNode.crop.errors.failed"};
+  failed: "node.videoNode.crop.errors.failed",
+};
 /**
  * 视频生成的计费 feature key。主体（错误态重试的计费探针）与操作面板（估价
  * 展示 + 提交置灰）共用，必须同一口径——放主体导出、面板 import。
@@ -286,7 +316,8 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
   imageReference: { Icon: Images, labelKey: "node.videoNode.cta.imageReference" },
   firstFrame: { Icon: Film, labelKey: "node.videoNode.cta.firstFrame" },
   imageToVideo: { Icon: Film, labelKey: "node.videoNode.cta.imageToVideo" },
-  firstLastFrame: { Icon: Layers, labelKey: "node.videoNode.cta.firstLastFrame" }};
+  firstLastFrame: { Icon: Layers, labelKey: "node.videoNode.cta.firstLastFrame" },
+};
 
 // 各 genMode 对上游引用数量的硬上限。UI 用这张表把后端字段约束（多图 / 多模态
 // 场景下）显式表达出来：超额 chip 标灰 + 从 @ 候选剔除，避免「prompt 引用了
@@ -313,7 +344,8 @@ const REFERENCE_CAPS_BY_MODE: Partial<
   videoEdit: { image: 5, video: 1, audio: 0 },
   videoExtend: { image: 0, video: 1, audio: 0 },
   allReference: { image: 9, video: 3, audio: 3 },
-  firstLastFrame: { image: 2, video: 0, audio: 0 }};
+  firstLastFrame: { image: 2, video: 0, audio: 0 },
+};
 
 // 后台「媒体模型」未给该模型配置比例 / 分辨率时的兜底档位。正常路径下这两项
 // 都来自目录条目的 ratioOptions / resolutionOptions。
@@ -445,7 +477,8 @@ function selectedVideoModelReferenceDisabledReason(
 // 能吃几张参考图」，管的是参考类模式；让它盖住这里等于允许配置把首帧悄悄变成参考。
 const FIXED_IMAGE_CAP_BY_MODE: Partial<Record<VideoGenMode, number>> = {
   firstFrame: 1,
-  imageToVideo: 1};
+  imageToVideo: 1,
+};
 
 function referenceCapsForMode(
   model: ModelOption | null | undefined,
@@ -457,7 +490,8 @@ function referenceCapsForMode(
   return {
     image: FIXED_IMAGE_CAP_BY_MODE[mode] ?? model?.referenceImageMax ?? defaults.image,
     video: model?.referenceVideoMax ?? defaults.video,
-    audio: model?.referenceAudioMax ?? defaults.audio};
+    audio: model?.referenceAudioMax ?? defaults.audio,
+  };
 }
 
 function hasConfiguredReferenceCaps(model: ModelOption | null | undefined): boolean {
@@ -667,7 +701,8 @@ export const VideoNode = memo(
     const {
       records: historyRecords,
       isLoading: historyLoading,
-      refresh: refreshHistory} = useNodeGenerationHistory(id, { enabled: Boolean(selected) });
+      refresh: refreshHistory,
+    } = useNodeGenerationHistory(id, { enabled: Boolean(selected) });
 
     // 生成进行中时，点击历史记录走「非破坏性预览」：不覆写 videoUrl、不打断在途
     // 任务，仅把这条历史视频临时显示在主体上（见 isGenerating 渲染分支）。新视频
@@ -685,7 +720,8 @@ export const VideoNode = memo(
     const {
       models: availableVideoModels,
       isLoading: videoModelsLoading,
-      isFallback: videoModelsFallback} = useFreezoneVideoModels();
+      isFallback: videoModelsFallback,
+    } = useFreezoneVideoModels();
     const selectedVideoModel = useMemo(
       () => selectVideoModel(availableVideoModels, data.model),
       [availableVideoModels, data.model],
@@ -833,7 +869,8 @@ export const VideoNode = memo(
         ready,
         durationSeconds: ready
           ? durations.reduce((sum, duration) => sum + (duration ?? 0), 0) / 1000
-          : 0};
+          : 0,
+      };
     }, [
       data.extendEndMs,
       data.extendStartMs,
@@ -920,7 +957,8 @@ export const VideoNode = memo(
           generationErrorDetails: null,
           generationErrorRequestId: null,
           // 恢复单条历史结果时旧批次画册已与主视频脱钩——一并清掉。
-          generationBatch: null});
+          generationBatch: null,
+        });
       },
       [id, isGenerating, updateNodeData],
     );
@@ -978,7 +1016,8 @@ export const VideoNode = memo(
             nodeId: node.id,
             videoUrl,
             thumbUrl,
-            displayName: vdata.displayName ?? null});
+            displayName: vdata.displayName ?? null,
+          });
           continue;
         }
         if (isAudioNode(node)) {
@@ -992,7 +1031,8 @@ export const VideoNode = memo(
             kind: "audio",
             nodeId: node.id,
             audioUrl,
-            displayName: node.data.displayName ?? null});
+            displayName: node.data.displayName ?? null,
+          });
           continue;
         }
         const url = referenceImageUrl(node);
@@ -1003,7 +1043,8 @@ export const VideoNode = memo(
             imageUrl: url,
             displayName:
               (node.data as { displayName?: string | null }).displayName ??
-              null});
+              null,
+          });
         }
       }
       return items;
@@ -1204,7 +1245,8 @@ export const VideoNode = memo(
           // 建节点时就把这两个钉好，省得先落到目录第一个模型上、再被下面那条
           // effect 纠正一次（每次纠正都要多压一份画布历史）。
           genMode: "allReference",
-          ...(extendModel ? { model: extendModel.id } : {})});
+          ...(extendModel ? { model: extendModel.id } : {}),
+        });
         // 源视频顺着这根边成为新节点的上游参考素材——全能参考就是靠它拿到前情。
         addEdge(id, newNodeId);
         updateNodeData(id, { isExtendPickMode: false });
@@ -1267,7 +1309,8 @@ export const VideoNode = memo(
         sourceNodeId: id,
         requesterNodeId: requesterId,
         videoUrl: data.videoUrl,
-        label: resolvedTitle});
+        label: resolvedTitle,
+      });
       const store = useCanvasStore.getState();
       store.setSelectedNode(requesterId);
       store.requestFocusNode(requesterId);
@@ -1378,11 +1421,13 @@ export const VideoNode = memo(
         albumAppliedCountRef.current += 1;
         const position = {
           x: self.position.x + resolvedWidth * 2 + 12 + 48 + applyIndex * 36,
-          y: self.position.y + applyIndex * 36};
+          y: self.position.y + applyIndex * 36,
+        };
         const newNodeId = addNode(CANVAS_NODE_TYPES.video, position, {
           videoUrl: url,
           aspectRatio: data.aspectRatio,
-          user_spawned: true} as Partial<VideoNodeData>);
+          user_spawned: true,
+        } as Partial<VideoNodeData>);
         setSelectedNode(newNodeId);
       },
       [addNode, data.aspectRatio, id, resolvedWidth, setSelectedNode],
@@ -1441,7 +1486,8 @@ export const VideoNode = memo(
             videoUrl: uploaded.url,
             previewImageUrl: null,
             sourceFileName: file.name,
-            isUploading: false});
+            isUploading: false,
+          });
         } catch (error) {
           console.error("[video-node] upload failed", error);
           updateNodeData(id, { isUploading: false });
@@ -1520,7 +1566,8 @@ export const VideoNode = memo(
             (typeof node.width === "number" ? node.width : FRAME_WIDTH),
           height:
             node.measured?.height ??
-            (typeof node.height === "number" ? node.height : FRAME_HEIGHT)});
+            (typeof node.height === "number" ? node.height : FRAME_HEIGHT),
+        });
         const overlaps = (
           a: { x: number; y: number; width: number; height: number },
           b: { x: number; y: number; width: number; height: number },
@@ -1541,7 +1588,8 @@ export const VideoNode = memo(
               x: node.position.x,
               y: node.position.y,
               width: size.width,
-              height: size.height};
+              height: size.height,
+            };
           });
         const upstreamIds = new Set(
           state.edges.filter((edge) => edge.target === id).map((edge) => edge.source),
@@ -1591,7 +1639,8 @@ export const VideoNode = memo(
                 mode === "firstFrame"
                   ? "node.videoNode.spawn.firstFrame"
                   : "node.videoNode.spawn.referenceImage",
-              )},
+              ),
+            },
           );
           if (mode === "firstFrame") {
             addEdgeWithData(newId, id, { keyframeSlot: "first" });
@@ -1632,7 +1681,8 @@ export const VideoNode = memo(
         );
         addEdgeWithData(lastId, id, { keyframeSlot: "last" });
         state.autoGroupSpawn(id, [firstId, lastId], {
-          label: t('node.videoNode.spawn.firstLastFrameGroup')});
+          label: t('node.videoNode.spawn.firstLastFrameGroup'),
+        });
         updateNodeData(id, { genMode: "firstLastFrame" });
       },
       [addEdge, addEdgeWithData, addNode, id, updateNodeData],
@@ -1784,7 +1834,8 @@ export const VideoNode = memo(
         currentModelId: selectedVideoModelId,
         models: availableVideoModels,
         modelsLoading: videoModelsLoading,
-        alreadySwitched: autoSwitchedForMediaRef.current});
+        alreadySwitched: autoSwitchedForMediaRef.current,
+      });
       if (action.kind === "release") {
         autoSwitchedForMediaRef.current = false;
         return;
@@ -1797,7 +1848,8 @@ export const VideoNode = memo(
       updateNodeData(id, {
         model: action.modelId,
         genMode: action.genMode,
-        generateAudio: videoModelDefaultGenerateAudio(nextModel)});
+        generateAudio: videoModelDefaultGenerateAudio(nextModel),
+      });
       // 刻意不调 writeLastVideoModel：这是替用户救场，不是他表达的偏好，不该顺手
       // 把后续新建视频节点继承的默认模型也改掉。
     }, [
@@ -1927,7 +1979,8 @@ export const VideoNode = memo(
       if (videoModelsLoading) return;
       const counts = {
         ...upstreamTypeCounts,
-        hasOtherReference: Boolean(data.referenceFileUrl || data.referenceLink?.trim())};
+        hasOtherReference: Boolean(data.referenceFileUrl || data.referenceLink?.trim()),
+      };
       const compatibleMode = selectedVideoModel?.supportedModes?.length
         ? videoModeForModel(genMode, selectedVideoModel, counts)
         : genMode;
@@ -2065,7 +2118,8 @@ export const VideoNode = memo(
           box: cropBox,
           sourceWidth: cropSourceWidth,
           sourceHeight: cropSourceHeight,
-          signal});
+          signal,
+        });
         const state = useCanvasStore.getState();
         // 裁的这几十秒里源节点可能被删了：结果没地方挂，别凭空冒出一个孤儿节点。
         if (!state.nodes.some((node) => node.id === id)) {
@@ -2078,7 +2132,8 @@ export const VideoNode = memo(
           widthPx: result.width,
           heightPx: result.height,
           durationMs: result.durationMs,
-          displayName: t("node.videoNode.crop.displayName", { name: resolvedTitle })});
+          displayName: t("node.videoNode.crop.displayName", { name: resolvedTitle }),
+        });
         addEdge(id, newNodeId);
         updateNodeData(id, { isCropMode: false });
         toast.success(t("node.videoNode.crop.success"), { id: toastId });
@@ -2203,11 +2258,15 @@ export const VideoNode = memo(
                     sourceUrl,
                     timelineStart: 0,
                     sourceStart,
-                    sourceEnd},
-                ]},
-            ]});
+                    sourceEnd,
+                  },
+                ],
+              },
+            ],
+          });
           await awaitTaskCompletion(ref.task_key, projectId, {
-            taskType: ref.task_type});
+            taskType: ref.task_type,
+          });
           const result = await fetchFreezoneJobResult(
             projectId,
             "freezone_video_compose",
@@ -2223,12 +2282,14 @@ export const VideoNode = memo(
             const newNodeId = addNode(CANVAS_NODE_TYPES.video, position, {
               videoUrl: result.url,
               durationMs: Math.round((sourceEnd - sourceStart) * 1000),
-              displayName: t("node.videoNode.clip.displayName")});
+              displayName: t("node.videoNode.clip.displayName"),
+            });
             addEdge(id, newNodeId);
             updateNodeData(id, {
               isClipMode: false,
               clipStartMs: null,
-              clipEndMs: null});
+              clipEndMs: null,
+            });
           } else {
             console.warn("[video-node] compose completed without url", result);
             setClipError(t("node.videoNode.clip.noUrl"));
@@ -2265,9 +2326,11 @@ export const VideoNode = memo(
         const ref = await submitFreezoneVideoErase(projectId, {
           sourceUrl: data.videoUrl,
           mode: subtitleEraseMode === "box" ? "box" : "smart_subtitle",
-          box: subtitleEraseMode === "box" ? subtitleEraseBox : null});
+          box: subtitleEraseMode === "box" ? subtitleEraseBox : null,
+        });
         await awaitTaskCompletion(ref.task_key, projectId, {
-          taskType: ref.task_type});
+          taskType: ref.task_type,
+        });
         const result = await fetchFreezoneJobResult(
           projectId,
           "freezone_video_erase",
@@ -2277,7 +2340,8 @@ export const VideoNode = memo(
           updateNodeData(id, {
             videoUrl: result.url,
             subtitleEraseMode: null,
-            subtitleEraseBox: null});
+            subtitleEraseBox: null,
+          });
         } else {
           console.warn("[video-node] erase completed without url", result);
         }
@@ -2351,7 +2415,8 @@ export const VideoNode = memo(
         !allowedTypes.includes(referenceFileExtension(fileUrl))
       ) {
         return t("node.videoNode.referenceDocument.unsupportedType", {
-          types: allowedTypes.join(", ")});
+          types: allowedTypes.join(", "),
+        });
       }
       return null;
     })();
@@ -2381,8 +2446,10 @@ export const VideoNode = memo(
           operation: genMode,
           generate_audio: generateAudio,
           video_input_present: videoInputBilling.present,
-          input_video_duration_seconds: videoInputBilling.durationSeconds},
-        quantity: Math.min(Math.max(count, 1), 4)},
+          input_video_duration_seconds: videoInputBilling.durationSeconds,
+        },
+        quantity: Math.min(Math.max(count, 1), 4),
+      },
     );
     const videoBillingRuleMissing =
       retryBillingProbe.error instanceof BillingRuleNotConfiguredError;
@@ -2423,7 +2490,8 @@ export const VideoNode = memo(
         // 在这里清会让一次失败的提交白白毁掉已有画册——批次清空挪到真正开跑前。
         generationError: null,
         generationErrorDetails: null,
-        generationErrorRequestId: null});
+        generationErrorRequestId: null,
+      });
       // 运镜 fragment 拼接到最终 prompt 的开头；上游 text 在前、用户自己写
       // 的 prompt 在后，两段以 \n\n 隔开（与 ImageGenNode/ImageEditNode 一致）。
       const fragment = cameraMovementPreset?.promptFragment;
@@ -2455,7 +2523,9 @@ export const VideoNode = memo(
             workflowRecipeCompiledAt: new Date().toISOString(),
             workflowRecipeCompiledPrompt: compiledPrompt,
             prompt: compiledPrompt,
-            workflowRecipeIds: recipeIds})});
+            workflowRecipeIds: recipeIds,
+          }),
+        });
         // Walk the current edges/nodes once — used by every non-textToVideo
         // branch to collect upstream resources. 必须与 UI 编号侧（useUpstreamNodes）
         // 同源：按连线顺序收集。曾按 state.nodes 顺序（节点创建顺序）收集，先创建
@@ -2496,7 +2566,8 @@ export const VideoNode = memo(
               url,
               slot: edge?.data?.keyframeSlot,
               legacyDisplayName:
-                typeof node.data.displayName === "string" ? node.data.displayName : null});
+                typeof node.data.displayName === "string" ? node.data.displayName : null,
+            });
           }
           return resolveVideoKeyframeUrls(candidates);
         };
@@ -2522,7 +2593,8 @@ export const VideoNode = memo(
               configured.totalMaxMs ??
               (media === "audio" && isSeedance20Model
                 ? MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS
-                : undefined)};
+                : undefined),
+          };
           if (refs.length === 0 || Object.values(limits).every((value) => value == null)) {
             return true;
           }
@@ -2541,13 +2613,15 @@ export const VideoNode = memo(
               nodeId: ref.nodeId,
               index: index + 1,
               label: ref.label,
-              durationMs: resolvedDurations[index] ?? null})),
+              durationMs: resolvedDurations[index] ?? null,
+            })),
             {
               minMs: limits.minMs ?? null,
               maxMs: limits.maxMs ?? null,
               totalMinMs: limits.totalMinMs,
               totalLimitMs: limits.totalMaxMs ?? null,
-              perClipLimits: limits.minMs != null || limits.maxMs != null},
+              perClipLimits: limits.minMs != null || limits.maxMs != null,
+            },
           );
           if (!rejection) return true;
 
@@ -2558,7 +2632,8 @@ export const VideoNode = memo(
             generationStartedAt: null,
             generationError: t("referenceValidation.title"),
             generationErrorDetails: null,
-            generationErrorRequestId: null});
+            generationErrorRequestId: null,
+          });
           return false;
         };
 
@@ -2581,7 +2656,8 @@ export const VideoNode = memo(
             );
             updateNodeData(id, {
               isGenerating: false,
-              generationStartedAt: null});
+              generationStartedAt: null,
+            });
             return;
           }
           doSubmit = (targetId) =>
@@ -2600,7 +2676,8 @@ export const VideoNode = memo(
               humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
               canvasId,
-              nodeId: targetId});
+              nodeId: targetId,
+            });
         } else if (genMode === "imageToVideo" || genMode === "imageReference") {
           // Unified i2v endpoint: 1 image = 图生视频, 2-9 images = 图片参考视频.
           const imageUrls = collectUpstreamImageUrls().slice(
@@ -2611,7 +2688,8 @@ export const VideoNode = memo(
             console.warn("[video-node] i2v submit without any upstream image");
             updateNodeData(id, {
               isGenerating: false,
-              generationStartedAt: null});
+              generationStartedAt: null,
+            });
             return;
           }
           doSubmit = (targetId) =>
@@ -2629,7 +2707,8 @@ export const VideoNode = memo(
               humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
               canvasId,
-              nodeId: targetId});
+              nodeId: targetId,
+            });
         } else if (genMode === "videoEdit") {
           // 视频编辑：1 个源视频，并按媒体目录上限附带参考图片和独立参考音频。
           // 不再是 HappyHorse 专属 —— 目录里声明了 video_edit 的模型都走这条路。
@@ -2642,7 +2721,8 @@ export const VideoNode = memo(
             console.warn("[video-node] videoEdit submit without upstream video");
             updateNodeData(id, {
               isGenerating: false,
-              generationStartedAt: null});
+              generationStartedAt: null,
+            });
             return;
           }
           const allImageUrls = collectUpstreamImageUrls();
@@ -2651,7 +2731,8 @@ export const VideoNode = memo(
             toast.warning(
               t("node.videoNode.videoEdit.imageLimit", {
                 limit: imageLimit,
-                ignored: allImageUrls.length - imageLimit}),
+                ignored: allImageUrls.length - imageLimit,
+              }),
             );
           }
           const imageUrls = allImageUrls.slice(0, imageLimit);
@@ -2677,7 +2758,8 @@ export const VideoNode = memo(
                 durationMs:
                   typeof node.data.durationMs === "number"
                     ? node.data.durationMs
-                    : null};
+                    : null,
+              };
             })
             .filter((item) => item.url.length > 0)
             .slice(0, audioLimit);
@@ -2697,7 +2779,8 @@ export const VideoNode = memo(
               modelParams: data.modelParams,
               humanReview: supportsHumanReview && humanReview,
               canvasId,
-              nodeId: targetId});
+              nodeId: targetId,
+            });
         } else if (genMode === "videoExtend") {
           const upstream = collectUpstream();
           const videoUrl =
@@ -2708,7 +2791,8 @@ export const VideoNode = memo(
             console.warn("[video-node] videoExtend submit without upstream video");
             updateNodeData(id, {
               isGenerating: false,
-              generationStartedAt: null});
+              generationStartedAt: null,
+            });
             return;
           }
           doSubmit = (targetId) =>
@@ -2724,7 +2808,8 @@ export const VideoNode = memo(
               modelParams: data.modelParams,
               humanReview: supportsHumanReview && humanReview,
               canvasId,
-              nodeId: targetId});
+              nodeId: targetId,
+            });
         } else if (genMode === "allReference") {
           // 全能参考是否可用以媒体目录的 supportedModes 为准。这里前置守卫给出
           // 可读提示，防止切换模型后残留模式打到不支持的端点。
@@ -2739,7 +2824,8 @@ export const VideoNode = memo(
             );
             updateNodeData(id, {
               isGenerating: false,
-              generationStartedAt: null});
+              generationStartedAt: null,
+            });
             return;
           }
           // Omni-gen: classify each upstream node by its media type.
@@ -2776,11 +2862,13 @@ export const VideoNode = memo(
                   url: videoRefUrl,
                   nodeId: node.id,
                   label: t("node.videoNode.referenceDuration.videoFallbackLabel", {
-                    index: videoCount + 1}),
+                    index: videoCount + 1,
+                  }),
                   durationMs:
                     typeof node.data.durationMs === "number"
                       ? node.data.durationMs
-                      : null});
+                      : null,
+                });
                 videoCount += 1;
               }
             } else if (isAudioNode(node)) {
@@ -2802,7 +2890,8 @@ export const VideoNode = memo(
                   type: "audio",
                   url,
                   role: "配乐参考", // i18n-exempt —— references[].role 是发给后端的协议字段
-                  label: rawLabel});
+                  label: rawLabel,
+                });
                 audioRefs.push({
                   url,
                   nodeId: node.id,
@@ -2813,11 +2902,13 @@ export const VideoNode = memo(
                   label:
                     rawLabel ||
                     t("node.videoNode.audio.clipFallbackLabel", {
-                      index: audioCount + 1}),
+                      index: audioCount + 1,
+                    }),
                   durationMs:
                     typeof node.data.durationMs === "number"
                       ? node.data.durationMs
-                      : null});
+                      : null,
+                });
                 audioCount += 1;
               }
             } else {
@@ -2833,7 +2924,8 @@ export const VideoNode = memo(
               type: "file",
               url: data.referenceFileUrl.trim(),
               role: "文件参考", // i18n-exempt —— 同上，协议字段
-              label: data.referenceFileName ?? ""});
+              label: data.referenceFileName ?? "",
+            });
           } else if (data.referenceLink?.trim()) {
             references.push({
               type: "link",
@@ -2845,7 +2937,8 @@ export const VideoNode = memo(
             console.warn("[video-node] omni-gen submit without any reference");
             updateNodeData(id, {
               isGenerating: false,
-              generationStartedAt: null});
+              generationStartedAt: null,
+            });
             return;
           }
           // 智能续写：选区只是源视频的一部分时，把这一段真截出来顶替整条源视频。
@@ -2856,7 +2949,8 @@ export const VideoNode = memo(
             const trimmed = await trimAndUploadExtendClip({
               projectId,
               videoUrl: sourceRef.url,
-              range: { startMs: extendTrimStartMs, endMs: extendTrimEndMs }});
+              range: { startMs: extendTrimStartMs, endMs: extendTrimEndMs },
+            });
             const reference = references.find((item) => item.type === "video");
             if (reference) reference.url = trimmed.url;
             videoRefs[0] = { ...sourceRef, url: trimmed.url, durationMs: trimmed.durationMs };
@@ -2880,7 +2974,8 @@ export const VideoNode = memo(
               humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
               canvasId,
-              nodeId: targetId});
+              nodeId: targetId,
+            });
         } else {
           // textToVideo (default).
           doSubmit = (targetId) =>
@@ -2897,7 +2992,8 @@ export const VideoNode = memo(
               humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
               canvasId,
-              nodeId: targetId});
+              nodeId: targetId,
+            });
         }
 
         const referenceSnapshot = collectUpstream();
@@ -2926,7 +3022,8 @@ export const VideoNode = memo(
               updateNodeData(id, generationTaskDescriptor(ref));
             }
             const completed = await awaitTaskCompletion(ref.task_key, projectId, {
-              taskType: ref.task_type});
+              taskType: ref.task_type,
+            });
             // Prefer the dedicated result endpoint — SSE `task.result` may only
             // carry metadata (same pattern as reverse_prompt + video_erase).
             let url = resolveOutputUrl(completed.result);
@@ -2955,9 +3052,11 @@ export const VideoNode = memo(
                       sourceFileName: null,
                       generationError: null,
                       generationErrorDetails: null,
-                      generationErrorRequestId: null}
+                      generationErrorRequestId: null,
+                    }
                   : {}),
-                ...(total > 1 ? { generationBatch: [...completedUrls] } : {})});
+                ...(total > 1 ? { generationBatch: [...completedUrls] } : {}),
+              });
             } else {
               console.warn(
                 "[video-node] video gen completed without output url",
@@ -2971,7 +3070,8 @@ export const VideoNode = memo(
                   generationStartedAt: null,
                   generationError: t("node.videoNode.generation.noResult"),
                   generationErrorDetails: null,
-                  generationErrorRequestId: null});
+                  generationErrorRequestId: null,
+                });
               }
             }
           } catch (error) {
@@ -3006,7 +3106,8 @@ export const VideoNode = memo(
                 : {}),
               generationError: displayErrorMessage,
               generationErrorDetails: diagnostics.details,
-              generationErrorRequestId: diagnostics.requestId});
+              generationErrorRequestId: diagnostics.requestId,
+            });
           }
         };
 
@@ -3080,7 +3181,8 @@ export const VideoNode = memo(
           toast.error(
             t("node.videoNode.partialBatchFailed", {
               ok: completedUrls.length,
-              total}),
+              total,
+            }),
           );
         }
         // 所有任务尘埃落定后统一拉一次历史：N 条记录都落在本节点名下，run 0
@@ -3093,7 +3195,8 @@ export const VideoNode = memo(
         updateNodeData(id, {
           isGenerating: false,
           generationStartedAt: null,
-          generationError: backendErrorToastMessage(error, t)});
+          generationError: backendErrorToastMessage(error, t),
+        });
         setAlbumPendingTotal(id, 0);
       }
       } finally {
@@ -3164,7 +3267,8 @@ export const VideoNode = memo(
                   : undefined;
               publishNodeActionSuccess(requestId, id, action, {
                 ...(videoUrl ? { videoUrl } : {}),
-                ...(executionMode === "single" ? { submitted: true } : {})});
+                ...(executionMode === "single" ? { submitted: true } : {}),
+              });
             })
             .catch((error) => publishNodeActionError(requestId, id, action, error));
           return;
@@ -3178,7 +3282,8 @@ export const VideoNode = memo(
                 : undefined;
             publishNodeActionSuccess(requestId, id, action, {
               ...(videoUrl ? { videoUrl } : {}),
-              ...(executionMode === "single" ? { submitted: true } : {})});
+              ...(executionMode === "single" ? { submitted: true } : {}),
+            });
           })
           .catch((error) => publishNodeActionError(requestId, id, action, error));
       });
@@ -3190,7 +3295,8 @@ export const VideoNode = memo(
 
     const cardToneClass = canvasNodeFrameClass({
       selected,
-      mainline: hasMainlineContext});
+      mainline: hasMainlineContext,
+    });
 
     const isUploading = Boolean(data.isUploading);
     // 裁切浮层的兜底判断：工具栏理论上已经保证 isCropMode 跟其他模式互斥，这里
@@ -3350,7 +3456,8 @@ export const VideoNode = memo(
                     right: -step * 7,
                     transform: `rotate(${step * 1.1}deg)`,
                     transformOrigin: 'center right',
-                    opacity: 1 - step * 0.18}}
+                    opacity: 1 - step * 0.18,
+                  }}
                 />
               );
             })}
@@ -3872,7 +3979,8 @@ export const VideoNode = memo(
             className="absolute left-1/2 z-10 flex w-max -translate-x-1/2 flex-col gap-1"
             style={{
               top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
-              minWidth: `calc(100% + ${panelOverhang * 2}px)`}}
+              minWidth: `calc(100% + ${panelOverhang * 2}px)`,
+            }}
           >
             <VideoClipPanel
               videoUrl={videoSource}
@@ -3935,7 +4043,8 @@ export const VideoNode = memo(
             className="absolute left-1/2 z-10 flex w-max -translate-x-1/2 flex-col gap-1"
             style={{
               top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
-              minWidth: `calc(100% + ${panelOverhang * 2}px)`}}
+              minWidth: `calc(100% + ${panelOverhang * 2}px)`,
+            }}
           >
             <VideoExtendPanel
               videoUrl={videoSource}
@@ -4007,7 +4116,8 @@ export const VideoNode = memo(
               style={{
                 top: `calc(100% + ${OPERATIONS_PANEL_GAP * 2 + panelHeight}px)`,
                 left: -panelOverhang,
-                right: -panelOverhang}}
+                right: -panelOverhang,
+              }}
               onClick={(event) => event.stopPropagation()}
             >
               <NodeGenerationHistory
@@ -4104,7 +4214,8 @@ function formatTime(seconds: number): string {
 function VideoPlayerControls({
   videoEl,
   isCapturingFrame,
-  onCapture}: VideoPlayerControlsProps) {
+  onCapture,
+}: VideoPlayerControlsProps) {
   const { t } = useTranslation();
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -4313,11 +4424,13 @@ function SubtitleEraseBoxOverlay({
   getDisplayedRect,
   onDragStart,
   onDragMove,
-  onDragEnd}: SubtitleEraseBoxOverlayProps) {
+  onDragEnd,
+}: SubtitleEraseBoxOverlayProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({
     w: 0,
-    h: 0});
+    h: 0,
+  });
 
   useEffect(() => {
     const el = containerRef.current;
@@ -4327,7 +4440,8 @@ function SubtitleEraseBoxOverlay({
       if (!entry) return;
       setContainerSize({
         w: entry.contentRect.width,
-        h: entry.contentRect.height});
+        h: entry.contentRect.height,
+      });
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -4346,7 +4460,8 @@ function SubtitleEraseBoxOverlay({
       const ny = displayed.height > 0 ? localY / displayed.height : 0;
       return {
         nx: Math.max(0, Math.min(1, nx)),
-        ny: Math.max(0, Math.min(1, ny))};
+        ny: Math.max(0, Math.min(1, ny)),
+      };
     },
     [displayed.height, displayed.left, displayed.top, displayed.width],
   );
@@ -4398,7 +4513,8 @@ function SubtitleEraseBoxOverlay({
         x: Math.min(drag.x0, drag.x1),
         y: Math.min(drag.y0, drag.y1),
         width: Math.abs(drag.x1 - drag.x0),
-        height: Math.abs(drag.y1 - drag.y0)}
+        height: Math.abs(drag.y1 - drag.y0),
+      }
     : box;
 
   return (
@@ -4418,7 +4534,8 @@ function SubtitleEraseBoxOverlay({
             left: displayed.left + effective.x * displayed.width,
             top: displayed.top + effective.y * displayed.height,
             width: effective.width * displayed.width,
-            height: effective.height * displayed.height}}
+            height: effective.height * displayed.height,
+          }}
         />
       )}
     </div>
@@ -4442,7 +4559,8 @@ function SubtitleEraseOpsPanel({
   hasBox,
   onExit,
   onResetBox,
-  onSubmit}: SubtitleEraseOpsPanelProps) {
+  onSubmit,
+}: SubtitleEraseOpsPanelProps) {
   const { t } = useTranslation();
   const submitDisabled = isErasing || (mode === "box" && !hasBox);
   const labelKey =

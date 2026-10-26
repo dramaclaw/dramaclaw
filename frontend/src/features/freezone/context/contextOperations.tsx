@@ -4,7 +4,6 @@
 // 界面引用，reason / label 也直接拼进 contextPromptCompiler 那份锁中文的提示词。
 // 等它真被挂到某个面板上时，这些串要一起入词条；在那之前整份免检。
 // i18n-exempt-start
-import { useTranslation } from "react-i18next";
 import type { ContextMatch } from "./contextMatching";
 import {
   matchForBeatToSketch,
@@ -33,44 +32,41 @@ export interface MatchedContextOperation {
   match: ContextMatch;
 }
 
-export function contextOperations(t: ReturnType<typeof useTranslation>["t"]): ContextOperation[] {
-  return [
-    {
-      id: "beat_to_sketch",
-      label: t("freezone.context.operation.beatSketch.label"),
-      outputKind: "sketch",
-      match: matchForBeatToSketch,
-      compilePrompt: compileBeatToSketchPrompt,
-    },
-    {
-      id: "director_combined_to_sketch",
-      label: t("freezone.context.operation.directorCompositeSketch.label"),
-      outputKind: "sketch",
-      match: matchForDirectorCombinedToSketch,
-      compilePrompt: compileDirectorCombinedToSketchPrompt,
-    },
-    {
-      id: "selected_background_to_sketch",
-      label: t("freezone.context.operation.backgroundAnchorSketch.label"),
-      outputKind: "sketch",
-      match: matchForSelectedBackgroundToSketch,
-      compilePrompt: compileSelectedBackgroundToSketchPrompt,
-    },
-    {
-      id: "sketch_to_frame",
-      label: t("freezone.context.operation.generateStoryboardFromMainline.label"),
-      outputKind: "frame",
-      match: matchForFrameGeneration,
-      compilePrompt: compileFrameGenerationContextPrompt,
-    },
-  ];
-}
+export const CONTEXT_OPERATIONS: ContextOperation[] = [
+  {
+    id: "beat_to_sketch",
+    label: "Beat 生成草图",
+    outputKind: "sketch",
+    match: matchForBeatToSketch,
+    compilePrompt: compileBeatToSketchPrompt,
+  },
+  {
+    id: "director_combined_to_sketch",
+    label: "导演合成图生成草图",
+    outputKind: "sketch",
+    match: matchForDirectorCombinedToSketch,
+    compilePrompt: compileDirectorCombinedToSketchPrompt,
+  },
+  {
+    id: "selected_background_to_sketch",
+    label: "背景锚点生成草图",
+    outputKind: "sketch",
+    match: matchForSelectedBackgroundToSketch,
+    compilePrompt: compileSelectedBackgroundToSketchPrompt,
+  },
+  {
+    id: "sketch_to_frame",
+    label: "按主线上下文生成分镜",
+    outputKind: "frame",
+    match: matchForFrameGeneration,
+    compilePrompt: compileFrameGenerationContextPrompt,
+  },
+];
 
 export function resolveMatchedContextOperations(
   contexts: MainlineContext[],
-  t: ReturnType<typeof useTranslation>["t"],
 ): MatchedContextOperation[] {
-  return contextOperations(t)
+  return CONTEXT_OPERATIONS
     .map((operation) => ({
       operation,
       match: operation.match(contexts),
@@ -85,14 +81,13 @@ export function ContextOperationsPanel({
   operations: MatchedContextOperation[];
   onRun: (item: MatchedContextOperation) => void;
 }) {
-  const { t } = useTranslation();
   if (operations.length === 0) return null;
 
   return (
     <div className="mb-2 rounded-xl border border-amber-300/25 bg-amber-300/10 p-2">
       <div className="mb-1 flex items-center justify-between gap-2">
-        <div className="text-[11px] font-medium text-amber-100">{t("freezone.context.mainlineContext")}</div>
-        <div className="text-[10px] text-amber-100/65">{t("freezone.context.mainlineContextHint")}</div>
+        <div className="text-[11px] font-medium text-amber-100">主线上下文</div>
+        <div className="text-[10px] text-amber-100/65">只在身份/场景/Beat 匹配时出现</div>
       </div>
       <div className="flex flex-wrap gap-2">
         {operations.map((item) => (

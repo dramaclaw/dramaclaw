@@ -10,7 +10,8 @@ import {
   Mic2,
   Pencil,
   Square,
-  X} from "lucide-react";
+  X,
+} from "lucide-react";
 
 import { useRegenerateSketches } from "@/lib/queries/sketches";
 import { useAudioBillingQuote, useGenerateAudio } from "@/lib/queries/audio";
@@ -20,7 +21,8 @@ import {
   SKETCH_REGEN_MODES,
   bestFitMode,
   overflowBatchCount,
-  type RegenMode} from "@/lib/regen-modes";
+  type RegenMode,
+} from "@/lib/regen-modes";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -30,7 +32,8 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogTitle} from "@/components/ui/alert-dialog";
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useTaskController } from "@/hooks/use-task-controller";
 import { useScopedTaskBatchInvalidation } from "@/hooks/use-scoped-task-batch-invalidation";
 import { queryKeys } from "@/lib/query-keys";
@@ -41,12 +44,14 @@ import { useProjectAspectRatio } from "@/stores/aspect-ratio-store";
 import {
   useSaveSketchRegenQueue,
   useSketchRegenQueue,
-  type SketchRegenQueueItem} from "@/lib/queries/sketch-regen-queue";
+  type SketchRegenQueueItem,
+} from "@/lib/queries/sketch-regen-queue";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { formatCreditCost } from "@/components/credits/credit-visual";
 import {
   backendErrorToastMessage,
-  BillingRuleNotConfiguredError} from "@/lib/api-errors";
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import { RenderPlanDialog } from "./render-plan-dialog";
 import type { Beat } from "@/types/episode";
 import type { Task } from "@/types/task";
@@ -129,7 +134,8 @@ export function createSketchRegenQueueItem(
     modeLabel: mode.label,
     beatNumbers: normalizedBeatNumbers,
     sceneIds: getSketchRegenSceneIds(beats, normalizedBeatNumbers),
-    createdAt: new Date().toISOString()};
+    createdAt: new Date().toISOString(),
+  };
 }
 
 function singleSketchModeForAspect(sketchAspect: SketchAspectRatio): RegenMode {
@@ -326,7 +332,8 @@ export function getLockedSketchRegenItemIds(
 }
 
 export function shouldShowSketchModeSpinner({
-  regenerateRequestPending}: {
+  regenerateRequestPending,
+}: {
   regenerateRequestPending: boolean;
   sketchTaskStarted: boolean;
 }): boolean {
@@ -351,7 +358,8 @@ export function getBatchPanelActionDisabled({
   generateAudioPending,
   audioTaskStarted,
   renderPlanTaskStarted = false,
-  selectedVideoRunning = false}: BatchPanelActionPendingState): {
+  selectedVideoRunning = false,
+}: BatchPanelActionPendingState): {
   sketch: boolean;
   render: boolean;
   audio: boolean;
@@ -359,7 +367,8 @@ export function getBatchPanelActionDisabled({
   return {
     sketch: count === 0 || regenSketchesPending || saveSketchQueuePending,
     render: count === 0 || renderPlanTaskStarted || selectedVideoRunning,
-    audio: count === 0 || generateAudioPending || audioTaskStarted};
+    audio: count === 0 || generateAudioPending || audioTaskStarted,
+  };
 }
 
 function sketchRegenSceneId(beat: Beat): string {
@@ -373,7 +382,8 @@ export function BatchPanel({
   project,
   episode,
   isSeedance2Backend = false,
-  onClearSelection}: BatchPanelProps) {
+  onClearSelection,
+}: BatchPanelProps) {
   const { t } = useTranslation();
   const { spec } = useProjectAspectRatio(project);
   const regenSketches = useRegenerateSketches(project, episode);
@@ -388,7 +398,8 @@ export function BatchPanel({
     invalidateKeys: [
       queryKeys.beats(project, episode),
       queryKeys.pipelineStatus(project),
-    ]});
+    ],
+  });
   // One render `execute` fans out into N `selected_regen` grid tasks (returning
   // only a non-matching umbrella `location__…` scope), so a single controller
   // can't follow them all. Track every grid task by its id instead.
@@ -401,7 +412,8 @@ export function BatchPanel({
       queryKeys.beats(project, episode),
       queryKeys.sketchImageUsage(project, episode),
       queryKeys.pipelineStatus(project),
-    ]});
+    ],
+  });
   // A batch dispatches one `sketch_regen` task per grid, each with its own
   // server-assigned scope. A single `useTaskController` follows only one scope,
   // so track the whole set by scope membership — every grid's completion then
@@ -413,7 +425,8 @@ export function BatchPanel({
       queryKeys.grids(project, episode),
       queryKeys.beats(project, episode),
       queryKeys.pipelineStatus(project),
-    ]});
+    ],
+  });
 
   const [planDialogOpen, setPlanDialogOpen] = useState(false);
   const [renderPlanForceOneByOne, setRenderPlanForceOneByOne] = useState(false);
@@ -494,7 +507,8 @@ export function BatchPanel({
       imageRole: "sketch",
       params: sketchSettings.data?.data.sketch_image_selection
         ? { image_selection: sketchSettings.data.data.sketch_image_selection }
-        : null},
+        : null,
+    },
   );
   const singleSketchPlanItems = useMemo(
     () => createSingleSketchRegenQueueItems(beats, beatList, spec.sketchAspect),
@@ -570,7 +584,8 @@ export function BatchPanel({
       try {
         const res = await regenSketches.mutateAsync({
           beatIndices: item.beatNumbers,
-          modeKey: item.modeKey});
+          modeKey: item.modeKey,
+        });
         if (res.ok === false) {
           fail++;
           firstError ||= res.error || t("episode.workbench.batch.dispatchFailed");
@@ -595,7 +610,8 @@ export function BatchPanel({
       toast.success(
         t("episode.workbench.batch.dispatched", {
           count: okBeats,
-          mode: okGrids === 1 ? dispatchedItems[0].modeLabel : `${okGrids} grids`}) +
+          mode: okGrids === 1 ? dispatchedItems[0].modeLabel : `${okGrids} grids`,
+        }) +
           (batches > okGrids
             ? t("episode.workbench.batch.dispatchedBatch", { batches })
             : "") +
@@ -618,7 +634,8 @@ export function BatchPanel({
     if (skippedLocked > 0) {
       toast.warning(
         t("episode.workbench.batch.sketchGroupSkippedRunning", {
-          count: skippedLocked}),
+          count: skippedLocked,
+        }),
       );
     }
   };
@@ -646,7 +663,8 @@ export function BatchPanel({
     try {
       const res = await generateAudio.mutateAsync({
         beatNumbers: beatList,
-        mode: "redo_selected"});
+        mode: "redo_selected",
+      });
       if (res.ok === false) {
         toast.error(res.error || t("episode.workbench.batch.dispatchFailed"));
         return;
@@ -667,7 +685,8 @@ export function BatchPanel({
     generateAudioPending: generateAudio.isPending,
     audioTaskStarted: audioTask.started,
     renderPlanTaskStarted: false,
-    selectedVideoRunning});
+    selectedVideoRunning,
+  });
 
   const askConfirm = (title: string, description: string, onConfirm: () => void) => {
     setConfirm({ title, description, onConfirm });
@@ -713,9 +732,11 @@ export function BatchPanel({
                 onClick={() => {
                   askConfirm(
                     t("episode.workbench.batch.regenSketchSingleTitle", {
-                      count}),
+                      count,
+                    }),
                     t("episode.workbench.batch.regenSketchSingleDesc", {
-                      beats: beatList.join(", #")}),
+                      beats: beatList.join(", #"),
+                    }),
                     handleDispatchSingleSketches,
                   );
                 }}
@@ -747,7 +768,8 @@ export function BatchPanel({
                 <AlertDialogTitle>
                   {t("episode.sketchPlan.title", {
                     beats: count,
-                    grids: sketchPlanItems.length})}
+                    grids: sketchPlanItems.length,
+                  })}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {t("episode.sketchPlan.subtitle")}
@@ -805,7 +827,8 @@ export function BatchPanel({
                   className="relative pr-11 transition-transform active:scale-95"
                 >
                   {t("episode.sketchPlan.confirm", {
-                    grids: sketchPlanItems.length})}
+                    grids: sketchPlanItems.length,
+                  })}
                   <CreditCostInline
                     display={sketchPlanCostDisplay}
                     promotion={sketchPlanCost.promotion}
@@ -878,7 +901,8 @@ export function BatchPanel({
                   askConfirm(
                     t("episode.workbench.batch.genBatchAudioTitle", { count }),
                     t("episode.workbench.batch.genBatchAudioDesc", {
-                      beats: beatList.join(", #")}),
+                      beats: beatList.join(", #"),
+                    }),
                     handleBatchAudio,
                   );
                 }}

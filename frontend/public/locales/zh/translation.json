@@ -322,40 +322,6 @@
     "third": {
       "title": "让故事成为起点",
       "subtitle": "导入小说、剧本或分集文本后，系统自动识别，为后续资产提取、剧集规划和镜头拆解建立基础。"
-    },
-    "works": {
-      "luban": {
-        "title": "鲁班",
-        "logline": "机械与古法在同一条时间线里重新咬合。"
-      },
-      "guilingsi": {
-        "title": "归灵司",
-        "logline": "全城反光物同时作祟，收灵人被迫追查镜中源头。"
-      },
-      "shixiongButianle": {
-        "title": "师兄你怎么不舔了",
-        "logline": "重生后的第一件事，是拒绝继续当命运的配角。"
-      },
-      "tianmingbukeqi": {
-        "title": "天命不可欺",
-        "logline": "大婚当日，归乡之法与王朝秘密同时浮出水面。"
-      },
-      "wulongxiantu": {
-        "title": "乌龙仙途",
-        "logline": "飞升系统终于激活，却把修仙路带向另一个荒唐方向。"
-      },
-      "feiyiZhouwu": {
-        "title": "非遗㑇舞",
-        "logline": "传统身段、节奏和镜头被重新编排成可观看的片段。"
-      },
-      "3dAnimeMontage": {
-        "title": "3D动漫混剪",
-        "logline": "多个动画片段被剪进同一组高密度镜头节奏。"
-      },
-      "dongtaiDadou": {
-        "title": "动态打斗",
-        "logline": "动作、速度线和镜头压迫感在短片里连续推进。"
-      }
     }
   },
   "downloadPage": {
@@ -1038,69 +1004,6 @@
         "cancelledRequest": "用户已取消本轮请求。"
       },
       "canvasCommandsCancelled": "画布操作等待超时，已自动取消。",
-      "command": {
-        "validateCanvasCommands": "校验画布命令",
-        "invalidCanvasCommand": "画布命令无效",
-        "updateShotContextDraft": {
-          "description": "更新镜头上下文节点草稿字段。只允许 data 包含 {{fields}}；出场身份和出场道具不开放给 agent 编辑。"
-        },
-        "syncShotContextDraft": {
-          "description": "把当前镜头上下文节点草稿同步到主线。该主线写入目前只能由用户在界面中手动确认，Agent 不得执行。"
-        },
-        "openSplitStoryboard": {
-          "description": "打开分格抽取面板，让用户手动设置行列/分隔线并执行抽取。此操作仅打开界面，不会直接生成新的故事板图片。"
-        },
-        "matting": {
-          "description": "抠图 / 去背景 / 移除背景 / 透明背景：在此图片节点上运行前景抠图，创建透明背景 PNG，并添加一个下游导出图片节点。"
-        },
-        "panorama": {
-          "description": "全景 / 360 全景：使用默认参数从此图片节点提交 360 全景生成。创建一个导出图片节点和一个 360 查看器节点。当用户要求使用全景功能时使用此操作。"
-        },
-        "multiAngle": {
-          "description": "多维度 / 多角度 / 多视图 / 多视角：为此图片节点打开多角度面板。当前聊天可以请求打开此界面；它不会直接运行生成或导出。"
-        },
-        "serialStoryboard": {
-          "description": "使用默认参数从此图片节点生成一张新的 25 帧连续故事板图片。不会打开界面。这不是分格抽取；如果用户说“分格抽取/抽取分格/打开分格”，请改用 open_split_storyboard_tool。"
-        },
-        "openUploadFilePicker": {
-          "description": "打开该上传节点的本地文件选择器。用户选择文件后，前端复用上传节点原流程处理，并把选择/上传结果返回给 agent；agent 不能直接指定本地文件路径。"
-        },
-        "videoBreakdown": {
-          "description": "逐帧拉片 / 拆分为帧：为此视频创建一个下游的视频拆解节点，与工具栏“逐帧拉片”入口一致。默认仅创建节点。当用户要求实际立即运行时，请传入 auto_start=true；随后提交付费拆解任务（耗时数分钟），并将故事板/动作/音乐结果组置于新节点下游。",
-          "autoStart": {
-            "label": "立即开始拉片"
-          }
-        },
-        "videoCrop": {
-          "description": "画面裁切 / 裁剪帧：进入此视频节点的裁剪模式。用户拖动裁剪框并通过现有前端裁剪界面确认；裁剪后的视频将成为一个新节点。"
-        },
-        "smartExtend": {
-          "description": "智能续写 / 智能扩展：进入此视频节点的区间选择模式。用户选择要继续的领先片段并确认；前端随后为续写创建一个下游 Seedance 2.5 视频节点。它本身不会生成任何内容。"
-        },
-        "depthMotionCapture": {
-          "description": "深度动作捕捉 / 深度动作捕获：在浏览器中计算逐帧深度视频，并将其作为一个新的下游视频节点落地，与工具栏操作一致。在本地运行（首选 WebGPU），需要一段时间，且仅支持最长 {{maxDuration}} 秒的视频。操作在任务开始后就返回；进度显示在新节点上。"
-        },
-        "startBreakdown": {
-          "description": "开始拉片：提交此节点源视频的付费逐帧拆解，与节点上的“开始拉片”按钮一致。耗时数分钟；操作在任务提交后返回，完成后故事板/动作/音乐结果组将落地于此节点下游。"
-        },
-        "clearCanvas": {
-          "description": "清空当前画布中的普通节点和连接。必须走审批；不要把“清空画布”转换为空的 delete_nodes。主线投影/系统管理节点会保留并明确报告。"
-        },
-        "posterWorkflow": {
-          "label": "海报生成流程"
-        }
-      },
-      "reference": {
-        "oldFormat": {
-          "title": "旧格式"
-        },
-        "posterImage": {
-          "displayName": "海报图"
-        },
-        "publicServiceBrief": {
-          "title": "公益广告简报"
-        }
-      },
       "resizeWidth": "调整聊天宽度"
     },
     "workflowRecovery": {
@@ -1557,19 +1460,7 @@
       },
       "loading": "正在加载画布...",
       "syncFailed": "画布同步失败",
-      "retry": "重试",
-      "mode": {
-        "workflow": "工作流",
-        "storyboard": "故事板"
-      },
-      "toggleCanvasView": "画布视图切换",
-      "newAgent": "新建 Agent",
-      "collapseAgentHistory": "收起历史 Agent",
-      "expandAgentHistory": "打开历史 Agent",
-      "resizeChatWidth": "调整聊天宽度",
-      "resizeAgentHistoryWidth": "调整历史 Agent 宽度",
-      "searchSessions": "搜索会话...",
-      "noMatchingAgents": "没有匹配的 Agent"
+      "retry": "重试"
     },
     "assetBrowser": {
       "loading": "加载中…",
@@ -1612,287 +1503,9 @@
       "metaInvalid": "导演元数据格式无效",
       "missingTargetPath": "导演合成图写入后缺少目标路径"
     },
-    "canvasDebug": {
-      "historyItemIdUnrecognized": "无法识别此历史项的 id（list 响应里没找到 id / history_id / filename / name 任一字段）。请看 console。",
-      "confirmRestore": "确认恢复到 {{historyId}}？当前版本将先保存到历史记录。",
-      "restoreFailed": "恢复失败：{{message}}",
-      "panelTitle": "画布调试面板（仅开发用）",
-      "toggle": "调试",
-      "notFetched": "尚未拉取，点 GET 查询。",
-      "fetch": "拉取",
-      "emptyHistory": "空（尚无历史快照）",
-      "restoreThisVersion": "恢复此版本",
-      "missingHistoryId": "缺少 history_id，无法恢复",
-      "restoring": "恢复中",
-      "restore": "恢复",
-      "debugHint": "仅调试用 · 后端 history endpoint 未部署时这里会显示\"接口未上线\""
-    },
     "canvasCommand": {
-      "lastShotEndFrame": "上一镜尾帧",
-      "workflowAlreadyRunning": "工作流正在运行，已忽略重复启动",
-      "alreadyHasResultSkipped": "（已有结果，已跳过）",
-      "workflowExistsSkipCreation": "工作流已存在，跳过重复创建",
-      "reuseExistingWorkflowNode": "复用已有工作流节点",
-      "skipInvalidConnection": "跳过无效连接",
-      "workflowCompletedNoRegen": "工作流已完成，未重新生成",
-      "workflowGroup": "工作流组",
-      "createNormalGroup": "创建普通组",
-      "validateLabel": "校验画布命令",
       "commandValidation": "命令校验",
-      "invalidFormat": "画布命令格式无效或不属于当前画布，前端未执行。",
-      "unparseable": "无法解析 canvas_chat_commands.v1 命令；请检查 command 字段是否在正确层级。",
-      "invalidCommand": "画布命令无效",
-      "prevalidationFailed": "画布命令预校验失败，前端未展示确认卡，也未执行。",
-      "externalAgent": "外部 Agent",
-      "unparseableContextRequest": "无法解析 canvas_context_request.v1 请求。",
-      "contextReadFailed": "读取画布上下文失败：{{message}}",
       "canvasContext": "画布上下文"
-    },
-    "canvasEdge": {
-      "context": {
-        "description": "文本/剧本规划节点之间的背景、约束或说明关系，用于组织创作思路，不直接驱动媒体生成。"
-      },
-      "prompt": {
-        "description": "上游文本/脚本是目标生成节点的直接提示词、文案、台词或任务输入。"
-      },
-      "sequence": {
-        "description": "上游节点只控制目标节点的执行顺序，目标节点不会消费其输出。"
-      },
-      "reference": {
-        "description": "上游图片/视频/音频作为目标节点的媒体输入或参考素材。"
-      },
-      "derivation": {
-        "description": "目标媒体是从上游媒体编辑、裁剪、高清、变体、导出或修复得到的结果。"
-      },
-      "composition": {
-        "description": "上游文本、图片、视频或音频片段进入目标合成/时间线节点，作为最终成片素材。"
-      }
-    },
-    "nodeAction": {
-      "parameter": {
-        "model": "模型",
-        "modelDescription": "可选。必须使用 options 里的模型 id；不填使用该动作默认模型，不要写口语名或后端 apiModel。",
-        "upscaleFactor": "放大倍率",
-        "default2": "默认 2。",
-        "quality": "画质",
-        "default2K": "默认 2K。",
-        "targetAspectRatio": "目标比例",
-        "defaultOriginal": "默认 original。",
-        "generateCount": "生成数量",
-        "default1": "默认 1。",
-        "resolution": "分辨率",
-        "default1080p": "默认 1080p。",
-        "breakdownDimension": "拆解维度",
-        "displayName": "显示名称",
-        "resolutionDescription": "视频高清处理面板里的目标分辨率；修改高清分辨率时更新 upscaleResolution。",
-        "imageModelDescription": "图片模型必须使用 options 里的 model id；不要使用口语名或后端 apiModel，例如不要写 nanobanana。",
-        "resolutionOptionsDescription": "使用所选图片模型目录返回的原始分辨率选项。",
-        "qualityUnsupported": "所选模型不支持画质档位；请省略 quality。",
-        "qualityUseSupported": "仅使用所选图片模型支持的画质档位。",
-        "aspectRatio": "比例",
-        "videoModelDescription": "视频模型必须使用 options 里的 model id；不要使用口语名或后端 apiModel。",
-        "videoAspectRatio": "视频比例",
-        "videoAspectRatioDescription": "视频节点底部参数里的比例；修改视频比例时更新 aspectRatio，不要改模型来间接实现。",
-        "clarity": "清晰度",
-        "clarityDescription": "视频节点底部参数里的清晰度；使用所选模型目录返回的原始分辨率选项。",
-        "durationSeconds": "时长秒数",
-        "durationSecDescription": " 修改时更新 durationSec。",
-        "videoGenMode": "视频生成模式",
-        "videoGenModeDescription": "仅可使用当前节点所选模型的 options；切换模型后必须重新查询模式选项，不得套用其他节点的模式。决定视频节点如何消费上游输入。textToVideo=只用当前提示词；imageToVideo=以单张图片作为整体画面参考；firstFrame=以单张图片锁定首帧（与 imageToVideo 不等价，用户指定哪种就保持哪种，不要互相替换）；firstLastFrame=需要首帧和尾帧；allReference=可同时参考图片/视频/音频；imageReference=以图片作为参考约束。改视频模式时更新 genMode，不要把“模式”误改成 model。",
-        "voiceReference": "音色引用",
-        "voiceReferenceDescription": "音频节点在 speechMode=clone 时使用 voiceRef 对象选择音色，不使用 voiceId 字符串。更换音色前必须先返回 context_request 指定的 canvas_context_request.v1；拿到 options 后，把选项里的 data 原样用于 update_node_data，并同时设置 speechMode=clone。不要用 run_node_action 获取音色选项。",
-        "startFrame": "起始画面"
-      },
-      "description": {
-        "generateMainSketchFromBackground": "根据 Beat 上下文和当前背景生成主线草图候选。",
-        "generateMainSketchFromDirectorComp": "从 Beat 上下文和导演合成图生成主线草图候选。",
-        "generateMainStoryboardCandidates": "根据 Beat 上下文、草图和参考素材生成主线分镜候选。",
-        "setBackgroundImage": "将明确指定的图片设为当前 Beat 的背景。",
-        "setDirectorCompositionImage": "将明确指定的图片设为当前 Beat 的 3GS 导演合成图。",
-        "generateScenePanorama": "根据场景主图生成 2:1 场景全景候选。",
-        "reviewStoryboardCandidates": "根据 Beat 上下文审核分镜候选。"
-      },
-      "shotContext": {
-        "startFrameDraft": {
-          "description": "镜头上下文节点的起始画面草稿。只修改画布本地草稿；如需写回主线，请使用界面中的手动入口。"
-        },
-        "scene": {
-          "label": "场景",
-          "description": "镜头上下文节点的场景草稿，格式为 {scene_id, variant_id}。只允许修改这个字段，不要修改出场身份或出场道具。"
-        },
-        "time": {
-          "label": "时间",
-          "description": "镜头上下文节点的时间草稿。必须从枚举中选择；空字符串表示未设置。"
-        }
-      },
-      "textAnnotation": {
-        "title": {
-          "label": "标题"
-        },
-        "content": {
-          "label": "内容"
-        }
-      },
-      "common": {
-        "text": {
-          "label": "文本"
-        },
-        "semanticRole": {
-          "label": "语义输出角色"
-        }
-      },
-      "generator": {
-        "displayName": {
-          "label": "显示名称"
-        },
-        "prompt": {
-          "label": "提示词"
-        },
-        "negativePrompt": {
-          "label": "反向提示词"
-        },
-        "count": {
-          "label": "生成数量"
-        }
-      },
-      "image": {
-        "displayName": {
-          "label": "显示名称"
-        },
-        "prompt": {
-          "label": "提示词"
-        },
-        "negativePrompt": {
-          "label": "反向提示词"
-        },
-        "count": {
-          "label": "生成数量"
-        }
-      },
-      "video": {
-        "displayName": {
-          "label": "显示名称"
-        },
-        "prompt": {
-          "label": "提示词"
-        },
-        "realPersonReview": {
-          "label": "真人审核",
-          "description": "图生视频时在模型支持的情况下启用真人内容审核。"
-        },
-        "count": {
-          "label": "生成数量"
-        }
-      },
-      "audio": {
-        "label": "生成音频",
-        "displayName": {
-          "label": "显示名称"
-        },
-        "kind": {
-          "label": "音频类型",
-          "description": "speech 表示文本转语音；music 表示文字生成音乐。"
-        },
-        "voiceMode": {
-          "label": "语音模式",
-          "description": "仅 audioKind=speech 时生效。虾画只使用自定义声线；未选择有效 voiceRef 时跳过语音生成。"
-        },
-        "text": {
-          "label": "文本"
-        },
-        "emotionPrompt": {
-          "label": "情绪提示"
-        },
-        "voiceName": {
-          "label": "音色名称",
-          "description": "音色展示名，通常随 voiceRef 一起从 audio_voice_options 选项的 data 中写入。"
-        },
-        "language": {
-          "label": "语言",
-          "description": "音色语言标签，通常随 voiceRef 一起从 audio_voice_options 选项的 data 中写入。"
-        },
-        "musicDurationMs": {
-          "label": "音乐时长毫秒",
-          "description": "仅 audioKind=music 时生效；页面默认 30000ms。"
-        },
-        "instrumental": {
-          "label": "纯音乐",
-          "description": "仅 audioKind=music 时生效；默认 true。"
-        },
-        "followSegmentDuration": {
-          "label": "遵守段落时长",
-          "description": "仅 audioKind=music 时生效；默认 true。"
-        }
-      },
-      "story": {
-        "displayName": {
-          "label": "显示名称"
-        },
-        "prompt": {
-          "label": "生成提示词",
-          "description": "故事脚本生成节点的主要输入；普通自由格式文本请使用 textAnnotationNode.content。"
-        },
-        "content": {
-          "label": "内容"
-        }
-      },
-      "world3d": {
-        "displayName": {
-          "label": "显示名称"
-        },
-        "title": {
-          "label": "标题"
-        },
-        "sourceType": {
-          "label": "3GS 来源类型",
-          "description": "master/reverse 生成单面 3GS；pano 表示上游是 360 全景图。"
-        }
-      },
-      "custom": {
-        "displayName": {
-          "label": "显示名称"
-        },
-        "prompt": {
-          "label": "提示词",
-          "description": "3D 世界节点的备注/生成提示；当前 3GS 生成主要依赖上游图片。"
-        }
-      },
-      "generic": {
-        "displayName": {
-          "label": "显示名称"
-        },
-        "parameters": {
-          "label": "参数"
-        }
-      },
-      "upload": {
-        "displayName": {
-          "label": "显示名称"
-        }
-      },
-      "default": {
-        "displayName": {
-          "label": "显示名称"
-        }
-      }
-    },
-    "context": {
-      "operation": {
-        "beatSketch": {
-          "label": "Beat 生成草图"
-        },
-        "directorCompositeSketch": {
-          "label": "导演合成图生成草图"
-        },
-        "backgroundAnchorSketch": {
-          "label": "背景锚点生成草图"
-        },
-        "generateStoryboardFromMainline": {
-          "label": "按主线上下文生成分镜"
-        }
-      },
-      "mainlineContext": "主线上下文",
-      "mainlineContextHint": "只在身份/场景/Beat 匹配时出现"
     },
     "viewMode": {
       "workflow": "工作流",
@@ -2023,8 +1636,8 @@
     "availableBalance": "可用积分余额",
     "promotion": {
       "active": "促销中",
-      "discount": "优惠 {{percentOff}}%",
-      "limitedDiscount": "限时优惠 {{percentOff}}%"
+      "discount": "{{discount}} 折优惠",
+      "limitedDiscount": "限时 {{discount}} 折"
     },
     "recharge": {
       "title": "在线充值",
@@ -3101,11 +2714,11 @@
         "variantPlaceholder": "漏水"
       },
       "environment": {
-        "front": "正面",
-        "left": "左侧",
-        "right": "右侧",
-        "back": "背面",
-        "light": "光源",
+        "front": "正面描述",
+        "left": "左侧描述",
+        "right": "右侧描述",
+        "back": "背面描述",
+        "light": "光源描述",
         "material": "材质/风格",
         "forbidden": "禁止元素"
       },
@@ -3746,10 +3359,6 @@
   },
   "taskCenter": {
     "title": "任务中心",
-    "batchProgress": "批次进度 {{settled}}/{{expected}}",
-    "runningCount": "运行 {{count}}",
-    "waitingCount": "等待 {{count}}",
-    "batchFailed": "{{failed}}/{{expected}} 个任务失败",
     "cancel": {
       "title": "取消生成任务",
       "description": "确定取消“{{name}}”吗？运行中的任务取消后通常不退款。",
@@ -3917,7 +3526,11 @@
       "sketchBackgroundIdentityProps": "草图 + 背景 + 身份/道具",
       "sketchCandidate": "草图候选",
       "storyboardCandidate": "分镜候选"
-    }
+    },
+    "batchProgress": "批次进度 {{settled}}/{{expected}}",
+    "runningCount": "运行 {{count}}",
+    "waitingCount": "等待 {{count}}",
+    "batchFailed": "{{failed}}/{{expected}} 个任务失败"
   },
   "pikoMiniGame": {
     "statusEntry": "Piko一下",
@@ -5862,7 +5475,7 @@
       "arrangeGrid": "网格",
       "arrangeHorizontal": "横向排列",
       "arrangeVertical": "纵向排列",
-      "commitHint": "将此节点内容回写到主线资产",
+      "commitHint": "把当前节点的内容写回主流程资产",
       "recipeFallbackTitle": "Recipe 模型编译超时，本次已使用稳定降级提示词继续生成",
       "recipeFallbackLabel": "Recipe 已降级编译"
     },
@@ -6465,147 +6078,7 @@
     "thinkingHigh": "高",
     "noModelsAvailable": "管理员尚未配置任何图片模型"
   },
-  "assetBoard": {
-    "referenceMaterials": "参考素材",
-    "zoomImage": "放大查看",
-    "prompt": "提示词",
-    "nodeMissing": "节点已不存在",
-    "clickToEdit": "点击编辑",
-    "noText": "暂无文本内容",
-    "noScript": "暂无脚本内容",
-    "noShots": "暂无镜头行",
-    "noDisplayContent": "暂无可展示的内容",
-    "shotNumber": "镜号",
-    "duration": "时长",
-    "visualDescription": "画面描述",
-    "dialogue": "对白",
-    "contentSummary": "内容摘要",
-    "resolution": "分辨率",
-    "referenceActions": "{{name}} 操作",
-    "edit": "编辑",
-    "locate": "定位",
-    "m4aOnly": "仅 m4a 源",
-    "noKeyElements": "该分类下暂无关键元素",
-    "referenceDropHint": "可将资产、图片、视频拖拽到此，添加为参考",
-    "imageOpChipHint": "点击切换功能，退格删除",
-    "upscaleResult": "高清放大",
-    "cropResult": "裁剪结果",
-    "rotateResult": "旋转结果",
-    "crop": "裁剪",
-    "rotate": "旋转",
-    "panoramaConfirm": "确认基于本图生成 360° 全景图？",
-    "panoramaResult": "360°全景图",
-    "durationSeconds": "{{count}}秒",
-    "generatingProgress": "生成中 {{percent}}%...",
-    "generating": "生成中",
-    "assetDetail": "资产详情",
-    "back": "返回",
-    "nodeActions": "节点操作",
-    "duplicate": "创建副本",
-    "delete": "删除",
-    "closeDetail": "关闭详情",
-    "text": "文本",
-    "image": "图片",
-    "video": "视频",
-    "relightEditor": "打光效果编辑器",
-    "multiAngleEditor": "多维度编辑器",
-    "ownReferenceImage": "节点自带参考图",
-    "removeReferenceImage": "移除参考图",
-    "panorama": "全景",
-    "panoramaTitle": "基于本图生成 360° 全景图（并挂一个全景查看器节点）",
-    "multiAngle": "多角度",
-    "multiAngleTitle": "打开多维度编辑器（球体选角 + 画质 + 提示词）",
-    "relight": "重打光",
-    "relightTitle": "打开打光效果编辑器（方向 + 亮度/色温 + 智能模式）",
-    "moreActions": "更多操作",
-    "download": "下载",
-    "regenerate": "重新生成",
-    "retryGeneration": "重新提交这次生成（失败重试）",
-    "gridTemplate": "基于本图套用宫格 / 多视图模板生成",
-    "editVideo": "剪辑",
-    "composedVideo": "合成视频",
-    "upscaledVideoName": "高清（{{resolution}}）",
-    "composeNeedsTwoVideos": "需要至少 2 个已就绪的上游视频素材",
-    "openComposeTimeline": "打开视频合成时间线",
-    "upscale": "高清",
-    "upscaleTitle": "放大分辨率（在画布上新建高清结果节点）",
-    "fullscreen": "全屏",
-    "fullscreenTitle": "全屏播放",
-    "resolution": "分辨率",
-    "submitUpscale": "提交高清",
-    "submitUpscaleTitle": "在画布上新建高清结果节点并提交任务",
-    "locateOnCanvas": "在画布中定位",
-    "generationFailed": "生成失败",
-    "downloadConvert": "下载 / 格式转换",
-    "resizeColumn": "调整栏宽",
-    "all": "全部",
-    "finalVideos": "成片",
-    "clips": "片段",
-    "noTextNodes": "画布中还没有文本类节点",
-    "noImageNodes": "画布中还没有图片节点",
-    "noVideoNodes": "画布中还没有视频节点",
-    "noMatchingVideos": "没有匹配当前筛选的视频",
-    "filterVideos": "筛选视频",
-    "switchColumn": "切换栏目",
-    "expand": "放大",
-    "collapse": "收起",
-    "pendingGeneration": "待确认后生成",
-    "sourceNotM4a": "源文件不是 m4a，无法转换为 m4a 格式",
-    "audioDownloadFailed": "音频下载失败",
-    "downloadAs": "下载为 {{format}}",
-    "keyElements": "关键元素",
-    "setKeyElement": "设置关键元素",
-    "clearKeyElement": "取消关键元素",
-    "current": "当前",
-    "audioLabel": "音频",
-    "categoryCharacter": "人物",
-    "categoryScene": "场景",
-    "categoryObject": "物品",
-    "categoryOther": "其他",
-    "audio": {
-      "musicDescription": "音乐描述",
-      "speechText": "要合成的文本",
-      "musicPlaceholder": "描述想要的音乐：风格、乐器、节奏、氛围…",
-      "speechPlaceholder": "输入要合成的文本",
-      "fillerWords": "语气词（可选）",
-      "fillerWordsPlaceholder": "如：紧张、压低声音、带一点恐惧感",
-      "chooseVoice": "选择自定义声线",
-      "changeVoice": "更换自定义声线",
-      "voice": "声线",
-      "voiceNotSelected": "未选择（生成时跳过）",
-      "customVoice": "自定义声线",
-      "musicDuration": "音乐时长",
-      "forceInstrumental": "强制纯音乐",
-      "respectSectionDurations": "遵守段落时长",
-      "textToMusic": "文字生成音乐",
-      "customVoiceNarration": "自定义声线旁白",
-      "voiceSettings": "音色设置（当前：{{voice}}）",
-      "notSelected": "未选择",
-      "advancedSettings": "高级设置",
-      "enterMusicFirst": "先填写音乐描述",
-      "enterSpeechFirst": "先填写要合成的文本",
-      "regenerate": "重新生成",
-      "generate": "生成"
-    }
-  },
   "node": {
-    "imageGeneration": {
-      "quality": "画质",
-      "resolution": "分辨率",
-      "aspectRatio": "比例",
-      "assetLibrary": "资产库",
-      "assetLibraryHint": "从资产库选择参考图（人物 / 场景 / 道具）",
-      "upstreamReference": "来自上游 · {{name}}",
-      "detachReference": "取消引用此素材"
-    },
-    "stylePicker": {
-      "title": "风格",
-      "other": "其他",
-      "clear": "清除",
-      "close": "关闭",
-      "loading": "加载中…",
-      "empty": "暂无风格模板"
-    },
     "menu": {
       "uploadImage": "上传资源",
       "image": "图片",
@@ -7423,7 +6896,6 @@
     },
     "videoOps": {
       "referenceGroupLabel": "资产参考组",
-      "externalMedia": "外部素材",
       "upstreamPlaceholder": "上游内容已自动接入，可继续补充提示词…",
       "humanReviewTitle": "素材含真实人脸时开启，可能增加审核时间，不保证通过。",
       "humanReviewLabel": "真人验证",
@@ -7484,7 +6956,8 @@
       },
       "extendLockReason": "智能续写固定使用 Seedance 2.5，不能切换模型或模式",
       "extendPlaceholder": "请输入需要续写的内容",
-      "modeRestrictedDefault": "该节点不支持切换生成模式"
+      "modeRestrictedDefault": "该节点不支持切换生成模式",
+      "externalMedia": "外部素材"
     },
     "threeDWorld": {
       "upstreamNodeFallback": "上游节点",
@@ -7516,6 +6989,23 @@
       "directorCaptureSizeFailed": "无法解析导演世界截图尺寸",
       "directorElement": "导演元素",
       "directorExportLabel": "导演世界导出"
+    },
+    "imageGeneration": {
+      "quality": "画质",
+      "resolution": "分辨率",
+      "aspectRatio": "比例",
+      "assetLibrary": "资产库",
+      "assetLibraryHint": "从资产库选择参考图（人物 / 场景 / 道具）",
+      "upstreamReference": "来自上游 · {{name}}",
+      "detachReference": "取消引用此素材"
+    },
+    "stylePicker": {
+      "title": "风格",
+      "other": "其他",
+      "clear": "清除",
+      "close": "关闭",
+      "loading": "加载中…",
+      "empty": "暂无风格模板"
     },
     "imageGenNode": {
       "billingRuleMissingSubmit": "图片生成未启动：计费规则未配置，请联系管理员设置积分规则后重试。"
@@ -8711,8 +8201,6 @@
       "add": "添加",
       "noRecipesToAdd": "没有可添加的 Recipe",
       "createSkillHint": "可以先让虾导总结当前画布，或描述工作流来创建自己的 Skill。",
-      "videoGeneration": "视频生成",
-      "audioGeneration": "音频生成",
       "associatedRecipesMissing": "，{{count}} 个未找到配置",
       "searchRecipe": "搜索 Recipe",
       "noDescription": "暂无描述",
@@ -9042,14 +8530,14 @@
     }
   },
   "superchat": {
-    "nodeSuggestions": {
-      "title": "节点",
-      "noMatches": "没有匹配的节点"
-    },
     "spec": {
       "characterFallback": "角色 {{index}}",
       "roleLabel": "角色",
       "descriptionLabel": "描述"
+    },
+    "nodeSuggestions": {
+      "title": "节点",
+      "noMatches": "没有匹配的节点"
     }
   },
   "productSurface": {
@@ -9220,38 +8708,126 @@
     "saveFailed": "无法创建结果，请确认图片和当前项目可用。",
     "invalidSize": "请输入正整数，单边不超过 16384 像素，总像素不超过 4000 万。"
   },
-  "login": {
-    "community": {
-      "work": {
-        "luban": {
-          "title": "鲁班"
-        },
-        "guilingsi": {
-          "title": "归灵司",
-          "description": "全城反光物同时作祟，人脸凭空消融！归灵司最强收灵人陆灵犀奉命调查，却发现自己竟是这场灵祸的源头——镜灵千年寻主"
-        },
-        "seniorBrotherNoLongerSimping": {
-          "title": "师兄你怎么不舔了",
-          "description": "堂堂天道宗掌门林渊，重生第一件事，就是拒绝当舔狗！"
-        },
-        "heavensWillCannotBeDeceived": {
-          "title": "天命不可欺",
-          "description": "大婚当日，内忧外患同时爆发，太庙送上一本回到现代的“归乡之法”，并告诉了云知之一个惊人的秘密……"
-        },
-        "wulongImmortalPath": {
-          "title": "乌龙仙途",
-          "description": "穿越十八年终于激活了飞升系统，结果系统是个坑货"
-        },
-        "intangibleHeritageZhouDance": {
-          "title": "非遗㑇舞"
-        },
-        "threeDAnimeMashup": {
-          "title": "3D动漫混剪"
-        },
-        "dynamicCombat": {
-          "title": "动态打斗"
-        }
-      }
+  "assetBoard": {
+    "referenceMaterials": "参考素材",
+    "zoomImage": "放大查看",
+    "prompt": "提示词",
+    "nodeMissing": "节点已不存在",
+    "clickToEdit": "点击编辑",
+    "noText": "暂无文本内容",
+    "noScript": "暂无脚本内容",
+    "noShots": "暂无镜头行",
+    "noDisplayContent": "暂无可展示的内容",
+    "shotNumber": "镜号",
+    "duration": "时长",
+    "visualDescription": "画面描述",
+    "dialogue": "对白",
+    "contentSummary": "内容摘要",
+    "resolution": "分辨率",
+    "referenceActions": "{{name}} 操作",
+    "edit": "编辑",
+    "locate": "定位",
+    "m4aOnly": "仅 m4a 源",
+    "noKeyElements": "该分类下暂无关键元素",
+    "referenceDropHint": "可将资产、图片、视频拖拽到此，添加为参考",
+    "imageOpChipHint": "点击切换功能，退格删除",
+    "upscaleResult": "高清放大",
+    "cropResult": "裁剪结果",
+    "rotateResult": "旋转结果",
+    "crop": "裁剪",
+    "rotate": "旋转",
+    "panoramaConfirm": "确认基于本图生成 360° 全景图？",
+    "panoramaResult": "360°全景图",
+    "durationSeconds": "{{count}}秒",
+    "generatingProgress": "生成中 {{percent}}%...",
+    "generating": "生成中",
+    "assetDetail": "资产详情",
+    "back": "返回",
+    "nodeActions": "节点操作",
+    "duplicate": "创建副本",
+    "delete": "删除",
+    "closeDetail": "关闭详情",
+    "text": "文本",
+    "image": "图片",
+    "video": "视频",
+    "relightEditor": "打光效果编辑器",
+    "multiAngleEditor": "多维度编辑器",
+    "ownReferenceImage": "节点自带参考图",
+    "removeReferenceImage": "移除参考图",
+    "panorama": "全景",
+    "panoramaTitle": "基于本图生成 360° 全景图（并挂一个全景查看器节点）",
+    "multiAngle": "多角度",
+    "multiAngleTitle": "打开多维度编辑器（球体选角 + 画质 + 提示词）",
+    "relight": "重打光",
+    "relightTitle": "打开打光效果编辑器（方向 + 亮度/色温 + 智能模式）",
+    "moreActions": "更多操作",
+    "download": "下载",
+    "regenerate": "重新生成",
+    "retryGeneration": "重新提交这次生成（失败重试）",
+    "gridTemplate": "基于本图套用宫格 / 多视图模板生成",
+    "editVideo": "剪辑",
+    "composedVideo": "合成视频",
+    "upscaledVideoName": "高清（{{resolution}}）",
+    "composeNeedsTwoVideos": "需要至少 2 个已就绪的上游视频素材",
+    "openComposeTimeline": "打开视频合成时间线",
+    "upscale": "高清",
+    "upscaleTitle": "放大分辨率（在画布上新建高清结果节点）",
+    "fullscreen": "全屏",
+    "fullscreenTitle": "全屏播放",
+    "submitUpscale": "提交高清",
+    "submitUpscaleTitle": "在画布上新建高清结果节点并提交任务",
+    "locateOnCanvas": "在画布中定位",
+    "generationFailed": "生成失败",
+    "downloadConvert": "下载 / 格式转换",
+    "resizeColumn": "调整栏宽",
+    "all": "全部",
+    "finalVideos": "成片",
+    "clips": "片段",
+    "noTextNodes": "画布中还没有文本类节点",
+    "noImageNodes": "画布中还没有图片节点",
+    "noVideoNodes": "画布中还没有视频节点",
+    "noMatchingVideos": "没有匹配当前筛选的视频",
+    "filterVideos": "筛选视频",
+    "switchColumn": "切换栏目",
+    "expand": "放大",
+    "collapse": "收起",
+    "pendingGeneration": "待确认后生成",
+    "sourceNotM4a": "源文件不是 m4a，无法转换为 m4a 格式",
+    "audioDownloadFailed": "音频下载失败",
+    "downloadAs": "下载为 {{format}}",
+    "keyElements": "关键元素",
+    "setKeyElement": "设置关键元素",
+    "clearKeyElement": "取消关键元素",
+    "current": "当前",
+    "audioLabel": "音频",
+    "categoryCharacter": "人物",
+    "categoryScene": "场景",
+    "categoryObject": "物品",
+    "categoryOther": "其他",
+    "audio": {
+      "musicDescription": "音乐描述",
+      "speechText": "要合成的文本",
+      "musicPlaceholder": "描述想要的音乐：风格、乐器、节奏、氛围…",
+      "speechPlaceholder": "输入要合成的文本",
+      "fillerWords": "语气词（可选）",
+      "fillerWordsPlaceholder": "如：紧张、压低声音、带一点恐惧感",
+      "chooseVoice": "选择自定义声线",
+      "changeVoice": "更换自定义声线",
+      "voice": "声线",
+      "voiceNotSelected": "未选择（生成时跳过）",
+      "customVoice": "自定义声线",
+      "musicDuration": "音乐时长",
+      "forceInstrumental": "强制纯音乐",
+      "respectSectionDurations": "遵守段落时长",
+      "textToMusic": "文字生成音乐",
+      "customVoiceNarration": "自定义声线旁白",
+      "voiceSettings": "音色设置（当前：{{voice}}）",
+      "notSelected": "未选择",
+      "advancedSettings": "高级设置",
+      "enterMusicFirst": "先填写音乐描述",
+      "enterSpeechFirst": "先填写要合成的文本",
+      "regenerate": "重新生成",
+      "generate": "生成"
     }
   }
 }

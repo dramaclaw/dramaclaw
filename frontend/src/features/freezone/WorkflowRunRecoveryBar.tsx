@@ -5,7 +5,8 @@ import { useTranslation } from "react-i18next";
 import {
   listFreezoneWorkflowRuns,
   updateFreezoneWorkflowRun,
-  type FreezoneWorkflowRun} from "@/api/canvas";
+  type FreezoneWorkflowRun,
+} from "@/api/canvas";
 import { Button } from "@/components/ui/button";
 import type { WorkflowRunUpdatedDetail } from "@/features/canvas/application/workflowExecutionActivity";
 import {
@@ -13,7 +14,8 @@ import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
   FREEZONE_WORKFLOW_RUN_UPDATED_EVENT,
   hasGeneratedResult,
-  isNodeActionGenerationPending} from "@/features/freezone/canvasChatCommands";
+  isNodeActionGenerationPending,
+} from "@/features/freezone/canvasChatCommands";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { useTaskCenterStore } from "@/task-center/store";
 
@@ -107,7 +109,8 @@ function latestResumableRun(
 
 export function WorkflowRunRecoveryBar({
   projectId,
-  canvasId}: {
+  canvasId,
+}: {
   projectId: string;
   canvasId: string;
 }) {
@@ -254,7 +257,9 @@ export function WorkflowRunRecoveryBar({
             type: "run_workflow",
             node_ids: nodeIds,
             direction: "downstream",
-            regenerate: false}]}],
+            regenerate: false,
+          }],
+        }],
         { projectId, canvasId },
       );
       if (result.errors.length > 0) {
@@ -282,7 +287,9 @@ export function WorkflowRunRecoveryBar({
             type: "run_workflow",
             node_ids: failedNodeIds,
             direction: "node",
-            regenerate: true}]}],
+            regenerate: true,
+          }],
+        }],
         { projectId, canvasId },
       );
       if (result.errors.length > 0) {
@@ -318,7 +325,8 @@ export function WorkflowRunRecoveryBar({
           error: "用户选择跳过安全审核失败节点", // i18n-exempt -- workflow payload
         }));
       const updated = await updateFreezoneWorkflowRun(projectId, canvasId, run.run_id, {
-        action_updates: updates});
+        action_updates: updates,
+      });
       setRuns((current) => current.map((item) => item.run_id === run.run_id ? updated : item));
     } catch (skipError) {
       setError(skipError instanceof Error ? skipError.message : String(skipError));

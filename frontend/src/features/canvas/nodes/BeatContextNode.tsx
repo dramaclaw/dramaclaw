@@ -7,7 +7,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type WheelEvent as ReactWheelEvent} from "react";
+  type WheelEvent as ReactWheelEvent,
+} from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -16,33 +17,40 @@ import {
   FolderOpen,
   Package,
   RefreshCw,
-  UserRound} from "lucide-react";
+  UserRound,
+} from "lucide-react";
 
 import {
   createCanvasFromPreset,
   getFreezoneCanvas,
-  type FreezonePresetCanvasRequest} from "@/api/canvas";
+  type FreezonePresetCanvasRequest,
+} from "@/api/canvas";
 import {
   listFreezoneBeatContext,
   updateBeat,
-  type BeatUpdatePayload} from "@/api/projects";
+  type BeatUpdatePayload,
+} from "@/api/projects";
 import {
   type BeatContextNodeData,
   type CanvasEdge,
-  type CanvasNode} from "@/features/canvas/domain/canvasNodes";
+  type CanvasNode,
+} from "@/features/canvas/domain/canvasNodes";
 import {
   isPresetManagedEdge,
-  isPresetManagedNode} from "@/features/canvas/domain/mainlineNodeFlags";
+  isPresetManagedNode,
+} from "@/features/canvas/domain/mainlineNodeFlags";
 import {
   NodeHeader,
-  NODE_HEADER_FLOATING_POSITION_CLASS} from "@/features/canvas/ui/NodeHeader";
+  NODE_HEADER_FLOATING_POSITION_CLASS,
+} from "@/features/canvas/ui/NodeHeader";
 import { NodeResizeHandle } from "@/features/canvas/ui/NodeResizeHandle";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { NodeContextBadges } from "@/features/freezone/context/NodeContextBadges";
 import { getFreezoneCanvasMetadata } from "@/features/freezone/canvasMetadataContext";
 import {
   applyRemoteFreezoneCanvas,
-  flushFreezoneCanvasRuntime} from "@/features/freezone/canvasSyncRuntime";
+  flushFreezoneCanvasRuntime,
+} from "@/features/freezone/canvasSyncRuntime";
 import { extractMainlineContextsFromNode } from "@/features/freezone/context/mainlineContext";
 import { buildBeatContextNodeRefreshPatch } from "@/features/freezone/context/beatContextSnapshot";
 import { syncBeatContextMainlineEdges } from "@/features/freezone/context/beatContextProjection";
@@ -237,7 +245,8 @@ function snapshotForRender(
     detectedProps: selectedProps,
     sketchColors: stringMap(beatContext.sketch_colors) ?? snapshot.sketchColors,
     propMarkerColors:
-      stringMap(beatContext.prop_marker_colors) ?? snapshot.propMarkerColors};
+      stringMap(beatContext.prop_marker_colors) ?? snapshot.propMarkerColors,
+  };
 }
 
 type StandaloneBeatContextPatch = Partial<{
@@ -262,7 +271,8 @@ function standaloneBeatContextPatchFromCurrentData(
     title: stringValue(currentBeatContext.title) ?? "自定义镜头上下文", // i18n-exempt
   };
   const snapshot = {
-    ...(data.snapshot ?? {})};
+    ...(data.snapshot ?? {}),
+  };
   if (patch.visual_description !== undefined) {
     snapshot.visualDescription = patch.visual_description;
   }
@@ -283,7 +293,8 @@ function standaloneBeatContextPatchFromCurrentData(
     content: patch.visual_description ?? data.content,
     snapshot,
     syncStatus: "fresh",
-    errorMessage: ""};
+    errorMessage: "",
+  };
 }
 
 function syncBeatContextMainlineLinks(
@@ -331,7 +342,8 @@ function presetRequestFromMetadata(
     asset_kind: stringOrNull(data.asset_kind),
     character: stringOrNull(data.character),
     identity_id: stringOrNull(data.identity_id),
-    asset_id: stringOrNull(data.asset_id)};
+    asset_id: stringOrNull(data.asset_id),
+  };
 }
 
 async function restoreCurrentMainlinePresetCanvas(
@@ -356,7 +368,8 @@ async function restoreCurrentMainlinePresetCanvas(
     ...request,
     canvas_id: canvasId,
     overwrite_existing: true,
-    base_revision: baseline.revision ?? undefined});
+    base_revision: baseline.revision ?? undefined,
+  });
   const remote = await getFreezoneCanvas(projectId, canvasId);
   const appliedBySyncRuntime = applyRemoteFreezoneCanvas(
     projectId,
@@ -419,7 +432,8 @@ function mergeRestoredCanvasWithLocalUserWork(
   });
   return {
     nodes: [...remoteNodes, ...preservedNodes],
-    edges: [...remoteEdges, ...preservedEdges]};
+    edges: [...remoteEdges, ...preservedEdges],
+  };
 }
 
 function mergeBeatRefreshPatch(
@@ -428,9 +442,11 @@ function mergeBeatRefreshPatch(
 ): Partial<BeatContextNodeData> {
   if (!localPatch) return refreshPatch;
   const snapshot = {
-    ...(refreshPatch.snapshot ?? {})};
+    ...(refreshPatch.snapshot ?? {}),
+  };
   const beatEditFields = {
-    ...(refreshPatch.beat_edit_fields ?? {})};
+    ...(refreshPatch.beat_edit_fields ?? {}),
+  };
 
   if (localPatch.visual_description !== undefined) {
     snapshot.visualDescription = localPatch.visual_description ?? "";
@@ -461,7 +477,8 @@ function mergeBeatRefreshPatch(
   return {
     ...refreshPatch,
     snapshot,
-    beat_edit_fields: beatEditFields};
+    beat_edit_fields: beatEditFields,
+  };
 }
 
 function localBeatPatchFromCurrentData(
@@ -472,11 +489,14 @@ function localBeatPatchFromCurrentData(
     {
       content: data.content,
       snapshot: {
-        ...(data.snapshot ?? {})},
+        ...(data.snapshot ?? {}),
+      },
       beat_edit_fields: {
-        ...(data.beat_edit_fields ?? {})},
+        ...(data.beat_edit_fields ?? {}),
+      },
       syncStatus: "stale",
-      errorMessage: ""},
+      errorMessage: "",
+    },
     localPatch,
   );
 }
@@ -511,7 +531,8 @@ function beatUpdatePayloadFromNodeData(
     ),
     detected_props: stringList(
       editFields.detected_props ?? snapshot.detectedProps ?? [],
-    )};
+    ),
+  };
 }
 
 function looksLikeEpBeatTitle(value: string): boolean {
@@ -636,7 +657,8 @@ export const BeatContextNode = memo(
     const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
     const sceneInitial = sceneRefToName({
       scene_id: snapshot.sceneId,
-      variant_id: snapshot.sceneVariantId});
+      variant_id: snapshot.sceneVariantId,
+    });
     const timeInitial = String(snapshot.timeOfDay || "");
     const [sceneDraft, setSceneDraft] = useState(sceneInitial);
     const [timeDraft, setTimeDraft] = useState(timeInitial);
@@ -709,7 +731,8 @@ export const BeatContextNode = memo(
           scene_id: item.scene_id,
           base_scene_id: item.base_scene_id,
           variant_id: item.variant_id,
-          time_of_day: item.time_of_day})),
+          time_of_day: item.time_of_day,
+        })),
       [episodeQuery.data],
     );
     const timeOptions = useMemo(() => {
@@ -725,12 +748,14 @@ export const BeatContextNode = memo(
             kind: "identity" as const,
             id: "identity-template",
             label: t("node.beatContextNode.mention.identity"),
-            token: "{{}}"},
+            token: "{{}}",
+          },
           {
             kind: "prop" as const,
             id: "prop-template",
             label: t("node.beatContextNode.mention.prop"),
-            token: "[[]]"},
+            token: "[[]]",
+          },
         ];
       }
       return [
@@ -738,12 +763,14 @@ export const BeatContextNode = memo(
           kind: "identity" as const,
           id: identityId,
           label: identityId,
-          token: `{{${identityId}}}`})),
+          token: `{{${identityId}}}`,
+        })),
         ...episodePropIds.map((propId) => ({
           kind: "prop" as const,
           id: propId,
           label: propId,
-          token: `[[${propId}]]`})),
+          token: `[[${propId}]]`,
+        })),
       ];
     }, [episodeIdentityIds, episodePropIds, isStandaloneContext]);
     const filteredMentionCandidates = useMemo(() => {
@@ -798,7 +825,8 @@ export const BeatContextNode = memo(
       ) {
         updateNodeData(id, {
           syncStatus: "error",
-          errorMessage: t("node.beatContextNode.status.missingTargetForSync")});
+          errorMessage: t("node.beatContextNode.status.missingTargetForSync"),
+        });
         return;
       }
       setIsSyncing(true);
@@ -820,7 +848,8 @@ export const BeatContextNode = memo(
           queryKey: queryKeys.freezoneBeatContext(projectId, episode, beat),
           queryFn: ({ signal }) =>
             listFreezoneBeatContext(projectId, { episode, beat, signal }),
-          staleTime: 0});
+          staleTime: 0,
+        });
         const latestBeat =
           response.episodes
             .find((ep) => ep.episode === episode)
@@ -844,7 +873,8 @@ export const BeatContextNode = memo(
       } catch (error) {
         updateNodeData(id, {
           syncStatus: "error",
-          errorMessage: error instanceof Error ? error.message : String(error)});
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
       } finally {
         setIsSyncing(false);
       }
@@ -861,7 +891,8 @@ export const BeatContextNode = memo(
         ) {
           updateNodeData(id, {
             syncStatus: "error",
-            errorMessage: t("node.beatContextNode.status.missingTargetForLocal")});
+            errorMessage: t("node.beatContextNode.status.missingTargetForLocal"),
+          });
           return;
         }
         const localPatch = localBeatPatchFromCurrentData(data, patch);
@@ -913,7 +944,8 @@ export const BeatContextNode = memo(
         patchStandaloneBeatContext({
           visual_description: next,
           detected_identities: nextIdentities,
-          detected_props: nextProps});
+          detected_props: nextProps,
+        });
         return;
       }
       if (next !== visualInitial.trim()) {
@@ -1008,7 +1040,8 @@ export const BeatContextNode = memo(
           ? before.length + 2
           : before.length + candidate.token.length + spacer.length;
         const patch: BeatUpdatePayload = {
-          visual_description: nextText.trim()};
+          visual_description: nextText.trim(),
+        };
 
         setVisualDraft(nextText);
         setMentionContext(null);
@@ -1068,7 +1101,8 @@ export const BeatContextNode = memo(
           scope: workbenchTarget.scope,
           episode: workbenchTarget.episode,
           beat: workbenchTarget.beat,
-          primary_slot: "render"});
+          primary_slot: "render",
+        });
       } finally {
         setOpeningWorkbench(false);
       }
@@ -1274,7 +1308,9 @@ export const BeatContextNode = memo(
                           void handleBeatFieldUpdate({
                             scene_ref: {
                               scene_id: nextRef.scene_id,
-                              variant_id: nextRef.variant_id}});
+                              variant_id: nextRef.variant_id,
+                            },
+                          });
                         }
                       }}
                     >
@@ -1424,7 +1460,8 @@ function SelectableTokenGroup({
   icon,
   onToggle,
   editableColors = false,
-  onColorChange}: {
+  onColorChange,
+}: {
   options: string[];
   selected: string[];
   colorMap?: Record<string, string>;
@@ -1537,7 +1574,8 @@ function SelectableTokenGroup({
 }
 
 function ContextColorPalette({
-  onSelect}: {
+  onSelect,
+}: {
   onSelect: (color: string) => void;
 }) {
   const { t } = useTranslation();
@@ -1569,7 +1607,8 @@ function PaletteSection({
   labelPrefix,
   colors,
   className = "",
-  onSelect}: {
+  onSelect,
+}: {
   title: string;
   labelPrefix: string;
   colors: readonly string[];

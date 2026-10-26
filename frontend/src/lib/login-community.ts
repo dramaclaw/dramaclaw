@@ -2,10 +2,10 @@
 // Copyright (c) 2026 ClaymoreLab
 export type LoginCommunityWork = {
   id: string;
-  /** i18n key for the display title (the source video's name). */
-  titleKey: string;
-  /** i18n key for the short description (from the work's 简介.txt; empty if none). */
-  descriptionKey: string | null;
+  /** Literal display title (the source video's name). */
+  title: string;
+  /** Literal short description (from the work's 简介.txt; empty if none). */
+  description: string;
   likes: number;
   cover: string;
   preview: string;
@@ -21,11 +21,13 @@ function cdn(path: string): string {
   return encodeURI(`${CDN_BASE}/${path}`);
 }
 
+// i18n-exempt-start —— title / description 是作品自己的片名和简介（见类型上的
+// “Literal …” 注释），属于展示内容而非界面文案。
 export const loginCommunityWorks: LoginCommunityWork[] = [
   {
     id: "neon-patrol",
-    titleKey: "loginCinematic.works.luban.title",
-    descriptionKey: "loginCinematic.works.luban.logline",
+    title: "鲁班",
+    description: "",
     likes: 124,
     cover: cdn("luban/luban-cover.png"),
     preview: cdn("luban/luban-ep01.mp4"),
@@ -33,8 +35,9 @@ export const loginCommunityWorks: LoginCommunityWork[] = [
   },
   {
     id: "glass-signal",
-    titleKey: "loginCinematic.works.guilingsi.title",
-    descriptionKey: "loginCinematic.works.guilingsi.logline",
+    title: "归灵司",
+    description:
+      "全城反光物同时作祟，人脸凭空消融！归灵司最强收灵人陆灵犀奉命调查，却发现自己竟是这场灵祸的源头——镜灵千年寻主",
     likes: 33,
     cover: cdn("guilingsi/guilingsi-cover.png"),
     preview: cdn("guilingsi/guilingsi-ep01.mp4"),
@@ -42,8 +45,8 @@ export const loginCommunityWorks: LoginCommunityWork[] = [
   },
   {
     id: "silent-arcade",
-    titleKey: "loginCinematic.works.shixiongButianle.title",
-    descriptionKey: "loginCinematic.works.shixiongButianle.logline",
+    title: "师兄你怎么不舔了",
+    description: "堂堂天道宗掌门林渊，重生第一件事，就是拒绝当舔狗！",
     likes: 71,
     cover: cdn("shixiong-butianle/shixiong-butianle-cover.png"),
     preview: cdn("shixiong-butianle/shixiong-butianle-ep01.mp4"),
@@ -51,8 +54,9 @@ export const loginCommunityWorks: LoginCommunityWork[] = [
   },
   {
     id: "floating-market",
-    titleKey: "loginCinematic.works.tianmingbukeqi.title",
-    descriptionKey: "loginCinematic.works.tianmingbukeqi.logline",
+    title: "天命不可欺",
+    description:
+      "大婚当日，内忧外患同时爆发，太庙送上一本回到现代的“归乡之法”，并告诉了云知之一个惊人的秘密……",
     likes: 95,
     cover: cdn("tianmingbukeqi/tianmingbukeqi-cover.png"),
     preview: cdn("tianmingbukeqi/tianmingbukeqi-ep02.mp4"),
@@ -60,8 +64,8 @@ export const loginCommunityWorks: LoginCommunityWork[] = [
   },
   {
     id: "last-take",
-    titleKey: "loginCinematic.works.wulongxiantu.title",
-    descriptionKey: "loginCinematic.works.wulongxiantu.logline",
+    title: "乌龙仙途",
+    description: "穿越十八年终于激活了飞升系统，结果系统是个坑货",
     likes: 118,
     cover: cdn("wulongxiantu/wulongxiantu-cover.png"),
     preview: cdn("wulongxiantu/wulongxiantu-ep01.mp4"),
@@ -69,8 +73,8 @@ export const loginCommunityWorks: LoginCommunityWork[] = [
   },
   {
     id: "paper-city",
-    titleKey: "loginCinematic.works.feiyiZhouwu.title",
-    descriptionKey: "loginCinematic.works.feiyiZhouwu.logline",
+    title: "非遗㑇舞",
+    description: "",
     likes: 57,
     cover: cdn("feiyi-zhouwu/feiyi-zhouwu-cover.png"),
     preview: cdn("feiyi-zhouwu/feiyi-zhouwu.mp4"),
@@ -78,8 +82,8 @@ export const loginCommunityWorks: LoginCommunityWork[] = [
   },
   {
     id: "rainy-night",
-    titleKey: "loginCinematic.works.3dAnimeMontage.title",
-    descriptionKey: "loginCinematic.works.3dAnimeMontage.logline",
+    title: "3D动漫混剪",
+    description: "",
     likes: 42,
     cover: "/login-community/rainy-night.jpg",
     preview: cdn("3d-anime-montage-demo/3d-anime-montage-demo.mp4"),
@@ -87,11 +91,12 @@ export const loginCommunityWorks: LoginCommunityWork[] = [
   },
   {
     id: "ember-crown",
-    titleKey: "loginCinematic.works.dongtaiDadou.title",
-    descriptionKey: "loginCinematic.works.dongtaiDadou.logline",
+    title: "动态打斗",
+    description: "",
     likes: 86,
     cover: "/login-community/ember-crown.jpg",
     preview: cdn("dongtai-dadou/dongtai-dadou.mp4"),
     gradient: "linear-gradient(135deg, #1f1b2e 0%, #8d3b2f 48%, #f0a23a 100%)",
   },
 ];
+// i18n-exempt-end

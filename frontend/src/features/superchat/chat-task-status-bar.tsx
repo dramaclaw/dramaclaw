@@ -10,7 +10,8 @@ import {
   LoaderCircle,
   LocateFixed,
   Play,
-  X} from "lucide-react";
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -18,19 +19,23 @@ import {
   listFreezoneWorkflowRuns,
   updateFreezoneWorkflowRun,
   type FreezoneWorkflowRun,
-  type FreezoneWorkflowRunAction} from "@/api/canvas";
+  type FreezoneWorkflowRunAction,
+} from "@/api/canvas";
 import {
   WORKFLOW_RUN_UPDATED_EVENT,
-  type WorkflowRunUpdatedDetail} from "@/features/canvas/application/workflowExecutionActivity";
+  type WorkflowRunUpdatedDetail,
+} from "@/features/canvas/application/workflowExecutionActivity";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import type { CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import {
   applyCanvasChatCommandsAsync,
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
-  hasCurrentWorkflowResult} from "@/features/freezone/canvasChatCommands";
+  hasCurrentWorkflowResult,
+} from "@/features/freezone/canvasChatCommands";
 import {
   taskBatchId,
-  taskBatchSize} from "@/features/superchat/task-notification-batch";
+  taskBatchSize,
+} from "@/features/superchat/task-notification-batch";
 import { recoverableWorkflowNodeIds } from "@/features/freezone/WorkflowRunRecoveryBar";
 import { cn } from "@/lib/utils";
 import { confirmDialog } from "@/components/confirm-dialog-host";
@@ -183,7 +188,8 @@ export function chatTaskBatchWaitingItems(
       batchId,
       expected,
       waiting,
-      representative: batch[0]}];
+      representative: batch[0],
+    }];
   });
 }
 
@@ -285,7 +291,8 @@ export function resolveWorkflowRunDisplayCompletion(
       action.status === "completed"
         ? action
         : { ...action, status: "completed", updated_at: now }
-    )};
+    ),
+  };
 }
 
 export function applyOptimisticWorkflowRunUpdate(
@@ -314,7 +321,8 @@ export function applyOptimisticWorkflowRunUpdate(
     actions: run.actions.map((action) => {
       const update = updates.get(`${action.node_id}:${action.action}`);
       return update ? { ...action, ...update, updated_at: now } : action;
-    })};
+    }),
+  };
 }
 
 export function mergeWorkflowRunUpdate(
@@ -340,9 +348,11 @@ export function mergeWorkflowRunUpdate(
       ? {
           status: previous.status,
           resumable: previous.resumable,
-          completed_at: previous.completed_at}
+          completed_at: previous.completed_at,
+        }
       : {}),
-    actions};
+    actions,
+  };
 }
 
 export function workflowStatusCounts(
@@ -442,7 +452,8 @@ export function selectChatTaskItems(
     const existing = terminalBatchWindows.get(batchId) ?? { latest: 0, failed: false };
     terminalBatchWindows.set(batchId, {
       latest: Math.max(existing.latest, terminalTimestamp(task)),
-      failed: existing.failed || task.status === "failed"});
+      failed: existing.failed || task.status === "failed",
+    });
   }
 
   const nodeIds = new Set(nodes.map((node) => node.id));
@@ -500,7 +511,8 @@ export function selectChatTaskItems(
       nodeLabel:
         node && node.type
           ? resolveNodeDisplayName(node.type, node.data)
-          : null});
+          : null,
+    });
   }
 
   const sorted = items.sort((left, right) => {
@@ -519,7 +531,8 @@ function taskProgress(task: TaskState): number {
 export function ChatTaskStatusBar({
   projectId,
   canvasId,
-  scope = "canvas"}: {
+  scope = "canvas",
+}: {
   projectId: string | null;
   canvasId: string | null;
   scope?: ChatTaskStatusScope;
@@ -724,11 +737,13 @@ export function ChatTaskStatusBar({
     ? workflowDisplayStatus === "completed"
       ? t("taskCenter.chatStatus.workflowCompletedShort", {
           completed: workflowSettledCount(workflowActions),
-          total: workflowActions.length})
+          total: workflowActions.length,
+        })
       : [
           t("taskCenter.chatStatus.workflowShort", {
             completed: workflowCounts.completed,
-            total: workflowActions.length}),
+            total: workflowActions.length,
+          }),
           workflowDisplayStatus === "interrupted"
             ? t("taskCenter.chatStatus.interruptedShort")
             : workflowDisplayStatus === "failed"
@@ -737,16 +752,19 @@ export function ChatTaskStatusBar({
           workflowCounts.inProgress > 0
             && workflowDisplayStatus === "running"
             ? t("taskCenter.chatStatus.inProgressShort", {
-                count: workflowCounts.inProgress})
+                count: workflowCounts.inProgress,
+              })
             : null,
           workflowCounts.waiting > 0
             && workflowDisplayStatus === "running"
             ? t("taskCenter.chatStatus.waitingShort", {
-                count: workflowCounts.waiting})
+                count: workflowCounts.waiting,
+              })
             : null,
           workflowCounts.failed > 0
             ? t("taskCenter.chatStatus.failedShort", {
-                count: workflowCounts.failed})
+                count: workflowCounts.failed,
+              })
             : null,
         ].filter(Boolean).join(" · ")
     : batchStatusSummary
@@ -887,7 +905,9 @@ export function ChatTaskStatusBar({
             type: "run_workflow",
             node_ids: resumeNodeIds,
             direction: "downstream",
-            regenerate: false}]}],
+            regenerate: false,
+          }],
+        }],
         { projectId, canvasId },
       );
       if (result.errors.length > 0) {
@@ -897,7 +917,8 @@ export function ChatTaskStatusBar({
       toast.success(t("taskCenter.chatStatus.resumeSucceeded"));
     } catch (error) {
       toast.error(t("taskCenter.chatStatus.resumeFailed", {
-        message: error instanceof Error ? error.message : String(error)}));
+        message: error instanceof Error ? error.message : String(error),
+      }));
     } finally {
       setResuming(false);
     }
@@ -910,7 +931,8 @@ export function ChatTaskStatusBar({
       store.nodes.map((node) => ({
         id: node.id,
         type: "select" as const,
-        selected: node.id === nodeId})),
+        selected: node.id === nodeId,
+      })),
     );
     store.setSelectedNode(nodeId);
     store.requestFocusNode(nodeId);

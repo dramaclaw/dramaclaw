@@ -1,23 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import i18n, { type TFunction } from "i18next";
+import type { TFunction } from "i18next";
 import { HTTPError } from "ky";
-import { normalize } from "@/i18n/languages";
 import type { ErrorResponse } from "@/types/api";
 
 export const NOVEL_IMPORT_REQUIRED_CODE = "NOVEL_IMPORT_REQUIRED";
-
-function currentLanguage(): string {
-  return normalize(i18n.resolvedLanguage ?? i18n.language).toLowerCase();
-}
-
-function containsCjk(text: string): boolean {
-  return /[\u3400-\u9fff]/.test(text);
-}
-
-function safeBackendMessage(text: string, t: TFunction): string {
-  return currentLanguage() === "zh" || !containsCjk(text) ? text : t("common.error");
-}
 
 export function backendErrorCodeToastMessage(
   errorCode: string | null | undefined,
@@ -45,10 +32,8 @@ export function taskResponseToastMessage(
   t: TFunction,
 ): string {
   const text = String(response.message ?? "");
-  if (!response.message_code) return safeBackendMessage(text, t);
-  return t(response.message_code, {
-    defaultValue: safeBackendMessage(text, t),
-    ...(response.message_params ?? {})});
+  if (!response.message_code) return text;
+  return t(response.message_code, { defaultValue: text, ...(response.message_params ?? {}) });
 }
 
 export function backendErrorResponseToastMessage(
@@ -436,7 +421,8 @@ function humanReviewAssetFailure(payload: unknown): HumanReviewAssetFailure | nu
       reasonCode:
         typeof data.reason_code === "string" && data.reason_code.trim()
           ? data.reason_code
-          : "unknown_review_error"};
+          : "unknown_review_error",
+    };
   }
   for (const nested of Object.values(record)) {
     const found = humanReviewAssetFailure(nested);
@@ -454,10 +440,12 @@ function humanReviewAssetMessage(raw: string, t: TFunction): string | null {
     unsupported_image: "unsupportedImage",
     content_rejected: "contentRejected",
     review_timeout: "reviewTimeout",
-    unknown_review_error: "unknownReviewError"};
+    unknown_review_error: "unknownReviewError",
+  };
   const reasonKey = keyByReason[failure.reasonCode] ?? "unknownReviewError";
   return t(`node.videoNode.humanReviewErrors.${reasonKey}`, {
-    index: failure.index});
+    index: failure.index,
+  });
 }
 
 export function classifyGatewayError(
@@ -499,10 +487,11 @@ export function humanizeTaskError(
   raw: string | null | undefined,
   t: TFunction,
 ): string {
-  const rawText = raw && raw.trim() ? raw : "";
-  const fallback = rawText && (currentLanguage() === "zh" || !containsCjk(rawText)) ? rawText : t("common.error");
+  const fallback = raw && raw.trim() ? raw : t("common.error");
   if (raw && /billing rule is not configured/i.test(raw)) {
-    return t("common.billingRuleNotConfigured");
+    return t("common.billingRuleNotConfigured", {
+      defaultValue: "计费规则未配置，请联系管理员设置积分规则",
+    });
   }
   const reviewMessage = raw ? humanReviewAssetMessage(raw, t) : null;
   if (reviewMessage) return reviewMessage;
@@ -517,24 +506,21 @@ export function humanizeTaskError(
       return t("common.generationContentPolicyBlocked", { defaultValue: fallback });
     case "rate_limit":
       return t("common.generationRateLimited", { defaultValue: fallback });
-    default: {
-      const providerMessage = providerErrorMessage(raw);
-      if (providerMessage && (currentLanguage() === "zh" || !containsCjk(providerMessage))) {
-        return providerMessage;
-      }
-      return fallback;
-    }
+    default:
+      return providerErrorMessage(raw) ?? fallback;
   }
 }
 
 export function backendErrorToastMessage(error: unknown, t: TFunction): string {
   if (error instanceof InsufficientCreditsError) {
     return t("common.insufficientCredits", {
-      defaultValue: error.message || t("common.error")});
+      defaultValue: error.message || t("common.error"),
+    });
   }
   if (error instanceof BillingRuleNotConfiguredError) {
     return t("common.billingRuleNotConfigured", {
-      defaultValue: error.message || t("common.error")});
+      defaultValue: error.message || t("common.error"),
+    });
   }
   if (error instanceof ProjectQueueLimitError) {
     const translationScope =
@@ -545,13 +531,16 @@ export function backendErrorToastMessage(error: unknown, t: TFunction): string {
           : error.limitScope;
     if (error.queueKind === "default") {
       return t(`common.${translationScope}DefaultQueueFull`, {
-        defaultValue: error.message});
+        defaultValue: error.message,
+      });
     }
     const queueLabel = t(`common.projectQueueKinds.${error.queueKind}`, {
-      defaultValue: error.queueKind});
+      defaultValue: error.queueKind,
+    });
     return t(`common.${translationScope}QueueFull`, {
       queue: queueLabel,
-      defaultValue: error.message});
+      defaultValue: error.message,
+    });
   }
   if (error instanceof Error && error.message) {
     return humanizeTaskError(error.message, t);

@@ -15,18 +15,21 @@ import {
   SceneEnvironmentPromptFields,
   parseEnvironmentPrompt,
   serializeEnvironmentPrompt,
-  type SceneEnvironmentSections} from "@/components/assets/scene-environment-prompt";
+  type SceneEnvironmentSections,
+} from "@/components/assets/scene-environment-prompt";
 import { PanoCaptureDialog } from "@/features/viewer-kit/pano/PanoCaptureDialog";
 import type { PanoCaptureResult } from "@/features/viewer-kit/pano/panoManifest";
 import { ThreeDDirectorDialog } from "@/features/viewer-kit/three-d/ThreeDDirectorDialog";
 import type { ThreeDSceneSnapshot } from "@/features/viewer-kit/three-d/engine/viewerApp";
 import {
   AssetSearchBox,
-  filterBySearch} from "@/components/assets/asset-search-box";
+  filterBySearch,
+} from "@/components/assets/asset-search-box";
 import {
   useAssetReferences,
   type BeatReference,
-  type SceneCoOccurrence} from "@/lib/queries/asset-references";
+  type SceneCoOccurrence,
+} from "@/lib/queries/asset-references";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { useAssetImageSourceSelection } from "@/lib/queries/character-image-selection";
 import { useAssetFocus } from "@/hooks/use-asset-focus";
@@ -36,7 +39,8 @@ import {
   backendErrorToastMessage,
   taskResponseToastMessage,
   BillingRuleNotConfiguredError,
-  humanizeTaskError} from "@/lib/api-errors";
+  humanizeTaskError,
+} from "@/lib/api-errors";
 import { confirmDialog } from "@/components/confirm-dialog-host";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { Button } from "@/components/ui/button";
@@ -48,12 +52,14 @@ import {
   DialogContent,
   DialogFooter,
   DialogHeader,
-  DialogTitle} from "@/components/ui/dialog";
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
-  TooltipTrigger} from "@/components/ui/tooltip";
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -62,13 +68,15 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue} from "@/components/ui/select";
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useTaskController } from "@/hooks/use-task-controller";
 import { useTaskActivity } from "@/task-center/use-task-activity";
 import {
   sceneReferenceAssetScope,
-  stageAssetScope} from "@/lib/task-scope";
+  stageAssetScope,
+} from "@/lib/task-scope";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { sceneTypeLabel, sceneTypeOptions } from "@/lib/scene-type";
 import { timeOfDayLabel, timeOfDayOptions } from "@/lib/time-of-day";
@@ -94,7 +102,8 @@ import {
   useUploadSceneCustomPackage,
   useUploadSceneMaster,
   useUploadScenePano,
-  type ScenePayload} from "@/lib/queries/scenes";
+  type ScenePayload,
+} from "@/lib/queries/scenes";
 import { useProject } from "@/lib/queries/projects";
 import { queryKeys } from "@/lib/query-keys";
 import { confirmAssetRename } from "@/lib/confirm-asset-rename";
@@ -102,7 +111,8 @@ import type { ErrorResponse } from "@/types/api";
 import type {
   SceneAsset,
   ScenePanoSource,
-  SceneStagePlySource} from "@/types/scene";
+  SceneStagePlySource,
+} from "@/types/scene";
 
 const SCENE_FORM_DEFAULT: ScenePayload = {
   name: "",
@@ -112,7 +122,8 @@ const SCENE_FORM_DEFAULT: ScenePayload = {
   time_of_day: "",
   environment_prompt: "",
   variant_prompt: "",
-  description: ""};
+  description: "",
+};
 
 function trimScenePart(value: string | null | undefined): string {
   return String(value || "").trim();
@@ -156,7 +167,8 @@ async function openSceneFreezoneCanvas(project: string, sceneName: string) {
   await openPresetProjectionInMyCanvas(project, {
     scope: "asset",
     asset_kind: "scene",
-    asset_id: sceneName});
+    asset_id: sceneName,
+  });
 }
 
 function SceneDialog({
@@ -168,7 +180,8 @@ function SceneDialog({
   coOccurrence,
   onOpenChange,
   onSubmit,
-  saving}: {
+  saving,
+}: {
   open: boolean;
   initial: SceneAsset | null;
   draftSeed?: Partial<ScenePayload> | null;
@@ -200,7 +213,8 @@ function SceneDialog({
           environment_prompt: initial.environment_prompt ?? "",
           variant_prompt: initial.variant_prompt ?? "",
           description: initial.description ?? "",
-          notes: initial.notes ?? ""}
+          notes: initial.notes ?? "",
+        }
       : { ...SCENE_FORM_DEFAULT, ...(draftSeed ?? {}) };
     setDraft(nextDraft);
     setEnvSections(parseEnvironmentPrompt(nextDraft.environment_prompt ?? ""));
@@ -247,13 +261,15 @@ function SceneDialog({
         variant_id: trimScenePart(draft.variant_id),
         time_of_day: trimScenePart(draft.time_of_day),
         environment_prompt: "",
-        variant_prompt: trimScenePart(draft.variant_prompt)}
+        variant_prompt: trimScenePart(draft.variant_prompt),
+      }
     : {
         ...draft,
         base_scene_id: "",
         variant_id: "",
         time_of_day: "",
-        variant_prompt: ""};
+        variant_prompt: "",
+      };
   const renderSceneTypeField = () => (
     <div className="grid min-w-0 gap-2">
       <Label className="text-sm">{t("assets.scenes.fields.type")}</Label>
@@ -262,7 +278,8 @@ function SceneDialog({
         onValueChange={(value) =>
           setDraft((prev) => ({
             ...prev,
-            scene_type: String(value || "other")}))
+            scene_type: String(value || "other"),
+          }))
         }
       >
         <SelectTrigger
@@ -336,7 +353,8 @@ function SceneDialog({
                     onChange={(event) =>
                       setDraft((prev) => ({
                         ...prev,
-                        variant_id: event.target.value}))
+                        variant_id: event.target.value,
+                      }))
                     }
                     placeholder={t("assets.scenes.fields.variantPlaceholder")}
                     className={SCENE_DIALOG_INPUT_CLASS}
@@ -352,7 +370,8 @@ function SceneDialog({
                       setDraft((prev) => ({
                         ...prev,
                         time_of_day:
-                          value === "__NO_SCENE_TIME__" ? "" : String(value || "")}))
+                          value === "__NO_SCENE_TIME__" ? "" : String(value || ""),
+                      }))
                     }
                   >
                     <SelectTrigger
@@ -406,7 +425,8 @@ function SceneDialog({
                 onChange={(event) =>
                   setDraft((prev) => ({
                     ...prev,
-                    variant_prompt: event.target.value}))
+                    variant_prompt: event.target.value,
+                  }))
                 }
                 placeholder={t("assets.scenes.fields.variantPromptPlaceholder")}
                 className={SCENE_DIALOG_TEXTAREA_CLASS}
@@ -436,7 +456,8 @@ function SceneDialog({
               onChange={(event) =>
                 setDraft((prev) => ({
                   ...prev,
-                  description: event.target.value}))
+                  description: event.target.value,
+                }))
               }
               className={SCENE_DIALOG_TEXTAREA_CLASS}
             />
@@ -483,7 +504,8 @@ function SceneDialog({
                 ...submitDraft,
                 environment_prompt: isPlateDialog
                   ? ""
-                  : serializeEnvironmentPrompt(envSections)})
+                  : serializeEnvironmentPrompt(envSections),
+              })
             }
             disabled={canSave}
             className="h-10 w-18 rounded-md bg-primary px-0 text-sm font-normal text-primary-foreground shadow-lg shadow-primary/15 hover:bg-primary/90"
@@ -500,7 +522,8 @@ function SceneDialog({
 function CoOccurrenceRow({
   label,
   ids,
-  onJump}: {
+  onJump,
+}: {
   label: string;
   ids: string[];
   onJump: (id: string) => void;
@@ -529,7 +552,8 @@ function SceneAssetCardController({
   scene,
   imageSourceSelection,
   onEdit,
-  onDelete}: {
+  onDelete,
+}: {
   project: string;
   scene: SceneAsset;
   imageSourceSelection: string;
@@ -576,7 +600,8 @@ function SceneAssetCardController({
       surface: "supertale",
       params: imageSourceSelection
         ? { image_selection: imageSourceSelection }
-        : null},
+        : null,
+    },
   );
   const panoCost = useGenerationCreditCost(
     "feature",
@@ -647,40 +672,50 @@ function SceneAssetCardController({
       taskType: "scene_reference_asset",
       project,
       episode: 0,
-      scope: sceneReferenceAssetScope(scene.name, "master")},
-    invalidateKeys: [queryKeys.scenes(project)]});
+      scope: sceneReferenceAssetScope(scene.name, "master"),
+    },
+    invalidateKeys: [queryKeys.scenes(project)],
+  });
   const panoTask = useTaskController({
     key: {
       taskType: "scene_pano_generation",
       project,
       episode: 0,
-      scope: stageAssetScope(scene.name, panoStep)},
-    invalidateKeys: [queryKeys.scenes(project)]});
+      scope: stageAssetScope(scene.name, panoStep),
+    },
+    invalidateKeys: [queryKeys.scenes(project)],
+  });
   const reverseTask = useTaskController({
     key: {
       taskType: "scene_reference_asset",
       project,
       episode: 0,
-      scope: sceneReferenceAssetScope(scene.name, "reverse_master")},
-    invalidateKeys: [queryKeys.scenes(project)]});
+      scope: sceneReferenceAssetScope(scene.name, "reverse_master"),
+    },
+    invalidateKeys: [queryKeys.scenes(project)],
+  });
   const stageSingleFaceTask = useTaskController({
     key: {
       taskType: "stage_asset",
       project,
       episode: 0,
-      scope: stageAssetScope(scene.name, "single_face_sharp")},
+      scope: stageAssetScope(scene.name, "single_face_sharp"),
+    },
     invalidateKeys: [queryKeys.scenes(project)],
     onComplete: () => setStagePlySource(null),
-    onError: () => setStagePlySource(null)});
+    onError: () => setStagePlySource(null),
+  });
   const stagePanoTask = useTaskController({
     key: {
       taskType: "stage_asset",
       project,
       episode: 0,
-      scope: stageAssetScope(scene.name, "pano_sharp")},
+      scope: stageAssetScope(scene.name, "pano_sharp"),
+    },
     invalidateKeys: [queryKeys.scenes(project)],
     onComplete: () => setStagePlySource(null),
-    onError: () => setStagePlySource(null)});
+    onError: () => setStagePlySource(null),
+  });
 
   async function handleMasterFile(file: File | undefined) {
     if (!file) return;
@@ -859,7 +894,8 @@ function SceneAssetCardController({
         url: manifest.source.pano_url ?? manifest.source.url,
         pano_url: manifest.source.pano_url ?? manifest.source.url,
         pano_fs: manifest.source.pano_fs,
-        slot_kind: "scene_director_pano_360"};
+        slot_kind: "scene_director_pano_360",
+      };
     }
     const option = manifest.source_options?.find((item) => {
       if (
@@ -882,7 +918,8 @@ function SceneAssetCardController({
       pano_url: option.pano_url,
       pano_fs: option.pano_fs,
       slot_kind: option.slot_kind,
-      fs: option.fs};
+      fs: option.fs,
+    };
   }
 
   async function handleSaveDirectorWorld(
@@ -893,7 +930,8 @@ function SceneAssetCardController({
     const res = await saveDirectorWorld.mutateAsync({
       active_source_id: sourceId,
       snapshot,
-      active_source: sourceForDirectorWorldSave(sourceId) as Record<string, unknown> | undefined});
+      active_source: sourceForDirectorWorldSave(sourceId) as Record<string, unknown> | undefined,
+    });
     if (isErrorResponse(res)) {
       throw new Error(res.error);
     }
@@ -1061,7 +1099,8 @@ function sceneGroupPreviewUrl(group: SceneGroup): string {
 function SceneGroupListItem({
   group,
   selected,
-  onSelect}: {
+  onSelect,
+}: {
   group: SceneGroup;
   selected: boolean;
   onSelect: () => void;
@@ -1078,7 +1117,8 @@ function SceneGroupListItem({
     <button
       type="button"
       aria-label={t("assets.scenes.selectScene", {
-        name: group.baseName})}
+        name: group.baseName,
+      })}
       aria-pressed={selected}
       onClick={onSelect}
       className={[
@@ -1107,7 +1147,8 @@ function SceneGroupListItem({
           {group.scenes.length > 1 ? (
             <span>
               {t("assets.scenes.variantCount", {
-                count: group.scenes.length})}
+                count: group.scenes.length,
+              })}
             </span>
           ) : null}
         </div>
@@ -1118,7 +1159,8 @@ function SceneGroupListItem({
 
 export function ScenesPanel({
   project,
-  focusId}: {
+  focusId,
+}: {
   project: string;
   focusId?: string | null;
 }) {
@@ -1181,7 +1223,8 @@ export function ScenesPanel({
     }
     return Array.from(groups.entries()).map(([baseName, groupScenes]) => ({
       baseName,
-      scenes: groupScenes}));
+      scenes: groupScenes,
+    }));
   }, [allItems]);
   useEffect(() => {
     setSelectedBaseName(readStoredSceneGroupSelection(project));
@@ -1252,7 +1295,8 @@ export function ScenesPanel({
     selectedSummaryGroup && selectedSceneAssets
       ? {
           baseName: selectedSummaryGroup.baseName,
-          scenes: selectedSceneAssets}
+          scenes: selectedSceneAssets,
+        }
       : null;
   const selectedBaseScene =
     selectedGroup?.scenes.find((scene) => scene.name === selectedGroup.baseName) ??
@@ -1310,7 +1354,8 @@ export function ScenesPanel({
       title: t("assets.scenes.deleteTitle"),
       description: t("assets.scenes.confirmDelete", { name: scene.name }),
       confirmText: t("common.delete"),
-      confirmVariant: "destructive"});
+      confirmVariant: "destructive",
+    });
     if (!confirmed) return;
     // ky 对 4xx/5xx 直接 reject，不接住的话删除失败就是「点了没反应」——用户会以为删掉了。
     let res;
@@ -1537,7 +1582,8 @@ export function ScenesPanel({
                                   selectedBaseScene?.scene_type ?? "interior",
                                 environment_prompt: "",
                                 variant_prompt: "",
-                                description: ""});
+                                description: "",
+                              });
                               setDialogOpen(true);
                             }}
                             title={t("assets.scenes.newPlateHint")}

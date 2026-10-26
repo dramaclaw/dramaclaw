@@ -5,72 +5,75 @@ export const cdn = (path: string) => encodeURI(`${CDN_BASE}/${path}`);
 
 export const businessWechatQrUrl = cdn("contact/wechat.png");
 
+// i18n-exempt-start —— 下面是被展示作品自己的片名和一句话简介（源自作品本身），
+// 不是界面文案；翻译掉就不是这部作品了。
 export const cinematicVideoLibrary = [
   {
     id: "luban",
-    titleKey: "loginCinematic.works.luban.title",
+    title: "鲁班",
     type: "TRAILER",
     stat: "12 SHOTS",
-    loglineKey: "loginCinematic.works.luban.logline",
+    logline: "机械与古法在同一条时间线里重新咬合。",
     video: cdn("luban/luban-ep01.mp4"),
   },
   {
     id: "guilingsi",
-    titleKey: "loginCinematic.works.guilingsi.title",
+    title: "归灵司",
     type: "SCENE",
     stat: "08 SHOTS",
-    loglineKey: "loginCinematic.works.guilingsi.logline",
+    logline: "全城反光物同时作祟，收灵人被迫追查镜中源头。",
     video: cdn("guilingsi/guilingsi-ep01.mp4"),
   },
   {
     id: "shixiong-butianle",
-    titleKey: "loginCinematic.works.shixiongButianle.title",
+    title: "师兄你怎么不舔了",
     type: "CHARACTER",
     stat: "09 SHOTS",
-    loglineKey: "loginCinematic.works.shixiongButianle.logline",
+    logline: "重生后的第一件事，是拒绝继续当命运的配角。",
     video: cdn("shixiong-butianle/shixiong-butianle-ep01.mp4"),
   },
   {
     id: "tianmingbukeqi",
-    titleKey: "loginCinematic.works.tianmingbukeqi.title",
+    title: "天命不可欺",
     type: "WORLD",
     stat: "14 SHOTS",
-    loglineKey: "loginCinematic.works.tianmingbukeqi.logline",
+    logline: "大婚当日，归乡之法与王朝秘密同时浮出水面。",
     video: cdn("tianmingbukeqi/tianmingbukeqi-ep02.mp4"),
   },
   {
     id: "wulongxiantu",
-    titleKey: "loginCinematic.works.wulongxiantu.title",
+    title: "乌龙仙途",
     type: "TRAILER",
     stat: "11 SHOTS",
-    loglineKey: "loginCinematic.works.wulongxiantu.logline",
+    logline: "飞升系统终于激活，却把修仙路带向另一个荒唐方向。",
     video: cdn("wulongxiantu/wulongxiantu-ep01.mp4"),
   },
   {
     id: "feiyi-zhouwu",
-    titleKey: "loginCinematic.works.feiyiZhouwu.title",
+    title: "非遗㑇舞",
     type: "WORLD",
     stat: "07 SHOTS",
-    loglineKey: "loginCinematic.works.feiyiZhouwu.logline",
+    logline: "传统身段、节奏和镜头被重新编排成可观看的片段。",
     video: cdn("feiyi-zhouwu/feiyi-zhouwu.mp4"),
   },
   {
     id: "3d-anime-montage-demo",
-    titleKey: "loginCinematic.works.3dAnimeMontage.title",
+    title: "3D动漫混剪",
     type: "SCENE",
     stat: "10 SHOTS",
-    loglineKey: "loginCinematic.works.3dAnimeMontage.logline",
+    logline: "多个动画片段被剪进同一组高密度镜头节奏。",
     video: cdn("3d-anime-montage-demo/3d-anime-montage-demo.mp4"),
   },
   {
     id: "dongtai-dadou",
-    titleKey: "loginCinematic.works.dongtaiDadou.title",
+    title: "动态打斗",
     type: "ACTION",
     stat: "06 SHOTS",
-    loglineKey: "loginCinematic.works.dongtaiDadou.logline",
+    logline: "动作、速度线和镜头压迫感在短片里连续推进。",
     video: cdn("dongtai-dadou/dongtai-dadou.mp4"),
   },
 ] as const;
+// i18n-exempt-end
 
 /** 登录弹窗左侧主视觉使用独立成片，不影响落地页作品库。 */
 export const loginModalShowcaseVideo = cdn("login/login20260826-174426.mp4");

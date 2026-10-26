@@ -7,7 +7,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type PointerEvent as ReactPointerEvent} from "react";
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Brush, Clapperboard, Loader2, Play, RefreshCw } from "lucide-react";
@@ -22,15 +23,18 @@ import { useViewToggles } from "@/hooks/use-view-toggles";
 import { useGenerateScript } from "@/lib/queries/scripts";
 import {
   useSketchSettings,
-  type SketchAspectRatio} from "@/lib/queries/sketch-settings";
+  type SketchAspectRatio,
+} from "@/lib/queries/sketch-settings";
 import {
   useRebuildPoolIndex,
-  useRegenerateSketches} from "@/lib/queries/sketches";
+  useRegenerateSketches,
+} from "@/lib/queries/sketches";
 import { useProject, useUpdateProject } from "@/lib/queries/projects";
 import { useProjectAspectRatio } from "@/stores/aspect-ratio-store";
 import {
   aspectRatioForOrientation,
-  orientationForAspectRatio} from "@/lib/aspect-ratio";
+  orientationForAspectRatio,
+} from "@/lib/aspect-ratio";
 import { DEFAULT_VIDEO_BACKEND, useVideoBackends } from "@/lib/queries/video";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { useTaskController } from "@/hooks/use-task-controller";
@@ -45,16 +49,19 @@ import { BatchBar } from "@/components/episode/beat-workbench/batch-bar";
 import {
   createSketchRegenPlanItems,
   getLockedSketchRegenItemIds,
-  sketchPlanGridLabel} from "@/components/episode/beat-workbench/batch-panel";
+  sketchPlanGridLabel,
+} from "@/components/episode/beat-workbench/batch-panel";
 import {
   useEpisodeActionsSlot,
-  useRegisterEpisodeActionsSlot} from "@/components/episode/episode-actions-slot";
+  useRegisterEpisodeActionsSlot,
+} from "@/components/episode/episode-actions-slot";
 import { BeatCardGrid } from "@/components/episode/beat-workbench/beat-card-grid";
 import { EpisodeEmptyState } from "@/components/episode/episode-empty-state";
 import { SketchGridGallery } from "@/components/episode/beat-workbench/sketch-grid-gallery";
 import {
   SketchColorLegend,
-  SketchStudioActions} from "@/components/episode/beat-workbench/sketch-studio-actions";
+  SketchStudioActions,
+} from "@/components/episode/beat-workbench/sketch-studio-actions";
 import { RenderGridGallery } from "@/components/episode/beat-workbench/render-grid-gallery";
 import { ViewToggles } from "@/components/episode/beat-workbench/view-toggles";
 import { ActionPanel } from "@/components/episode/beat-workbench/action-panel";
@@ -66,7 +73,8 @@ import { CreditCostInline } from "@/components/credit-cost-inline";
 import { formatCreditCost } from "@/components/credits/credit-visual";
 import {
   backendErrorToastMessage,
-  BillingRuleNotConfiguredError} from "@/lib/api-errors";
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -75,15 +83,18 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogTitle} from "@/components/ui/alert-dialog";
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
-  DialogTitle} from "@/components/ui/dialog";
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   useGenerationCreditCost,
-  useGenerationCreditCostPlan} from "@/lib/queries/generation-credit-cost";
+  useGenerationCreditCostPlan,
+} from "@/lib/queries/generation-credit-cost";
 
 const SHOW_EPISODE_FREEZONE_ENTRY = false;
 
@@ -131,7 +142,8 @@ export function BeatsTabContent() {
     sub: targetSection,
     focusBeat,
     setBeat,
-    clearFocusBeat} = useBeatsWorkbenchParam();
+    clearFocusBeat,
+  } = useBeatsWorkbenchParam();
   const appliedDeepLinkRef = useRef<string | null>(null);
   const focusAppliedRef = useRef<number | null>(null);
 
@@ -141,7 +153,8 @@ export function BeatsTabContent() {
     handleCardClick,
     toggleCheck,
     selectSingle,
-    clearSelection} = useSelection({ project, episode: epNum });
+    clearSelection,
+  } = useSelection({ project, episode: epNum });
 
   // View toggles (localStorage persisted)
   const { toggles, toggle: toggleView } = useViewToggles(project, epNum);
@@ -270,7 +283,8 @@ export function BeatsTabContent() {
       queryKeys.grids(project, epNum),
       queryKeys.beats(project, epNum),
       queryKeys.pipelineStatus(project),
-    ]});
+    ],
+  });
   // One render `execute` fans out into N `selected_regen` grid tasks (and only
   // returns a non-matching umbrella `location__…` scope), so a single
   // controller can't follow them all. Track every grid task by its id instead.
@@ -283,7 +297,8 @@ export function BeatsTabContent() {
       queryKeys.beats(project, epNum),
       queryKeys.sketchImageUsage(project, epNum),
       queryKeys.pipelineStatus(project),
-    ]});
+    ],
+  });
   const checkedBeatNums = useMemo(
     () =>
       selection.mode === "multi"
@@ -306,7 +321,8 @@ export function BeatsTabContent() {
       imageRole: "sketch",
       params: sketchImageGenerationSelection
         ? { image_selection: sketchImageGenerationSelection }
-        : null},
+        : null,
+    },
   );
   const lockedSketchItemIds = useMemo(
     () => getLockedSketchRegenItemIds(tasks.data?.data, sketchPlanItems),
@@ -358,7 +374,8 @@ export function BeatsTabContent() {
       try {
         const res = await regenSketches.mutateAsync({
           beatIndices: item.beatNumbers,
-          modeKey: item.modeKey});
+          modeKey: item.modeKey,
+        });
         if (res.ok === false) {
           fail++;
           firstError ||= res.error || t("episode.workbench.batch.dispatchFailed");
@@ -378,7 +395,8 @@ export function BeatsTabContent() {
       toast.success(
         t("episode.workbench.batch.dispatched", {
           count: okBeats,
-          mode: okGrids === 1 ? dispatchableItems[0].modeLabel : `${okGrids} grids`}),
+          mode: okGrids === 1 ? dispatchableItems[0].modeLabel : `${okGrids} grids`,
+        }),
       );
     }
 
@@ -410,7 +428,8 @@ export function BeatsTabContent() {
       const res = await rebuildPoolIndex.mutateAsync();
       toast.success(
         t("episode.workbench.pool.rebuildSuccess", {
-          count: res.data.image_count}),
+          count: res.data.image_count,
+        }),
       );
     } catch {
       toast.error(t("episode.workbench.pool.rebuildFailed"));
@@ -505,7 +524,8 @@ export function BeatsTabContent() {
       queryKeys.script(project, epNum),
       queryKeys.beats(project, epNum),
       queryKeys.pipelineStatus(project),
-    ]});
+    ],
+  });
   const handleGenerate = async () => {
     if (!identityPlanReady) {
       toast.error(t("episode.script.identityRequired"));
@@ -529,7 +549,8 @@ export function BeatsTabContent() {
     try {
       await openPresetProjectionInMyCanvas(project, {
         scope: "episode",
-        episode: epNum});
+        episode: epNum,
+      });
       toast.success(t("episode.workbench.actionPanel.episodeFreezoneOpened"));
     } catch {
       toast.error(t("episode.workbench.actionPanel.episodeFreezoneOpenFailed"));
@@ -694,7 +715,8 @@ export function BeatsTabContent() {
                 {detailBeatDisplayNumber !== null ? (
                   <span className="font-mono text-xs font-medium leading-none tabular-nums text-primary">
                     {t("episode.workbench.view.activeBeat", {
-                      n: detailBeatDisplayNumber})}
+                      n: detailBeatDisplayNumber,
+                    })}
                   </span>
                 ) : (
                   <span aria-hidden className="min-w-0" />
@@ -807,7 +829,8 @@ export function BeatsTabContent() {
             <AlertDialogTitle>
               {t("episode.sketchPlan.title", {
                 beats: checkedBeatNums.length,
-                grids: sketchPlanItems.length})}
+                grids: sketchPlanItems.length,
+              })}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {t("episode.sketchPlan.subtitle")}
@@ -863,7 +886,8 @@ export function BeatsTabContent() {
               className="relative pr-11 transition-transform active:scale-95"
             >
               {t("episode.sketchPlan.confirm", {
-                grids: sketchPlanItems.length})}
+                grids: sketchPlanItems.length,
+              })}
               <CreditCostInline
                 display={sketchPlanCostDisplay}
                 promotion={sketchPlanCost.promotion}
@@ -921,4 +945,5 @@ export function BeatsTabContent() {
 export const Route = createLazyFileRoute(
   "/_app/projects/$project/episodes/$episode/beats",
 )({
-  component: BeatsTabContent});
+  component: BeatsTabContent,
+});

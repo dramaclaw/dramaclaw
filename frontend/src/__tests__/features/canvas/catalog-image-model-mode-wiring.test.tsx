@@ -40,6 +40,7 @@ vi.mock('@/lib/model-task-access', () => ({
 }));
 
 vi.mock("react-i18next", () => ({
+  initReactI18next: { type: "3rdParty", init: () => {} },
   useTranslation: () => ({
     t: (key: string, fallback?: unknown) =>
       typeof fallback === "string" ? fallback : key,

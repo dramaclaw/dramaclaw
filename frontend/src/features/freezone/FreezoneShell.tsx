@@ -459,10 +459,7 @@ async function loadMainlineProjectionAssets(project: string): Promise<FreezonePr
   return [...assets, ...characterAssets];
 }
 
-function canvasCommandValidationFailureResult(
-  errors: string[],
-  t: TFn,
-): CanvasChatCommandApplyResult {
+function canvasCommandValidationFailureResult(errors: string[]): CanvasChatCommandApplyResult {
   return {
     applied: 0,
     openedUiActions: 0,
@@ -473,7 +470,7 @@ function canvasCommandValidationFailureResult(
         commandIndex: -1,
         type: "validate",
         status: "error",
-        label: t("freezone.canvasCommand.validateLabel"),
+        label: "校验画布命令",
         error: errors.join("; "),
       },
     ],
@@ -1749,8 +1746,8 @@ export function FreezoneShell({
 
       if (envelopes.length === 0) {
         const errors = [
-          t("freezone.canvasCommand.invalidFormat"),
-          t("freezone.canvasCommand.unparseable"),
+          "画布命令格式无效或不属于当前画布，前端未执行。",
+          "无法解析 canvas_chat_commands.v1 命令；请检查 command 字段是否在正确层级。",
         ];
         console.warn("[freezone-canvas-command] frame rejected: no valid envelope", {
           bridgeKey,
@@ -1791,8 +1788,8 @@ export function FreezoneShell({
               commandIndex: -1,
               type: "validate",
               status: "error",
-              label: t("freezone.canvasCommand.invalidCommand"),
-              error: t("freezone.canvasCommand.unparseable"),
+              label: "画布命令无效",
+              error: "无法解析 canvas_chat_commands.v1 命令；请检查 command 字段是否在正确层级。",
             },
           ],
         };
@@ -1844,7 +1841,7 @@ export function FreezoneShell({
       );
       if (!validation.ok) {
         const errors = [
-          t("freezone.canvasCommand.prevalidationFailed"),
+          "画布命令预校验失败，前端未展示确认卡，也未执行。",
           ...validation.issues.map((issue) => `${issue.path}: ${issue.message}`),
         ];
         console.warn("[freezone-canvas-command] validation failed", {
@@ -1878,7 +1875,7 @@ export function FreezoneShell({
           receivedAt: eventReceivedAt + 1,
           externalMcpCommand: isExternalMcpCommand,
         });
-        const result = canvasCommandValidationFailureResult(errors, t);
+        const result = canvasCommandValidationFailureResult(errors);
         reportCanvasCommandToolResult({
           bridgeKey,
           turnId,
@@ -2021,7 +2018,7 @@ export function FreezoneShell({
           window.dispatchEvent(new CustomEvent(SUPERCHAT_CANVAS_COMMAND_EVENT, {
             detail: {
               frame,
-              anchorTextPrefix: t("freezone.canvasCommand.externalAgent"),
+              anchorTextPrefix: "外部 Agent",
               receivedAt: now + index,
               externalMcpCommand: true,
             },
@@ -2081,7 +2078,7 @@ export function FreezoneShell({
           canvasId,
           agentId,
           responses: [],
-          errors: [t("freezone.canvasCommand.unparseableContextRequest")],
+          errors: ["无法解析 canvas_context_request.v1 请求。"],
         });
         setChatOpen(true);
         return;
@@ -2119,7 +2116,7 @@ export function FreezoneShell({
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error || "unknown error");
-          const errors = [t("freezone.canvasCommand.contextReadFailed", { message })];
+          const errors = [`读取画布上下文失败：${message}`];
           emitCanvasContextActivity({
             turnId,
             anchorTextPrefix,
