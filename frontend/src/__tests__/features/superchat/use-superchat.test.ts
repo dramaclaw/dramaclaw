@@ -5301,7 +5301,7 @@ describe("useSuperChat websocket lifecycle", () => {
           freezoneCanvasId: "canvas-a",
           freezoneComposeNodeId: composeNodeId,
         }),
-      { initialProps: { composeNodeId: "compose-1" } },
+      { initialProps: { composeNodeId: "compose-1" as string | null } },
     );
 
     await waitFor(() => expect(sockets).toHaveLength(1));
@@ -5328,7 +5328,7 @@ describe("useSuperChat websocket lifecycle", () => {
     const inside = sentFrames
       .map((frame) => JSON.parse(frame) as Record<string, unknown>)
       .filter((frame) => frame.type === "chat.message");
-    expect(inside.at(-1)).toEqual(expect.objectContaining({
+    expect(inside[inside.length - 1]).toEqual(expect.objectContaining({
       context: {
         freezone_canvas_id: "canvas-a",
         canvas_command_execution_mode: "manual_confirm",
@@ -5343,7 +5343,7 @@ describe("useSuperChat websocket lifecycle", () => {
     const outside = sentFrames
       .map((frame) => JSON.parse(frame) as Record<string, unknown>)
       .filter((frame) => frame.type === "chat.message");
-    expect(outside.at(-1)).toEqual(expect.objectContaining({
+    expect(outside[outside.length - 1]).toEqual(expect.objectContaining({
       context: {
         freezone_canvas_id: "canvas-a",
         canvas_command_execution_mode: "manual_confirm",
