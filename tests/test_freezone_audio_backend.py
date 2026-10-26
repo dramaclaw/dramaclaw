@@ -23,6 +23,19 @@ from novelvideo.freezone.audio_node import (
 from novelvideo.model_gateway_settings import save_custom_newapi_gateway
 
 
+@pytest.fixture(autouse=True)
+def local_media_storage(monkeypatch):
+    # These tests exercise audio delivery, not user-owned storage/network I/O.
+    # Storage admission failures are covered by test_media_storage_preflight.
+    from novelvideo.storage import media_preflight
+    from novelvideo.model_gateway_settings import EffectiveMediaRelayConfig
+
+    monkeypatch.setattr(media_preflight, "effective_media_storage_config", lambda: EffectiveMediaRelayConfig(
+        source="environment", provider="aliyun_oss", ttl_seconds=1800,
+        endpoint="", bucket="", access_key_id="", access_key_secret="",
+    ))
+
+
 class FakeTTSGenerator:
     calls = []
 

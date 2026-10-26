@@ -2387,6 +2387,7 @@ src/novelvideo/sqlite_schema.py,Elastic-2.0,2026 SuperTale contributors,REUSE.to
 src/novelvideo/sqlite_store.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/stage_asset_tasks.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/storage/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/storage/media_preflight.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/storage/media_relay.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/story_analysis.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/structured_builders.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2803,6 +2804,7 @@ tests/test_media_io_probe_concurrency.py,Elastic-2.0,2026 SuperTale contributors
 tests/test_media_model_request_schema.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_read_authorization.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_relay.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_media_storage_preflight.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_relay_multi_reference_claim.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_thumbnails.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_migrate_docker_output_script.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

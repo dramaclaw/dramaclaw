@@ -248,6 +248,10 @@ Routing is based on model ID. A Local ComfyUI model may appear in XiaHua as a ne
 
 Image editing, video first/last frames, reference images, and identity images require upstream services to read local files. Go to **Settings → Media Storage** and configure a publicly reachable temporary media relay.
 
+Saving first uploads a tiny test image and reads it back. A failed check leaves the previous configuration intact. Before paid image, video, or audio calls, CE also checks configured media storage. Successful checks are reused for up to 60 seconds; configuration changes require a fresh check. Local workflows without configured media storage or reference uploads remain available.
+
+Probe objects have random names under the normal relay prefix. OSS deletion is best effort and is not a required permission. Retention rules should clean up undeleted objects and Cloudinary probes. Preflight does not guarantee continued network availability or add automatic refunds or result recovery.
+
 ### Aliyun OSS
 
 Provide a Bucket and an AccessKey with read/write permission for that Bucket. A narrowly scoped RAM sub-account is recommended.

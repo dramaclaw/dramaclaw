@@ -124,6 +124,7 @@ class AliyunOSSRelay:
         bucket_name: str,
         access_key_id: str,
         access_key_secret: str,
+        connect_timeout: float | None = None,
     ) -> None:
         missing = [
             name
@@ -151,6 +152,7 @@ class AliyunOSSRelay:
             oss2.Auth(access_key_id, access_key_secret),
             f"https://{endpoint.strip()}",
             bucket_name.strip(),
+            **({"connect_timeout": connect_timeout} if connect_timeout is not None else {}),
         )
 
     def upload_bytes(
@@ -192,6 +194,7 @@ class CloudinaryRelay:
         api_key: str,
         api_secret: str,
         folder: str = "",
+        request_timeout: float = 60.0,
     ) -> None:
         missing = [
             name
@@ -211,6 +214,7 @@ class CloudinaryRelay:
         self._api_key = api_key.strip()
         self._api_secret = api_secret.strip()
         self._folder = str(folder or "").strip().strip("/")
+        self._request_timeout = request_timeout
 
     def upload_bytes(
         self,
@@ -242,7 +246,7 @@ class CloudinaryRelay:
             f"{resource_type}/upload"
         )
         try:
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=self._request_timeout) as client:
                 response = client.post(
                     url,
                     data=payload,
