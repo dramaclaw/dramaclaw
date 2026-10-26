@@ -419,3 +419,75 @@ def test_intent_accepts_external_video_kind() -> None:
             {**_intent(), "external_inputs": [VIDEO_EXTERNAL]}
         )
     )
+
+
+@pytest.mark.parametrize("node_type", ["videoNode", "uploadNode"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "blob:http://localhost/recording",
+        "BLOB:http://localhost/recording",
+        " blob:http://localhost/recording ",
+    ],
+)
+def test_external_video_rejects_browser_blob_url(node_type: str, url: str) -> None:
+    canvas = _video_canvas()
+    canvas["nodes"][-1].update(type=node_type, data={"videoUrl": url})
+    with pytest.raises(ValueError, match="no persistent media"):
+        resolve_external_inputs(_video_plan(), canvas, project_id="project-a")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/static/projects/project-a/previz.mp4",
+        "/api/v1/projects/project-a/media/previz.mp4",
+        "https://media.example.test/previz.mp4",
+        "data:video/mp4;base64,AAAA",
+    ],
+)
+def test_external_video_preserves_existing_non_blob_urls(url: str) -> None:
+    canvas = _video_canvas()
+    canvas["nodes"][-1]["data"]["videoUrl"] = url
+    binding = resolve_external_inputs(_video_plan(), canvas, project_id="project-a")
+    assert binding["camera"]["media_url"] == url
+
+
+def test_external_video_rejects_foreign_project_media() -> None:
+    canvas = _video_canvas()
+    canvas["nodes"][-1]["data"]["videoUrl"] = "/static/projects/project-b/previz.mp4"
+    with pytest.raises(ValueError, match="belongs to another project"):
+        resolve_external_inputs(_video_plan(), canvas, project_id="project-a")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("node_type", ["videoNode", "uploadNode"])
+@pytest.mark.parametrize("change", ["blob", "replaced"])
+async def test_draft_route_rejects_unavailable_video_with_structured_error(
+    monkeypatch, node_type: str, change: str
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    canvas = _video_canvas()
+    canvas["nodes"][-1]["type"] = node_type
+    compiled = {"plan": _video_plan()}
+    monkeypatch.setattr(freezone.canvas_store, "read_canvas", lambda *_: canvas)
+    binding = await freezone._resolve_workflow_draft_external_inputs(
+        compiled, state_dir=Path("/unused"), canvas_id="default", project_id="project-a"
+    )
+    canvas["nodes"][-1]["data"]["videoUrl"] = (
+        "blob:http://localhost/recording"
+        if change == "blob"
+        else "/static/projects/project-a/replaced.mp4"
+    )
+    with pytest.raises(HTTPException) as error:
+        await freezone._resolve_workflow_draft_external_inputs(
+            compiled, state_dir=Path("/unused"), canvas_id="default", project_id="project-a",
+            **({"expected": binding, "require_verified": True} if change == "replaced" else {}),
+        )
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "workflow_external_input_unavailable"
+    expected_error = "no persistent media" if change == "blob" else "changed"
+    assert expected_error in error.value.detail["error"]
+    assert "Do not drop this input silently" in error.value.detail["message"]
+    assert "tell the user" in error.value.detail["message"]

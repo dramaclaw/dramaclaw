@@ -76,6 +76,7 @@ def resolve_external_inputs(
         if (
             not isinstance(media_url, str)
             or not media_url.strip()
+            or media_url.strip().lower().startswith("blob:")
             or data.get("assetMigration")
         ):
             raise ValueError(
