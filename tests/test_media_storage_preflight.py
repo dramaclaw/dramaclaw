@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from io import BytesIO
 from types import SimpleNamespace
 
 import httpx
 import pytest
 import requests
+from PIL import Image
 
 from novelvideo.model_gateway_settings import EffectiveMediaRelayConfig
 from novelvideo.ports.local.usage import NoOpUsageMeter
@@ -22,7 +24,24 @@ def storage_config():
         bucket="test-relay",
         access_key_id="test-access-key",
         access_key_secret="test-secret",
+        cloud_name="test-cloud",
+        cloudinary_api_key="cloud-key",
+        cloudinary_api_secret="cloud-secret",
     )
+
+
+def _encoded_image(*, mode="L", size=(1, 1), color=255):
+    output = BytesIO()
+    Image.new(mode, size, color).save(output, format="PNG")
+    return output.getvalue()
+
+
+def test_probe_is_a_valid_png_with_correct_checksums():
+    with Image.open(BytesIO(preflight._PROBE_PNG)) as image:
+        image.verify()
+    with Image.open(BytesIO(preflight._PROBE_PNG)) as image:
+        assert image.size == (1, 1)
+        assert image.convert("RGBA").getpixel((0, 0)) == (255, 255, 255, 255)
 
 
 @pytest.fixture(autouse=True)
@@ -40,6 +59,7 @@ def storage_io(monkeypatch):
         error=None,
         delete_error=None,
         content=preflight._PROBE_PNG,
+        status=200,
     )
 
     class Bucket:
@@ -60,7 +80,7 @@ def storage_io(monkeypatch):
 
     def get(request):
         calls.gets.append(request)
-        return httpx.Response(200, content=calls.content)
+        return httpx.Response(calls.status, content=calls.content)
 
     transport = httpx.MockTransport(get)
     original_client = httpx.Client
@@ -162,12 +182,86 @@ def test_oss_errors_are_safe_and_never_cached(
     assert len(storage_io.puts) == 2
 
 
-def test_read_failure_is_not_a_successful_probe(storage_config, storage_io):
+@pytest.mark.parametrize("provider", ["aliyun_oss", "cloudinary"])
+def test_read_failure_is_not_a_successful_probe(storage_config, storage_io, provider):
+    storage_config = replace(storage_config, provider=provider)
     storage_io.content = b"wrong object or transformed response"
     with pytest.raises(
         preflight.MediaStorageUnavailable, match="MEDIA_STORAGE_READ_MISMATCH"
     ):
         preflight.verify_media_storage(storage_config)
+    assert preflight._verified_config is None
+
+
+@pytest.mark.parametrize("provider", ["aliyun_oss", "cloudinary"])
+def test_reencoded_probe_is_only_accepted_for_cloudinary(
+    storage_config, storage_io, provider
+):
+    storage_config = replace(storage_config, provider=provider)
+    storage_io.content = _encoded_image()
+    assert storage_io.content != preflight._PROBE_PNG
+    if provider == "cloudinary":
+        preflight.verify_media_storage(storage_config)
+        assert preflight._verified_config is not None
+    else:
+        with pytest.raises(
+            preflight.MediaStorageUnavailable, match="MEDIA_STORAGE_READ_MISMATCH"
+        ):
+            preflight.verify_media_storage(storage_config)
+        assert preflight._verified_config is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"",
+        b"<html>access denied</html>",
+        _encoded_image(size=(2, 1)),
+        _encoded_image(color=0),
+        _encoded_image(mode="RGBA", color=(255, 255, 255, 0)),
+    ],
+    ids=["empty", "html", "wrong-size", "wrong-pixels", "wrong-alpha"],
+)
+def test_cloudinary_does_not_accept_unreadable_or_different_images(
+    storage_config, storage_io, content
+):
+    storage_io.content = content
+    with pytest.raises(
+        preflight.MediaStorageUnavailable, match="MEDIA_STORAGE_READ_MISMATCH"
+    ):
+        preflight.verify_media_storage(replace(storage_config, provider="cloudinary"))
+    assert preflight._verified_config is None
+
+
+def test_cloudinary_rejects_a_png_with_an_invalid_checksum(storage_config, storage_io):
+    content = bytearray(preflight._PROBE_PNG)
+    content[content.index(b"IDAT") + 4] ^= 1
+    storage_io.content = bytes(content)
+    with pytest.raises(
+        preflight.MediaStorageUnavailable, match="MEDIA_STORAGE_READ_MISMATCH"
+    ):
+        preflight.verify_media_storage(replace(storage_config, provider="cloudinary"))
+    assert preflight._verified_config is None
+
+
+@pytest.mark.parametrize("provider", ["aliyun_oss", "cloudinary"])
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (401, "MEDIA_STORAGE_AUTH_INVALID"),
+        (403, "MEDIA_STORAGE_ACCESS_DENIED"),
+        (404, "MEDIA_STORAGE_TARGET_INVALID"),
+        (302, "MEDIA_STORAGE_UNAVAILABLE"),
+    ],
+)
+def test_upload_success_does_not_hide_unreadable_delivery(
+    storage_config, storage_io, provider, status, expected
+):
+    storage_io.status = status
+    with pytest.raises(preflight.MediaStorageUnavailable) as exc:
+        preflight.verify_media_storage(replace(storage_config, provider=provider))
+    assert exc.value.code == expected
+    assert len(storage_io.puts) == 1
     assert preflight._verified_config is None
 
 
@@ -229,13 +323,16 @@ def test_cloudinary_upload_and_read_are_both_verified(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["aliyun_oss", "cloudinary"])
 async def test_bad_storage_prevents_video_gateway_submission(
-    monkeypatch, storage_config, storage_io, tmp_path
+    monkeypatch, storage_config, storage_io, tmp_path, provider
 ):
     from novelvideo.generators import video_generator
 
     monkeypatch.setattr(
-        preflight, "effective_media_storage_config", lambda: storage_config
+        preflight,
+        "effective_media_storage_config",
+        lambda: replace(storage_config, provider=provider),
     )
     monkeypatch.setattr(video_generator, "get_usage_meter", NoOpUsageMeter)
     storage_io.error = PermissionError("storage cannot be written")
@@ -260,11 +357,14 @@ async def test_bad_storage_prevents_video_gateway_submission(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["image", "video", "audio"])
+@pytest.mark.parametrize("provider", ["aliyun_oss", "cloudinary"])
 async def test_ce_media_boundary_blocks_bad_storage(
-    monkeypatch, storage_config, storage_io, kind
+    monkeypatch, storage_config, storage_io, kind, provider
 ):
     monkeypatch.setattr(
-        preflight, "effective_media_storage_config", lambda: storage_config
+        preflight,
+        "effective_media_storage_config",
+        lambda: replace(storage_config, provider=provider),
     )
     storage_io.error = PermissionError("storage cannot be written")
     with pytest.raises(preflight.MediaStorageUnavailable):
@@ -307,13 +407,16 @@ async def test_ee_does_not_read_ce_storage(monkeypatch, storage_io):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["aliyun_oss", "cloudinary"])
 async def test_bad_storage_prevents_image_gateway_submission(
-    monkeypatch, storage_config, storage_io
+    monkeypatch, storage_config, storage_io, provider
 ):
     from novelvideo.generators import nanobanana_grid
 
     monkeypatch.setattr(
-        preflight, "effective_media_storage_config", lambda: storage_config
+        preflight,
+        "effective_media_storage_config",
+        lambda: replace(storage_config, provider=provider),
     )
     monkeypatch.setattr(nanobanana_grid, "get_usage_meter", NoOpUsageMeter)
     storage_io.error = PermissionError("storage cannot be written")
@@ -337,13 +440,16 @@ async def test_bad_storage_prevents_image_gateway_submission(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["aliyun_oss", "cloudinary"])
 async def test_bad_storage_prevents_preset_speech_submission(
-    monkeypatch, tmp_path, storage_config, storage_io
+    monkeypatch, tmp_path, storage_config, storage_io, provider
 ):
     from novelvideo.freezone.audio_node import _write_newapi_audio_speech
 
     monkeypatch.setattr(
-        preflight, "effective_media_storage_config", lambda: storage_config
+        preflight,
+        "effective_media_storage_config",
+        lambda: replace(storage_config, provider=provider),
     )
     storage_io.error = PermissionError("storage cannot be written")
 

@@ -11,8 +11,10 @@ import time
 import uuid
 from datetime import datetime, timezone
 from dataclasses import asdict
+from io import BytesIO
 
 import httpx
+from PIL import Image
 
 from novelvideo import config
 from novelvideo.model_gateway_settings import (
@@ -27,7 +29,7 @@ from novelvideo.storage.media_relay import (
 )
 
 _PROBE_PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC"
 )
 _CACHE_TTL_SECONDS = 60.0
 _PROBE_TIMEOUT_SECONDS = 5.0
@@ -111,10 +113,29 @@ def _safe_probe_error(exc: Exception) -> MediaStorageUnavailable:
     )
 
 
+def _probe_image_matches(content: bytes) -> bool:
+    """Accept Cloudinary re-encoding, but not a corrupt or different image."""
+    try:
+        with Image.open(BytesIO(content)) as image:
+            image.verify()
+        with (
+            Image.open(BytesIO(content)) as image,
+            Image.open(BytesIO(_PROBE_PNG)) as expected,
+        ):
+            if image.size != expected.size:
+                return False
+            return image.convert("RGBA").tobytes() == expected.convert("RGBA").tobytes()
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+        return False
+
+
 def verify_media_storage(
     settings: EffectiveMediaRelayConfig, *, force: bool = False
 ) -> None:
     """Upload/read a small image, caching only success for the exact configuration.
+
+    OSS must preserve the stored bytes. Cloudinary may re-encode delivered
+    images, so verify decoded dimensions and pixels instead of file bytes.
 
     Probe objects use the normal relay prefix and random names. OSS cleanup is
     best effort: a key with PutObject/GetObject but no DeleteObject is valid.
@@ -162,7 +183,12 @@ def verify_media_storage(
             ) as client:
                 response = client.get(url)
                 response.raise_for_status()
-                if response.content != _PROBE_PNG:
+                matches = (
+                    _probe_image_matches(response.content)
+                    if settings.provider == "cloudinary"
+                    else response.content == _PROBE_PNG
+                )
+                if not matches:
                     raise MediaStorageUnavailable(
                         "MEDIA_STORAGE_READ_MISMATCH",
                         "媒体存储读取校验失败，请检查存储访问配置。",
