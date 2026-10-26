@@ -291,7 +291,9 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
     # 合并后新增 video-extend、upscale/quote、upscale/probe 三条非画布路由。
     # 画布路由数保持 staging 的 31 条，home-node opt-out 白名单仍逐项检查。
     # staging 的两个白模路由与 main 的逐帧拉片路由均保留。
-    assert router_decorators == 116
+    # OpenFilm 剪辑工作区再加 5 条非画布路由（TAG_FREEZONE_VIDEO）：打开 Studio 会话，
+    # 以及 agent 的 film 读取 / 编辑 / 导入素材 / 导出；它们都走默认的 home-node 守卫。
+    assert router_decorators == 121
     assert len(canvas_routes) == 31
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES

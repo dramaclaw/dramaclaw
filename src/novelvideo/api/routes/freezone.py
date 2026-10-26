@@ -12350,7 +12350,7 @@ def _studio_node_media(canvas: dict | None, node_id: str) -> tuple[str, str]:
     raise HTTPException(409, f"canvas node {node_id} has no finished media to import")
 
 
-def _mark_video_compose_node_generating(
+async def _mark_video_compose_node_generating(
     state_dir: Path,
     canvas_id: str,
     node_id: str,
@@ -12362,7 +12362,9 @@ def _mark_video_compose_node_generating(
     """Claim the compose node for a server-started export so the result projects back.
 
     The task runner only writes ``resultVideoUrl`` when the node still carries this
-    task's key, exactly as the browser does before it submits a compose.
+    task's key, exactly as the browser does before it submits a compose. The save
+    goes through ``save_canvas_async`` like every other route-side canvas write, so
+    the lock wait and file I/O stay off the event loop.
     """
 
     def skip_if(existing: dict | None) -> dict | None:
@@ -12395,7 +12397,7 @@ def _mark_video_compose_node_generating(
         updated["save_source"] = "studio_export"
         return updated
 
-    saved = canvas_store.save_canvas(
+    saved = await canvas_store.save_canvas_async(
         state_dir,
         canvas_id,
         base_revision=None,
@@ -12532,8 +12534,7 @@ async def freezone_studio_export(
     task_key = project_task_state_key(
         "freezone_video_compose", ctx.project_id, 0, scope=job_id
     )
-    claimed = await asyncio.to_thread(
-        _mark_video_compose_node_generating,
+    claimed = await _mark_video_compose_node_generating(
         _canvas_state_project_dir(ctx, project_dir),
         canvas_id,
         node_id,
