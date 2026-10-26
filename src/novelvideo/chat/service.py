@@ -3920,6 +3920,7 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_USERNAME",
                 "NOVELVIDEO_OUTPUT_DIR",
                 "PYTHONPATH",
+                "SUPERTALE_OPENFILM_STUDIO_ENABLED",
             ],
         }
     }

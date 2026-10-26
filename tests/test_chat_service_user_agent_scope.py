@@ -3953,6 +3953,7 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_USERNAME",
         "NOVELVIDEO_OUTPUT_DIR",
         "PYTHONPATH",
+        "SUPERTALE_OPENFILM_STUDIO_ENABLED",
     ]
 
 
@@ -4410,7 +4411,8 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_ROOT","DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
         '"DRAMACLAW_TURN_ID","DRAMACLAW_USERNAME",'
-        '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH"]' in overrides
+        '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH",'
+        '"SUPERTALE_OPENFILM_STUDIO_ENABLED"]' in overrides
     )
     assert "mcp_servers.dramaclaw.required=true" in overrides
     assert 'mcp_servers.dramaclaw.default_tools_approval_mode="approve"' in overrides

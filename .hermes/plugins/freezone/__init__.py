@@ -40,6 +40,9 @@ def _openfilm_studio_enabled() -> bool:
     }
 
 
+_OPENFILM_STUDIO_ENABLED = _openfilm_studio_enabled()
+
+
 _STRUCTURED_RESULT_INPUT_HASH: ContextVar[Any] = ContextVar(
     "freezone_structured_result_input_hash", default=None
 )
@@ -9539,6 +9542,19 @@ _STORY_SUCCESS_REQUIRED = (
 )
 
 
+_STUDIO_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    "freezone_studio_get_film": ("node_id", "rev", "problems", "film", "media", "studio"),
+    "freezone_studio_edit_film": (
+        "node_id", "rev", "rebased", "ops_applied", "film", "media",
+    ),
+    "freezone_studio_import_media": ("node_id", "asset_path", "kind", "media", "source"),
+    "freezone_studio_export_film": (
+        "node_id", "task_type", "job_id", "task_key", "task_episode", "task_scope",
+        "backend", "queue", "task_id",
+    ),
+}
+
+
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     **_STORY_RESULT_FIELDS,
     "freezone_observe_workflow_run": (
@@ -9806,15 +9822,7 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "request",
     ),
     "freezone_get_link_type_catalog": ("link_types", "count"),
-    "freezone_studio_get_film": ("node_id", "rev", "problems", "film", "media", "studio"),
-    "freezone_studio_edit_film": (
-        "node_id", "rev", "rebased", "ops_applied", "film", "media",
-    ),
-    "freezone_studio_import_media": ("node_id", "asset_path", "kind", "media", "source"),
-    "freezone_studio_export_film": (
-        "node_id", "task_type", "job_id", "task_key", "task_episode", "task_scope",
-        "backend", "queue", "task_id",
-    ),
+    **(_STUDIO_RESULT_FIELDS if _OPENFILM_STUDIO_ENABLED else {}),
 }
 
 
@@ -9832,12 +9840,17 @@ _SKILL_STUDIO_FRONTEND_REQUIRED = (
     "action",
 )
 
-_RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
-    **_STORY_SUCCESS_REQUIRED,
+_STUDIO_RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
     "freezone_studio_get_film": ("rev", "film"),
     "freezone_studio_edit_film": ("rev", "film"),
     "freezone_studio_import_media": ("asset_path",),
     "freezone_studio_export_film": ("job_id", "task_key"),
+}
+
+
+_RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
+    **_STORY_SUCCESS_REQUIRED,
+    **(_STUDIO_RESULT_SUCCESS_REQUIRED if _OPENFILM_STUDIO_ENABLED else {}),
     "freezone_observe_workflow_run": (
         "run_id",
         "run_status",
@@ -11739,7 +11752,7 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
         ),
         _handle_studio_export_film,
     ),
-)
+) if _OPENFILM_STUDIO_ENABLED else ()
 
 
 TOOLS = (
@@ -13144,7 +13157,7 @@ TOOLS = (
         ),
         _handle_run_node_action,
     ),
-    *(_STUDIO_TOOLS if _openfilm_studio_enabled() else ()),
+    *_STUDIO_TOOLS,
 )
 
 
