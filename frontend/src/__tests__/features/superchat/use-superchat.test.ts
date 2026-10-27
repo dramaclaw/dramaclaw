@@ -67,6 +67,7 @@ import {
   assistantClarificationCanSubmit,
   assistantClarificationCanSubmitRecommended,
   assistantClarificationGenerationCatalogIssue,
+  assistantClarificationCanExitUnavailableVideoModel,
   assistantClarificationShowsRecommended,
   imageApprovalInitialParamsForTest,
   imageApprovalParamGroupsForTest,
@@ -2502,6 +2503,16 @@ describe("Assistant clarification response", () => {
     expect(payload).toMatchObject({project_id: "project-a", canvas_id: "canvas-a", agent_id: "main"});
   });
 
+  it("returns cancellation to the agent without treating it as generation consent", () => {
+    const payload = buildAssistantClarificationToolResultForTest(
+      { type: "assistant.clarification.request", clarification_id: "c", bridge_key: "key", questions: [] },
+      { __action: "cancel" },
+      { cancelMessage: "请调整镜头模式。" },
+    );
+    expect(payload).toMatchObject({ action: "cancel", clarification_status: "cancelled",
+      ok: false, answers: {}, message: "请调整镜头模式。" });
+  });
+
   it("builds a generic bridge tool result payload", () => {
     const payload = buildAssistantClarificationToolResultForTest(
       {
@@ -3350,6 +3361,62 @@ describe("Canvas command approval image params", () => {
       { id: "video-quality", label: "高质量模型" },
       { id: "video-fast", label: "快速模型", description: "速度优先" },
     ]);
+  });
+
+  it("only offers models supporting every verified target mode and rejects stale answers", () => {
+    const rawQuestions = [{
+      id: "video_model", title: "视频模型", options_source: "video_models" as const,
+      required_video_modes: ["all_reference", "image_to_video"], options: [],
+    }];
+    const models = [
+      { id: "single", supportedModes: ["image_to_video"] },
+      { id: "unknown" },
+      { id: "omni", supportedModes: ["image_to_video", "all_reference"] },
+    ];
+    const questions = clarificationQuestionsWithLiveModelCatalogsForTest(rawQuestions, [], models);
+    expect(questions[0]?.options).toEqual([{ id: "omni", label: "omni" }]);
+    expect(assistantClarificationCanSubmit(questions, { video_model: { option_ids: ["single"] } })).toBe(false);
+    expect(assistantClarificationCanSubmit(questions, { video_model: { option_ids: ["omni"] } })).toBe(true);
+    expect(assistantClarificationShowsRecommended(questions, true,
+      { video_model: { option_ids: ["single"] } })).toBe(false);
+    const catalog = { models: models.slice(0, 2), isLoading: false, isFallback: false };
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions, catalog)).toBe(true);
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions,
+      { ...catalog, isLoading: true })).toBe(false);
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions,
+      { ...catalog, models })).toBe(false);
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions,
+      { ...catalog, isFallback: true })).toBe(true);
+    expect(assistantClarificationGenerationCatalogIssue(rawQuestions,
+      { models: [], isLoading: false, isFallback: false }, catalog)).toBe("no_compatible_video_model");
+    const unavailableQuestions = clarificationQuestionsWithLiveModelCatalogsForTest(rawQuestions, [], catalog.models);
+    expect(assistantClarificationCanSubmit(unavailableQuestions, { video_model: { option_ids: ["single"] } })).toBe(false);
+  });
+
+  it("blocks partial cards when a previously confirmed video model disappears or loses a required mode", () => {
+    const rawQuestions = [{ id: "video_resolution", title: "视频分辨率",
+      options_source: "selected_video_model_resolutions" as const,
+      required_video_modes: ["all_reference"], options: [] }];
+    const imageCatalog = { models: [], isLoading: false, isFallback: false };
+    const models = [
+      { id: "old", supportedModes: ["image_to_video"], resolutionOptions: ["720P"] },
+      { id: "new", supportedModes: ["all_reference"], resolutionOptions: ["720P"] },
+    ];
+    const videoCatalog = { models, isLoading: false, isFallback: false };
+    const answers = { video_model: { option_ids: ["old"] }, video_resolution: { option_ids: ["720P"] } };
+    expect(assistantClarificationGenerationCatalogIssue(rawQuestions, imageCatalog, videoCatalog, answers))
+      .toBe("model_incompatible");
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions, videoCatalog, answers)).toBe(true);
+    const questions = clarificationQuestionsWithLiveModelCatalogsForTest(rawQuestions, [], models, answers);
+    expect(questions[0]?.options).toEqual([]);
+    expect(assistantClarificationCanSubmit(questions, answers)).toBe(false);
+    const removed = { ...videoCatalog, models: models.slice(1) };
+    expect(assistantClarificationGenerationCatalogIssue(rawQuestions, imageCatalog, removed, answers))
+      .toBe("model_unavailable");
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions, removed, answers)).toBe(true);
+    const validAnswers = { ...answers, video_model: { option_ids: ["new"] } };
+    expect(assistantClarificationGenerationCatalogIssue(rawQuestions, imageCatalog, videoCatalog, validAnswers)).toBeNull();
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions, videoCatalog, validAnswers)).toBe(false);
   });
 
   it("derives dependent generation options from the selected live model", () => {

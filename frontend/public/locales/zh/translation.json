@@ -4,6 +4,9 @@
     "title": "待确认的工作流方案",
     "summary": "{{nodes}} 个节点 · {{edges}} 条连线。尚未写入画布。",
     "referenceImages": "参考素材",
+    "storyReferencesUnverified": "以下分镜的参考图对应关系无法确认：",
+    "storyReferenceItem": "{{frame}}：{{entity}}",
+    "storyReferencesAction": "已有手工参考图可能适用，请核对或补充素材。",
     "changed": "方案状态已更新，请重新查看后确认。",
     "failed": "未能提交确认，请重试；没有重新创建草稿。",
     "cancelFailed": "未能取消方案，请重试。",
@@ -969,7 +972,11 @@
           "loading": "正在加载模型目录，请稍后选择参数。",
           "fallback": "暂时无法获取模型目录，请稍后重试。",
           "empty": "管理员尚未配置可用的生成模型，暂时无法提交参数。",
-          "model_unavailable": "已确认的模型不在当前模型目录中，请重新选择模型后再填写参数。"
+          "model_unavailable": "已确认的模型不在当前模型目录中，请重新选择模型后再填写参数。",
+          "model_incompatible": "已确认的视频模型已不支持这些镜头的生成模式，请返回调整方案。",
+          "no_compatible_video_model": "当前没有模型同时支持这些镜头的生成模式。请调整镜头模式，或让管理员配置兼容模型。",
+          "exit": "返回调整方案",
+          "exitMessage": "用户退出了模型选择：当前无法选择支持镜头模式的模型。请与用户讨论调整镜头模式，或配置兼容模型；不要继续生成。"
         },
         "autoRatio": "自动比例",
         "imageQuality": "图片画质",

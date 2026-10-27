@@ -4,6 +4,9 @@
     "title": "Workflow plan awaiting confirmation",
     "summary": "{{nodes}} nodes · {{edges}} connections. Not yet applied to the canvas.",
     "referenceImages": "Reference media",
+    "storyReferencesUnverified": "These storyboard reference matches could not be verified:",
+    "storyReferenceItem": "{{frame}}: {{entity}}",
+    "storyReferencesAction": "A manually selected reference may already apply. Check the references or add media.",
     "changed": "The plan has changed. Review it again before confirming.",
     "failed": "Confirmation could not be submitted. Retry; no new draft was created.",
     "cancelFailed": "Could not cancel the plan. Please retry.",
@@ -969,7 +972,11 @@
           "loading": "Loading the model catalog. Choose parameters when it is ready.",
           "fallback": "The model catalog is unavailable. Please try again later.",
           "empty": "No generation models are configured. Ask an administrator to configure one.",
-          "model_unavailable": "The previously selected model is unavailable. Select a model again before choosing parameters."
+          "model_unavailable": "The previously selected model is unavailable. Select a model again before choosing parameters.",
+          "model_incompatible": "The confirmed video model no longer supports the required shot modes. Return to adjust the plan.",
+          "no_compatible_video_model": "No available model supports all of these shots’ generation modes. Adjust the shot modes or ask an administrator to configure a compatible model.",
+          "exit": "Return to adjust plan",
+          "exitMessage": "The user exited model selection because a compatible model cannot currently be selected. Discuss adjusting the shot modes or configuring a compatible model; do not generate yet."
         },
         "autoRatio": "Auto ratio",
         "imageQuality": "Image quality",

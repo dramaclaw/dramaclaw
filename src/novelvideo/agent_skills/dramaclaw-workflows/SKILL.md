@@ -113,6 +113,15 @@ fail-safe when the host omits that argument. Explicit `image_model` / `video_mod
 included in `generation_preferences`; the server accepts them only after validating the current
 project's live Catalog entry and dependent options.
 
+For existing video nodes, read the target nodes and their real references before asking for a
+model, and pass all target node IDs as `generation_video_node_ids` to the clarification tool.
+The host uses their current generation modes to restrict model choices. In interactive stories,
+include every requested segment's video node; keep its existing reference mode when it is needed
+to consume the connected images. Do not switch a multi-image shot to first-frame mode just to make
+an incompatible model pass: explain the conflict and let the user choose a compatible model or
+explicitly change the reference plan. Check reference types and counts separately against the
+selected model's current capabilities.
+
 When using `generation_media_types` or `generation_required_choices`, do not include agent-authored
 `questions` in the same call. Generation clarification is one exclusive server-owned mode; ask any
 unrelated business question in a separate turn only when it is actually required.

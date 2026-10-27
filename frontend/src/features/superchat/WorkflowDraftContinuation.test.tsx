@@ -34,6 +34,21 @@ describe("workflow draft continuation", () => {
     ]}});
     render(<WorkflowDraftContinuation {...props()} />);
     expect(await screen.findByText("参考素材: 红杯原图")).toBeInTheDocument();
+    expect(screen.queryByText("以下分镜的参考图对应关系无法确认：")).not.toBeInTheDocument();
+  });
+  it("shows only unverified story references and still allows confirmation", async () => {
+    api.mockResolvedValue({ ...draft, preview: { ...draft.preview, preflight: { warnings: [
+      { code: "story_reference_unmapped", frame_name: "开场", entity_name: "主角", message: "internal warning" },
+      { code: "other_warning", message: "unrelated warning" },
+    ] } } });
+    const value = props();
+    render(<WorkflowDraftContinuation {...value} />);
+    expect(await screen.findByText("开场：主角")).toBeInTheDocument();
+    expect(screen.getByText("以下分镜的参考图对应关系无法确认：")).toBeInTheDocument();
+    expect(screen.getByText("已有手工参考图可能适用，请核对或补充素材。")).toBeInTheDocument();
+    expect(screen.queryByText("unrelated warning")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认创建" }));
+    await waitFor(() => expect(value.onConfirm).toHaveBeenCalledOnce());
   });
   it("recovers a qualified MCP draft result but ignores failures and unrelated tools", () => {
     expect(latestWorkflowDraftId(messages())).toBe("draft-a");

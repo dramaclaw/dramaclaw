@@ -1405,6 +1405,117 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             }
         )
     questions = normalized_questions
+    # An existing story clip already has a confirmed generation mode. Resolve
+    # the requested targets from the canvas rather than trusting agent-provided
+    # model options, and require one model to support every target's mode.
+    video_node_ids = args.get("generation_video_node_ids")
+    required_video_modes: list[str] = []
+    if video_node_ids is not None and resumed is None:
+        if (
+            not project or not canvas or not isinstance(video_node_ids, list)
+            or not video_node_ids
+            or any(not isinstance(item, str) or not item.strip() for item in video_node_ids)
+        ):
+            return tool_result({"ok": False, "status": "generation_clarification_args_invalid",
+                                "error": "generation_video_node_ids requires a project, canvas, and nonempty node ids"})
+        nodes, edges, read_error = _canvas_generation_preflight_state(project, canvas)
+        if read_error is not None:
+            return tool_result(read_error)
+        for node_id in video_node_ids:
+            node = nodes.get(node_id.strip())
+            if not isinstance(node, dict) or node.get("type") != "videoNode":
+                return tool_result({"ok": False, "status": "generation_clarification_args_invalid",
+                                    "error": f"video target not found on canvas: {node_id}"})
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            def is_image_source(source: Any) -> bool:
+                if not isinstance(source, dict):
+                    return False
+                source_type = source.get("type")
+                if source_type in {"imageGenNode", "imageNode", "exportImageNode"}:
+                    return True
+                source_data = source.get("data") if isinstance(source.get("data"), dict) else {}
+                # An uploaded video's cover is a preview, not an image input.
+                if source_type == "uploadNode" and source_data.get("videoUrl"):
+                    return False
+                return source_type in {"uploadNode", "storyboardGenNode"} and bool(
+                    source_data.get("imageUrl") or source_data.get("previewImageUrl")
+                    or source_data.get("referenceImageUrl")
+                )
+            incoming_images = [
+                edge for edge in edges
+                if str(edge.get("target") or "") == node_id.strip()
+                and (not isinstance(edge.get("data"), dict)
+                     or edge["data"].get("link_type") != "dependency_for")
+                and is_image_source(nodes.get(str(edge.get("source") or "")))
+            ]
+            if incoming_images and (
+                not data.get("genMode")
+                or data.get("genMode") == "textToVideo"
+                or (data.get("genMode") in {"firstFrame", "imageToVideo"} and len(incoming_images) > 1)
+            ):
+                return tool_result({
+                    "ok": False, "status": "generation_reference_mode_confirmation_required",
+                    "code": "generation_reference_mode_confirmation_required",
+                    "node_id": node_id, "reference_image_count": len(incoming_images),
+                    "error": "The target's reference mode does not establish how its linked images will be used.",
+                    "agent_instruction": "Confirm the intended use of all linked images and set an appropriate supported mode before asking for a model; do not silently discard references.",
+                })
+            mode = data.get("genMode") or "textToVideo"
+            catalog_mode = _VIDEO_MODE_CATALOG_VALUES.get(mode)
+            if catalog_mode is None:
+                return tool_result({"ok": False, "status": "generation_clarification_args_invalid",
+                                    "error": f"unknown video generation mode on target {node_id}: {mode}"})
+            if catalog_mode not in required_video_modes:
+                required_video_modes.append(catalog_mode)
+        questions = [
+            {**question, "required_video_modes": required_video_modes}
+            if isinstance(question, dict) and str(question.get("id") or "").startswith("video_")
+            else question
+            for question in questions
+        ]
+        if any(isinstance(question, dict) and str(question.get("id") or "").startswith("video_")
+               for question in questions):
+            try:
+                catalog_response = _request(
+                    "GET", f"/projects/{quote(project, safe='')}/freezone/video/models"
+                )
+            except Exception:  # noqa: BLE001 - do not show an unverifiable card
+                catalog_response = None
+            catalog = (catalog_response.get("data") if isinstance(catalog_response, dict)
+                       and catalog_response.get("ok") is not False else None)
+            if not isinstance(catalog, list):
+                return tool_result({"ok": False, "status": "model_catalog_unavailable",
+                                    "code": "model_catalog_unavailable",
+                                    "error": "Cannot verify compatible video models because the model catalog is unavailable."})
+            if not any(
+                isinstance(entry, dict) and isinstance(entry.get("supportedModes"), list)
+                and all(mode in entry["supportedModes"] for mode in required_video_modes)
+                for entry in catalog
+            ):
+                return tool_result({
+                    "ok": False, "status": "no_compatible_video_model",
+                    "code": "no_compatible_video_model", "required_video_modes": required_video_modes,
+                    "error": "No available video model supports all target generation modes.",
+                    "agent_instruction": "Ask the user whether to adjust the reference requirements or modes, or configure a compatible model. Do not silently discard references or change modes.",
+                })
+            if not any(isinstance(question, dict) and question.get("id") == "video_model"
+                       for question in questions) and "video_model" in answers:
+                try:
+                    confirmed_model = _generation_answer_value("video_model", answers["video_model"])
+                except ValueError:
+                    confirmed_model = None
+                from novelvideo.freezone.workflow_preflight import _catalog_entry_for_model
+                entry = _catalog_entry_for_model(
+                    [item for item in catalog if isinstance(item, dict)], str(confirmed_model or "")
+                )
+                supported = entry.get("supportedModes") if isinstance(entry, dict) else None
+                if not isinstance(supported, list) or not all(mode in supported for mode in required_video_modes):
+                    return tool_result({
+                        "ok": False, "status": "generation_model_incompatible",
+                        "code": "generation_model_incompatible", "required_video_modes": required_video_modes,
+                        "error": "The confirmed video model does not support all target generation modes.",
+                        "agent_instruction": "Ask the user to select a compatible model; preserve the target modes and references.",
+                    })
     bypass_error = _workflow_bypass_clarification_error(args, questions)
     if bypass_error is not None:
         return tool_result(bypass_error)
@@ -1547,6 +1658,7 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                     "canvas_id": canvas or "",
                     "workflow_draft_id": str(args.get("workflow_draft_id") or ""),
                     "questions": fingerprint_questions,
+                    "required_video_modes": required_video_modes,
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -1644,6 +1756,8 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         # (or keep waiting) instead of showing a second card.
         key, stored_event, stored_result = resumed
         questions = _safe_list(stored_event.get("questions")) or questions
+        if not answers and isinstance(stored_event.get("answers"), dict):
+            answers = stored_event["answers"]
         recommended_answers = (
             stored_event.get("recommended_answers")
             if isinstance(stored_event.get("recommended_answers"), dict)
@@ -1660,11 +1774,18 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         if isinstance(question, dict)
         and str(question.get("id") or "") in _GENERATION_ANSWER_DATA_FIELDS
     ]
+    # Resumed cards retain the original constraints in the stored question.
+    if resumed is not None:
+        required_video_modes = next((
+            question.get("required_video_modes", []) for question in questions
+            if isinstance(question, dict) and question.get("required_video_modes")
+        ), [])
     if resumed is None:
         recommended_answers = {}
         if generation_question_ids:
             recommended_answers = _generation_clarification_recommendations(
-                project, generation_question_ids, answers, generation_preferences
+                project, generation_question_ids, answers, generation_preferences,
+                required_video_modes=required_video_modes,
             )
             # A recommended action is offered only with concrete values resolved from
             # the caller's current Catalog; an empty "use recommended" is never valid.
@@ -1701,6 +1822,25 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             require_recommendation=bool(generation_preferences),
         )
         if finalized is not None:
+            if finalized.get("ok") is True and required_video_modes:
+                selected = (finalized.get("generation_choices") or {}).get("video_model")
+                if not selected and "video_model" in answers:
+                    try:
+                        selected = _generation_answer_value("video_model", answers["video_model"])
+                    except ValueError:
+                        selected = None
+                if selected:
+                    try:
+                        entry = _generation_catalog_entry(project, "videoNode", selected, {})
+                    except Exception:  # noqa: BLE001 - an unverifiable model must not be accepted
+                        entry = None
+                    modes = entry.get("supportedModes") if isinstance(entry, dict) else None
+                    if not isinstance(modes, list) or not all(mode in modes for mode in required_video_modes):
+                        finalized = {"ok": False, "status": "generation_model_incompatible",
+                                     "code": "generation_model_incompatible",
+                                     "error": "Selected video model does not support all target generation modes.",
+                                     "required_video_modes": required_video_modes,
+                                     "agent_instruction": "Ask the user to select a compatible model; preserve the target modes and references."}
             response = finalized
             result = tool_result(finalized)
             if finalized.get("ok") is True:
@@ -4050,6 +4190,7 @@ _GENERATION_MEDIA_NODE_TYPES = {"image": "imageGenNode", "video": "videoNode"}
 def _generation_clarification_recommendations(
     project: str | None, question_ids: list[str], answers: Any = None,
     preferences: dict[str, Any] | None = None,
+    *, required_video_modes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return concrete option ids for one current scoped Catalog snapshot.
 
@@ -4110,6 +4251,14 @@ def _generation_clarification_recommendations(
             for target_type, field in (_GENERATION_ANSWER_DATA_FIELDS[question_id],)
             if target_type == node_type
         }
+        if node_type == "videoNode" and required_video_modes:
+            # The recommendation checker otherwise assumes text-to-video,
+            # which can incorrectly reject a reference-only model.
+            data["genMode"] = next(
+                (mode for mode, catalog_mode in _VIDEO_MODE_CATALOG_VALUES.items()
+                 if catalog_mode == required_video_modes[0]),
+                "textToVideo",
+            )
         if f"{name}_model" in asked:
             preferred_model = preferences.get(f"{name}_model")
             data["model"] = (
@@ -4160,6 +4309,12 @@ def _generation_clarification_recommendations(
         )
         if entry is None:
             return {}
+        if node["node_type"] == "videoNode" and required_video_modes:
+            supported = entry.get("supportedModes")
+            if not isinstance(supported, list) or not all(
+                mode in supported for mode in required_video_modes
+            ):
+                return {}
         # The catalog may use a different case for an otherwise valid option.
         for field, catalog_key in (
             ("size", "resolutionOptions"), ("quality", "resolutionOptions")
@@ -4666,10 +4821,14 @@ def _workflow_preflight_failure(
 
 
 _VIDEO_MODE_CATALOG_VALUES = {
+    "textToVideo": "text_to_video",
     "firstFrame": "first_frame",
+    "firstLastFrame": "first_last_frame",
     "imageToVideo": "image_to_video",
     "imageReference": "image_reference",
     "allReference": "all_reference",
+    "videoEdit": "video_edit",
+    "videoExtend": "video_extend",
 }
 _VIDEO_MODE_LABELS = {
     "firstFrame": "首帧生成视频",
@@ -11843,6 +12002,12 @@ TOOLS = (
                     "type": "array",
                     "items": {"type": "string", "enum": ["image", "video"]},
                     "description": "Generate the full parameter card for the listed media types. This mode is exclusive; omit questions because any supplied questions are ignored.",
+                },
+                "generation_video_node_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "string", "minLength": 1},
+                    "description": "For existing video nodes, pass every target node id. The server reads their current generation modes and limits the model choices to models supporting all of them. Preserve each node's reference mode and connections.",
                 },
                 "generation_required_choices": {
                     "type": "object",

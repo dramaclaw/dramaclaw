@@ -3836,6 +3836,252 @@ def test_generation_clarification_builds_complete_media_questions(monkeypatch):
     assert "questions" not in schemas["freezone_request_user_clarification"]["parameters"]["required"]
 
 
+def test_generation_clarification_uses_all_target_video_modes(monkeypatch):
+    plugin = _load_plugin_module()
+    emitted = []
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (
+        {"one": {"type": "videoNode", "data": {"genMode": "allReference"}},
+         "two": {"type": "videoNode", "data": {"genMode": "firstFrame"}}}, [], None
+    ))
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _p, _c, event: emitted.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "compatible", "supportedModes": ["all_reference", "first_frame"]}]})
+    result = plugin._handle_request_user_clarification({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_media_types": ["video"], "generation_video_node_ids": ["one", "two"],
+    })
+    assert result == "shown"
+    question = next(q for q in emitted[0]["questions"] if q["id"] == "video_model")
+    assert question["required_video_modes"] == ["all_reference", "first_frame"]
+
+
+def test_generation_clarification_rejects_incompatible_model_receipt(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (
+        {"one": {"type": "videoNode", "data": {"genMode": "allReference"}}}, [], None
+    ))
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_generation_catalog_entry", lambda *_: {
+        "id": "first-only", "supportedModes": ["first_frame"],
+    })
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "compatible", "supportedModes": ["all_reference"]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_: plugin.tool_result({
+        "ok": True, "clarification_status": "answered",
+        "answers": {"video_model": {"option_ids": ["first-only"]}},
+    }))
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+        "generation_video_node_ids": ["one"],
+    })
+    assert result["status"] == "generation_model_incompatible"
+    assert result["required_video_modes"] == ["all_reference"]
+
+
+def test_generation_recommendation_requires_every_target_mode(monkeypatch):
+    plugin = _load_plugin_module()
+    entry = {"id": "video-a", "supportedModes": ["first_frame"],
+             "resolutionOptions": ["720p"]}
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [entry]})
+    kwargs = {"required_video_modes": ["all_reference", "first_frame"]}
+    assert plugin._generation_clarification_recommendations(
+        "project-a", ["video_model"], preferences={"video_model": "video-a"}, **kwargs
+    ) == {}
+    entry["supportedModes"].append("all_reference")
+    assert plugin._generation_clarification_recommendations(
+        "project-a", ["video_model"], preferences={"video_model": "video-a"}, **kwargs
+    ) == {"video_model": {"option_ids": ["video-a"]}}
+
+
+def test_generation_clarification_resumed_card_retains_mode_constraints(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_resume_clarification", lambda *_: (
+        "old-key", {"questions": [{"id": "video_model", "options_source": "video_models",
+                                  "required_video_modes": ["all_reference"]}]},
+        {"ok": True, "clarification_status": "answered",
+         "answers": {"video_model": {"option_ids": ["first-only"]}}},
+    ))
+    monkeypatch.setattr(plugin, "_generation_catalog_entry", lambda *_: {
+        "supportedModes": ["first_frame"],
+    })
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a", "clarification_id": "resume",
+    })
+    assert result["status"] == "generation_model_incompatible"
+    assert result["required_video_modes"] == ["all_reference"]
+
+
+def test_generation_clarification_cancel_passes_through_without_remembering(monkeypatch):
+    plugin = _load_plugin_module()
+    cancelled = {
+        "ok": False, "status": "clarification_frontend_result",
+        "tool_call_status": "completed", "clarification_status": "cancelled",
+        "action": "cancel", "answers": {"video_model": {"option_ids": ["old-model"]}},
+        "message": "用户退出了模型选择：请调整镜头模式或配置兼容模型，不要继续生成。",
+        "agent_instruction": "Do not continue; handle the clarification error or ask the user to retry.",
+    }
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_: cancelled)
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_remember_generation_answers",
+                        lambda *_: pytest.fail("cancelled answers must not be remembered"))
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+    })
+    assert result == cancelled
+    assert result["ok"] is False
+    assert "Do not continue" in result["agent_instruction"]
+    assert "node_data" not in result
+
+
+def test_generation_target_supports_extend_mode(monkeypatch):
+    plugin = _load_plugin_module()
+    emitted = []
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (
+        {"one": {"type": "videoNode", "data": {"genMode": "videoExtend"}}}, [], None
+    ))
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "extend", "supportedModes": ["video_extend"]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _p, _c, event: emitted.append(event) or "shown")
+    plugin._handle_request_user_clarification({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+        "generation_video_node_ids": ["one"],
+    })
+    assert emitted[0]["questions"][0]["required_video_modes"] == ["video_extend"]
+
+
+def test_generation_clarification_no_compatible_model_does_not_show_card(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (
+        {"one": {"type": "videoNode", "data": {"genMode": "allReference"}}}, [], None))
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "first", "supportedModes": ["first_frame"]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_: pytest.fail("no card"))
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]}, "generation_video_node_ids": ["one"],
+    })
+    assert result["status"] == "no_compatible_video_model"
+
+
+def test_generation_clarification_checks_confirmed_model_on_partial_card(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (
+        {"one": {"type": "videoNode", "data": {"genMode": "allReference"}}}, [], None))
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "first", "supportedModes": ["first_frame"]},
+        {"id": "all", "supportedModes": ["all_reference"]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_: pytest.fail("no card"))
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["resolution"]},
+        "answers": {"video_model": {"option_ids": ["first"]}},
+        "generation_video_node_ids": ["one"],
+    })
+    assert result["status"] == "generation_model_incompatible"
+
+
+@pytest.mark.parametrize(
+    ("mode", "image_count"),
+    [(None, 1), (None, 2), ("textToVideo", 1), ("textToVideo", 2),
+     ("firstFrame", 2), ("imageToVideo", 2)],
+)
+def test_generation_clarification_requires_reference_mode_for_images(monkeypatch, mode, image_count):
+    plugin = _load_plugin_module()
+    nodes = {"shot": {"type": "videoNode", "data": {"genMode": mode}},
+             "a": {"type": "imageGenNode", "data": {}},
+             "b": {"type": "imageNode", "data": {}}}
+    edges = [{"source": key, "target": "shot"} for key in ("a", "b")[:image_count]]
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (nodes, edges, None))
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_: pytest.fail("no model card"))
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: pytest.fail("no model catalog request"))
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+        "generation_video_node_ids": ["shot"],
+    })
+    assert result["status"] == "generation_reference_mode_confirmation_required"
+    assert result["reference_image_count"] == image_count
+
+
+@pytest.mark.parametrize(
+    ("mode", "image_count", "required_mode"),
+    [("textToVideo", 0, "text_to_video"), ("firstFrame", 1, "first_frame"),
+     ("imageToVideo", 1, "image_to_video"), ("allReference", 2, "all_reference")],
+)
+def test_generation_clarification_allows_consistent_video_reference_mode(
+    monkeypatch, mode, image_count, required_mode
+):
+    plugin = _load_plugin_module()
+    nodes = {"shot": {"type": "videoNode", "data": {"genMode": mode}},
+             "a": {"type": "imageGenNode", "data": {}},
+             "b": {"type": "imageNode", "data": {}}}
+    edges = [{"source": key, "target": "shot"} for key in ("a", "b")[:image_count]]
+    emitted = []
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (nodes, edges, None))
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "compatible", "supportedModes": [required_mode]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _p, _c, event: emitted.append(event) or "shown")
+    result = plugin._handle_request_user_clarification({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+        "generation_video_node_ids": ["shot"],
+    })
+    assert result == "shown"
+    assert emitted[0]["questions"][0]["required_video_modes"] == [required_mode]
+
+
+@pytest.mark.parametrize(
+    ("source_type", "source_data", "link_type", "is_reference"),
+    [
+        ("uploadNode", {"previewImageUrl": "/upload.png"}, None, True),
+        ("storyboardGenNode", {"previewImageUrl": "/frame.png"}, None, True),
+        ("imageNode", {"imageUrl": "/edited.png"}, None, True),
+        ("uploadNode", {"previewImageUrl": "/cover.png", "videoUrl": "/clip.mp4"}, None, False),
+        ("uploadNode", {"previewImageUrl": "/upload.png"}, "dependency_for", False),
+    ],
+)
+def test_generation_clarification_identifies_image_references(
+    monkeypatch, source_type, source_data, link_type, is_reference
+):
+    plugin = _load_plugin_module()
+    nodes = {
+        "shot": {"type": "videoNode", "data": {"genMode": "textToVideo"}},
+        "source": {"type": source_type, "data": source_data},
+    }
+    edge = {"source": "source", "target": "shot"}
+    if link_type:
+        edge["data"] = {"link_type": link_type}
+    emitted = []
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (nodes, [edge], None))
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "text", "supportedModes": ["text_to_video"]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _p, _c, event: emitted.append(event) or "shown")
+    args = {
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+        "generation_video_node_ids": ["shot"],
+    }
+    if is_reference:
+        result = _clarification_handler(plugin)(args)
+        assert result["status"] == "generation_reference_mode_confirmation_required"
+        assert result["reference_image_count"] == 1
+        assert emitted == []
+    else:
+        assert plugin._handle_request_user_clarification(args) == "shown"
+        assert emitted[0]["questions"][0]["required_video_modes"] == ["text_to_video"]
+
+
 def test_generation_clarification_ignores_agent_authored_questions(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}

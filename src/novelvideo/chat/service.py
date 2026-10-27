@@ -371,6 +371,11 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "Interactive-story video segments are different: the approved story production plan "
     "selects each segment's parameters, so do not call generic generation_media_types for "
     "video or ask for one shared video_duration_seconds. Keep each segment's own durationSec. "
+    "Before asking for a model for existing video nodes, read every target node and its "
+    "references and pass their IDs as generation_video_node_ids to the clarification tool. "
+    "The host filters model choices by the nodes' current modes. Do not change a multi-image "
+    "shot to firstFrame merely to fit a model; retain the reference plan or ask the user to "
+    "change it. Check each model's reference types and counts separately. "
     "If preflight returns required_choices for other missing fields, pass exactly those "
     "choices as generation_required_choices without adding duration. Pass the returned "
     "answers object unchanged as generation_answers to the workflow prepare tool; "
@@ -1475,6 +1480,48 @@ def _codex_story_write_payload_signature(event: Any) -> str | None:
         }
         try:
             return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _codex_outline_missing_id_signature(event: Any, *, rejected: bool) -> str | None:
+    """Match only a missing outline ID correction, preserving the requested content."""
+    if _codex_freezone_tool_name(event) != "dramaclaw_save_interactive_story_outline":
+        return None
+    if rejected and not any(
+        payload.get("ok") is False
+        and payload.get("error") == "tool_arguments_invalid"
+        and payload.get("phase") == "tool_validation"
+        and payload.get("path") == "outline"
+        and payload.get("message") == "'outline_id' is a required property"
+        for value in (
+            getattr(event, "structured", None),
+            getattr(event, "output", None),
+        )
+        for payload in _json_objects_from_codex_tool_value(value)
+    ):
+        return None
+    for args in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        outline = args.get("outline")
+        if not isinstance(outline, dict):
+            continue
+        outline_id = outline.get("outline_id")
+        if rejected:
+            if "outline_id" in outline:
+                return None
+        elif not isinstance(outline_id, str) or not outline_id.strip():
+            return None
+        comparable = {
+            key: value
+            for key, value in args.items()
+            if key not in {"base_revision", "idempotency_key"}
+        }
+        comparable["outline"] = {
+            key: value for key, value in outline.items() if key != "outline_id"
+        }
+        try:
+            return json.dumps(comparable, ensure_ascii=False, sort_keys=True)
         except (TypeError, ValueError):
             return None
     return None
@@ -5630,6 +5677,7 @@ async def _stream_assistant_reply_codex(
     # call_id -> the exact corrected arguments that would prove a write the MCP
     # input schema rejected was only a slip; a receipt for them supersedes it.
     canvas_argument_rejections: dict[str, str] = {}
+    outline_missing_id_rejections: dict[str, str] = {}
     ready_workflow_draft: dict[str, Any] | None = None
     turn_agent_product_operations = _TurnAgentProductOperationTracker()
     authorization = await authorize_hermes_launch(
@@ -5878,6 +5926,19 @@ async def _stream_assistant_reply_codex(
                                     else "story_id"
                                 )
                                 if intent is not None and receipt_identity == intent[1]:
+                                    outline_signature = _codex_outline_missing_id_signature(
+                                        event, rejected=False
+                                    )
+                                    for rejected_call, expected in list(
+                                        outline_missing_id_rejections.items()
+                                    ):
+                                        if (
+                                            outline_signature is not None
+                                            and outline_signature == expected
+                                        ):
+                                            canvas_write_attempts.pop(rejected_call, None)
+                                            canvas_write_failures.pop(rejected_call, None)
+                                            del outline_missing_id_rejections[rejected_call]
                                     # A server 409 rejected this exact story write
                                     # before saving. Only its verified rebased
                                     # successor can settle that failed attempt.
@@ -5986,6 +6047,11 @@ async def _stream_assistant_reply_codex(
                                 expected = _codex_freezone_argument_retry_expectation(event)
                                 if expected is not None:
                                     canvas_argument_rejections[call_id] = expected
+                                outline_signature = _codex_outline_missing_id_signature(
+                                    event, rejected=True
+                                )
+                                if outline_signature is not None:
+                                    outline_missing_id_rejections[call_id] = outline_signature
                             failure = _codex_freezone_write_result_error(event)
                             if failure:
                                 canvas_write_failures[call_id] = failure

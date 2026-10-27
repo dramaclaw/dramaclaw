@@ -7,6 +7,7 @@ the same entries through ``novelvideo.chat.interactive_story_mcp``.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import Any, Callable
 from urllib.parse import quote
@@ -727,7 +728,14 @@ def _story_outline_schema() -> dict[str, Any]:
     return _strict_object(
         {
             "schema_version": {"const": "pending_story_outline.v1"},
-            "outline_id": dict(_ENTITY_ID_SCHEMA),
+            "outline_id": {
+                **_ENTITY_ID_SCHEMA,
+                "description": (
+                    "Stable outline ID. Required when updating an existing canvas; "
+                    "on the first write at revision 0 it may be omitted and is "
+                    "generated from the idempotency key."
+                ),
+            },
             "kind": {"enum": ["story", "ad"]},
             "title": {"type": "string", "minLength": 1, "maxLength": 200},
             "premise": {
@@ -749,8 +757,22 @@ def _story_outline_schema() -> dict[str, Any]:
             },
             "status": {"enum": ["pending", "needs_revision"]},
         },
-        ["outline_id", "kind", "title", "premise", "plot_summary"],
+        ["kind", "title", "premise", "plot_summary"],
     )
+
+
+def _require_outline_id_after_first_revision(tool_schema: dict[str, Any]) -> dict[str, Any]:
+    """Expose the conditional ID requirement to MCP clients before execution."""
+    tool_schema["parameters"]["allOf"] = [
+        {
+            "if": {
+                "properties": {"base_revision": {"minimum": 1}},
+                "required": ["base_revision"],
+            },
+            "then": {"properties": {"outline": {"required": ["outline_id"]}}},
+        }
+    ]
+    return tool_schema
 
 
 # The SKILL's "only Create after the user confirmed" is no longer prompt-only:
@@ -890,6 +912,23 @@ def build_tools(
             outline = args.get("outline")
             if not isinstance(outline, dict):
                 raise ValueError("outline is required")
+            if "outline_id" not in outline:
+                key = args.get("idempotency_key")
+                if type(args.get("base_revision")) is not int or args["base_revision"] != 0:
+                    raise ValueError(
+                        "outline.outline_id is required when base_revision is not 0; "
+                        "reuse the saved outline ID or choose an ID for a new outline"
+                    )
+                if not isinstance(key, str) or not 8 <= len(key) <= 200:
+                    raise ValueError(
+                        "a valid idempotency_key is required to generate outline.outline_id"
+                    )
+                # Only a first write may generate an ID. A retry with the same
+                # key must send the same payload to the persistence layer.
+                outline = {
+                    **outline,
+                    "outline_id": "outline_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:32],
+                }
             body = story_body(args, "base_revision", "idempotency_key")
             body["outline"] = outline
             return tool_result(request("PUT", outline_path(args), body=body))
@@ -1079,9 +1118,9 @@ def build_tools(
         ),
         (
             "dramaclaw_save_interactive_story_outline",
-            schema(
+            _require_outline_id_after_first_revision(schema(
                 "dramaclaw_save_interactive_story_outline",
-                "Save or update the canvas-level pending story outline for user review. This is not the formal story: it never creates story nodes, and any content change resets the user's confirmation. Only call after the user agreed to move the plan onto the canvas.",
+                "Save or update the canvas-level pending story outline for user review. On the first canvas write at base_revision 0, an omitted outline_id is generated from the idempotency key and returned in the receipt. At later revisions, supply an outline_id: reuse the saved outline's ID, or choose one for a new outline. This is not the formal story: it never creates story nodes, and any content change resets the user's confirmation. Only call after the user agreed to move the plan onto the canvas.",
                 {
                     "project_id": {
                         "type": "string",
@@ -1104,7 +1143,7 @@ def build_tools(
                 },
                 ["base_revision", "idempotency_key", "outline"],
                 additional_properties=False,
-            ),
+            )),
             handle_save_outline,
         ),
         (

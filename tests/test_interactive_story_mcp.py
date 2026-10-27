@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import importlib.util
 import json
 import os
 import subprocess
@@ -71,6 +72,65 @@ async def test_independent_story_server_loads_no_hermes_plugins(monkeypatch):
     assert result.isError is False
     assert result.structuredContent["canvas_id"] == "canvas-a"
     assert result.structuredContent["revision"] == 7
+
+
+@pytest.mark.asyncio
+async def test_first_outline_id_is_stable_and_shared_with_native_hermes(monkeypatch, tmp_path):
+    from novelvideo.interactive_story.models import SaveStoryOutlineRequest
+    from novelvideo.interactive_story.service import InteractiveStoryService
+
+    service = InteractiveStoryService(tmp_path / "project", project_id="project-a", actor_id="local")
+    bodies = []
+
+    def request(method, path, *, body=None, query=None):
+        bodies.append(body)
+        return service.save_outline(SaveStoryOutlineRequest.model_validate(body)).model_dump(mode="json")
+
+    monkeypatch.setattr(interactive_story_mcp, "_request", request)
+    args = {"base_revision": 0, "idempotency_key": "save-outline-a", "outline": {
+        "kind": "ad", "title": "Piko", "premise": "广告创意", "plot_summary": "分支故事",
+    }}
+    first = await interactive_story_mcp.call_tool("dramaclaw_save_interactive_story_outline", args)
+    retry = await interactive_story_mcp.call_tool("dramaclaw_save_interactive_story_outline", args)
+    assert not first.isError and not retry.isError
+    assert first.structuredContent["outline_id"] == retry.structuredContent["outline_id"]
+    assert retry.structuredContent["idempotent"] is True
+    assert bodies[0] == bodies[1]
+    assert "outline_id" not in args["outline"]
+
+    # Exercise the generated, stdlib-only Hermes bundle, not merely its source.
+    bundle = Path(__file__).resolve().parents[1] / ".hermes/plugins/dramaclaw/interactive_story.py"
+    spec = importlib.util.spec_from_file_location("native_story_test", bundle)
+    native = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(native)
+    native_bodies = []
+    entries = native.build_tools(
+        schema=interactive_story_mcp._schema,
+        request=lambda method, path, *, body=None, query=None: native_bodies.append(body) or {"ok": True},
+        project_from_args=lambda args: "project-a",
+        tool_result=lambda value: value,
+        tool_error=lambda value: {"ok": False, "error": value},
+    )
+    handler = next(handler for name, _, handler in entries if name == "dramaclaw_save_interactive_story_outline")
+    handler(args)
+    assert native_bodies[0]["outline"]["outline_id"] == first.structuredContent["outline_id"]
+
+    update = await interactive_story_mcp.call_tool("dramaclaw_save_interactive_story_outline", {**args, "base_revision": 1})
+    invalid = await interactive_story_mcp.call_tool("dramaclaw_save_interactive_story_outline", {
+        **args, "outline": {**args["outline"], "outline_id": "invalid id"},
+    })
+    assert update.isError and update.structuredContent["error"] == "tool_arguments_invalid"
+    assert invalid.isError and invalid.structuredContent["error"] == "tool_arguments_invalid"
+    assert len(bodies) == 2
+    assert handler({**args, "base_revision": 1})["ok"] is False
+    assert len(native_bodies) == 1
+    saved_id = first.structuredContent["outline_id"]
+    valid_update = await interactive_story_mcp.call_tool("dramaclaw_save_interactive_story_outline", {
+        **args, "base_revision": 1, "idempotency_key": "update-outline-a",
+        "outline": {**args["outline"], "outline_id": saved_id, "title": "Piko updated"},
+    })
+    assert not valid_update.isError
+    assert valid_update.structuredContent["outline_id"] == saved_id
 
 
 def test_story_server_runs_with_canvas_and_legacy_runtime_imports_blocked(tmp_path):
