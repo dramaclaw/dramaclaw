@@ -286,6 +286,46 @@ async def test_story_schema_rejection_preserves_correction_details_without_http(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("name", "arguments", "paths"),
+    [
+        (
+            "dramaclaw_save_interactive_story_outline",
+            {"base_revision": 2, "idempotency_key": "valid-key", "outline": {
+                "premise": "Premise", "plot_summary": "Plot", "unexpected": 1,
+            }},
+            {("outline", "outline_id"), ("outline", "title"), ("outline", "kind"),
+             ("outline", "unexpected")},
+        ),
+        (
+            "dramaclaw_confirm_interactive_story_outline",
+            {"base_revision": "2", "idempotency_key": "valid-key"},
+            {("outline_id",), ("base_revision",)},
+        ),
+        (
+            "dramaclaw_patch_interactive_story",
+            {"story_id": "story-a", "base_revision": 2, "idempotency_key": "valid-key",
+             "operations": [{"op": "update_story_metadata", "changes": {"title": 123}}]},
+            {("operations", 0, "changes", "title")},
+        ),
+    ],
+)
+async def test_story_mcp_reports_precise_machine_readable_corrections(
+    monkeypatch, name, arguments, paths
+):
+    calls = []
+    monkeypatch.setattr(interactive_story_mcp, "_request", lambda *a, **kw: calls.append(a))
+    result = await interactive_story_mcp.call_tool(name, arguments)
+    assert result.isError and calls == []
+    payload = result.structuredContent
+    assert payload["argument_corrections_complete"] is True
+    assert {tuple(path) for path in payload["invalid_argument_paths"]} == paths
+    raw = json.loads(result.content[0].text)
+    assert raw["invalid_argument_paths"] == payload["invalid_argument_paths"]
+    assert raw["argument_corrections_complete"] is True
+
+
+@pytest.mark.asyncio
 async def test_chat_outline_confirmation_persists_then_allows_create(monkeypatch, tmp_path):
     from novelvideo.interactive_story.models import (
         ConfirmStoryOutlineRequest, CreateInteractiveStoryRequest, SaveStoryOutlineRequest,

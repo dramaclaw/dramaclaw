@@ -11595,9 +11595,42 @@ def _load_interactive_story_tools():
             reject_unknown=not additional_properties,
         )
 
-    def scoped_handler(name, handler):
+    story_write_tools = {
+        "dramaclaw_create_interactive_story",
+        "dramaclaw_patch_interactive_story",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_stages",
+    }
+    story_validation = None
+
+    def scoped_handler(name, tool_schema, handler):
         def handle(args, **kwargs):
+            nonlocal story_validation
             try:
+                if name in story_write_tools:
+                    # Hermes executes native plugin handlers directly; unlike MCP,
+                    # it does not validate inputSchema before entering the handler.
+                    # Load lazily so read-only tools and isolated plugin loading do
+                    # not require jsonschema or the application package.
+                    if story_validation is None:
+                        try:
+                            story_validation = _load_stdlib_tool_module(
+                                "_freezone_story_validation",
+                                _PLUGIN_DIR.parent / "dramaclaw" / "story_validation.py",
+                            )
+                        except (ImportError, OSError, RuntimeError):
+                            return _structured_tool_result({
+                                "ok": False,
+                                "status": "story_validation_unavailable",
+                                "error": "Interactive-story parameter validation is unavailable; no write was attempted.",
+                                "retryable": False,
+                            }, tool_name=name)
+                    rejection = story_validation.validate_arguments(
+                        name, args, tool_schema["parameters"]
+                    )
+                    if rejection is not None:
+                        return _structured_tool_result(rejection, tool_name=name)
                 result = handler(_bound_story_args(args), **kwargs)
             except Exception as exc:
                 result = {"ok": False, "error": str(exc)}
@@ -11613,7 +11646,7 @@ def _load_interactive_story_tools():
         tool_error=lambda message: {"ok": False, "error": str(message)},
     )
     return tuple(
-        (name, schema, scoped_handler(name, handler))
+        (name, schema, scoped_handler(name, schema, handler))
         for name, schema, handler in entries
     )
 

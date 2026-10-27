@@ -535,6 +535,10 @@ class _StoryWriteContinuation:
         self.read_revision: int | None = None
         self.used = False
         self.outcome: str | None = None
+        self.rejection: dict[str, Any] | None = None
+        self.read_story_id: str | None = None
+        self.read_outline_id: str | None = None
+        self.success_outline_id: str | None = None
 
     def _args(self, event: ChatBackendEvent) -> dict[str, Any]:
         args = _coerce_tool_result(event.input)
@@ -558,17 +562,26 @@ class _StoryWriteContinuation:
         if event.type == "tool_started":
             if self.write is None and event.name in {
                 "dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story",
+                "dramaclaw_save_interactive_story_outline",
+                "dramaclaw_confirm_interactive_story_outline",
+                "dramaclaw_confirm_interactive_story_stages",
             }:
                 self.write = event
             elif self.write is not None and self.outcome is not None:
-                expected_read = (
-                    "dramaclaw_get_freezone_canvas"
-                    if self.write.name == "dramaclaw_create_interactive_story" and self.outcome != "success"
-                    else "dramaclaw_get_interactive_story"
-                )
+                if self.write.name in {
+                    "dramaclaw_save_interactive_story_outline",
+                    "dramaclaw_confirm_interactive_story_outline",
+                }:
+                    expected_read = "dramaclaw_get_interactive_story_outline"
+                elif self.write.name == "dramaclaw_create_interactive_story" and self.outcome != "success":
+                    expected_read = "dramaclaw_get_freezone_canvas"
+                else:
+                    expected_read = "dramaclaw_get_interactive_story"
                 if event.name == expected_read:
                     self.read = event
                     self.read_revision = None
+                    self.read_story_id = None
+                    self.read_outline_id = None
             return
         if event.type != "tool_updated" or not event.call_id or self.write is None:
             return
@@ -580,8 +593,12 @@ class _StoryWriteContinuation:
             self.read = None
             self.read_revision = None
             self.outcome = None
+            self.rejection = None
+            self.success_outline_id = None
             revision = payload.get("current_revision")
             if (
+                self.write.name in {"dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story"}
+                and
                 event.status in {"completed", "failed"}
                 and payload.get("ok") is False
                 and payload.get("code") == "revision_conflict"
@@ -597,7 +614,10 @@ class _StoryWriteContinuation:
                 and payload.get("phase") == "tool_validation"
             ):
                 self.outcome = "validation"
+                self.rejection = payload
             elif (
+                self.write.name in {"dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story"}
+                and
                 event.status == "completed" and not event.error
                 and payload.get("ok") is True
                 and payload.get("refresh_canvas") is True
@@ -607,6 +627,21 @@ class _StoryWriteContinuation:
             ):
                 self.conflict_revision = payload["revision"]
                 self.outcome = "success"
+            elif (
+                self.write.name == "dramaclaw_save_interactive_story_outline"
+                and event.status == "completed" and not event.error
+                and payload.get("ok") is True and payload.get("refresh_canvas") is True
+                and payload.get("canvas_id") == self._scope(self.write)[1]
+                and payload.get("project_id") == self._scope(self.write)[0]
+                and isinstance(payload.get("outline_id"), str) and payload["outline_id"].strip()
+                and type(payload.get("revision")) is int and payload["revision"] >= 0
+            ):
+                outline = self._args(self.write).get("outline")
+                requested_id = outline.get("outline_id") if isinstance(outline, dict) else None
+                if isinstance(outline, dict) and (requested_id is None or requested_id == payload["outline_id"]):
+                    self.success_outline_id = payload["outline_id"]
+                    self.conflict_revision = payload["revision"]
+                    self.outcome = "success"
         elif self.read is not None and event.call_id == self.read.call_id:
             self.read_revision = None
             if (
@@ -614,19 +649,35 @@ class _StoryWriteContinuation:
                 or payload.get("ok") is not True
                 or self._scope(self.read) != self._scope(self.write)
                 or payload.get("canvas_id") != self._scope(self.write)[1]
+                or (payload.get("project_id") is not None
+                    and payload.get("project_id") != self._scope(self.write)[0])
             ):
                 return
             if self.read.name == "dramaclaw_get_interactive_story":
                 story = payload.get("story")
                 if (
                     not isinstance(story, dict)
-                    or story.get("story_id") != self._story_id(self.write)
-                    or self._story_id(self.read) != self._story_id(self.write)
+                    or not isinstance(story.get("story_id"), str)
+                    or not story["story_id"].strip()
+                    or story["story_id"] != self._story_id(self.read)
+                    or (self._story_id(self.write) and story["story_id"] != self._story_id(self.write))
                 ):
                     return
+                self.read_story_id = story["story_id"]
                 revision = story.get("revision")
             else:
                 revision = payload.get("revision")
+                if self.read.name == "dramaclaw_get_interactive_story_outline":
+                    if "outline" not in payload:
+                        return
+                    outline = payload.get("outline")
+                    if isinstance(outline, dict):
+                        outline_id = outline.get("outline_id")
+                        if not isinstance(outline_id, str) or not outline_id.strip():
+                            return
+                        self.read_outline_id = outline_id
+                    elif outline is not None:
+                        return
             if (
                 type(revision) is int and revision >= 0
                 and (self.conflict_revision is None or revision >= self.conflict_revision)
@@ -650,6 +701,77 @@ class _StoryWriteContinuation:
             return False
         before, after = self._args(self.write), self._args(event)
         key = after.get("idempotency_key")
+        if self.outcome == "success" and self.write.name == "dramaclaw_save_interactive_story_outline":
+            if (
+                event.name != "dramaclaw_confirm_interactive_story_outline"
+                or not event.call_id or event.call_id == self.write.call_id
+                or not self._scope(self.write)[0] or self._scope(event) != self._scope(self.write)
+                or not self.success_outline_id or self.read_outline_id != self.success_outline_id
+                or after.get("outline_id") != self.success_outline_id
+                or type(after.get("base_revision")) is not int
+                or after["base_revision"] != base_revision
+                or base_revision != self.conflict_revision
+                or not isinstance(key, str) or not key.strip()
+                or key == before.get("idempotency_key")
+            ):
+                return False
+            self.write = event
+            self.read = None
+            self.read_revision = None
+            self.read_outline_id = None
+            self.conflict_revision = None
+            self.outcome = None
+            self.success_outline_id = None
+            return True
+        if self.outcome == "validation":
+            from novelvideo.chat.runtime_event_evidence import story_argument_retry_matches
+
+            # The story tools bind omitted (or empty) scope arguments to this
+            # turn's project and canvas. Compare those resolved values so an
+            # explicitly supplied bound scope is equivalent to the default.
+            project, canvas = self._scope(self.write)
+            bound_project = str(self.env.get("DRAMACLAW_PROJECT_ID") or "").strip()
+            bound_canvas = str(self.env.get("DRAMACLAW_CANVAS_ID") or "").strip()
+            before_scoped = {**before, "project_id": project, "canvas_id": canvas}
+            after_scoped = {**after, "project_id": project, "canvas_id": canvas}
+            if (
+                event.name != self.write.name
+                or not event.call_id or event.call_id == self.write.call_id
+                or not bound_project or not bound_canvas
+                or project != bound_project or canvas != bound_canvas
+                or self._scope(event) != (project, canvas)
+                or type(after.get("base_revision")) is not int
+                or after["base_revision"] != base_revision
+                or not isinstance(key, str) or not key.strip()
+                or key == before.get("idempotency_key")
+                or not story_argument_retry_matches(
+                    before_scoped, after_scoped, self.rejection or {}, tool_name=event.name
+                )
+            ):
+                return False
+            if event.name in {"dramaclaw_patch_interactive_story", "dramaclaw_confirm_interactive_story_stages"}:
+                if not self.read_story_id or self._story_id(event) != self.read_story_id:
+                    return False
+            if event.name == "dramaclaw_confirm_interactive_story_outline":
+                if not self.read_outline_id or after.get("outline_id") != self.read_outline_id:
+                    return False
+            if event.name == "dramaclaw_save_interactive_story_outline":
+                outline = after.get("outline")
+                if not isinstance(outline, dict):
+                    return False
+                # Saving can intentionally replace the current outline. The
+                # diagnostic matcher preserves the requested outline ID unless
+                # validation specifically reported that field as invalid.
+            self.used = True
+            self.write = event
+            self.read = None
+            self.read_revision = None
+            self.read_story_id = None
+            self.read_outline_id = None
+            self.conflict_revision = None
+            self.outcome = None
+            self.rejection = None
+            return True
         if (
             (event.name != ("dramaclaw_patch_interactive_story" if self.outcome == "success" else self.write.name))
             or not event.call_id or event.call_id == self.write.call_id

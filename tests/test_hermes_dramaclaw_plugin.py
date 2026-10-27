@@ -141,6 +141,62 @@ def test_interactive_story_tools_use_typed_api_routes(monkeypatch):
     )]
 
 
+def test_story_validation_unavailable_refuses_write_before_handler(monkeypatch):
+    plugin = _load_plugin_module("freezone")
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setattr(plugin, "_load_stdlib_tool_module", lambda *_: (_ for _ in ()).throw(ImportError()))
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: pytest.fail("no API write"))
+    handler = next(handler for name, _, handler in plugin.TOOLS
+                   if name == "dramaclaw_confirm_interactive_story_outline")
+    result = handler({"outline_id": "outline-a", "base_revision": 1,
+                      "idempotency_key": "confirm-key"})
+    assert result["status"] == "story_validation_unavailable"
+    assert result["ok"] is False
+
+
+def test_isolated_native_story_validation_without_novelvideo(tmp_path):
+    repo_root = Path(__file__).resolve().parents[1]
+    plugins = tmp_path / "checkout" / ".hermes" / "plugins"
+    for name in ("dramaclaw", "freezone"):
+        shutil.copytree(repo_root / ".hermes" / "plugins" / name, plugins / name)
+    script = """
+import importlib.util, sys, types
+class BlockNovelvideo:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'novelvideo' or fullname.startswith('novelvideo.'):
+            raise ModuleNotFoundError(fullname)
+sys.meta_path.insert(0, BlockNovelvideo())
+tools = types.ModuleType('tools')
+registry = types.ModuleType('tools.registry')
+registry.tool_error = lambda value: value
+registry.tool_result = lambda value: value
+sys.modules['tools'] = tools
+sys.modules['tools.registry'] = registry
+spec = importlib.util.spec_from_file_location('isolated_freezone', sys.argv[1])
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+calls = []
+plugin._request = lambda *args, **kwargs: calls.append(args) or {'ok': True}
+handler = next(handler for name, schema, handler in plugin.TOOLS
+               if name == 'dramaclaw_confirm_interactive_story_outline')
+result = handler({'base_revision': 1, 'idempotency_key': 'confirm-key'})
+assert result['error'] == 'tool_arguments_invalid'
+assert result['argument_corrections_complete'] is True
+assert ['outline_id'] in result['invalid_argument_paths']
+assert not calls
+assert not any(name == 'novelvideo' or name.startswith('novelvideo.') for name in sys.modules)
+"""
+    env = {**os.environ, "PYTHONPATH": "", "DRAMACLAW_PROJECT_ID": "project-a",
+           "DRAMACLAW_CANVAS_ID": "canvas-a"}
+    python = os.environ.get("HERMES_TEST_PYTHON") or sys.executable
+    completed = subprocess.run(
+        [python, "-I", "-c", script, str(plugins / "freezone" / "__init__.py")],
+        cwd=tmp_path, env=env, check=False, capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
 def test_dramaclaw_plugin_adds_chat_error_without_replacing_task_error():
     plugin = _load_plugin_module()
     raw_error = "Content filter triggered. Finish reason: 'content_filter'"

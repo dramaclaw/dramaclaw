@@ -9,7 +9,6 @@ import asyncio
 import inspect
 import json
 import logging
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -18,6 +17,14 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from mcp import types
+
+from novelvideo.chat.story_validation import (
+    _integer_string_argument_paths as _integer_string_argument_paths,
+    _unexpected_argument_fields as _unexpected_argument_fields,
+    base_validation_error_payload as validation_error_payload,
+    validation_correction_paths as validation_correction_paths,
+    validation_error_details as validation_error_details,
+)
 
 ToolIndex = dict[str, tuple[dict[str, Any], Any]]
 logger = logging.getLogger("novelvideo.chat.mcp_runtime")
@@ -79,210 +86,6 @@ def normalize_structured_result(schema: dict[str, Any], decoded: Any) -> dict[st
     return structured
 
 
-def validation_error_details(
-    errors: list[Any], message_for_error: Callable[[Any], str | None] | None = None
-) -> list[dict[str, Any]]:
-    """Return every invalid argument path without noisy duplicate entries."""
-    grouped: dict[str, dict[str, Any]] = {}
-    expanded = []
-
-    def expand(error):
-        contexts = list(getattr(error, "context", ()) or ())
-        instance = getattr(error, "instance", None)
-        schema = getattr(error, "schema", {})
-        if contexts and isinstance(instance, dict):
-            variants = schema.get("oneOf", [])
-            for discriminator in ("op", "kind"):
-                if discriminator not in instance:
-                    continue
-                matches = [
-                    i
-                    for i, variant in enumerate(variants)
-                    if variant.get("properties", {}).get(discriminator, {}).get("const")
-                    == instance[discriminator]
-                ]
-                if len(matches) == 1:
-                    before = len(expanded)
-                    for child in contexts:
-                        if child.schema_path and child.schema_path[0] == matches[0]:
-                            expand(child)
-                    if len(expanded) == before:
-                        expanded.append(error)
-                    return
-        expanded.append(error)
-
-    for error in errors:
-        expand(error)
-    for error in expanded:
-        path = ".".join(str(part) for part in getattr(error, "absolute_path", ()))
-        detail = grouped.setdefault(path, {"path": path, "messages": []})
-        contexts = list(getattr(error, "context", ()) or ())
-        messages = [getattr(item, "message", str(item)) for item in contexts]
-        if not messages:
-            messages = [getattr(error, "message", str(error))]
-        if message_for_error is not None:
-            override = message_for_error(error)
-            if override is not None:
-                messages = [override]
-        for message in messages:
-            if message not in detail["messages"]:
-                detail["messages"].append(message)
-    return [
-        {"path": detail["path"], "message": "; ".join(detail.pop("messages"))}
-        for detail in grouped.values()
-    ]
-
-
-def _format_schema_path(parts: list[Any]) -> str:
-    path = ""
-    for part in parts:
-        if isinstance(part, int):
-            path += f"[{part}]"
-        elif path:
-            path += f".{part}"
-        else:
-            path = str(part)
-    return path or "arguments"
-
-
-def _matching_object_variants(
-    schema: Any, value: dict[str, Any]
-) -> list[dict[str, Any]] | None:
-    """The object schemas that apply to this value, narrowing a oneOf/anyOf
-    union by its type discriminator; None when that cannot be decided."""
-    if not isinstance(schema, dict):
-        return None
-    variants = schema.get("oneOf") or schema.get("anyOf")
-    if not isinstance(variants, list):
-        variants = [schema]
-    matching = []
-    for variant in variants:
-        if not isinstance(variant, dict):
-            return None
-        discriminator = (variant.get("properties") or {}).get("type")
-        allowed = discriminator.get("enum") if isinstance(discriminator, dict) else None
-        if isinstance(allowed, list) and value.get("type") not in allowed:
-            continue
-        matching.append(variant)
-    return matching or None
-
-
-def _closed_object_fields(schema: Any, value: dict[str, Any]) -> set[str] | None:
-    """Fields a closed object schema allows for this value, or None if unknown.
-
-    Open schemas, or unions with no matching variant, are never judged.
-    """
-    matching = _matching_object_variants(schema, value)
-    if matching is None or any(
-        variant.get("additionalProperties") is not False
-        or not isinstance(variant.get("properties"), dict)
-        for variant in matching
-    ):
-        return None
-    return {field for variant in matching for field in variant["properties"]}
-
-
-def _unexpected_argument_fields(
-    schema: dict[str, Any], arguments: Any
-) -> list[dict[str, Any]]:
-    """Fields no schema variant allows, by path, for a provable retry (#686).
-
-    Dropping exactly these fields is the only structural correction the chat
-    service accepts as the same call when the agent retries a rejection.
-    Covers the top-level arguments and objects inside top-level arrays.
-    """
-    if not isinstance(arguments, dict):
-        return []
-    found: list[dict[str, Any]] = []
-    allowed = _closed_object_fields(schema, arguments)
-    if allowed is not None and set(arguments) - allowed:
-        found.append({"path": [], "fields": sorted(set(arguments) - allowed)})
-    properties = schema.get("properties") if isinstance(schema, dict) else None
-    for key, value in arguments.items():
-        property_schema = (properties or {}).get(key)
-        if not isinstance(value, list) or not isinstance(property_schema, dict):
-            continue
-        for index, item in enumerate(value):
-            if not isinstance(item, dict):
-                continue
-            allowed = _closed_object_fields(property_schema.get("items"), item)
-            if allowed is not None and set(item) - allowed:
-                found.append(
-                    {"path": [key, index], "fields": sorted(set(item) - allowed)}
-                )
-    return found
-
-
-_ASCII_INTEGER_STRING = re.compile(r"-?[0-9]+", re.ASCII)
-
-
-def _declares_integer(schema: Any) -> bool:
-    if not isinstance(schema, dict):
-        return False
-    declared = schema.get("type")
-    types = declared if isinstance(declared, list) else [declared]
-    return "integer" in types and "string" not in types
-
-
-def _integer_string_argument_paths(schema: Any, value: Any) -> list[list[Any]]:
-    """Paths the schema declares integer but that hold a numeric string (#686).
-
-    Coercing exactly these values is the only value correction the chat
-    service accepts as the same call on retry. Open objects such as node data
-    declare nothing, so their contents are never coerced.
-    """
-    found: list[list[Any]] = []
-    if isinstance(value, list) and isinstance(schema, dict):
-        for index, item in enumerate(value):
-            for path in _integer_string_argument_paths(schema.get("items"), item):
-                found.append([index, *path])
-        return found
-    if not isinstance(value, dict):
-        return found
-    matching = _matching_object_variants(schema, value)
-    if matching is None:
-        return found
-    for key, item in value.items():
-        property_schemas = [
-            (variant.get("properties") or {}).get(key) for variant in matching
-        ]
-        # Every applicable variant must agree, or the type is not provable.
-        if any(not isinstance(candidate, dict) for candidate in property_schemas):
-            continue
-        if all(_declares_integer(candidate) for candidate in property_schemas):
-            if isinstance(item, str) and _ASCII_INTEGER_STRING.fullmatch(item):
-                found.append([key])
-            continue
-        if len(property_schemas) == 1:
-            for path in _integer_string_argument_paths(property_schemas[0], item):
-                found.append([key, *path])
-    return found
-
-
-def _schema_validation_diagnostic(
-    exc: SchemaError | ValidationError,
-) -> tuple[str, str]:
-    parts = list(getattr(exc, "absolute_path", ()))
-    if isinstance(exc, ValidationError) and exc.validator in {"oneOf", "anyOf"}:
-        instance = exc.instance
-        variants = exc.validator_value
-        if (
-            isinstance(instance, dict)
-            and "type" not in instance
-            and isinstance(variants, list)
-            and variants
-            and all(
-                isinstance(variant, dict) and "type" in variant.get("required", [])
-                for variant in variants
-            )
-        ):
-            path = _format_schema_path([*parts, "type"])
-            return path, f"{path}: field is required"
-
-    path = _format_schema_path(parts)
-    return path, getattr(exc, "message", str(exc))
-
-
 def output_schema_for_tool(name: str, tool_index: ToolIndex) -> dict[str, Any]:
     entry = tool_index.get(name)
     if entry is None:
@@ -308,31 +111,6 @@ def build_mcp_tools(tool_index: ToolIndex) -> list[types.Tool]:
             )
         )
     return result
-
-
-def validation_error_payload(
-    name: str,
-    arguments: dict[str, Any],
-    schema: dict[str, Any],
-    exc: SchemaError | ValidationError,
-    errors: list[Any],
-) -> dict[str, Any]:
-    path, message = _schema_validation_diagnostic(exc)
-    unexpected = _unexpected_argument_fields(schema, arguments)
-    integer_strings = _integer_string_argument_paths(schema, arguments)
-    return {
-        "ok": False,
-        "error": "tool_arguments_invalid",
-        "tool_name": name,
-        "message": message,
-        "path": path,
-        "status": "tool_arguments_invalid",
-        "phase": "tool_validation",
-        "retryable": False,
-        "next_action": "检查错误字段后再重试",
-        **({"unexpected_fields": unexpected} if unexpected else {}),
-        **({"integer_string_fields": integer_strings} if integer_strings else {}),
-    }
 
 
 def _identity_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:

@@ -1262,6 +1262,11 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
     "retryable": {"type": "boolean"},
     "next_action": {"type": ["string", "null"]},
     "agent_instruction": {"type": ["string", "null"]},
+    "invalid_argument_paths": {
+        "type": "array",
+        "items": {"type": "array", "items": {"type": ["string", "integer"]}},
+    },
+    "argument_corrections_complete": {"type": "boolean"},
 }
 
 STORY_RESULT_FIELDS = {
