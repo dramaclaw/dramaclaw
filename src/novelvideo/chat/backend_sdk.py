@@ -1164,18 +1164,106 @@ def _codex_thread_config(
     return config
 
 
+class CodexThreadBusyError(RuntimeError):
+    """The persisted thread still has a turn in flight on the App Server."""
+
+
+def _loaded_codex_thread_status(client: Any, thread_id: str) -> str | None:
+    """Return the App Server runtime status type for ``thread_id`` or ``None``."""
+
+    from openai_codex.errors import InvalidRequestError
+
+    try:
+        response = client.thread_read(thread_id, include_turns=False)
+    except InvalidRequestError as exc:
+        if _is_missing_codex_thread_error(exc):
+            return None
+        raise
+    status = getattr(getattr(response, "thread", None), "status", None)
+    status = getattr(status, "root", status)
+    status_type = getattr(status, "type", None)
+    return str(status_type).strip() if status_type else None
+
+
+def _refresh_loaded_codex_thread_runtime(codex: Any, thread_id: str) -> bool:
+    """Make the App Server drop a loaded thread so ``thread/resume`` rebuilds it.
+
+    Every turn binds its own credential file, turn id and tool allowlist into the
+    thread-local MCP config.  The App Server only applies those overrides on a cold
+    resume: a loaded thread keeps its session, including the MCP subprocesses and
+    the environment they were spawned with, for as long as any connection is still
+    subscribed to it, and every connection auto-subscribes to every thread created on
+    the shared node runtime.  A concurrent turn on the node is therefore enough to
+    make the next turn's tools read the previous turn's (already deleted) token.
+
+    ``thread/archive`` is the one request that shuts a loaded thread down regardless
+    of subscribers; ``thread/unarchive`` restores the stored thread and the resume
+    that follows cold-starts from the persisted rollout with this turn's config.
+    Returns ``True`` when the loaded runtime was dropped.
+    """
+
+    client = getattr(codex, "_client", None)
+    if client is None or not all(
+        callable(getattr(client, name, None))
+        for name in ("thread_read", "thread_archive", "thread_unarchive")
+    ):
+        return False
+    status = _loaded_codex_thread_status(client, thread_id)
+    if status in (None, "notLoaded"):
+        return False
+    if status == "active":
+        raise CodexThreadBusyError(
+            f"Codex thread {thread_id} still has a turn in flight; refusing to reuse "
+            "its tool runtime or interrupt it"
+        )
+    try:
+        client.thread_archive(thread_id)
+    except Exception:
+        # The resume below still reaches the model; its tools may hold the previous
+        # turn's environment, which the token file check then rejects loudly.
+        _log.warning(
+            "could not drop loaded Codex thread %s (status=%s) before resume; "
+            "its tool runtime may be stale",
+            thread_id,
+            status,
+            exc_info=True,
+        )
+        return False
+    try:
+        client.thread_unarchive(thread_id)
+    except Exception:
+        _log.error(
+            "dropped loaded Codex thread %s but failed to restore it",
+            thread_id,
+            exc_info=True,
+        )
+        raise
+    _log.info(
+        "dropped loaded Codex thread %s (status=%s) so resume rebuilds its tool runtime",
+        thread_id,
+        status,
+    )
+    return True
+
+
 def _start_or_resume_codex_thread(
     codex: Any,
     thread_id: str | None,
     thread_options: dict[str, Any],
 ) -> Any:
-    """Resume a persisted thread, replacing only a provably stale pointer."""
+    """Resume a persisted thread, replacing only a provably stale pointer.
+
+    A thread the App Server still holds in memory is dropped first so the resume
+    applies this turn's MCP environment (see
+    :func:`_refresh_loaded_codex_thread_runtime`).
+    """
 
     if not thread_id:
         return codex.thread_start(**thread_options)
 
     from openai_codex.errors import InvalidRequestError
 
+    _refresh_loaded_codex_thread_runtime(codex, thread_id)
     try:
         return codex.thread_resume(thread_id, **thread_options)
     except InvalidRequestError as exc:
