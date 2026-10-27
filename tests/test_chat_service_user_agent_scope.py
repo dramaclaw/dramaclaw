@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -2214,6 +2215,25 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "story_conflict_changed_payload",
         "story_validate_after_create",
         "outline_conflict_retry",
+        "story_validation_save_kind",
+        "story_validation_save_kind_generated_id",
+        "story_validation_save_kind_wrong_generated_id",
+        "story_validation_save_kind_default_version",
+        "story_validation_save_kind_default_version_changed_title",
+        "story_validation_confirm_missing_id",
+        "story_validation_unreported_change",
+        "story_validation_incomplete_diagnostic",
+        "outline_missing_id_retry",
+        "outline_missing_id_changed_content",
+        "outline_missing_id_wrong_scope",
+        "outline_missing_id_wrong_project",
+        "outline_missing_id_wrong_tool",
+        "outline_missing_id_wrong_receipt",
+        "outline_missing_id_handler_failure",
+        "outline_missing_id_other_failure",
+        "outline_missing_id_duplicate",
+        "outline_missing_id_different_rejection",
+        "outline_missing_id_wrong_phase",
         "unstructured_proposal",
         "unstructured_json_proposal",
         "preflight_retry",
@@ -2331,7 +2351,9 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     (
                         "rejected",
                         "story-a",
-                        {"ok": False, "error": "tool_arguments_invalid", "phase": "tool_validation"},
+                        {"ok": False, "error": "tool_arguments_invalid", "phase": "tool_validation",
+                         "invalid_argument_paths": [["operations", 0, "value"]],
+                         "argument_corrections_complete": True},
                     ),
                     (
                         "corrected",
@@ -2347,7 +2369,9 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         name="dramaclaw.dramaclaw_patch_interactive_story",
                         call_id=call_id,
                         status="completed",
-                        input={"story_id": story_id, "base_revision": 3},
+                        input={"story_id": story_id, "base_revision": 3,
+                               "idempotency_key": "story-key",
+                               "operations": [{"op": "replace", "value": "bad" if call_id == "rejected" else "fixed"}]},
                         output={"content": [{"type": "text", "text": json.dumps(payload)}]},
                         structured=payload,
                         error=None,
@@ -2357,7 +2381,9 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     (
                         "rejected",
                         {"title": "耳机广告"},
-                        {"ok": False, "error": "tool_arguments_invalid", "phase": "tool_validation"},
+                        {"ok": False, "error": "tool_arguments_invalid", "phase": "tool_validation",
+                         "invalid_argument_paths": [["story", "story_id"]],
+                         "argument_corrections_complete": True},
                     ),
                     (
                         "corrected",
@@ -2372,7 +2398,7 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         name="dramaclaw.dramaclaw_create_interactive_story",
                         call_id=call_id,
                         status="completed",
-                        input={"story": story, "base_revision": 3},
+                        input={"story": story, "base_revision": 3, "idempotency_key": "story-key"},
                         output={"content": [{"type": "text", "text": json.dumps(payload)}]},
                         structured=payload,
                         error=None,
@@ -2462,6 +2488,195 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         status="completed",
                         input=input_payload,
                         output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload,
+                        error=None,
+                    )
+            elif tool_outcome.startswith("story_validation_"):
+                confirmation = tool_outcome == "story_validation_confirm_missing_id"
+                generated_id = tool_outcome in {
+                    "story_validation_save_kind_generated_id",
+                    "story_validation_save_kind_wrong_generated_id",
+                    "story_validation_save_kind_default_version",
+                    "story_validation_save_kind_default_version_changed_title",
+                }
+                tool = (
+                    "dramaclaw_confirm_interactive_story_outline"
+                    if confirmation else "dramaclaw_save_interactive_story_outline"
+                )
+                before = {"base_revision": 0 if generated_id else 1,
+                          "idempotency_key": "story-key", "canvas_id": "canvas-a"}
+                if confirmation:
+                    after = {**before, "outline_id": "outline-a"}
+                    paths = [["outline_id"]]
+                    identity = "outline-a"
+                else:
+                    outline = {"title": "Piko", "premise": "广告", "plot_summary": "故事"}
+                    if not generated_id:
+                        outline["outline_id"] = "outline-a"
+                    before["outline"] = outline
+                    after = {**before, "outline": {**outline, "kind": "ad"}}
+                    if tool_outcome in {
+                        "story_validation_save_kind_default_version",
+                        "story_validation_save_kind_default_version_changed_title",
+                    }:
+                        after["outline"]["schema_version"] = "pending_story_outline.v1"
+                    if tool_outcome == "story_validation_save_kind_default_version_changed_title":
+                        after["outline"]["title"] = "Another plan"
+                    if tool_outcome == "story_validation_unreported_change":
+                        after["outline"]["title"] = "Another plan"
+                    paths = [["outline", "kind"]]
+                    identity = ("outline_" + hashlib.sha256(b"story-key").hexdigest()[:32]
+                                if generated_id else "outline-a")
+                    if tool_outcome == "story_validation_save_kind_wrong_generated_id":
+                        identity = "outline-other"
+                rejected = {"ok": False, "error": "tool_arguments_invalid",
+                            "phase": "tool_validation", "invalid_argument_paths": paths,
+                            "argument_corrections_complete": tool_outcome != "story_validation_incomplete_diagnostic"}
+                saved = {"ok": True, "project_id": "project-a", "canvas_id": "canvas-a",
+                         "outline_id": identity, "revision": 2, "refresh_canvas": True}
+                for call_id, arguments, payload in (("rejected", before, rejected),
+                                                     ("corrected", after, saved)):
+                    yield SimpleNamespace(
+                        type="tool_updated", name=f"dramaclaw.{tool}", text=f"[mcp:completed] dramaclaw.{tool}",
+                        call_id=call_id, status="completed", input=arguments,
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload, error=None,
+                    )
+            elif tool_outcome.startswith("outline_missing_id_"):
+                original = {
+                    "title": "Piko",
+                    "kind": "ad",
+                    "premise": "广告",
+                    "plot_summary": "故事",
+                }
+                rejection = {
+                    "ok": False,
+                    "error": "tool_arguments_invalid",
+                    "phase": "tool_validation",
+                    "path": "outline",
+                    "message": "'outline_id' is a required property",
+                }
+                if tool_outcome == "outline_missing_id_wrong_phase":
+                    rejection["phase"] = "handler"
+                revised = {**original, "outline_id": "outline-a"}
+                if tool_outcome == "outline_missing_id_changed_content":
+                    revised["title"] = "Different"
+                result = {
+                    "ok": True,
+                    "project_id": "project-a",
+                    "canvas_id": "canvas-a",
+                    "outline_id": "other"
+                    if tool_outcome == "outline_missing_id_wrong_receipt"
+                    else "outline-a",
+                    "revision": 1,
+                    "refresh_canvas": True,
+                }
+                if tool_outcome == "outline_missing_id_handler_failure":
+                    result = {"ok": False, "error": "save_failed"}
+                if tool_outcome in {
+                    "outline_missing_id_duplicate",
+                    "outline_missing_id_different_rejection",
+                }:
+                    repeated = dict(original)
+                    if tool_outcome == "outline_missing_id_different_rejection":
+                        repeated["title"] = "Another outline"
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        name="dramaclaw.dramaclaw_save_interactive_story_outline",
+                        text="[mcp:completed] dramaclaw.dramaclaw_save_interactive_story_outline",
+                        call_id="another-rejected",
+                        status="completed",
+                        input={
+                            "outline": repeated,
+                            "canvas_id": "canvas-a",
+                            "base_revision": 0,
+                            "idempotency_key": "outline-key",
+                        },
+                        output={
+                            "content": [{"type": "text", "text": json.dumps(rejection)}]
+                        },
+                        structured=rejection,
+                        error=None,
+                    )
+                for call_id, outline, payload, canvas in (
+                    ("rejected", original, rejection, "canvas-a"),
+                    (
+                        "corrected",
+                        revised,
+                        result,
+                        "canvas-b"
+                        if tool_outcome == "outline_missing_id_wrong_scope"
+                        else "canvas-a",
+                    ),
+                ):
+                    tool_name = (
+                        "dramaclaw_confirm_interactive_story_outline"
+                        if call_id == "corrected"
+                        and tool_outcome == "outline_missing_id_wrong_tool"
+                        else "dramaclaw_save_interactive_story_outline"
+                    )
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        name=f"dramaclaw.{tool_name}",
+                        text=f"[mcp:completed] dramaclaw.{tool_name}",
+                        call_id=call_id,
+                        status="completed",
+                        input={
+                            "outline": outline,
+                            "canvas_id": canvas,
+                            **(
+                                {"project_id": "project-b"}
+                                if call_id == "corrected"
+                                and tool_outcome == "outline_missing_id_wrong_project"
+                                else {}
+                            ),
+                            "base_revision": 0,
+                            "idempotency_key": "outline-key",
+                        },
+                        output={
+                            "content": [{"type": "text", "text": json.dumps(payload)}]
+                        },
+                        structured=payload,
+                        error=None,
+                    )
+                if tool_outcome == "outline_missing_id_retry":
+                    payload = {
+                        "ok": True,
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                        "outline_id": "outline-a",
+                        "revision": 2,
+                        "refresh_canvas": True,
+                    }
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        name="dramaclaw.dramaclaw_confirm_interactive_story_outline",
+                        text="[mcp:completed] dramaclaw.dramaclaw_confirm_interactive_story_outline",
+                        call_id="confirmed",
+                        status="completed",
+                        input={
+                            "outline_id": "outline-a",
+                            "base_revision": 1,
+                            "idempotency_key": "confirm-key",
+                        },
+                        output={
+                            "content": [{"type": "text", "text": json.dumps(payload)}]
+                        },
+                        structured=payload,
+                        error=None,
+                    )
+                if tool_outcome == "outline_missing_id_other_failure":
+                    payload = {"ok": False, "error": "another_failure"}
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        name="dramaclaw.dramaclaw_confirm_interactive_story_outline",
+                        text="[mcp:completed] dramaclaw.dramaclaw_confirm_interactive_story_outline",
+                        call_id="unrelated",
+                        status="completed",
+                        input={},
+                        output={
+                            "content": [{"type": "text", "text": json.dumps(payload)}]
+                        },
                         structured=payload,
                         error=None,
                     )
@@ -2936,6 +3151,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 "story_conflict_changed_payload",
                 "story_validate_after_create",
                 "outline_conflict_retry",
+                "outline_missing_id_retry",
+                "outline_missing_id_duplicate",
+                "story_validation_save_kind",
+                "story_validation_save_kind_generated_id",
+                "story_validation_save_kind_default_version",
+                "story_validation_confirm_missing_id",
             }:
                 assistant_reply = "互动故事已更新。"
             if tool_outcome.startswith("video_preflight"):
@@ -3103,8 +3324,34 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     elif tool_outcome == "story_conflict_changed_payload":
         assert result["content"] == "画布操作未完成：Conflict"
         assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {"story_validate_after_create", "outline_conflict_retry"}:
+    elif tool_outcome in {
+        "story_validate_after_create",
+        "outline_conflict_retry",
+        "outline_missing_id_retry",
+        "outline_missing_id_duplicate",
+        "story_validation_save_kind",
+        "story_validation_save_kind_generated_id",
+        "story_validation_save_kind_default_version",
+        "story_validation_confirm_missing_id",
+    }:
         assert result["content"] == "互动故事已更新。"
+    elif tool_outcome in {
+        "outline_missing_id_changed_content",
+        "outline_missing_id_wrong_scope",
+        "outline_missing_id_wrong_project",
+        "outline_missing_id_wrong_tool",
+        "outline_missing_id_wrong_receipt",
+        "outline_missing_id_handler_failure",
+        "outline_missing_id_different_rejection",
+        "outline_missing_id_wrong_phase",
+        "story_validation_save_kind_wrong_generated_id",
+        "story_validation_save_kind_default_version_changed_title",
+        "story_validation_unreported_change",
+        "story_validation_incomplete_diagnostic",
+    }:
+        assert result["content"].startswith("画布操作未完成：")
+    elif tool_outcome == "outline_missing_id_other_failure":
+        assert result["content"] == "画布操作未完成：another_failure"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "story_conflict_wrong_retry":
         assert result["content"] == "画布操作未完成：canvas revision conflict"

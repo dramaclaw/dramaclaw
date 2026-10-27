@@ -15645,6 +15645,48 @@ async def _validate_workflow_draft_story_targets(
     return bool(context.get("targets") or context.get("asset_targets"))
 
 
+async def _prepare_workflow_draft_story_references(
+    compiled: dict, *, state_dir: Path, canvas_id: str, user: dict,
+    approved: bool = False, expected_warnings: list | None = None,
+) -> None:
+    """Freeze automatically selected story references into the reviewed plan."""
+    from novelvideo.freezone.agent_workflows.catalog import validate_agent_workflow_plan
+    from novelvideo.freezone.workflow_story_targets import prepare_story_frame_references
+
+    plan = compiled.get("plan") or {}
+    context = plan.get("source_context")
+    if not isinstance(context, dict) or not context.get("targets"):
+        return
+    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+    warnings: list[dict[str, Any]] = []
+    try:
+        updated = prepare_story_frame_references(plan, canvas, warnings=warnings)
+    except ValueError as exc:
+        raise HTTPException(409, {"code": "story_frame_reference_unavailable", "error": str(exc)}) from exc
+    if approved and expected_warnings is not None and warnings != expected_warnings:
+        raise HTTPException(409, {
+            "code": "story_frame_references_changed",
+            "error": "Story reference warnings changed; prepare and review a new draft.",
+        })
+    compiled["story_reference_warnings"] = warnings
+    if updated == plan:
+        return
+    if approved:
+        raise HTTPException(409, {
+            "code": "story_frame_references_changed",
+            "error": "Story references changed; prepare and review a new draft.",
+        })
+    validated = await asyncio.to_thread(
+        validate_agent_workflow_plan, updated,
+        username=str(user.get("username") or ""),
+        allow_template_reroute=False,
+        mode_confirmations=compiled.get("mode_confirmations"),
+    )
+    if not validated.get("ok"):
+        raise HTTPException(400, validated)
+    compiled.update(validated)
+
+
 @router.post(
     "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts",
     tags=[TAG_FREEZONE_CANVAS],
@@ -15800,6 +15842,9 @@ async def create_canvas_workflow_draft(
     has_story_targets = await _validate_workflow_draft_story_targets(
         validated, state_dir=state_dir, canvas_id=canvas_id,
     )
+    await _prepare_workflow_draft_story_references(
+        validated, state_dir=state_dir, canvas_id=canvas_id, user=user,
+    )
     if has_story_targets and "run_after_create" not in body:
         raise HTTPException(400, {
             "ok": False,
@@ -15814,6 +15859,7 @@ async def create_canvas_workflow_draft(
     validated["preflight"] = await _check_workflow_runtime(
         validated, project=project, user=user
     )
+    validated["preflight"].setdefault("warnings", []).extend(validated.get("story_reference_warnings") or [])
     plan = validated.get("plan") if isinstance(validated.get("plan"), dict) else {}
     logger.info(
         "workflow_draft.create.validated project_id=%s canvas_id=%s operation_id=%s "
@@ -16056,12 +16102,16 @@ async def patch_canvas_workflow_draft(
     await _validate_workflow_draft_story_targets(
         validated, state_dir=state_dir, canvas_id=canvas_id,
     )
+    await _prepare_workflow_draft_story_references(
+        validated, state_dir=state_dir, canvas_id=canvas_id, user=user,
+    )
     validated["external_inputs_verified"] = await _resolve_workflow_draft_external_inputs(
         validated, state_dir=state_dir, canvas_id=canvas_id, project_id=ctx.project_id,
     )
     validated["preflight"] = await _check_workflow_runtime(
         validated, project=project, user=user
     )
+    validated["preflight"].setdefault("warnings", []).extend(validated.get("story_reference_warnings") or [])
     if isinstance(prepared["intent"].get("plan"), dict):
         prepared["intent"]["plan"] = deepcopy(validated["plan"])
     try:
@@ -16615,6 +16665,10 @@ async def claim_canvas_workflow_draft(
     validated = await _validate_workflow_draft_submission(current_draft, user)
     await _validate_workflow_draft_story_targets(
         validated, state_dir=state_dir, canvas_id=canvas_id,
+    )
+    await _prepare_workflow_draft_story_references(
+        validated, state_dir=state_dir, canvas_id=canvas_id, user=user, approved=True,
+        expected_warnings=current_draft["compiled"].get("story_reference_warnings"),
     )
     await _resolve_workflow_draft_external_inputs(
         current_draft["compiled"], state_dir=state_dir, canvas_id=canvas_id,

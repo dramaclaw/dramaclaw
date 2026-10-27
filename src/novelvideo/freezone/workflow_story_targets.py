@@ -7,7 +7,140 @@ classification of every image workflow on a canvas that contains a story.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
+
+from novelvideo.i18n_message import lmsg, message_payload
+
+
+def prepare_story_frame_references(
+    plan: dict[str, Any], canvas: dict[str, Any] | None,
+    *, warnings: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Bind unambiguous, explicitly mapped story assets before draft approval.
+
+    Older canvases often have untagged images; those remain manual references.
+    Never infer an identity from a node's title or prompt.
+    """
+    result = deepcopy(plan)
+    context = result.get("source_context")
+    if not isinstance(context, dict) or not context.get("targets"):
+        return result
+    validate_story_frame_targets(result, canvas)
+    assert isinstance(canvas, dict)
+    nodes = {n.get("id"): n for n in canvas.get("nodes") or [] if isinstance(n, dict)}
+    story_id = context.get("story_id")
+    declarations = result.get("external_inputs") or []
+    edges = result.get("edges") or []
+    exclusions = context.get("story_reference_exclusions", [])
+    if not isinstance(exclusions, list):
+        raise ValueError("source_context.story_reference_exclusions must be a list")
+    excluded: set[tuple[str, str, str]] = set()
+    for item in exclusions:
+        if (not isinstance(item, dict) or set(item) != {"plan_node_id", "kind", "entity_id"}
+                or not isinstance(item.get("kind"), str)
+                or item.get("kind") not in {"subject", "scene"}
+                or not all(isinstance(item.get(k), str) and item[k].strip()
+                           for k in ("plan_node_id", "entity_id"))):
+            raise ValueError("invalid story_reference_exclusions entry")
+        key = (item["plan_node_id"], item["kind"], item["entity_id"])
+        if key in excluded:
+            raise ValueError("duplicate story_reference_exclusions entry")
+        excluded.add(key)
+    assets: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for node in nodes.values():
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        target = data.get("storyAssetTarget")
+        if (node.get("type") != "imageGenNode" or not isinstance(target, dict)
+                or target.get("storyId") != story_id or not isinstance(target.get("kind"), str)
+                or target.get("kind") not in {"subject", "scene"}
+                or not isinstance(target.get("entityId"), str)
+                or not isinstance(target.get("segmentIds"), list)):
+            continue
+        for segment in target["segmentIds"]:
+            if isinstance(segment, str):
+                assets.setdefault((segment, target["kind"], target["entityId"]), []).append(node)
+    aliases = {item.get("id"): item.get("node_id") for item in declarations if isinstance(item, dict)}
+    used = set(aliases) | {n.get("id") for n in result.get("nodes") or [] if isinstance(n, dict)}
+    plan_nodes = {n.get("id"): n for n in result.get("nodes") or [] if isinstance(n, dict)}
+    valid_exclusions: set[tuple[str, str, str]] = set()
+    for target in context["targets"]:
+        frame_id, segment_id = target["plan_node_id"], target["story_segment_id"]
+        video_data = nodes[target["video_node_id"]].get("data") or {}
+        subjects = [("subject", value) for value in video_data.get("storyCharacterIds") or []
+                    if isinstance(value, str)]
+        scenes = [("scene", ref["scene_id"]) for ref in video_data.get("storySceneRefs") or []
+                  if isinstance(ref, dict) and isinstance(ref.get("scene_id"), str)]
+        for kind, entity_id in dict.fromkeys(subjects + scenes):
+            key = (frame_id, kind, entity_id)
+            valid_exclusions.add(key)
+            candidates = assets.get((segment_id, kind, entity_id), [])
+            selected_ids = {
+                aliases.get(edge.get("source")) for edge in edges
+                if isinstance(edge, dict) and edge.get("target") == frame_id
+                and edge.get("link_type") == "media_input_for"
+            }
+            selected = [node for node in candidates if node.get("id") in selected_ids]
+            if key in excluded:
+                if selected:
+                    raise ValueError(f"story frame {frame_id} excludes {kind} {entity_id} but also references it")
+                continue
+            if not candidates:
+                if warnings is not None:
+                    label = "主体" if kind == "subject" else "场景"
+                    video = nodes[target["video_node_id"]]
+                    group_data = (nodes.get(video.get("parentId"), {}).get("data") or {})
+                    entities = group_data.get("storyCharacters" if kind == "subject" else "storyScenes") or []
+                    entity_name = next((entry.get("name") for entry in entities
+                                        if isinstance(entry, dict) and entry.get("id") == entity_id
+                                        and isinstance(entry.get("name"), str) and entry["name"].strip()), entity_id)
+                    frame_data = plan_nodes.get(frame_id, {}).get("data") or {}
+                    frame_name = frame_data.get("displayName") or frame_data.get("title") or frame_id
+                    segment_name = video_data.get("displayName") or segment_id
+                    message = lmsg(
+                        "workflowDraftContinuation.storyReferenceItem",
+                        f"分镜 {frame_name}（片段 {segment_name}）的{label} {entity_name} "
+                        "没有可验证的素材映射。已有手工参考图可能适用，请核对；也可明确排除。",
+                        frame=str(frame_name), entity=str(entity_name),
+                    )
+                    warnings.append({
+                        "path": f"source_context.targets.{frame_id}",
+                        "code": "story_reference_unmapped",
+                        "frame_name": str(frame_name),
+                        "segment_name": str(segment_name),
+                        "entity_name": str(entity_name),
+                        "kind": kind,
+                        "message": message.text,
+                        "message_i18n": message_payload(message),
+                    })
+                continue  # No trustworthy mapping: preserve legacy manual workflows.
+            if len(selected) > 1 or (not selected and len(candidates) > 1):
+                raise ValueError(f"story frame {frame_id} has multiple {kind} references for {entity_id}; select one")
+            node = selected[0] if selected else candidates[0]
+            data = node.get("data") or {}
+            image_url = data.get("imageUrl")
+            if (not isinstance(image_url, str) or not image_url.strip()
+                    or image_url.strip().lower().startswith("blob:")
+                    or data.get("isGenerating") or data.get("assetMigration")):
+                raise ValueError(f"story frame {frame_id} {kind} reference {entity_id} is not generated")
+            if selected:
+                continue
+            node_id = node.get("id")
+            alias = next((name for name, value in aliases.items() if value == node_id), None)
+            if alias is None:
+                index = 1
+                while f"story_ref_{index}" in used:
+                    index += 1
+                alias = f"story_ref_{index}"
+                used.add(alias)
+                aliases[alias] = node_id
+                result["external_inputs"] = declarations
+                declarations.append({"id": alias, "node_id": node_id, "media_kind": "image"})
+            result["edges"] = edges
+            edges.append({"source": alias, "target": frame_id, "link_type": "media_input_for"})
+    if excluded - valid_exclusions:
+        raise ValueError("story_reference_exclusions must refer to a planned frame and entity")
+    return result
 
 
 def is_story_image_production_plan(plan: dict[str, Any]) -> bool:

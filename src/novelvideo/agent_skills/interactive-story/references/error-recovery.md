@@ -12,7 +12,7 @@
 
 - `revision_conflict`：故事 Create/Patch 的版本冲突。服务在应用故事写入前拒绝了请求；重新读取同一故事及画布，保留并发编辑，只重建仍获授权的变更。若回执给出 `current_revision`，且读取后原操作仍明确安全，可用新 `idempotency_key` 最多重试一次；状态不明或第二次冲突时停止。
 - `canvas_revision_conflict`：画布保存的版本冲突。`current_revision` 只用于定位最新状态，不能单凭版本号重放整批命令。先读取最新画布与逐命令回执，确认哪些写入没有生效，再仅重建安全的缺失部分；不得重放已提交的媒体生成。
-- `tool_arguments_invalid` 且 `phase=tool_validation`：这是确定性的写入前参数拒绝。修正每个返回的 `details.path`，保留未报告字段和故事语义，重新读取当前状态，然后在同一轮中用当前 revision 和新 key 重试一次。不要猜测其他 envelope；第二次调用无论如何失败都停止。
+- `tool_arguments_invalid` 且 `phase=tool_validation`：这是确定性的写入前参数拒绝。仅当 `argument_corrections_complete=true` 时，修正 `invalid_argument_paths` 指出的字段，保留其他字段和故事语义；重新读取当前状态，在同一轮中用当前 revision 和新 key 最多重试一次。诊断不完整时不要猜测或自动重试；第二次调用失败时停止并报告。
 - `idempotency_conflict`：停止；不得通过更换 key 隐藏冲突。
 - `outline_not_confirmed`：Create 入口与后端均校验此门禁，不直接重试 Create。先回读大纲与 revision；用户已在聊天明确批准当前内容时，调用 `dramaclaw_confirm_interactive_story_outline`，成功后再创建。否则让用户在聊天确认或点击方案卡；内容改变不能沿用旧批准。
 - 没有上述明确 `phase=tool_validation` 证据时，`invalid_story`、HTTP 422 和 `request_validation_error` 不能证明可以安全重试。`invalid_story` 可能发生在持久化成功后读取保存结果的阶段。读取当前状态并报告错误，不覆盖或自动重试。缺少诊断路径不授权猜测修正。

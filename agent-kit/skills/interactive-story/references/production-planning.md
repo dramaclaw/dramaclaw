@@ -8,6 +8,8 @@
 
 先 Get 故事和画布，用真实关联找到各 Segment 的视频节点；剧情关系以故事为准，参数和引用以 `freezone_get_node_detail` 的 `parameters`、`reference_media` 为准。需要动作能力时读 `freezone_get_node_action_catalog`。收集已有视频、提示词、`model`、`genMode`、`durationSec`、`aspectRatio`、`quality`、`generateAudio` 和已连接素材；模型与时长档位、参考类型/数量、声音及清晰度按当前 options 核对，不从标题或记忆推断。
 
+询问已有镜头的视频模型前，先读取本次目标镜头的真实模式和参考，把所有目标视频节点 ID 作为 `generation_video_node_ids` 传给 `freezone_request_user_clarification`，由宿主按现有模式筛选模型。多张参考图需要能消费这些图的模式；不能为了适配模型擅自改成只消费一张图的首帧模式。模型对参考类型和数量的限制仍须逐镜头核对；若无兼容方案，说明冲突，由用户决定调整模型或参考方案。
+
 制作影游素材前，先在 StoryDraft 写好 `characters`（人物、产品主角、重要物品）、`scenes`，并逐片段填写 `character_ids` 与 `scene_refs`。每个主体/场景使用稳定 ASCII ID；明确其视觉描述和使用片段。故事 Patch 完成后再提交图片工作流。工作流 `source_context` 使用 `story_id` 和 `asset_targets`：每张图片声明 `plan_node_id`、`kind: "subject"|"scene"`、`entity_id`、`segment_ids`。服务端会核对所有目标片段确实在当前故事中要求该主体/场景；生成成功后宿主再按当前规划回连。`product` 主体也用 `kind: "subject"` 的目标。分镜开场图继续使用 `targets` 的片段映射，两类目标不要混用。没有规划的旧故事可保留人工连线，不会自动猜测分配。
 
 集中给用户“审制作”摘要：主要路线观看时长、公共模型/画幅/声音、所需人物和场景、逐镜头例外及待补项。跨片段整理角色、场景、物品的稳定外观与状态，区分已有、待提供、待制作素材；文字设定不等于真实图片。分支汇合应兼容所有来源。未获用户要求时不逐项追问资产或逐节点配置。

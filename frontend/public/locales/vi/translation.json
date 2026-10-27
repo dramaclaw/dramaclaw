@@ -1297,7 +1297,11 @@
           "loading": "Đang tải danh mục mô hình. Vui lòng chọn thông số sau khi tải xong.",
           "fallback": "Không thể tải danh mục mô hình. Vui lòng thử lại sau.",
           "empty": "Chưa có mô hình tạo nội dung nào được cấu hình. Vui lòng liên hệ quản trị viên.",
-          "model_unavailable": "Mô hình đã chọn trước đó không còn khả dụng. Vui lòng chọn lại mô hình trước khi chọn thông số."
+          "model_unavailable": "Mô hình đã chọn trước đó không còn khả dụng. Vui lòng chọn lại mô hình trước khi chọn thông số.",
+          "model_incompatible": "Mô hình video đã xác nhận không còn hỗ trợ chế độ của các cảnh. Hãy quay lại điều chỉnh phương án.",
+          "no_compatible_video_model": "Không có mô hình nào hỗ trợ tất cả chế độ tạo của các cảnh này. Hãy điều chỉnh chế độ cảnh hoặc nhờ quản trị viên cấu hình mô hình tương thích.",
+          "exit": "Quay lại điều chỉnh",
+          "exitMessage": "Người dùng đã thoát chọn mô hình vì hiện không thể chọn mô hình tương thích. Hãy trao đổi để điều chỉnh chế độ cảnh hoặc cấu hình mô hình tương thích; chưa tạo nội dung."
         },
         "autoRatio": "Tỷ lệ tự động",
         "imageQuality": "Chất lượng ảnh",
@@ -10322,6 +10326,9 @@
     "title": "Kế hoạch quy trình đang chờ xác nhận",
     "summary": "{{nodes}} node · {{edges}} đường nối. Chưa áp dụng lên canvas.",
     "referenceImages": "Tư liệu tham chiếu",
+    "storyReferencesUnverified": "Không thể xác minh ảnh tham chiếu cho các phân cảnh sau:",
+    "storyReferenceItem": "{{frame}}: {{entity}}",
+    "storyReferencesAction": "Ảnh tham chiếu đã chọn thủ công có thể phù hợp. Hãy kiểm tra hoặc bổ sung tư liệu.",
     "changed": "Kế hoạch đã thay đổi. Hãy xem lại trước khi xác nhận.",
     "failed": "Không gửi được xác nhận. Hãy thử lại; chưa tạo bản nháp mới.",
     "cancelFailed": "Không thể hủy kế hoạch. Vui lòng thử lại.",

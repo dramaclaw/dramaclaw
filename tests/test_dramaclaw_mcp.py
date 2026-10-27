@@ -34,6 +34,36 @@ def _story_tool_schemas():
     }
 
 
+def _valid_story_tool_arguments(tool_name: str) -> dict:
+    """Use a valid request for the tool so tests reach the behavior under test."""
+    common = {"base_revision": 0, "idempotency_key": "story-key-01"}
+    if tool_name == "dramaclaw_create_interactive_story":
+        return {
+            **common,
+            "story": {
+                "story_id": "story-a",
+                "title": "测试故事",
+                "start_segment_id": "ending-a",
+                "segments": [{
+                    "id": "ending-a",
+                    "title": "结局",
+                    "script": "故事结束。",
+                    "kind": "ending",
+                    "ending_label": "完成",
+                }],
+            },
+        }
+    if tool_name == "dramaclaw_patch_interactive_story":
+        return {
+            **common,
+            "story_id": "story-a",
+            "operations": [{"op": "set_story_start", "segment_id": "ending-a"}],
+        }
+    if tool_name == "dramaclaw_get_freezone_canvas":
+        return {}
+    return {"story_id": "story-a"}
+
+
 def test_mcp_bridge_exposes_interactive_story_plugin_tools(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
@@ -361,8 +391,10 @@ def test_freezone_story_tools_reject_scope_override(monkeypatch, tool_name, over
     plugin = dramaclaw_mcp._plugin("freezone")
     calls = []
     monkeypatch.setattr(plugin, "_request", lambda *a, **kw: calls.append((a, kw)))
-    handler = dramaclaw_mcp._plugin_tools("freezone")[tool_name][1]
-    raw = handler({"story_id": "story-a", **override})
+    schema, handler = dramaclaw_mcp._plugin_tools("freezone")[tool_name]
+    arguments = {**_valid_story_tool_arguments(tool_name), **override}
+    Draft202012Validator(schema["parameters"]).validate(arguments)
+    raw = handler(arguments)
     result = json.loads(raw) if isinstance(raw, str) else raw
     assert result["ok"] is False
     assert "bound" in result["error"]
@@ -484,16 +516,27 @@ def test_hermes_recovers_story_write_receipt(monkeypatch, tmp_path, tool_name):
     plugin = dramaclaw_mcp._plugin("freezone")
     receipt = {"ok": True, "project_id": "project-a", "story_id": "story-a", "canvas_id": "canvas-a",
                "revision": 1, "refresh_canvas": True}
-    monkeypatch.setattr(plugin, "_request", lambda *a, **kw: receipt)
-    handler = dramaclaw_mcp._plugin_tools("freezone")[tool_name][1]
-    arguments = {
-        "story_id": "story-a",
-        "base_revision": 0,
-        "idempotency_key": "story-key-01",
-        "story": {},
-        "operations": [],
-    }
-    handler(arguments)
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append((method, path))
+        if method == "GET":
+            return {"ok": True, "outline": None}
+        return receipt
+
+    monkeypatch.setattr(plugin, "_request", request)
+    schema, handler = dramaclaw_mcp._plugin_tools("freezone")[tool_name]
+    arguments = _valid_story_tool_arguments(tool_name)
+    Draft202012Validator(schema["parameters"]).validate(arguments)
+    raw = handler(arguments)
+    assert (json.loads(raw) if isinstance(raw, str) else raw) == receipt
+    if tool_name == "dramaclaw_create_interactive_story":
+        assert calls == [
+            ("GET", "/api/v1/projects/project-a/interactive-story-outline"),
+            ("POST", "/api/v1/projects/project-a/interactive-stories"),
+        ]
+    else:
+        assert calls == [("PATCH", "/api/v1/projects/project-a/interactive-stories/story-a")]
     assert _load_recent_freezone_tool_result(
         str(tmp_path), tool_name, tool_input=arguments
     ) == receipt
@@ -507,8 +550,11 @@ def test_freezone_story_create_requires_bound_scope(monkeypatch, missing):
     plugin = dramaclaw_mcp._plugin("freezone")
     calls = []
     monkeypatch.setattr(plugin, "_request", lambda *a, **kw: calls.append((a, kw)))
-    handler = dramaclaw_mcp._plugin_tools("freezone")["dramaclaw_create_interactive_story"][1]
-    raw = handler({"project_id": "project-a", "canvas_id": "canvas-a"})
+    schema, handler = dramaclaw_mcp._plugin_tools("freezone")["dramaclaw_create_interactive_story"]
+    arguments = {**_valid_story_tool_arguments("dramaclaw_create_interactive_story"),
+                 "project_id": "project-a", "canvas_id": "canvas-a"}
+    Draft202012Validator(schema["parameters"]).validate(arguments)
+    raw = handler(arguments)
     result = json.loads(raw) if isinstance(raw, str) else raw
     assert result["ok"] is False
     assert "bound" in result["error"]

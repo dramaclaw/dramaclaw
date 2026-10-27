@@ -5262,3 +5262,103 @@ def test_execution_policy_never_bypasses_invalid_story_binding(workflow_run_clie
     )
     assert response.status_code == 409, response.text
     assert workflow_run_client.enqueued_tasks == []
+
+
+@pytest.mark.parametrize("change", ["replace", "add"])
+def test_story_frame_draft_binds_asset_in_preview_and_rechecks_it_on_claim(
+    workflow_run_client, monkeypatch, change
+):
+    from novelvideo.api.routes import freezone
+
+    async def image_models(*_args, **_kwargs):
+        return {"ok": True, "data": [{"id": "story-image-model"}]}
+
+    monkeypatch.setattr(freezone, "freezone_image_models", image_models)
+    canvas = {"project_id": "proj_demo", "canvas_id": "canvas_demo", "revision": 1, "nodes": [
+        {"id": "story-group", "type": "groupNode", "data": {
+            "storyGroup": True, "interactiveStoryId": "story-1"}},
+        {"id": "video-opening", "type": "videoNode", "parentId": "story-group", "data": {
+            "storySegmentId": "opening", "storyCharacterIds": ["hero"], "storySceneRefs": []}},
+        {"id": "hero-image", "type": "imageGenNode", "data": {
+            "imageUrl": "/static/projects/proj_demo/hero.png", "displayName": "主角参考图",
+            "storyAssetTarget": {"storyId": "story-1", "kind": "subject", "entityId": "hero", "segmentIds": ["opening"]}}},
+    ]}
+    hero = canvas["nodes"].pop() if change == "add" else None
+    monkeypatch.setattr(freezone.canvas_store, "read_canvas", lambda *_args: canvas)
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1", "skill": {"id": "text-to-image-video"},
+        "source_context": {"story_id": "story-1", "targets": [{
+            "plan_node_id": "frame-opening", "story_segment_id": "opening", "video_node_id": "video-opening"}]},
+        "nodes": [{"id": "frame-opening", "node_type": "imageGenNode", "stage": "image", "data": {
+            "prompt": "开场分镜", "model": "story-image-model",
+            "workflowCatalog": {"skillId": "text-to-image-video", "recipeId": "general-image"}}}],
+        "edges": [],
+    }
+    base = "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts"
+    created = workflow_run_client.post(base, json={"plan": plan, "run_after_create": False})
+    assert created.status_code == 200, created.text
+    draft = created.json()["data"]
+    saved = workflow_run_client.get(f"{base}/{draft['draft_id']}").json()["data"]
+    saved_plan = saved["compiled"]["plan"]
+    if change == "replace":
+        assert any(item["node_id"] == "hero-image" for item in draft["preview"]["external_inputs"])
+        reference = next(item for item in saved_plan["external_inputs"] if item["node_id"] == "hero-image")
+        assert {"source": reference["id"], "target": "frame-opening", "link_type": "media_input_for"} in saved_plan["edges"]
+        assert saved["compiled"]["external_inputs_verified"][reference["id"]]["media_url"] == "/static/projects/proj_demo/hero.png"
+        canvas["nodes"][2]["data"]["imageUrl"] = "/static/projects/proj_demo/changed.png"
+    else:
+        assert not saved_plan.get("external_inputs")
+        canvas["nodes"].append(hero)
+    # A reviewer must not confirm a reference that changed after the preview.
+    claimed = workflow_run_client.post(f"{base}/{draft['draft_id']}/claim", json={"revision": 1})
+    assert claimed.status_code == 409, claimed.text
+    assert workflow_run_client.get(f"{base}/{draft['draft_id']}").json()["data"]["status"] == "ready"
+
+
+@pytest.mark.parametrize("exclude_hero", [False, True])
+def test_story_frame_legacy_unmapped_reference_warning_is_reviewable_without_blocking(
+    workflow_run_client, monkeypatch, exclude_hero
+):
+    from novelvideo.api.routes import freezone
+
+    async def image_models(*_args, **_kwargs):
+        return {"ok": True, "data": [{"id": "story-image-model"}]}
+
+    monkeypatch.setattr(freezone, "freezone_image_models", image_models)
+    canvas = {"project_id": "proj_demo", "canvas_id": "canvas_demo", "revision": 1, "nodes": [
+        {"id": "story-group", "type": "groupNode", "data": {
+            "storyGroup": True, "interactiveStoryId": "story-1"}},
+        {"id": "video-opening", "type": "videoNode", "parentId": "story-group", "data": {
+            "storySegmentId": "opening", "storyCharacterIds": ["hero"],
+            "storySceneRefs": [{"scene_id": "office"}]}},
+        {"id": "legacy-image", "type": "imageGenNode", "data": {
+            "imageUrl": "/static/projects/proj_demo/legacy.png",
+            "storyAssetTarget": {"storyId": "story-1", "kind": [], "entityId": "hero", "segmentIds": ["opening"]}}},
+    ]}
+    monkeypatch.setattr(freezone.canvas_store, "read_canvas", lambda *_args: canvas)
+    context = {"story_id": "story-1", "targets": [{
+        "plan_node_id": "frame-opening", "story_segment_id": "opening", "video_node_id": "video-opening"}]}
+    if exclude_hero:
+        context["story_reference_exclusions"] = [{
+            "plan_node_id": "frame-opening", "kind": "subject", "entity_id": "hero"}]
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1", "skill": {"id": "text-to-image-video"},
+        "source_context": context,
+        "external_inputs": [{"id": "manual", "node_id": "legacy-image", "media_kind": "image"}],
+        "nodes": [{"id": "frame-opening", "node_type": "imageGenNode", "stage": "image", "data": {
+            "prompt": "开场分镜", "model": "story-image-model",
+            "workflowCatalog": {"skillId": "text-to-image-video", "recipeId": "general-image"}}}],
+        "edges": [{"source": "manual", "target": "frame-opening", "link_type": "media_input_for"}],
+    }
+    response = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts",
+        json={"plan": plan, "run_after_create": False},
+    )
+    assert response.status_code == 200, response.text
+    draft = response.json()["data"]
+    warnings = [w for w in draft["preview"]["preflight"]["warnings"] if w.get("code") == "story_reference_unmapped"]
+    assert any("frame-opening" in w["message"] and "opening" in w["message"] and "office" in w["message"]
+               for w in warnings)
+    assert any("hero" in w["message"] for w in warnings) is not exclude_hero
+    assert any(item["node_id"] == "legacy-image" for item in draft["preview"]["external_inputs"])
+    assert not draft["preview"]["preflight"]["blockers"]

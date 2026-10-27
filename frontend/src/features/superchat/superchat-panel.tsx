@@ -4341,6 +4341,8 @@ type SkillStudioQuestionSelections = Record<string, string | string[] | SkillStu
 type AssistantClarificationQuestion = SkillStudioQuestion & {
   mode?: "single" | "multiple";
   options_source?: ClarificationOptionsSource;
+  /** Server-verified catalog modes required by the target video nodes. */
+  required_video_modes?: string[];
 };
 
 type AssistantClarificationAnswers = SkillStudioQuestionSelections;
@@ -4356,7 +4358,16 @@ type ClarificationCatalogModel = {
   minDuration?: number | null;
   maxDuration?: number | null;
   supportsGenerateAudio?: boolean;
+  supportedModes?: string[];
 };
+
+function clarificationVideoModelSupportsRequiredModes(
+  model: ClarificationCatalogModel,
+  requiredModes: readonly string[] | undefined,
+): boolean {
+  return !requiredModes?.length || requiredModes.every((mode) =>
+    model.supportedModes?.includes(mode));
+}
 
 type ClarificationOptionsSource =
   | "image_models"
@@ -4425,12 +4436,29 @@ type GenerationCatalogState = {
   isFallback: boolean;
 };
 
+export function assistantClarificationCanExitUnavailableVideoModel(
+  questions: AssistantClarificationQuestion[],
+  videoCatalog: GenerationCatalogState,
+  answers: AssistantClarificationAnswers = {},
+): boolean {
+  if (videoCatalog.isLoading) return false;
+  const requiredModes = questions.flatMap((question) => question.required_video_modes ?? []);
+  if (!requiredModes.length) return false;
+  if (videoCatalog.isFallback || !videoCatalog.models.some((model) =>
+    clarificationVideoModelSupportsRequiredModes(model, requiredModes))) return true;
+  const hasModelQuestion = questions.some((question) =>
+    normalizedClarificationId(question.id) === "video_model");
+  if (hasModelQuestion || !clarificationSelectedValue(questions, answers, "video_model")) return false;
+  const selected = clarificationSelectedModel(questions, answers, "video_model", videoCatalog.models);
+  return !selected || !clarificationVideoModelSupportsRequiredModes(selected, requiredModes);
+}
+
 export function assistantClarificationGenerationCatalogIssue(
   questions: AssistantClarificationQuestion[],
   imageCatalog: GenerationCatalogState,
   videoCatalog: GenerationCatalogState,
   answers: AssistantClarificationAnswers = {},
-): "loading" | "fallback" | "empty" | "model_unavailable" | null {
+): "loading" | "fallback" | "empty" | "model_unavailable" | "model_incompatible" | "no_compatible_video_model" | null {
   const requestedCatalogs = [
     ["image_models", "selected_image_model_", "image_model", imageCatalog],
     ["video_models", "selected_video_model_", "video_model", videoCatalog],
@@ -4445,6 +4473,23 @@ export function assistantClarificationGenerationCatalogIssue(
   if (needed.some(([, , , catalog]) => catalog.isLoading)) return "loading";
   if (needed.some(([, , , catalog]) => catalog.isFallback)) return "fallback";
   if (needed.some(([, , , catalog]) => catalog.models.length === 0)) return "empty";
+  if (questions.some((question) =>
+    (question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[
+      normalizedClarificationId(question.id)
+    ]) === "video_models"
+      && Boolean(question.required_video_modes?.length)
+      && !videoCatalog.models.some((model) =>
+        clarificationVideoModelSupportsRequiredModes(model, question.required_video_modes)))) {
+    return "no_compatible_video_model";
+  }
+  const requiredVideoModes = questions.flatMap((question) => question.required_video_modes ?? []);
+  const hasVideoModelQuestion = questions.some((question) =>
+    normalizedClarificationId(question.id) === "video_model");
+  const selectedVideoModel = clarificationSelectedModel(questions, answers, "video_model", videoCatalog.models);
+  if (requiredVideoModes.length && !hasVideoModelQuestion && selectedVideoModel
+    && !clarificationVideoModelSupportsRequiredModes(selectedVideoModel, requiredVideoModes)) {
+    return "model_incompatible";
+  }
   for (const [, dependentPrefix, modelQuestionId, catalog] of needed) {
     const hasDependentQuestion = questions.some((question) =>
       (question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[
@@ -4562,9 +4607,13 @@ function clarificationQuestionsWithLiveModelCatalogs(
   const selectedImageModel = clarificationSelectedModel(
     questions, answers, "image_model", imageModels,
   );
-  const selectedVideoModel = clarificationSelectedModel(
+  const selectedVideoModelCandidate = clarificationSelectedModel(
     questions, answers, "video_model", videoModels,
   );
+  const requiredVideoModes = questions.flatMap((question) => question.required_video_modes ?? []);
+  const selectedVideoModel = selectedVideoModelCandidate
+    && clarificationVideoModelSupportsRequiredModes(selectedVideoModelCandidate, requiredVideoModes)
+    ? selectedVideoModelCandidate : null;
   const hasImageModelQuestion = questions.some(
     (question) => normalizedClarificationId(question.id) === "image_model",
   );
@@ -4577,7 +4626,8 @@ function clarificationQuestionsWithLiveModelCatalogs(
     const existingOptions = question.options ?? [];
     const normalized = (value: unknown) => String(value ?? "").trim().toLowerCase();
     if (source === "image_models" || source === "video_models") {
-      const models = source === "image_models" ? imageModels : videoModels;
+      const models = source === "image_models" ? imageModels : videoModels.filter((model) =>
+        clarificationVideoModelSupportsRequiredModes(model, question.required_video_modes));
       return {
         ...question,
         options_source: source,
@@ -6310,8 +6360,9 @@ export function buildAssistantClarificationResponseForTest(
 export function buildAssistantClarificationToolResultForTest(
   event: AssistantClarificationUiEvent,
   answers: AssistantClarificationAnswers,
-  options: { skillStudioRevision?: boolean; projectId?: string; canvasId?: string; agentId?: string } = {},
+  options: { skillStudioRevision?: boolean; projectId?: string; canvasId?: string; agentId?: string; cancelMessage?: string } = {},
 ) {
+  const cancelled = answers.__action === "cancel";
   const safeAnswers = Object.fromEntries(
     Object.entries(answers).filter(([key]) => !key.startsWith("__")),
   ) as AssistantClarificationAnswers;
@@ -6337,11 +6388,11 @@ export function buildAssistantClarificationToolResultForTest(
     canvas_id: event.canvas_id || options.canvasId || undefined,
     agent_id: event.agent_id || options.agentId || undefined,
     tool_call_status: "completed" as const,
-    clarification_status: "answered",
-    ok: true,
-    action: "submit",
+    clarification_status: cancelled ? "cancelled" : "answered",
+    ok: !cancelled,
+    action: cancelled ? "cancel" : "submit",
     answers: safeAnswers,
-    message,
+    message: cancelled ? options.cancelMessage ?? "用户退出模型选择，需要先调整镜头模式或配置兼容模型。" : message,
   };
 }
 
@@ -7136,6 +7187,9 @@ function AssistantClarificationInputCard({
   const allQuestionsAnswered = selectableQuestions.length > 0 && answeredCount === selectableQuestions.length;
   const canSubmit = assistantClarificationCanSubmit(questions, answers);
   const isGenerationCard = assistantClarificationIsGenerationCard(questions);
+  const canExitUnavailableVideoModel = assistantClarificationCanExitUnavailableVideoModel(
+    eventQuestions, videoModelCatalog, answers,
+  );
   const goToQuestion = useCallback((position: number) => {
     if (selectableQuestions.length === 0) return;
     setActiveQuestionPosition(Math.max(0, Math.min(position, selectableQuestions.length - 1)));
@@ -7325,6 +7379,18 @@ function AssistantClarificationInputCard({
           已选择 {activeSelectedCount} 项 · {answeredCount} / {selectableQuestions.length}
         </div>
         <div className="flex items-center gap-2">
+          {canExitUnavailableVideoModel && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-8 rounded-full px-3 text-xs text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+              disabled={!onSubmit || isSubmitting}
+              onClick={() => void submitResponse({ __action: "cancel" })}
+            >
+              {t("freezone.chat.generationParams.catalog.exit")}
+            </Button>
+          )}
           {event.allow_skip && (
             <Button
               type="button"
@@ -15481,6 +15547,8 @@ export function SuperChatPanel({
         ? "recommended"
         : answers.__action === "skip"
           ? "skip"
+          : answers.__action === "cancel"
+            ? "cancel"
           : "submit";
       if (action === "recommended" && !assistantClarificationCanSubmitRecommended(
         event, answers,
@@ -15496,9 +15564,10 @@ export function SuperChatPanel({
           projectId: params.project || undefined,
           canvasId: effectiveFreezoneCanvasId || undefined,
           agentId: effectiveFreezoneAgentId || undefined,
+          cancelMessage: t("freezone.chat.generationParams.catalog.exitMessage"),
         }),
         action,
-        clarification_status: action === "submit" ? "answered" : action,
+        clarification_status: action === "submit" ? "answered" : action === "cancel" ? "cancelled" : action,
         skipped: action === "skip",
         used_recommended: action === "recommended",
       };
@@ -15516,7 +15585,7 @@ export function SuperChatPanel({
         return false;
       }
       if (event.turn_id) {
-        const actionStatus = action === "submit" ? "answered" : action;
+        const actionStatus = action === "submit" ? "answered" : action === "cancel" ? "cancelled" : action;
         const receivedAt = uiEventFirstReceivedAt(event);
         const persistedEvent = buildPersistedAssistantClarificationEvent(event, {
           action,
