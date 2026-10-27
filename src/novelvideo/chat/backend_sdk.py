@@ -1909,6 +1909,8 @@ class CodexThread:
                     timeout_error = {
                         "message": timeout_message,
                         "kind": timeout_kind,
+                        # Stream time at deadline detection, before interrupt cleanup.
+                        "elapsed_ms": int((now - started_at) * 1000),
                     }
                     yield ChatBackendEvent(
                         type="turn_completed",
