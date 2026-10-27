@@ -119,6 +119,13 @@ def _is_missing_codex_thread_error(exc: Exception) -> bool:
     )
 
 
+def _is_archived_codex_thread_error(exc: Exception) -> bool:
+    """``thread/resume`` on an archived thread (e.g. ``session <id> is archived``)."""
+
+    message = str(getattr(exc, "message", exc) or "").lower()
+    return "is archived" in message
+
+
 def control_codex_runtime(
     *,
     codex_bin: Path,
@@ -1267,6 +1274,22 @@ def _start_or_resume_codex_thread(
     try:
         return codex.thread_resume(thread_id, **thread_options)
     except InvalidRequestError as exc:
+        if _is_archived_codex_thread_error(exc):
+            # A previous refresh archived the thread but could not restore it.
+            # The App Server refuses to resume an archived thread (it is not
+            # "missing", so history is never silently replaced); restore it and
+            # retry once so the thread does not stay stuck.
+            client = getattr(codex, "_client", None)
+            if client is None or not callable(
+                getattr(client, "thread_unarchive", None)
+            ):
+                raise
+            _log.warning(
+                "Codex thread %s was left archived; restoring it before resume",
+                thread_id,
+            )
+            client.thread_unarchive(thread_id)
+            return codex.thread_resume(thread_id, **thread_options)
         if not _is_missing_codex_thread_error(exc):
             raise
         return codex.thread_start(**thread_options)
@@ -1923,7 +1946,9 @@ class CodexThread:
                         )
                     )
                     return
-                await queue.put(("error", str(exc)))
+                # Keep the exception object: the chat route maps a busy thread
+                # onto its existing "turn still running" UX by type.
+                await queue.put(("error", exc))
 
         worker_task = asyncio.create_task(run_worker())
         started_at = loop.time()
@@ -2024,6 +2049,8 @@ class CodexThread:
                     )
                     break
                 if kind == "error":
+                    if isinstance(payload, CodexThreadBusyError):
+                        raise payload
                     raise RuntimeError(str(payload))
                 event = payload
                 if event.type not in _CODEX_LIFECYCLE_ONLY_EVENTS:
