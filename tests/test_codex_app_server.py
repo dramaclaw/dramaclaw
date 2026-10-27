@@ -236,6 +236,196 @@ def test_missing_rollout_starts_a_replacement_thread():
     assert result is replacement
 
 
+class _LoadedThreadClient:
+    """Low-level App Server client fake recording the refresh sequence."""
+
+    def __init__(self, status: str | None, *, archive_error: Exception | None = None):
+        self.status = status
+        self.archive_error = archive_error
+        self.calls: list[tuple[str, str]] = []
+
+    def thread_read(self, thread_id, include_turns=False):
+        from openai_codex.errors import InvalidRequestError
+
+        assert include_turns is False
+        self.calls.append(("read", thread_id))
+        if self.status is None:
+            raise InvalidRequestError(-32600, f"thread not found: {thread_id}")
+        status = SimpleNamespace(type=self.status)
+        return SimpleNamespace(
+            thread=SimpleNamespace(status=SimpleNamespace(root=status))
+        )
+
+    def thread_archive(self, thread_id):
+        self.calls.append(("archive", thread_id))
+        if self.archive_error is not None:
+            raise self.archive_error
+
+    def thread_unarchive(self, thread_id):
+        self.calls.append(("unarchive", thread_id))
+
+
+class _LoadedThreadCodex:
+    def __init__(self, client):
+        self._client = client
+        self.calls = client.calls
+        self.resumed = object()
+
+    def thread_resume(self, thread_id, **options):
+        self.calls.append(("resume", thread_id))
+        self.options = options
+        return self.resumed
+
+    def thread_start(self, **options):
+        raise AssertionError("a persisted thread must be resumed, not replaced")
+
+
+def test_resume_drops_a_loaded_idle_thread_before_resuming():
+    """A loaded thread keeps its MCP env; archive+unarchive forces a cold resume."""
+
+    codex = _LoadedThreadCodex(_LoadedThreadClient("idle"))
+
+    result = _start_or_resume_codex_thread(codex, "thread-1", {"model": "m"})
+
+    assert result is codex.resumed
+    assert codex.options == {"model": "m"}
+    assert codex.calls == [
+        ("read", "thread-1"),
+        ("archive", "thread-1"),
+        ("unarchive", "thread-1"),
+        ("resume", "thread-1"),
+    ]
+
+
+@pytest.mark.parametrize("status", [None, "notLoaded"])
+def test_resume_leaves_an_unloaded_thread_alone(status):
+    codex = _LoadedThreadCodex(_LoadedThreadClient(status))
+
+    assert _start_or_resume_codex_thread(codex, "thread-1", {}) is codex.resumed
+    assert codex.calls == [("read", "thread-1"), ("resume", "thread-1")]
+
+
+def test_resume_refuses_a_thread_with_a_turn_in_flight():
+    from novelvideo.chat.backend_sdk import CodexThreadBusyError
+
+    codex = _LoadedThreadCodex(_LoadedThreadClient("active"))
+
+    with pytest.raises(CodexThreadBusyError, match="turn in flight"):
+        _start_or_resume_codex_thread(codex, "thread-1", {})
+    assert codex.calls == [("read", "thread-1")]
+
+
+def test_resume_still_runs_when_the_loaded_thread_cannot_be_dropped(caplog):
+    codex = _LoadedThreadCodex(
+        _LoadedThreadClient("idle", archive_error=RuntimeError("archive unavailable"))
+    )
+
+    with caplog.at_level("WARNING", logger="novelvideo.chat.backend_sdk"):
+        assert _start_or_resume_codex_thread(codex, "thread-1", {}) is codex.resumed
+    assert codex.calls == [
+        ("read", "thread-1"),
+        ("archive", "thread-1"),
+        ("resume", "thread-1"),
+    ]
+    assert "tool runtime may be stale" in caplog.text
+
+
+def test_resume_without_a_low_level_client_keeps_the_plain_path():
+    resumed = object()
+
+    class FakeCodex:
+        def thread_resume(self, thread_id, **options):
+            return resumed
+
+        def thread_start(self, **options):
+            raise AssertionError("unexpected replacement")
+
+    assert _start_or_resume_codex_thread(FakeCodex(), "thread-1", {}) is resumed
+
+
+def test_resume_restores_an_archived_thread_before_retrying():
+    """A refresh that archived but failed to unarchive must not strand the thread."""
+
+    from openai_codex.errors import InvalidRequestError
+
+    client = _LoadedThreadClient("notLoaded")
+    codex = _LoadedThreadCodex(client)
+    attempts = []
+
+    def thread_resume(thread_id, **options):
+        attempts.append(thread_id)
+        codex.calls.append(("resume", thread_id))
+        if len(attempts) == 1:
+            raise InvalidRequestError(
+                -32600,
+                f"session {thread_id} is archived. Run `codex unarchive {thread_id}` first.",
+            )
+        return codex.resumed
+
+    codex.thread_resume = thread_resume
+
+    assert _start_or_resume_codex_thread(codex, "thread-1", {}) is codex.resumed
+    assert codex.calls == [
+        ("read", "thread-1"),
+        ("resume", "thread-1"),
+        ("unarchive", "thread-1"),
+        ("resume", "thread-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_raises_codex_thread_busy_error_by_type(monkeypatch, tmp_path):
+    """The chat route maps the busy error by type, so it must not be flattened."""
+
+    from novelvideo.chat.backend_sdk import CodexThreadBusyError
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield object()
+
+    def busy(*_args, **_kwargs):
+        raise CodexThreadBusyError("Codex thread thread-1 still has a turn in flight")
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(
+        "novelvideo.chat.backend_sdk._start_or_resume_codex_thread", busy
+    )
+
+    thread = CodexThread(
+        codex_bin=None,
+        cwd=tmp_path,
+        env={},
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="Use DramaClaw MCP only.",
+        config_overrides=(),
+        thread_config={},
+        turn_metadata={},
+        thread_id="thread-1",
+    )
+
+    with pytest.raises(CodexThreadBusyError, match="turn in flight"):
+        _ = [event async for event in thread.stream("continue")]
+
+
+def test_chat_route_maps_busy_thread_onto_the_run_lock_message():
+    from novelvideo.api.routes.chat import _chat_turn_busy_message
+    from novelvideo.chat.backend_sdk import CodexThreadBusyError
+    from novelvideo.chat.session_registry import CHAT_RUN_BUSY_MESSAGE
+
+    assert (
+        _chat_turn_busy_message(
+            CodexThreadBusyError("thread-1 still has a turn in flight")
+        )
+        == CHAT_RUN_BUSY_MESSAGE
+    )
+    assert (
+        _chat_turn_busy_message(RuntimeError(CHAT_RUN_BUSY_MESSAGE))
+        == CHAT_RUN_BUSY_MESSAGE
+    )
+    assert _chat_turn_busy_message(RuntimeError("boom")) is None
+
+
 def test_resume_does_not_hide_non_stale_invalid_request():
     from openai_codex.errors import InvalidRequestError
 

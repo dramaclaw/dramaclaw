@@ -31,10 +31,12 @@ from novelvideo.api.auth import (
 from novelvideo.api.deps import list_user_projects
 from novelvideo.api.egress_binding import request_egress_scope
 from novelvideo.chat import service as chat_service
+from novelvideo.chat.backend_sdk import CodexThreadBusyError
 from novelvideo.chat.execution_context import AgentExecutionContext
 from novelvideo.chat.hermes_egress import EgressBoundaryError
 from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
 from novelvideo.chat.director_auto import coordinator as director_auto_coordinator
+from novelvideo.chat.session_registry import CHAT_RUN_BUSY_MESSAGE
 from novelvideo.chat.live_events import (
     register_chat_websocket,
     unregister_chat_websocket,
@@ -698,6 +700,22 @@ def _canvas_bridge_dir(
         ),
     )
     return canvas_bridge_dir_for_profile(home, profile)
+
+
+def _chat_turn_busy_message(exc: BaseException) -> str | None:
+    """The user-facing busy message for a failed turn, or None if it was not busy.
+
+    Both the chat run lock and a Codex thread that still has a turn in flight
+    (``CodexThreadBusyError``) mean "your previous turn is still running"; the
+    frontend shows them through the same ``chat.busy`` frame.
+    """
+
+    if isinstance(exc, CodexThreadBusyError):
+        return CHAT_RUN_BUSY_MESSAGE
+    message = str(exc)
+    if "当前用户已有 AI 对话正在处理中" in message:
+        return message
+    return None
 
 
 def _is_freezone_scope(scope: ChatScope) -> bool:
@@ -4626,14 +4644,15 @@ async def chat_ws(websocket: WebSocket) -> None:
                         },
                     )
             except Exception as exc:  # noqa: BLE001
-                message = str(exc)
+                busy_message = _chat_turn_busy_message(exc)
+                message = busy_message or str(exc)
                 logger.exception(
                     "chat turn failed username=%s turn_id=%s error_type=%s",
                     username,
                     turn_id,
                     type(exc).__name__,
                 )
-                if "当前用户已有 AI 对话正在处理中" in message:
+                if busy_message is not None:
                     await _send_json_best_effort(
                         websocket,
                         {
