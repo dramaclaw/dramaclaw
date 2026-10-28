@@ -53,3 +53,18 @@ def test_api_routes_take_precedence(spa_client):
     r = spa_client.get("/api/v1/config")
     assert r.status_code == 200
     assert r.json()["ok"] is True
+
+
+def test_shell_must_revalidate(spa_client):
+    """旧 index.html 被缓存住会让升级后的首屏 404(黑屏)。"""
+    assert spa_client.get("/").headers["cache-control"] == "no-cache"
+
+
+def test_deep_link_shell_must_revalidate(spa_client):
+    r = spa_client.get("/projects/abc/ingest")
+    assert r.headers["cache-control"] == "no-cache"
+
+
+def test_hashed_assets_are_immutable(spa_client):
+    r = spa_client.get("/assets/app.js")
+    assert r.headers["cache-control"] == "public, max-age=31536000, immutable"
