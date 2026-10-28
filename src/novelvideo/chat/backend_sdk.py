@@ -7,7 +7,7 @@ import os
 import threading
 import tomllib
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Literal, Sequence
 
 from novelvideo.chat.runtime_port import (
     AgentRuntimeThreadPort,
@@ -112,6 +112,20 @@ def interrupt_live_codex_turn(thread_id: str, turn_id: str) -> bool:
     return True
 
 
+def _is_missing_codex_thread_error(exc: Exception) -> bool:
+    message = str(getattr(exc, "message", exc) or "").lower()
+    return "no rollout found for thread id" in message or (
+        "thread" in message and "not found" in message
+    )
+
+
+def _is_archived_codex_thread_error(exc: Exception) -> bool:
+    """``thread/resume`` on an archived thread (e.g. ``session <id> is archived``)."""
+
+    message = str(getattr(exc, "message", exc) or "").lower()
+    return "is archived" in message
+
+
 def control_codex_runtime(
     *,
     codex_bin: Path,
@@ -146,13 +160,22 @@ def control_codex_runtime(
         elif operation == "archive":
             client.thread_archive(thread_id)
         else:
+            from openai_codex.errors import InvalidRequestError
             from openai_codex.generated.v2_all import ThreadDeleteResponse
 
-            client.request(
-                "thread/delete",
-                {"threadId": thread_id},
-                response_model=ThreadDeleteResponse,
-            )
+            try:
+                client.request(
+                    "thread/delete",
+                    {"threadId": thread_id},
+                    response_model=ThreadDeleteResponse,
+                )
+            except InvalidRequestError as exc:
+                # Project purge is idempotent: a stale session index may point
+                # at a rollout that was already removed. Treat only that
+                # explicit not-found response as success; transport, auth and
+                # other runtime failures must still abort and roll back purge.
+                if not _is_missing_codex_thread_error(exc):
+                    raise
     return True
 
 
@@ -1148,26 +1171,126 @@ def _codex_thread_config(
     return config
 
 
+class CodexThreadBusyError(RuntimeError):
+    """The persisted thread still has a turn in flight on the App Server."""
+
+
+def _loaded_codex_thread_status(client: Any, thread_id: str) -> str | None:
+    """Return the App Server runtime status type for ``thread_id`` or ``None``."""
+
+    from openai_codex.errors import InvalidRequestError
+
+    try:
+        response = client.thread_read(thread_id, include_turns=False)
+    except InvalidRequestError as exc:
+        if _is_missing_codex_thread_error(exc):
+            return None
+        raise
+    status = getattr(getattr(response, "thread", None), "status", None)
+    status = getattr(status, "root", status)
+    status_type = getattr(status, "type", None)
+    return str(status_type).strip() if status_type else None
+
+
+def _refresh_loaded_codex_thread_runtime(codex: Any, thread_id: str) -> bool:
+    """Make the App Server drop a loaded thread so ``thread/resume`` rebuilds it.
+
+    Every turn binds its own credential file, turn id and tool allowlist into the
+    thread-local MCP config.  The App Server only applies those overrides on a cold
+    resume: a loaded thread keeps its session, including the MCP subprocesses and
+    the environment they were spawned with, for as long as any connection is still
+    subscribed to it, and every connection auto-subscribes to every thread created on
+    the shared node runtime.  A concurrent turn on the node is therefore enough to
+    make the next turn's tools read the previous turn's (already deleted) token.
+
+    ``thread/archive`` is the one request that shuts a loaded thread down regardless
+    of subscribers; ``thread/unarchive`` restores the stored thread and the resume
+    that follows cold-starts from the persisted rollout with this turn's config.
+    Returns ``True`` when the loaded runtime was dropped.
+    """
+
+    client = getattr(codex, "_client", None)
+    if client is None or not all(
+        callable(getattr(client, name, None))
+        for name in ("thread_read", "thread_archive", "thread_unarchive")
+    ):
+        return False
+    status = _loaded_codex_thread_status(client, thread_id)
+    if status in (None, "notLoaded"):
+        return False
+    if status == "active":
+        raise CodexThreadBusyError(
+            f"Codex thread {thread_id} still has a turn in flight; refusing to reuse "
+            "its tool runtime or interrupt it"
+        )
+    try:
+        client.thread_archive(thread_id)
+    except Exception:
+        # The resume below still reaches the model; its tools may hold the previous
+        # turn's environment, which the token file check then rejects loudly.
+        _log.warning(
+            "could not drop loaded Codex thread %s (status=%s) before resume; "
+            "its tool runtime may be stale",
+            thread_id,
+            status,
+            exc_info=True,
+        )
+        return False
+    try:
+        client.thread_unarchive(thread_id)
+    except Exception:
+        _log.error(
+            "dropped loaded Codex thread %s but failed to restore it",
+            thread_id,
+            exc_info=True,
+        )
+        raise
+    _log.info(
+        "dropped loaded Codex thread %s (status=%s) so resume rebuilds its tool runtime",
+        thread_id,
+        status,
+    )
+    return True
+
+
 def _start_or_resume_codex_thread(
     codex: Any,
     thread_id: str | None,
     thread_options: dict[str, Any],
 ) -> Any:
-    """Resume a persisted thread, replacing only a provably stale pointer."""
+    """Resume a persisted thread, replacing only a provably stale pointer.
+
+    A thread the App Server still holds in memory is dropped first so the resume
+    applies this turn's MCP environment (see
+    :func:`_refresh_loaded_codex_thread_runtime`).
+    """
 
     if not thread_id:
         return codex.thread_start(**thread_options)
 
     from openai_codex.errors import InvalidRequestError
 
+    _refresh_loaded_codex_thread_runtime(codex, thread_id)
     try:
         return codex.thread_resume(thread_id, **thread_options)
     except InvalidRequestError as exc:
-        message = str(getattr(exc, "message", exc) or "").lower()
-        stale_pointer = "no rollout found for thread id" in message or (
-            "thread" in message and "not found" in message
-        )
-        if not stale_pointer:
+        if _is_archived_codex_thread_error(exc):
+            # A previous refresh archived the thread but could not restore it.
+            # The App Server refuses to resume an archived thread (it is not
+            # "missing", so history is never silently replaced); restore it and
+            # retry once so the thread does not stay stuck.
+            client = getattr(codex, "_client", None)
+            if client is None or not callable(
+                getattr(client, "thread_unarchive", None)
+            ):
+                raise
+            _log.warning(
+                "Codex thread %s was left archived; restoring it before resume",
+                thread_id,
+            )
+            client.thread_unarchive(thread_id)
+            return codex.thread_resume(thread_id, **thread_options)
+        if not _is_missing_codex_thread_error(exc):
             raise
         return codex.thread_start(**thread_options)
 
@@ -1177,32 +1300,34 @@ def _start_codex_turn(
     prompt: str,
     turn_metadata: dict[str, str],
     output_schema: dict[str, Any] | None = None,
+    images: Sequence[str] = (),
 ) -> Any:
     """Start a turn with metadata omitted by the 0.147 generated facade.
 
     App Server 0.147 already accepts ``responsesapiClientMetadata``; only the
     generated Python convenience method lagged behind the protocol. Sending a
     raw params mapping keeps the credential scoped to the turn context instead
-    of the long-lived thread configuration.
+    of the long-lived thread configuration. ``images`` are data URLs sent as
+    image input after the prompt text.
     """
 
-    if not turn_metadata and output_schema is None:
-        from openai_codex import TextInput
+    from openai_codex._inputs import ImageInput, TextInput, _to_wire_input
 
+    if not turn_metadata and output_schema is None:
+        if images:
+            return thread.turn([TextInput(prompt), *map(ImageInput, images)])
         return thread.turn(TextInput(prompt))
 
-    from openai_codex._inputs import TextInput, _normalize_run_input, _to_wire_input
     from openai_codex.api import TurnHandle
 
     if output_schema is not None:
-        from novelvideo.chat.canvas_outcome import CANVAS_FINAL_RESPONSE_INSTRUCTIONS, CANVAS_REPLY_SCHEMA
-
-        contract = (
-            CANVAS_FINAL_RESPONSE_INSTRUCTIONS if output_schema == CANVAS_REPLY_SCHEMA
-            else "Your final response must be exactly one JSON object matching the supplied schema."
+        # Only program-consumed answers (e.g. the exact audio action plan) carry a
+        # schema; canvas chat replies are plain text (#862).
+        prompt += (
+            "\n\nYour final response must be exactly one JSON object matching the supplied schema."
+            "\nFinal response JSON schema: " + json.dumps(output_schema, ensure_ascii=False)
         )
-        prompt += "\n\n" + contract + "\nFinal response JSON schema: " + json.dumps(output_schema, ensure_ascii=False)
-    wire_input = _to_wire_input(_normalize_run_input(TextInput(prompt)))
+    wire_input = _to_wire_input([TextInput(prompt), *map(ImageInput, images)])
     params: dict[str, Any] = {}
     if turn_metadata:
         params["responsesapiClientMetadata"] = dict(turn_metadata)
@@ -1306,7 +1431,9 @@ class CodexThread:
         self._output_schema = output_schema
         self.id = thread_id
 
-    async def stream(self, prompt: str) -> AsyncIterator[ChatBackendEvent]:
+    async def stream(
+        self, prompt: str, *, images: Sequence[str] = ()
+    ) -> AsyncIterator[ChatBackendEvent]:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         current_turn_id: str | None = None
@@ -1381,7 +1508,11 @@ class CodexThread:
                 )
                 self.id = thread.id
                 turn = _start_codex_turn(
-                    thread, prompt, self._turn_metadata, self._output_schema
+                    thread,
+                    prompt,
+                    self._turn_metadata,
+                    self._output_schema,
+                    images=images,
                 )
                 nonlocal current_turn_id
                 current_turn_id = turn.id
@@ -1815,7 +1946,9 @@ class CodexThread:
                         )
                     )
                     return
-                await queue.put(("error", str(exc)))
+                # Keep the exception object: the chat route maps a busy thread
+                # onto its existing "turn still running" UX by type.
+                await queue.put(("error", exc))
 
         worker_task = asyncio.create_task(run_worker())
         started_at = loop.time()
@@ -1889,6 +2022,8 @@ class CodexThread:
                     timeout_error = {
                         "message": timeout_message,
                         "kind": timeout_kind,
+                        # Stream time at deadline detection, before interrupt cleanup.
+                        "elapsed_ms": int((now - started_at) * 1000),
                     }
                     yield ChatBackendEvent(
                         type="turn_completed",
@@ -1914,6 +2049,8 @@ class CodexThread:
                     )
                     break
                 if kind == "error":
+                    if isinstance(payload, CodexThreadBusyError):
+                        raise payload
                     raise RuntimeError(str(payload))
                 event = payload
                 if event.type not in _CODEX_LIFECYCLE_ONLY_EVENTS:

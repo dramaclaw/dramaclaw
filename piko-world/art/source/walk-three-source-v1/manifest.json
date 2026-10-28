@@ -1,0 +1,48 @@
+{
+  "outputs": {
+    "male": "player-male-motion-v5.png",
+    "female": "player-female-motion-v6.png"
+  },
+  "frameSize": 256,
+  "logicalFrameSize": 64,
+  "columns": 6,
+  "directions": [
+    "south",
+    "west",
+    "east",
+    "north"
+  ],
+  "idleColumns": [
+    0,
+    1,
+    2
+  ],
+  "walkColumns": [
+    3,
+    4,
+    5,
+    4
+  ],
+  "pivot": [
+    128,
+    228
+  ],
+  "maleSources": "../motion-source-v2/male-{direction}.png",
+  "maleScaling": "one scale per direction; maximum body height 224",
+  "idleSources": "../motion-source-v2/{male,female}-idle-body.png",
+  "sharedWalkingHeadColumn": 4,
+  "headBottoms": {
+    "male": [
+      90,
+      88,
+      90,
+      94
+    ],
+    "female": [
+      90,
+      88,
+      88,
+      90
+    ]
+  }
+}

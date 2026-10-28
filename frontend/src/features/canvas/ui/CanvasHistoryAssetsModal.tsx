@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
@@ -48,6 +49,7 @@ import {
 } from '@/features/viewer-kit/three-d/directorManifest';
 import { ThreeDDirectorDialog } from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
 
+import { mediaViewerUrls } from '../domain/mediaViewerState';
 import { ImageViewerModal } from './ImageViewerModal';
 import { VideoViewerModal } from './VideoViewerModal';
 
@@ -195,6 +197,7 @@ export function CanvasHistoryAssetsModal({
   assetSource = 'generation-history',
 }: CanvasHistoryAssetsModalProps) {
   const { t, i18n } = useTranslation();
+  const modalRef = useRef<HTMLDivElement>(null);
   const nodes = useCanvasStore((state) => state.nodes);
   const useHistory = assetSource === 'generation-history';
 
@@ -227,7 +230,7 @@ export function CanvasHistoryAssetsModal({
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   // Image lightbox state (drives the shared ImageViewerModal nav list).
-  const [imageViewerIndex, setImageViewerIndex] = useState<number | null>(null);
+  const [imageViewerUrl, setImageViewerUrl] = useState<string | null>(null);
   const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
   // 世界模型「查看」：用产物 url 现搭一个最小 manifest，直接开虾境（导演台）。
   const [worldManifest, setWorldManifest] = useState<DirectorStageManifest | null>(null);
@@ -279,10 +282,13 @@ export function CanvasHistoryAssetsModal({
     () => groupAssetsByDate(activeAssets, direction),
     [activeAssets, direction],
   );
-  const orderedImageUrls = useMemo(
+  const orderedMediaUrls = useMemo(
     () => groups.flatMap((group) => group.assets).map((asset) => asset.url),
     [groups],
   );
+  const viewerImages = useMemo(() => mediaViewerUrls(imageViewerUrl ?? '', orderedMediaUrls), [imageViewerUrl, orderedMediaUrls]);
+  const viewerVideos = useMemo(() => mediaViewerUrls(videoViewerUrl ?? '', orderedMediaUrls), [videoViewerUrl, orderedMediaUrls]);
+  const imageViewerIndex = imageViewerUrl === null ? null : viewerImages.indexOf(imageViewerUrl);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -328,8 +334,7 @@ export function CanvasHistoryAssetsModal({
   // 查看：图片 / 视频放大查看。音频不走这里 —— 直接在卡片上内联播放（见 AssetCard）。
   const handleView = (asset: CanvasAsset) => {
     if (asset.kind === 'image') {
-      const index = orderedImageUrls.indexOf(asset.url);
-      setImageViewerIndex(index >= 0 ? index : 0);
+      setImageViewerUrl(asset.url.trim());
     } else if (asset.kind === 'video') {
       setVideoViewerUrl(asset.url);
     } else if (asset.kind === 'model') {
@@ -426,8 +431,9 @@ export function CanvasHistoryAssetsModal({
     onClose();
   };
 
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+  // 脱离画布自身的 stacking context，让遮罩真正覆盖项目导航和整个视口。
+  return createPortal(
+    <div ref={modalRef} className="fixed inset-0 z-[300] flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-black/55 backdrop-blur-sm"
         onClick={onClose}
@@ -437,6 +443,7 @@ export function CanvasHistoryAssetsModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="canvas-history-assets-title"
+        onClick={(event) => event.stopPropagation()}
         className="relative z-10 flex h-[min(780px,88vh)] w-[min(1200px,94vw)] flex-col overflow-hidden rounded-xl border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.96)] shadow-[0_18px_48px_rgba(0,0,0,0.45)]"
       >
         {/* Header */}
@@ -688,32 +695,35 @@ export function CanvasHistoryAssetsModal({
       {/* Viewers */}
       <ImageViewerModal
         open={imageViewerIndex !== null}
-        imageUrl={imageViewerIndex !== null ? (orderedImageUrls[imageViewerIndex] ?? '') : ''}
-        imageList={orderedImageUrls}
+        imageUrl={imageViewerUrl ?? ''}
+        imageList={viewerImages}
         currentIndex={imageViewerIndex ?? 0}
-        onClose={() => setImageViewerIndex(null)}
-        onNavigate={(dir) =>
-          setImageViewerIndex((index) => {
-            if (index === null) {
-              return index;
-            }
-            const next = dir === 'next' ? index + 1 : index - 1;
-            if (next < 0 || next >= orderedImageUrls.length) {
-              return index;
-            }
-            return next;
-          })
-        }
+        onClose={() => setImageViewerUrl(null)}
+        onSelect={(index) => setImageViewerUrl(viewerImages[index] ?? null)}
+        onNavigate={(direction) => {
+          if (imageViewerIndex === null) return;
+          const next = imageViewerIndex + (direction === 'next' ? 1 : -1);
+          if (next >= 0 && next < viewerImages.length) setImageViewerUrl(viewerImages[next]);
+        }}
       />
       <VideoViewerModal
         open={Boolean(videoViewerUrl)}
         videoUrl={videoViewerUrl ?? ''}
+        videoList={viewerVideos}
+        currentIndex={videoViewerUrl ? Math.max(0, viewerVideos.indexOf(videoViewerUrl)) : 0}
+        onSelect={(index) => setVideoViewerUrl(viewerVideos[index] ?? null)}
+        onNavigate={(direction) => {
+          const index = videoViewerUrl ? viewerVideos.indexOf(videoViewerUrl) : -1;
+          const next = index + (direction === 'next' ? 1 : -1);
+          if (index >= 0 && next >= 0 && next < viewerVideos.length) setVideoViewerUrl(viewerVideos[next]);
+        }}
         onClose={() => setVideoViewerUrl(null)}
       />
 
       {/* 世界模型「查看」：进虾境（导演台）只读浏览。历史产物没有可保存的源节点，
           故不接 onSaveScene / onCapture* 回调（纯查看）。 */}
       <ThreeDDirectorDialog
+        portalContainer={modalRef}
         open={Boolean(worldManifest)}
         onOpenChange={(open) => {
           if (!open) setWorldManifest(null);
@@ -759,7 +769,8 @@ export function CanvasHistoryAssetsModal({
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

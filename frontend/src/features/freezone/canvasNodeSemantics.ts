@@ -122,6 +122,13 @@ const CANVAS_NODE_SEMANTICS: Partial<Record<CanvasNodeType, CanvasNodeSemanticSp
     shortDescription: "3D/director-world preview node",
     defaultUsage: "Use to inspect or derive 3D/director-world outputs from upstream imagery.",
   },
+  [CANVAS_NODE_TYPES.previz]: {
+    nodeType: CANVAS_NODE_TYPES.previz,
+    role: "viewer",
+    shortDescription: "previz stage node for 3D blocking (characters, cameras, paths)",
+    defaultUsage:
+      "Create it empty, then read its scene from the node detail (parameters.sceneEdit.current_value) and edit it with update_node_data data.sceneEdit: objects (primitive props, library models, cameras, characters, lights) and timeline (walk paths, follow cameras, character motions, cuts).",
+  },
   [CANVAS_NODE_TYPES.skill]: {
     nodeType: CANVAS_NODE_TYPES.skill,
     role: "action",
@@ -161,6 +168,7 @@ export function buildCommonNodeTypeGuidance(): string {
     CANVAS_NODE_TYPES.beatContext,
     CANVAS_NODE_TYPES.pano360Viewer,
     CANVAS_NODE_TYPES.threeDWorld,
+    CANVAS_NODE_TYPES.previz,
   ] as const;
   const parts = ordered
     .map((nodeType) => {

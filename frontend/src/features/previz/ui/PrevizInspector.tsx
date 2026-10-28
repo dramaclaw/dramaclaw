@@ -1,0 +1,547 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import { useId } from "react";
+import { useTranslation } from "react-i18next";
+
+import {
+  PREVIZ_APERTURE,
+  PREVIZ_FOCAL_MM,
+  clampAperture,
+  clampFocalMm,
+  clampToRange,
+  sensorVerticalFovDeg,
+} from "@/features/previz/domain/camera";
+import {
+  PREVIZ_HEIGHT_CM_RANGE,
+  type PrevizObjectPatch,
+} from "@/features/previz/domain/objects";
+import { findPrevizLibraryModel } from "@/features/previz/domain/modelLibrary";
+import { PREVIZ_POSES, PREVIZ_POSE_LABEL_KEYS } from "@/features/previz/domain/poses";
+import {
+  isPrevizPrimitiveShape,
+  previzPrimitiveNameKey,
+} from "@/features/previz/domain/primitives";
+import {
+  PREVIZ_INTENSITY_RANGE,
+  PREVIZ_POSE_ADJUST_RANGE,
+  type BodyType,
+  type HeightPolicy,
+  type PrevizCharacter,
+  type PrevizObject,
+  type PrevizProp,
+  type PrevizTransform,
+  type Vec3,
+} from "@/features/previz/domain/scene";
+import { PrevizSelect } from "@/features/previz/ui/PrevizSelect";
+
+export interface PrevizInspectorProps {
+  object: PrevizObject | null;
+  onChange: (patch: PrevizObjectPatch) => void;
+}
+
+const FIELD =
+  "h-8 w-full rounded-md border border-white/10 bg-white/[0.04] px-2 text-[12px] text-white/90 outline-none focus:border-white/25";
+const LABEL = "mb-1 block text-[11px] text-white/45";
+
+type PoseAdjustAxis = keyof PrevizCharacter["poseAdjust"];
+
+/**
+ * 三张列表都从 `Record<T, true>` 取键，而不是写成裸数组字面量：`BodyType` 多一个体型、
+ * `PrevizTransform` 多一个通道、`poseAdjust` 多一根轴时，这里编译期就红，不会静默少一个
+ * 下拉项 / 少一组输入框——少掉的那个字段在界面上根本不存在，用户改不到，落盘的值也就
+ * 永远停在默认值上，没有任何报错。（`PrevizViewportHud` 的 `inOrder`、工具栏与图层面板的
+ * `Record<Kind, Icon>` 是同一套写法；非整数字符串键的 `Object.keys` 保持书写顺序，
+ * 所以左边的顺序就是屏幕上的顺序。）
+ */
+const CHANNELS = Object.keys({
+  position: true,
+  rotation: true,
+  scale: true,
+} satisfies Record<keyof PrevizTransform, true>) as readonly (keyof PrevizTransform)[];
+// 顺序照抄 `BodyType` 的书写顺序，免得同一份枚举在类型里和屏幕上各排各的。
+// `capsule` 排在最前是「简化圆柱体」——它不是一档胖瘦，选它是不加载 GLB（见 scene.ts）。
+const BODY_TYPES = Object.keys({
+  capsule: true,
+  slim: true,
+  average: true,
+  heavy: true,
+  tall: true,
+} satisfies Record<BodyType, true>) as readonly BodyType[];
+const POSE_ADJUST_AXES = Object.keys({
+  pitch: true,
+  turn: true,
+  lean: true,
+} satisfies Record<PoseAdjustAxis, true>) as readonly PoseAdjustAxis[];
+const HEIGHT_POLICIES = Object.keys({
+  follow: true,
+  ground: true,
+  plane: true,
+} satisfies Record<HeightPolicy, true>) as readonly HeightPolicy[];
+
+/** 三根轴的书写顺序就是 `Vec3` 的下标顺序，`patchTransform` 靠这个把 index 当轴用。 */
+const AXES = ["x", "y", "z"] as const;
+
+/**
+ * 空串是「正在编辑」而不是「设成 0」：`Number("")` 是 0，逐键放行会在用户删完最后一个
+ * 数字的瞬间就把字段改掉——位置跳回原点、身高压到下界 120、焦距跳回默认 50。
+ * 非有限值同理，喂给 three 的 fov / 矩阵一旦沾上 NaN，画面全黑，而病因离故障点隔着
+ * 好几个文件。
+ *
+ * 这道守卫只保证「删空的那一瞬间不改数据」，**不**等于「清空再重输就能输对」。这些框
+ * 全是受控的，本组件也不留编辑中的字符串，于是被守卫拦下的那次 change 之后 React 会把
+ * DOM 值还原成 prop，接着敲的字符是**追加**在旧值后面的。实测（身高默认 175）：清空再
+ * 敲 `130` 得到的是 220。全选覆盖输入正常，逐位退格也正常，只有「先删空再重输」会走偏。
+ * 要修得让面板自己存一份编辑中的原始字符串（聚焦期间不从 prop 回灌），那是另一件事，
+ * 不是这道守卫能顺手办掉的。
+ */
+/**
+ * 模型那一栏显示什么：几何体显示形状名，模型库的模型显示库里的名字，自己导入的只显示
+ * 文件名。完整 URL 对人没用，还会把真正的名字挤出框外。
+ */
+function describeAsset(
+  prop: PrevizProp,
+): { labelKey: string; nameKey?: string; value: string } {
+  if (prop.assetFormat === "primitive") {
+    // 认不出的形状（更新的版本写入的）原样显示，别显示一个不存在的 i18n key。
+    const nameKey = isPrevizPrimitiveShape(prop.assetUrl)
+      ? previzPrimitiveNameKey(prop.assetUrl)
+      : undefined;
+    return { labelKey: "previz.inspector.primitive", nameKey, value: prop.assetUrl };
+  }
+  const entry = findPrevizLibraryModel(prop.assetUrl);
+  if (entry) {
+    return { labelKey: "previz.inspector.libraryModel", nameKey: entry.nameKey, value: entry.id };
+  }
+  return { labelKey: "previz.inspector.assetFile", value: fileNameOf(prop.assetUrl) };
+}
+
+function fileNameOf(url: string): string {
+  const path = url.split(/[?#]/, 1)[0];
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
+
+function readNumber(raw: string): number | null {
+  if (raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * 选中对象的属性面板。只吃 props、不读 store——store 接线全在 `PrevizEditor` 那一层，
+ * 这样面板本身可以用纯 props 测。
+ *
+ * 下拉走 `PrevizSelect`（原生 `<select>` 在 macOS 上会把面板压在框上），
+ * 滑杆仍是原生 `<input type="range">`。
+ */
+export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
+  const { t } = useTranslation();
+  const prefix = useId();
+
+  if (!object) {
+    return (
+      <div className="flex items-center justify-center px-4 py-6 text-center text-[12px] text-white/45">
+        {t("previz.inspector.empty")}
+      </div>
+    );
+  }
+
+  // 取成 const 再用：闭包里的收窄对 const 绑定才是稳的，对形参会随 TS 版本变。
+  const selected = object;
+  const character = selected.kind === "character" ? selected : null;
+  const camera = selected.kind === "camera" ? selected : null;
+  const light = selected.kind === "light" ? selected : null;
+  const prop = selected.kind === "prop" ? selected : null;
+  const asset = prop ? describeAsset(prop) : null;
+
+  /**
+   * 三个通道共用一份：只把改动的那一轴换掉，另外两轴与另外两个通道原样带回去。
+   * 这里**不**夹取——`scale` 在 domain 里是有区间的（`PREVIZ_SCALE_RANGE`，1e-4..100），
+   * 但夹取由 store 的 `normalizeObject`（走 `parseObject`）统一做，面板不重复一份：
+   * 两份夹取迟早会对边界值给出不同答案，而 store 那份是所有写入路径（手柄拖拽、
+   * 撤销重做、读盘）都必经的，面板这份只覆盖键盘输入这一条。
+   */
+  const patchTransform = (channel: keyof PrevizTransform, axis: 0 | 1 | 2, raw: string) => {
+    const value = readNumber(raw);
+    if (value === null) return;
+    const next = [...selected.transform[channel]] as Vec3;
+    next[axis] = value;
+    onChange({ transform: { ...selected.transform, [channel]: next } });
+  };
+
+  const patchPoseAdjust = (source: PrevizCharacter, axis: PoseAdjustAxis, raw: string) => {
+    const value = readNumber(raw);
+    if (value === null) return;
+    // 必须整份展开再覆盖一轴：只传改动的那一轴会把另外两轴抹成 undefined。
+    const next = { ...source.poseAdjust };
+    next[axis] = value;
+    onChange({ poseAdjust: next });
+  };
+
+  /**
+   * 切到「锁定平面」时把 `planeY` 一起锁在他现在站的那一层。不带这一笔的话，站在二楼
+   * 的人一改策略就会掉到工厂给的 0 上——用户看到的是「选了个策略人就掉下去了」，
+   * 而他并没有改过任何高度。另外两档不带 `planeY`：那个数在它们下面读不到，顺手写一笔
+   * 只会在切回「锁定平面」时冒出一个来路不明的高度。
+   */
+  const patchHeightPolicy = (source: PrevizCharacter, next: HeightPolicy) => {
+    if (next !== "plane") {
+      onChange({ heightPolicy: next });
+      return;
+    }
+    onChange({ heightPolicy: next, planeY: source.transform.position[1] });
+  };
+
+  /**
+   * 「跟随轨迹」以外的两档，位置 Y 不再是用户写进去的那个数：「贴合地面」由渲染器
+   * 每帧打落地射线算出来（`PrevizRenderer.standGroundCharacters` 直接写
+   * `node.position.y`），「锁定平面」由求值层压成 `planeY`（`evaluate.ts` 的
+   * `applyHeightPolicies`）。这两档下 Y 输入框改了不会有任何反应，不置灰就是一个
+   * 看起来坏了的控件，所以顺带给出一行说明——只置灰不说原因，用户只会以为是 bug。
+   */
+  const computedHeight =
+    character && character.heightPolicy !== "follow" ? character.heightPolicy : null;
+
+  return (
+    <div className="flex flex-col gap-3 p-3">
+      <div>
+        <label className={LABEL} htmlFor={`${prefix}-name`}>
+          {t("previz.inspector.name")}
+        </label>
+        <input
+          id={`${prefix}-name`}
+          className={FIELD}
+          value={selected.name}
+          onChange={(event) => onChange({ name: event.target.value })}
+        />
+      </div>
+
+      {CHANNELS.map((channel) => (
+        <div key={channel}>
+          <span className={LABEL}>{t(`previz.inspector.${channel}.label`)}</span>
+          <div className="grid grid-cols-3 gap-1.5">
+            {AXES.map((axis, index) => (
+              <input
+                key={axis}
+                className={FIELD}
+                type="number"
+                step={channel === "rotation" ? 1 : 0.1}
+                aria-label={t(`previz.inspector.${channel}.${axis}`)}
+                // 只锁 Y：X 与 Z 归走位管，任何一档高度策略都碰不到它们。
+                disabled={channel === "position" && index === 1 && computedHeight !== null}
+                value={selected.transform[channel][index]}
+                onChange={(event) => patchTransform(channel, index as 0 | 1 | 2, event.target.value)}
+              />
+            ))}
+          </div>
+          {channel === "position" && computedHeight && (
+            <p
+              data-testid="previz-inspector-height-note"
+              className="mt-1 text-[11px] text-white/35"
+            >
+              {t(`previz.inspector.heightNote.${computedHeight}`)}
+            </p>
+          )}
+        </div>
+      ))}
+
+      {character && (
+        <>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-marker-color`}>
+              {t("previz.inspector.markerColor")}
+            </label>
+            {/*
+              辨识色排在身高体型之前：这一栏回答的是「这是谁」，而不是「他长什么样」。
+              场上所有人共用同一份角色模型，这个颜色是唯一分得清谁是谁的东西。
+            */}
+            <input
+              id={`${prefix}-marker-color`}
+              className={`${FIELD} p-1`}
+              type="color"
+              value={character.color}
+              onChange={(event) => onChange({ color: event.target.value })}
+            />
+          </div>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-height`}>
+              {t("previz.inspector.heightCm")}
+            </label>
+            <input
+              id={`${prefix}-height`}
+              className={FIELD}
+              type="number"
+              min={PREVIZ_HEIGHT_CM_RANGE.min}
+              max={PREVIZ_HEIGHT_CM_RANGE.max}
+              value={character.heightCm}
+              onChange={(event) => {
+                const value = readNumber(event.target.value);
+                if (value === null) return;
+                onChange({ heightCm: clampToRange(value, PREVIZ_HEIGHT_CM_RANGE) });
+              }}
+            />
+          </div>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-body`}>
+              {t("previz.inspector.bodyType")}
+            </label>
+            <PrevizSelect
+              id={`${prefix}-body`}
+              className={FIELD}
+              value={character.bodyType}
+              options={BODY_TYPES.map((type) => ({
+                value: type,
+                label: t(`previz.inspector.bodyTypes.${type}`),
+              }))}
+              onChange={(bodyType) => onChange({ bodyType })}
+            />
+          </div>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-pose`}>
+              {t("previz.inspector.basePose")}
+            </label>
+            {/* 标签走 i18n，但 key 表不许自己另起一套：`PREVIZ_POSE_LABEL_KEYS` 与
+                viewer-kit 的 `POSE_LABEL_KEYS` 有棘轮对齐（`poses.test.ts` 盯着），
+                两边必须逐字一致，同一个姿势才会在预演台和 3D 导演里同名。 */}
+            <PrevizSelect
+              id={`${prefix}-pose`}
+              className={FIELD}
+              value={character.basePoseId}
+              options={PREVIZ_POSES.map((pose) => ({ value: pose, label: t(PREVIZ_POSE_LABEL_KEYS[pose]) }))}
+              onChange={(basePoseId) => onChange({ basePoseId })}
+            />
+          </div>
+          <div>
+            <span className={LABEL}>{t("previz.inspector.poseAdjust.label")}</span>
+            {POSE_ADJUST_AXES.map((axis) => {
+              // 三轴的区间各不对称（人向前屈得比向后仰得多），逐轴取 domain 的那份，
+              // 不要拍一对 ±30 了事——滑杆比落盘校验还窄的话，合法值就够不着了。
+              const range = PREVIZ_POSE_ADJUST_RANGE[axis];
+              return (
+                <div key={axis} className="mb-1 flex items-center gap-2">
+                  <span className="w-8 shrink-0 text-[11px] text-white/40">
+                    {t(`previz.inspector.poseAdjust.${axis}`)}
+                  </span>
+                  <input
+                    className="flex-1"
+                    type="range"
+                    min={range.min}
+                    max={range.max}
+                    step={1}
+                    aria-label={t(`previz.inspector.poseAdjust.${axis}`)}
+                    value={character.poseAdjust[axis]}
+                    onChange={(event) => patchPoseAdjust(character, axis, event.target.value)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-height-policy`}>
+              {t("previz.inspector.heightPolicy")}
+            </label>
+            <PrevizSelect
+              id={`${prefix}-height-policy`}
+              className={FIELD}
+              value={character.heightPolicy}
+              options={HEIGHT_POLICIES.map((policy) => ({
+                value: policy,
+                label: t(`previz.inspector.heightPolicies.${policy}`),
+              }))}
+              onChange={(policy) => patchHeightPolicy(character, policy)}
+            />
+          </div>
+          {/* 只有「锁定平面」读得到这个数。另外两档也摆一个改不出效果的输入框在那里，
+              用户会以为自己改的高度没生效。 */}
+          {character.heightPolicy === "plane" && (
+            <div>
+              <label className={LABEL} htmlFor={`${prefix}-plane-y`}>
+                {t("previz.inspector.planeY")}
+              </label>
+              <input
+                id={`${prefix}-plane-y`}
+                className={FIELD}
+                type="number"
+                step={0.1}
+                value={character.planeY}
+                onChange={(event) => {
+                  // 非有限值不算一次修改：放行的话 store 的 `normalizeObject`
+                  // （`parseObject` 里的 `num(source.planeY, 0)`）会把它静默洗成 0，
+                  // 人物瞬间掉到地面，而输入框里用户敲的东西还在。
+                  const value = readNumber(event.target.value);
+                  if (value === null) return;
+                  onChange({ planeY: value });
+                }}
+              />
+            </div>
+          )}
+          {/*
+            移动辅助只在播放时生效：求值层按这两个开关决定要不要把人从道具里推开、
+            要不要把他按在场地内。手工摆位时它们一动不动，所以那行说明必须挨着开关摆
+            ——否则勾上了却推不动，用户只会以为功能坏了。
+          */}
+          <div>
+            <span className={LABEL}>{t("previz.inspector.moveAssist")}</span>
+            <label className="mb-1 flex items-center gap-2 text-[12px] text-white/80">
+              <input
+                type="checkbox"
+                checked={character.avoidCollision}
+                onChange={(event) => onChange({ avoidCollision: event.target.checked })}
+              />
+              {t("previz.inspector.avoidCollision")}
+            </label>
+            <label className="mb-1 flex items-center gap-2 text-[12px] text-white/80">
+              <input
+                type="checkbox"
+                checked={character.stayInBounds}
+                onChange={(event) => onChange({ stayInBounds: event.target.checked })}
+              />
+              {t("previz.inspector.stayInBounds")}
+            </label>
+            <p className="text-[11px] text-white/35">{t("previz.inspector.moveAssistNote")}</p>
+          </div>
+        </>
+      )}
+
+      {camera && (
+        <>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-focal`}>
+              {t("previz.inspector.focalMm")}
+            </label>
+            <input
+              id={`${prefix}-focal`}
+              className={FIELD}
+              type="number"
+              min={PREVIZ_FOCAL_MM.min}
+              max={PREVIZ_FOCAL_MM.max}
+              value={camera.focalMm}
+              onChange={(event) => {
+                const value = readNumber(event.target.value);
+                if (value === null) return;
+                onChange({ focalMm: clampFocalMm(value) });
+              }}
+            />
+          </div>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-aperture`}>
+              {t("previz.inspector.aperture")}
+            </label>
+            <input
+              id={`${prefix}-aperture`}
+              className={FIELD}
+              type="number"
+              step={0.1}
+              min={PREVIZ_APERTURE.min}
+              max={PREVIZ_APERTURE.max}
+              value={camera.aperture}
+              onChange={(event) => {
+                const value = readNumber(event.target.value);
+                if (value === null) return;
+                onChange({ aperture: clampAperture(value) });
+              }}
+            />
+          </div>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-sensor`}>
+              {t("previz.inspector.sensor")}
+            </label>
+            <PrevizSelect
+              id={`${prefix}-sensor`}
+              className={FIELD}
+              value={camera.sensor}
+              options={[
+                { value: "ff", label: t("previz.inspector.sensors.ff") },
+                { value: "s35", label: t("previz.inspector.sensors.s35") },
+              ] as const}
+              onChange={(sensor) => onChange({ sensor })}
+            />
+          </div>
+          {/* 视场角是算出来的读数，不是可编辑字段：数字单独占一个节点，好让它跟着
+              焦距与机身走，而不是跟着文案模板走。
+              读的是镜头自身的纵向角（见 `sensorVerticalFovDeg` 的注释），与摄影机创建
+              对话框那条「标准 · 27.0°」是同一个数——同一台机位在两处显示不同的视场角，
+              用户只会当成 bug。 */}
+          <div className="text-[11px] text-white/45">
+            {t("previz.inspector.angleOfView")}
+            <span data-testid="previz-inspector-fov" className="ml-1 tabular-nums text-white/70">
+              {sensorVerticalFovDeg(camera.focalMm, camera.sensor).toFixed(1)}°
+            </span>
+          </div>
+        </>
+      )}
+
+      {light && (
+        <>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-light-type`}>
+              {t("previz.inspector.lightType")}
+            </label>
+            <PrevizSelect
+              id={`${prefix}-light-type`}
+              className={FIELD}
+              value={light.lightType}
+              options={[
+                { value: "key", label: t("previz.inspector.lightTypes.key") },
+                { value: "point", label: t("previz.inspector.lightTypes.point") },
+                { value: "spot", label: t("previz.inspector.lightTypes.spot") },
+              ] as const}
+              onChange={(lightType) => onChange({ lightType })}
+            />
+          </div>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-color`}>
+              {t("previz.inspector.color")}
+            </label>
+            <input
+              id={`${prefix}-color`}
+              className={`${FIELD} p-1`}
+              type="color"
+              value={light.color}
+              onChange={(event) => onChange({ color: event.target.value })}
+            />
+          </div>
+          <div>
+            <label className={LABEL} htmlFor={`${prefix}-intensity`}>
+              {t("previz.inspector.intensity")}
+            </label>
+            <input
+              id={`${prefix}-intensity`}
+              className="w-full"
+              type="range"
+              min={PREVIZ_INTENSITY_RANGE.min}
+              max={PREVIZ_INTENSITY_RANGE.max}
+              step={0.1}
+              value={light.intensity}
+              onChange={(event) => {
+                const value = readNumber(event.target.value);
+                if (value === null) return;
+                onChange({ intensity: value });
+              }}
+            />
+          </div>
+        </>
+      )}
+
+      {prop && asset && (
+        <div>
+          <label className={LABEL} htmlFor={`${prefix}-asset`}>
+            {t(asset.labelKey)}
+          </label>
+          {/* 只读：手打 URL 只会打错，换模型走模型库。完整地址留在悬停提示里备查。 */}
+          <input
+            id={`${prefix}-asset`}
+            className={FIELD}
+            readOnly
+            title={prop.assetFormat === "primitive" ? undefined : prop.assetUrl}
+            value={asset.nameKey ? t(asset.nameKey) : asset.value}
+          />
+        </div>
+      )}
+    </div>
+  );
+}

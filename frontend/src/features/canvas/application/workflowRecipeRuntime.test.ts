@@ -165,6 +165,113 @@ describe('workflowRecipeRuntime', () => {
     }));
   });
 
+  it('reuses the saved compiled prompt when manually rerunning after the product operation ends', async () => {
+    const result = await compileWorkflowNodePrompt({
+      nodeId: 'image-finished',
+      nodeData: {
+        workflowCatalog: { recipeId: 'metered-product-image' },
+        workflowRecipeCompiledPrompt: '已编译的商品图提示词',
+      },
+      nodeKind: 'image',
+      nodePrompt: '已编译的商品图提示词',
+      fallbackPrompt: '不应使用的回退提示词',
+      executionSource: 'manual',
+    });
+
+    expect(result).toBe('已编译的商品图提示词');
+    expect(compileMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the edited prompt directly when manually rerunning a compiled node', async () => {
+    const result = await compileWorkflowNodePrompt({
+      nodeId: 'image-edited',
+      nodeData: {
+        workflowCatalog: { recipeId: 'metered-product-image' },
+        workflowRecipeCompiledPrompt: '旧的编译结果',
+      },
+      nodeKind: 'image',
+      nodePrompt: '用户修改后的最终提示词',
+      fallbackPrompt: '不应使用的回退提示词',
+      executionSource: 'manual',
+    });
+
+    expect(result).toBe('用户修改后的最终提示词');
+    expect(compileMock).not.toHaveBeenCalled();
+  });
+
+  it('supports manually rerunning an older completed node without saved compile metadata', async () => {
+    const result = await compileWorkflowNodePrompt({
+      nodeId: 'legacy-completed-image',
+      nodeData: {
+        workflowCatalog: { recipeId: 'metered-product-image' },
+        imageUrl: '/static/existing-result.png',
+      },
+      nodeKind: 'image',
+      nodePrompt: '旧节点当前保存的提示词',
+      fallbackPrompt: 'fallback',
+      executionSource: 'manual',
+    });
+
+    expect(result).toBe('旧节点当前保存的提示词');
+    expect(compileMock).not.toHaveBeenCalled();
+  });
+
+  it('still recompiles a saved prompt while an admitted product operation is bound', async () => {
+    compileMock.mockResolvedValue('本轮重新编译结果');
+    bindWorkflowProductOperation('image-running', {
+      projectId: 'project-a',
+      operationId: 'agent_product_rerun',
+    });
+
+    try {
+      const result = await compileWorkflowNodePrompt({
+        nodeId: 'image-running',
+        nodeData: {
+          workflowCatalog: { recipeId: 'metered-product-image' },
+          workflowRecipeCompiledPrompt: '上轮编译结果',
+        },
+        nodeKind: 'image',
+        nodePrompt: '本轮输入',
+        fallbackPrompt: 'fallback',
+      });
+      expect(result).toBe('本轮重新编译结果');
+    } finally {
+      clearWorkflowProductOperation('image-running');
+    }
+
+    expect(compileMock).toHaveBeenCalledWith(expect.objectContaining({
+      productOperationId: 'agent_product_rerun',
+    }));
+  });
+
+  it('recompiles an existing CE workflow node without a product operation', async () => {
+    compileMock.mockResolvedValue('根据新上游编译的提示词');
+
+    const result = await compileWorkflowNodePrompt({
+      nodeId: 'ce-workflow-image',
+      nodeData: {
+        workflowCatalog: { recipeId: 'ce-product-image' },
+        workflowRecipeCompiledPrompt: '上轮编译结果',
+        imageUrl: '/static/existing-result.png',
+      },
+      nodeKind: 'image',
+      nodePrompt: '本轮输入',
+      upstreamText: '新的上游内容',
+      fallbackPrompt: 'fallback',
+      executionSource: 'workflow',
+    });
+
+    expect(result).toBe('根据新上游编译的提示词');
+    expect(compileMock).toHaveBeenCalledWith(expect.objectContaining({
+      recipeId: 'ce-product-image',
+      nodePrompt: '本轮输入',
+      upstreamText: '新的上游内容',
+    }));
+    expect(compileMock).not.toHaveBeenCalledWith(expect.objectContaining({
+      productOperationId: expect.anything(),
+    }));
+  });
+
   it('keeps explicitly connected HTML text even when Recipe selects user assets', async () => {
     generateTextMock.mockResolvedValue('<html></html>');
     await generateWorkflowText({nodeData: {workflowCatalog: {recipeId: 'page', inputStrategy: {type: 'user_assets'}}}, nodePrompt: 'Build', upstreamText: 'Manually connected copy', upstreamInputMode: 'connected'});

@@ -1,0 +1,5 @@
+@import 'tailwindcss' source(none);
+@source '../StoryPlayer.tsx';
+@import '../storyPlayer.css';
+html, body, #app { margin: 0; width: 100%; height: 100%; background: #000; }
+#app { display: flex; height: 100dvh; }

@@ -485,7 +485,6 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
   const updateNodeInternals = useUpdateNodeInternals();
   const rootRef = useRef<HTMLDivElement>(null);
   const pickerMenuRef = useRef<HTMLDivElement>(null);
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   // Subscribe to ONLY one-hop upstream (not the whole nodes array) so unrelated
   // node drags don't re-render this node. See useUpstreamGraph.
   const upstreamNodes = useUpstreamNodes(id);
@@ -1015,7 +1014,6 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
         ${canvasNodeFrameClass({ selected })}
       `}
       style={{ width: `${resolvedNodeWidth}px`, height: `${resolvedNodeHeight}px` }}
-      onClick={() => setSelectedNode(id)}
     >
       <NodeHeader
         className={NODE_HEADER_FLOATING_POSITION_CLASS}

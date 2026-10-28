@@ -19,29 +19,10 @@ import {
 import type { FreezoneGenerationHistoryRecord } from '@/api/ops';
 import type { TFn } from '@/lib/i18n-types';
 import { resolveMediaUrl } from '@/lib/media-url';
+import { ViewportLazyVideo } from '@/components/viewport-lazy-video';
 
-/**
- * Pull the displayable output URL out of a history record's `result` payload.
- * The shape varies by task_type, so we probe the known keys in priority order.
- */
-export function historyRecordOutputUrl(
-  record: FreezoneGenerationHistoryRecord,
-): string | null {
-  const result = record.result ?? {};
-  for (const key of [
-    'output_url',
-    'image_url',
-    'video_url',
-    'audio_url',
-    'ply_url',
-    'master_url',
-    'url',
-  ]) {
-    const value = result[key];
-    if (typeof value === 'string' && value.length > 0) return value;
-  }
-  return null;
-}
+import { historyRecordOutputUrl, isCompletedGeneration as isCompleted } from '../domain/generationHistory';
+export { historyRecordOutputUrl } from '../domain/generationHistory';
 
 export function historyRecordHtmlIdentity(
   record: FreezoneGenerationHistoryRecord,
@@ -303,10 +284,6 @@ export function historyRecordPrompt(
   return null;
 }
 
-function isCompleted(record: FreezoneGenerationHistoryRecord): boolean {
-  return record.status === 'completed' || record.status === 'succeeded';
-}
-
 /**
  * Whether the history strip would render any entry. Only successful generations
  * show up (failed / pending attempts are filtered out), so a node that has only
@@ -344,7 +321,7 @@ function MediaFallbackIcon({ mediaType }: { mediaType: string }) {
   return <ImageIcon className={className} />;
 }
 
-interface NodeGenerationHistoryProps {
+export interface NodeGenerationHistoryProps {
   records: FreezoneGenerationHistoryRecord[];
   isLoading?: boolean;
   /** Invoked when the user clicks a (completed) history entry to restore it. */
@@ -362,12 +339,13 @@ interface NodeGenerationHistoryProps {
    */
   fallbackThumbnailUrl?: string | null;
   className?: string;
+  layout?: 'horizontal' | 'vertical';
   /** true 时整条禁用（如生成中不可恢复）：条带变暗、光标 not-allowed，行按钮原生 disabled。 */
   disabled?: boolean;
 }
 
 /**
- * Horizontal strip of a node's recent generation history. Image/video records
+ * Horizontal strip or compact vertical rail of a node's history. Image/video records
  * render a thumbnail; other media render a typed icon. Failed records are
  * dimmed and not restorable. The host node owns the restore semantics via
  * `onRestore` (the strip stays media-agnostic).
@@ -380,6 +358,7 @@ export function NodeGenerationHistory({
   isActive,
   fallbackThumbnailUrl,
   className,
+  layout = 'horizontal',
   disabled = false,
 }: NodeGenerationHistoryProps) {
   const { t } = useTranslation();
@@ -402,12 +381,12 @@ export function NodeGenerationHistory({
 
   return (
     <div
-      className={`flex flex-col gap-1.5 ${disabled ? 'cursor-not-allowed opacity-50' : ''} ${className ?? ''}`}
+      className={`flex min-h-0 flex-col gap-1.5 ${layout === 'vertical' ? 'max-h-full' : ''} ${disabled ? 'cursor-not-allowed opacity-50' : ''} ${className ?? ''}`}
     >
       <div className="flex items-center justify-between px-0.5">
         <span className="inline-flex items-center gap-1 text-[11px] font-medium text-text-muted">
-          <History className="h-3 w-3" />
-          {t('canvas.nodeHistory.title')}
+          {layout === 'horizontal' && <History className="h-3 w-3" />}
+          {t(layout === 'vertical' ? 'canvas.nodeHistory.compactTitle' : 'canvas.nodeHistory.title')}
           {sorted.length > 0 ? ` · ${sorted.length}` : ''}
         </span>
         {onRefresh && (
@@ -428,7 +407,7 @@ export function NodeGenerationHistory({
           </button>
         )}
       </div>
-      <div className="nodrag nowheel flex gap-1.5 overflow-x-auto pb-1">
+      <div className={`nodrag nowheel ui-scrollbar flex min-h-0 gap-1.5 pb-1 ${layout === 'vertical' ? 'flex-col items-center overflow-y-auto overflow-x-hidden' : 'overflow-x-auto'}`}>
         {sorted.map((record) => {
           const rawUrl = historyRecordOutputUrl(record);
           const url = resolveMediaUrl(rawUrl);
@@ -484,12 +463,9 @@ export function NodeGenerationHistory({
                   className="h-full w-full object-cover"
                 />
               ) : isVideo ? (
-                <video
-                  src={url ?? undefined}
+                <ViewportLazyVideo
+                  src={url!}
                   className="h-full w-full object-cover"
-                  muted
-                  playsInline
-                  preload="metadata"
                 />
               ) : previewImg ? (
                 <img

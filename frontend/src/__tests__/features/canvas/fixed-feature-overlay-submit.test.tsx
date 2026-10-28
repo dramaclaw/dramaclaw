@@ -13,10 +13,14 @@ import { GridActionConfirmOverlay } from "@/features/canvas/ui/GridActionConfirm
 import type { GridActionRequest } from "@/features/canvas/ui/GridActionConfirmOverlay";
 import type { CanvasNode } from "@/features/canvas/domain/canvasNodes";
 
-vi.mock("@xyflow/react", () => ({
-  NodeToolbar: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Position: { Top: "top", Bottom: "bottom" },
-}));
+// 只替换工具条壳；其余导出保留真实实现（画布 store 要用 applyNodeChanges）。
+vi.mock("@xyflow/react", async () => {
+  const actual = await vi.importActual<typeof import("@xyflow/react")>("@xyflow/react");
+  return {
+    ...actual,
+    NodeToolbar: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  };
+});
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),

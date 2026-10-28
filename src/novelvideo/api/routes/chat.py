@@ -31,10 +31,12 @@ from novelvideo.api.auth import (
 from novelvideo.api.deps import list_user_projects
 from novelvideo.api.egress_binding import request_egress_scope
 from novelvideo.chat import service as chat_service
+from novelvideo.chat.backend_sdk import CodexThreadBusyError
 from novelvideo.chat.execution_context import AgentExecutionContext
 from novelvideo.chat.hermes_egress import EgressBoundaryError
 from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
 from novelvideo.chat.director_auto import coordinator as director_auto_coordinator
+from novelvideo.chat.session_registry import CHAT_RUN_BUSY_MESSAGE
 from novelvideo.chat.live_events import (
     register_chat_websocket,
     unregister_chat_websocket,
@@ -44,6 +46,7 @@ from novelvideo.chat.hermes_workspace import (
     sync_freezone_hermes_workflow_skills,
 )
 from novelvideo.chat.store import ChatScope, chat_store
+from novelvideo.chat.turn_images import referenced_image_paths
 from novelvideo.freezone.canvas_command_bridge import (
     BRIDGE_PENDING_TTL_SECONDS,
     bridge_message_exists,
@@ -699,6 +702,22 @@ def _canvas_bridge_dir(
     return canvas_bridge_dir_for_profile(home, profile)
 
 
+def _chat_turn_busy_message(exc: BaseException) -> str | None:
+    """The user-facing busy message for a failed turn, or None if it was not busy.
+
+    Both the chat run lock and a Codex thread that still has a turn in flight
+    (``CodexThreadBusyError``) mean "your previous turn is still running"; the
+    frontend shows them through the same ``chat.busy`` frame.
+    """
+
+    if isinstance(exc, CodexThreadBusyError):
+        return CHAT_RUN_BUSY_MESSAGE
+    message = str(exc)
+    if "当前用户已有 AI 对话正在处理中" in message:
+        return message
+    return None
+
+
 def _is_freezone_scope(scope: ChatScope) -> bool:
     return scope.kind == "freezone" or (
         scope.kind == "project" and scope.surface == "freezone"
@@ -1125,6 +1144,28 @@ def _resolve_canvas_command_tool_result_payload(
             )
         else:
             agent_instruction = "Canvas command applied successfully."
+    requires_canvas_refresh = bool(
+        payload.canvas_id
+        and (
+            payload.applied_count > 0
+            or (
+                not payload.cancelled
+                and (
+                    (payload.applied and not has_open_node_action)
+                    or payload.canvas_apply_status in {"accepted", "pending", "partially_applied"}
+                )
+            )
+        )
+    )
+    if requires_canvas_refresh:
+        agent_instruction += (
+            " Earlier canvas/story revisions are now stale or may become stale while "
+            "generation finishes. Before the next revision-based write on this canvas, "
+            "read its current persisted state with dramaclaw_get_freezone_canvas (or "
+            "the current story with dramaclaw_get_interactive_story), recheck the intended "
+            "changes, and use that read's revision as base_revision. Do not reuse a "
+            "revision read before this command, guess revision + 1, or replay generation."
+        )
     result = {
         "ok": command_ok,
         "turn_id": payload.turn_id,
@@ -1144,6 +1185,7 @@ def _resolve_canvas_command_tool_result_payload(
         "user_message": payload.user_message,
         "agent_instruction": agent_instruction,
         "agent_hint": payload.agent_hint,
+        "requires_canvas_refresh": requires_canvas_refresh,
     }
     return resolve_canvas_command(
         key,
@@ -2019,6 +2061,9 @@ def _attachment_context_block(attachments: list[ChatAttachmentIn]) -> str:
     lines = [
         "[CHAT_ATTACHMENTS]",
         "The browser sent these attachment records with the user message.",
+        "You see a referenced image only if it arrives as image input in this turn; "
+        "a file name or URL alone does not show it. The chat box cannot take "
+        "image uploads or pasted screenshots, so never ask the user to attach one.",
     ]
     for index, attachment in enumerate(attachments, 1):
         lines.append("")
@@ -3675,6 +3720,9 @@ async def _stream_project_turn(
                 backend=runtime_backend,
                 execution_context=execution_context,
                 project_context=project_ctx,
+                image_paths=referenced_image_paths(
+                    _attachment_payloads(attachments), project_dir
+                ),
             )
     finally:
         heartbeat_task.cancel()
@@ -4596,14 +4644,15 @@ async def chat_ws(websocket: WebSocket) -> None:
                         },
                     )
             except Exception as exc:  # noqa: BLE001
-                message = str(exc)
+                busy_message = _chat_turn_busy_message(exc)
+                message = busy_message or str(exc)
                 logger.exception(
                     "chat turn failed username=%s turn_id=%s error_type=%s",
                     username,
                     turn_id,
                     type(exc).__name__,
                 )
-                if "当前用户已有 AI 对话正在处理中" in message:
+                if busy_message is not None:
                     await _send_json_best_effort(
                         websocket,
                         {

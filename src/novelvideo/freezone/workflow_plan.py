@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from novelvideo.freezone.workflow_schema import (
+    EXTERNAL_INPUT_NODE_TYPES,
     LINK_TYPE_VALUES,
     NODE_TYPE_VALUES,
     WORKFLOW_PLAN_SCHEMA_VERSION,
@@ -240,14 +241,15 @@ def validate_workflow_plan(
             errors.append(_issue(path, "requires id, node_id and media_kind"))
             continue
         alias, node_id = source.get("id"), source.get("node_id")
+        external_type = EXTERNAL_INPUT_NODE_TYPES.get(source.get("media_kind"))
         if (not isinstance(alias, str) or not _ID_RE.fullmatch(alias)
                 or alias in node_types or not isinstance(node_id, str)
-                or not _ID_RE.fullmatch(node_id) or source.get("media_kind") != "image"):
-            errors.append(_issue(path, "invalid external image input"))
+                or not _ID_RE.fullmatch(node_id) or external_type is None):
+            errors.append(_issue(path, "invalid external input; media_kind must be image or video"))
             continue
         external_ids.add(alias)
-        node_types[alias] = "imageGenNode"
-        node_values[alias] = {"id": alias, "node_type": "imageGenNode", "data": {}}
+        node_types[alias] = external_type
+        node_values[alias] = {"id": alias, "node_type": external_type, "data": {}}
         node_indexes[alias] = -1
 
     top_level_skill = payload.get("skill")
@@ -310,7 +312,10 @@ def validate_workflow_plan(
         if target in external_ids:
             errors.append(_issue(f"{path}.target", "external input cannot be an edge target"))
         if source in external_ids and link_type != "media_input_for":
-            errors.append(_issue(f"{path}.link_type", "external image input requires media_input_for"))
+            errors.append(_issue(f"{path}.link_type", "external input requires media_input_for"))
+        if (source in external_ids and node_types[source] == "videoNode"
+                and node_types.get(target) != "videoNode"):
+            errors.append(_issue(f"{path}.target", "external video input can only reference a videoNode"))
         if source not in node_types:
             errors.append(_issue(f"{path}.source", f"unknown node: {source}"))
         if target not in node_types:

@@ -78,6 +78,22 @@ describe("dynamic workflow node action contract", () => {
     expect(localResultPatch).toBeGreaterThan(projectionRebase);
   });
 
+  it("keeps the legacy compose editor as the default and gates local Studio", () => {
+    const nodeSource = readNodeSource("VideoComposeNode");
+    const shellSource = readSource("src/features/freezone/FreezoneShell.tsx");
+
+    const gate = nodeSource.indexOf("if (openFilmStudioEnabled())");
+    const studioRoute = nodeSource.indexOf("writeUrl({ compose: id })", gate);
+    const legacyOpen = nodeSource.indexOf("setEditorOpen(true)", studioRoute);
+    expect(gate).toBeGreaterThan(-1);
+    expect(studioRoute).toBeGreaterThan(gate);
+    expect(legacyOpen).toBeGreaterThan(studioRoute);
+    expect(nodeSource).toContain("<VideoComposeModal");
+    expect(shellSource).toContain(
+      "const composeActive = active && openFilmStudioEnabled() && Boolean(composeNodeId)",
+    );
+  });
+
   it("compiles catalog-backed image workflow prompts before generation", () => {
     const source = readSource("src/features/canvas/nodes/shared/useImageGenerationForm.ts");
 

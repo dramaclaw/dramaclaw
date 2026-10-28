@@ -325,7 +325,6 @@ function PanoViewportButton({ onClick, title, children }: PanoToolbarButtonProps
 export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pano360ViewerNodeProps) => {
   const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const requestFocusNode = useCanvasStore((state) => state.requestFocusNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const addPanoCaptureGroup = useCanvasStore((state) => state.addPanoCaptureGroup);
@@ -1043,10 +1042,6 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
     });
   }, [id, resetView, snap2x2, snap4x3, snapAsBackgroundAnchor, snapCurrent]);
 
-  const handleNodeClick = useCallback(() => {
-    setSelectedNode(id);
-  }, [id, setSelectedNode]);
-
   const zoomViewportBy = useCallback(
     (deltaFov: number) => {
       const baseFov = dataRef.current.fovDeg || livePos.fovDeg || 70;
@@ -1081,7 +1076,6 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
         ${canvasNodeFrameClass({ selected })}
       `}
       style={containerStyle}
-      onClick={handleNodeClick}
     >
       {/* 截图工具栏：放在节点正上方（删除 pill 已隐藏，可贴近节点）。 */}
       <ReactFlowNodeToolbar

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { useVideoContinuityMode } from "@/features/canvas/nodes/shared/useVideoContinuityMode";
+import { ensureVideoContinuity, videoContinuitySources } from "@/features/canvas/application/videoContinuity";
 import { selectVideoModel } from "@/features/canvas/domain/catalogVideoModels";
 import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import {
   memo,
   useCallback,
@@ -38,6 +41,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  Share as ShareIcon,
   Sparkles,
   Square,
   Upload as UploadIcon,
@@ -67,6 +71,8 @@ import {
   type VideoGenQuality,
   type VideoNodeData,
 } from "@/features/canvas/domain/canvasNodes";
+import { isNodeStoryClip } from "@/features/canvas/story/storySelectors";
+import { canOpenStoryFrameEditor } from "@/features/canvas/story/storyFrameInteraction";
 import {
   publishNodeActionAccepted,
   publishNodeActionError,
@@ -145,15 +151,16 @@ import {
   useAlbumPendingTotal,
 } from "@/features/canvas/nodes/shared/albumPendingTotals";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
+import { nodeMediaViewerUrls, openNodeVideoViewer } from "@/features/canvas/application/nodeMediaViewer";
 import { useExternalFileHandoff } from "@/features/canvas/hooks/useExternalFileHandoff";
 import {
   extractUpstreamContent,
   joinUpstreamText,
 } from "@/features/canvas/application/graphContentResolver";
-import { useUpstreamNodes } from "@/features/canvas/application/useUpstreamGraph";
+import { useVideoReferenceNodes } from "@/features/canvas/application/useUpstreamGraph";
 import {
   sortUpstreamByReferenceOrder,
-  upstreamNodesInEdgeOrder,
+  videoReferenceNodesInEdgeOrder,
 } from "@/features/canvas/nodes/referenceOrdering";
 import { useReferenceMentionSync } from "@/features/canvas/nodes/useReferenceMentionSync";
 import { useNodeGenerationTaskState } from "@/features/canvas/application/useNodeGenerationTaskState";
@@ -173,13 +180,12 @@ import {
   NODE_HEADER_FLOATING_POSITION_CLASS,
 } from "@/features/canvas/ui/NodeHeader";
 import { NodeResizeHandle } from "@/features/canvas/ui/NodeResizeHandle";
-import { NODE_OPS_PANEL_ENTER_CLASS } from "@/features/canvas/ui/OperationPanelShell";
 import { NodeGenerationOverlay } from "@/features/canvas/ui/NodeGenerationOverlay";
 import {
   CANVAS_NODE_INPUT_BODY_FRAME_CLASS,
   CANVAS_NODE_INPUT_BODY_SELECTED_FRAME_CLASS,
   CANVAS_NODE_INPUT_SURFACE_CLASS,
-  CANVAS_NODE_OPS_PANEL_CLASS,
+  CANVAS_NODE_MEDIA_FRAME_CLASS,
   CANVAS_NODE_PANEL_SURFACE_CLASS,
   CANVAS_NODE_TOOLBAR_PILL_CLASS,
   canvasNodeFrameClass,
@@ -256,15 +262,22 @@ import {
 import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
 import { useNodeGenerationHistory } from "@/features/canvas/hooks/useNodeGenerationHistory";
 import {
-  NodeGenerationHistory,
   hasCompletedHistoryRecords,
   historyRecordOutputUrl,
 } from "@/features/canvas/ui/NodeGenerationHistory";
 import type { FreezoneGenerationHistoryRecord } from "@/api/ops";
 import { readUrl } from "@/lib/url-params";
+import { mediaDurationMs } from "@/lib/media-duration";
 import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
 import { CreditCostPill } from "@/components/credits/credit-visual";
+import { NodeHistoryRail } from "@/features/canvas/ui/NodeHistoryRail";
 import { VideoOperationsPanel } from "@/features/canvas/nodes/VideoOperationsPanel";
+import { StoryClipNarrativePanel } from "@/features/canvas/nodes/StoryClipNarrativePanel";
+import {
+  STORY_CLIP_DETAILS_WIDTH_PERCENT,
+  STORY_CLIP_MIN_HEIGHT,
+  STORY_CLIP_MIN_WIDTH,
+} from "@/features/canvas/story/storyClipLayout";
 
 type VideoNodeProps = NodeProps & {
   id: string;
@@ -654,6 +667,14 @@ export const VideoNode = memo(
     const { t } = useTranslation();
     const updateNodeInternals = useUpdateNodeInternals();
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
+    // 故事片段「播放器形态」:故事组内的视频节点默认收起画布编辑 chrome,
+    // 点击视频框进入编辑态(storyEditNodeId === id)，恢复普通画布视频节点。
+    const isStoryClip = useCanvasStore((state) => isNodeStoryClip(state.nodes, id));
+    const storyEditNodeId = useCanvasStore((state) => state.storyEditNodeId);
+    const setStoryEditNode = useCanvasStore((state) => state.setStoryEditNode);
+    const inStoryEditMode = isStoryClip && storyEditNodeId === id;
+    const storyPlayerMode = isStoryClip && !inStoryEditMode;
+    const storyFramePointer = useRef<{ x: number; y: number; dragged: boolean } | null>(null);
     const [referenceErrors, setReferenceErrors] = useState<ReferenceIssue[]>([]);
     const [referenceErrorsOpen, setReferenceErrorsOpen] = useState(false);
     const isBoxSelecting = useIsBoxSelecting();
@@ -702,21 +723,23 @@ export const VideoNode = memo(
       records: historyRecords,
       isLoading: historyLoading,
       refresh: refreshHistory,
-    } = useNodeGenerationHistory(id, { enabled: Boolean(selected) });
+    } = useNodeGenerationHistory(id, {
+      // 故事片段播放器形态:不拉取每节点生成历史(也不渲染下方历史框),避免选中时
+      // 历史框「loading→空→消失」造成节点底部闪烁,且历史属画布创作 chrome,播放器形态应收起。
+      enabled: Boolean(selected) && !storyPlayerMode,
+    });
 
-    // 生成进行中时，点击历史记录走「非破坏性预览」：不覆写 videoUrl、不打断在途
-    // 任务，仅把这条历史视频临时显示在主体上（见 isGenerating 渲染分支）。新视频
-    // 生成完成后由下方 effect 自动清空，回到最新结果。非生成态恢复历史时也清掉它。
-    const [historyPreviewUrl, setHistoryPreviewUrl] = useState<string | null>(
-      null,
-    );
+    // 导入互动影游占位片段的旁白(narration)就地编辑态。双击进入,
+    // 失焦 / ⌘+回车保存,Esc 取消。
+    const [isEditingNarration, setIsEditingNarration] = useState(false);
+    const [narrationDraft, setNarrationDraft] = useState("");
 
     const prompt = typeof data.prompt === "string" ? data.prompt : "";
     const genMode: VideoGenMode = data.genMode ?? "textToVideo";
     // Billing and submission must inspect the same one-hop inputs. Keeping the
     // subscription here also lets the displayed quote react when a source
     // video's browser-probed duration becomes available.
-    const upstreamNodes = useUpstreamNodes(id);
+    const upstreamNodes = useVideoReferenceNodes(id);
     const {
       models: availableVideoModels,
       isLoading: videoModelsLoading,
@@ -726,6 +749,9 @@ export const VideoNode = memo(
       () => selectVideoModel(availableVideoModels, data.model),
       [availableVideoModels, data.model],
     );
+    const isFmvNode = useVideoContinuityMode(id, data, selectedVideoModel, updateNodeData);
+    const usesFmvContinuity = isFmvNode && (data.continuityMode === "auto" || data.continuityMode === "independent");
+    const fmvAutoContinuity = isFmvNode && data.continuityMode === "auto" && data.storyRole !== "start";
     const modelId = selectedVideoModel?.id ?? "";
     const selectedVideoModelId = selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId;
     const isHappyHorseModel = isHappyHorseVideoModel(selectedVideoModelId);
@@ -933,21 +959,20 @@ export const VideoNode = memo(
         ? data.generationErrorRequestId
         : "";
 
-    // 生成结束（成功/失败）后清掉临时历史预览，让主体回到最新结果。
-    useEffect(() => {
-      if (!isGenerating) setHistoryPreviewUrl(null);
-    }, [isGenerating]);
-
-    const handleRestoreHistory = useCallback(
+    const handleHistorySelect = useCallback(
       (record: FreezoneGenerationHistoryRecord) => {
         const url = historyRecordOutputUrl(record);
         if (!url) return;
-        // 生成进行中：仅做非破坏性预览，绝不动 videoUrl，也不打断在途任务。
+        // 生成进行中只查看历史，不替换节点主体，也不打断在途任务。
         if (isGenerating) {
-          setHistoryPreviewUrl(url);
+          void openNodeVideoViewer(
+            url,
+            id,
+            nodeMediaViewerUrls(url, [], historyRecords, "video"),
+            data.displayName ?? undefined,
+          );
           return;
         }
-        setHistoryPreviewUrl(null);
         updateNodeData(id, {
           videoUrl: url,
           isGenerating: false,
@@ -960,7 +985,7 @@ export const VideoNode = memo(
           generationBatch: null,
         });
       },
-      [id, isGenerating, updateNodeData],
+      [data.displayName, historyRecords, id, isGenerating, updateNodeData],
     );
 
     // ------ upstream reference images ----------------------------------------
@@ -1079,8 +1104,17 @@ export const VideoNode = memo(
       (next: string) => updateNodeData(id, { prompt: next }),
       [id, updateNodeData],
     );
+    // 重编号的基线 prompt 必须与引用列表（useVideoReferenceNodes）同一帧同源：
+    // data prop 经 React Flow 内部转发，在删边发生的那一帧可能仍是旧 prompt，拿迟到的
+    // 副本 remap 会把 store 里的最新文本覆盖回旧版——切「独立开场」原子剥离承接段并
+    // 删尾帧边时，旧副本会让被剥掉的 [FMV自动承接] 段复活（体感为“连线没了但文字还
+    // 在，再切换一次才消失”）。与上游订阅同源订阅 store ⇒ 同一次渲染读到同一快照。
+    const storePromptForMentionSync = useCanvasStore((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === id);
+      return typeof node?.data.prompt === "string" ? (node.data.prompt as string) : "";
+    });
     useReferenceMentionSync(
-      prompt,
+      storePromptForMentionSync,
       [
         // 这三个前缀是提示词里 `@图片1` 这类引用记号的**协议**，会随 prompt 原样发给
         // 后端，不是界面文案，翻了就对不上。
@@ -1251,11 +1285,7 @@ export const VideoNode = memo(
         addEdge(id, newNodeId);
         updateNodeData(id, { isExtendPickMode: false });
         // 选中态要同时改 React Flow 自己那份，否则新节点的操作面板不浮出来。
-        store.onNodesChange([
-          { id, type: "select", selected: false },
-          { id: newNodeId, type: "select", selected: true },
-        ]);
-        setSelectedNode(newNodeId);
+        selectNodeExclusively(newNodeId);
       },
       [
         addEdge,
@@ -1263,7 +1293,6 @@ export const VideoNode = memo(
         availableVideoModels,
         id,
         resolvedTitle,
-        setSelectedNode,
         updateNodeData,
       ],
     );
@@ -1312,7 +1341,7 @@ export const VideoNode = memo(
         label: resolvedTitle,
       });
       const store = useCanvasStore.getState();
-      store.setSelectedNode(requesterId);
+      selectNodeExclusively(requesterId);
       store.requestFocusNode(requesterId);
       cancelPick();
     }, [
@@ -1333,7 +1362,6 @@ export const VideoNode = memo(
     );
     // 收起态浮动面板固定基础尺寸；放大用居中弹窗（见下方 OperationPanelShell）。
     const [panelExpanded, setPanelExpanded] = useState(false);
-    const panelHeight = OPERATIONS_PANEL_HEIGHT;
     const panelOverhang = OPERATIONS_PANEL_OVERHANG;
 
     // ── 叠卡画册（count > 1 的一组生成结果，与图片节点同构）──
@@ -1428,9 +1456,9 @@ export const VideoNode = memo(
           aspectRatio: data.aspectRatio,
           user_spawned: true,
         } as Partial<VideoNodeData>);
-        setSelectedNode(newNodeId);
+        selectNodeExclusively(newNodeId);
       },
-      [addNode, data.aspectRatio, id, resolvedWidth, setSelectedNode],
+      [addNode, data.aspectRatio, id, resolvedWidth],
     );
 
     const handleDownloadAlbumVideo = useCallback(
@@ -1745,6 +1773,7 @@ export const VideoNode = memo(
     // 静默截断 / 触发上游互斥报错）。
     useEffect(() => {
       if (!isHappyHorseModel) return;
+      if (fmvAutoContinuity) return;
       const { images, videos } = upstreamTypeCounts;
       let target: VideoGenMode;
       if (videos > 0) {
@@ -1768,6 +1797,7 @@ export const VideoNode = memo(
         updateNodeData(id, { genMode: target });
       }
     }, [
+      fmvAutoContinuity,
       genMode,
       id,
       isHappyHorseModel,
@@ -1984,11 +2014,12 @@ export const VideoNode = memo(
       const compatibleMode = selectedVideoModel?.supportedModes?.length
         ? videoModeForModel(genMode, selectedVideoModel, counts)
         : genMode;
-      const target = videoNoUpstreamResetMode(compatibleMode, counts, selectedVideoModel)
+      const target = videoNoUpstreamResetMode(compatibleMode, counts, selectedVideoModel, fmvAutoContinuity)
         ?? compatibleMode;
       if (target === genMode) return;
       updateNodeData(id, { genMode: target }, { recordHistory: false });
     }, [
+      fmvAutoContinuity,
       data.referenceFileUrl,
       data.referenceLink,
       selectedVideoModel,
@@ -2204,6 +2235,8 @@ export const VideoNode = memo(
      */
     const getDisplayedVideoRect = useCallback(
       (containerW: number, containerH: number) => {
+        // 剧情详情在编辑时仍占据右侧，字幕擦除框按左侧真实视频区换算。
+        if (isStoryClip) containerW *= 1 - STORY_CLIP_DETAILS_WIDTH_PERCENT / 100;
         const vw = data.widthPx ?? 0;
         const vh = data.heightPx ?? 0;
         if (!vw || !vh || containerW <= 0 || containerH <= 0) {
@@ -2220,7 +2253,7 @@ export const VideoNode = memo(
         const w = containerH * videoRatio;
         return { left: (containerW - w) / 2, top: 0, width: w, height: h };
       },
-      [data.heightPx, data.widthPx],
+      [data.heightPx, data.widthPx, isStoryClip],
     );
 
     const handleEraseExit = useCallback(() => {
@@ -2371,6 +2404,10 @@ export const VideoNode = memo(
       upstreamTextJoined.length > 0 ||
       // 续写节点的只读前缀本身就是一句完整指令，正文留空也能提交。
       extendPrefixText !== null;
+    const canPrepareContinuity = useCanvasStore((state) => {
+      const sources = videoContinuitySources(id, state.nodes, state.edges);
+      return sources.length === 1 && Boolean(sources[0]?.data.videoUrl) && !sources[0]?.data.isGenerating;
+    });
     const hasRequiredMediaForMode =
       genMode === "videoEdit" || genMode === "videoExtend"
         ? upstreamCounts.videos > 0
@@ -2465,7 +2502,7 @@ export const VideoNode = memo(
       // prompt，omni 端点又没素材可发）。写成三元的时候，全能参考只看提示词，素材撤空后
       // 按钮仍是可点态，点下去被 handleSubmit 的 references.length === 0 静默拦掉。
       (videoModeRequiresPrompt(genMode) && !hasPromptText) ||
-      (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode);
+      (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode && !canPrepareContinuity);
 
     const handleSubmit = useCallback(async () => {
       if (submitDisabled) return;
@@ -2495,7 +2532,7 @@ export const VideoNode = memo(
       // 运镜 fragment 拼接到最终 prompt 的开头；上游 text 在前、用户自己写
       // 的 prompt 在后，两段以 \n\n 隔开（与 ImageGenNode/ImageEditNode 一致）。
       const fragment = cameraMovementPreset?.promptFragment;
-      const trimmedPrompt = prompt.trim();
+      let trimmedPrompt = prompt.trim();
       const userPrompt = [upstreamTextJoined, trimmedPrompt]
         .filter((s) => s.length > 0)
         .join("\n\n");
@@ -2510,6 +2547,24 @@ export const VideoNode = memo(
         ? `${extendSubmitPrefix}${composedPromptBody}`
         : composedPromptBody;
       try {
+        let submitFallbackPrompt = fallbackPrompt;
+        if (usesFmvContinuity) {
+          await ensureVideoContinuity(id, projectId);
+          const liveState = useCanvasStore.getState();
+          const liveReferences = videoReferenceNodesInEdgeOrder(liveState.nodes, liveState.edges, id);
+          const liveCounts = { images: 0, videos: 0, audios: 0 };
+          for (const node of liveReferences) {
+            if (referenceVideoUrl(node)) liveCounts.videos += 1;
+            else if (isAudioNode(node) && node.data.audioUrl) liveCounts.audios += 1;
+            else if (referenceImageUrl(node)) liveCounts.images += 1;
+          }
+          const liveReferenceError = selectedVideoModelReferenceDisabledReason(selectedVideoModel, liveCounts, genMode, t);
+          const liveMediaError = videoSubmitMediaRejectionReason(genMode, selectedVideoModel, liveCounts);
+          if (liveReferenceError || liveMediaError) throw new Error(liveReferenceError || t(liveMediaError!));
+          trimmedPrompt = String(useCanvasStore.getState().nodes.find((node) => node.id === id)?.data.prompt ?? prompt).trim();
+          const continuityFallback = [upstreamTextJoined, trimmedPrompt].filter(Boolean).join("\n\n");
+          if (continuityFallback) submitFallbackPrompt = fragment ? `${fragment}，${continuityFallback}` : continuityFallback;
+        }
         const composedPrompt = await compileWorkflowNodePrompt({
           nodeId: id,
           nodeData: data,
@@ -2517,7 +2572,7 @@ export const VideoNode = memo(
           nodePrompt: trimmedPrompt,
           upstreamText: upstreamTextJoined,
           upstreamContents,
-          fallbackPrompt,
+          fallbackPrompt: submitFallbackPrompt,
           onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(id, {
             workflowRecipeCompileMode: mode,
             workflowRecipeCompiledAt: new Date().toISOString(),
@@ -2527,13 +2582,13 @@ export const VideoNode = memo(
           }),
         });
         // Walk the current edges/nodes once — used by every non-textToVideo
-        // branch to collect upstream resources. 必须与 UI 编号侧（useUpstreamNodes）
+        // branch to collect upstream resources. 必须与 UI 编号侧（useVideoReferenceNodes）
         // 同源：按连线顺序收集。曾按 state.nodes 顺序（节点创建顺序）收集，先创建
         // 但后连线的节点会排到 references 前面，@图片N 在后端就指向错位的图。
         const collectUpstream = () => {
           const state = useCanvasStore.getState();
           return sortUpstreamByReferenceOrder(
-            upstreamNodesInEdgeOrder(state.nodes, state.edges, id),
+            videoReferenceNodesInEdgeOrder(state.nodes, state.edges, id),
             data.referenceOrder,
           );
         };
@@ -2569,7 +2624,7 @@ export const VideoNode = memo(
                 typeof node.data.displayName === "string" ? node.data.displayName : null,
             });
           }
-          return resolveVideoKeyframeUrls(candidates);
+          return resolveVideoKeyframeUrls(candidates, genMode);
         };
 
         const validateReferenceDurations = async (
@@ -2657,6 +2712,7 @@ export const VideoNode = memo(
             updateNodeData(id, {
               isGenerating: false,
               generationStartedAt: null,
+              generationError: t("node.videoNode.generation.missingKeyframe"),
             });
             return;
           }
@@ -3009,6 +3065,7 @@ export const VideoNode = memo(
         const total = Math.min(Math.max(count, 1), 4);
         // 各并发任务完成顺序不定，本地累积已完成的 URL，整组写回（避免读改写竞态）。
         const completedUrls: string[] = [];
+        let panelCollapsedAfterSubmit = false;
         // 收集每个子任务的失败，留到整批 settle 后统一决定是否弹错误框——避免
         // 「N 条里 1 条秒失败（如命中队列上限）、其余正常生成」时一边弹报错一边
         // 又冒加载动画的矛盾观感。
@@ -3016,6 +3073,10 @@ export const VideoNode = memo(
         const runOne = async (runIndex: number) => {
           try {
             const ref = await submitOnce(id);
+            if (!panelCollapsedAfterSubmit) {
+              panelCollapsedAfterSubmit = true;
+              setPanelExpanded(false);
+            }
             // Persist the task handle so a page refresh can resume this job.
             // N 个并发任务同节点只能存一个句柄——保留第 1 个（主视频）的。
             if (runIndex === 0) {
@@ -3197,6 +3258,9 @@ export const VideoNode = memo(
           generationStartedAt: null,
           generationError: backendErrorToastMessage(error, t),
         });
+        if (usesFmvContinuity) {
+          toast.error(backendErrorToastMessage(error, t));
+        }
         setAlbumPendingTotal(id, 0);
       }
       } finally {
@@ -3223,6 +3287,7 @@ export const VideoNode = memo(
       genMode,
       humanReview,
       id,
+      usesFmvContinuity,
       isSeedance20Model,
       supportsAllReference,
       supportsHumanReview,
@@ -3276,6 +3341,14 @@ export const VideoNode = memo(
         void handleSubmit()
           .then(() => {
             const finished = useCanvasStore.getState().nodes.find((node) => node.id === id);
+            const generationError =
+              isVideoNode(finished) && typeof finished.data.generationError === "string"
+                ? finished.data.generationError
+                : null;
+            if (generationError) {
+              publishNodeActionError(requestId, id, action, new Error(generationError));
+              return;
+            }
             const videoUrl =
               isVideoNode(finished) && typeof finished.data.videoUrl === "string"
                 ? finished.data.videoUrl
@@ -3323,6 +3396,15 @@ export const VideoNode = memo(
         ? CANVAS_NODE_INPUT_BODY_SELECTED_FRAME_CLASS
         : CANVAS_NODE_INPUT_BODY_FRAME_CLASS
       : cardToneClass;
+    const storyMediaState = isUploading
+      ? "uploading"
+      : isGenerating
+        ? "generating"
+        : hasGenerationError
+          ? "failed"
+          : videoSource
+            ? "ready"
+            : "missing";
     const showVideoOpsPanel =
       selected &&
       !isBoxSelecting &&
@@ -3333,6 +3415,8 @@ export const VideoNode = memo(
       !isExtendPickMode &&
       !subtitleEraseMode &&
       !data.referenceOnly &&
+      // 故事片段播放器形态:隐藏生成面板,点「编辑」进编辑态才显示。
+      !storyPlayerMode &&
       // 视频高清节点用自己的 VideoUpscaleEditorOverlay 配置面板，不走常规生成面板。
       !data.isUpscaleNode;
 
@@ -3425,7 +3509,6 @@ export const VideoNode = memo(
         ref={albumRootRef}
         className="group relative h-full w-full overflow-visible"
         style={{ width: resolvedWidth, height: resolvedHeight }}
-        onClick={() => setSelectedNode(id)}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
       >
@@ -3525,8 +3608,8 @@ export const VideoNode = memo(
         />
 
         <NodeResizeHandle
-          minWidth={MIN_WIDTH}
-          minHeight={MIN_HEIGHT}
+          minWidth={isStoryClip ? STORY_CLIP_MIN_WIDTH : MIN_WIDTH}
+          minHeight={isStoryClip ? STORY_CLIP_MIN_HEIGHT : MIN_HEIGHT}
           maxWidth={MAX_WIDTH}
           maxHeight={MAX_HEIGHT}
           keepAspectRatio
@@ -3550,10 +3633,46 @@ export const VideoNode = memo(
         )}
 
         <div
-          className={`relative flex h-full w-full items-center justify-center ${videoSource ? "overflow-hidden" : "overflow-visible"} rounded-[var(--node-radius)] border ${bodySurfaceClass} transition-colors ${bodyFrameClass} ${
+          data-story-edit-frame={isStoryClip ? id : undefined}
+          tabIndex={storyPlayerMode ? 0 : undefined}
+          aria-label={storyPlayerMode ? t('canvas.story.editClip') : undefined}
+          onPointerDownCapture={(event) => {
+            storyFramePointer.current = event.button === 0 ? { x: event.clientX, y: event.clientY, dragged: false } : null;
+          }}
+          onPointerMoveCapture={(event) => {
+            const point = storyFramePointer.current;
+            if (point && Math.hypot(event.clientX - point.x, event.clientY - point.y) > 5) point.dragged = true;
+          }}
+          onPointerCancel={() => { storyFramePointer.current = null; }}
+          onClick={(event) => {
+            const point = storyFramePointer.current;
+            storyFramePointer.current = null;
+            if (!storyPlayerMode || isUploading || subtitleEraseMode) return;
+            if (!canOpenStoryFrameEditor(event.target as Element, event.currentTarget, Boolean(point?.dragged))) return;
+            selectNodeExclusively(id);
+            setStoryEditNode(id);
+          }}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget || !storyPlayerMode || isUploading || subtitleEraseMode) return;
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              event.stopPropagation();
+              selectNodeExclusively(id);
+              setStoryEditNode(id);
+            }
+          }}
+          onDoubleClick={(event) => {
+            if ((event.target as HTMLElement).closest('button, input') || storyPlayerMode || isClipMode || subtitleEraseMode || isUploading) return;
+            const url = videoSource;
+            if (!url) return;
+            event.stopPropagation();
+            void openNodeVideoViewer(url, id, nodeMediaViewerUrls(url, albumUrls, historyRecords, 'video'), data.displayName ?? undefined);
+          }}
+          className={`relative flex h-full w-full items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${videoSource || storyPlayerMode ? "overflow-hidden" : "overflow-visible"} rounded-[var(--node-radius)] ${videoSource ? CANVAS_NODE_MEDIA_FRAME_CLASS : "border"} ${bodySurfaceClass} transition-colors ${bodyFrameClass} ${
             // 画册展开时藏起节点本体——半透明的画册容器盖不严，底下的视频会透出来。
             albumExpanded && hasAlbum ? "invisible" : ""
           }`}
+          style={isStoryClip ? { paddingRight: `${STORY_CLIP_DETAILS_WIDTH_PERCENT}%` } : undefined}
         >
           {/* 卡片内右上角的「替换」入口：点击换本地文件 —— 复用节点自己那条
               上传路径（processFile，含 HEVC 转码 + uploadFreezoneVideo 落 OSS），
@@ -3592,12 +3711,10 @@ export const VideoNode = memo(
                 alt=""
                 className="h-full w-full object-contain"
                 draggable={false}
-                onClick={() => setSelectedNode(id)}
               />
             ) : (
               <div
                 className="flex h-full w-full items-center justify-center bg-black/40"
-                onClick={() => setSelectedNode(id)}
               >
                 <VideoIcon className="h-1/4 max-h-10 w-1/4 max-w-10 text-white/25" />
               </div>
@@ -3619,10 +3736,6 @@ export const VideoNode = memo(
                 isVideoPlayingRef.current = false;
                 setNodeMediaActive(id, false);
               }}
-              onClick={() => {
-                // 点击视频本体只负责选中节点 —— 播放/暂停统一交给左下角按钮。
-                setSelectedNode(id);
-              }}
               onLoadedMetadata={(event) => {
                 const el = event.currentTarget;
                 setHasMetadata(true);
@@ -3637,8 +3750,9 @@ export const VideoNode = memo(
                     updates.widthPx = el.videoWidth;
                   if (data.heightPx !== el.videoHeight)
                     updates.heightPx = el.videoHeight;
-                  if (data.durationMs !== Math.round(el.duration * 1000)) {
-                    updates.durationMs = Math.round(el.duration * 1000);
+                  const durationMs = mediaDurationMs(el.duration);
+                  if (durationMs !== null && data.durationMs !== durationMs) {
+                    updates.durationMs = durationMs;
                   }
                   if (Object.keys(updates).length > 0) {
                     updateNodeData(id, updates);
@@ -3658,36 +3772,6 @@ export const VideoNode = memo(
               <span className="px-4 text-center text-[12px] leading-6">
                 {t("node.videoNode.uploading")}
               </span>
-            </div>
-          ) : isGenerating && historyPreviewUrl ? (
-            // 生成进行中，但用户点了历史记录预览：临时播放那条历史视频，新视频
-            // 仍在后台生成。顶部 pill 提示「生成中」，右上「返回」回到 loading。
-            <div className="relative h-full w-full">
-              <video
-                src={resolveImageDisplayUrl(historyPreviewUrl)}
-                className="h-full w-full object-contain"
-                controls
-                playsInline
-                preload="metadata"
-                onClick={(event) => event.stopPropagation()}
-              />
-              <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-2 p-2">
-                <span className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[11px] text-white/90 backdrop-blur">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  {t("node.videoNode.history.generatingNew")}
-                </span>
-                <button
-                  type="button"
-                  className="nodrag pointer-events-auto inline-flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1 text-[11px] text-white/90 backdrop-blur transition-colors hover:bg-black/75"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setHistoryPreviewUrl(null);
-                  }}
-                >
-                  <XIcon className="h-3 w-3" />
-                  {t("node.videoNode.history.back")}
-                </button>
-              </div>
             </div>
           ) : isGenerating ? (
             <div className="relative h-full w-full">
@@ -3740,6 +3824,66 @@ export const VideoNode = memo(
               <span className="text-center text-sm font-medium text-text-dark/78">
                 {t("node.videoUpscale.placeholder")}
               </span>
+            </div>
+          ) : isStoryClip ? (
+            <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-6 text-text-muted/75">
+              <Film className="h-8 w-8 opacity-60" />
+            </div>
+          ) : data.narration || data.videoHint ? (
+            // 导入互动影游的占位片段：无视频时展示旁白 + 期望文件名 + 待补提示。
+            // 旁白双击就地编辑（与节点标题一致），写回 narration。
+            <div className="flex h-full w-full flex-col justify-center gap-2 px-6 py-4">
+              {isEditingNarration ? (
+                <textarea
+                  autoFocus
+                  value={narrationDraft}
+                  className="nodrag nowheel max-h-[120px] w-full resize-none rounded-md border border-white/15 bg-black/30 px-2 py-1.5 text-[13px] leading-6 text-text-dark outline-none focus:border-accent/60"
+                  rows={3}
+                  onChange={(event) => setNarrationDraft(event.target.value)}
+                  onClick={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onBlur={() => {
+                    updateNodeData(id, { narration: narrationDraft.trim() });
+                    setIsEditingNarration(false);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setIsEditingNarration(false);
+                    } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault();
+                      event.currentTarget.blur();
+                    }
+                  }}
+                />
+              ) : (
+                <p
+                  title={t("canvas.story.editNarrationHint")}
+                  className="nodrag max-h-[96px] cursor-text overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-6 text-text-dark/85 [overflow-wrap:anywhere]"
+                  onDoubleClick={(event) => {
+                    event.stopPropagation();
+                    setNarrationDraft(
+                      typeof data.narration === "string" ? data.narration : "",
+                    );
+                    setIsEditingNarration(true);
+                  }}
+                >
+                  {data.narration || t("canvas.story.editNarrationEmpty")}
+                </p>
+              )}
+              <div className="flex items-center gap-1.5 text-[11px] text-text-muted/80">
+                <Film className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                <span className="truncate">
+                  {data.videoHint
+                    ? t("canvas.story.importClipHint", { file: data.videoHint })
+                    : t("canvas.story.importClipPending")}
+                </span>
+                {data.importNeedsReview && (
+                  <span className="text-amber-400" title={data.importReviewNote}>
+                    ⚠
+                  </span>
+                )}
+              </div>
             </div>
           ) : isConnected ? (
             // 已连线：不再显示文字 CTA，只在节点中间放一个图标（对齐 libtv）。
@@ -3804,8 +3948,35 @@ export const VideoNode = memo(
                 videoEl={videoEl}
                 isCapturingFrame={isCapturingFrame}
                 onCapture={handleCaptureFrame}
+                rightInsetPercent={isStoryClip ? STORY_CLIP_DETAILS_WIDTH_PERCENT : 0}
               />
             )}
+
+          {/* 替换视频：hover 节点出现的右上角圆钮，点击走文件选择器替换当前节点视频。
+              与画册徽标共处右上角，hasAlbum 时左移让位给数量徽标。 */}
+          {videoSource && !isGenerating && !isUploading && !subtitleEraseMode && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleUploadClick();
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              title={t("node.videoNode.replace")}
+              className="nodrag absolute top-2 z-10 hidden h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-black/55 text-white/90 shadow-lg backdrop-blur-sm transition-colors hover:bg-black/80 hover:text-white group-hover:inline-flex"
+              style={{
+                right: isStoryClip
+                  ? hasAlbum
+                    ? `calc(${STORY_CLIP_DETAILS_WIDTH_PERCENT}% + 48px)`
+                    : `calc(${STORY_CLIP_DETAILS_WIDTH_PERCENT}% + 8px)`
+                  : hasAlbum
+                    ? 48
+                    : 8,
+              }}
+            >
+              <ShareIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
 
           {/* 画册数量徽标：hover 节点出现，hover 徽标箭头下探，点击展开画册。 */}
           {hasAlbum && !isGenerating && videoSource && (
@@ -3817,7 +3988,12 @@ export const VideoNode = memo(
               }}
               onPointerDown={(event) => event.stopPropagation()}
               title={t("node.videoNode.album.expandCount", { count: albumTotalSlots })}
-              className="nodrag group/albumpill absolute right-2 top-2 z-10 hidden items-center gap-1 rounded-full bg-black/65 px-2.5 py-1 text-[12px] font-medium tabular-nums text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black/85 group-hover:inline-flex"
+              className="nodrag group/albumpill absolute top-2 z-10 hidden items-center gap-1 rounded-full bg-black/65 px-2.5 py-1 text-[12px] font-medium tabular-nums text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black/85 group-hover:inline-flex"
+              style={{
+                right: isStoryClip
+                  ? `calc(${STORY_CLIP_DETAILS_WIDTH_PERCENT}% + 8px)`
+                  : 8,
+              }}
             >
               {albumPendingCount > 0
                 ? `${albumUrls.length}/${albumPendingTotal}`
@@ -3852,6 +4028,20 @@ export const VideoNode = memo(
             />
           )}
 
+          {isStoryClip ? (
+            <StoryClipNarrativePanel
+              nodeId={id}
+              narration={typeof data.narration === 'string' ? data.narration : ''}
+              productionNotes={
+                typeof data.storyProductionNotes === 'string' ? data.storyProductionNotes : ''
+              }
+              videoHint={typeof data.videoHint === 'string' ? data.videoHint : undefined}
+              importNeedsReview={data.importNeedsReview}
+              importReviewNote={data.importReviewNote}
+              mediaState={storyMediaState}
+              onChange={(patch) => updateNodeData(id, patch)}
+            />
+          ) : null}
           {videoSource && showCropUi && cropBox && cropSourceWidth > 0 && cropSourceHeight > 0 && (
             <VideoCropOverlay
               nodeId={id}
@@ -4097,46 +4287,23 @@ export const VideoNode = memo(
             expanded={panelExpanded}
             onExpandedChange={setPanelExpanded}
             onSubmit={handleSubmit}
-          />
-        )}
-
-        {selected &&
-          !isBoxSelecting &&
-          !albumExpanded &&
-          !isClipMode &&
-          !isCropMode &&
-          // 截「续写前置视频」时轨道占着节点底下那块，历史面板跟着操作面板一起
-          // 让位——它是按 panelHeight 往下推的，操作面板不在时会浮在半空。
-          !isExtendPickMode &&
-          !subtitleEraseMode &&
-          !data.referenceOnly &&
-          hasCompletedHistoryRecords(historyRecords) && (
-            <div
-              className={`nodrag absolute z-[300] rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS} ${NODE_OPS_PANEL_ENTER_CLASS} px-3 py-2`}
-              style={{
-                top: `calc(100% + ${OPERATIONS_PANEL_GAP * 2 + panelHeight}px)`,
-                left: -panelOverhang,
-                right: -panelOverhang,
-              }}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <NodeGenerationHistory
+            historyPanel={hasCompletedHistoryRecords(historyRecords) ? (
+              <NodeHistoryRail
                 records={historyRecords}
                 isLoading={historyLoading}
-                onRestore={handleRestoreHistory}
+                onRestore={handleHistorySelect}
                 onRefresh={() => void refreshHistory()}
                 isActive={(record) => {
                   const url = historyRecordOutputUrl(record);
                   if (!url) return false;
-                  // 预览态下高亮正在预览的历史条，否则高亮当前主视频。
-                  if (isGenerating && historyPreviewUrl) {
-                    return url === historyPreviewUrl;
-                  }
+                  // 生成中不标记旧结果；任务完成后只标记当前主视频。
+                  if (isGenerating) return false;
                   return url === data.videoUrl;
                 }}
               />
-            </div>
-          )}
+            ) : undefined}
+          />
+        )}
 
         {subtitleEraseMode && (
           <div
@@ -4201,6 +4368,8 @@ interface VideoPlayerControlsProps {
   videoEl: HTMLVideoElement | null;
   isCapturingFrame: boolean;
   onCapture: (mode: "first" | "last" | "current") => void;
+  /** 故事片段右侧的剧情栏宽度；控制条只覆盖左侧媒体栏。 */
+  rightInsetPercent?: number;
 }
 
 function formatTime(seconds: number): string {
@@ -4215,6 +4384,7 @@ function VideoPlayerControls({
   videoEl,
   isCapturingFrame,
   onCapture,
+  rightInsetPercent = 0,
 }: VideoPlayerControlsProps) {
   const { t } = useTranslation();
   const [isPlaying, setIsPlaying] = useState(false);
@@ -4286,7 +4456,10 @@ function VideoPlayerControls({
   const sliderBg = `linear-gradient(to right, rgb(var(--accent-rgb)) 0%, rgb(var(--accent-rgb)) ${progressPct}%, rgba(255,255,255,0.18) ${progressPct}%, rgba(255,255,255,0.18) 100%)`;
 
   return (
-    <div className="nodrag absolute inset-x-0 bottom-0 z-20 flex items-center gap-2.5 bg-gradient-to-t from-black/75 via-black/45 to-transparent px-3 pb-2 pt-6 text-text-dark">
+    <div
+      className="nodrag absolute bottom-0 left-0 z-20 flex items-center gap-2.5 bg-gradient-to-t from-black/75 via-black/45 to-transparent px-3 pb-2 pt-6 text-text-dark"
+      style={{ right: `${rightInsetPercent}%` }}
+    >
       <button
         type="button"
         onClick={(event) => {

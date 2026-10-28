@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the bundled Workflow Skill into one local agent host."""
+"""Install one bundled DramaClaw Skill into a local agent host."""
 
 from __future__ import annotations
 
@@ -19,15 +19,20 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", choices=[*sorted(DEFAULT_ROOTS), "custom"], required=True)
     parser.add_argument("--target", help="Exact destination skill directory")
+    parser.add_argument(
+        "--skill",
+        choices=("dramaclaw-workflows", "interactive-story"),
+        default="dramaclaw-workflows",
+    )
     parser.add_argument("--replace", action="store_true")
     args = parser.parse_args()
 
     kit_root = Path(__file__).resolve().parents[1]
-    source = kit_root / "skills" / "dramaclaw-workflows"
+    source = kit_root / "skills" / args.skill
     target = (
         Path(args.target).expanduser()
         if args.target
-        else DEFAULT_ROOTS.get(args.host, Path()) / "dramaclaw-workflows"
+        else DEFAULT_ROOTS.get(args.host, Path()) / args.skill
     )
     if args.host == "custom" and not args.target:
         raise SystemExit("--target is required for host=custom")

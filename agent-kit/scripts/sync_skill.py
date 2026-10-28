@@ -9,6 +9,9 @@ import shutil
 from pathlib import Path
 
 
+SKILL_NAMES = ("dramaclaw-workflows", "interactive-story")
+
+
 def _same_tree(source: Path, target: Path) -> bool:
     comparison = filecmp.dircmp(source, target)
     if comparison.left_only or comparison.right_only or comparison.funny_files:
@@ -28,17 +31,20 @@ def main() -> None:
 
     kit_root = Path(__file__).resolve().parents[1]
     ce_root = kit_root.parent
-    source = ce_root / "src" / "novelvideo" / "agent_skills" / "dramaclaw-workflows"
-    target = kit_root / "skills" / "dramaclaw-workflows"
-    if args.check:
-        if not target.is_dir() or not _same_tree(source, target):
-            raise SystemExit("Published Skill differs from the canonical CE Skill")
-        print("Skill is synchronized")
-        return
-    if target.exists():
-        shutil.rmtree(target)
-    shutil.copytree(source, target)
-    print("Skill synchronized")
+    skills_root = ce_root / "src" / "novelvideo" / "agent_skills"
+    for skill_name in SKILL_NAMES:
+        source = skills_root / skill_name
+        target = kit_root / "skills" / skill_name
+        if args.check:
+            if not target.is_dir() or not _same_tree(source, target):
+                raise SystemExit(
+                    f"Published Skill {skill_name!r} differs from the canonical CE Skill"
+                )
+            continue
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(source, target)
+    print("Skills are synchronized" if args.check else "Skills synchronized")
 
 
 if __name__ == "__main__":

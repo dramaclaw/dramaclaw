@@ -25,6 +25,8 @@ from novelvideo.freezone.workflow_contract_generated import (
 
 NODE_TYPE_VALUES = WORKFLOW_NODE_TYPES
 LINK_TYPE_VALUES = WORKFLOW_LINK_TYPES
+# An external input stands in for an existing canvas node of this type.
+EXTERNAL_INPUT_NODE_TYPES = {"image": "imageGenNode", "video": "videoNode"}
 PORTABLE_VIDEO_GENERATION_MODES = (
     "allReference",
     "firstFrame",
@@ -624,7 +626,7 @@ def workflow_plan_json_schema() -> dict[str, Any]:
                     "properties": {
                         "id": {"type": "string", "minLength": 1},
                         "node_id": {"type": "string", "minLength": 1},
-                        "media_kind": {"const": "image"},
+                        "media_kind": {"enum": list(EXTERNAL_INPUT_NODE_TYPES)},
                     },
                     "required": ["id", "node_id", "media_kind"],
                     "additionalProperties": False,
@@ -806,7 +808,7 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                     "properties": {
                         "id": {"type": "string", "minLength": 1},
                         "node_id": {"type": "string", "minLength": 1},
-                        "media_kind": {"const": "image"},
+                        "media_kind": {"enum": list(EXTERNAL_INPUT_NODE_TYPES)},
                     },
                     "required": ["id", "node_id", "media_kind"],
                     "additionalProperties": False,

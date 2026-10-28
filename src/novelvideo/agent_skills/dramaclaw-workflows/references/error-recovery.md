@@ -5,6 +5,14 @@
 - Invalid intent: correct the reported intent path and retry the same draft preparation once.
 - Invalid plan or Recipe: correct the same complete Plan with only the selected Skill package's node
   capabilities and Recipe IDs. Do not switch an exact topology to compact Intent compilation.
+- Existing-story image batch reporting `skill_stage_missing`: inspect `source_context.story_id`,
+  full and unique coverage of image IDs across `asset_targets` and `targets`, live story assets,
+  and extraneous executable nodes. Follow `interactive-story`'s `references/reference-images.md`.
+  Repair the same image Plan once; do not add executable planning or video nodes, change image
+  purposes, or switch to single-node tools. If the same path still fails, report that the authored
+  image plan has not met the contract and images remain unsubmitted. Repeated validation failures
+  do not establish that the platform lacks image-only workflows; do not suggest relaxed validation
+  or ask the user to change their production scope to accommodate an internal planning error.
 - Disconnected nodes: inspect connected components in the same complete Plan. Preserve independent
   Beat/shot failure isolation; do not serialize sibling branches merely to satisfy validation. Add or
   restore one non-executable common input/root and connect it to every independent branch input, then

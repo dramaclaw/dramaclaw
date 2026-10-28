@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { spyOnCanvasGetContext } from '@/__tests__/helpers/canvas-context';
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
 
@@ -28,7 +29,7 @@ afterEach(() => vi.restoreAllMocks());
 describe('local image resizing', () => {
   it('resamples to target pixels, uploads once, preserves source and adds one linked result', async () => {
     const drawImage = vi.fn();
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
+    spyOnCanvasGetContext().mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function (this: HTMLCanvasElement, callback) {
       expect([this.width, this.height]).toEqual([537, 300]);
       callback(new Blob(['PNG'], { type: 'image/png' }));

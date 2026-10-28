@@ -221,6 +221,7 @@ def test_c1_eg07_child_env_is_minimal_and_ignores_process_provider_secrets(
     monkeypatch.setenv("OPENAI_API_KEY", "process-openai-secret")
     monkeypatch.setenv("OPENROUTER_API_KEY", "process-openrouter-secret")
     monkeypatch.setenv("MODEL_API_KEY", "process-model-secret")
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
     authorization = HermesTurnAuthorization.for_test(
         context=_context(),
         credential=RequestCredential(
@@ -247,6 +248,7 @@ def test_c1_eg07_child_env_is_minimal_and_ignores_process_provider_secrets(
     assert "OPENAI_API_KEY" not in env
     assert "OPENROUTER_API_KEY" not in env
     assert "MODEL_API_KEY" not in env
+    assert env["SUPERTALE_OPENFILM_STUDIO_ENABLED"] == "1"
     assert set(env) <= {
         "PATH",
         "LANG",
@@ -264,6 +266,7 @@ def test_c1_eg07_child_env_is_minimal_and_ignores_process_provider_secrets(
         "NEWAPI_API_KEY",
         "NEWAPI_BASE_URL",
         "DRAMACLAW_GATEWAY_CREDENTIAL_MODE",
+        "SUPERTALE_OPENFILM_STUDIO_ENABLED",
     }
 
 

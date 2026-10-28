@@ -169,9 +169,13 @@ def _copy_via_oss(source: Path, target: Path) -> bool:
     return visible
 
 
-def copy_project_file(source: Path, target: Path) -> CopyMethod:
+def copy_project_file(source: Path, target: Path, *, create_parent: bool = True) -> CopyMethod:
     """把 `source` 复制到 `target`，优先 OSS 服务端拷贝，失败回退文件系统。"""
-    target.parent.mkdir(parents=True, exist_ok=True)
+    # Publication workers create directories under their lifecycle lock.
+    if create_parent:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    elif not target.parent.is_dir():
+        raise FileNotFoundError(target.parent)
     if _copy_via_oss(source, target):
         return "oss"
     shutil.copyfile(source, target)

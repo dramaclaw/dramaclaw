@@ -20,11 +20,23 @@ ARG CODEX_RUNTIME_IMAGE="docker.io/claymorelab/codex-dramaclaw:758ef40-pc9db6e46
 FROM rust:1.95-bookworm AS vtracer-builder
 RUN cargo install --locked --version 1.0.0-alpha.3 vtracer-cli
 
+# Node for the vendored OpenFilm Studio (the 「视频合成与剪辑」 editor). The distro's node is
+# older than the vendored server expects; the binary is copied into the final image.
+FROM node:22-bookworm-slim AS node-runtime
+
+# Studio's one runtime dependency (playwright-core), installed from the vendored lockfile so
+# the version and integrity hash match what was tested. npm is not needed at runtime.
+FROM node:22-bookworm-slim AS openfilm-deps
+WORKDIR /openfilm
+COPY vendor/openfilm/package.json vendor/openfilm/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+
 FROM ${CODEX_RUNTIME_IMAGE} AS codex-runtime
 
 FROM python:3.12-slim
 ARG CODEX_REF
 COPY --from=vtracer-builder /usr/local/cargo/bin/vtracer /usr/local/bin/vtracer
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 
 # 项目全程用 uv 管理(与 host 一致)。Dockerfile 也用 uv,使 uv.lock 锁版本 +
 # [[tool.uv.dependency-metadata]] override(da2 的 torch==2.5.0 冲突、sharp 的 gsplat)
@@ -42,7 +54,8 @@ ENV ST_EDITION=ce \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     HERMES_CLI_PATH=/usr/local/bin/hermes \
-    CODEX_BIN=/usr/local/bin/codex-dramaclaw
+    CODEX_BIN=/usr/local/bin/codex-dramaclaw \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 COPY --from=codex-runtime /codex /usr/local/bin/codex-dramaclaw
 COPY --from=codex-runtime /codex-runtime.sha /opt/codex-runtime.sha
@@ -75,6 +88,30 @@ RUN set -eux; \
     codex-dramaclaw --version
 
 WORKDIR /app
+
+# OpenFilm Studio (the 「视频合成与剪辑」 editor) runs from this tree at request time: the Python
+# backend spawns scripts/openfilm_studio/run.mjs with the vendored server and patched UI.
+# node_modules comes from the lockfile stage, never from the build context.
+COPY --from=openfilm-deps /openfilm/node_modules ./vendor/openfilm/node_modules
+
+# Chromium draws the editor's thumbnails, covers and exports; --with-deps installs its shared
+# libraries. The headless shell carries no fonts, so CJK titles and subtitles need Noto.
+# PLAYWRIGHT_BROWSERS_PATH is in studio.py's env passthrough; without that the spawned Studio
+# would look under $HOME/.cache and silently fall back to a system Chrome this image lacks.
+# Kept before the vendor tree so a re-vendored UI does not re-download the browser.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends fonts-noto-cjk; \
+    node vendor/openfilm/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium; \
+    rm -rf /var/lib/apt/lists/*
+
+COPY vendor/openfilm ./vendor/openfilm
+COPY scripts/openfilm_studio ./scripts/openfilm_studio
+
+# Fail the build, not the feature: starts Chromium, boots the vendored Studio and checks that
+# the served index loads Dramaclaw's patched chunk.
+RUN node scripts/openfilm_studio/smoke.mjs
+
 COPY pyproject.toml uv.lock README.md ./
 # license 正文按 REUSE 惯例只存于 LICENSES/(pyproject license-files 指向它),
 # hatchling 构建 wheel 时需要这份文件在上下文中。

@@ -69,6 +69,7 @@ from novelvideo.api.schemas import (
     FreezoneGenRequest,
     FreezoneImageCameraConfig,
     FreezoneImageReversePromptRequest,
+    FreezoneImageToBlockoutRequest,
     FreezoneImageStyleConfig,
     FreezoneImageTo3GSRequest,
     FreezoneImageToVideoRequest,
@@ -97,6 +98,10 @@ from novelvideo.api.schemas import (
     FreezoneVideoBreakdownRequest,
     FreezoneVideoCharacterLibraryItemRequest,
     FreezoneVideoComposeRequest,
+    FreezoneVideoComposeStudioRequest,
+    FreezoneStudioExportRequest,
+    FreezoneStudioFilmEditRequest,
+    FreezoneStudioMediaImportRequest,
     FreezoneVideoEditRequest,
     FreezoneVideoExtendRequest,
     FreezoneVideoEraseRequest,
@@ -104,6 +109,7 @@ from novelvideo.api.schemas import (
     FreezoneVideoOmniGenRequest,
     FreezoneVideoUpscaleRequest,
     ImpactRequest,
+    OkResponse,
     PresetCanvasRequest,
     ProjectionPresetCanvasRequest,
     ProjectionRemoveRequest,
@@ -145,6 +151,7 @@ from novelvideo.freezone.asset_copy import (
 from novelvideo.i18n_message import lmsg, log_lines_text
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
+    media_model_request_endpoint,
     media_request_schema_for_mode,
     normalize_media_model_mode,
     validate_media_model_params,
@@ -260,6 +267,18 @@ from novelvideo.freezone.recipe_runtime import (
     compile_recipe_prompt_batch,
     compile_recipe_prompt_result,
     generate_recipe_text,
+)
+from novelvideo.freezone.studio import (
+    StudioError,
+    build_studio_film,
+    edit_studio_film,
+    ensure_studio_session,
+    film_dir_for_node,
+    import_media_to_film,
+    openfilm_studio_enabled,
+    read_studio_film,
+    studio_export_film_dir,
+    studio_film_exists,
 )
 from novelvideo.ports import get_usage_meter
 from novelvideo.ports.local.usage import NoOpUsageMeter
@@ -8016,6 +8035,10 @@ def _image_reverse_prompt_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_image_reverse_prompt") / f"{job_id}.json"
 
 
+def _image_to_blockout_output_path(project_dir: Path, job_id: str) -> Path:
+    return outputs_dir(project_dir, "freezone_image_to_blockout") / job_id / "result.json"
+
+
 def _video_compose_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_video_compose") / f"{job_id}.mp4"
 
@@ -8124,6 +8147,7 @@ def _start_freezone_video_compose_task(
     job_id: str,
     body: FreezoneVideoComposeRequest,
     resolved_tracks: list[dict],
+    studio_film_dir: str = "",
 ) -> None:
     task_type = "freezone_video_compose"
     task_manager = get_task_manager()
@@ -8143,19 +8167,30 @@ def _start_freezone_video_compose_task(
                 current_task="validating_timeline",
                 logs=["开始合成视频时间线"],
             )
-            from novelvideo.freezone.jobs import run_freezone_video_compose
-
-            output_path = await run_freezone_video_compose(
-                project_dir=project_dir,
-                job_id=job_id,
-                title=body.title,
-                canvas_id=body.canvas_id,
-                resolution=body.resolution,
-                fps=body.fps,
-                background_color=body.background_color,
-                keep_original_audio=body.keep_original_audio,
-                tracks=resolved_tracks,
+            from novelvideo.freezone.jobs import (
+                run_freezone_studio_export,
+                run_freezone_video_compose,
             )
+
+            if studio_film_dir:
+                output_path = await run_freezone_studio_export(
+                    project_dir=project_dir,
+                    job_id=job_id,
+                    film_dir=studio_film_dir,
+                    fps=body.fps,
+                )
+            else:
+                output_path = await run_freezone_video_compose(
+                    project_dir=project_dir,
+                    job_id=job_id,
+                    title=body.title,
+                    canvas_id=body.canvas_id,
+                    resolution=body.resolution,
+                    fps=body.fps,
+                    background_color=body.background_color,
+                    keep_original_audio=body.keep_original_audio,
+                    tracks=resolved_tracks,
+                )
             task_manager.complete_task(
                 task_type,
                 username,
@@ -9324,6 +9359,20 @@ async def _scoped_media_model_catalog(
         raise HTTPException(503, "媒体模型目录暂不可用，请稍后重试") from None
 
 
+_MEDIA_TYPE_LABELS = {"image": "图片", "video": "视频", "blockout": "白模"}
+
+
+def _media_model_catalog_is_authoritative() -> bool:
+    """EE 注册了目录端口时，目录说了算；CE 自己管模型表，没有组织策略要执行。"""
+    from novelvideo.ports.registry import PortNotRegistered, get_port
+
+    try:
+        get_port("media_model_catalog")
+    except PortNotRegistered:
+        return False
+    return True
+
+
 _SERVER_MANAGED_MEDIA_MODEL_PARAMETER_KEYS = frozenset({"thinking_level"})
 
 
@@ -9354,7 +9403,7 @@ def _public_media_model_catalog(
 def _media_model_unavailable(
     media_type: str, catalog: list[dict[str, Any]]
 ) -> HTTPException:
-    media_label = "图片" if media_type == "image" else "视频"
+    media_label = _MEDIA_TYPE_LABELS.get(media_type, "媒体")
     detail = (
         f"当前没有可用的{media_label}模型，请联系管理员或刷新后重试"
         if not catalog
@@ -9370,11 +9419,7 @@ async def _require_scoped_media_model(
     requester_user_id: str,
 ) -> dict[str, Any] | None:
     """Recheck model visibility immediately before billing and enqueueing."""
-    from novelvideo.ports.registry import PortNotRegistered, get_port
-
-    try:
-        get_port("media_model_catalog")
-    except PortNotRegistered:
+    if not _media_model_catalog_is_authoritative():
         # Community Edition owns its local model map and has no organization
         # policy to enforce. Keep its existing submission behavior unchanged.
         return None
@@ -9530,9 +9575,7 @@ async def _resolve_catalog_request(
         return {}, {}, None
     try:
         full_schema = validate_media_request_schema(entry.get("request"))
-        expected_endpoint = (
-            "images/generations" if media_type == "image" else "video/generations"
-        )
+        expected_endpoint = media_model_request_endpoint(media_type)
         if full_schema and full_schema.get("endpoint") != expected_endpoint:
             raise MediaModelSchemaError(f"endpoint must be {expected_endpoint}")
         schema = media_request_schema_for_mode(full_schema, mode)
@@ -9929,6 +9972,62 @@ async def freezone_image_models(
     return {"ok": True, "data": data}
 
 
+@router.get("/projects/{project}/freezone/blockout/models", tags=[TAG_FREEZONE_IMAGE])
+async def freezone_blockout_models(
+    project: str,
+    user: dict = Depends(get_api_user),
+):
+    """预演台：参考图转白模可选的模型，来自媒体模型目录的白模类型，默认模型排第一。"""
+    ctx, _username, _project_name, _project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
+    )
+    catalog = await _blockout_model_catalog(requester_user_id=ctx.requester_user_id)
+    return {"ok": True, "data": catalog}
+
+
+async def _blockout_model_catalog(*, requester_user_id: str) -> list[dict[str, Any]]:
+    """白模目录：图片/视频同一套目录的 ``blockout`` 类型，设置页的默认模型排第一。
+
+    CE 没有组织策略，目录里缺默认模型时补一条，装好就能生成；EE 的目录是权威的，
+    组织没开放默认模型就不替它补上。
+    """
+    from novelvideo.director_world.blockout.generation_agent import resolve_blockout_model
+
+    catalog = list(
+        await _scoped_media_model_catalog(
+            "blockout",
+            requester_user_id=requester_user_id,
+        )
+        or []
+    )
+    default_model = resolve_blockout_model()
+    default_entry = next(
+        (item for item in catalog if default_model in _catalog_entry_identifiers(item)),
+        None,
+    )
+    if default_entry is None:
+        if _media_model_catalog_is_authoritative():
+            return catalog
+        default_entry = {
+            "catalogId": default_model,
+            "catalog_id": default_model,
+            "id": default_model,
+            "providerId": "newapi",
+            "provider": "newapi",
+            "apiModel": default_model,
+            "api_model": default_model,
+            "gatewayModel": default_model,
+            "gateway_model": default_model,
+            "aliases": [],
+            "label": default_model,
+            "sortOrder": 0,
+            "request": {"endpoint": "chat/completions", "parameters": []},
+        }
+    else:
+        catalog.remove(default_entry)
+    return [default_entry, *catalog]
+
+
 @router.post(
     "/projects/{project}/freezone/marks/detect",
     response_model=FreezoneMarkDetectResponse,
@@ -10152,6 +10251,67 @@ async def freezone_image_reverse_prompt(
         project=project_name,
         job_id=job_id,
     )
+
+
+@router.post(
+    "/projects/{project}/freezone/image-to-blockout",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_IMAGE],
+)
+async def freezone_image_to_blockout(
+    project: str,
+    body: FreezoneImageToBlockoutRequest,
+    user: dict = Depends(get_api_user),
+):
+    """预演台：参考图转白模，异步生成一组可编辑的基础几何体。"""
+    from novelvideo.api.routes.model_credits import (
+        freezone_image_to_blockout_task_billing,
+    )
+    from novelvideo.director_world.blockout.generation_agent import resolve_blockout_model
+
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    catalog = await _blockout_model_catalog(requester_user_id=ctx.requester_user_id)
+    requested = resolve_blockout_model(body.model)
+    entry = next(
+        (item for item in catalog if requested in _catalog_entry_identifiers(item)),
+        None,
+    )
+    if entry is None:
+        raise _media_model_unavailable("blockout", catalog)
+    model = str(entry.get("gatewayModel") or entry.get("gateway_model") or requested)
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.exists():
+        raise HTTPException(404, f"source not found: {source_path}")
+    if source_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        raise HTTPException(400, f"source must be an image: {source_path}")
+
+    try:
+        return await _enqueue_freezone_background_job(
+            ctx=ctx,
+            project_dir=project_dir,
+            task_type="freezone_image_to_blockout",
+            job_id=_new_job_id(),
+            payload={
+                "source_path": source_path.as_posix(),
+                "description": body.description.strip(),
+                "picture_check": body.picture_check,
+                "render_check": body.render_check,
+                "canvas_id": body.canvas_id or "",
+                "node_id": body.node_id or "",
+                "model": model,
+                "billing": freezone_image_to_blockout_task_billing(
+                    {"operation": "image_to_blockout", "model": model}
+                ),
+            },
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("image to blockout failed", exc)
+        raise HTTPException(500, f"image to blockout failed: {exc}") from exc
 
 
 @router.get(
@@ -12055,6 +12215,14 @@ async def freezone_video_compose(
     if not has_video_item:
         raise HTTPException(400, "video compose requires at least one video item")
 
+    # 节点若在剪辑工作区里被手改过（人或 agent 经 Studio），film.html 才是真实的剪辑，
+    # 成片按 film 渲染；没进过工作区或没改过的节点，时间线路径一字不动。
+    studio_film = (
+        studio_export_film_dir(project_dir, body.canvas_id, body.node_id)
+        if openfilm_studio_enabled()
+        else None
+    )
+
     try:
         job_id = _new_job_id()
         if ctx is not None:
@@ -12075,6 +12243,7 @@ async def freezone_video_compose(
                     "keep_original_audio": body.keep_original_audio,
                     "cover_url": body.cover_url,
                     "tracks": resolved_tracks,
+                    "studio_film_dir": str(studio_film) if studio_film else "",
                 },
             )
         _start_freezone_video_compose_task(
@@ -12084,6 +12253,7 @@ async def freezone_video_compose(
             job_id=job_id,
             body=body,
             resolved_tracks=resolved_tracks,
+            studio_film_dir=str(studio_film) if studio_film else "",
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error(
@@ -12099,6 +12269,325 @@ async def freezone_video_compose(
         project=project_name,
         job_id=job_id,
     )
+
+
+@router.post(
+    "/projects/{project}/freezone/video/compose/studio",
+    response_model=OkResponse,
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_video_compose_studio(
+    project: str,
+    body: FreezoneVideoComposeStudioRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：把时间线落成 OpenFilm 工程，返回可内嵌的 Studio 编辑器地址。
+
+    只负责编辑与预览；成片导出仍走 `/video/compose` 异步任务。
+    """
+    _require_openfilm_studio_enabled()
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+
+    try:
+        film_dir = await asyncio.to_thread(
+            build_studio_film,
+            project_dir=project_dir,
+            canvas_id=body.canvas_id,
+            node_id=body.node_id,
+            title=body.title,
+            resolution=body.resolution,
+            background_color=body.background_color,
+            keep_original_audio=body.keep_original_audio,
+            tracks=body.tracks,
+            rebuild=body.rebuild,
+        )
+        session = await ensure_studio_session(
+            film_dir,
+            host_back=body.host_back,
+            host_back_label=body.host_back_label,
+            lang=body.lang,
+        )
+    except StudioError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+    return {"ok": True, "data": session}
+
+
+_STUDIO_NODE_ID_RE = re.compile(r"^[A-Za-z0-9_.:\-]{1,128}$")
+_STUDIO_MEDIA_URL_KEYS = ("resultVideoUrl", "videoUrl", "audioUrl", "imageUrl")
+
+
+def _require_openfilm_studio_enabled() -> None:
+    """Hide every Studio API unless the local-only feature was explicitly enabled."""
+    if not openfilm_studio_enabled():
+        raise HTTPException(404, "not found")
+
+
+def _studio_route_scope(canvas_id: str, node_id: str) -> None:
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    if not _STUDIO_NODE_ID_RE.match(node_id or ""):
+        raise HTTPException(400, "invalid node_id")
+
+
+def _studio_canvas_node(canvas: dict | None, node_id: str) -> dict | None:
+    if not isinstance(canvas, dict):
+        return None
+    for node in canvas.get("nodes") or []:
+        if isinstance(node, dict) and node.get("id") == node_id:
+            return node
+    return None
+
+
+def _studio_node_media(canvas: dict | None, node_id: str) -> tuple[str, str]:
+    """A canvas node's finished media URL and a label for it."""
+    node = _studio_canvas_node(canvas, node_id)
+    data = node.get("data") if isinstance(node, dict) else None
+    if not isinstance(data, dict):
+        raise HTTPException(404, f"canvas node not found: {node_id}")
+    for key in _STUDIO_MEDIA_URL_KEYS:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            label = next(
+                (
+                    str(data[name]).strip()
+                    for name in ("label", "displayName", "title", "name")
+                    if isinstance(data.get(name), str) and str(data[name]).strip()
+                ),
+                "",
+            )
+            return value.strip(), label
+    raise HTTPException(409, f"canvas node {node_id} has no finished media to import")
+
+
+async def _mark_video_compose_node_generating(
+    state_dir: Path,
+    canvas_id: str,
+    node_id: str,
+    *,
+    task_key: str,
+    job_id: str,
+    actor: str,
+) -> bool:
+    """Claim the compose node for a server-started export so the result projects back.
+
+    The task runner only writes ``resultVideoUrl`` when the node still carries this
+    task's key, exactly as the browser does before it submits a compose. The save
+    goes through ``save_canvas_async`` like every other route-side canvas write, so
+    the lock wait and file I/O stay off the event loop.
+    """
+
+    def skip_if(existing: dict | None) -> dict | None:
+        node = _studio_canvas_node(existing, node_id)
+        if node is None or node.get("type") != "videoComposeNode":
+            return {"claimed": False, "reason": "target_missing"}
+        return None
+
+    def build_payload(existing: dict | None) -> dict:
+        if not isinstance(existing, dict):
+            raise ValueError("canvas disappeared while claiming the compose node")
+        updated = deepcopy(existing)
+        node = _studio_canvas_node(updated, node_id)
+        if node is None or not isinstance(node.get("data"), dict):
+            raise ValueError("compose node disappeared while claiming it")
+        node["data"].update(
+            {
+                "isGenerating": True,
+                "generationStartedAt": int(time.time() * 1000),
+                "generationTaskKey": task_key,
+                "generationTaskType": "freezone_video_compose",
+                "generationTaskJobId": job_id,
+                "generationError": None,
+            }
+        )
+        revision = existing.get("revision")
+        updated["revision"] = revision + 1 if isinstance(revision, int) else 1
+        updated["updated_at"] = canvas_store.utc_now_iso()
+        updated["updated_by"] = actor
+        updated["save_source"] = "studio_export"
+        return updated
+
+    saved = await canvas_store.save_canvas_async(
+        state_dir,
+        canvas_id,
+        base_revision=None,
+        build_payload=build_payload,
+        skip_if=skip_if,
+        enforce_revision=False,
+        save_source="studio_export",
+    )
+    return not bool(
+        saved.response_cache and saved.response_cache.get("claimed") is False
+    )
+
+
+@router.get(
+    "/projects/{project}/freezone/canvases/{canvas_id}/compose/{node_id}/studio/film",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_studio_film(
+    project: str,
+    canvas_id: str,
+    node_id: str,
+    user: dict = Depends(get_api_user),
+):
+    """剪辑工作区：读取合成节点的 OpenFilm film（按 clip id 的轨道/片段摘要与 rev）。"""
+    _require_openfilm_studio_enabled()
+    _studio_route_scope(canvas_id, node_id)
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    try:
+        return await read_studio_film(
+            project_dir=project_dir,
+            state_dir=_canvas_state_project_dir(ctx, project_dir),
+            canvas_id=canvas_id,
+            node_id=node_id,
+        )
+    except StudioError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/compose/{node_id}/studio/edit",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_studio_film_edit(
+    project: str,
+    canvas_id: str,
+    node_id: str,
+    body: FreezoneStudioFilmEditRequest,
+    user: dict = Depends(get_api_user),
+):
+    """剪辑工作区：按 clip id 编辑 film。冲突或非法编辑以 200 + ok=false 返回原因。"""
+    _require_openfilm_studio_enabled()
+    _studio_route_scope(canvas_id, node_id)
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    try:
+        return await edit_studio_film(
+            project_dir=project_dir,
+            state_dir=_canvas_state_project_dir(ctx, project_dir),
+            canvas_id=canvas_id,
+            node_id=node_id,
+            base_rev=body.base_rev,
+            ops=body.ops,
+        )
+    except StudioError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/compose/{node_id}/studio/media",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_studio_import_media(
+    project: str,
+    canvas_id: str,
+    node_id: str,
+    body: FreezoneStudioMediaImportRequest,
+    user: dict = Depends(get_api_user),
+):
+    """剪辑工作区：把画布节点的成品媒体（或项目内媒体地址）拷进 film 素材库。"""
+    _require_openfilm_studio_enabled()
+    _studio_route_scope(canvas_id, node_id)
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    source_url = str(body.source_url or "").strip()
+    source_node_id = str(body.source_node_id or "").strip()
+    label = body.label.strip()
+    if source_node_id:
+        canvas = await asyncio.to_thread(
+            canvas_store.read_canvas, _canvas_state_project_dir(ctx, project_dir), canvas_id
+        )
+        node_url, node_label = _studio_node_media(canvas, source_node_id)
+        source_url = source_url or node_url
+        label = label or node_label
+    try:
+        return await import_media_to_film(
+            project_dir=project_dir,
+            canvas_id=canvas_id,
+            node_id=node_id,
+            source_url=source_url,
+            source_node_id=source_node_id,
+            label=label,
+        )
+    except StudioError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/compose/{node_id}/studio/export",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_studio_export(
+    project: str,
+    canvas_id: str,
+    node_id: str,
+    body: FreezoneStudioExportRequest,
+    user: dict = Depends(get_api_user),
+):
+    """剪辑工作区：用 OpenFilm Studio 渲染 film 成片，结果回写到合成节点。"""
+    _require_openfilm_studio_enabled()
+    _studio_route_scope(canvas_id, node_id)
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    try:
+        film_dir = film_dir_for_node(project_dir, canvas_id, node_id)
+    except StudioError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    if not studio_film_exists(film_dir):
+        raise HTTPException(
+            404,
+            "this compose node has no Studio film yet: open its compose workspace first",
+        )
+    job_id = _new_job_id()
+    task_key = project_task_state_key(
+        "freezone_video_compose", ctx.project_id, 0, scope=job_id
+    )
+    claimed = await _mark_video_compose_node_generating(
+        _canvas_state_project_dir(ctx, project_dir),
+        canvas_id,
+        node_id,
+        task_key=task_key,
+        job_id=job_id,
+        actor=_canvas_actor_id(user),
+    )
+    if not claimed:
+        raise HTTPException(404, f"compose node not found on canvas: {node_id}")
+    try:
+        response = await _enqueue_or_start_freezone_media_job(
+            ctx=ctx,
+            username=username,
+            project=project_name,
+            project_dir=project_dir,
+            task_type="freezone_video_compose",
+            job_id=job_id,
+            payload={
+                "title": body.title,
+                "canvas_id": canvas_id,
+                "node_id": node_id,
+                "fps": body.fps,
+                "resolution": "1080p",
+                "tracks": [],
+                "studio_film_dir": str(film_dir),
+            },
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("failed to start studio export task", exc)
+        raise HTTPException(503, f"failed to start studio export task: {exc}") from exc
+    data = response.get("data") if isinstance(response, dict) else None
+    return {
+        "ok": True,
+        "status": "studio_export_started",
+        "node_id": node_id,
+        **(data if isinstance(data, dict) else {}),
+    }
 
 
 @router.post(
@@ -12179,6 +12668,7 @@ async def freezone_job_result(
         "freezone_video_compose",
         "freezone_image_reverse_prompt",
         "freezone_image_to_3gs",
+        "freezone_image_to_blockout",
         "freezone_image_vectorize",
         "freezone_image_animate_gif",
         "freezone_text_generate",
@@ -12294,6 +12784,8 @@ async def freezone_job_result(
         out = out.with_suffix(".svg" if task_type == "freezone_image_vectorize" else ".gif")
     if task_type == "freezone_image_reverse_prompt":
         out = _image_reverse_prompt_output_path(project_dir, job_id)
+    if task_type == "freezone_image_to_blockout":
+        out = _image_to_blockout_output_path(project_dir, job_id)
     if task_type == "freezone_video_erase":
         out = _video_erase_output_path(project_dir, job_id)
     if task_type == "freezone_video_upscale":
@@ -12436,6 +12928,7 @@ async def freezone_job_result(
         return {"ok": False, "info": "job result not yet on disk", "status": "unknown"}
     if task_type in {
         "freezone_image_reverse_prompt",
+        "freezone_image_to_blockout",
         "freezone_text_generate",
         "freezone_text_translate",
         "freezone_story_script",
@@ -12969,6 +13462,8 @@ def _stamp_canvas_mainline_context_project_id(payload: dict, project_id: str) ->
 
 
 def _raise_canvas_store_http(exc: Exception) -> None:
+    if isinstance(exc, canvas_store.CanvasStoryGroupLimit):
+        raise HTTPException(409, {"code": "story_group_limit", "error": str(exc)}) from exc
     if isinstance(exc, canvas_store.CanvasCorruptError):
         raise HTTPException(500, str(exc)) from exc
     if isinstance(exc, canvas_store.CanvasBaseRevisionRequired):
@@ -13561,6 +14056,7 @@ _NODE_DESIGN_SIZES: dict[str, tuple[float, float]] = {
     "videoStoryNode": (720.0, 360.0),
     "pano360ViewerNode": (900.0, 480.0),
     "threeDWorldNode": (480.0, 360.0),
+    "previzNode": (340.0, 210.0),
 }
 _DEFAULT_NODE_DESIGN_SIZE = (320.0, 200.0)
 
@@ -15103,7 +15599,7 @@ async def _resolve_workflow_draft_external_inputs(
     compiled: dict, *, state_dir: Path, canvas_id: str, project_id: str,
     expected: dict | None = None, require_verified: bool = False,
 ) -> dict:
-    from novelvideo.freezone.workflow_external_inputs import resolve_external_image_inputs
+    from novelvideo.freezone.workflow_external_inputs import resolve_external_inputs
 
     plan = compiled.get("plan") or {}
     if not plan.get("external_inputs"):
@@ -15112,11 +15608,83 @@ async def _resolve_workflow_draft_external_inputs(
         raise HTTPException(409, "workflow external input binding is missing")
     canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
     try:
-        return resolve_external_image_inputs(
+        return resolve_external_inputs(
             plan, canvas, project_id=project_id, canvas_id=canvas_id, expected=expected,
         )
     except ValueError as exc:
+        raise HTTPException(409, {
+            "code": "workflow_external_input_unavailable",
+            "error": str(exc),
+            # Agents have dropped the user's named source and claimed it was used.
+            "message": (
+                "Do not drop this input silently. Fix external_inputs as the error says "
+                "and prepare again; if it still cannot be used, tell the user which "
+                "referenced media was not used and why."
+            ),
+        }) from exc
+
+
+async def _validate_workflow_draft_story_targets(
+    compiled: dict, *, state_dir: Path, canvas_id: str
+) -> bool:
+    from novelvideo.freezone.workflow_story_targets import (
+        validate_story_asset_targets,
+        validate_story_frame_targets,
+    )
+
+    plan = compiled.get("plan") or {}
+    context = plan.get("source_context")
+    if not isinstance(context, dict) or not ({"story_id", "targets", "asset_targets"} & context.keys()):
+        return False
+    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+    try:
+        validate_story_frame_targets(plan, canvas)
+        validate_story_asset_targets(plan, canvas)
+    except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    return bool(context.get("targets") or context.get("asset_targets"))
+
+
+async def _prepare_workflow_draft_story_references(
+    compiled: dict, *, state_dir: Path, canvas_id: str, user: dict,
+    approved: bool = False, expected_warnings: list | None = None,
+) -> None:
+    """Freeze automatically selected story references into the reviewed plan."""
+    from novelvideo.freezone.agent_workflows.catalog import validate_agent_workflow_plan
+    from novelvideo.freezone.workflow_story_targets import prepare_story_frame_references
+
+    plan = compiled.get("plan") or {}
+    context = plan.get("source_context")
+    if not isinstance(context, dict) or not context.get("targets"):
+        return
+    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+    warnings: list[dict[str, Any]] = []
+    try:
+        updated = prepare_story_frame_references(plan, canvas, warnings=warnings)
+    except ValueError as exc:
+        raise HTTPException(409, {"code": "story_frame_reference_unavailable", "error": str(exc)}) from exc
+    if approved and expected_warnings is not None and warnings != expected_warnings:
+        raise HTTPException(409, {
+            "code": "story_frame_references_changed",
+            "error": "Story reference warnings changed; prepare and review a new draft.",
+        })
+    compiled["story_reference_warnings"] = warnings
+    if updated == plan:
+        return
+    if approved:
+        raise HTTPException(409, {
+            "code": "story_frame_references_changed",
+            "error": "Story references changed; prepare and review a new draft.",
+        })
+    validated = await asyncio.to_thread(
+        validate_agent_workflow_plan, updated,
+        username=str(user.get("username") or ""),
+        allow_template_reroute=False,
+        mode_confirmations=compiled.get("mode_confirmations"),
+    )
+    if not validated.get("ok"):
+        raise HTTPException(400, validated)
+    compiled.update(validated)
 
 
 @router.post(
@@ -15271,12 +15839,27 @@ async def create_canvas_workflow_draft(
         )
     prepared = await _prepare_workflow_source(body, user)
     validated = prepared["compiled"]
+    has_story_targets = await _validate_workflow_draft_story_targets(
+        validated, state_dir=state_dir, canvas_id=canvas_id,
+    )
+    await _prepare_workflow_draft_story_references(
+        validated, state_dir=state_dir, canvas_id=canvas_id, user=user,
+    )
+    if has_story_targets and "run_after_create" not in body:
+        raise HTTPException(400, {
+            "ok": False,
+            "code": "story_execution_policy_required",
+            "error": "Story-bound workflows require an explicit run_after_create boolean.",
+            "retryable": True,
+            "next_action": "prepare_with_explicit_execution_policy",
+        })
     validated["external_inputs_verified"] = await _resolve_workflow_draft_external_inputs(
         validated, state_dir=state_dir, canvas_id=canvas_id, project_id=ctx.project_id,
     )
     validated["preflight"] = await _check_workflow_runtime(
         validated, project=project, user=user
     )
+    validated["preflight"].setdefault("warnings", []).extend(validated.get("story_reference_warnings") or [])
     plan = validated.get("plan") if isinstance(validated.get("plan"), dict) else {}
     logger.info(
         "workflow_draft.create.validated project_id=%s canvas_id=%s operation_id=%s "
@@ -15516,12 +16099,19 @@ async def patch_canvas_workflow_draft(
     else:
         prepared = await _prepare_workflow_source(body, user)
     validated = prepared["compiled"]
+    await _validate_workflow_draft_story_targets(
+        validated, state_dir=state_dir, canvas_id=canvas_id,
+    )
+    await _prepare_workflow_draft_story_references(
+        validated, state_dir=state_dir, canvas_id=canvas_id, user=user,
+    )
     validated["external_inputs_verified"] = await _resolve_workflow_draft_external_inputs(
         validated, state_dir=state_dir, canvas_id=canvas_id, project_id=ctx.project_id,
     )
     validated["preflight"] = await _check_workflow_runtime(
         validated, project=project, user=user
     )
+    validated["preflight"].setdefault("warnings", []).extend(validated.get("story_reference_warnings") or [])
     if isinstance(prepared["intent"].get("plan"), dict):
         prepared["intent"]["plan"] = deepcopy(validated["plan"])
     try:
@@ -16073,6 +16663,13 @@ async def claim_canvas_workflow_draft(
         }
     # Revalidate old drafts and catalog revocations before admitting a task.
     validated = await _validate_workflow_draft_submission(current_draft, user)
+    await _validate_workflow_draft_story_targets(
+        validated, state_dir=state_dir, canvas_id=canvas_id,
+    )
+    await _prepare_workflow_draft_story_references(
+        validated, state_dir=state_dir, canvas_id=canvas_id, user=user, approved=True,
+        expected_warnings=current_draft["compiled"].get("story_reference_warnings"),
+    )
     await _resolve_workflow_draft_external_inputs(
         current_draft["compiled"], state_dir=state_dir, canvas_id=canvas_id,
         project_id=ctx.project_id,

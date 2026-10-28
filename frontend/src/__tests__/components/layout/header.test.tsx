@@ -7,10 +7,13 @@ import { cloneElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Header } from "@/components/layout/header";
+import { featureEntrySeenKey } from "@/lib/feature-entry-state";
 
 const runtimeState = vi.hoisted(() => ({ authRequired: true, isCe: false, phoneVisible: false }));
 const authState = vi.hoisted(() => ({ username: "local", logout: vi.fn() }));
 const resetUserSessionStateMock = vi.hoisted(() => vi.fn());
+const settingsAccount = vi.hoisted(() => ({ current: undefined as Record<string, unknown> | undefined }));
+const settingsPage = vi.hoisted(() => ({ current: undefined as string | undefined }));
 const securityState = vi.hoisted(() => ({
   data: undefined as
     | undefined
@@ -40,8 +43,11 @@ vi.mock("@/lib/queries/model-gateway", () => ({
 }));
 
 vi.mock("@/components/settings/settings-dialog", () => ({
-  SettingsDialog: ({ open }: { open: boolean }) =>
-    open ? <div role="dialog">Settings dialog</div> : null,
+  SettingsDialog: ({ open, account, initialPage }: { open: boolean; account: Record<string, unknown>; initialPage?: string }) => {
+    settingsAccount.current = account;
+    settingsPage.current = initialPage;
+    return open ? <div role="dialog">Settings dialog</div> : null;
+  },
 }));
 
 vi.mock("@/lib/queries/auth", () => ({
@@ -74,7 +80,7 @@ vi.mock("react-i18next", () => ({
     t: (key: string) =>
       ({
         "app.logoHomeTooltip": "Home",
-        "header.settings": "Settings",
+        "header.settings": "Feature Settings",
         "header.account.open": "Open account",
         "header.notifications": "Announcement Center",
         "header.account.changeAvatar": "Change avatar",
@@ -129,20 +135,6 @@ vi.mock("@/components/ui/tooltip", () => ({
   TooltipContent: ({ children }: React.PropsWithChildren) => <>{children}</>,
 }));
 
-vi.mock("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  DropdownMenuTrigger: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  DropdownMenuContent: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  DropdownMenuGroup: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  DropdownMenuLabel: ({ children }: React.PropsWithChildren) => <div>{children}</div>,
-  DropdownMenuSeparator: () => <hr />,
-  DropdownMenuItem: ({ children, ...props }: React.ComponentProps<"button">) => (
-    <button type="button" {...props}>
-      {children}
-    </button>
-  ),
-}));
-
 function renderHeader() {
   return render(
     <QueryClientProvider client={new QueryClient()}>
@@ -153,6 +145,7 @@ function renderHeader() {
 
 describe("Header runtime gating", () => {
   beforeEach(() => {
+    localStorage.clear();
     runtimeState.authRequired = true;
     runtimeState.isCe = false;
     runtimeState.phoneVisible = false;
@@ -162,6 +155,37 @@ describe("Header runtime gating", () => {
     brandingState.enabled = null;
     brandingState.data = undefined;
     securityState.data = undefined;
+  });
+
+  it("keeps the Piko reminder on hover, then dismisses and persists it on entry click", async () => {
+    const user = userEvent.setup();
+    const view = renderHeader();
+    const entry = screen.getByRole("button", { name: "Piko Piko" });
+    const dot = () => entry.querySelector('[data-slot="notification-dot"]');
+    expect(dot()).not.toBeNull();
+
+    await user.hover(entry);
+    expect(await screen.findByText("New")).toBeInTheDocument();
+    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+    expect(dot()).not.toBeNull();
+
+    await user.click(entry);
+    expect(dot()).toBeNull();
+    expect(localStorage.getItem(featureEntrySeenKey("piko-hub-v1", "local"))).toBe("seen");
+
+    view.unmount();
+    renderHeader();
+    expect(screen.getByRole("button", { name: "Piko Piko" }).querySelector('[data-slot="notification-dot"]')).toBeNull();
+  });
+
+  it.each(["{Enter}", " ", "{ArrowDown}"])("dismisses the Piko reminder on keyboard activation (%s)", async (key) => {
+    const user = userEvent.setup();
+    renderHeader();
+    const entry = screen.getByRole("button", { name: "Piko Piko" });
+    entry.focus();
+    await user.keyboard(key);
+    expect(await screen.findByText("New")).toBeInTheDocument();
+    expect(entry.querySelector('[data-slot="notification-dot"]')).toBeNull();
   });
 
   it("reads branding only for an authenticated EE session and renders it in the home link", () => {
@@ -191,14 +215,17 @@ describe("Header runtime gating", () => {
     expect(brandingState.enabled).toBe(false);
   });
 
-  it("keeps the settings entry available in EE runtime", () => {
+  it("keeps settings available in the avatar menu in EE runtime", async () => {
     runtimeState.isCe = false;
 
     renderHeader();
 
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.queryByRole("button", { name: "Feature Settings" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Open account"));
+    fireEvent.click(await screen.findByRole("button", { name: "Feature Settings" }));
 
     expect(screen.getByRole("dialog")).toHaveTextContent("Settings dialog");
+    expect(screen.queryByText("Change avatar")).not.toBeInTheDocument();
   });
 
   it("renders logout in the account panel when runtime requires auth", async () => {
@@ -207,7 +234,8 @@ describe("Header runtime gating", () => {
     fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
 
     expect(await screen.findByText("Log out")).toBeInTheDocument();
-    expect(screen.getByText("Change password")).toBeInTheDocument();
+    expect(screen.queryByText("Change password")).not.toBeInTheDocument();
+    expect(settingsAccount.current?.onPasswordChanged).toBeTypeOf("function");
   });
 
   it("shows a masked phone and first-password action for a passwordless account", async () => {
@@ -221,7 +249,7 @@ describe("Header runtime gating", () => {
     fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
 
     expect(await screen.findByText("138****8000")).toBeInTheDocument();
-    expect(screen.getByText("Set password")).toBeInTheDocument();
+    expect(settingsAccount.current?.passwordConfigured).toBe(false);
   });
 
   it.each([false, true])("gates first phone binding on phone entry visibility (%s)", async (visible) => {
@@ -271,6 +299,17 @@ describe("Header runtime gating", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens the requested settings page from a cross-region entry", async () => {
+    renderHeader();
+
+    window.dispatchEvent(new CustomEvent("dramaclaw-open-settings-dialog", {
+      detail: { page: "freezone-skills" },
+    }));
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(settingsPage.current).toBe("freezone-skills");
+  });
+
   it("opens with the keyboard, lands focus inside the panel and closes on Escape", async () => {
     const user = userEvent.setup();
     renderHeader();
@@ -280,7 +319,7 @@ describe("Header runtime gating", () => {
     await user.keyboard("{Enter}");
 
     // 面板 portal 到 body 末尾，Tab 走不进去，所以打开时必须主动把焦点送进第一项。
-    expect(await screen.findByRole("button", { name: "Announcement Center" })).toHaveFocus();
+    expect(await screen.findByRole("button", { name: "Feature Settings" })).toHaveFocus();
 
     await user.keyboard("{Escape}");
 
@@ -346,6 +385,7 @@ describe("Header runtime gating", () => {
     });
     expect(screen.queryByText("Log out")).not.toBeInTheDocument();
     expect(screen.queryByText("Change password")).not.toBeInTheDocument();
+    expect(settingsAccount.current?.onPasswordChanged).toBeUndefined();
   });
 
   it("purges user-scoped caches after logout so the next account can't see stale data", async () => {

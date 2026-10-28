@@ -24,6 +24,7 @@ import {
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 import {
   fetchFreezoneJobResult,
   submitFreezoneOutpaint,
@@ -100,7 +101,6 @@ export const OutpaintEditorOverlay = memo(
     const { t } = useTranslation();
     const addNode = useCanvasStore((state) => state.addNode);
     const addEdge = useCanvasStore((state) => state.addEdge);
-    const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const findNodePosition = useCanvasStore((state) => state.findNodePosition);
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
 
@@ -312,7 +312,7 @@ export const OutpaintEditorOverlay = memo(
             y: base.y + i * (EXPORT_RESULT_NODE_LAYOUT_HEIGHT + RESULT_STACK_GAP),
           }),
         );
-        setSelectedNode(nodeIds[0]);
+        selectNodeExclusively(nodeIds[0]);
         onClose();
         nodeIds.forEach((id) => void runOutpaintGeneration(project, id, apiModel));
       } finally {
@@ -329,7 +329,6 @@ export const OutpaintEditorOverlay = memo(
       onClose,
       runOutpaintGeneration,
       selectedModel,
-      setSelectedNode,
     ]);
 
     return (

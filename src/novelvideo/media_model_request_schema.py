@@ -71,6 +71,74 @@ RESERVED_CATALOG_CONFIG_FIELDS = {
     "label",
 }
 
+# 媒体模型目录里的三种模型：图片、视频，以及预演台白模用的视觉 LLM。音频只在
+# CE 设置的映射里当 mediaType 用（TTS/音乐预设），不进目录。
+MEDIA_MODEL_CATALOG_TYPES: tuple[str, ...] = ("image", "video", "blockout")
+MEDIA_MODEL_REQUEST_ENDPOINTS: dict[str, str] = {
+    "image": "images/generations",
+    "video": "video/generations",
+    "blockout": "chat/completions",
+}
+_MEDIA_REQUEST_ENDPOINTS = frozenset(
+    {*MEDIA_MODEL_REQUEST_ENDPOINTS.values(), "audio/speech"}
+)
+# 视频/图片条目各自不能带的能力字段；白模条目一个都不能带。
+_IMAGE_INCOMPATIBLE_FIELDS = frozenset(
+    {
+        "minDuration",
+        "maxDuration",
+        "supportedModes",
+        "referenceVideoMax",
+        "referenceAudioMax",
+        "referenceFileMax",
+        "referenceLinkMax",
+        "referenceFileTypes",
+        "referenceAudioMinSeconds",
+        "referenceAudioMaxSeconds",
+        "referenceAudioTotalMinSeconds",
+        "referenceAudioTotalMaxSeconds",
+        "referenceVideoMinSeconds",
+        "referenceVideoMaxSeconds",
+        "referenceVideoTotalMinSeconds",
+        "referenceVideoTotalMaxSeconds",
+        "humanReview",
+        "supportsGenerateAudio",
+        "sceneOptimizeOptions",
+        "defaultSceneOptimize",
+    }
+)
+_VIDEO_INCOMPATIBLE_FIELDS = frozenset({"qualityOptions", "minPixels"})
+_BLOCKOUT_INCOMPATIBLE_FIELDS = (
+    _IMAGE_INCOMPATIBLE_FIELDS
+    | _VIDEO_INCOMPATIBLE_FIELDS
+    | {"resolutionOptions", "ratioOptions", "referenceImageMax"}
+)
+_INCOMPATIBLE_FIELDS_BY_TYPE: dict[str, frozenset[str]] = {
+    "image": _IMAGE_INCOMPATIBLE_FIELDS,
+    "video": _VIDEO_INCOMPATIBLE_FIELDS,
+    "blockout": _BLOCKOUT_INCOMPATIBLE_FIELDS,
+}
+
+
+def media_model_request_endpoint(media_type: str) -> str:
+    """The NewAPI endpoint a catalog entry of this media type must declare."""
+    try:
+        return MEDIA_MODEL_REQUEST_ENDPOINTS[media_type]
+    except KeyError:
+        raise MediaModelSchemaError(
+            "media type must be " + " or ".join(MEDIA_MODEL_CATALOG_TYPES)
+        ) from None
+
+
+def default_media_model_request(media_type: str) -> dict[str, Any]:
+    """The request schema a catalog entry gets when its config declares none."""
+    return {"endpoint": media_model_request_endpoint(media_type), "parameters": []}
+
+
+def media_model_api_model(media_type: str, model: str) -> str:
+    """What the picker sends as ``model``: video keeps its legacy ``newapi_`` prefix."""
+    return f"newapi_{model}" if media_type == "video" else model
+
 
 class MediaModelSchemaError(ValueError):
     pass
@@ -333,7 +401,7 @@ def validate_media_request_schema(schema: object) -> dict[str, Any]:
     if not isinstance(schema, dict):
         raise MediaModelSchemaError("request schema must be an object")
     endpoint = str(schema.get("endpoint") or "").strip()
-    if endpoint not in {"images/generations", "video/generations", "audio/speech"}:
+    if endpoint not in _MEDIA_REQUEST_ENDPOINTS:
         raise MediaModelSchemaError("unsupported NewAPI media endpoint")
     parameters = schema.get("parameters") or []
     if not isinstance(parameters, list) or len(parameters) > 32:
@@ -418,8 +486,7 @@ def validate_media_model_catalog_config(
 ) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise MediaModelSchemaError("media model config must be an object")
-    if media_type not in {"image", "video"}:
-        raise MediaModelSchemaError("media type must be image or video")
+    expected_endpoint = media_model_request_endpoint(media_type)
     reserved_fields = sorted(RESERVED_CATALOG_CONFIG_FIELDS.intersection(config))
     if reserved_fields:
         raise MediaModelSchemaError(
@@ -432,40 +499,12 @@ def validate_media_model_catalog_config(
     except ValueError as exc:
         raise MediaModelSchemaError(str(exc)) from exc
     request_schema = validate_media_request_schema(config.get("request"))
-    expected_endpoint = (
-        "images/generations" if media_type == "image" else "video/generations"
-    )
     if request_schema and request_schema.get("endpoint") != expected_endpoint:
         raise MediaModelSchemaError(
             f"{media_type} model request endpoint must be {expected_endpoint}"
         )
 
-    incompatible_fields = (
-        {
-            "minDuration",
-            "maxDuration",
-            "supportedModes",
-            "referenceVideoMax",
-            "referenceAudioMax",
-            "referenceFileMax",
-            "referenceLinkMax",
-            "referenceFileTypes",
-            "referenceAudioMinSeconds",
-            "referenceAudioMaxSeconds",
-            "referenceAudioTotalMinSeconds",
-            "referenceAudioTotalMaxSeconds",
-            "referenceVideoMinSeconds",
-            "referenceVideoMaxSeconds",
-            "referenceVideoTotalMinSeconds",
-            "referenceVideoTotalMaxSeconds",
-            "humanReview",
-            "supportsGenerateAudio",
-            "sceneOptimizeOptions",
-            "defaultSceneOptimize",
-        }
-        if media_type == "image"
-        else {"qualityOptions", "minPixels"}
-    )
+    incompatible_fields = _INCOMPATIBLE_FIELDS_BY_TYPE[media_type]
     configured_incompatible = sorted(
         field for field in incompatible_fields if config.get(field) is not None
     )

@@ -383,7 +383,10 @@ async function restoreCurrentMainlinePresetCanvas(
         localEdges,
       ),
   );
-  if (!appliedBySyncRuntime) {
+  if (appliedBySyncRuntime === false) {
+    return false;
+  }
+  if (appliedBySyncRuntime === null) {
     const setCanvasData = useCanvasStore.getState().setCanvasData;
     const merged = mergeRestoredCanvasWithLocalUserWork(
       (remote.nodes ?? []) as CanvasNode[],
@@ -593,7 +596,6 @@ function resolveWorkbenchTarget(
 
 export const BeatContextNode = memo(
   ({ id, data, width, height, selected }: BeatContextNodeProps) => {
-    const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const queryClient = useQueryClient();
     const { t } = useTranslation();
@@ -1112,7 +1114,6 @@ export const BeatContextNode = memo(
       <div
         className="group relative h-full w-full overflow-visible"
         style={{ width: resolvedWidth, height: resolvedHeight }}
-        onClick={() => setSelectedNode(id)}
       >
         <Handle
           type="source"
