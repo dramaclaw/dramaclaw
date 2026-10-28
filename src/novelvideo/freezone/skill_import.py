@@ -4,7 +4,6 @@ Sources are data only: never extracted or executed. Records are requester scoped
 """
 from __future__ import annotations
 
-import fcntl
 import base64
 import binascii
 import hashlib
@@ -19,6 +18,8 @@ import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+import portalocker
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_TEXT_BYTES = 128 * 1024
@@ -95,7 +96,7 @@ def save_record(root: Path, username: str, record: dict) -> None:
     path = record_path(root, username, record['id'])
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.with_suffix('.write-lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        portalocker.lock(lock, portalocker.LOCK_EX)
         if path.exists():
             record['task_id'] = json.loads(path.read_text()).get('task_id', '')
         _write_record(path, record)
@@ -110,7 +111,7 @@ def _write_record(path: Path, record: dict) -> None:
 def bind_task(root: Path, username: str, import_id: str, task_id: str) -> dict:
     path = record_path(root, username, import_id)
     with path.with_suffix('.write-lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        portalocker.lock(lock, portalocker.LOCK_EX)
         record = json.loads(path.read_text())
         record['task_id'] = task_id
         _write_record(path, record)
