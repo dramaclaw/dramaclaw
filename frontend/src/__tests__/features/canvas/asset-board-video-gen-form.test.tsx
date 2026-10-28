@@ -43,6 +43,7 @@ vi.mock('@/api/ops', async (importOriginal) => ({
       providerId: 'huimeng',
       apiModel: 'test_video_api',
       label: '测试视频模型',
+      humanReview: true,
     },
   ]),
   fetchFreezoneVideoCameraTemplates: vi.fn(async () => []),
@@ -118,7 +119,7 @@ describe('故事板详情 · 视频生成表单', () => {
   });
 
   it('有提示词 → 点提交走真实提交链路（submitFreezoneVideoGen 收到该 prompt）', async () => {
-    seed([emptyVideoNode({ prompt: '雪夜里发光的小猫在屋顶漫步' })]);
+    seed([emptyVideoNode({ prompt: '雪夜里发光的小猫在屋顶漫步', humanReview: true })]);
     openDetail('视频节点 1');
 
     const submit = within(detailPanel()).getByRole('button', { name: '提交' });
@@ -131,6 +132,8 @@ describe('故事板详情 · 视频生成表单', () => {
     expect(payload.prompt).toBe('雪夜里发光的小猫在屋顶漫步');
     expect(payload.nodeId).toBe('vid-1');
     expect(payload.genMode).toBe('textToVideo');
+    expect(payload.humanReview).toBe(false);
+    expect(within(detailPanel()).queryByRole('switch')).not.toBeInTheDocument();
   });
 
   it('已有产物的 video 节点仍挂表单，且不再重复渲染只读提示词块', () => {

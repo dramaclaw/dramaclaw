@@ -448,6 +448,7 @@ export interface FreezoneVideoGenPayload extends FreezoneNodeContext {
    * Real-person material review. Set `true` when the input contains real
    * human faces so the backend routes the job through the human-review path
    * (may take longer, approval not guaranteed). Omitted/false otherwise.
+   * Text-to-video ignores this value and always submits false.
    */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -482,7 +483,8 @@ export async function submitFreezoneVideoGen(
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
         gen_mode: payload.genMode,
-        human_review: payload.humanReview ?? false,
+        // Text-to-video must never inherit real-person review from old node data.
+        human_review: false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
       },

@@ -981,7 +981,7 @@ async def test_freezone_video_generation_enqueues_feature_billing(
         resolution="1080p",
         duration_seconds=8,
         generate_audio=True,
-        human_review=False,
+        human_review=True,
         scene_optimize=None,
         backend="newapi_seedance-1.0-pro-fast",
         gen_mode="image_reference",
@@ -1014,6 +1014,8 @@ async def test_freezone_video_generation_enqueues_feature_billing(
         "input_video_duration_seconds": 0.0,
     }
     assert captured["payload"]["gen_mode"] == "image_reference"
+    # No visual references: a stale client flag must not reach the task runner.
+    assert captured["payload"]["human_review"] is False
     assert captured["payload"]["requested_gen_mode"] == "imageToVideo"
     assert captured["payload"]["generate_audio"] is True
 
