@@ -1679,10 +1679,10 @@ export const NodeActionToolbar = memo(
               <span
                 key="recipe-compile-fallback"
                 className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-3 py-1.5 text-sm text-amber-100"
-                title="Recipe 模型编译超时，本次已使用稳定降级提示词继续生成"
+                title={t("canvas.nodeToolbar.recipeFallbackTitle")}
               >
                 <AlertTriangle className="h-3.5 w-3.5" />
-                Recipe 已降级编译
+                {t("canvas.nodeToolbar.recipeFallbackLabel")}
               </span>
             )}
             {isPresetLocked && workbenchTarget && (
@@ -2700,7 +2700,7 @@ export const NodeActionToolbar = memo(
                         <UiChipButton
                           key="group-workflow-running"
                           className={TOOLBAR_TEXT_BUTTON_CLASS}
-                          title="工作流正在运行"
+                          title={t("canvas.multiSelect.workflowRunning")}
                           disabled
                           onClick={(event) => event.stopPropagation()}
                         >
@@ -2709,12 +2709,12 @@ export const NodeActionToolbar = memo(
                           ) : (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
                           )}
-                          {groupWorkflowStopRequested ? "已停止后续" : "运行中"}
+                          {groupWorkflowStopRequested ? t("canvas.multiSelect.workflowStoppedNext") : t("canvas.multiSelect.workflowRunningShort")}
                         </UiChipButton>
                         <UiChipButton
                           key="group-stop-workflow"
                           className={TOOLBAR_TEXT_BUTTON_CLASS}
-                          title="停止启动后续工作流节点"
+                          title={t("canvas.multiSelect.workflowStopNextTitle")}
                           disabled={groupWorkflowStopRequested}
                           onClick={(event) => {
                             event.stopPropagation();
@@ -2727,7 +2727,7 @@ export const NodeActionToolbar = memo(
                           ) : (
                             <CirclePause className="h-3.5 w-3.5" />
                           )}
-                          {groupWorkflowStopRequested ? "等待当前节点" : "停止后续"}
+                          {groupWorkflowStopRequested ? t("canvas.multiSelect.workflowWaitingCurrent") : t("canvas.multiSelect.workflowStopNext")}
                         </UiChipButton>
                       </>
                     ) : (
@@ -2737,8 +2737,8 @@ export const NodeActionToolbar = memo(
                           className={TOOLBAR_TEXT_BUTTON_CLASS}
                           title={
                             groupWorkflowState.status === "completed"
-                              ? "工作流已完成"
-                              : "运行工作流"
+                              ? t("canvas.multiSelect.workflowCompleted")
+                              : t("canvas.multiSelect.workflowRun")
                           }
                           disabled={isRunningGroupWorkflow || !groupWorkflowState.canContinue}
                           onClick={(event) => {
@@ -2752,13 +2752,13 @@ export const NodeActionToolbar = memo(
                           ) : (
                             <Workflow className="h-3.5 w-3.5" />
                           )}
-                          {isRunningGroupWorkflow ? "运行中" : groupWorkflowState.primaryLabel}
+                          {isRunningGroupWorkflow ? t("canvas.multiSelect.workflowRunningShort") : groupWorkflowState.primaryLabel}
                         </UiChipButton>
                         {groupWorkflowState.canRegenerate && (
                           <UiChipButton
                             key="group-rerun-workflow"
                             className={TOOLBAR_TEXT_BUTTON_CLASS}
-                            title="重新运行全部工作流节点"
+                            title={t("canvas.multiSelect.workflowRerunAllTitle")}
                             disabled={isRunningGroupWorkflow}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -2767,7 +2767,7 @@ export const NodeActionToolbar = memo(
                             }}
                           >
                             <RefreshCw className="h-3.5 w-3.5" />
-                            重新运行全部
+                            {t("canvas.multiSelect.workflowRerunAll")}
                           </UiChipButton>
                         )}
                       </>
@@ -2857,21 +2857,21 @@ export const NodeActionToolbar = memo(
                         onSelect={() => arrangeGroupChildren(nodeId, 'grid')}
                       >
                         <Workflow className="h-4 w-4 text-text-muted" />
-                        宫格排列
+                        {t("canvas.multiSelect.arrangeGrid")}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className={TOOLBAR_MENU_ITEM_CLASS}
                         onSelect={() => arrangeGroupChildren(nodeId, 'horizontal')}
                       >
                         <StretchHorizontal className="h-4 w-4 text-text-muted" />
-                        水平排列
+                        {t("canvas.multiSelect.arrangeHorizontal")}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className={TOOLBAR_MENU_ITEM_CLASS}
                         onSelect={() => arrangeGroupChildren(nodeId, 'vertical')}
                       >
                         <StretchVertical className="h-4 w-4 text-text-muted" />
-                        垂直排列
+                        {t("canvas.multiSelect.arrangeVertical")}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>

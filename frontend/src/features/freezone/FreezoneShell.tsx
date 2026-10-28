@@ -1784,7 +1784,7 @@ export function FreezoneShell({
         canvasId,
         agentId,
         status: "running",
-        labels: ["命令校验"],
+        labels: [t("freezone.canvasCommand.commandValidation")],
         receivedAt: eventReceivedAt,
         surfaceOrder: eventReceivedAt,
         externalMcpCommand: isExternalMcpCommand,
@@ -1818,7 +1818,7 @@ export function FreezoneShell({
           canvasId,
           agentId,
           status: "failed",
-          labels: ["命令校验"],
+          labels: [t("freezone.canvasCommand.commandValidation")],
           errors,
           receivedAt: eventReceivedAt + 1,
           surfaceOrder: eventReceivedAt + 1,
@@ -1915,7 +1915,7 @@ export function FreezoneShell({
           canvasId,
           agentId,
           status: "failed",
-          labels: ["命令校验"],
+          labels: [t("freezone.canvasCommand.commandValidation")],
           errors,
           receivedAt: eventReceivedAt + 1,
           surfaceOrder: eventReceivedAt + 1,
@@ -1976,7 +1976,7 @@ export function FreezoneShell({
         canvasId,
         agentId,
         status: "done",
-        labels: ["命令校验"],
+        labels: [t("freezone.canvasCommand.commandValidation")],
         receivedAt: eventReceivedAt + 1,
         surfaceOrder: eventReceivedAt + 1,
         externalMcpCommand: isExternalMcpCommand,
@@ -2181,7 +2181,7 @@ export function FreezoneShell({
             canvasId,
             agentId,
             status: "failed",
-            labels: ["画布上下文"],
+            labels: [t("freezone.canvasCommand.canvasContext")],
             errors,
             receivedAt: Date.now(),
           });
@@ -2855,8 +2855,8 @@ function FreezoneChatDock({
           variant="ghost"
           size="icon-sm"
           onClick={handleHeaderAddAgent}
-          aria-label="新建 Agent"
-          title="新建 Agent"
+          aria-label={t("freezone.agent.create")}
+          title={t("freezone.agent.create")}
           className="text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
         >
           <Plus className="size-4" />
@@ -2869,8 +2869,8 @@ function FreezoneChatDock({
           size="icon-sm"
           onClick={() => setAgentHistoryOpen((value) => !value)}
           aria-pressed={agentHistoryOpen}
-          aria-label={agentHistoryOpen ? "收起历史 Agent" : "打开历史 Agent"}
-          title={agentHistoryOpen ? "收起历史 Agent" : "打开历史 Agent"}
+          aria-label={agentHistoryOpen ? t("freezone.agent.collapseHistory") : t("freezone.agent.expandHistory")}
+          title={agentHistoryOpen ? t("freezone.agent.collapseHistory") : t("freezone.agent.expandHistory")}
           className={cn(
             "text-muted-foreground hover:bg-white/[0.08] hover:text-foreground",
             agentHistoryOpen && "bg-white/[0.08] text-foreground",
@@ -3192,8 +3192,8 @@ function FreezoneChatDock({
           className="group absolute inset-y-0 left-0 z-30 flex w-3 cursor-col-resize touch-none items-stretch justify-start"
           role="separator"
           aria-orientation="vertical"
-          aria-label="调整聊天宽度"
-          title="调整聊天宽度"
+          aria-label={t("freezone.chat.resizeWidth")}
+          title={t("freezone.chat.resizeWidth")}
           onPointerDown={(event) => startPaneResize("chat", event)}
         >
           <span
@@ -3215,8 +3215,8 @@ function FreezoneChatDock({
               className="group relative z-20 flex w-2 shrink-0 cursor-col-resize touch-none items-stretch justify-center bg-white/[0.03] transition-colors hover:bg-white/[0.08]"
               role="separator"
               aria-orientation="vertical"
-              aria-label="调整历史 Agent 宽度"
-              title="调整历史 Agent 宽度"
+              aria-label={t("freezone.agent.resizeHistoryWidth")}
+              title={t("freezone.agent.resizeHistoryWidth")}
               onPointerDown={(event) => startPaneResize("history", event)}
             >
               <span
@@ -3262,6 +3262,7 @@ function FreezoneAgentHistoryPanel({
   onSelect: (agentId: string) => void;
   onAdd: () => void;
 }) {
+  const { t } = useTranslation();
   const normalizedSearch = search.trim().toLowerCase();
   const visibleAgents = agents
     .filter((agent) => {
@@ -3277,7 +3278,7 @@ function FreezoneAgentHistoryPanel({
         <input
           value={search}
           onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="搜索会话..."
+          placeholder={t("freezone.agent.searchSessions")}
           className="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
         />
       </label>
@@ -3316,7 +3317,7 @@ function FreezoneAgentHistoryPanel({
         })}
         {visibleAgents.length === 0 && (
           <div className="px-2 py-8 text-center text-xs text-zinc-500">
-            没有匹配的 Agent
+            {t("freezone.agent.noMatches")}
           </div>
         )}
       </div>
@@ -3329,7 +3330,7 @@ function FreezoneAgentHistoryPanel({
           onClick={onAdd}
         >
           <Plus className="mr-1.5 size-4" />
-          新建 Agent
+          {t("freezone.agent.create")}
         </Button>
       )}
     </div>

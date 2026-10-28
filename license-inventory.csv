@@ -367,6 +367,7 @@ frontend/public/liexiaoren/skin/modal-secondary-button.png,Elastic-2.0,2026 Supe
 frontend/public/liexiaoren/skin/modal-title.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/liexiaoren/skin/poster.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/locales/en/translation.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/public/locales/pt/translation.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/locales/vi/translation.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/locales/zh/translation.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/public/login-cinematic/final-mark.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -988,6 +989,7 @@ frontend/src/__tests__/features/canvas/history-assets-buckets.test.ts,Elastic-2.
 frontend/src/__tests__/features/canvas/history-search-keyboard.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-billing.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-editor-overlays-empty-catalog.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/image-form-i18n.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-gen-director-world-entry.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-gen-error-notification.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-gen-node-context-palette.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3636,6 +3638,7 @@ src/novelvideo/sqlite_schema.py,Elastic-2.0,2026 SuperTale contributors,REUSE.to
 src/novelvideo/sqlite_store.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/stage_asset_tasks.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/storage/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/storage/media_preflight.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/storage/media_relay.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/story_analysis.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/structured_builders.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4090,6 +4093,7 @@ tests/test_media_io_probe_concurrency.py,Elastic-2.0,2026 SuperTale contributors
 tests/test_media_model_request_schema.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_read_authorization.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_relay.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_media_storage_preflight.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_relay_multi_reference_claim.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_thumbnails.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_migrate_docker_output_script.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

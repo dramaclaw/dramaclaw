@@ -160,7 +160,7 @@ import type {
 } from "@/api/ops";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { CanvasOntologyContext } from "@/features/canvas/ontology/canvasOntology";
-import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
+import { localizeNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { useCanvasStore, type CanvasNode } from "@/stores/canvasStore";
 import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import {
@@ -646,7 +646,7 @@ function freezoneToolMeta(message: ChatMessage): string[] {
 }
 
 function normalizeMessageText(text: string): string {
-  return text.trim().replace(/\n{3,}/g, "\n\n");
+  return text.trim().replace(/\n{3}/g, "\n\n");
 }
 
 // 这两个必须是模块级常量：react-markdown 会把 components 里的函数当组件类型用，
@@ -3724,18 +3724,16 @@ function CanvasCommandApprovalCard({
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium text-foreground">
             {isExecuting
-              ? t("freezone.chat.canvasExecuting", { defaultValue: "执行中..." })
+              ? t("freezone.chat.canvasExecuting")
               : approval.requiresUserChoice
-              ? t("freezone.chat.audioApproval.chooseVoiceTitle", { defaultValue: "请选择旁白声线" })
+              ? t("freezone.chat.audioApproval.chooseVoiceTitle")
               : "待确认的画布操作"}
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {isExecuting
               ? t("freezone.chat.canvasConfirmedExecuting")
               : approval.requiresUserChoice
-              ? t("freezone.chat.audioApproval.chooseVoiceDescription", {
-                  defaultValue: "请选择自定义声线；如果暂不选择，本次将跳过旁白生成。",
-                })
+              ? t("freezone.chat.audioApproval.chooseVoiceDescription")
               : `Agent 计划执行 ${approval.commandCount} 个操作，确认后才会应用到画布。`}
           </p>
         </div>
@@ -3957,8 +3955,8 @@ function CanvasCommandApprovalCard({
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground">
               <Volume2 className="size-3" />
               {audioParam.audioKind === "music"
-                ? t("freezone.chat.audioApproval.music", { defaultValue: "音乐" })
-                : t("freezone.chat.audioApproval.narration", { defaultValue: "旁白" })}
+                ? t("freezone.chat.audioApproval.music")
+                : t("freezone.chat.audioApproval.narration")}
               {(audioParam.nodeIds?.length ?? 1) > 1 ? ` ×${audioParam.nodeIds?.length}` : ""}
             </span>
             <span className="h-4 w-px bg-white/[0.12]" />
@@ -3971,32 +3969,27 @@ function CanvasCommandApprovalCard({
                   className="inline-flex h-7 items-center rounded-full border border-white/[0.16] bg-white/[0.065] px-2.5 text-[11px] font-medium text-foreground hover:border-white/30 hover:bg-white/[0.1] disabled:opacity-60"
                 >
                   {audioParam.voiceAvailable === true
-                    ? t("freezone.chat.audioApproval.changeVoice", { defaultValue: "更换自定义声线" })
-                    : t("freezone.chat.audioApproval.chooseVoice", { defaultValue: "选择自定义声线" })}
+                    ? t("freezone.chat.audioApproval.changeVoice")
+                    : t("freezone.chat.audioApproval.chooseVoice")}
                 </button>
                 <span className="text-[10px] text-muted-foreground">
                   {audioParam.voiceAvailable === true
                     ? t("freezone.chat.audioApproval.selectedVoice", {
-                        defaultValue: "已选择：{{voice}}",
-                        voice: audioParam.voiceLabel.trim() || t(
-                          "freezone.chat.audioApproval.customVoice",
-                          { defaultValue: "自定义声线" },
-                        ),
-                      })
-                    : t("freezone.chat.audioApproval.noVoiceSkip", {
-                        defaultValue: "未选择，本次将跳过旁白生成",
-                      })}
+                                            voice: audioParam.voiceLabel.trim() || t(
+                                              "freezone.chat.audioApproval.customVoice",
+                                            ),
+                                          })
+                    : t("freezone.chat.audioApproval.noVoiceSkip")}
                 </span>
               </>
             ) : (
               <span className="text-[10px] text-muted-foreground">
                 {t("freezone.chat.audioApproval.musicSummary", {
-                  defaultValue: "{{seconds}} 秒 · {{mode}}",
-                  seconds: audioParam.musicLengthSec,
-                  mode: audioParam.forceInstrumental
-                    ? t("freezone.chat.audioApproval.instrumental", { defaultValue: "纯音乐" })
-                    : t("freezone.chat.audioApproval.vocalsAllowed", { defaultValue: "允许人声" }),
-                })}
+                                  seconds: audioParam.musicLengthSec,
+                                  mode: audioParam.forceInstrumental
+                                    ? t("freezone.chat.audioApproval.instrumental")
+                                    : t("freezone.chat.audioApproval.vocalsAllowed"),
+                                })}
               </span>
             )}
           </div>
@@ -4015,10 +4008,10 @@ function CanvasCommandApprovalCard({
           onClick={() => onApply(amendedApproval)}
         >
           {isExecuting
-            ? t("freezone.chat.canvasExecuting", { defaultValue: "执行中..." })
+            ? t("freezone.chat.canvasExecuting")
             : approval.requiresUserChoice
-              ? t("freezone.chat.audioApproval.continue", { defaultValue: "使用所选声线继续" })
-              : t("freezone.chat.canvasConfirmExecution", { defaultValue: "确认执行" })}
+              ? t("freezone.chat.audioApproval.continue")
+              : t("freezone.chat.canvasConfirmExecution")}
         </Button>
       </div>
       {voicePickerAudioParams && (
@@ -4107,11 +4100,11 @@ function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback, t: T
   if (firstFailedStep?.label === "已取消" || canvasCommandFeedbackIsUserCancelled(feedback)) return "画布操作已取消";
   if (canvasCommandFeedbackHasPending(feedback)) {
     if (canvasCommandFeedbackBackgroundRunning(feedback)) {
-      return t("freezone.chat.backgroundGenerationRunningLabel", { defaultValue: "后台生成中" });
+      return t("freezone.chat.backgroundGenerationRunningLabel");
     }
     return canvasCommandFeedbackReconciliationPending(feedback)
-      ? t("freezone.chat.workflowReconciliationPendingLabel", { defaultValue: "对账中" })
-      : t("freezone.chat.workflowOutputSyncPendingLabel", { defaultValue: "产物待同步" });
+      ? t("freezone.chat.workflowReconciliationPendingLabel")
+      : t("freezone.chat.workflowOutputSyncPendingLabel");
   }
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成图片")) return "生成图片失败";
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成视频")) return "生成视频失败";
@@ -4172,26 +4165,16 @@ function CanvasCommandFeedbackCard({
   const compactTitle = canvasCommandFeedbackCompactTitle(feedback, t);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
   const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
-    ? t("freezone.chat.canvasTimeoutCancelled", {
-        defaultValue: "画布操作因等待超时已取消，没有应用到画布。",
-      })
+    ? t("freezone.chat.canvasTimeoutCancelled")
     : canvasCommandFeedbackIsUserCancelled(feedback)
-      ? t("freezone.chat.canvasManuallyCancelled", {
-          defaultValue: "画布操作已手动取消，没有应用到画布。",
-        })
+      ? t("freezone.chat.canvasManuallyCancelled")
       : null;
   const userFailureMessage = pending
     ? canvasCommandFeedbackBackgroundRunning(feedback)
-      ? t("freezone.chat.backgroundGenerationRunningMessage", {
-          defaultValue: "任务已提交，正在后台生成。完成或失败后会自动更新这里的状态。",
-        })
+      ? t("freezone.chat.backgroundGenerationRunningMessage")
       : canvasCommandFeedbackReconciliationPending(feedback)
-      ? t("freezone.chat.workflowReconciliationPendingMessage", {
-          defaultValue: "画布产物已生成，服务端仍在核对任务产物；请稍后检查运行状态，暂勿重复生成。",
-        })
-      : t("freezone.chat.workflowOutputSyncPendingMessage", {
-          defaultValue: "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。",
-        })
+      ? t("freezone.chat.workflowReconciliationPendingMessage")
+      : t("freezone.chat.workflowOutputSyncPendingMessage")
     : failed
     ? cancellationMessage ?? canvasCommandUserMessageFromResult(
         feedback.errors,
@@ -10209,9 +10192,9 @@ async function writeClipboardText(text: string): Promise<boolean> {
   }
 }
 
-function getCanvasNodeLabel(node: CanvasNode): string {
+function getCanvasNodeLabel(node: CanvasNode, t: TFunction): string {
   if (!node.type) return node.id;
-  return resolveNodeDisplayName(node.type as CanvasNodeType, node.data);
+  return localizeNodeDisplayName(node.type as CanvasNodeType, node.data, t);
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -10307,10 +10290,10 @@ function composeDraftPreviewUrl(data: Record<string, unknown>): string | null {
   return null;
 }
 
-function canvasNodeToReferencePreview(node: CanvasNode): CanvasNodeReferencePreview {
+function canvasNodeToReferencePreview(node: CanvasNode, t: TFunction): CanvasNodeReferencePreview {
   return {
     nodeId: node.id,
-    label: getCanvasNodeLabel(node),
+    label: getCanvasNodeLabel(node, t),
     nodeType: node.type ?? null,
     mediaType: canvasReferenceMediaType(node),
     sourceUrl: canvasReferenceSourceUrl(node),
@@ -10444,6 +10427,7 @@ function CanvasNodeReferenceThumb({
   node: CanvasNodeReferencePreview;
   onRemove?: () => void;
 }) {
+  const { t } = useTranslation();
   const thumbRef = useRef<HTMLDivElement | null>(null);
   const [previewPosition, setPreviewPosition] = useState<{ left: number; top: number } | null>(null);
   const mediaSrc = canvasReferenceResolvedUrl(node.sourceUrl);
@@ -10509,7 +10493,7 @@ function CanvasNodeReferenceThumb({
       <button
         type="button"
         className="absolute right-0.5 top-0.5 z-20 flex size-4 items-center justify-center rounded-full bg-black/70 text-white/75 opacity-0 shadow-sm backdrop-blur transition hover:bg-black/85 hover:text-white group-hover:opacity-100 group-focus-within:opacity-100"
-        aria-label="移除画布引用"
+        aria-label={t("freezone.chat.removeReference")}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -11289,20 +11273,20 @@ const CANVAS_COMMAND_APPROVAL_TIMEOUT_MS = 300_000;
 const DIRECTOR_RUN_MODE_OPTIONS: ReadonlyArray<{
   value: DirectorRunMode;
   icon: LucideIcon;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
 }> = [
   {
     value: "manual_confirm",
     icon: ShieldAlert,
-    label: "手动模式",
-    description: "每个生成步骤执行前由你确认",
+    labelKey: "aiAssistant.directorRunMode.manualLabel",
+    descriptionKey: "aiAssistant.directorRunMode.manualDescription",
   },
   {
     value: "episode_auto",
     icon: Gauge,
-    label: "本集自动",
-    description: "二次确认后自动推进本集，失败或成片完成时停止",
+    labelKey: "aiAssistant.directorRunMode.autoLabel",
+    descriptionKey: "aiAssistant.directorRunMode.autoDescription",
   },
 ];
 
@@ -11387,20 +11371,20 @@ async function getDirectorAutoServer(project: string): Promise<DirectorAutoServe
 const CANVAS_COMMAND_EXECUTION_MODE_OPTIONS: ReadonlyArray<{
   value: CanvasCommandExecutionMode;
   icon: LucideIcon;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
 }> = [
   {
     value: "manual_confirm",
     icon: ShieldAlert,
-    label: "手动确认",
-    description: "Agent 在执行画布命令前都会请求确认",
+    labelKey: "freezone.chat.executionMode.manualLabel",
+    descriptionKey: "freezone.chat.executionMode.manualDescription",
   },
   {
     value: "auto_execute",
     icon: Wrench,
-    label: "自动生成",
-    description: "Agent 会自动执行安全命令并反馈结果",
+    labelKey: "freezone.chat.executionMode.autoLabel",
+    descriptionKey: "freezone.chat.executionMode.autoDescription",
   },
 ];
 
@@ -11621,17 +11605,11 @@ function canvasCommandResultFromWorkflowRun(
   t: TFunction,
 ): CanvasChatCommandApplyResult {
   const terminalError = run.status === "failed"
-    ? t("freezone.chat.backgroundGenerationFailed", {
-        defaultValue: "后台生成失败，请检查任务详情后重试。",
-      })
+    ? t("freezone.chat.backgroundGenerationFailed")
     : run.status === "cancelled"
-      ? t("freezone.chat.backgroundGenerationCancelled", {
-          defaultValue: "后台生成已取消。",
-        })
+      ? t("freezone.chat.backgroundGenerationCancelled")
       : run.status === "interrupted"
-        ? t("freezone.chat.backgroundGenerationInterrupted", {
-            defaultValue: "后台生成已中断，请恢复任务或重试。",
-          })
+        ? t("freezone.chat.backgroundGenerationInterrupted")
         : null;
   const commandResults = (feedback.commandResults ?? []).map((step, index): CanvasChatCommandApplyStep => {
     const action = run.actions[index];
@@ -13110,8 +13088,8 @@ export function SuperChatPanel({
   const canSend = hasSendableContent && chat.connected && !preparingSend;
   const composerWaiting = chat.busy && (!hasSendableContent || !chat.connected || preparingSend);
   const selectedFreezoneNodePreviews = useMemo(
-    () => selectedFreezoneNodes.map((node) => canvasNodeToReferencePreview(node)),
-    [selectedFreezoneNodes],
+    () => selectedFreezoneNodes.map((node) => canvasNodeToReferencePreview(node, t)),
+    [selectedFreezoneNodes, t],
   );
   const deselectFreezoneNodeReferences = useCallback((nodeIds: ReadonlySet<string>) => {
     if (!isFreezoneLayout) return;
@@ -14237,7 +14215,9 @@ export function SuperChatPanel({
       );
     }
     const receivedAt = Date.now();
-    const cancelMessage = reason === "timeout" ? "画布操作等待超时，已自动取消" : t("freezone.chat.canvasCommandsCancelled");
+    const cancelMessage = reason === "timeout"
+      ? t("freezone.chat.canvasCommandsCancelled")
+      : t("freezone.chat.canvasManuallyCancelled");
     const result: CanvasChatCommandApplyResult = {
       applied: 0,
       openedUiActions: 0,
@@ -14248,7 +14228,7 @@ export function SuperChatPanel({
           commandIndex: -1,
           type: "validate",
           status: "error",
-          label: "已取消",
+          label: t("freezone.chat.clarification.cancelled"),
           error: cancelMessage,
         },
       ],
@@ -16450,7 +16430,7 @@ export function SuperChatPanel({
             {!hasActiveComposerPrompt && showFreezoneSkillSuggestions && !showClearCommandSuggestion && !freezoneSkillMenuExplicitOpen && (
               <div className="border-b border-white/10 bg-black/20 px-3 py-2.5">
                 <div className="mb-1.5 px-0.5 text-xs text-muted-foreground/85">
-                  技能
+                  {t("freezone.chat.skillMenu.title")}
                 </div>
                 <div className="max-h-52 overflow-y-auto pr-1">
                   {visibleFreezoneSkillSuggestions.length > 0 ? (
@@ -16487,10 +16467,10 @@ export function SuperChatPanel({
                   ) : (
                     <div className="px-0.5 pb-2 pt-0.5 text-xs leading-5 text-muted-foreground/65">
                       <div className="font-normal text-muted-foreground/72">
-                        还没有可用技能
+                        {t("freezone.chat.skillMenu.unavailable")}
                       </div>
                       <div className="mt-1 max-w-[30rem] text-[11px] leading-4 text-muted-foreground/45">
-                        可以让 Agent 把当前画布总结成 Skill，也可以直接描述你的工作流，让它帮你创建专属技能。
+                        {t("freezone.chat.skillMenu.emptyHelp")}
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {FREEZONE_SKILL_EMPTY_ACTIONS.map((action) => (
@@ -16503,7 +16483,7 @@ export function SuperChatPanel({
                             }}
                             onClick={() => insertFreezoneSkillEmptyAction(action.prompt)}
                           >
-                            {action.label}
+                            {t(`freezone.chat.skillMenu.actions.${action.id}`, { defaultValue: action.label })}
                           </button>
                         ))}
                       </div>
@@ -16596,17 +16576,17 @@ export function SuperChatPanel({
             {!hasActiveComposerPrompt && isFreezoneLayout && selectedFreezoneNodes.length > 0 && (
               <div className={cn("px-4", visibleComposerAttachments.length > 0 ? "pt-2" : "pt-3")}>
                 <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
-                  <span>当前选中</span>
+                  <span>{t("freezone.chat.currentSelection")}</span>
                   <div className="flex items-center gap-2">
-                    <span>本轮会使用</span>
+                    <span>{t("freezone.chat.usedThisTurn")}</span>
                     {selectedFreezoneNodes.length > 1 && (
                       <button
                         type="button"
                         onClick={deselectAllSelectedFreezoneNodeReferences}
                         className="rounded-sm px-1.5 py-0.5 text-[11px] font-medium text-destructive transition hover:bg-destructive/10 hover:text-destructive"
-                        aria-label="取消全部画布引用"
+                        aria-label={t("freezone.chat.removeAllReferences")}
                       >
-                        全部取消
+                        {t("freezone.chat.clearReferences")}
                       </button>
                     )}
                   </div>
@@ -16688,15 +16668,15 @@ export function SuperChatPanel({
                             <>
                               <Gauge className="size-3.5" />
                               {directorRunState.confirmationStage === "confirmed"
-                                ? "本集自动 · 运行中"
+                                ? t("aiAssistant.directorRunMode.running")
                                 : directorRunState.confirmationStage === "awaiting_intervention"
-                                  ? "本集自动 · 待修改确认"
-                                : "本集自动 · 待确认"}
+                                  ? t("aiAssistant.directorRunMode.awaitingIntervention")
+                                : t("aiAssistant.directorRunMode.awaitingConfirmation")}
                             </>
                           ) : (
                             <>
                               <ShieldAlert className="size-3.5" />
-                              手动模式
+                              {t("aiAssistant.directorRunMode.manualLabel")}
                             </>
                           )}
                         </DropdownMenuTrigger>
@@ -16721,9 +16701,9 @@ export function SuperChatPanel({
                               >
                                 <option.icon className="mt-0.5 shrink-0 text-muted-foreground" />
                                 <span className="min-w-0 flex-1">
-                                  <span className="block text-sm font-medium">{option.label}</span>
+                                  <span className="block text-sm font-medium">{t(option.labelKey)}</span>
                                   <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
-                                    {option.description}
+                                    {t(option.descriptionKey)}
                                   </span>
                                 </span>
                               </DropdownMenuRadioItem>
@@ -16754,12 +16734,12 @@ export function SuperChatPanel({
                             {canvasCommandExecutionMode === "manual_confirm" ? (
                               <>
                                 <ShieldAlert className="size-3.5" />
-                                手动确认
+                                {t("freezone.chat.executionMode.manualLabel")}
                               </>
                             ) : (
                               <>
                                 <Wrench className="size-3.5" />
-                                自动生成
+                                {t("freezone.chat.executionMode.autoLabel")}
                               </>
                             )}
                           </DropdownMenuTrigger>
@@ -16797,9 +16777,9 @@ export function SuperChatPanel({
                                 >
                                   <option.icon className="mt-0.5 shrink-0 text-muted-foreground" />
                                   <span className="min-w-0 flex-1">
-                                    <span className="block text-sm font-medium">{option.label}</span>
+                                    <span className="block text-sm font-medium">{t(option.labelKey)}</span>
                                     <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
-                                      {option.description}
+                                      {t(option.descriptionKey)}
                                     </span>
                                   </span>
                                 </DropdownMenuRadioItem>
@@ -16829,8 +16809,8 @@ export function SuperChatPanel({
                             setActiveFreezoneSkillSuggestionIndex(0);
                             restoreDraftFocusRef.current = true;
                           }}
-                          aria-label="选择 Skill"
-                          title="选择 Skill"
+                          aria-label={t("freezone.chat.selectSkill")}
+                          title={t("freezone.chat.selectSkill")}
                           aria-expanded={showFreezoneSkillSuggestions}
                         >
                           <Package className="size-3.5" />
@@ -16958,7 +16938,7 @@ export function SuperChatPanel({
                   aria-expanded={freezoneSkillCreateMenuOpen}
                 >
                   <Plus className="size-3.5" />
-                  创建
+                  {t("freezone.chat.skillMenu.create")}
                   <ChevronDown className={cn("size-3 transition", freezoneSkillCreateMenuOpen && "rotate-180")} />
                 </button>
                 {freezoneSkillCreateMenuOpen && (
@@ -16982,7 +16962,7 @@ export function SuperChatPanel({
                         ) : (
                           <Plus className="size-4 shrink-0 text-muted-foreground/80" />
                         )}
-                        <span>{action.label}</span>
+                        <span>{t(`freezone.chat.skillMenu.actions.${action.id}`, { defaultValue: action.label })}</span>
                       </button>
                     ))}
                   </div>
@@ -17025,7 +17005,7 @@ export function SuperChatPanel({
                   );
                 }
               }}
-              placeholder="搜索 Skill"
+              placeholder={t("freezone.chat.skillMenu.search")}
               className="h-9 w-full rounded-[8px] border border-white/[0.08] bg-white/[0.06] pl-8 pr-3 text-sm text-foreground outline-none placeholder:text-white/32 transition focus:border-white/[0.18] focus:bg-white/[0.08]"
             />
           </label>
@@ -17063,12 +17043,12 @@ export function SuperChatPanel({
             ) : (
               <div className="px-1 pb-1 pt-0.5 text-xs leading-5 text-muted-foreground/78">
                 <div className="font-medium text-foreground/78">
-                  {freezoneSkillMenuSearch.trim() ? "没有匹配的 Skill" : "这里暂时没有 Skill"}
+                  {t(freezoneSkillMenuSearch.trim() ? "freezone.chat.skillMenu.noMatches" : "freezone.chat.skillMenu.empty")}
                 </div>
                 {!freezoneSkillMenuSearch.trim() && (
                   <>
                     <div className="mt-1 text-muted-foreground/62">
-                      可以让 Agent 把当前画布总结成 Skill，也可以描述你的工作流来创建专属技能。
+                      {t("freezone.chat.skillMenu.emptyHelp")}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {FREEZONE_SKILL_EMPTY_ACTIONS.map((action) => (
@@ -17078,7 +17058,7 @@ export function SuperChatPanel({
                           className="rounded-full border border-white/[0.10] bg-white/[0.07] px-3 py-1.5 text-[11px] leading-4 text-foreground/78 shadow-[0_8px_18px_rgba(0,0,0,0.24)] transition hover:border-white/[0.16] hover:bg-white/[0.11] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
                           onClick={() => insertFreezoneSkillEmptyAction(action.prompt)}
                         >
-                          {action.label}
+                          {t(`freezone.chat.skillMenu.actions.${action.id}`, { defaultValue: action.label })}
                         </button>
                       ))}
                     </div>

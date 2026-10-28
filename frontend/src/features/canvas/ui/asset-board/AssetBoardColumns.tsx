@@ -9,6 +9,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/lib/utils';
 
@@ -61,6 +62,7 @@ function safeReleasePointerCapture(el: Element, pointerId: number): void {
  * 退回时重挂载并从 localStorage 恢复比例（故详情态天然不受 fractions 影响）。
  */
 export function AssetBoardColumns({ text, image, video }: AssetBoardColumnsProps): ReactElement {
+  const { t } = useTranslation();
   const { fractions, setFractions, commitFractions } = useAssetBoardColumnFractions();
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragSession | null>(null);
@@ -136,7 +138,7 @@ export function AssetBoardColumns({ text, image, video }: AssetBoardColumnsProps
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label="调整栏宽"
+      aria-label={t('assetBoard.resizeColumn')}
       data-testid={`asset-board-resizer-${handleIndex}`}
       onPointerDown={handlePointerDown(handleIndex)}
       onPointerMove={handlePointerMove}

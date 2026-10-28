@@ -4470,8 +4470,8 @@ function VideoPlayerControls({
         className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-dark/90 transition-colors hover:bg-white/[0.12] hover:text-text-dark"
         title={
           isPlaying
-            ? t("node.videoNode.player.pause", { defaultValue: "暂停" })
-            : t("node.videoNode.player.play", { defaultValue: "播放" })
+            ? t("node.videoNode.player.pause")
+            : t("node.videoNode.player.play")
         }
       >
         {isPlaying ? (
@@ -4507,8 +4507,8 @@ function VideoPlayerControls({
         className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-dark/90 transition-colors hover:bg-white/[0.12] hover:text-text-dark"
         title={
           isMuted
-            ? t("node.videoNode.player.unmute", { defaultValue: "取消静音" })
-            : t("node.videoNode.player.mute", { defaultValue: "静音" })
+            ? t("node.videoNode.player.unmute")
+            : t("node.videoNode.player.mute")
         }
       >
         {isMuted ? (

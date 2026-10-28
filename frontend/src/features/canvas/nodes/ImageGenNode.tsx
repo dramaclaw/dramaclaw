@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { mediaStorageErrorMessage } from '@/lib/api-errors';
 
 import {
   CANVAS_NODE_TYPES,
@@ -185,7 +186,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   // 两个视图的交互因此完全一致；普通图片生成节点拿到 null，渲染与从前一致。
   const opFormProps = useImageOpFormProps(id, { isGenerating });
 
-  const generationError =
+  const rawGenerationError =
     typeof data.generationError === 'string' && data.generationError.length > 0
       ? data.generationError
       : null;
@@ -193,6 +194,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     typeof data.generationErrorDetails === 'string' && data.generationErrorDetails.length > 0
       ? data.generationErrorDetails
       : null;
+  const generationError = rawGenerationError
+    ? mediaStorageErrorMessage(generationErrorDetails || rawGenerationError, t)
+      ?? rawGenerationError
+    : null;
   const generationErrorRequestId =
     typeof data.generationErrorRequestId === 'string' && data.generationErrorRequestId.length > 0
       ? data.generationErrorRequestId
@@ -202,7 +207,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const [errorDetailsCopied, setErrorDetailsCopied] = useState(false);
 
   const handleCopyErrorDetails = useCallback(async () => {
-    const copyText = generationErrorDetails || generationError || generationErrorRequestId;
+    const copyText = generationErrorDetails || rawGenerationError || generationErrorRequestId;
     if (!copyText) return;
     try {
       await navigator.clipboard.writeText(copyText);
@@ -211,7 +216,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     } catch (error) {
       console.error('[image-gen] copy error details failed', error);
     }
-  }, [generationError, generationErrorDetails, generationErrorRequestId]);
+  }, [rawGenerationError, generationErrorDetails, generationErrorRequestId]);
 
   const handleRestoreHistory = useCallback(
     (record: Parameters<typeof historyRecordOutputUrl>[0]) => {

@@ -131,4 +131,17 @@ describe("ImageGen error notification contract", () => {
     // 失败必须终结 loading，否则节点会一直转圈。
     expect(nodeData().isGenerating).toBe(false);
   });
+
+  it("localizes storage failures while preserving their raw diagnostic details", async () => {
+    const raw = "请求异常: MediaStorageUnavailable('MEDIA_STORAGE_ACCESS_DENIED: 媒体存储拒绝访问。')";
+    vi.mocked(submitFreezoneGen).mockRejectedValueOnce(new Error(raw));
+    const { result } = renderHook(() => useImageGenerationForm("img-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    await result.current.submit().catch(() => undefined);
+    await waitFor(() => expect(nodeData().generationErrorDetails).toBe(raw));
+    expect(nodeData().generationError).toBe(
+      "MEDIA_STORAGE_ACCESS_DENIED: translated:settings.mediaStorage.errors.MEDIA_STORAGE_ACCESS_DENIED",
+    );
+    expect(nodeData().isGenerating).toBe(false);
+  });
 });

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { Compiler } from 'inkjs/full';
 import type { BuildPlayerHtmlOptions } from '@/features/canvas/story/export/buildPlayerHtml';
@@ -310,10 +310,12 @@ describe('exported HTML using the shared player', () => {
     }));
     expect(document.querySelector('[data-choice-stage]')).toBeNull();
     document.querySelector('video')!.dispatchEvent(new window.Event('ended'));
-    await pause(350);
-    expect(document.querySelector('[data-choice-stage]')?.getAttribute('data-choice-stage')).toBe('timeout');
-    await pause(550);
-    expect(document.querySelector('[data-story-ending]')?.textContent).toContain('抵达结局');
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-choice-stage]')?.getAttribute('data-choice-stage')).toBe('timeout');
+    }, { timeout: 2000, interval: 20 });
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-story-ending]')?.textContent).toContain('抵达结局');
+    }, { timeout: 2000, interval: 20 });
     expect(errors).toEqual([]);
   });
 

@@ -155,7 +155,7 @@ describe("beats sketch/render v2 contract", () => {
     );
 
     expect(sketchSection).toContain("episode.workbench.batch.autoCombine");
-    expect(sketchSection).toContain('defaultValue: "批量重抽"');
+    expect(sketchSection).not.toContain("defaultValue");
     expect(sketchSection).not.toContain('defaultValue: "自动组合"');
   });
 

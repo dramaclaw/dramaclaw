@@ -14,11 +14,10 @@ import {
 import { useCanvasStore } from '@/stores/canvasStore';
 
 // AssetBoardView 内常驻挂载的 ImageViewerModal / 生成表单用到 useTranslation 与 react-query。
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, fallback?: unknown) => (typeof fallback === 'string' ? fallback : key),
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 vi.mock('@/lib/queries/generation-credit-cost', () => ({
   useGenerationCreditCost: () => ({ data: undefined }),
 }));

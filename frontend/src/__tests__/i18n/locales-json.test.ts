@@ -19,7 +19,7 @@ function loadLocale(language: string): unknown {
 }
 
 describe("locale translation files", () => {
-  it.each(["en", "zh", "vi"])("%s translation JSON is valid", (language) => {
+  it.each(["en", "zh", "vi", "pt"])("%s translation JSON is valid", (language) => {
     const content = readFileSync(`public/locales/${language}/translation.json`, "utf8");
 
     expect(() => JSON.parse(content)).not.toThrow();
@@ -28,7 +28,7 @@ describe("locale translation files", () => {
   // `en` is the reference key set. A locale may leave a value in English on
   // purpose — prompt fragments, domain terms and product names all stay as they
   // are — but it may never be missing a key, or i18next renders the raw key.
-  it.each(["zh", "vi"])("keeps %s aligned with the en key set", (language) => {
+  it.each(["zh", "vi", "pt"])("keeps %s aligned with the en key set", (language) => {
     const en = loadLocale("en");
     const other = loadLocale(language);
     const enKeys = new Set(collectKeys(en));

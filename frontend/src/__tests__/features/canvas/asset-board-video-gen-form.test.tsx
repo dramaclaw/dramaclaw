@@ -15,26 +15,14 @@ class ResizeObserverMock {
 }
 vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
-// 视频表单的按钮标题走 i18n key（不像图片侧写死中文），这里只把用到的几条兑成
-// public/locales/zh 里的真实文案，断言才读得懂。
-const ZH = vi.hoisted(() => ({
-  'node.videoNode.submit': '提交',
-  'node.videoNode.submitBusy': '生成中，请稍候',
-  'node.videoNode.placeholder': '根据文字描述生成视频。',
-}) as Record<string, string>);
-
 vi.mock('@/lib/model-task-access', () => ({
   useModelTaskAccess: () => ({ blocked: false, denialReason: null, message: null }),
 }));
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    // 第二参数可能是插值对象（如 t(key, { count })），只有字符串才当默认文案用，
-    // 否则会把对象当成 React 子节点渲染出去。
-    t: (key: string, fallback?: unknown) =>
-      ZH[key] ?? (typeof fallback === 'string' ? fallback : key),
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 // 算力询价走 react-query，测试树里没有 QueryClientProvider —— 直接短路。
 vi.mock('@/lib/queries/generation-credit-cost', () => ({

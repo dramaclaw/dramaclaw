@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from 'react';
 import i18next from 'i18next';
+import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown, ImageIcon, Maximize2, Minimize2, Play } from 'lucide-react';
 
 import {
@@ -66,16 +67,16 @@ const DETAIL_STACK_MAX = 50;
 /** 放大态网格里「定位」高亮的持续时长（与卡片侧 LOCATE_HIGHLIGHT_MS 同值）。 */
 const GRID_LOCATE_HIGHLIGHT_MS = 1200;
 
-const VIDEO_FILTERS: ReadonlyArray<{ value: VideoFilter; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'final', label: '成片' },
-  { value: 'clip', label: '片段' },
-];
-
 // 冻结时 item 引用稳定，memo 让隐藏→显示切换外的重渲染跳过整卡子树。
 const MemoAssetBoardCard = memo(AssetBoardCard);
 
 export function AssetBoardView({ visible, rightInset, onLocateNode }: AssetBoardViewProps): ReactElement {
+  const { t } = useTranslation();
+  const videoFilters: ReadonlyArray<{ value: VideoFilter; label: string }> = [
+    { value: 'all', label: t('assetBoard.all') },
+    { value: 'final', label: t('assetBoard.finalVideos') },
+    { value: 'clip', label: t('assetBoard.clips') },
+  ];
   // 隐藏时 selector 恒返回 null（Object.is 相等）→ 画布拖拽/生成进度不会重渲染隐藏的故事板。
   const liveNodes = useCanvasStore((state) => (visible ? state.nodes : null));
   const liveEdges = useCanvasStore((state) => (visible ? state.edges : null));
@@ -321,10 +322,10 @@ export function AssetBoardView({ visible, rightInset, onLocateNode }: AssetBoard
       case 'text':
         return (
           <BoardColumn
-            title="文本"
+            title={t('assetBoard.text')}
             titleSlot={titleSlot}
             items={board.text}
-            emptyText="画布中还没有文本类节点"
+            emptyText={t('assetBoard.noTextNodes')}
             onOpen={openItem}
             onLocate={onLocateNode}
             onPreviewImage={previewImage}
@@ -358,10 +359,10 @@ export function AssetBoardView({ visible, rightInset, onLocateNode }: AssetBoard
       case 'image':
         return (
           <BoardColumn
-            title="图片"
+            title={t('assetBoard.image')}
             titleSlot={titleSlot}
             items={board.image}
-            emptyText="画布中还没有图片节点"
+            emptyText={t('assetBoard.noImageNodes')}
             onOpen={openItem}
             onLocate={onLocateNode}
             onPreviewImage={previewImage}
@@ -379,10 +380,10 @@ export function AssetBoardView({ visible, rightInset, onLocateNode }: AssetBoard
       case 'video':
         return (
           <BoardColumn
-            title="视频"
+            title={t('assetBoard.video')}
             titleSlot={titleSlot}
             items={filteredVideos}
-            emptyText={videoFilter === 'all' ? '画布中还没有视频节点' : '没有匹配当前筛选的视频'}
+            emptyText={videoFilter === 'all' ? t('assetBoard.noVideoNodes') : t('assetBoard.noMatchingVideos')}
             onOpen={openItem}
             onLocate={onLocateNode}
             onPreviewImage={previewImage}
@@ -398,9 +399,9 @@ export function AssetBoardView({ visible, rightInset, onLocateNode }: AssetBoard
                     成片/片段。菜单右对齐——触发器在栏头右上角，左对齐会顶出栏外。 */}
                 <BoardSelect
                   value={videoFilter}
-                  options={VIDEO_FILTERS}
+                  options={videoFilters}
                   onSelect={setVideoFilter}
-                  menuLabel="筛选视频"
+                  menuLabel={t('assetBoard.filterVideos')}
                   menuClassName="right-0"
                   triggerClassName="flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[12px] text-white/80 transition-colors hover:bg-white/[0.08] hover:text-white"
                 />
@@ -418,23 +419,23 @@ export function AssetBoardView({ visible, rightInset, onLocateNode }: AssetBoard
     const items = column === 'image' ? board.image : filteredVideos;
     return (
       <AssetBoardColumn
-        title={column === 'image' ? '图片' : '视频'}
+        title={column === 'image' ? t('assetBoard.image') : t('assetBoard.video')}
         count={items.length}
         emptyText={
           column === 'image'
-            ? '画布中还没有图片节点'
+            ? t('assetBoard.noImageNodes')
             : videoFilter === 'all'
-              ? '画布中还没有视频节点'
-              : '没有匹配当前筛选的视频'
+              ? t('assetBoard.noVideoNodes')
+              : t('assetBoard.noMatchingVideos')
         }
         headerExtra={
           <div className="flex items-center gap-1.5">
             {column === 'video' && (
               <BoardSelect
                 value={videoFilter}
-                options={VIDEO_FILTERS}
+                options={videoFilters}
                 onSelect={setVideoFilter}
-                menuLabel="筛选视频"
+                menuLabel={t('assetBoard.filterVideos')}
                 menuClassName="right-0"
                 triggerClassName="flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[12px] text-white/80 transition-colors hover:bg-white/[0.08] hover:text-white"
               />
@@ -629,15 +630,15 @@ function BoardColumn({
 type LeftColumn = 'text' | 'previz' | 'image' | 'video';
 
 const LEFT_COLUMN_OPTIONS: ReadonlyArray<{ value: LeftColumn; label: string }> = [
-  { value: 'text', label: '文本' },
+  { value: 'text', get label() { return i18next.t('assetBoard.text'); } },
   {
     value: 'previz',
     get label() {
       return i18next.t('previz.editor.title');
     },
   },
-  { value: 'image', label: '图片' },
-  { value: 'video', label: '视频' },
+  { value: 'image', get label() { return i18next.t('assetBoard.image'); } },
+  { value: 'video', get label() { return i18next.t('assetBoard.video'); } },
 ];
 
 /**
@@ -653,7 +654,8 @@ function ExpandColumnButton({
   expanded?: boolean;
   onToggle: (column: 'image' | 'video' | null) => void;
 }): ReactElement {
-  const label = expanded ? '收起' : '放大';
+  const { t } = useTranslation();
+  const label = expanded ? t('assetBoard.collapse') : t('assetBoard.expand');
   return (
     <button
       type="button"
@@ -682,6 +684,7 @@ function AssetBoardGridCard({
   /** 「定位」滚动令牌：与卡片同款语义（非 null 即滚进视野并短暂高亮）。 */
   scrollTargetToken?: number | null;
 }): ReactElement {
+  const { t } = useTranslation();
   const cardRef = useRef<HTMLButtonElement | null>(null);
   const [locateHighlighted, setLocateHighlighted] = useState(false);
   // 与 AssetBoardCard 同一套：令牌变化 → 滚进视野 + 亮一下；回 null → 清高亮。
@@ -729,7 +732,7 @@ function AssetBoardGridCard({
         )}
         {item.column === 'video' && item.videoRole === 'final' && (
           <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-0.5 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white/90 backdrop-blur-sm">
-            成片
+            {t('assetBoard.finalVideos')}
           </span>
         )}
         {item.column === 'video' && (item.thumbnailUrl || item.mediaUrl) && (
@@ -866,12 +869,19 @@ function LeftColumnSwitcher({
   current: LeftColumn;
   onSelect: (column: LeftColumn) => void;
 }): ReactElement {
+  const { t } = useTranslation();
+  const options: ReadonlyArray<{ value: LeftColumn; label: string }> = [
+    { value: 'text', label: t('assetBoard.text') },
+    { value: 'previz', label: t('previz.editor.title') },
+    { value: 'image', label: t('assetBoard.image') },
+    { value: 'video', label: t('assetBoard.video') },
+  ];
   return (
     <BoardSelect
       value={current}
-      options={LEFT_COLUMN_OPTIONS}
+      options={options}
       onSelect={onSelect}
-      menuLabel="切换栏目"
+      menuLabel={t('assetBoard.switchColumn')}
       triggerClassName={COLUMN_TITLE_SELECT_CLASS}
     />
   );

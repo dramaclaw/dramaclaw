@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { Camera, FileText, Image as ImageIcon, Music, Play, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AssetBoardColumn } from "@/features/canvas/domain/assetBoard";
@@ -35,6 +36,7 @@ export function FreezoneNodeSuggestionMenu({
   onSelect,
   onReachEnd,
 }: FreezoneNodeSuggestionMenuProps) {
+  const { t } = useTranslation();
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const visible = items.slice(0, visibleCount);
   itemRefs.current.length = visible.length;
@@ -45,7 +47,7 @@ export function FreezoneNodeSuggestionMenu({
 
   return (
     <div className="border-b border-white/10 bg-black/20 px-3 py-2.5">
-      <div className="mb-1.5 px-0.5 text-xs text-muted-foreground/85">节点</div>
+      <div className="mb-1.5 px-0.5 text-xs text-muted-foreground/85">{t("superchat.nodeSuggestions.title")}</div>
       {visible.length > 0 ? (
         <div
           className="max-h-64 overflow-y-auto pr-1"
@@ -98,7 +100,7 @@ export function FreezoneNodeSuggestionMenu({
           })}
         </div>
       ) : (
-        <div className="px-0.5 pb-1 pt-0.5 text-xs text-muted-foreground/65">没有匹配的节点</div>
+        <div className="px-0.5 pb-1 pt-0.5 text-xs text-muted-foreground/65">{t("superchat.nodeSuggestions.noMatches")}</div>
       )}
     </div>
   );

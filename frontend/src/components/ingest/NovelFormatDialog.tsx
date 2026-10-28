@@ -164,9 +164,8 @@ export function NovelFormatDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { t, i18n } = useTranslation();
-  const samples = (i18n.resolvedLanguage ?? i18n.language ?? "").startsWith("zh")
-    ? FORMAT_SAMPLES.zh
-    : FORMAT_SAMPLES.en;
+  const language = (i18n.resolvedLanguage ?? i18n.language ?? "en").toLowerCase();
+  const samples = language.startsWith("zh") ? FORMAT_SAMPLES.zh : FORMAT_SAMPLES.en;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

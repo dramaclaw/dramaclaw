@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
+import ky from "ky";
 
 import { SettingsDialog } from "@/components/settings/settings-dialog";
+import { enT, zhT } from "@/__tests__/helpers/i18n-fixtures";
 
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: true }));
+const localeState = vi.hoisted(() => ({ language: "zh" }));
 const languageMocks = vi.hoisted(() => ({ changeLanguage: vi.fn(), setLanguage: vi.fn() }));
 vi.mock("@/stores/app-store", () => ({
   useAppStore: (select: (state: { setLanguage: typeof languageMocks.setLanguage }) => unknown) =>
@@ -17,6 +20,7 @@ const modelGatewayMocks = vi.hoisted(() => ({
   config: undefined as Record<string, unknown> | undefined,
   saveAgent: vi.fn(),
   saveBrainClaw: vi.fn(),
+  saveMediaRelay: vi.fn(),
   setCustomLlmMode: vi.fn(),
 }));
 const freezoneAgentConfigMocks = vi.hoisted(() => ({
@@ -97,7 +101,10 @@ vi.mock("@/lib/queries/model-gateway", () => ({
   useSaveEmbeddingModel: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveMediaModels: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSaveProviderChannels: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useSaveMediaRelayConfig: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSaveMediaRelayConfig: () => ({
+    mutateAsync: modelGatewayMocks.saveMediaRelay,
+    isPending: false,
+  }),
   useSyncProviderChannel: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useChannelModels: () => ({
     data: undefined,
@@ -115,7 +122,9 @@ vi.mock("sonner", () => ({
   },
 }));
 
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async () => {
+  const { zhT } = await import("@/__tests__/helpers/i18n-fixtures");
+  return {
   useTranslation: () => ({
     i18n: { resolvedLanguage: "en", changeLanguage: languageMocks.changeLanguage },
     t: (
@@ -130,7 +139,9 @@ vi.mock("react-i18next", () => ({
         sharedCount?: number;
       },
     ) =>
-      ({
+      key.startsWith("settings.mediaStorage.errors.")
+        ? (localeState.language === "en" ? enT : zhT)(key, options)
+        : ({
         "settings.title": "功能设置",
         "header.account.changeAvatar": "更换头像",
         "header.account.changePassword": "修改密码",
@@ -139,6 +150,7 @@ vi.mock("react-i18next", () => ({
         "header.account.languageChinese": "中文",
         "header.account.languageEnglish": "English",
         "header.account.languageVietnamese": "Tiếng Việt",
+        "header.account.languagePortuguese": "Português",
         "settings.close": "关闭",
         "settings.navigationLabel": "设置导航",
         "settings.pages.models": "模型配置",
@@ -355,9 +367,10 @@ vi.mock("react-i18next", () => ({
         "settings.freezoneCatalog.newRecipe.copyRawJson": "复制 JSON",
         "settings.freezoneCatalog.newRecipe.rawJsonCopied": "Recipe JSON 已复制",
         "settings.freezoneCatalog.newRecipe.rawJsonCopyFailed": "复制失败，请手动复制",
-      })[key] ?? options?.defaultValue ?? key,
+      })[key] ?? zhT(key, options),
   }),
-}));
+  };
+});
 
 function renderSettingsDialog(
   account?: Parameters<typeof SettingsDialog>[0]["account"],
@@ -378,9 +391,13 @@ function openRecipesManagement() {
 
 beforeEach(() => {
   runtimeState.isCeRuntime = true;
+  localeState.language = "zh";
   modelGatewayMocks.config = undefined;
   modelGatewayMocks.saveAgent.mockReset();
   modelGatewayMocks.saveBrainClaw.mockReset();
+  modelGatewayMocks.saveMediaRelay.mockReset();
+  vi.mocked(toast.error).mockClear();
+  vi.mocked(toast.success).mockClear();
   modelGatewayMocks.setCustomLlmMode.mockReset();
   modelGatewayMocks.setCustomLlmMode.mockResolvedValue({ ok: true });
   freezoneAgentConfigMocks.delete.mockReset();
@@ -401,6 +418,148 @@ beforeEach(() => {
 });
 
 describe("SettingsDialog pages", () => {
+  it.each([
+    {
+      language: "en",
+      expected: "MEDIA_STORAGE_ACCESS_DENIED: Media storage access denied. Check your credentials and upload/read permissions.",
+    },
+    {
+      language: "zh",
+      expected: "MEDIA_STORAGE_ACCESS_DENIED: 媒体存储拒绝访问，请检查凭据及上传、读取权限。",
+    },
+  ])("shows the $language storage error after Ky consumes the HTTP response", async ({ language, expected }) => {
+    localeState.language = language;
+    const detail = "MEDIA_STORAGE_ACCESS_DENIED: 媒体存储拒绝访问";
+    let requestError: unknown;
+    try {
+      await ky
+        .post("https://storage.example.test/config", {
+          retry: 0,
+          fetch: async () =>
+            new Response(JSON.stringify({ detail }), {
+              status: 400,
+              headers: { "content-type": "application/json" },
+            }),
+        })
+        .json();
+    } catch (error) {
+      requestError = error;
+    }
+    expect(requestError).toMatchObject({
+      data: { detail },
+      response: { bodyUsed: true },
+    });
+    modelGatewayMocks.saveMediaRelay.mockRejectedValue(requestError);
+
+    renderSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
+    fireEvent.click(
+      screen.getByRole("tab", {
+        name: zhT("settings.mediaStorage.providerAliyunOss"),
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: zhT("settings.mediaStorage.save") }),
+    );
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expected));
+    expect(modelGatewayMocks.saveMediaRelay).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "aliyun_oss" }),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["MEDIA_STORAGE_TIMEOUT", "Media storage connection timed out. Check your network and try again."],
+    ["MEDIA_STORAGE_AUTH_INVALID", "Media storage credentials are invalid. Check your AccessKey / API Key."],
+    ["MEDIA_STORAGE_ACCESS_DENIED", "Media storage access denied. Check your credentials and upload/read permissions."],
+    ["MEDIA_STORAGE_TARGET_INVALID", "Media storage destination is unavailable. Check the bucket, endpoint, or folder."],
+    ["MEDIA_STORAGE_CONFIG_INVALID", "Media storage configuration is incomplete or the upload failed. Check the selected storage settings."],
+    ["MEDIA_STORAGE_UNAVAILABLE", "Media storage read/write verification failed. Check your connection and settings, then try again."],
+    ["MEDIA_STORAGE_READ_MISMATCH", "Media storage read verification failed. Check the storage access settings."],
+  ])("translates %s in failed save responses", async (code, message) => {
+    localeState.language = "en";
+    modelGatewayMocks.saveMediaRelay.mockResolvedValue({
+      ok: false,
+      error: `${code}: 后端中文错误`,
+    });
+    renderSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
+    fireEvent.click(
+      screen.getByRole("tab", {
+        name: zhT("settings.mediaStorage.providerAliyunOss"),
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: zhT("settings.mediaStorage.save") }),
+    );
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(`${code}: ${message}`));
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "parsed text payload",
+      error: () => ({ data: "  Storage unavailable  " }),
+      expected: "Storage unavailable",
+    },
+    {
+      name: "unknown storage error code",
+      error: () => ({ data: { detail: "MEDIA_STORAGE_NEW_ERROR: Original error" } }),
+      expected: "MEDIA_STORAGE_NEW_ERROR: Original error",
+    },
+    {
+      name: "unconsumed legacy response",
+      error: () => ({
+        response: new Response(JSON.stringify({ detail: "Legacy storage error" })),
+      }),
+      expected: "Legacy storage error",
+    },
+    {
+      name: "consumed response without parsed data",
+      error: async () => {
+        const response = new Response("unavailable");
+        await response.text();
+        return { response, message: "Storage request failed" };
+      },
+      expected: "Storage request failed",
+    },
+    {
+      name: "synchronous response cloning failure",
+      error: () => ({
+        response: {
+          bodyUsed: false,
+          clone: () => {
+            throw new TypeError("Cannot clone response");
+          },
+        },
+        message: "Storage request failed",
+      }),
+      expected: "Storage request failed",
+    },
+    {
+      name: "missing error details",
+      error: () => ({}),
+      expected: zhT("settings.mediaStorage.saveFailed"),
+    },
+  ])("shows a storage save error for $name", async ({ error, expected }) => {
+    modelGatewayMocks.saveMediaRelay.mockRejectedValue(await error());
+    renderSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
+    fireEvent.click(
+      screen.getByRole("tab", {
+        name: zhT("settings.mediaStorage.providerAliyunOss"),
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: zhT("settings.mediaStorage.save") }),
+    );
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expected));
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
   it("opens directly on a requested page", () => {
     renderSettingsDialog(undefined, vi.fn(), "freezone-skills");
 
@@ -418,12 +577,15 @@ describe("SettingsDialog pages", () => {
     expect(document.querySelector('input[type="file"]')).not.toBeNull();
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
-    expect(screen.getByLabelText("header.account.passwordDialog.current")).toBeInTheDocument();
+    expect(screen.getByLabelText(zhT("header.account.passwordDialog.current"))).toBeInTheDocument();
     expect(document.querySelector('input[type="file"]')).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "选择语言" }));
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
     expect(languageMocks.changeLanguage).toHaveBeenCalledWith("zh");
     expect(languageMocks.setLanguage).toHaveBeenCalledWith("zh");
+    fireEvent.click(screen.getByRole("button", { name: "Português" }));
+    expect(languageMocks.changeLanguage).toHaveBeenCalledWith("pt");
+    expect(languageMocks.setLanguage).toHaveBeenCalledWith("pt");
     fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     expect(screen.getByText("暂无虾画 Skills")).toBeInTheDocument();
   });
@@ -442,22 +604,22 @@ describe("SettingsDialog pages", () => {
     const onPasswordChanged = vi.fn();
     renderSettingsDialog({ avatarInitial: "A", displayName: "Admin", passwordConfigured: true, onPasswordChanged }, onOpenChange);
     fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
-    fireEvent.change(screen.getByLabelText("header.account.passwordDialog.current"), { target: { value: "old-password" } });
-    fireEvent.change(screen.getByLabelText("header.account.passwordDialog.new"), { target: { value: "new-password" } });
-    fireEvent.change(screen.getByLabelText("header.account.passwordDialog.confirm"), { target: { value: "new-password" } });
-    fireEvent.click(screen.getByRole("button", { name: "header.account.passwordDialog.submit" }));
+    fireEvent.change(screen.getByLabelText(zhT("header.account.passwordDialog.current")), { target: { value: "old-password" } });
+    fireEvent.change(screen.getByLabelText(zhT("header.account.passwordDialog.new")), { target: { value: "new-password" } });
+    fireEvent.change(screen.getByLabelText(zhT("header.account.passwordDialog.confirm")), { target: { value: "new-password" } });
+    fireEvent.click(within(screen.getByLabelText(zhT("header.account.passwordDialog.current")).closest("form")!).getByRole("button", { name: zhT("header.account.passwordDialog.submit") }));
     expect(screen.getByRole("button", { name: "选择语言" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "关闭" })).toBeDisabled();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onOpenChange).not.toHaveBeenCalled();
     finish(new Response(JSON.stringify({ detail: "incorrect password" }), { status: 401 }));
-    await screen.findByText("header.account.passwordDialog.currentIncorrect");
+    await screen.findByText(zhT("header.account.passwordDialog.currentIncorrect"));
     expect(onPasswordChanged).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.getByRole("button", { name: "选择语言" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "选择语言" }));
     fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
-    expect(screen.getByLabelText("header.account.passwordDialog.current")).toHaveValue("");
-    expect(screen.getByLabelText("header.account.passwordDialog.new")).toHaveValue("");
+    expect(screen.getByLabelText(zhT("header.account.passwordDialog.current"))).toHaveValue("");
+    expect(screen.getByLabelText(zhT("header.account.passwordDialog.new"))).toHaveValue("");
     fetchMock.mockRestore();
   });
 

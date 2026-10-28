@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useMemo, useState, type ReactElement } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ArrowUp, Loader2, Music2, Settings2, SlidersHorizontal } from 'lucide-react';
 
 import { CreditCostPill } from '@/components/credits/credit-visual';
@@ -114,6 +115,7 @@ export function AssetBoardAudioGenForm({
   nodeId,
   data,
 }: AssetBoardAudioGenFormProps): ReactElement {
+  const { t } = useTranslation();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const { generate, isGenerating, effectivePrompt, isMusic } = useAudioGeneration(nodeId, data);
   const busyOp = audioOpsRegistry.useInFlightOp(nodeId);
@@ -168,7 +170,7 @@ export function AssetBoardAudioGenForm({
           一致（它们也不内联错误）。此前这份内联块是从旧顶部内联面板带过来的。 */}
 
       <div className="flex flex-col gap-1.5">
-        <span className={FIELD_LABEL_CLASS}>{isMusic ? '音乐描述' : '要合成的文本'}</span>
+        <span className={FIELD_LABEL_CLASS}>{isMusic ? t('assetBoard.audio.musicDescription') : t('assetBoard.audio.speechText')}</span>
         {/* 直绑 store（不做本地草稿 + IME 守卫）：工作流面板那份守卫是为了避开
             画布上高频重渲染打断输入法候选；故事板隐藏时数据源整体冻结，这里没有
             同一个问题，多一层草稿反而会和「切走再切回」的重挂载互相打架。 */}
@@ -177,7 +179,7 @@ export function AssetBoardAudioGenForm({
           onChange={(event) => patch({ text: event.target.value })}
           disabled={isGenerating}
           placeholder={
-            isMusic ? '描述想要的音乐：风格、乐器、节奏、氛围…' : '输入要合成的文本'
+            isMusic ? t('assetBoard.audio.musicPlaceholder') : t('assetBoard.audio.speechPlaceholder')
           }
           className={`${FIELD_CLASS} min-h-[84px] resize-y`}
         />
@@ -185,13 +187,13 @@ export function AssetBoardAudioGenForm({
 
       {!isMusic && (
         <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL_CLASS}>语气词（可选）</span>
+          <span className={FIELD_LABEL_CLASS}>{t('assetBoard.audio.fillerWords')}</span>
           <input
             type="text"
             value={emotionPrompt}
             onChange={(event) => patch({ emotionPrompt: event.target.value })}
             disabled={isGenerating}
-            placeholder="如：紧张、压低声音、带一点恐惧感"
+            placeholder={t('assetBoard.audio.fillerWordsPlaceholder')}
             className={FIELD_CLASS}
           />
         </div>
@@ -204,12 +206,12 @@ export function AssetBoardAudioGenForm({
             onClick={() => setVoiceModalOpen(true)}
             className="h-7 rounded-[5px] bg-white/10 text-[12px] text-white/90 transition-colors hover:bg-white/15"
           >
-            {voiceMissing ? '选择自定义声线' : '更换自定义声线'}
+            {voiceMissing ? t('assetBoard.audio.chooseVoice') : t('assetBoard.audio.changeVoice')}
           </button>
           <div className="flex items-center gap-2 text-[12px] text-white/60">
-            <span className={FIELD_LABEL_CLASS}>声线</span>
+            <span className={FIELD_LABEL_CLASS}>{t('assetBoard.audio.voice')}</span>
             <span className="truncate text-white/85">
-              {voiceMissing ? '未选择（生成时跳过）' : data.voiceLabel ?? '自定义声线'}
+              {voiceMissing ? t('assetBoard.audio.voiceNotSelected') : data.voiceLabel ?? t('assetBoard.audio.customVoice')}
             </span>
             {data.voiceLanguage && (
               <span className="rounded bg-white/[0.08] px-1.5 py-0.5 text-[11px] text-white/70">
@@ -223,9 +225,9 @@ export function AssetBoardAudioGenForm({
       {isMusic && showMusicSettings && (
         <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
           <div className="flex items-center justify-between gap-3">
-            <span className="text-[13px] text-white/80">音乐时长</span>
+            <span className="text-[13px] text-white/80">{t('assetBoard.audio.musicDuration')}</span>
             <UiSelect
-              aria-label="音乐时长"
+              aria-label={t('assetBoard.audio.musicDuration')}
               value={String(musicLengthMs)}
               onChange={(event) => patch({ musicLengthMs: Number(event.target.value) })}
               className={MUSIC_LENGTH_SELECT_CLASS}
@@ -239,17 +241,17 @@ export function AssetBoardAudioGenForm({
             </UiSelect>
           </div>
           <div className="flex items-center justify-between gap-3">
-            <span className="text-[13px] text-white/80">强制纯音乐</span>
+            <span className="text-[13px] text-white/80">{t('assetBoard.audio.forceInstrumental')}</span>
             <SettingToggle
-              ariaLabel="强制纯音乐"
+              ariaLabel={t('assetBoard.audio.forceInstrumental')}
               checked={data.forceInstrumental ?? true}
               onChange={(next) => patch({ forceInstrumental: next })}
             />
           </div>
           <div className="flex items-center justify-between gap-3">
-            <span className="text-[13px] text-white/80">遵守段落时长</span>
+            <span className="text-[13px] text-white/80">{t('assetBoard.audio.respectSectionDurations')}</span>
             <SettingToggle
-              ariaLabel="遵守段落时长"
+              ariaLabel={t('assetBoard.audio.respectSectionDurations')}
               checked={data.respectSectionsDurations ?? true}
               onChange={(next) => patch({ respectSectionsDurations: next })}
             />
@@ -265,15 +267,19 @@ export function AssetBoardAudioGenForm({
         <Music2 className="h-3.5 w-3.5 shrink-0 text-white/40" />
         <span className="min-w-0 truncate text-[12px] text-white/60">
           {isMusic
-            ? '文字生成音乐'
-            : '自定义声线旁白'}
+            ? t('assetBoard.audio.textToMusic')
+            : t('assetBoard.audio.customVoiceNarration')}
         </span>
         <span className="flex-1" />
         <span className="shrink-0 text-[11px] tabular-nums text-white/35">{text.length}</span>
         {!isMusic && (
           <button
             type="button"
-            title={`音色设置（当前：${voiceMissing ? '未选择' : data.voiceLabel ?? '自定义声线'}）`}
+            title={t('assetBoard.audio.voiceSettings', {
+              voice: voiceMissing
+                ? t('assetBoard.audio.notSelected')
+                : data.voiceLabel ?? t('assetBoard.audio.customVoice'),
+            })}
             onClick={() => setVoiceModalOpen(true)}
             className={NODE_INLINE_ICON_BUTTON_CLASS}
           >
@@ -283,7 +289,7 @@ export function AssetBoardAudioGenForm({
         {isMusic && (
           <button
             type="button"
-            title="高级设置"
+            title={t('assetBoard.audio.advancedSettings')}
             onClick={() => setShowMusicSettings((open) => !open)}
             className={`${NODE_INLINE_ICON_BUTTON_CLASS} ${
               showMusicSettings ? NODE_INLINE_ICON_BUTTON_ACTIVE_CLASS : ''
@@ -305,13 +311,13 @@ export function AssetBoardAudioGenForm({
           title={
             effectivePrompt.length === 0
               ? isMusic
-                ? '先填写音乐描述'
-                : '先填写要合成的文本'
+                ? t('assetBoard.audio.enterMusicFirst')
+                : t('assetBoard.audio.enterSpeechFirst')
               : hasAudio
-                ? '重新生成'
-                : '生成'
+                ? t('assetBoard.audio.regenerate')
+                : t('assetBoard.audio.generate')
           }
-          aria-label={hasAudio ? '重新生成' : '生成'}
+          aria-label={hasAudio ? t('assetBoard.audio.regenerate') : t('assetBoard.audio.generate')}
           onClick={() => void handleGenerate()}
           className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
             submitDisabled

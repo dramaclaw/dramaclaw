@@ -22,25 +22,29 @@ function loadLocale(lng: string): Record<string, unknown> {
 export const zhTranslation = loadLocale("zh");
 export const enTranslation = loadLocale("en");
 
-function lookup(table: unknown, key: string): string | undefined {
+function lookup(table: unknown, key: string): unknown {
   let cursor: unknown = table;
   for (const part of key.split(".")) {
     if (!cursor || typeof cursor !== "object") return undefined;
     cursor = (cursor as Record<string, unknown>)[part];
   }
-  return typeof cursor === "string" ? cursor : undefined;
+  return cursor;
 }
 
 function makeT(lang: "zh" | "en", table: unknown) {
   return ((key: string, options?: Record<string, unknown>) => {
-    const template = lookup(table, key);
-    if (template === undefined) {
+    const value = lookup(table, key);
+    if (value === undefined) {
       // 动态拼出来的 key（比如 `sourceKinds.${kind}`）本来就允许落空，跟 i18next 一样
       // 退回 defaultValue；真正没写词条又没兜底的，才是要当场喊出来的漏翻。
       if (options && typeof options.defaultValue === "string") return options.defaultValue;
       throw new Error(`${lang} translation.json 里没有这个 key：${key}`);
     }
-    return template.replace(/\{\{(\w+)\}\}/g, (whole, name: string) =>
+    if (options?.returnObjects === true) return value;
+    if (typeof value !== "string") {
+      throw new Error(`${lang} translation.json 的 key 不是字符串：${key}`);
+    }
+    return value.replace(/\{\{(\w+)\}\}/g, (whole, name: string) =>
       options && name in options ? String(options[name]) : whole,
     );
   }) as unknown as TFunction;
