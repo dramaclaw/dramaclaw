@@ -182,7 +182,7 @@ def test_compose_runtime_matches_the_selected_image() -> None:
     release = _api(RELEASE_FILE)["environment"]
     assert source["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-codex}"
     assert source["HERMES_CLI_PATH"] == "/usr/local/bin/hermes"
-    assert release["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-hermes}"
+    assert release["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-codex}"
     assert release["HERMES_CLI_PATH"] == "/root/.local/bin/hermes"
 
 

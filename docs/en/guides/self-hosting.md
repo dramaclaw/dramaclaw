@@ -7,7 +7,7 @@
 
 CE ships three containers: `api` + `newapi` (the bundled DramaClaw gateway, idle until you switch to Custom or Local + Official Hybrid mode) + `web`, with **no PostgreSQL / no Redis / no Celery** (`ST_EDITION=ce`; tasks run inline within the process). Models go through the official DramaClaw gateway by default.
 
-Two compose files ship in the repo: `docker-compose.yml` builds all three services from source (the default entry point — `docker compose up -d --build`), and `docker-compose.release.yml` only pulls published images (`docker compose -f docker-compose.release.yml up -d`). `docker-compose.yml` extends `docker-compose.release.yml` for the shared runtime definition (env / ports / volumes / healthchecks) and only adds `build:` plus local image names.
+Two compose files ship in the repo: `docker-compose.yml` builds all three services from source (the default entry point — `docker compose up -d --build`), and `docker-compose.release.yml` only pulls published images (`docker compose -f docker-compose.release.yml up -d`). `docker-compose.yml` extends `docker-compose.release.yml` for the shared runtime definition (env / ports / volumes / healthchecks), adding local builds, local image names and source-runtime overrides.
 
 ## 1. Prerequisites
 
@@ -25,7 +25,7 @@ cd dramaclaw
 cp .env.example .env
 ```
 
-Two files, already set for you, no changes needed:
+Choose one of the two files; configure the release versions in `.env` as shown below:
 
 | File | Mode | Command |
 |---|---|---|
@@ -38,7 +38,8 @@ Key points shared by both (defined once in `docker-compose.release.yml`, reused 
 |---|---|---|
 | Services | `api` + `newapi` + `web` | No PG/Redis; `newapi` is the bundled gateway |
 | Images (release) | `${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/...` | Pulled from Docker Hub; set `DRAMACLAW_IMAGE_PREFIX` in `.env` to use the ACR mirror (pinned tags only) |
-| Versions (release) | `DRAMACLAW_VERSION` (api/web), `DRAMACLAW_GATEWAY_VERSION` | Defaults: `2.0.2` / the gateway tag baked into the file |
+| Versions (release) | `DRAMACLAW_VERSION` (api/web), `DRAMACLAW_GATEWAY_VERSION` | For this release, explicitly set `2.1.0` / `v1.0.0-rc.24-dramaclaw.3` in `.env` |
+| Agent backend | `DRAMACLAW_CHAT_BACKEND` | Both source and release Compose default to `codex` |
 | Port | `8780:8780` | REST API |
 | Gateway admin port | `${ST_NEWAPI_BIND:-127.0.0.1}:${ST_NEWAPI_PORT:-3000}:3000` | Bound to `127.0.0.1` by default; set `ST_NEWAPI_BIND=0.0.0.0` in `.env` to widen it |
 | Enforced environment | `ST_EDITION=ce`, control-plane/Redis/Celery cleared | CE mode cannot be downgraded |
@@ -49,6 +50,31 @@ Key points shared by both (defined once in `docker-compose.release.yml`, reused 
 > ⚠️ **Secret-type defaults (such as `PROMPT_EXPORT_PASSWORD=change_me`) must be changed.** For the model gateway, see [Model Configuration](#model-configuration).
 
 Groups (each item is commented inline in `.env.example`): local NewAPI provisioner, reference-media OSS relay (OSS_RELAY_*), Cognee knowledge graph, text/image/video/audio models, image and video base parameters, UI, and output directories. Channel selection, gateway address, and token are saved from the web UI to `settings.db`.
+
+### Release versions and Agent backend
+
+For the **v2.1.0 published images**, add or update these entries in `.env`:
+
+```dotenv
+DRAMACLAW_VERSION=2.1.0
+DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
+```
+
+These are also the current release Compose defaults. Explicit pins make the selected
+version clear. Check the resolved images without starting anything:
+
+```bash
+docker compose -f docker-compose.release.yml config --images
+```
+
+Both release and source Compose select the bundled credential-safe Codex 0.164.0 runtime
+at v2.1.0 by default. An explicit `DRAMACLAW_CHAT_BACKEND` value in your shell or `.env`
+overrides the Compose default; use `codex` if an older configuration selects another backend.
+Agent backend selection
+does not select your Official/Custom/Hybrid model gateway mode; configure that in the UI.
+
+Source builds use the local checkout's Dockerfile and code. Setting `DRAMACLAW_VERSION`
+does not upgrade a source build or change its Codex pin; pull the desired code and rebuild.
 
 ### Model Configuration
 
@@ -61,13 +87,29 @@ Local NewAPI must map DramaClaw's logical models to real upstream models. The re
 
 ## 4. Start / Stop
 
+Source build:
+
 ```bash
-docker compose up -d --build                              # source build: start (builds on first run)
-docker compose -f docker-compose.release.yml up -d         # image mode: start (pulls images on first run)
-docker compose ps                                          # status
-docker compose logs -f api                                 # logs
-docker compose down                                        # stop (keeps the data volume)
+docker compose up -d --build
+docker compose ps
+docker compose logs -f api
+docker compose down
 ```
+
+Published images (after setting the versions above):
+
+```bash
+docker compose -f docker-compose.release.yml pull
+docker compose -f docker-compose.release.yml up -d
+docker compose -f docker-compose.release.yml ps
+docker compose -f docker-compose.release.yml logs -f api
+docker compose -f docker-compose.release.yml down
+```
+
+Both Docker modes serve the UI at `http://localhost:8080` and API at
+`http://localhost:8780`. Source Docker is not hot-reloading: rebuild after code changes.
+For Python/Vite development outside Docker (UI at `http://localhost:5173`), see the
+[installation guide](../getting-started/installation.md).
 
 ## 5. Where the data lives / Backup, restore & migrate
 
@@ -126,7 +168,10 @@ docker compose -f docker-compose.release.yml up -d
 
 Your `.env` is never touched by the upgrade. The `ce-data` and `newapi-data` volumes are reused.
 
-The `DRAMACLAW_VERSION` / `DRAMACLAW_GATEWAY_VERSION` defaults baked into `docker-compose.release.yml` are kept current by the release packaging workflow: after each packaging run that publishes a compose bundle it opens a PR here pinning both defaults to that release's CE and gateway tags, so pulling `main` picks up the latest defaults even if your `.env` sets nothing.
+Publishing a GitHub Release triggers image builds, but does not by itself update the
+fallback tags in `docker-compose.release.yml`. The separate packaging workflow opens a
+version-update PR when it publishes a compose bundle; those defaults change only after
+that PR is merged. Explicitly pin the desired versions in `.env` for each upgrade.
 
 If an older release wrote media to `/app/output` inside the container, run the one-time migration **before** starting the new version (zip users: download `scripts/migrate_docker_output.py` from GitHub instead of `git pull`):
 

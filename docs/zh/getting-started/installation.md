@@ -12,7 +12,7 @@ DramaClaw CE 是单机服务,**无需 PostgreSQL / Redis**。Docker 起 `api` + 
 | 方式 | 适合 | 前置 |
 |---|---|---|
 | **Docker(推荐)** | 部署、试用、生产自托管 | 只需 Docker;ffmpeg 等都在镜像里 |
-| **本地开发(uv)** | 改代码、调试 | Python 3.11–3.12、uv、ffmpeg(自行安装) |
+| **本地开发(uv)** | 改代码、调试 | Python 3.11–3.12、uv、Node.js/pnpm、ffmpeg(自行安装) |
 
 > ffmpeg/ffprobe 是**系统依赖**,CE 不分发其二进制(原因见 [ADR-0002](../../adr/0002-ffmpeg-system-dependency.md))。Docker 镜像已自带;本地开发需自己装,见 [ffmpeg 指南](../guides/ffmpeg.md)。
 
@@ -28,7 +28,11 @@ DramaClaw CE 是单机服务,**无需 PostgreSQL / Redis**。Docker 起 `api` + 
 | **Windows** | Docker Desktop,启用 **WSL2** 后端(Settings → General → Use WSL2) |
 | **Linux** | Docker Engine + `docker-compose-plugin`(各发行版包管理器) —— Docker Compose **≥ 2.24**(`docker compose version` 确认;compose 文件用了 `env_file` 长语法) |
 
-装好后:
+装好后，选择**官方镜像**或**源码构建**。使用 v2.1.0 官方镜像不需要克隆网关源码；
+按[快速开始的方式 A](quickstart.md)指定 `DRAMACLAW_VERSION=2.1.0`
+和 `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`。
+
+需要构建本地代码时：
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
@@ -36,8 +40,10 @@ git clone https://github.com/dramaclaw/dramaclaw-gateway.git   # 内置网关，
 cd dramaclaw
 cp .env.example .env        # 至少把 PROMPT_EXPORT_PASSWORD 改成非默认值
 docker compose up -d --build    # 用两个 checkout 从源码构建 api、web 与网关
-# 免构建：docker compose -f docker-compose.release.yml up -d   # 拉已发布镜像，不需要 clone 网关
 ```
+
+源码 Docker 不是热更新。修改代码后用 `docker compose up -d --build api web`
+重新构建；只改网关时重建 `newapi`。
 
 起好后浏览器打开 **`http://localhost:8080`**(应用界面);REST API 在 `http://localhost:8780`。进入设置 → 模型配置 → 官方渠道,粘贴 DC key 保存即用。完整步骤见 [快速开始](quickstart.md),起停/备份见 [自托管手册](../guides/self-hosting.md)。
 
@@ -57,19 +63,35 @@ docker compose up -d --build    # 用两个 checkout 从源码构建 api、web �
 
 > Python 必须落在 **3.11–3.12**(`requires-python = ">=3.11,<3.13"`)。uv 会按 `uv.lock` 锁定依赖版本。
 
+前端还需要 Node.js 和 pnpm；pnpm 版本以 `frontend/package.json` 的声明为准。
+`scripts/start-ce.sh` 会检查 pnpm，并在需要时安装前端依赖。
+只安装 Python 只能运行 API，不能启动 Vite 开发界面。
+
 ### 2. 装依赖并启动
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
-cp .env.example .env && $EDITOR .env     # 填网关与 Key
+cp .env.example .env && $EDITOR .env     # 修改 PROMPT_EXPORT_PASSWORD；模型渠道与 Key 通过网页设置
 
 scripts/start-ce.sh                      # 安装依赖并启动 API 与前端
 ```
 
-Docker 镜像和直接运行 `novelvideo api` 默认使用 Codex；镜像内置经过凭据安全修补的
-Codex App Server Runtime，源码直接运行时需配置有效的 `CODEX_BIN`。
+浏览器打开 `http://localhost:5173`，这是支持热更新的 Vite 开发界面；
+API 为 `http://localhost:8780`。也可分两个终端启动：
+
+```bash
+# 终端 1：在仓库根目录运行，须先配置支持的虾导运行时
+uv run novelvideo api --host 127.0.0.1 --port 8780
+# 终端 2：
+cd frontend && pnpm install && pnpm dev --host 127.0.0.1 --port 5173
+```
+
+v2.1.0 Docker 构建内置凭据保护版 Codex 0.164.0。源码和发布版 Compose 均默认使用 Codex；
+显式设置的 `DRAMACLAW_CHAT_BACKEND` 会覆盖该默认值。
+直接运行 `novelvideo api` 默认使用 Codex，需要配置宿主机上有效的 `CODEX_BIN`；
+Docker 中的二进制路径不等于宿主机已安装运行时，不能用未经配套保护的官方原版二进制替代。
 `scripts/start-ce.sh` 则为源码开发把 Hermes 安装到隔离环境，并在未显式配置聊天后端时
 选择 Hermes。`DRAMACLAW_CHAT_BACKEND` 优先于兼容变量 `SUPERTALE_CHAT_BACKEND`。
 CE 默认 `ST_EDITION=ce`、免登录单本地用户、任务进程内 inline 执行(无 Ray/Redis/Celery)。
@@ -114,7 +136,7 @@ curl http://localhost:8780/api/v1/config   # 返回 200 即正常
 mkdir -p state/newapi
 docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
   -v "$PWD/state/newapi:/data" \
-  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.1
+  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.3
 ```
 
 或者在旁边的 `dramaclaw-gateway` checkout 里构建并用 `SQLITE_PATH` 指向该文件来启动。模式配置见[配置模型供应商](configuring-models.md)。
