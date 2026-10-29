@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import fcntl
-
 from copy import deepcopy
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
+
+import portalocker
 
 from novelvideo.freezone.agent_bundle_schema import (
     BUNDLE_SCHEMA_VERSION,
@@ -47,7 +47,7 @@ def install_agent_bundle(*, username: str, payload: dict[str, Any]) -> dict[str,
     root = user_agent_config_dir(username, "skills").parent
     root.mkdir(parents=True, exist_ok=True)
     with (root / ".bundle-install.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        portalocker.lock(lock, portalocker.LOCK_EX)
         return _install_agent_bundle_unlocked(username=username, payload=payload)
 
 

@@ -7,7 +7,6 @@ remain as a temporary compatibility mirror for legacy workers.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -18,6 +17,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+import portalocker
 
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
@@ -648,11 +649,11 @@ def _key_lock(key: str, bridge_dir: str | Path | None = None):
     safe_key = "".join(ch for ch in key if ch.isalnum() or ch in {"-", "_"})[:128]
     lock_path = directory / f"{safe_key}.lock"
     with lock_path.open("a+") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        portalocker.lock(lock_file, portalocker.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            portalocker.unlock(lock_file)
 
 
 def _canvas_command_idempotency_conflict(

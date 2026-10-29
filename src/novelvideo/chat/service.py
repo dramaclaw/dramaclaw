@@ -1887,7 +1887,9 @@ def _chat_backend() -> str:
     if preferred == "codex":
         if is_codex_backend_available():
             return "codex"
-        raise RuntimeError(
+        from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+        raise CodexRuntimeError(
             "DRAMACLAW_CHAT_BACKEND=codex requested but Codex is unavailable. "
             "Install `openai-codex`/Codex Python SDK support in the backend environment "
             "and ensure CODEX_BIN points to a valid codex binary."

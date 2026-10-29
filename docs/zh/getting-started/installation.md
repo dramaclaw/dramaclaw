@@ -28,8 +28,8 @@ DramaClaw CE 是单机服务,**无需 PostgreSQL / Redis**。Docker 起 `api` + 
 | **Windows** | Docker Desktop,启用 **WSL2** 后端(Settings → General → Use WSL2) |
 | **Linux** | Docker Engine + `docker-compose-plugin`(各发行版包管理器) —— Docker Compose **≥ 2.24**(`docker compose version` 确认;compose 文件用了 `env_file` 长语法) |
 
-装好后，选择**官方镜像**或**源码构建**。使用 v2.1.0 官方镜像不需要克隆网关源码；
-按[快速开始的方式 A](quickstart.md)指定 `DRAMACLAW_VERSION=2.1.0`
+装好后，选择**官方镜像**或**源码构建**。使用 v2.1.1 官方镜像不需要克隆网关源码；
+按[快速开始的方式 A](quickstart.md)指定 `DRAMACLAW_VERSION=2.1.1`
 和 `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`。
 
 需要构建本地代码时：
@@ -111,7 +111,7 @@ cd frontend && pnpm install && pnpm dev --host 127.0.0.1 --port 5173
 能否执行，但不能据此证明它带有凭据保护补丁，请勿用官方原版 Codex CLI 替代。
 下载或校验失败时，脚本会在启动服务前退出，不会回退到其他后端。
 
-v2.1.0 Docker 构建已内置凭据保护版 Codex 0.164.0。源码和发布版 Compose 均默认选择 Codex；
+v2.1.1 Docker 构建已内置凭据保护版 Codex 0.164.0。源码和发布版 Compose 均默认选择 Codex；
 如显式设置 `DRAMACLAW_CHAT_BACKEND`，请保持为 `codex`。
 上面本地 Python 命令中的 `CODEX_BIN` 是宿主机路径，不是容器内路径。
 CE 默认 `ST_EDITION=ce`、免登录单本地用户、任务进程内 inline 执行(无 Ray/Redis/Celery)。
