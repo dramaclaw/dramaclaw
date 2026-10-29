@@ -8839,6 +8839,8 @@
       "loading": "正在打开剪辑工作区…",
       "retry": "重试",
       "backToCanvas": "返回虾画",
+      "exportQueued": "已提交导出任务。",
+      "exportFailed": "导出任务提交失败，请重试。",
       "missingNode": "没有找到这个视频合成与剪辑节点，可能已被删除。",
       "noMedia": "这个合成节点还没有可用的上游素材。",
       "noMediaHint": "先在画布上给这个节点连接视频或图片素材，再重新打开。",

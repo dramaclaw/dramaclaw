@@ -112,7 +112,10 @@ export async function render(args, opts = {}) {
   const chip = opts.format || opts.hardware === false ? null : await chipFormat(extname(out).toLowerCase(), size, fps);
   let format = chip ? { ...own, ...chip.format } : own;
   let encoder = chip?.encoder ?? encoderOf(own.video);
-  const workers = Math.max(1, Math.min(Number(opts.workers ?? defaultWorkers(machine(), total)), total));
+  // Hosted jobs share the API pod with the application; never create a browser
+  // for every host CPU, even when a client supplies a large worker count.
+  const hostedLimit = process.env.OPENFILM_HOSTED_RENDER === '1' ? 2 : Infinity;
+  const workers = Math.max(1, Math.min(Number(opts.workers ?? defaultWorkers(machine(), total)), total, hostedLimit));
   /* the videos get copies this browser plays: those it does not decode here (ProRes; HEVC without a chip for it), and
      for a render of more than a moment those that seek slowly (seekable.mjs). A film's video clips load only when
      their time comes, so they are read from film.html (a page drawn around the project's film, as a burned-in

@@ -12298,7 +12298,10 @@ async def freezone_video_compose_studio(
         await _resolve_freezone_project(project, user)
     )
 
+    from novelvideo.freezone.studio_proxy import hosted_origins, public_session
+
     try:
+        hosted_origins()
         film_dir = await asyncio.to_thread(
             build_studio_film,
             project_dir=project_dir,
@@ -12316,6 +12319,12 @@ async def freezone_video_compose_studio(
             host_back=body.host_back,
             host_back_label=body.host_back_label,
             lang=body.lang,
+        )
+        session = public_session(
+            session,
+            project=project,
+            canvas=body.canvas_id,
+            node=body.node_id,
         )
     except StudioError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc

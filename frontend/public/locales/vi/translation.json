@@ -8713,6 +8713,8 @@
       "loading": "Đang mở không gian chỉnh sửa…",
       "retry": "Thử lại",
       "backToCanvas": "Quay lại canvas",
+      "exportQueued": "Đã đưa tác vụ xuất video vào hàng đợi.",
+      "exportFailed": "Không thể bắt đầu xuất video. Vui lòng thử lại.",
       "missingNode": "Không tìm thấy node dựng & chỉnh video này, có thể đã bị xóa.",
       "noMedia": "Node dựng này chưa có media nguồn dùng được.",
       "noMediaHint": "Hãy kết nối video hoặc ảnh vào node này trên canvas rồi mở lại.",

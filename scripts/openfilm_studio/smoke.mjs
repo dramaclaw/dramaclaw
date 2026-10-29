@@ -1,16 +1,17 @@
 // Proves a deployment can actually run the editor: Node starts the vendored server, Playwright's
 // browser launches, and the served build is Dramaclaw's patched chunk. The image runs this at
 // build time, so a missing browser, font or copied folder fails the build instead of the feature.
-import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { spawn, execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createServer } from 'node:http';
+
+import { filmHtml } from '../../vendor/openfilm/src/film-doc.mjs';
+import { FilmPage, launch } from '../../vendor/openfilm/src/host.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const require = createRequire(join(root, 'vendor/openfilm/package.json'));
-const { chromium } = require('playwright-core');
 
 const check = (ok, message) => {
   if (!ok) throw new Error(message);
@@ -18,7 +19,7 @@ const check = (ok, message) => {
 
 let browser;
 try {
-  browser = await chromium.launch();
+  browser = await launch();
   const page = await browser.newPage();
   await page.setContent('<p id="t">视频合成与剪辑</p>');
   const text = await page.textContent('#t');
@@ -28,7 +29,7 @@ try {
   const key = 'smoke';
   const child = spawn(process.execPath, [join(root, 'scripts/openfilm_studio/run.mjs')], {
     cwd: root,
-    env: { ...process.env, OPENFILM_HOME: home, OPENFILM_STUDIO_PORT: '0', OPENFILM_STUDIO_KEY: key },
+    env: { ...process.env, OPENFILM_HOME: join(home, 'state'), OPENFILM_HOSTED_RENDER: '1', OPENFILM_STUDIO_PORT: '0', OPENFILM_STUDIO_KEY: key },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
 
@@ -75,9 +76,16 @@ try {
         ...init,
         headers: { 'x-studio-key': key, 'content-type': 'application/json' },
       });
-    const created = await (await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: 'smoke' }) })).json();
+    const created = await (await api('/api/projects', { method: 'POST', body: JSON.stringify({ path: join(home, 'film'), create: true }) })).json();
     const film = created?.project?.id;
     check(film, `POST /api/projects created no film: ${JSON.stringify(created).slice(0, 200)}`);
+    const folder = join(home, 'film');
+    mkdirSync(join(folder, 'assets'), { recursive: true });
+    writeFileSync(join(folder, 'assets/smoke.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="royalblue"/><text x="25" y="90" fill="white" font-size="24">剪辑烟测</text></svg>');
+    writeFileSync(join(folder, 'film.html'), filmHtml({
+      stage: { w: 320, h: 180 },
+      tracks: [{ clips: [{ id: 'smoke-clip', src: 'assets/smoke.svg', at: 0, time: [0, 1] }] }],
+    }));
 
     const target = new URLSearchParams({
       hostBack: 'http://127.0.0.1:5173/projects/smoke/freezone',
@@ -108,7 +116,72 @@ try {
       `the rendered editor still names the vendored product: ${JSON.stringify(painted.slice(0, 300))}`,
     );
 
-    console.log(`openfilm studio smoke: ok (${chunk}, 「${(await heading.textContent())?.trim()}」 painted)`);
+    const endpoint = `/api/projects/${film}`;
+    const before = await (await api(endpoint)).json();
+    const edit = await api(`${endpoint}/edit`, {
+      method: 'POST', body: JSON.stringify({ base: before.rev, ops: [{ op: 'set', clip: 'smoke-clip', field: 'at', value: 0.1 }] }),
+    });
+    check(edit.ok, `edit answered ${edit.status}`);
+    const saved = await (await api(endpoint)).json();
+    check(saved.doc?.tracks?.[0]?.clips?.[0]?.at === 0.1, 'the edit was not saved');
+    const preview = await fetch(`${saved.folder}film.html`);
+    check(preview.ok && (await preview.text()).includes('smoke-clip'), 'preview did not serve the saved film');
+    const started = await api(`${endpoint}/exports`, {
+      method: 'POST', body: JSON.stringify({ jobs: [{ kind: 'video', codec: 'h264', fps: 12 }], folder: join(home, 'exports') }),
+    });
+    check(started.ok, `export answered ${started.status}`);
+    const jobId = (await started.json()).exports?.[0]?.id;
+    check(jobId, 'export did not return a job');
+    let job;
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      const result = await (await api(`${endpoint}/exports`)).json();
+      job = result.exports?.find((item) => item.id === jobId);
+      if (['done', 'failed', 'cancelled'].includes(job?.status)) break;
+      await new Promise((done) => setTimeout(done, 500));
+    }
+    check(job?.status === 'done', `export did not finish: ${JSON.stringify(job)}`);
+    const output = job.outputs?.[0];
+    check(output && statSync(output).size > 0, 'export produced no file');
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name:format=duration', '-of', 'json', output], { encoding: 'utf8' }));
+    check(probe.streams?.some((stream) => stream.codec_name === 'h264'), 'export is not H.264');
+    check(Number(probe.format?.duration) >= 1, 'export is truncated');
+
+    // A fresh render context must also block transports that HTTP routing does
+    // not intercept: Service Workers and WebSockets.
+    let escaped = 0;
+    const outside = createServer((_req, res) => { escaped++; res.end('unexpected'); });
+    outside.on('upgrade', (_req, socket) => { escaped++; socket.destroy(); });
+    await new Promise((done) => outside.listen(0, '127.0.0.1', done));
+    const external = `http://127.0.0.1:${outside.address().port}`;
+    const previousHosted = process.env.OPENFILM_HOSTED_RENDER;
+    process.env.OPENFILM_HOSTED_RENDER = '1';
+    let protectedFilm;
+    try {
+      writeFileSync(join(folder, 'network-worker.js'), `self.addEventListener('install', e => e.waitUntil(fetch('${external}/worker')));`);
+      writeFileSync(join(folder, 'network-check.html'), `<!doctype html><script>
+window.networkCheck = Promise.all([
+  fetch('${external}/http').then(() => false, () => true),
+  new Promise(resolve => { const ws = new WebSocket('${external.replace('http:', 'ws:')}/socket');
+    ws.onclose = ws.onerror = () => resolve(true); ws.onopen = () => { resolve(false); ws.close(); }; }),
+  navigator.serviceWorker.register('./network-worker.js').then(registration => !registration, () => true)
+]);
+window.film = { width: 320, height: 180, duration: 1, frame() {},
+  ready: window.networkCheck.then(results => { window.networkResults = results; }) };
+</script>`);
+      const address = new URL('network-check.html', saved.folder);
+      protectedFilm = await FilmPage.open(browser, address.origin, address.pathname);
+      const results = await protectedFilm.page.evaluate(() => window.networkResults);
+      check(results?.length === 3 && results.every(Boolean), `hosted transport was available: ${JSON.stringify(results)}`);
+      check(escaped === 0, `${escaped} hosted render requests escaped its film origin`);
+    } finally {
+      await protectedFilm?.close();
+      await new Promise((done) => outside.close(done));
+      if (previousHosted === undefined) delete process.env.OPENFILM_HOSTED_RENDER;
+      else process.env.OPENFILM_HOSTED_RENDER = previousHosted;
+    }
+    console.log(`openfilm studio smoke: ok (${chunk}; editor, edit, save, preview, H.264 export, hosted network isolation)`);
+
   } finally {
     child.kill('SIGTERM');
     await new Promise((done) => {

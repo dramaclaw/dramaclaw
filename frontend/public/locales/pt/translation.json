@@ -8978,6 +8978,8 @@
       "loading": "Opening the editing workspace…",
       "retry": "Retry",
       "backToCanvas": "Back to canvas",
+      "exportQueued": "Exportação adicionada à fila.",
+      "exportFailed": "Não foi possível iniciar a exportação. Tente novamente.",
       "missingNode": "This video compose & edit node no longer exists.",
       "noMedia": "This compose node has no usable upstream media yet.",
       "noMediaHint": "Connect video or image clips to this node on the canvas, then open it again.",

@@ -1066,6 +1066,18 @@ export interface FreezoneVideoComposeStudioSession {
   origin: string;
 }
 
+/** Use the existing task queue so exports update the compose node and its history. */
+export async function exportFreezoneVideoComposeStudio(
+  project: string,
+  canvasId: string,
+  nodeId: string,
+): Promise<void> {
+  await apiCallEnvelope<unknown>(
+    `projects/${encodeURIComponent(project)}/freezone/canvases/${encodeURIComponent(canvasId)}/compose/${encodeURIComponent(nodeId)}/studio/export`,
+    { method: "POST", json: { fps: 30 } },
+  );
+}
+
 export async function openFreezoneVideoComposeStudio(
   project: string,
   payload: FreezoneVideoComposeStudioPayload,

@@ -353,6 +353,13 @@ const stuck = async (/** @type {import('playwright-core').Page} */ page) =>
 /** One web page in one browser tab. */
 export class FilmPage {
   static async open(browser, origin, entry, { scale = 1, size = null, transparent = false, black = false, offline = false, network = {}, waitMs = 10_000, readyMs = READY_MS } = {}) {
+    // Hosted films are untrusted: use the existing folder-only network policy
+    // for thumbnails and exports too, not just the browser-facing preview.
+    const hosted = process.env.OPENFILM_HOSTED_RENDER === '1';
+    if (hosted) {
+      offline = true;
+      network = {};
+    }
     const film = new FilmPage();
     film.problems = [];
     film.browser = browser;
@@ -361,7 +368,8 @@ export class FilmPage {
     film.scale = scale;
     /* `size`: a page clip's (SPEC §1), what a page without a size of its own is laid out at, from its first layout */
     const laid = size?.w > 0 && size?.h > 0 ? { width: Math.round(size.w), height: Math.round(size.h) } : { width: 1920, height: 1080 };
-    film.context = await browser.newContext({ viewport: laid, deviceScaleFactor: scale });
+    film.context = await browser.newContext({ viewport: laid, deviceScaleFactor: scale, ...(hosted ? { serviceWorkers: 'block' } : {}) });
+    if (hosted) await film.context.routeWebSocket(/.*/, (socket) => socket.close());
     film.page = await film.context.newPage();
     const problems = film.problems;
     film.page.on('pageerror', (e) => problems.push({ kind: 'error', message: e.message }));

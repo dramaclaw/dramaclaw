@@ -310,6 +310,7 @@ frontend/build/buildStoryPlayer.mjs,Elastic-2.0,2026 SuperTale contributors,REUS
 frontend/build/storyPlayerPlugin.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/components.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/docker/19-payment-form-csp.envsh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/docker/20-openfilm-preview.envsh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/docker/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/docker/nginx.conf.template,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/e2e/playwright.config.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3138,6 +3139,7 @@ scripts/openfilm_studio/source-patches/0005-update-gate.patch,Elastic-2.0,2026 S
 scripts/openfilm_studio/source-patches/0006-project-name-from-film-title.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/openfilm_studio/source-patches/0007-server-copy-branding.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/openfilm_studio/source-patches/0008-host-route-gates.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/source-patches/0009-hosted-render-network.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_arm_rig.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_gait.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_leg_rig.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3206,6 +3208,7 @@ src/novelvideo/api/routes/ingest.py,Elastic-2.0,2026 SuperTale contributors,REUS
 src/novelvideo/api/routes/interactive_stories.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/api/routes/model_credits.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/api/routes/model_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/api/routes/openfilm.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/api/routes/piko.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/api/routes/pipeline.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/api/routes/product_surfaces.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3472,6 +3475,7 @@ src/novelvideo/freezone/skill_registry.py,Elastic-2.0,2026 SuperTale contributor
 src/novelvideo/freezone/slots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/stale.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/studio.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/studio_proxy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/style_templates.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/style_templates.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/text_node.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4108,6 +4112,7 @@ tests/test_newapi_provider_sync.py,Elastic-2.0,2026 SuperTale contributors,REUSE
 tests/test_newapi_text_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_no_nicegui_character_ref_imports.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openapi_edition_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_openfilm_hosted_proxy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_export_branding.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_image.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_route_guards.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
