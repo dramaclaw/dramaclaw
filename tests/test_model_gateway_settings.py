@@ -3952,6 +3952,7 @@ def test_media_relay_config_route_persists_and_masks_oss_keys(monkeypatch, tmp_p
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["source"] == "database"
+
     assert data["ttlSeconds"] == 900
     assert data["endpoint"] == "oss-cn-shanghai.aliyuncs.com"
     assert data["bucket"] == "user-relay"
@@ -3961,6 +3962,83 @@ def test_media_relay_config_route_persists_and_masks_oss_keys(monkeypatch, tmp_p
     assert "SK-user-secret" not in response.text
     assert storage_probe[0].access_key_id == "LTAI-user-secret"
     assert storage_probe[0].bucket == "user-relay"
+
+
+def test_s3_relay_config_route_preserves_separate_credentials(monkeypatch, tmp_path, storage_probe):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+    oss = {
+        "provider": "aliyun_oss", "endpoint": "oss.example.test", "bucket": "oss-bucket",
+        "accessKeyId": "oss-test-key", "accessKeySecret": "oss-test-secret",
+    }
+    assert client.post("/model-gateway/media-relay/config", json=oss).status_code == 200
+    s3 = {
+        "provider": "s3", "ttlSeconds": 1800, "s3Endpoint": "http://localhost:9000",
+        "s3Bucket": "media", "s3AccessKeyId": "s3-test-key", "s3AccessKeySecret": "s3-test-secret",
+        "s3Region": "us-east-1", "s3PathStyle": True,
+    }
+    response = client.post("/model-gateway/media-relay/config", json=s3)
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["provider"] == "s3"
+    assert data["configured"] is True
+    assert data["s3Endpoint"] == "http://localhost:9000"
+    assert data["s3PathStyle"] is True
+    assert "s3-test-secret" not in response.text
+    assert "s3-test-key" not in response.text
+    assert storage_probe[-1].s3_access_key_id == "s3-test-key"
+    assert storage_probe[-1].access_key_id == "oss-test-key"
+    assert client.post("/model-gateway/media-relay/config", json={"provider": "cloudinary",
+        "cloudName": "demo", "apiKey": "cloud-key", "apiSecret": "cloud-secret",
+    }).status_code == 200
+    assert client.post("/model-gateway/media-relay/config", json={"provider": "s3",
+        "s3AccessKeyId": "", "s3AccessKeySecret": "", "s3PathStyle": False,
+    }).status_code == 200
+    assert storage_probe[-1].s3_access_key_secret == "s3-test-secret"
+    assert storage_probe[-1].s3_path_style is False
+    assert client.post("/model-gateway/media-relay/config", json={"provider": "aliyun_oss"}).status_code == 200
+    assert storage_probe[-1].access_key_secret == "oss-test-secret"
+
+
+def test_s3_relay_does_not_inherit_oss_keys_or_overwrite_on_failed_probe(monkeypatch, tmp_path, storage_probe):
+    from novelvideo.storage import media_preflight
+
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+    save_media_relay_config(provider="aliyun_oss", ttl_seconds=1800,
+        endpoint="oss.test", bucket="oss", access_key_id="oss-key", access_key_secret="oss-secret")
+    candidate = {"provider": "s3", "s3Endpoint": "https://storage.test", "s3Bucket": "media"}
+    assert client.post("/model-gateway/media-relay/config", json=candidate).status_code == 400
+    assert not storage_probe
+
+    def reject(settings, **kwargs):
+        raise media_preflight.MediaStorageUnavailable("MEDIA_STORAGE_AUTH_INVALID", "invalid")
+
+    monkeypatch.setattr(media_preflight, "verify_media_storage", reject)
+    candidate.update(s3AccessKeyId="new-key", s3AccessKeySecret="new-secret")
+    assert client.post("/model-gateway/media-relay/config", json=candidate).status_code == 400
+    settings = get_effective_media_relay_config()
+    assert settings.provider == "aliyun_oss"
+    assert settings.access_key_secret == "oss-secret"
+    assert not settings.s3_access_key_id
+
+
+def test_s3_relay_rejects_excessive_ttl_before_probe(monkeypatch, tmp_path, storage_probe):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    response = TestClient(app).post("/model-gateway/media-relay/config", json={
+        "provider": "s3", "ttlSeconds": 604801,
+    })
+    assert response.status_code == 400
+    assert not storage_probe
 
 
 def test_media_relay_config_route_persists_and_masks_cloudinary_keys(

@@ -94,6 +94,12 @@ class EffectiveMediaRelayConfig:
     cloudinary_api_key: str = field(default="", repr=False)
     cloudinary_api_secret: str = field(default="", repr=False)
     cloudinary_folder: str = ""
+    s3_endpoint: str = ""
+    s3_bucket: str = ""
+    s3_access_key_id: str = field(default="", repr=False)
+    s3_access_key_secret: str = field(default="", repr=False)
+    s3_region: str = "us-east-1"
+    s3_path_style: bool = False
 
 
 @dataclass(frozen=True)
@@ -1027,6 +1033,12 @@ def save_media_relay_config(
     cloudinary_api_key: str = "",
     cloudinary_api_secret: str = "",
     cloudinary_folder: str = "",
+    s3_endpoint: str | None = None,
+    s3_bucket: str | None = None,
+    s3_access_key_id: str | None = None,
+    s3_access_key_secret: str | None = None,
+    s3_region: str | None = None,
+    s3_path_style: bool | None = None,
 ) -> None:
     _write_many(
         {
@@ -1040,6 +1052,18 @@ def save_media_relay_config(
             "cloudinary_relay_api_key": str(cloudinary_api_key or "").strip(),
             "cloudinary_relay_api_secret": str(cloudinary_api_secret or "").strip(),
             "cloudinary_relay_folder": str(cloudinary_folder or "").strip().strip("/"),
+            **{
+                f"s3_relay_{name}": value.strip()
+                for name, value in {
+                    "endpoint": s3_endpoint,
+                    "bucket": s3_bucket,
+                    "ak": s3_access_key_id,
+                    "sk": s3_access_key_secret,
+                    "region": s3_region,
+                    "path_style": None if s3_path_style is None else str(int(s3_path_style)),
+                }.items()
+                if value is not None
+            },
         }
     )
 
@@ -1272,6 +1296,7 @@ def get_effective_media_relay_config(
             db_cloudinary_folder,
         ]
     )
+    has_db_config = has_db_config or any(key.startswith("s3_relay_") for key in settings)
     if has_db_config:
         return EffectiveMediaRelayConfig(
             source="database",
@@ -1285,6 +1310,12 @@ def get_effective_media_relay_config(
             cloudinary_api_key=db_cloudinary_api_key,
             cloudinary_api_secret=db_cloudinary_api_secret,
             cloudinary_folder=db_cloudinary_folder,
+            s3_endpoint=settings.get("s3_relay_endpoint", ""),
+            s3_bucket=settings.get("s3_relay_bucket", ""),
+            s3_access_key_id=settings.get("s3_relay_ak", ""),
+            s3_access_key_secret=settings.get("s3_relay_sk", ""),
+            s3_region=settings.get("s3_relay_region", "us-east-1"),
+            s3_path_style=settings.get("s3_relay_path_style", "0") == "1",
         )
 
     raw_ttl = (
@@ -1326,6 +1357,13 @@ def get_effective_media_relay_config(
         )
         .strip()
         .strip("/"),
+        s3_endpoint=os.environ.get("S3_RELAY_ENDPOINT", "").strip(),
+        s3_bucket=os.environ.get("S3_RELAY_BUCKET", "").strip(),
+        s3_access_key_id=os.environ.get("S3_RELAY_AK", "").strip(),
+        s3_access_key_secret=os.environ.get("S3_RELAY_SK", "").strip(),
+        s3_region=os.environ.get("S3_RELAY_REGION", "us-east-1").strip(),
+        s3_path_style=os.environ.get("S3_RELAY_PATH_STYLE", "0").strip().lower()
+        in {"1", "true", "yes"},
     )
 
 
@@ -1604,6 +1642,13 @@ def build_media_relay_status(
         and effective.cloudinary_api_key
         and effective.cloudinary_api_secret
     )
+    s3_configured = bool(
+        effective.s3_endpoint
+        and effective.s3_bucket
+        and effective.s3_region
+        and effective.s3_access_key_id
+        and effective.s3_access_key_secret
+    )
     return {
         "source": effective.source,
         "provider": effective.provider,
@@ -1616,9 +1661,17 @@ def build_media_relay_status(
         "cloudinaryApiKeyPreview": mask_secret(effective.cloudinary_api_key),
         "cloudinaryApiSecretPreview": mask_secret(effective.cloudinary_api_secret),
         "apiFolder": effective.cloudinary_folder,
+        "s3Endpoint": effective.s3_endpoint,
+        "s3Bucket": effective.s3_bucket,
+        "s3Region": effective.s3_region,
+        "s3PathStyle": effective.s3_path_style,
+        "s3AccessKeyIdPreview": mask_secret(effective.s3_access_key_id),
+        "s3AccessKeySecretPreview": mask_secret(effective.s3_access_key_secret),
         "configured": (
             cloudinary_configured
             if effective.provider == "cloudinary"
+            else s3_configured
+            if effective.provider == "s3"
             else aliyun_configured
         ),
     }

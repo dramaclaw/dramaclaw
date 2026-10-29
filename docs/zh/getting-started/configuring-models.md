@@ -266,6 +266,25 @@ ComfyUI 渠道存在时，MiniMax H3 模板按钮会保留在该渠道的 **Comf
 
 Bucket 无需公开读；DramaClaw 使用临时签名 URL 授权上游读取。
 
+### S3 兼容存储
+
+在媒体存储中选择 **S3 兼容存储**。这仅配置参考媒体中转，不迁移项目文件、备份或 OSS 下载加速。
+
+| 网页字段 | 环境变量 | 示例或说明 |
+|---|---|---|
+| Endpoint | `S3_RELAY_ENDPOINT` | 完整源站 URL，例如 `https://s3.us-east-1.amazonaws.com`，不带桶名或路径 |
+| Bucket | `S3_RELAY_BUCKET` | 已创建的私有桶 |
+| AccessKey ID / Secret | `S3_RELAY_AK` / `S3_RELAY_SK` | 显式长期凭据，不使用宿主机 AWS 凭据 |
+| Region / 地域 | `S3_RELAY_REGION` | 默认 `us-east-1`，按存储服务要求填写 |
+| Path-style | `S3_RELAY_PATH_STYLE` | 默认 `0`（virtual-hosted）；服务要求时设为 `1`，例如本地 MinIO |
+| 有效期 | `MEDIA_RELAY_TTL_SECONDS` | 1–604800 秒；部分媒体调用会提升到至少 7200 秒 |
+
+仅使用环境变量时设置 `MEDIA_RELAY_PROVIDER=s3`。保存的 CE 数据库配置整体优先，不会从环境变量补混凭据。S3 凭据与 OSS、Cloudinary 分别保存；已保存密钥留空即可保留，完整密钥不会回传或持久化到浏览器存储。
+
+凭据需要 `relay/*` 下的 `PutObject` 和 `GetObject` 权限。`DeleteObject` 仅用于尽力清理测试对象，不要求公开读 ACL 或 `ListBucket` 权限。请配置桶生命周期清理：签名 URL 过期不等于对象删除。不支持临时 session token、自动发现/刷新凭据或内外网双 endpoint。
+
+推荐 HTTPS；本地 MinIO 测试允许 HTTP。返回的签名 URL 必须能被上游模型访问，本地预检成功不代表外部可访问。不同 S3 兼容服务存在差异，请实际验证目标服务，不承诺支持所有 S3 扩展。
+
 ### Cloudinary
 
 填写 Cloud name、API Key、API Secret 和可选文件夹。可在 Cloudinary 控制台的 **Product environment settings → API Keys** 查看这些值。保存后本地数据库配置优先于环境变量，完整密钥不会返回前端。

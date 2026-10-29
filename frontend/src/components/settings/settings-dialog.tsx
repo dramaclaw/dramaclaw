@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { confirmDialog } from "@/components/confirm-dialog-host";
@@ -93,6 +93,7 @@ import {
   useSettingsStore,
   FEATURE_MODEL_PROVIDERS,
   type AliyunOssStorageConfig,
+  type S3StorageConfig,
   type CloudinaryStorageConfig,
   type EmbeddingModelEntry,
   type FeatureModelEntry,
@@ -112,6 +113,7 @@ interface SettingsDialogProps {
 const MEDIA_STORAGE_PROVIDERS: MediaStorageProvider[] = [
   "aliyun_oss",
   "cloudinary",
+  "s3",
 ];
 
 // Codex 本地桥接暂时隐藏（保留组件代码，后端就绪后改回 true 即可恢复）。
@@ -5988,15 +5990,17 @@ function MediaStorageSection() {
     (s) => s.updateAliyunOssStorageConfig,
   );
   const saveMediaRelay = useSaveMediaRelayConfig();
+  const updateS3 = useSettingsStore((s) => s.updateS3StorageConfig);
 
-  const { provider, cloudinary, aliyunOss } = mediaStorage;
+  const { provider, cloudinary, aliyunOss, s3 } = mediaStorage;
   const [ttlSeconds, setTtlSeconds] = useState("1800");
   const mediaRelayKey = JSON.stringify(mediaRelay ?? {});
   useEffect(() => {
     if (!mediaRelay) return;
     if (
       mediaRelay.provider === "aliyun_oss" ||
-      mediaRelay.provider === "cloudinary"
+      mediaRelay.provider === "cloudinary" ||
+      mediaRelay.provider === "s3"
     ) {
       setProvider(mediaRelay.provider as MediaStorageProvider);
     }
@@ -6018,6 +6022,17 @@ function MediaStorageSection() {
           : {}),
       });
     }
+    if (mediaRelay.s3Endpoint || mediaRelay.s3Bucket) {
+      updateS3({
+        endpoint: mediaRelay.s3Endpoint ?? "",
+        bucket: mediaRelay.s3Bucket ?? "",
+        region: mediaRelay.s3Region ?? "us-east-1",
+        pathStyle: mediaRelay.s3PathStyle ?? false,
+        ...(mediaRelay.provider === "s3" && mediaRelay.configured
+          ? { accessKeyId: "", accessKeySecret: "" }
+          : {}),
+      });
+    }
     if (mediaRelay.ttlSeconds) {
       setTtlSeconds((current) =>
         current === String(mediaRelay.ttlSeconds)
@@ -6036,10 +6051,18 @@ function MediaStorageSection() {
     : provider;
   const localizeStorageError = (message: string) =>
     mediaStorageErrorMessage(message, t) ?? message;
+  const providerLabel = (value: string | undefined) =>
+    value === "s3" ? t("settings.mediaStorage.providerS3")
+      : value === "cloudinary" ? t("settings.mediaStorage.providerCloudinary")
+        : t("settings.mediaStorage.providerAliyunOss");
   const handleSave = async () => {
     const ttl = Number(ttlSeconds.trim() || "0");
     if (!Number.isFinite(ttl) || ttl <= 0) {
       toast.error(t("settings.mediaStorage.validation.ttlSeconds"));
+      return;
+    }
+    if (provider === "s3" && ttl > 604800) {
+      toast.error(t("settings.mediaStorage.validation.s3TtlSeconds"));
       return;
     }
     try {
@@ -6057,7 +6080,16 @@ function MediaStorageSection() {
                 ? { apiSecret: cloudinary.apiSecret.trim() }
                 : {}),
             }
-          : {
+          : provider === "s3" ? {
+              provider: "s3",
+              ttlSeconds: Math.trunc(ttl),
+              s3Endpoint: s3.endpoint.trim(),
+              s3Bucket: s3.bucket.trim(),
+              s3Region: s3.region.trim(),
+              s3PathStyle: s3.pathStyle,
+              ...(s3.accessKeyId.trim() ? { s3AccessKeyId: s3.accessKeyId.trim() } : {}),
+              ...(s3.accessKeySecret.trim() ? { s3AccessKeySecret: s3.accessKeySecret.trim() } : {}),
+            } : {
               provider: "aliyun_oss",
               ttlSeconds: Math.trunc(ttl),
               endpoint: aliyunOss.endpoint.trim(),
@@ -6076,12 +6108,15 @@ function MediaStorageSection() {
       }
       if (provider === "cloudinary") {
         updateCloudinary({ apiKey: "", apiSecret: "" });
+      } else if (provider === "s3") {
+        updateS3({ accessKeyId: "", accessKeySecret: "" });
       } else {
         updateAliyunOss({ accessKeyId: "", accessKeySecret: "" });
       }
       toast.success(
         provider === "cloudinary"
           ? t("settings.mediaStorage.cloudinarySaveSuccess")
+          : provider === "s3" ? t("settings.mediaStorage.s3SaveSuccess")
           : t("settings.mediaStorage.saveSuccess"),
       );
     } catch (error) {
@@ -6116,9 +6151,7 @@ function MediaStorageSection() {
         ) : null}
         <span className="ml-1 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
           {t("settings.mediaStorage.currentPlan")}:{" "}
-          {configuredProvider === "cloudinary"
-            ? t("settings.mediaStorage.providerCloudinary")
-            : t("settings.mediaStorage.providerAliyunOss")}
+          {providerLabel(configuredProvider)}
         </span>
       </div>
 
@@ -6153,20 +6186,19 @@ function MediaStorageSection() {
         </div>
       ) : null}
 
-      <div className="mt-4 flex items-center gap-3">
+      <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="w-[64px] shrink-0 text-xs text-muted-foreground">
           {t("settings.mediaStorage.provider")}
         </span>
         <Tabs
           value={provider}
+          className="min-w-0 max-w-full"
           onValueChange={(value) => setProvider(value as MediaStorageProvider)}
         >
-          <TabsList>
+          <TabsList className="flex-wrap group-data-horizontal/tabs:h-auto">
             {MEDIA_STORAGE_PROVIDERS.map((p) => (
-              <TabsTrigger key={p} value={p}>
-                {p === "aliyun_oss"
-                  ? t("settings.mediaStorage.providerAliyunOss")
-                  : t("settings.mediaStorage.providerCloudinary")}
+              <TabsTrigger key={p} value={p} className="h-7">
+                {providerLabel(p)}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -6181,8 +6213,17 @@ function MediaStorageSection() {
             apiKeyPreview={mediaRelay?.cloudinaryApiKeyPreview ?? ""}
             apiSecretPreview={mediaRelay?.cloudinaryApiSecretPreview ?? ""}
           />
+        ) : provider === "s3" ? (
+          <S3Fields
+            config={s3}
+            onChange={updateS3}
+            ttlSeconds={ttlSeconds}
+            onTtlSecondsChange={setTtlSeconds}
+            accessKeyIdPreview={mediaRelay?.s3AccessKeyIdPreview ?? ""}
+            accessKeySecretPreview={mediaRelay?.s3AccessKeySecretPreview ?? ""}
+          />
         ) : (
-          <AliyunOssFields
+          <ObjectStorageFields
             config={aliyunOss}
             onChange={updateAliyunOss}
             ttlSeconds={ttlSeconds}
@@ -6208,6 +6249,8 @@ function MediaStorageSection() {
                   {t("settings.mediaStorage.cloudinaryRegisterLink")}
                 </a>
               </>
+            ) : provider === "s3" ? (
+              t("settings.mediaStorage.s3FieldsHint")
             ) : (
               t("settings.mediaStorage.fieldsHint")
             )}
@@ -6225,6 +6268,7 @@ function MediaStorageSection() {
           ) : null}
           {provider === "cloudinary"
             ? t("settings.mediaStorage.saveCloudinary")
+            : provider === "s3" ? t("settings.mediaStorage.saveS3")
             : t("settings.mediaStorage.save")}
         </Button>
       </div>
@@ -6278,26 +6322,28 @@ function CloudinaryFields({
   );
 }
 
-function AliyunOssFields({
+function ObjectStorageFields({
   config,
   onChange,
   ttlSeconds,
   onTtlSecondsChange,
   accessKeyIdPreview,
   accessKeySecretPreview,
+  namePrefix = "aliyun-oss",
 }: {
-  config: AliyunOssStorageConfig;
-  onChange: (patch: Partial<AliyunOssStorageConfig>) => void;
+  config: Pick<AliyunOssStorageConfig, "accessKeyId" | "accessKeySecret" | "bucket" | "endpoint">;
+  onChange: (patch: Partial<Pick<AliyunOssStorageConfig, "accessKeyId" | "accessKeySecret" | "bucket" | "endpoint">>) => void;
   ttlSeconds: string;
   onTtlSecondsChange: (value: string) => void;
   accessKeyIdPreview: string;
   accessKeySecretPreview: string;
+  namePrefix?: string;
 }) {
   const { t } = useTranslation();
   return (
     <>
       <FieldRow
-        name="aliyun-oss-access-key-id"
+        name={`${namePrefix}-access-key-id`}
         label={t("settings.mediaStorage.fields.accessKeyId")}
         value={config.accessKeyId}
         onChange={(v) => onChange({ accessKeyId: v })}
@@ -6306,7 +6352,7 @@ function AliyunOssFields({
       />
       <FieldRow
         secret
-        name="aliyun-oss-access-key-secret"
+        name={`${namePrefix}-access-key-secret`}
         label={t("settings.mediaStorage.fields.accessKeySecret")}
         value={config.accessKeySecret}
         onChange={(v) => onChange({ accessKeySecret: v })}
@@ -6314,11 +6360,13 @@ function AliyunOssFields({
         savedPreview={accessKeySecretPreview}
       />
       <FieldRow
+        name={`${namePrefix}-bucket`}
         label={t("settings.mediaStorage.fields.bucket")}
         value={config.bucket}
         onChange={(v) => onChange({ bucket: v })}
       />
       <FieldRow
+        name={`${namePrefix}-endpoint`}
         label={t("settings.mediaStorage.fields.endpoint")}
         value={config.endpoint}
         onChange={(v) => onChange({ endpoint: v })}
@@ -6328,6 +6376,37 @@ function AliyunOssFields({
         value={ttlSeconds}
         onChange={onTtlSecondsChange}
       />
+    </>
+  );
+}
+
+function S3Fields(props: {
+  config: S3StorageConfig;
+  onChange: (patch: Partial<S3StorageConfig>) => void;
+  ttlSeconds: string;
+  onTtlSecondsChange: (value: string) => void;
+  accessKeyIdPreview: string;
+  accessKeySecretPreview: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <ObjectStorageFields {...props} namePrefix="s3" />
+      <FieldRow
+        name="s3-region"
+        label={t("settings.mediaStorage.fields.region")}
+        value={props.config.region}
+        onChange={(region) => props.onChange({ region })}
+      />
+      <label className="flex items-center gap-3 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          className="size-4 accent-primary"
+          checked={props.config.pathStyle}
+          onChange={(event) => props.onChange({ pathStyle: event.target.checked })}
+        />
+        {t("settings.mediaStorage.fields.pathStyle")}
+      </label>
     </>
   );
 }
@@ -6352,6 +6431,7 @@ function FieldRow({
   savedPreview?: string;
 }) {
   const { t } = useTranslation();
+  const inputId = useId();
   const [revealed, setRevealed] = useState(false);
   useEffect(() => {
     if (!value) setRevealed(false);
@@ -6359,11 +6439,12 @@ function FieldRow({
   const hasSavedSecret = Boolean(savedPreview && !value);
   return (
     <div className="grid grid-cols-[120px_1fr] items-center gap-3">
-      <Label className="justify-start text-[11px] font-normal tracking-wide text-muted-foreground uppercase">
+      <Label htmlFor={inputId} className="justify-start text-[11px] font-normal tracking-wide text-muted-foreground uppercase">
         {label}
       </Label>
       <div className="relative">
         <Input
+          id={inputId}
           name={name}
           autoComplete={autoComplete ?? (secret ? "new-password" : undefined)}
           type={secret && !revealed ? "password" : "text"}
