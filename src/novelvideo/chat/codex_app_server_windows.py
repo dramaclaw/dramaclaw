@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import ctypes
+import select
+import socket
 from pathlib import Path
 
 # uv --target does not execute pywin32.pth. Load its DLL bootstrap before win32api.
@@ -13,6 +16,51 @@ import win32con
 import win32file
 import win32process
 import win32security
+
+
+def connect_unix_socket(path: Path, timeout: float) -> socket.socket:
+    """Connect through Winsock when CPython lacks AF_UNIX address support."""
+
+    encoded = str(path).encode("utf-8")
+    if not path.is_absolute() or b"\0" in encoded or len(encoded) >= 108:
+        raise ValueError("Invalid Windows Codex socket path")
+    prepare_private_directory(path.parent)
+
+    class SockaddrUnix(ctypes.Structure):
+        _fields_ = [("family", ctypes.c_ushort), ("path", ctypes.c_char * 108)]
+
+    winsock = ctypes.WinDLL("ws2_32")
+    winsock.connect.argtypes = [
+        ctypes.c_size_t,
+        ctypes.POINTER(SockaddrUnix),
+        ctypes.c_int,
+    ]
+    winsock.connect.restype = ctypes.c_int
+    winsock.WSAGetLastError.argtypes = []
+    winsock.WSAGetLastError.restype = ctypes.c_int
+    # CPython can own a Winsock handle for family 1, but cannot encode its address.
+    # Keep all I/O and handle ownership in socket.socket; only connect is native.
+    stream = socket.socket(1, socket.SOCK_STREAM)
+    try:
+        stream.setblocking(False)
+        address = SockaddrUnix(1, encoded)
+        if winsock.connect(
+            stream.fileno(), ctypes.byref(address), ctypes.sizeof(address)
+        ):
+            error = winsock.WSAGetLastError()
+            if error != 10035:  # WSAEWOULDBLOCK: asynchronous connect in progress.
+                raise ctypes.WinError(error)
+            _, writable, exceptional = select.select([], [stream], [stream], timeout)
+            if not writable and not exceptional:
+                raise TimeoutError("Timed out connecting to the Windows Codex socket")
+            error = stream.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+            if error:
+                raise ctypes.WinError(error)
+        stream.setblocking(True)
+        return stream
+    except BaseException:
+        stream.close()
+        raise
 
 
 def current_user_sid():

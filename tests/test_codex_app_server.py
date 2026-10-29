@@ -6,6 +6,7 @@ import gzip
 import json
 import os
 import sqlite3
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -27,12 +28,42 @@ def _integration_codex_binary() -> Path:
         binary = Path(configured)
         assert binary.is_file(), "CODEX_BIN must point to the compiled runtime"
         return binary
-    return Path(distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex"))
+    return Path(
+        distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
+    )
 
 
 def test_runtime_rejects_sdk_bundled_binary():
     with pytest.raises(RuntimeError, match="DramaClaw-patched Codex runtime"):
         codex_app_server._resolve_codex_bin(SimpleNamespace(codex_bin=None))
+
+
+def test_windows_websocket_uses_preconnected_socket_and_closes_on_failure(
+    monkeypatch, tmp_path
+):
+    from unittest.mock import Mock
+    import websockets.sync.client
+
+    stream = Mock()
+    native_connect = Mock(return_value=stream)
+    monkeypatch.setitem(
+        sys.modules,
+        "novelvideo.chat.codex_app_server_windows",
+        SimpleNamespace(connect_unix_socket=native_connect),
+    )
+    monkeypatch.setattr(codex_app_server, "os", SimpleNamespace(name="nt"))
+    handshake = Mock(side_effect=TimeoutError("handshake timed out"))
+    monkeypatch.setattr(websockets.sync.client, "unix_connect", handshake)
+    path = tmp_path / "codex.sock"
+    with pytest.raises(TimeoutError, match="handshake timed out"):
+        codex_app_server._connect_local_websocket(
+            path, uri="ws://localhost/rpc", open_timeout=0.2
+        )
+    native_connect.assert_called_once_with(path, 0.2)
+    assert handshake.call_args.args == ()
+    assert handshake.call_args.kwargs["sock"] is stream
+    assert 0 <= handshake.call_args.kwargs["open_timeout"] <= 0.2
+    stream.close.assert_called_once()
 
 
 def test_control_rpc_uses_shared_app_server_for_lifecycle(monkeypatch, tmp_path):
@@ -756,8 +787,7 @@ async def test_app_server_exact_node_action_searches_only_batch_write_tool(
 
         try:
             events = [
-                event
-                async for event in client.thread_start().stream(execution_prompt)
+                event async for event in client.thread_start().stream(execution_prompt)
             ]
         finally:
             codex_app_server.stop_shared_codex_runtime()

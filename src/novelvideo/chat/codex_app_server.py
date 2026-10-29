@@ -71,6 +71,27 @@ class CodexRuntimeError(RuntimeError):
     """The local App Server could not start or initialize its transport."""
 
 
+def _connect_local_websocket(socket_path: Path, **options):
+    from websockets.sync.client import unix_connect
+
+    if os.name != "nt":
+        return unix_connect(str(socket_path), **options)
+    from novelvideo.chat.codex_app_server_windows import connect_unix_socket
+
+    started = time.monotonic()
+    stream = connect_unix_socket(socket_path, options["open_timeout"])
+    try:
+        # A preconnected socket avoids CPython's missing Windows AF_UNIX encoder.
+        # unix_connect also suppresses TCP options and proxy discovery.
+        options["open_timeout"] = max(
+            0.0, options["open_timeout"] - (time.monotonic() - started)
+        )
+        return unix_connect(sock=stream, **options)
+    except BaseException:
+        stream.close()
+        raise
+
+
 def _deny_unexpected_approval(method: str, _params: dict | None) -> dict:
     """Fail closed if the runtime asks for authority outside approved MCP tools.
 
@@ -284,11 +305,9 @@ class _SharedCodexRuntime:
     def _socket_accepting(socket_path: Path) -> bool:
         if not socket_path.exists():
             return False
-        from websockets.sync.client import unix_connect
-
         try:
-            probe = unix_connect(
-                str(socket_path),
+            probe = _connect_local_websocket(
+                socket_path,
                 uri="ws://localhost/rpc",
                 compression=None,
                 open_timeout=0.2,
@@ -687,7 +706,6 @@ class _UnixSocketCodexClient:
         from openai_codex.client import CodexClient as SdkCodexClient
         from openai_codex.errors import CodexError, TransportClosedError
         from websockets.exceptions import ConnectionClosed
-        from websockets.sync.client import unix_connect
 
         class Client(SdkCodexClient):
             def __init__(self) -> None:
@@ -703,8 +721,8 @@ class _UnixSocketCodexClient:
             def start(self) -> None:
                 if self._websocket is not None:
                     return
-                self._websocket = unix_connect(
-                    str(self._socket_path),
+                self._websocket = _connect_local_websocket(
+                    self._socket_path,
                     uri="ws://localhost/rpc",
                     compression=None,
                     max_size=_MAX_MESSAGE_BYTES,

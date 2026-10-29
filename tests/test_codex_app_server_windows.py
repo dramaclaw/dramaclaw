@@ -6,10 +6,45 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 
 @unittest.skipUnless(os.name == "nt", "Windows process and DACL APIs")
 class WindowsAppServerBoundary(unittest.TestCase):
+    def test_missing_socket_fails_without_waiting_for_startup_timeout(self):
+        from novelvideo.chat.codex_app_server_windows import (
+            connect_unix_socket,
+            prepare_private_directory,
+            private_control_root,
+        )
+        import time
+
+        with tempfile.TemporaryDirectory(dir=private_control_root()) as root:
+            private = Path(root) / "private"
+            prepare_private_directory(private)
+            started = time.monotonic()
+            with self.assertRaises(OSError):
+                connect_unix_socket(private / "missing.sock", 0.2)
+            self.assertLess(time.monotonic() - started, 2)
+
+    def test_socket_timeout_closes_the_native_handle(self):
+        from novelvideo.chat import codex_app_server_windows as native
+
+        stream = Mock()
+        stream.fileno.return_value = 123
+        winsock = Mock()
+        winsock.connect.return_value = -1
+        winsock.WSAGetLastError.return_value = 10035
+        with (
+            patch.object(native, "prepare_private_directory"),
+            patch.object(native.ctypes, "WinDLL", return_value=winsock),
+            patch.object(native.socket, "socket", return_value=stream),
+            patch.object(native.select, "select", return_value=([], [], [])),
+        ):
+            with self.assertRaises(TimeoutError):
+                native.connect_unix_socket(Path("C:/private/codex.sock"), 0.2)
+        stream.close.assert_called_once()
+
     def test_pid_probe_does_not_terminate_process(self):
         from novelvideo.chat.codex_app_server_windows import pid_alive
 
