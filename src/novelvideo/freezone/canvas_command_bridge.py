@@ -210,19 +210,22 @@ def find_clarification_bridge_message(
     project_id: str | None,
     canvas_id: str | None,
     clarification_id: str,
+    request_scope: dict[str, Any] | None = None,
     include_expired: bool = False,
     bridge_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
-    """Locate the newest live clarification card for one clarification id.
+    """Locate the newest card by its id/version family or explicit target scope.
 
     Returns the stored pending payload plus ``key``, ``transport_status`` and,
     once the frontend answered, ``result``. Used to resume waiting on a card
     after the tool call that created it timed out, so the user's later answer
     is collected instead of a second card being shown. An expired card (its
     pending TTL passed before anyone answered) is reported as absent.
+    Scope lookup requires every requested field to match persisted metadata;
+    cards without that metadata are only recoverable by id.
     """
     wanted = str(clarification_id or "").strip()
-    if not wanted:
+    if not wanted and not request_scope:
         return None
     now = time.time()
     with _bridge_db(bridge_dir) as conn:
@@ -240,7 +243,13 @@ def find_clarification_bridge_message(
         if not isinstance(event, dict):
             continue
         event_id = str(event.get("clarification_id") or "")
-        if event_id != wanted and not event_id.startswith(f"{wanted}_v"):
+        if wanted and event_id != wanted and not event_id.startswith(f"{wanted}_v"):
+            continue
+        stored_scope = event.get("request_scope")
+        if request_scope and (
+            not isinstance(stored_scope, dict)
+            or any(stored_scope.get(key) != value for key, value in request_scope.items())
+        ):
             continue
         status = str(row["status"])
         if status == "expired" and not include_expired:

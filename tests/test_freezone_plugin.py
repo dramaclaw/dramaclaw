@@ -3618,6 +3618,192 @@ def test_clarification_recovery_and_choice_revision_use_durable_inbox(
     ]
 
 
+@pytest.fixture
+def clarification_inbox(monkeypatch, tmp_path):
+    from novelvideo.freezone import canvas_command_bridge as bridge
+
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "wait_clarification_result",
+        lambda key, **kw: bridge.wait_clarification_result(key, timeout_seconds=0),
+    )
+    return plugin, bridge
+
+
+def _character_clarification(name):
+    return {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "context_key": f"character:{name}",
+        "target_node_ids": [name],
+        "questions": [
+            {
+                "id": "style",
+                "title": "Style",
+                "options": [
+                    {"id": "a", "label": "A"},
+                    {"id": "b", "label": "B"},
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize("explicit_id", [False, True])
+@pytest.mark.parametrize("answered", [False, True])
+def test_recovery_keeps_requested_character_instead_of_latest_card(
+    clarification_inbox,
+    explicit_id,
+    answered,
+):
+    plugin, bridge = clarification_inbox
+    handler = _clarification_handler(plugin)
+    alice_args = _character_clarification("alice")
+    alice = handler(alice_args)
+    if answered:
+        bridge.resolve_clarification_result(
+            alice["bridge_key"],
+            {
+                "ok": True,
+                "status": "clarification_frontend_result",
+                "clarification_status": "answered",
+                "answers": {"style": {"option_ids": ["a"]}},
+            },
+        )
+    bob = handler(_character_clarification("bob"))
+    bridge.resolve_clarification_result(
+        bob["bridge_key"],
+        {
+            "ok": True,
+            "status": "clarification_frontend_result",
+            "clarification_status": "answered",
+            "answers": {"style": {"option_ids": ["b"]}},
+        },
+    )
+    bridge.put_clarification_turn_context(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        recovery_only=True,
+    )
+    reopened = handler(
+        {**alice_args, **({"clarification_id": alice["clarification_id"]} if explicit_id else {})}
+    )
+    assert reopened["bridge_key"] == alice["bridge_key"]
+    if answered:
+        assert reopened["answers"]["style"]["option_ids"] == ["a"]
+    else:
+        assert reopened["status"] == "clarification_frontend_timeout"
+
+
+@pytest.mark.parametrize("explicit_id", [False, True])
+def test_reselecting_changed_questions_cancels_the_original_card(clarification_inbox, explicit_id):
+    plugin, bridge = clarification_inbox
+    handler = _clarification_handler(plugin)
+    args = _character_clarification("alice")
+    original = handler(args)
+    revised = handler(
+        {
+            **args,
+            "new_request": True,
+            **({"clarification_id": original["clarification_id"]} if explicit_id else {}),
+            "questions": [
+                {
+                    "id": "style",
+                    "title": "Choose a new style",
+                    "options": [
+                        {"id": "c", "label": "C"},
+                        {"id": "d", "label": "D"},
+                    ],
+                }
+            ],
+        }
+    )
+    assert revised["bridge_key"] != original["bridge_key"]
+    pending = bridge.list_pending_bridge_messages(project_id="project-a", canvas_id="canvas-a")
+    assert [item["key"] for item in pending] == [revised["bridge_key"]]
+    assert (
+        bridge.wait_clarification_result(original["bridge_key"], timeout_seconds=0)[
+            "clarification_status"
+        ]
+        == "cancelled"
+    )
+    bridge.resolve_clarification_result(
+        revised["bridge_key"],
+        {
+            "ok": True,
+            "status": "clarification_frontend_result",
+            "clarification_status": "answered",
+            "answers": {"style": {"option_ids": ["c"]}},
+        },
+    )
+    resumed = handler(
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "clarification_id": original["clarification_id"],
+        }
+    )
+    assert resumed["answers"]["style"]["option_ids"] == ["c"]
+
+
+def test_recovery_preserves_explicit_id_for_legacy_card_without_scope(clarification_inbox):
+    plugin, bridge = clarification_inbox
+    handler = _clarification_handler(plugin)
+    args = _character_clarification("alice")
+    bridge.put_pending_clarification_event(
+        key="legacy-alice-key",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event={"clarification_id": "legacy-alice", "questions": args["questions"]},
+    )
+    handler(_character_clarification("bob"))
+    bridge.put_clarification_turn_context(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        recovery_only=True,
+    )
+    result = handler({**args, "clarification_id": "legacy-alice"})
+    assert result["bridge_key"] == "legacy-alice-key"
+
+
+def test_conflicting_card_id_and_character_scope_are_rejected(clarification_inbox):
+    plugin, bridge = clarification_inbox
+    handler = _clarification_handler(plugin)
+    alice = handler(_character_clarification("alice"))
+    bob = handler(_character_clarification("bob"))
+    bridge.put_clarification_turn_context(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        recovery_only=True,
+    )
+    result = handler(
+        {**_character_clarification("bob"), "clarification_id": alice["clarification_id"]}
+    )
+    assert result["status"] == "clarification_scope_mismatch"
+    pending = bridge.list_pending_bridge_messages(project_id="project-a", canvas_id="canvas-a")
+    assert {item["key"] for item in pending} == {alice["bridge_key"], bob["bridge_key"]}
+
+
+def test_invalid_new_question_does_not_cancel_original_card(clarification_inbox):
+    plugin, bridge = clarification_inbox
+    handler = _clarification_handler(plugin)
+    args = _character_clarification("alice")
+    original = handler(args)
+    result = handler(
+        {
+            **args,
+            "clarification_id": original["clarification_id"],
+            "new_request": True,
+            "questions": [],
+        }
+    )
+    assert result["status"] == "questions_required"
+    pending = bridge.list_pending_bridge_messages(project_id="project-a", canvas_id="canvas-a")
+    assert [item["key"] for item in pending] == [original["bridge_key"]]
+
+
 def test_clarification_resume_collects_late_answer_without_second_card(monkeypatch):
     """A card answered after the first call timed out is consumed on the next call."""
     plugin = _load_plugin_module()
