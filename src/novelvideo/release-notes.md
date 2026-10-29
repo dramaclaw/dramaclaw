@@ -1,35 +1,23 @@
 ---
-version: 2.1.0
-attention: medium
+version: 2.1.1
+attention: high
 ---
-# v2.1.0
+# v2.1.1
 
 ## User-facing Highlights (zh)
 
-- **虾导与创作工作流**: 完善技能驱动的创作方案、模型参数确认、画布执行及任务恢复，支持配置第三方 Agent 模型。
-- **更多画布工具**: 新增视频逐帧拉片、智能续写、画面裁切、深度动作捕捉入口及本地图片像素尺寸调整；模型能力决定可用的视频模式。
-- **媒体存储提前校验**: CE 在付费媒体生成前检查自配存储，提前提示不可用配置，减少因存储问题导致的无效生成。
-- **文生视频无需真人素材审核**: 自动关闭并隐藏真人素材审核开关，避免旧配置或误操作触发不必要的审核请求。
-- **Codex 0.164.0**: 正式 Docker 构建升级到凭据保护版 Codex 0.164.0，提供 AMD64 与 ARM64 原生镜像。
+- **修复桌面虾导**: 桌面版与绿色版使用凭据保护版 Codex 0.164.0，修复升级后虾导无法回复的问题。
+- **更可靠的启动**: 改善 Windows 启动兼容性，并为 Mac 首次初始化助手留出足够时间。
+- **更准确的错误提示**: 本地助手启动失败会提示检查应用，避免误报为上游模型连接失败。
 
 ## User-facing Highlights (en)
 
-- **Agent-assisted workflows**: Improved skill-driven planning, model parameter confirmation, canvas execution and task recovery, with configurable third-party Agent models.
-- **More canvas tools**: Added frame-by-frame video analysis, continuation, cropping, depth motion capture entry points and local image pixel resizing. Available video modes follow model capabilities.
-- **Media storage preflight**: CE checks self-configured storage before paid media generation and reports unavailable configurations earlier.
-- **No real-person material review for text-to-video**: The review switch is hidden and disabled, preventing stale settings or accidental activation from requesting unnecessary review.
-- **Codex 0.164.0**: Official Docker builds use the credential-safe Codex 0.164.0 runtime with native AMD64 and ARM64 images.
+- **Desktop assistant repaired**: Desktop and portable apps use the credential-safe Codex 0.164.0 runtime, fixing assistant failures after upgrading.
+- **More reliable startup**: Improved Windows compatibility and allowed enough time for the assistant's first initialization on Mac.
+- **Clearer errors**: Local assistant startup failures now suggest checking the app instead of reporting an upstream model connection failure.
 
 ## Fixes
 
-- 修复 CE 媒体存储校验和错误提示，兼容 Cloudinary 对测试图片的重新编码，并完善中英文界面提示 (#868)。
-- 文生视频在界面、任务执行和最终请求层关闭真人素材审核；带参考素材的其他模式保留审核能力 (#877)。
-- 改善工作流规划、模型确认、执行状态与音频交付的一致性 (#794、#825、#827、#833、#844、#847)。
-- 修复视频处理请求的自动画幅传递，并将 Ladybug JSON 扩展随包提供，避免运行时下载依赖 (#855、#860)。
-
-## Improvements
-
-- 增加渠道模型列表获取与可搜索模型选择，以及第三方 Agent 模型配置 (#795、#826)。
-- 增加视频处理入口、按模型能力约束视频模式，以及本地图片像素尺寸调整 (#801、#802、#842)。
-- 新增欧洲葡萄牙语本地化，并完善多语言体验 (#866)。
-- 升级正式 Docker 构建的 Codex 运行时到 0.164.0，固定镜像摘要并校验提交、架构、版本和二进制 SHA256。
+- 保留每轮凭据隔离、只读沙箱和默认拒绝本地命令及文件修改审批。
+- 修复 Windows 文件锁、进程存活探测及私有助手通信目录的兼容性。
+- 桌面出包增加真实请求、凭据轮换与防落盘检查，并校验签名、公证及必要资源。

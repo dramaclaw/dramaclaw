@@ -2045,6 +2045,7 @@ src/novelvideo/chat/agent_kit_contract.json,Elastic-2.0,2026 SuperTale contribut
 src/novelvideo/chat/backend_sdk.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/canvas_outcome.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/codex_app_server.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/chat/codex_app_server_windows.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/director_auto.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/display_fallback.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/dramaclaw_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2679,6 +2680,7 @@ tests/test_chat_ws_project_egress.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_cli_cognee_commands.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cli_store_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_codex_app_server.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_codex_app_server_windows.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_codex_app_server_filesystem_security.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_episode_update_merge.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
