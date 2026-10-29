@@ -382,7 +382,7 @@ For frontend development with hot reload: `cd frontend && pnpm install && pnpm d
 
 The local launcher installs Hermes in an isolated environment and explicitly uses it as the
 safe source-checkout chat runtime. Source-built Docker images ship the patched Codex App
-Server runtime and default to Codex. The pinned 2.0.4 release image uses Hermes. To run the API command directly, configure a supported chat backend
+Server runtime and default to Codex, as does the pinned 2.1.1 release image. To run the API command directly, configure a supported chat backend
 first; do not rely on the stock Codex binary for gateway credentials.
 
 **Gateway.** In **Official** mode you need nothing else. For **Custom** or **Local + Official Hybrid** the API expects a gateway on `127.0.0.1:3000` whose SQLite file is `./state/newapi/one-api.db` (that is what "Initialize" in Settings writes to; `NEWAPI_ADMIN_BASE_URL` in `.env` already points there). Either run the published image with that directory mounted:
@@ -391,7 +391,7 @@ first; do not rely on the stock Codex binary for gateway credentials.
 mkdir -p state/newapi
 docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
   -v "$PWD/state/newapi:/data" \
-  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.1
+  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.3
 ```
 
 or run the gateway from source in the sibling checkout (`make dev-api` / `make dev-web` in [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway#develop), or `go build` and start the binary with `SQLITE_PATH=<path to>/dramaclaw/state/newapi/one-api.db`).
