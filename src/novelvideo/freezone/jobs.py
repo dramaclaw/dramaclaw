@@ -1745,7 +1745,17 @@ async def run_freezone_video_gen(
         for item in (reference_items or [])
         if str(item.get("path") or "").strip()
     ]
-    from novelvideo.freezone.video_node import is_freezone_seedance2_backend
+    from novelvideo.freezone.video_node import (
+        effective_video_human_review,
+        is_freezone_seedance2_backend,
+    )
+
+    human_review = effective_video_human_review(
+        human_review,
+        gen_mode=gen_mode,
+        reference_items=reference_items,
+        last_frame_path=last_frame_path,
+    )
 
     video_gen = create_video_generator(
         backend=backend,

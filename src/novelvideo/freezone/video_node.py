@@ -737,6 +737,23 @@ def validate_omni_reference_image_dimensions(
         )
 
 
+def effective_video_human_review(
+    requested: bool,
+    *,
+    gen_mode: str | None,
+    reference_items: list[dict] | None,
+    last_frame_path: str | None = None,
+) -> bool:
+    """Review applies to visual input materials, never text-to-video requests."""
+    if not requested or gen_mode in {"textToVideo", "text_to_video"}:
+        return False
+    return bool(last_frame_path and last_frame_path.strip()) or any(
+        str(item.get("type") or "image") in {"image", "video"}
+        and bool(str(item.get("path") or "").strip())
+        for item in (reference_items or [])
+    )
+
+
 async def run_trusted_freezone_video_gen(
     *,
     project_dir: Path,
@@ -798,7 +815,12 @@ async def run_trusted_freezone_video_gen(
         "duration": float(duration_seconds),
         "last_frame_path": last_frame_path,
         "references": references,
-        "human_review": bool(human_review),
+        "human_review": effective_video_human_review(
+            human_review,
+            gen_mode=gen_mode,
+            reference_items=reference_items,
+            last_frame_path=last_frame_path,
+        ),
         "seedance2_config": (
             {"scene_optimize": scene_optimize} if scene_optimize else None
         ),

@@ -104,6 +104,7 @@ vi.mock("@/api/ops", async (importOriginal) => {
         apiModel: "seedance-1.5-pro",
         label: "Seedance 1.5 Pro",
         catalogId: "catalog-sd1",
+        humanReview: true,
       },
       {
         id: "huimeng/seedance-2.0",
@@ -111,6 +112,7 @@ vi.mock("@/api/ops", async (importOriginal) => {
         apiModel: "seedance-2.0",
         label: "Seedance 2.0",
         catalogId: "catalog-sd2",
+        humanReview: true,
       },
       {
         id: "video-extend-model", providerId: "newapi", label: "Extend",
@@ -315,6 +317,27 @@ describe("video-only catalog mode state", () => {
 });
 
 describe("视频节点：genMode → 提交端点的分派", () => {
+  it("hides and disables persisted human review after switching to text mode", async () => {
+    useCanvasStore.getState().setCanvasData([
+      videoNode({ model: MODEL_SD1, genMode: "firstFrame", humanReview: true }),
+      uploadImageNode("img-1", "/static/first.png"),
+    ], [edge("e1", "img-1")]);
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+    await waitFor(() => expect(result.current.formProps.showHumanReview).toBe(true));
+    expect(result.current.formProps.humanReview).toBe(true);
+
+    act(() => {
+      useCanvasStore.getState().setCanvasData([
+        videoNode({ model: MODEL_SD1, genMode: "textToVideo", humanReview: true }),
+      ], []);
+    });
+    await waitFor(() => expect(result.current.formProps.genMode).toBe("textToVideo"));
+    expect(result.current.formProps.showHumanReview).toBe(false);
+    expect(result.current.formProps.humanReview).toBe(false);
+    await act(async () => { await result.current.submit(); });
+    expect(payloadOf(submitFreezoneVideoGen)).toMatchObject({ humanReview: false });
+  });
+
   it("ordinary video ignores an accidental FMV continuity flag", async () => {
     useCanvasStore.getState().setCanvasData(
       [videoNode({ genMode: "textToVideo", continuityMode: "auto" })],
@@ -346,13 +369,16 @@ describe("视频节点：genMode → 提交端点的分派", () => {
   });
 
   it("文生视频 → /video/gen", async () => {
-    useCanvasStore.getState().setCanvasData([videoNode({ genMode: "textToVideo" })], []);
+    useCanvasStore.getState().setCanvasData([videoNode({ genMode: "textToVideo", humanReview: true })], []);
 
-    await submitAndSettle();
+    const result = await submitAndSettle();
+    expect(result.current.formProps.showHumanReview).toBe(false);
+    expect(result.current.formProps.humanReview).toBe(false);
 
     expectOnlyEndpointCalled(submitFreezoneVideoGen);
     expect(payloadOf(submitFreezoneVideoGen)).toMatchObject({
       genMode: "textToVideo",
+      humanReview: false,
       prompt: "一只猫跳上桌子",
       // 提交给后端的是媒体目录 id，不是前端的展示 id。
       model: "catalog-sd2",
@@ -384,7 +410,7 @@ describe("视频节点：genMode → 提交端点的分派", () => {
       .getState()
       .setCanvasData(
         [
-          videoNode({ model: MODEL_SD1, genMode: "firstFrame" }),
+          videoNode({ model: MODEL_SD1, genMode: "firstFrame", humanReview: true }),
           uploadImageNode("img-1", "/static/first.png"),
         ],
         [edge("e1", "img-1")],
@@ -395,6 +421,7 @@ describe("视频节点：genMode → 提交端点的分派", () => {
     expectOnlyEndpointCalled(submitFreezoneVideoKeyframes);
     expect(payloadOf(submitFreezoneVideoKeyframes)).toMatchObject({
       genMode: "firstFrame",
+      humanReview: true,
       firstFrameUrl: "/static/first.png",
       // 首帧模式下尾帧必须留空，否则后端会当首尾帧插值任务跑。
       lastFrameUrl: null,
