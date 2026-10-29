@@ -31,7 +31,7 @@ def test_local_ce_keeps_hermes_out_of_application_venv():
     assert 'uv pip install --python "$HERMES_PYTHON"' in setup_script
 
 
-def test_source_startup_docs_use_supported_local_launcher():
+def test_source_startup_docs_configure_codex_runtime():
     documented_paths = (
         ROOT / "README.md",
         ROOT / "docs" / "en" / "getting-started" / "installation.md",
@@ -40,4 +40,15 @@ def test_source_startup_docs_use_supported_local_launcher():
 
     for path in documented_paths:
         content = path.read_text(encoding="utf-8")
-        assert "scripts/start-ce.sh" in content
+        assert "export DRAMACLAW_CHAT_BACKEND=codex" in content
+        assert 'export CODEX_BIN="/absolute/path/to/codex-dramaclaw"' in content
+        assert "uv run novelvideo api --host 127.0.0.1 --port 8780" in content
+        assert "scripts/start-ce.sh" not in content
+        assert "hermes" not in content.lower()
+
+
+def test_env_example_selects_codex_for_source_development():
+    content = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert "\nDRAMACLAW_CHAT_BACKEND=codex\n" in content
+    assert "HERMES_MODEL=" not in content

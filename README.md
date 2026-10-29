@@ -166,7 +166,7 @@ Xia Director turns natural-language creative briefs into executable canvas workf
 
 - **Canvas workflow orchestration** &mdash; plan, create, connect and arrange nodes from a creative brief; execute confirmed workflows with progress tracking and failure recovery.
 - **Workflow catalog and skill extensions** &mdash; 11 workflow skills and 60 recipes covering short drama, e-commerce ads, IP character ads and social content; install, export and share skill / recipe bundles.
-- **External agent integration** &mdash; [Agent Kit](agent-kit/README.md) exposes the same production workflows to Codex, Claude Code, OpenClaw, Hermes, WorkBuddy and other MCP clients.
+- **External agent integration** &mdash; [Agent Kit](agent-kit/README.md) exposes the same production workflows to Codex, Claude Code, OpenClaw, WorkBuddy and other MCP clients.
 - **Project context and task management** &mdash; inspect project progress, advance script and shot tasks, check deliverable completeness and identify the next production steps.
 
 <br/>
@@ -339,9 +339,9 @@ Choose a deployment method before starting:
 |---|---|---|---|
 | Published images | A fixed release; no local build | Codex | `http://localhost:8080` |
 | Source Docker | Code from your local checkouts, built into images | Codex | `http://localhost:8080` |
-| Local Python + Vite | Source processes on your host, outside Docker | Hermes via `scripts/start-ce.sh` | `http://localhost:5173` |
+| Local Python + Vite | Source processes on your host, outside Docker | Codex (requires a host-side credential-safe runtime) | `http://localhost:5173` |
 
-The Agent backend (Hermes/Codex) is separate from the model gateway mode (Official/Custom/Hybrid).
+The Codex Agent backend is separate from the model gateway mode (Official/Custom/Hybrid).
 
 **Source build (default)** — clone DramaClaw and the bundled [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) side by side; `docker compose up -d --build` builds all three services from those two checkouts.
 
@@ -396,23 +396,28 @@ Pin versions or switch registry in `.env` (`DRAMACLAW_VERSION`, `DRAMACLAW_GATEW
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
-uv sync
+uv sync --group dev
 cp .env.example .env && $EDITOR .env
 
-scripts/start-ce.sh   # installs dependencies, then starts the API and bundled frontend
+# First install a credential-safe DramaClaw Codex runtime for your host OS/architecture.
+# Replace this path with your actual executable:
+export CODEX_BIN="/absolute/path/to/codex-dramaclaw"
+export DRAMACLAW_CHAT_BACKEND=codex
+test -x "$CODEX_BIN" && "$CODEX_BIN" --version
+uv run novelvideo api --host 127.0.0.1 --port 8780
 ```
 
-This launcher needs Python 3.11–3.12, `uv`, Node.js/pnpm and ffmpeg. Open
-<http://localhost:5173>; the API runs at <http://localhost:8780>.
-For frontend development with hot reload: `cd frontend && pnpm install && pnpm dev`.
+In another terminal, from the repository root, run
+`cd frontend && pnpm install && pnpm dev`. This starts the hot-reloading UI at <http://localhost:5173>;
+the API runs at <http://localhost:8780>. Local development needs Python 3.11–3.12,
+`uv`, Node.js/pnpm and ffmpeg.
 Source Docker builds are not hot-reloading: rebuild `api web` after changing their code.
 
-The local launcher installs Hermes in an isolated environment and explicitly uses it as the
-safe source-checkout chat runtime when no backend is explicitly selected. Docker builds at
-v2.1.0 include credential-safe Codex 0.164.0; both source and release Compose default to
-Codex. To run the API command directly, configure a supported chat
-backend first; the Docker-only binary path is not a host installation. Do not rely on the
-stock Codex binary for gateway credentials. See the [installation guide](docs/en/getting-started/installation.md).
+Docker builds at v2.1.0 include credential-safe Codex 0.164.0; both source and release
+Compose default to Codex. Native Python development needs a separate compatible runtime:
+the Linux binary inside Docker cannot run directly on macOS or Windows. Do not substitute
+a stock Codex binary for the credential-safe runtime. If you do not have a compatible host
+binary, use source Docker instead. See the [installation guide](docs/en/getting-started/installation.md).
 
 **Gateway.** In **Official** mode you need nothing else. For **Custom** or **Local + Official Hybrid** the API expects a gateway on `127.0.0.1:3000` whose SQLite file is `./state/newapi/one-api.db` (that is what "Initialize" in Settings writes to; `NEWAPI_ADMIN_BASE_URL` in `.env` already points there). Either run the published image with that directory mounted:
 

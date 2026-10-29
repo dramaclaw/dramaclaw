@@ -63,9 +63,14 @@ After it's up, open **`http://localhost:8080`** in your browser (the app UI); th
 
 > Python must be in the **3.11–3.12** range (`requires-python = ">=3.11,<3.13"`). uv pins dependency versions according to `uv.lock`.
 
-The frontend also needs Node.js and pnpm. Use the pnpm version declared in
-`frontend/package.json`; `scripts/start-ce.sh` checks for pnpm and installs frontend
-dependencies when needed. Python alone only provides the API, not the Vite dev server.
+The frontend also needs Node.js and pnpm; use the pnpm version declared in
+`frontend/package.json`. Python alone only provides the API, not the Vite dev server.
+
+The Agent uses Codex. Native development requires a **credential-safe DramaClaw Codex
+runtime matching your host OS and architecture**. Set `CODEX_BIN` to its executable;
+neither `uv sync` nor the frontend installs it. The Docker image's Linux binary is not
+a macOS or Windows binary. If you do not have a compatible host runtime, use source
+Docker instead. Do not substitute the stock Codex CLI for this runtime.
 
 ### 2. Install dependencies and start
 
@@ -75,58 +80,28 @@ cd dramaclaw
 
 cp .env.example .env && $EDITOR .env     # change PROMPT_EXPORT_PASSWORD; configure the model channel/key in the UI
 
-scripts/start-ce.sh                      # install dependencies and start API + frontend
+uv sync --group dev
+# Replace this path with your installed credential-safe runtime:
+export CODEX_BIN="/absolute/path/to/codex-dramaclaw"
+export DRAMACLAW_CHAT_BACKEND=codex
+test -x "$CODEX_BIN" && "$CODEX_BIN" --version
+uv run novelvideo api --host 127.0.0.1 --port 8780
 ```
 
 Open `http://localhost:5173` for the Vite development UI; the API is at
-`http://localhost:8780`. The frontend supports hot reload. For separate API and frontend
-terminals, use:
+`http://localhost:8780`. In a second terminal, from the repository root, start the
+hot-reloading frontend:
 
 ```bash
-# Terminal 1, from the repository root, with a supported Agent runtime configured:
-uv run novelvideo api --host 127.0.0.1 --port 8780
-# Terminal 2:
 cd frontend && pnpm install && pnpm dev --host 127.0.0.1 --port 5173
 ```
 
-Docker builds at v2.1.0 include credential-safe Codex 0.164.0. Both source and release
-Compose default to Codex; an explicit `DRAMACLAW_CHAT_BACKEND` value overrides this
-default. Direct `novelvideo api` invocations default
-to Codex and need a valid host-side `CODEX_BIN`; the Docker binary path does not install
-a host runtime. Do not substitute a stock Codex binary for the credential-safe runtime.
-`scripts/start-ce.sh` installs Hermes in an isolated environment for source development and selects
-Hermes only when no chat backend is explicitly configured. `DRAMACLAW_CHAT_BACKEND` takes
-precedence over the legacy `SUPERTALE_CHAT_BACKEND` variable.
+Docker builds at v2.1.0 already include credential-safe Codex 0.164.0. Both source and
+release Compose select Codex by default; keep `DRAMACLAW_CHAT_BACKEND=codex` if setting
+it explicitly. `CODEX_BIN` in the native instructions above is a host-side path, not a
+container path.
 CE defaults to `ST_EDITION=ce`, no-login single local user, and in-process inline task execution
 (no Ray/Redis/Celery).
-
-### Linux source-checkout Hermes sandbox choice
-
-This applies only to Hermes; Codex does not use this sandbox switch. On Linux, Hermes
-refuses chat by default when the sandbox is missing, unusable, or not activated.
-When neither `SUPERTALE_ALLOW_UNSANDBOXED` nor `SUPERTALE_LINUX_SANDBOX` is enabled,
-`scripts/start-ce.sh` prints configuration guidance before installing dependencies. Enabled values are `1/true/yes/on`, ignoring case and surrounding
-whitespace; `0/false` does not enable a switch. Direct `novelvideo api` invocations with Hermes
-explicitly selected follow the same sandbox enforcement rule.
-
-For **single-user local development**, if you accept running Hermes without a sandbox,
-explicitly add this to `.env`:
-
-```dotenv
-SUPERTALE_ALLOW_UNSANDBOXED=1
-```
-
-Or scope it to one launch:
-
-```bash
-SUPERTALE_ALLOW_UNSANDBOXED=1 scripts/start-ce.sh
-```
-
-This permits a warning-backed fallback only when the sandbox is unavailable; it does not
-disable a usable sandbox. `SUPERTALE_ENV=production` or a nonempty `ST_CONTROL_PLANE_DSN`
-still requires sandboxing, and the opt-in cannot override that boundary. Do not set
-`SUPERTALE_LINUX_SANDBOX=1` merely to suppress the error: that switch requires a deployment
-that isolates the current user's data directories through mounts.
 
 ### 3. Verify
 

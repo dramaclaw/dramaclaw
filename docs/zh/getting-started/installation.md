@@ -64,8 +64,13 @@ docker compose up -d --build    # 用两个 checkout 从源码构建 api、web �
 > Python 必须落在 **3.11–3.12**(`requires-python = ">=3.11,<3.13"`)。uv 会按 `uv.lock` 锁定依赖版本。
 
 前端还需要 Node.js 和 pnpm；pnpm 版本以 `frontend/package.json` 的声明为准。
-`scripts/start-ce.sh` 会检查 pnpm，并在需要时安装前端依赖。
 只安装 Python 只能运行 API，不能启动 Vite 开发界面。
+
+虾导使用 Codex。本地 Python 开发必须先准备**与宿主机操作系统和架构匹配的
+DramaClaw 凭据保护版 Codex 运行时**，并将 `CODEX_BIN` 指向其可执行文件；
+`uv sync` 和前端依赖安装都不会安装该运行时。Docker 中的 Linux 二进制不能直接在
+macOS 或 Windows 上运行。没有配套的宿主机运行时，建议使用源码 Docker 方式；
+不要用未经配套保护的官方原版 Codex CLI 替代。
 
 ### 2. 装依赖并启动
 
@@ -75,52 +80,25 @@ cd dramaclaw
 
 cp .env.example .env && $EDITOR .env     # 修改 PROMPT_EXPORT_PASSWORD；模型渠道与 Key 通过网页设置
 
-scripts/start-ce.sh                      # 安装依赖并启动 API 与前端
+uv sync --group dev
+# 替换为你已安装的凭据保护版运行时路径：
+export CODEX_BIN="/absolute/path/to/codex-dramaclaw"
+export DRAMACLAW_CHAT_BACKEND=codex
+test -x "$CODEX_BIN" && "$CODEX_BIN" --version
+uv run novelvideo api --host 127.0.0.1 --port 8780
 ```
 
 浏览器打开 `http://localhost:5173`，这是支持热更新的 Vite 开发界面；
-API 为 `http://localhost:8780`。也可分两个终端启动：
+API 为 `http://localhost:8780`。在另一个终端进入仓库根目录，启动前端：
 
 ```bash
-# 终端 1：在仓库根目录运行，须先配置支持的虾导运行时
-uv run novelvideo api --host 127.0.0.1 --port 8780
-# 终端 2：
 cd frontend && pnpm install && pnpm dev --host 127.0.0.1 --port 5173
 ```
 
-v2.1.0 Docker 构建内置凭据保护版 Codex 0.164.0。源码和发布版 Compose 均默认使用 Codex；
-显式设置的 `DRAMACLAW_CHAT_BACKEND` 会覆盖该默认值。
-直接运行 `novelvideo api` 默认使用 Codex，需要配置宿主机上有效的 `CODEX_BIN`；
-Docker 中的二进制路径不等于宿主机已安装运行时，不能用未经配套保护的官方原版二进制替代。
-`scripts/start-ce.sh` 则为源码开发把 Hermes 安装到隔离环境，并在未显式配置聊天后端时
-选择 Hermes。`DRAMACLAW_CHAT_BACKEND` 优先于兼容变量 `SUPERTALE_CHAT_BACKEND`。
+v2.1.0 Docker 构建已内置凭据保护版 Codex 0.164.0。源码和发布版 Compose 均默认选择 Codex；
+如显式设置 `DRAMACLAW_CHAT_BACKEND`，请保持为 `codex`。
+上面本地 Python 命令中的 `CODEX_BIN` 是宿主机路径，不是容器内路径。
 CE 默认 `ST_EDITION=ce`、免登录单本地用户、任务进程内 inline 执行(无 Ray/Redis/Celery)。
-
-### Linux 源码运行 Hermes 的沙箱选择
-
-仅在使用 Hermes 时需要处理这一项；Codex 不使用此沙箱开关。Linux 上沙箱缺失、
-不可用或未激活时，Hermes 默认拒绝聊天。`SUPERTALE_ALLOW_UNSANDBOXED` 和
-`SUPERTALE_LINUX_SANDBOX` 都未有效开启时，
-`scripts/start-ce.sh` 会在安装依赖前显示配置提示。有效开启值为 `1/true/yes/on`，
-忽略大小写和首尾空格；`0/false` 不算开启。显式选择 Hermes 后直接运行
-`novelvideo api` 时也遵循同一沙箱规则。
-
-如果是**单机本地开发**，并且接受 Hermes 无沙箱运行，可在 `.env` 中显式添加：
-
-```dotenv
-SUPERTALE_ALLOW_UNSANDBOXED=1
-```
-
-也可仅对本次启动设置：
-
-```bash
-SUPERTALE_ALLOW_UNSANDBOXED=1 scripts/start-ce.sh
-```
-
-该配置只允许沙箱不可用时告警降级，不会自动关闭可用的沙箱。
-`SUPERTALE_ENV=production` 或 `ST_CONTROL_PLANE_DSN` 非空时仍强制要求沙箱，
-这个开关不能绕过。不要仅为消除错误设置 `SUPERTALE_LINUX_SANDBOX=1`：
-该开关要求部署已通过挂载隔离当前用户的数据目录。
 
 ### 3. 验证
 
