@@ -617,3 +617,37 @@ PR 描述须列出的配置项（产品确认）：
 C1～C6、C8～C11 和 S5 是后续实现验收命令，本轮未运行，不能据此宣称功能或 UI 通过。本轮 UI 方案补充基于 HEAD `9e9b7d3a4b6486d0ae10c47b03ea6b20022dacc0`，已读 DESIGN.md。修订后 `git diff --check` 退出 0，6 个仓库内链接有效，8 段 JSON 可解析；人工核对了 U01～U12 与测试或浏览器命令的对应关系。最终文档提交 SHA 由 Git 提交结果报告，避免把尚未产生的提交写进文档。
 
 2026-10-29 修订：按用户对 P1、P3、P4 的决定更新第 1.1～1.3、3.2、3.4、3.5、4、4.1、5、7、8 节，新增 A31、I17；仅改本文。
+
+### S0 契约导出（2026-10-30）
+
+边界模型位于 `src/novelvideo/api/routes/voice_design.py`，尚未注册生产路由。
+生成请求使用 `VoiceDesignCreateRequest`；角色与账号保存请求分别使用
+`SaveCharacterVoiceRequest`、`SaveUserVoiceRequest`。生成接收响应为
+`CandidateAcceptedResponse`，查询响应为 `CandidateResponse`；两类保存成功响应为
+`CharacterVoiceResponse`、`UserVoiceResponse`。所有模型均可调用
+`model_json_schema()` 导出 JSON Schema，或作为 FastAPI 的请求/response_model
+导出 OpenAPI。`Candidate` 联合类型用 `TypeAdapter(Candidate).json_schema()` 导出五态。
+`CandidateResponse` 不包含 expired：已知过期查询应返回 HTTP 410 的
+`VoiceDesignError`，不能包装成 HTTP 200 成功。
+
+`ERROR_POLICY` 固定第 3.5 节的 HTTP 状态及 retryable；`ErrorDetails` 只允许
+`field`、`duration_seconds`、`retry_after_seconds`，省略未提供值时使用
+`model_dump(mode="json", exclude_none=True)`。`field` 只能是公开请求字段名。
+错误消息仍须由路由/服务提供可公开的文案，模型不会自动净化自由文本。
+后续路由必须把框架校验异常转换为此错误体，不能返回原始 Pydantic input/ctx。
+无有效操作 UUID 的校验失败需由服务端分配本地请求 UUID。
+语言枚举保留 zh/en；部署开放语言、额度与可配置试听长度由后续服务边界落实，
+当前 schema 固定已批准的默认 15～60 字符。账号音色名称复用现有
+`_safe_voice_name`，不改变上传路径的命名规则。
+
+成功及失败 fixtures 位于 `tests/test_api_voice_design.py`，最小 FastAPI 测试 app
+验证 schema、序列化、202/200/410/422 错误 envelope 和替换请求的契约。
+其中保存及查询 handler 只返回 fixtures，不证明候选生命周期、权限、真实保存、
+幂等、并发或替换归档已经实现。S0 未调用供应商，未修改生产路由注册。
+
+S0 验证环境为 macOS arm64、uv 管理的 Python 3.12.10。起点为
+`a704c6c482fc07668770bb2009f0c01dff5d5921`；首轮
+`uv run pytest tests/test_api_voice_design.py -q` 得到 9 failed，均因待新增的
+`novelvideo.api.routes.voice_design` 模块缺失。实现后同命令通过；交审前再次执行
+该测试、两个新增 Python 文件的 Ruff 检查及 `git diff --check`。
+最终测试数量和完整提交 SHA 由交审回报记录，不把未发生的 Git SHA 写入本文。
