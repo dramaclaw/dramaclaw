@@ -983,7 +983,7 @@ async def test_plan_tool_still_rejects_invalid_input_after_publication(monkeypat
     registry = dramaclaw_mcp._agent_tools()
     schema, _ = registry[target]
     calls = []
-    registry[target] = (schema, lambda args: calls.append(args))
+    monkeypatch.setitem(registry, target, (schema, lambda args: calls.append(args)))
     monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", lambda: registry)
     tools = {tool.name: tool for tool in await dramaclaw_mcp.list_tools()}
     plan = {
