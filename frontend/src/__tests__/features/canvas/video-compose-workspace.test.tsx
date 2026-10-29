@@ -257,6 +257,10 @@ describe('VideoComposeWorkspace', () => {
     // splash（它的标记和文案），刷新页面时会闪一下「另一个产品」的加载态。
     // 遮罩要压住 iframe 直到编辑器自己画出来。
     await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy());
+    expect(container.querySelector('iframe')?.getAttribute('allow')).toBe(
+      'autoplay; fullscreen; picture-in-picture',
+    );
+    expect(container.querySelector('iframe')?.hasAttribute('allowfullscreen')).toBe(false);
     expect(getByText('videoCompose.studio.loading')).toBeTruthy();
 
     fireEvent.load(container.querySelector('iframe')!);

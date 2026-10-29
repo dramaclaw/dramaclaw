@@ -3180,7 +3180,8 @@ function FreezoneChatDock({
         )}
         style={dockStyle}
         aria-label={title}
-        aria-hidden={!open}
+        // inert also removes the closed panel from the accessibility tree.
+        // Setting aria-hidden first races with focus still inside the composer.
         inert={!open}
         onPointerDown={startFloatDrag}
       >

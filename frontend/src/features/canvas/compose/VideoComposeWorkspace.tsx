@@ -309,7 +309,6 @@ export function VideoComposeWorkspace({
             title={t("videoCompose.studio.title")}
             className="h-full w-full border-0"
             allow="autoplay; fullscreen; picture-in-picture"
-            allowFullScreen
             onLoad={() => setEditorPainted(true)}
           />
           {!editorPainted && <div className="absolute inset-0">{loadingSurface}</div>}
