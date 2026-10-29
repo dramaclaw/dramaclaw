@@ -192,6 +192,10 @@ _MERGEABLE_MEDIA_SPEC_TYPES = presentation.MERGEABLE_MEDIA_SPEC_TYPES
 
 _CODEX_MODEL_PROVIDER = "dramaclaw_gateway"
 _DEFAULT_CODEX_MODEL = "DC-codex-agent-LLM"
+_RETIRED_HERMES_MESSAGE = (
+    "Hermes runtime has been retired. Set DRAMACLAW_CHAT_BACKEND=codex "
+    "and CODEX_BIN to the verified DramaClaw Codex executable."
+)
 _DEFAULT_CODEX_REASONING_EFFORT = "medium"
 _CODEX_REASONING_EFFORT_VALUES = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
@@ -1868,22 +1872,20 @@ def _pipeline_continuation_instructions(prompt: str, *, tool_mode: str) -> str:
     return f"{_DRAMACLAW_CONTINUATION_INSTRUCTIONS}\n\n"
 
 
+def _reject_hermes_backend(backend: str | None) -> None:
+    if str(backend or "").strip().lower() == "hermes":
+        from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+        raise CodexRuntimeError(_RETIRED_HERMES_MESSAGE)
+
+
 def _chat_backend() -> str:
     preferred = (
         os.environ.get("DRAMACLAW_CHAT_BACKEND")
         or os.environ.get("SUPERTALE_CHAT_BACKEND")
         or "codex"
     ).strip().lower() or "codex"
-    if preferred == "hermes":
-        # Explicit "hermes" must succeed — do NOT silently fall back to
-        # claude/codex. A missing hermes binary is a config error to surface.
-        if is_hermes_backend_available():
-            return "hermes"
-        raise RuntimeError(
-            "DRAMACLAW_CHAT_BACKEND=hermes requested but hermes is unavailable. "
-            "Run `uv tool install 'hermes-agent[acp]'`, "
-            "then run `hermes doctor` to diagnose."
-        )
+    _reject_hermes_backend(preferred)
     if preferred == "codex":
         if is_codex_backend_available():
             return "codex"
@@ -2007,8 +2009,8 @@ def is_hermes_backend_available() -> bool:
 
 
 def is_chat_backend_available() -> bool:
-    # NOTE: _chat_backend() raises when DRAMACLAW_CHAT_BACKEND=hermes is
-    # requested but unavailable; catch so this probe stays non-throwing.
+    # Configuration errors, including a retired backend, must not make this
+    # availability probe throw.
     try:
         backend = _chat_backend()
     except RuntimeError:
@@ -4070,6 +4072,7 @@ async def stream_assistant_reply(
     execution_context: AgentExecutionContext | None = None,
     project_context: ProjectContext | None = None,
 ) -> dict[str, Any]:
+    _reject_hermes_backend(backend)
     if project_context is not None and project != project_context.project_id:
         raise ValueError("project context project mismatch")
     if execution_context is not None:

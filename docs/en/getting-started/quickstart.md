@@ -12,7 +12,7 @@ DramaClaw is the Community Edition (CE): it runs on a single machine with no Pos
 - Docker (Desktop or Engine) with `docker compose` support.
 - A **DC key** — sign up / purchase at <https://relayclaw.cdnfg.com>; alternatively use the local NewAPI bundled with CE.
 
-## Option A: Published v2.1.1 images (no build)
+## Option A: Published v2.1.2 images (no build)
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
@@ -23,7 +23,7 @@ cp .env.example .env
 Edit `.env`: change `PROMPT_EXPORT_PASSWORD` to a non-default value and add or update:
 
 ```dotenv
-DRAMACLAW_VERSION=2.1.1
+DRAMACLAW_VERSION=2.1.2
 DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
 ```
 

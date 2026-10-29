@@ -33,17 +33,15 @@ ENV ST_EDITION=ce \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
-    HERMES_CLI_PATH=/usr/local/bin/hermes \
+    DRAMACLAW_CHAT_BACKEND=codex \
     CODEX_BIN=/usr/local/bin/codex-dramaclaw
 
 COPY --from=codex-runtime /codex /usr/local/bin/codex-dramaclaw
 COPY --from=codex-runtime /codex-runtime.sha /opt/codex-runtime.sha
 COPY --from=codex-runtime /codex-runtime.json /opt/codex-runtime.json
 
-# ffmpeg for media; bubblewrap (`bwrap`) for the Hermes Linux sandbox — the
-# vendored codex-linux-sandbox binary's default pipeline execs system bwrap
-# (Landlock is only its --use-legacy-landlock fallback, which we do not use).
-# The binary itself is installed further down, per TARGETARCH.
+# Keep the media tools and OS sandbox dependencies independently of the chat
+# runtime. Retiring Hermes must not weaken the application's sandbox boundary.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg bubblewrap \
     && rm -rf /var/lib/apt/lists/*
@@ -71,13 +69,8 @@ COPY src ./src
 COPY .hermes ./.hermes
 COPY deploy ./deploy
 
-# Hermes Linux sandbox binary: install the vendored codex-linux-sandbox for
-# this image's target arch onto PATH, where sandbox_wrap._wrap_linux looks it
-# up (`shutil.which` / /usr/local/bin). TARGETARCH is amd64|arm64 (BuildKit),
-# matching deploy/sandbox/linux-{amd64,arm64}/. The `--help` smoke only proves
-# the ELF loads (loader/arch OK); it creates no sandbox, so it does not need
-# host user namespaces; the worker performs its cached functional probe before
-# wrapping a Hermes command.
+# Preserve the reviewed OS sandbox executable for the target architecture.
+# This loader check does not replace runtime isolation and credential gates.
 RUN set -eux; \
     sbx="deploy/sandbox/linux-${TARGETARCH}/codex-linux-sandbox"; \
     test -x "$sbx" || { echo "no vendored codex-linux-sandbox for TARGETARCH='${TARGETARCH}'" >&2; exit 1; }; \
@@ -120,40 +113,12 @@ RUN set -eux; \
     apt-get autoremove -y; \
     rm -rf /var/lib/apt/lists/*
 
-# Hermes comes from this project's own fork, always. A PyPI release cannot
-# serve this image: it keeps the same version string as the fork and then drops
-# the `_meta` extension the per-turn credential travels in, so every turn fails
-# closed and reports it as a connection error. There is no version to pin here
-# — which upstream release the fork carries is a property of the branch.
-# Hermes comes from this project's own fork, cloned and installed editable.
-#
-# Not from PyPI: a release keeps the same version string as the fork and then
-# drops the `_meta` extension the per-turn credential travels in, so every turn
-# fails closed and reports it as a connection error. Not as a wheel either —
-# upstream refuses to build one on purpose ("distributed via the shell
-# installer, Docker image, or Nix"), and an editable install from a clone is
-# the supported path that a pinned commit can actually use.
-#
-# HERMES_REF is a branch by default and resolves to whatever it points at when
-# the image is built. Pass a commit sha to make a build reproducible.
-ARG HERMES_REPO="https://github.com/dramaclaw/hermes-agent.git"
-ARG HERMES_REF="brainclaw/evidence-plane"
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends git; \
-    rm -rf /var/lib/apt/lists/*; \
-    git clone --depth 1 --branch "$HERMES_REF" "$HERMES_REPO" /opt/hermes-agent \
-      || { git clone "$HERMES_REPO" /opt/hermes-agent; git -C /opt/hermes-agent checkout "$HERMES_REF"; }; \
-    HERMES_SHA="$(git -C /opt/hermes-agent rev-parse HEAD)"; \
-    echo "$HERMES_SHA" > /opt/hermes-agent.sha; \
-    rm -rf /opt/hermes-agent/.git; \
-    uv pip install --system -e "/opt/hermes-agent[acp]"; \
-    python3 deploy/patch_hermes_acp_toolsets.py; \
-    hermes --version; \
-    python3 deploy/verify_hermes_fork.py; \
-    apt-get purge -y git; apt-get autoremove -y
-
 ENV PATH="/app/.venv/bin:/usr/local/bin:$PATH"
+
+# The retired Hermes runtime must not reappear through a dependency or layer.
+RUN ! command -v hermes \
+    && test ! -e /opt/hermes-agent \
+    && /app/.venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('hermes_cli') is None; assert importlib.util.find_spec('acp_adapter') is None"
 
 EXPOSE 8780
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8780/api/v1/config', timeout=2).status == 200 else 1)"

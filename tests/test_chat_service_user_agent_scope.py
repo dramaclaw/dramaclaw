@@ -4408,6 +4408,58 @@ def test_ee_codex_model_uses_environment(monkeypatch):
     assert chat_service._codex_model() == "DC-ee-codex-LLM"
 
 
+@pytest.mark.parametrize(
+    "setting", ["DRAMACLAW_CHAT_BACKEND", "SUPERTALE_CHAT_BACKEND"]
+)
+def test_retired_hermes_is_rejected_without_probing_or_installing(monkeypatch, setting):
+    from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+    monkeypatch.delenv("DRAMACLAW_CHAT_BACKEND", raising=False)
+    monkeypatch.delenv("SUPERTALE_CHAT_BACKEND", raising=False)
+    monkeypatch.setenv(setting, "hermes")
+    monkeypatch.setattr(
+        chat_service,
+        "is_hermes_backend_available",
+        lambda: pytest.fail("A retired runtime must not be probed"),
+    )
+    with pytest.raises(CodexRuntimeError, match="Hermes runtime has been retired"):
+        chat_service._chat_backend()
+    assert chat_service.is_chat_backend_available() is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["hermes", " Hermes "])
+async def test_explicit_turn_override_cannot_revive_hermes(monkeypatch, backend):
+    from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+    monkeypatch.setattr(
+        chat_service,
+        "_stream_assistant_reply_hermes",
+        lambda *args, **kwargs: pytest.fail("Retired adapter must not start"),
+    )
+    with pytest.raises(CodexRuntimeError, match="Hermes runtime has been retired"):
+        await chat_service.stream_assistant_reply(
+            "admin", "project-a", "hello", None, backend=backend
+        )
+
+
+@pytest.mark.asyncio
+async def test_home_chat_does_not_fall_back_to_hermes_for_another_backend(monkeypatch):
+    from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "claude")
+    with pytest.raises(CodexRuntimeError, match="Home chat requires"):
+        await chat_routes._stream_home_turn(
+            websocket=None,
+            user={},
+            username="admin",
+            scope=ChatScope(kind="home"),
+            text="hello",
+            attachments=[],
+            turn_id="turn-a",
+        )
+
+
 def test_explicit_codex_does_not_fallback_when_unavailable(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "codex")
     monkeypatch.delenv("SUPERTALE_CHAT_BACKEND", raising=False)
@@ -6061,7 +6113,8 @@ def test_freezone_canvas_agent_summaries_tie_break_same_millisecond(
 async def test_freezone_hermes_assistant_message_keeps_turn_id(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6123,7 +6176,8 @@ async def test_freezone_hermes_turn_cancels_undelivered_agent_product_admission(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
     state_dir = tmp_path / "project-state"
     operation_id = "agent_product_pending"
     scope = ChatScope(
@@ -6201,7 +6255,8 @@ async def test_freezone_hermes_retries_once_when_cached_session_is_unavailable(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6275,7 +6330,8 @@ async def test_freezone_hermes_retries_once_when_prompt_completion_reports_stale
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6348,7 +6404,8 @@ async def test_freezone_hermes_retries_once_when_stream_ends_before_completion(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6419,7 +6476,8 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6503,7 +6561,8 @@ async def test_freezone_hermes_does_not_replay_failed_workflow_draft_operation(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6563,7 +6622,8 @@ async def test_freezone_hermes_does_not_replay_failed_workflow_draft_operation(
 async def test_freezone_hermes_drops_mainline_media_ui_specs(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",

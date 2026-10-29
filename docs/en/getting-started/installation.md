@@ -29,8 +29,8 @@ Prerequisites: Docker + `docker compose`.
 | **Linux** | Docker Engine + `docker-compose-plugin` (from your distro's package manager) — Docker Compose **≥ 2.24** (`docker compose version`; the compose file uses the `env_file` long syntax) |
 
 Once installed, choose **published images** or a **source build**. For published
-v2.1.1 images, no gateway checkout is needed; follow [Quickstart option A](quickstart.md)
-to pin `DRAMACLAW_VERSION=2.1.1` and `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`.
+v2.1.2 images, no gateway checkout is needed; follow [Quickstart option A](quickstart.md)
+to pin `DRAMACLAW_VERSION=2.1.2` and `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`.
 
 To build your local code instead:
 
@@ -113,7 +113,7 @@ is operator-managed: the script checks that it runs, but cannot prove it contain
 credential-safety patches. Do not use the stock Codex CLI. A download/checksum failure
 stops startup before either service is launched and never falls back to another backend.
 
-Docker builds at v2.1.1 already include credential-safe Codex 0.164.0. Both source and
+Docker builds at v2.1.2 already include credential-safe Codex 0.164.0. Both source and
 release Compose select Codex by default; keep `DRAMACLAW_CHAT_BACKEND=codex` if setting
 it explicitly. `CODEX_BIN` in the native instructions above is a host-side path, not a
 container path.

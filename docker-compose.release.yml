@@ -8,7 +8,7 @@
 # 默认模式是官方，此时内置网关只是常驻待命；.env 写 NEWAPI_PROVISIONER_ENABLED=false 可禁用一键初始化。
 services:
   api:
-    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw:${DRAMACLAW_VERSION:-2.1.1}
+    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw:${DRAMACLAW_VERSION:-2.1.2}
     restart: unless-stopped
     # 运行时从宿主 .env 注入 model/LLM key；镜像版允许没有 .env（首启后再补也行）。
     # environment: 块仍覆盖此处同名变量，保持 CE inline 模式强制不变。
@@ -26,8 +26,6 @@ services:
       NOVELVIDEO_STATE_DIR: /data/state
       NOVELVIDEO_RUNTIME_DIR: /data/runtime
       DRAMACLAW_CHAT_BACKEND: "${DRAMACLAW_CHAT_BACKEND:-codex}"
-      HERMES_CLI_PATH: /usr/local/bin/hermes
-      SUPERTALE_ALLOW_UNSANDBOXED: "1"
       # 运行时用哪个网关由应用设置（settings.db 的 model_gateway_mode）决定，CE 的网关路由不回退到 env；
       # NEWAPI_BASE_URL 只是兜底，默认官方地址，与桌面版 main.js 一致。
       NEWAPI_BASE_URL: "${NEWAPI_BASE_URL:-https://relayclaw.cdnfg.com/v1}"
@@ -78,7 +76,7 @@ services:
   # they are overridden to the compose `api` service (internal port 8780). Open
   # the app at http://localhost:8080 — the browser only ever talks to web.
   web:
-    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw-frontend:${DRAMACLAW_VERSION:-2.1.1}
+    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw-frontend:${DRAMACLAW_VERSION:-2.1.2}
     restart: unless-stopped
     environment:
       BACKEND_HOST: api

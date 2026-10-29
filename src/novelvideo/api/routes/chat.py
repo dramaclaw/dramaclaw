@@ -3951,7 +3951,8 @@ async def _stream_home_turn(
     attachments: list[ChatAttachmentIn],
     turn_id: str,
 ) -> None:
-    if chat_service.get_chat_backend_name() == "codex":
+    backend = chat_service.get_chat_backend_name()
+    if backend == "codex":
         await _stream_home_turn_codex(
             websocket=websocket,
             user=user,
@@ -3962,6 +3963,13 @@ async def _stream_home_turn(
             turn_id=turn_id,
         )
         return
+
+    # The production selector rejects Hermes. Do not route any other backend
+    # into the retained legacy adapter either.
+    if backend != "hermes":
+        from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+        raise CodexRuntimeError("Home chat requires the configured Codex runtime.")
 
     from novelvideo.chat.hermes_egress import HOME_SCOPE_EGRESS_PROJECT_ID
     from novelvideo.chat.hermes_pool import pool as hermes_pool
