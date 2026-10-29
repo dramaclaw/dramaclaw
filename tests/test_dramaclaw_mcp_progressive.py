@@ -948,6 +948,69 @@ async def test_freezone_lists_concrete_hermes_tools(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_plan_tool_publication_preserves_registry_and_other_tools(monkeypatch):
+    from copy import deepcopy
+
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    registry = dramaclaw_mcp._agent_tools()
+    original = {name: deepcopy(schema) for name, (schema, _) in registry.items()}
+    monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", lambda: registry)
+
+    tools = {tool.name: tool for tool in await dramaclaw_mcp.list_tools()}
+    target = "freezone_prepare_workflow_plan_draft"
+    for name, schema in original.items():
+        expected = deepcopy(schema["parameters"])
+        if name == target:
+            del expected["properties"]["plan"]["anyOf"]
+        assert tools[name].inputSchema == expected
+        assert registry[name][0] == schema
+    assert tools[target].inputSchema["properties"]["plan"]["required"] == [
+        "schema_version", "skill", "nodes", "edges"
+    ]
+
+    # MCP clients must not be able to alter the server's execution contract.
+    tools[target].inputSchema["properties"]["plan"]["required"].clear()
+    assert registry[target][0] == original[target]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["missing_identity", "disconnected_nodes"])
+async def test_plan_tool_still_rejects_invalid_input_after_publication(monkeypatch, invalid):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    target = "freezone_prepare_workflow_plan_draft"
+    registry = dramaclaw_mcp._agent_tools()
+    schema, _ = registry[target]
+    calls = []
+    registry[target] = (schema, lambda args: calls.append(args))
+    monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", lambda: registry)
+    tools = {tool.name: tool for tool in await dramaclaw_mcp.list_tools()}
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "skill": {"id": "retro-hong-kong-kungfu-comedy-video"},
+        "nodes": [{"id": "brief", "node_type": "textAnnotationNode",
+                   "stage": "input", "data": {"content": "Brief"}}],
+        "edges": [],
+    }
+    args = {"operation_id": "admitted-operation", "plan": plan}
+    Draft202012Validator(schema["parameters"]).validate(args)
+    if invalid == "missing_identity":
+        del plan["schema_version"]
+        del plan["skill"]
+    else:
+        plan["nodes"].append({"id": "brief-2", "node_type": "textAnnotationNode",
+                              "stage": "input", "data": {"content": "Second brief"}})
+        # The advertised projection omits this cross-field constraint only.
+        Draft202012Validator(tools[target].inputSchema).validate(args)
+
+    result = await dramaclaw_mcp.call_tool(target, args)
+    assert result.isError is True
+    assert json.loads(result.content[0].text)["error"] == "tool_arguments_invalid"
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_concrete_tool_completes_real_mcp_output_contract_round_trip():
     env = {
         **os.environ,

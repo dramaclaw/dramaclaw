@@ -16,6 +16,7 @@ import os
 import sys
 import time
 import types as py_types
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -422,7 +423,15 @@ async def list_tools() -> list[types.Tool]:
 
 
 def build_mcp_tools(tool_index: ToolIndex) -> list[types.Tool]:
-    return mcp_runtime.build_mcp_tools(tool_index)
+    tools = mcp_runtime.build_mcp_tools(tool_index)
+    for tool in tools:
+        if tool.name == "freezone_prepare_workflow_plan_draft":
+            # Codex clears cardinality-only anyOf fragments into empty schemas.
+            # Adapt only the advertised copy; call_tool still validates the
+            # original registry, including node/edge cardinality.
+            tool.inputSchema = deepcopy(tool.inputSchema)
+            tool.inputSchema["properties"]["plan"].pop("anyOf", None)
+    return tools
 
 
 def _skill_resource_path(uri: str) -> Path:
