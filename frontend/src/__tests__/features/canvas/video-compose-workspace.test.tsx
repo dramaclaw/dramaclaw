@@ -30,8 +30,12 @@ const openStudio = vi.hoisted(() =>
   ),
 );
 
+const exportStudio = vi.hoisted(() => vi.fn(async () => {}));
+const notices = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+vi.mock('sonner', () => ({ toast: notices }));
 vi.mock('@/api/ops', () => ({
   openFreezoneVideoComposeStudio: openStudio,
+  exportFreezoneVideoComposeStudio: exportStudio,
 }));
 
 // t 必须跨渲染稳定（真实 react-i18next 就是这么做的）；否则 effect 依赖 t 会在
@@ -61,6 +65,9 @@ describe('VideoComposeWorkspace', () => {
   afterEach(() => {
     useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
     openStudio.mockClear();
+    exportStudio.mockClear();
+    notices.success.mockClear();
+    notices.error.mockClear();
     i18nState.language = 'zh';
   });
 
@@ -493,5 +500,31 @@ describe('VideoComposeWorkspace', () => {
     expect(container.textContent).not.toContain('Not Found');
     fireEvent.click(getByText('videoCompose.studio.retry'));
     await waitFor(() => expect(openStudio).toHaveBeenCalledTimes(2));
+  });
+  it('exports through the existing task API only for a message from its own editor frame', async () => {
+    useCanvasStore.setState({
+      nodes: [
+        videoNode('video-a', 5000),
+        { id: 'compose', type: CANVAS_NODE_TYPES.videoCompose, position: { x: 0, y: 0 }, data: {} },
+      ],
+      edges: [{ id: 'edge-a', source: 'video-a', target: 'compose' }],
+    });
+    const onExit = vi.fn();
+    const { container } = render(
+      <VideoComposeWorkspace projectId="proj-demo" canvasId="canvas-1" nodeId="compose" onExit={onExit} />,
+    );
+    await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy());
+    const iframe = container.querySelector('iframe')!;
+    const message = (origin: string, source: Window) => new MessageEvent('message', {
+      origin, source, data: { type: 'dramaclaw:studio-export' },
+    });
+    window.dispatchEvent(message('https://other.example', iframe.contentWindow!));
+    window.dispatchEvent(message('http://127.0.0.1:4747', window));
+    expect(exportStudio).not.toHaveBeenCalled();
+    window.dispatchEvent(message('http://127.0.0.1:4747', iframe.contentWindow!));
+    window.dispatchEvent(message('http://127.0.0.1:4747', iframe.contentWindow!));
+    await waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
+    expect(exportStudio).toHaveBeenCalledExactlyOnceWith('proj-demo', 'canvas-1', 'compose');
+    expect(notices.success).toHaveBeenCalledWith('videoCompose.studio.exportQueued');
   });
 });

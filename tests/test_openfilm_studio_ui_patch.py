@@ -73,12 +73,14 @@ def test_source_edits_are_stored_as_patches() -> None:
         "0006-project-name-from-film-title.patch",
         "0007-server-copy-branding.patch",
         "0008-host-route-gates.patch",
+        "0009-hosted-render-network.patch",
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in patches)
     for path in (
         "packages/openfilm/studio/ui/src/components/ProjectView.tsx",
         "packages/openfilm/studio/ui/src/App.tsx",
         "packages/openfilm/src/host.mjs",
+        "packages/openfilm/src/render.mjs",
         "packages/openfilm/studio/server/slides.mjs",
         "packages/openfilm/studio/server/fcpxml.mjs",
         "packages/openfilm/studio/server/server.mjs",

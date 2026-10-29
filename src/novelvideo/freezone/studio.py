@@ -20,12 +20,14 @@ import subprocess
 import tempfile
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
+import portalocker
 
 from novelvideo.config import STATE_DIR
 from novelvideo.freezone.paths import resolve_static_url_to_path
@@ -57,7 +59,6 @@ _HEX_COLOR = re.compile(
 )
 
 _BUILD_LOCK = threading.Lock()
-_SESSION_LOCK = asyncio.Lock()
 # Studio 是第三方 Node 进程，只给它运行所需的系统变量；MODEL_API_KEY、DSN、
 # 会话密钥等 API 环境一律不继承。
 _STUDIO_ENV_PASSTHROUGH = (
@@ -79,7 +80,7 @@ _STALE_CLIP_NAME = re.compile(r"^clip-\d+-")
 
 
 def openfilm_studio_enabled() -> bool:
-    """Return whether the local-only Studio bridge is explicitly enabled."""
+    """Return whether the Studio bridge is explicitly enabled."""
     return os.environ.get("SUPERTALE_OPENFILM_STUDIO_ENABLED", "").strip().lower() in {
         "1",
         "true",
@@ -101,7 +102,35 @@ def _repo_root() -> Path:
 
 
 def _state_dir() -> Path:
-    return Path(STATE_DIR) / "openfilm"
+    root = Path(STATE_DIR) / "openfilm"
+    # Loopback listeners belong to one network namespace. Some Celery profiles
+    # intentionally cannot mount the application STATE_DIR. Keep only process
+    # metadata in pod-local tmp; films/edits/exports stay on the project volume.
+    if os.environ.get("KUBERNETES_SERVICE_HOST"):
+        return Path(tempfile.gettempdir()) / "dramaclaw-openfilm" / socket.gethostname()
+    return root
+
+
+@asynccontextmanager
+async def _studio_process_lock():
+    """Serialize lazy startup across Gunicorn workers without blocking their loop."""
+    _state_dir().mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (_state_dir() / ".startup.lock").open("a+b") as handle:
+        deadline = time.monotonic() + 35
+        while True:
+            try:
+                portalocker.lock(handle, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                break
+            except portalocker.exceptions.AlreadyLocked as exc:
+                if time.monotonic() >= deadline:
+                    raise StudioError(
+                        "OpenFilm Studio startup is busy; retry shortly", 503
+                    ) from exc
+                await asyncio.sleep(0.05)
+        try:
+            yield
+        finally:
+            portalocker.unlock(handle)
 
 
 def _studio_home() -> Path:
@@ -630,6 +659,8 @@ def _studio_env(port: int, key: str, ready: Path) -> dict[str, str]:
             "OPENFILM_STUDIO_READY_FILE": str(ready),
         }
     )
+    if os.environ.get("SUPERTALE_OPENFILM_STUDIO_PUBLIC_ORIGIN", "").strip():
+        env["OPENFILM_HOSTED_RENDER"] = "1"
     return env
 
 
@@ -735,7 +766,7 @@ async def _health(origin: str) -> dict[str, Any] | None:
 
 
 async def _ensure_studio() -> dict[str, Any]:
-    async with _SESSION_LOCK:
+    async with _studio_process_lock():
         external = os.environ.get("SUPERTALE_OPENFILM_STUDIO_ORIGIN", "").strip()
         external_key = os.environ.get("SUPERTALE_OPENFILM_STUDIO_KEY", "").strip()
         if external:
@@ -759,7 +790,25 @@ async def _ensure_studio() -> dict[str, Any]:
                     said.get("filmOrigin") or state.get("film_origin") or ""
                 )
                 return state
-        return await asyncio.to_thread(_spawn_studio)
+        # Cancelling to_thread does not stop its thread. Keep the process lock
+        # until startup finishes, even if the request is cancelled repeatedly.
+        startup = asyncio.create_task(asyncio.to_thread(_spawn_studio))
+        cancelled: asyncio.CancelledError | None = None
+        while True:
+            try:
+                result = await asyncio.shield(startup)
+            except asyncio.CancelledError as exc:
+                if startup.cancelled():
+                    raise
+                cancelled = exc
+                continue
+            except Exception:
+                if cancelled is not None:
+                    raise cancelled
+                raise
+            if cancelled is not None:
+                raise cancelled
+            return result
 
 
 async def _studio_post(

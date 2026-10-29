@@ -1,9 +1,19 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
 const html = readFileSync("index.html", "utf8");
 const script = html.match(/<script>([\s\S]*?)<\/script>/)![1];
+
+it("allows the exact theme bootstrap through the deployed Nginx CSP", () => {
+  const template = readFileSync("docker/nginx.conf.template", "utf8");
+  const sources = template.match(/script-src ([^;]+);/)?.[1].trim().split(/\s+/);
+  // CSP hashes include the script's surrounding whitespace, exactly as served.
+  const hash = createHash("sha256").update(script).digest("base64");
+  expect(sources).toEqual(["'self'", `'sha256-${hash}'`]);
+});
+
 function bootstrap(stored: string | null, systemDark = false, failStorage = false) {
   const classes: string[] = [];
   runInNewContext(script, {

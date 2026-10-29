@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, Clapperboard } from "lucide-react";
+import { toast } from "sonner";
 
 import { ApiError } from "@/api/client";
 import {
   openFreezoneVideoComposeStudio,
+  exportFreezoneVideoComposeStudio,
   type FreezoneVideoComposeStudioSession,
 } from "@/api/ops";
 import { BackendStatusError } from "@/lib/api-errors";
@@ -188,17 +190,34 @@ export function VideoComposeWorkspace({
 
   useEffect(() => {
     if (!session) return;
+    let active = true;
+    let exportPending = false;
     const studioOrigin = new URL(session.origin).origin;
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== studioOrigin) return;
       if (event.source !== iframeRef.current?.contentWindow) return;
       const data = event.data as { type?: unknown } | null;
-      if (data?.type !== "dramaclaw:studio-back") return;
-      onExit();
+      if (data?.type === "dramaclaw:studio-back") {
+        onExit();
+      } else if (data?.type === "dramaclaw:studio-export" && !exportPending) {
+        exportPending = true;
+        void exportFreezoneVideoComposeStudio(projectId, canvasId, nodeId)
+          .then(() => {
+            toast.success(t("videoCompose.studio.exportQueued"));
+            if (active) onExit();
+          })
+          .catch(() => toast.error(t("videoCompose.studio.exportFailed")))
+          .finally(() => {
+            exportPending = false;
+          });
+      }
     };
     window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [onExit, session]);
+    return () => {
+      active = false;
+      window.removeEventListener("message", onMessage);
+    };
+  }, [onExit, session, projectId, canvasId, nodeId, t]);
 
   const retry = useCallback(() => setRetryToken((token) => token + 1), []);
   const confirmRebuild = useCallback(() => {
