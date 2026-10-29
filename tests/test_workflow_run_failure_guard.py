@@ -14,6 +14,10 @@ def run_bridge(monkeypatch, tmp_path, request):
     plugin = _load_plugin_module()
     monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    # The run handler validates exact node IDs through the Freezone canvas
+    # boundary before exercising the turn guard. Keep this unit test local by
+    # supplying the boundary URL and a deterministic canvas response.
+    monkeypatch.setenv("DRAMACLAW_API_URL", "http://freezone.test")
     monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", str(tmp_path))
     monkeypatch.setattr(plugin, "_bound_scope_mismatch", lambda *_: None)
     delivered = []
@@ -38,6 +42,14 @@ def run_bridge(monkeypatch, tmp_path, request):
         )
 
     monkeypatch.setattr(plugin, "wait_canvas_command_result", wait)
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "data": {"nodes": [{"id": "image"}]},
+        },
+    )
 
     def dispatch(commands=None):
         handler = (

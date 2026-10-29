@@ -1,21 +1,11 @@
 # Codex runtime pin — the single source of truth for every image that ships the
-# credential-safe Codex App Server (this file, and downstream images that read
-# these two lines). The tag encodes <upstream ref[:7]>-p<patch sha256[:8]>; the
-# digest pins the exact published index. Bump both lines together.
-#
-# Why prebuilt: the stock openai/codex 0.149 binary logs the full per-turn
-# metadata map (which carries per-turn gateway credentials) to logs_2.sqlite.
-# deploy/codex/0.149.0-redact-turn-metadata.patch redacts it and consumes the
-# per-turn key as Responses bearer auth. The patched binary is compiled once by
-# the maintainers' release pipeline and published to Docker Hub; this image
-# only verifies and copies it (tests/test_docker_persistence_config.py keeps the
-# tag consistent with the patch file and CODEX_REF).
-#
-# Platform status: the pinned image above is linux/amd64 only today. Publishing
-# an arm64 artifact is a hard prerequisite before this Dockerfile reaches main,
-# since release-images.yml builds both platforms.
-ARG CODEX_REF="758ef40f50c1a458425c7cfbf1eb12cbc07af0b0"
-ARG CODEX_RUNTIME_IMAGE="docker.io/claymorelab/codex-dramaclaw:758ef40-pc9db6e46@sha256:b53773645294faade3dbb397d91efb7110358d55806a9f291c2a409172da30a6"
+# credential-safe Codex App Server. The fork includes per-turn credential
+# redaction and Responses authentication; the old 0.149 patch is historical.
+# Pin the fork commit, upstream version and multi-arch index together.
+# This published index provides native linux/amd64 and linux/arm64 binaries.
+ARG CODEX_REF="27f7ff4d5c458953a9a54d48cc26ef93309cf8c9"
+ARG CODEX_VERSION="0.164.0"
+ARG CODEX_RUNTIME_IMAGE="docker.io/claymorelab/codex-dramaclaw:27f7ff4@sha256:a1c05773ea6c8449f258e3969fdfcd85649f58d62920f3c48c4fb6206114b856"
 
 FROM rust:1.95-bookworm AS vtracer-builder
 RUN cargo install --locked --version 1.0.0-alpha.3 vtracer-cli
@@ -24,6 +14,8 @@ FROM ${CODEX_RUNTIME_IMAGE} AS codex-runtime
 
 FROM python:3.12-slim
 ARG CODEX_REF
+ARG CODEX_VERSION
+ARG TARGETARCH
 COPY --from=vtracer-builder /usr/local/cargo/bin/vtracer /usr/local/bin/vtracer
 
 # 项目全程用 uv 管理(与 host 一致)。Dockerfile 也用 uv,使 uv.lock 锁版本 +
@@ -58,21 +50,16 @@ RUN apt-get update \
 
 # deploy/codex/ is copied again, in full, further down as part of the
 # application source (COPY deploy ./deploy); this narrow copy only makes the
-# patch file available here, before WORKDIR /app, for the identity check below.
+# verifier available here, before WORKDIR /app, for the identity check below.
 COPY deploy/codex/ /tmp/codex-bom/
 
 # Fail the build (not the container's preflight an hour later) if the prebuilt
-# runtime is not the upstream commit this image claims, if its patch does not
-# match the one recorded in codex-runtime.json, or if the binary cannot start
-# on this base image (shared libraries).
+# runtime has the wrong fork commit, version, architecture or binary hash.
+# Also execute it to catch loader/shared-library failures on the target platform.
 RUN set -eux; \
-    test "$(cat /opt/codex-runtime.sha)" = "${CODEX_REF}" \
-        || { echo "codex-runtime.sha ($(cat /opt/codex-runtime.sha)) does not match CODEX_REF (${CODEX_REF})" >&2; exit 1; }; \
-    want_patch_sha256="$(python3 -c 'import json; print(json.load(open("/opt/codex-runtime.json"))["patch_sha256"])')"; \
-    got_patch_sha256="$(sha256sum /tmp/codex-bom/*.patch | cut -d' ' -f1)"; \
-    test "$got_patch_sha256" = "$want_patch_sha256" \
-        || { echo "codex-runtime patch_sha256 mismatch: codex-runtime.json says $want_patch_sha256, deploy/codex/*.patch hashes to $got_patch_sha256" >&2; exit 1; }; \
-    codex-dramaclaw --version
+    python3 /tmp/codex-bom/verify_runtime.py \
+        --ref "${CODEX_REF}" --version "${CODEX_VERSION}" --arch "${TARGETARCH}"; \
+    test "$(codex-dramaclaw --version)" = "codex-cli ${CODEX_VERSION}"
 
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
@@ -91,7 +78,6 @@ COPY deploy ./deploy
 # the ELF loads (loader/arch OK); it creates no sandbox, so it does not need
 # host user namespaces; the worker performs its cached functional probe before
 # wrapping a Hermes command.
-ARG TARGETARCH
 RUN set -eux; \
     sbx="deploy/sandbox/linux-${TARGETARCH}/codex-linux-sandbox"; \
     test -x "$sbx" || { echo "no vendored codex-linux-sandbox for TARGETARCH='${TARGETARCH}'" >&2; exit 1; }; \
@@ -128,6 +114,7 @@ RUN set -eux; \
         uv sync --frozen --no-dev \
           --no-install-package openai-codex-cli-bin; \
     fi; \
+    /app/.venv/bin/python -m novelvideo.ladybug_json_extension; \
     mkdir -p /data; \
     apt-get purge -y git; \
     apt-get autoremove -y; \

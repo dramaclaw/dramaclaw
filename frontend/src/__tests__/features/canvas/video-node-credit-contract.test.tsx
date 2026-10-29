@@ -24,14 +24,10 @@ class ResizeObserverMock {
 }
 vi.stubGlobal("ResizeObserver", ResizeObserverMock);
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string, fallback?: unknown) =>
-      typeof fallback === "string"
-        ? fallback
-        : ((fallback as { defaultValue?: string } | undefined)?.defaultValue ?? key),
-  }),
-}));
+vi.mock("react-i18next", async () => {
+  const { zhT } = await import("@/__tests__/helpers/i18n-fixtures");
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 // 只替换 hook，保留真的 BillingRuleNotConfiguredError —— 断言依赖 instanceof。
 vi.mock("@/lib/queries/generation-credit-cost", async (importOriginal) => ({

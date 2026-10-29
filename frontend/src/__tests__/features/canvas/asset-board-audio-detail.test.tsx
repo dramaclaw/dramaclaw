@@ -37,11 +37,10 @@ vi.mock('@/lib/model-task-access', () => ({
   useModelTaskAccess: () => ({ blocked: false, denialReason: null, message: null }),
 }));
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, fallback?: unknown) => (typeof fallback === 'string' ? fallback : key),
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 vi.mock('@/lib/queries/generation-credit-cost', () => ({
   useGenerationCreditCost: () => ({ data: undefined }),
@@ -277,7 +276,7 @@ describe('AssetBoard 音频进主从详情', () => {
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
     await waitFor(() => expect(
       useCanvasStore.getState().nodes.find(node => node.id === id)?.data.generationError,
-    ).toBe('node.audioNode.selectVoiceFirst'));
+    ).toBe('未选择自定义声线，已跳过生成'));
     expect(submitFreezoneAudioSpeech).not.toHaveBeenCalled();
   });
 

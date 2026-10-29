@@ -14,7 +14,7 @@ import sqlite3
 import time
 import tempfile
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -88,11 +88,11 @@ class EffectiveMediaRelayConfig:
     ttl_seconds: int
     endpoint: str
     bucket: str
-    access_key_id: str
-    access_key_secret: str
+    access_key_id: str = field(repr=False)
+    access_key_secret: str = field(repr=False)
     cloud_name: str = ""
-    cloudinary_api_key: str = ""
-    cloudinary_api_secret: str = ""
+    cloudinary_api_key: str = field(default="", repr=False)
+    cloudinary_api_secret: str = field(default="", repr=False)
     cloudinary_folder: str = ""
 
 

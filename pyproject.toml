@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "supertale-ce"
-version = "2.0.6"
+version = "2.1.0"
 description = "SuperTale Community Edition API and video pipeline"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -23,9 +23,8 @@ dependencies = [
     # on 1.x until a deliberate output_retries -> retries={'output':N} migration.
     "pydantic-ai-slim[anthropic,google,openai,openrouter]==1.107.0",
     "openai>=2.29.0",
-    # Codex CLI/runtime 0.149.0 is released, while its stable Python SDK has
-    # not reached PyPI yet. Pin the official 0.149.0 SDK release commit so the
-    # generated App Server protocol stays aligned with the runtime built below.
+    # Keep the tested Python SDK protocol pin independent of CODEX_BIN. Docker
+    # ships the credential-safe 0.164.0 runtime; do not use the SDK's stock binary.
     "openai-codex @ git+https://github.com/openai/codex.git@25b5957f0e263fbf48e0b8844ba764a9841162c4#subdirectory=sdk/python",
     "pydantic>=2.0.0",
     "psycopg[binary]>=3.2.0",

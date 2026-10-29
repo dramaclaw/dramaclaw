@@ -53,3 +53,46 @@ def test_api_routes_take_precedence(spa_client):
     r = spa_client.get("/api/v1/config")
     assert r.status_code == 200
     assert r.json()["ok"] is True
+
+
+def test_shell_must_revalidate(spa_client):
+    """旧 index.html 被缓存住会让升级后的首屏 404(黑屏)。"""
+    assert spa_client.get("/").headers["cache-control"] == "no-cache"
+
+
+def test_deep_link_shell_must_revalidate(spa_client):
+    r = spa_client.get("/projects/abc/ingest")
+    assert r.headers["cache-control"] == "no-cache"
+
+
+def test_hashed_assets_are_immutable(spa_client):
+    r = spa_client.get("/assets/app.js")
+    assert r.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
+def test_asset_redirect_is_not_cached(spa_client, tmp_path: Path):
+    """跳转/错误响应被长期缓存会在 URL 不变时永久卡住(同 #92 的教训)。"""
+    (tmp_path / "dist" / "assets" / "sub").mkdir()
+    (tmp_path / "dist" / "assets" / "sub" / "index.html").write_text(
+        "s", encoding="utf-8"
+    )
+    r = spa_client.get("/assets/sub", follow_redirects=False)
+    assert r.status_code == 307
+    assert "immutable" not in r.headers.get("cache-control", "")
+
+
+def test_asset_404_page_is_not_cached(spa_client, tmp_path: Path):
+    (tmp_path / "dist" / "404.html").write_text("nf", encoding="utf-8")
+    r = spa_client.get("/assets/missing.js")
+    assert r.status_code == 404
+    assert "immutable" not in r.headers.get("cache-control", "")
+
+
+def test_asset_range_and_revalidation_stay_immutable(spa_client):
+    r = spa_client.get("/assets/app.js", headers={"range": "bytes=0-0"})
+    assert r.status_code == 206
+    assert r.headers["cache-control"] == "public, max-age=31536000, immutable"
+    etag = spa_client.get("/assets/app.js").headers["etag"]
+    r = spa_client.get("/assets/app.js", headers={"if-none-match": etag})
+    assert r.status_code == 304
+    assert r.headers["cache-control"] == "public, max-age=31536000, immutable"

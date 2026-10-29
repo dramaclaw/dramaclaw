@@ -1533,42 +1533,61 @@ async def test_newapi_video_seedance2_references_normalize_only_image_refs(
 
 
 @pytest.mark.parametrize(
-    ("model", "metadata", "expected_ratio"),
+    ("model", "mode", "ratio", "expected_ratio", "expected_duration"),
     [
-        # 智能续写 / 视频编辑：Seedance + 跟随输入 + 带参考视频 → 厂商原词 adaptive
-        (
-            "seedance-2.5",
-            {"ratio": "auto", "reference_videos": ["https://example.com/source.mp4"]},
-            "adaptive",
-        ),
-        # 纯首帧任务没有视频输入，保持规范契约的 auto
-        ("seedance-2.5", {"ratio": "auto"}, "auto"),
-        # 用户明确选了比例，不替用户改
-        (
-            "seedance-2.5",
-            {"ratio": "16:9", "reference_videos": ["https://example.com/source.mp4"]},
-            "16:9",
-        ),
-        # 非 Seedance 渠道走各自协议，不动
-        (
-            "happyhorse-1.0",
-            {"ratio": "auto", "reference_videos": ["https://example.com/source.mp4"]},
-            "auto",
-        ),
+        ("seedance-2.5", "video_edit", "16:9", "auto", "auto"),
+        ("seedance-2.5", "videoEdit", "auto", "auto", "auto"),
+        ("seedance-2.5", "video_extend", "16:9", "auto", 6),
+        ("seedance-2.5", "all_reference", "auto", "auto", 6),
+        ("seedance-2.5", "all_reference", "16:9", "16:9", 6),
+        ("happyhorse-1.0", "video_edit", "16:9", "auto", "auto"),
     ],
 )
-def test_newapi_seedance_source_video_ratio_uses_vendor_adaptive(
-    model, metadata, expected_ratio
+async def test_newapi_source_video_request_preserves_dc_media_contract(
+    tmp_path, monkeypatch, model, mode, ratio, expected_ratio, expected_duration
 ):
-    from novelvideo.generators.video_generator import NewApiVideoGenerator
+    from novelvideo.generators import video_generator as video_module
+    from novelvideo.generators.video_generator import NewApiVideoGenerator, ShotReference
 
+    captured = {}
     generator = NewApiVideoGenerator(
         api_key="test-key",
         endpoint="https://newapi.example",
         model=model,
     )
-    payload = {"model": model, "metadata": dict(metadata)}
 
-    result = generator._apply_seedance_source_video_ratio(payload)
+    async def fake_reserve(*_args, **_kwargs):
+        return "reservation-1"
 
-    assert result["metadata"]["ratio"] == expected_ratio
+    async def fake_refund(*_args, **_kwargs):
+        return None
+
+    async def fake_post_json(url, payload):
+        captured["url"] = url
+        captured["payload"] = payload
+        return {}
+
+    monkeypatch.setattr(video_module, "_reserve_video_model_call", fake_reserve)
+    monkeypatch.setattr(video_module, "_refund_video_model_call", fake_refund)
+    monkeypatch.setattr(generator, "_post_json", fake_post_json)
+
+    await generator.generate(
+        image_path=None,
+        prompt="Edit or extend the source video.",
+        output_path=str(tmp_path / "out.mp4"),
+        gen_mode=mode,
+        references=[ShotReference("video", "https://example.com/source.mp4", "source")],
+        duration=6,
+        aspect_ratio=ratio,
+    )
+
+    assert captured["url"] == "https://newapi.example/video/generations"
+    payload = captured["payload"]
+    assert payload["duration"] == expected_duration
+    assert "seconds" not in payload
+    assert payload["metadata"]["ratio"] == expected_ratio
+    assert payload["metadata"]["reference_videos"] == ["https://example.com/source.mp4"]
+    assert "reference_file" not in payload["metadata"]
+    assert "reference_link" not in payload["metadata"]
+    if expected_ratio == "auto":
+        assert not {"width", "height", "size"}.intersection(payload)

@@ -2293,7 +2293,7 @@ function ThreeDDirectorSurface({
               )}
               {manifest.mode !== "beat" && (
                 <ColorPaletteField
-                  label={t("viewer.threeD.actorColor", { defaultValue: "人物颜色" })}
+                  label={t("viewer.threeD.actorColor")}
                   value={actorColor}
                   palette={anonymousActorPalette}
                   onChange={setActorColor}

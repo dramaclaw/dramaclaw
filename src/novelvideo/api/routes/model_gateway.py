@@ -907,6 +907,26 @@ async def save_media_relay_settings(body: MediaRelayConfigBody) -> dict[str, Any
         raise HTTPException(
             status_code=400, detail=f"missing fields: {', '.join(missing)}"
         )
+    from novelvideo.model_gateway_settings import EffectiveMediaRelayConfig
+    from novelvideo.storage.media_preflight import MediaStorageUnavailable, verify_media_storage
+
+    candidate = EffectiveMediaRelayConfig(
+        source="database",
+        provider=provider,
+        ttl_seconds=body.ttl_seconds,
+        endpoint=endpoint,
+        bucket=bucket,
+        access_key_id=access_key_id,
+        access_key_secret=access_key_secret,
+        cloud_name=cloud_name,
+        cloudinary_api_key=cloudinary_api_key,
+        cloudinary_api_secret=cloudinary_api_secret,
+        cloudinary_folder=cloudinary_folder,
+    )
+    try:
+        await asyncio.to_thread(verify_media_storage, candidate, force=True)
+    except MediaStorageUnavailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     save_media_relay_config(
         provider=provider,
         ttl_seconds=body.ttl_seconds,

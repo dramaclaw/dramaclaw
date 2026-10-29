@@ -406,6 +406,9 @@ def test_freezone_plugin_registers_canvas_command_tools():
     run_workflow_description = schemas["freezone_run_workflow"]["description"]
     run_node_action_description = schemas["freezone_run_node_action"]["description"]
     assert "one-node workflow is still a workflow" in run_workflow_description
+    assert "top_objects[].node_id" in (
+        schemas["freezone_run_workflow"]["parameters"]["properties"]["node_ids"]["description"]
+    )
     assert "one-node workflow" in run_node_action_description
     assert "never use this tool to run, continue, or resume" in run_node_action_description
     assert "freezone_get_mainline_projection_assets" in names
@@ -709,6 +712,11 @@ def test_freezone_run_workflow_emits_one_deterministic_runner_command(monkeypatc
         return "queued"
 
     monkeypatch.setattr(plugin, "_single_write_command", fake_single_write)
+    monkeypatch.setattr(plugin, "_default_project_id", lambda: "project-a")
+    monkeypatch.setattr(plugin, "_default_canvas_id", lambda: "canvas-a")
+    monkeypatch.setattr(plugin, "_request", lambda *a, **k: {
+        "ok": True, "data": {"nodes": [{"id": "shot-2"}]},
+    })
 
     result = plugin._handle_run_workflow(
         {
@@ -725,6 +733,61 @@ def test_freezone_run_workflow_emits_one_deterministic_runner_command(monkeypatc
         "direction": "downstream",
         "regenerate": True,
     }
+
+
+@pytest.mark.parametrize("target", [
+    "RECOVER01_core_recover_01_mv6dfiw6", "恢复测试图片", "external-image-42",
+])
+def test_run_workflow_rejects_non_canvas_identity_before_emitting(monkeypatch, target):
+    plugin = _load_plugin_module()
+    emitted = []
+    monkeypatch.setattr(plugin, "_request", lambda *a, **k: {
+        "ok": True, "data": {"nodes": [{
+            "id": "recover-image", "type": "imageGenNode",
+            "data": {"displayName": "恢复测试图片", "externalId": "external-image-42",
+                     "prompt": "RECOVER01_core_recover_01_mv6dfiw6 一只红色马克杯"},
+        }]},
+    })
+    monkeypatch.setattr(plugin, "_single_write_command", lambda *a: emitted.append(a))
+
+    result = plugin._handle_run_workflow({
+        "project_id": "project-a", "canvas_id": "canvas-a", "node_ids": [target],
+    })
+
+    assert emitted == []
+    assert result["status"] == "workflow_node_not_found"
+    assert result["available_ids"] == ["recover-image"]
+    Draft202012Validator(plugin._output_schema("freezone_run_workflow")).validate(result)
+
+
+@pytest.mark.parametrize("node_id", ["recover-image", "RECOVER01_valid_node_id"])
+def test_run_workflow_uses_structured_node_id_without_rewriting(monkeypatch, node_id):
+    plugin = _load_plugin_module()
+    emitted = []
+    monkeypatch.setattr(plugin, "_request", lambda *a, **k: {
+        "ok": True, "data": {"nodes": [{"id": node_id}]},
+    })
+    monkeypatch.setattr(plugin, "_single_write_command", lambda *a: emitted.append(a))
+    plugin._handle_run_workflow({
+        "project_id": "project-a", "canvas_id": "canvas-a", "node_ids": [node_id],
+    })
+    assert emitted[0][1] == {
+        "type": "run_workflow", "direction": "connected", "node_ids": [node_id],
+    }
+
+
+def test_run_workflow_does_not_emit_when_canvas_cannot_be_read(monkeypatch):
+    plugin = _load_plugin_module()
+    emitted = []
+    monkeypatch.setattr(plugin, "_request", lambda *a, **k: {
+        "ok": False, "error": "canvas unavailable",
+    })
+    monkeypatch.setattr(plugin, "_single_write_command", lambda *a: emitted.append(a))
+    result = plugin._handle_run_workflow({
+        "project_id": "project-a", "canvas_id": "canvas-a", "node_ids": ["recover-image"],
+    })
+    assert result["status"] == "canvas_read_failed"
+    assert emitted == []
 
 
 def test_freezone_agent_rules_bound_content_policy_remediation() -> None:
@@ -8988,10 +9051,15 @@ def test_media_result_guidance_requires_add_next_and_run_in_one_batch():
 
     add_next = schemas["freezone_add_next_node"]["description"]
     emit = schemas["freezone_emit_canvas_command"]["description"]
+    update = schemas["freezone_update_node_data"]["description"]
+    run_action = schemas["freezone_run_node_action"]["description"]
 
     assert "does not generate media" in add_next
     assert "add_next_node + run_node_action" in add_next
     assert "add_next_node + run_node_action" in emit
+    assert "update_node_data + run_node_action" in emit
+    assert "update_node_data + run_node_action" in update
+    assert "update_node_data + run_node_action" in run_action
     assert "do not ask the user to click generate" in emit.lower()
 
 

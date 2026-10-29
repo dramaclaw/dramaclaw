@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import React, { useSyncExternalStore } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { enT } from "@/__tests__/helpers/i18n-fixtures";
 
 const canvasStoreMock = vi.hoisted(() => {
   const listeners = new Set<() => void>();
@@ -62,7 +63,10 @@ vi.mock("@xyflow/react", () => ({
 }));
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, options?: { defaultValue?: string }) =>
+      key.startsWith("settings.mediaStorage.errors.") ? enT(key, options) : key,
+  }),
 }));
 
 vi.mock("@/stores/canvasStore", async () => {
@@ -207,6 +211,44 @@ function staleErrorOffenders(source: string): string[] {
 }
 
 describe("stale generation-error banner", () => {
+  it("translates persisted storage errors at render time and keeps raw diagnostics for copying", async () => {
+    const raw = "DramaClawAPI image generation failed: 请求异常: " +
+      "MediaStorageUnavailable('MEDIA_STORAGE_READ_MISMATCH: 媒体存储读取校验失败。')";
+    const data = {
+      displayName: "图片节点16",
+      autoTitleIndex: 16,
+      generationError: raw,
+      generationErrorDetails: raw,
+      generationErrorRequestId: "req-storage",
+      isGenerating: false,
+      model: "test-model",
+    };
+    canvasStoreMock.reset(data);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      render(React.createElement(ImageGenNode, {
+        id: "image-1", data, selected: true, width: 580, height: 360,
+        type: "imageGenNode", dragging: false, zIndex: 0,
+        selectable: true, deletable: true, draggable: true, isConnectable: true,
+        positionAbsoluteX: 0, positionAbsoluteY: 0,
+      } as never));
+      expect(screen.getByText(
+        "MEDIA_STORAGE_READ_MISMATCH: Media storage read verification failed. Check the storage access settings.",
+      )).toBeInTheDocument();
+      expect(screen.queryByText(raw)).not.toBeInTheDocument();
+      await act(async () => {
+        fireEvent.click(screen.getByTitle("nodeToolbar.copyErrorReport"));
+      });
+      expect(writeText).toHaveBeenCalledWith(raw);
+      expect(data.generationErrorDetails).toBe(raw);
+    } finally {
+      if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
   it("removes the rendered failure banner when a history image is restored", () => {
     canvasStoreMock.reset({
       displayName: "图片",

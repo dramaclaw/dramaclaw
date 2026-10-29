@@ -568,9 +568,7 @@ export function BatchPanel({
     const skippedLocked = items.length - dispatchableItems.length;
     if (dispatchableItems.length === 0) {
       toast.warning(
-        t("episode.workbench.batch.sketchGroupRunning", {
-          defaultValue: "相同草图组正在运行中",
-        }),
+        t("episode.workbench.batch.sketchGroupRunning"),
       );
       return;
     }
@@ -735,11 +733,9 @@ export function BatchPanel({
                   askConfirm(
                     t("episode.workbench.batch.regenSketchSingleTitle", {
                       count,
-                      defaultValue: "单张重抽草图",
                     }),
                     t("episode.workbench.batch.regenSketchSingleDesc", {
                       beats: beatList.join(", #"),
-                      defaultValue: "按当前画幅把选中 beats 拆成 1x1 草图任务。",
                     }),
                     handleDispatchSingleSketches,
                   );
@@ -747,9 +743,7 @@ export function BatchPanel({
                 className="h-7 gap-1 px-2 text-[11px]"
               >
                 <Square className="size-3" />
-                {t("episode.workbench.batch.singleRegen", {
-                  defaultValue: "单张重抽",
-                })}
+                {t("episode.workbench.batch.singleRegen")}
               </Button>
               <Button
                 variant="outline"
@@ -759,9 +753,7 @@ export function BatchPanel({
                 className="relative h-7 gap-1 rounded-[8px] border-[3px] border-[#007A87] px-2 pr-9 text-[11px] transition-transform hover:border-[#007A87] hover:bg-transparent active:scale-95 dark:border-[#007A87] dark:hover:border-[#007A87]"
               >
                 <Grid2X2 className="size-3" />
-                {t("episode.workbench.batch.autoCombine", {
-                  defaultValue: "批量重抽",
-                })}
+                {t("episode.workbench.batch.autoCombine")}
                 <CreditCostInline
                   display={sketchPlanCostDisplay}
                   promotion={sketchPlanCost.promotion}
@@ -814,9 +806,7 @@ export function BatchPanel({
                       </div>
                       <div className="truncate text-[10px] text-muted-foreground">
                         {lockedSketchItemIds.has(item.id)
-                          ? t("episode.workbench.batch.sketchGroupRunning", {
-                              defaultValue: "相同草图组正在运行中",
-                            })
+                          ? t("episode.workbench.batch.sketchGroupRunning")
                           : item.modeLabel}
                       </div>
                     </div>
@@ -863,9 +853,7 @@ export function BatchPanel({
                 className="h-7 gap-1 px-2 text-[11px]"
               >
                 <Square className="size-3" />
-                {t("episode.workbench.batch.singleRegen", {
-                  defaultValue: "单张重抽",
-                })}
+                {t("episode.workbench.batch.singleRegen")}
               </Button>
               <Button
                 variant="outline"
@@ -875,9 +863,7 @@ export function BatchPanel({
                 className="h-7 gap-1 px-2 text-[11px]"
               >
                 <Grid2X2 className="size-3" />
-                {t("episode.workbench.batch.autoCombine", {
-                  defaultValue: "自动组合",
-                })}
+                {t("episode.workbench.batch.autoCombine")}
               </Button>
             </div>
           </div>

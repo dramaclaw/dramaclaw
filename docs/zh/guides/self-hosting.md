@@ -7,7 +7,7 @@
 
 CE 三个容器：`api` + `newapi`（内置 DramaClaw 网关，切到自定义/本地 + 官方混合模式前闲置）+ `web`，**无 PostgreSQL / 无 Redis / 无 Celery**（`ST_EDITION=ce`，任务在进程内 inline 执行）。模型默认走 DramaClaw 官方网关。
 
-仓库里有两份 compose 文件：`docker-compose.yml` 源码构建三个服务（默认入口 —— `docker compose up -d --build`），`docker-compose.release.yml` 只拉已发布镜像（`docker compose -f docker-compose.release.yml up -d`）。`docker-compose.yml` 通过 `extends` 复用 `docker-compose.release.yml` 里的运行定义（env / 端口 / 卷 / 健康检查），自己只加 `build:` 与本地镜像名。
+仓库里有两份 compose 文件：`docker-compose.yml` 源码构建三个服务（默认入口 —— `docker compose up -d --build`），`docker-compose.release.yml` 只拉已发布镜像（`docker compose -f docker-compose.release.yml up -d`）。`docker-compose.yml` 通过 `extends` 复用 `docker-compose.release.yml` 里的运行定义（env / 端口 / 卷 / 健康检查），并添加本地构建、本地镜像名和源码运行时覆盖配置。
 
 ## 1. 前置
 
@@ -25,7 +25,7 @@ cd dramaclaw
 cp .env.example .env
 ```
 
-两份文件，已为你定好，无需改：
+选择其中一种；镜像模式还需按下文在 `.env` 中指定发布版本：
 
 | 文件 | 模式 | 命令 |
 |---|---|---|
@@ -38,7 +38,8 @@ cp .env.example .env
 |---|---|---|
 | 服务 | `api` + `newapi` + `web` | 无 PG/Redis；`newapi` 是内置网关 |
 | 镜像（release） | `${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/...` | 默认拉 Docker Hub；`.env` 设 `DRAMACLAW_IMAGE_PREFIX` 切到 ACR 镜像（只有钉 tag） |
-| 版本（release） | `DRAMACLAW_VERSION`（api/web）、`DRAMACLAW_GATEWAY_VERSION` | 默认 `2.0.2` / 文件里写死的网关 tag |
+| 版本（release） | `DRAMACLAW_VERSION`（api/web）、`DRAMACLAW_GATEWAY_VERSION` | 当前版本请在 `.env` 中显式指定 `2.1.0` / `v1.0.0-rc.24-dramaclaw.3` |
+| 虾导后端 | `DRAMACLAW_CHAT_BACKEND` | 源码和发布版 Compose 均默认 `codex` |
 | 端口 | `8780:8780` | REST API |
 | 网关管理端口 | `${ST_NEWAPI_BIND:-127.0.0.1}:${ST_NEWAPI_PORT:-3000}:3000` | 默认只绑 `127.0.0.1`；`.env` 设 `ST_NEWAPI_BIND=0.0.0.0` 放开 |
 | 强制环境 | `ST_EDITION=ce`、清空 control-plane/Redis/Celery | CE 模式不可降级 |
@@ -49,6 +50,31 @@ cp .env.example .env
 > ⚠️ **密钥类默认值（如 `PROMPT_EXPORT_PASSWORD=change_me`）必须改。** 模型网关见 [模型配置](#模型配置)。
 
 分组（`.env.example` 内有逐项注释）：本地 NewAPI provisioner、参考媒体 OSS relay（OSS_RELAY_*）、Cognee 知识图谱、文本/图片/视频/音频各模型、图像与视频基础参数、UI、输出目录。渠道、网关地址和 token 通过网页保存到 `settings.db`。
+
+### 发布版本与虾导后端
+
+使用 **v2.1.0 官方镜像**时，在 `.env` 中添加或更新：
+
+```dotenv
+DRAMACLAW_VERSION=2.1.0
+DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
+```
+
+这两个版本也是发布版 Compose 当前的默认值；显式指定可明确实际使用的版本。
+可以先检查解析出的镜像，此命令不会启动服务：
+
+```bash
+docker compose -f docker-compose.release.yml config --images
+```
+
+v2.1.0 的发布版和源码 Compose 均默认选择镜像内置的凭据保护版 Codex 0.164.0。
+终端环境或 `.env` 中显式设置的 `DRAMACLAW_CHAT_BACKEND` 会覆盖默认值；
+若旧配置选择了其他后端，请改为 `codex`。
+虾导后端的选择不等于模型网关模式的选择，
+「官方／自定义／混合」仍通过网页设置。
+
+源码构建使用本地 checkout 的 Dockerfile 和代码；设置 `DRAMACLAW_VERSION`
+不会更新源码或改变其 Codex 固定版本，需要拉取目标代码并重新构建。
 
 ### 模型配置
 
@@ -61,13 +87,28 @@ cp .env.example .env
 
 ## 4. 起停
 
+源码构建：
+
 ```bash
-docker compose up -d --build                          # 源码构建：启动（首次会构建）
-docker compose -f docker-compose.release.yml up -d    # 镜像模式：启动（首次拉镜像）
-docker compose ps                                     # 状态
-docker compose logs -f api                            # 日志
-docker compose down                                   # 停止（保留数据卷）
+docker compose up -d --build
+docker compose ps
+docker compose logs -f api
+docker compose down
 ```
+
+官方镜像（先按上文指定版本）：
+
+```bash
+docker compose -f docker-compose.release.yml pull
+docker compose -f docker-compose.release.yml up -d
+docker compose -f docker-compose.release.yml ps
+docker compose -f docker-compose.release.yml logs -f api
+docker compose -f docker-compose.release.yml down
+```
+
+两种 Docker 方式的界面均为 `http://localhost:8080`，API 为 `http://localhost:8780`。
+源码 Docker 不提供热更新，代码修改后需要重新构建。
+需要在宿主机使用 Python/Vite 开发（界面为 `http://localhost:5173`）时，见[安装指南](../getting-started/installation.md)。
 
 ## 5. 数据在哪 / 备份、恢复与迁移
 
@@ -126,7 +167,9 @@ docker compose -f docker-compose.release.yml up -d
 
 升级不会碰你的 `.env`；`ce-data` 与 `newapi-data` 卷原样复用。
 
-`docker-compose.release.yml` 里内置的 `DRAMACLAW_VERSION` / `DRAMACLAW_GATEWAY_VERSION` 默认值由发行包打包 workflow 维护：每次打包并发布 compose 发行包后，它会向本仓开 PR，把两个默认值钉到该次发布的 CE 与网关 tag，即使 `.env` 里什么都没设，`git pull` 到 `main` 也能拿到最新默认值。
+创建 GitHub Release 会触发镜像构建，但不会直接更新 `docker-compose.release.yml` 的默认标签。
+独立的发行包打包 workflow 在发布 compose 发行包后会创建版本更新 PR，合并后默认值才会改变。
+因此每次升级都应在 `.env` 中显式指定目标版本。
 
 如果旧版本曾将媒体写入容器内 `/app/output`，请在启动新版本**之前**运行一次迁移（zip 用户没有 git 仓库，直接从 GitHub 下载 `scripts/migrate_docker_output.py`）：
 

@@ -1425,6 +1425,12 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
         )
         is False
     )
+    assert (
+        chat_service._freezone_canvas_write_requested(
+            "不要移动节点，只给我布局建议"
+        )
+        is False
+    )
     assert chat_service._freezone_canvas_write_requested("生成一张图片") is True
     assert (
         chat_service._freezone_canvas_write_requested("生成一张赛博朋克风格的图片")
@@ -1673,6 +1679,138 @@ def test_codex_freezone_thread_advertises_exact_agent_skill_locator(
     }
 
 
+def test_codex_exact_node_action_thread_enables_native_tool_search(
+    monkeypatch,
+    tmp_path,
+):
+    captured = {}
+    skill = (
+        tmp_path
+        / "workspace"
+        / ".agents"
+        / "skills"
+        / "dramaclaw-workflows"
+        / "SKILL.md"
+    )
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# Workflow skill\n", encoding="utf-8")
+
+    class FakeCodexClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def thread_start(self):
+            return "new-thread"
+
+    monkeypatch.setattr(
+        chat_service,
+        "ensure_user_codex_workspace",
+        lambda *_args, **_kwargs: (tmp_path / "workspace", tmp_path / "codex-home"),
+    )
+    monkeypatch.setattr(chat_service, "_build_codex_env", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        chat_service,
+        "_codex_turn_gateway_credentials",
+        lambda _authorization: ("turn-key", "https://gateway.example/v1"),
+    )
+    gateway_options = []
+
+    def fake_gateway_overrides(_url, **kwargs):
+        gateway_options.append(kwargs)
+        return ()
+
+    monkeypatch.setattr(
+        chat_service, "_codex_gateway_config_overrides", fake_gateway_overrides
+    )
+    monkeypatch.setattr(
+        chat_service, "_codex_mcp_config_overrides", lambda _servers: ()
+    )
+    monkeypatch.setattr(
+        chat_service, "_get_codex_thread_id", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(chat_service, "CodexClient", FakeCodexClient)
+
+    thread = chat_service._build_codex_thread(
+        "admin",
+        "project-a",
+        "agent-token",
+        authorization=None,
+        agent_profile="freezone:main",
+        tool_mode="freezone_canvas",
+        request_prompt=(
+            "请执行当前画布中名为『红杯展示背景音乐』的现有音频节点，"
+            "先更新音乐参数，再运行 generate_audio。"
+        ),
+    )
+
+    assert thread == "new-thread"
+    assert gateway_options == [{"native_tool_search": True}]
+    assert captured["thread_config_overrides"] == ()
+
+
+def test_codex_exact_audio_planner_has_no_canvas_tools_and_uses_plan_schema(
+    monkeypatch, tmp_path
+):
+    captured = {}
+    mcp_inputs = []
+
+    class FakeCodexClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def thread_start(self):
+            return "planner-thread"
+
+        def thread_resume(self, _thread_id):
+            pytest.fail("the stateless exact-audio planner must not resume a chat thread")
+
+    monkeypatch.setattr(
+        chat_service,
+        "ensure_user_codex_workspace",
+        lambda *_args, **_kwargs: (tmp_path / "workspace", tmp_path / "codex-home"),
+    )
+    monkeypatch.setattr(chat_service, "_build_codex_env", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        chat_service,
+        "_codex_turn_gateway_credentials",
+        lambda _authorization: ("turn-key", "https://gateway.example/v1"),
+    )
+    monkeypatch.setattr(
+        chat_service, "_codex_gateway_config_overrides", lambda _url: ()
+    )
+
+    def fake_mcp_overrides(servers):
+        mcp_inputs.append(servers)
+        return ()
+
+    monkeypatch.setattr(
+        chat_service, "_codex_mcp_config_overrides", fake_mcp_overrides
+    )
+    monkeypatch.setattr(
+        chat_service, "_get_codex_thread_id", lambda *_args, **_kwargs: "old-thread"
+    )
+    monkeypatch.setattr(chat_service, "CodexClient", FakeCodexClient)
+
+    thread = chat_service._build_codex_thread(
+        "admin",
+        "project-a",
+        "agent-token",
+        authorization=None,
+        agent_profile="freezone:main",
+        tool_mode="freezone_canvas",
+        request_prompt="执行现有节点并运行 generate_audio",
+        exact_audio_action_plan=True,
+    )
+
+    assert thread == "planner-thread"
+    assert mcp_inputs == [{}]
+    assert (
+        captured["developer_instructions"]
+        == chat_service._CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS
+    )
+    assert captured["output_schema"] == chat_service._CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA
+
+
 def test_named_recipe_distinguishes_existing_output_from_external_media_input():
     for instructions in (
         chat_service._codex_developer_instructions("freezone_canvas"),
@@ -1776,6 +1914,7 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "clarification_answered",
         "skill_saved",
         "read_only",
+        "false_read_only",
         "mixed",
         "wrong_scope",
         "preflight_retry",
@@ -1802,11 +1941,6 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setattr(
-        chat_service,
-        "_freezone_canvas_write_requested",
-        lambda *_: pytest.fail("Receipt enforcement must not classify user prose"),
-    )
     events = []
     revoked = []
 
@@ -2239,7 +2373,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         structured=retry_structured,
                         error=None,
                     )
-            elif tool_outcome not in {"missing", "blocked", "read_only"}:
+            elif tool_outcome not in {
+                "missing",
+                "blocked",
+                "read_only",
+                "false_read_only",
+            }:
                 result_payload = (
                     {
                         "ok": True,
@@ -2299,6 +2438,11 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
             )
             if tool_outcome == "read_only":
                 assistant_reply = "建议保持当前节点位置，先检查配置。"
+            if tool_outcome == "false_read_only":
+                assistant_reply = (
+                    "正在通过节点绑定的 drama-background-music Recipe 编译提示词并执行 "
+                    "generate_audio。"
+                )
             if tool_outcome == "clarification_answered":
                 assistant_reply = "参数已确认，尚未执行画布操作。"
             if tool_outcome.startswith("video_preflight"):
@@ -2340,7 +2484,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     "mode": (
                         "read_only"
                         if tool_outcome
-                        in {"skill_saved", "read_only", "clarification_answered"}
+                        in {
+                            "skill_saved",
+                            "read_only",
+                            "false_read_only",
+                            "clarification_answered",
+                        }
                         else "blocked" if tool_outcome == "blocked" else "mutation"
                     ),
                     "canvas_receipts": receipts,
@@ -2381,6 +2530,13 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     )
     if tool_outcome == "read_only":
         request_prompt = "不要移动节点，只给我布局建议"
+    elif tool_outcome == "false_read_only":
+        request_prompt = (
+            "请执行当前画布中名为「红杯展示背景音乐」的现有音频节点，"
+            "并只运行 generate_audio 一次。"
+        )
+    elif tool_outcome == "clarification_answered":
+        request_prompt = "确认当前参数"
     elif tool_outcome == "missing":
         request_prompt = "做个咖啡店宣传页"
     result = await chat_service._stream_assistant_reply_codex(
@@ -2460,6 +2616,11 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "read_only":
         assert result["content"] == "建议保持当前节点位置，先检查配置。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "false_read_only":
+        assert result["content"] == (
+            "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
+        )
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "mixed":
         assert result["content"] == "画布操作未完成：第二个节点未保存"
@@ -3306,6 +3467,372 @@ def test_freezone_adds_independent_workflow_mcp_without_changing_default():
     }
 
 
+def test_freezone_existing_execution_uses_focused_mcp_tools():
+    servers = chat_service._dramaclaw_mcp_servers(
+        "freezone_canvas",
+        prompt="请执行当前画布中名为『红杯展示背景音乐』的现有音频节点。",
+    )
+
+    assert set(servers) == {"dramaclaw"}
+    assert servers["dramaclaw"]["enabled_tools"] == [
+        "freezone_get_canvas_ontology",
+        "freezone_get_node_action_catalog",
+        "freezone_get_node_detail",
+        "freezone_get_workflow",
+        "freezone_observe_workflow_run",
+        "freezone_request_user_clarification",
+        "freezone_run_node_action",
+        "freezone_run_workflow",
+        "freezone_update_node_data",
+    ]
+
+
+def test_freezone_exact_node_action_uses_one_batch_write_tool():
+    servers = chat_service._dramaclaw_mcp_servers(
+        "freezone_canvas",
+        prompt=(
+            "请执行当前画布中名为『红杯展示背景音乐』的现有音频节点，"
+            "先更新音乐参数，再运行 generate_audio。"
+        ),
+    )
+
+    assert set(servers) == {"dramaclaw"}
+    assert servers["dramaclaw"]["enabled_tools"] == ["freezone_emit_canvas_command"]
+
+
+def test_freezone_exact_audio_action_resolves_unique_node_from_canvas_summary():
+    user_text = (
+        "请执行当前画布中名为『红杯展示背景音乐』的现有音频节点，"
+        "先更新音乐参数，再只运行 generate_audio 一次。"
+    )
+    prompt = (
+        user_text
+        + "\n\n[SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]\n"
+        + json.dumps(
+            {
+                "schema_version": "canvas_ontology_summary.v1",
+                "canvas_id": "canvas-a",
+                "top_objects": [
+                    {
+                        "node_id": "rcp05-music-result",
+                        "node_type": "audioNode",
+                        "label": "红杯展示背景音乐",
+                    },
+                    {
+                        "node_id": "other-audio",
+                        "node_type": "audioNode",
+                        "label": "片尾音乐",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n[/SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]"
+    )
+
+    assert chat_service._freezone_exact_audio_action_target(
+        prompt, route_prompt=user_text
+    ) == ("rcp05-music-result", "generate_audio", "红杯展示")
+
+
+def test_exact_audio_action_restores_target_subject_omitted_by_planner():
+    node_data = chat_service._exact_audio_action_node_data(
+        json.dumps(
+            {
+                "text": (
+                    "轻快温暖的展示背景音乐，以木琴和轻柔鼓点为主，"
+                    "纯器乐、无人声、无歌词。"
+                ),
+                "audio_kind": "music",
+                "force_instrumental": True,
+            },
+            ensure_ascii=False,
+        ),
+        required_subject="红杯展示",
+    )
+
+    assert node_data == {
+        "text": "红杯展示：轻快温暖的展示背景音乐，以木琴和轻柔鼓点为主，纯器乐、无人声、无歌词。",
+        "audioKind": "music",
+        "forceInstrumental": True,
+    }
+
+
+@pytest.mark.anyio
+async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    events = []
+    prompts = []
+    build_kwargs = []
+    dispatched = []
+
+    async def fake_authorize(**_kwargs):
+        return None
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, _token):
+            return None
+
+    class FakeThread:
+        async def stream(self, prompt):
+            prompts.append(prompt)
+            yield SimpleNamespace(
+                type="thread_started",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+            )
+            yield SimpleNamespace(
+                type="assistant_delta",
+                text=json.dumps(
+                    {
+                        "text": (
+                            "为红杯展示生成一段轻快、温暖的背景音乐，"
+                            "以木琴和轻柔鼓点为主，纯器乐、无人声、无歌词。"
+                        ),
+                        "audio_kind": "music",
+                        "force_instrumental": True,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            yield SimpleNamespace(
+                type="turn_completed",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+                status="completed",
+                disposition="completed",
+                error=None,
+            )
+            yield SimpleNamespace(type="complete", thread_id="codex-thread", text="")
+
+    async def fake_dispatch(**kwargs):
+        dispatched.append(kwargs)
+        return {
+            "ok": True,
+            "tool_call_status": "completed",
+            "canvas_apply_status": "accepted",
+            "applied": True,
+            "bridge_key": "bridge-audio",
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+        }
+
+    def fake_build_thread(*_args, **kwargs):
+        build_kwargs.append(kwargs)
+        return FakeThread()
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(
+        chat_service, "_create_page_agent_session_token", fake_create_token
+    )
+    monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
+    monkeypatch.setattr(
+        chat_service, "_dispatch_exact_audio_node_action", fake_dispatch
+    )
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    async def collect_event(event):
+        events.append(event)
+
+    user_text = (
+        "请执行当前画布中名为『红杯展示背景音乐』的现有音频节点。"
+        "它已绑定 short-drama-quick Skill 下的 drama-background-music Recipe；"
+        "必须先通过该 Recipe 编译音乐提示词，再只运行 generate_audio 一次并完成实际生成。"
+        "音乐应轻快、温暖，以木琴和轻柔鼓点为主，必须是纯器乐、无人声、无歌词。"
+    )
+    prompt = (
+        user_text
+        + "\n\n[SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]\n"
+        + json.dumps(
+            {
+                "schema_version": "canvas_ontology_summary.v1",
+                "canvas_id": "canvas-a",
+                "top_objects": [
+                    {
+                        "node_id": "rcp05-music-result",
+                        "node_type": "audioNode",
+                        "label": "红杯展示背景音乐",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n[/SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]"
+    )
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+    )
+
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        prompt,
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+        store_scope=scope,
+        turn_id="business-turn",
+        route_prompt=user_text,
+    )
+
+    assert len(prompts) == 1
+    assert build_kwargs[0]["exact_audio_action_plan"] is True
+    assert dispatched == [
+        {
+            "username": "admin",
+            "project": "project-a",
+            "canvas_id": "canvas-a",
+            "agent_profile": "freezone:main",
+            "turn_id": "business-turn",
+            "project_state_dir": tmp_path / "state" / "admin" / "project-a",
+            "node_id": "rcp05-music-result",
+            "action": "generate_audio",
+            "node_data": {
+                "text": (
+                    "为红杯展示生成一段轻快、温暖的背景音乐，"
+                    "以木琴和轻柔鼓点为主，纯器乐、无人声、无歌词。"
+                ),
+                "audioKind": "music",
+                "forceInstrumental": True,
+            },
+        }
+    ]
+    assert result["content"] == "已更新现有音频节点，并提交 generate_audio。"
+    assert [event["text"] for event in events if event["type"] == "assistant_delta"] == [
+        result["content"]
+    ]
+
+
+@pytest.mark.anyio
+async def test_exact_audio_dispatch_publishes_once_and_waits_for_same_receipt(
+    monkeypatch, tmp_path
+):
+    from novelvideo.chat import hermes_pool, hermes_workspace
+    from novelvideo.freezone import canvas_command_bridge
+
+    published = []
+    waited = []
+    bridge_dir = tmp_path / "bridge"
+
+    monkeypatch.setattr(
+        hermes_workspace,
+        "ensure_user_hermes_workspace",
+        lambda *_args, **_kwargs: tmp_path / "hermes-home",
+    )
+    monkeypatch.setattr(
+        hermes_pool,
+        "canvas_bridge_dir_for_profile",
+        lambda _home, _profile: bridge_dir,
+    )
+    monkeypatch.setattr(
+        canvas_command_bridge,
+        "canvas_command_bridge_key",
+        lambda **_kwargs: "bridge-audio",
+    )
+
+    def fake_put(**kwargs):
+        published.append(kwargs)
+        return None
+
+    def fake_wait(key, timeout_seconds, **kwargs):
+        waited.append((key, timeout_seconds, kwargs))
+        return {
+            "ok": True,
+            "tool_call_status": "completed",
+            "canvas_apply_status": "accepted",
+            "applied": True,
+            "bridge_key": key,
+        }
+
+    monkeypatch.setattr(canvas_command_bridge, "put_pending_canvas_command", fake_put)
+    monkeypatch.setattr(canvas_command_bridge, "wait_canvas_command_result", fake_wait)
+
+    result = await chat_service._dispatch_exact_audio_node_action(
+        username="admin",
+        project="project-a",
+        canvas_id="canvas-a",
+        agent_profile="freezone:main",
+        turn_id="turn-a",
+        project_state_dir=tmp_path / "state",
+        node_id="rcp05-music-result",
+        action="generate_audio",
+        node_data={
+            "text": "红杯展示，木琴和轻柔鼓点，纯器乐。",
+            "audioKind": "music",
+            "forceInstrumental": True,
+        },
+    )
+
+    commands = [
+        {
+            "type": "update_node_data",
+            "node_id": "rcp05-music-result",
+            "data": {
+                "text": "红杯展示，木琴和轻柔鼓点，纯器乐。",
+                "audioKind": "music",
+                "forceInstrumental": True,
+            },
+        },
+        {
+            "type": "run_node_action",
+            "node_id": "rcp05-music-result",
+            "action": "generate_audio",
+        },
+    ]
+    assert len(published) == 1
+    assert published[0]["commands"] == commands
+    assert published[0]["envelope"] == {
+        "schema_version": "canvas_chat_commands.v1",
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "commands": commands,
+        "agent_id": "main",
+        "external_mcp_command": True,
+        "turn_id": "turn-a",
+    }
+    assert published[0]["bridge_dir"] == bridge_dir
+    assert len(waited) == 1
+    assert waited[0][0] == "bridge-audio"
+    assert waited[0][2]["bridge_dir"] == bridge_dir
+    assert result["bridge_key"] == "bridge-audio"
+
+
+def test_freezone_non_execution_request_keeps_full_mcp_servers():
+    servers = chat_service._dramaclaw_mcp_servers(
+        "freezone_canvas",
+        prompt="请创建三个节点并连接成图片转视频工作流。",
+    )
+
+    assert "enabled_tools" not in servers["dramaclaw"]
+    assert "dramaclaw_workflows" in servers
+
+
+def test_freezone_execution_instruction_forbids_progress_reply_before_tool():
+    instructions = chat_service._codex_developer_instructions("freezone_canvas")
+
+    assert "An assistant message ends the current agent turn" in instructions
+    assert (
+        "Do not send a progress or status message before that tool call" in instructions
+    )
+    assert (
+        "update_node_data + run_node_action in one freezone_emit_canvas_command"
+        in instructions
+    )
+
+
 def test_chat_agent_api_url_defaults_to_rest_listener(monkeypatch):
     for name in (
         "DRAMACLAW_API_URL",
@@ -3372,6 +3899,23 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
     assert "mcp_servers.dramaclaw.env_vars" not in thread._thread_config
     assert thread._model == "DC-codex-agent-LLM"
     assert thread._model_provider == "dramaclaw_gateway"
+
+
+def test_codex_mcp_config_renders_enabled_tools():
+    servers = chat_service._dramaclaw_mcp_servers(
+        "freezone_canvas",
+        prompt="执行这个现有节点。",
+    )
+
+    overrides = chat_service._codex_mcp_config_overrides(servers)
+
+    assert (
+        'mcp_servers.dramaclaw.enabled_tools=["freezone_get_canvas_ontology",'
+        '"freezone_get_node_action_catalog","freezone_get_node_detail",'
+        '"freezone_get_workflow","freezone_observe_workflow_run",'
+        '"freezone_request_user_clarification","freezone_run_node_action",'
+        '"freezone_run_workflow","freezone_update_node_data"]'
+    ) in overrides
 
 
 def test_codex_client_carries_freezone_scope_into_mcp_process(tmp_path):
@@ -3551,6 +4095,58 @@ def test_codex_gateway_accepts_disabled_tool_search_for_chat_compat(
         item for item in overrides if item.startswith("model_catalog_json=")
     )
     assert Path(json.loads(catalog_override.split("=", 1)[1])) == catalog_path
+
+
+def test_default_codex_gateway_uses_concrete_mcp_tools(monkeypatch):
+    bundled = (
+        Path(chat_service.__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / "dramaclaw-model-catalog.json"
+    )
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(bundled))
+
+    overrides = chat_service._codex_gateway_config_overrides(
+        "https://gateway.example/v1"
+    )
+
+    catalog_override = next(
+        item for item in overrides if item.startswith("model_catalog_json=")
+    )
+    configured_path = Path(json.loads(catalog_override.split("=", 1)[1]))
+    configured_catalog = json.loads(configured_path.read_text(encoding="utf-8"))
+
+    assert configured_path == bundled
+    assert {
+        model["slug"]: model["supports_search_tool"]
+        for model in configured_catalog["models"]
+    } == {"DC-codex-agent-LLM": False, "brainclaw": False}
+
+
+def test_exact_node_action_gateway_enables_native_tool_search(monkeypatch):
+    bundled = (
+        Path(chat_service.__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / "dramaclaw-model-catalog.json"
+    )
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(bundled))
+
+    overrides = chat_service._codex_gateway_config_overrides(
+        "https://gateway.example/v1", native_tool_search=True
+    )
+
+    catalog_override = next(
+        item for item in overrides if item.startswith("model_catalog_json=")
+    )
+    configured_path = Path(json.loads(catalog_override.split("=", 1)[1]))
+    configured_catalog = json.loads(configured_path.read_text(encoding="utf-8"))
+
+    assert configured_path.name == "dramaclaw-model-catalog-tool-search.json"
+    assert {
+        model["slug"]: model["supports_search_tool"]
+        for model in configured_catalog["models"]
+    } == {"DC-codex-agent-LLM": True, "brainclaw": True}
 
 
 def test_codex_gateway_reasoning_effort_is_configurable(monkeypatch):
@@ -7513,6 +8109,7 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
     prompts = []
+    build_kwargs = []
     events = []
     revoked = []
 
@@ -7542,9 +8139,11 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     monkeypatch.setattr(
         chat_service, "_create_page_agent_session_token", fake_create_token
     )
-    monkeypatch.setattr(
-        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
-    )
+    def fake_build_thread(*_args, **kwargs):
+        build_kwargs.append(kwargs)
+        return FakeThread()
+
+    monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
     monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
     monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
 
@@ -7574,6 +8173,7 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     )
 
     assert prompts[1:] == [chat_service.CANVAS_FORMAT_REPAIR_PROMPT]
+    assert build_kwargs[0]["request_prompt"] == request_prompt
     assert result["content"] == expected
     assert [
         event["text"] for event in events if event["type"] == "assistant_delta"

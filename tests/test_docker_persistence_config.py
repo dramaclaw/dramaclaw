@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import runpy
 from pathlib import Path
 
+import pytest
 import yaml
-
 
 REPOSITORY_ROOT = Path(__file__).parents[1]
 RELEASE_FILE = "docker-compose.release.yml"
@@ -20,12 +22,16 @@ def _compose() -> dict:
 
 
 def _api(relative_path: str) -> dict:
-    api = yaml.safe_load((REPOSITORY_ROOT / relative_path).read_text())["services"]["api"]
+    api = yaml.safe_load((REPOSITORY_ROOT / relative_path).read_text())["services"][
+        "api"
+    ]
     if "extends" in api:
         base = yaml.safe_load((REPOSITORY_ROOT / api["extends"]["file"]).read_text())
         inherited = base["services"][api["extends"]["service"]]
         merged = inherited | api
-        merged["environment"] = inherited.get("environment", {}) | api.get("environment", {})
+        merged["environment"] = inherited.get("environment", {}) | api.get(
+            "environment", {}
+        )
         return merged
     return api
 
@@ -69,7 +75,8 @@ def test_ce_images_share_one_version_variable() -> None:
     for name, repository in (("api", "dramaclaw"), ("web", "dramaclaw-frontend")):
         image = services[name]["image"]
         match = re.fullmatch(
-            re.escape(IMAGE_PREFIX + repository) + r":\$\{DRAMACLAW_VERSION:-(\d+\.\d+\.\d+)\}",
+            re.escape(IMAGE_PREFIX + repository)
+            + r":\$\{DRAMACLAW_VERSION:-(\d+\.\d+\.\d+)\}",
             image,
         )
         assert match, image
@@ -79,12 +86,16 @@ def test_ce_images_share_one_version_variable() -> None:
 
 def test_api_persists_generated_media_in_ce_data_volume() -> None:
     api = _compose()["services"]["api"]
-    assert api["environment"] | {
-        "NOVELVIDEO_DATA_ROOT": "/data",
-        "NOVELVIDEO_OUTPUT_DIR": "/data/output",
-        "NOVELVIDEO_STATE_DIR": "/data/state",
-        "NOVELVIDEO_RUNTIME_DIR": "/data/runtime",
-    } == api["environment"]
+    assert (
+        api["environment"]
+        | {
+            "NOVELVIDEO_DATA_ROOT": "/data",
+            "NOVELVIDEO_OUTPUT_DIR": "/data/output",
+            "NOVELVIDEO_STATE_DIR": "/data/state",
+            "NOVELVIDEO_RUNTIME_DIR": "/data/runtime",
+        }
+        == api["environment"]
+    )
     assert "ce-data:/data" in api["volumes"]
 
 
@@ -128,7 +139,9 @@ def test_source_file_extends_release_and_builds_all_three() -> None:
     services = source["services"]
     assert set(services) == {"api", "newapi", "web"}
     for name, service in services.items():
-        expected_keys = {"extends", "image", "build"} | ({"environment"} if name == "api" else set())
+        expected_keys = {"extends", "image", "build"} | (
+            {"environment"} if name == "api" else set()
+        )
         assert set(service) == expected_keys, f"{name} keys: {set(service)}"
         assert service["extends"] == {"file": RELEASE_FILE, "service": name}
 
@@ -149,7 +162,10 @@ def test_source_file_extends_release_and_builds_all_three() -> None:
         "context": "${DRAMACLAW_GATEWAY_SRC:-../dramaclaw-gateway}",
         "dockerfile": "Dockerfile",
     }
-    assert services["web"]["build"] == {"context": "./frontend", "dockerfile": "Dockerfile"}
+    assert services["web"]["build"] == {
+        "context": "./frontend",
+        "dockerfile": "Dockerfile",
+    }
 
     assert set(source["volumes"]) == {"ce-data", "newapi-data"}
 
@@ -166,7 +182,7 @@ def test_compose_runtime_matches_the_selected_image() -> None:
     release = _api(RELEASE_FILE)["environment"]
     assert source["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-codex}"
     assert source["HERMES_CLI_PATH"] == "/usr/local/bin/hermes"
-    assert release["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-hermes}"
+    assert release["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-codex}"
     assert release["HERMES_CLI_PATH"] == "/root/.local/bin/hermes"
 
 
@@ -188,15 +204,14 @@ def test_env_example_configures_data_root_instead_of_individual_directories() ->
 CODEX_REF_RE = re.compile(r'^ARG CODEX_REF="([0-9a-f]{40})"$', re.MULTILINE)
 CODEX_RUNTIME_IMAGE_RE = re.compile(
     r'^ARG CODEX_RUNTIME_IMAGE="docker\.io/claymorelab/codex-dramaclaw:'
-    r"([0-9a-f]{7})-p([0-9a-f]{8})@sha256:[0-9a-f]{64}\"$",
+    r"([0-9a-f]{7})@sha256:[0-9a-f]{64}\"$",
     re.MULTILINE,
 )
 
 
 def test_container_consumes_only_the_pinned_prebuilt_codex_runtime() -> None:
     """The CE image must not compile codex; it copies the prebuilt, digest-pinned
-    credential-safe runtime whose tag encodes (upstream ref, patch sha). The two
-    ARG lines are the single source of truth for every consumer of this repo."""
+    credential-safe fork runtime. Commit, version and index are pinned together."""
     dockerfile = (REPOSITORY_ROOT / "Dockerfile").read_text()
 
     refs = CODEX_REF_RE.findall(dockerfile)
@@ -204,23 +219,36 @@ def test_container_consumes_only_the_pinned_prebuilt_codex_runtime() -> None:
     pins = CODEX_RUNTIME_IMAGE_RE.findall(dockerfile)
     assert len(pins) == 1, pins
     (codex_ref,) = refs
-    ((tag_ref, tag_patch),) = pins
+    (tag_ref,) = pins
 
     first_from = dockerfile.index("\nFROM ")
     assert dockerfile.index("ARG CODEX_REF=") < first_from
     assert dockerfile.index("ARG CODEX_RUNTIME_IMAGE=") < first_from
 
     assert tag_ref == codex_ref[:7]
-    patches = sorted((REPOSITORY_ROOT / "deploy" / "codex").glob("*.patch"))
-    assert len(patches) == 1, patches
-    assert tag_patch == hashlib.sha256(patches[0].read_bytes()).hexdigest()[:8]
+    assert 'ARG CODEX_VERSION="0.164.0"' in dockerfile
 
     assert "FROM ${CODEX_RUNTIME_IMAGE} AS codex-runtime" in dockerfile
-    assert "COPY --from=codex-runtime /codex /usr/local/bin/codex-dramaclaw" in dockerfile
-    assert "COPY --from=codex-runtime /codex-runtime.sha /opt/codex-runtime.sha" in dockerfile
-    assert "COPY --from=codex-runtime /codex-runtime.json /opt/codex-runtime.json" in dockerfile
-    assert 'test "$(cat /opt/codex-runtime.sha)" = "${CODEX_REF}"' in dockerfile
-    assert "patch_sha256" in dockerfile
+    assert (
+        "COPY --from=codex-runtime /codex /usr/local/bin/codex-dramaclaw" in dockerfile
+    )
+    assert (
+        "COPY --from=codex-runtime /codex-runtime.sha /opt/codex-runtime.sha"
+        in dockerfile
+    )
+    assert (
+        "COPY --from=codex-runtime /codex-runtime.json /opt/codex-runtime.json"
+        in dockerfile
+    )
+    assert "python3 /tmp/codex-bom/verify_runtime.py" in dockerfile
+    assert (
+        '--ref "${CODEX_REF}" --version "${CODEX_VERSION}" --arch "${TARGETARCH}"'
+        in dockerfile
+    )
+    assert (
+        'test "$(codex-dramaclaw --version)" = "codex-cli ${CODEX_VERSION}"'
+        in dockerfile
+    )
     assert "/opt/codex-runtime.json" in dockerfile
     assert "codex-dramaclaw --version" in dockerfile
     assert "codex-builder" not in dockerfile
@@ -236,6 +264,55 @@ def test_container_consumes_only_the_pinned_prebuilt_codex_runtime() -> None:
     assert "USER dramaclaw:dramaclaw" not in dockerfile
 
 
+@pytest.mark.parametrize("arch", ["amd64", "arm64"])
+@pytest.mark.parametrize(
+    "corrupt",
+    [
+        None,
+        "repo",
+        "commit",
+        "upstream_version",
+        "target",
+        "tests",
+        "bytes",
+        "sha256",
+        "ref_file",
+    ],
+)
+def test_pinned_codex_runtime_verification(
+    tmp_path: Path, arch: str, corrupt: str | None
+) -> None:
+    verifier = runpy.run_path(str(REPOSITORY_ROOT / "deploy/codex/verify_runtime.py"))
+    ref = CODEX_REF_RE.findall((REPOSITORY_ROOT / "Dockerfile").read_text())[0]
+    content = b"mock-codex-binary"
+    manifest = {
+        "repo": "https://github.com/claymorelab/codex",
+        "commit": ref,
+        "upstream_version": "0.164.0",
+        "target": verifier["TARGETS"][arch],
+        "tests": sorted(verifier["REQUIRED_TESTS"]),
+        "bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+    binary = tmp_path / "codex"
+    metadata = tmp_path / "codex-runtime.json"
+    ref_file = tmp_path / "codex-runtime.sha"
+    binary.write_bytes(content)
+    ref_file.write_text("wrong" if corrupt == "ref_file" else ref)
+    if corrupt and corrupt != "ref_file":
+        manifest[corrupt] = [] if corrupt == "tests" else "wrong"
+    metadata.write_text(json.dumps(manifest))
+    if corrupt:
+        with pytest.raises(ValueError):
+            verifier["verify_runtime"](
+                binary, metadata, ref_file, ref=ref, version="0.164.0", arch=arch
+            )
+    else:
+        verifier["verify_runtime"](
+            binary, metadata, ref_file, ref=ref, version="0.164.0", arch=arch
+        )
+
+
 def test_compose_upgrade_keeps_existing_volume_runtime_permissions() -> None:
     for relative_path in COMPOSE_FILES:
         api = _api(relative_path)
@@ -248,5 +325,9 @@ def test_compose_upgrade_keeps_existing_volume_runtime_permissions() -> None:
 def test_env_example_documents_image_variables() -> None:
     env_example = (REPOSITORY_ROOT / ".env.example").read_text()
 
-    for key in ("DRAMACLAW_IMAGE_PREFIX", "DRAMACLAW_VERSION", "DRAMACLAW_GATEWAY_VERSION"):
+    for key in (
+        "DRAMACLAW_IMAGE_PREFIX",
+        "DRAMACLAW_VERSION",
+        "DRAMACLAW_GATEWAY_VERSION",
+    ):
         assert re.search(rf"^# {key}=", env_example, re.MULTILINE), key

@@ -12,7 +12,36 @@ DramaClaw is the Community Edition (CE): it runs on a single machine with no Pos
 - Docker (Desktop or Engine) with `docker compose` support.
 - A **DC key** — sign up / purchase at <https://relayclaw.cdnfg.com>; alternatively use the local NewAPI bundled with CE.
 
-## Steps
+## Option A: Published v2.1.0 images (no build)
+
+```bash
+git clone https://github.com/dramaclaw/dramaclaw.git
+cd dramaclaw
+cp .env.example .env
+```
+
+Edit `.env`: change `PROMPT_EXPORT_PASSWORD` to a non-default value and add or update:
+
+```dotenv
+DRAMACLAW_VERSION=2.1.0
+DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
+```
+
+The release Compose file defaults to the bundled credential-safe Codex 0.164.0 Agent.
+If your shell or `.env` already selects another backend, set `DRAMACLAW_CHAT_BACKEND=codex`.
+This choice does not change your Official/Custom/Hybrid model gateway mode.
+
+```bash
+docker compose -f docker-compose.release.yml config --images
+docker compose -f docker-compose.release.yml pull
+docker compose -f docker-compose.release.yml up -d
+docker compose -f docker-compose.release.yml ps
+```
+
+These versions are also the Compose defaults; explicit pins make upgrades predictable.
+This mode needs no gateway checkout and no `--build`.
+
+## Option B: Build your local source with Docker
 
 ```bash
 # 1. Get the code — DramaClaw and the bundled gateway, side by side
@@ -27,11 +56,21 @@ cp .env.example .env
 
 # 3. Start — brings up api / newapi / web
 docker compose up -d --build   # builds api, web (this checkout) and the gateway (../dramaclaw-gateway) from source
-# no build? docker compose -f docker-compose.release.yml up -d   # pulls published images, no gateway clone needed
 
 # 4. Confirm it's up
 docker compose ps   # api, newapi, and web should all be running
 ```
+
+Source Compose defaults to Codex. Builds use the code in your local checkouts, not the
+`DRAMACLAW_VERSION` image tag. Code changes require rebuilding; this is not hot reload:
+
+```bash
+docker compose up -d --build api web
+# If only the gateway changed: docker compose up -d --build newapi
+```
+
+For host-side Python/Vite development with hot reload, see the
+[installation guide](installation.md#b-local-development-uv--python-311312).
 
 ## Enter your DC key (one-time, required)
 

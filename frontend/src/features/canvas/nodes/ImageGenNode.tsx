@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { mediaStorageErrorMessage } from '@/lib/api-errors';
 
 import {
   CANVAS_NODE_TYPES,
@@ -179,7 +180,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   // 两个视图的交互因此完全一致；普通图片生成节点拿到 null，渲染与从前一致。
   const opFormProps = useImageOpFormProps(id, { isGenerating });
 
-  const generationError =
+  const rawGenerationError =
     typeof data.generationError === 'string' && data.generationError.length > 0
       ? data.generationError
       : null;
@@ -187,6 +188,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     typeof data.generationErrorDetails === 'string' && data.generationErrorDetails.length > 0
       ? data.generationErrorDetails
       : null;
+  const generationError = rawGenerationError
+    ? mediaStorageErrorMessage(generationErrorDetails || rawGenerationError, t)
+      ?? rawGenerationError
+    : null;
   const generationErrorRequestId =
     typeof data.generationErrorRequestId === 'string' && data.generationErrorRequestId.length > 0
       ? data.generationErrorRequestId
@@ -196,7 +201,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const [errorDetailsCopied, setErrorDetailsCopied] = useState(false);
 
   const handleCopyErrorDetails = useCallback(async () => {
-    const copyText = generationErrorDetails || generationError || generationErrorRequestId;
+    const copyText = generationErrorDetails || rawGenerationError || generationErrorRequestId;
     if (!copyText) return;
     try {
       await navigator.clipboard.writeText(copyText);
@@ -205,7 +210,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     } catch (error) {
       console.error('[image-gen] copy error details failed', error);
     }
-  }, [generationError, generationErrorDetails, generationErrorRequestId]);
+  }, [rawGenerationError, generationErrorDetails, generationErrorRequestId]);
 
   // 生成进行中时，点击历史记录走「非破坏性预览」：不覆写 imageUrl、不打断在途
   // 任务，仅把这张历史图临时显示在主体上（见 isGenerating 渲染分支）。新图生成

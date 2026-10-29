@@ -19,6 +19,15 @@ SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
 path = [
+    "src/novelvideo/assets/ladybug-json/**",
+    "LICENSES/MIT.txt",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = [
     "**",
 ]
 precedence = "aggregate"

@@ -538,8 +538,9 @@ export function useVideoGenerationForm(
   const isSeedance20Model = isSeedance2VideoModel(selectedVideoModelId);
   // 真人素材审核开关改由媒体目录声明（#210）：以前是「凡 Seedance 2.0 都显示」，
   // 现在谁支持谁在 Admin 里勾。isSeedance20Model 仍用于场景优化等 2.0 专属逻辑。
-  const supportsHumanReview = selectedVideoModel?.humanReview === true;
-  const humanReview = Boolean(data.humanReview);
+  const supportsHumanReview =
+    genMode !== "textToVideo" && selectedVideoModel?.humanReview === true;
+  const humanReview = supportsHumanReview && Boolean(data.humanReview);
   const count: VideoGenCount = (data.count ?? 1) as VideoGenCount;
   const upstreamNodes = useUpstreamNodes(id);
   const videoInputBilling = useMemo(() => {
@@ -649,10 +650,7 @@ export function useVideoGenerationForm(
   const videoBillingRuleMissing =
     videoCreditCost.error instanceof BillingRuleNotConfiguredError;
   const billingRuleMissingSubmitMessage = videoBillingRuleMissing
-    ? t("node.videoNode.billingRuleMissingSubmit", {
-        defaultValue:
-          "视频生成未启动：计费规则未配置，请联系管理员设置积分规则后重试。",
-      })
+    ? t("node.videoNode.billingRuleMissingSubmit")
     : null;
   // 用服务端下发的 `display`，别自己 format `cost`：促销时 display 是「原价→现价」，
   // CreditCostPill 正是靠这个 `→` 才渲染划线原价和促销标签（credit-visual.tsx:117）。
@@ -1824,8 +1822,10 @@ export function useVideoGenerationForm(
         const diagnostics = resolveGenerationErrorDiagnostics(firstError, resolved.details);
         const haystack = `${displayErrorMessage}\n${diagnostics.details ?? ""}`;
         if (
-          haystack.includes("InputImageSensitiveContentDetected.PrivateInformation")
-          || haystack.includes("InputImageSensitiveContentDetected.PrivacyInformation")
+          supportsHumanReview &&
+          !humanReview &&
+          (haystack.includes("InputImageSensitiveContentDetected.PrivateInformation") ||
+            haystack.includes("InputImageSensitiveContentDetected.PrivacyInformation"))
         ) {
           // 素材含真实人脸被拦截：引导用户开启「真人素材审核」后重试。
           void showErrorDialog(
