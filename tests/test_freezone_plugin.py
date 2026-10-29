@@ -3453,7 +3453,10 @@ def test_clarification_timeout_result_tells_agent_how_to_resume(monkeypatch):
     ).validate(result)
 
 
-def test_same_turn_repeated_clarification_without_id_reuses_existing_card(monkeypatch):
+@pytest.mark.parametrize("second_turn", ["turn-a", "turn-b"])
+def test_repeated_clarification_without_id_reuses_existing_card(
+    monkeypatch, second_turn
+):
     plugin = _load_plugin_module()
     monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-a")
     stored = {}
@@ -3494,12 +3497,110 @@ def test_same_turn_repeated_clarification_without_id_reuses_existing_card(monkey
     }
 
     first = _clarification_handler(plugin)(args)
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", second_turn)
     second = _clarification_handler(plugin)(args)
 
     assert first["ok"] is True
     assert second["ok"] is True
     assert len(emitted) == 1
     assert emitted[0]["clarification_id"].startswith("clarify_canvas-a_")
+    assert first["answers"] == second["answers"]
+
+    # A different subject or an explicit choice revision must not reuse the answer.
+    _clarification_handler(plugin)({**args, "target_node_ids": ["different-character"]})
+    assert len(emitted) == 2
+    _clarification_handler(plugin)({**args, "new_request": True})
+    assert len(emitted) == 3
+
+
+def test_clarification_recovery_and_choice_revision_use_durable_inbox(
+    monkeypatch, tmp_path
+):
+    from novelvideo.freezone import canvas_command_bridge as bridge
+
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "wait_clarification_result",
+        lambda key, **kw: bridge.wait_clarification_result(key, timeout_seconds=0),
+    )
+    args = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "context_key": "character-reference:阿叶",
+        "target_node_ids": ["character-a"],
+        "questions": [
+            {
+                "id": "style",
+                "title": "风格",
+                "options": [
+                    {"id": "a", "label": "A"},
+                    {"id": "b", "label": "B"},
+                ],
+            }
+        ],
+    }
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "first-turn")
+    first = _clarification_handler(plugin)(args)
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "reopen-turn")
+    retry = _clarification_handler(plugin)({**args, "title": "重新确认"})
+    assert retry["bridge_key"] == first["bridge_key"]
+    assert (
+        len(
+            bridge.list_pending_bridge_messages(
+                project_id="project-a",
+                canvas_id="canvas-a",
+            )
+        )
+        == 1
+    )
+
+    def answer(card, choice):
+        return bridge.resolve_clarification_result(
+            card["bridge_key"],
+            {
+                "ok": True,
+                "status": "clarification_frontend_result",
+                "clarification_status": "answered",
+                "action": "submit",
+                "answers": {"style": {"option_ids": [choice]}},
+            },
+        )
+
+    answer(first, "a")
+    assert _clarification_handler(plugin)(args)["answers"]["style"]["option_ids"] == [
+        "a"
+    ]
+    revised = _clarification_handler(plugin)({**args, "new_request": True})
+    assert revised["bridge_key"] != first["bridge_key"]
+    answer(revised, "b")
+    # Recovery without an id must select the newest version, not the old answer.
+    assert _clarification_handler(plugin)(args)["answers"]["style"]["option_ids"] == [
+        "b"
+    ]
+    pending_revision = _clarification_handler(plugin)({**args, "new_request": True})
+    newest = _clarification_handler(plugin)({**args, "new_request": True})
+    assert (
+        len(
+            bridge.list_pending_bridge_messages(
+                project_id="project-a",
+                canvas_id="canvas-a",
+            )
+        )
+        == 1
+    )
+    assert (
+        bridge.wait_clarification_result(
+            pending_revision["bridge_key"],
+            timeout_seconds=0,
+        )["clarification_status"]
+        == "cancelled"
+    )
+    answer(newest, "a")
+    assert _clarification_handler(plugin)(args)["answers"]["style"]["option_ids"] == [
+        "a"
+    ]
 
 
 def test_clarification_resume_collects_late_answer_without_second_card(monkeypatch):
@@ -3549,8 +3650,14 @@ def test_clarification_resume_collects_late_answer_without_second_card(monkeypat
         "clarification_id": "clarify_resume", "generation_media_types": ["image"],
     })
 
-    assert lookups == [{"project_id": "project-a", "canvas_id": "canvas-a",
-                        "clarification_id": "clarify_resume"}]
+    assert lookups == [
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "clarification_id": "clarify_resume",
+            "include_expired": True,
+        }
+    ]
     assert result["ok"] is True
     assert result["bridge_key"] == "clarify-key-old"
     assert result["used_recommended"] is True
@@ -7019,7 +7126,7 @@ def test_freezone_plugin_clarification_tool_generates_missing_id(monkeypatch):
     assert result["bridge_key"] == "clarify-key-2"
     generated_id = pending_events[0]["event"]["clarification_id"]
     assert generated_id.startswith("clarify_ss-distill-a_")
-    assert len(generated_id.rsplit("_", 1)[-1]) == 8
+    assert len(generated_id.rsplit("_", 1)[-1]) == 20
 
 
 def test_freezone_plugin_skill_studio_draft_tool_waits_for_frontend_result(monkeypatch):

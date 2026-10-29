@@ -2067,8 +2067,9 @@ def test_resolve_clarification_tool_result_writes_bridge_result(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("replayed", [False, True])
 async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, replayed
 ) -> None:
     async def bridge_project_state(user, payload):
         return tmp_path / "project"
@@ -2100,9 +2101,25 @@ async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
         },
     )
 
+    if replayed:
+        chat_route.chat_store.append_message(
+            "admin", scope, "user", "重新弹出", turn_id="turn-b"
+        )
+        chat_route.chat_store.append_ui_event(
+            "admin",
+            scope,
+            "turn-b",
+            {
+                "type": "assistant.clarification.request",
+                "bridge_key": "clarify-key-1",
+                "clarification_id": "clarify-1",
+                "questions": [],
+            },
+        )
+
     await chat_route.resolve_clarification_tool_result(
         chat_route.ClarificationToolResultIn(
-            turn_id="turn-a",
+            turn_id="turn-b" if replayed else "turn-a",
             bridge_key="clarify-key-1",
             project_id="project-a",
             canvas_id="canvas-a",
@@ -2116,6 +2133,15 @@ async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
     )
 
     messages = chat_route.chat_store.list_messages("admin", scope)
+    if replayed:
+        for turn in ("turn-a", "turn-b"):
+            events = [
+                event
+                for message in messages
+                if message.get("turn_id") == turn
+                for event in message.get("ui_events", [])
+            ]
+            assert any(event.get("submitted") is True for event in events)
     submitted_events = [
         event
         for event in messages[-1]["ui_events"]
@@ -2127,6 +2153,49 @@ async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
     assert submitted_events[-1]["answers"] == {
         "scope": {"option_ids": ["user"], "custom_text": ""}
     }
+
+
+@pytest.mark.anyio
+async def test_expired_clarification_submission_is_not_acknowledged_or_persisted(
+    monkeypatch,
+    tmp_path,
+):
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    async def must_not_persist(*args, **kwargs):
+        pytest.fail("An expired submission must not be saved as answered")
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
+    monkeypatch.setattr(
+        chat_route.chat_store, "append_ui_event_async", must_not_persist
+    )
+    monkeypatch.setattr(chat_route, "_canvas_bridge_dir", lambda *a, **kw: tmp_path)
+    clock = [1000.0]
+    monkeypatch.setattr(canvas_command_bridge.time, "time", lambda: clock[0])
+    put_pending_clarification_event(
+        key="expired-choice",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event={"clarification_id": "expired-choice"},
+        bridge_dir=tmp_path,
+    )
+    clock[0] += (
+        canvas_command_bridge.BRIDGE_PENDING_TTL_SECONDS["clarification_event"] + 1
+    )
+    result = await chat_route.resolve_clarification_tool_result(
+        chat_route.ClarificationToolResultIn(
+            turn_id="turn-a",
+            bridge_key="expired-choice",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            answers={"image_model": "chosen"},
+        ),
+        user={"username": "admin"},
+    )
+    assert result["ok"] is False
+    assert result["data"]["canvas_apply_status"] == "timeout"
+    assert "expired" in result["message"]
 
 
 @pytest.mark.anyio

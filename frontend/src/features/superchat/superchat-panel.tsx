@@ -15548,6 +15548,7 @@ export function SuperChatPanel({
         }),
         action,
         clarification_status: action === "submit" ? "answered" : action === "cancel" ? "cancelled" : action,
+        questions: event.questions,
         skipped: action === "skip",
         used_recommended: action === "recommended",
       };
@@ -15555,28 +15556,40 @@ export function SuperChatPanel({
         ok?: boolean;
         message?: string | null;
         errors?: string[];
+        data?: {
+          answers?: AssistantClarificationAnswers;
+          action?: string;
+          clarification_status?: string;
+          skipped?: boolean;
+          used_recommended?: boolean;
+        };
       }>("chat/clarification-tool-result", {
         method: "POST",
         json: payload,
       });
-      if (result.ok === false) {
+      if (result.ok !== true) {
         submittedAssistantClarificationKeysRef.current.delete(submissionKey);
         toast.error(result.errors?.find(Boolean) || result.message || t("freezone.chat.clarification.submitFailed"));
         return false;
       }
       if (event.turn_id) {
-        const actionStatus = action === "submit" ? "answered" : action === "cancel" ? "cancelled" : action;
+        const acceptedAction = result.data?.action ?? action;
+        const acceptedAnswers = result.data?.answers ?? payload.answers;
+        const actionStatus = result.data?.clarification_status
+          ?? (action === "submit" ? "answered" : action === "cancel" ? "cancelled" : action);
+        const skipped = result.data?.skipped ?? action === "skip";
+        const usedRecommended = result.data?.used_recommended ?? action === "recommended";
         const receivedAt = uiEventFirstReceivedAt(event);
         const persistedEvent = buildPersistedAssistantClarificationEvent(event, {
-          action,
-          answers: payload.answers,
+          action: acceptedAction,
+          answers: acceptedAnswers,
           clarificationStatus: actionStatus,
           receivedAt,
-          skipped: action === "skip",
-          usedRecommended: action === "recommended",
+          skipped,
+          usedRecommended,
         });
         updateChatUiEvent(
-          event.turn_id,
+          null,
           (candidate) =>
             Boolean(
               candidate
@@ -15590,13 +15603,13 @@ export function SuperChatPanel({
           (candidate) => ({
             ...(candidate as Record<string, unknown>),
             received_at: uiEventFirstReceivedAt(candidate, event),
+            questions: event.questions,
             submitted: true,
-            action,
+            action: acceptedAction,
             clarification_status: actionStatus,
-            answers: payload.answers,
-            skipped: action === "skip",
-            used_recommended: action === "recommended",
-            anchor_text_prefix: event.anchor_text_prefix ?? null,
+            answers: acceptedAnswers,
+            skipped,
+            used_recommended: usedRecommended,
           }),
         );
         persistSkillStudioUiEvent(event.turn_id, persistedEvent);

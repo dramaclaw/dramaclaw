@@ -400,7 +400,12 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "until the answer is returned. If the clarification tool returns "
     "clarification_frontend_timeout, tell the user the card is still waiting and will reappear "
     "on their next message; when they reply, call the tool again with the same clarification_id "
-    "to resume that card instead of building a new one. This rule applies to generation or run requests, including "
+    "to resume that card instead of building a new one. Keep a stable context_key describing "
+    "the creative step and subject, and target_node_ids when known, across retries. "
+    "Set new_request=true when the user explicitly wants to change/reselect choices or "
+    "reopen a cancelled/expired card; reopening a pending card is recovery. "
+    "Reuse returned confirmed answers. "
+    "This rule applies to generation or run requests, including "
     "run_after_create=true. It also applies when run_after_create=false if the user explicitly asks "
     "to configure image/video node parameters. It does not apply when the user only asks to create "
     "empty nodes, connect, group, lay out, or edit them without generation parameters. It is an "
@@ -2780,8 +2785,6 @@ def _append_message(
     return message_repository.append_message(
         conn, role, content, media, now_iso=_now_iso
     )
-
-
 
 
 def _bounded_workflow_planning_reply(text: str, *, draft_ready: bool) -> str:

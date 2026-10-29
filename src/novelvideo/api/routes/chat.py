@@ -430,6 +430,7 @@ class ClarificationToolResultIn(BaseModel):
     ok: bool = True
     action: str = "submit"
     answers: dict[str, Any] = Field(default_factory=dict)
+    questions: list[dict[str, Any]] | None = None
     skipped: bool = False
     used_recommended: bool = False
     errors: list[str] = []
@@ -1631,30 +1632,74 @@ async def _persist_clarification_result_ui_event(
     user: dict[str, Any],
     username: str,
     payload: ClarificationToolResultIn,
+    resolved: dict[str, Any] | None = None,
 ) -> None:
+    if resolved is not None:
+        if not _clarification_result_accepted(resolved):
+            return
+        payload = payload.model_copy(
+            update={
+                field: resolved.get(field, getattr(payload, field))
+                for field in (
+                    "action",
+                    "clarification_status",
+                    "answers",
+                    "skipped",
+                    "used_recommended",
+                )
+            }
+        )
     turn_id = str(payload.turn_id or "").strip()
     scope = _scope_from_interaction_payload(payload)
     if not turn_id or scope is None:
         return
     project_ctx = await _project_context_for_interaction_result(user, scope)
-    await chat_store.append_ui_event_async(
-        username,
-        _chat_store_scope_for_project_context(scope, project_ctx),
-        turn_id,
-        {
-            "type": "assistant.clarification.request",
-            "bridge_key": payload.bridge_key,
-            "project_id": payload.project_id,
-            "canvas_id": payload.canvas_id,
-            "agent_id": payload.agent_id,
-            "submitted": True,
-            "action": payload.action,
-            "clarification_status": payload.clarification_status,
-            "answers": payload.answers,
-            "skipped": payload.skipped,
-            "used_recommended": payload.used_recommended,
-            "anchor_text_prefix": payload.anchor_text_prefix,
-        },
+    store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
+    turns = {turn_id}
+    for message in await chat_store.list_messages_async(username, store_scope):
+        if message.get("turn_id") and any(
+            event.get("type") == "assistant.clarification.request"
+            and event.get("bridge_key") == payload.bridge_key
+            for event in message.get("ui_events", [])
+            if isinstance(event, dict)
+        ):
+            turns.add(message["turn_id"])
+    for target_turn in turns:
+        await chat_store.append_ui_event_async(
+            username,
+            store_scope,
+            target_turn,
+            {
+                "type": "assistant.clarification.request",
+                "bridge_key": payload.bridge_key,
+                "project_id": payload.project_id,
+                "canvas_id": payload.canvas_id,
+                "agent_id": payload.agent_id,
+                "submitted": True,
+                "action": payload.action,
+                "clarification_status": payload.clarification_status,
+                "answers": payload.answers,
+                **(
+                    {"questions": payload.questions}
+                    if payload.questions is not None
+                    else {}
+                ),
+                "skipped": payload.skipped,
+                "used_recommended": payload.used_recommended,
+                # Each replay belongs to its own position in the conversation.
+                **(
+                    {"anchor_text_prefix": payload.anchor_text_prefix}
+                    if target_turn == turn_id
+                    else {}
+                ),
+            },
+        )
+
+
+def _clarification_result_accepted(resolved: dict[str, Any]) -> bool:
+    return resolved.get("status") == "clarification_frontend_result" and (
+        resolved.get("ok") is True
+        or resolved.get("clarification_status") == "cancelled"
     )
 
 
@@ -1857,11 +1902,20 @@ async def resolve_clarification_tool_result(
     )
     try:
         await _persist_clarification_result_ui_event(
-            user=user, username=username, payload=payload
+            user=user, username=username, payload=payload, resolved=resolved
         )
     except Exception:
         logger.exception("failed to persist clarification result ui event")
-    return {"ok": True, "data": resolved}
+    return {
+        "ok": _clarification_result_accepted(resolved),
+        "data": resolved,
+        "message": resolved.get("message")
+        or (
+            "This selection card has expired. Reopen it before submitting."
+            if resolved.get("canvas_apply_status") == "timeout"
+            else None
+        ),
+    }
 
 
 def _is_websocket_disconnected_runtime_error(exc: RuntimeError) -> bool:
@@ -1926,14 +1980,14 @@ async def _receive_bridge_results_during_turn(
 
         if event_type == "assistant.clarification.result":
             payload = ClarificationToolResultIn.model_validate(raw)
-            _resolve_clarification_tool_result_payload(
+            resolved = _resolve_clarification_tool_result_payload(
                 payload,
                 username=username,
                 project_state_dir=await _bridge_project_state_dir(user, payload),
             )
             try:
                 await _persist_clarification_result_ui_event(
-                    user=user, username=username, payload=payload
+                    user=user, username=username, payload=payload, resolved=resolved
                 )
             except Exception:
                 logger.exception("failed to persist clarification result ui event")
@@ -4555,14 +4609,14 @@ async def chat_ws(websocket: WebSocket) -> None:
 
             if event_type == "assistant.clarification.result":
                 payload = ClarificationToolResultIn.model_validate(raw)
-                _resolve_clarification_tool_result_payload(
+                resolved = _resolve_clarification_tool_result_payload(
                     payload,
                     username=username,
                     project_state_dir=await _bridge_project_state_dir(user, payload),
                 )
                 try:
                     await _persist_clarification_result_ui_event(
-                        user=user, username=username, payload=payload
+                        user=user, username=username, payload=payload, resolved=resolved
                     )
                 except Exception:
                     logger.exception("failed to persist clarification result ui event")

@@ -32,7 +32,8 @@ BRIDGE_PENDING_TTL_SECONDS = {
     "canvas_command": 10 * 60,
     "canvas_context": 45,
     "skill_studio_event": 10 * 60,
-    "clarification_event": 10 * 60,
+    # A tool wait may end after ten minutes; the user's card must outlive it.
+    "clarification_event": 60 * 60,
 }
 _BRIDGE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS canvas_command_messages (
@@ -209,6 +210,7 @@ def find_clarification_bridge_message(
     project_id: str | None,
     canvas_id: str | None,
     clarification_id: str,
+    include_expired: bool = False,
     bridge_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
     """Locate the newest live clarification card for one clarification id.
@@ -235,10 +237,13 @@ def find_clarification_bridge_message(
     for row in rows:
         payload = _decode_bridge_json(row["payload_json"])
         event = payload.get("event") if payload else None
-        if not isinstance(event, dict) or str(event.get("clarification_id") or "") != wanted:
+        if not isinstance(event, dict):
+            continue
+        event_id = str(event.get("clarification_id") or "")
+        if event_id != wanted and not event_id.startswith(f"{wanted}_v"):
             continue
         status = str(row["status"])
-        if status == "expired":
+        if status == "expired" and not include_expired:
             return None
         return {
             **payload,
@@ -429,8 +434,13 @@ def clarification_bridge_key(
         "kind": "clarification_event",
         "project_id": project_id or "",
         "canvas_id": canvas_id or "",
-        "event": event,
-        "nonce": time.time_ns(),
+        # Retries and concurrent callers for the same logical card share an inbox.
+        "clarification_id": event.get("clarification_id"),
+        **(
+            {"event": event, "nonce": time.time_ns()}
+            if not event.get("clarification_id")
+            else {}
+        ),
     }
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()[:32]
 
@@ -587,6 +597,7 @@ def _resolve_durable_bridge_message(
     now = time.time()
     with _bridge_db(bridge_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        _prune_bridge_rows(conn, now=now, bridge_dir=bridge_dir)
         existing = conn.execute(
             "SELECT * FROM canvas_command_messages WHERE bridge_key = ?",
             (key,),
@@ -878,7 +889,7 @@ def put_pending_clarification_event(
     canvas_id: str | None,
     event: dict[str, Any],
     bridge_dir: str | Path | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     payload = {
         "key": key,
         "kind": "clarification_event",
@@ -887,16 +898,20 @@ def put_pending_clarification_event(
         "event": event,
         "created_at": time.time(),
     }
-    _put_pending_bridge_message(
-        key=key,
-        kind="clarification_event",
-        project_id=project_id,
-        canvas_id=canvas_id,
-        payload=payload,
-        bridge_dir=bridge_dir,
-    )
-    _unlink_if_exists(_path("result", key, bridge_dir))
-    _write_json(_path("pending", key, bridge_dir), payload)
+    with _key_lock(key, bridge_dir):
+        resolved = _put_pending_bridge_message(
+            key=key,
+            kind="clarification_event",
+            project_id=project_id,
+            canvas_id=canvas_id,
+            payload=payload,
+            bridge_dir=bridge_dir,
+        )
+        if resolved is not None:
+            return resolved
+        _unlink_if_exists(_path("result", key, bridge_dir))
+        _write_json(_path("pending", key, bridge_dir), payload)
+    return None
 
 
 def resolve_canvas_command(

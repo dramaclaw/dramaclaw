@@ -1709,6 +1709,39 @@ describe("updateAssistantUiEvents", () => {
 });
 
 describe("Skill Studio question response", () => {
+  it("settles every replay of a clarification and preserves readable model choices", () => {
+    const pending = {
+      type: "assistant.clarification.request", bridge_key: "shared-card",
+      clarification_id: "shared-choice", questions: [{ id: "image_model", options: [] }],
+    };
+    const current = ["old-turn", "recovery-turn"].map((turn, index) => ({
+      ...message(`assistant-${turn}`, "assistant", "", index + 1, turn),
+      uiEvents: [pending],
+    }));
+    const questions = [{
+      id: "image_model", title: "图片模型",
+      options: [{ id: "internal-model-id", label: "LingShan G2" }],
+    }];
+    const answers = { image_model: { option_ids: ["internal-model-id"] } };
+    const settled = updateAssistantUiEventsForTest(current, null,
+      (event) => (event as typeof pending).bridge_key === "shared-card",
+      (event) => ({ ...(event as object), submitted: true, questions, answers }),
+    );
+    for (const turn of ["old-turn", "recovery-turn"]) {
+      expect(pendingAssistantClarificationEventsForTurnForTest(settled, turn)).toHaveLength(0);
+    }
+    expect(visibleAssistantClarificationTimelineItemsForTest(questions, answers)[0]?.summary)
+      .toBe("LingShan G2");
+    // A delayed websocket delivery in a third turn must stay settled.
+    const replayed = upsertAssistantUiEventForTest(settled, "late-turn", pending);
+    expect(pendingAssistantClarificationEventsForTurnForTest(replayed, "late-turn")).toHaveLength(0);
+    // A new choice version for another subject remains answerable.
+    const different = upsertAssistantUiEventForTest(replayed, "new-turn", {
+      ...pending, bridge_key: "new-card", clarification_id: "new-choice",
+    });
+    expect(pendingAssistantClarificationEventsForTurnForTest(different, "new-turn")).toHaveLength(1);
+  });
+
   it("uses the server turn id for incoming UI events before pending local turns", () => {
     expect(resolveUiEventTurnIdForTest("server-turn", "pending-turn", "active-turn")).toBe("server-turn");
     expect(resolveUiEventTurnIdForTest("  ", "pending-turn", "active-turn")).toBe("pending-turn");
