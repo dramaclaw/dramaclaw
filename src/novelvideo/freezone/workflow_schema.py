@@ -617,7 +617,11 @@ def workflow_plan_json_schema() -> dict[str, Any]:
         "type": "object",
         "description": (
             "Complete freezone_workflow_plan.v1 object. Execution policy is not part of the "
-            "plan; pass run_after_create beside plan in the tool arguments."
+            "plan; pass run_after_create beside plan in the tool arguments. "
+            "Always include schema_version='freezone_workflow_plan.v1' and skill={id, version} "
+            "at the same level as nodes and edges. Copy skill identity from the current "
+            "Workflow Skill package and use the same identity as operation_id admission; "
+            "node data.workflowCatalog does not replace this required plan envelope."
         ),
         "properties": {
             "external_inputs": {

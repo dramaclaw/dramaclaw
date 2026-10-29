@@ -1246,6 +1246,47 @@ def test_hermes_tool_call_guard_stops_repeated_successful_validation():
     assert "重复校验同一批画布命令" in stop_message
 
 
+@pytest.mark.parametrize("change", ["title", "operation", "diagnostic"])
+def test_workflow_schema_recovery_guard_uses_diagnostics_and_plan_scope(change):
+    guard = hermes_sdk._TurnToolCallGuard()
+    stop_message = None
+    for index in range(2):
+        errors = [
+            {"path": "plan.schema_version", "message": "field is required"},
+            {"path": "plan.skill", "message": "field is required"},
+        ]
+        if index and change == "diagnostic":
+            errors = errors[1:]
+        output = {
+            "ok": False,
+            "error": "tool_arguments_invalid",
+            "status": "workflow_validation_failed",
+            "errors": list(reversed(errors)) if index else errors,
+        }
+        stop_message = guard.observe(hermes_sdk.ChatBackendEvent(
+            type="tool_updated",
+            name="dramaclaw.freezone_prepare_workflow_plan_draft",
+            call_id=f"draft-{index}",
+            input={
+                "operation_id": f"op-{index}" if change == "operation" else "op-a",
+                "plan": {
+                    "title": f"角色参考图 {index}",
+                    "nodes": [{"id": "brief"}, {"id": "portrait"}],
+                    "edges": [],
+                },
+            },
+            output=output,
+            status="failed",
+        ))
+        if not index:
+            assert stop_message is None
+    if change == "title":
+        assert stop_message is not None
+        assert "重复返回相同错误" in stop_message
+    else:
+        assert stop_message is None
+
+
 def test_hermes_freezone_tool_limit_message_uses_freezone_context():
     message = hermes_sdk._tool_call_limit_stop_message(
         "freezone_put_agent_catalog_recipe"

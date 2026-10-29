@@ -386,6 +386,12 @@ def _workflow_schema_recovery_instruction(tool_name: str) -> str | None:
         return None
     return (
         "WorkflowPlan 校验失败。先按 message/path 指出的字段逐项修正，不要逐个猜删其它字段。"
+        "plan.schema_version 必须为 freezone_workflow_plan.v1；plan.skill 必须是包含 id 和"
+        "当前规划包 version 的对象，从本次已读取的 Workflow Skill 复制，并与原 operation_id"
+        "的准入身份一致。节点 data.workflowCatalog.skillId 不能代替 plan.skill。"
+        "这两个字段与 nodes、edges 同级，都放在工具参数 plan 对象内。"
+        "保持原 operation_id 和完整计划，修正后最多重试一次；同一校验项仍失败就停止，"
+        "说明计划尚未符合契约、尚未提交生成。不能无证据断言传输丢字段，也不能改用逐节点生成。"
         "不要提交单节点探测、空 edges 或 compact Intent。"
         "请保留同一份完整节点清单和所有边；每个可执行节点必须把"
         "workflowCatalog.recipeId 放在节点 data 内。确认所有 edge 的 source/target"
@@ -593,6 +599,7 @@ def _tool_validation_error(name, arguments, schema, exc, errors) -> dict[str, An
                 f"{issue['path']}: {issue['message']}" for issue in diagnostics
             ),
             path=diagnostics[0]["path"],
+            errors=diagnostics,
         )
     if name in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"}:
         payload.update(
