@@ -1079,7 +1079,22 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     user_text = raw_prompt.split("[SUPERTALE_", 1)[0].strip()
     if not user_text:
         return False
+    # Explicit read-only inspections can contain past-tense generation words
+    # ("核实图片是否已经生成"). Those words do not request a new write receipt.
+    if re.search(
+        r"(?:只读(?:检查)?|(?:只|仅)(?:做|作)?(?:分析|检查|核实|查询|查看))"
+        r"[，,\s]*(?:不(?:要)?(?:生成|修改|写入)[^。！？!?\n]*)?[。.!！\s]*$",
+        user_text,
+    ):
+        return False
     intent_text = _FREEZONE_CANVAS_WRITE_NEGATION_RE.sub("", user_text)
+    # Strip only status predicates, keeping any independent instruction such as
+    # "是否已生成？没有的话生成一张" eligible for the write guard.
+    intent_text = re.sub(
+        r"(?:是否|是不是|有没有)(?:已经|已|成功)?(?:生成|创建|合成)(?:成功|完成|了)?",
+        "",
+        intent_text,
+    )
     has_action = bool(_FREEZONE_CANVAS_WRITE_ACTION_RE.search(intent_text))
     has_canvas_object = bool(_FREEZONE_CANVAS_WRITE_OBJECT_RE.search(intent_text))
     has_direct_media_write = bool(_FREEZONE_DIRECT_MEDIA_WRITE_RE.search(intent_text))

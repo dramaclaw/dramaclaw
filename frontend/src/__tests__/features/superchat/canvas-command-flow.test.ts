@@ -5,12 +5,15 @@ import {
   backgroundCanvasCommandPendingResultForTest,
   buildCanvasCommandFlowItemsForTest,
   canvasCommandResultFromWorkflowRunForTest,
+  canvasCommandFeedbackNeedsRecoveryForTest,
   canvasCommandFeedbackVisualToneForTest,
   canvasCommandFeedbackIsValidationOnlyForTest,
   canvasContextActivityVisualToneForTest,
   isGenerationSuccessSummaryText,
   mergeCanvasContextActivitiesForTest,
   mergeCanvasCommandFeedbacksForTest,
+  mergeCanvasCommandFeedbackRecordForTest,
+  pendingCanvasWorkflowReceiptsForTest,
   mergePendingCanvasCommandApprovalForTest,
   orderExternalMcpCanvasPartsForTest,
   resolveCanvasCommandFeedbackMessageIdForTest,
@@ -46,6 +49,85 @@ describe("assistant success summary", () => {
 });
 
 describe("background canvas generation status", () => {
+  it("stops recovery when a terminal live receipt supersedes a pending turn-id alias", () => {
+    const pending = {
+      key: "bridge:images", workflowRunId: "run-images",
+      applied: 0, openedUiActions: 0, errors: [],
+      commandResults: [{ commandIndex: 0, type: "run_workflow", label: "分镜", status: "pending",
+        output: { reason: "background_generation_running" } }],
+    };
+    expect(pendingCanvasWorkflowReceiptsForTest({ "turn-1": [pending], assistant: [pending] }).size).toBe(1);
+    const settled = { ...pending, commandResults: [{ ...pending.commandResults[0], status: "success" }] };
+    expect(pendingCanvasWorkflowReceiptsForTest({ "turn-1": [pending], assistant: [settled] }).size).toBe(0);
+  });
+  it("retains the workflow identity needed to resume polling after reloading history", () => {
+    const running = {
+      key: "bridge:images", workflowRunId: "run-images", bridgeKey: "images", turnId: "turn-1",
+      applied: 0, openedUiActions: 0, errors: [],
+      commandResults: [{ commandIndex: 0, type: "run_workflow", label: "分镜", status: "pending" }],
+    };
+    const completed = { ...running, completionNotice: true, applied: 5,
+      commandResults: [{ ...running.commandResults[0], status: "success" }],
+    };
+    const history: Record<string, typeof running[]> = {};
+    mergeCanvasCommandFeedbackRecordForTest(history, "assistant", [running]);
+    expect(history.assistant[0]).toMatchObject({
+      workflowRunId: "run-images", bridgeKey: "images", turnId: "turn-1",
+    });
+    mergeCanvasCommandFeedbackRecordForTest(history, "assistant", [completed]);
+    expect(history.assistant).toHaveLength(1);
+    expect(history.assistant[0]).toMatchObject({ applied: 5, completionNotice: true });
+  });
+  it.each([false, true])("keeps a single terminal card despite receipt order (reversed=%s)", (reversed) => {
+    const running = {
+      key: "bridge:generation", applied: 0, openedUiActions: 0, errors: [],
+      commandResults: [{ commandIndex: 0, type: "run_workflow", label: "生成分镜", status: "pending" }],
+    };
+    const completed = { ...running, applied: 5, commandResults: [{
+      ...running.commandResults[0], status: "success",
+    }] };
+    const results = reversed ? [completed, running] : [running, completed];
+    const merged = mergeCanvasCommandFeedbacksForTest([results[0]], [results[1]]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].commandResults[0].status).toBe("success");
+    expect(merged[0].applied).toBe(5);
+  });
+
+  it("matches task results by node instead of treating canvas creation steps as tasks", () => {
+    const result = canvasCommandResultFromWorkflowRunForTest({
+      key: "bridge:run", applied: 0, openedUiActions: 0, errors: [],
+      commandResults: [
+        { commandIndex: 0, type: "create_node", label: "创建分镜", status: "success", nodeId: "created" },
+        { commandIndex: 1, type: "run_node_action", label: "生成 A", status: "pending", nodeId: "a", action: "generate_image" },
+        { commandIndex: 2, type: "run_node_action", label: "生成 B", status: "pending", nodeId: "b", action: "generate_image" },
+      ],
+    }, {
+      schema_version: "freezone_workflow_run.v1", run_id: "run", project_id: "p", canvas_id: "c",
+      status: "failed", resumable: true, created_at: "now", started_at: "now", updated_at: "now",
+      actions: [
+        { node_id: "b", action: "generate_image", status: "failed", user_error: "B 失败" },
+        { node_id: "a", action: "generate_image", status: "completed" },
+      ],
+    }, zhT as never);
+    expect(result.commandResults.map((step) => [step.nodeId, step.status, step.error])).toEqual([
+      ["created", "success", undefined], ["a", "success", undefined], ["b", "error", "B 失败"],
+    ]);
+    expect(result.errors).toEqual(["B 失败"]);
+  });
+  it.each([
+    "background_generation_running", "workflow_result_sync_pending",
+    "workflow_server_reconciliation_pending",
+  ])("recovers durable workflow receipts waiting for %s", (reason) => {
+    const feedback = {
+      key: "run-1", applied: 0, openedUiActions: 0, errors: [],
+      commandResults: [{ commandIndex: 0, type: "run_workflow", label: "工作流",
+        status: "pending", output: { reason } }],
+    };
+    expect(canvasCommandFeedbackNeedsRecoveryForTest(feedback)).toBe(true);
+    expect(canvasCommandFeedbackNeedsRecoveryForTest({ ...feedback, commandResults: [{
+      ...feedback.commandResults[0], status: "success",
+    }] })).toBe(false);
+  });
   it("marks media and workflow commands as running instead of completed", () => {
     const result = backgroundCanvasCommandPendingResultForTest([
       { index: 0, type: "run_node_action", label: "生成音频", details: [] },

@@ -997,6 +997,8 @@
       "canvasTimeoutCancelled": "A operação na área de trabalho excedeu o tempo limite e foi cancelada sem ser aplicada.",
       "canvasManuallyCancelled": "A operação na área de trabalho foi cancelada manualmente sem ser aplicada.",
       "backgroundGenerationRunningLabel": "A gerar em segundo plano",
+      "backgroundWorkflowCompletedQuestion": "O fluxo em segundo plano foi concluído. Deseja confirmar os resultados e continuar para o próximo passo?",
+      "backgroundWorkflowFailedQuestion": "O fluxo em segundo plano não foi totalmente concluído. Consulte os resultados no cartão de execução. Deseja que eu investigue a falha?",
       "backgroundGenerationRunningMessage": "A tarefa foi enviada e está a ser gerada em segundo plano. Este estado será atualizado automaticamente quando for concluída com êxito ou falhar.",
       "backgroundGenerationFailed": "A geração em segundo plano falhou. Consulte os detalhes da tarefa e tente novamente.",
       "backgroundGenerationCancelled": "A geração em segundo plano foi cancelada.",

@@ -418,8 +418,9 @@ def test_canvas_command_tool_result_accepts_background_workflow(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("apply_status", ["pending", "applied", "failed"])
 async def test_canvas_background_followup_is_saved_for_agent_without_reresolving_bridge(
-    monkeypatch,
+    monkeypatch, apply_status,
 ) -> None:
     saved: dict[str, object] = {}
 
@@ -453,7 +454,7 @@ async def test_canvas_background_followup_is_saved_for_agent_without_reresolving
         agent_id="agent-1",
         followup=True,
         tool_call_status="completed",
-        canvas_apply_status="pending",
+        canvas_apply_status=apply_status,
         applied=False,
         agent_hint="Do not rerun generation.",
     )
@@ -463,11 +464,43 @@ async def test_canvas_background_followup_is_saved_for_agent_without_reresolving
         {"username": "admin"},
     )
 
-    assert response["data"]["canvas_apply_status"] == "pending"
+    assert response["data"]["canvas_apply_status"] == apply_status
     assert saved["role"] == "agent_notification"
-    assert "do not rerun generation" in str(saved["content"])
-    assert saved["idempotency_key"] == "canvas-background-result:bridge-workflow"
+    assert "[CANVAS_BACKGROUND_RESULT]" in str(saved["content"])
+    if apply_status == "pending":
+        assert "do not rerun generation" in str(saved["content"])
+    assert saved["idempotency_key"] == f"canvas-background-result:bridge-workflow:{apply_status}"
     assert getattr(saved["scope"], "agent_id") == "agent-1"
+
+
+@pytest.mark.anyio
+async def test_workflow_completion_notification_is_idempotent_per_canvas(monkeypatch, tmp_path):
+    from novelvideo.chat.store import ChatStore
+
+    store = ChatStore()
+    monkeypatch.setattr(store, "db_for", lambda _username, scope: tmp_path / f"{scope.canvas_id}.db")
+    monkeypatch.setattr(chat_route, "chat_store", store)
+
+    async def fake_project_context(_user, _scope):
+        return None
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", fake_project_context)
+    payload = chat_route.ChatNotificationIn(
+        scope=chat_route.ChatScopePayload(
+            kind="project", id="p", surface="freezone", canvasId="canvas-a", agentId="main",
+        ),
+        text="本轮工作流已完成，是否继续？",
+        idempotency_key="workflow-completion:run-1",
+    )
+    first = await chat_route.append_chat_notification(payload, {"username": "admin"})
+    second = await chat_route.append_chat_notification(payload, {"username": "admin"})
+    assert first["data"]["id"] == second["data"]["id"]
+    with sqlite3.connect(tmp_path / "canvas-a.db") as conn:
+        assert conn.execute("SELECT count(*) FROM chat_messages").fetchone()[0] == 1
+    payload.scope.canvasId = "canvas-b"
+    await chat_route.append_chat_notification(payload, {"username": "admin"})
+    with sqlite3.connect(tmp_path / "canvas-b.db") as conn:
+        assert conn.execute("SELECT count(*) FROM chat_messages").fetchone()[0] == 1
 
 
 @pytest.mark.anyio

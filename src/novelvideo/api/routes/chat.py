@@ -439,6 +439,7 @@ class ClarificationToolResultIn(BaseModel):
 class ChatNotificationIn(BaseModel):
     scope: ChatScopePayload | None = None
     text: str
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class DirectorAutoStartIn(BaseModel):
@@ -571,6 +572,9 @@ async def append_chat_notification(
             _chat_store_scope_for_project_context(scope, project_ctx),
             "assistant",
             text,
+            idempotency_key=(
+                f"chat-notification:{payload.idempotency_key}" if payload.idempotency_key else None
+            ),
         )
     elif scope.kind == "project":
         project_ctx = await _project_context_for_scope(user, scope)
@@ -588,7 +592,10 @@ async def append_chat_notification(
         )
     else:
         message = await chat_store.append_message_async(
-            username, scope, "assistant", text
+            username, scope, "assistant", text,
+            idempotency_key=(
+                f"chat-notification:{payload.idempotency_key}" if payload.idempotency_key else None
+            ),
         )
     return {"ok": True, "data": message}
 
@@ -1729,7 +1736,9 @@ async def resolve_canvas_command_tool_result(
             "agent_notification",
             f"[CANVAS_BACKGROUND_RESULT] {instruction} [/CANVAS_BACKGROUND_RESULT]",
             turn_id=turn_id,
-            idempotency_key=f"canvas-background-result:{payload.bridge_key.strip()}",
+            idempotency_key=(
+                f"canvas-background-result:{payload.bridge_key.strip()}:{payload.canvas_apply_status}"
+            ),
         )
         return {
             "ok": True,

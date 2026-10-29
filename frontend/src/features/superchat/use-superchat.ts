@@ -3081,7 +3081,7 @@ export function useSuperChat({
     return true;
   }, [connected, desiredScope, displayName, markTurnActive, normalizedComposeNodeId, normalizedFreezoneCanvasId, sendFrame, surface]);
 
-  const appendNotification = useCallback(async (text: string): Promise<boolean> => {
+  const appendNotification = useCallback(async (text: string, idempotencyKey?: string): Promise<boolean> => {
     const trimmed = text.trim();
     if (!trimmed) return false;
     try {
@@ -3090,19 +3090,21 @@ export function useSuperChat({
           json: {
             scope: desiredScope,
             text: trimmed,
+            ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
           },
         })
         .json<ChatNotificationResponse>();
       const message = normalizeMessageForScope(response.data, "assistant", desiredScope);
-      if (message) {
-        setMessages((current) => sortMessages([...current, message]));
+      if (message && scopeMatches(desiredScope, desiredScopeRef.current)) {
+        setMessages((current) => sortMessages([...current.filter((item) => item.id !== message.id), message]));
       }
       return true;
     } catch (error) {
       console.error("[superchat] append notification failed", error);
       const fallback = normalizeMessageForScope(
         {
-          id: `task-notification-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          id: idempotencyKey ? `task-notification:${idempotencyKey}`
+            : `task-notification-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           role: "assistant",
           content: trimmed,
           created_at: new Date().toISOString(),
@@ -3110,8 +3112,8 @@ export function useSuperChat({
         "assistant",
         desiredScope,
       );
-      if (fallback) {
-        setMessages((current) => sortMessages([...current, fallback]));
+      if (fallback && scopeMatches(desiredScope, desiredScopeRef.current)) {
+        setMessages((current) => sortMessages([...current.filter((item) => item.id !== fallback.id), fallback]));
       }
       return false;
     }

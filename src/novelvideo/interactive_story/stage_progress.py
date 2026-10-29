@@ -22,6 +22,7 @@ from novelvideo.interactive_story.models import (
     InteractiveStoryStageEvidence,
     ManualStoryStageId,
     PendingStoryOutline,
+    StoryReferenceImageEvidence,
     StoryStageId,
     StoryStageStatus,
 )
@@ -112,6 +113,10 @@ def collect_stage_evidence(
     video_ready_count = 0
     synopsis_present = False
     character_count = 0
+    scene_count = 0
+    reference_images: list[StoryReferenceImageEvidence] = []
+    unmapped_image_node_ids: list[str] = []
+    ready_entities: dict[str, set[str]] = {"subject": set(), "scene": set()}
     has_story_group = story_group is not None
     lint_errors = lint_error_count
     if story_group is not None:
@@ -133,6 +138,57 @@ def collect_stage_evidence(
         synopsis_present = _non_empty_text(group_data.get("storySynopsis"))
         characters = group_data.get("storyCharacters")
         character_count = len(characters) if isinstance(characters, list) else 0
+        scenes = group_data.get("storyScenes")
+        scene_count = len(scenes) if isinstance(scenes, list) else 0
+        entity_ids = {
+            kind: {item["id"] for item in items
+                   if isinstance(item, dict) and isinstance(item.get("id"), str)}
+            for kind, items in (
+                ("subject", characters if isinstance(characters, list) else []),
+                ("scene", scenes if isinstance(scenes, list) else []),
+            )
+        }
+        story_id = group_data.get("interactiveStoryId")
+        segment_ids = {
+            str(node.get("id")): str((node.get("data") or {}).get("storySegmentId") or "")
+            for node in members
+        }
+        for node in canvas.get("nodes") or []:
+            if not isinstance(node, dict) or node.get("type") != "imageGenNode":
+                continue
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            target = data.get("storyAssetTarget")
+            node_id = str(node.get("id") or "")
+            if not isinstance(target, dict):
+                unmapped_image_node_ids.append(node_id)
+                continue
+            if not story_id or target.get("storyId") != story_id:
+                continue
+            kind, entity_id = target.get("kind"), target.get("entityId")
+            if kind not in ("subject", "scene") or not isinstance(entity_id, str):
+                continue
+            url = data.get("imageUrl")
+            ready = (
+                isinstance(url, str) and bool(url.strip())
+                and not url.strip().lower().startswith("blob:")
+                and not data.get("isGenerating") and not data.get("assetMigration")
+            )
+            linked = set()
+            for edge in canvas.get("edges") or []:
+                if not isinstance(edge, dict) or edge.get("source") != node_id:
+                    continue
+                edge_data = edge.get("data") if isinstance(edge.get("data"), dict) else {}
+                if edge_data.get("link_type") != "media_input_for":
+                    continue
+                segment_id = segment_ids.get(str(edge.get("target")))
+                if segment_id:
+                    linked.add(segment_id)
+            reference_images.append(StoryReferenceImageEvidence(
+                kind=kind, entity_id=entity_id, node_id=node_id,
+                ready=ready, linked_segment_ids=sorted(linked),
+            ))
+            if ready and entity_id in entity_ids[kind]:
+                ready_entities[kind].add(entity_id)
         # 前端 lintStory 把组内选择边指向组外计为 dangling_edge error；故事映射
         # 失败时 service 已折算为 1，这里只补映射成功但边悬空的画布级情况。
         member_ids = {str(node.get("id") or "") for node in members}
@@ -155,6 +211,11 @@ def collect_stage_evidence(
         video_ready_count=video_ready_count,
         lint_error_count=lint_errors,
         character_count=character_count,
+        scene_count=scene_count,
+        character_image_ready_count=len(ready_entities["subject"]),
+        scene_image_ready_count=len(ready_entities["scene"]),
+        reference_images=reference_images,
+        unmapped_image_node_ids=unmapped_image_node_ids,
         confirmed_stages=confirmed_manual_stages(story_group),
     )
 
