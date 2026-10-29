@@ -166,7 +166,7 @@ Xia Director turns natural-language creative briefs into executable canvas workf
 
 - **Canvas workflow orchestration** &mdash; plan, create, connect and arrange nodes from a creative brief; execute confirmed workflows with progress tracking and failure recovery.
 - **Workflow catalog and skill extensions** &mdash; 11 workflow skills and 60 recipes covering short drama, e-commerce ads, IP character ads and social content; install, export and share skill / recipe bundles.
-- **External agent integration** &mdash; [Agent Kit](agent-kit/README.md) exposes the same production workflows to Codex, Claude Code, OpenClaw, Hermes, WorkBuddy and other MCP clients.
+- **External agent integration** &mdash; [Agent Kit](agent-kit/README.md) exposes the same production workflows to Codex, Claude Code, OpenClaw, WorkBuddy and other MCP clients.
 - **Project context and task management** &mdash; inspect project progress, advance script and shot tasks, check deliverable completeness and identify the next production steps.
 
 <br/>
@@ -333,6 +333,16 @@ DramaClaw runs all inference through an **OpenAI-compatible gateway** — either
 
 Every GitHub Release publishes multi-arch (amd64/arm64) images to Docker Hub.
 
+Choose a deployment method before starting:
+
+| Method | What runs | Default Agent backend | Browser URL |
+|---|---|---|---|
+| Published images | A fixed release; no local build | Codex | `http://localhost:8080` |
+| Source Docker | Code from your local checkouts, built into images | Codex | `http://localhost:8080` |
+| Local Python + Vite | Source processes on your host, outside Docker | Codex (requires a host-side credential-safe runtime) | `http://localhost:5173` |
+
+The Codex Agent backend is separate from the model gateway mode (Official/Custom/Hybrid).
+
 **Source build (default)** — clone DramaClaw and the bundled [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) side by side; `docker compose up -d --build` builds all three services from those two checkouts.
 
 ```bash
@@ -350,9 +360,23 @@ Both checkouts are plain git repos: edit, `git pull`, rebuild. Only DramaClaw co
 
 **No build** — pull published images instead (no gateway clone needed):
 
+For **v2.1.1**, add or update these entries in `.env` before starting:
+
+```dotenv
+DRAMACLAW_VERSION=2.1.1
+DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
+```
+
 ```bash
+docker compose -f docker-compose.release.yml config --images
+docker compose -f docker-compose.release.yml pull
 docker compose -f docker-compose.release.yml up -d
 ```
+
+These versions are also the release Compose defaults. Explicit pins make your intended
+release clear when upgrading. Do not add `--build` for this mode. The Agent defaults to
+the bundled credential-safe Codex 0.164.0 runtime; an existing `DRAMACLAW_CHAT_BACKEND`
+value in your shell or `.env` overrides that default.
 
 Open the app at <http://localhost:8080>; the REST API is at <http://localhost:8780>. In **Settings → Model Config** pick one of:
 
@@ -372,18 +396,23 @@ Pin versions or switch registry in `.env` (`DRAMACLAW_VERSION`, `DRAMACLAW_GATEW
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
-uv sync
 cp .env.example .env && $EDITOR .env
-
-scripts/start-ce.sh   # installs dependencies, then starts the API and bundled frontend
+scripts/start-ce.sh
 ```
 
-For frontend development with hot reload: `cd frontend && pnpm install && pnpm dev`.
+The launcher installs dependencies and starts both the API at <http://localhost:8780>
+and the hot-reloading UI at <http://localhost:5173>. Stop both with Ctrl+C.
+Local development needs Python 3.11–3.12, `uv`, Node.js/pnpm, curl and ffmpeg.
+Source Docker builds are not hot-reloading: rebuild `api web` after changing their code.
 
-The local launcher installs Hermes in an isolated environment and explicitly uses it as the
-safe source-checkout chat runtime. Source-built Docker images ship the patched Codex App
-Server runtime and default to Codex, as does the pinned 2.1.1 release image. To run the API command directly, configure a supported chat backend
-first; do not rely on the stock Codex binary for gateway credentials.
+Docker builds at v2.1.1 include credential-safe Codex 0.164.0; both source and release
+Compose default to Codex. The native launcher downloads the public patched **0.164.0**
+runtime for macOS Apple Silicon/Intel or Linux x64/ARM64, verifies its pinned SHA256,
+and caches it under `runtime/codex/bin/` (or `NOVELVIDEO_RUNTIME_DIR`). No private
+repository access is needed. An explicit `CODEX_BIN` in `.env` selects your own patched
+executable and skips downloading; it is not automatically replaced or checksum-verified.
+Windows users should use WSL2 or Docker. Do not substitute the stock Codex CLI.
+See the [installation guide](docs/en/getting-started/installation.md) for API-only startup.
 
 **Gateway.** In **Official** mode you need nothing else. For **Custom** or **Local + Official Hybrid** the API expects a gateway on `127.0.0.1:3000` whose SQLite file is `./state/newapi/one-api.db` (that is what "Initialize" in Settings writes to; `NEWAPI_ADMIN_BASE_URL` in `.env` already points there). Either run the published image with that directory mounted:
 

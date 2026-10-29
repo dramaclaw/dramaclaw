@@ -355,6 +355,45 @@ def _response_completed(response_id: str) -> dict:
     }
 
 
+def _contract_codex_bin() -> Path:
+    # Opt-in runtime smoke uses the exact public artifact without replacing the
+    # SDK's installed binary. All Responses traffic below goes to a local stub.
+    override = os.environ.get("DRAMACLAW_TEST_CODEX_BIN", "").strip()
+    if override:
+        return Path(override)
+    return _integration_codex_binary()
+
+
+@pytest.mark.parametrize("selection", ["test_override", "configured", "sdk"])
+def test_contract_runtime_selection_preserves_both_overrides(
+    monkeypatch, tmp_path, selection
+):
+    test_binary = tmp_path / "test-codex"
+    configured_binary = tmp_path / "configured-codex"
+    bundled_binary = tmp_path / "sdk-codex"
+    for binary in (test_binary, configured_binary, bundled_binary):
+        binary.touch()
+    monkeypatch.delenv("DRAMACLAW_TEST_CODEX_BIN", raising=False)
+    monkeypatch.delenv("CODEX_BIN", raising=False)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "distribution",
+        lambda _name: SimpleNamespace(locate_file=lambda _path: bundled_binary),
+    )
+    if selection != "sdk":
+        monkeypatch.setenv("CODEX_BIN", str(configured_binary))
+    if selection == "test_override":
+        monkeypatch.setenv("DRAMACLAW_TEST_CODEX_BIN", str(test_binary))
+    assert (
+        _contract_codex_bin()
+        == {
+            "test_override": test_binary,
+            "configured": configured_binary,
+            "sdk": bundled_binary,
+        }[selection]
+    )
+
+
 @contextmanager
 def _recording_responses_gateway(responses: list[bytes]):
     requests: list[dict] = []
@@ -471,7 +510,7 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
     ]
 
     with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
-        bundled_codex = _integration_codex_binary()
+        bundled_codex = _contract_codex_bin()
         assert bundled_codex.is_file(), "the pinned App Server binary is required"
         token_file = tmp_path / "turn.token"
         token_file.write_text("contract-test-token", encoding="utf-8")
@@ -622,7 +661,7 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
     ]
 
     with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
-        bundled_codex = _integration_codex_binary()
+        bundled_codex = _contract_codex_bin()
         token_file = tmp_path / "turn.token"
         token_file.write_text("contract-test-token", encoding="utf-8")
         token_file.chmod(0o600)
@@ -742,7 +781,7 @@ async def test_app_server_exact_node_action_searches_only_batch_write_tool(
     ]
 
     with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
-        bundled_codex = _integration_codex_binary()
+        bundled_codex = _contract_codex_bin()
         token_file = tmp_path / "turn.token"
         token_file.write_text("contract-test-token", encoding="utf-8")
         token_file.chmod(0o600)
@@ -809,6 +848,62 @@ async def test_app_server_exact_node_action_searches_only_batch_write_tool(
     assert any(
         event.type == "complete" and event.text == final_reply for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_public_patched_runtime_keeps_turn_key_out_of_metadata_and_disk(
+    monkeypatch, tmp_path
+):
+    if not os.environ.get("DRAMACLAW_TEST_CODEX_BIN", "").strip():
+        pytest.skip("set DRAMACLAW_TEST_CODEX_BIN to verify a public patched artifact")
+    secret = "synthetic-native-runtime-test-key-not-a-real-credential"
+    scripted = _responses_sse(
+        _response_created("native-runtime-test"),
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "id": "native-message",
+                "content": [{"type": "output_text", "text": "native runtime OK"}],
+            },
+        },
+        _response_completed("native-runtime-test"),
+    )
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    with _recording_responses_gateway([scripted]) as (gateway_url, requests):
+        client = backend_sdk.CodexClient(
+            codex_bin=_contract_codex_bin(),
+            cwd=tmp_path,
+            env={
+                **os.environ,
+                "CODEX_HOME": str(tmp_path / "codex-home"),
+                "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+            },
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions="Reply briefly without tools.",
+            config_overrides=service._codex_gateway_config_overrides(gateway_url),
+            turn_metadata={"dramaclaw_gateway_api_key": secret},
+        )
+        try:
+            events = [event async for event in client.thread_start().stream("Say OK")]
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+    assert len(requests) == 1
+    headers = {key.lower(): value for key, value in requests[0]["headers"].items()}
+    assert headers.pop("authorization") == f"Bearer {secret}"
+    assert secret not in json.dumps(headers)
+    assert secret not in json.dumps(requests[0]["body"])
+    assert any(
+        event.type == "complete" and event.text == "native runtime OK"
+        for event in events
+    )
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            assert (
+                secret.encode() not in path.read_bytes()
+            ), f"Turn key persisted in {path.name}"
 
 
 @pytest.mark.e2e

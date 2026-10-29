@@ -73,41 +73,24 @@ export NOVELVIDEO_API_PORT="$api_port"
 export NOVELVIDEO_API_URL="http://127.0.0.1:${api_port}"
 export DRAMACLAW_API_URL="$NOVELVIDEO_API_URL"
 export SUPERTALE_API_URL="$NOVELVIDEO_API_URL"
-# Make the local CE storage roots explicit so Hermes does not emit a fallback
-# warning on every first chat turn. These are the same paths derived from the
-# repository root when no overrides are provided.
+# Keep runtime downloads and project files inside the local CE storage roots.
 export NOVELVIDEO_DATA_ROOT="${NOVELVIDEO_DATA_ROOT:-$root_dir}"
 export NOVELVIDEO_STATE_DIR="${NOVELVIDEO_STATE_DIR:-$NOVELVIDEO_DATA_ROOT/state}"
 export NOVELVIDEO_OUTPUT_DIR="${NOVELVIDEO_OUTPUT_DIR:-$NOVELVIDEO_DATA_ROOT/output}"
 export NOVELVIDEO_RUNTIME_DIR="${NOVELVIDEO_RUNTIME_DIR:-$NOVELVIDEO_DATA_ROOT/runtime}"
 
-# A source checkout does not build the credential-safe, DramaClaw-patched
-# Codex runtime shipped by the Docker image. This local launcher installs
-# Hermes below, so use it unless the operator explicitly configured another
-# backend through either the current or legacy environment variable (and, for
-# Codex, a valid CODEX_BIN).
-if [ -z "${DRAMACLAW_CHAT_BACKEND:-}" ] && [ -z "${SUPERTALE_CHAT_BACKEND:-}" ]; then
-  export DRAMACLAW_CHAT_BACKEND=hermes
+# This launcher provisions Codex only. Do not silently ignore an older .env
+# selecting another backend, or install a second agent into the application venv.
+backend="$(printf '%s' "${DRAMACLAW_CHAT_BACKEND:-${SUPERTALE_CHAT_BACKEND:-codex}}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+if [ "$backend" != codex ]; then
+  echo "This launcher uses Codex. Set DRAMACLAW_CHAT_BACKEND=codex in .env (current: $backend)." >&2
+  exit 2
 fi
+export DRAMACLAW_CHAT_BACKEND=codex
 
-# Match sandbox_wrap's stripped, case-insensitive flag values for guidance.
-sandbox_flag_enabled() {
-  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" in
-    1|true|yes|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# Explain unconfigured Linux Hermes requirements before dependency setup.
-# This is guidance only: sandbox_wrap remains the authority for enforcement.
-if [ "$(uname -s)" = "Linux" ] && \
-   [ "${DRAMACLAW_CHAT_BACKEND:-${SUPERTALE_CHAT_BACKEND:-hermes}}" = "hermes" ] && \
-   ! sandbox_flag_enabled "${SUPERTALE_ALLOW_UNSANDBOXED:-}" && \
-   ! sandbox_flag_enabled "${SUPERTALE_LINUX_SANDBOX:-}"; then
-  echo "Linux Hermes chat: when the sandbox is unavailable or not activated, chat is refused by default." >&2
-  echo "For single-user local development only, explicitly set SUPERTALE_ALLOW_UNSANDBOXED=1 in .env or the shell to allow a warning-backed fallback." >&2
-  echo "This opt-in cannot bypass sandbox requirements in EE or production. See docs/en/getting-started/installation.md." >&2
-fi
+# Resolve before starting either service; assignment must preserve setup errors.
+codex_bin="$(bash "$root_dir/scripts/setup-codex.sh")"
+export CODEX_BIN="$codex_bin"
 
 if [ "${NEWAPI_API_KEY:-}" = "your_newapi_token" ] || [ -z "${NEWAPI_API_KEY:-}" ]; then
   echo "Warning: NEWAPI_API_KEY is not configured. API can start, but AI generation will fail." >&2
@@ -119,18 +102,6 @@ fi
 
 echo "Checking/installing dependencies with uv sync --group dev ..."
 uv sync --group dev
-
-# Keep the Hermes fork in its own environment. The fork currently pins an
-# older OpenAI SDK than pydantic-ai requires for Recipe text execution; putting
-# both in the application .venv makes setup-hermes silently downgrade the API
-# runtime and every generate_text action fails before its model request starts.
-hermes_env_dir="${HERMES_ENV_DIR:-$root_dir/.cache/hermes-venv}"
-export HERMES_ENV_DIR="$hermes_env_dir"
-export HERMES_CLI_PATH="${HERMES_CLI_PATH:-$hermes_env_dir/bin/hermes}"
-export HERMES_PYTHON="${HERMES_PYTHON:-$hermes_env_dir/bin/python}"
-export HERMES_BASE_PYTHON="${HERMES_BASE_PYTHON:-$root_dir/.venv/bin/python}"
-echo "Checking Hermes CLI version ..."
-scripts/setup-hermes.sh
 
 if [ ! -d "frontend/node_modules" ]; then
   echo "Installing frontend dependencies with pnpm install ..."
