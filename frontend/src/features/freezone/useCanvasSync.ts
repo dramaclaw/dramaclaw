@@ -193,6 +193,9 @@ function acquireHydrateFlight(
   canvasId: string,
   reloadKey: number,
 ): { promise: Promise<FreezoneCanvasPayload>; release: () => void } {
+  // Cleanup can outlive the global browser environment (notably Vitest teardown).
+  // Keep timers owned by the window in which this consumer acquired the flight.
+  const timerWindow = window;
   const key = hydrateFlightKey(project, canvasId, reloadKey);
   let flight = hydrateFlights.get(key);
   if (flight?.settled) {
@@ -204,7 +207,7 @@ function acquireHydrateFlight(
       useCanvasStore.getState().userEditsSinceHydrate === 0;
     if (!canReuseJustSettledFlight) {
       if (flight.releaseTimer != null) {
-        window.clearTimeout(flight.releaseTimer);
+        timerWindow.clearTimeout(flight.releaseTimer);
       }
       hydrateFlights.delete(key);
       flight = undefined;
@@ -236,7 +239,7 @@ function acquireHydrateFlight(
     flight = createdFlight;
   }
   if (flight.releaseTimer != null) {
-    window.clearTimeout(flight.releaseTimer);
+    timerWindow.clearTimeout(flight.releaseTimer);
     flight.releaseTimer = null;
   }
   flight.consumers += 1;
@@ -248,7 +251,7 @@ function acquireHydrateFlight(
       released = true;
       flight.consumers = Math.max(0, flight.consumers - 1);
       if (flight.consumers > 0) return;
-      flight.releaseTimer = window.setTimeout(() => {
+      flight.releaseTimer = timerWindow.setTimeout(() => {
         if (flight.consumers > 0) return;
         if (hydrateFlights.get(key) !== flight) return;
         if (
@@ -259,7 +262,7 @@ function acquireHydrateFlight(
           const remaining =
             FREEZONE_HYDRATE_SETTLED_REUSE_MS - (Date.now() - flight.settledAt);
           if (remaining > 0) {
-            flight.releaseTimer = window.setTimeout(() => {
+            flight.releaseTimer = timerWindow.setTimeout(() => {
               if (flight.consumers === 0 && hydrateFlights.get(key) === flight) {
                 hydrateFlights.delete(key);
               }

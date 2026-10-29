@@ -296,6 +296,33 @@ describe("useCanvasSync hydrate lifecycle", () => {
     second.unmount();
   });
 
+  it("releases a settled hydrate without accessing the global window after teardown", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({ nodes: [], edges: [], revision: 1 });
+    const hook = renderHook(() => useCanvasSync("teardown-project", "release-window"));
+    await act(async () => { await Promise.resolve(); });
+    expect(hook.result.current.status).toBe("ready");
+    const timerSpy = vi.spyOn(window, "setTimeout");
+    hook.unmount();
+    const release = timerSpy.mock.calls.find(([, delay]) =>
+      delay === FREEZONE_HYDRATE_RELEASE_GRACE_MS)?.[0] as () => void;
+    expect(release).toBeTypeOf("function");
+    try {
+      // Vitest can remove the global window while a grace-period callback is queued.
+      vi.stubGlobal("window", undefined);
+      expect(() => release()).not.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+      act(() => { vi.advanceTimersByTime(FREEZONE_HYDRATE_SETTLED_REUSE_MS + 10); });
+      timerSpy.mockRestore();
+      vi.useRealTimers();
+    }
+    const reopened = renderHook(() => useCanvasSync("teardown-project", "release-window"));
+    await waitFor(() => expect(reopened.result.current.status).toBe("ready"));
+    expect(getFreezoneCanvas).toHaveBeenCalledTimes(2);
+    reopened.unmount();
+  });
+
   it("does not reuse a settled hydrate snapshot after the settled reuse window", async () => {
     vi.useFakeTimers();
     vi.mocked(getFreezoneCanvas)
