@@ -21,6 +21,15 @@ from novelvideo.chat.backend_sdk import (
 )
 
 
+def _integration_codex_binary() -> Path:
+    configured = os.environ.get("CODEX_BIN", "").strip()
+    if configured:
+        binary = Path(configured)
+        assert binary.is_file(), "CODEX_BIN must point to the compiled runtime"
+        return binary
+    return Path(distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex"))
+
+
 def test_runtime_rejects_sdk_bundled_binary():
     with pytest.raises(RuntimeError, match="DramaClaw-patched Codex runtime"):
         codex_app_server._resolve_codex_bin(SimpleNamespace(codex_bin=None))
@@ -258,7 +267,7 @@ def test_output_schema_is_sent_even_without_turn_metadata():
 
 
 def test_codex_149_sdk_exposes_required_runtime_notifications():
-    from importlib.metadata import version
+    from importlib.metadata import requires
 
     from openai_codex import Codex
     from openai_codex.client import CodexClient
@@ -273,7 +282,7 @@ def test_codex_149_sdk_exposes_required_runtime_notifications():
         hasattr(CodexClient, name)
         for name in ("initialize", "thread_start", "turn_start")
     )
-    assert version("openai-codex-cli-bin") == "0.149.0"
+    assert "openai-codex-cli-bin==0.149.0" in requires("openai-codex")
     assert {
         "item/agentMessage/delta",
         "item/completed",
@@ -431,9 +440,7 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
     ]
 
     with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
-        bundled_codex = Path(
-            distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
-        )
+        bundled_codex = _integration_codex_binary()
         assert bundled_codex.is_file(), "the pinned App Server binary is required"
         token_file = tmp_path / "turn.token"
         token_file.write_text("contract-test-token", encoding="utf-8")
@@ -584,9 +591,7 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
     ]
 
     with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
-        bundled_codex = Path(
-            distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
-        )
+        bundled_codex = _integration_codex_binary()
         token_file = tmp_path / "turn.token"
         token_file.write_text("contract-test-token", encoding="utf-8")
         token_file.chmod(0o600)
@@ -706,9 +711,7 @@ async def test_app_server_exact_node_action_searches_only_batch_write_tool(
     ]
 
     with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
-        bundled_codex = Path(
-            distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
-        )
+        bundled_codex = _integration_codex_binary()
         token_file = tmp_path / "turn.token"
         token_file.write_text("contract-test-token", encoding="utf-8")
         token_file.chmod(0o600)
@@ -802,9 +805,7 @@ async def test_real_gateway_app_server_native_tool_search_calls_concrete_mcp(
     if not gateway_base_url or not gateway_api_key:
         pytest.skip("a Tool Search-capable DramaClaw Gateway URL and key are required")
 
-    bundled_codex = Path(
-        distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
-    )
+    bundled_codex = _integration_codex_binary()
     codex_bin = Path(os.environ.get("CODEX_BIN", "") or bundled_codex)
     if not codex_bin.is_file():
         pytest.skip("DramaClaw-patched Codex binary is unavailable")

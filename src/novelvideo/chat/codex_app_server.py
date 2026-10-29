@@ -23,6 +23,9 @@ from pathlib import Path
 from typing import Iterator
 
 _CONNECT_TIMEOUT_SECONDS = 10.0
+# The first Intel launch under Rosetta may take over 20 seconds. Coordination
+# locks also wait for that startup so another worker cannot fail halfway through it.
+_START_TIMEOUT_SECONDS = 60.0
 _MAX_MESSAGE_BYTES = 128 << 20
 _NODE_ENV_ALLOWLIST = {
     "ALL_PROXY",
@@ -40,6 +43,13 @@ _NODE_ENV_ALLOWLIST = {
     "SSL_CERT_FILE",
     "TMPDIR",
     "TZ",
+    "SYSTEMROOT",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "LOCALAPPDATA",
+    "APPDATA",
 }
 _TURN_METADATA_NAMES = (
     "dramaclaw_gateway_api_key",
@@ -55,6 +65,10 @@ _JSON_METADATA_RE = re.compile(
 _ESCAPED_JSON_METADATA_RE = re.compile(
     rf'(\\"(?:{"|".join(_TURN_METADATA_NAMES)})\\"\s*:\s*\\")[^"\\]*(\\")'
 )
+
+
+class CodexRuntimeError(RuntimeError):
+    """The local App Server could not start or initialize its transport."""
 
 
 def _deny_unexpected_approval(method: str, _params: dict | None) -> dict:
@@ -79,7 +93,11 @@ def _control_dir() -> Path:
     # intentionally below the configured state root and can easily exceed that.
     # These files are operating-system IPC state, not DramaClaw runtime data, so
     # keep them under a fixed short path instead of following TMPDIR/runtime.
-    uid = os.getuid() if hasattr(os, "getuid") else os.getpid()
+    if os.name == "nt":
+        from novelvideo.chat.codex_app_server_windows import private_control_root
+
+        return private_control_root()
+    uid = os.getuid()
     path = Path("/tmp") / f"claymore-{uid}"
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     mode = path.lstat().st_mode
@@ -104,11 +122,17 @@ def _control_paths(codex_home: Path) -> tuple[Path, Path, Path]:
         :16
     ]
     control_dir = _control_dir() / identity
-    control_dir.mkdir(mode=0o700, exist_ok=True)
+    if os.name == "nt":
+        from novelvideo.chat.codex_app_server_windows import prepare_private_directory
+
+        prepare_private_directory(control_dir)
+    else:
+        control_dir.mkdir(mode=0o700, exist_ok=True)
     mode = control_dir.lstat().st_mode
     if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
         raise RuntimeError(f"Unsafe Codex App Server node directory: {control_dir}")
-    control_dir.chmod(0o700)
+    if os.name != "nt":
+        control_dir.chmod(0o700)
     return (
         control_dir / "app-server.sock",
         control_dir / "node-runtime.lock",
@@ -122,8 +146,13 @@ def _coordination_paths(codex_home: Path) -> tuple[Path, Path, Path]:
     socket_path, _lock_path, _signature_path = _control_paths(codex_home)
     control_dir = socket_path.parent
     leases_dir = control_dir / "active-clients"
-    leases_dir.mkdir(mode=0o700, exist_ok=True)
-    leases_dir.chmod(0o700)
+    if os.name == "nt":
+        from novelvideo.chat.codex_app_server_windows import prepare_private_directory
+
+        prepare_private_directory(leases_dir)
+    else:
+        leases_dir.mkdir(mode=0o700, exist_ok=True)
+        leases_dir.chmod(0o700)
     return (
         control_dir / "app-server.owner.json",
         control_dir / "app-server.drain",
@@ -132,6 +161,10 @@ def _coordination_paths(codex_home: Path) -> tuple[Path, Path, Path]:
 
 
 def _pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        from novelvideo.chat.codex_app_server_windows import pid_alive
+
+        return pid_alive(pid)
     if pid <= 0:
         return False
     try:
@@ -289,7 +322,7 @@ class _SharedCodexRuntime:
         )
         signature_digest = _signature_digest(signature)
         with self._lock:
-            with Lock(str(lock_path), mode="a", timeout=_CONNECT_TIMEOUT_SECONDS):
+            with Lock(str(lock_path), mode="a", timeout=_START_TIMEOUT_SECONDS):
                 active_leases = _remove_stale_client_leases(leases_dir)
                 if drain_path.exists():
                     if active_leases:
@@ -396,7 +429,7 @@ class _SharedCodexRuntime:
                 )
                 owner_path.chmod(0o600)
 
-                deadline = time.monotonic() + _CONNECT_TIMEOUT_SECONDS
+                deadline = time.monotonic() + _START_TIMEOUT_SECONDS
                 while time.monotonic() < deadline:
                     if self._socket_accepting(socket_path):
                         signature_path.write_text(signature_digest, encoding="ascii")
@@ -437,7 +470,7 @@ class _SharedCodexRuntime:
         with self._lock:
             _socket_path, lock_path, _signature_path = _control_paths(codex_home)
             _owner_path, drain_path, leases_dir = _coordination_paths(codex_home)
-            with Lock(str(lock_path), mode="a", timeout=_CONNECT_TIMEOUT_SECONDS):
+            with Lock(str(lock_path), mode="a", timeout=_START_TIMEOUT_SECONDS):
                 _remove_stale_client_leases(leases_dir)
                 if drain_path.exists():
                     raise RuntimeError(
@@ -475,7 +508,7 @@ class _SharedCodexRuntime:
         with self._lock:
             socket_path, lock_path, signature_path = _control_paths(codex_home)
             owner_path, drain_path, leases_dir = _coordination_paths(codex_home)
-            with Lock(str(lock_path), mode="a", timeout=_CONNECT_TIMEOUT_SECONDS):
+            with Lock(str(lock_path), mode="a", timeout=_START_TIMEOUT_SECONDS):
                 lease_path.unlink(missing_ok=True)
                 active_leases = _remove_stale_client_leases(leases_dir)
                 if drain_path.exists() and not active_leases:
@@ -493,7 +526,7 @@ class _SharedCodexRuntime:
         with self._lock:
             socket_path, lock_path, signature_path = _control_paths(codex_home)
             owner_path, drain_path, leases_dir = _coordination_paths(codex_home)
-            with Lock(str(lock_path), mode="a", timeout=_CONNECT_TIMEOUT_SECONDS):
+            with Lock(str(lock_path), mode="a", timeout=_START_TIMEOUT_SECONDS):
                 drain_path.touch(mode=0o600, exist_ok=True)
                 drain_path.chmod(0o600)
                 if _remove_stale_client_leases(leases_dir):
@@ -751,19 +784,25 @@ def shared_codex(config) -> Iterator[object]:
     codex_home = Path(codex_home_raw)
     if not codex_home.is_absolute():
         raise RuntimeError("Shared Codex App Server requires an absolute CODEX_HOME")
-    socket_path, lease_path = _RUNTIME.acquire(
-        codex_bin=_resolve_codex_bin(config),
-        codex_home=codex_home,
-        env=env,
-        config_overrides=tuple(config.config_overrides),
-    )
+    try:
+        socket_path, lease_path = _RUNTIME.acquire(
+            codex_bin=_resolve_codex_bin(config),
+            codex_home=codex_home,
+            env=env,
+            config_overrides=tuple(config.config_overrides),
+        )
+    except Exception as exc:
+        raise CodexRuntimeError(str(exc)) from exc
     client = None
     try:
         client = _UnixSocketCodexClient.create(config, socket_path)
         codex = object.__new__(Codex)
         codex._client = client
-        client.start()
-        codex._init = validate_initialize_metadata(client.initialize())
+        try:
+            client.start()
+            codex._init = validate_initialize_metadata(client.initialize())
+        except Exception as exc:
+            raise CodexRuntimeError(str(exc)) from exc
         yield codex
     finally:
         try:
