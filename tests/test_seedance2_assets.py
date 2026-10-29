@@ -859,7 +859,9 @@ async def test_prepare_dialogue_without_voice_allows_native_audio_or_silence(tmp
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("generate_audio", [True, False])
-async def test_prepare_dialogue_uses_configured_voice_only_when_audio_enabled(tmp_path, generate_audio):
+@pytest.mark.parametrize("voice_hint", ["", "使用音频1的声音。", "Voice mapping: Alice: use the voice from 音频1."])
+async def test_prepare_dialogue_uses_configured_voice_only_when_audio_enabled(tmp_path, generate_audio, voice_hint, monkeypatch):
+    from novelvideo.seedance2_i2v.models import parse_seedance2_config
     from novelvideo.seedance2_i2v.pipeline import prepare_seedance2_generation_inputs
 
     voice = tmp_path / "assets" / "characters" / "Alice" / "voices" / "voice_default.mp3"
@@ -871,7 +873,7 @@ async def test_prepare_dialogue_uses_configured_voice_only_when_audio_enabled(tm
         beat={"beat_number": 1, "audio_type": "dialogue", "speaker": "Alice",
               "narration_segment": "你好。",
               "seedance2_config_json": {"mode": "multimodal_reference",
-                  "final_prompt": "Alice说：你好。", "generate_audio": generate_audio,
+                  "final_prompt": "Alice说：你好。" + voice_hint, "generate_audio": generate_audio,
                   "generate_audio_user_set": True}},
         video_mode="i2v", prompt="", duration=4, characters=[character], prop_menu=[],
     )
@@ -879,3 +881,32 @@ async def test_prepare_dialogue_uses_configured_voice_only_when_audio_enabled(tm
     assert audios == ([str(voice)] if generate_audio else [])
     if generate_audio:
         assert "Alice" in prepared.prompt and "音频1" in prepared.prompt
+
+    from novelvideo.seedance2_i2v.request import build_seedance2_huimeng_params
+    params = build_seedance2_huimeng_params(
+        prepared.seedance2_config_json,
+        reference_images=["https://example.com/frame.png"],
+        reference_audios=["https://example.com/voice.mp3"] if audios else [],
+    )
+    assert bool(params.get("reference_audios")) is generate_audio
+    if generate_audio:
+        saved = parse_seedance2_config(prepared.seedance2_config_json)
+        saved.generate_audio = False
+        def reject_audio_probe(_path):
+            pytest.fail("Silent generation must not inspect voice sample duration")
+        monkeypatch.setattr(
+            "novelvideo.seedance2_i2v.pipeline.probe_voice_sample_duration_seconds",
+            reject_audio_probe,
+        )
+        again = await prepare_seedance2_generation_inputs(
+            project_output=tmp_path, state_dir=tmp_path / "state", episode=1,
+            beat={"beat_number": 1, "audio_type": "dialogue", "speaker": "Alice",
+                  "narration_segment": "你好。", "seedance2_config_json": saved.model_dump()},
+            video_mode="i2v", prompt="", duration=4, characters=[character], prop_menu=[],
+        )
+        assert parse_seedance2_config(again.seedance2_config_json).reference_audio_paths == []
+        assert not [ref for ref in again.references if ref.type == "audio"]
+        params = build_seedance2_huimeng_params(
+            again.seedance2_config_json, reference_images=["https://example.com/frame.png"],
+        )
+        assert "reference_audios" not in params

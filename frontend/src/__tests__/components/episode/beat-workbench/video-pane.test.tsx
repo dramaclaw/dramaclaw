@@ -220,6 +220,8 @@ const cropSeedance2AssetMock: Mock = vi.fn();
 const trimSeedance2AssetMock: Mock = vi.fn();
 const videoQueryMockState = vi.hoisted(() => ({
   voiceReady: true,
+  voiceRequired: true,
+  voiceStatusAvailable: true,
   hideReturnedLastFrame: false,
   includeAudioAsset: false,
   seedance2AssetsOverride: null as Array<Record<string, unknown>> | null,
@@ -412,7 +414,7 @@ vi.mock("@/lib/queries/video", () => ({
     isPending: false,
   }),
   useSeedance2BeatStatus: () => ({
-    data: {
+    data: videoQueryMockState.voiceStatusAvailable ? {
       ok: true,
       data: {
         beat_number: 1,
@@ -424,7 +426,7 @@ vi.mock("@/lib/queries/video", () => ({
           video_ready: true,
         },
         voice: {
-          required: true,
+          required: videoQueryMockState.voiceRequired,
           ready: videoQueryMockState.voiceReady,
           label: "声线就绪",
           detail: "陆辰_青年时期",
@@ -595,7 +597,7 @@ vi.mock("@/lib/queries/video", () => ({
           ),
         },
       },
-    },
+    } : undefined,
     isLoading: false,
     isError: false,
   }),
@@ -697,6 +699,8 @@ function renderPane(
 
 beforeEach(() => {
   videoQueryMockState.voiceReady = true;
+  videoQueryMockState.voiceRequired = true;
+  videoQueryMockState.voiceStatusAvailable = true;
   videoQueryMockState.hideReturnedLastFrame = false;
   videoQueryMockState.includeAudioAsset = false;
   videoQueryMockState.seedance2AssetsOverride = null;
@@ -1606,6 +1610,28 @@ describe("VideoPane Seedance2 inspector", () => {
     await user.click(screen.getByRole("button", { name: "确认" }));
     await waitFor(() => expect(regenerateMock).toHaveBeenCalled());
     expect(JSON.parse(regenerateMock.mock.calls[0][0].seedance2ConfigJson).generate_audio).toBe(true);
+  });
+
+  it.each([
+    { mode: "multimodal_reference", available: false, required: true },
+    { mode: "multimodal_reference", available: true, required: false },
+    { mode: "first_frame", available: true, required: true },
+    { mode: "first_last_frame", available: true, required: true },
+  ])("does not warn about voices for $mode with available=$available required=$required", async ({ mode, available, required }) => {
+    videoQueryMockState.voiceReady = false;
+    videoQueryMockState.voiceRequired = required;
+    videoQueryMockState.voiceStatusAvailable = available;
+    const user = userEvent.setup();
+    renderPane(makeBeat({ seedance2_config_json: JSON.stringify({
+      mode, mode_user_set: true, final_prompt: "Alice说你好。",
+      generate_audio: false, generate_audio_user_set: true,
+    }) }));
+    await user.click(screen.getByRole("switch", { name: "生成声音" }));
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByText("尚未配置角色声线")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "前往配置声线" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重新生成" }));
+    expect(screen.queryByText(/部分角色或旁白/)).not.toBeInTheDocument();
   });
 
   it("preserves explicitly disabled Seedance2 audio on load", async () => {
