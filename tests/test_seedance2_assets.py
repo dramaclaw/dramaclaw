@@ -836,3 +836,46 @@ def test_validate_reference_audio_request_total_bound_and_probe_failures(monkeyp
 
     monkeypatch.setattr(pipeline, "probe_voice_sample_duration_seconds", boom)
     pipeline._validate_reference_audio_request(["a.wav", "b.wav", "c.wav"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("generate_audio", [True, False])
+async def test_prepare_dialogue_without_voice_allows_native_audio_or_silence(tmp_path, generate_audio):
+    from novelvideo.seedance2_i2v.pipeline import prepare_seedance2_generation_inputs
+    from novelvideo.seedance2_i2v.models import parse_seedance2_config
+
+    prepared = await prepare_seedance2_generation_inputs(
+        project_output=tmp_path, state_dir=tmp_path / "state", episode=1,
+        beat={"beat_number": 1, "audio_type": "dialogue", "speaker": "Alice",
+              "narration_segment": "你好。",
+              "seedance2_config_json": {"mode": "multimodal_reference",
+                  "final_prompt": "Alice说：你好。", "generate_audio": generate_audio,
+                  "generate_audio_user_set": True}},
+        video_mode="i2v", prompt="", duration=4, characters=[], prop_menu=[],
+    )
+    assert parse_seedance2_config(prepared.seedance2_config_json).generate_audio is generate_audio
+    assert not [ref for ref in prepared.references if ref.type == "audio"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("generate_audio", [True, False])
+async def test_prepare_dialogue_uses_configured_voice_only_when_audio_enabled(tmp_path, generate_audio):
+    from novelvideo.seedance2_i2v.pipeline import prepare_seedance2_generation_inputs
+
+    voice = tmp_path / "assets" / "characters" / "Alice" / "voices" / "voice_default.mp3"
+    voice.parent.mkdir(parents=True)
+    voice.write_bytes(b"voice")
+    character = NovelCharacter(name="Alice", reference_audio_path=str(voice))
+    prepared = await prepare_seedance2_generation_inputs(
+        project_output=tmp_path, state_dir=tmp_path / "state", episode=1,
+        beat={"beat_number": 1, "audio_type": "dialogue", "speaker": "Alice",
+              "narration_segment": "你好。",
+              "seedance2_config_json": {"mode": "multimodal_reference",
+                  "final_prompt": "Alice说：你好。", "generate_audio": generate_audio,
+                  "generate_audio_user_set": True}},
+        video_mode="i2v", prompt="", duration=4, characters=[character], prop_menu=[],
+    )
+    audios = [ref.path for ref in prepared.references if ref.type == "audio"]
+    assert audios == ([str(voice)] if generate_audio else [])
+    if generate_audio:
+        assert "Alice" in prepared.prompt and "音频1" in prepared.prompt

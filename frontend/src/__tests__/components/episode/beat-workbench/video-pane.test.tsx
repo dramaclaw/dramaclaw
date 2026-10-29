@@ -100,6 +100,13 @@ beforeAll(async () => {
                 duration: "时长",
                 resolution: "分辨率",
                 ratio: "画幅",
+                configureVoice: "前往配置声线",
+                audioDisabled: "本次视频不生成音频",
+                audioModelDefault: "使用模型默认音频",
+                audioCharacterVoice: "使用角色声线",
+                audioMissingVoiceTitle: "尚未配置角色声线",
+                audioMissingVoice: "部分角色或旁白尚未配置声线，继续后将使用模型默认音频，无法保证音色一致。是否继续？",
+                audioContinue: "继续开启",
                 generateAudio: "生成声音",
                 returnLastFrame: "返回尾帧",
                 returnLastFramePending: "等待生成尾帧",
@@ -212,6 +219,7 @@ const generateBeatVideoPromptMock: Mock = vi.fn();
 const cropSeedance2AssetMock: Mock = vi.fn();
 const trimSeedance2AssetMock: Mock = vi.fn();
 const videoQueryMockState = vi.hoisted(() => ({
+  voiceReady: true,
   hideReturnedLastFrame: false,
   includeAudioAsset: false,
   seedance2AssetsOverride: null as Array<Record<string, unknown>> | null,
@@ -417,7 +425,7 @@ vi.mock("@/lib/queries/video", () => ({
         },
         voice: {
           required: true,
-          ready: true,
+          ready: videoQueryMockState.voiceReady,
           label: "声线就绪",
           detail: "陆辰_青年时期",
           speaker: "陆辰_青年时期",
@@ -688,6 +696,7 @@ function renderPane(
 }
 
 beforeEach(() => {
+  videoQueryMockState.voiceReady = true;
   videoQueryMockState.hideReturnedLastFrame = false;
   videoQueryMockState.includeAudioAsset = false;
   videoQueryMockState.seedance2AssetsOverride = null;
@@ -1560,7 +1569,46 @@ describe("VideoPane Seedance2 inspector", () => {
     expect(config.mode_user_set).toBe(false);
   });
 
-  it("persists legacy React-forced Seedance2 audio-off configs back to the NiceGUI audio default", async () => {
+  it("submits the last visible audio choice before autosave", async () => {
+    const user = userEvent.setup();
+    renderPane();
+    await user.click(screen.getByRole("switch", { name: "生成声音" }));
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false");
+    await user.click(screen.getByRole("button", { name: "重新生成" }));
+    await user.click(screen.getByRole("button", { name: "确认" }));
+    await waitFor(() => expect(regenerateMock).toHaveBeenCalled());
+    const config = JSON.parse(regenerateMock.mock.calls[0][0].seedance2ConfigJson);
+    expect(config.generate_audio).toBe(false);
+    expect(config.generate_audio_user_set).toBe(true);
+    expect(screen.queryByText("尚未配置角色声线")).not.toBeInTheDocument();
+  });
+
+  it("confirms enabling audio without a voice and exposes configuration", async () => {
+    videoQueryMockState.voiceReady = false;
+    const user = userEvent.setup();
+    renderPane(makeBeat({ seedance2_config_json: JSON.stringify({
+      mode: "multimodal_reference", final_prompt: "Alice说你好。",
+      generate_audio: false, generate_audio_user_set: true,
+    }) }));
+    await user.click(screen.getByRole("switch", { name: "生成声音" }));
+    expect(screen.getByText("尚未配置角色声线")).toBeInTheDocument();
+    expect(within(screen.getByRole("alertdialog")).getByRole("link", { name: "前往配置声线" }))
+      .toHaveAttribute("href", "/projects/demo/characters");
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false");
+    expect(regenerateMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("switch"));
+    await user.click(screen.getByRole("button", { name: "继续开启" }));
+    await waitFor(() => expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "true"));
+    expect(regenerateMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "重新生成" }));
+    expect(within(screen.getByRole("alertdialog")).getByText(/部分角色或旁白/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "确认" }));
+    await waitFor(() => expect(regenerateMock).toHaveBeenCalled());
+    expect(JSON.parse(regenerateMock.mock.calls[0][0].seedance2ConfigJson).generate_audio).toBe(true);
+  });
+
+  it("preserves explicitly disabled Seedance2 audio on load", async () => {
     renderPane(
       makeBeat({
         seedance2_config_json: JSON.stringify({
@@ -1572,11 +1620,8 @@ describe("VideoPane Seedance2 inspector", () => {
       }),
     );
 
-    await waitFor(() => expect(updateBeatMock).toHaveBeenCalledTimes(1));
-    const payload = updateBeatMock.mock.calls[0][0];
-    const config = JSON.parse(payload.data.seedance2_config_json);
-    expect(config.generate_audio).toBe(true);
-    expect(config.generate_audio_user_set).toBe(false);
+    expect(screen.getByRole("switch", { name: "生成声音" })).toHaveAttribute("aria-checked", "false");
+    expect(updateBeatMock).not.toHaveBeenCalled();
   });
 
   it("autosaves Seedance2 mode changes so reference assets refresh by mode", async () => {
@@ -1607,7 +1652,7 @@ describe("VideoPane Seedance2 inspector", () => {
     expect(screen.queryByRole("button", { name: "保存prompt" })).not.toBeInTheDocument();
   });
 
-  it("keeps Seedance2 API audio generation enabled by default", async () => {
+  it("preserves explicit audio-off when autosaving prompt edits", async () => {
     renderPane(
       makeBeat({
         seedance2_config_json: JSON.stringify({
@@ -1626,8 +1671,8 @@ describe("VideoPane Seedance2 inspector", () => {
 
     const payload = updateBeatMock.mock.calls[0][0];
     const config = JSON.parse(payload.data.seedance2_config_json);
-    expect(config.generate_audio).toBe(true);
-    expect(config.generate_audio_user_set).toBe(false);
+    expect(config.generate_audio).toBe(false);
+    expect(config.generate_audio_user_set).toBe(true);
   });
 
   it("shows and downloads the returned last frame when enabled", () => {

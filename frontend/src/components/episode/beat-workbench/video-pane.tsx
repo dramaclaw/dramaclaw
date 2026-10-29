@@ -738,6 +738,34 @@ export function VideoPane({
     }
     return true;
   };
+  const missingVoice =
+    showSeedance2Config &&
+    seedance2StatusData?.voice.required !== false &&
+    seedance2StatusData?.voice.ready !== true;
+  const [audioConfirm, setAudioConfirm] = useState(false);
+  const setGenerateAudio = (enabled: boolean) => {
+    const next = {
+      ...seedance2DraftRef.current,
+      generate_audio: enabled,
+      generate_audio_user_set: true,
+    };
+    seedance2DraftRef.current = next;
+    setSeedance2Draft(next);
+  };
+  const voiceConfigLink = (
+    <a
+      href={`/projects/${encodeURIComponent(project)}/characters`}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={() => window.localStorage.setItem(
+        `supertale-asset-tab:${encodeURIComponent(project)}`,
+        beat.audio_type === "dialogue" ? "characters" : "voices",
+      )}
+      className="text-primary underline text-xs"
+    >
+      {t("episode.workbench.video.configureVoice")}
+    </a>
+  );
   const openRegenConfirm = () => {
     if (!validateVideoPromptReady()) return;
     setRegenConfirm(true);
@@ -754,6 +782,7 @@ export function VideoPane({
 
   const handleRegen = async () => {
     try {
+      let seedance2ConfigJson: string | undefined;
       let happyHorseConfigJson: string | undefined;
       let happyHorseDraft: Seedance2ConfigDraft | undefined;
       let grokVideoConfigJson: string | undefined;
@@ -769,6 +798,9 @@ export function VideoPane({
           seedance2DraftRef.current = normalizedDraft;
           setSeedance2Draft(normalizedDraft);
         }
+        seedance2ConfigJson = JSON.stringify(
+          serializeSeedance2Config(normalizedDraft, seedance2Config),
+        );
         if (
           seedance2Dirty ||
           !sameSeedance2Config(normalizedDraft, seedance2Config)
@@ -812,6 +844,7 @@ export function VideoPane({
       const res = await regenerate.mutateAsync({
         beatNum: beat.beat_number,
         videoBackend: defaultBackend,
+        ...(showSeedance2Config ? { seedance2ConfigJson } : {}),
         ...(showHappyHorseConfig && happyHorseDraft
           ? {
               resolution: happyHorseDraft.resolution,
@@ -882,9 +915,7 @@ export function VideoPane({
       raw.mode === "first_frame" &&
       raw.mode_user_set !== true &&
       seedance2Config.mode === "multimodal_reference";
-    const shouldNormalizeAudio =
-      raw.generate_audio === false && raw.generate_audio_user_set === true;
-    if (!shouldNormalizeMode && !shouldNormalizeAudio) return;
+    if (!shouldNormalizeMode) return;
     const key = `${beat.beat_number}:${String(beat.seedance2_config_json ?? "")}`;
     if (normalizedLegacySeedance2ConfigRef.current === key) return;
     normalizedLegacySeedance2ConfigRef.current = key;
@@ -2537,6 +2568,33 @@ export function VideoPane({
                 />
                 {renderSeedance2ReferenceControls("final_prompt")}
               </div>
+              {showSeedance2Config && (
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <button type="button" role="switch"
+                    aria-label={t("episode.workbench.video.generateAudio")}
+                    aria-checked={seedance2Draft.generate_audio}
+                    onClick={() => {
+                      if (!seedance2Draft.generate_audio && missingVoice) setAudioConfirm(true);
+                      else setGenerateAudio(!seedance2Draft.generate_audio);
+                    }}
+                    className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1">
+                    {t("episode.workbench.video.generateAudio")}
+                    <span className={cn("relative inline-flex h-5 w-9 rounded-full transition-colors", seedance2Draft.generate_audio ? "bg-primary" : "bg-muted")}>
+                      <span className={cn("absolute top-0.5 size-4 rounded-full bg-background transition-transform", seedance2Draft.generate_audio ? "translate-x-[18px]" : "translate-x-0.5")} />
+                    </span>
+                  </button>
+                  <span className="text-muted-foreground">
+                    {!seedance2Draft.generate_audio
+                      ? t("episode.workbench.video.audioDisabled")
+                      : seedance2Draft.mode !== "multimodal_reference"
+                        ? t("episode.workbench.video.audioModeDefault")
+                      : missingVoice
+                        ? t("episode.workbench.video.audioModelDefault")
+                        : t("episode.workbench.video.audioCharacterVoice")}
+                  </span>
+                  {missingVoice && voiceConfigLink}
+                </div>
+              )}
               <div className="flex flex-wrap justify-start gap-2 pt-1">
                 <Button
                   size="xs"
@@ -2629,6 +2687,25 @@ export function VideoPane({
         onSave={handleTrimSeedance2Asset}
       />
 
+      <AlertDialog open={audioConfirm} onOpenChange={setAudioConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("episode.workbench.video.audioMissingVoiceTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("episode.workbench.video.audioMissingVoice")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            {voiceConfigLink}
+            <AlertDialogAction onClick={() => {
+              setGenerateAudio(true);
+              setAudioConfirm(false);
+            }}>
+              {t("episode.workbench.video.audioContinue")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={regenConfirm} onOpenChange={setRegenConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -2641,9 +2718,13 @@ export function VideoPane({
               {hasGeneratedVideo
                 ? t("episode.workbench.video.regenDesc", { n: beat.beat_number })
                 : t("episode.workbench.video.genDesc", { n: beat.beat_number })}
+              {showSeedance2Config && seedance2Draft.generate_audio && missingVoice && (
+                <span className="mt-2 block">{t("episode.workbench.video.audioMissingVoice")}</span>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
+            {showSeedance2Config && seedance2Draft.generate_audio && missingVoice && voiceConfigLink}
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
@@ -3197,8 +3278,8 @@ function defaultSeedance2Config(
     duration: clampDuration(raw.duration),
     resolution: normalizeSeedance2Resolution(raw.resolution),
     ratio: normalizeSeedance2Ratio(raw.ratio, defaultRatio),
-    generate_audio_user_set: false,
-    generate_audio: true,
+    generate_audio_user_set: raw.generate_audio_user_set === true,
+    generate_audio: !(raw.generate_audio === false && raw.generate_audio_user_set === true),
     return_last_frame: raw.return_last_frame === true,
     scene_optimize: normalizeSeedance2SceneOptimize(raw.scene_optimize),
     human_review_user_set: raw.human_review_user_set === true,
@@ -3596,8 +3677,8 @@ function serializeSeedance2Config(
     duration: draft.duration,
     resolution: draft.resolution,
     ratio: draft.ratio,
-    generate_audio: true,
-    generate_audio_user_set: false,
+    generate_audio: draft.generate_audio,
+    generate_audio_user_set: draft.generate_audio_user_set,
     return_last_frame: draft.return_last_frame,
     scene_optimize: draft.scene_optimize,
     human_review: draft.human_review,

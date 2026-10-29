@@ -151,8 +151,9 @@ def _validate_dialogue_final_prompt(
     beat: dict[str, Any],
     final_prompt: str,
     assets: list[Seedance2ResolvedAsset],
+    generate_audio: bool = True,
 ) -> None:
-    if normalize_seedance2_audio_type(beat) != "dialogue":
+    if not generate_audio or normalize_seedance2_audio_type(beat) != "dialogue":
         return
 
     required_texts = required_seedance2_dialogue_texts(beat)
@@ -173,7 +174,7 @@ def _validate_dialogue_final_prompt(
         for asset in _selected_audio_assets(assets)
         if asset.reference_label.startswith("音频")
     ]
-    if not audio_labels or any(label not in final_prompt for label in audio_labels):
+    if any(label not in final_prompt for label in audio_labels):
         raise ValueError("Seedance2 最终提示词缺少参考声线，请在台词描述中写明对应音频编号")
 
 
@@ -292,6 +293,17 @@ async def prepare_seedance2_generation_inputs(
         raise ValueError(
             f"{prefix}Seedance 2.0 最终提示词为空，请先在 Seedance 2.0 Prompt 面板生成或填写最终提示词"
         )
+    if config.generate_audio:
+        voice_mappings = [
+            f"Voice mapping: {asset.label}: use the voice from {asset.reference_label}."
+            for asset in assets
+            if asset.key.startswith("voice:")
+            and asset.selected
+            and asset.reference_label.startswith("音频")
+            and asset.reference_label not in final_prompt
+        ]
+        if voice_mappings:
+            final_prompt += "\n" + "\n".join(voice_mappings)
     config.final_prompt = final_prompt
     assets = apply_prompt_audio_selection(assets, final_prompt)
 
@@ -305,6 +317,7 @@ async def prepare_seedance2_generation_inputs(
         beat=beat,
         final_prompt=final_prompt,
         assets=assets,
+        generate_audio=config.generate_audio,
     )
 
     image_path: str | None = None
