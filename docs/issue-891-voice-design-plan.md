@@ -1,8 +1,9 @@
 # #891 需求二：按描述生成声线方案
 
-状态：供前后端并行开发的方案，未实施。产品待决项见第 8 节，不代表已获批准。
+状态：供前后端并行开发的方案，未实施。用户已确认采用百炼已接入链路，虾画本期接入；剩余产品待决项见第 8 节。
 
 分析日期：2026-10-29。DramaClaw 基于当前 HEAD `4c48e0787a4dd1aa9cd0efda94f82fefaccacb3c`。
+本轮补充调查基于文档提交后的 HEAD `2caa593f225dc858f98d7527ca02801039193755`，应用代码未变。EE 使用远端 main `02f37495b7cacaf16ef111cd4a2ddba75eebe6c7`，管理后台使用远端 main `184795867de5fd42dbe156479f9ef0b5ef468176`，均下载对应 SHA 的源码快照核对，未修改这两个仓库。
 网关基于远端 `main` `40d696d7f60153c4556d82a7cb09c8e4923231f1`，通过 `git ls-remote origin refs/heads/main` 核对，并下载该 SHA 的源码快照阅读。本机网关 checkout 的 `45f96b84…` 不是本次结论的依据。
 
 需求来源：[dramaclaw #891](https://github.com/dramaclaw/dramaclaw/issues/891)，查阅时无评论。本文只处理需求二；需求三中上传能力和历史绑定的条目作为兼容性约束。
@@ -11,7 +12,11 @@
 
 在现有角色声线管理组件 [character-voice-panel.tsx](../frontend/src/components/assets/character-voice-panel.tsx) 增加入口。用户填写描述和试听文本，生成独立候选，播放候选，可重新生成，最后显式保存到所选角色声线插槽。
 
-本期方案不修改需求一的音频开关、缺失声线提示和视频提交逻辑；不实施需求四的身份造型入口整合、身份独立绑定或数据迁移；不移除或重做上传、录音和裁剪。旁白管理不新增入口。虾画是否本期接入口由 P2 决定，不能把未实施的虾画复用算作整个需求二已完成。
+“候选”是尚未保存的生成试听音频。它暂时存放，可试听或重新生成，不会改变现有声线。界面可以显示“生成结果”或“试听声线”，不要求用户理解内部术语。
+
+虾画本期也必须接入。在现有 `VoiceSelectionModal` 的“我的音色”增加“按描述生成”，复用同一生成与试听界面，保存后进入既有音色列表供语音选择。当前按“增加一种可选音色来源”设计，保持一次语音生成选择一个声线；如果“多选”指一次勾选多个音色用于多角色对白，需要另行确认新的语音合成契约。
+
+本期方案不修改需求一的音频开关、缺失声线提示和视频提交逻辑；不实施需求四的身份造型入口整合、身份独立绑定或数据迁移；不移除或重做上传、录音和裁剪。旁白管理不新增入口。EE 的模型目录、管理后台、功能价格和组织凭据链路属于本期必要接入范围，见第 2.7 节。
 
 技术选择：通过 claymore-llm-gateway 的百炼 `voice-enrollment`，指定 `target_model=cosyvoice-v3.5-flash`，取得预览音频并保存为文件。后续配音继续使用现有 IndexTTS2 参考音频流程。这里设计的是“可保存的参考音频”，不是把供应商音色 ID 加进角色绑定系统。
 
@@ -21,7 +26,7 @@
 
 | 名称 | 功能与使用方法 | 对本需求的用途 |
 | --- | --- | --- |
-| 百炼 `voice-enrollment` | 音色创建和管理服务。`create_voice` 携带 `voice_prompt`、`preview_text`、`target_model` 时按描述设计；基于录音的复刻是另一种请求。设计返回 `voice_id` 和 Base64 预览音频。 | 推荐用于本次候选生成。不要因为名称中有 enrollment 就当成只支持上传复刻。 |
+| 百炼 `voice-enrollment` | 音色创建和管理服务。`create_voice` 携带 `voice_prompt`、`preview_text`、`target_model` 时按描述设计；基于录音的复刻是另一种请求。设计返回 `voice_id` 和 Base64 预览音频。 | 用户已确认用于本次候选生成。不要因为名称中有 enrollment 就当成只支持上传复刻。 |
 | 百炼 `cosyvoice-v3.5-flash` | TTS 合成模型，使用匹配该模型的自定义音色和待朗读文本合成音频。 | 本次作为设计目标模型；创建接口已有预览时，不再调用一次 TTS。 |
 | 绘梦 `seed-audio-1.0` | 根据包含音色、语气及台词的 Prompt 生成音频，可带预设 speaker 或参考音频。绘梦将其包装成提交、查询、下载的任务接口。 | 可以生成参考音频，但不是返回永久音色 ID 的音色管理 API。当前网关缺适配，不能作为已接通的替代路径。 |
 
@@ -115,7 +120,7 @@ Content-Type: application/json
 
 提交返回 `task_id`，用 `GET /api/v1/voice/{task_id}` 查询。完成结果包含 `status=completed`、`result.audio_url` 或 `result.url`、`duration`、`original_duration`，以及顶层 `cost`、`error_message`。本路径交付的是音频 URL，不是 Base64 或新音色 ID。`text_prompt` 最长 3000 字符，输出最长 120 秒；参考素材最多 3 条，单条参考音频最长 30 秒且不超过 10 MB，通过 `@音频N` 引用。新音色候选生成不提供参考素材。
 
-若选此路径，先在网关另立任务实现音频提交、查询、归档、计费和错误转换。候选服务仍输出第 3 节的结构。模型可能生成环境声或多角色表演，提示词不能机械保证“干净单人声”，因此不能在本方案里写成已满足的 PASS。是否引入它见 P5。
+用户已确定首期使用百炼，本期不实施绘梦路径。若以后引入，先在网关另立任务实现音频提交、查询、归档、计费和错误转换。模型可能生成环境声或多角色表演，提示词不能机械保证“干净单人声”，不能将它写成已满足的 PASS。
 
 ### 2.5 成本、限流和失败分类
 
@@ -150,13 +155,64 @@ Content-Type: application/json
 | [characters.py](../src/novelvideo/api/routes/characters.py) | 保存复用 `_voice_slot_update_fields`、`_apply_character_voice_update`、`_voice_slot_payload` 与 `run_voice_media_operation`。补齐保存失败的文件恢复与持久化回执；上传协议保持原样。 |
 | [voice_clone.py](../src/novelvideo/seedance2_i2v/voice_clone.py) | 继续按身份覆盖、年龄段、角色默认的顺序解析参考文件，交给 IndexTTS2。无需知道音频来自生成还是上传；不引入 CosyVoice 后续合成分支。 |
 | [characters.ts](../frontend/src/lib/queries/characters.ts) | 生成和试听不写正式声线缓存；保存响应复用 `handleCharacterVoiceMutationSuccess`，更新角色、插槽和绑定相关查询。 |
-| 虾画 `freezone/audio_node.py`、`api/routes/freezone.py` | 现有角色参考音频可继续读取保存结果。新增生成入口与“我的音色”保存属于 P2 的条件切片，不默认实施。 |
+| 虾画 `VoiceSelectionModal.tsx`、`freezone/audio_node.py`、`api/routes/freezone.py` | 本期新增生成入口及“保存到我的音色”，复用 `user_custom` 音色记录和原有语音选择链路。不新增 generated scope 或第三种 speechMode。 |
 
-当前 `media_model_request_schema.py` 的通用端点白名单没有 `audio/voice-designs`。本方案通过专用音频适配器调用已存在的网关端点，不假装往该通用模型目录增加一个名字就能工作；若现有凭据发现必须经过该目录，S1 同时补端点类型及契约测试。
+当前 `media_model_request_schema.py` 的通用端点白名单没有 `audio/voice-designs`，目录配置校验也只接受 image、video。要让 CE 与 EE 的模型配置控制运行时，必须扩展共享 schema 和目录读写，专用调用适配器仍需消费有效配置，不能通过硬编码绕过管理后台。
+
+### 2.7 EE、管理后台与模型配置调查
+
+EE 的权威本地源由仓库注册表指向 `SuperTale2`，远端仓库为 `claymorelab/SuperTale`。本次对照的是文首远端 main 快照。EE Docker 构建会用 CE checkout 覆盖其 `src/novelvideo`，因此共享功能改在 dramaclaw，不能只改 EE 仓库内的旧副本。
+
+| 层次 | 当前代码事实 | 本期必须补齐 |
+| --- | --- | --- |
+| CE 共享 schema | `media_model_request_schema.py:336` 不接受设计端点，`:421` 不接受 audio 目录类型。 | 接受 `audio` 与 `audio/voice-designs`；按媒体类型校验端点，禁止把非 image 一律当 video。 |
+| EE 媒体目录 | `media_model_models.py:89,206` 的平台及组织输入限 image/video；`media_model_catalog.py:194` 对 audio 返回空列表。 | 平台目录、组织 visibility 与配置覆盖、有效目录读取均支持 audio，保留原平台下架和组织权限规则。 |
+| EE 功能计费 | `feature_billing.py` 没有 voice_design；`task_backend.py:180-199` 会拒绝未登记计费功能的新任务。 | 登记 task `voice_design`、共享 feature `audio.voice_design`，模型价格 kind 为 audio，生成一次按 `item_count=1` 计量。 |
+| EE 模型价格与配置传输 | admin routes 的模型价格、平台及组织导入导出 DTO、组织模型价格只接受 image/video。 | 扩展 audio CRUD、报价、预扣、结算、组织覆盖价、导入导出，不能只改创建接口。 |
+| 数据库约束 | 三张表的 CHECK 分别限制媒体类型、平台模型价格 kind、组织模型价格 kind。 | 新增版本迁移扩大约束，保留旧行及价格类型一致性检查，禁止修改历史迁移或直接移除约束。 |
+| 管理后台 | `MediaModel` 类型、筛选、默认端点和功能价格行只有图片、视频；组织定价分域缺 audio。 | 增加音频模型表单、设计目标模型选择、按模型价格行和组织 audio 覆盖价。All 功能页可以承载共享 feature，无需另做分域快捷页。 |
+
+源码依据：[EE 模型 DTO](https://github.com/claymorelab/SuperTale/blob/02f37495b7cacaf16ef111cd4a2ddba75eebe6c7/src/novelvideo_ee/media_model_models.py)、[EE 功能登记](https://github.com/claymorelab/SuperTale/blob/02f37495b7cacaf16ef111cd4a2ddba75eebe6c7/src/novelvideo_ee/feature_billing.py)、[EE 模型价格路由](https://github.com/claymorelab/SuperTale/blob/02f37495b7cacaf16ef111cd4a2ddba75eebe6c7/src/supertale_admin/routes.py)、[后台模型管理](https://github.com/claymorelab/supertale-admin-fe/blob/184795867de5fd42dbe156479f9ef0b5ef468176/src/components/media-models/MediaModelManager.tsx)。这些是源码调查，不代表线上配置已创建。
+
+模型配置采用以下结构，技术字段在服务端解析，用户界面只展示“按描述生成声线”：
+
+| 条目 | 设计条目 | 目标 TTS 条目 |
+| --- | --- | --- |
+| `media_type` | `audio` | `audio` |
+| `gateway_model` | `voice-enrollment`，或管理员映射的公开别名 | `cosyvoice-v3.5-flash`，或同一网关可用的公开别名 |
+| `config.request.endpoint` | `audio/voice-designs` | `audio/speech` |
+| `config.targetModel` | 引用目录中目标 TTS 条目的稳定 ID | 不设置 |
+
+能力由 endpoint 派生为 voice_design 或 speech，不再增加一份重复的 audioCapabilities 标志。运行时解析 targetModel 引用后，用目标条目的 gateway_model 作为网关请求的 target_model。设计条目只允许引用可见、启用、支持音频合成的目标；当前首期限定目标为 CosyVoice 3.5 Flash 的有效映射。配置缺失、禁用或目标无效时拒绝出网，不回退硬编码默认模型。
+
+两个条目是管理员配置的模型职责，不是两个用户音色选项。目标 TTS 条目供设计服务引用，不因列入音频目录就自动成为已实现的长文本配音模型选项。现有 `freezone_audio_speech` 仍使用原参考音频链路。
+
+服务端使用请求者实际可用的目录一次解析设计模型、目标模型和价格，报价与投递采用同一份解析结果。配置版本及定价依据复用现有 reservation 与 ledger 固化机制；不向 CE `AdmissionContext` 添加 media_model_snapshot，不改其身份权限契约。网关 subject 来自可信模型 token，不接受浏览器声称的 subject。
+
+`audio.voice_design` 在角色与虾画入口共用：一次候选生成只预扣并结算一次，试听和保存不再计设计费。不能套用 `freezone_audio_speech` 的 billable_chars 把描述长度当设计数量；是否收费及单价仍由 P4 决定，免费也必须是显式可追溯的配置。沿用 feature 内含模型调用的现有计费政策，不能再叠加扣一次模型费。共享 feature 可在现有 All 功能页配置，组织价格页补 audio 域。促销目前仅支持 mainline/freezone，本期不扩大促销规则；如需该新功能参加促销，列入 P4 决策并补完整政策、DTO 和数据库约束。
+
+至少需要扩大这三个现有 CHECK，采用新增版本迁移：
+
+- `media_model_catalog.media_type`，源定义在 `migrations/unified_billing_v1/media_model_catalog.py`。
+- `feature_media_model_prices.pricing_kind`，源定义在 `migrations/unified_billing_v1/feature_media_prices.py`。
+- `org_feature_media_model_prices.pricing_kind`，源定义在 `migrations/versions/0049_org_pricing.py`。
+
+账号音色归属沿用现有行为：组织项目目录是 `OUTPUT_DIR/_orgs/<org>/<owner>/<project>`，但“我的音色”存于 `OUTPUT_DIR/<requester>/_account/freezone/audio/voices/`。候选按项目加请求者隔离；保存成“我的音色”仍归请求者，不自动变为 owner 或组织共享资产。项目 home node 能处理候选 state/runtime，并不证明其挂载了请求者账号音色目录。EE 联调必须实证该目录可读写；读取或挂载失败时明确失败，不能当空库写回。若部署缺挂载，需把请求者账号切片以最小范围接入正确存储节点，不能挂载其他用户目录作为修复。
+
+实施后在 EE 仓库根运行 C8，在管理后台仓库根运行 C9；使用正常 CE 加 EE 测试环境，不用 EE 内旧 CE 副本代替本次共享代码：
+
+```sh
+# C8 EE：目录、计费登记、平台及组织价格、配置往返
+uv run pytest tests/test_media_model_catalog.py tests/test_admin_feature_model_prices.py tests/test_feature_billing_registry.py tests/test_task_backend_client.py tests/test_billing_config_transfer.py -q
+uv run pytest tests/b2b/test_scoped_media_model_catalog.py tests/b2b/test_org_media_model_api.py tests/b2b/test_org_pricing_service.py tests/b2b/test_org_pricing_routes.py tests/b2b/test_org_media_model_task_snapshot.py -q
+# C9 管理后台：模型表单、音频价格行、组织覆盖及配置传输
+pnpm test src/__tests__/organizations/media-model-manager-contract.test.ts src/__tests__/organizations/organization-media-models.test.tsx src/__tests__/feature-credits/feature-credits-domain.test.tsx src/__tests__/feature-credits/organization-pricing-model-rows.test.ts src/__tests__/feature-credits/billing-config-page.test.tsx
+pnpm typecheck
+```
 
 ## 3. 前后端接口契约
 
-以下是拟新增契约，现有上传接口保持不变。统一前缀 `/api/v1`。所有 ID 为不含路径分隔符的 UUID；所有字符串长度按 Unicode 字符计。
+以下是拟新增契约，现有上传接口保持不变。统一前缀 `/api/v1`。候选 ID、生成 request_id 与 save_request_id 为 UUID；正式账号音色 ID 沿用 fv_*。所有 ID 均不得含路径分隔符，字符串长度按 Unicode 字符计。
 
 ### 3.1 候选状态与存储
 
@@ -273,6 +329,33 @@ Content-Type: application/json
 
 retryable 表示界面可提供重试入口，不授权 HTTP 客户端自动重发非幂等的模型创建请求。
 
+### 3.6 虾画保存与选择
+
+```http
+POST /api/v1/projects/{project}/freezone/audio/voices/save-generated
+Content-Type: application/json
+```
+
+```json
+{
+	"candidate_id": "178727cd-e421-451c-87e7-68779d72a8ec",
+	"save_request_id": "381d5157-c7a6-4841-bd7b-1b4e65617603",
+	"name": "沙哑的老年男声"
+}
+```
+
+name 使用现有账号音色命名约束。项目 editor 可调用；服务端根据已验证的 requester 定位账号，不能接受 username 或 owner 作为请求字段。候选检查沿用项目、请求者、ready 和 TTL 约束。首次及同 save_request_id 重放均返回 HTTP 200，`{ok:true,data:<现有user_custom音色记录>}`，包含 `voice_id,scope,label,name,path,url,exists,sha256,duration_ms,mime_type,created_at,updated_at,source_filename`。正式 ID 为账号库的 `fv_*`，不能使用 candidate_id 或网关音色句柄。
+
+保存复制候选文件，不发模型请求。相同保存请求只生成一个 fv_*；相同 ID 改内容或名字返回 409。账号音色保存回执与角色保存回执按保存类型区分；一个候选可以分别保存到角色和“我的音色”，两次保存都不重新生成或再次计模型费。错误体复用第 3.5 节。
+
+现有 `create_user_audio_voice` 对 `voices.json` 做整份读、追加、写回，缺少跨进程锁；读到坏 JSON 时还会返回空列表。新增保存必须同时修好这处共用写入口：按请求者账号串行写入，锁内重读索引，坏索引拒绝写入，临时文件加原子替换，并给保存回执提供恢复依据。上传与生成保存并发时不能丢失任何一条旧记录。
+
+保存后刷新 `GET /api/v1/projects/{project}/freezone/audio/references`，新记录必须出现在 `available` 及 user_custom 筛选后的“我的音色”。默认保留当前节点的 voiceRef，由用户显式选择新音色；如需“保存并使用”，另设明确操作，不能保存即隐式切换。
+
+选中后仍使用现有 `speechMode=clone`、`voiceRef={scope:"user_custom",voiceId:"fv_*"}`，后端收到 `speech_mode=clone` 和 `voice_ref={scope:"user_custom",voice_id:"fv_*"}`。`VoiceSelectionModal` 已同时用于 `AudioNode`、`AudioOperationsPanel` 和资产板 `AssetBoardAudioGenForm`，新增生成入口放在共享选择器，不复制三份界面。选择器当前没有试听播放器，由共享生成弹窗提供试听。
+
+现有 preset 后端分支主要兼容历史节点，新节点实际提交会走 clone；本次不把它重新包装成已具备的完整系统音色入口，也不将后续长文本配音改成使用临时 CosyVoice 句柄。
+
 ## 4. PASS 判定与验证命令
 
 本节是实施后的验收门槛，不是当前已经通过的测试结果。下列新增测试文件及节点名是交付要求，实施者必须创建，不能将“尚无此文件”当作跳过理由。模型响应在本地测试中用 HTTP fixture；真实凭据仅用于 S5 的受控联调。
@@ -291,7 +374,7 @@ pnpm -C frontend test src/__tests__/components/assets/character-voice-panel.test
 # C5 改动前端时执行类型检查
 pnpm -C frontend exec tsc -b
 # C6 新增文件及触及的现有文件无 Ruff 问题
-uv run ruff check src/novelvideo/audio/voice_design_service.py src/novelvideo/audio/voice_design_storage.py src/novelvideo/api/routes/voice_design.py src/novelvideo/api/routes/characters.py src/novelvideo/seedance2_i2v/character_voice_storage.py
+uv run ruff check src/novelvideo/audio/voice_design_service.py src/novelvideo/audio/voice_design_storage.py src/novelvideo/api/routes/voice_design.py src/novelvideo/api/routes/characters.py src/novelvideo/api/routes/freezone.py src/novelvideo/seedance2_i2v/character_voice_storage.py src/novelvideo/freezone/audio_node.py
 # C7 文档和补丁空白检查
 git diff --check
 ```
@@ -321,6 +404,15 @@ git diff --check
 | A19 | 原有上传、录音、裁剪、取消及串行写入测试全部通过。 | C3，另加 C4 现有上传测试 |
 | A20 | 触及的豁免文件完成清理，豁免键被删除，且不带 ignore 的 Ruff 检查退出 0。 | C6 与第 7 节静态命令 |
 | A21 | 前端类型检查与补丁空白检查退出 0。 | C5、C7 |
+| A22 | 保存候选到“我的音色”后，references.available 包含同 SHA 的 user_custom 记录；同保存请求重放只有一个 fv_*。 | `uv run pytest tests/test_api_voice_design.py -q -k generated_user_voice`，新增 `test_generated_user_voice_save_and_replay` |
+| A23 | 上传与生成保存并发均保留；坏账号索引导致明确失败，原索引字节不变。owner 与 requester 不同时归属 requester。 | 新增 `test_generated_user_voice_concurrent_upload`、`test_generated_user_voice_rejects_corrupt_index`、`test_generated_user_voice_belongs_to_requester`，同 A22 命令 |
+| A24 | 从音频节点及资产板分别生成、试听、保存、选择后，提交仍使用 clone 与 user_custom 引用；生成、保存失败不修改旧 voiceRef。 | 新增 `frontend/src/__tests__/features/canvas/voice-design-selection.test.tsx`，用 `pnpm -C frontend test src/__tests__/features/canvas/voice-design-selection.test.tsx` 运行 |
+| A25 | 同一 candidate_id 从角色与虾画入口分别保存，模型创建调用总数仍为 1；候选清理后两个正式文件均可读。 | 新增 C2 `test_candidate_reused_across_character_and_canvas` |
+| A26 | 平台音频条目及 targetModel 可配置、读取、导入导出；组织禁用或不可见目标时拒绝出网；音频默认端点不落到视频。 | C8 扩充 `test_audio_voice_design_catalog_round_trip`、`test_audio_voice_design_target_visibility` |
+| A27 | audio.voice_design 按 1 次报价、预扣、结算；描述长度变化不改变数量；重放、试听和保存不增加收费记录。未登记功能的任务仍被拒绝。 | C8 扩充 `test_voice_design_billing_once`、`test_voice_design_task_requires_registered_feature` |
+| A28 | 新迁移保留已有 image/video 模型、价格及组织覆盖；三张表可插入合法 audio 行，错误类型配对仍失败。 | C8 新增并运行 `tests/test_voice_design_audio_migration.py` |
+| A29 | All 功能价格页可编辑该功能的 audio 模型价格，组织覆盖页可管理 audio；模型表单可保存设计目标。 | C9 对应现有测试增加 audio 场景 |
+| A30 | EE 请求者账号目录不可读写时保存失败且不覆盖索引；owner 不等于 requester 时，文件及读取权限仅归 requester。 | C8 新增并运行 `tests/b2b/test_voice_design_user_voice_storage.py`；S5 实际部署联调记录 |
 
 ## 5. 不变量清单
 
@@ -340,6 +432,10 @@ git diff --check
 | I10 | 触及 Ruff 豁免文件时顺手清 lint、删豁免行。 | 机械检查 | A20、C6 及 pyproject 豁免键检查。 |
 | I11 | 网关音色句柄不是持久声线资产，不能依赖其长期合成。 | 引用 | 第 2.2 节固定 SHA 的生命周期文档，1 小时和一次成功消费规则。 |
 | I12 | 费用、并发和额度检查发生在模型调用之前，错误响应不暴露秘密。 | 测试 | A15、A16。 |
+| I13 | 虾画新生成声线与上传声线均为 user_custom，同一选择器和语音提交契约可用。 | 测试 | A22、A24、A25。 |
+| I14 | 账号音色索引不因并发或解析失败丢失旧记录，保存归属请求者。 | 测试 | A23。 |
+| I15 | 模型配置、组织可见性和有效价格控制真实生成，不能靠硬编码绕过后台配置。 | 测试 | A26、A27、A29。 |
+| I16 | audio 目录和定价迁移保留历史图像、视频配置与价格，账号音色不变成组织共享。 | 测试 | A28、A30。 |
 
 ## 6. Pre-mortem
 
@@ -355,30 +451,33 @@ git diff --check
 
 ## 7. 切片与文件归属
 
-S0 先固定第 3 节契约，之后 S1、S2、S4 可按契约和 fixture 并行；S3 依赖 S2 的候选文件与回执接口，S5 汇合验收。这里描述开发分工，不在本次启动实现 agent。
+S0 先固定第 3 节契约，之后 S1、S2、S4 可按契约和 fixture 并行；S3、S6 依赖 S2 的候选文件与回执接口。S7、S8 按共同音频目录契约开发，S5 在共享应用、EE 和管理后台汇合后验收。这里描述开发分工，不在本次启动实现 agent。
 
 | 切片 | 范围与依赖 | owns：会改的文件或目录 | 验证命令 |
 | --- | --- | --- | --- |
 | S0 契约 | 导出候选与保存请求的 OpenAPI schema、成功及失败 fixtures；不调用模型。依赖 P3 对已占用插槽的确认，未确认时使用明确拒绝替换的分支。 | 新增 `api/routes/voice_design.py` 中的边界模型、`tests/test_api_voice_design.py` 的契约 fixtures；本文。 | C2 的 schema 和错误体测试、C7。 |
-| S1 网关适配 | 实现百炼设计、身份、凭据、计费预留及结果验证；不写正式声线。依赖 S0；测试不依赖线上 Key。 | 新增 `audio/voice_design_service.py`、`tests/test_voice_design_service.py`；修改 `task_backend/runners/audio.py` 注册 `voice_design`，按需修改 `task_backend/` 内 admission、任务类型与投递配置；扩充 `tests/test_task_backend_registry.py`；必要时改 `media_model_request_schema.py` 和对应测试。复用现有音频凭据函数。 | C1 服务测试，A01、A02、A05、A14、A16；`uv run pytest tests/test_task_backend_registry.py -q`；对改动 Python 路径运行 Ruff。 |
+| S1 网关与共享模型配置 | 实现百炼设计、身份、凭据、计费预留及结果验证；扩共享 audio 目录、端点、报价和有效配置读取；不写正式声线。依赖 S0，与 S7、S8 对齐配置契约；测试不依赖线上 Key。 | 新增 `audio/voice_design_service.py`、`tests/test_voice_design_service.py`；修改 `task_backend/runners/audio.py` 注册 `voice_design`，按需改任务投递配置；修改 `media_model_request_schema.py`、`model_gateway_settings.py`、`api/routes/model_gateway.py`、`api/routes/model_credits.py` 及对应测试；需要提供可导入初始模板时改 `official_media_models.json`，EE 缺配置仍拒绝。 | C1 服务测试、A01、A02、A05、A14、A16；`uv run pytest tests/test_task_backend_registry.py tests/test_media_model_request_schema.py tests/test_model_gateway_settings.py tests/test_api_model_credit_cost.py -q`；对改动 Python 路径运行 Ruff。 |
 | S2 候选生命周期 | 实现独立候选存储、持久幂等、状态查询、鉴权试听及 TTL 清理。依赖 S0；TTL 测试注入。生产启用前依赖 P1、P4。 | 新增 `audio/voice_design_storage.py`、`tests/test_voice_design_storage.py`；扩充 `api/routes/voice_design.py`、`tests/test_api_voice_design.py`；修改 `api/__init__.py` 注册路由。 | C1 存储测试、C2 的 A03～A07、A13、A17。 |
 | S3 正式保存 | 复用上传持久化与绑定，加入冲突比较、保存回执、回滚和恢复。依赖 S2，替换已有声线依赖 P3。 | `api/routes/characters.py`、`seedance2_i2v/character_voice_storage.py`、新增保存回执逻辑所在的 `audio/voice_design_storage.py`、`tests/test_api_character_voice_samples.py`、`tests/test_api_voice_design.py`、`tests/test_character_voice_storage.py`；`pyproject.toml`。 | C2 的 A08～A12、C3、C6。 |
 | S4 现有声线管理 UI | 加描述、试听文本、生成、重新生成、试听及保存；保留输入和旧候选，处理错误码；用 fixtures 可先做。依赖 S0，联调依赖 S1～S3。 | `frontend/src/components/assets/character-voice-panel.tsx`，新增同目录 `voice-design-dialog.tsx`；新增 `frontend/src/lib/queries/voice-design.ts`；修改 `lib/queries/characters.ts`、`lib/query-keys.ts`、`frontend/src/types/` 中对应类型；相关 `__tests__`；`frontend/public/locales/` 文案。 | C4、C5；视觉实现前读 `DESIGN.md`。若改 token，同步文档并执行 `npx @google/design.md lint DESIGN.md`，0 errors。 |
-| S5 联调与上线门槛 | 校验真实部署路由、单 Key 渠道、可信 subject、账单及预览交付；证明保存后现有 IndexTTS2 可以读取文件。不扩大到全量视频回归。依赖前述切片与 P1、P3、P4 拍板。 | 新增 `scripts/acceptance/voice_design.py`，更新本文的验收记录。脚本从环境读测试项目和凭据，报告只写请求 ID、候选 SHA、slot SHA 和脱敏账单。 | C1～C7；`uv run python scripts/acceptance/voice_design.py --project "$VOICE_DESIGN_TEST_PROJECT" --character "$VOICE_DESIGN_TEST_CHARACTER" --slot default`，非零表示未通过。 |
-| S6 虾画复用，条件切片 | 仅在 P2 选择本期时执行。复用同一候选 API 与弹窗，增加“我的音色”或角色目标的保存适配；不能让用户重复生成来跨入口使用。 | `api/routes/freezone.py`、`freezone/audio_node.py`、对应 `frontend/src/features/canvas/` 入口及测试；`pyproject.toml`。不改身份绑定。 | 现有 `tests/test_freezone_audio_backend.py` 加候选保存测试；新增前端“同一 candidate_id 跨入口保存不再调用模型”测试；运行相关路径 Ruff、C5。若 P2 延后，不以此切片作为本期 PASS。 |
+| S5 联调与上线门槛 | 校验真实部署路由、单 Key 渠道、可信 subject、账单及预览交付；证明保存后现有 IndexTTS2 可以读取文件，并验证 EE 后台改配置会影响新任务。不扩大到全量视频回归。依赖前述切片、S6～S8 与 P1、P3、P4 拍板。 | 新增 `scripts/acceptance/voice_design.py`，更新本文的验收记录。脚本从环境读测试项目和凭据，报告只写请求 ID、候选 SHA、slot SHA、配置版本和脱敏账单。 | C1～C7 及第 2.7 节 EE、后台检查；`uv run python scripts/acceptance/voice_design.py --project "$VOICE_DESIGN_TEST_PROJECT" --character "$VOICE_DESIGN_TEST_CHARACTER" --slot default`，非零表示未通过。 |
+| S6 虾画复用，本期必做 | 复用同一候选 API 与弹窗，增加“保存到我的音色”；上传与生成保存共用受保护的账号索引写入。依赖 S0、S2；共享弹窗联调依赖 S4。 | `api/routes/freezone.py`、`api/schemas.py`、`freezone/audio_node.py`、`VoiceSelectionModal.tsx`、`frontend/src/api/ops.ts` 或共享 query；`frontend/public/locales/`；相关 `tests`；`pyproject.toml`。节点与资产板只补必要调用连接，避免复制入口。 | A22～A25；`uv run pytest tests/test_freezone_audio_backend.py tests/test_freezone_audio_speech_prereq.py tests/test_freezone_audio_enqueue_projection.py -q`；`pnpm -C frontend test src/__tests__/features/canvas/audio-voice-prereq.test.tsx src/__tests__/features/canvas/asset-board-audio-detail.test.tsx src/__tests__/features/canvas/voice-design-selection.test.tsx`；C5、C6。 |
+| S7 EE 模型与价格 | 补有效 audio 目录、共享计费 feature、三张表约束迁移、平台及组织覆盖价、配置导入导出；不改 CE AdmissionContext。依赖 S0，与 S1 对齐；已有计费缺配置时仍拒绝。 | EE 仓库 `src/novelvideo_ee/media_model_models.py`、`media_model_catalog.py`、`feature_billing.py`、`orgs/pricing_models.py`、`orgs/pricing_service.py`、`billing_config_transfer.py`、`org_billing_config_transfer.py`；`src/supertale_admin/routes.py`；新增 `migrations/versions/` 版本迁移；对应 tests。若目录服务调用者存在二分判断，同片迁移。 | C8、A26～A28、A30；对触及 EE Python 文件运行其配置下 Ruff。 |
+| S8 EE 管理后台 | 音频模型表单及筛选、目标 TTS 配置、All 功能页音频模型价格、组织 audio 覆盖价与配置往返。依赖 S1、S7 的 schema 与 API，fixtures 可先做；不扩促销规则。 | admin-fe 仓库 `src/lib/types.ts`、`src/lib/organization-api.ts`、`src/components/media-models/MediaModelManager.tsx`、必要的 `adapters.ts`、`src/features/feature-credits/FeatureCreditsPage.tsx`、`OrganizationPricingPage.tsx`、相关 i18n 与 tests。 | C9、A29；确认表单保存结果与 EE 回读配置一致。 |
 
-S3 修改 `characters.py` 时必须“顺手清 lint、删豁免行”：清理 E402，删除 `pyproject.toml` 中该文件的豁免键。S6 若修改 `freezone.py`，同样清理 F401 并删该豁免键。若实现必须修改 `generators/tts_generator.py`，清 F401、F541 并删除其豁免；不得为了增加一个导出包装而改它。其余新增触及文件也须先对照豁免表，不只检查这三项。
+S3 修改 `characters.py` 时必须“顺手清 lint、删豁免行”：清理 E402，删除 `pyproject.toml` 中该文件的豁免键。S6 修改 `freezone.py`，同样清理 F401 并删该豁免键。若实现必须修改 `generators/tts_generator.py`，清 F401、F541 并删除其豁免；不得为了增加一个导出包装而改它。其余新增触及文件也须先对照豁免表，不只检查这三项。
 
-S3 的机械检查命令如下；S6 或触及 tts_generator 时扩充清单。
+S3 与 S6 的机械检查命令如下；触及 tts_generator 时扩充清单。
 
 ```sh
-uv run ruff check --ignore-noqa --isolated --select E4,E7,E9,F src/novelvideo/api/routes/characters.py
+uv run ruff check --ignore-noqa --isolated --select E4,E7,E9,F src/novelvideo/api/routes/characters.py src/novelvideo/api/routes/freezone.py
 python3 - <<'PY'
 import pathlib
 import tomllib
 config = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
 ignores = config["tool"]["ruff"]["lint"]["per-file-ignores"]
 assert "src/novelvideo/api/routes/characters.py" not in ignores
+assert "src/novelvideo/api/routes/freezone.py" not in ignores
 PY
 ```
 
@@ -390,20 +489,20 @@ S5 脚本只写专用测试项目的空插槽，不替换生产声线。验证�
 
 ## 8. 待人拍板的产品决策
 
-这些问题不由本方案代定。S0～S4 可通过显式配置与 fixture 继续开发；涉及的正式上线行为必须有决策记录。
+已确认的决策：本期采用百炼 `voice-enrollment` 与 `cosyvoice-v3.5-flash`，不新增绘梦网关适配；虾画入口本期完成，生成结果可保存到“我的音色”后选用。以下问题仍未决定。S0～S4 可通过显式配置与 fixture 继续开发；涉及的正式上线行为必须有决策记录。
 
 | ID | 待决定的问题 | 影响与未决时的边界 |
 | --- | --- | --- |
 | P1 | 未保存候选保留多久？退出弹窗、刷新、重新登录后是否可找回？最多保留多少个？ | 决定 TTL、历史列表及存储成本。当前接口有 expires_at，但不设定生产时长；跨刷新候选列表不默认为已承诺能力。网关一小时不能直接作为产品 TTL。 |
-| P2 | 虾画复用本期完成，还是后补？首选保存到“我的音色”还是角色插槽？ | 决定 S6 和最终需求二的完成口径。后补时明确本期只完成角色管理入口与共享 API。 |
 | P3 | 保存到已有插槽能否替换？需要什么确认？超长试听是要求缩短文本，还是开放候选裁剪？ | 决定 replace_existing 的启用和裁剪交互。未批准前已有插槽返回 slot_occupied，显式替换返回 replacement_not_enabled；超长返回明确错误，不静默截断。 |
-| P4 | 用户按次数、字符或额度付费，还是平台承担？每天候选额度及渠道预算多少？是否开放英文？ | 决定价格展示、quota、预算及语言入口。技术契约可表达 zh/en，但不以此替产品决定首期语言范围。缺预算配置时禁止生产入口启用。 |
-| P5 | 是否接受百炼作为首期供应商？Seed Audio 是否要求本期备选或作为首选？ | 推荐百炼是已有适配的技术结论。若选 Seed Audio，先完成独立网关音频任务切片和干净参考音频的验证，再重新核算依赖、成本和上线条件。 |
+| P4 | 每次设计扣多少额度，还是平台承担？每天候选额度及渠道预算多少？是否开放英文，是否要求 audio 参加促销？ | 生成数量按一次记账，单价、quota 和预算仍需决定。技术契约可表达 zh/en，但不以此替产品决定首期语言范围。audio 促销若要开放，需要完整扩展现有限域政策。缺预算配置时禁止生产入口启用。 |
 
 ## 9. 本次方案交付与验证记录
 
-本次只新增本文，不修改应用、模型配置或网关源码，不 push。提交前以实际工作区执行 `git diff --check`，检查本文的仓库内 Markdown 链接，并人工逐项核对需求八项、接口状态、PASS 与不变量对应关系。当前 HEAD 与网关远端 SHA 已记录在文首。
+首次交付新增本文，本轮根据已确认决策补充虾画、EE 和管理后台调查；不修改应用、线上模型配置或网关源码，不 push。提交前以实际工作区执行 `git diff --check`，检查本文的仓库内 Markdown 链接、JSON 示例及引用的现有测试路径，并人工核对需求八项、接口状态、PASS 与不变量对应关系。应用 HEAD 和远端源码快照 SHA 见文首。
 
-验证环境：macOS，本机 zsh，Python 3 标准库。针对文首 HEAD 加本文的交付状态，`git diff --no-index --check /dev/null docs/issue-891-voice-design-plan.md` 退出 0；Python 标准库检查的 5 个仓库内 Markdown 链接全部存在，7 段 JSON 示例全部能解析。方案自审已核对八项要求、接口状态与测试映射；复核时网关远端 main 仍为文首 SHA。
+验证环境：macOS，本机 zsh，Python 3 标准库；配置现状诊断使用本仓库 `.venv/bin/python` 的 Python 3.12.10 与现有 Pydantic 环境。首次交付静态检查已通过。本轮针对 `2caa593f…` 加本文修订重新执行 `git diff --check`，退出 0；Python 检查的 5 个仓库内链接有效，8 段 JSON 示例可解析，20 个引用的现有测试路径均存在。未把后续要求新增的测试当作已存在或已通过。
 
-C1～C6 和 S5 是后续实现验收命令，本次未运行，不能据此宣称功能通过。最终提交 SHA 由 Git 提交结果报告，避免把尚未产生的提交写进文档。
+本轮还直接运行共享 `validate_media_model_catalog_config({}, "audio")` 及 `validate_media_request_schema({"endpoint":"audio/voice-designs","parameters":[]})`，分别复现 `media type must be image or video` 和 `unsupported NewAPI media endpoint`；对照 image 目录和 audio/speech 端点可通过。读取 EE 固定 SHA 的 `MediaModelReq` 并传 audio 条目，同样复现媒体类型拒绝。这些诊断证明当前配置缺口，不是新增功能已经通过。
+
+C1～C6、C8、C9 和 S5 是后续实现验收命令，本轮未运行，不能据此宣称功能通过。最终文档提交 SHA 由 Git 提交结果报告，避免把尚未产生的提交写进文档。
