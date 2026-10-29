@@ -493,6 +493,10 @@ def create_app() -> FastAPI:
 
             SHELL_CACHE_CONTROL = "no-cache"
             ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
+            # 长期缓存只给真实内容;跳转/错误响应一旦被 immutable 固化,
+            # URL 不变就再也刷不掉。
+            ASSET_ERROR_CACHE_CONTROL = "no-store"
+            _CACHEABLE_ASSET_STATUSES = frozenset({200, 206, 304})
 
             @classmethod
             def _with_cache_control(cls, response, request_path: str):
@@ -500,7 +504,11 @@ def create_app() -> FastAPI:
                 # Windows), so compare on a POSIX separator.
                 clean_path = str(request_path or "").replace("\\", "/").lstrip("/")
                 if clean_path.startswith("assets/"):
-                    response.headers.setdefault("Cache-Control", cls.ASSET_CACHE_CONTROL)
+                    if response.status_code in cls._CACHEABLE_ASSET_STATUSES:
+                        cache_control = cls.ASSET_CACHE_CONTROL
+                    else:
+                        cache_control = cls.ASSET_ERROR_CACHE_CONTROL
+                    response.headers.setdefault("Cache-Control", cache_control)
                 else:
                     response.headers.setdefault("Cache-Control", cls.SHELL_CACHE_CONTROL)
                 return response
