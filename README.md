@@ -360,10 +360,10 @@ Both checkouts are plain git repos: edit, `git pull`, rebuild. Only DramaClaw co
 
 **No build** — pull published images instead (no gateway clone needed):
 
-For **v2.1.2**, add or update these entries in `.env` before starting:
+For **v2.1.3**, add or update these entries in `.env` before starting:
 
 ```dotenv
-DRAMACLAW_VERSION=2.1.2
+DRAMACLAW_VERSION=2.1.3
 DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
 ```
 
@@ -405,7 +405,7 @@ and the hot-reloading UI at <http://localhost:5173>. Stop both with Ctrl+C.
 Local development needs Python 3.11–3.12, `uv`, Node.js/pnpm, curl and ffmpeg.
 Source Docker builds are not hot-reloading: rebuild `api web` after changing their code.
 
-Docker builds at v2.1.2 include credential-safe Codex 0.164.0; both source and release
+Docker builds at v2.1.3 include credential-safe Codex 0.164.0; both source and release
 Compose default to Codex. The native launcher downloads the public patched **0.164.0**
 runtime for macOS Apple Silicon/Intel or Linux x64/ARM64, verifies its pinned SHA256,
 and caches it under `runtime/codex/bin/` (or `NOVELVIDEO_RUNTIME_DIR`). No private

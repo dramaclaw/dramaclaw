@@ -1320,7 +1320,7 @@ class CodexThread:
                 CodexConfig,
                 Sandbox,
             )
-            from novelvideo.chat.codex_app_server import shared_codex
+            from novelvideo.chat.codex_app_server import CodexRuntimeError, shared_codex
             from openai_codex.generated.v2_all import (
                 AgentMessageDeltaNotification,
                 ConfigWarningNotification,
@@ -1345,7 +1345,7 @@ class CodexThread:
             )
 
             if self._codex_bin is not None and not self._codex_bin.exists():
-                raise RuntimeError(f"Codex binary not found: {self._codex_bin}")
+                raise CodexRuntimeError(f"Codex binary not found: {self._codex_bin}")
 
             config = CodexConfig(
                 codex_bin=str(self._codex_bin) if self._codex_bin is not None else None,
@@ -1815,7 +1815,7 @@ class CodexThread:
                         )
                     )
                     return
-                await queue.put(("error", str(exc)))
+                await queue.put(("error", exc))
 
         worker_task = asyncio.create_task(run_worker())
         started_at = loop.time()
@@ -1914,7 +1914,7 @@ class CodexThread:
                     )
                     break
                 if kind == "error":
-                    raise RuntimeError(str(payload))
+                    raise payload
                 event = payload
                 if event.type not in _CODEX_LIFECYCLE_ONLY_EVENTS:
                     saw_runtime_progress = True

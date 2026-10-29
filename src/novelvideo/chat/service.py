@@ -459,7 +459,11 @@ def _codex_agent_skill_locator_instructions(workspace: Path) -> str:
         workspace / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
     ).resolve()
     if not skill_path.is_file():
-        raise RuntimeError("managed dramaclaw-workflows Agent Skill is unavailable")
+        from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+        raise CodexRuntimeError(
+            "managed dramaclaw-workflows Agent Skill is unavailable"
+        )
     locators = {
         "agent_skills": [
             {
@@ -2031,15 +2035,27 @@ def get_chat_backend_name() -> str:
 def _repo_skill_roots() -> list[Path]:
     root = _repo_root()
     return [
-        root / "src" / "novelvideo" / "agent_skills",
+        Path(__file__).resolve().parents[1] / "agent_skills",
         root / ".claude" / "skills",
         root / ".codex" / "skills",
     ]
 
 
 def _skill_sources() -> list[tuple[str, Path]]:
+    roots = _repo_skill_roots()
+    required = roots[0] / "dramaclaw-workflows" / "SKILL.md"
+    try:
+        if not required.read_text(encoding="utf-8").strip():
+            raise ValueError("empty bundled Skill")
+    except (OSError, UnicodeError, ValueError) as exc:
+        from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+        raise CodexRuntimeError(
+            "Bundled Agent Skill resource is missing or unreadable: "
+            "dramaclaw-workflows/SKILL.md"
+        ) from exc
     sources: dict[str, Path] = {}
-    for repo_skills_root in _repo_skill_roots():
+    for repo_skills_root in roots:
         if not repo_skills_root.exists():
             continue
         for child in sorted(repo_skills_root.iterdir()):
@@ -3441,6 +3457,10 @@ def _build_codex_env(
     from novelvideo import config
 
     env = os.environ.copy()
+    # Installed desktop resources live beside env/, while containers use /app.
+    # Pass the known application root to MCP instead of relying on its Docker fallback.
+    if not env.get("DRAMACLAW_ROOT", "").strip():
+        env["DRAMACLAW_ROOT"] = str(_repo_root())
     # MCP subprocesses run from project workspaces, not the API data root.
     env["NOVELVIDEO_OUTPUT_DIR"] = str(Path(config.OUTPUT_DIR).resolve())
     agent_scope = "project" if project else "user"

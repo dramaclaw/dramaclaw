@@ -38,7 +38,7 @@ Key points shared by both (defined once in `docker-compose.release.yml`, reused 
 |---|---|---|
 | Services | `api` + `newapi` + `web` | No PG/Redis; `newapi` is the bundled gateway |
 | Images (release) | `${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/...` | Pulled from Docker Hub; set `DRAMACLAW_IMAGE_PREFIX` in `.env` to use the ACR mirror (pinned tags only) |
-| Versions (release) | `DRAMACLAW_VERSION` (api/web), `DRAMACLAW_GATEWAY_VERSION` | For this release, explicitly set `2.1.2` / `v1.0.0-rc.24-dramaclaw.3` in `.env` |
+| Versions (release) | `DRAMACLAW_VERSION` (api/web), `DRAMACLAW_GATEWAY_VERSION` | For this release, explicitly set `2.1.3` / `v1.0.0-rc.24-dramaclaw.3` in `.env` |
 | Agent backend | `DRAMACLAW_CHAT_BACKEND` | Both source and release Compose default to `codex` |
 | Port | `8780:8780` | REST API |
 | Gateway admin port | `${ST_NEWAPI_BIND:-127.0.0.1}:${ST_NEWAPI_PORT:-3000}:3000` | Bound to `127.0.0.1` by default; set `ST_NEWAPI_BIND=0.0.0.0` in `.env` to widen it |
@@ -53,10 +53,10 @@ Groups (each item is commented inline in `.env.example`): local NewAPI provision
 
 ### Release versions and Agent backend
 
-For the **v2.1.2 published images**, add or update these entries in `.env`:
+For the **v2.1.3 published images**, add or update these entries in `.env`:
 
 ```dotenv
-DRAMACLAW_VERSION=2.1.2
+DRAMACLAW_VERSION=2.1.3
 DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
 ```
 
@@ -68,7 +68,7 @@ docker compose -f docker-compose.release.yml config --images
 ```
 
 Both release and source Compose select the bundled credential-safe Codex 0.164.0 runtime
-at v2.1.2 by default. An explicit `DRAMACLAW_CHAT_BACKEND` value in your shell or `.env`
+at v2.1.3 by default. An explicit `DRAMACLAW_CHAT_BACKEND` value in your shell or `.env`
 overrides the Compose default; use `codex` if an older configuration selects another backend.
 Agent backend selection
 does not select your Official/Custom/Hybrid model gateway mode; configure that in the UI.
@@ -161,7 +161,7 @@ docker compose up -d --build
 Image mode:
 
 ```bash
-# edit .env: DRAMACLAW_VERSION=2.1.2 (and DRAMACLAW_GATEWAY_VERSION if the release notes say so)
+# edit .env: DRAMACLAW_VERSION=2.1.3 (and DRAMACLAW_GATEWAY_VERSION if the release notes say so)
 docker compose -f docker-compose.release.yml pull
 docker compose -f docker-compose.release.yml up -d
 ```

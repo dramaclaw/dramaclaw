@@ -38,7 +38,7 @@ cp .env.example .env
 |---|---|---|
 | 服务 | `api` + `newapi` + `web` | 无 PG/Redis；`newapi` 是内置网关 |
 | 镜像（release） | `${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/...` | 默认拉 Docker Hub；`.env` 设 `DRAMACLAW_IMAGE_PREFIX` 切到 ACR 镜像（只有钉 tag） |
-| 版本（release） | `DRAMACLAW_VERSION`（api/web）、`DRAMACLAW_GATEWAY_VERSION` | 当前版本请在 `.env` 中显式指定 `2.1.2` / `v1.0.0-rc.24-dramaclaw.3` |
+| 版本（release） | `DRAMACLAW_VERSION`（api/web）、`DRAMACLAW_GATEWAY_VERSION` | 当前版本请在 `.env` 中显式指定 `2.1.3` / `v1.0.0-rc.24-dramaclaw.3` |
 | 虾导后端 | `DRAMACLAW_CHAT_BACKEND` | 源码和发布版 Compose 均默认 `codex` |
 | 端口 | `8780:8780` | REST API |
 | 网关管理端口 | `${ST_NEWAPI_BIND:-127.0.0.1}:${ST_NEWAPI_PORT:-3000}:3000` | 默认只绑 `127.0.0.1`；`.env` 设 `ST_NEWAPI_BIND=0.0.0.0` 放开 |
@@ -53,10 +53,10 @@ cp .env.example .env
 
 ### 发布版本与虾导后端
 
-使用 **v2.1.2 官方镜像**时，在 `.env` 中添加或更新：
+使用 **v2.1.3 官方镜像**时，在 `.env` 中添加或更新：
 
 ```dotenv
-DRAMACLAW_VERSION=2.1.2
+DRAMACLAW_VERSION=2.1.3
 DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
 ```
 
@@ -67,7 +67,7 @@ DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
 docker compose -f docker-compose.release.yml config --images
 ```
 
-v2.1.2 的发布版和源码 Compose 均默认选择镜像内置的凭据保护版 Codex 0.164.0。
+v2.1.3 的发布版和源码 Compose 均默认选择镜像内置的凭据保护版 Codex 0.164.0。
 终端环境或 `.env` 中显式设置的 `DRAMACLAW_CHAT_BACKEND` 会覆盖默认值；
 若旧配置选择了其他后端，请改为 `codex`。
 虾导后端的选择不等于模型网关模式的选择，
@@ -160,7 +160,7 @@ docker compose up -d --build
 镜像模式：
 
 ```bash
-# 编辑 .env：DRAMACLAW_VERSION=2.1.2（发布说明要求时同时改 DRAMACLAW_GATEWAY_VERSION）
+# 编辑 .env：DRAMACLAW_VERSION=2.1.3（发布说明要求时同时改 DRAMACLAW_GATEWAY_VERSION）
 docker compose -f docker-compose.release.yml pull
 docker compose -f docker-compose.release.yml up -d
 ```
