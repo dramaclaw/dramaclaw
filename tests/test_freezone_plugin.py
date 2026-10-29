@@ -3546,6 +3546,13 @@ def test_clarification_recovery_and_choice_revision_use_durable_inbox(
     monkeypatch.setenv("DRAMACLAW_TURN_ID", "reopen-turn")
     retry = _clarification_handler(plugin)({**args, "title": "重新确认"})
     assert retry["bridge_key"] == first["bridge_key"]
+    bridge.put_clarification_turn_context(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        recovery_only=True,
+    )
+    mistaken_reopen = {**args, "new_request": True, "clarification_id": "invented-id"}
+    assert _clarification_handler(plugin)(mistaken_reopen)["bridge_key"] == first["bridge_key"]
     assert (
         len(
             bridge.list_pending_bridge_messages(
@@ -3569,6 +3576,14 @@ def test_clarification_recovery_and_choice_revision_use_durable_inbox(
         )
 
     answer(first, "a")
+    assert _clarification_handler(plugin)(mistaken_reopen)["answers"]["style"]["option_ids"] == [
+        "a"
+    ]
+    bridge.put_clarification_turn_context(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        recovery_only=False,
+    )
     assert _clarification_handler(plugin)(args)["answers"]["style"]["option_ids"] == [
         "a"
     ]

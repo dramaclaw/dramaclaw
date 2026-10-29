@@ -269,6 +269,57 @@ def bridge_message_exists(key: str, *, bridge_dir: str | Path | None = None) -> 
     return row is not None
 
 
+def put_clarification_turn_context(
+    *,
+    project_id: str,
+    canvas_id: str,
+    recovery_only: bool,
+    bridge_dir: str | Path | None = None,
+) -> None:
+    """Bind a host-observed reopen request to its latest answerable card.
+
+    This context is written by the chat host from the user's message, never from
+    model-generated tool arguments. A model cannot turn reopening into revision.
+    """
+    context = {"project_id": project_id, "canvas_id": canvas_id, "created_at": time.time()}
+    if recovery_only:
+        with _bridge_db(bridge_dir) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            _prune_bridge_rows(conn, now=time.time(), bridge_dir=bridge_dir)
+            row = conn.execute(
+                "SELECT payload_json, result_json, status FROM canvas_command_messages "
+                "WHERE project_id = ? AND canvas_id = ? AND kind = 'clarification_event' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (project_id, canvas_id),
+            ).fetchone()
+        if row is not None:
+            result = _decode_bridge_json(row["result_json"]) or {}
+            payload = _decode_bridge_json(row["payload_json"]) or {}
+            if row["status"] in {"pending", "delivered"} or (
+                row["status"] == "applied" and result.get("ok") is True
+            ):
+                context["recover_clarification_id"] = (payload.get("event") or {}).get(
+                    "clarification_id"
+                )
+    key = hashlib.sha256(_canonical_json([project_id, canvas_id]).encode()).hexdigest()[:32]
+    _write_json(_path("clarification-turn", key, bridge_dir), context)
+
+
+def read_clarification_turn_context(
+    *,
+    project_id: str | None,
+    canvas_id: str | None,
+    bridge_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    key = hashlib.sha256(_canonical_json([project_id, canvas_id]).encode()).hexdigest()[:32]
+    context = _read_json(_path("clarification-turn", key, bridge_dir)) or {}
+    if context.get("project_id") != project_id or context.get("canvas_id") != canvas_id:
+        return {}
+    if time.time() - float(context.get("created_at") or 0) > 60 * 60:
+        return {}
+    return context
+
+
 def list_pending_bridge_messages(
     *,
     project_id: str,

@@ -157,6 +157,7 @@ try:
         canvas_context_bridge_key,
         clarification_bridge_key,
         find_clarification_bridge_message,
+        read_clarification_turn_context,
         resolve_clarification_result,
         put_pending_clarification_event,
         put_pending_canvas_command,
@@ -176,6 +177,7 @@ except Exception as exc:
     canvas_context_bridge_key = None
     clarification_bridge_key = None
     find_clarification_bridge_message = None
+    read_clarification_turn_context = None
     resolve_clarification_result = None
     put_pending_clarification_event = None
     put_pending_canvas_command = None
@@ -1181,6 +1183,11 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     mismatch = _bound_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
+    if read_clarification_turn_context is not None:
+        recovery = read_clarification_turn_context(project_id=project, canvas_id=canvas)
+        if recovery.get("recover_clarification_id"):
+            clarification_id = recovery["recover_clarification_id"]
+            new_request = False
     # An id the agent already holds may name a card that is still waiting (or
     # was answered late). Resolve it first so a bare resume call needs no questions.
     resumed = (
@@ -11736,7 +11743,6 @@ _STORY_CANVAS_TOOLS = (
         _handle_get_story_canvas,
     ),
 ) if _INCLUDE_INTERACTIVE_STORY else ()
-
 
 
 # ---------------------------------------------------------------------------
