@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import i18next from "i18next";
+import { enTranslation } from "@/__tests__/helpers/i18n-fixtures";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { buildCanvasActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import {
@@ -23,6 +26,39 @@ function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["typ
 }
 
 describe("canvas action catalog", () => {
+  it("localizes story fields and frame capture instructions when the language changes", async () => {
+    i18next.addResourceBundle("en", "translation", enTranslation, true, true);
+    i18next.addResourceBundle("vi", "translation", JSON.parse(
+      readFileSync("public/locales/vi/translation.json", "utf8"),
+    ), true, true);
+    const originalLanguage = i18next.language;
+    const clip = node({
+      id: "story-i18n", type: CANVAS_NODE_TYPES.video,
+      data: { storySegmentId: "segment-i18n", videoUrl: "/clip.mp4" },
+    });
+    try {
+      for (const [language, label] of [["en", "Story content"], ["vi", "Nội dung cốt truyện"], ["zh", "剧情内容"]]) {
+        await i18next.changeLanguage(language);
+        const catalog = buildCanvasNodeActionCatalog(clip);
+        expect(catalog.editable_schema.narration.label).toBe(label);
+        const values = [
+          ...["continuityMode", "continuitySourceNodeId", "narration", "storyProductionNotes"]
+            .flatMap((field) => [catalog.editable_schema[field].label, catalog.editable_schema[field].description]),
+          ...["update_node_data", "capture_video_first_frame", "capture_video_last_frame"]
+            .map((action) => catalog.actions.find((entry) => entry.action === action)?.description),
+        ];
+        for (const value of values) {
+          expect(value).toBeTruthy();
+          expect(value).not.toContain("canvas.story.actionCatalog.");
+          if (language !== "zh") expect(value).not.toMatch(/[\u4e00-\u9fff]/);
+        }
+        expect(catalog.editable_schema.continuityMode.options).toEqual(["auto", "independent"]);
+      }
+    } finally {
+      await i18next.changeLanguage(originalLanguage);
+    }
+  });
+
   it("keeps mainline writes in manual UI but out of Agent discovery", async () => {
     const beatContext = node({
       id: "beat-context-a",
@@ -409,6 +445,49 @@ describe("canvas action catalog", () => {
       type: "enum",
       options: expect.arrayContaining(["480p", "720p"]),
     });
+  });
+
+  it("exposes story content and production notes for interactive-story video clips", () => {
+    const storyClip = node({
+      id: "story-video-a",
+      type: CANVAS_NODE_TYPES.video,
+      data: {
+        storySegmentId: "segment-story-video-a",
+        narration: "林晚锁上便利店的门。",
+        storyProductionNotes: "雪夜，监控屏闪过人脸。",
+        prompt: "便利店雪夜收尾镜头",
+      },
+    });
+    const regularVideo = node({
+      id: "regular-video-a",
+      type: CANVAS_NODE_TYPES.video,
+      data: { prompt: "普通视频提示词" },
+    });
+
+    const storyCatalog = buildCanvasNodeActionCatalog(storyClip);
+    const regularCatalog = buildCanvasNodeActionCatalog(regularVideo);
+
+    expect(storyCatalog.editable_fields).toEqual(
+      expect.arrayContaining(["narration", "storyProductionNotes", "prompt", "continuityMode", "continuitySourceNodeId"]),
+    );
+    expect(storyCatalog.editable_schema.narration).toMatchObject({
+      type: "string",
+      label: "剧情内容",
+      current_value: "林晚锁上便利店的门。",
+      description: expect.stringContaining("prompt"),
+    });
+    expect(storyCatalog.editable_schema.storyProductionNotes).toMatchObject({
+      type: "string",
+      label: "制作备注",
+      current_value: "雪夜，监控屏闪过人脸。",
+    });
+    expect(
+      storyCatalog.actions.find((action) => action.action === "update_node_data")?.description,
+    ).toContain("narration");
+    expect(regularCatalog.editable_fields).not.toContain("narration");
+    expect(regularCatalog.editable_fields).not.toContain("storyProductionNotes");
+    expect(regularCatalog.editable_fields).not.toContain("continuityMode");
+    expect(regularCatalog.editable_fields).not.toContain("continuitySourceNodeId");
   });
 
   it("explains generator prompt fields are combined with upstream prompt text and reference mentions", () => {

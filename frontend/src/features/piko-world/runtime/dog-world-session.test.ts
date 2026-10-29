@@ -1,0 +1,20 @@
+import { afterEach, expect, it, vi } from 'vitest';
+const update=vi.fn();
+vi.mock('./dog-world',()=>({createDogWorld:()=>({update})}));
+vi.mock('./map-package-loader',()=>({loadPikoMapNavigation:vi.fn(async()=>({})),loadPikoMapOcclusion:vi.fn(async()=>({occluders:[]}))}));
+import { getWorldDog, retainDogWorldSession } from './dog-world-session';
+import { loadPikoMapNavigation } from './map-package-loader';
+afterEach(()=>{vi.useRealTimers();vi.restoreAllMocks();vi.unstubAllGlobals();update.mockClear();});
+it('keeps one offscreen simulation, pauses hidden/reduced, and releases it with the shell',async()=>{
+ vi.useFakeTimers();let reduced=false;
+ vi.stubGlobal('matchMedia',()=>({get matches(){return reduced;}}));
+ const hidden=vi.spyOn(document,'hidden','get').mockReturnValue(false);
+ const stop=retainDogWorldSession();
+ const a=await getWorldDog(),b=await getWorldDog();expect(a).toBe(b);
+ expect(loadPikoMapNavigation).toHaveBeenCalledTimes(6);
+ vi.advanceTimersByTime(100);expect(update).toHaveBeenCalledTimes(2);
+ hidden.mockReturnValue(true);vi.advanceTimersByTime(100);expect(update).toHaveBeenCalledTimes(2);
+ hidden.mockReturnValue(false);reduced=true;vi.advanceTimersByTime(100);expect(update).toHaveBeenCalledTimes(2);
+ reduced=false;vi.advanceTimersByTime(50);expect(update).toHaveBeenCalledTimes(3);
+ stop();vi.advanceTimersByTime(100);expect(update).toHaveBeenCalledTimes(3);
+});

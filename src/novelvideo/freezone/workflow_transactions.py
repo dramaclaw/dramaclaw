@@ -16,6 +16,7 @@ from novelvideo.freezone.agent_workflows.catalog import (
 )
 from novelvideo.freezone.agent_workflows.drafts import build_workflow_draft_patch
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
+from novelvideo.freezone.workflow_schema import EXTERNAL_INPUT_NODE_TYPES
 from novelvideo.freezone.workflow_semantics import text_edge_error
 
 CONTRACT_VERSION = "dramaclaw.workflow-operations.v1"
@@ -167,8 +168,12 @@ def bind_workflow_inputs(plan: dict, bindings: Any) -> dict:
     nodes = _node_index(plan)
     external_ids: set[str] = set()
     for source in plan.get("external_inputs") or []:
-        if isinstance(source, dict) and source.get("media_kind") == "image":
-            nodes[source["id"]] = {"id": source["id"], "node_type": "imageGenNode", "data": {}}
+        node_type = (
+            EXTERNAL_INPUT_NODE_TYPES.get(source.get("media_kind"))
+            if isinstance(source, dict) else None
+        )
+        if node_type:
+            nodes[source["id"]] = {"id": source["id"], "node_type": node_type, "data": {}}
             external_ids.add(source["id"])
     for binding in bindings:
         if not isinstance(binding, dict) or set(binding) - {
@@ -184,7 +189,7 @@ def bind_workflow_inputs(plan: dict, bindings: Any) -> dict:
         if not isinstance(source_id, str) or not isinstance(target_id, str):
             raise WorkflowOperationError("binding source and target must be node ids")
         if target_id in external_ids or (source_id in external_ids and binding.get("usage") != "reference"):
-            raise WorkflowOperationError("external image input only supports outgoing reference usage")
+            raise WorkflowOperationError("external input only supports outgoing reference usage")
         source, target = nodes.get(source_id), nodes.get(target_id)
         if source is None or target is None or source_id == target_id:
             raise WorkflowOperationError(
@@ -292,6 +297,9 @@ def update_workflow_steps(plan: dict, updates: Any) -> dict:
             data[field] = prompt
             if node_type == "textAnnotationNode" and "prompt" in data:
                 data["prompt"] = prompt
+            # A node-level prompt is a planning alias; leaving it would keep the old wording.
+            if "prompt" in node:
+                node["prompt"] = prompt
         settings = update.get("settings", {})
         if not isinstance(settings, dict):
             raise WorkflowOperationError("settings must be an object")
@@ -506,13 +514,27 @@ def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dic
         )
         return {**prepared, "run_after_create": policy,
                 "last_changes": {**prepared.get("last_changes", {}), "run_after_create": policy}}
-    graph_fields = {"step_updates", "bindings"}
+    exact_plan = isinstance(payload.get("intent", {}).get("plan"), dict)
+    # An exact plan's summary (its preview title) and analysis describe its steps, so they are
+    # revised together with them.
+    graph_fields = {"step_updates", "bindings"} | (
+        {"summary", "analysis"} if exact_plan else set()
+    )
     if graph_fields & set(changes):
         if set(changes) - graph_fields:
             raise WorkflowOperationError(
                 "do not mix step/binding changes with compact intent fields"
             )
         plan = deepcopy(payload["compiled"]["plan"])
+        if "summary" in changes:
+            summary = changes["summary"]
+            if not isinstance(summary, str) or not summary.strip():
+                raise WorkflowOperationError("summary must be non-empty text")
+            plan["summary"] = summary
+        if "analysis" in changes:
+            if not isinstance(changes["analysis"], dict):
+                raise WorkflowOperationError("analysis must be an object")
+            plan["analysis"] = deepcopy(changes["analysis"])
         stored = payload["compiled"].get("mode_confirmations")
         confirmations = dict(stored) if isinstance(stored, dict) else {}
         if "step_updates" in changes:
@@ -524,8 +546,8 @@ def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dic
             {"plan": plan}, username=username, mode_confirmations=confirmations
         )
         return {**prepared, "last_changes": deepcopy(changes)}
-    if isinstance(payload.get("intent", {}).get("plan"), dict):
-        raise WorkflowOperationError("exact plans accept step_updates or bindings")
+    if exact_plan:
+        raise WorkflowOperationError("exact plans accept step_updates, bindings, summary or analysis")
     with workflow_catalog_scope(username):
         patched, error = build_workflow_draft_patch(
             payload=payload,

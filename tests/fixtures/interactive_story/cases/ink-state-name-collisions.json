@@ -1,0 +1,135 @@
+{
+  "description": "ink-state-name-collisions",
+  "story": {
+    "story_id": "ink-state-name-collisions",
+    "title": "Ink state namespace",
+    "start_segment_id": "start",
+    "variables": [
+      {
+        "name": "clip_start",
+        "label": "clip_start",
+        "initial": 0
+      },
+      {
+        "name": "clip_5f_start",
+        "label": "clip_5f_start",
+        "initial": 7
+      },
+      {
+        "name": "state_clip_start",
+        "label": "state_clip_start",
+        "initial": 9
+      },
+      {
+        "name": "END",
+        "label": "END",
+        "initial": 1
+      }
+    ],
+    "flags": [
+      {
+        "name": "clip_end",
+        "label": "Key",
+        "initial": true
+      },
+      {
+        "name": "temp",
+        "label": "Temporary flag",
+        "initial": false
+      }
+    ],
+    "segments": [
+      {
+        "id": "start",
+        "title": "start",
+        "script": "start",
+        "media": {
+          "source": "imported",
+          "status": "ready",
+          "url": "start.mp4"
+        }
+      },
+      {
+        "id": "end",
+        "title": "end",
+        "script": "end",
+        "media": {
+          "source": "imported",
+          "status": "ready",
+          "url": "end.mp4"
+        },
+        "kind": "ending",
+        "ending_label": "END"
+      }
+    ],
+    "choices": [
+      {
+        "id": "continue",
+        "source_segment_id": "start",
+        "target_segment_id": "end",
+        "mode": "visible",
+        "text": "Continue",
+        "order": 0,
+        "condition": {
+          "kind": "group",
+          "join": "and",
+          "items": [
+            {
+              "kind": "variable",
+              "variable": "END",
+              "operator": ">=",
+              "value": 1
+            },
+            {
+              "kind": "flag",
+              "flag": "clip_end",
+              "value": true
+            }
+          ]
+        },
+        "effects": [
+          {
+            "kind": "increment",
+            "variable": "clip_start",
+            "delta": 3
+          },
+          {
+            "kind": "increment",
+            "variable": "END",
+            "delta": 2
+          },
+          {
+            "kind": "set_flag",
+            "flag": "clip_end",
+            "value": false
+          },
+          {
+            "kind": "set_flag",
+            "flag": "temp",
+            "value": true
+          }
+        ]
+      }
+    ]
+  },
+  "expectedIssues": [],
+  "playthroughs": [
+    {
+      "choices": [
+        "continue"
+      ],
+      "expectedSegments": [
+        "start",
+        "end"
+      ],
+      "expectedVariables": {
+        "clip_start": 3,
+        "clip_5f_start": 7,
+        "state_clip_start": 9,
+        "END": 3,
+        "clip_end": false,
+        "temp": true
+      }
+    }
+  ]
+}

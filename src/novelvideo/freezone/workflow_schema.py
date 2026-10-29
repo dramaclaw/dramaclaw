@@ -25,6 +25,8 @@ from novelvideo.freezone.workflow_contract_generated import (
 
 NODE_TYPE_VALUES = WORKFLOW_NODE_TYPES
 LINK_TYPE_VALUES = WORKFLOW_LINK_TYPES
+# An external input stands in for an existing canvas node of this type.
+EXTERNAL_INPUT_NODE_TYPES = {"image": "imageGenNode", "video": "videoNode"}
 PORTABLE_VIDEO_GENERATION_MODES = (
     "allReference",
     "firstFrame",
@@ -130,20 +132,21 @@ def _normalize_plan_node_stage(arguments: dict[str, Any]) -> dict[str, Any]:
 def workflow_plan_schema_diagnostics(
     arguments: dict[str, Any], input_schema: dict[str, Any]
 ) -> list[dict[str, str]]:
-    """Explain node failures hidden by the JSON Schema ``anyOf`` over node shapes.
+    """Report all Plan argument errors, including missing identity and bad edges.
 
     Each invalid node is checked against the branch its ``node_type`` selects, so
-    the Agent gets field-level paths instead of the whole node echoed back. Other
-    argument errors are kept beside them. Returns ``[]`` when no node is invalid,
-    leaving the caller's own error reporting unchanged. This only describes
-    invalid arguments; it never fills values or changes a node's requested
-    deliverable type. The strict validator remains authoritative.
+    the Agent gets field-level paths instead of the whole node echoed back. Plan
+    identity and edge errors are reported even when every node is valid. This only
+    describes invalid arguments; it never fills values or changes the requested
+    workflow. The strict validator remains authoritative. Non-Plan tools retain
+    their own error reporting.
     """
-    errors = list(Draft202012Validator(input_schema).iter_errors(arguments))
-    if not any(_node_index(error) is not None for error in errors):
+    if "plan" not in input_schema.get("properties", {}):
         return []
+    errors = list(Draft202012Validator(input_schema).iter_errors(arguments))
     branches = _node_branch_schemas()
-    nodes = arguments["plan"]["nodes"]
+    plan = arguments.get("plan")
+    nodes = plan.get("nodes", []) if isinstance(plan, dict) else []
     issues: list[dict[str, str]] = []
     for error in errors:
         index = _node_index(error)
@@ -624,7 +627,7 @@ def workflow_plan_json_schema() -> dict[str, Any]:
                     "properties": {
                         "id": {"type": "string", "minLength": 1},
                         "node_id": {"type": "string", "minLength": 1},
-                        "media_kind": {"const": "image"},
+                        "media_kind": {"enum": list(EXTERNAL_INPUT_NODE_TYPES)},
                     },
                     "required": ["id", "node_id", "media_kind"],
                     "additionalProperties": False,
@@ -806,7 +809,7 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                     "properties": {
                         "id": {"type": "string", "minLength": 1},
                         "node_id": {"type": "string", "minLength": 1},
-                        "media_kind": {"const": "image"},
+                        "media_kind": {"enum": list(EXTERNAL_INPUT_NODE_TYPES)},
                     },
                     "required": ["id", "node_id", "media_kind"],
                     "additionalProperties": False,

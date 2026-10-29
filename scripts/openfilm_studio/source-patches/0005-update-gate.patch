@@ -1,0 +1,27 @@
+diff --git a/packages/openfilm/studio/server/server.mjs b/packages/openfilm/studio/server/server.mjs
+index c4a693f..d798d10 100644
+--- a/packages/openfilm/studio/server/server.mjs
++++ b/packages/openfilm/studio/server/server.mjs
+@@ -246,7 +246,11 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+     /* this Studio's version, and the latest on npm (Settings → General; `?check=1` asks npm now) */
+     if (parts[0] === 'version' && parts.length === 1 && req.method === 'GET') {
+       const now = url.searchParams.get('check') === '1';
+-      const { latest, checkedAt } = await npmOpenfilm({ force: now, waitMs: 4000 });
++      /* Dramaclaw patch: with update checks off there is nothing to ask npm for, and every page load
++         hits this route — skip the lookup instead of only hiding its result. */
++      const { latest, checkedAt } = process.env.OPENFILM_NO_UPDATE_CHECK
++        ? {}
++        : await npmOpenfilm({ force: now, waitMs: 4000 });
+       return json(res, 200, { version: VERSION, latest, newer: Boolean(latest && olderThanThis(VERSION, latest)), checkedAt, checking: !process.env.OPENFILM_NO_UPDATE_CHECK && !FROM_SOURCE, source: FROM_SOURCE,
+         ...(updating ? { update: updating } : {}) });
+     }
+@@ -274,6 +278,9 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+        on the new version and reload. Not while an export runs or media is made. `/api/version` says how it goes */
+     if (parts[0] === 'update' && parts.length === 1 && req.method === 'POST') {
+       if (stays || FROM_SOURCE) return json(res, 409, { error: 'this Studio does not update itself', code: stays ? 'app' : 'source' });
++      /* Dramaclaw patch: `/api/version` hides the button under this flag, but the flag has to close the
++         route as well — this call rewrites vendor/openfilm (patched chunk included) and runs npm code. */
++      if (process.env.OPENFILM_NO_UPDATE_CHECK) return json(res, 409, { error: 'update checks are off', code: 'off' });
+       if (exports.busy()) return json(res, 409, { error: 'an export is running', code: 'exporting' });
+       if (making) return json(res, 409, { error: 'media is being made', code: 'making' });
+       if (updating?.status === 'updating') return json(res, 202, { update: updating });

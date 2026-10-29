@@ -38,6 +38,28 @@ THIRD_PARTY_PATH_OVERRIDES: tuple[tuple[str, str, str, str], ...] = (
         "unmodified upstream Ladybug JSON extension (links yyjson); see bundled LICENSE.txt and SHA256SUMS",
     ),
     (
+        "LICENSES/OFL-1.1.txt",
+        "OFL-1.1",
+        "SIL International",
+        "SIL Open Font License 1.1 text",
+    ),
+    (
+        # Inter ships inside the editor bundle, so the vendor MIT row below would otherwise
+        # claim it; first prefix match wins here, so this row must precede vendor/openfilm/.
+        "vendor/openfilm/studio/ui/dist/assets/inter-",
+        "OFL-1.1",
+        "Rasmus Andersson",
+        "vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md",
+    ),
+    (
+        # The 「视频合成与剪辑」 editor ships as source here, and its own License wins over the
+        # aggregate annotation: without this row the台账 would claim MIT code as Elastic-2.0.
+        "vendor/openfilm/",
+        "MIT",
+        "2026 OpenFilm contributors",
+        "vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE",
+    ),
+    (
         "LICENSES/Apache-2.0.txt",
         "Apache-2.0",
         "Apache Software Foundation",
@@ -60,6 +82,20 @@ THIRD_PARTY_PATH_OVERRIDES: tuple[tuple[str, str, str, str], ...] = (
         "CC0-1.0",
         "Quaternius",
         "upstream License.txt (CC0-1.0 public domain)",
+    ),
+    (
+        # The Piko countdown font is an Ark Pixel subset; its OFL text ships next to it and
+        # frontend/public/fonts/README.md records the upstream and the licensing.
+        "frontend/public/fonts/piko-countdown-pixel.woff",
+        "OFL-1.1",
+        "2021 TakWolf",
+        "frontend/public/fonts/OFL.txt (Ark Pixel subset, SIL Open Font License 1.1)",
+    ),
+    (
+        "frontend/public/fonts/OFL.txt",
+        "OFL-1.1",
+        "SIL International",
+        "SIL Open Font License 1.1 text",
     ),
 )
 
@@ -332,9 +368,20 @@ def locked_package_licenses() -> list[PackageLicense]:
 
 
 def write_reuse_toml() -> None:
+    # REUSE 3.3: a file covered by several [[annotations]] tables uses the LAST matching table,
+    # so the catch-all has to come first — with it last it silently labels every third-party tree
+    # (vendor/openfilm, LICENSES/*, the codex binaries) as Elastic-2.0.
     write_text(
         ROOT / "REUSE.toml",
         """version = 1
+
+[[annotations]]
+path = [
+    "**",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 SuperTale contributors"
+SPDX-License-Identifier = "Elastic-2.0"
 
 [[annotations]]
 path = [
@@ -364,11 +411,46 @@ SPDX-License-Identifier = "MIT"
 
 [[annotations]]
 path = [
-    "**",
+    "LICENSES/OFL-1.1.txt",
 ]
-precedence = "aggregate"
-SPDX-FileCopyrightText = "2026 SuperTale contributors"
-SPDX-License-Identifier = "Elastic-2.0"
+precedence = "override"
+SPDX-FileCopyrightText = "SIL International"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+    "vendor/openfilm/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 OpenFilm contributors"
+SPDX-License-Identifier = "MIT"
+
+# Last match wins: these webfonts sit inside the MIT-licensed editor tree but are OFL.
+[[annotations]]
+path = [
+    "vendor/openfilm/studio/ui/dist/assets/inter-*.woff2",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Rasmus Andersson"
+SPDX-License-Identifier = "OFL-1.1"
+
+# frontend/REUSE.toml deliberately leaves public/fonts/** unannotated, so the root catch-all
+# reached it. The Piko countdown font is an OFL Ark Pixel subset and ships its license text.
+[[annotations]]
+path = [
+    "frontend/public/fonts/piko-countdown-pixel.woff",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2021 TakWolf"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+    "frontend/public/fonts/OFL.txt",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "SIL International"
+SPDX-License-Identifier = "OFL-1.1"
 """,
     )
 
@@ -403,6 +485,7 @@ def write_license_inventory(files: list[str]) -> None:
             "LICENSES/Apache-2.0.txt",
             "LICENSES/MIT.txt",
             "LICENSES/Elastic-2.0.txt",
+            "LICENSES/OFL-1.1.txt",
             "license-inventory.csv",
             "NOTICE",
             "sbom.spdx.json",
@@ -449,7 +532,15 @@ def write_dependency_reports(packages: list[PackageLicense]) -> None:
                 "source": "pyproject.toml [tool.supertale.external-tools.splat-transform]",
                 "scope": "optional INSTALL_WORLD=1 Docker/runtime external tool",
                 "evidence": "upstream package metadata and existing Dockerfile comment",
-            }
+            },
+            {
+                "package": "playwright-core",
+                "version": "1.61.1",
+                "license_expression": "Apache-2.0",
+                "source": "vendor/openfilm/package.json (install shim for the vendored Studio)",
+                "scope": "Studio runtime in the API image; drives the headless Chromium used for thumbnails and exports",
+                "evidence": "vendor/openfilm/package-lock.json integrity entry and vendor/openfilm/THIRD_PARTY_NOTICES.md",
+            },
         ],
     )
 
@@ -480,6 +571,30 @@ def write_dependency_reports(packages: list[PackageLicense]) -> None:
                 "distribution_scope": "container runtime image only",
                 "evidence": "Dockerfile FROM python:3.12-slim and apt package installation",
                 "notes": "Refer to Debian package copyright files in the built image.",
+            },
+            {
+                "name": "Node.js",
+                "kind": "container runtime executable",
+                "license_expression": "MIT",
+                "distribution_scope": "container runtime image only",
+                "evidence": "Dockerfile COPY --from=node-runtime /usr/local/bin/node",
+                "notes": "Runs the vendored Studio server. Node bundles its own third-party components; refer to the node:22-bookworm-slim image notices.",
+            },
+            {
+                "name": "Playwright headless Chromium",
+                "kind": "container runtime browser",
+                "license_expression": "BSD-3-Clause",
+                "distribution_scope": "container runtime image only",
+                "evidence": "Dockerfile playwright-core cli install --with-deps --only-shell chromium",
+                "notes": "Chromium carries its own third-party components. Installed into PLAYWRIGHT_BROWSERS_PATH.",
+            },
+            {
+                "name": "Noto CJK fonts",
+                "kind": "container OS package",
+                "license_expression": "OFL-1.1",
+                "distribution_scope": "container runtime image only",
+                "evidence": "Dockerfile apt-get install -y --no-install-recommends fonts-noto-cjk",
+                "notes": "Renders CJK titles and subtitles in the headless browser.",
             },
         ],
     )
@@ -582,6 +697,11 @@ def write_notice(packages: list[PackageLicense]) -> None:
             "- @playcanvas/splat-transform ^2.0.3: MIT; optional world asset conversion tool",
             "- ffmpeg/ffprobe: external system executables; license depends on the user's system build",
             "- Ladybug JSON extension 0.16.0 (links yyjson): MIT; unmodified upstream libraries, notices in src/novelvideo/assets/ladybug-json",
+            "- OpenFilm Studio v0.2.4 (vendor/openfilm): MIT; bundled video editor runtime",
+            "- playwright-core 1.61.1: Apache-2.0; drives the editor's headless browser",
+            "- Inter, Noto CJK: SIL OFL 1.1; editor and container fonts",
+            "- React, React DOM: MIT; editor bundle",
+            "- Lucide icons: ISC; editor bundle",
             "",
             "Restricted Optional Components",
             "The optional world feature can use apple/ml-sharp and its model assets. The source",

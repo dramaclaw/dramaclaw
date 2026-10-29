@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import { BeatContextNode } from "@/features/canvas/nodes/BeatContextNode";
@@ -12,6 +12,11 @@ import type { BeatContextNodeData } from "@/features/canvas/domain/canvasNodes";
 import { buildBeatContextNodeRefreshPatch } from "@/features/freezone/context/beatContextSnapshot";
 import { setFreezoneCanvasMetadata } from "@/features/freezone/canvasMetadataContext";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { registerFreezoneCanvasRuntime } from "@/features/freezone/canvasSyncRuntime";
+import type { FreezoneCanvasPayload } from "@/api/canvas";
+
+let unregisterCanvasRuntime: (() => void) | undefined;
+afterEach(() => { unregisterCanvasRuntime?.(); unregisterCanvasRuntime = undefined; });
 
 const updateBeat = vi.fn().mockResolvedValue({ ok: true, data: null });
 const listFreezoneBeatContext = vi.fn();
@@ -862,6 +867,49 @@ describe("BeatContextNode", () => {
         }),
       ).toBe(true);
     });
+  });
+
+  it.each(["stale", "applier", "scope"] as const)("does not fall back to replacing canvas data after runtime rejection (%s)", async reason => {
+    const user = userEvent.setup();
+    setFreezoneCanvasMetadata({ preset: { scope: "beat", episode: 1, beat: 3, primary_slot: "render" } });
+    const data = makeData();
+    const latestMedia = {
+      id: "managed_media", type: CANVAS_NODE_TYPES.upload, position: { x: 120, y: 120 },
+      data: { displayName: "最新素材", imageUrl: "/static/latest.png", preset_managed: true },
+    };
+    const context = { id: "context_beat", type: CANVAS_NODE_TYPES.beatContext, position: { x: 0, y: 0 }, data };
+    const latestVideo = {
+      id: "latest_video", type: CANVAS_NODE_TYPES.video, position: { x: 500, y: 120 },
+      data: { videoUrl: "/static/latest.mp4", user_spawned: true },
+    };
+    const latestEdge = {
+      id: "latest-reference", source: "managed_media", target: "latest_video",
+      sourceHandle: "source", targetHandle: "target", type: "disconnectableEdge",
+    };
+    useCanvasStore.getState().setCanvasData([context, latestMedia, latestVideo], [latestEdge]);
+    const retainedMedia = useCanvasStore.getState().nodes.find(node => node.id === "managed_media");
+    const retainedEdges = useCanvasStore.getState().edges;
+    expect(retainedEdges).toHaveLength(1);
+    const apply = vi.fn((_remote: FreezoneCanvasPayload) => false);
+    unregisterCanvasRuntime = registerFreezoneCanvasRuntime(
+      reason === "scope" ? "other-project" : "demo", "default", apply,
+      async () => true, undefined, undefined, () => 9,
+    );
+    getFreezoneCanvas.mockResolvedValueOnce({ nodes: [], edges: [], revision: 7 });
+    getFreezoneCanvas.mockResolvedValueOnce({
+      nodes: [context, { ...latestMedia, data: { ...latestMedia.data, displayName: "旧素材", imageUrl: "/static/old.png" } }],
+      edges: [], revision: reason === "applier" ? 10 : 8,
+    });
+    renderNode(data);
+    await user.click(screen.getByRole("button", { name: "同步到主线" }));
+    await waitFor(() => {
+      expect(getFreezoneCanvas).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("button", { name: "同步到主线" })).toBeEnabled();
+    });
+    expect(apply).toHaveBeenCalledTimes(reason === "applier" ? 1 : 0);
+    expect(useCanvasStore.getState().nodes.find(node => node.id === "managed_media")).toEqual(retainedMedia);
+    expect(useCanvasStore.getState().edges).toEqual(retainedEdges);
+    expect(useCanvasStore.getState().nodes).toHaveLength(3);
   });
 
   it("saves identity selection locally and restores the backend preset only after manual sync", async () => {

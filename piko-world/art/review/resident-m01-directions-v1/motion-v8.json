@@ -1,0 +1,31 @@
+{
+  "frameSize": 64,
+  "columns": 11,
+  "rows": [
+    "south",
+    "west",
+    "east",
+    "north"
+  ],
+  "pivot": {
+    "x": 32,
+    "y": 57
+  },
+  "idleColumns": [
+    0,
+    1,
+    2
+  ],
+  "walkColumns": [
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "cycleDistanceSourcePixels": 40,
+  "rig": "unified-eight-pose-gait-v8"
+}

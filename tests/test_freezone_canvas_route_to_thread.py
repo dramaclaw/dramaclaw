@@ -172,7 +172,10 @@ async def test_put_canvas_keeps_the_event_loop_alive_while_lock_is_held(
 
 
 def test_freezone_routes_never_call_save_canvas_synchronously() -> None:
-    """四个调用点必须全是 `await canvas_store.save_canvas_async(...)`。
+    """五个调用点必须全是 `await canvas_store.save_canvas_async(...)`。
+
+    第五个是剪辑工作区的 Studio 导出路由：服务端替合成节点打 generationTaskKey，
+    让任务完成后的投影能写回 resultVideoUrl。
 
     `save_canvas` 本体保留且仍是同步函数（B2-8：CLI / 备份进程照旧直接调它），
     这条只管路由模块。
@@ -199,4 +202,4 @@ def test_freezone_routes_never_call_save_canvas_synchronously() -> None:
 
     assert sync_calls == []
     assert bare_async_calls == []
-    assert len(awaited_async_calls) == 4
+    assert len(awaited_async_calls) == 5

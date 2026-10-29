@@ -12,6 +12,7 @@ const currentUserState = vi.hoisted(() => ({
   isLoading: false,
   balance: 1234 as number | undefined,
 }));
+const summaryStatus = vi.hoisted(() => ({ ready: true, isError: false }));
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: false }));
 const productSurfaceState = vi.hoisted(() => ({ paymentAvailable: false }));
 const summaryState = vi.hoisted(() => ({
@@ -86,7 +87,8 @@ vi.mock("@/lib/queries/auth", () => ({
 vi.mock("@/lib/queries/credits", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/queries/credits")>()),
   useCreditSummary: () => ({
-    data: { data: summaryState },
+    data: summaryStatus.ready ? { data: summaryState } : undefined,
+    isError: summaryStatus.isError,
     isStale: false,
     refetch: vi.fn(),
   }),
@@ -162,6 +164,9 @@ describe("CreditBalanceBadge", () => {
     runtimeState.isCeRuntime = false;
     productSurfaceState.paymentAvailable = false;
     summaryState.scope = undefined;
+    summaryState.balance = 1234;
+    summaryStatus.ready = true;
+    summaryStatus.isError = false;
   });
 
   it("renders the current credit balance", async () => {
@@ -239,6 +244,29 @@ describe("CreditBalanceBadge", () => {
       expect(screen.queryByText("组织分配给你的额度")).not.toBeInTheDocument();
       unmount();
     }
+  });
+
+  it("never flashes the auth wallet while the summary is loading or unavailable", () => {
+    currentUserState.balance = 98910;
+    summaryStatus.ready = false;
+    const { rerender } = renderBadge();
+    expect(screen.queryByText("98,910")).not.toBeInTheDocument();
+    expect(screen.getAllByText("--").length).toBeGreaterThan(0);
+    summaryStatus.isError = true;
+    rerender(<CreditBalanceBadge />);
+    expect(screen.queryByText("98,910")).not.toBeInTheDocument();
+    summaryStatus.ready = true;
+    summaryStatus.isError = false;
+    summaryState.balance = 1508;
+    rerender(<CreditBalanceBadge />);
+    expect(screen.getAllByText("1,508")).toHaveLength(2);
+    expect(screen.queryByText("98,910")).not.toBeInTheDocument();
+  });
+
+  it("keeps the summary visible when the unrelated auth query fails", () => {
+    currentUserState.isError = true;
+    renderBadge();
+    expect(screen.getAllByText("1,234")).toHaveLength(2);
   });
 
   it("renders nothing when logged out", () => {

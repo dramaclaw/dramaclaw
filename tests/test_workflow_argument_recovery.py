@@ -425,4 +425,113 @@ async def test_node_diagnostics_keep_plan_level_errors(monkeypatch, adapter):
         payload = json.loads(result.content[0].text)
         message = payload["message"]
     assert "plan.skill: field is required" in message
-    assert "plan.nodes[0].scene: field is not allowed for node_type videoNode" in message
+    assert (
+        "plan.nodes[0].scene: field is not allowed for node_type videoNode" in message
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adapter", ["workflow", "dramaclaw"])
+async def test_plan_identity_and_edge_errors_are_reported_without_invalid_nodes(
+    monkeypatch, adapter
+):
+    import json
+    from novelvideo.chat import dramaclaw_mcp
+    from novelvideo.freezone.workflow_schema import workflow_plan_json_schema
+
+    plan = _plan_with(
+        {
+            "id": "shot",
+            "node_type": "videoNode",
+            "data": {"workflowCatalog": {"recipeId": "r"}},
+        }
+    )
+    del plan["schema_version"]
+    del plan["skill"]
+    plan["edges"] = [
+        {
+            "source": "shot",
+            "target": "output",
+            "link_type": "media_input_for",
+            "explicit_ref": False,
+        }
+    ]
+    arguments = {"plan": plan}
+    original = deepcopy(arguments)
+    if adapter == "workflow":
+        result = await workflow_mcp.call_tool("workflow_graph_compile", arguments)
+        payload = result.structuredContent
+        message = payload["error"]
+    else:
+        monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+        monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+        name = "freezone_prepare_workflow_plan_draft"
+        schema = dramaclaw_mcp._agent_tools()[name][0]
+
+        def must_not_run(_args):
+            raise AssertionError("invalid plan reached handler")
+
+        monkeypatch.setattr(
+            dramaclaw_mcp,
+            "_agent_tools",
+            lambda: {
+                name: (
+                    {
+                        **schema,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "plan": workflow_plan_json_schema(),
+                            },
+                            "required": ["plan"],
+                        },
+                    },
+                    must_not_run,
+                )
+            },
+        )
+        result = await dramaclaw_mcp.call_tool(name, arguments)
+        payload = json.loads(result.content[0].text)
+        message = payload["message"]
+    assert result.isError
+    assert "plan.schema_version: field is required" in message
+    assert "plan.skill: field is required" in message
+    assert "plan.edges[0]" in message and "explicit_ref" in message
+    assert arguments == original
+
+
+@pytest.mark.parametrize(
+    "arguments, expected_paths",
+    [
+        ({}, {"plan"}),
+        ({"plan": None}, {"plan"}),
+        ({"plan": []}, {"plan"}),
+        (
+            {"plan": {}},
+            {"plan.schema_version", "plan.skill", "plan.nodes", "plan.edges"},
+        ),
+        (
+            {"plan": {"nodes": None}},
+            {"plan.schema_version", "plan.skill", "plan.nodes", "plan.edges"},
+        ),
+    ],
+)
+def test_plan_envelope_diagnostics_handle_missing_or_malformed_fields(
+    arguments, expected_paths
+):
+    from novelvideo.freezone.workflow_schema import (
+        workflow_plan_json_schema,
+        workflow_plan_schema_diagnostics,
+    )
+
+    schema = {
+        "type": "object",
+        "properties": {"plan": workflow_plan_json_schema()},
+        "required": ["plan"],
+    }
+    original = deepcopy(arguments)
+
+    issues = workflow_plan_schema_diagnostics(arguments, schema)
+
+    assert {issue["path"] for issue in issues} == expected_paths
+    assert arguments == original

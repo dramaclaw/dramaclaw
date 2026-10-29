@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { Fragment, type ReactNode } from "react";
 import { Bell } from "lucide-react";
+import { NotificationDot } from "@/components/ui/notification-dot";
 import styles from "./announcement-card.module.css";
 
 export type AnnouncementCardBodyToken = {
@@ -34,7 +35,7 @@ export function AnnouncementCard({
     <article className={styles.card}>
       <span className={styles.icon} aria-hidden="true">
         <Bell />
-        {unread ? <span className={styles.unreadDot} /> : null}
+        {unread ? <NotificationDot className={styles.unreadDot} /> : null}
       </span>
 
       <div className={styles.content}>

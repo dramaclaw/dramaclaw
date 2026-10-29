@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useState } from 'react';
+import { create } from 'zustand';
 
 /** 画布视图模式：工作流（React Flow 画布）或 故事板（AssetBoard 三栏投影）。 */
 export type FreezoneViewMode = 'workflow' | 'board';
@@ -28,15 +28,26 @@ export function writeStoredViewMode(mode: FreezoneViewMode): void {
 }
 
 /**
- * 画布视图模式 state + localStorage 写穿。
- * 单调用点约定：目前仅 FreezoneShell 使用；若第二个组件需要读写此状态，
- * 请升级为共享 store（参照 edgeVisibilityStore 的 Zustand 模式）避免多副本失步。
+ * 顶栏视图菜单与保活画布共享同一份状态，进入视图的附加行为由画布宿主处理。
  */
+const useViewModeStore = create<{
+  mode: FreezoneViewMode;
+  setMode: (mode: FreezoneViewMode) => void;
+}>((set) => ({
+  mode: readStoredViewMode(),
+  setMode: (mode) => {
+    writeStoredViewMode(mode);
+    set({ mode });
+  },
+}));
+
 export function useFreezoneViewMode(): [FreezoneViewMode, (mode: FreezoneViewMode) => void] {
-  const [mode, setMode] = useState<FreezoneViewMode>(readStoredViewMode);
-  const update = useCallback((next: FreezoneViewMode) => {
-    setMode(next);
-    writeStoredViewMode(next);
-  }, []);
-  return [mode, update];
+  const mode = useViewModeStore((state) => state.mode);
+  const setMode = useViewModeStore((state) => state.setMode);
+  return [mode, setMode];
+}
+
+/** Project-folder entry resets both the live view and its saved preference. */
+export function resetFreezoneViewMode(): void {
+  useViewModeStore.getState().setMode('workflow');
 }

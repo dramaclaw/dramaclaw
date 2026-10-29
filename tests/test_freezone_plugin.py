@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import io
 import json
+import shutil
 import sys
 import threading
 import types
@@ -504,6 +505,8 @@ def test_freezone_plugin_registers_canvas_command_tools():
     assert plan_schema["properties"] != {}
     draft_schema = schemas["freezone_confirm_workflow_draft"]["parameters"]
     assert draft_schema["required"] == ["draft_id", "revision"]
+    prepare_schema = schemas["freezone_prepare_workflow"]["parameters"]
+    assert prepare_schema["required"] == ["operation_id"]
     # Execution policy is decided when the draft is prepared or patched and the
     # user reviews that preview; confirmation must not be able to change it.
     assert "run_after_create" not in draft_schema["properties"]
@@ -1014,6 +1017,53 @@ def test_generation_preflight_does_not_require_quality_for_model_without_quality
         )
         is None
     )
+
+
+def test_interactive_story_missing_duration_requires_node_plan_not_fixed_question(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "data": [{"id": "video-model", "supportsGenerateAudio": True}],
+        },
+    )
+    commands = [
+        {
+            "type": "create_node",
+            "client_id": "story-segment-a",
+            "node_type": "videoNode",
+            "data": {
+                "storySegmentId": "segment-a",
+                "displayName": "开场",
+                "model": "video-model",
+                "aspectRatio": "16:9",
+                "quality": "720P",
+                "generateAudio": False,
+                "count": 1,
+            },
+        },
+        {
+            "type": "run_node_action",
+            "node_id": "story-segment-a",
+            "action": "generate_video",
+        },
+    ]
+
+    result = plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", commands
+    )
+
+    assert result is not None
+    assert result["status"] == "interactive_story_duration_plan_required"
+    assert result["code"] == "interactive_story_duration_plan_required"
+    assert result["required_choices"] == {}
+    assert "clarification" not in result
+    assert result["dynamic_story_duration_node_ids"] == ["story-segment-a"]
+    assert "Do not ask for one shared video_duration_seconds" in result["agent_instruction"]
 
 
 def test_generation_preflight_keeps_quality_for_model_with_quality_options(
@@ -2849,7 +2899,13 @@ def test_compiled_workflow_timeline_role_passes_plan_submission_schema(monkeypat
                for n in plan["nodes"])
     schema = {name: schema for name, schema, _ in plugin.TOOLS}[
         "freezone_prepare_workflow_plan_draft"]["parameters"]
-    Draft202012Validator(schema).validate({"operation_id": "agent_product_test", "plan": plan})
+    Draft202012Validator(schema).validate(
+        {
+            "operation_id": "agent_product_test",
+            "plan": plan,
+            "run_after_create": False,
+        }
+    )
 
 
 def test_plan_submission_tool_schema_accepts_terminal_video_compose():
@@ -2876,7 +2932,11 @@ def test_plan_submission_tool_schema_accepts_terminal_video_compose():
     }
 
     Draft202012Validator(schema).validate(
-        {"operation_id": "agent_product_test", "plan": plan}
+        {
+            "operation_id": "agent_product_test",
+            "plan": plan,
+            "run_after_create": False,
+        }
     )
 
 
@@ -2925,6 +2985,9 @@ def test_freezone_get_workflow_skill_records_structured_result_side_channel(
     assert len(files) == 1
     payload = json.loads(files[0].read_text(encoding="utf-8"))
     assert payload["tool_name"] == "freezone_get_workflow_skill"
+    assert payload["input_hash"] == plugin._tool_input_hash(
+        {"skill_id": "ecommerce-product"}
+    )
     assert payload["result"]["ok"] is True
     assert payload["result"]["skill_id"] == "ecommerce-product"
     assert isinstance(payload["result"]["available_recipes"], list)
@@ -3771,6 +3834,252 @@ def test_generation_clarification_builds_complete_media_questions(monkeypatch):
     assert emitted[0]["allow_recommended"] is False
     assert emitted[0]["allow_skip"] is False
     assert "questions" not in schemas["freezone_request_user_clarification"]["parameters"]["required"]
+
+
+def test_generation_clarification_uses_all_target_video_modes(monkeypatch):
+    plugin = _load_plugin_module()
+    emitted = []
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (
+        {"one": {"type": "videoNode", "data": {"genMode": "allReference"}},
+         "two": {"type": "videoNode", "data": {"genMode": "firstFrame"}}}, [], None
+    ))
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _p, _c, event: emitted.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "compatible", "supportedModes": ["all_reference", "first_frame"]}]})
+    result = plugin._handle_request_user_clarification({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_media_types": ["video"], "generation_video_node_ids": ["one", "two"],
+    })
+    assert result == "shown"
+    question = next(q for q in emitted[0]["questions"] if q["id"] == "video_model")
+    assert question["required_video_modes"] == ["all_reference", "first_frame"]
+
+
+def test_generation_clarification_rejects_incompatible_model_receipt(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (
+        {"one": {"type": "videoNode", "data": {"genMode": "allReference"}}}, [], None
+    ))
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_generation_catalog_entry", lambda *_: {
+        "id": "first-only", "supportedModes": ["first_frame"],
+    })
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "compatible", "supportedModes": ["all_reference"]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_: plugin.tool_result({
+        "ok": True, "clarification_status": "answered",
+        "answers": {"video_model": {"option_ids": ["first-only"]}},
+    }))
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+        "generation_video_node_ids": ["one"],
+    })
+    assert result["status"] == "generation_model_incompatible"
+    assert result["required_video_modes"] == ["all_reference"]
+
+
+def test_generation_recommendation_requires_every_target_mode(monkeypatch):
+    plugin = _load_plugin_module()
+    entry = {"id": "video-a", "supportedModes": ["first_frame"],
+             "resolutionOptions": ["720p"]}
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [entry]})
+    kwargs = {"required_video_modes": ["all_reference", "first_frame"]}
+    assert plugin._generation_clarification_recommendations(
+        "project-a", ["video_model"], preferences={"video_model": "video-a"}, **kwargs
+    ) == {}
+    entry["supportedModes"].append("all_reference")
+    assert plugin._generation_clarification_recommendations(
+        "project-a", ["video_model"], preferences={"video_model": "video-a"}, **kwargs
+    ) == {"video_model": {"option_ids": ["video-a"]}}
+
+
+def test_generation_clarification_resumed_card_retains_mode_constraints(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_resume_clarification", lambda *_: (
+        "old-key", {"questions": [{"id": "video_model", "options_source": "video_models",
+                                  "required_video_modes": ["all_reference"]}]},
+        {"ok": True, "clarification_status": "answered",
+         "answers": {"video_model": {"option_ids": ["first-only"]}}},
+    ))
+    monkeypatch.setattr(plugin, "_generation_catalog_entry", lambda *_: {
+        "supportedModes": ["first_frame"],
+    })
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a", "clarification_id": "resume",
+    })
+    assert result["status"] == "generation_model_incompatible"
+    assert result["required_video_modes"] == ["all_reference"]
+
+
+def test_generation_clarification_cancel_passes_through_without_remembering(monkeypatch):
+    plugin = _load_plugin_module()
+    cancelled = {
+        "ok": False, "status": "clarification_frontend_result",
+        "tool_call_status": "completed", "clarification_status": "cancelled",
+        "action": "cancel", "answers": {"video_model": {"option_ids": ["old-model"]}},
+        "message": "用户退出了模型选择：请调整镜头模式或配置兼容模型，不要继续生成。",
+        "agent_instruction": "Do not continue; handle the clarification error or ask the user to retry.",
+    }
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_: cancelled)
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_remember_generation_answers",
+                        lambda *_: pytest.fail("cancelled answers must not be remembered"))
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+    })
+    assert result == cancelled
+    assert result["ok"] is False
+    assert "Do not continue" in result["agent_instruction"]
+    assert "node_data" not in result
+
+
+def test_generation_target_supports_extend_mode(monkeypatch):
+    plugin = _load_plugin_module()
+    emitted = []
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (
+        {"one": {"type": "videoNode", "data": {"genMode": "videoExtend"}}}, [], None
+    ))
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "extend", "supportedModes": ["video_extend"]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _p, _c, event: emitted.append(event) or "shown")
+    plugin._handle_request_user_clarification({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+        "generation_video_node_ids": ["one"],
+    })
+    assert emitted[0]["questions"][0]["required_video_modes"] == ["video_extend"]
+
+
+def test_generation_clarification_no_compatible_model_does_not_show_card(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (
+        {"one": {"type": "videoNode", "data": {"genMode": "allReference"}}}, [], None))
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "first", "supportedModes": ["first_frame"]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_: pytest.fail("no card"))
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]}, "generation_video_node_ids": ["one"],
+    })
+    assert result["status"] == "no_compatible_video_model"
+
+
+def test_generation_clarification_checks_confirmed_model_on_partial_card(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (
+        {"one": {"type": "videoNode", "data": {"genMode": "allReference"}}}, [], None))
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "first", "supportedModes": ["first_frame"]},
+        {"id": "all", "supportedModes": ["all_reference"]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_: pytest.fail("no card"))
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["resolution"]},
+        "answers": {"video_model": {"option_ids": ["first"]}},
+        "generation_video_node_ids": ["one"],
+    })
+    assert result["status"] == "generation_model_incompatible"
+
+
+@pytest.mark.parametrize(
+    ("mode", "image_count"),
+    [(None, 1), (None, 2), ("textToVideo", 1), ("textToVideo", 2),
+     ("firstFrame", 2), ("imageToVideo", 2)],
+)
+def test_generation_clarification_requires_reference_mode_for_images(monkeypatch, mode, image_count):
+    plugin = _load_plugin_module()
+    nodes = {"shot": {"type": "videoNode", "data": {"genMode": mode}},
+             "a": {"type": "imageGenNode", "data": {}},
+             "b": {"type": "imageNode", "data": {}}}
+    edges = [{"source": key, "target": "shot"} for key in ("a", "b")[:image_count]]
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (nodes, edges, None))
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_: pytest.fail("no model card"))
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: pytest.fail("no model catalog request"))
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+        "generation_video_node_ids": ["shot"],
+    })
+    assert result["status"] == "generation_reference_mode_confirmation_required"
+    assert result["reference_image_count"] == image_count
+
+
+@pytest.mark.parametrize(
+    ("mode", "image_count", "required_mode"),
+    [("textToVideo", 0, "text_to_video"), ("firstFrame", 1, "first_frame"),
+     ("imageToVideo", 1, "image_to_video"), ("allReference", 2, "all_reference")],
+)
+def test_generation_clarification_allows_consistent_video_reference_mode(
+    monkeypatch, mode, image_count, required_mode
+):
+    plugin = _load_plugin_module()
+    nodes = {"shot": {"type": "videoNode", "data": {"genMode": mode}},
+             "a": {"type": "imageGenNode", "data": {}},
+             "b": {"type": "imageNode", "data": {}}}
+    edges = [{"source": key, "target": "shot"} for key in ("a", "b")[:image_count]]
+    emitted = []
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (nodes, edges, None))
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "compatible", "supportedModes": [required_mode]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _p, _c, event: emitted.append(event) or "shown")
+    result = plugin._handle_request_user_clarification({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+        "generation_video_node_ids": ["shot"],
+    })
+    assert result == "shown"
+    assert emitted[0]["questions"][0]["required_video_modes"] == [required_mode]
+
+
+@pytest.mark.parametrize(
+    ("source_type", "source_data", "link_type", "is_reference"),
+    [
+        ("uploadNode", {"previewImageUrl": "/upload.png"}, None, True),
+        ("storyboardGenNode", {"previewImageUrl": "/frame.png"}, None, True),
+        ("imageNode", {"imageUrl": "/edited.png"}, None, True),
+        ("uploadNode", {"previewImageUrl": "/cover.png", "videoUrl": "/clip.mp4"}, None, False),
+        ("uploadNode", {"previewImageUrl": "/upload.png"}, "dependency_for", False),
+    ],
+)
+def test_generation_clarification_identifies_image_references(
+    monkeypatch, source_type, source_data, link_type, is_reference
+):
+    plugin = _load_plugin_module()
+    nodes = {
+        "shot": {"type": "videoNode", "data": {"genMode": "textToVideo"}},
+        "source": {"type": source_type, "data": source_data},
+    }
+    edge = {"source": "source", "target": "shot"}
+    if link_type:
+        edge["data"] = {"link_type": link_type}
+    emitted = []
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: (nodes, [edge], None))
+    monkeypatch.setattr(plugin, "_generation_clarification_recommendations", lambda *a, **kw: {})
+    monkeypatch.setattr(plugin, "_request", lambda *_a, **_kw: {"ok": True, "data": [
+        {"id": "text", "supportedModes": ["text_to_video"]}]})
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _p, _c, event: emitted.append(event) or "shown")
+    args = {
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "generation_required_choices": {"video": ["model"]},
+        "generation_video_node_ids": ["shot"],
+    }
+    if is_reference:
+        result = _clarification_handler(plugin)(args)
+        assert result["status"] == "generation_reference_mode_confirmation_required"
+        assert result["reference_image_count"] == 1
+        assert emitted == []
+    else:
+        assert plugin._handle_request_user_clarification(args) == "shown"
+        assert emitted[0]["questions"][0]["required_video_modes"] == ["text_to_video"]
 
 
 def test_generation_clarification_ignores_agent_authored_questions(monkeypatch):
@@ -4676,6 +4985,37 @@ def test_generation_clarification_partial_card_without_model_adds_model_question
     assert captured[0]["recommended_answers"]["image_model"] == {
         "option_ids": ["LingShan-G2"]
     }
+
+
+@pytest.mark.parametrize("question_args", [
+    {"generation_required_choices": {"video": ["generate_audio"]}},
+    {"questions": [{"id": "video_generate_audio"}]},
+])
+def test_storyboard_video_audio_question_without_model_never_shows_empty_card(
+    monkeypatch, question_args,
+):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    captured = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: captured.append(event) or "shown")
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        **question_args,
+    })
+
+    if "generation_required_choices" in question_args:
+        # The server now adds model context for dependent video choices.
+        # Keep this partial card scoped: do not introduce a shared shot duration.
+        assert result == "shown"
+        assert [question["id"] for question in captured[0]["questions"]] == [
+            "video_model", "video_generate_audio",
+        ]
+    else:
+        assert result["status"] == "generation_model_context_required"
+        assert "storyboard images" in result["agent_instruction"]
+        assert captured == []
 
 
 def test_generation_clarification_canonical_questions_offer_recommendation(monkeypatch):
@@ -6324,6 +6664,7 @@ def test_unified_prepare_recovers_plan_identity_and_reserved_text_stage(monkeypa
         "project_id": "project-a",
         "canvas_id": "canvas-a",
         "operation_id": "op-a",
+        "run_after_create": False,
         "plan": {
             "nodes": [
                 {
@@ -6504,6 +6845,7 @@ def test_unified_prepare_accepts_generation_clarification_receipt(monkeypatch):
     }
     args = {
         "project_id": "project-a", "canvas_id": "canvas-a", "operation_id": "op-a",
+        "run_after_create": False,
         "plan": {
             "schema_version": "freezone_workflow_plan.v1",
             "summary": "对白镜头",
@@ -6542,6 +6884,7 @@ def test_unified_prepare_rejects_conflicting_clarification_choices(monkeypatch):
 
     args = {
         "project_id": "project-a", "canvas_id": "canvas-a", "operation_id": "op-a",
+        "run_after_create": False,
         "plan": {"schema_version": "freezone_workflow_plan.v1", "skill": {"id": "video-ad"},
                  "nodes": [{"id": "shot-1", "node_type": "videoNode", "data": {
                      "workflowCatalog": {"recipeId": "shot-video"},
@@ -8511,6 +8854,7 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
 
 def test_freezone_get_workflow_skill_includes_current_user_agent_config(monkeypatch):
     catalog = _load_catalog_module()
+    monkeypatch.setenv("ST_EDITION", "ee")
     monkeypatch.setenv("DRAMACLAW_USER", "alice")
 
     def fake_list_user_agent_config_items(username, kind):
@@ -8620,8 +8964,189 @@ def test_freezone_canvas_command_slim_result_omits_large_details():
         },
     ]
     assert "copy every non-empty displayName" in summary["agent_instruction"]
-    assert "created_node_ids" not in summary
-    assert "command_results" not in summary
+    assert summary["created_node_ids"] == ["node-a", "node-b"]
+    assert summary["command_results"] == []
+
+
+def test_story_image_reference_batch_only_allows_existing_story_clips(monkeypatch):
+    plugin = _load_plugin_module()
+    canvas = {
+        "nodes": [
+            {"id": "story", "type": "groupNode", "data": {
+                "storyGroup": True, "interactiveStoryId": "story-a"}},
+            *[
+                {"id": f"video-{index}", "type": "videoNode", "parentId": "story",
+                 "data": {"storySegmentId": f"segment-{index}"}}
+                for index in range(4)
+            ],
+        ]
+    }
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {"ok": True, "data": canvas})
+    commands = [
+        {"type": "create_node", "client_id": f"image-{index}",
+         "node_type": "imageGenNode", "data": {"prompt": f"故事分镜 {index}"}}
+        for index in range(3)
+    ] + [
+        {"type": "create_edge", "source": f"image-{index}",
+         "target": f"video-{index}", "link_type": "media_input_for"}
+        for index in range(3)
+    ]
+
+    assert plugin._looks_like_handwritten_workflow_batch(commands)
+    assert plugin._is_story_image_reference_batch("project-a", "canvas-a", commands)
+    assert plugin._is_story_image_reference_batch("project-a", "canvas-a", [
+        *commands, {"type": "update_node_data", "node_id": "video-3",
+                    "data": {"durationSec": 8, "continuityMode": "auto"}},
+    ])
+    assert not plugin._is_story_image_reference_batch(
+        "project-a", "canvas-a", [*commands, {"type": "run_workflow", "scope": "canvas"}]
+    )
+    canvas["nodes"][-2]["data"].pop("storySegmentId")
+    assert not plugin._is_story_image_reference_batch("project-a", "canvas-a", commands)
+
+
+def test_story_video_preflight_blocks_unready_image_and_unsupported_duration(monkeypatch):
+    plugin = _load_plugin_module()
+    canvas = {"nodes": [
+        {"id": "video-a", "type": "videoNode", "data": {
+            "storySegmentId": "segment-a", "model": "video-model", "genMode": "imageToVideo",
+            "durationSec": 20, "aspectRatio": "16:9", "quality": "720P",
+            "generateAudio": False, "count": 1}},
+        {"id": "image-a", "type": "imageGenNode", "data": {"imageUrl": ""}},
+        {"id": "video-b", "type": "videoNode", "data": {
+            "storySegmentId": "segment-b", "model": "video-model", "genMode": "textToVideo",
+            "durationSec": 10, "aspectRatio": "16:9", "quality": "720P",
+            "generateAudio": False, "count": 1}},
+    ], "edges": [{"source": "image-a", "target": "video-a",
+                  "data": {"link_type": "media_input_for"}}]}
+
+    def request(_method, path, **_kwargs):
+        if path.endswith("/video/models"):
+            return {"ok": True, "data": [{"id": "video-model", "minDuration": 3,
+                "maxDuration": 15, "supportedModes": ["image_to_video", "text_to_video"],
+                "referenceImageMax": 1, "resolutionOptions": ["720P"],
+                "ratioOptions": ["16:9"]}]}
+        return {"ok": True, "data": canvas}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", [{"type": "run_workflow", "scope": "nodes",
+            "node_ids": ["video-a", "video-b"], "direction": "node"}]
+    )
+    assert result["status"] == "interactive_story_generation_not_ready"
+    assert {item["code"] for item in result["blockers"]} == {
+        "model_capability_unsupported", "story_reference_not_ready"}
+    assert all(item["node_id"] == "video-a" for item in result["blockers"])
+    assert result["ready_node_ids"] == ["video-b"]
+    _assert_real_mcp_output(plugin, "freezone_run_workflow", result)
+    canvas["nodes"][1]["data"] = {"imageUrl": "/static/previous.png", "isGenerating": True}
+    pending = plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", [{"type": "run_workflow", "scope": "nodes",
+            "node_ids": ["video-a"], "direction": "node"}]
+    )
+    assert "story_reference_not_ready" in {item["code"] for item in pending["blockers"]}
+
+
+@pytest.mark.parametrize("image_type,image_data", [
+    ("imageNode", {"imageUrl": "/static/reference.png"}),
+    ("storyboardGenNode", {"imageUrl": "/static/reference.png"}),
+    ("imageGenNode", {"referenceImageUrl": "/static/reference.png"}),
+])
+def test_story_video_preflight_accepts_submittable_image_sources(
+    monkeypatch, image_type, image_data
+):
+    plugin = _load_plugin_module()
+    canvas = {"nodes": [
+        {"id": "video-a", "type": "videoNode", "data": {
+            "storySegmentId": "segment-a", "model": "video-model",
+            "genMode": "imageToVideo", "durationSec": 5,
+            "aspectRatio": "16:9", "quality": "720P", "generateAudio": False,
+            "count": 1}},
+        {"id": "image-a", "type": image_type, "data": image_data},
+    ], "edges": [{"source": "image-a", "target": "video-a",
+                  "data": {"link_type": "media_input_for"}}]}
+
+    def request(_method, path, **_kwargs):
+        if path.endswith("/video/models"):
+            return {"ok": True, "data": [{"id": "video-model", "minDuration": 3,
+                "maxDuration": 15, "supportedModes": ["image_to_video"],
+                "referenceImageMax": 1, "resolutionOptions": ["720P"],
+                "ratioOptions": ["16:9"]}]}
+        return {"ok": True, "data": canvas}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    assert plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", [{"type": "run_node_action", "node_id": "video-a",
+                                   "action": "generate_video"}]
+    ) is None
+
+
+@pytest.mark.parametrize("existing_image", [False, True])
+def test_story_video_preflight_sees_same_batch_reference_edges(monkeypatch, existing_image):
+    plugin = _load_plugin_module()
+    image = {"id": "image-a", "type": "imageGenNode",
+             "data": {"imageUrl": "/static/reference.png"}}
+    canvas = {"nodes": [image] if existing_image else [], "edges": []}
+
+    def request(_method, path, **_kwargs):
+        if path.endswith("/video/models"):
+            return {"ok": True, "data": [{"id": "video-model", "minDuration": 3,
+                "maxDuration": 15, "supportedModes": ["image_to_video"],
+                "referenceImageMax": 1, "resolutionOptions": ["720P"],
+                "ratioOptions": ["16:9"]}]}
+        return {"ok": True, "data": canvas}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    commands = [] if existing_image else [
+        {"type": "create_node", "client_id": "image-a", "node_type": "imageGenNode",
+         "data": image["data"]},
+    ]
+    commands.extend([
+        {"type": "create_node", "client_id": "video-a", "node_type": "videoNode",
+         "data": {"storySegmentId": "segment-a", "model": "video-model",
+                  "genMode": "imageToVideo", "durationSec": 5,
+                  "aspectRatio": "16:9", "quality": "720P", "generateAudio": False,
+                  "count": 1}},
+        {"type": "create_edge", "source": "image-a", "target": "video-a",
+         "link_type": "media_input_for"},
+        {"type": "run_node_action", "node_id": "video-a", "action": "generate_video"},
+    ])
+    assert plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", commands
+    ) is None
+
+
+def test_canvas_command_slim_result_preserves_partial_command_outcomes():
+    plugin = _load_plugin_module()
+    summary = plugin._summarize_canvas_command_result(
+        {"ok": False, "canvas_apply_status": "failed", "code": "canvas_revision_conflict",
+         "current_revision": 8, "created_node_ids": ["image-a"],
+         "command_results": [
+             {"commandIndex": 0, "type": "create_node", "status": "success",
+              "createdNodeId": "image-a"},
+             {"commandIndex": 1, "type": "create_edge", "status": "error",
+              "error": "Conflict"},
+         ], "errors": ["Conflict"]},
+        bridge_key="bridge-a",
+        commands=[{"type": "create_node"}, {"type": "create_edge"}],
+    )
+    assert summary["created_node_ids"] == ["image-a"]
+    assert [item["status"] for item in summary["command_results"]] == ["success", "error"]
+    assert summary["current_revision"] == 8
+    assert summary["code"] == "canvas_revision_conflict"
+    assert "Read the latest canvas" in summary["agent_instruction"]
+
+
+def test_canvas_command_slim_result_keeps_attachment_warning_separate():
+    plugin = _load_plugin_module()
+    summary = plugin._summarize_canvas_command_result(
+        {"ok": True, "canvas_apply_status": "applied", "applied_count": 1,
+         "warnings": ["story frame target changed"], "errors": []},
+        bridge_key="bridge-a",
+        commands=[{"type": "run_workflow"}],
+    )
+    assert summary["warnings"] == ["story frame target changed"]
+    assert "Media generation completed" in summary["agent_instruction"]
 
 
 def test_freezone_canvas_command_slim_result_reports_background_acceptance():
@@ -9551,6 +10076,37 @@ def test_freezone_plugin_register_call_exposes_node_tools_on_hermes_acp():
     assert by_name["freezone_emit_canvas_command"]["toolset"] == "hermes-acp"
     assert len(calls) == len(plugin.TOOLS)
 
+
+def test_freezone_plugin_degrades_when_interactive_story_sibling_is_missing(
+    tmp_path,
+):
+    source = (
+        Path(__file__).resolve().parents[1]
+        / ".hermes"
+        / "plugins"
+        / "freezone"
+        / "__init__.py"
+    )
+    copied = tmp_path / "plugins" / "freezone" / "__init__.py"
+    copied.parent.mkdir(parents=True)
+    shutil.copyfile(source, copied)
+
+    tools_module = types.ModuleType("tools")
+    registry_module = types.ModuleType("tools.registry")
+    registry_module.tool_error = lambda value: value
+    registry_module.tool_result = lambda value: value
+    sys.modules["tools"] = tools_module
+    sys.modules["tools.registry"] = registry_module
+    spec = importlib.util.spec_from_file_location("test_freezone_without_story", copied)
+    assert spec is not None and spec.loader is not None
+    plugin = importlib.util.module_from_spec(spec)
+
+    spec.loader.exec_module(plugin)
+
+    names = {name for name, _schema, _handler in plugin.TOOLS}
+    assert "freezone_create_node" in names
+    assert "dramaclaw_create_interactive_story" not in names
+    assert isinstance(plugin._INTERACTIVE_STORY_IMPORT_ERROR, FileNotFoundError)
 def test_external_skill_import_submits_background_task_without_canvas_write(monkeypatch):
     import base64
     module = _load_plugin_module()
@@ -9728,6 +10284,44 @@ def test_direct_apply_resolves_add_next_client_alias_for_later_commands(monkeypa
         node for node in saved[0]["nodes"] if node["type"] == "imageGenNode"
     )
     assert created["data"] == {"prompt": "水彩", "count": 1}
+
+
+def test_direct_apply_conflict_reports_no_persisted_commands(monkeypatch):
+    plugin = _load_plugin_module()
+    calls = []
+
+    def request(method, _path, **_kwargs):
+        calls.append(method)
+        if method == "GET":
+            return {"ok": True, "data": {"revision": 4, "nodes": [], "edges": []}}
+        return {"ok": False, "code": "canvas_revision_conflict",
+                "current_revision": 5, "error": "Conflict"}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._direct_apply_canvas_commands(
+        "project-a", "canvas-a",
+        [{"type": "create_node", "client_id": "image-a",
+          "node_type": "imageGenNode", "data": {"prompt": "开场"}}],
+        slim_result=False,
+    )
+    assert calls == ["GET", "PUT"]
+    assert result["code"] == "canvas_revision_conflict"
+    assert result["current_revision"] == 5
+    assert result["command_results"][0]["status"] == "not_applied"
+    assert result.get("created_node_ids") is None
+
+
+def test_canvas_http_revision_conflict_preserves_current_revision():
+    plugin = _load_plugin_module()
+    result = plugin._http_error_result(
+        409,
+        json.dumps({"detail": {"code": "canvas_revision_conflict",
+                               "error": "canvas revision conflict",
+                               "current_revision": 5, "base_revision": 4}}),
+        "Conflict",
+    )
+    assert result["code"] == "canvas_revision_conflict"
+    assert result["current_revision"] == 5
 
 
 @pytest.mark.parametrize(
@@ -10275,3 +10869,195 @@ def test_observation_timeout_only_retries_read(monkeypatch):
     result = plugin._handle_observe_workflow_run({"run_id": "run_1"})
     assert result["next_action"] == "observe_same_run"
     assert result["retryable"] is True
+
+
+@pytest.mark.parametrize("name", [
+    "freezone_prepare_workflow", "freezone_prepare_workflow_draft", "freezone_prepare_workflow_plan_draft",
+])
+@pytest.mark.parametrize("policy", [None, True, False])
+def test_mcp_prepare_preserves_missing_execution_policy(monkeypatch, name, policy):
+    """A missing field must reach the API intact for story-target classification."""
+    import asyncio
+    from novelvideo.chat import dramaclaw_mcp
+
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "tool_result", json.dumps)
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    plan = {"schema_version": "freezone_workflow_plan.v1", "skill": {"id": "video-ad", "version": "1"},
+            "nodes": [{"id": "brief", "node_type": "textAnnotationNode", "stage": "input",
+                       "data": {"content": "Brief"}}], "edges": []}
+    compiled = {"ok": True, "skill_id": "video-ad", "plan": plan}
+    monkeypatch.setattr(plugin, "validate_agent_workflow_plan", lambda *_a, **_kw: compiled)
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda *_a, **_kw: compiled)
+    monkeypatch.setattr(plugin, "_workflow_runtime_preflight", lambda *_a, **_kw: {"blockers": []})
+    monkeypatch.setattr(plugin, "_workflow_plan_operation_admission_error", lambda *_a: None)
+    captured = []
+
+    def api_request(method, path, *, body=None, **kwargs):
+        if method == "GET" and "/agent-product-operations/" in path:
+            return {"ok": True, "data": {"product_kind": "workflow_result",
+                "status": "reserved", "canvas_id": "canvas-a", "artifact_id": "video-ad@1",
+                "metadata": {"skill_id": "video-ad", "skill_version": "1"}}}
+        assert method == "POST", path
+        captured.append(body)
+        return {"ok": False, "code": "policy_probe", "error": "Stopped at API boundary"}
+
+    monkeypatch.setattr(plugin, "_request", api_request)
+    arguments = {"operation_id": "test-operation"}
+    if name == "freezone_prepare_workflow_draft":
+        arguments["intent"] = {"skill_id": "video-ad", "user_goal": "Test"}
+    else:
+        arguments["plan"] = plan
+    if policy is not None:
+        arguments["run_after_create"] = policy
+    result = asyncio.run(dramaclaw_mcp.call_tool(
+        name, arguments, tool_index=dramaclaw_mcp._tool_index(plugin),
+    ))
+    assert result.structuredContent["code"] == "policy_probe", result.structuredContent
+    assert len(captured) == 1
+    assert ("run_after_create" in captured[0]) is (policy is not None)
+    if policy is not None:
+        assert captured[0]["run_after_create"] is policy
+
+
+# ---------------------------------------------------------------------------
+# Compose workspace tools: the node's OpenFilm film through Studio.
+# ---------------------------------------------------------------------------
+
+
+def _as_result(value):
+    """The registry stub returns the dict itself; Hermes gets it serialised."""
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def _studio_plugin(monkeypatch):
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
+    monkeypatch.setenv("DRAMACLAW_API_URL", "http://api.test")
+    monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN", "token")
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "proj-1")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-1")
+    plugin = _load_plugin_module()
+    requests = []
+
+    def fake_request(method, path, *, query=None, body=None):
+        requests.append((method, path, body))
+        return {"status_code": 200, "ok": True, "status": "studio_film", "rev": "r1", "film": {"tracks": []}}
+
+    monkeypatch.setattr(plugin, "_request", fake_request)
+    return plugin, requests
+
+
+def test_studio_tools_are_published_with_strict_schemas(monkeypatch):
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
+    plugin = _load_plugin_module()
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+    for name in (
+        "freezone_studio_get_film",
+        "freezone_studio_edit_film",
+        "freezone_studio_import_media",
+        "freezone_studio_export_film",
+    ):
+        assert name in schemas, name
+        assert schemas[name]["parameters"]["additionalProperties"] is False
+        assert "node_id" in schemas[name]["parameters"]["required"]
+        assert schemas[name]["output_schema"]["x-dramaclaw-tool"] == name
+    assert schemas["freezone_studio_edit_film"]["parameters"]["required"] == [
+        "node_id",
+        "base_rev",
+        "ops",
+    ]
+    # none of them is a bridge-backed canvas write
+    assert not ({name for name in schemas if name.startswith("freezone_studio_")} & set(plugin._CANVAS_RESULT_TOOLS))
+
+
+def test_studio_tools_are_not_published_when_feature_is_disabled(monkeypatch):
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", raising=False)
+    plugin = _load_plugin_module()
+    assert not {
+        name
+        for name, _schema, _handler in plugin.TOOLS
+        if name.startswith("freezone_studio_")
+    }
+
+
+def test_studio_get_film_reads_the_bound_canvas_scope(monkeypatch):
+    plugin, requests = _studio_plugin(monkeypatch)
+    handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_get_film"]
+
+    result = _as_result(handler({"node_id": "node-1"}))
+
+    assert requests == [
+        ("GET", "/projects/proj-1/freezone/canvases/canvas-1/compose/node-1/studio/film", None)
+    ]
+    assert result["ok"] is True and result["rev"] == "r1" and result["node_id"] == "node-1"
+    assert "status_code" not in result
+
+
+def test_studio_tools_refuse_a_canvas_outside_the_bound_scope(monkeypatch):
+    plugin, requests = _studio_plugin(monkeypatch)
+    handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_get_film"]
+
+    result = _as_result(handler({"node_id": "node-1", "canvas_id": "other"}))
+
+    assert result["ok"] is False and requests == []
+    assert "canvas-1" in json.dumps(result)
+
+
+def test_studio_edit_requires_a_base_rev_and_forwards_ops(monkeypatch):
+    plugin, requests = _studio_plugin(monkeypatch)
+    handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_edit_film"]
+
+    missing = _as_result(handler({"node_id": "node-1", "ops": [{"op": "remove", "clip": "c"}]}))
+    assert missing["ok"] is False and missing["status"] == "invalid_arguments"
+    assert requests == []
+
+    ops = [{"op": "move", "clip": "clip-1", "at": 2.5}]
+    _as_result(handler({"node_id": "node-1", "base_rev": "r1", "ops": ops}))
+    assert requests == [
+        (
+            "POST",
+            "/projects/proj-1/freezone/canvases/canvas-1/compose/node-1/studio/edit",
+            {"base_rev": "r1", "ops": ops},
+        )
+    ]
+
+
+def test_studio_import_and_export_bodies(monkeypatch):
+    plugin, requests = _studio_plugin(monkeypatch)
+    handlers = dict((name, handler) for name, _schema, handler in plugin.TOOLS)
+
+    _as_result(handlers["freezone_studio_import_media"]({"node_id": "node-1", "source_node_id": "video-a"}))
+    _as_result(handlers["freezone_studio_export_film"]({"node_id": "node-1", "fps": 24}))
+    bad = _as_result(handlers["freezone_studio_export_film"]({"node_id": "node-1", "fps": 500}))
+    none = _as_result(handlers["freezone_studio_import_media"]({"node_id": "node-1"}))
+
+    assert requests == [
+        (
+            "POST",
+            "/projects/proj-1/freezone/canvases/canvas-1/compose/node-1/studio/media",
+            {"source_url": None, "source_node_id": "video-a", "label": ""},
+        ),
+        (
+            "POST",
+            "/projects/proj-1/freezone/canvases/canvas-1/compose/node-1/studio/export",
+            {"title": "", "fps": 24},
+        ),
+    ]
+    assert bad["status"] == "invalid_arguments" and none["status"] == "invalid_arguments"
+
+
+def test_studio_tools_explain_a_missing_film(monkeypatch):
+    plugin, _requests = _studio_plugin(monkeypatch)
+    handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_get_film"]
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_a, **_k: {"ok": False, "status": "failed", "status_code": 404, "error": "no film"},
+    )
+
+    result = _as_result(handler({"node_id": "node-1"}))
+
+    assert result["ok"] is False
+    assert "compose workspace" in result["agent_instruction"]

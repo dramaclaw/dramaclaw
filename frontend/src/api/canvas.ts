@@ -50,7 +50,9 @@ export type CanvasSaveSource =
   | "restore"
   | "from_preset"
   | "projection_remove"
-  | "import";
+  | "import"
+  | "agent_create"
+  | "agent_patch";
 
 export type CanvasBackupStatus = "disabled" | "synced" | "pending" | "failed";
 

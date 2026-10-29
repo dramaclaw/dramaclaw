@@ -17,6 +17,7 @@ import { completeDerivedMedia } from './derivedMedia';
 import type { CanvasNode, CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import {
+  fetchFreezoneImageToBlockoutResult,
   fetchFreezoneJobResult,
   fetchFreezoneReversePromptResult,
   fetchFreezoneStoryScriptResult,
@@ -39,10 +40,18 @@ import {
 import {
   shouldWriteGenerationError,
 } from '@/features/canvas/application/generationTaskArbitration';
+import {
+  holdUnfetchedBlockout,
+  landBlockoutResult,
+  reportBlockoutFailure,
+} from '@/features/previz/blockoutLanding';
 import { sessionOwnsGenerationTask } from './generationTaskDescriptor';
 import { resumePersistedHtmlGeneration } from './workflowHtmlRuntime';
 
-export { generationTaskDescriptor } from './generationTaskDescriptor';
+export {
+  generationTaskDescriptor,
+  sessionOwnedGenerationTaskDescriptor,
+} from './generationTaskDescriptor';
 export type { GenerationTaskDescriptor } from './generationTaskDescriptor';
 
 type FreezoneTaskType = FreezoneJobRef['task_type'];
@@ -161,6 +170,7 @@ type ResumeKind =
   | 'script'
   | 'reverse-prompt'
   | 'text-generate'
+  | 'blockout'
   | 'html';
 
 function resumeKindForNode(type: CanvasNodeType, taskType: FreezoneTaskType): ResumeKind | null {
@@ -184,6 +194,8 @@ function resumeKindForNode(type: CanvasNodeType, taskType: FreezoneTaskType): Re
       return 'script';
     case CANVAS_NODE_TYPES.textAnnotation:
       return taskType === 'freezone_text_generate' ? 'text-generate' : 'reverse-prompt';
+    case CANVAS_NODE_TYPES.previz:
+      return 'blockout';
     case CANVAS_NODE_TYPES.htmlArtifact:
       return taskType === 'freezone_text_generate' ? 'html' : null;
     default:
@@ -242,13 +254,22 @@ export const CLEARED_GENERATION_TASK_FIELDS = {
   generationTaskJobId: null,
 } as const;
 
+/** 白模落地要读节点上的最新数据（导入模式、编辑器关着时的场景），这一步之前的 patch 不够用。 */
+interface ResumeNodeContext {
+  nodeId: string;
+  readNodeData: () => Record<string, unknown> | null | undefined;
+  /** 节点仍由这个任务持有（存在、在生成中、句柄未被替换）。取结果要等，等完得再问一次。 */
+  stillOwnsTask: () => boolean;
+}
+
 async function buildSuccessPatch(
   kind: ResumeKind,
   completed: TaskState,
   taskType: FreezoneTaskType,
   jobId: string,
   projectId: string,
-): Promise<Record<string, unknown>> {
+  context: ResumeNodeContext,
+): Promise<Record<string, unknown> | null> {
   switch (kind) {
     case 'derived-media': return {};
     case 'image': {
@@ -339,12 +360,45 @@ async function buildSuccessPatch(
         model: result.model,
       };
     }
+    case 'blockout': {
+      let body: unknown;
+      try {
+        body = await fetchFreezoneImageToBlockoutResult(projectId, jobId);
+      } catch (error) {
+        if (!context.stillOwnsTask()) return null;
+        // 到这里任务已经完成、积分已经扣了，失败的只是取结果这一趟。走通用错误分支会把
+        // 节点清成什么都没发生，花了钱的结果就丢了；留着任务号让人按号再取。
+        return {
+          ...CLEARED_GENERATION_TASK_FIELDS,
+          blockoutImportMode: null,
+          blockoutHeld: holdUnfetchedBlockout(jobId, error),
+        };
+      }
+      // 落地不只是算补丁：编辑器开着时它当场改 store、弹提示，事后拦不回来。任务
+      // 句柄在取结果期间被清掉或换成别的任务，这份结果就不该再进场景。
+      if (!context.stillOwnsTask()) return null;
+      // 节点数据也要等结果回来再读：等的这段时间里用户可能改了场景并关掉编辑器，
+      // 拿等之前读的那份去落地，会把刚存进节点的修改盖掉。
+      const nodeData = context.readNodeData();
+      if (!nodeData) return null;
+      const mode = nodeData.blockoutImportMode === 'append' ? 'append' : 'replace';
+      return {
+        ...CLEARED_GENERATION_TASK_FIELDS,
+        blockoutImportMode: null,
+        ...landBlockoutResult({ nodeId: context.nodeId, nodeData, jobId, body, mode }),
+      };
+    }
     default:
       return { ...CLEARED_GENERATION_TASK_FIELDS };
   }
 }
 
 function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unknown> {
+  if (kind === 'blockout') {
+    // 预演台节点卡片上没有错误位，取消/失败都用 toast 说；生成态照常清掉。
+    reportBlockoutFailure(error);
+    return { ...CLEARED_GENERATION_TASK_FIELDS, blockoutImportMode: null };
+  }
   if (isTaskCancelledError(error)) {
     // 用户主动终止过的任务恢复时只清理生成态，不当错误展示。
     return { ...CLEARED_GENERATION_TASK_FIELDS };
@@ -409,9 +463,12 @@ export async function resumeNodeGeneration(params: {
   }
 
   const readLatestNodeData = () =>
-    getNodeData?.(node.id)
-    ?? (node.data as Record<string, unknown>);
-  const stillOwnsTask = () => readLatestNodeData().generationTaskKey === taskKey;
+    getNodeData ? getNodeData(node.id) : data;
+  // 节点被删、被新任务接管或已落过结果（isGenerating 已清）时，这一轮都不该再写。
+  const stillOwnsTask = () => {
+    const latest = readLatestNodeData();
+    return latest?.isGenerating === true && latest.generationTaskKey === taskKey;
+  };
 
   // Quick pre-check: if the task no longer exists server-side (expired/cleaned),
   // avoid hanging on the full poll budget — clear the stuck 生成中 state now.
@@ -453,8 +510,12 @@ export async function resumeNodeGeneration(params: {
       });
       return;
     }
-    const patch = await buildSuccessPatch(kind, completed, taskType, jobId, projectId);
-    if (!stillOwnsTask()) return;
+    const patch = await buildSuccessPatch(kind, completed, taskType, jobId, projectId, {
+      nodeId: node.id,
+      readNodeData: readLatestNodeData,
+      stillOwnsTask,
+    });
+    if (!patch || !stillOwnsTask()) return;
     updateNodeData(node.id, patch);
   } catch (error) {
     console.warn('[resume-generation] task resume failed', { nodeId: node.id, taskKey, error });
@@ -465,7 +526,7 @@ export async function resumeNodeGeneration(params: {
     }
     if (!stillOwnsTask()) return;
     if (kind === 'image' || kind === 'video' || kind === 'video-compose') {
-      const latestNodeData = readLatestNodeData();
+      const latestNodeData = readLatestNodeData()!;
       if (!shouldWriteGenerationError({ nodeData: latestNodeData, taskKey, error })) {
         updateNodeData(node.id, { ...CLEARED_GENERATION_TASK_FIELDS });
         return;
@@ -477,9 +538,11 @@ export async function resumeNodeGeneration(params: {
 }
 
 /**
- * Whether a node restored from storage needs {@link resumeNodeGeneration}. Returns
- * false for tasks already being awaited by an in-session flow (see
- * {@link sessionOwnedTaskKeys}).
+ * Whether a node restored from storage needs {@link resumeNodeGeneration}.
+ *
+ * 本会话提交的任务同样需要恢复：SPA 导航后原等待方可能已经不在了，而并发 wait
+ * 由 task API 合并成同一个 promise。只有提交方明确接管并自行落盘的流程（HTML）
+ * 会通过 {@link sessionOwnedGenerationTaskDescriptor} 跳过扫描。
  */
 export function nodeNeedsGenerationResume(node: CanvasNode): boolean {
   const data = node.data as Record<string, unknown>;

@@ -1,0 +1,600 @@
+import { create } from 'zustand';
+import { Compiler, Story } from 'inkjs/full';
+import type { CompiledStory, StoryChoiceInteraction, StoryStateChange, StoryEnding } from '@/features/canvas/story/storyTypes';
+import { readStorySave, readExplorationSave, writeStorySave, clearStorySave, storySaveFingerprint } from '@/features/canvas/story/storySave';
+import { recordChoice, recordEnding, clearStoryStats, statsKeyFromSaveKey } from '@/features/canvas/story/storyStats';
+import { emptyExploration, previousChoiceCheckpoint, decisionsForCheckpoint, type ExplorationNode, type StoryExploration, type StoryCheckpoint } from '@/features/canvas/story/storyExploration';
+
+type InkStory = ReturnType<Compiler['Compile']>;
+
+/** 'loading' 当前不可达（enterPlay 是同步编译）；预留给将来 inkjs 懒加载/异步编译时使用。 */
+export type StoryPhase = 'idle' | 'loading' | 'playing' | 'ended' | 'error';
+
+export interface StoryChoiceView {
+  index: number;
+  text: string;
+  /** 该选择确认后短暂展示的剧情反馈；为空时直接推进。 */
+  feedbackText?: string;
+  /** 仅在有剧情反馈的关键选择中展示的语义状态箭头。 */
+  stateChanges?: StoryStateChange[];
+  /** 该选择在视频中的呈现与锚点。 */
+  interaction?: StoryChoiceInteraction;
+}
+
+interface StoryRuntimeState {
+  explorationNodes: ExplorationNode[];
+  exploration: StoryExploration;
+  /** Capture an arrival before any outgoing choice effects execute. */
+  captureCheckpoint: (choiceText?: string) => void;
+  completeCurrentNode: () => void;
+  rewindToNode: (nodeId: string) => boolean;
+  restoreCheckpoint: (checkpoint: StoryCheckpoint) => boolean;
+  rewindToPreviousChoice: () => boolean;
+  clearProgress: () => void;
+  mode: 'edit' | 'play';
+  /** Embedded players own their UI; suppress the canvas overlay. */
+  embedded: boolean;
+  /** 娱乐模式从起点完整试玩；live 是创作者从任意节点开始的无存档调试。 */
+  playKind: 'entertainment' | 'live';
+  story: InkStory | null;
+  clipByNodeId: Record<string, string>;
+  /** 选择源节点 id → 独立互动循环片段 URL。 */
+  choiceLoopClipByNodeId: Record<string, string>;
+  /** 源节点 id → 选项窗口秒数 / 默认选项 index(限时选项)。 */
+  choiceTimeByNodeId: Record<string, number>;
+  defaultChoiceIndexByNodeId: Record<string, number>;
+  /** 叶子结局节点 id → 结局页标题/标。 */
+  endingByNodeId: Record<string, StoryEnding>;
+  /** 节点 id → 占位卡文案(无视频时占位试玩用)。 */
+  placeholderByNodeId: Record<string, { text: string; label?: string }>;
+  /** Ink 选项 tag id → 玩家选择后展示的短暂剧情反馈。 */
+  choiceFeedbackById: Record<string, string>;
+  /** Ink 选项 tag id → 玩家看到的语义状态箭头。 */
+  choiceStateChangesById: Record<string, StoryStateChange[]>;
+  /** Ink 选项 tag id → 互动呈现规格。 */
+  choiceInteractionById: Record<string, StoryChoiceInteraction>;
+  /** 当前选择点/片段所属的节点 id(`# clip:` 解析所得);null = 无 tag。播放器据此判定「换了一跳」以重置选择点状态机。 */
+  currentNodeId: string | null;
+  currentClipUrl: string | null;
+  currentChoices: StoryChoiceView[];
+  /** 当前各选项的后继片段 URL(前瞻所得),供播放器针对性预取「下一跳」分支。 */
+  nextClipUrls: string[];
+  /** 当前选项窗口秒数(null = 不限时);超时自动选的默认选项 index(null = 无默认)。 */
+  currentChoiceTimeSec: number | null;
+  currentDefaultChoiceIndex: number | null;
+  /** 当前结局(仅 ended 相位的叶子节点);null = 非结局。 */
+  currentEnding: StoryEnding | null;
+  /** 当前占位卡(仅无视频且有选项的 playing 节点);null = 有视频或非占位。 */
+  currentPlaceholder: { text: string; label?: string } | null;
+  phase: StoryPhase;
+  error: string | null;
+  /** 本次试玩的存档 key(localStorage),null = 不存档。 */
+  saveKey: string | null;
+  /** 编译后的 Ink 指纹；存档中的选项标签和执行指针必须属于同一故事版本。 */
+  saveFingerprint: string | null;
+  /** 本次试玩的统计 key(localStorage,由 saveKey 派生),null = 不统计。 */
+  statsKey: string | null;
+  /** 本次试玩的故事组 id;播放器据此从画布派生剧情树,叠加统计画「路径回顾图」。null = 无(如导入的独立故事)。 */
+  groupId: string | null;
+  /** 进入时检测到存档,等玩家决定「继续 / 从头」;true 期间不自动 advance。 */
+  resumeAvailable: boolean;
+
+  enterPlay: (compiled: CompiledStory, opts?: {
+    /** Precompiled Ink JSON for the standalone player; uses the same runtime transitions. */
+    storyJson?: string;
+    embedded?: boolean;
+    saveKey?: string;
+    groupId?: string;
+    playKind?: 'entertainment' | 'live';
+  }) => void;
+  /** 续玩:把存档灌回 story 并定位。返回 true=成功;false=存档损坏,已清档并回到起点。 */
+  resumeSaved: () => boolean;
+  /** 忽略存档,从头开始并覆盖存档为新起点。 */
+  startFresh: () => void;
+  choose: (index: number) => void;
+  /** 当前片段播放结束后执行系统自动跳转；没有待执行内容时无操作。 */
+  advanceAutomatic: () => void;
+  restart: () => void;
+  exitPlay: () => void;
+}
+
+const CLIP_TAG_PREFIX = 'clip:';
+const CHOICE_FEEDBACK_TAG_PREFIX = 'choice-feedback:';
+const CHOICE_INTERACTION_TAG_PREFIX = 'choice-interaction:';
+
+/** 从当前 currentTags 解析 `# clip:` 携带的节点 id(无则 null)。 */
+function nodeIdFromTags(story: InkStory): string | null {
+  const tag = story.currentTags?.find((it) => it.startsWith(CLIP_TAG_PREFIX));
+  return tag ? tag.slice(CLIP_TAG_PREFIX.length).trim() : null;
+}
+
+/** 从当前 currentTags 解析 `# clip:` 对应的视频 URL(无则 null)。 */
+function clipUrlFromTags(story: InkStory, clipByNodeId: Record<string, string>): string | null {
+  const nodeId = nodeIdFromTags(story);
+  return nodeId ? (clipByNodeId[nodeId] ?? null) : null;
+}
+
+/** Ink 选项 tag 使用编译期 id，取回该结果的剧情反馈与语义状态变化。 */
+function outcomeFromChoiceTags(
+  choice: { tags?: string[] | null },
+  choiceFeedbackById: Record<string, string>,
+  choiceStateChangesById: Record<string, StoryStateChange[]>,
+): Pick<StoryChoiceView, 'feedbackText' | 'stateChanges'> {
+  const tag = choice.tags?.find((item) => item.startsWith(CHOICE_FEEDBACK_TAG_PREFIX));
+  const feedbackId = tag?.slice(CHOICE_FEEDBACK_TAG_PREFIX.length).trim();
+  const text = feedbackId ? choiceFeedbackById[feedbackId]?.trim() : '';
+  const stateChanges = feedbackId ? choiceStateChangesById[feedbackId] : undefined;
+  return {
+    ...(text ? { feedbackText: text } : {}),
+    ...(stateChanges?.length ? { stateChanges } : {}),
+  };
+}
+
+function interactionFromChoiceTags(
+  choice: { tags?: string[] | null },
+  choiceInteractionById: Record<string, StoryChoiceInteraction>,
+): StoryChoiceInteraction | undefined {
+  const tag = choice.tags?.find((item) => item.startsWith(CHOICE_INTERACTION_TAG_PREFIX));
+  const interactionId = tag?.slice(CHOICE_INTERACTION_TAG_PREFIX.length).trim();
+  return interactionId ? choiceInteractionById[interactionId] : undefined;
+}
+
+/**
+ * 前瞻:快照当前运行态,对每个 currentChoice 试走一步读出其后继 `# clip:` 的视频 URL,再恢复。
+ * 用于「针对性下一跳预取」——只预取玩家马上要二选一的那几个后继片段,而非全量预加载。
+ * 用存档同款 toJson/LoadJson 做快照,保证探测后状态原样恢复。
+ */
+function peekNextClipUrls(story: InkStory, clipByNodeId: Record<string, string>): string[] {
+  const choices = story.currentChoices;
+  if (choices.length === 0 && !story.canContinue) return [];
+  const snapshot = story.state.toJson();
+  const urls: string[] = [];
+  try {
+    if (choices.length === 0) {
+      if (story.canContinue) story.Continue();
+      const url = clipUrlFromTags(story, clipByNodeId);
+      if (url) urls.push(url);
+    } else {
+      for (const choice of choices) {
+        story.ChooseChoiceIndex(choice.index);
+        if (story.canContinue) story.Continue();
+        const url = clipUrlFromTags(story, clipByNodeId);
+        if (url) urls.push(url);
+        story.state.LoadJson(snapshot);
+      }
+    }
+  } finally {
+    story.state.LoadJson(snapshot);
+  }
+  return Array.from(new Set(urls));
+}
+
+/** 推进 story 到下一段内容，解析 `# clip:` tag 得到视频 URL、当前选项与变量值，返回新状态片段。 */
+function advanceToClip(
+  story: InkStory,
+  clipByNodeId: Record<string, string>,
+  choiceTimeByNodeId: Record<string, number>,
+  defaultChoiceIndexByNodeId: Record<string, number>,
+  endingByNodeId: Record<string, StoryEnding>,
+  placeholderByNodeId: Record<string, { text: string; label?: string }>,
+  choiceFeedbackById: Record<string, string>,
+  choiceStateChangesById: Record<string, StoryStateChange[]>,
+  choiceInteractionById: Record<string, StoryChoiceInteraction>,
+  continueStory = true,
+): {
+  currentNodeId: string | null;
+  currentClipUrl: string | null;
+  currentChoices: StoryChoiceView[];
+  nextClipUrls: string[];
+  currentChoiceTimeSec: number | null;
+  currentDefaultChoiceIndex: number | null;
+  currentEnding: StoryEnding | null;
+  currentPlaceholder: { text: string; label?: string } | null;
+  phase: StoryPhase;
+} {
+  if (continueStory && story.canContinue) {
+    story.Continue();
+  }
+  const tag = story.currentTags?.find((it) => it.startsWith(CLIP_TAG_PREFIX));
+  const nodeId = tag ? tag.slice(CLIP_TAG_PREFIX.length).trim() : null;
+  const currentClipUrl = nodeId ? (clipByNodeId[nodeId] ?? null) : null;
+  const currentChoices = story.currentChoices.map((c) => ({
+    index: c.index,
+    text: c.text,
+    ...outcomeFromChoiceTags(c, choiceFeedbackById, choiceStateChangesById),
+    interaction: interactionFromChoiceTags(c, choiceInteractionById),
+  }));
+  const phase: StoryPhase = currentChoices.length > 0 || story.canContinue ? 'playing' : 'ended';
+  // 限时只在「有选项」时有意义;无选项(结局)不计时。
+  const limit = nodeId ? choiceTimeByNodeId[nodeId] : undefined;
+  const currentChoiceTimeSec =
+    currentChoices.length > 0 && typeof limit === 'number' && limit > 0 ? limit : null;
+  // New compilations identify defaults on the surviving Ink choices. Keep the
+  // positional fallback only for older published stories without these tags.
+  const hasDefaultTags = story.currentChoices.some(c => c.tags?.some(tag => tag.startsWith('choice-default:')));
+  const defaultIdx = hasDefaultTags
+    ? story.currentChoices.find(c => c.tags?.includes('choice-default: true'))?.index
+    : nodeId ? defaultChoiceIndexByNodeId[nodeId] : undefined;
+  const currentDefaultChoiceIndex =
+    currentChoices.length > 0 && typeof defaultIdx === 'number' ? defaultIdx : null;
+  // 结局只在叶子(ended)有意义。
+  const currentEnding = phase === 'ended' && nodeId ? (endingByNodeId[nodeId] ?? null) : null;
+  // 无视频片段保留占位正文，包括结局；由播放器决定展示位置。
+  const currentPlaceholder =
+    !currentClipUrl
+      ? (nodeId ? (placeholderByNodeId[nodeId] ?? { text: '' }) : { text: '' })
+      : null;
+  return {
+    currentNodeId: nodeId,
+    currentClipUrl,
+    currentChoices,
+    nextClipUrls: peekNextClipUrls(story, clipByNodeId),
+    currentChoiceTimeSec,
+    currentDefaultChoiceIndex,
+    currentEnding,
+    currentPlaceholder,
+    phase,
+  };
+}
+
+/** 存档当前 inkjs 运行态(仅当有 saveKey 时)。 */
+function persist(saveKey: string | null, story: InkStory, fingerprint: string | null, exploration: StoryExploration): void {
+  if (saveKey && fingerprint) writeStorySave(saveKey, story.state.toJson(), fingerprint, exploration);
+}
+
+const INITIAL_RUNTIME = {
+  explorationNodes: [] as ExplorationNode[],
+  exploration: emptyExploration(),
+  embedded: false,
+  playKind: 'entertainment' as const,
+  story: null as InkStory | null,
+  clipByNodeId: {} as Record<string, string>,
+  choiceLoopClipByNodeId: {} as Record<string, string>,
+  choiceTimeByNodeId: {} as Record<string, number>,
+  defaultChoiceIndexByNodeId: {} as Record<string, number>,
+  endingByNodeId: {} as Record<string, StoryEnding>,
+  placeholderByNodeId: {} as Record<string, { text: string; label?: string }>,
+  choiceFeedbackById: {} as Record<string, string>,
+  choiceStateChangesById: {} as Record<string, StoryStateChange[]>,
+  choiceInteractionById: {} as Record<string, StoryChoiceInteraction>,
+  currentNodeId: null as string | null,
+  currentClipUrl: null as string | null,
+  currentChoices: [] as StoryChoiceView[],
+  nextClipUrls: [] as string[],
+  currentChoiceTimeSec: null as number | null,
+  currentDefaultChoiceIndex: null as number | null,
+  currentEnding: null as StoryEnding | null,
+  currentPlaceholder: null as { text: string; label?: string } | null,
+  phase: 'idle' as StoryPhase,
+  error: null as string | null,
+  saveKey: null as string | null,
+  saveFingerprint: null as string | null,
+  statsKey: null as string | null,
+  groupId: null as string | null,
+  resumeAvailable: false,
+};
+
+export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
+  mode: 'edit',
+  ...INITIAL_RUNTIME,
+
+  captureCheckpoint: (choiceText) => {
+    const { story, currentNodeId, exploration, saveKey, saveFingerprint } = get();
+    if (!story || !currentNodeId) return;
+    const route = [...exploration.route, { nodeId: currentNodeId, visit: exploration.nextVisit, ...(choiceText ? { choiceText } : {}) }];
+    const next = {
+      ...exploration, route, nextVisit: exploration.nextVisit + 1,
+      checkpoints: { ...exploration.checkpoints, [currentNodeId]: {
+        inkState: story.state.toJson(), route, completed: false,
+        decisions: exploration.decisions.map(({ inkState, route, completed }) => ({ inkState, route, completed })),
+      } },
+    };
+    set({ exploration: next });
+    persist(saveKey, story, saveFingerprint, next);
+  },
+
+  completeCurrentNode: () => {
+    const { story, currentNodeId, exploration, saveKey, saveFingerprint, phase } = get();
+    const checkpoint = currentNodeId ? exploration.checkpoints[currentNodeId] : undefined;
+    if (!story || !currentNodeId || !checkpoint || checkpoint.completed) return;
+    const isEnding = phase === 'ended';
+    const next = {
+      ...exploration,
+      completedNodeIds: [...new Set([...exploration.completedNodeIds, currentNodeId])],
+      reachedEndingIds: isEnding ? [...new Set([...exploration.reachedEndingIds, currentNodeId])] : exploration.reachedEndingIds,
+      totalRuns: exploration.totalRuns + (isEnding ? 1 : 0),
+      checkpoints: { ...exploration.checkpoints, [currentNodeId]: { ...checkpoint, completed: true } },
+    };
+    set({ exploration: next });
+    persist(saveKey, story, saveFingerprint, next);
+  },
+
+  rewindToNode: (nodeId) => {
+    const checkpoint = get().exploration.checkpoints[nodeId];
+    return checkpoint ? get().restoreCheckpoint(checkpoint) : false;
+  },
+
+  rewindToPreviousChoice: () => {
+    const checkpoint = previousChoiceCheckpoint(get().exploration);
+    return checkpoint ? get().restoreCheckpoint(checkpoint) : false;
+  },
+
+  restoreCheckpoint: (checkpoint) => {
+    const state = get();
+    const { story, exploration } = state;
+    const nodeId = checkpoint.route[checkpoint.route.length - 1]?.nodeId;
+    if (!story || !nodeId || !exploration.completedNodeIds.includes(nodeId)) return false;
+    const previous = story.state.toJson();
+    try {
+      story.state.LoadJson(checkpoint.inkState);
+      const next = advanceToClip(story, state.clipByNodeId, state.choiceTimeByNodeId, state.defaultChoiceIndexByNodeId,
+        state.endingByNodeId, state.placeholderByNodeId, state.choiceFeedbackById, state.choiceStateChangesById,
+        state.choiceInteractionById, false);
+      if (next.currentNodeId !== nodeId) throw new Error('checkpoint mismatch');
+      const restored = {
+        ...exploration, route: checkpoint.route,
+        checkpoints: { ...exploration.checkpoints, [nodeId]: checkpoint },
+        decisions: decisionsForCheckpoint(checkpoint, exploration),
+      };
+      set({ ...next, resumeAvailable: false, exploration: restored });
+      persist(state.saveKey, story, state.saveFingerprint, restored);
+      return true;
+    } catch {
+      story.state.LoadJson(previous);
+      return false;
+    }
+  },
+
+  clearProgress: () => {
+    if (get().statsKey) clearStoryStats(get().statsKey!);
+    set({ exploration: emptyExploration() });
+    get().startFresh();
+  },
+
+  enterPlay: (compiled, opts) => {
+    try {
+      const story = opts?.storyJson ? new Story(opts.storyJson) : new Compiler(compiled.ink).Compile();
+      const saveKey = opts?.saveKey ?? null;
+      const saveFingerprint = saveKey ? storySaveFingerprint(story.ToJson() ?? compiled.ink) : null;
+      const statsKey = statsKeyFromSaveKey(saveKey);
+      const groupId = opts?.groupId ?? null;
+      const playKind = opts?.playKind ?? 'entertainment';
+      const explorationNodes = compiled.explorationNodes ?? Object.keys(compiled.clipByNodeId).map((id) => ({
+        id, label: compiled.placeholderByNodeId[id]?.label ?? '', successors: [], isEnding: !!compiled.endingByNodeId[id],
+      }));
+      const exploration = saveKey && saveFingerprint
+        ? readExplorationSave(saveKey, saveFingerprint, new Set(explorationNodes.map((node) => node.id)))
+        : emptyExploration();
+      const tables = {
+        explorationNodes, exploration,
+        clipByNodeId: compiled.clipByNodeId,
+        choiceLoopClipByNodeId: compiled.choiceLoopClipByNodeId,
+        choiceTimeByNodeId: compiled.choiceTimeByNodeId,
+        defaultChoiceIndexByNodeId: compiled.defaultChoiceIndexByNodeId,
+        endingByNodeId: compiled.endingByNodeId,
+        placeholderByNodeId: compiled.placeholderByNodeId,
+        choiceFeedbackById: compiled.choiceFeedbackById,
+        choiceStateChangesById: compiled.choiceStateChangesById,
+        choiceInteractionById: compiled.choiceInteractionById,
+      };
+      // 有存档:暂不 advance,挂起等玩家选「继续 / 从头」。
+      if (saveKey && readStorySave(saveKey) !== null) {
+        set({
+          mode: 'play',
+          embedded: opts?.embedded ?? false,
+          playKind,
+          story,
+          ...tables,
+          error: null,
+          currentNodeId: null,
+          currentClipUrl: null,
+          currentChoices: [],
+          nextClipUrls: [],
+          currentChoiceTimeSec: null,
+          currentDefaultChoiceIndex: null,
+          currentEnding: null,
+          currentPlaceholder: null,
+          phase: 'idle',
+          saveKey,
+          saveFingerprint,
+          statsKey,
+          groupId,
+          resumeAvailable: true,
+        });
+        return;
+      }
+      // 无存档:照旧直接进入起点,并写入初始存档。
+      set({
+        mode: 'play',
+        embedded: opts?.embedded ?? false,
+        playKind,
+        story,
+        ...tables,
+        error: null,
+        saveKey,
+        saveFingerprint,
+        statsKey,
+        groupId,
+        resumeAvailable: false,
+        ...advanceToClip(
+          story,
+          compiled.clipByNodeId,
+          compiled.choiceTimeByNodeId,
+          compiled.defaultChoiceIndexByNodeId,
+          compiled.endingByNodeId,
+          compiled.placeholderByNodeId,
+          compiled.choiceFeedbackById,
+          compiled.choiceStateChangesById,
+          compiled.choiceInteractionById,
+        ),
+      });
+      get().captureCheckpoint();
+    } catch (err) {
+      set({ mode: 'play', ...INITIAL_RUNTIME, embedded: opts?.embedded ?? false, phase: 'error', error: err instanceof Error ? err.message : String(err) });
+    }
+  },
+
+  resumeSaved: () => {
+    const {
+      story, saveKey, saveFingerprint, clipByNodeId,
+      choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById,
+    } = get();
+    if (!story || !saveKey || !saveFingerprint) return false;
+    const json = readStorySave(saveKey, saveFingerprint);
+    try {
+      if (json === null) throw new Error('no save');
+      story.state.LoadJson(json);
+      // LoadJson 可能接受过期指针，直到继续执行或分支预取才抛错。
+      // 整个恢复过程都必须成功，才能发布恢复后的运行态。
+      const next = advanceToClip(story, clipByNodeId, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById, false);
+      set({ resumeAvailable: false, ...next });
+      if (get().exploration.route[get().exploration.route.length - 1]?.nodeId !== next.currentNodeId
+        || !get().exploration.checkpoints[next.currentNodeId ?? '']) {
+        set({ exploration: { ...get().exploration, route: [] } });
+        get().captureCheckpoint();
+      }
+    } catch {
+      // 存档与当前 ink 不匹配/损坏:清档,从头开始。
+      clearStorySave(saveKey);
+      get().startFresh();
+      return false;
+    }
+    persist(saveKey, story, saveFingerprint, get().exploration);
+    return true;
+  },
+
+  startFresh: () => {
+    const {
+      story, clipByNodeId,
+      choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById,
+    } = get();
+    if (!story) return;
+    story.ResetState();
+    set({
+      exploration: { ...get().exploration, route: [], decisions: [] },
+      resumeAvailable: false,
+      ...advanceToClip(story, clipByNodeId, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById),
+    });
+    get().captureCheckpoint();
+  },
+
+  choose: (index) => {
+    const {
+      story,
+      clipByNodeId,
+      choiceTimeByNodeId,
+      defaultChoiceIndexByNodeId,
+      endingByNodeId,
+      placeholderByNodeId,
+      choiceFeedbackById,
+      choiceStateChangesById,
+      choiceInteractionById,
+      currentChoices,
+      statsKey,
+      phase,
+    } = get();
+    if (!story) return;
+    if (phase === 'ended') return;
+    const selected = currentChoices.find((choice) => choice.index === index);
+    if (!selected) return;
+    get().completeCurrentNode();
+    const exploration = get().exploration;
+    const checkpoint = get().currentNodeId ? exploration.checkpoints[get().currentNodeId!] : undefined;
+    if (checkpoint) set({ exploration: { ...exploration, decisions: [...exploration.decisions, checkpoint] } });
+    // 试玩埋点(选择分布):在推进前抓当前选择点 nodeId 与所选选项文案。
+    if (statsKey) {
+      const pointNodeId = nodeIdFromTags(story);
+      const chosen = currentChoices.find((c) => c.index === index);
+      if (pointNodeId && chosen) {
+        recordChoice(statsKey, {
+          nodeId: pointNodeId,
+          index,
+          text: chosen.text,
+          pointLabel: placeholderByNodeId[pointNodeId]?.label,
+        });
+      }
+    }
+    story.ChooseChoiceIndex(index);
+    const next = advanceToClip(
+      story,
+      clipByNodeId,
+      choiceTimeByNodeId,
+      defaultChoiceIndexByNodeId,
+      endingByNodeId,
+      placeholderByNodeId,
+      choiceFeedbackById,
+      choiceStateChangesById,
+      choiceInteractionById,
+    );
+    set(next);
+    // 试玩埋点(结局达成率):推进后若到达结局叶子,记一次通关。
+    if (statsKey && next.phase === 'ended') {
+      const endNodeId = nodeIdFromTags(story);
+      if (endNodeId) {
+        const ending = endingByNodeId[endNodeId] ?? { title: '' };
+        recordEnding(statsKey, { nodeId: endNodeId, title: ending.title, label: ending.label });
+      }
+    }
+    get().captureCheckpoint(selected.text);
+  },
+
+  advanceAutomatic: () => {
+    const state = get();
+    const { story } = state;
+    if (!story || state.currentChoices.length > 0 || !story.canContinue) return;
+    get().completeCurrentNode();
+    const next = advanceToClip(
+      story,
+      state.clipByNodeId,
+      state.choiceTimeByNodeId,
+      state.defaultChoiceIndexByNodeId,
+      state.endingByNodeId,
+      state.placeholderByNodeId,
+      state.choiceFeedbackById,
+      state.choiceStateChangesById,
+      state.choiceInteractionById,
+    );
+    set(next);
+    if (state.statsKey && next.phase === 'ended') {
+      const endNodeId = nodeIdFromTags(story);
+      if (endNodeId) {
+        const ending = state.endingByNodeId[endNodeId] ?? { title: '' };
+        recordEnding(state.statsKey, { nodeId: endNodeId, title: ending.title, label: ending.label });
+      }
+    }
+    get().captureCheckpoint();
+  },
+
+  restart: () => {
+    const {
+      story,
+      clipByNodeId,
+      choiceTimeByNodeId,
+      defaultChoiceIndexByNodeId,
+      endingByNodeId,
+      placeholderByNodeId,
+      choiceFeedbackById,
+      choiceStateChangesById,
+      choiceInteractionById,
+    } = get();
+    if (!story) return;
+    story.ResetState();
+    set(
+      { exploration: { ...get().exploration, route: [], decisions: [] }, ...advanceToClip(
+        story,
+        clipByNodeId,
+        choiceTimeByNodeId,
+        defaultChoiceIndexByNodeId,
+        endingByNodeId,
+        placeholderByNodeId,
+        choiceFeedbackById,
+        choiceStateChangesById,
+        choiceInteractionById,
+      ) },
+    );
+    get().captureCheckpoint();
+  },
+
+  // 退出仅清运行态;存档保留,下次试玩可续。
+  exitPlay: () => set({ mode: 'edit', ...INITIAL_RUNTIME }),
+}));

@@ -1,0 +1,33 @@
+diff --git a/packages/openfilm/studio/server/server.mjs b/packages/openfilm/studio/server/server.mjs
+index 5bd1575..cf73807 100644
+--- a/packages/openfilm/studio/server/server.mjs
++++ b/packages/openfilm/studio/server/server.mjs
+@@ -419,7 +419,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+       return json(res, 200, { ...listing, ...places });
+     }
+     /* the example films (examples.mjs): none when the index cannot be read */
+-    if (parts[0] === 'examples' && parts.length === 1 && req.method === 'GET') return json(res, 200, { examples: await listExamples() });
++    if (parts[0] === 'examples' && parts.length === 1 && req.method === 'GET') return json(res, 200, { examples: process.env.OPENFILM_NO_EXAMPLES ? [] : await listExamples() });
+     /* a poster or preview beside an index read from this computer (examples.mjs exampleFile) */
+     if (parts[0] === 'examples' && parts[1] === 'file' && parts.length > 2 && req.method === 'GET') {
+       return sendMedia(req, res, exampleFile(parts.slice(2).map(decodeURIComponent).join('/')), { keep: true });
+@@ -577,6 +577,10 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+         return json(res, 200, { project, folder: pages.folderUrl(project), ...film });
+       }
+       if (req.method === 'PATCH') {
++        /* Dramaclaw patch: a rename moves the project folder, and the host looks a film up by that
++           folder's name — its node id — so renaming orphans the cut left inside it. The embed already
++           shows the name as a label; the route has to refuse as well, because the frame holds the key. */
++        if (process.env.OPENFILM_NO_RENAME) throw new HttpError(409, 'this Studio does not rename projects', { code: 'off' });
+         const { name } = /** @type {{ name?: string }} */ (await readJson(req));
+         if (agentIn(project.path)) throw new HttpError(409, 'An agent is running in this project: stop it first, then rename the project.', { code: 'agent-running' });
+         if (exports.list(project.id).some((job) => job.status === 'waiting' || job.status === 'running')) {
+@@ -1013,7 +1017,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+   });
+   await new Promise((done, fail) => { editor.once('error', fail); editor.listen(port, '127.0.0.1', () => done(undefined)); });
+   /* the examples index is asked for as Studio starts, so the Examples tab has GitHub's newest when it opens */
+-  void listExamples().catch(() => {});
++  if (!process.env.OPENFILM_NO_EXAMPLES) void listExamples().catch(() => {});
+   const address = /** @type {import('node:net').AddressInfo} */ (editor.address());
+   origin = `http://127.0.0.1:${address.port}`;
+   COOKIE = cookieName(address.port);

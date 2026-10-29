@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 *.pyd
 *.log
+**/node_modules
 .env
 output/
 inputs/

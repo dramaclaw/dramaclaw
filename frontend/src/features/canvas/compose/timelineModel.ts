@@ -267,6 +267,21 @@ export interface BuildComposeOptions {
   fps?: number;
 }
 
+/**
+ * 源内裁剪终点（ms），保证不越过真实文件末尾。
+ *
+ * `durationMs` 是四舍五入后的整数毫秒（历史节点由视频元数据回写时还会再四舍五入
+ * 一次），真实文件可能短至 durationMs - 0.5ms。Studio 的 `#t=start,end` 一旦超出
+ * 文件时长就会拒绝整条 film —— 贴边裁剪统一再收 1ms；未探测到时长时保持原值。
+ */
+function clampedSourceEndMs(clip: ComposeClip): number {
+  const { durationMs } = clip;
+  if (durationMs == null || !Number.isFinite(durationMs) || durationMs <= 0) {
+    return clip.trimEndMs;
+  }
+  return Math.min(clip.trimEndMs, Math.max(0, durationMs - 1));
+}
+
 /** 把时间线状态映射成后端 compose 接口入参（ms → 秒）。空轨道被剔除。 */
 export function buildComposePayload(
   state: ComposeTimelineState,
@@ -281,7 +296,7 @@ export function buildComposePayload(
         sourceUrl: clip.sourceUrl,
         timelineStart: timelineStartMs / 1000,
         sourceStart: clip.trimStartMs / 1000,
-        sourceEnd: clip.trimEndMs / 1000,
+        sourceEnd: clampedSourceEndMs(clip) / 1000,
         volume: clip.volume,
         muted: clip.muted,
         // ⚠️ 后端需支持该字段才会真正变速；否则被忽略（导出按原速）。

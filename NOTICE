@@ -36,6 +36,11 @@ Selected runtime dependencies requiring attribution:
 - @playcanvas/splat-transform ^2.0.3: MIT; optional world asset conversion tool
 - ffmpeg/ffprobe: external system executables; license depends on the user's system build
 - Ladybug JSON extension 0.16.0 (links yyjson): MIT; unmodified upstream libraries, notices in src/novelvideo/assets/ladybug-json
+- OpenFilm Studio v0.2.4 (vendor/openfilm): MIT; bundled video editor runtime
+- playwright-core 1.61.1: Apache-2.0; drives the editor's headless browser
+- Inter, Noto CJK: SIL OFL 1.1; editor and container fonts
+- React, React DOM: MIT; editor bundle
+- Lucide icons: ISC; editor bundle
 
 Restricted Optional Components
 The optional world feature can use apple/ml-sharp and its model assets. The source

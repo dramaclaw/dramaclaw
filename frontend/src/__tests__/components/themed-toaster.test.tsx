@@ -11,8 +11,21 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 vi.mock("sonner", () => ({
-  Toaster: ({ offset }: { offset: number }) => (
-    <div data-testid="toaster" data-offset={offset} />
+  Toaster: ({
+    offset,
+    position,
+    toastOptions,
+  }: {
+    offset: { top: number };
+    position: string;
+    toastOptions?: { classNames?: { description?: string } };
+  }) => (
+    <div
+      data-testid="toaster"
+      data-offset={offset.top}
+      data-position={position}
+      data-description-class={toastOptions?.classNames?.description}
+    />
   ),
 }));
 
@@ -25,7 +38,7 @@ describe("ThemedToaster", () => {
 
   it.each([
     ["/", "60"],
-    ["/projects/demo/freezone", "60"],
+    ["/projects/demo/freezone", "94"],
     ["/projects/demo/characters", "102"],
     ["/login", "24"],
     ["/watch/demo", "24"],
@@ -35,6 +48,15 @@ describe("ThemedToaster", () => {
     expect(screen.getByTestId("toaster")).toHaveAttribute(
       "data-offset",
       expectedOffset,
+    );
+    expect(screen.getByTestId("toaster")).toHaveAttribute("data-position", "top-left");
+  });
+
+  it("keeps line breaks in toast descriptions", () => {
+    render(<ThemedToaster />);
+    expect(screen.getByTestId("toaster")).toHaveAttribute(
+      "data-description-class",
+      expect.stringContaining("whitespace-pre-line"),
     );
   });
 });

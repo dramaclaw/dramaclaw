@@ -31,6 +31,7 @@ describe("runtime-config", () => {
       isCeRuntime,
       loadRuntimeConfig,
       mcpDirectCanvasApplyEnabled,
+      openFilmStudioEnabled,
       phoneOtpEntryVisible,
     } = await import("@/lib/runtime-config");
     await loadRuntimeConfig();
@@ -38,7 +39,32 @@ describe("runtime-config", () => {
     expect(isCeRuntime()).toBe(true);
     expect(authRequired()).toBe(false);
     expect(mcpDirectCanvasApplyEnabled()).toBe(false);
+    expect(openFilmStudioEnabled()).toBe(false);
     expect(phoneOtpEntryVisible()).toBe(false);
+  });
+
+  it("exposes OpenFilm Studio only after an explicit runtime opt-in", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            data: {
+              edition: "ce",
+              auth_required: false,
+              openfilm_studio_enabled: true,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const { loadRuntimeConfig, openFilmStudioEnabled } = await import("@/lib/runtime-config");
+    expect(openFilmStudioEnabled()).toBe(false);
+    await loadRuntimeConfig();
+    expect(openFilmStudioEnabled()).toBe(true);
   });
 
   it("falls back to auth-required when the fetch fails without VITE_EDITION", async () => {

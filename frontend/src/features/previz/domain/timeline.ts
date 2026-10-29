@@ -1,0 +1,652 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import { v4 as uuidv4 } from 'uuid';
+
+import { audioFramesAvailable, framesToMs, msToFrames } from './audioTrack';
+import { PREVIZ_MOTION_LIMITS } from './limits';
+import { samplePathPosition, samplePathRotation, sortedPathPoints } from './pathCurve';
+import {
+  PREVIZ_FPS,
+  PREVIZ_MIN_CLIP_FRAMES,
+  type PrevizActionClip,
+  type PrevizAudioClip,
+  type PrevizClip,
+  type PrevizCutClip,
+  type PrevizPathClip,
+  type PrevizPathPoint,
+  type PrevizRigClip,
+  type PrevizScene,
+  type PrevizTrack,
+  type Vec3,
+} from './scene';
+
+/**
+ * 时间轴的查询与操作。全部是纯函数：入参是场景，出参是新场景，一次都不改原对象——
+ * store 的 undo 栈存的就是整份场景快照，就地改会把历史里的旧快照一起改掉。
+ */
+
+export function isPathClip(clip: PrevizClip): clip is PrevizPathClip {
+  return clip.kind === 'path';
+}
+
+export function isRigClip(clip: PrevizClip): clip is PrevizRigClip {
+  return clip.kind === 'rig';
+}
+
+export function isCutClip(clip: PrevizClip): clip is PrevizCutClip {
+  return clip.kind === 'cut';
+}
+
+export function isAudioClip(clip: PrevizClip): clip is PrevizAudioClip {
+  return clip.kind === 'audio';
+}
+
+export function isActionClip(clip: PrevizClip): clip is PrevizActionClip {
+  return clip.kind === 'action';
+}
+
+/**
+ * 轨道上的动作片段，按起点升序。轨道的 `clips` 混着路径与特写片段、顺序是建出来的先后，
+ * 动作片段的邻居（过渡找前后段、裁切夹邻居）都得在这份有序子列表里按下标找。
+ */
+export function actionClipsOf(track: PrevizTrack): PrevizActionClip[] {
+  return track.clips.filter(isActionClip).sort((left, right) => left.startFrame - right.startFrame);
+}
+
+export function trackFor(scene: PrevizScene, objectId: string): PrevizTrack | undefined {
+  return scene.timeline.tracks.find((track) => track.objectId === objectId);
+}
+
+/**
+ * 片段在哪张表里、在那张表里排第几。对象轨道带 `track`，另外两张表没有轨道这一层。
+ * `index` 是为了让写操作按下标定位，而不是再按 id 搜一遍——parseScene 不去重，同 id
+ * 出现两次时按 id 搜索会把两条一起改掉。
+ */
+export type PrevizClipLocation =
+  | { table: 'tracks'; track: PrevizTrack; index: number; clip: PrevizClip }
+  | { table: 'program'; index: number; clip: PrevizCutClip }
+  | { table: 'audio'; index: number; clip: PrevizAudioClip };
+
+export function clipById(scene: PrevizScene, clipId: string): PrevizClipLocation | undefined {
+  for (const track of scene.timeline.tracks) {
+    const index = track.clips.findIndex((entry) => entry.id === clipId);
+    if (index >= 0) return { table: 'tracks', track, index, clip: track.clips[index]! };
+  }
+  const programIndex = scene.timeline.program.findIndex((entry) => entry.id === clipId);
+  if (programIndex >= 0) {
+    return { table: 'program', index: programIndex, clip: scene.timeline.program[programIndex]! };
+  }
+  const audioIndex = scene.timeline.audio.findIndex((entry) => entry.id === clipId);
+  if (audioIndex >= 0) {
+    return { table: 'audio', index: audioIndex, clip: scene.timeline.audio[audioIndex]! };
+  }
+  return undefined;
+}
+
+/**
+ * 这一帧生效的路径片段。区间闭合（两端都算），重叠时取起始帧较晚者——设计文档
+ * 「同帧同对象存在多个同类片段时取起始帧较晚者」。起始帧也相同时取数组里靠后的那条，
+ * 因为新建的片段总是 push 在后面，「后建的盖住先建的」是用户能预期的方向。
+ */
+export function pathClipAt(track: PrevizTrack, frame: number): PrevizPathClip | undefined {
+  return clipAt(track, frame, isPathClip);
+}
+
+/**
+ * 这一帧之前**最后一条已经结束**的路径片段。用来把走完的对象停在终点：片段之外没有
+ * 片段覆盖，`pathClipAt` 交白卷，求值器就落回静态 transform——用户看到的是人物走到头
+ * 之后瞬间闪回摆放时的位置。
+ *
+ * 只往回找已经结束的，不往前找还没开始的：对象在开始走之前就该站在你摆它的地方，那不
+ * 是「弹回」，那本来就是它的位置。两段之间的空隙同理，停在前一段的终点。
+ *
+ * 跳过没有点的片段：空片段一帧都没挪动过谁（「建好了还没画」是常态），让它挡住前面那
+ * 段真轨迹的终点等于凭空把人送回原地。
+ */
+export function lastEndedPathClip(track: PrevizTrack, frame: number): PrevizPathClip | undefined {
+  let held: PrevizPathClip | undefined;
+  for (const clip of track.clips) {
+    if (!isPathClip(clip) || clip.points.length === 0) continue;
+    if (clip.endFrame >= frame) continue;
+    if (!held || clip.endFrame > held.endFrame) held = clip;
+  }
+  return held;
+}
+
+/** 这一帧生效的特写片段。取舍与 `pathClipAt` 同一套，见那里的说明。 */
+export function rigClipAt(track: PrevizTrack, frame: number): PrevizRigClip | undefined {
+  return clipAt(track, frame, isRigClip);
+}
+
+/** 上面两个查询共用的选取规则。分开写两遍迟早会让两种片段的覆盖顺序对不上。 */
+function clipAt<T extends PrevizClip>(
+  track: PrevizTrack,
+  frame: number,
+  is: (clip: PrevizClip) => clip is T,
+): T | undefined {
+  let best: T | undefined;
+  for (const clip of track.clips) {
+    if (!is(clip)) continue;
+    if (frame < clip.startFrame || frame > clip.endFrame) continue;
+    if (!best || clip.startFrame >= best.startFrame) best = clip;
+  }
+  return best;
+}
+
+/**
+ * 帧号 → 片段内归一化参数。区间外夹到两端；长度为 0 的片段返回 0 而不是 NaN
+ * ——NaN 会一路流进节点的 position，症状是对象凭空消失，病因隔着五层。
+ */
+export function frameToU(clip: PrevizClip, frame: number): number {
+  const span = clip.endFrame - clip.startFrame;
+  if (span <= 0) return 0;
+  return Math.min(1, Math.max(0, (frame - clip.startFrame) / span));
+}
+
+export function uToFrame(clip: PrevizClip, u: number): number {
+  const span = Math.max(0, clip.endFrame - clip.startFrame);
+  return clip.startFrame + Math.round(Math.min(1, Math.max(0, u)) * span);
+}
+
+/** 时间轴总秒数。fps 是 schema 里钉死的 30，不从 settings 里读一个可能被改脏的值。 */
+export function timelineSeconds(scene: PrevizScene): number {
+  return scene.settings.durationFrames / PREVIZ_FPS;
+}
+
+/**
+ * 时间轴的横向比例：每秒占多少像素。存像素而不是「缩放倍率」，是因为刻度疏密、
+ * 片段宽度、播放头落点全都要拿它换算，多一层倍率只会让每处都乘一遍同样的常数。
+ */
+export const PREVIZ_TIMELINE_ZOOM = { min: 20, max: 480, default: 120 } as const;
+
+/** 主刻度之间至少留这么宽，否则标签会挨在一起糊成一片。 */
+const RULER_MIN_MAJOR_PX = 80;
+
+/** 主刻度可以取的整齐间隔（秒）。不整齐的间隔（比如 0.37s）读不出来。 */
+const RULER_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60] as const;
+
+/** 每个主刻度切成几段次刻度。 */
+const RULER_MINORS_PER_MAJOR = 5;
+
+/** 尺子渲染多少根就到头：缩放算错时不至于铺出十万个 DOM 节点把页面卡死。 */
+const RULER_MAX_TICKS = 2000;
+
+export interface PrevizRulerTick {
+  /** 落点，单位秒。 */
+  seconds: number;
+  major: boolean;
+  /** 只有主刻度带文字。 */
+  label: string | null;
+}
+
+/** 秒数写成刻度上的标签。整秒不带小数点，细分刻度才带。 */
+function rulerLabel(seconds: number): string {
+  return `${Number(seconds.toFixed(2))}s`;
+}
+
+/**
+ * 一把覆盖 `totalSeconds` 的刻度尺。间隔随比例自动粗细：比例小了退到 2s/5s，
+ * 放大了细到 0.2s——固定间隔要么缩放后挤成一团，要么放大后整屏只有两根线。
+ */
+export function rulerTicks(totalSeconds: number, pxPerSecond: number): PrevizRulerTick[] {
+  const span = Math.max(0, totalSeconds);
+  if (span <= 0) return [{ seconds: 0, major: true, label: rulerLabel(0) }];
+
+  const major =
+    RULER_STEPS.find((step) => step * pxPerSecond >= RULER_MIN_MAJOR_PX) ??
+    RULER_STEPS[RULER_STEPS.length - 1];
+  const minor = major / RULER_MINORS_PER_MAJOR;
+  const count = Math.min(Math.floor(span / minor), RULER_MAX_TICKS);
+
+  const ticks: PrevizRulerTick[] = [];
+  for (let index = 0; index <= count; index += 1) {
+    // 累加会把浮点误差滚成 0.30000000000000004，乘完再圆一次才对得上标签。
+    const seconds = Math.round(index * minor * 1000) / 1000;
+    const isMajor = index % RULER_MINORS_PER_MAJOR === 0;
+    ticks.push({ seconds, major: isMajor, label: isMajor ? rulerLabel(seconds) : null });
+  }
+  return ticks;
+}
+
+/** 「适配」按钮要的比例：整条时间轴正好铺满轨槽，再夹回缩放范围内。 */
+export function zoomToFit(totalSeconds: number, laneWidthPx: number): number {
+  // 面板还没量出宽度（首帧、或者被折叠着）时别算出 0——退回默认比例。
+  if (laneWidthPx <= 0 || totalSeconds <= 0) return PREVIZ_TIMELINE_ZOOM.default;
+  const raw = laneWidthPx / totalSeconds;
+  return Math.min(PREVIZ_TIMELINE_ZOOM.max, Math.max(PREVIZ_TIMELINE_ZOOM.min, raw));
+}
+
+export { PREVIZ_MIN_CLIP_FRAMES };
+
+/** 换掉某条轨道，其余原样。所有写操作都经过它，免得每个函数各写一遍 map。 */
+function withTrack(scene: PrevizScene, trackId: string, next: PrevizTrack): PrevizScene {
+  return {
+    ...scene,
+    timeline: {
+      ...scene.timeline,
+      tracks: scene.timeline.tracks.map((track) => (track.id === trackId ? next : track)),
+    },
+  };
+}
+
+function withProgram(scene: PrevizScene, program: PrevizCutClip[]): PrevizScene {
+  return { ...scene, timeline: { ...scene.timeline, program } };
+}
+
+function withAudio(scene: PrevizScene, audio: PrevizAudioClip[]): PrevizScene {
+  return { ...scene, timeline: { ...scene.timeline, audio } };
+}
+
+/** 用 `next`（0~2 项）拼接替换掉数组里下标 `index` 那一项，其余原样保留顺序。 */
+function spliceAt<T>(array: readonly T[], index: number, next: T[]): T[] {
+  return [...array.slice(0, index), ...next, ...array.slice(index + 1)];
+}
+
+/**
+ * 用 `next` 替换 `found` 所在位置（空数组即删除），三张表通用。按 `found.index` 定位，
+ * 不再按 id 重新搜索——见 `PrevizClipLocation` 上的说明。
+ */
+function withClips(scene: PrevizScene, found: PrevizClipLocation, next: PrevizClip[]): PrevizScene {
+  if (found.table === 'program') {
+    // filter 只是把 PrevizClip 收窄回 PrevizCutClip 好过类型检查，不是校验——
+    // next 里的每一项都是从 found.clip 展开出来的，天然就是同一 kind。
+    const nextCuts = next.filter(isCutClip);
+    return withProgram(scene, spliceAt(scene.timeline.program, found.index, nextCuts));
+  }
+  if (found.table === 'audio') {
+    const nextAudio = next.filter(isAudioClip);
+    return withAudio(scene, spliceAt(scene.timeline.audio, found.index, nextAudio));
+  }
+  return withTrack(scene, found.track.id, {
+    ...found.track,
+    clips: spliceAt(found.track.clips, found.index, next),
+  });
+}
+
+/**
+ * 固定行里一段的可动范围：前一段的终点到后一段的起点。镜头轨、音频轨与人物的动作行
+ * 都有序且不重叠，所以按下标取前后即可。
+ */
+function neighbourBounds(
+  siblings: readonly { startFrame: number; endFrame: number }[],
+  index: number,
+): { lower: number; upper: number } {
+  return {
+    lower: siblings[index - 1]?.endFrame ?? 0,
+    upper: siblings[index + 1]?.startFrame ?? Number.POSITIVE_INFINITY,
+  };
+}
+
+/**
+ * 与这一段互不重叠的那一行，以及它在行里的下标。路径与特写片段允许重叠，返回 null。
+ *
+ * 动作片段和路径片段混在同一条轨道的 `clips` 里、顺序是建出来的先后，`found.index` 是
+ * 在混合数组里的下标，拿去找邻居是错的——所以动作行单独排一份，按引用重新定位。
+ * 按引用而不是按 id：同 id 出现两次时按 id 找会落到另一条上。
+ */
+function siblingsOf(
+  scene: PrevizScene,
+  found: PrevizClipLocation,
+): { list: readonly PrevizClip[]; index: number } | null {
+  if (found.table === 'program') return { list: scene.timeline.program, index: found.index };
+  if (found.table === 'audio') return { list: scene.timeline.audio, index: found.index };
+  if (!isActionClip(found.clip)) return null;
+  const list = actionClipsOf(found.track);
+  return { list, index: list.indexOf(found.clip) };
+}
+
+/** 新建或替换一个片段；对象还没有轨道时顺手建一条。 */
+export function upsertClip(
+  scene: PrevizScene,
+  objectId: string,
+  clip: PrevizClip,
+): PrevizScene {
+  const track = trackFor(scene, objectId);
+  if (!track) {
+    return {
+      ...scene,
+      timeline: {
+        ...scene.timeline,
+        tracks: [...scene.timeline.tracks, { id: uuidv4(), objectId, clips: [clip] }],
+      },
+    };
+  }
+  const exists = track.clips.some((entry) => entry.id === clip.id);
+  return withTrack(scene, track.id, {
+    ...track,
+    clips: exists
+      ? track.clips.map((entry) => (entry.id === clip.id ? clip : entry))
+      : [...track.clips, clip],
+  });
+}
+
+/**
+ * 整体平移片段。撞到 0 或时间轴末尾时**保长**——夹的是起点，不是两端各夹各的，
+ * 后者会在边界上把片段压扁。镜头轨、音频轨、动作行里的段还会被卡在前后邻居之间
+ * （路径与特写片段允许重叠，不受这条限制）。
+ */
+export function moveClip(
+  scene: PrevizScene,
+  clipId: string,
+  deltaFrames: number,
+  maxFrame: number,
+): PrevizScene {
+  const found = clipById(scene, clipId);
+  if (!found) return scene;
+  // 非有限数没有对应的帧，写进去会被下次 parseScene 整段丢掉。
+  if (!Number.isFinite(deltaFrames)) return scene;
+  const { clip } = found;
+  const span = clip.endFrame - clip.startFrame;
+  let start = Math.min(
+    Math.max(0, maxFrame - span),
+    Math.max(0, clip.startFrame + Math.round(deltaFrames)),
+  );
+  const siblings = siblingsOf(scene, found);
+  if (siblings) {
+    // 固定行里的段不能压到邻居身上，卡在两边之间。
+    const { lower, upper } = neighbourBounds(siblings.list, siblings.index);
+    // 表合法（有序不重叠）时 upper − span ≥ lower 恒成立；外层 max 只是防坏数据
+    // 把 start 拉到 lower 之前，不代表这种情况真的会发生。
+    start = Math.min(Math.max(start, lower), Math.max(lower, upper - span));
+  }
+  // 没动就还回原对象，调用方靠引用相等跳过 applyScene，免得一次没位移的拖拽也压一层 undo。
+  if (start === clip.startFrame) return scene;
+  return withClips(scene, found, [{ ...clip, startFrame: start, endFrame: start + span }]);
+}
+
+/** 把某一边拉到指定帧。两边至少留 `PREVIZ_MIN_CLIP_FRAMES` 帧，不许交叉。 */
+export function trimClip(
+  scene: PrevizScene,
+  clipId: string,
+  edge: 'start' | 'end',
+  frame: number,
+): PrevizScene {
+  const found = clipById(scene, clipId);
+  if (!found) return scene;
+  // 非有限数没有对应的帧，写进去会被下次 parseScene 整段丢掉。
+  if (!Number.isFinite(frame)) return scene;
+  const { clip } = found;
+  const fps = scene.settings.fps;
+  const target = Math.round(frame);
+  const siblings = siblingsOf(scene, found);
+  const bounds = siblings ? neighbourBounds(siblings.list, siblings.index) : null;
+
+  if (edge === 'start') {
+    let start = Math.min(Math.max(0, target), clip.endFrame - PREVIZ_MIN_CLIP_FRAMES);
+    if (bounds) start = Math.max(start, bounds.lower);
+    if (found.table === 'audio') {
+      // 往左拉等于把素材偏移往回退，退到 0 就到头了。
+      start = Math.max(start, clip.startFrame - msToFrames(found.clip.offsetMs, fps));
+      const offsetMs = Math.max(0, found.clip.offsetMs + framesToMs(start - clip.startFrame, fps));
+      return withClips(scene, found, [{ ...found.clip, startFrame: start, offsetMs }]);
+    }
+    return withClips(scene, found, [{ ...clip, startFrame: start }]);
+  }
+
+  let end = Math.max(target, clip.startFrame + PREVIZ_MIN_CLIP_FRAMES);
+  if (bounds) end = Math.min(end, bounds.upper);
+  if (found.table === 'audio') {
+    // 素材放完就没有声音了，片段不能比剩余素材长。
+    const available = audioFramesAvailable(found.clip.durationMs, found.clip.offsetMs, fps);
+    end = Math.max(
+      clip.startFrame + PREVIZ_MIN_CLIP_FRAMES,
+      Math.min(end, clip.startFrame + available),
+    );
+  }
+  return withClips(scene, found, [{ ...clip, endFrame: end }]);
+}
+
+/** 把点列按切点重新归一化到 0..1，并保证切点两侧各有一个点。 */
+function halfPoints(clip: PrevizPathClip, uCut: number, side: 'left' | 'right'): PrevizPathPoint[] {
+  const sorted = sortedPathPoints(clip.points);
+  if (sorted.length === 0) return [];
+
+  const cut: PrevizPathPoint = {
+    id: uuidv4(),
+    u: side === 'left' ? 1 : 0,
+    position: samplePathPosition(sorted, uCut),
+    rotation: samplePathRotation(sorted, uCut),
+    // 切点的朝向是从曲线采出来的，不是用户调的——标成已编辑会让它把右半段后面所有
+    // 点的朝向都传播成自己。
+  };
+
+  if (side === 'left') {
+    const kept = sorted
+      .filter((point) => point.u < uCut)
+      .map((point) => ({ ...point, u: point.u / uCut }));
+    return [...kept, cut];
+  }
+  const kept = sorted
+    .filter((point) => point.u > uCut)
+    .map((point) => ({ ...point, u: (point.u - uCut) / (1 - uCut) }));
+  return [cut, ...kept];
+}
+
+/**
+ * 剃刀：在某一帧把路径片段切成两条各自完整的轨迹。切点两侧各留一个关键帧——不留的话
+ * 两半在接缝处会各自朝下一个远处的点甩出去，播放起来是一个明显的跳。
+ * 切在端点或片段之外一律不动：那会产出长度为 0 的片段。
+ */
+export function splitClip(scene: PrevizScene, clipId: string, frame: number): PrevizScene {
+  const found = clipById(scene, clipId);
+  if (!found) return scene;
+  // 非有限数没有对应的帧，写进去会被下次 parseScene 整段丢掉。
+  if (!Number.isFinite(frame)) return scene;
+  const { clip } = found;
+  const cut = Math.round(frame);
+  if (cut <= clip.startFrame || cut >= clip.endFrame) return scene;
+
+  if (found.table === 'program') {
+    return withClips(scene, found, [
+      { ...found.clip, id: uuidv4(), endFrame: cut },
+      { ...found.clip, id: uuidv4(), startFrame: cut },
+    ]);
+  }
+  if (found.table === 'audio') {
+    const fps = scene.settings.fps;
+    return withClips(scene, found, [
+      { ...found.clip, id: uuidv4(), endFrame: cut },
+      {
+        ...found.clip,
+        id: uuidv4(),
+        startFrame: cut,
+        // 右半段从素材更靠后的位置起播，声音才接得上。
+        offsetMs: found.clip.offsetMs + framesToMs(cut - clip.startFrame, fps),
+      },
+    ]);
+  }
+  if (isActionClip(clip)) {
+    // 切一刀会给动作行多出一段：满行时再切就会变成 61 段，读档时 `parseActionClips`
+    // 按 `slice(0, 60)` 截断，悄悄丢掉最后一段——不如在这里直接拒绝，行为看得见。
+    if (actionClipsOf(found.track).length >= PREVIZ_MOTION_LIMITS.clipsPerCharacter) return scene;
+    // 右半段从动作开头重新播（求值按片段首帧起算），不做起播偏移——设计文档「不做」一节。
+    return withClips(scene, found, [
+      { ...clip, id: uuidv4(), endFrame: cut },
+      { ...clip, id: uuidv4(), startFrame: cut },
+    ]);
+  }
+  if (!isPathClip(clip)) return scene;
+  const uCut = frameToU(clip, cut);
+  return withClips(scene, found, [
+    { ...clip, id: uuidv4(), endFrame: cut, points: halfPoints(clip, uCut, 'left') },
+    { ...clip, id: uuidv4(), startFrame: cut, points: halfPoints(clip, uCut, 'right') },
+  ]);
+}
+
+export function removeClip(scene: PrevizScene, clipId: string): PrevizScene {
+  const found = clipById(scene, clipId);
+  if (!found) return scene;
+  return withClips(scene, found, []);
+}
+
+/**
+ * 把一条轨道挪到最前面（时间轴上的「置顶」）。轨道没有单独的排序字段，数组顺序
+ * 就是渲染顺序——盯着某个对象排戏时把它提到眼前，比一直往下滚要省事。
+ */
+export function pinTrack(scene: PrevizScene, objectId: string): PrevizScene {
+  const target = trackFor(scene, objectId);
+  if (!target) return scene;
+  return {
+    ...scene,
+    timeline: {
+      ...scene.timeline,
+      tracks: [target, ...scene.timeline.tracks.filter((track) => track.id !== target.id)],
+    },
+  };
+}
+
+export function removeTrack(scene: PrevizScene, objectId: string): PrevizScene {
+  return {
+    ...scene,
+    timeline: {
+      ...scene.timeline,
+      tracks: scene.timeline.tracks.filter((track) => track.objectId !== objectId),
+    },
+  };
+}
+
+/**
+ * 独奏：集合非空时，不在集合里的非机位对象不吃任何片段，停在静态摆位上。机位轨道
+ * 原样保留——独奏是为了单独看人走位，运镜照常。集合为空原样返回同一个对象，调用方不白算。
+ *
+ * 没有轨道的 id 不算数：撤销一次「加到时间轴」轨道就没了，S 也随之点不到，
+ * 留着它当独奏会把全场冻住且无从解开。
+ */
+export function soloScene(scene: PrevizScene, soloObjectIds: readonly string[]): PrevizScene {
+  if (!soloObjectIds.some((id) => trackFor(scene, id))) return scene;
+  const cameras = new Set(
+    scene.objects.filter((object) => object.kind === 'camera').map((object) => object.id),
+  );
+  return {
+    ...scene,
+    timeline: {
+      ...scene.timeline,
+      tracks: scene.timeline.tracks.map((track) =>
+        cameras.has(track.objectId) || soloObjectIds.includes(track.objectId)
+          ? track
+          : { ...track, clips: [] },
+      ),
+    },
+  };
+}
+
+/**
+ * 播放走到哪一帧停。独奏时停在独奏轨道最晚那个片段的末尾——别的轨道都冻住了，
+ * 再往后走只是空跑时间；没在独奏（或独奏轨道上一个片段都没有）就走满总长。
+ * 夹在总长以内：超出总长的片段本来也播不到。
+ */
+export function playbackEndFrame(scene: PrevizScene, soloObjectIds: readonly string[]): number {
+  const last = scene.settings.durationFrames;
+  let end = 0;
+  for (const track of scene.timeline.tracks) {
+    if (!soloObjectIds.includes(track.objectId)) continue;
+    for (const clip of track.clips) end = Math.max(end, clip.endFrame);
+  }
+  return end > 0 ? Math.min(end, last) : last;
+}
+
+/** 两个 u 差在这以内就算同一个关键帧。120 帧的片段上 1e-6 远小于半帧。 */
+const U_EPSILON = 1e-6;
+
+/** 只改路径片段的点列，其余原样。四个点操作共用。 */
+function withPathPoints(
+  scene: PrevizScene,
+  clipId: string,
+  update: (points: PrevizPathPoint[]) => PrevizPathPoint[],
+): PrevizScene {
+  const found = clipById(scene, clipId);
+  if (!found || !isPathClip(found.clip)) return scene;
+  return withClips(scene, found, [{ ...found.clip, points: update(found.clip.points) }]);
+}
+
+/**
+ * 在播放头处插一个关键帧，值取**曲线上**的当前位置与朝向。取曲线而不是取相邻两点的
+ * 中点：插一个点不该改变轨迹的形状，只该把这一处钉住。
+ */
+export function insertPathPointAt(
+  scene: PrevizScene,
+  clipId: string,
+  frame: number,
+): PrevizScene {
+  const found = clipById(scene, clipId);
+  if (!found || !isPathClip(found.clip)) return scene;
+  const clip = found.clip;
+  // 空片段上没有曲线可采，插出来的点只能是原点——那是把对象拽走，不是插关键帧。
+  if (clip.points.length === 0) return scene;
+
+  const u = frameToU(clip, frame);
+  const inserted: PrevizPathPoint = {
+    id: uuidv4(),
+    u,
+    position: samplePathPosition(clip.points, u),
+    rotation: samplePathRotation(clip.points, u),
+  };
+
+  return withPathPoints(scene, clipId, (points) =>
+    sortedPathPoints([
+      // 同一帧上留两个关键帧是无解的：谁生效取决于数组顺序。
+      ...points.filter((point) => Math.abs(point.u - u) > U_EPSILON),
+      inserted,
+    ]),
+  );
+}
+
+/**
+ * 改一个轨迹点。带 `rotation` 的补丁会顺带把 `rotationEdited` 置上——这个标记就是
+ * 「该朝向沿用至下一个手动调整过朝向的点」的开关，由改朝向这个动作本身触发，而不是
+ * 让每个调用方自己记得传。
+ *
+ * `rotation: null` 是反向操作：把这个点交还给自动朝向。没有它，手滑改过一次角度的点
+ * 就永远脱离了轨迹，只能删掉重插。
+ */
+export function updatePathPoint(
+  scene: PrevizScene,
+  clipId: string,
+  pointId: string,
+  patch: { position?: Vec3; rotation?: Vec3 | null },
+): PrevizScene {
+  return withPathPoints(scene, clipId, (points) =>
+    points.map((point) =>
+      point.id === pointId
+        ? {
+            ...point,
+            ...(patch.position ? { position: patch.position } : {}),
+            ...(patch.rotation ? { rotation: patch.rotation, rotationEdited: true } : {}),
+            ...(patch.rotation === null ? { rotationEdited: false } : {}),
+          }
+        : point,
+    ),
+  );
+}
+
+export function removePathPoint(
+  scene: PrevizScene,
+  clipId: string,
+  pointId: string,
+): PrevizScene {
+  return withPathPoints(scene, clipId, (points) =>
+    points.filter((point) => point.id !== pointId),
+  );
+}
+
+/**
+ * 给路径片段指一个「看向」目标；null 表示回到沿切线自动朝向。
+ *
+ * 目标存不存在这里不查：删对象不该顺手改别人的片段，求值器碰到悬空的目标会退回
+ * 切线朝向。这里只挡「自己看自己」——那个解不出方向，会交出一个假的正前方。
+ */
+export function setPathAim(
+  scene: PrevizScene,
+  clipId: string,
+  aimObjectId: string | null,
+): PrevizScene {
+  const found = clipById(scene, clipId);
+  if (!found || found.table !== 'tracks' || !isPathClip(found.clip)) return scene;
+  if (aimObjectId === found.track.objectId) return scene;
+  return withClips(scene, found, [{ ...found.clip, aimObjectId }]);
+}
+
+/** 清空轨迹但保留片段：重画一条不需要先把片段删了再建。 */
+export function clearPathPoints(scene: PrevizScene, clipId: string): PrevizScene {
+  return withPathPoints(scene, clipId, () => []);
+}

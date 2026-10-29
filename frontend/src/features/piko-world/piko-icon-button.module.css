@@ -1,0 +1,19 @@
+/* Shared feedback for Piko icons, chat entries and action buttons. Keep pixel geometry stable. */
+.button {
+  cursor: pointer;
+  transition: filter var(--duration-fast) var(--ease-out-quint);
+}
+.button:hover:not(:disabled),
+.button:focus-visible {
+  filter: brightness(1.1);
+}
+.button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.button:active:not(:disabled) {
+  filter: brightness(1.05);
+}
+@media (prefers-reduced-motion: reduce) {
+  .button { transition: none; }
+}

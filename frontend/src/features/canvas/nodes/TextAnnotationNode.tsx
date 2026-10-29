@@ -177,7 +177,6 @@ export const TextAnnotationNode = memo(({
   const { t } = useTranslation();
   const modelTaskAccess = useModelTaskAccess();
   const reactFlow = useReactFlow();
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const isBoxSelecting = useIsBoxSelecting();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
@@ -627,7 +626,6 @@ export const TextAnnotationNode = memo(({
     <div
       className="group relative h-full w-full overflow-visible"
       style={{ width: resolvedWidth, height: resolvedHeight }}
-      onClick={() => setSelectedNode(id)}
     >
       <Handle
         type="target"

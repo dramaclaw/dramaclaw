@@ -443,6 +443,10 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "run_freezone_video_compose": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
+    # Studio 导出：只打本机回环的 OpenFilm Studio 进程，由它的 Chromium + ffmpeg 落盘。
+    "run_freezone_studio_export": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
+    ),
     "run_freezone_video_erase": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
@@ -472,6 +476,11 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     ),
     "reverse_prompt_from_image": LeafEgressRule(
         "novelvideo.freezone.image_node", LeafEgress.NETWORK, "EG-18b"
+    ),
+    "generate_blockout_from_image": LeafEgressRule(
+        "novelvideo.director_world.blockout.generation_agent",
+        LeafEgress.NETWORK,
+        "EG-18b",
     ),
     # EG-18a `freezone.text.generate` / `.structured`（:51，`gateway-routed`）
     "translate_freezone_text": LeafEgressRule(
@@ -1479,6 +1488,7 @@ async def _run_freezone_video_compose_async(
     from novelvideo.api.deps import make_static_url_for_context
     from novelvideo.freezone.jobs import (
         ensure_freezone_dirs,
+        run_freezone_studio_export,
         run_freezone_video_compose,
     )
 
@@ -1487,21 +1497,37 @@ async def _run_freezone_video_compose_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     cover_url = str(payload.get("cover_url") or payload.get("coverUrl") or "").strip()
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_video_compose", job_id, 0.1, "开始合成视频时间线...")
-    output_path = await _call_freezone_leaf(
-        envelope,
-        run_freezone_video_compose,
-        "run_freezone_video_compose",
-        project_dir=project_dir,
-        job_id=job_id,
-        title=str(payload.get("title") or ""),
-        canvas_id=str(payload.get("canvas_id") or ""),
-        resolution=str(payload.get("resolution") or "1080p"),
-        fps=int(payload.get("fps") or 30),
-        background_color=str(payload.get("background_color") or "#000000"),
-        keep_original_audio=bool(payload.get("keep_original_audio", True)),
-        tracks=list(payload.get("tracks") or []),
-    )
+    studio_film_dir = str(payload.get("studio_film_dir") or "").strip()
+    if studio_film_dir:
+        # The node was cut in the OpenFilm workspace (by hand or by the agent):
+        # the film is the cut, so Studio renders it. Untouched nodes keep the
+        # timeline path below unchanged.
+        _update(ctx, "freezone_video_compose", job_id, 0.1, "开始导出剪辑成片...")
+        output_path = await _call_freezone_leaf(
+            envelope,
+            run_freezone_studio_export,
+            "run_freezone_studio_export",
+            project_dir=project_dir,
+            job_id=job_id,
+            film_dir=studio_film_dir,
+            fps=int(payload.get("fps") or 30),
+        )
+    else:
+        _update(ctx, "freezone_video_compose", job_id, 0.1, "开始合成视频时间线...")
+        output_path = await _call_freezone_leaf(
+            envelope,
+            run_freezone_video_compose,
+            "run_freezone_video_compose",
+            project_dir=project_dir,
+            job_id=job_id,
+            title=str(payload.get("title") or ""),
+            canvas_id=str(payload.get("canvas_id") or ""),
+            resolution=str(payload.get("resolution") or "1080p"),
+            fps=int(payload.get("fps") or 30),
+            background_color=str(payload.get("background_color") or "#000000"),
+            keep_original_audio=bool(payload.get("keep_original_audio", True)),
+            tracks=list(payload.get("tracks") or []),
+        )
     rel = output_path.relative_to(project_dir).as_posix()
     result = {
         "job_id": job_id,
@@ -1942,6 +1968,63 @@ async def _run_freezone_image_reverse_prompt_async(
     return result
 
 
+async def _run_freezone_image_to_blockout_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.director_world.blockout.artifacts import (
+        RESULT_FILENAME,
+        BlockoutGenerationError,
+        write_blockout_artifacts,
+        write_blockout_failure_artifacts,
+    )
+    from novelvideo.director_world.blockout.generation_agent import (
+        generate_blockout_from_image,
+    )
+    from novelvideo.freezone.jobs import ensure_freezone_dirs
+    from novelvideo.freezone.paths import outputs_dir
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    ensure_freezone_dirs(project_dir)
+    source_path = Path(str(payload["source_path"]))
+    out_dir = outputs_dir(project_dir, "freezone_image_to_blockout") / job_id
+    _update(ctx, "freezone_image_to_blockout", job_id, 0.1, "正在根据参考图搭建白模...")
+    try:
+        generation = await _call_freezone_leaf(
+            envelope,
+            generate_blockout_from_image,
+            "generate_blockout_from_image",
+            image_path=source_path,
+            description=str(payload.get("description") or ""),
+            picture_check=bool(payload.get("picture_check", False)),
+            render_check=bool(payload.get("render_check", False)),
+            model=str(payload.get("model") or "") or None,
+        )
+    except BlockoutGenerationError as exc:
+        write_blockout_failure_artifacts(out_dir, exc)
+        raise
+    _update(ctx, "freezone_image_to_blockout", job_id, 0.9, "正在保存白模...")
+    written = write_blockout_artifacts(out_dir, generation)
+    out = out_dir / RESULT_FILENAME
+    rel = out.relative_to(project_dir).as_posix()
+    # 物件清单只落盘，不进任务状态：任务状态会随进度事件反复下发，150 件物件不该跟着走。
+    return {
+        "job_id": job_id,
+        "output_format": "json",
+        "output_path": str(out),
+        "output_url": make_static_url_for_context(ctx, rel),
+        "reference_camera_id": written["reference_camera_id"],
+        "counts": written["counts"],
+        "warnings": written["warnings"],
+        "compiler_version": written["compiler_version"],
+        "model": generation.model,
+        "retries": max(len(generation.attempts) - 1, 0),
+    }
+
+
 def run_freezone_text_translate(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
@@ -1966,6 +2049,15 @@ def run_freezone_image_reverse_prompt(
 ) -> dict[str, Any]:
     return _run_cancellable(
         envelope, _run_freezone_image_reverse_prompt_async(envelope, ctx)
+    )
+
+
+def run_freezone_image_to_blockout(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    return _run_cancellable(
+        envelope, _run_freezone_image_to_blockout_async(envelope, ctx)
     )
 
 
@@ -2176,6 +2268,11 @@ register_project_task_runner(
 register_project_task_runner(
     "freezone_image_reverse_prompt",
     run_freezone_image_reverse_prompt,
+    requires_home_node=False,
+)
+register_project_task_runner(
+    "freezone_image_to_blockout",
+    run_freezone_image_to_blockout,
     requires_home_node=False,
 )
 register_project_task_runner(

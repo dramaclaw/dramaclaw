@@ -42,6 +42,27 @@ describe("canvas command validator", () => {
     expect(validateCanvasChatCommandEnvelopes([envelope], [replaced], []).issues[0]?.message)
       .toContain("workflow source image changed");
   });
+  it("guards an existing video used as a workflow reference", () => {
+    const source = node({id: "previz", type: CANVAS_NODE_TYPES.video,
+      data: {videoUrl: "/static/projects/project-a/previz.mp4"}});
+    const envelope: CanvasChatCommandEnvelope = {
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [
+        {type: "create_node", client_id: "shot", node_type: CANVAS_NODE_TYPES.video,
+          data: {prompt: "沿用录制视频的运镜", genMode: "allReference"}},
+        {type: "create_edge", source: "previz", target: "shot", link_type: "media_input_for",
+          expected_source_video_url: "/static/projects/project-a/previz.mp4"},
+      ],
+    };
+    expect(validateCanvasChatCommandEnvelopes([envelope], [source], [])).toEqual({ok: true, issues: []});
+    expect(extractCanvasChatCommandEnvelopes([envelope])[0]?.commands[1]).toMatchObject({
+      expected_source_video_url: "/static/projects/project-a/previz.mp4",
+    });
+    const replaced = node({id: "previz", type: CANVAS_NODE_TYPES.video,
+      data: {videoUrl: "/static/projects/project-a/rerecorded.mp4"}});
+    expect(validateCanvasChatCommandEnvelopes([envelope], [replaced], []).issues[0]?.message)
+      .toContain("workflow source video changed");
+  });
   it("accepts a guarded reference image on an ungenerated image node", () => {
     const source = node({ id: "reference", type: CANVAS_NODE_TYPES.imageGen,
       data: { referenceImageUrl: "/static/projects/project-a/reference.png" } });

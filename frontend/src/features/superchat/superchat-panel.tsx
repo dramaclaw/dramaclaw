@@ -75,6 +75,7 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { openSettingsDialog } from "@/components/settings/settings-dialog-events";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -161,6 +162,7 @@ import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { CanvasOntologyContext } from "@/features/canvas/ontology/canvasOntology";
 import { localizeNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { useCanvasStore, type CanvasNode } from "@/stores/canvasStore";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import {
   CANVAS_NODE_TYPES,
   type AudioVoiceRef,
@@ -169,6 +171,7 @@ import {
   type VideoGenQuality,
 } from "@/features/canvas/domain/canvasNodes";
 import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
+import type { ComposeTimelineState } from "@/features/canvas/compose/timelineModel";
 import { VIDEO_GENERATION_ASPECT_RATIOS } from "@/features/canvas/application/imageData";
 import {
   VIDEO_UPSCALE_RESOLUTIONS,
@@ -2099,15 +2102,16 @@ function workflowDraftOperationId(toolMessage: ChatMessage): string {
 }
 
 function toolStatusRuntimeText(params: {
+  t: TFunction;
   status: "running" | "done" | "failed";
   title: string;
   toolMessage: ChatMessage;
 }): string {
-  const { status, title, toolMessage } = params;
+  const { status, title, toolMessage, t } = params;
   const raw = toolRawRecord(toolMessage);
   const businessStatus = toolBusinessStatus(toolMessage);
-  if (businessStatus === "clarification_required") return "等待选择生成参数";
-  if (businessStatus === "clarification_frontend_timeout") return "等待回答已暂停";
+  if (businessStatus === "clarification_required") return t("superchat.runtime.waitingForGenerationParameters");
+  if (businessStatus === "clarification_frontend_timeout") return t("superchat.runtime.clarificationPaused");
   if (
     status === "failed" &&
     (raw?.name === "freezone_put_agent_catalog_draft_outline" ||
@@ -2290,6 +2294,7 @@ function AgentRuntimeTimeline({
   streaming: boolean;
   hideSettledToolStatus?: boolean;
 }) {
+  const { t } = useTranslation();
   const runtimeParts = agentRuntimeDisplayParts(parts, { streaming, hideSettledToolStatus });
   if (runtimeParts.length === 0) return null;
   return (
@@ -2307,7 +2312,7 @@ function AgentRuntimeTimeline({
           const detail = status === "failed" && error ? error : "";
           const title = display?.title ?? genericToolTitle(toolMessage);
           const repeatText = toolPart.repeatCount && toolPart.repeatCount > 1 ? ` × ${toolPart.repeatCount}` : "";
-          const statusText = toolStatusRuntimeText({ status, title, toolMessage });
+          const statusText = toolStatusRuntimeText({ status, title, toolMessage, t });
           return (
             <div
               key={part.id}
@@ -2826,8 +2831,10 @@ function videoApprovalParamGroups(
     const nodeData = approvalNodeData(approval, canvasNodes, nodeId);
     if (nodeData.isUpscaleNode === true) continue;
     const rawModel = textValue(nodeData?.model, fallbackModel);
+    const isStorySegment = typeof nodeData.storySegmentId === "string"
+      && Boolean(nodeData.storySegmentId.trim());
     const selectedModel = models.find((item) => item.id === rawModel) ?? models[0];
-    const model = selectedModel?.id ?? rawModel;
+    const model = isStorySegment ? rawModel : selectedModel?.id ?? rawModel;
     const qualityOptions = videoQualityOptionsForApproval(selectedModel);
     const durationBounds = videoDurationBoundsForApproval(selectedModel);
     const aspectOptions = clarificationCapabilityOptions(
@@ -2839,19 +2846,41 @@ function videoApprovalParamGroups(
       && approvalVideoHasImageInput(approval, canvasNodes, canvasEdges, nodeId, nodeData)
       && nodeData.humanReview !== true
     );
+    const continuityMode = isStorySegment
+      ? nodeData.storyRole === "start"
+        ? "independent"
+        : nodeData.continuityMode === "auto" || nodeData.continuityMode === "independent"
+          ? nodeData.continuityMode
+          : null
+      : null;
+    const storySegmentLabel = isStorySegment
+      ? textValue(nodeData.displayName ?? nodeData.title, nodeId)
+      : null;
     const params: CanvasApprovalVideoParams = {
       nodeId,
       nodeIds: [nodeId],
       model,
-      aspectRatio: normalizeApprovalStringOption(nodeData?.aspectRatio, aspectOptions, "16:9"),
-      quality: normalizeVideoQualityForApproval(nodeData?.quality, qualityOptions),
-      durationSec: clampVideoDurationForApproval(nodeData?.durationSec, durationBounds),
-      generateAudio: selectedModel?.supportsGenerateAudio === false
-        ? false
-        : Boolean(nodeData?.generateAudio),
+      aspectRatio: isStorySegment
+        ? textValue(nodeData?.aspectRatio, "")
+        : normalizeApprovalStringOption(nodeData?.aspectRatio, aspectOptions, "16:9"),
+      quality: isStorySegment
+        ? textValue(nodeData?.quality, "")
+        : normalizeVideoQualityForApproval(nodeData?.quality, qualityOptions),
+      durationSec: isStorySegment
+        ? typeof nodeData.durationSec === "number" && nodeData.durationSec > 0
+          ? nodeData.durationSec
+          : Number.NaN
+        : clampVideoDurationForApproval(nodeData?.durationSec, durationBounds),
+      generateAudio: isStorySegment
+        ? Boolean(nodeData?.generateAudio)
+        : selectedModel?.supportsGenerateAudio === false
+          ? false
+          : Boolean(nodeData?.generateAudio),
       humanReview: requiresHumanReviewConfirmation || Boolean(nodeData?.humanReview),
       requiresHumanReviewConfirmation,
       count: isCanvasApprovalVideoCount(nodeData?.count) ? nodeData.count : 1,
+      storySegmentLabels: storySegmentLabel ? [storySegmentLabel] : [],
+      continuityMode,
     };
     const signature = JSON.stringify({
       model: params.model,
@@ -2861,9 +2890,21 @@ function videoApprovalParamGroups(
       generateAudio: params.generateAudio,
       humanReview: params.humanReview,
       count: params.count,
+      continuityMode: params.continuityMode,
+      // 互动故事必须逐片段审核；即使两个片段当前参数相同，也不能合并成一行后
+      // 让一次时长调整同时覆盖两段剧情。
+      storySegmentNodeId: isStorySegment ? nodeId : null,
     });
     const existing = groups.get(signature);
-    if (existing) existing.nodeIds = [...(existing.nodeIds ?? []), nodeId];
+    if (existing) {
+      existing.nodeIds = [...(existing.nodeIds ?? []), nodeId];
+      if (storySegmentLabel) {
+        existing.storySegmentLabels = [
+          ...(existing.storySegmentLabels ?? []),
+          storySegmentLabel,
+        ];
+      }
+    }
     else groups.set(signature, params);
   }
   return [...groups.values()];
@@ -3581,7 +3622,9 @@ function CanvasCommandApprovalCard({
       approval,
     );
     const withVideoParams = videoParams.reduce(
-      (current, params) => amendCanvasApprovalWithVideoParams(current, params),
+      (current, params) => params.storySegmentLabels?.length
+        ? current
+        : amendCanvasApprovalWithVideoParams(current, params),
       withImageParams,
     );
     const withVideoUpscaleParams = amendCanvasApprovalWithVideoUpscaleParams(
@@ -3701,7 +3744,9 @@ function CanvasCommandApprovalCard({
         <div className="flex items-center gap-2 border-t border-amber-400/10 bg-white/[0.025] px-3 py-1.5 text-[11px] font-medium text-foreground/90">
           <SlidersHorizontal className="size-3.5 text-muted-foreground" />
           生成设置
-          <span className="ml-auto text-[10px] font-normal text-muted-foreground">确认后统一写入节点</span>
+          <span className="ml-auto text-[10px] font-normal text-muted-foreground">
+            {videoParams.some((params) => params.storySegmentLabels?.length) ? "影游参数按镜头规划" : "确认后统一写入节点"}
+          </span>
         </div>
       )}
       {humanReviewNodeIds.length > 0 && (
@@ -3813,14 +3858,49 @@ function CanvasCommandApprovalCard({
           selectedVideoModel?.ratioOptions,
           VIDEO_GENERATION_ASPECT_RATIOS,
         );
+        const storySegmentLabels = videoParam.storySegmentLabels ?? [];
+        const storySegmentSummary = storySegmentLabels.join("、");
+        const continuityLabel = videoParam.continuityMode
+          ? t(`canvas.story.continuity.${videoParam.continuityMode}`)
+          : null;
+        const storyDurationLabel = Number.isFinite(videoParam.durationSec)
+          ? `${videoParam.durationSec}s`
+          : "时长未规划";
+        const storyParamLabel = [
+          videoParam.model, videoParam.aspectRatio, videoParam.quality,
+          storyDurationLabel, `${videoParam.count} 个`,
+        ].filter(Boolean).join(" · ");
         return (
         <div key={`${videoParam.nodeId}:${videoParam.model}`} className="border-t border-amber-400/10 px-3 py-1">
+          {storySegmentLabels.length > 0 && (
+            <div className="mb-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span
+                className="min-w-0 truncate text-foreground/85"
+                title={storySegmentSummary}
+              >
+                {storySegmentSummary}
+              </span>
+              {continuityLabel && (
+                <span className="shrink-0 rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {continuityLabel}
+                </span>
+              )}
+            </div>
+          )}
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground">
               <Play className="size-3" />视频
               {(videoParam.nodeIds?.length ?? 1) > 1 ? ` ×${videoParam.nodeIds?.length}` : ""}
             </span>
             <span className="h-3.5 w-px bg-white/[0.12]" />
+            {storySegmentLabels.length > 0 ? (
+              <span
+                className="text-[11px] text-foreground/90"
+                aria-label={`镜头参数：${storyParamLabel}`}
+              >
+                {storyParamLabel}
+              </span>
+            ) : (<>
             <CanvasApprovalImageParamSelect
               ariaLabel="视频模型"
               disabled={isExecuting}
@@ -3846,6 +3926,7 @@ function CanvasCommandApprovalCard({
               onChange={(value) => updateVideoParams(videoParamIndex, { count: Number(value) as 1 | 2 | 4 })}
               options={CANVAS_APPROVAL_VIDEO_COUNT_OPTIONS.map((option) => ({ value: String(option), label: `${option} 个` }))}
             />
+            </>)}
           </div>
         </div>
         );
@@ -4003,7 +4084,7 @@ export const canvasContextActivityVisualToneForTest = canvasContextActivityVisua
 
 function canvasCommandFeedbackVisualTone(feedback: CanvasCommandFeedback): CanvasFeedbackVisualTone {
   const failed = canvasCommandFeedbackHasFailure(feedback);
-  if (!failed) return "success";
+  if (!failed) return feedback.warnings?.length ? "warning" : "success";
   if (canvasCommandFeedbackHasPending(feedback)) return "warning";
   if (canvasCommandFeedbackIsUserCancelled(feedback)) return "muted";
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "warning";
@@ -4069,16 +4150,18 @@ function CanvasCommandFeedbackCard({
   // so the user can see and retry the operation without an extra click.
   const [expanded, setExpanded] = useState(() => canvasCommandFeedbackIsTimeoutCancelled(feedback));
   const steps = feedback.commandResults ?? [];
+  const warnings = feedback.warnings ?? [];
   const successfulCount = feedback.applied + feedback.openedUiActions;
-  if (steps.length === 0 && successfulCount === 0 && feedback.errors.length === 0) return null;
+  if (steps.length === 0 && successfulCount === 0 && feedback.errors.length === 0 && warnings.length === 0) return null;
   const failed = canvasCommandFeedbackHasFailure(feedback);
   const pending = canvasCommandFeedbackHasPending(feedback);
   const invalidCommand = canvasCommandFeedbackIsInvalidCommand(feedback);
   const visualTone = canvasCommandFeedbackVisualTone(feedback);
   const mutedFailure = failed && visualTone === "muted";
   const warningFailure = failed && visualTone === "warning";
+  const warningOnly = !failed && warnings.length > 0;
   const initiallyCompact = failed && successfulCount === 0;
-  const collapseSuccessfulDetails = !failed && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
+  const collapseSuccessfulDetails = !failed && !warningOnly && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
   const compactTitle = canvasCommandFeedbackCompactTitle(feedback, t);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
   const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
@@ -4129,7 +4212,7 @@ function CanvasCommandFeedbackCard({
         "mt-3 w-full min-w-0 overflow-hidden rounded-xl border text-xs text-muted-foreground",
         mutedFailure
           ? "border-white/[0.10] bg-background/80 backdrop-blur-sm"
-          : invalidCommand || warningFailure
+          : invalidCommand || warningFailure || warningOnly
             ? "border-amber-400/20 bg-amber-400/[0.035]"
             : failed
               ? "border-destructive/20 bg-destructive/[0.035]"
@@ -4148,6 +4231,11 @@ function CanvasCommandFeedbackCard({
       </div>
       {expanded && <CanvasCommandPlanList plans={feedback.plans} />}
       <div className="space-y-1 px-3 py-2">
+        {warnings.length > 0 && (
+          <div className="rounded-md bg-warning/[0.06] px-2 py-1.5 leading-5 text-foreground/90">
+            图片生成已完成，素材回接待处理：{warnings.join("；")}
+          </div>
+        )}
         {userFailureMessage && (
           <div className={cn(
             "mb-1 rounded-md px-2 py-1.5 leading-5",
@@ -4236,6 +4324,8 @@ type SkillStudioQuestionSelections = Record<string, string | string[] | SkillStu
 type AssistantClarificationQuestion = SkillStudioQuestion & {
   mode?: "single" | "multiple";
   options_source?: ClarificationOptionsSource;
+  /** Server-verified catalog modes required by the target video nodes. */
+  required_video_modes?: string[];
 };
 
 type AssistantClarificationAnswers = SkillStudioQuestionSelections;
@@ -4251,7 +4341,16 @@ type ClarificationCatalogModel = {
   minDuration?: number | null;
   maxDuration?: number | null;
   supportsGenerateAudio?: boolean;
+  supportedModes?: string[];
 };
+
+function clarificationVideoModelSupportsRequiredModes(
+  model: ClarificationCatalogModel,
+  requiredModes: readonly string[] | undefined,
+): boolean {
+  return !requiredModes?.length || requiredModes.every((mode) =>
+    model.supportedModes?.includes(mode));
+}
 
 type ClarificationOptionsSource =
   | "image_models"
@@ -4320,12 +4419,29 @@ type GenerationCatalogState = {
   isFallback: boolean;
 };
 
+export function assistantClarificationCanExitUnavailableVideoModel(
+  questions: AssistantClarificationQuestion[],
+  videoCatalog: GenerationCatalogState,
+  answers: AssistantClarificationAnswers = {},
+): boolean {
+  if (videoCatalog.isLoading) return false;
+  const requiredModes = questions.flatMap((question) => question.required_video_modes ?? []);
+  if (!requiredModes.length) return false;
+  if (videoCatalog.isFallback || !videoCatalog.models.some((model) =>
+    clarificationVideoModelSupportsRequiredModes(model, requiredModes))) return true;
+  const hasModelQuestion = questions.some((question) =>
+    normalizedClarificationId(question.id) === "video_model");
+  if (hasModelQuestion || !clarificationSelectedValue(questions, answers, "video_model")) return false;
+  const selected = clarificationSelectedModel(questions, answers, "video_model", videoCatalog.models);
+  return !selected || !clarificationVideoModelSupportsRequiredModes(selected, requiredModes);
+}
+
 export function assistantClarificationGenerationCatalogIssue(
   questions: AssistantClarificationQuestion[],
   imageCatalog: GenerationCatalogState,
   videoCatalog: GenerationCatalogState,
   answers: AssistantClarificationAnswers = {},
-): "loading" | "fallback" | "empty" | "model_unavailable" | null {
+): "loading" | "fallback" | "empty" | "model_unavailable" | "model_incompatible" | "no_compatible_video_model" | null {
   const requestedCatalogs = [
     ["image_models", "selected_image_model_", "image_model", imageCatalog],
     ["video_models", "selected_video_model_", "video_model", videoCatalog],
@@ -4340,6 +4456,23 @@ export function assistantClarificationGenerationCatalogIssue(
   if (needed.some(([, , , catalog]) => catalog.isLoading)) return "loading";
   if (needed.some(([, , , catalog]) => catalog.isFallback)) return "fallback";
   if (needed.some(([, , , catalog]) => catalog.models.length === 0)) return "empty";
+  if (questions.some((question) =>
+    (question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[
+      normalizedClarificationId(question.id)
+    ]) === "video_models"
+      && Boolean(question.required_video_modes?.length)
+      && !videoCatalog.models.some((model) =>
+        clarificationVideoModelSupportsRequiredModes(model, question.required_video_modes)))) {
+    return "no_compatible_video_model";
+  }
+  const requiredVideoModes = questions.flatMap((question) => question.required_video_modes ?? []);
+  const hasVideoModelQuestion = questions.some((question) =>
+    normalizedClarificationId(question.id) === "video_model");
+  const selectedVideoModel = clarificationSelectedModel(questions, answers, "video_model", videoCatalog.models);
+  if (requiredVideoModes.length && !hasVideoModelQuestion && selectedVideoModel
+    && !clarificationVideoModelSupportsRequiredModes(selectedVideoModel, requiredVideoModes)) {
+    return "model_incompatible";
+  }
   for (const [, dependentPrefix, modelQuestionId, catalog] of needed) {
     const hasDependentQuestion = questions.some((question) =>
       (question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[
@@ -4457,9 +4590,13 @@ function clarificationQuestionsWithLiveModelCatalogs(
   const selectedImageModel = clarificationSelectedModel(
     questions, answers, "image_model", imageModels,
   );
-  const selectedVideoModel = clarificationSelectedModel(
+  const selectedVideoModelCandidate = clarificationSelectedModel(
     questions, answers, "video_model", videoModels,
   );
+  const requiredVideoModes = questions.flatMap((question) => question.required_video_modes ?? []);
+  const selectedVideoModel = selectedVideoModelCandidate
+    && clarificationVideoModelSupportsRequiredModes(selectedVideoModelCandidate, requiredVideoModes)
+    ? selectedVideoModelCandidate : null;
   const hasImageModelQuestion = questions.some(
     (question) => normalizedClarificationId(question.id) === "image_model",
   );
@@ -4472,7 +4609,8 @@ function clarificationQuestionsWithLiveModelCatalogs(
     const existingOptions = question.options ?? [];
     const normalized = (value: unknown) => String(value ?? "").trim().toLowerCase();
     if (source === "image_models" || source === "video_models") {
-      const models = source === "image_models" ? imageModels : videoModels;
+      const models = source === "image_models" ? imageModels : videoModels.filter((model) =>
+        clarificationVideoModelSupportsRequiredModes(model, question.required_video_modes));
       return {
         ...question,
         options_source: source,
@@ -6205,8 +6343,9 @@ export function buildAssistantClarificationResponseForTest(
 export function buildAssistantClarificationToolResultForTest(
   event: AssistantClarificationUiEvent,
   answers: AssistantClarificationAnswers,
-  options: { skillStudioRevision?: boolean; projectId?: string; canvasId?: string; agentId?: string } = {},
+  options: { skillStudioRevision?: boolean; projectId?: string; canvasId?: string; agentId?: string; cancelMessage?: string } = {},
 ) {
+  const cancelled = answers.__action === "cancel";
   const safeAnswers = Object.fromEntries(
     Object.entries(answers).filter(([key]) => !key.startsWith("__")),
   ) as AssistantClarificationAnswers;
@@ -6232,11 +6371,11 @@ export function buildAssistantClarificationToolResultForTest(
     canvas_id: event.canvas_id || options.canvasId || undefined,
     agent_id: event.agent_id || options.agentId || undefined,
     tool_call_status: "completed" as const,
-    clarification_status: "answered",
-    ok: true,
-    action: "submit",
+    clarification_status: cancelled ? "cancelled" : "answered",
+    ok: !cancelled,
+    action: cancelled ? "cancel" : "submit",
     answers: safeAnswers,
-    message,
+    message: cancelled ? options.cancelMessage ?? "用户退出模型选择，需要先调整镜头模式或配置兼容模型。" : message,
   };
 }
 
@@ -7031,6 +7170,9 @@ function AssistantClarificationInputCard({
   const allQuestionsAnswered = selectableQuestions.length > 0 && answeredCount === selectableQuestions.length;
   const canSubmit = assistantClarificationCanSubmit(questions, answers);
   const isGenerationCard = assistantClarificationIsGenerationCard(questions);
+  const canExitUnavailableVideoModel = assistantClarificationCanExitUnavailableVideoModel(
+    eventQuestions, videoModelCatalog, answers,
+  );
   const goToQuestion = useCallback((position: number) => {
     if (selectableQuestions.length === 0) return;
     setActiveQuestionPosition(Math.max(0, Math.min(position, selectableQuestions.length - 1)));
@@ -7220,6 +7362,18 @@ function AssistantClarificationInputCard({
           已选择 {activeSelectedCount} 项 · {answeredCount} / {selectableQuestions.length}
         </div>
         <div className="flex items-center gap-2">
+          {canExitUnavailableVideoModel && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-8 rounded-full px-3 text-xs text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+              disabled={!onSubmit || isSubmitting}
+              onClick={() => void submitResponse({ __action: "cancel" })}
+            >
+              {t("freezone.chat.generationParams.catalog.exit")}
+            </Button>
+          )}
           {event.allow_skip && (
             <Button
               type="button"
@@ -9470,7 +9624,7 @@ function SearchBar({
   }, []);
 
   return (
-    <div role="search" className="pointer-events-auto flex h-10 w-full items-center gap-2 rounded-xl border border-border/70 bg-background/90 px-2.5 shadow-lg backdrop-blur-xl">
+    <div role="search" className="pointer-events-auto flex h-10 w-full items-center gap-2 rounded-xl border border-border/70 bg-background/90 px-2.5 backdrop-blur-xl">
       <Search className="size-4 shrink-0 text-muted-foreground" />
       <Input
         ref={inputRef}
@@ -9481,7 +9635,7 @@ function SearchBar({
         }}
         placeholder={t("aiAssistant.search")}
         aria-label={t("aiAssistant.search")}
-        className="h-8 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
+        className="h-8 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
       />
       <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={onClose} aria-label={t("aiAssistant.closeSearch")}>
         <X className="size-4" />
@@ -10098,7 +10252,42 @@ function canvasReferencePreviewUrl(node: CanvasNode): string | null {
   if (node.type === "videoNode") {
     return stringOrNull(data.previewImageUrl) || stringOrNull(data.videoUrl);
   }
-  return stringOrNull(data.previewImageUrl) || stringOrNull(data.imageUrl) || stringOrNull(data.referenceImageUrl);
+  const preview =
+    stringOrNull(data.previewImageUrl) ||
+    stringOrNull(data.imageUrl) ||
+    stringOrNull(data.referenceImageUrl);
+  if (preview) return preview;
+  if (node.type === "videoComposeNode") {
+    return composeDraftPreviewUrl(data as Record<string, unknown>);
+  }
+  return null;
+}
+
+/**
+ * A compose node has no media of its own until an auto-compose writes a result
+ * cover back; what it does have is the draft timeline it was opened with. Read
+ * that timeline so the selection chip shows the film's first frame instead of a
+ * bare play icon.
+ */
+function composeDraftPreviewUrl(data: Record<string, unknown>): string | null {
+  const timeline = data.draftTimeline as Partial<ComposeTimelineState> | undefined;
+  const cover = stringOrNull(timeline?.cover?.url);
+  if (cover) return cover;
+  const tracks = timeline?.tracks ?? [];
+  for (const track of tracks) {
+    for (const clip of track.clips ?? []) {
+      const thumb = stringOrNull(clip.thumbUrl);
+      if (thumb) return thumb;
+    }
+  }
+  for (const track of tracks) {
+    if (track.kind !== "video") continue;
+    for (const clip of track.clips ?? []) {
+      const source = stringOrNull(clip.sourceUrl);
+      if (source) return source;
+    }
+  }
+  return null;
 }
 
 function canvasNodeToReferencePreview(node: CanvasNode, t: TFunction): CanvasNodeReferencePreview {
@@ -10208,17 +10397,8 @@ function CanvasReferenceVideoPreview({
 }
 
 function focusCanvasReferenceNode(nodeId: string): void {
-  const store = useCanvasStore.getState();
-  if (!store.nodes.some((node) => node.id === nodeId)) return;
-  store.onNodesChange(
-    store.nodes.map((node) => ({
-      id: node.id,
-      type: "select" as const,
-      selected: node.id === nodeId,
-    })),
-  );
-  store.setSelectedNode(nodeId);
-  store.requestFocusNode(nodeId);
+  selectNodeExclusively(nodeId);
+  useCanvasStore.getState().requestFocusNode(nodeId);
 }
 
 function removeCanvasReferenceNode(nodeId: string): void {
@@ -10279,7 +10459,7 @@ function CanvasNodeReferenceThumb({
   return (
     <div
       ref={thumbRef}
-      className="group relative size-11 shrink-0 cursor-pointer overflow-visible focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20"
+      className="group relative size-11 shrink-0 cursor-pointer overflow-visible rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20"
       aria-label={`${title} · ${node.nodeId}`}
       data-media-kind={fallbackKind}
       role="button"
@@ -10292,7 +10472,7 @@ function CanvasNodeReferenceThumb({
       onKeyDown={(event) => handleCanvasReferenceKeyDown(event, node.nodeId)}
       tabIndex={0}
     >
-      <div className="h-full w-full overflow-hidden rounded-md border border-white/10 bg-white/[0.07] transition group-hover:border-white/25 group-hover:ring-2 group-hover:ring-white/10">
+      <div className="h-full w-full overflow-hidden rounded-[inherit] border border-white/10 bg-white/[0.07] transition group-hover:border-white/25 group-hover:ring-2 group-hover:ring-white/10">
         {previewSrc && previewIsVideo ? (
           <CanvasReferenceVideoPreview src={previewSrc} title={title} iconClassName="size-4" />
         ) : previewSrc && (previewIsImage || isImage) ? (
@@ -10528,7 +10708,10 @@ function serializeFreezoneSkillEditor(root: HTMLElement): string {
 }
 
 const FREEZONE_CHIP_CLASS =
-  "mx-0.5 inline-flex max-w-[min(260px,80%)] select-none items-center gap-1.5 rounded-[7px] border border-white/[0.12] bg-white/[0.08] px-2 py-0.5 align-baseline text-xs text-foreground/90";
+  "mention-chip max-w-[min(260px,80%)] select-none";
+
+const FREEZONE_COMPOSER_ACTION_CLASS =
+  "h-7 gap-1.5 rounded-full border border-foreground/10 bg-transparent px-2 text-xs text-muted-foreground transition-colors duration-[var(--duration-fast)] hover:border-foreground/30 hover:bg-transparent hover:text-foreground dark:hover:bg-transparent aria-expanded:bg-transparent focus-visible:border-foreground/30 focus-visible:text-foreground";
 
 function buildFreezoneSkillChipElement(skillId: string, label: string): HTMLElement {
   const chip = document.createElement("span");
@@ -10543,7 +10726,7 @@ function buildFreezoneSkillChipElement(skillId: string, label: string): HTMLElem
   chip.appendChild(icon);
 
   const text = document.createElement("span");
-  text.className = "truncate";
+  text.className = "mention-chip-label";
   text.textContent = label;
   chip.appendChild(text);
   return chip;
@@ -10551,6 +10734,7 @@ function buildFreezoneSkillChipElement(skillId: string, label: string): HTMLElem
 
 const FREEZONE_NODE_CHIP_GLYPH: Record<AssetBoardColumn, string> = {
   text: "T",
+  previz: "◎",
   image: "▣",
   video: "▶",
   audio: "♪",
@@ -10577,7 +10761,6 @@ function buildFreezoneNodeChipElement(
     thumb.src = meta.thumbnailUrl;
     thumb.alt = "";
     thumb.loading = "lazy";
-    thumb.className = "size-4 shrink-0 rounded-[3px] object-cover";
     chip.appendChild(thumb);
   } else if (meta?.column === "video" && meta.mediaUrl) {
     // 视频没记封面：拿片源取首帧当缩略图（对齐故事板 VideoThumb 的 #t=0.1 兜底）。
@@ -10586,7 +10769,6 @@ function buildFreezoneNodeChipElement(
     thumb.muted = true;
     thumb.preload = "metadata";
     thumb.playsInline = true;
-    thumb.className = "size-4 shrink-0 rounded-[3px] object-cover";
     chip.appendChild(thumb);
   } else {
     const icon = document.createElement("span");
@@ -10596,7 +10778,7 @@ function buildFreezoneNodeChipElement(
   }
 
   const text = document.createElement("span");
-  text.className = "truncate";
+  text.className = "mention-chip-label";
   text.textContent = label;
   chip.appendChild(text);
   return chip;
@@ -10935,6 +11117,7 @@ type CanvasCommandFeedbackStep = {
 };
 
 type CanvasCommandFeedback = Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
+  warnings?: string[];
   commandResults: CanvasCommandFeedbackStep[];
   key: string;
   plans?: CanvasCommandPlan[];
@@ -11002,12 +11185,14 @@ type CanvasApprovalVideoParams = {
   nodeIds?: string[];
   model: string;
   aspectRatio: string;
-  quality: VideoGenQuality;
+  quality: string;
   durationSec: number;
   generateAudio: boolean;
   humanReview: boolean;
   requiresHumanReviewConfirmation: boolean;
   count: 1 | 2 | 4;
+  storySegmentLabels?: string[];
+  continuityMode?: "auto" | "independent" | null;
 };
 
 type CanvasApprovalVideoUpscaleParams = {
@@ -11268,7 +11453,7 @@ function canvasCommandPlanLabel(command: CanvasChatCommand): string {
     case "run_node_action":
       if (command.action === "generate_image") return "生成图片";
       if (command.action === "generate_video") return "生成视频";
-      if (command.action === "open_video_compose_modal") return "打开视频合成";
+      if (command.action === "open_video_compose_modal") return "打开视频合成与剪辑";
       if (command.action === "auto_compose_video") return "自动合成视频";
       if (command.action === "open_video_viewer") return "打开视频";
       return "执行节点动作";
@@ -11727,6 +11912,7 @@ function canvasCommandFeedbackDedupeKey(feedback: CanvasCommandFeedback): string
     applied: feedback.applied,
     openedUiActions: feedback.openedUiActions,
     errors: feedback.errors,
+    warnings: feedback.warnings,
     commandResults: (feedback.commandResults ?? []).map((step) => ({
       commandIndex: step.commandIndex,
       type: step.type,
@@ -11901,6 +12087,7 @@ function mergeCanvasCommandFeedbackValue(
   previous: CanvasCommandFeedback | undefined,
   key: string,
   result: Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
+    warnings?: string[];
     commandResults: CanvasCommandFeedbackStep[];
   },
   plans: CanvasCommandPlan[] = [],
@@ -11913,6 +12100,7 @@ function mergeCanvasCommandFeedbackValue(
     applied: (previous?.applied ?? 0) + result.applied,
     openedUiActions: (previous?.openedUiActions ?? 0) + result.openedUiActions,
     errors: dedupeGenerationErrors([...(previous?.errors ?? []), ...result.errors]),
+    warnings: dedupeGenerationErrors([...(previous?.warnings ?? []), ...(result.warnings ?? [])]),
     commandResults: mergeCanvasCommandResults(previous?.commandResults, result.commandResults),
     plans: [...(previous?.plans ?? []), ...plans],
     anchorTextPrefix: previous?.anchorTextPrefix ?? nextAnchorTextPrefix,
@@ -11950,6 +12138,7 @@ function appendCanvasCommandFeedbackCard(
   current: CanvasCommandFeedback[] | undefined,
   key: string,
   result: Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
+    warnings?: string[];
     commandResults: CanvasCommandFeedbackStep[];
   },
   plans: CanvasCommandPlan[] = [],
@@ -11982,6 +12171,9 @@ function canvasCommandApplyResultFromUnknown(value: unknown): CanvasChatCommandA
       : [],
     errors: Array.isArray(result.errors)
       ? dedupeGenerationErrors(result.errors.map((item) => String(item)))
+      : [],
+    warnings: Array.isArray(result.warnings)
+      ? dedupeGenerationErrors(result.warnings.map((item) => String(item)))
       : [],
     commandResults: commandResults.filter(
       (item): item is CanvasChatCommandApplyStep =>
@@ -12422,6 +12614,8 @@ interface SuperChatPanelProps {
   variant?: SuperChatPanelVariant;
   freezoneCanvasId?: string | null;
   freezoneAgentId?: string | null;
+  /** 视频合成与剪辑工作区里正在剪的 videoComposeNode；仅工作区打开时传入。 */
+  freezoneComposeNodeId?: string | null;
   connectionEnabled?: boolean;
   workflowStatusEnabled?: boolean;
   onConnectionStateChange?: (state: {
@@ -12438,6 +12632,11 @@ interface SuperChatPanelProps {
   /** 「添加到对话」落地：一批 nodeId,面板挂载后 drain 成 draft 里的行内 mention chip。 */
   pendingNodeMentions?: string[];
   onPendingNodeMentionsConsumed?: () => void;
+  /** 面板外的「提交并继续」：外壳决策落定（如确认大纲）后代投一条用户消息，
+   * 面板 drain 进发送队列，与手动发送同管道（忙时排队、空闲即发）。
+   * mode="draft" 则不发送，只把文本预填进输入框并聚焦（如「需要修改」等用户补意见）。 */
+  pendingExternalSubmit?: { id: string; text: string; mode?: "send" | "draft" } | null;
+  onPendingExternalSubmitConsumed?: () => void;
   onRequestClose?: () => void;
   freezoneHeaderActions?: ReactNode;
   onFreezoneUserMessage?: (message: string, timestamp: number) => void;
@@ -12462,6 +12661,7 @@ export function SuperChatPanel({
   variant = "default",
   freezoneCanvasId = null,
   freezoneAgentId = null,
+  freezoneComposeNodeId = null,
   connectionEnabled = true,
   workflowStatusEnabled = true,
   onConnectionStateChange,
@@ -12472,6 +12672,8 @@ export function SuperChatPanel({
   onPendingAttachmentsConsumed,
   pendingNodeMentions = [],
   onPendingNodeMentionsConsumed,
+  pendingExternalSubmit = null,
+  onPendingExternalSubmitConsumed,
   onRequestClose,
   freezoneHeaderActions,
   onFreezoneUserMessage,
@@ -12562,6 +12764,7 @@ export function SuperChatPanel({
   const onConnectionStateChangeRef = useRef(onConnectionStateChange);
   const consumedPendingAttachmentsKeyRef = useRef<string | null>(null);
   const consumedPendingNodeMentionsKeyRef = useRef<string | null>(null);
+  const consumedPendingExternalSubmitIdRef = useRef<string | null>(null);
   const notifiedTaskKeysRef = useRef<Set<string>>(new Set());
   const directorAutoTerminalTaskIdsRef = useRef<Set<string>>(new Set());
   const taskEventBus = useEventBus();
@@ -12574,6 +12777,7 @@ export function SuperChatPanel({
     surface: variant === "freezone" ? "freezone" : undefined,
     freezoneCanvasId: variant === "freezone" ? freezoneCanvasId ?? canvasId : null,
     freezoneAgentId: variant === "freezone" ? freezoneAgentId : null,
+    freezoneComposeNodeId: variant === "freezone" ? freezoneComposeNodeId : null,
     connectionEnabled,
   });
   const updateChatUiEvent = chat.updateUiEvent;
@@ -14604,6 +14808,35 @@ export function SuperChatPanel({
     restoreDraftFocusRef.current = true;
   }, [pendingNodeMentions, canvasNodes, canvasEdges, onPendingNodeMentionsConsumed]);
 
+  // 「提交并继续」drain：send 直接进发送队列，和手动忙时排队共用同一条 flush 路径——
+  // 空闲且已连接就立即发出，Agent 忙则排队，用户全程能在队列里看到将要发送的内容。
+  // draft 只预填输入框并聚焦，把要不要发、发什么留给用户（「需要修改」后的意见补写）。
+  useEffect(() => {
+    if (!pendingExternalSubmit) {
+      consumedPendingExternalSubmitIdRef.current = null;
+      return;
+    }
+    if (consumedPendingExternalSubmitIdRef.current === pendingExternalSubmit.id) return;
+    consumedPendingExternalSubmitIdRef.current = pendingExternalSubmit.id;
+    if (pendingExternalSubmit.mode === "draft") {
+      setDraft((current) =>
+        current.trim() ? `${current}\n${pendingExternalSubmit.text}` : pendingExternalSubmit.text,
+      );
+      restoreDraftFocusRef.current = true;
+    } else {
+      setQueuedMessages((current) => [
+        ...current,
+        {
+          id: `external-${pendingExternalSubmit.id}`,
+          text: pendingExternalSubmit.text,
+          attachments: [],
+          createdAt: Date.now(),
+        },
+      ]);
+    }
+    onPendingExternalSubmitConsumed?.();
+  }, [pendingExternalSubmit, onPendingExternalSubmitConsumed]);
+
   useEffect(() => {
     if (variant !== "freezone" || currentCanvasSelection.length > 0) return;
     setAttachments((current) => {
@@ -15294,6 +15527,8 @@ export function SuperChatPanel({
         ? "recommended"
         : answers.__action === "skip"
           ? "skip"
+          : answers.__action === "cancel"
+            ? "cancel"
           : "submit";
       if (action === "recommended" && !assistantClarificationCanSubmitRecommended(
         event, answers,
@@ -15309,9 +15544,10 @@ export function SuperChatPanel({
           projectId: params.project || undefined,
           canvasId: effectiveFreezoneCanvasId || undefined,
           agentId: effectiveFreezoneAgentId || undefined,
+          cancelMessage: t("freezone.chat.generationParams.catalog.exitMessage"),
         }),
         action,
-        clarification_status: action === "submit" ? "answered" : action,
+        clarification_status: action === "submit" ? "answered" : action === "cancel" ? "cancelled" : action,
         skipped: action === "skip",
         used_recommended: action === "recommended",
       };
@@ -15325,11 +15561,11 @@ export function SuperChatPanel({
       });
       if (result.ok === false) {
         submittedAssistantClarificationKeysRef.current.delete(submissionKey);
-        toast.error(result.errors?.find(Boolean) || result.message || "提交补充信息失败，请重试");
+        toast.error(result.errors?.find(Boolean) || result.message || t("freezone.chat.clarification.submitFailed"));
         return false;
       }
       if (event.turn_id) {
-        const actionStatus = action === "submit" ? "answered" : action;
+        const actionStatus = action === "submit" ? "answered" : action === "cancel" ? "cancelled" : action;
         const receivedAt = uiEventFirstReceivedAt(event);
         const persistedEvent = buildPersistedAssistantClarificationEvent(event, {
           action,
@@ -15374,10 +15610,10 @@ export function SuperChatPanel({
     } catch (error) {
       submittedAssistantClarificationKeysRef.current.delete(submissionKey);
       console.error("[superchat] clarification result submit failed", error);
-      toast.error("提交补充信息失败，请重试");
+      toast.error(t("freezone.chat.clarification.submitFailed"));
       return false;
     }
-	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages]);
+	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages, t]);
 
   const submitSkillStudioDraftResponse = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
@@ -16477,7 +16713,7 @@ export function SuperChatPanel({
                       </DropdownMenu>
                     )}
                     {isFreezoneLayout && (
-                      <>
+                      <div className="flex items-center gap-2">
                         <DropdownMenu
                           open={canvasCommandModeMenuOpen}
                           onOpenChange={setCanvasCommandModeMenuOpen}
@@ -16489,8 +16725,8 @@ export function SuperChatPanel({
                                 variant="ghost"
                                 size="sm"
                                 className={cn(
-                                  "h-8 gap-1.5 rounded-full px-2.5 text-xs text-muted-foreground hover:bg-white/[0.08] hover:text-foreground",
-                                  canvasCommandModeMenuOpen && "bg-white/[0.08] text-foreground",
+                                  FREEZONE_COMPOSER_ACTION_CLASS,
+                                  canvasCommandModeMenuOpen && "border-foreground/30 text-foreground",
                                 )}
                               />
                             }
@@ -16557,8 +16793,8 @@ export function SuperChatPanel({
                           variant="ghost"
                           size="sm"
                           className={cn(
-                            "h-8 gap-1.5 rounded-full px-2.5 text-xs text-muted-foreground hover:bg-white/[0.08] hover:text-foreground",
-                            showFreezoneSkillSuggestions && freezoneSkillMenuExplicitOpen && "bg-white/[0.08] text-foreground",
+                            FREEZONE_COMPOSER_ACTION_CLASS,
+                            showFreezoneSkillSuggestions && freezoneSkillMenuExplicitOpen && "border-foreground/30 text-foreground",
                           )}
                           onMouseDown={(event) => {
                             event.preventDefault();
@@ -16577,10 +16813,10 @@ export function SuperChatPanel({
                           title={t("freezone.chat.selectSkill")}
                           aria-expanded={showFreezoneSkillSuggestions}
                         >
-                          <Package className="size-4" />
+                          <Package className="size-3.5" />
                           <span>Skill</span>
                         </Button>
-                      </>
+                      </div>
                     )}
                     {ENABLE_SUPERCHAT_FILE_UPLOAD && (
                       <Button
@@ -16672,6 +16908,21 @@ export function SuperChatPanel({
               Skill
             </div>
             <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                className="inline-flex h-7 items-center gap-1 rounded-full border border-white/[0.10] bg-white/[0.08] px-2.5 text-xs font-medium text-foreground/88 shadow-[0_8px_18px_rgba(0,0,0,0.28)] transition hover:border-white/[0.16] hover:bg-white/[0.12] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                }}
+                onClick={() => {
+                  setFreezoneSkillMenuExplicitOpen(false);
+                  setFreezoneSkillCreateMenuOpen(false);
+                  openSettingsDialog("freezone-skills");
+                }}
+              >
+                <SlidersHorizontal className="size-3.5" />
+                {t("aiAssistant.settings")}
+              </button>
               <div className="relative">
                 <button
                   type="button"

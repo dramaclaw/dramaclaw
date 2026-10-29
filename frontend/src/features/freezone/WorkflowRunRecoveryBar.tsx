@@ -17,6 +17,7 @@ import {
   isNodeActionGenerationPending,
 } from "@/features/freezone/canvasChatCommands";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import { useTaskCenterStore } from "@/task-center/store";
 
 const RESUMABLE_ACTION_STATUSES = new Set(["pending", "running", "failed", "blocked"]);
@@ -306,7 +307,7 @@ export function WorkflowRunRecoveryBar({
   const handleEditSafetyPrompt = () => {
     const nodeId = safetyNodeIds[0];
     if (!nodeId) return;
-    useCanvasStore.getState().setSelectedNode(nodeId);
+    selectNodeExclusively(nodeId);
     useCanvasStore.getState().requestFocusNode(nodeId);
     setDismissedRunId(run?.run_id ?? null);
   };

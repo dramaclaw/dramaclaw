@@ -12,6 +12,8 @@ import {
 import { getDownstreamSpawnTypes, getNodeDefinition, nodeHasSourceHandle } from "@/features/canvas/domain/nodeRegistry";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import { isAgentExecutableNodeAction } from "@/features/freezone/canvasNodeActionCatalog";
+import { planNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
+import type { PrevizScene } from "@/features/previz/domain/scene";
 import {
   isBeatContextAgentEditablePatch,
   normalizeCanvasCommandCreateNodeData,
@@ -53,6 +55,24 @@ const RESERVED_DATA_KEYS = new Set([
 
 const AUDIO_DOWNLOAD_FORMATS = new Set(["source", "mp3", "m4a", "wav"]);
 const VIDEO_UPSCALE_RESOLUTION_VALUES = new Set<string>(VIDEO_UPSCALE_RESOLUTIONS);
+
+/** Error when a workflow external input no longer holds the media its draft verified. */
+export function workflowExternalSourceMismatch(
+  source: CanvasNode | undefined,
+  sourceId: string,
+  expected: { imageUrl?: unknown; videoUrl?: unknown },
+): string | null {
+  const content = source ? extractUpstreamContent(source) : undefined;
+  if (typeof expected.videoUrl === "string" && expected.videoUrl.trim() &&
+    content?.videoUrl !== expected.videoUrl) {
+    return `workflow source video changed: ${sourceId}`;
+  }
+  if (typeof expected.imageUrl === "string" && expected.imageUrl.trim() &&
+    content?.imageUrl !== expected.imageUrl) {
+    return `workflow source image changed: ${sourceId}`;
+  }
+  return null;
+}
 
 function hasReservedKeys(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
@@ -186,6 +206,8 @@ export function validateCanvasChatCommandEnvelopes(
   const edgeIds = new Set(edges.map((edge) => edge.id));
   const nodeById = new Map<string, CanvasNode>(nodes.map((node) => [node.id, node] as const));
   const clientIds = new Set<string>();
+  // 预演台节点在这一批里已经规划出来的场景：后面的 sceneEdit 接着它算，不回头读原始场景。
+  const plannedPrevizScenes = new Map<string, PrevizScene>();
   const issues: CanvasCommandValidationIssue[] = [];
 
   const isKnownNodeRef = (id: string): boolean => nodeIds.has(id) || clientIds.has(id);
@@ -330,6 +352,16 @@ export function validateCanvasChatCommandEnvelopes(
             if (invalid.length > 0) {
               addIssue(issues, path, `fields are not editable on this node: ${invalid.join(", ")}`);
             }
+            if (target.type === CANVAS_NODE_TYPES.previz && "sceneEdit" in data) {
+              const plan = planNodeAgentSceneEdit(
+                target.id,
+                target.data as Record<string, unknown>,
+                (data as Record<string, unknown>).sceneEdit,
+                plannedPrevizScenes.get(target.id),
+              );
+              if (plan.ok) plannedPrevizScenes.set(target.id, plan.scene);
+              else addIssue(issues, path, `sceneEdit rejected: ${plan.error}`);
+            }
             validateModelAndModeFields(
               issues,
               path,
@@ -388,12 +420,12 @@ export function validateCanvasChatCommandEnvelopes(
         case "create_edge": {
           if (!isKnownNodeRef(command.source)) addIssue(issues, path, missingNodeMessage(command.source, "source"));
           if (!isKnownNodeRef(command.target)) addIssue(issues, path, missingNodeMessage(command.target, "target"));
-          if (command.expected_source_image_url &&
-            (nodeById.get(command.source)
-              ? extractUpstreamContent(nodeById.get(command.source)!).imageUrl
-              : undefined) !== command.expected_source_image_url) {
-            addIssue(issues, path, `workflow source image changed: ${command.source}`);
-          }
+          const sourceMismatch = workflowExternalSourceMismatch(
+            nodeById.get(command.source),
+            command.source,
+            { imageUrl: command.expected_source_image_url, videoUrl: command.expected_source_video_url },
+          );
+          if (sourceMismatch) addIssue(issues, path, sourceMismatch);
           const linkType = normalizeCanvasEdgeSemanticKind(command.link_type);
           if (!linkType) {
             addIssue(

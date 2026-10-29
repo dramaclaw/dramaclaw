@@ -1,0 +1,39 @@
+.outer,
+.middle,
+.inner {
+  position: absolute;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.outer {
+  width: 48px;
+  height: 48px;
+  border: 2px solid rgb(255 255 255 / 90%);
+  box-shadow: 0 0 8px rgb(255 255 255 / 40%);
+}
+
+.middle {
+  width: 32px;
+  height: 32px;
+  border: 1.5px solid rgb(207 250 254 / 80%);
+}
+
+.inner {
+  width: 12px;
+  height: 12px;
+  border: 2.5px solid white;
+}
+
+.outer[data-completed='true'] {
+  animation: complete var(--duration-slow, 320ms) var(--ease-out-quint, ease-out) both;
+}
+
+@keyframes complete {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .outer[data-completed='true'] { animation: none; }
+}

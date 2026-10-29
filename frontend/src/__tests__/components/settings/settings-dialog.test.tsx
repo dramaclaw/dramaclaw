@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import ky from "ky";
@@ -11,6 +11,11 @@ import { enT, zhT } from "@/__tests__/helpers/i18n-fixtures";
 
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: true }));
 const localeState = vi.hoisted(() => ({ language: "zh" }));
+const languageMocks = vi.hoisted(() => ({ changeLanguage: vi.fn(), setLanguage: vi.fn() }));
+vi.mock("@/stores/app-store", () => ({
+  useAppStore: (select: (state: { setLanguage: typeof languageMocks.setLanguage }) => unknown) =>
+    select({ setLanguage: languageMocks.setLanguage }),
+}));
 const modelGatewayMocks = vi.hoisted(() => ({
   config: undefined as Record<string, unknown> | undefined,
   saveAgent: vi.fn(),
@@ -121,6 +126,7 @@ vi.mock("react-i18next", async () => {
   const { zhT } = await import("@/__tests__/helpers/i18n-fixtures");
   return {
   useTranslation: () => ({
+    i18n: { resolvedLanguage: "en", changeLanguage: languageMocks.changeLanguage },
     t: (
       key: string,
       options?: {
@@ -136,7 +142,15 @@ vi.mock("react-i18next", async () => {
       key.startsWith("settings.mediaStorage.errors.")
         ? (localeState.language === "en" ? enT : zhT)(key, options)
         : ({
-        "settings.title": "设置",
+        "settings.title": "功能设置",
+        "header.account.changeAvatar": "更换头像",
+        "header.account.changePassword": "修改密码",
+        "header.account.setPassword": "设置密码",
+        "header.account.selectLanguage": "选择语言",
+        "header.account.languageChinese": "中文",
+        "header.account.languageEnglish": "English",
+        "header.account.languageVietnamese": "Tiếng Việt",
+        "header.account.languagePortuguese": "Português",
         "settings.close": "关闭",
         "settings.navigationLabel": "设置导航",
         "settings.pages.models": "模型配置",
@@ -358,10 +372,14 @@ vi.mock("react-i18next", async () => {
   };
 });
 
-function renderSettingsDialog() {
+function renderSettingsDialog(
+  account?: Parameters<typeof SettingsDialog>[0]["account"],
+  onOpenChange = vi.fn(),
+  initialPage?: Parameters<typeof SettingsDialog>[0]["initialPage"],
+) {
   return render(
     <QueryClientProvider client={new QueryClient()}>
-      <SettingsDialog open onOpenChange={vi.fn()} />
+      <SettingsDialog open onOpenChange={onOpenChange} initialPage={initialPage} account={account} />
     </QueryClientProvider>,
   );
 }
@@ -540,6 +558,69 @@ describe("SettingsDialog pages", () => {
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expected));
     expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("opens directly on a requested page", () => {
+    renderSettingsDialog(undefined, vi.fn(), "freezone-skills");
+
+    expect(screen.getByRole("button", { name: "虾画 Skills" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByText("暂无虾画 Skills")).toBeInTheDocument();
+  });
+
+  it("integrates account forms and language beside Skills in one dialog", () => {
+    renderSettingsDialog({ avatarInitial: "A", displayName: "Admin", passwordConfigured: true, onPasswordChanged: vi.fn() });
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("功能设置");
+    fireEvent.click(screen.getByRole("button", { name: "更换头像" }));
+    expect(document.querySelector('input[type="file"]')).not.toBeNull();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
+    expect(screen.getByLabelText(zhT("header.account.passwordDialog.current"))).toBeInTheDocument();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "选择语言" }));
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(languageMocks.changeLanguage).toHaveBeenCalledWith("zh");
+    expect(languageMocks.setLanguage).toHaveBeenCalledWith("zh");
+    fireEvent.click(screen.getByRole("button", { name: "Português" }));
+    expect(languageMocks.changeLanguage).toHaveBeenCalledWith("pt");
+    expect(languageMocks.setLanguage).toHaveBeenCalledWith("pt");
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
+    expect(screen.getByText("暂无虾画 Skills")).toBeInTheDocument();
+  });
+
+  it("keeps local settings available without offering an account password action", () => {
+    renderSettingsDialog({ avatarInitial: "L", displayName: "Local", passwordConfigured: true });
+    expect(screen.queryByRole("button", { name: "修改密码" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "更换头像" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择语言" })).toBeInTheDocument();
+  });
+
+  it("locks navigation while saving a password and clears secrets when leaving the form", async () => {
+    let finish!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>((resolve) => { finish = resolve; }));
+    const onOpenChange = vi.fn();
+    const onPasswordChanged = vi.fn();
+    renderSettingsDialog({ avatarInitial: "A", displayName: "Admin", passwordConfigured: true, onPasswordChanged }, onOpenChange);
+    fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
+    fireEvent.change(screen.getByLabelText(zhT("header.account.passwordDialog.current")), { target: { value: "old-password" } });
+    fireEvent.change(screen.getByLabelText(zhT("header.account.passwordDialog.new")), { target: { value: "new-password" } });
+    fireEvent.change(screen.getByLabelText(zhT("header.account.passwordDialog.confirm")), { target: { value: "new-password" } });
+    fireEvent.click(within(screen.getByLabelText(zhT("header.account.passwordDialog.current")).closest("form")!).getByRole("button", { name: zhT("header.account.passwordDialog.submit") }));
+    expect(screen.getByRole("button", { name: "选择语言" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeDisabled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    finish(new Response(JSON.stringify({ detail: "incorrect password" }), { status: 401 }));
+    await screen.findByText(zhT("header.account.passwordDialog.currentIncorrect"));
+    expect(onPasswordChanged).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "选择语言" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "选择语言" }));
+    fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
+    expect(screen.getByLabelText(zhT("header.account.passwordDialog.current"))).toHaveValue("");
+    expect(screen.getByLabelText(zhT("header.account.passwordDialog.new"))).toHaveValue("");
+    fetchMock.mockRestore();
   });
 
   it("opens on the model settings page", () => {

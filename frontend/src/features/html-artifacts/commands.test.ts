@@ -13,7 +13,7 @@ vi.mock('./api',()=>({createHtmlArtifact:vi.fn(),saveHtmlArtifact:vi.fn(),restor
 const artifact = {id:'a1',title:'Hello',html:'<h1>Hello</h1>',version:1,created_at:'now',updated_at:'now'};
 const envelope=(command:unknown)=>({schema_version:'canvas_chat_commands.v1',project_id:'p',canvas_id:'c',commands:[command]});
 describe('director HTML commands',()=>{
- beforeEach(()=>{vi.clearAllMocks();vi.mocked(api.recordHtmlNodeHistory).mockResolvedValue(artifact);registerFreezoneCanvasRuntime("p","c",()=>{});useCanvasStore.setState({nodes:[],edges:[]});});
+ beforeEach(()=>{vi.clearAllMocks();vi.mocked(api.recordHtmlNodeHistory).mockResolvedValue(artifact);registerFreezoneCanvasRuntime("p","c",()=>true);useCanvasStore.setState({nodes:[],edges:[]});});
  it('preserves create aliases and rejects aliases on version writes',()=>{
   expect(parseHtmlArtifactCommand({type:'html_artifact',action:'create',client_id:'page',title:'Hello',html:'hello'})).toMatchObject({client_id:'page'});
   expect(parseHtmlArtifactCommand({type:'html_artifact',action:'create',client_id:' ',title:'Hello',html:'hello'})).toBeNull();
@@ -218,7 +218,7 @@ describe('director HTML commands',()=>{
  });
  it('does not attach a saved artifact to another canvas after switching',async()=>{
   const envelopes=extractCanvasChatCommandEnvelopes([envelope({type:'html_artifact',action:'create',title:'Hello',html:'hello'})]);
-  vi.mocked(api.createHtmlArtifact).mockImplementation(async()=>{registerFreezoneCanvasRuntime('other','new',()=>{});return artifact;});
+  vi.mocked(api.createHtmlArtifact).mockImplementation(async()=>{registerFreezoneCanvasRuntime('other','new',()=>true);return artifact;});
   const result=await applyCanvasChatCommandsAsync(envelopes,{projectId:'p',canvasId:'c'});
   expect(useCanvasStore.getState().nodes).toHaveLength(0);
   expect(result.commandResults[0].output).toMatchObject({html_artifact:{id:'a1'},canvas_attached:false});

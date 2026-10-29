@@ -1,0 +1,64 @@
+/* Shared skin for Piko resident menus, settings menus and profile popups. */
+.surface {
+  /* Keep primitive focus styles inside the town's warm popup palette. */
+  --accent: var(--color-amber-200);
+  --accent-foreground: var(--color-amber-950);
+  border: 1px solid #c5a12d;
+  border-radius: var(--radius-md);
+  background: var(--color-amber-100);
+  color: var(--color-amber-950);
+  box-shadow: 0 5px 16px rgb(43 36 15 / 18%);
+  outline: none;
+}
+.item {
+  cursor: pointer;
+  border-radius: max(2px, calc(var(--radius-md) - 5px));
+  padding: 8px 12px;
+  color: inherit;
+}
+.item[data-highlighted], .item:hover, .item:focus, .item:focus-visible, .item:active {
+  background: var(--color-amber-200);
+  color: var(--color-amber-950);
+}
+.recoveryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  min-height: 44px;
+  border-radius: var(--radius-md);
+  padding: 10px 20px;
+  background: var(--color-amber-300);
+  color: var(--color-amber-950);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-out-quint);
+}
+.recoveryButton:hover, .recoveryButton:active { background: var(--color-amber-400); }
+.recoveryButton:focus-visible {
+  outline: 2px solid var(--color-amber-800);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .recoveryButton { transition: none; }
+}
+.close {
+  position: absolute;
+  right: -28px;
+  top: -28px;
+  z-index: 20;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.close img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}

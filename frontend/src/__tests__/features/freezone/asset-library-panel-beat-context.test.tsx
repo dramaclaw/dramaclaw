@@ -61,6 +61,23 @@ describe("AssetLibraryPanel beat context", () => {
     mainlineAvailable = true;
   });
 
+  it("keeps collapsed panel controls outside the hidden content and restores them on expansion", () => {
+    listFreezoneProjectAssets.mockResolvedValue([]);
+    listFreezoneBeatContext.mockResolvedValue({ scope: { episode: null, beat: null }, episodes: [], assets: [] });
+    const { container } = render(
+      <AssetLibraryPanel project="demo" metadata={{ kind: "default" }} currentCanvasId="user_admin_demo" />,
+      { wrapper: makeWrapper() },
+    );
+    const toggle = screen.getByRole('button', { expanded: false });
+    expect(container.querySelector('[inert]')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.queryByRole('tab', { name: '项目画布' })).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('tab', { name: '项目画布' })).toBeVisible();
+    fireEvent.click(toggle);
+    expect(screen.queryByRole('tab', { name: '项目画布' })).not.toBeInTheDocument();
+  });
+
   it("shares one project asset request across matching panels", async () => {
     listFreezoneProjectAssets.mockResolvedValue([]);
     listFreezoneBeatContext.mockResolvedValue({
