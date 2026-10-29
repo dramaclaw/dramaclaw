@@ -38,7 +38,7 @@ cp .env.example .env
 |---|---|---|
 | 服务 | `api` + `newapi` + `web` | 无 PG/Redis；`newapi` 是内置网关 |
 | 镜像（release） | `${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/...` | 默认拉 Docker Hub；`.env` 设 `DRAMACLAW_IMAGE_PREFIX` 切到 ACR 镜像（只有钉 tag） |
-| 版本（release） | `DRAMACLAW_VERSION`（api/web）、`DRAMACLAW_GATEWAY_VERSION` | 当前版本请在 `.env` 中显式指定 `2.1.0` / `v1.0.0-rc.24-dramaclaw.3` |
+| 版本（release） | `DRAMACLAW_VERSION`（api/web）、`DRAMACLAW_GATEWAY_VERSION` | 当前版本请在 `.env` 中显式指定 `2.1.1` / `v1.0.0-rc.24-dramaclaw.3` |
 | 虾导后端 | `DRAMACLAW_CHAT_BACKEND` | 源码和发布版 Compose 均默认 `codex` |
 | 端口 | `8780:8780` | REST API |
 | 网关管理端口 | `${ST_NEWAPI_BIND:-127.0.0.1}:${ST_NEWAPI_PORT:-3000}:3000` | 默认只绑 `127.0.0.1`；`.env` 设 `ST_NEWAPI_BIND=0.0.0.0` 放开 |
@@ -53,10 +53,10 @@ cp .env.example .env
 
 ### 发布版本与虾导后端
 
-使用 **v2.1.0 官方镜像**时，在 `.env` 中添加或更新：
+使用 **v2.1.1 官方镜像**时，在 `.env` 中添加或更新：
 
 ```dotenv
-DRAMACLAW_VERSION=2.1.0
+DRAMACLAW_VERSION=2.1.1
 DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
 ```
 
@@ -67,7 +67,7 @@ DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
 docker compose -f docker-compose.release.yml config --images
 ```
 
-v2.1.0 的发布版和源码 Compose 均默认选择镜像内置的凭据保护版 Codex 0.164.0。
+v2.1.1 的发布版和源码 Compose 均默认选择镜像内置的凭据保护版 Codex 0.164.0。
 终端环境或 `.env` 中显式设置的 `DRAMACLAW_CHAT_BACKEND` 会覆盖默认值；
 若旧配置选择了其他后端，请改为 `codex`。
 虾导后端的选择不等于模型网关模式的选择，
@@ -160,16 +160,16 @@ docker compose up -d --build
 镜像模式：
 
 ```bash
-# 编辑 .env：DRAMACLAW_VERSION=2.1.0（发布说明要求时同时改 DRAMACLAW_GATEWAY_VERSION）
+# 编辑 .env：DRAMACLAW_VERSION=2.1.1（发布说明要求时同时改 DRAMACLAW_GATEWAY_VERSION）
 docker compose -f docker-compose.release.yml pull
 docker compose -f docker-compose.release.yml up -d
 ```
 
 升级不会碰你的 `.env`；`ce-data` 与 `newapi-data` 卷原样复用。
 
-创建 GitHub Release 会触发镜像构建，但不会直接更新 `docker-compose.release.yml` 的默认标签。
-独立的发行包打包 workflow 在发布 compose 发行包后会创建版本更新 PR，合并后默认值才会改变。
-因此每次升级都应在 `.env` 中显式指定目标版本。
+发布准备时，`docker-compose.release.yml` 中 API/Web 默认版本与应用版本一起更新，
+合入 main 后再打 tag；发布 GitHub Release 时从该 tag 构建镜像。
+`.env` 中显式设置的版本仍优先于默认值，因此升级时也要同步调整这些覆盖值。
 
 如果旧版本曾将媒体写入容器内 `/app/output`，请在启动新版本**之前**运行一次迁移（zip 用户没有 git 仓库，直接从 GitHub 下载 `scripts/migrate_docker_output.py`）：
 
