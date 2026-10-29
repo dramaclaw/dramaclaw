@@ -2808,6 +2808,17 @@ function isSeedance20ApprovalModel(model: string): boolean {
   return /(?:seedance2|omniflash)/i.test(model.replace(/[\s._-]/g, ""));
 }
 
+function approvalVideoSupportsReviewMode(
+  approval: PendingCanvasCommandApproval,
+  canvasNodes: CanvasNode[],
+  canvasEdges: CanvasEdge[],
+  nodeId: string,
+): boolean {
+  const data = approvalNodeData(approval, canvasNodes, nodeId);
+  if (typeof data.genMode === "string" && data.genMode) return data.genMode !== "textToVideo";
+  return approvalVideoHasImageInput(approval, canvasNodes, canvasEdges, nodeId, data);
+}
+
 function videoApprovalParamGroups(
   approval: PendingCanvasCommandApproval,
   canvasNodes: CanvasNode[],
@@ -2820,6 +2831,7 @@ function videoApprovalParamGroups(
     minDuration?: number | null;
     maxDuration?: number | null;
     supportsGenerateAudio?: boolean;
+    humanReview?: boolean;
   }>,
   fallbackModel: string,
 ): CanvasApprovalVideoParams[] {
@@ -2842,9 +2854,11 @@ function videoApprovalParamGroups(
       VIDEO_GENERATION_ASPECT_RATIOS,
     );
     const requiresHumanReviewConfirmation = (
-      isSeedance20ApprovalModel(model)
+      selectedModel?.humanReview === true
+      && approvalVideoSupportsReviewMode(approval, canvasNodes, canvasEdges, nodeId)
       && approvalVideoHasImageInput(approval, canvasNodes, canvasEdges, nodeId, nodeData)
       && nodeData.humanReview !== true
+      && approvalVideoSupportsReviewMode(approval, canvasNodes, canvasEdges, nodeId)
     );
     const continuityMode = isStorySegment
       ? nodeData.storyRole === "start"
@@ -3029,12 +3043,15 @@ function canvasApprovalHumanReviewNodeIds(
   approval: PendingCanvasCommandApproval,
   canvasNodes: CanvasNode[],
   canvasEdges: CanvasEdge[],
+  models?: readonly { id: string; humanReview?: boolean }[],
 ): string[] {
   return canvasApprovalVideoCandidateNodeIds(approval).filter((nodeId) => {
     const nodeData = approvalNodeData(approval, canvasNodes, nodeId);
     const model = typeof nodeData.model === "string" ? nodeData.model : "";
     return (
-      (!model.trim() || isSeedance20ApprovalModel(model))
+      (models
+        ? (models.find((item) => item.id === model) ?? (!model ? models[0] : undefined))?.humanReview === true
+        : (!model.trim() || isSeedance20ApprovalModel(model)))
       && nodeData.humanReview !== true
       && approvalVideoHasImageInput(approval, canvasNodes, canvasEdges, nodeId, nodeData)
     );
@@ -3045,8 +3062,16 @@ function canvasApprovalRequiresHumanReviewConfirmation(
   approval: PendingCanvasCommandApproval,
   canvasNodes: CanvasNode[],
   canvasEdges: CanvasEdge[],
+  models?: readonly { id: string; humanReview?: boolean }[],
 ): boolean {
-  return canvasApprovalHumanReviewNodeIds(approval, canvasNodes, canvasEdges).length > 0;
+  return canvasApprovalHumanReviewNodeIds(approval, canvasNodes, canvasEdges, models).length > 0
+    || (models !== undefined && videoGenerateCommandNodeIds(approval.envelopes).some((nodeId) => {
+      const data = approvalNodeData(approval, canvasNodes, nodeId);
+      const model = models.find((item) => item.id === data.model)
+        ?? (!data.model ? models[0] : undefined);
+      return data.humanReview === true && (model?.humanReview !== true
+        || !approvalVideoSupportsReviewMode(approval, canvasNodes, canvasEdges, nodeId));
+    }));
 }
 
 function canvasApprovalRequiresAudioVoiceChoice(
@@ -3571,8 +3596,8 @@ function CanvasCommandApprovalCard({
   const [audioParams, setAudioParams] = useState<CanvasApprovalAudioParams[]>(() => initialAudioParams);
   const [voicePickerAudioIndex, setVoicePickerAudioIndex] = useState<number | null>(null);
   const humanReviewNodeIds = useMemo(
-    () => canvasApprovalHumanReviewNodeIds(approval, canvasNodes, canvasEdges),
-    [approval, canvasEdges, canvasNodes],
+    () => canvasApprovalHumanReviewNodeIds(approval, canvasNodes, canvasEdges, videoModels.models),
+    [approval, canvasEdges, canvasNodes, videoModels.models],
   );
   const humanReviewNodeIdsKey = humanReviewNodeIds.join("\n");
   const [humanReviewEnabled, setHumanReviewEnabled] = useState(true);
@@ -3622,9 +3647,18 @@ function CanvasCommandApprovalCard({
       approval,
     );
     const withVideoParams = videoParams.reduce(
-      (current, params) => params.storySegmentLabels?.length
-        ? current
-        : amendCanvasApprovalWithVideoParams(current, params),
+      (current, params) => {
+        if (!params.storySegmentLabels?.length) return amendCanvasApprovalWithVideoParams(current, params);
+        // Story parameters remain read-only unless this card's capability choice changed them.
+        const initial = initialVideoParams.find((item) => item.nodeId === params.nodeId);
+        const changes: Record<string, unknown> = {};
+        if (params.model !== initial?.model) changes.model = params.model;
+        if (params.humanReview !== initial?.humanReview) changes.humanReview = params.humanReview;
+        return Object.keys(changes).length > 0
+          ? amendCanvasApprovalWithGenerationData(current, params.nodeIds ?? [params.nodeId],
+            "generate_video", changes)
+          : current;
+      },
       withImageParams,
     );
     const withVideoUpscaleParams = amendCanvasApprovalWithVideoUpscaleParams(
@@ -3640,7 +3674,20 @@ function CanvasCommandApprovalCard({
       humanReviewNodeIds,
       humanReviewEnabled,
     );
-  }, [approval, audioParams, humanReviewEnabled, humanReviewNodeIds, imageParams, videoParams, videoUpscaleParams]);
+  }, [approval, audioParams, humanReviewEnabled, humanReviewNodeIds, imageParams, initialVideoParams, videoParams, videoUpscaleParams]);
+  // Validate the same final per-node data that will be executed. A group's default switch
+  // may apply to only some members; explicitly requested review on another member survives it.
+  const unsupportedReviewNodes = videoParams.flatMap((params) =>
+    (params.nodeIds ?? [params.nodeId]).flatMap((nodeId) => {
+      const finalData = approvalNodeData(amendedApproval, canvasNodes, nodeId);
+      if (finalData.humanReview !== true) return [];
+      const model = videoModels.models.find((item) => item.id === finalData.model);
+      const modeSupported = approvalVideoSupportsReviewMode(amendedApproval, canvasNodes, canvasEdges, nodeId);
+      return model?.humanReview === true && modeSupported ? [] : [{ params, modeSupported }];
+    }));
+  const unsupportedHumanReview = videoParams.filter((params) =>
+    unsupportedReviewNodes.some((node) => node.params === params));
+  const unsupportedReviewMode = unsupportedReviewNodes.some((node) => !node.modeSupported);
   const imageModelOptionsFor = useCallback((params: CanvasApprovalImageParams) => {
     const options = imageModels.models.map((model) => ({ value: model.id, label: model.label ?? model.id }));
     if (params.model && !options.some((option) => option.value === params.model)) {
@@ -3740,6 +3787,38 @@ function CanvasCommandApprovalCard({
         <Badge variant="outline" className="rounded-md uppercase">{isExecuting ? "执行中" : "确认"}</Badge>
       </div>
       <CanvasCommandPlanList plans={approval.plans} />
+      {unsupportedHumanReview.length > 0 && (
+        <div role="status" className="border-t border-border px-3 py-2 text-xs text-foreground">
+          <p>{unsupportedReviewMode
+            ? "当前文生视频模式不支持真人验证，请关闭真人验证后继续，或取消并改用带素材的视频模式。尚未提交视频生成任务。"
+            : "当前模型不支持真人验证，请选择后再继续。尚未提交视频生成任务。"}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <CanvasApprovalImageParamSelect
+              ariaLabel="切换到支持真人验证的模型"
+              disabled={isExecuting || videoModels.isLoading || unsupportedReviewMode}
+              value=""
+              options={[
+                { value: "", label: "切换模型" },
+                ...videoModels.models.filter((model) => model.humanReview === true)
+                  .map((model) => ({ value: model.id, label: model.label ?? model.id })),
+              ]}
+              onChange={(model) => {
+                if (!model) return;
+                videoParams.forEach((params, index) => {
+                  if (unsupportedHumanReview.includes(params)) updateVideoParams(index, { model });
+                });
+              }}
+            />
+            <Button size="xs" variant="outline" disabled={isExecuting} onClick={() => {
+              setHumanReviewEnabled(false);
+              setVideoParams((current) => current.map((params) => ({ ...params, humanReview: false })));
+            }}>关闭本次视频的真人验证</Button>
+            <Button size="xs" variant="outline" disabled={isExecuting}
+              onClick={() => onCancel(approval)}>取消本次生成</Button>
+          </div>
+          <p className="mt-1 text-muted-foreground">关闭后仍可能被安全审核拒绝；选择后点击确认执行。</p>
+        </div>
+      )}
       {(imageParams.length > 0 || videoParams.length > 0 || audioParams.length > 0) && (
         <div className="flex items-center gap-2 border-t border-amber-400/10 bg-white/[0.025] px-3 py-1.5 text-[11px] font-medium text-foreground/90">
           <SlidersHorizontal className="size-3.5 text-muted-foreground" />
@@ -4004,7 +4083,7 @@ function CanvasCommandApprovalCard({
         <Button size="xs" variant="outline" disabled={isExecuting} onClick={() => onCancel(approval)}>取消</Button>
         <Button
           size="xs"
-          disabled={isExecuting}
+          disabled={isExecuting || (videoParams.length > 0 && videoModels.isLoading) || unsupportedHumanReview.length > 0}
           onClick={() => onApply(amendedApproval)}
         >
           {isExecuting
@@ -12680,6 +12759,7 @@ export function SuperChatPanel({
 }: SuperChatPanelProps = {}) {
   const { t } = useTranslation();
   const params = useParams({ strict: false }) as { project?: string };
+  const approvalVideoModels = useFreezoneVideoModels(params.project);
   const queryClient = useQueryClient();
   const isFreezoneLayout = variant === "freezone";
   const displayName = useAuthStore((s) => s.displayName);
@@ -14335,14 +14415,18 @@ export function SuperChatPanel({
           approval,
           canvasNodes,
           canvasEdges,
+          approvalVideoModels.models,
         )
       ) {
         continue;
       }
+      if (approvalVideoModels.isLoading && videoGenerateCommandNodeIds(approval.envelopes).length > 0) continue;
       if (!executingCanvasCommandApprovalIds.has(approval.id)) handleApplyCanvasCommandApproval(approval);
     }
   }, [
     canvasCommandExecutionMode,
+    approvalVideoModels.models,
+    approvalVideoModels.isLoading,
     canvasEdges,
     canvasNodes,
     executingCanvasCommandApprovalIds,

@@ -1,7 +1,7 @@
 import { enT, zhT } from "@/__tests__/helpers/i18n-fixtures";
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { act, render, renderHook, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { useCanvasStore } from "@/stores/canvasStore";
 import {
@@ -157,7 +157,10 @@ vi.mock("@/features/canvas/hooks/useFreezoneImageModels", async (importOriginal)
   return { ...await importOriginal<typeof import("@/features/canvas/hooks/useFreezoneImageModels")>(), useFreezoneImageModels: () => ({ models }) };
 });
 vi.mock("@/features/canvas/hooks/useFreezoneVideoModels", async (importOriginal) => {
-  const models = [{ id: "video-model", label: "测试视频模型", minDuration: 5, maxDuration: 15 }];
+  const models = [
+    { id: "video-model", label: "测试视频模型", minDuration: 5, maxDuration: 15 },
+    { id: "review-model", label: "支持真人验证的模型", humanReview: true },
+  ];
   return { ...await importOriginal<typeof import("@/features/canvas/hooks/useFreezoneVideoModels")>(), useFreezoneVideoModels: () => ({ models }) };
 });
 
@@ -4637,6 +4640,143 @@ describe("Canvas command approval audio params", () => {
 });
 
 describe("Canvas command approval video params", () => {
+  it.each([false, true])("checks each final review flag in a mixed batch (explicit first: %s)", (explicitFirst) => {
+    const previous = useCanvasStore.getState();
+    const nodes = [false, true].map((explicit) => ({
+      id: explicit ? "explicit-review" : "default-review", type: "videoNode" as const,
+      position: { x: 0, y: 0 }, data: { model: "review-model", genMode: "imageToVideo" as const,
+        prompt: "人物走路", ...(explicit ? { humanReview: true } : {}) },
+    }));
+    if (explicitFirst) nodes.reverse();
+    useCanvasStore.setState({ nodes, edges: [] });
+    const approval = { id: "mixed-review", key: "mixed-review", messageId: "assistant",
+      receivedAt: 1, commandCount: 2, plans: [], envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: nodes.map((node) => ({ type: "run_node_action" as const,
+          node_id: node.id, action: "generate_video" })),
+      }] };
+    const onApply = vi.fn();
+    const view = render(createElement(CanvasCommandApprovalCardForTest,
+      { approval, onApply, onCancel: vi.fn() }));
+    try {
+      expect(view.getAllByLabelText("视频模型")).toHaveLength(1);
+      fireEvent.click(view.getByRole("switch", { name: "真人审核" }));
+      fireEvent.change(view.getByLabelText("视频模型"), { target: { value: "video-model" } });
+      const confirm = view.getAllByRole("button").find((button) =>
+        button.textContent?.includes("canvasConfirmExecution") || button.textContent === "确认执行")!;
+      expect((confirm as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(confirm);
+      expect(onApply).not.toHaveBeenCalled();
+      fireEvent.change(view.getByLabelText("切换到支持真人验证的模型"),
+        { target: { value: "review-model" } });
+      expect((confirm as HTMLButtonElement).disabled).toBe(false);
+      fireEvent.click(confirm);
+      const commands = onApply.mock.calls[0][0].envelopes[0].commands;
+      for (const nodeId of ["default-review", "explicit-review"]) {
+        const finalData = Object.assign({}, ...commands.filter((command: {
+          type: string; node_id: string;
+        }) => command.type === "update_node_data" && command.node_id === nodeId)
+          .map((command: { data: object }) => command.data));
+        expect(finalData).toMatchObject({ model: "review-model", humanReview: nodeId === "explicit-review" });
+      }
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+
+  const reviewApproval = {
+    id: "review-capability", key: "review-capability", messageId: "assistant",
+    receivedAt: 1, commandCount: 1, plans: [],
+    envelopes: [{ schema_version: "canvas_chat_commands.v1" as const, commands: [
+      { type: "run_node_action" as const, node_id: "review-video", action: "generate_video" },
+    ] }],
+  };
+
+  it("pauses auto execution for an explicitly requested but unsupported review", () => {
+    const nodes = [{ id: "review-video", type: "videoNode", position: { x: 0, y: 0 },
+      data: { model: "custom-model", humanReview: true } }];
+    expect(canvasApprovalRequiresHumanReviewConfirmationForTest(
+      reviewApproval as never, nodes as never, [], [{ id: "custom-model", humanReview: false }],
+    )).toBe(true);
+  });
+
+  it("recognizes review capability on custom model IDs", () => {
+    const nodes = [{ id: "review-video", type: "videoNode", position: { x: 0, y: 0 },
+      data: { model: "custom-model", genMode: "imageToVideo" } }];
+    expect(canvasApprovalRequiresHumanReviewConfirmationForTest(
+      reviewApproval as never, nodes as never, [], [{ id: "custom-model", humanReview: true }],
+    )).toBe(true);
+  });
+
+  it("pauses text-to-video even when the selected model supports material review", () => {
+    const nodes = [{ id: "review-video", type: "videoNode", position: { x: 0, y: 0 },
+      data: { model: "review-model", genMode: "textToVideo", humanReview: true } }];
+    expect(canvasApprovalRequiresHumanReviewConfirmationForTest(
+      reviewApproval as never, nodes as never, [], [{ id: "review-model", humanReview: true }],
+    )).toBe(true);
+  });
+
+  it("does not suggest switching models to enable review for text-to-video", () => {
+    const previous = useCanvasStore.getState();
+    useCanvasStore.setState({ nodes: [{ id: "review-video", type: "videoNode",
+      position: { x: 0, y: 0 }, data: { model: "review-model", humanReview: true,
+        genMode: "textToVideo", prompt: "人物走路" },
+    }], edges: [] });
+    const view = render(createElement(CanvasCommandApprovalCardForTest,
+      { approval: reviewApproval, onApply: vi.fn(), onCancel: vi.fn() }));
+    try {
+      expect(view.getByText(/当前文生视频模式不支持真人验证/)).toBeTruthy();
+      expect((view.getByLabelText("切换到支持真人验证的模型") as HTMLSelectElement).disabled).toBe(true);
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+
+  it.each(["disable", "switch", "cancel"])("requires an explicit %s choice before generation", (choice) => {
+    const previous = useCanvasStore.getState();
+    useCanvasStore.setState({ nodes: [{ id: "review-video", type: "videoNode",
+      position: { x: 0, y: 0 }, data: { model: "video-model", humanReview: true,
+        genMode: "imageToVideo", prompt: "人物走路" },
+    }], edges: [] });
+    const onApply = vi.fn();
+    const onCancel = vi.fn();
+    const view = render(createElement(CanvasCommandApprovalCardForTest,
+      { approval: reviewApproval, onApply, onCancel }));
+    try {
+      const confirm = view.getAllByRole("button").find((button) =>
+        button.textContent?.includes("canvasConfirmExecution") || button.textContent === "确认执行")!;
+      expect(confirm).toBeTruthy();
+      expect((confirm as HTMLButtonElement).disabled).toBe(true);
+      expect(onApply).not.toHaveBeenCalled();
+      if (choice === "cancel") {
+        fireEvent.click(view.getByText("取消本次生成"));
+        expect(onCancel).toHaveBeenCalledOnce();
+        expect(onApply).not.toHaveBeenCalled();
+        return;
+      }
+      if (choice === "disable") {
+        fireEvent.click(view.getByText("关闭本次视频的真人验证"));
+      } else {
+        fireEvent.change(view.getByLabelText("切换到支持真人验证的模型"),
+          { target: { value: "review-model" } });
+      }
+      expect((confirm as HTMLButtonElement).disabled).toBe(false);
+      expect(onApply).not.toHaveBeenCalled();
+      fireEvent.click(confirm);
+      const commands = onApply.mock.calls[0][0].envelopes[0].commands;
+      expect(commands[0]).toMatchObject({ type: "update_node_data", data: {
+        model: choice === "switch" ? "review-model" : "video-model",
+        humanReview: choice === "switch",
+      } });
+      expect(commands.at(-1)).toMatchObject({ type: "run_node_action", action: "generate_video" });
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+
   it("updates video node data before running generate_video", () => {
     const approval = {
       id: "approval-a",
