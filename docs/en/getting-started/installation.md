@@ -66,11 +66,14 @@ After it's up, open **`http://localhost:8080`** in your browser (the app UI); th
 The frontend also needs Node.js and pnpm; use the pnpm version declared in
 `frontend/package.json`. Python alone only provides the API, not the Vite dev server.
 
-The Agent uses Codex. Native development requires a **credential-safe DramaClaw Codex
-runtime matching your host OS and architecture**. Set `CODEX_BIN` to its executable;
-neither `uv sync` nor the frontend installs it. The Docker image's Linux binary is not
-a macOS or Windows binary. If you do not have a compatible host runtime, use source
-Docker instead. Do not substitute the stock Codex CLI for this runtime.
+The Agent uses Codex. `scripts/start-ce.sh` downloads the public **credential-safe
+DramaClaw Codex 0.164.0** build matching your host: macOS Apple Silicon/Intel or
+Linux x64/ARM64. No private repository access is needed. The first download is about
+250–310 MB and requires curl plus `shasum` (macOS) or `sha256sum` (Linux).
+The launcher checks the pinned SHA256 before execution, checks the version, and reuses
+the verified cache under `runtime/codex/bin/` on subsequent starts. Custom storage roots
+(`NOVELVIDEO_RUNTIME_DIR` / `NOVELVIDEO_DATA_ROOT`) are respected.
+Windows native startup is not supported by this launcher; use WSL2 or Docker.
 
 ### 2. Install dependencies and start
 
@@ -80,21 +83,35 @@ cd dramaclaw
 
 cp .env.example .env && $EDITOR .env     # change PROMPT_EXPORT_PASSWORD; configure the model channel/key in the UI
 
-uv sync --group dev
-# Replace this path with your installed credential-safe runtime:
-export CODEX_BIN="/absolute/path/to/codex-dramaclaw"
-export DRAMACLAW_CHAT_BACKEND=codex
-test -x "$CODEX_BIN" && "$CODEX_BIN" --version
-uv run novelvideo api --host 127.0.0.1 --port 8780
+scripts/start-ce.sh
 ```
 
 Open `http://localhost:5173` for the Vite development UI; the API is at
-`http://localhost:8780`. In a second terminal, from the repository root, start the
-hot-reloading frontend:
+`http://localhost:8780`. The launcher installs dependencies and starts both services;
+Ctrl+C stops them. Keep `DRAMACLAW_CHAT_BACKEND=codex` in `.env`; an older setting
+selecting another backend produces an actionable error rather than a silent fallback.
+
+To manage the API and frontend separately, prepare the same runtime before starting
+the API (the standalone setup command reads exported variables, not `.env`):
+
+```bash
+uv sync --group dev
+CODEX_BIN="$(bash scripts/setup-codex.sh)" &&
+  CODEX_BIN="$CODEX_BIN" DRAMACLAW_CHAT_BACKEND=codex \
+    uv run --no-sync novelvideo api --host 127.0.0.1 --port 8780
+```
+
+In a second terminal, from the repository root:
 
 ```bash
 cd frontend && pnpm install && pnpm dev --host 127.0.0.1 --port 5173
 ```
+
+To skip downloading, set `CODEX_BIN=/absolute/path/to/codex-dramaclaw` in `.env`
+for the launcher, or export it before the standalone setup command. An explicit binary
+is operator-managed: the script checks that it runs, but cannot prove it contains the
+credential-safety patches. Do not use the stock Codex CLI. A download/checksum failure
+stops startup before either service is launched and never falls back to another backend.
 
 Docker builds at v2.1.0 already include credential-safe Codex 0.164.0. Both source and
 release Compose select Codex by default; keep `DRAMACLAW_CHAT_BACKEND=codex` if setting

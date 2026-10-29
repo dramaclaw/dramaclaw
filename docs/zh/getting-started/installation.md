@@ -66,11 +66,13 @@ docker compose up -d --build    # 用两个 checkout 从源码构建 api、web �
 前端还需要 Node.js 和 pnpm；pnpm 版本以 `frontend/package.json` 的声明为准。
 只安装 Python 只能运行 API，不能启动 Vite 开发界面。
 
-虾导使用 Codex。本地 Python 开发必须先准备**与宿主机操作系统和架构匹配的
-DramaClaw 凭据保护版 Codex 运行时**，并将 `CODEX_BIN` 指向其可执行文件；
-`uv sync` 和前端依赖安装都不会安装该运行时。Docker 中的 Linux 二进制不能直接在
-macOS 或 Windows 上运行。没有配套的宿主机运行时，建议使用源码 Docker 方式；
-不要用未经配套保护的官方原版 Codex CLI 替代。
+虾导使用 Codex。`scripts/start-ce.sh` 会根据宿主机平台，自动下载公开的
+**DramaClaw 凭据保护版 Codex 0.164.0**，支持 macOS Apple Silicon/Intel 和
+Linux x64/ARM64，不需要私有源码仓库权限。首次下载约 250–310 MB，需安装 curl
+以及 `shasum`（macOS）或 `sha256sum`（Linux）。
+脚本先核对固定的 SHA256，再检查版本；文件缓存到 `runtime/codex/bin/`，后续启动
+校验通过便直接复用，也遵循 `NOVELVIDEO_RUNTIME_DIR` / `NOVELVIDEO_DATA_ROOT` 自定义目录。
+此脚本不支持 Windows 原生启动，请使用 WSL2 或 Docker。
 
 ### 2. 装依赖并启动
 
@@ -80,20 +82,34 @@ cd dramaclaw
 
 cp .env.example .env && $EDITOR .env     # 修改 PROMPT_EXPORT_PASSWORD；模型渠道与 Key 通过网页设置
 
-uv sync --group dev
-# 替换为你已安装的凭据保护版运行时路径：
-export CODEX_BIN="/absolute/path/to/codex-dramaclaw"
-export DRAMACLAW_CHAT_BACKEND=codex
-test -x "$CODEX_BIN" && "$CODEX_BIN" --version
-uv run novelvideo api --host 127.0.0.1 --port 8780
+scripts/start-ce.sh
 ```
 
 浏览器打开 `http://localhost:5173`，这是支持热更新的 Vite 开发界面；
-API 为 `http://localhost:8780`。在另一个终端进入仓库根目录，启动前端：
+API 为 `http://localhost:8780`。脚本安装依赖后同时启动前后端，Ctrl+C 停止二者。
+`.env` 中保持 `DRAMACLAW_CHAT_BACKEND=codex`；旧配置若指定其他后端，脚本会提示修改，
+不会静默切换。
+
+如果需要分开管理 API 和前端，先准备同一套运行时再启动 API
+（单独运行下载脚本时读取已导出的环境变量，不读取 `.env`）：
+
+```bash
+uv sync --group dev
+CODEX_BIN="$(bash scripts/setup-codex.sh)" &&
+  CODEX_BIN="$CODEX_BIN" DRAMACLAW_CHAT_BACKEND=codex \
+    uv run --no-sync novelvideo api --host 127.0.0.1 --port 8780
+```
+
+在另一个终端进入仓库根目录，启动前端：
 
 ```bash
 cd frontend && pnpm install && pnpm dev --host 127.0.0.1 --port 5173
 ```
+
+若已有配套运行时，可在 `.env` 设置 `CODEX_BIN=/absolute/path/to/codex-dramaclaw`，
+或在单独运行下载脚本前导出该变量，以跳过下载。手动指定的文件由使用者管理：脚本检查
+能否执行，但不能据此证明它带有凭据保护补丁，请勿用官方原版 Codex CLI 替代。
+下载或校验失败时，脚本会在启动服务前退出，不会回退到其他后端。
 
 v2.1.0 Docker 构建已内置凭据保护版 Codex 0.164.0。源码和发布版 Compose 均默认选择 Codex；
 如显式设置 `DRAMACLAW_CHAT_BACKEND`，请保持为 `codex`。

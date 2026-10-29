@@ -396,28 +396,23 @@ Pin versions or switch registry in `.env` (`DRAMACLAW_VERSION`, `DRAMACLAW_GATEW
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
-uv sync --group dev
 cp .env.example .env && $EDITOR .env
-
-# First install a credential-safe DramaClaw Codex runtime for your host OS/architecture.
-# Replace this path with your actual executable:
-export CODEX_BIN="/absolute/path/to/codex-dramaclaw"
-export DRAMACLAW_CHAT_BACKEND=codex
-test -x "$CODEX_BIN" && "$CODEX_BIN" --version
-uv run novelvideo api --host 127.0.0.1 --port 8780
+scripts/start-ce.sh
 ```
 
-In another terminal, from the repository root, run
-`cd frontend && pnpm install && pnpm dev`. This starts the hot-reloading UI at <http://localhost:5173>;
-the API runs at <http://localhost:8780>. Local development needs Python 3.11–3.12,
-`uv`, Node.js/pnpm and ffmpeg.
+The launcher installs dependencies and starts both the API at <http://localhost:8780>
+and the hot-reloading UI at <http://localhost:5173>. Stop both with Ctrl+C.
+Local development needs Python 3.11–3.12, `uv`, Node.js/pnpm, curl and ffmpeg.
 Source Docker builds are not hot-reloading: rebuild `api web` after changing their code.
 
 Docker builds at v2.1.0 include credential-safe Codex 0.164.0; both source and release
-Compose default to Codex. Native Python development needs a separate compatible runtime:
-the Linux binary inside Docker cannot run directly on macOS or Windows. Do not substitute
-a stock Codex binary for the credential-safe runtime. If you do not have a compatible host
-binary, use source Docker instead. See the [installation guide](docs/en/getting-started/installation.md).
+Compose default to Codex. The native launcher downloads the public patched **0.164.0**
+runtime for macOS Apple Silicon/Intel or Linux x64/ARM64, verifies its pinned SHA256,
+and caches it under `runtime/codex/bin/` (or `NOVELVIDEO_RUNTIME_DIR`). No private
+repository access is needed. An explicit `CODEX_BIN` in `.env` selects your own patched
+executable and skips downloading; it is not automatically replaced or checksum-verified.
+Windows users should use WSL2 or Docker. Do not substitute the stock Codex CLI.
+See the [installation guide](docs/en/getting-started/installation.md) for API-only startup.
 
 **Gateway.** In **Official** mode you need nothing else. For **Custom** or **Local + Official Hybrid** the API expects a gateway on `127.0.0.1:3000` whose SQLite file is `./state/newapi/one-api.db` (that is what "Initialize" in Settings writes to; `NEWAPI_ADMIN_BASE_URL` in `.env` already points there). Either run the published image with that directory mounted:
 
