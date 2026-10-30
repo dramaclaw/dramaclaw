@@ -18,7 +18,7 @@ SOURCE = "a" * 40
 
 def receipt():
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "release_tag": "v2.1.3",
         "source_sha": SOURCE,
         "image_tag": "2.1.3",
@@ -50,6 +50,18 @@ def receipt():
             name: {
                 "digest": "sha256:" + char * 64,
                 "platforms": ["linux/amd64", "linux/arm64"],
+                "runtime": {
+                    "service": "api" if name == "dramaclaw" else "web",
+                    "platform": "linux/amd64",
+                    "index_digest": "sha256:" + char * 64,
+                    "image_ref": f"registry.example/dramaclaw/{name}@sha256:{char * 64}",
+                    "manifest_digest": "sha256:"
+                    + hashlib.sha256((name + "amd64").encode()).hexdigest(),
+                    "config_digest": "sha256:" + "e" * 64,
+                    "image_id": "sha256:" + "e" * 64,
+                    "container_id": "f" * 64,
+                    "verified_before_and_after": True,
+                },
             }
             for name, char in [("dramaclaw", "b"), ("dramaclaw-frontend", "c")]
         },
@@ -59,6 +71,10 @@ def receipt():
 @pytest.mark.parametrize(
     "path,value",
     [
+        (("schema_version",), 1),
+        (("images", "dramaclaw", "runtime"), {}),
+        (("images", "dramaclaw-frontend", "runtime", "image_id"), "sha256:" + "d" * 64),
+        (("images", "dramaclaw", "runtime", "verified_before_and_after"), False),
         (("source_sha",), "d" * 40),
         (("release_tag",), "v2.1.1"),
         (("issuer", "repository_id"), "1"),
@@ -106,6 +122,8 @@ def registry(monkeypatch, data, *, bad_arch=False, moved=False):
         repo = (
             ref.split("@")[0].rsplit(":", 1)[0] if "@" not in ref else ref.split("@")[0]
         )
+        if field == "Raw":
+            return {"config": {"digest": "sha256:" + "e" * 64}}
         if field == "Image":
             arch = children[ref]
             return {
@@ -189,7 +207,7 @@ def test_dry_run_validates_every_image_without_mutation(monkeypatch):
 
 
 def test_release_asset_must_authenticate_the_packaging_publisher_and_exact_bytes():
-    payload = b'{"schema_version": 1}'
+    payload = b'{"schema_version": 2}'
     meta = {
         "tag_name": "v2.1.3",
         "draft": False,
@@ -211,3 +229,20 @@ def test_release_asset_must_authenticate_the_packaging_publisher_and_exact_bytes
         promotion.validate_release_asset(wrong, "v2.1.3", payload)
     with pytest.raises(promotion.PromotionError):
         promotion.validate_release_asset(meta, "v2.1.4", payload)
+
+
+@pytest.mark.parametrize("name", ["dramaclaw", "dramaclaw-frontend"])
+@pytest.mark.parametrize("field", ["manifest_digest", "config_digest"])
+def test_runtime_identity_must_match_the_accepted_registry_manifest(
+    monkeypatch, name, field
+):
+    data = receipt()
+    # Internally consistent proof is still rejected if it attests another
+    # platform manifest or config than the accepted index actually contains.
+    data["images"][name]["runtime"][field] = "sha256:" + "a" * 64
+    if field == "config_digest":
+        data["images"][name]["runtime"]["image_id"] = "sha256:" + "a" * 64
+    writes = registry(monkeypatch, data)
+    with pytest.raises(promotion.PromotionError):
+        promotion.promote(data, "v2.1.3", SOURCE, latest=True)
+    assert writes == []
