@@ -1784,6 +1784,7 @@ frontend/src/features/canvas/application/graphImageResolver.ts,Elastic-2.0,2026 
 frontend/src/features/canvas/application/gridTemplateAction.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/imageCrop.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/imageData.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/application/imageGenerationResults.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/imageMultiAngle.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/imageNodeSizing.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/imageOutpaint.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
