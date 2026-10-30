@@ -1,11 +1,13 @@
 import asyncio
 import os
+import runpy
 import signal
 import sys
 import textwrap
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -138,13 +140,45 @@ def _spawn_tree_script(tmp_path: Path) -> tuple[Path, Path]:
             import time
 
             child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
-            pathlib.Path({str(pidfile)!r}).write_text(str(child.pid), encoding="utf-8")
+            pidfile = pathlib.Path({str(pidfile)!r})
+            pending_pidfile = pidfile.with_suffix(".tmp")
+            pending_pidfile.write_text(str(child.pid), encoding="utf-8")
+            pending_pidfile.replace(pidfile)
             child.wait()
             time.sleep(30)
             """),
         encoding="utf-8",
     )
     return script, pidfile
+
+
+def test_process_tree_pid_is_published_only_after_write(tmp_path, monkeypatch):
+    script, pidfile = _spawn_tree_script(tmp_path)
+    original_write_text = Path.write_text
+    writes = []
+
+    def write_with_observable_empty_file(path, data, *args, **kwargs):
+        # Model the window between opening a file with truncation and writing
+        # its contents. Readers must not see the final PID path in this window.
+        path.touch()
+        assert not pidfile.exists()
+        result = original_write_text(path, data, *args, **kwargs)
+        assert not pidfile.exists()
+        writes.append(path)
+        return result
+
+    monkeypatch.setattr(Path, "write_text", write_with_observable_empty_file)
+    monkeypatch.setattr(
+        "subprocess.Popen",
+        lambda *_args, **_kwargs: SimpleNamespace(pid=12345, wait=lambda: None),
+    )
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    runpy.run_path(str(script), run_name="__main__")
+
+    assert len(writes) == 1
+    assert pidfile.read_text(encoding="utf-8") == "12345"
+    assert not writes[0].exists()
 
 
 @pytest.mark.asyncio
