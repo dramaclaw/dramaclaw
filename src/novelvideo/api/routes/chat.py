@@ -97,6 +97,12 @@ _REASONING_REQUIRED_ERROR_MESSAGE = (
 def _user_facing_chat_error(exc: BaseException) -> str:
     """Turn provider/runtime failures into stable, safe chat copy."""
 
+    from novelvideo.chat.codex_app_server import CodexRuntimeError
+    from novelvideo.chat.hermes_fork_requirement import HermesForkMissing
+
+    if isinstance(exc, (CodexRuntimeError, HermesForkMissing)):
+        return "本地助手运行时不可用：请重启应用；若仍失败，请更新应用并导出诊断日志。"
+
     raw = safe_exception_message(exc).strip()
     lowered = raw.lower()
     if "reasoning is mandatory" in lowered and "cannot be disabled" in lowered:
@@ -359,6 +365,7 @@ class CanvasCommandToolResultIn(BaseModel):
     )
     tool_call_status: str = "completed"
     canvas_apply_status: str
+    background_execution_status: str | None = None
     applied: bool = False
     cancelled: bool = False
     errors: list[str] = []
@@ -1104,10 +1111,11 @@ def _resolve_canvas_command_tool_result_payload(
             or "Do not claim success. Read errors and command_results, then fix the command before trying again. Do not expose raw canvas protocol details to the user."
         )
     elif payload.canvas_apply_status == "accepted":
-        message = payload.message or "Canvas command was submitted to the canvas."
+        message = payload.message or "Canvas command was submitted and is running in the background."
         agent_instruction = (
-            "Tell the user the canvas command has been submitted to the canvas. Do not claim that "
-            "generation is complete, do not say a tool was opened, and do not ask the user to operate it manually."
+            "Tell the user generation is running in the background and its status will update automatically. "
+            "Do not claim that generation is complete, do not say a tool was opened, and do not ask the user "
+            "to operate it manually."
         )
     else:
         message = payload.message or "Frontend executor applied the canvas command."
@@ -1128,6 +1136,7 @@ def _resolve_canvas_command_tool_result_payload(
         "turn_id": payload.turn_id,
         "tool_call_status": payload.tool_call_status,
         "canvas_apply_status": payload.canvas_apply_status,
+        "background_execution_status": payload.background_execution_status,
         "applied": payload.applied,
         "cancelled": payload.cancelled,
         "errors": payload.errors,
@@ -3671,6 +3680,7 @@ async def _stream_project_turn(
                 route_prompt=display_text,
                 backend=runtime_backend,
                 execution_context=execution_context,
+                project_context=project_ctx,
             )
     finally:
         heartbeat_task.cancel()

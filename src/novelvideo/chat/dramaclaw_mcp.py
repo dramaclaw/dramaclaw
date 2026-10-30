@@ -234,9 +234,16 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         "Never prepare a replacement draft or claim success before the actual canvas write receipt. "
     )
     instruction += (
-        "For adjustments, prepare a new complete Plan draft."
+        "Only after a later user message explicitly requests a change, call "
+        "freezone_patch_workflow_draft on this draft with changes.step_updates and/or "
+        "changes.bindings and its expected_revision. If waiting for review, end this turn "
+        "without another workflow write."
         if name == "freezone_prepare_workflow_plan_draft"
-        else "For adjustments, patch this draft instead of rebuilding the intent."
+        else (
+            "Only after a later user message explicitly requests a change, patch this draft "
+            "instead of rebuilding the intent. If waiting for review, end this turn without "
+            "another workflow write."
+        )
     )
     instruction += " Do not invent or mention credits, billing, pricing, or editions."
     payload["agent_instruction"] = instruction
@@ -452,8 +459,9 @@ def _workflow_plan_log_summary(arguments: Any) -> dict[str, Any]:
 
 @SERVER.list_tools()
 async def list_tools() -> list[types.Tool]:
-    # Native Responses Tool Search progressively loads these scope-filtered
-    # concrete tools and preserves their input/output schemas end to end.
+    # Codex receives these scope-filtered concrete tools directly by default.
+    # Deployments that opt into native Responses Tool Search load the same
+    # schemas progressively.
     result: list[types.Tool] = []
     for name, (schema, _handler) in sorted(_agent_tools().items()):
         parameters = schema.get("parameters") if isinstance(schema, dict) else None

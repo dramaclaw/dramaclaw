@@ -10,8 +10,8 @@ ambient 回落与 OI-52 的调用点闸门对这一处都无效。
 `_complete_organization_image_egress`），经进程局部 env 交给子进程，子进程带 mode 标记
 fail-closed、绝不回落 settings.db 的平台 Key，trace 经 manifest 回来完成 claim。
 
-两个 OpenRouter 直连的 VLM 旁路子进程（`scene_overlap_analyzer` /
-`scene_spatial_contract`）无对应网关能力位，组织下走它们已有的跳过分支。
+两个可选场景分析子进程（`scene_overlap_analyzer` /
+`scene_spatial_contract`）尚未单独接入组织 operation admission，组织下保留跳过分支。
 """
 
 from __future__ import annotations
@@ -404,7 +404,7 @@ def test_platform_pano_launches_without_any_organization_env(
     assert harness.pano_launch()["env"] is None
 
 
-# --- 两个 OpenRouter 旁路子进程：组织下走既有跳过分支 --------------------------------
+# --- 两个网关分析子进程：组织下走既有跳过分支 --------------------------------
 
 
 def _master_pair(tmp_path: Path) -> dict[str, Path]:
@@ -417,16 +417,16 @@ def _master_pair(tmp_path: Path) -> dict[str, Path]:
     return {"master": master, "reverse": reverse}
 
 
-def test_organization_skips_the_openrouter_vlm_children(
+def test_organization_skips_the_scene_analysis_children(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """组织下即使 OPENROUTER_API_KEY 在场，两个 VLM 旁路子进程也不得启动。
+    """Configured platform analysis must not bypass organization admission."""
 
-    它们是 OpenRouter 直连、无对应网关能力位；平台上本就只在配了 Key 时才跑、
-    没配就静默跳过，组织复用这条已跑熟的分支，360 主流程照常出图。
-    """
+    from novelvideo.director_world import scene_analysis_gateway
 
-    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-present")
+    monkeypatch.setattr(
+        scene_analysis_gateway, "scene_analysis_gateway_configured", lambda: True
+    )
     pair = _master_pair(tmp_path)
     context = _egress_context(kind="organization")
     harness = _SceneHarness(monkeypatch, context)
@@ -442,12 +442,17 @@ def test_organization_skips_the_openrouter_vlm_children(
     assert harness.modules_launched() == ["scene_360_builder"]
 
 
-def test_platform_still_launches_the_openrouter_vlm_children(
+def test_platform_launches_scene_analysis_with_gateway_only(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """跳过只对组织生效——平台带 Key 时两个旁路照旧启动。"""
+    """No legacy OpenRouter key is needed to launch the gateway analyses."""
 
-    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-present")
+    from novelvideo.director_world import scene_analysis_gateway
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(
+        scene_analysis_gateway, "scene_analysis_gateway_configured", lambda: True
+    )
     pair = _master_pair(tmp_path)
     harness = _SceneHarness(monkeypatch, None)
 
@@ -462,6 +467,82 @@ def test_platform_still_launches_the_openrouter_vlm_children(
     assert "scene_overlap_analyzer" in launched
     assert "scene_spatial_contract" in launched
     assert "scene_360_builder" in launched
+
+
+def test_platform_skips_analysis_without_gateway_even_with_legacy_key(
+    monkeypatch, tmp_path
+):
+    from novelvideo.director_world import scene_analysis_gateway
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "legacy-key")
+    monkeypatch.setattr(
+        scene_analysis_gateway, "scene_analysis_gateway_configured", lambda: False
+    )
+    pair = _master_pair(tmp_path)
+    harness = _SceneHarness(monkeypatch, None)
+    result = _run_pano(
+        tmp_path,
+        source="master",
+        master_path_override=pair["master"],
+        reverse_master_path_override=pair["reverse"],
+    )
+    assert result["ok"]
+    assert harness.modules_launched() == ["scene_360_builder"]
+
+
+def test_cached_analyses_are_reused_and_failures_do_not_block_pano(
+    monkeypatch, tmp_path
+):
+    from novelvideo import stage_asset_tasks
+    from novelvideo.director_world import scene_analysis_gateway
+
+    monkeypatch.setattr(
+        scene_analysis_gateway, "scene_analysis_gateway_configured", lambda: True
+    )
+    pair = _master_pair(tmp_path)
+    harness = _SceneHarness(monkeypatch, None)
+    analysis = (
+        pair["master"].parent
+        / "overlap_continuation_test"
+        / "overlap_continuation_analysis.json"
+    )
+    contract = (
+        pair["master"].parent / "scene_spatial_contract" / "scene_spatial_contract.json"
+    )
+    for path in (analysis, contract):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {"schema_version": stage_asset_tasks.SPATIAL_CONTRACT_SCHEMA_VERSION}
+            )
+        )
+    kwargs = dict(
+        source="master",
+        master_path_override=pair["master"],
+        reverse_master_path_override=pair["reverse"],
+    )
+    assert _run_pano(tmp_path, **kwargs)["ok"]
+    assert harness.modules_launched() == ["scene_360_builder"]
+
+    analysis.unlink()
+    contract.unlink()
+    original_run = stage_asset_tasks.run_project_subprocess
+
+    def fail_analysis(cmd, **options):
+        result = original_run(cmd, **options)
+        if not cmd[2].endswith("scene_360_builder"):
+            return SimpleNamespace(
+                returncode=1, stdout="", stderr="403: Model access denied"
+            )
+        return result
+
+    monkeypatch.setattr(stage_asset_tasks, "run_project_subprocess", fail_analysis)
+    assert _run_pano(tmp_path, **kwargs)["ok"]
+    assert harness.modules_launched()[-3:] == [
+        "scene_overlap_analyzer",
+        "scene_spatial_contract",
+        "scene_360_builder",
+    ]
 
 
 # --- 子进程侧：fail-closed，绝不回落平台 Key ----------------------------------------

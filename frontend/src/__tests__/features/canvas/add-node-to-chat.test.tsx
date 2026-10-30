@@ -13,11 +13,10 @@ import { AssetBoardView } from '@/features/canvas/ui/asset-board/AssetBoardView'
 import { useCanvasStore } from '@/stores/canvasStore';
 
 // ImageViewerModal（AssetBoardView 内常驻挂载）用到 useTranslation。
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, fallback?: unknown) => (typeof fallback === 'string' ? fallback : key),
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 // 宫格活价用了 react-query，测试树没有 QueryClientProvider —— mock 掉。
 vi.mock('@/lib/queries/generation-credit-cost', () => ({

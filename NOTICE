@@ -35,6 +35,7 @@ Selected runtime dependencies requiring attribution:
 - uvicorn 0.49.0: BSD-3-Clause
 - @playcanvas/splat-transform ^2.0.3: MIT; optional world asset conversion tool
 - ffmpeg/ffprobe: external system executables; license depends on the user's system build
+- Ladybug JSON extension 0.16.0 (links yyjson): MIT; unmodified upstream libraries, notices in src/novelvideo/assets/ladybug-json
 
 Restricted Optional Components
 The optional world feature can use apple/ml-sharp and its model assets. The source

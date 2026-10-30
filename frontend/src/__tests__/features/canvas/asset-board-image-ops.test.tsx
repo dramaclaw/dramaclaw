@@ -22,11 +22,10 @@ class ResizeObserverMock {
 }
 vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 // 详情工具条的活价查询没有 QueryClientProvider —— mock 掉走硬编码兜底。
 vi.mock('@/lib/queries/generation-credit-cost', () => ({
@@ -163,7 +162,7 @@ function openDetail(name: string) {
  */
 function openMoreMenu(): HTMLElement {
   const detail = detailPanel();
-  const trigger = within(detail).getByRole('button', { name: '更多' });
+  const trigger = within(detail).getByRole('button', { name: '更多操作' });
   if (trigger.getAttribute('aria-expanded') !== 'true') fireEvent.click(trigger);
   return detail;
 }
@@ -219,18 +218,18 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
     // 进编辑器就把「旋转结果」节点建好（源图保持不动），编辑器直接写回它。
     expect(createRotateResultNode).toHaveBeenCalledWith('img-up', { displayName: '旋转结果' });
 
-    const dialog = await screen.findByRole('dialog', { name: 'rotateEditor.title' });
+    const dialog = await screen.findByRole('dialog', { name: '旋转与镜像' });
     const preview = dialog.querySelector('img');
     expect(preview).not.toBeNull();
     expect(preview?.style.transform).toBe('rotate(0deg) scale(1, 1)');
 
     // 每点一次「顺时针 90°」都在当前角度上加 90，预览实时跟着变（libtv 行为）。
-    const rotate90 = within(dialog).getByRole('button', { name: 'rotateEditor.rotate90' });
+    const rotate90 = within(dialog).getByRole('button', { name: '顺时针旋转 90°' });
     await user.click(rotate90);
     await user.click(rotate90);
     expect(preview?.style.transform).toBe('rotate(180deg) scale(1, 1)');
 
-    await user.click(within(dialog).getByRole('button', { name: /rotateEditor\.save/ }));
+    await user.click(within(dialog).getByRole('button', { name: '保存' }));
 
     expect(rotateImageInPlace).toHaveBeenCalledWith('rot-1', expect.stringContaining('up.png'), {
       angleDeg: 180,
@@ -238,7 +237,7 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
       mirrorV: false,
     });
     // 提交后编辑器关闭，源节点的「...→旋转」进入 busy 直到后台链 settle。
-    expect(screen.queryByRole('dialog', { name: 'rotateEditor.title' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '旋转与镜像' })).not.toBeInTheDocument();
     expect(inFlightImageOps.get('img-up')).toBe('rotate');
     expect(discardRotateResultNode).not.toHaveBeenCalled();
   });
@@ -250,12 +249,12 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
 
     fireEvent.click(within(openMoreMenu()).getByRole('button', { name: '旋转' }));
 
-    const dialog = await screen.findByRole('dialog', { name: 'rotateEditor.title' });
-    await user.click(within(dialog).getByRole('button', { name: 'rotateEditor.exit' }));
+    const dialog = await screen.findByRole('dialog', { name: '旋转与镜像' });
+    await user.click(within(dialog).getByRole('button', { name: '退出旋转与镜像' }));
 
     expect(rotateImageInPlace).not.toHaveBeenCalled();
     expect(discardRotateResultNode).toHaveBeenCalledWith('rot-2');
-    expect(screen.queryByRole('dialog', { name: 'rotateEditor.title' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '旋转与镜像' })).not.toBeInTheDocument();
     expect(inFlightImageOps.get('img-up')).toBeUndefined();
   });
 
@@ -263,7 +262,7 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
     openDetail('改图节点');
     const detail = detailPanel();
     // 编辑三项没图可编辑 → 「...」整颗不渲染（否则点开是个空面板）。
-    expect(within(detail).queryByRole('button', { name: '更多' })).not.toBeInTheDocument();
+    expect(within(detail).queryByRole('button', { name: '更多操作' })).not.toBeInTheDocument();
     expect(within(detail).queryByRole('button', { name: /全景/ })).not.toBeInTheDocument();
     expect(within(detail).queryByRole('button', { name: /多角度/ })).not.toBeInTheDocument();
   });
@@ -280,14 +279,14 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
     // 进编辑器就把「裁剪结果」节点建好（源图保持不动），编辑器直接写回它。
     expect(createCropResultNode).toHaveBeenCalledWith('img-up', { displayName: '裁剪结果' });
 
-    const dialog = await screen.findByRole('dialog', { name: 'cropEditor.title' });
+    const dialog = await screen.findByRole('dialog', { name: '裁剪' });
     loadCropImage(dialog, 800, 400);
 
     // 默认是「原图比例」；换成 1:1 后取景框复位成该比例下的最大居中矩形
     // （800×400 里的 400×400，居中即 x=200）。
-    await user.click(within(dialog).getByRole('button', { name: 'cropEditor.aspectOriginal' }));
+    await user.click(within(dialog).getByRole('button', { name: '原图比例' }));
     await user.click(await within(dialog).findByRole('option', { name: /1:1/ }));
-    await user.click(within(dialog).getByRole('button', { name: 'cropEditor.confirm' }));
+    await user.click(within(dialog).getByRole('button', { name: '确认' }));
 
     expect(cropImageInPlace).toHaveBeenCalledWith('crop-1', '/static/up.png', {
       x: 200,
@@ -296,7 +295,7 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
       height: 400,
     });
     // 提交后编辑器关闭，源节点的「...→裁剪」进入 busy 直到后台链 settle。
-    expect(screen.queryByRole('dialog', { name: 'cropEditor.title' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '裁剪' })).not.toBeInTheDocument();
     expect(within(openMoreMenu()).getByRole('button', { name: '裁剪' })).toBeDisabled();
     expect(inFlightImageOps.get('img-up')).toBe('crop');
     expect(discardCropResultNode).not.toHaveBeenCalled();
@@ -310,21 +309,21 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
     openDetail('上传图');
 
     fireEvent.click(within(openMoreMenu()).getByRole('button', { name: '裁剪' }));
-    let dialog = await screen.findByRole('dialog', { name: 'cropEditor.title' });
-    await user.click(within(dialog).getByRole('button', { name: 'cropEditor.exit' }));
+    let dialog = await screen.findByRole('dialog', { name: '裁剪' });
+    await user.click(within(dialog).getByRole('button', { name: '退出裁剪' }));
 
     expect(cropImageInPlace).not.toHaveBeenCalled();
     expect(discardCropResultNode).toHaveBeenCalledWith('crop-2');
-    expect(screen.queryByRole('dialog', { name: 'cropEditor.title' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '裁剪' })).not.toBeInTheDocument();
     expect(inFlightImageOps.get('img-up')).toBeUndefined();
 
     // 再进一次，什么都不动直接确认：取景框还是整张图，没什么可裁的——不上传、
     // 同样回收预建节点，免得画布上多出一个与原图逐像素相同的副本。
     createCropResultNode.mockReturnValue('crop-3');
     fireEvent.click(within(openMoreMenu()).getByRole('button', { name: '裁剪' }));
-    dialog = await screen.findByRole('dialog', { name: 'cropEditor.title' });
+    dialog = await screen.findByRole('dialog', { name: '裁剪' });
     loadCropImage(dialog, 800, 400);
-    await user.click(within(dialog).getByRole('button', { name: 'cropEditor.confirm' }));
+    await user.click(within(dialog).getByRole('button', { name: '确认' }));
 
     expect(cropImageInPlace).not.toHaveBeenCalled();
     expect(discardCropResultNode).toHaveBeenCalledWith('crop-3');
@@ -350,7 +349,7 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
 
     // 详情已切到新建的高清节点，正文下方挂着高清编辑器（模型/画质/倍数 + ↑）。
     const detail = detailPanel();
-    expect(within(detail).getByRole('button', { name: 'upscaleEditor.submit' })).toBeInTheDocument();
+    expect(within(detail).getByRole('button', { name: '提交生成' })).toBeInTheDocument();
     // 结果节点已请求视口预定位（Task 10 模式）。
     expect(useCanvasStore.getState().pendingFocusNodeId).toBe(upscaleResultNodeId);
     // 源节点没有进入 busy —— 这一步不产生在途任务。
@@ -360,7 +359,7 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
     expect(within(detail).getByText('待确认后生成')).toBeInTheDocument();
     expect(within(detail).queryByRole('img', { name: '高清放大' })).toBeNull();
     // 空态节点整条操作工具条不渲染（下载/「...」/全景… 全要素材才成立）。
-    expect(within(detail).queryByRole('button', { name: '更多' })).toBeNull();
+    expect(within(detail).queryByRole('button', { name: '更多操作' })).toBeNull();
     expect(within(detail).queryByRole('button', { name: /全景/ })).toBeNull();
   });
 
@@ -374,7 +373,7 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
 
     const detail = detailPanel();
     // 画质在弹出选择器里选（同工作流那张卡片）。
-    await user.click(within(detail).getByRole('button', { name: /qualityPicker/ }));
+    await user.click(within(detail).getByRole('button', { name: /画质/ }));
     await user.click(await screen.findByRole('button', { name: '4K' }));
     // 放大倍数是分段按钮组。
     await user.click(within(detail).getByRole('button', { name: '4' }));
@@ -386,7 +385,7 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
     expect(resultData.upscaleImageSize).toBe('4K');
     expect(resultData.upscaleScaleFactor).toBe(4);
 
-    await user.click(within(detail).getByRole('button', { name: 'upscaleEditor.submit' }));
+    await user.click(within(detail).getByRole('button', { name: '提交生成' }));
 
     expect(submitImageUpscale).toHaveBeenCalledWith(upscaleResultNodeId, {
       sourceUrl: '/static/up.png',
@@ -509,7 +508,7 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
     expect(screen.queryByText(/环绕 0° · 俯仰 0°/)).not.toBeInTheDocument();
 
     // 提交带上编辑器面板的当前参数（默认水平/垂直 0°、中景），并请求视口预定位。
-    await user.click(within(dialog).getByRole('button', { name: 'multiAngleEditor.submit' }));
+    await user.click(within(dialog).getByRole('button', { name: '提交生成' }));
     expect(multiAngleImage).toHaveBeenCalledWith(
       'img-up',
       '/static/up.png',
@@ -558,9 +557,9 @@ describe('AssetBoard 详情图片操作（第二批：「...」编辑三项 + �
     const dialog = await screen.findByRole('dialog', { name: '打光效果编辑器' });
     expect(within(detail).queryByRole('dialog')).toBeNull();
     // 旧内联平面配置行（主光方向分段）不再共存。
-    expect(screen.queryByText('主光方向')).not.toBeInTheDocument();
+    expect(within(detail).queryByText('主光方向')).not.toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole('button', { name: 'lightEditor.submit' }));
+    await user.click(within(dialog).getByRole('button', { name: '提交生成' }));
     expect(relightImage).toHaveBeenCalledWith(
       'img-up',
       '/static/up.png',

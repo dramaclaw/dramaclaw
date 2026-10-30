@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -331,9 +332,9 @@ def _root_value(*names: str) -> str:
 
 def _effective_newapi_gateway() -> tuple[str, str]:
     """Return the independent LLM gateway used by Hermes."""
-    from novelvideo.model_gateway_settings import get_effective_llm_config
+    from novelvideo.model_gateway_settings import get_effective_agent_llm_config
 
-    gateway = get_effective_llm_config()
+    gateway = get_effective_agent_llm_config()
     return gateway.api_key, gateway.base_url
 
 
@@ -348,20 +349,42 @@ def effective_gateway_fingerprint() -> str:
     return hashlib.sha256(material).hexdigest()
 
 
+def effective_gateway_runtime_fingerprint() -> str:
+    """Fingerprint the non-secret route baked into a Hermes worker.
+
+    Credentials are injected per turn and deliberately excluded. The endpoint,
+    model, and wire protocol are worker configuration, so changing any of them
+    must rotate an existing worker before it serves another turn.
+    """
+    _api_key, base_url = _effective_newapi_gateway()
+    parsed = urlsplit(str(base_url or "").strip().rstrip("/"))
+    normalized_base_url = (
+        f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{parsed.path.rstrip('/')}"
+    )
+    material = (
+        f"{normalized_base_url}\n{_hermes_model_default()}\n{_hermes_model_api_mode()}"
+    ).encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
 def effective_gateway_credentials() -> tuple[str, str]:
     """Return the NewAPI credentials injected into a newly spawned worker."""
     return _effective_newapi_gateway()
 
 
 def _hermes_model_default() -> str:
-    from novelvideo.model_gateway_settings import get_effective_llm_config
+    from novelvideo.model_gateway_settings import get_effective_agent_llm_config
     from novelvideo.shared.runtime_env import is_ce_effective
 
     # Only CE resolves the route from its gateway settings database. EE keeps
     # the deployment environment in charge, so HERMES_MODEL selects the alias
     # and BrainClaw is reached by pointing it at the BrainClaw alias.
-    if is_ce_effective() and get_effective_llm_config().is_brainclaw:
-        return "brainclaw"
+    if is_ce_effective():
+        gateway = get_effective_agent_llm_config()
+        if gateway.is_brainclaw:
+            return "brainclaw"
+        if gateway.model:
+            return gateway.model
     return (
         _root_value(
             "HERMES_MODEL",
@@ -373,6 +396,21 @@ def _hermes_model_default() -> str:
 
 
 def _hermes_model_api_mode() -> str:
+    from novelvideo.model_gateway_settings import (
+        AGENT_LLM_MODE_THIRD_PARTY,
+        get_effective_agent_llm_config,
+    )
+    from novelvideo.shared.runtime_env import is_ce_effective
+
+    # The CE third-party Agent contract is shared with Codex App Server and
+    # explicitly requires the OpenAI Responses API. Hermes calls this transport
+    # ``codex_responses``; forcing it here keeps both runtimes on the same wire
+    # protocol instead of silently using Chat Completions in local development.
+    if (
+        is_ce_effective()
+        and get_effective_agent_llm_config().mode == AGENT_LLM_MODE_THIRD_PARTY
+    ):
+        return "codex_responses"
     return _root_value("HERMES_MODEL_API_MODE") or _DEFAULT_HERMES_MODEL_API_MODE
 
 
@@ -1371,6 +1409,7 @@ def _materialize_plugin_links(plugins_dir: Path, *, profile: str = "director") -
 __all__ = [
     "effective_gateway_credentials",
     "effective_gateway_fingerprint",
+    "effective_gateway_runtime_fingerprint",
     "ensure_user_hermes_workspace",
     "list_freezone_hermes_workflow_skills",
     "sync_freezone_hermes_workflow_skills",

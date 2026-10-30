@@ -8,7 +8,7 @@ from novelvideo.ports.product_surface_access import (
 
 
 @pytest.mark.asyncio
-async def test_ce_surface_defaults_keep_assistants_hidden(monkeypatch) -> None:
+async def test_ce_surface_defaults_expose_assistants(monkeypatch) -> None:
     monkeypatch.delenv("ST_CE_ENABLE_ASSISTANT_SURFACES", raising=False)
     access = LocalProductSurfaceAccess()
     items = await access.get_effective_access("local-user")
@@ -16,8 +16,8 @@ async def test_ce_surface_defaults_keep_assistants_hidden(monkeypatch) -> None:
 
     assert by_code["mainline"]["available"] is True
     assert by_code["freezone"]["available"] is True
-    assert by_code["assistant"]["available"] is False
-    assert by_code["freezone_assistant"]["available"] is False
+    assert by_code["assistant"]["available"] is True
+    assert by_code["freezone_assistant"]["available"] is True
 
 
 @pytest.mark.asyncio

@@ -5,17 +5,21 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import json
 import os
 import re
 from pathlib import Path
 from typing import Any
 
-import httpx
 from PIL import Image, ImageDraw, ImageFont
 
 from novelvideo.config import OUTPUT_DIR
+from novelvideo.director_world.scene_analysis_gateway import (
+    SPATIAL_MODEL_ENV,
+    SPATIAL_MODEL,
+    analyze_scene_references,
+    resolve_scene_analysis_model,
+)
 
 # Demo defaults for standalone/manual runs. In production stage_asset_tasks
 # always passes absolute --master/--reverse/--output-dir, so these are never used.
@@ -25,7 +29,7 @@ DEFAULT_SCENE_DIR = PROJECT_DIR / "assets/scenes" / DEFAULT_SCENE_NAME
 DEFAULT_MASTER = DEFAULT_SCENE_DIR / "master.png"
 DEFAULT_REVERSE = DEFAULT_SCENE_DIR / "reverse_master.png"
 DEFAULT_OUTPUT_DIR = DEFAULT_SCENE_DIR / "scene_spatial_contract"
-DEFAULT_MODEL = "openai/gpt-5.5"
+DEFAULT_MODEL = SPATIAL_MODEL
 SPATIAL_CONTRACT_SCHEMA_VERSION = "scene_spatial_contract_v8_topology_only_locks"
 
 
@@ -290,58 +294,17 @@ of inventing a confident wall.
 """.strip()
 
 
-async def ask_openrouter(
-    *,
-    image_path: Path,
-    prompt: str,
-    api_key: str,
-    model: str,
-    max_tokens: int,
+async def ask_gateway(
+    *, image_path: Path, prompt: str, model: str | None = None, max_tokens: int
 ) -> str:
-    data_url = "data:image/jpeg;base64," + base64.b64encode(
-        image_path.read_bytes()
-    ).decode("ascii")
-    payload = {
-        "model": model,
-        "temperature": 0.0,
-        "max_tokens": max_tokens,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            }
-        ],
-    }
-    if model.lower().startswith("openai/"):
-        payload["response_format"] = {"type": "json_object"}
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://supertale.local/scene-spatial-contract",
-        "X-Title": "SuperTale Scene Spatial Contract",
-    }
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
-        data = response.json()
-    choices = data.get("choices") or []
-    if not choices:
-        return ""
-    content = (choices[0].get("message") or {}).get("content")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        return "".join(
-            str(part.get("text") or "") for part in content if isinstance(part, dict)
-        ).strip()
-    return ""
+    return await analyze_scene_references(
+        image_path=image_path,
+        prompt=prompt,
+        model_env=SPATIAL_MODEL_ENV,
+        default_model=DEFAULT_MODEL,
+        model=model,
+        max_tokens=max_tokens,
+    )
 
 
 def parse_json(text: str) -> dict[str, Any]:
@@ -1042,6 +1005,9 @@ async def run(args: argparse.Namespace, *, egress_context=None) -> None:
 
     require_direct_model_egress_allowed(egress_context)
     load_env()
+    args.model = resolve_scene_analysis_model(
+        SPATIAL_MODEL_ENV, DEFAULT_MODEL, args.model
+    )
     master = repo_path(args.master)
     reverse = repo_path(args.reverse)
     output_dir = repo_path(args.output_dir)
@@ -1062,13 +1028,9 @@ async def run(args: argparse.Namespace, *, egress_context=None) -> None:
         prompt, encoding="utf-8"
     )
 
-    api_key = args.api_key or os.environ.get("OPENROUTER_API_KEY") or ""
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is missing")
-    raw_text = await ask_openrouter(
+    raw_text = await ask_gateway(
         image_path=sheet_path,
         prompt=prompt,
-        api_key=api_key,
         model=args.model,
         max_tokens=max(4000, int(args.max_tokens)),
     )
@@ -1114,18 +1076,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default=(
-            os.environ.get("SCENE_SPATIAL_CONTRACT_MODEL")
-            or os.environ.get("OPENROUTER_VISION_MODEL")
-            or DEFAULT_MODEL
-        ),
+        default=(os.environ.get(SPATIAL_MODEL_ENV) or ""),
     )
     parser.add_argument(
         "--max-tokens",
         type=int,
         default=int(os.environ.get("SCENE_SPATIAL_CONTRACT_MAX_TOKENS") or "16000"),
     )
-    parser.add_argument("--api-key", default="")
     return parser.parse_args()
 
 

@@ -42,7 +42,8 @@ import {
   type ComposeTimelineState,
 } from "@/features/canvas/compose/timelineModel";
 import { fetchFreezoneJobResult, submitFreezoneVideoCompose } from "@/api/ops";
-import { awaitTaskCompletion } from "@/api/tasks";
+import { awaitTaskCompletion, isTaskPollTimeoutError } from "@/api/tasks";
+import { notifyTaskStillRunning } from "@/features/canvas/application/errorDialog";
 import { orderedComposeSeedNodeIds } from "@/features/canvas/compose/composeInputOrdering";
 import {
   publishNodeActionAccepted,
@@ -50,7 +51,13 @@ import {
   publishNodeActionSuccess,
   subscribeNodeAction,
 } from "@/features/canvas/application/nodeActionResult";
-import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
+import {
+  CLEARED_GENERATION_TASK_FIELDS,
+  generationTaskDescriptor,
+} from "@/features/canvas/application/resumeGeneration";
+import {
+  reconcileCompletedVideoComposeProjection,
+} from "@/features/canvas/application/videoComposeProjection";
 
 type VideoComposeNodeProps = NodeProps & {
   id: string;
@@ -113,6 +120,7 @@ export const VideoComposeNode = memo(
       if (!project || !canAutoCompose) {
         throw new Error("自动合成至少需要 1 个视频和共计 2 个已完成媒体节点");
       }
+      let taskCompleted = false;
       const draft = data.draftTimeline as ComposeTimelineState | undefined;
       const timeline = await resolveUnknownClipDurations(
         draft?.tracks?.length
@@ -142,12 +150,32 @@ export const VideoComposeNode = memo(
         await awaitTaskCompletion(ref.task_key, project, {
           taskType: ref.task_type,
         });
+        taskCompleted = true;
         const result = await fetchFreezoneJobResult(
           project,
           "freezone_video_compose",
           ref.job_id,
         );
         if (!result.url) throw new Error("视频合成完成但未返回成片地址");
+        const projectionReconcile =
+          await reconcileCompletedVideoComposeProjection({
+            projectId: project,
+            canvasId,
+            nodeId: id,
+            taskKey: ref.task_key,
+            jobId: ref.job_id,
+          });
+        const output = {
+          videoUrl: result.url,
+          output_url: result.url,
+          task_key: ref.task_key,
+          task_type: ref.task_type,
+          job_id: ref.job_id,
+        };
+        // The user navigated away while the task was finishing. The worker's
+        // projection is already durable; do not write its result into whatever
+        // canvas runtime is active now.
+        if (projectionReconcile === "runtime_missing") return output;
         const resultCoverUrl = result.cover_url ?? timeline.cover?.url ?? null;
         const store = useCanvasStore.getState();
         const existingResult = store.nodes.find((node) =>
@@ -170,27 +198,31 @@ export const VideoComposeNode = memo(
           store.addEdge(id, resultNodeId);
         }
         updateNodeData(id, {
+          ...CLEARED_GENERATION_TASK_FIELDS,
           resultVideoUrl: result.url,
+          resultVideoTaskKey: ref.task_key,
+          resultVideoJobId: ref.job_id,
           previewImageUrl: resultCoverUrl,
           resolution: timeline.resolution,
           draftTimeline: timeline,
-          isGenerating: false,
-          generationStartedAt: null,
           generationError: null,
         });
-        return {
-          videoUrl: result.url,
-          output_url: result.url,
-          task_key: ref.task_key,
-          task_type: ref.task_type,
-          job_id: ref.job_id,
-        };
+        return output;
       } catch (error) {
-        updateNodeData(id, {
-          isGenerating: false,
-          generationStartedAt: null,
-          generationError: error instanceof Error ? error.message : String(error),
-        });
+        if (isTaskPollTimeoutError(error)) {
+          notifyTaskStillRunning(t);
+          throw error;
+        }
+        // Once completion is observed, the worker may already have advanced
+        // the server canvas revision. Keep the durable task descriptor intact
+        // if fetching/rebasing the result fails; a refresh can recover it
+        // without issuing another stale autosave.
+        if (!taskCompleted) {
+          updateNodeData(id, {
+            ...CLEARED_GENERATION_TASK_FIELDS,
+            generationError: error instanceof Error ? error.message : String(error),
+          });
+        }
         throw error;
       }
     }, [

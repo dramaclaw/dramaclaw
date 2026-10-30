@@ -15,26 +15,14 @@ class ResizeObserverMock {
 }
 vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
-// 视频表单的按钮标题走 i18n key（不像图片侧写死中文），这里只把用到的几条兑成
-// public/locales/zh 里的真实文案，断言才读得懂。
-const ZH = vi.hoisted(() => ({
-  'node.videoNode.submit': '提交',
-  'node.videoNode.submitBusy': '生成中，请稍候',
-  'node.videoNode.placeholder': '根据文字描述生成视频。',
-}) as Record<string, string>);
-
 vi.mock('@/lib/model-task-access', () => ({
   useModelTaskAccess: () => ({ blocked: false, denialReason: null, message: null }),
 }));
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    // 第二参数可能是插值对象（如 t(key, { count })），只有字符串才当默认文案用，
-    // 否则会把对象当成 React 子节点渲染出去。
-    t: (key: string, fallback?: unknown) =>
-      ZH[key] ?? (typeof fallback === 'string' ? fallback : key),
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { zhT } = await import('@/__tests__/helpers/i18n-fixtures');
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 // 算力询价走 react-query，测试树里没有 QueryClientProvider —— 直接短路。
 vi.mock('@/lib/queries/generation-credit-cost', () => ({
@@ -55,6 +43,7 @@ vi.mock('@/api/ops', async (importOriginal) => ({
       providerId: 'huimeng',
       apiModel: 'test_video_api',
       label: '测试视频模型',
+      humanReview: true,
     },
   ]),
   fetchFreezoneVideoCameraTemplates: vi.fn(async () => []),
@@ -130,7 +119,7 @@ describe('故事板详情 · 视频生成表单', () => {
   });
 
   it('有提示词 → 点提交走真实提交链路（submitFreezoneVideoGen 收到该 prompt）', async () => {
-    seed([emptyVideoNode({ prompt: '雪夜里发光的小猫在屋顶漫步' })]);
+    seed([emptyVideoNode({ prompt: '雪夜里发光的小猫在屋顶漫步', humanReview: true })]);
     openDetail('视频节点 1');
 
     const submit = within(detailPanel()).getByRole('button', { name: '提交' });
@@ -143,6 +132,8 @@ describe('故事板详情 · 视频生成表单', () => {
     expect(payload.prompt).toBe('雪夜里发光的小猫在屋顶漫步');
     expect(payload.nodeId).toBe('vid-1');
     expect(payload.genMode).toBe('textToVideo');
+    expect(payload.humanReview).toBe(false);
+    expect(within(detailPanel()).queryByRole('switch')).not.toBeInTheDocument();
   });
 
   it('已有产物的 video 节点仍挂表单，且不再重复渲染只读提示词块', () => {

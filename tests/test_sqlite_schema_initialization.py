@@ -414,3 +414,66 @@ def test_project_usage_components_share_one_db_without_schema_races(
         ).fetchone() == (1,)
     finally:
         conn.close()
+
+
+@pytest.mark.parametrize(
+    "existing_task_schema", [True, False], ids=["probe", "initialize"]
+)
+def test_old_task_schema_request_does_not_poison_recreated_project(
+    tmp_path, monkeypatch, existing_task_schema
+):
+    from collections import OrderedDict
+
+    import novelvideo.sqlite_schema as schema
+
+    # Isolate this process cache while using the real project/task initializers.
+    monkeypatch.setattr(schema, "_READY_COMPONENTS", OrderedDict())
+    output_dir = tmp_path / "output"
+    state_dir = tmp_path / "state"
+    db_path = state_dir / "data.db"
+
+    def initialize_project():
+        store = SQLiteStore(
+            "alice/demo", output_dir=str(output_dir), state_dir=str(state_dir)
+        )
+        store._ensure_project_schema_sync()
+
+    initialize_project()
+    manager = TaskStateManager()
+    if existing_task_schema:
+        manager._ensure_task_schema(db_path)
+    # A worker may first see a schema already initialized by another process.
+    schema._READY_COMPONENTS.clear()
+    before_mark = threading.Event()
+    resume = threading.Event()
+    original_mark = schema._mark_component_process_ready
+
+    def pause_old_request(*args, **kwargs):
+        if threading.current_thread().name.startswith("old-schema"):
+            before_mark.set()
+            assert resume.wait(timeout=5)
+        return original_mark(*args, **kwargs)
+
+    monkeypatch.setattr(schema, "_mark_component_process_ready", pause_old_request)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="old-schema") as executor:
+        old_request = executor.submit(manager._ensure_task_schema, db_path)
+        try:
+            assert before_mark.wait(timeout=5)
+            old_inode = db_path.stat().st_ino
+            # Purge detaches the old directory before releasing the project name.
+            state_dir.rename(tmp_path / "purged-state")
+            initialize_project()
+            assert db_path.stat().st_ino != old_inode
+        finally:
+            resume.set()
+        old_request.result(timeout=5)
+
+    # The recreated project must work without clearing the cache or restarting.
+    with manager._connect_path(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM task_states").fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT version FROM novelvideo_schema_components WHERE component = 'task_state'"
+            ).fetchone()[0]
+            == 1
+        )

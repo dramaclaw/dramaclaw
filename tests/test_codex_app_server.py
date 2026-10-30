@@ -6,6 +6,7 @@ import gzip
 import json
 import os
 import sqlite3
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -21,9 +22,48 @@ from novelvideo.chat.backend_sdk import (
 )
 
 
+def _integration_codex_binary() -> Path:
+    configured = os.environ.get("CODEX_BIN", "").strip()
+    if configured:
+        binary = Path(configured)
+        assert binary.is_file(), "CODEX_BIN must point to the compiled runtime"
+        return binary
+    return Path(
+        distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
+    )
+
+
 def test_runtime_rejects_sdk_bundled_binary():
     with pytest.raises(RuntimeError, match="DramaClaw-patched Codex runtime"):
         codex_app_server._resolve_codex_bin(SimpleNamespace(codex_bin=None))
+
+
+def test_windows_websocket_uses_preconnected_socket_and_closes_on_failure(
+    monkeypatch, tmp_path
+):
+    from unittest.mock import Mock
+    import websockets.sync.client
+
+    stream = Mock()
+    native_connect = Mock(return_value=stream)
+    monkeypatch.setitem(
+        sys.modules,
+        "novelvideo.chat.codex_app_server_windows",
+        SimpleNamespace(connect_unix_socket=native_connect),
+    )
+    monkeypatch.setattr(codex_app_server, "os", SimpleNamespace(name="nt"))
+    handshake = Mock(side_effect=TimeoutError("handshake timed out"))
+    monkeypatch.setattr(websockets.sync.client, "unix_connect", handshake)
+    path = tmp_path / "codex.sock"
+    with pytest.raises(TimeoutError, match="handshake timed out"):
+        codex_app_server._connect_local_websocket(
+            path, uri="ws://localhost/rpc", open_timeout=0.2
+        )
+    native_connect.assert_called_once_with(path, 0.2)
+    assert handshake.call_args.args == ()
+    assert handshake.call_args.kwargs["sock"] is stream
+    assert 0 <= handshake.call_args.kwargs["open_timeout"] <= 0.2
+    stream.close.assert_called_once()
 
 
 def test_control_rpc_uses_shared_app_server_for_lifecycle(monkeypatch, tmp_path):
@@ -258,7 +298,7 @@ def test_output_schema_is_sent_even_without_turn_metadata():
 
 
 def test_codex_149_sdk_exposes_required_runtime_notifications():
-    from importlib.metadata import version
+    from importlib.metadata import requires
 
     from openai_codex import Codex
     from openai_codex.client import CodexClient
@@ -273,7 +313,7 @@ def test_codex_149_sdk_exposes_required_runtime_notifications():
         hasattr(CodexClient, name)
         for name in ("initialize", "thread_start", "turn_start")
     )
-    assert version("openai-codex-cli-bin") == "0.149.0"
+    assert "openai-codex-cli-bin==0.149.0" in requires("openai-codex")
     assert {
         "item/agentMessage/delta",
         "item/completed",
@@ -313,6 +353,45 @@ def _response_completed(response_id: str) -> dict:
             },
         },
     }
+
+
+def _contract_codex_bin() -> Path:
+    # Opt-in runtime smoke uses the exact public artifact without replacing the
+    # SDK's installed binary. All Responses traffic below goes to a local stub.
+    override = os.environ.get("DRAMACLAW_TEST_CODEX_BIN", "").strip()
+    if override:
+        return Path(override)
+    return _integration_codex_binary()
+
+
+@pytest.mark.parametrize("selection", ["test_override", "configured", "sdk"])
+def test_contract_runtime_selection_preserves_both_overrides(
+    monkeypatch, tmp_path, selection
+):
+    test_binary = tmp_path / "test-codex"
+    configured_binary = tmp_path / "configured-codex"
+    bundled_binary = tmp_path / "sdk-codex"
+    for binary in (test_binary, configured_binary, bundled_binary):
+        binary.touch()
+    monkeypatch.delenv("DRAMACLAW_TEST_CODEX_BIN", raising=False)
+    monkeypatch.delenv("CODEX_BIN", raising=False)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "distribution",
+        lambda _name: SimpleNamespace(locate_file=lambda _path: bundled_binary),
+    )
+    if selection != "sdk":
+        monkeypatch.setenv("CODEX_BIN", str(configured_binary))
+    if selection == "test_override":
+        monkeypatch.setenv("DRAMACLAW_TEST_CODEX_BIN", str(test_binary))
+    assert (
+        _contract_codex_bin()
+        == {
+            "test_override": test_binary,
+            "configured": configured_binary,
+            "sdk": bundled_binary,
+        }[selection]
+    )
 
 
 @contextmanager
@@ -364,12 +443,17 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
     monkeypatch, tmp_path
 ):
     """Record the complete Responses Tool Search chain across App Server + MCP."""
-    native_catalog = (
+    bundled_catalog = (
         Path(service.__file__).resolve().parents[3]
         / "deploy"
         / "codex"
         / "dramaclaw-model-catalog.json"
     )
+    catalog = json.loads(bundled_catalog.read_text(encoding="utf-8"))
+    for model in catalog["models"]:
+        model["supports_search_tool"] = True
+    native_catalog = tmp_path / "native-tool-search-models.json"
+    native_catalog.write_text(json.dumps(catalog), encoding="utf-8")
     monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(native_catalog))
     search_call_id = "search-call-1"
     tool_call_id = "mcp-call-1"
@@ -426,9 +510,7 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
     ]
 
     with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
-        bundled_codex = Path(
-            distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
-        )
+        bundled_codex = _contract_codex_bin()
         assert bundled_codex.is_file(), "the pinned App Server binary is required"
         token_file = tmp_path / "turn.token"
         token_file.write_text("contract-test-token", encoding="utf-8")
@@ -551,17 +633,17 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
 
 
 @pytest.mark.asyncio
-async def test_app_server_chat_compat_catalog_omits_native_tool_search(
+async def test_app_server_default_catalog_exposes_freezone_execution_tools(
     monkeypatch, tmp_path
 ):
-    """Responses-to-Chat gateways receive concrete MCP functions only."""
-    compat_catalog = (
+    """Freezone write turns can call their execution entry without a search round."""
+    default_catalog = (
         Path(service.__file__).resolve().parents[3]
         / "deploy"
         / "codex"
-        / "dramaclaw-model-catalog-chat-compat.json"
+        / "dramaclaw-model-catalog.json"
     )
-    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(compat_catalog))
+    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(default_catalog))
     scripted_responses = [
         _responses_sse(
             _response_created("response-compat"),
@@ -579,9 +661,7 @@ async def test_app_server_chat_compat_catalog_omits_native_tool_search(
     ]
 
     with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
-        bundled_codex = Path(
-            distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
-        )
+        bundled_codex = _contract_codex_bin()
         token_file = tmp_path / "turn.token"
         token_file.write_text("contract-test-token", encoding="utf-8")
         token_file.chmod(0o600)
@@ -593,18 +673,27 @@ async def test_app_server_chat_compat_catalog_omits_native_tool_search(
             "DRAMACLAW_PROJECT_ID": "chat-compat-contract",
             "DRAMACLAW_USERNAME": "local",
             "DRAMACLAW_AGENT_TOKEN_FILE": str(token_file),
+            "DRAMACLAW_ROOT": str(Path(__file__).resolve().parents[1]),
+            "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+            "DRAMACLAW_CANVAS_ID": "canvas-a",
+            "DRAMACLAW_AGENT_PROFILE": "freezone:main",
+            "DRAMACLAW_CHAT_SURFACE": "freezone",
             "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
             "PYTHONDONTWRITEBYTECODE": "1",
         }
-        mcp_servers = service._dramaclaw_mcp_servers()
-        mcp_servers["dramaclaw"]["env_vars"].append("PYTHONPATH")
+        execution_prompt = "请执行当前画布里的现有音频节点。"
+        mcp_servers = service._dramaclaw_mcp_servers(
+            "freezone_canvas", prompt=execution_prompt
+        )
         client = backend_sdk.CodexClient(
             codex_bin=bundled_codex,
             cwd=tmp_path,
             env=env,
             model="DC-codex-agent-LLM",
             model_provider="dramaclaw_gateway",
-            developer_instructions=service._codex_developer_instructions("default"),
+            developer_instructions=service._codex_developer_instructions(
+                "freezone_canvas"
+            ),
             config_overrides=service._codex_gateway_config_overrides(gateway_url),
             thread_config_overrides=service._codex_mcp_config_overrides(mcp_servers),
             turn_metadata={"dramaclaw_gateway_api_key": "per-turn-contract-key"},
@@ -612,8 +701,7 @@ async def test_app_server_chat_compat_catalog_omits_native_tool_search(
 
         try:
             events = [
-                event
-                async for event in client.thread_start().stream("查询当前项目状态。")
+                event async for event in client.thread_start().stream(execution_prompt)
             ]
         finally:
             codex_app_server.stop_shared_codex_runtime()
@@ -621,10 +709,201 @@ async def test_app_server_chat_compat_catalog_omits_native_tool_search(
     assert len(requests) == 1
     tools = requests[0]["body"]["tools"]
     assert not any(tool.get("type") == "tool_search" for tool in tools)
-    assert any(tool.get("type") == "function" for tool in tools)
+    namespace_names = {
+        str(member.get("name") or "")
+        for tool in tools
+        if tool.get("type") == "namespace"
+        for member in tool.get("tools") or []
+    }
+    expected_execution_tools = {
+        "freezone_get_canvas_ontology",
+        "freezone_get_node_action_catalog",
+        "freezone_get_node_detail",
+        "freezone_get_workflow",
+        "freezone_observe_workflow_run",
+        "freezone_request_user_clarification",
+        "freezone_run_node_action",
+        "freezone_run_workflow",
+        "freezone_update_node_data",
+    }
+    assert namespace_names == expected_execution_tools
+    assert not any(
+        tool.get("name") == "mcp__dramaclaw_workflows"
+        for tool in tools
+        if tool.get("type") == "namespace"
+    )
     assert any(
         event.type == "complete" and event.text == "兼容模式正常。" for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_app_server_exact_node_action_searches_only_batch_write_tool(
+    monkeypatch, tmp_path
+):
+    """Exact node actions discover one atomic update-and-run entry."""
+    monkeypatch.delenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", raising=False)
+    search_call_id = "search-batch-write"
+    final_reply = json.dumps(
+        {"message": "完成。", "mode": "read_only", "canvas_receipts": []},
+        ensure_ascii=False,
+    )
+    scripted_responses = [
+        _responses_sse(
+            _response_created("response-search"),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "tool_search_call",
+                    "call_id": search_call_id,
+                    "execution": "client",
+                    "arguments": {
+                        "query": "update an existing node and run its exact action in one batch",
+                        "limit": 5,
+                    },
+                },
+            },
+            _response_completed("response-search"),
+        ),
+        _responses_sse(
+            _response_created("response-final"),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "id": "message-final",
+                    "content": [{"type": "output_text", "text": final_reply}],
+                },
+            },
+            _response_completed("response-final"),
+        ),
+    ]
+
+    with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
+        bundled_codex = _contract_codex_bin()
+        token_file = tmp_path / "turn.token"
+        token_file.write_text("contract-test-token", encoding="utf-8")
+        token_file.chmod(0o600)
+        monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+        env = {
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+            "DRAMACLAW_PROJECT_ID": "focused-search-contract",
+            "DRAMACLAW_USERNAME": "local",
+            "DRAMACLAW_AGENT_TOKEN_FILE": str(token_file),
+            "DRAMACLAW_ROOT": str(Path(__file__).resolve().parents[1]),
+            "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+            "DRAMACLAW_CANVAS_ID": "canvas-a",
+            "DRAMACLAW_AGENT_PROFILE": "freezone:main",
+            "DRAMACLAW_CHAT_SURFACE": "freezone",
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        execution_prompt = (
+            "请执行当前画布里的现有音频节点，先更新音乐参数，再运行 generate_audio。"
+        )
+        mcp_servers = service._dramaclaw_mcp_servers(
+            "freezone_canvas", prompt=execution_prompt
+        )
+        client = backend_sdk.CodexClient(
+            codex_bin=bundled_codex,
+            cwd=tmp_path,
+            env=env,
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions=service._codex_developer_instructions(
+                "freezone_canvas"
+            ),
+            config_overrides=service._codex_gateway_config_overrides(
+                gateway_url, native_tool_search=True
+            ),
+            thread_config_overrides=service._codex_mcp_config_overrides(mcp_servers),
+            turn_metadata={"dramaclaw_gateway_api_key": "per-turn-contract-key"},
+            output_schema=service.CANVAS_REPLY_SCHEMA,
+        )
+
+        try:
+            events = [
+                event async for event in client.thread_start().stream(execution_prompt)
+            ]
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+
+    assert len(requests) == 2
+    first, second = [request["body"] for request in requests]
+    assert any(tool.get("type") == "tool_search" for tool in first["tools"])
+    assert not any(tool.get("type") == "namespace" for tool in first["tools"])
+    search_output = next(
+        item for item in second["input"] if item.get("type") == "tool_search_output"
+    )
+    assert search_output["call_id"] == search_call_id
+    assert [tool["name"] for tool in search_output["tools"]] == ["mcp__dramaclaw"]
+    assert [
+        tool["name"]
+        for namespace in search_output["tools"]
+        for tool in namespace["tools"]
+    ] == ["freezone_emit_canvas_command"]
+    assert any(
+        event.type == "complete" and event.text == final_reply for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_public_patched_runtime_keeps_turn_key_out_of_metadata_and_disk(
+    monkeypatch, tmp_path
+):
+    if not os.environ.get("DRAMACLAW_TEST_CODEX_BIN", "").strip():
+        pytest.skip("set DRAMACLAW_TEST_CODEX_BIN to verify a public patched artifact")
+    secret = "synthetic-native-runtime-test-key-not-a-real-credential"
+    scripted = _responses_sse(
+        _response_created("native-runtime-test"),
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "id": "native-message",
+                "content": [{"type": "output_text", "text": "native runtime OK"}],
+            },
+        },
+        _response_completed("native-runtime-test"),
+    )
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    with _recording_responses_gateway([scripted]) as (gateway_url, requests):
+        client = backend_sdk.CodexClient(
+            codex_bin=_contract_codex_bin(),
+            cwd=tmp_path,
+            env={
+                **os.environ,
+                "CODEX_HOME": str(tmp_path / "codex-home"),
+                "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+            },
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions="Reply briefly without tools.",
+            config_overrides=service._codex_gateway_config_overrides(gateway_url),
+            turn_metadata={"dramaclaw_gateway_api_key": secret},
+        )
+        try:
+            events = [event async for event in client.thread_start().stream("Say OK")]
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+    assert len(requests) == 1
+    headers = {key.lower(): value for key, value in requests[0]["headers"].items()}
+    assert headers.pop("authorization") == f"Bearer {secret}"
+    assert secret not in json.dumps(headers)
+    assert secret not in json.dumps(requests[0]["body"])
+    assert any(
+        event.type == "complete" and event.text == "native runtime OK"
+        for event in events
+    )
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            assert (
+                secret.encode() not in path.read_bytes()
+            ), f"Turn key persisted in {path.name}"
 
 
 @pytest.mark.e2e
@@ -651,9 +930,7 @@ async def test_real_gateway_app_server_native_tool_search_calls_concrete_mcp(
     if not gateway_base_url or not gateway_api_key:
         pytest.skip("a Tool Search-capable DramaClaw Gateway URL and key are required")
 
-    bundled_codex = Path(
-        distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
-    )
+    bundled_codex = _integration_codex_binary()
     codex_bin = Path(os.environ.get("CODEX_BIN", "") or bundled_codex)
     if not codex_bin.is_file():
         pytest.skip("DramaClaw-patched Codex binary is unavailable")

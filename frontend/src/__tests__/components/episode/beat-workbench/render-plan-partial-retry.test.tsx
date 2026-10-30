@@ -28,21 +28,10 @@ vi.mock("@/lib/api", () => ({
 
 // react-i18next：把 `defaultValue` 原样吐出来并做变量替换，这样三种 reason 的
 // 文案能被断言为「三条真的不一样的话」，而不是三次同一个 key。
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (
-      key: string,
-      vars?: Record<string, string | number> & { defaultValue?: string },
-    ) => {
-      const base = typeof vars?.defaultValue === "string" ? vars.defaultValue : key;
-      if (!vars) return base;
-      return Object.entries(vars).reduce(
-        (acc, [k, v]) => (k === "defaultValue" ? acc : acc.replace(`{{${k}}}`, String(v))),
-        base,
-      );
-    },
-  }),
-}));
+vi.mock("react-i18next", async () => {
+  const { zhT } = await import("@/__tests__/helpers/i18n-fixtures");
+  return { useTranslation: () => ({ t: zhT }) };
+});
 
 const { toast } = vi.hoisted(() => ({
   toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
@@ -188,7 +177,7 @@ function renderDialog() {
 }
 
 async function confirm() {
-  const btn = await screen.findByRole("button", { name: /episode\.renderPlan\.confirm/ });
+  const btn = await screen.findByRole("button", { name: /确认渲染/ });
   await userEvent.click(btn);
 }
 

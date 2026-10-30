@@ -6,12 +6,12 @@
 
 按顺序执行：
 
-1. **Bump 版本**：改 `pyproject.toml` 的 `version = "X.Y.Z"`（版本唯一真源，SSOT），并同步 `tests/test_release_feed.py::test_project_version_is_single_source_of_truth` 中钉死的版本字面量；第 3 步重装后 `uv.lock` 会随之更新，记得一并提交。
+1. **Bump 版本**：改 `pyproject.toml` 的 `version = "X.Y.Z"`（版本唯一真源，SSOT），并同步 `tests/test_release_feed.py::test_project_version_is_single_source_of_truth` 中钉死的版本字面量；更新锁文件并一并提交。同时执行 `python3 scripts/bump_compose_default.py docker-compose.release.yml DRAMACLAW_VERSION X.Y.Z`，更新 `.env.example`、README 和中英文部署指南中的版本示例。网关使用独立版本，不随 CE 版本盲目递增。Compose 默认值必须在打 tag **之前**与应用版本一致，不依赖发布后的打包 PR 补改。
 2. **重写包内 release notes**：整体替换 `src/novelvideo/release-notes.md` 为新版本内容（用下方模板）。front-matter 的 `version:` 必须与 `pyproject.toml` 一致，否则解析门断言失败（F8）。
 3. **本地验证**：
    ```bash
    uv pip install -e .            # 重装使新版本号生效
-   uv run pytest tests/test_release_feed.py
+   uv run pytest tests/test_release_feed.py tests/test_docker_persistence_config.py
    # 或起后端后：curl 'http://localhost:8780/api/v1/release-notifications?locale=zh'
    # 确认 current_version == 新版本、current_items 非空
    ```

@@ -96,6 +96,21 @@ function resumableHtmlNode(extra: Record<string, unknown> = {}): CanvasNode {
   } as unknown as CanvasNode;
 }
 
+function resumableComposeNode(extra: Record<string, unknown> = {}): CanvasNode {
+  return {
+    id: "compose-1",
+    type: CANVAS_NODE_TYPES.videoCompose,
+    position: { x: 0, y: 0 },
+    data: {
+      isGenerating: true,
+      generationTaskKey: "task:freezone_video_compose:project:demo:0:compose-job-1",
+      generationTaskType: "freezone_video_compose",
+      generationTaskJobId: "compose-job-1",
+      ...extra,
+    },
+  } as unknown as CanvasNode;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -241,6 +256,43 @@ describe("恢复路径：HTML 文本任务保存为 Artifact", () => {
     );
     expect(fetchFreezoneTextGenerateResult).not.toHaveBeenCalled();
     expect(updateNodeData.mock.calls.some(([, value]) => "content" in value)).toBe(false);
+  });
+});
+
+describe("恢复路径：视频合成结果回写原节点", () => {
+  it("刷新后把已完成任务的成片和封面写回合成节点", async () => {
+    const node = resumableComposeNode();
+    const taskKey = String(node.data.generationTaskKey);
+    listTasks.mockResolvedValue([{ task_key: taskKey, status: "completed" }]);
+    awaitTaskCompletion.mockResolvedValue({
+      task_key: taskKey,
+      status: "completed",
+      result: {
+        output_url: "/static/project/freezone/compose-job-1.mp4",
+        cover_url: "/static/project/freezone/compose-job-1.png",
+      },
+    });
+    const updateNodeData = vi.fn();
+
+    await resumeNodeGeneration({
+      node,
+      projectId: "demo",
+      updateNodeData,
+    });
+
+    const calls = updateNodeData.mock.calls;
+    const patch = calls[calls.length - 1]?.[1] as Record<string, unknown>;
+    expect(patch).toMatchObject({
+      resultVideoUrl: "/static/project/freezone/compose-job-1.mp4",
+      previewImageUrl: "/static/project/freezone/compose-job-1.png",
+      resultVideoTaskKey: taskKey,
+      resultVideoJobId: "compose-job-1",
+      isGenerating: false,
+      generationTaskKey: null,
+      generationTaskType: null,
+      generationTaskJobId: null,
+      generationError: null,
+    });
   });
 });
 

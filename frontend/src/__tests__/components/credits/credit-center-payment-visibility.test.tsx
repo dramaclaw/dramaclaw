@@ -40,6 +40,9 @@ vi.mock("@/lib/queries/payments", () => ({
   useCustomRechargeConfig: () => ({ data: undefined, isPending: false }),
   useRechargeOrders: rechargeOrdersQuery,
 }));
+vi.mock("@/lib/queries/subscriptions", () => ({
+  useMembership: () => ({ data: { data: { active: false } }, isPending: false }),
+}));
 vi.mock("@/components/credits/SubscriptionPanel", () => ({
   SubscriptionPanel: subscriptionPanel,
 }));

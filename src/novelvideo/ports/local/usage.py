@@ -32,6 +32,12 @@ class NoOpUsageMeter:
         billing_quantity: int | float | str | None = 1,
         metadata: Optional[dict[str, Any]] = None,
     ) -> str:
+        # CE's shared pre-submit boundary: validate user-owned media storage
+        # before an image/video/audio request can reach a paid provider.
+        if billing_kind in {"image", "video", "audio"}:
+            from novelvideo.storage.media_preflight import require_ce_media_storage
+
+            await require_ce_media_storage()
         return ""
 
     async def refund_model_call_credit_reservation(

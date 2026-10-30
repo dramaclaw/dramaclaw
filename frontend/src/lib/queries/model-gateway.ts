@@ -9,6 +9,7 @@ import type { ErrorResponse, OkResponse } from "@/types/api";
 
 export type GatewayMode = "official" | "custom" | "hybrid";
 export type CustomLlmMode = "relayclaw_brainclaw" | "advanced";
+export type AgentLlmMode = "inherit" | "third_party";
 
 /** 通用的「端点预览」：服务端只回 key 预览，绝不回完整 key。 */
 export interface GatewayEndpointPreview {
@@ -43,6 +44,11 @@ export interface EffectiveLlmConfig extends EffectiveGatewayConfig {
   mode: string;
   model: string;
   brainclaw: boolean;
+}
+
+export interface AgentLlmConfig extends GatewayEndpointPreview {
+  mode: AgentLlmMode;
+  model: string;
 }
 
 export interface NewApiDatabaseStatus {
@@ -127,6 +133,7 @@ export interface ModelGatewayConfig {
   mode: GatewayMode;
   effective: EffectiveGatewayConfig;
   llmEffective: EffectiveLlmConfig;
+  agent?: AgentLlmConfig;
   official: OfficialGatewayConfig;
   brainclaw?: GatewayEndpointPreview;
   custom: CustomGatewayConfig;
@@ -156,6 +163,13 @@ export interface SaveOfficialConfigInput {
 export interface SaveBrainClawConfigInput {
   newApiBaseUrl: string;
   newApiApiKey?: string;
+}
+
+export interface SaveAgentLlmConfigInput {
+  mode: AgentLlmMode;
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
 }
 
 export interface NewApiDatabaseConfigInput {
@@ -434,6 +448,22 @@ export function useSaveOfficialConfig() {
     mutationFn: (input: SaveOfficialConfigInput) =>
       api
         .post("api/v1/model-gateway/official/config", { json: input })
+        .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+    },
+  });
+}
+
+export function useSaveAgentLlmConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SaveAgentLlmConfigInput) =>
+      api
+        .post("api/v1/model-gateway/agent/config", {
+          json: input,
+          throwHttpErrors: false,
+        })
         .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertCircle, ChevronRight, FileText, MapPin, ImageIcon, Loader2, Play } from 'lucide-react';
 
 import {
@@ -47,7 +48,6 @@ const LOCATE_HIGHLIGHT_MS = 1200;
  * 媒体空态文案：节点还没出图/出片（参数、提示词已就位，等用户在生成条上确认提交）。
  * 图片与视频、卡片与详情四处共用同一句，避免有的地方有说明、有的地方只有灰图标。
  */
-export const EMPTY_MEDIA_PLACEHOLDER_TEXT = '待确认后生成';
 
 /**
  * 各栏生成耗时的经验预估（毫秒）——不是后端真实进度，后端不下发逐步进度事件，
@@ -85,12 +85,13 @@ function GeneratingLabel({
   /** 故事板被保活隐藏时停表（见 useEstimatedProgress 的 paused 说明）。 */
   paused?: boolean;
 }): ReactElement {
+  const { t } = useTranslation();
   const percent = useEstimatedProgress(
     item.generationStartedAt,
     estimatedGenerationDurationMs(item.column),
     paused,
   );
-  return <span className={cn('text-[11px] text-white/40', className)}>{`生成中 ${percent}%...`}</span>;
+  return <span className={cn('text-[11px] text-white/40', className)}>{t('assetBoard.generatingProgress', { percent })}</span>;
 }
 
 // 时长/分辨率徽标：胶囊形 + 细边框 + 极淡底色，对齐 liblib 参考图。
@@ -110,6 +111,7 @@ export function Chip({ children }: { children: ReactNode }) {
  * 都是黑框（用户反馈）。
  */
 export function VideoThumb({ item }: { item: AssetBoardItem }) {
+  const { t } = useTranslation();
   if (item.thumbnailUrl) {
     return <img src={item.thumbnailUrl} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover" />;
   }
@@ -130,7 +132,7 @@ export function VideoThumb({ item }: { item: AssetBoardItem }) {
   return (
     <div className="flex flex-col items-center gap-1.5">
       <Play className="h-6 w-6 text-muted-foreground" />
-      <span className="text-[11px] text-muted-foreground">{EMPTY_MEDIA_PLACEHOLDER_TEXT}</span>
+      <span className="text-[11px] text-muted-foreground">{t('assetBoard.pendingGeneration')}</span>
     </div>
   );
 }
@@ -146,6 +148,7 @@ export function AssetBoardCard({
   paused = false,
   scrollTargetToken = null,
 }: AssetBoardCardProps): ReactElement {
+  const { t } = useTranslation();
   const cardRef = useRef<HTMLDivElement | null>(null);
   // 缩略图容器：拖拽时用它当自定义拖拽虚影，只显示内容缩略图，不带标题/参考素材面板。
   const thumbRef = useRef<HTMLDivElement | null>(null);
@@ -201,7 +204,7 @@ export function AssetBoardCard({
       </Chip>,
     );
   }
-  if (item.durationSec !== null) badges.push(<Chip key="dur">{`${item.durationSec}秒`}</Chip>);
+  if (item.durationSec !== null) badges.push(<Chip key="dur">{t('assetBoard.durationSeconds', { count: item.durationSec })}</Chip>);
   // 分辨率优先用节点记的尺寸；上传图等没记尺寸的节点退回图片实际加载出来的
   // 原始尺寸（卡片展示的就是原图，naturalWidth 即真实分辨率）。
   // 整对取舍而不是逐项回退：半残数据（只记了 widthPx）逐项回退会把存储的宽配上
@@ -290,7 +293,7 @@ export function AssetBoardCard({
               className="inline-flex shrink-0 items-center gap-0.5 text-[11px] text-red-400"
             >
               <AlertCircle className="h-3 w-3" />
-              失败
+              {t('assetBoard.generationFailed')}
             </span>
           )}
         </div>
@@ -305,8 +308,8 @@ export function AssetBoardCard({
           />
           <button
             type="button"
-            aria-label="在画布中定位"
-            title="在画布中定位"
+            aria-label={t('assetBoard.locateOnCanvas')}
+            title={t('assetBoard.locateOnCanvas')}
             onClick={(event) => {
               event.stopPropagation();
               onLocate(item.nodeId);
@@ -331,7 +334,7 @@ export function AssetBoardCard({
               <VideoThumb item={item} />
               {isFinalVideo && (
                 <span className="absolute left-1.5 top-1.5 z-10 inline-flex items-center gap-0.5 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white/90 backdrop-blur-sm">
-                  成片
+                  {t('assetBoard.finalVideos')}
                   <ChevronRight className="h-3 w-3" />
                 </span>
               )}
@@ -359,7 +362,7 @@ export function AssetBoardCard({
             <div className="flex flex-col items-center gap-1.5">
               <ImageIcon className="h-6 w-6 text-muted-foreground" />
               <span className="text-[11px] text-muted-foreground">
-                {EMPTY_MEDIA_PLACEHOLDER_TEXT}
+                {t('assetBoard.pendingGeneration')}
               </span>
             </div>
           )}
@@ -371,7 +374,7 @@ export function AssetBoardCard({
           {item.isGenerating && (
             <span
               role="status"
-              aria-label="生成中"
+              aria-label={t('assetBoard.generating')}
               className={cn(
                 'absolute inset-0 z-20 flex flex-col items-center justify-center gap-1.5',
                 item.thumbnailUrl || item.mediaUrl ? 'bg-black/50' : 'bg-[#141414]',
@@ -388,7 +391,7 @@ export function AssetBoardCard({
               className="absolute left-1.5 top-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-400 backdrop-blur-sm"
             >
               <AlertCircle className="h-3 w-3" />
-              失败
+              {t('assetBoard.generationFailed')}
             </span>
           )}
         </div>

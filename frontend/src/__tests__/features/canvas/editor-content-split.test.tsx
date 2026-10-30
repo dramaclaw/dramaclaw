@@ -11,7 +11,12 @@ import { AssetBoardRelightDialog } from '@/features/canvas/ui/asset-board/AssetB
 import { useCanvasStore } from '@/stores/canvasStore';
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string, fallback?: string) => fallback ?? key }),
+  useTranslation: () => ({
+    t: (key: string, fallback?: string) => ({
+      'assetBoard.multiAngleEditor': '多维度编辑器',
+      'assetBoard.relightEditor': '打光效果编辑器',
+    } as Record<string, string>)[key] ?? fallback ?? key,
+  }),
 }));
 vi.mock('@/lib/queries/generation-credit-cost', () => ({
   useGenerationCreditCost: () => ({ data: undefined }),

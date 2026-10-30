@@ -106,9 +106,13 @@ def _mark_component_process_ready(
     db_path: str | Path,
     component: str,
     version: int,
+    *,
+    expected_identity: tuple[str, int, int, str, int] | None,
 ) -> None:
     identity = _database_identity(db_path, component, version)
-    if identity is None:
+    # Never register a replacement DB using readiness from the old connection.
+    # A newly created DB has no pre-open identity; cache it on the next probe.
+    if identity is None or identity != expected_identity:
         return
     path = identity[0]
     with _READY_COMPONENTS_LOCK:
@@ -185,18 +189,22 @@ def ensure_sqlite_schema(
         return
 
     if path.is_file():
+        probe_identity = _database_identity(path, component, version)
         probe = sqlite3.connect(path, timeout=10, check_same_thread=False)
         try:
             configure_sqlite_connection(probe, set_journal_mode=False)
             if schema_component_is_current(
                 probe, component, version
             ) and _journal_is_wal(probe):
-                _mark_component_process_ready(path, component, version)
+                _mark_component_process_ready(
+                    path, component, version, expected_identity=probe_identity
+                )
                 return
         finally:
             probe.close()
 
     with sqlite_schema_lock(path):
+        connection_identity = _database_identity(path, component, version)
         conn = sqlite3.connect(path, timeout=10, check_same_thread=False)
         try:
             configure_sqlite_connection(conn, set_journal_mode=False)
@@ -206,6 +214,8 @@ def ensure_sqlite_schema(
                 initialize(conn)
                 mark_schema_component(conn, component, version)
                 conn.commit()
-            _mark_component_process_ready(path, component, version)
+            _mark_component_process_ready(
+                path, component, version, expected_identity=connection_identity
+            )
         finally:
             conn.close()

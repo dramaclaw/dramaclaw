@@ -494,7 +494,7 @@ async def test_c1_eg17_overlap_analyzer_org_denied_before_network(monkeypatch):
     network = []
     monkeypatch.setattr(
         scene_overlap_analyzer,
-        "ask_openrouter",
+        "ask_gateway",
         lambda **kwargs: network.append(kwargs),
     )
     with pytest.raises(Exception) as exc_info:

@@ -328,6 +328,178 @@ def test_unsupported_video_mode_without_compatible_model_asks_user():
     assert blocker["recovery"] == "ask_user"
 
 
+def test_video_model_recovery_intersects_mode_and_every_shot_duration():
+    """Issue #742: a mode-compatible model is not a recovery candidate when
+    another shot in the same selected-model group falls outside its duration."""
+    catalog = [
+        {
+            "id": "selected",
+            "supportedModes": ["text_to_video", "first_frame"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+        {
+            "id": "mode-only",
+            "supportedModes": ["all_reference"],
+            "minDuration": 4,
+            "maxDuration": 15,
+        },
+        {
+            "id": "duration-only",
+            "supportedModes": ["image_reference"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+        {
+            "id": "compatible",
+            "supportedModes": ["all_reference"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+    ]
+    compiled = {
+        "plan": {
+            "nodes": [
+                {
+                    "id": "shot-1",
+                    "node_type": "videoNode",
+                    "data": {
+                        "model": "selected",
+                        "genMode": "allReference",
+                        "durationSec": 4,
+                    },
+                },
+                {
+                    "id": "shot-2",
+                    "node_type": "videoNode",
+                    "data": {
+                        "model": "selected",
+                        "genMode": "allReference",
+                        "durationSec": 3,
+                    },
+                },
+            ]
+        }
+    }
+    result = evaluate_workflow_preflight(
+        compiled,
+        model_responses={"videoNode": {"ok": True, "data": catalog}},
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 1}}},
+    )
+
+    mode_blockers = [
+        blocker for blocker in result["blockers"] if blocker["path"].endswith(".genMode")
+    ]
+    assert len(mode_blockers) == 2
+    assert all(
+        blocker["compatible_models"] == ["compatible"]
+        and blocker["recovery"] == "choose_compatible_model"
+        for blocker in mode_blockers
+    )
+    recovered = deepcopy(compiled)
+    for node in recovered["plan"]["nodes"]:
+        node["data"]["model"] = "compatible"
+    ready = evaluate_workflow_preflight(
+        recovered,
+        model_responses={"videoNode": {"ok": True, "data": catalog}},
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 1}}},
+    )
+    assert ready["status"] == "ready", ready["blockers"]
+
+
+def test_video_duration_recovery_keeps_reference_mode_and_reports_no_candidate():
+    catalog = [
+        {
+            "id": "selected",
+            "supportedModes": ["all_reference"],
+            "minDuration": 4,
+            "maxDuration": 15,
+        },
+        {
+            "id": "duration-only",
+            "supportedModes": ["image_reference"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+    ]
+    blocked = _check_catalog(
+        {"model": "selected", "genMode": "allReference", "durationSec": 3},
+        catalog,
+    )
+
+    blocker = next(
+        item for item in blocked["blockers"] if item["path"].endswith(".durationSec")
+    )
+    assert blocker["compatible_models"] == []
+    assert blocker["recovery"] == "ask_user"
+    assert "No available model satisfies the existing generation parameters" in blocker[
+        "message"
+    ]
+
+
+def test_video_duration_recovery_names_only_full_constraint_candidates():
+    catalog = [
+        {
+            "id": "selected",
+            "supportedModes": ["all_reference"],
+            "minDuration": 4,
+            "maxDuration": 15,
+        },
+        {
+            "id": "duration-only",
+            "supportedModes": ["image_reference"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+        {
+            "id": "compatible",
+            "supportedModes": ["all_reference"],
+            "minDuration": 2,
+            "maxDuration": 15,
+        },
+    ]
+    blocked = _check_catalog(
+        {"model": "selected", "genMode": "allReference", "durationSec": 3},
+        catalog,
+    )
+
+    blocker = next(
+        item for item in blocked["blockers"] if item["path"].endswith(".durationSec")
+    )
+    assert blocker["compatible_models"] == ["compatible"]
+    assert blocker["recovery"] == "choose_compatible_model"
+
+
+@pytest.mark.parametrize("declared_modes", [None, []])
+def test_video_model_recovery_treats_undeclared_modes_as_unrestricted(declared_modes):
+    candidate = {
+        "id": "compatible",
+        "minDuration": 2,
+        "maxDuration": 15,
+    }
+    if declared_modes is not None:
+        candidate["supportedModes"] = declared_modes
+    catalog = [
+        {
+            "id": "selected",
+            "supportedModes": ["all_reference"],
+            "minDuration": 4,
+            "maxDuration": 15,
+        },
+        candidate,
+    ]
+
+    blocked = _check_catalog(
+        {"model": "selected", "genMode": "allReference", "durationSec": 3},
+        catalog,
+    )
+
+    blocker = next(
+        item for item in blocked["blockers"] if item["path"].endswith(".durationSec")
+    )
+    assert blocker["compatible_models"] == ["compatible"]
+
+
 def test_video_node_without_planned_duration_asks_for_clarification():
     """Issue #677: an agent-authored video node that pins a model but no
     durationSec would run as a 0-second shot; preflight blocks and names the
@@ -416,6 +588,72 @@ def test_embedded_dialogue_conflict_blocks_without_live_catalog():
 
     assert result["status"] == "blocked"
     assert any(b["code"] == "generation_parameter_conflict" for b in result["blockers"])
+
+
+def test_required_speech_audio_without_usable_voice_is_not_ready():
+    """Issue #677: catalog-backed speech is skipped by the executor unless a
+    usable custom/reference voice was selected, so it cannot be admitted as ready."""
+    result = evaluate_workflow_preflight(
+        {
+            "plan": {
+                "nodes": [
+                    {
+                        "id": "voice-1",
+                        "node_type": "audioNode",
+                        "data": {
+                            "audioKind": "speech",
+                            "voiceAvailable": False,
+                            "workflowCatalog": {
+                                "recipeId": "general-audio",
+                                "timelineRole": "voiceover",
+                            },
+                        },
+                    }
+                ]
+            }
+        },
+        model_responses={},
+        limits={"ok": True, "data": {"default": {"limit": 1, "remaining": 1}}},
+    )
+
+    assert result["status"] == "blocked"
+    assert any(
+        blocker["code"] == "audio_voice_required"
+        and blocker["path"] == "runtime.audio.voice-1.voiceRef"
+        for blocker in result["blockers"]
+    )
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {
+            "audioKind": "speech",
+            "voiceAvailable": True,
+            "voiceRef": {"scope": "project_narrator"},
+            "workflowCatalog": {"recipeId": "general-audio"},
+        },
+        {
+            "audioKind": "speech",
+            "voiceAvailable": True,
+            "voiceRef": {"scope": "user_custom", "voiceId": "voice-42"},
+            "workflowCatalog": {"recipeId": "general-audio"},
+        },
+        {
+            "audioKind": "music",
+            "voiceAvailable": False,
+            "workflowCatalog": {"recipeId": "general-audio"},
+        },
+    ],
+)
+def test_audio_preflight_accepts_usable_voice_or_music(data):
+    result = evaluate_workflow_preflight(
+        {"plan": {"nodes": [{"id": "audio-1", "node_type": "audioNode", "data": data}]}},
+        model_responses={},
+        limits={"ok": True, "data": {"default": {"limit": 1, "remaining": 1}}},
+    )
+
+    assert result["status"] == "ready"
 
 
 @pytest.mark.parametrize(

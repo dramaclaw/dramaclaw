@@ -11,6 +11,9 @@ import {
 } from "@/features/freezone/chatNodeReferences";
 import type { ChatAttachment, ChatMessage } from "@/features/superchat/types";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { enT } from "@/__tests__/helpers/i18n-fixtures";
+
+const localeState = vi.hoisted(() => ({ language: "zh" }));
 
 const superChatMocks = vi.hoisted(() => ({
   send: vi.fn(async () => true),
@@ -64,13 +67,16 @@ function setFreezoneComposerText(input: HTMLElement, value: string): void {
   fireEvent.input(input);
 }
 
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async () => {
+  const { zhT } = await import("@/__tests__/helpers/i18n-fixtures");
+  return {
   initReactI18next: {
-    type: "3rdParty",
-    init: vi.fn(),
+    type: "3rdParty" as const,
+    init: () => undefined,
   },
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
+      if (localeState.language === "en") return enT(key, { defaultValue: key, ...options });
       const translations: Record<string, string> = {
         "aiAssistant.placeholder": "写下灵感、剧情或任务，虾导来接住",
         "aiAssistant.freezonePlaceholder": "想画什么、改哪里，直接告诉虾画",
@@ -79,7 +85,7 @@ vi.mock("react-i18next", () => ({
         "aiAssistant.queuedCount": "待发送 {{count}} 条",
         "freezone.chat.currentSelection": "当前选中",
         "freezone.chat.usedThisTurn": "本轮会使用",
-        "freezone.chat.canvasCommandsCancelled": "已取消画布操作",
+
         "freezone.chat.canvasRetryPrompt": "请重新检查并继续刚才未完成的画布操作。先核对已有节点和运行状态，保留已完成结果；补齐生成参数后再提交新的审批。",
         "freezone.chat.canvasRetryDisplay": "重新检查并继续未完成的画布操作",
         "freezone.chat.generationParams.imageQuality": "图片画质",
@@ -87,12 +93,13 @@ vi.mock("react-i18next", () => ({
         "freezone.chat.generationParams.audioOn": "有声",
         "freezone.chat.generationParams.audioOff": "静音",
       };
-      const template = translations[key]
-        ?? (typeof options?.defaultValue === "string" ? options.defaultValue : key);
+      const template = translations[key] ?? zhT(key, options);
+      if (typeof template !== "string") return template;
       return template.replace(/{{(\w+)}}/g, (_match, name: string) => String(options?.[name] ?? ""));
     },
   }),
-}));
+  };
+});
 
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => ({ project: "project-a" }),
@@ -218,6 +225,8 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
   });
 
   afterEach(() => {
+    localeState.language = "zh";
+    window.localStorage.removeItem("freezone.canvasCommandExecutionMode");
     vi.useRealTimers();
     superChatMocks.send.mockClear();
     superChatMocks.appendNotification.mockClear();
@@ -229,6 +238,51 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     apiMocks.post.mockClear();
     useCanvasStore.getState().setCanvasData([], []);
     useCanvasStore.getState().setSelectedNode(null);
+  });
+
+  it("localizes selection, execution mode and Skill controls without changing reference data", async () => {
+    localeState.language = "en";
+    const nodes = [
+      {
+        id: "image-node-16", type: "imageGenNode", position: { x: 0, y: 0 }, selected: true,
+        data: { displayName: "图片节点16", autoTitleIndex: 16 },
+      },
+      {
+        id: "image-node-17", type: "imageGenNode", position: { x: 200, y: 0 }, selected: true,
+        data: { displayName: "我的参考图", autoTitleIndex: 17 },
+      },
+    ] as CanvasNode[];
+    useCanvasStore.getState().setCanvasData(nodes, []);
+    useCanvasStore.getState().setSelectedNode(nodes[0].id);
+    const props = { variant: "freezone" as const, canvasId: "canvas-a", workflowStatusEnabled: false };
+    const view = render(<SuperChatPanel {...props} />);
+
+    expect(screen.getByText("Current selection")).toBeInTheDocument();
+    expect(screen.getByText("Used this turn")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Image node16 · image-node-16" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "我的参考图 · image-node-17" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manual confirmation" }));
+    expect(await screen.findByText("The agent asks for confirmation before executing canvas commands"))
+      .toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Auto-generate/ }));
+    expect(screen.getByRole("button", { name: "Auto-generate" })).toBeInTheDocument();
+    expect(window.localStorage.getItem("freezone.canvasCommandExecutionMode")).toBe("auto_execute");
+    expect(superChatMocks.send).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose a Skill" }));
+    expect(await screen.findByPlaceholderText("Search Skills")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Choose a Skill" }));
+
+    localeState.language = "zh";
+    view.rerender(<SuperChatPanel {...props} />);
+    expect(screen.getByText("当前选中")).toBeInTheDocument();
+    expect(screen.getByText("本轮会使用")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "自动生成" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "图片节点16 · image-node-16" })).toBeInTheDocument();
+    expect(useCanvasStore.getState().nodes[0].data.displayName).toBe("图片节点16");
+    fireEvent.click(screen.getByRole("button", { name: "取消全部画布引用" }));
+    expect(useCanvasStore.getState().nodes.every((node) => !node.selected)).toBe(true);
   });
 
   it("uses the dedicated Xia Draw placeholder in freezone mode", () => {
@@ -655,7 +709,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
       />,
     );
 
-    const copyButton = screen.getByRole("button", { name: "aiAssistant.actions.copy" });
+    const copyButton = screen.getByRole("button", { name: "复制" });
     // 工具条靠 top-full + mt-1 悬浮在气泡下方的消息间距里，容器不再用 hover:pb-10
     // 给它预留高度——hover 改高度会触发消息列表的 ResizeObserver，贴底时整条列表
     // 会往上抖（见「消除虾导消息 hover 时列表跳动」）。
@@ -728,7 +782,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
       />,
     );
 
-    const copyButton = screen.getByLabelText("aiAssistant.actions.copy");
+    const copyButton = screen.getByLabelText("复制");
     const actionBar = copyButton.parentElement;
     // main 的展示语义将助手操作栏放在正文下方的正常文档流中，避免覆盖后续消息。
     expect(actionBar).toHaveClass("mt-1.5");
@@ -1650,7 +1704,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
                 applied: 0,
                 openedUiActions: 0,
                 createdNodeIds: [],
-                errors: ["已取消画布操作"],
+                errors: ["画布操作已手动取消，没有应用到画布。"],
                 commandResults: [
                   {
                     commandIndex: -1,
@@ -1722,7 +1776,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
                 applied: 0,
                 openedUiActions: 0,
                 createdNodeIds: [],
-                errors: ["画布操作等待超时，已自动取消"],
+                errors: ["画布操作等待超时，已自动取消。"],
                 commandResults: [
                   {
                     commandIndex: -1,
@@ -1827,7 +1881,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
           turn_id: "turn-a",
           canvas_apply_status: "cancelled_by_user",
           cancelled: true,
-          errors: ["已取消画布操作"],
+          errors: ["画布操作已手动取消，没有应用到画布。"],
         }),
       })),
     );
@@ -1899,7 +1953,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
           turn_id: "turn-a",
           canvas_apply_status: "cancelled_by_user",
           cancelled: true,
-          errors: ["画布操作等待超时，已自动取消"],
+          errors: ["画布操作等待超时，已自动取消。"],
         }),
       })),
     );

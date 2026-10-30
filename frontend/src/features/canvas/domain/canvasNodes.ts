@@ -293,6 +293,10 @@ export interface VideoNodeData extends NodeDisplayData {
 export interface VideoComposeNodeData extends NodeDisplayData {
   /** 最近一次合成导出的视频 url。 */
   resultVideoUrl?: string | null;
+  /** 最近一次成功回写结果对应的持久任务键，用于幂等收敛。 */
+  resultVideoTaskKey?: string | null;
+  /** 最近一次成功回写结果对应的合成任务 ID。 */
+  resultVideoJobId?: string | null;
   /** 结果视频的封面（暂未生成时为空）。 */
   previewImageUrl?: string | null;
   /** 上次使用的导出分辨率。 */

@@ -182,7 +182,7 @@ def test_run_project_task_core_injects_deadline_for_runner(monkeypatch):
 @pytest.mark.parametrize(
     ("task_type", "expected_projection"),
     [
-        ("freezone_agent_recipe_result", "failed"),
+        ("freezone_agent_recipe_result", "running"),
         ("freezone_agent_workflow_result", "running"),
     ],
 )

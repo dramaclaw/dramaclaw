@@ -15,11 +15,13 @@ import {
   abortTerminalGraceMsForTest,
   approvalOptionIdForTest,
   canvasContextToolResultFrameForTest,
+  cancelAssistantClarificationsForTurnForTest,
   dedupeMessagesByIdForTest,
   dispatchCanvasCommandFrameForTest,
   freezoneCanvasCommandExecutionModeForTest,
   mergeHistorySnapshot,
   normalizeMessageForScopeForTest,
+  pendingAssistantClarificationEventsForTurnForTest,
   removeSkillStudioStatusForTurnForTest,
   revealIncompleteSkillStudioDraftForTurnForTest,
   pruneOldMessageCaches,
@@ -1741,6 +1743,44 @@ describe("Skill Studio question response", () => {
       type: "assistant.clarification.request",
       clarification_id: "clarify-1",
     });
+  });
+
+  it("settles the active clarification card when the user cancels the turn", () => {
+    const assistant = message("assistant-turn-1", "assistant", "", 10, "turn-1");
+    const clarification = {
+      type: "assistant.clarification.request",
+      bridge_key: "clarify-key-1",
+      clarification_id: "clarify-1",
+      questions: [{ id: "image_model", options: [] }],
+    };
+    assistant.uiEvents = [clarification];
+    assistant.parts = [{
+      id: "assistant.clarification.request:clarify-key-1",
+      type: "clarification",
+      event: clarification,
+    }];
+
+    expect(pendingAssistantClarificationEventsForTurnForTest(
+      [assistant], "turn-1",
+    )).toHaveLength(1);
+
+    const next = cancelAssistantClarificationsForTurnForTest([assistant], "turn-1");
+    expect(next[0]?.uiEvents?.[0]).toMatchObject({
+      submitted: true,
+      cancelled: true,
+      action: "cancel",
+      clarification_status: "cancelled",
+    });
+    expect(next[0]?.parts?.[0]).toMatchObject({
+      event: {
+        submitted: true,
+        cancelled: true,
+        clarification_status: "cancelled",
+      },
+    });
+    expect(pendingAssistantClarificationEventsForTurnForTest(
+      next, "turn-1",
+    )).toHaveLength(0);
   });
 
   it("marks an assistant message with pending questions as waiting for the user", () => {

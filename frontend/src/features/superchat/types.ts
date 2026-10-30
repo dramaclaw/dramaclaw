@@ -45,6 +45,7 @@ export type ClientFrame =
       agentId?: string | null;
       tool_call_status?: "completed" | "cancelled" | "failed";
       canvas_apply_status: "accepted" | "applied" | "pending" | "partially_applied" | "failed" | "cancelled_by_user";
+      background_execution_status?: "running" | "succeeded" | "failed" | "cancelled";
       applied?: boolean;
       cancelled?: boolean;
       errors?: string[];

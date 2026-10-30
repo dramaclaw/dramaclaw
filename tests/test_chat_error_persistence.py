@@ -6,6 +6,31 @@ from novelvideo.api.routes import chat as chat_routes
 from novelvideo.chat.store import ChatScope, chat_store
 
 
+@pytest.mark.parametrize(
+    "cause", ["Timed out waiting for shared Codex", "connection error"]
+)
+def test_local_codex_errors_are_not_translated_as_upstream_failures(cause):
+    from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+    message = chat_routes._user_facing_chat_error(CodexRuntimeError(cause))
+    assert "本地助手运行时不可用" in message
+    assert "上游" not in message
+
+
+def test_missing_hermes_fork_is_a_local_runtime_failure():
+    from novelvideo.chat.hermes_fork_requirement import HermesForkMissing
+
+    message = chat_routes._user_facing_chat_error(
+        HermesForkMissing("would report connection error")
+    )
+    assert "本地助手运行时不可用" in message
+
+
+def test_provider_connection_error_keeps_upstream_message():
+    message = chat_routes._user_facing_chat_error(ConnectionError("connection error"))
+    assert "无法连接上游模型服务" in message
+
+
 def test_reasoning_required_error_has_actionable_chinese_message() -> None:
     exc = RuntimeError(
         "Reasoning is mandatory for this endpoint and cannot be disabled. "

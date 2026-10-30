@@ -411,10 +411,14 @@ async def test_gate3_world_lane_saturation_does_not_starve_default_lane(
     ctx = _ctx(tmp_path)
     backend = signed_inline_backend()
     world_release = threading.Event()
+    world_started = threading.Event()
     default_done = threading.Event()
 
     def world_runner(envelope, run_ctx):
-        world_release.wait(timeout=3)
+        world_started.set()
+        # Hold the lane until the assertion finishes, not a short CI timing window.
+        if not world_release.wait(timeout=30):
+            raise TimeoutError("test did not release the world lane")
         return {"ok": True}
 
     def default_runner(envelope, run_ctx):
@@ -424,26 +428,34 @@ async def test_gate3_world_lane_saturation_does_not_starve_default_lane(
     register_project_task_runner("l014_gate3_world_blocker", world_runner)
     register_project_task_runner("l014_gate3_default_fast", default_runner)
 
-    await backend.enqueue_project_task(
-        ctx,
-        task_type="l014_gate3_world_blocker",
-        product_surface="mainline",
-        episode=1,
-        queue_kind="world",
-    )
-    await _wait_for_status(_task_ports, ctx, "l014_gate3_world_blocker", "running")
-    await backend.enqueue_project_task(
-        ctx,
-        task_type="l014_gate3_default_fast",
-        product_surface="mainline",
-        episode=1,
-        queue_kind="default",
-    )
+    try:
+        await backend.enqueue_project_task(
+            ctx,
+            task_type="l014_gate3_world_blocker",
+            product_surface="mainline",
+            episode=1,
+            queue_kind="world",
+        )
+        assert await asyncio.to_thread(world_started.wait, 10) is True
+        await backend.enqueue_project_task(
+            ctx,
+            task_type="l014_gate3_default_fast",
+            product_surface="mainline",
+            episode=1,
+            queue_kind="default",
+        )
 
-    assert await asyncio.to_thread(default_done.wait, 1) is True
-    await _wait_for_status(_task_ports, ctx, "l014_gate3_default_fast", "completed")
-    assert backend.lane_snapshot()["world"]["active"] == 1
-    world_release.set()
+        assert await asyncio.to_thread(default_done.wait, 10) is True
+        await _wait_for_status(
+            _task_ports, ctx, "l014_gate3_default_fast", "completed", timeout=5
+        )
+        assert backend.lane_snapshot()["world"]["active"] == 1
+        assert not world_release.is_set()
+    finally:
+        world_release.set()
+        await _wait_for_status(
+            _task_ports, ctx, "l014_gate3_world_blocker", "completed", timeout=5
+        )
 
 
 @pytest.mark.asyncio

@@ -114,12 +114,14 @@ def finalize_canvas_reply(
     receipts: set[tuple[str, int | None]],
     failure: str = "",
     draft_ready: bool = False,
+    write_requested: bool = False,
 ) -> str:
     """Validate claims against same-turn evidence without interpreting user prose.
 
     Every attempted write must succeed; one successful operation cannot mask
     another failed operation. Catalog-only and read-only answers need no canvas
-    receipt. A prepared workflow remains a pending user approval, not a write.
+    receipt unless the caller identified an explicit write request. A prepared
+    workflow remains a pending user approval, not a write.
     """
     states = set(attempts.values())
     if "failed" in states:
@@ -138,6 +140,8 @@ def finalize_canvas_reply(
     if reply is None:
         return envelope_error
     message, mode, claims = reply["message"], reply["mode"], reply["canvas_receipts"]
+    if write_requested and mode == "read_only" and not attempts:
+        return "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
     if mode == "mutation":
         if not attempts or not claims:
             return "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"

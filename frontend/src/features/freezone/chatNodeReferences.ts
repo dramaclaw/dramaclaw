@@ -331,7 +331,7 @@ function buildAgentNodeActionCatalogResponse(
           instruction:
             actions.length > 0
               ? "Use the invocation example for this action's actual command type. For a batch, put its command in freezone_emit_canvas_command.commands. Only action-specific values go inside run_node_action.parameters; node_id and action stay at the command top level. The action entry's parameters describe available inputs and defaults, so supply any required inputs and replace empty editable data before invoking. These are action/tool parameters, not node editable data. If the action opens or creates a downstream UI/node, do not answer from the source node parameters; follow result_effect and inspect the selected/new node detail when needed. Read actions use node_action_read context requests, not run_node_action. A one-node workflow still runs through freezone_run_workflow."
-              : "No action with this name exists on the node. Use freezone_get_node_detail to inspect available action names.",
+              : "No action with this name exists on the node. If the requested name is a Skill or Recipe that should create a new result from this node as a source or reference, stop node-action routing and use a Workflow Skill draft with external_inputs and reference_inputs; do not recreate or copy the source node. Otherwise use freezone_get_node_detail to inspect available action names.",
         }
       : {
           instruction:

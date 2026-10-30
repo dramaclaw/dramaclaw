@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterator, TypeVar
 
 from novelvideo.model_gateway_settings import (
+    get_effective_agent_llm_config,
     get_effective_llm_config,
     get_effective_newapi_config,
 )
@@ -618,11 +619,15 @@ def refresh_model_gateway_runtime() -> dict[str, Any]:
         official_api_key=app_config.NEWAPI_API_KEY,
     )
     llm_gateway = get_effective_llm_config()
+    agent_llm_gateway = get_effective_agent_llm_config()
     api_key = str(gateway.api_key or "").strip()
     base_url = str(gateway.base_url or "").strip().rstrip("/")
     version = _runtime_version(
-        f"{api_key}\n{llm_gateway.api_key}\n{llm_gateway.mode}",
-        f"{base_url}\n{llm_gateway.base_url}",
+        (
+            f"{api_key}\n{llm_gateway.api_key}\n{llm_gateway.mode}\n"
+            f"{agent_llm_gateway.api_key}\n{agent_llm_gateway.mode}"
+        ),
+        f"{base_url}\n{llm_gateway.base_url}\n{agent_llm_gateway.base_url}",
     )
 
     cleared = _clear_agent_singletons()

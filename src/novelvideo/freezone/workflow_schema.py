@@ -768,8 +768,22 @@ def workflow_intent_json_schema() -> dict[str, Any]:
             "music_length_ms": {"type": "integer", "minimum": 3000, "maximum": 600000},
             "duration_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
             "recipe_id": {"type": "string", "minLength": 1},
-            "depends_on": {"type": "array", "items": {"type": "string"}},
-            "reference_inputs": {"type": "array", "items": {"type": "string"}},
+            "depends_on": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Execution-order dependencies. Text-to-media dependencies become "
+                    "dependency_for and do not feed the text into the media prompt."
+                ),
+            },
+            "reference_inputs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Outputs consumed by this item. Text references become prompt_for; "
+                    "media references become media_input_for."
+                ),
+            },
             "stage": {"type": "string"},
             "timeline_role": {"type": "string"},
             "requires_generated_audio": {"type": "boolean"},
@@ -785,7 +799,8 @@ def workflow_intent_json_schema() -> dict[str, Any]:
         ),
         "properties": {
             "external_inputs": {
-                "type": "array", "maxItems": 24,
+                "type": "array",
+                "maxItems": 24,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -844,7 +859,7 @@ def workflow_intent_json_schema() -> dict[str, Any]:
             "planner": {
                 "type": "object",
                 "description": (
-                    "Planning mode, deliverable, duration, and units. "
+                    "Planning mode, deliverable, duration, units, and supported Recipe overrides. "
                     "Composition is controlled by sibling intent.include_compose; "
                     "do not put include_compose here."
                 ),
@@ -855,6 +870,14 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                         "enum": ["images", "video", "mixed", "html"],
                     },
                     "item_count": {"type": "integer", "minimum": 1, "maximum": 25},
+                    "image_recipe_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": (
+                            "For ecommerce-ad, select an allowed images-stage Recipe while "
+                            "the standard planner still owns nodes and consuming edges."
+                        ),
+                    },
                     "total_duration_seconds": {
                         "type": "integer",
                         "minimum": 1,

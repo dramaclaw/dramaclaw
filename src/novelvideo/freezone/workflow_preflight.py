@@ -5,6 +5,9 @@ from typing import Any
 import math
 
 from novelvideo.api.schemas import FREEZONE_DEFAULT_IMAGE_MODEL
+from novelvideo.freezone.clarifications import (
+    video_model_constraint_adjustment_clarification,
+)
 from novelvideo.freezone.video_node import FREEZONE_DEFAULT_VIDEO_BACKEND
 
 _RECOMMENDED_GENERATION_MODEL_VALUES = {
@@ -209,6 +212,14 @@ def _catalog_string_options(entry: dict[str, Any], key: str) -> list[str]:
 # is the narrow, explicit signal preflight can act on (issue #677).
 _VOICED_RECIPE_MARKERS = ("dialog", "voice", "speech", "narrat", "lipsync", "lip-sync")
 _VOICED_TIMELINE_ROLES = frozenset({"voiceover", "narration", "shot_voice", "dialogue"})
+_AUDIO_VOICE_REF_REQUIRED_FIELDS = {
+    "project_narrator": (),
+    "user_custom": ("voiceId",),
+    "character_default": ("characterName",),
+    "character_age_group": ("characterName", "slot"),
+    "identity": ("characterName", "identityId"),
+    "identity_resolved": ("characterName", "identityId"),
+}
 
 
 def _video_node_is_voiced(node: dict[str, Any]) -> bool:
@@ -303,6 +314,43 @@ def _video_runtime_parameter_blockers(
     return blockers
 
 
+def _audio_voice_blockers(node: dict[str, Any], *, required: bool) -> list[dict[str, Any]]:
+    """Reject required speech that the canvas executor would silently skip."""
+    if not required:
+        return []
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    if data.get("audioKind", "speech") == "music":
+        return []
+    catalog = data.get("workflowCatalog")
+    if not isinstance(catalog, dict):
+        return []  # Historical canvas nodes retain their legacy narrator fallback.
+    voice_ref = data.get("voiceRef")
+    scope = str(voice_ref.get("scope") or "").strip() if isinstance(voice_ref, dict) else ""
+    required_fields = _AUDIO_VOICE_REF_REQUIRED_FIELDS.get(scope)
+    usable = (
+        data.get("voiceAvailable") is True
+        and required_fields is not None
+        and all(
+            isinstance(voice_ref.get(field), str) and voice_ref[field].strip()
+            for field in required_fields
+        )
+    )
+    if usable:
+        return []
+    node_id = str(node.get("id") or "audio").strip()
+    return [
+        {
+            "path": f"runtime.audio.{node_id}.voiceRef",
+            "code": "audio_voice_required",
+            "message": (
+                "required speech has no usable custom/reference voice and would be skipped; "
+                "bind a valid voiceRef before confirming the draft"
+            ),
+            "recovery": "select_custom_voice",
+        }
+    ]
+
+
 # Portable choice names used in required_choices -> canvas data field.
 _PORTABLE_CHOICE_DATA_FIELDS = {
     "model": "model",
@@ -345,6 +393,135 @@ def preflight_failure_blocker(preflight: dict[str, Any]) -> dict[str, Any]:
         if blocker.get("code") != "generation_parameters_required":
             return blocker
     return blockers[0] if blockers else {}
+
+
+def _video_model_reselection_candidates(
+    preflight: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]] | None:
+    blockers = preflight.get("blockers")
+    if not isinstance(blockers, list) or not blockers:
+        return None
+    relevant = [
+        blocker
+        for blocker in blockers
+        if isinstance(blocker, dict)
+        and blocker.get("code") == "model_capability_unsupported"
+        and blocker.get("recovery") in {"choose_compatible_model", "ask_user"}
+        and isinstance(blocker.get("compatible_models"), list)
+        and str(blocker.get("path") or "").endswith((".genMode", ".durationSec"))
+    ]
+    unhandled = [
+        blocker
+        for blocker in blockers
+        if blocker not in relevant
+        and not (
+            isinstance(blocker, dict) and blocker.get("code") == "audio_voice_required"
+        )
+    ]
+    if not relevant or unhandled:
+        return None
+    candidate_order = [str(value).strip() for value in relevant[0]["compatible_models"]]
+    compatible_sets = [
+        {
+            str(value).strip()
+            for value in blocker["compatible_models"]
+            if str(value).strip()
+        }
+        for blocker in relevant
+    ]
+    compatible = [
+        model_id
+        for model_id in candidate_order
+        if model_id and all(model_id in values for values in compatible_sets)
+    ]
+    return relevant, compatible
+
+
+def video_model_reselection_clarification(
+    preflight: dict[str, Any],
+    compiled: dict[str, Any],
+    catalog: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Return the verified model choice, or the fixed constraint-adjustment choice."""
+    candidates = _video_model_reselection_candidates(preflight)
+    if candidates is None:
+        return None
+    relevant, compatible = candidates
+    if not compatible:
+        return video_model_constraint_adjustment_clarification(preflight)
+
+    options = []
+    for model_id in compatible:
+        entry = _catalog_entry_for_model(catalog, model_id)
+        if entry is None:
+            continue
+        options.append(
+            {
+                "id": model_id,
+                "label": str(entry.get("label") or entry.get("name") or model_id),
+                "description": "支持当前镜头的参考模式、时长及已确认生成参数。",
+            }
+        )
+    if not options:
+        return None
+
+    planned_video_ids = {
+        str(node.get("id") or "")
+        for node in (compiled.get("plan") or {}).get("nodes") or []
+        if isinstance(node, dict) and node.get("node_type") == "videoNode"
+    }
+    affected_node_ids = []
+    for blocker in relevant:
+        node_id = _blocker_node_id(str(blocker.get("path") or ""))
+        if node_id in planned_video_ids and node_id not in affected_node_ids:
+            affected_node_ids.append(node_id)
+    if not affected_node_ids:
+        return None
+
+    return {
+        "ok": True,
+        "status": "video_model_clarification_required",
+        "code": "video_model_incompatible",
+        "draft_created": False,
+        "retryable": False,
+        "next_action": "request_user_clarification",
+        "preflight": preflight,
+        "required_choice": "compatible_video_model",
+        "affected_node_ids": affected_node_ids,
+        "question": {
+            "id": "compatible_video_model",
+            "title": "确认兼容的视频模型",
+            "prompt": (
+                "当前选择的视频模型不能同时满足参考模式和镜头时长。切换模型可能影响"
+                "成本或效果，请确认替代模型。"
+            ),
+            "mode": "single",
+            "options": options,
+        },
+        "agent_instruction": (
+            "This is a successful pre-draft clarification outcome, not a failed draft. "
+            "Call freezone_request_user_clarification exactly once with the returned question. "
+            "Do not select a replacement without the user's answer. After the answer, replace "
+            "plan.inputs.video_model and data.model on every affected_node_id with the chosen "
+            "option id, and retry the same complete plan exactly once with the same operation_id. "
+            "Also pass that answer as generation_answers.video_model so it replaces the earlier "
+            "model answer while the other remembered generation choices remain unchanged. Preserve "
+            "all modes, shot durations, references, node counts, and other confirmed values."
+        ),
+    }
+
+
+def no_compatible_video_model_clarification(
+    preflight: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the fixed question only when model blockers have no common candidate."""
+    candidates = _video_model_reselection_candidates(preflight)
+    if candidates is None:
+        return None
+    _relevant, compatible = candidates
+    if compatible:
+        return None
+    return video_model_constraint_adjustment_clarification(preflight)
 
 
 def generation_clarification_request(preflight: dict[str, Any]) -> dict[str, Any] | None:
@@ -472,10 +649,69 @@ def workflow_parameter_type_blockers(node: dict[str, Any]) -> list[dict[str, Any
     )
 
 
+def _video_catalog_entry_satisfies_nodes(
+    entry: dict[str, Any], nodes: list[dict[str, Any]]
+) -> bool:
+    """Whether one visible model satisfies every confirmed field in a shot group."""
+    for node in nodes:
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        for field, catalog_key, case_insensitive in (
+            ("aspectRatio", "ratioOptions", False),
+            ("quality", "resolutionOptions", True),
+        ):
+            value = data.get(field)
+            options = _catalog_string_options(entry, catalog_key)
+            if value not in (None, "") and options and not _catalog_option_supported(
+                value, options, case_insensitive=case_insensitive
+            ):
+                return False
+
+        selected_mode = data.get("genMode") or "textToVideo"
+        catalog_mode = (
+            _VIDEO_CATALOG_MODES.get(selected_mode)
+            if isinstance(selected_mode, str)
+            else None
+        )
+        supported_modes = entry.get("supportedModes")
+        if (
+            isinstance(supported_modes, list)
+            and supported_modes
+            and catalog_mode not in supported_modes
+        ):
+            return False
+
+        duration = data.get("durationSec")
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+            minimum = entry.get("minDuration")
+            maximum = entry.get("maxDuration")
+            if isinstance(minimum, (int, float)) and duration < minimum:
+                return False
+            if isinstance(maximum, (int, float)) and duration > maximum:
+                return False
+        if data.get("generateAudio") is True and entry.get("supportsGenerateAudio") is False:
+            return False
+    return True
+
+
+def _compatible_video_models(
+    nodes: list[dict[str, Any]], catalog: list[dict[str, Any]] | None
+) -> list[str]:
+    return [
+        str(entry.get("id") or entry.get("apiModel") or entry.get("api_model") or "").strip()
+        for entry in catalog or []
+        if isinstance(entry, dict)
+        and str(
+            entry.get("id") or entry.get("apiModel") or entry.get("api_model") or ""
+        ).strip()
+        and _video_catalog_entry_satisfies_nodes(entry, nodes)
+    ]
+
+
 def _workflow_node_capability_blockers(
     node: dict[str, Any],
     catalog_entry: dict[str, Any],
     catalog: list[dict[str, Any]] | None = None,
+    candidate_nodes: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     node_type = str(node.get("node_type") or "").strip()
     data = node.get("data") if isinstance(node.get("data"), dict) else {}
@@ -533,6 +769,11 @@ def _workflow_node_capability_blockers(
         )
     type_blockers = workflow_parameter_type_blockers(node)
     blockers.extend(type_blockers)
+    compatible = (
+        _compatible_video_models(candidate_nodes or [node], catalog)
+        if node_type == "videoNode"
+        else []
+    )
     if node_type == "videoNode":
         supported_modes = catalog_entry.get("supportedModes")
         selected_mode = data.get("genMode") or "textToVideo"
@@ -550,14 +791,6 @@ def _workflow_node_capability_blockers(
             # The mode is what the user asked for (issue #711): imageToVideo and
             # firstFrame consume the same single image differently, so recovery
             # keeps the mode and switches to a model that supports it.
-            compatible = [
-                str(entry.get("id") or "").strip()
-                for entry in catalog or []
-                if isinstance(entry, dict)
-                and str(entry.get("id") or "").strip()
-                and isinstance(entry.get("supportedModes"), list)
-                and catalog_mode in entry["supportedModes"]
-            ]
             blockers.append({
                 "path": f"runtime.models.{node_id}.genMode",
                 "message": (
@@ -601,10 +834,19 @@ def _workflow_node_capability_blockers(
                         f"durationSec value {data['durationSec']!r} is not supported "
                         f"by model {model_id}"
                         f"; supported duration range: {minimum!r} to {maximum!r} seconds"
+                        + (
+                            ". Select one of compatible_models without changing the "
+                            "existing mode or shot durations."
+                            if compatible
+                            else ". No available model satisfies the existing generation "
+                            "parameters; ask the user which constraint to change."
+                        )
                     ),
                     "code": "model_capability_unsupported",
                     "minimum": minimum,
                     "maximum": maximum,
+                    "compatible_models": compatible,
+                    "recovery": "choose_compatible_model" if compatible else "ask_user",
                 }
             )
     if (
@@ -783,8 +1025,24 @@ def evaluate_workflow_preflight(
                 model = str((node.get("data") or {}).get("model") or "").strip()
                 catalog_entry = _catalog_entry_for_model(catalog, model)
                 if catalog_entry is not None:
+                    candidate_nodes = None
+                    if node_type == "videoNode":
+                        candidate_nodes = [
+                            peer
+                            for peer in typed_nodes
+                            if _catalog_entry_for_model(
+                                catalog,
+                                str((peer.get("data") or {}).get("model") or "").strip(),
+                            )
+                            is catalog_entry
+                        ]
                     blockers.extend(
-                        _workflow_node_capability_blockers(node, catalog_entry, catalog)
+                        _workflow_node_capability_blockers(
+                            node,
+                            catalog_entry,
+                            catalog,
+                            candidate_nodes=candidate_nodes,
+                        )
                     )
                     if node_type == "videoNode":
                         blockers.extend(
@@ -864,13 +1122,37 @@ def evaluate_workflow_preflight(
                             "message": f"{lane} generation queue is currently full; tasks will wait",
                         }
                     )
+    composition_sources = {
+        str(edge.get("source"))
+        for edge in edges
+        if isinstance(edge, dict) and edge.get("link_type") == "composition_input_for"
+    }
     # Duration existence is model-independent: check every video node whether
     # or not the live catalog was reachable (after catalog-level blockers so an
     # unavailable catalog is still reported first).
     for node in nodes:
-        if isinstance(node, dict) and node.get("node_type") == "videoNode":
+        if not isinstance(node, dict):
+            continue
+        if node.get("node_type") == "videoNode":
             blockers.extend(_video_duration_blockers(node))
             blockers.extend(_video_audio_intent_blockers(node))
+        elif node.get("node_type") == "audioNode":
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            catalog = (
+                data.get("workflowCatalog")
+                if isinstance(data.get("workflowCatalog"), dict)
+                else {}
+            )
+            role = str(catalog.get("timelineRole") or "").strip().casefold()
+            blockers.extend(
+                _audio_voice_blockers(
+                    node,
+                    required=(
+                        str(node.get("id") or "") in composition_sources
+                        or role in _VOICED_TIMELINE_ROLES
+                    ),
+                )
+            )
     return {
         **base,
         "status": "blocked" if blockers else "ready",

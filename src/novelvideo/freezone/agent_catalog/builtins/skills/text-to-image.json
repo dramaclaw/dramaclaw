@@ -1,0 +1,58 @@
+{
+  "id": "text-to-image",
+  "name": "文生图（动态）",
+  "enabled": true,
+  "version": 1,
+  "description": "从文字需求规划并生成一张或多张普通图片，不附加视频、音频或社交平台模板阶段。",
+  "category": "creation",
+  "triggers": {
+    "keywords": [
+      "文生图",
+      "图片生成工作流",
+      "生成图片工作流",
+      "纯图片工作流",
+      "只生成图片"
+    ],
+    "node_scopes": [
+      "textGeneration",
+      "imageGeneration"
+    ]
+  },
+  "planning": {
+    "planning_notes": "根据用户描述确定图片数量；先形成内容规划，再为每个计划项生成一张图片，不创建视频或音频节点。",
+    "prompt_guide": "每个计划项描述一张图片的主体、场景、构图和风格；多张图片需要保持用户要求的视觉一致性。",
+    "conduct_rules": [
+      "仅生成用户要求的图片阶段，不自动添加视频或音频阶段",
+      "仅使用 allowed_recipe_ids 中声明的能力",
+      "创建画布节点前先生成并确认动态计划"
+    ]
+  },
+  "schema_version": "dramaclaw.workflow-skill.v1",
+  "allowed_recipe_ids": [
+    "general-text",
+    "general-image"
+  ],
+  "input_parameters": [],
+  "evaluation": {
+    "rating_bands": [
+      {
+        "score": 10,
+        "description": "图片节点完整满足用户目标且工作流可以执行"
+      },
+      {
+        "score": 7,
+        "description": "核心图片流程完整，允许少量非关键调整"
+      },
+      {
+        "score": 4,
+        "description": "缺少必要的规划或图片生成阶段"
+      }
+    ],
+    "visual_review_items": [],
+    "text_review_items": [],
+    "quality_threshold": 7,
+    "domain_constraints": [
+      "工作流只包含规划和图片生成阶段，不得强制添加视频节点"
+    ]
+  }
+}

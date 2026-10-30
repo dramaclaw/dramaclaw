@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useMemo, useState, type ReactElement } from 'react';
-import { Boxes, Crop, Globe2, ImageUpscale, Lightbulb, RotateCw } from 'lucide-react';
+import { Boxes, Crop, Globe2, ImageUpscale, Lightbulb, RotateCw, Scaling } from 'lucide-react';
 
 import {
   createCropResultNode,
@@ -22,6 +22,8 @@ import {
 } from '@/features/canvas/ui/ProviderModelPicker';
 import { useCanvasStore } from '@/stores/canvasStore';
 
+import { ImageResizeDialog } from '../ImageResizeDialog';
+import { useTranslation } from 'react-i18next';
 import { AssetBoardCropDialog } from './AssetBoardCropDialog';
 import { AssetBoardMultiAngleDialog } from './AssetBoardMultiAngleDialog';
 import { AssetBoardRelightDialog } from './AssetBoardRelightDialog';
@@ -124,6 +126,8 @@ export function useAssetBoardImageEditActions({
   onOpenNode?: (nodeId: string) => void;
 }): { entries: MoreMenuEntry[]; overlays: ReactElement | null } {
   const busyOp = useInFlightOp(node.id);
+  const { t } = useTranslation();
+  const [resizeOpen, setResizeOpen] = useState(false);
   // 裁剪 / 旋转：进入编辑器前就把结果节点建好（同工作流 SelectedNodeOverlay），
   // 编辑器实时预览、保存时把结果写回这个节点；取消则回收它。
   const [cropNodeId, setCropNodeId] = useState<string | null>(null);
@@ -155,7 +159,7 @@ export function useAssetBoardImageEditActions({
   const handleOpenHd = useCallback(() => {
     if (busyOp) return;
     const resultNodeId = createUpscaleResultNode(node.id, {
-      displayName: '高清放大',
+      displayName: t('assetBoard.upscaleResult'),
       modelId: selectedModelId,
     });
     if (!resultNodeId) return;
@@ -163,7 +167,7 @@ export function useAssetBoardImageEditActions({
     // 它，用户切回工作流时不用自己找。
     useCanvasStore.getState().requestFocusNode(resultNodeId);
     onOpenNode?.(resultNodeId);
-  }, [busyOp, node.id, onOpenNode, selectedModelId]);
+  }, [busyOp, node.id, onOpenNode, selectedModelId, t]);
 
   /**
    * 打开裁剪编辑器：与旋转同一条路——先把「裁剪结果」节点建出来（源图保持不动），
@@ -171,10 +175,10 @@ export function useAssetBoardImageEditActions({
    */
   const handleOpenCrop = useCallback(() => {
     if (busyOp) return;
-    const resultNodeId = createCropResultNode(node.id, { displayName: '裁剪结果' });
+    const resultNodeId = createCropResultNode(node.id, { displayName: t('assetBoard.cropResult') });
     if (!resultNodeId) return;
     setCropNodeId(resultNodeId);
-  }, [busyOp, node.id]);
+  }, [busyOp, node.id, t]);
 
   const handleCloseCrop = useCallback(
     (committed: boolean) => {
@@ -198,10 +202,10 @@ export function useAssetBoardImageEditActions({
    */
   const handleOpenRotate = useCallback(() => {
     if (busyOp) return;
-    const resultNodeId = createRotateResultNode(node.id, { displayName: '旋转结果' });
+    const resultNodeId = createRotateResultNode(node.id, { displayName: t('assetBoard.rotateResult') });
     if (!resultNodeId) return;
     setRotateNodeId(resultNodeId);
-  }, [busyOp, node.id]);
+  }, [busyOp, node.id, t]);
 
   const handleCloseRotate = useCallback(
     (committed: boolean) => {
@@ -223,15 +227,18 @@ export function useAssetBoardImageEditActions({
     ? []
     : (
         [
-          { kind: 'action', key: 'hd', icon: ImageUpscale, label: '高清', onSelect: handleOpenHd },
-          { kind: 'action', key: 'crop', icon: Crop, label: '裁剪', busy: busyOp === 'crop', onSelect: handleOpenCrop },
-          { kind: 'action', key: 'rotate', icon: RotateCw, label: '旋转', busy: busyOp === 'rotate', onSelect: handleOpenRotate },
+          { kind: 'action', key: 'hd', icon: ImageUpscale, label: t('assetBoard.upscale'), onSelect: handleOpenHd },
+          { kind: 'action', key: 'crop', icon: Crop, label: t('assetBoard.crop'), busy: busyOp === 'crop', onSelect: handleOpenCrop },
+          { kind: 'action', key: 'resize', icon: Scaling, label: t('resizeEditor.title'), onSelect: () => { if (!busyOp) setResizeOpen(true); } },
+          { kind: 'action', key: 'rotate', icon: RotateCw, label: t('assetBoard.rotate'), busy: busyOp === 'rotate', onSelect: handleOpenRotate },
         ] satisfies MoreMenuEntry[]
       ).filter((entry) => !(isPresetLocked && (entry.key === 'hd' || entry.key === 'rotate')));
 
   const overlays =
-    !imageSource || (!cropNodeId && !rotateNodeId) ? null : (
+    !imageSource || (!cropNodeId && !rotateNodeId && !resizeOpen) ? null : (
       <>
+        {resizeOpen && <ImageResizeDialog nodeId={node.id} imageSource={imageSource}
+          onClose={() => setResizeOpen(false)} onCreated={onOpenNode} />}
         {/* 裁剪：大图 + 取景框 + 悬浮控制条（liblib 同款）。纯本地 canvas 切图，
             不走生成接口。 */}
         {cropNodeId && (
@@ -283,6 +290,7 @@ export function AssetBoardImageOps({
   node,
   imageSource,
 }: AssetBoardImageOpsProps): ReactElement {
+  const { t } = useTranslation();
   // busy 态跨重挂载存活（详情工具条按 key={node.id} 整体重挂载），不是组件局部
   // state——见 inFlightImageOps 的说明。
   const busyOp = useInFlightOp(node.id);
@@ -295,37 +303,37 @@ export function AssetBoardImageOps({
 
   const handlePanoSubmit = useCallback(() => {
     if (busyOp) return;
-    if (!window.confirm('确认基于本图生成 360° 全景图？')) return;
+    if (!window.confirm(t('assetBoard.panoramaConfirm'))) return;
     const result = scene360Image(node.id, imageSource, {
-      displayName: '360°全景图',
+      displayName: t('assetBoard.panoramaResult'),
       aspectRatio: '2:1',
     });
     if (!result) return;
     trackSpawn(node.id, 'pano', result.nodeId, result.completion);
-  }, [busyOp, imageSource, node.id]);
+  }, [busyOp, imageSource, node.id, t]);
 
   return (
     <>
       <DetailToolbarButton
         icon={Globe2}
-        label="全景"
+        label={t('assetBoard.panorama')}
         busy={busyOp === 'pano'}
         disabled={busyOp !== null}
-        title="基于本图生成 360° 全景图（并挂一个全景查看器节点）"
+        title={t('assetBoard.panoramaTitle')}
         onClick={handlePanoSubmit}
       />
       <DetailToolbarButton
         icon={Boxes}
-        label="多角度"
+        label={t('assetBoard.multiAngle')}
         disabled={busyOp !== null}
-        title="打开多维度编辑器（球体选角 + 画质 + 提示词）"
+        title={t('assetBoard.multiAngleTitle')}
         onClick={() => setMultiAngleOpen(true)}
       />
       <DetailToolbarButton
         icon={Lightbulb}
-        label="重打光"
+        label={t('assetBoard.relight')}
         disabled={busyOp !== null}
-        title="打开打光效果编辑器（方向 + 亮度/色温 + 智能模式）"
+        title={t('assetBoard.relightTitle')}
         onClick={() => setRelightOpen(true)}
       />
 

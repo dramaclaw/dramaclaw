@@ -17,6 +17,12 @@ After startup, open `http://localhost:8080` and go to **Settings → Models & Ch
 
 Enable the intended mode after configuring it. New jobs read the latest mode, key, and mappings. Jobs already running do not switch gateways midway.
 
+## Agent model
+
+The Xia Director Agent can either follow the active gateway mode or use an independent third-party endpoint. Under **Agent model**, select **Third party** and provide an OpenAI-compatible Base URL, API Key, and model name. The endpoint must support the OpenAI Responses API and tool calls. This setting affects the Agent only; image, video, audio, embedding, and other feature-model routes continue to use the selected gateway mode.
+
+Secrets remain in the local CE settings database and are returned to the browser only as a masked preview. Changing the third-party endpoint requires entering the API Key again, which prevents a saved credential from being sent to a different host accidentally. Select **Follow current channel** to restore the existing Official, Custom, or Hybrid routing behavior.
+
 ## Official mode
 
 Official mode is the shortest setup path:
@@ -241,6 +247,10 @@ Routing is based on model ID. A Local ComfyUI model may appear in XiaHua as a ne
 ## Reference media storage
 
 Image editing, video first/last frames, reference images, and identity images require upstream services to read local files. Go to **Settings → Media Storage** and configure a publicly reachable temporary media relay.
+
+Saving first uploads a tiny test image and reads it back. A failed check leaves the previous configuration intact. Before paid image, video, or audio calls, CE also checks configured media storage. Successful checks are reused for up to 60 seconds; configuration changes require a fresh check. Local workflows without configured media storage or reference uploads remain available.
+
+Probe objects have random names under the normal relay prefix. OSS deletion is best effort and is not a required permission. Retention rules should clean up undeleted objects and Cloudinary probes. Preflight does not guarantee continued network availability or add automatic refunds or result recovery.
 
 ### Aliyun OSS
 

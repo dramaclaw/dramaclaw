@@ -48,6 +48,13 @@ describe("dynamic workflow node action contract", () => {
     expect(source).toContain("DEFAULT_NODE_ACTION_TIMEOUT_MS = 30 * 60 * 1000");
   });
 
+  it("reports image node action success only after the generated assets settle", () => {
+    const source = readNodeSource("ImageGenNode");
+
+    expect(source).toContain("completionMode: 'completed'");
+    expect(source).not.toContain("executionMode === 'single' ? 'submitted' : 'completed'");
+  });
+
   it("persists and reports the durable auto-compose task reference", () => {
     const source = readNodeSource("VideoComposeNode");
 
@@ -55,6 +62,20 @@ describe("dynamic workflow node action contract", () => {
     expect(source).toContain("task_key: ref.task_key");
     expect(source).toContain("task_type: ref.task_type");
     expect(source).toContain("job_id: ref.job_id");
+    expect(source).toContain("resultVideoTaskKey: ref.task_key");
+    expect(source).toContain("resultVideoJobId: ref.job_id");
+    expect(source).toContain("if (isTaskPollTimeoutError(error))");
+    expect(source).toContain("notifyTaskStillRunning(t)");
+    const taskCompletion = source.indexOf("await awaitTaskCompletion");
+    const projectionRebase = source.indexOf(
+      "await reconcileCompletedVideoComposeProjection",
+    );
+    const localResultPatch = source.indexOf(
+      "const store = useCanvasStore.getState()",
+      projectionRebase,
+    );
+    expect(projectionRebase).toBeGreaterThan(taskCompletion);
+    expect(localResultPatch).toBeGreaterThan(projectionRebase);
   });
 
   it("compiles catalog-backed image workflow prompts before generation", () => {

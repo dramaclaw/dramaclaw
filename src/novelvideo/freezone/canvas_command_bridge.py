@@ -7,7 +7,6 @@ remain as a temporary compatibility mirror for legacy workers.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -18,6 +17,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+import portalocker
 
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
@@ -648,11 +649,11 @@ def _key_lock(key: str, bridge_dir: str | Path | None = None):
     safe_key = "".join(ch for ch in key if ch.isalnum() or ch in {"-", "_"})[:128]
     lock_path = directory / f"{safe_key}.lock"
     with lock_path.open("a+") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        portalocker.lock(lock_file, portalocker.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            portalocker.unlock(lock_file)
 
 
 def _canvas_command_idempotency_conflict(
@@ -758,6 +759,59 @@ def put_pending_canvas_command(
 
         _write_json(pending_path, durable_payload)
     return None
+
+
+def put_or_reuse_pending_canvas_command(
+    *,
+    key: str,
+    project_id: str | None,
+    canvas_id: str | None,
+    commands: list[Any],
+    envelope: dict[str, Any],
+    bridge_dir: str | Path | None = None,
+) -> tuple[str, dict[str, Any] | None]:
+    """Publish a command unless the same request is already awaiting a result.
+
+    The caller may choose a fresh key for a new user turn. While an identical
+    command is still pending or leased to a browser, keep waiting on its
+    original key instead of leaving two runnable inbox messages. Terminal and
+    expired requests do not block a later explicit retry.
+    """
+    fingerprint = _canvas_command_request_fingerprint(
+        project_id=project_id,
+        canvas_id=canvas_id,
+        commands=commands,
+    )
+    fingerprint_lock = f"canvas-command-request-{fingerprint}"
+    with _key_lock(fingerprint_lock, bridge_dir):
+        with _bridge_db(bridge_dir) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            _prune_bridge_rows(conn, now=time.time(), bridge_dir=bridge_dir)
+            existing = conn.execute(
+                """
+                SELECT bridge_key
+                  FROM canvas_command_messages
+                 WHERE kind = 'canvas_command'
+                   AND project_id IS ?
+                   AND canvas_id IS ?
+                   AND request_fingerprint = ?
+                   AND status IN ('pending', 'delivered')
+                 ORDER BY created_at ASC
+                 LIMIT 1
+                """,
+                (project_id, canvas_id, fingerprint),
+            ).fetchone()
+        if existing is not None:
+            return str(existing["bridge_key"]), None
+        result = put_pending_canvas_command(
+            key=key,
+            project_id=project_id,
+            canvas_id=canvas_id,
+            commands=commands,
+            envelope=envelope,
+            bridge_dir=bridge_dir,
+        )
+    return key, result
 
 
 def put_pending_canvas_context(

@@ -21,7 +21,9 @@
   existing approval state. Never replay the write as standalone commands.
 - Audio generation: Freezone has no preset/system voice fallback. Preserve a valid custom
   `voiceRef`; if none is selected, skip the audio node without submitting TTS and continue the
-  remaining workflow. Never choose a catalog voice or open the picker automatically.
+  remaining workflow. A draft whose required voice-over/composition speech has no usable voice is
+  blocked with `audio_voice_required`; do not treat it as ready or choose a catalog voice/open the
+  picker automatically.
 - Batch/schema failure: do not degrade to single-node tools. Return the blocking validation detail if
   one corrected retry cannot satisfy the schema. For `invalid_compiled_command_schema`, correct only
   a semantic Plan field explicitly named by `errors[].path`; never hand-author canvas commands. If

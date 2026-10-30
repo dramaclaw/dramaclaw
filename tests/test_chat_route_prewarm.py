@@ -399,6 +399,7 @@ def test_canvas_command_tool_result_accepts_background_workflow(
         canvas_id="canvas-a",
         tool_call_status="completed",
         canvas_apply_status="accepted",
+        background_execution_status="running",
         applied=True,
     )
 
@@ -408,7 +409,9 @@ def test_canvas_command_tool_result_accepts_background_workflow(
     assert isinstance(result, dict)
     assert result["ok"] is True
     assert result["canvas_apply_status"] == "accepted"
-    assert "submitted to the canvas" in result["agent_instruction"]
+    assert result["background_execution_status"] == "running"
+    assert "running in the background" in result["agent_instruction"]
+    assert "update automatically" in result["agent_instruction"]
     assert "tool was opened" in result["agent_instruction"]
     assert "operate it manually" in result["agent_instruction"]
     assert "Do not claim" in result["agent_instruction"]

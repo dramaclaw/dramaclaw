@@ -203,6 +203,7 @@ from novelvideo.freezone.agent_product_operations import (
     read_agent_product_operation,
     read_recipe_model_prompt,
     save_agent_generation_session,
+    terminalize_undelivered_agent_product_task,
 )
 from novelvideo.freezone.workflow_runs import (
     RECIPE_ATTEMPT_ENDED_MARKER,
@@ -782,6 +783,14 @@ async def _start_or_enqueue_freezone_video_gen(
 ) -> dict:
     from novelvideo.api.routes.model_credits import (
         freezone_video_generate_task_billing,
+    )
+    from novelvideo.freezone.video_node import effective_video_human_review
+
+    human_review = effective_video_human_review(
+        human_review,
+        gen_mode=gen_mode,
+        reference_items=reference_items,
+        last_frame_path=last_frame_path,
     )
 
     workflow_link: dict[str, str] = {}
@@ -14973,6 +14982,7 @@ async def _check_workflow_runtime(compiled: dict, *, project: str, user: dict) -
         from novelvideo.freezone.workflow_preflight import (
             generation_clarification_request,
             preflight_failure_blocker,
+            video_model_reselection_clarification,
         )
 
         clarification = generation_clarification_request(preflight)
@@ -14992,6 +15002,24 @@ async def _check_workflow_runtime(compiled: dict, *, project: str, user: dict) -
                     "next_action": "request_user_clarification",
                 },
             )
+        video_response = (
+            results[requested.index("videoNode")]
+            if "videoNode" in requested
+            else {}
+        )
+        video_catalog = (
+            video_response.get("data")
+            if isinstance(video_response, dict)
+            and isinstance(video_response.get("data"), list)
+            else []
+        )
+        model_clarification = video_model_reselection_clarification(
+            preflight,
+            compiled,
+            [item for item in video_catalog if isinstance(item, dict)],
+        )
+        if model_clarification is not None:
+            raise HTTPException(400, model_clarification)
         raise HTTPException(
             400,
             {
@@ -15020,6 +15048,17 @@ async def _prepare_workflow_source(body: dict, user: dict) -> dict:
         raise HTTPException(400, exc.result) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+def _workflow_draft_source_kind(source: dict) -> str:
+    intent = source.get("intent")
+    if (
+        "bindings" in source
+        or isinstance(source.get("plan"), dict)
+        or (isinstance(intent, dict) and isinstance(intent.get("plan"), dict))
+    ):
+        return "exact_plan"
+    return "compact_intent"
 
 
 async def _validate_workflow_draft_submission(body: dict, user: dict) -> dict:
@@ -15193,6 +15232,22 @@ async def create_canvas_workflow_draft(
             draft_id=existing_id,
         )
         if existing is not None:
+            if _workflow_draft_source_kind(body) != _workflow_draft_source_kind(existing):
+                raise HTTPException(
+                    409,
+                    {
+                        "ok": False,
+                        "status": "workflow_result_source_conflict",
+                        "error": (
+                            "workflow result operation already delivered a draft from a "
+                            "different workflow source kind"
+                        ),
+                        "draft_id": existing_id,
+                        "revision": existing.get("revision"),
+                        "retryable": False,
+                        "next_action": "use_existing_draft",
+                    },
+                )
             await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
             return {
                 "ok": True,
@@ -15976,7 +16031,12 @@ async def complete_agent_product_operation(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+    if operation.get("status") == "delivered":
+        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+    else:
+        await terminalize_undelivered_agent_product_task(
+            ctx=ctx, operation=operation
+        )
     return {"ok": True, "data": operation}
 
 
@@ -16252,6 +16312,10 @@ async def create_canvas_workflow_run(
                     "generation_attempt_id": attempt_id,
                 },
             )
+            # Track the durable operation before admission. Enqueue can fail
+            # (for example when its billing rule is missing) before a task id
+            # exists, and that unbound operation still needs a terminal state.
+            admitted_operations.append(operation)
             if not operation.get("task_id"):
                 queued = await get_task_backend().enqueue_project_task(
                     ctx,
@@ -16275,7 +16339,7 @@ async def create_canvas_workflow_run(
                     task_id=task_id,
                     root_task_id=task_id,
                 )
-            admitted_operations.append(operation)
+                admitted_operations[-1] = operation
             run = await asyncio.to_thread(
                 bind_workflow_action_product_operation,
                 project_dir=state_dir,

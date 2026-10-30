@@ -871,6 +871,25 @@ def test_text_to_image_video_standard_plan_feeds_outline_into_each_image(monkeyp
     assert catalog.skill_stage_blockers("text-to-image-video", plan["nodes"], plan["edges"]) == []
 
 
+def test_text_to_image_standard_plan_creates_images_without_video(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    result = catalog.compile_workflow_intent(
+        {
+            "skill_id": "text-to-image",
+            "user_goal": "生成两张森林主题插画",
+            "planner": {"mode": "standard", "item_count": 2},
+        }
+    )
+
+    assert result["ok"] is True, result
+    assert result["planner"]["deliverable"] == "images"
+    nodes = result["plan"]["nodes"]
+    assert len([node for node in nodes if node["node_type"] == "imageGenNode"]) == 2
+    assert not any(node["node_type"] == "videoNode" for node in nodes)
+    assert catalog.skill_stage_blockers("text-to-image", nodes, result["plan"]["edges"]) == []
+
+
 def test_ecommerce_standard_plan_feeds_creative_outline_into_product_reference(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
@@ -907,6 +926,134 @@ def test_ecommerce_standard_plan_feeds_creative_outline_into_product_reference(m
             "ecommerce-ad", order_only["nodes"], order_only["edges"]
         )
     )
+
+
+def test_ecommerce_external_image_replaces_generated_asset_stage(monkeypatch):
+    """An existing product image is the asset; recovery must not generate an anchor."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "skill": {"id": "ecommerce-ad", "version": 1},
+        "summary": "Use the selected red cup as the only image input and remix it.",
+        "external_inputs": [
+            {"id": "red_cup", "node_id": "red-cup-source", "media_kind": "image"}
+        ],
+        "nodes": [
+            {
+                "id": "result",
+                "node_type": "imageGenNode",
+                "stage": "images",
+                "data": {
+                    "prompt": "Keep the cup shape, use a blue background, and add no text.",
+                    "workflowCatalog": {"recipeId": "ecommerce-remix-image"},
+                },
+            }
+        ],
+        "edges": [
+            {"source": "red_cup", "target": "result", "link_type": "media_input_for"}
+        ],
+    }
+
+    missing_planning = catalog.validate_agent_workflow_plan(plan)
+
+    assert missing_planning["ok"] is True, missing_planning
+    assert [
+        (blocker["code"], blocker["stage"])
+        for blocker in missing_planning["preflight"]["blockers"]
+    ] == [("skill_stage_missing", "planning")]
+
+    plan["nodes"].insert(
+        0,
+        {
+            "id": "planning_brief",
+            "node_type": "textAnnotationNode",
+            "stage": "planning",
+            "data": {
+                "prompt": "Plan the requested red-cup background replacement.",
+                "workflowCatalog": {"recipeId": "general-text"},
+            },
+        },
+    )
+    plan["edges"].append(
+        {"source": "planning_brief", "target": "result", "link_type": "prompt_for"}
+    )
+
+    ready = catalog.validate_agent_workflow_plan(plan)
+
+    assert ready["ok"] is True, ready
+    assert ready["preflight"]["status"] == "ready"
+    assert ready["preflight"]["blockers"] == []
+    assert [
+        node["id"]
+        for node in ready["plan"]["nodes"]
+        if node["node_type"] == "imageGenNode"
+    ] == ["result"]
+    assert ready["plan"]["edges"][0] == {
+        "source": "red_cup",
+        "target": "result",
+        "link_type": "media_input_for",
+    }
+
+
+def test_ecommerce_standard_planner_binds_external_image_to_requested_recipe(
+    monkeypatch,
+):
+    """CORE-RCP-02: compact planning owns the topology and reaches ready once."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    intent = {
+        "schema_version": "freezone_workflow_intent.v1",
+        "skill_id": "ecommerce-ad",
+        "user_goal": (
+            "Use ecommerce-remix-image with the selected red cup only; preserve its shape, "
+            "replace the background with blue, and add no text."
+        ),
+        "external_inputs": [
+            {"id": "red_cup", "node_id": "red-cup-source", "media_kind": "image"}
+        ],
+        "planner": {
+            "mode": "standard",
+            "deliverable": "images",
+            "item_count": 1,
+            "image_recipe_id": "ecommerce-remix-image",
+        },
+        "include_audio": False,
+        "include_compose": False,
+    }
+
+    result = catalog.compile_workflow_intent(intent)
+
+    assert result["ok"] is True, result
+    Draft202012Validator(workflow_intent_json_schema()).validate(intent)
+    assert result["planner"]["mode"] == "deterministic_standard"
+    assert result["preflight"]["status"] == "ready"
+    assert result["preflight"]["blockers"] == []
+    plan = result["plan"]
+    planning_nodes = [node for node in plan["nodes"] if node.get("stage") == "planning"]
+    image_nodes = [
+        node for node in plan["nodes"] if node.get("node_type") == "imageGenNode"
+    ]
+    assert len(planning_nodes) == 1
+    assert len(image_nodes) == 1
+    assert (
+        image_nodes[0]["data"]["workflowCatalog"]["recipeId"] == "ecommerce-remix-image"
+    )
+    assert not any(node.get("stage") == "assets" for node in plan["nodes"])
+    edges = {
+        (edge["source"], edge["target"]): edge["link_type"] for edge in plan["edges"]
+    }
+    assert edges[(planning_nodes[0]["id"], image_nodes[0]["id"])] == "prompt_for"
+    assert edges[("red_cup", image_nodes[0]["id"])] == "media_input_for"
+    assert [
+        edge for edge in plan["edges"] if edge["link_type"] == "media_input_for"
+    ] == [
+        {
+            "source": "red_cup",
+            "target": image_nodes[0]["id"],
+            "link_type": "media_input_for",
+        }
+    ]
 
 
 def _raw_plan_from_standard(catalog, intent: dict, *, deviate: bool = True) -> dict:
@@ -1163,6 +1310,38 @@ def test_intent_video_item_carries_explicit_embedded_audio_requirement():
     assert node["data"]["workflowCatalog"]["requiresGeneratedAudio"] is True
 
 
+def test_explicit_intent_audio_requirement_survives_recipe_rebinding(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    compiled = catalog.compile_workflow_intent(
+        {
+            "skill_id": "ling-cage-cinematic-video",
+            "user_goal": "制作一个必须带同期声的镜头",
+            "items": [
+                {
+                    "id": "shot",
+                    "title": "对白镜头",
+                    "recipe_id": "sci-fi-survival-shot-video",
+                    "prompt": "人物说出对白",
+                    "duration_seconds": 5,
+                    "requires_generated_audio": True,
+                }
+            ],
+        }
+    )
+
+    assert compiled["ok"] is True, compiled
+    checked = catalog.validate_agent_workflow_plan(
+        compiled["plan"], allow_template_reroute=False
+    )
+    shot = next(
+        node
+        for node in checked["plan"]["nodes"]
+        if node["node_type"] == "videoNode"
+    )
+    assert shot["data"]["workflowCatalog"]["requiresGeneratedAudio"] is True
+
+
 @pytest.mark.parametrize(
     ("skill_id", "shot_recipe_id", "anchor_recipe_id"),
     [
@@ -1174,10 +1353,10 @@ def test_intent_video_item_carries_explicit_embedded_audio_requirement():
         ),
     ],
 )
-def test_builtin_voiced_shot_recipe_blocks_silent_agent_plan(
+def test_builtin_shot_recipe_accepts_confirmed_silent_agent_plan(
     monkeypatch, skill_id, shot_recipe_id, anchor_recipe_id
 ):
-    """No-BGM must not silently disable dialogue and sound in these two Skills."""
+    """The user's direct sound choice must win over optional Recipe audio."""
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
     items = []
@@ -1212,7 +1391,9 @@ def test_builtin_voiced_shot_recipe_blocks_silent_agent_plan(
     plan.pop("planner", None)
     shot = next(node for node in plan["nodes"] if node["node_type"] == "videoNode")
     shot["data"]["generateAudio"] = False
-    shot["data"]["workflowCatalog"]["requiresGeneratedAudio"] = False
+    # Simulate a draft compiled before the built-in Recipe made generated
+    # audio optional. Validation must rebind this cached catalog value.
+    shot["data"]["workflowCatalog"]["requiresGeneratedAudio"] = True
 
     silent = catalog.validate_agent_workflow_plan(plan, allow_template_reroute=False)
 
@@ -1220,13 +1401,12 @@ def test_builtin_voiced_shot_recipe_blocks_silent_agent_plan(
     actual_shot = next(
         n for n in silent["plan"]["nodes"] if n["node_type"] == "videoNode"
     )
-    assert actual_shot["data"]["workflowCatalog"]["requiresGeneratedAudio"] is True
+    assert actual_shot["data"]["workflowCatalog"].get("requiresGeneratedAudio") is False
     silent_preflight = evaluate_workflow_preflight(
         silent, model_responses={}, limits={}, runtime_available=False
     )
-    assert any(
+    assert not any(
         blocker["code"] == "generation_parameter_conflict"
-        and blocker["path"].endswith(".generateAudio")
         for blocker in silent_preflight["blockers"]
     )
     shot["data"]["generateAudio"] = True
@@ -1237,6 +1417,76 @@ def test_builtin_voiced_shot_recipe_blocks_silent_agent_plan(
     assert not any(
         blocker["code"] == "generation_parameter_conflict"
         for blocker in audible_preflight["blockers"]
+    )
+
+
+def test_ling_cage_requires_every_video_to_feed_terminal_compose():
+    catalog = _load_catalog_module()
+    nodes = [
+        {"id": "shot-1", "node_type": "videoNode"},
+        {"id": "shot-2", "node_type": "videoNode"},
+    ]
+
+    missing = catalog.skill_stage_blockers(
+        "ling-cage-cinematic-video", nodes, []
+    )
+    assert any(
+        blocker["code"] == "skill_stage_missing"
+        and blocker["path"] == "plan.stages.compose"
+        for blocker in missing
+    )
+
+    nodes.append({"id": "compose", "node_type": "videoComposeNode"})
+    partly_connected = catalog.skill_stage_blockers(
+        "ling-cage-cinematic-video",
+        nodes,
+        [
+            {
+                "source": "shot-1",
+                "target": "compose",
+                "link_type": "composition_input_for",
+            }
+        ],
+    )
+    assert any(
+        blocker["code"] == "skill_stage_unused"
+        and blocker["node_ids"] == ["shot-2"]
+        for blocker in partly_connected
+    )
+
+    complete = catalog.skill_stage_blockers(
+        "ling-cage-cinematic-video",
+        nodes,
+        [
+            {
+                "source": shot_id,
+                "target": "compose",
+                "link_type": "composition_input_for",
+            }
+            for shot_id in ("shot-1", "shot-2")
+        ],
+    )
+    assert not any(
+        blocker["path"].startswith("plan.stages.compose") for blocker in complete
+    )
+
+    duplicated = catalog.skill_stage_blockers(
+        "ling-cage-cinematic-video",
+        [*nodes, {"id": "compose-extra", "node_type": "videoComposeNode"}],
+        [
+            {
+                "source": shot_id,
+                "target": "compose",
+                "link_type": "composition_input_for",
+            }
+            for shot_id in ("shot-1", "shot-2")
+        ],
+    )
+    assert any(
+        blocker["code"] == "skill_stage_unused"
+        and blocker["path"] == "plan.stages.compose.nodes"
+        and blocker["node_ids"] == ["compose-extra"]
+        for blocker in duplicated
     )
 
 
@@ -4663,6 +4913,7 @@ def test_project_catalog_uses_canonical_pixar_skill_and_recipes(monkeypatch):
     assert skills["ecommerce-ad"]["name"] == "电商广告"
     assert skills["video-tutorial"]["name"] == "视频解说教程"
     assert skills["text-to-image-video"]["name"] == "文生图生视频（动态）"
+    assert skills["text-to-image"]["name"] == "文生图（动态）"
     assert skills["short-drama-quick"]["name"] == "短剧（快速测试）"
     assert skills["pixar-ip-ad-video"]["name"] == "皮克斯 IP 品牌广告短片"
     assert skills["lego-minifigure-animation-video"]["name"] == "乐高小人动画短片"

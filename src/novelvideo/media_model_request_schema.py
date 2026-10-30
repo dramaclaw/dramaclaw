@@ -233,6 +233,10 @@ def enforce_newapi_video_mode_contract(
     raw_metadata = result.get("metadata")
     metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
     metadata.pop("omni_reference_task_type", None)
+    if normalized_mode == "text_to_video":
+        # Apply after custom request templates so they cannot re-enable material review.
+        result.pop("human_review", None)
+        metadata["human_review"] = False
     omni_task_type = {
         "all_reference": "reference",
         "video_edit": "edit",

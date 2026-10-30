@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -600,6 +601,103 @@ def _append_node_history(
         canvas_id=str(payload.get("canvas_id") or "default"),
         node_id=node_id,
         record=record,
+    )
+
+
+def _project_video_compose_result_to_canvas(
+    *,
+    ctx: ProjectContext,
+    payload: dict[str, Any],
+    job_id: str,
+    output_url: str,
+    cover_url: str,
+) -> bool:
+    """Persist a completed compose result when this task still owns the node."""
+    from novelvideo.freezone import canvas_store
+
+    canvas_id = str(payload.get("canvas_id") or "").strip()
+    node_id = str(payload.get("node_id") or "").strip()
+    if not canvas_id or not node_id:
+        return False
+    task_key = project_task_state_key(
+        "freezone_video_compose", ctx.project_id, 0, scope=job_id
+    )
+
+    def target_node(canvas: dict | None) -> dict | None:
+        if not isinstance(canvas, dict):
+            return None
+        return next(
+            (
+                node
+                for node in canvas.get("nodes") or []
+                if isinstance(node, dict)
+                and node.get("id") == node_id
+                and node.get("type") == "videoComposeNode"
+            ),
+            None,
+        )
+
+    def skip_if(existing: dict | None) -> dict | None:
+        node = target_node(existing)
+        data = node.get("data") if isinstance(node, dict) else None
+        if not isinstance(data, dict):
+            return {"projected": False, "reason": "target_missing"}
+        if (
+            data.get("resultVideoTaskKey") == task_key
+            and data.get("resultVideoJobId") == job_id
+            and data.get("resultVideoUrl") == output_url
+        ):
+            return {"projected": False, "reason": "already_projected"}
+        if (
+            data.get("generationTaskKey") != task_key
+            or data.get("generationTaskType") != "freezone_video_compose"
+            or data.get("generationTaskJobId") != job_id
+        ):
+            return {"projected": False, "reason": "task_superseded"}
+        return None
+
+    def build_payload(existing: dict | None) -> dict:
+        if not isinstance(existing, dict):
+            raise ValueError("compose canvas disappeared during projection")
+        updated = deepcopy(existing)
+        node = target_node(updated)
+        if node is None or not isinstance(node.get("data"), dict):
+            raise ValueError("compose node disappeared during projection")
+        data = node["data"]
+        data.update(
+            {
+                "resultVideoUrl": output_url,
+                "resultVideoTaskKey": task_key,
+                "resultVideoJobId": job_id,
+                "isGenerating": False,
+                "generationStartedAt": None,
+                "generationTaskKey": None,
+                "generationTaskType": None,
+                "generationTaskJobId": None,
+                "generationError": None,
+            }
+        )
+        if cover_url:
+            data["previewImageUrl"] = cover_url
+        revision = existing.get("revision")
+        updated["revision"] = revision + 1 if isinstance(revision, int) else 1
+        updated["updated_at"] = canvas_store.utc_now_iso()
+        updated["updated_by"] = str(getattr(ctx, "requester_user_id", "") or "")
+        updated["save_source"] = "task_projection"
+        return updated
+
+    state_dir = Path(getattr(ctx, "state_dir", ctx.output_dir))
+    saved = canvas_store.save_canvas(
+        state_dir,
+        canvas_id,
+        base_revision=None,
+        build_payload=build_payload,
+        skip_if=skip_if,
+        enforce_revision=False,
+        save_source="task_projection",
+    )
+    return not bool(
+        saved.response_cache and saved.response_cache.get("projected") is False
     )
 
 
@@ -1424,6 +1522,36 @@ async def _run_freezone_video_compose_async(
     )
     if history_record:
         result["generation_history_record"] = history_record
+    try:
+        projected = await asyncio.to_thread(
+            _project_video_compose_result_to_canvas,
+            ctx=ctx,
+            payload=payload,
+            job_id=job_id,
+            output_url=str(result["output_url"]),
+            cover_url=cover_url,
+        )
+        logger.info(
+            "video_compose.canvas_projection project_id=%s canvas_id=%s "
+            "node_id=%s job_id=%s projected=%s",
+            ctx.project_id,
+            str(payload.get("canvas_id") or ""),
+            str(payload.get("node_id") or ""),
+            job_id,
+            projected,
+        )
+    except Exception:
+        # The media output remains valid even if a transient Canvas lock/storage
+        # failure prevents this best-effort projection. The persisted task handle
+        # lets the frontend retry the same convergence after refresh.
+        logger.exception(
+            "video_compose.canvas_projection_failed project_id=%s canvas_id=%s "
+            "node_id=%s job_id=%s",
+            ctx.project_id,
+            str(payload.get("canvas_id") or ""),
+            str(payload.get("node_id") or ""),
+            job_id,
+        )
     return result
 
 

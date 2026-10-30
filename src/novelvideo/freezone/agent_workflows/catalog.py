@@ -134,16 +134,25 @@ _TEXT_FIRST_BUILTIN_RECIPE_IDS = {
     "video-storyboard-script",
 }
 
+
 def _stage(
-    stage_id: str, node_type: str, recipes: list[str], *, required: bool
+    stage_id: str,
+    node_type: str,
+    recipes: list[str],
+    *,
+    required: bool,
+    accepts_external_media: list[str] | None = None,
 ) -> dict[str, Any]:
     """One stage of a standard planner template (see ``stages`` below)."""
-    return {
+    stage = {
         "id": stage_id,
         "node_type": node_type,
         "recipes": list(recipes),
         "required": required,
     }
+    if accepts_external_media:
+        stage["accepts_external_media"] = list(accepts_external_media)
+    return stage
 
 
 # ``stages`` is the machine-comparable shape of what ``_standard_skill_items``
@@ -185,6 +194,7 @@ _DETERMINISTIC_SKILL_PLANNERS = {
                 "imageGenNode",
                 ["general-image", "ecommerce-style-reference"],
                 required=True,
+                accepts_external_media=["image"],
             ),
             _stage(
                 "images",
@@ -200,7 +210,9 @@ _DETERMINISTIC_SKILL_PLANNERS = {
             _stage("video", "videoNode", ["video-clip-generation"], required=False),
             _stage("audio", "audioNode", ["general-audio"], required=False),
         ],
-        "edges": [["planning", "assets"], ["assets", "images"], ["images", "video"]],
+        # A supplied product image replaces generated assets. In either case the
+        # creative plan and the product asset must both reach the output images.
+        "edges": [["planning", "images"], ["assets", "images"], ["images", "video"]],
     },
     "text-to-image-video": {
         "default_item_count": 3,
@@ -223,6 +235,22 @@ _DETERMINISTIC_SKILL_PLANNERS = {
             _stage("video", "videoNode", ["general-video"], required=True),
         ],
         "edges": [["planning", "images"], ["images", "video"]],
+    },
+    "text-to-image": {
+        "default_item_count": 1,
+        "deliverables": ["images"],
+        "default_deliverable": "images",
+        "default_include_audio": False,
+        "stages": [
+            _stage(
+                "planning",
+                "textAnnotationNode",
+                ["general-text"],
+                required=True,
+            ),
+            _stage("images", "imageGenNode", ["general-image"], required=True),
+        ],
+        "edges": [["planning", "images"]],
     },
     "video-tutorial": {
         "default_item_count": 3,
@@ -324,6 +352,7 @@ _DETERMINISTIC_SKILL_PLANNERS = {
 
 _TEXT_NODE_TYPES = {"textAnnotationNode", "scriptNode", "beatContextNode"}
 _USER_MATERIAL_STAGES = {"input", "resource", "asset"}
+_SKILLS_REQUIRING_VIDEO_COMPOSE = frozenset({"ling-cage-cinematic-video"})
 
 
 def standard_skill_stages(skill_id: str) -> list[dict[str, Any]]:
@@ -408,8 +437,94 @@ def _node_fills_stage(
     return kind_is_unique and bool(recipe_id)
 
 
+def _required_video_compose_blockers(
+    skill_id: str, nodes: list[Any], edges: Any
+) -> list[dict[str, Any]]:
+    """Require exactly one terminal compose fed by every planned video."""
+    video_ids = [
+        _text(node.get("id"))
+        for node in nodes
+        if isinstance(node, dict) and node.get("node_type") == "videoNode"
+    ]
+    if not video_ids:
+        return []
+    compose_ids = [
+        _text(node.get("id"))
+        for node in nodes
+        if isinstance(node, dict) and node.get("node_type") == "videoComposeNode"
+    ]
+    if not compose_ids:
+        return [
+            {
+                "path": "plan.stages.compose",
+                "code": "skill_stage_missing",
+                "message": (
+                    f"Skill {skill_id} requires one terminal videoComposeNode fed by "
+                    "every planned video"
+                ),
+                "stage": "compose",
+                "node_type": "videoComposeNode",
+                "hint": (
+                    "Add one terminal videoComposeNode and connect every videoNode to it "
+                    "with composition_input_for in delivery order"
+                ),
+            }
+        ]
+    if len(compose_ids) > 1:
+        return [
+            {
+                "path": "plan.stages.compose.nodes",
+                "code": "skill_stage_unused",
+                "message": (
+                    f"Skill {skill_id} requires exactly one terminal videoComposeNode; "
+                    f"extra nodes: {', '.join(compose_ids[1:])}"
+                ),
+                "stage": "compose",
+                "downstream_stage": "compose",
+                "node_ids": compose_ids[1:],
+                "hint": (
+                    f"Keep {compose_ids[0]}, remove the extra compose nodes, and connect "
+                    "every videoNode to the remaining node in delivery order"
+                ),
+            }
+        ]
+
+    compose_id = compose_ids[0]
+    edge_values = edges if isinstance(edges, list) else []
+    connected = {
+        _text(edge.get("source"))
+        for edge in edge_values
+        if isinstance(edge, dict)
+        if _text(edge.get("target")) == compose_id
+        and _text(edge.get("link_type")) == "composition_input_for"
+    }
+    unfed = [node_id for node_id in video_ids if node_id not in connected]
+    if not unfed:
+        return []
+    return [
+        {
+            "path": "plan.stages.compose.inputs",
+            "code": "skill_stage_unused",
+            "message": (
+                f"Skill {skill_id} requires every video to feed terminal compose; "
+                f"missing: {', '.join(unfed)}"
+            ),
+            "stage": "compose",
+            "downstream_stage": "compose",
+            "node_ids": unfed,
+            "hint": (
+                f"Connect {', '.join(unfed)} to {compose_id} with "
+                "composition_input_for in delivery order"
+            ),
+        }
+    ]
+
+
 def skill_stage_blockers(
-    skill_id: str, nodes: Any, edges: Any = None
+    skill_id: str,
+    nodes: Any,
+    edges: Any = None,
+    external_inputs: Any = None,
 ) -> list[dict[str, Any]]:
     """Preflight blockers for standard-planner stages a plan skips or bypasses.
 
@@ -421,11 +536,19 @@ def skill_stage_blockers(
     a downstream stage must be reachable from a node of the upstream stage
     (``skill_stage_unused``), and only consuming edges count for that: a
     ``dependency_for`` edge orders execution without feeding the target.
-    Skills without a standard planner have no template and are not checked.
+    A small set of dynamic-only Skills also declares a terminal composition
+    contract here so prose guidance cannot admit disconnected final clips.
     """
     stages = standard_skill_stages(skill_id)
-    if not stages or not isinstance(nodes, list):
+    if not isinstance(nodes, list):
         return []
+    blockers = (
+        _required_video_compose_blockers(skill_id, nodes, edges)
+        if skill_id in _SKILLS_REQUIRING_VIDEO_COMPOSE
+        else []
+    )
+    if not stages:
+        return blockers
     kind_counts: dict[str, int] = {}
     for stage in stages:
         kind = _node_kind(_text(stage["node_type"]))
@@ -438,7 +561,13 @@ def skill_stage_blockers(
             for node in nodes
             if _node_fills_stage(node, stage, kind_is_unique=kind_is_unique)
         ]
-    blockers: list[dict[str, Any]] = []
+        accepted_media = set(stage.get("accepts_external_media") or [])
+        for source in external_inputs if isinstance(external_inputs, list) else []:
+            if not isinstance(source, dict):
+                continue
+            source_id = _text(source.get("id"))
+            if source_id and _text(source.get("media_kind")) in accepted_media:
+                filled[stage["id"]].append(source_id)
     for stage in stages:
         if not stage.get("required") or filled[stage["id"]]:
             continue
@@ -458,8 +587,15 @@ def skill_stage_blockers(
                 "hint": (
                     f"Add a {stage['node_type']} node for the {stage['id']} stage (set its "
                     f"stage to \"{stage['id']}\" or use one of {recipes}) and feed the "
-                    "downstream nodes from it, or drop the custom items and let the "
-                    "standard planner (planner.mode=standard) produce every required stage."
+                    "downstream nodes from it"
+                    + (
+                        f", or declare and connect existing {', '.join(stage['accepts_external_media'])} "
+                        "media as external_inputs"
+                        if stage.get("accepts_external_media")
+                        else ""
+                    )
+                    + ", or drop the custom items and let the standard planner "
+                    "(planner.mode=standard) produce every required stage."
                 ),
             }
         )
@@ -502,7 +638,12 @@ def _attach_skill_stage_blockers(result: dict[str, Any], skill_id: str) -> None:
     plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
     _attach_preflight_blockers(
         result,
-        skill_stage_blockers(skill_id, plan.get("nodes") or [], plan.get("edges") or []),
+        skill_stage_blockers(
+            skill_id,
+            plan.get("nodes") or [],
+            plan.get("edges") or [],
+            plan.get("external_inputs") or [],
+        ),
     )
 
 
@@ -2013,6 +2154,8 @@ def _standard_skill_items(
     include_audio: bool,
     units: list[dict[str, Any]],
     user_goal: str,
+    external_inputs: list[dict[str, Any]] | None = None,
+    image_recipe_id: str = "",
     include_unit_facts: bool = True,
     video_dependency: str = "independent",
 ) -> list[dict[str, Any]]:
@@ -2028,26 +2171,42 @@ def _standard_skill_items(
                 stage="planning",
             )
         )
-        items.append(
-            _planned_item(
-                item_id="product_reference",
-                title="商品视觉锚点",
-                prompt=f"{user_goal}，生成稳定一致的商品主体参考图",
-                recipe_id="general-image",
-                depends_on=["creative_outline"],
-                reference_inputs=["creative_outline"],
-                stage="assets",
+        external_image_ids = [
+            _text(source.get("id"))
+            for source in external_inputs or []
+            if isinstance(source, dict)
+            and source.get("media_kind") == "image"
+            and _text(source.get("id"))
+        ]
+        asset_ids = external_image_ids
+        if not asset_ids:
+            asset_ids = ["product_reference"]
+            items.append(
+                _planned_item(
+                    item_id="product_reference",
+                    title="商品视觉锚点",
+                    prompt=f"{user_goal}，生成稳定一致的商品主体参考图",
+                    recipe_id="general-image",
+                    depends_on=["creative_outline"],
+                    reference_inputs=["creative_outline"],
+                    stage="assets",
+                )
             )
-        )
         for index, unit in enumerate(units, 1):
             image_id = f"scene_{index}"
+            image_dependencies = (
+                ["creative_outline", *asset_ids] if external_image_ids else asset_ids
+            )
             items.append(
                 _planned_item(
                     item_id=image_id,
                     title=unit["title"],
                     prompt=unit["prompt"],
-                    recipe_id="ecommerce-scene-image",
-                    depends_on=["product_reference"],
+                    recipe_id=image_recipe_id or "ecommerce-scene-image",
+                    depends_on=image_dependencies,
+                    reference_inputs=(
+                        image_dependencies if external_image_ids else None
+                    ),
                     stage="images",
                 )
             )
@@ -2083,6 +2242,7 @@ def _standard_skill_items(
         return items
 
     outline_recipe = {
+        "text-to-image": "general-text",
         "text-to-image-video": "video-creative-outline",
         "video-tutorial": "general-text",
         "short-drama-quick": "drama-plot-outline",
@@ -2214,36 +2374,41 @@ def _standard_skill_items(
                     depends_on=["outline"],
                     reference_inputs=(
                         ["outline"]
-                        if skill_id in {"text-to-image-video", "video-tutorial"}
+                        if skill_id in {
+                            "text-to-image",
+                            "text-to-image-video",
+                            "video-tutorial",
+                        }
                         else None
                     ),
                     stage="images",
                 )
             )
             video_source_id = source_id
-        video_dependencies = [video_source_id]
-        if video_dependency == "sequential" and index > 1:
-            video_dependencies.append(f"clip_{index - 1}")
-        items.append(
-            _planned_item(
-                item_id=f"clip_{index}",
-                title=f"{unit['title']}视频",
-                prompt=unit["prompt"],
-                recipe_id="general-video",
-                depends_on=video_dependencies,
-                stage="video",
-                # The shot plan is what the clip renders, not a gate ahead of
-                # it: reference it so the edge is prompt_for and the runtime
-                # feeds the shot text into the video prompt (issue #677).
-                reference_inputs=(
-                    [video_source_id, source_id]
-                    if skill_id == "short-drama-quick"
-                    else None
-                ),
-                timeline_role="visual",
-                duration_seconds=unit.get("duration_seconds"),
+        if deliverable != "images":
+            video_dependencies = [video_source_id]
+            if video_dependency == "sequential" and index > 1:
+                video_dependencies.append(f"clip_{index - 1}")
+            items.append(
+                _planned_item(
+                    item_id=f"clip_{index}",
+                    title=f"{unit['title']}视频",
+                    prompt=unit["prompt"],
+                    recipe_id="general-video",
+                    depends_on=video_dependencies,
+                    stage="video",
+                    # The shot plan is what the clip renders, not a gate ahead of
+                    # it: reference it so the edge is prompt_for and the runtime
+                    # feeds the shot text into the video prompt (issue #677).
+                    reference_inputs=(
+                        [video_source_id, source_id]
+                        if skill_id == "short-drama-quick"
+                        else None
+                    ),
+                    timeline_role="visual",
+                    duration_seconds=unit.get("duration_seconds"),
+                )
             )
-        )
         if include_audio and skill_id in {"video-tutorial", "short-drama-quick"}:
             narration = _text(unit.get("narration"))
             deferred_short_drama_speech = (
@@ -2568,6 +2733,28 @@ def _expand_standard_skill_intent(
                 path="planner.video_dependency",
             ),
         )
+    image_recipe_id = _text(planner.get("image_recipe_id"))
+    if image_recipe_id:
+        image_stage = next(
+            (
+                stage
+                for stage in profile.get("stages") or []
+                if stage.get("id") == "images"
+            ),
+            {},
+        )
+        if skill_id != "ecommerce-ad" or image_recipe_id not in (
+            image_stage.get("recipes") or []
+        ):
+            return (
+                intent,
+                None,
+                _intent_error(
+                    f"planner.image_recipe_id is not supported by Skill {skill_id}: "
+                    f"{image_recipe_id}",
+                    path="planner.image_recipe_id",
+                ),
+            )
     units = _standard_planner_units(
         planner=planner,
         item_count=item_count,
@@ -2631,6 +2818,12 @@ def _expand_standard_skill_intent(
         include_audio=include_audio,
         units=units,
         user_goal=user_goal,
+        external_inputs=(
+            intent.get("external_inputs")
+            if isinstance(intent.get("external_inputs"), list)
+            else []
+        ),
+        image_recipe_id=image_recipe_id,
         include_unit_facts=include_unit_facts,
         video_dependency=video_dependency,
     )
@@ -2665,6 +2858,7 @@ def _expand_standard_skill_intent(
         "deliverable": deliverable,
         "item_count": len(units),
         "include_audio": include_audio,
+        **({"image_recipe_id": image_recipe_id} if image_recipe_id else {}),
         **(
             {"video_dependency": video_dependency}
             if video_dependency != "independent"
@@ -4015,7 +4209,13 @@ def _backfill_plan_runtime_fields(
 def _bind_recipe_audio_requirements(
     nodes: list[Any], recipes: dict[str, dict[str, Any]]
 ) -> bool:
-    """Apply trusted Recipe audio requirements to agent-authored video nodes."""
+    """Rebind cached video audio requirements to their authoritative source.
+
+    Recipe metadata wins for built-in requirements.  A dynamic intent item may
+    still opt into generated audio explicitly; the compiler preserves that item
+    under ``promptBuilder.planItem``.  Bare catalog values are only cached
+    derivatives and must not keep an obsolete Recipe requirement alive.
+    """
     changed = False
     for node in nodes:
         if not isinstance(node, dict) or node.get("node_type") != "videoNode":
@@ -4025,13 +4225,25 @@ def _bind_recipe_audio_requirements(
         if not isinstance(workflow_catalog, dict):
             continue
         recipe = recipes.get(_text(workflow_catalog.get("recipeId")))
-        if (
-            not isinstance(recipe, dict)
-            or recipe.get("requires_generated_audio") is not True
-        ):
+        if not isinstance(recipe, dict):
             continue
-        if workflow_catalog.get("requiresGeneratedAudio") is not True:
+        prompt_builder = workflow_catalog.get("promptBuilder")
+        plan_item = (
+            prompt_builder.get("planItem")
+            if isinstance(prompt_builder, dict)
+            and isinstance(prompt_builder.get("planItem"), dict)
+            else {}
+        )
+        item_requirement = plan_item.get("requires_generated_audio")
+        required = recipe.get("requires_generated_audio") is True or (
+            isinstance(item_requirement, bool) and item_requirement
+        )
+        cached_requirement = workflow_catalog.get("requiresGeneratedAudio")
+        if required and cached_requirement is not True:
             workflow_catalog["requiresGeneratedAudio"] = True
+            changed = True
+        elif not required and cached_requirement is True:
+            workflow_catalog["requiresGeneratedAudio"] = False
             changed = True
     return changed
 
