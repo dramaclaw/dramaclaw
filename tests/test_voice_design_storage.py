@@ -197,6 +197,7 @@ def test_channel_budget_spans_users_and_quota_resets_next_day(store, ctx, tmp_pa
             second["candidate_id"], channel_key="shared-channel", channel_daily_limit=1
         )
     now[0] += 86400
+    second, _ = reserve(other)
     assert other.claim(
         second["candidate_id"], channel_key="shared-channel", channel_daily_limit=1
     )
@@ -238,3 +239,71 @@ def test_runtime_ttl_configuration(ctx, tmp_path, monkeypatch):
     record, _ = reserve(store)
     completed = finish(store, record["candidate_id"])
     assert completed["expires_at"] == 1030
+
+
+def test_parent_symlink_cannot_publish_or_delete_formal_audio(store, ctx):
+    from novelvideo.audio.voice_design_storage import CandidateStorageError
+
+    record, _ = reserve(store)
+    candidate_id = record["candidate_id"]
+    store.claim(candidate_id)
+    formal = ctx.output_dir / "formal"
+    formal.mkdir(parents=True)
+    protected = formal / f"{candidate_id}.mp3"
+    protected.write_bytes(b"formal")
+    root = ctx.runtime_dir / "voice-design"
+    root.mkdir(parents=True)
+    (root / ctx.requester_user_id).symlink_to(formal, target_is_directory=True)
+    with pytest.raises(CandidateStorageError):
+        store.complete(
+            candidate_id, duration_seconds=3, sha256=sha256(b"formal").hexdigest()
+        )
+    store.mark_unknown(candidate_id)
+    with pytest.raises(CandidateStorageError):
+        store.cleanup()
+    assert protected.read_bytes() == b"formal"
+
+
+def test_unclaimed_queued_candidate_recovers_after_restart(store, ctx):
+    from novelvideo.audio.voice_design_storage import VoiceDesignStorage
+
+    store.clock = lambda: 1000
+    record, _ = reserve(store)
+    store.mark_queued(record["candidate_id"])
+    reopened = VoiceDesignStorage(
+        ctx, clock=lambda: 1000 + 86400, quota_path=store.quota_path
+    )
+    recovered = reopened.get(record["candidate_id"])
+    assert recovered["status"] == "unknown"
+    assert recovered["description"] == record["description"]
+    assert reopened.claim(record["candidate_id"]) is None
+    fresh, _ = reserve(reopened)
+    assert reopened.claim(fresh["candidate_id"])
+
+
+def test_sweep_discovers_candidates_without_requests(store):
+    from novelvideo.audio.voice_design_storage import sweep_candidates
+
+    store.clock = lambda: 1000
+    record, _ = reserve(store)
+    finish(store, record["candidate_id"])
+    path = store.output_path(record["candidate_id"])
+    sweep_candidates(quota_path=store.quota_path, clock=lambda: 4601)
+    assert not path.exists()
+
+
+def sweep_process(quota_path):
+    from novelvideo.audio.voice_design_storage import sweep_candidates
+
+    sweep_candidates(quota_path=quota_path, clock=lambda: 5000)
+    return True
+
+
+def test_multiple_cleanup_processes_are_idempotent(store):
+    store.clock = lambda: 1000
+    record, _ = reserve(store)
+    finish(store, record["candidate_id"])
+    with ProcessPoolExecutor(2) as pool:
+        assert list(pool.map(sweep_process, [store.quota_path] * 2)) == [True, True]
+    assert not store.output_path(record["candidate_id"]).exists()
+    assert store.get(record["candidate_id"])["status"] == "expired"

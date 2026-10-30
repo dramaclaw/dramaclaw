@@ -523,7 +523,7 @@ def test_real_create_replay_and_conflict(production_api):
     assert first.status_code == 202
     assert s.client.post(s.url, json=CREATE).json() == first.json()
     assert len(s.calls) == 1
-    assert s.calls[0]["scope"] == REQUEST_ID
+    assert s.calls[0]["scope"] == s.store.task_scope(REQUEST_ID)
     assert s.calls[0]["payload"]["candidate_id"] == REQUEST_ID
     changed = s.client.post(s.url, json={**CREATE, "description": "different"})
     assert changed.status_code == 409
@@ -775,3 +775,94 @@ def test_project_quote_uses_authorized_context(production_api, monkeypatch, surf
     s.ctx = replace(s.ctx, effective_role="viewer")
     assert s.client.get(url, params={"surface": surface}).status_code == 403
     assert len(seen) == 1
+
+
+def test_actual_task_manager_isolates_requester_with_same_uuid(
+    production_api, monkeypatch
+):
+    from dataclasses import replace
+    from novelvideo.task_state import TaskStateManager
+
+    manager = TaskStateManager()
+    results = []
+
+    async def enqueue(ctx, **kwargs):
+        task, reserved = manager.reserve_task_for_project(
+            ctx, kwargs["task_type"], 0, scope=kwargs["scope"], metadata={}
+        )
+        results.append((task.task_id, reserved))
+
+    monkeypatch.setattr(contract(), "enqueue_project_task", enqueue)
+    s = production_api
+    assert s.client.post(s.url, json=CREATE).status_code == 202
+    s.ctx = replace(s.ctx, requester_user_id="second-user")
+    assert s.client.post(s.url, json=CREATE).status_code == 202
+    assert [r[1] for r in results] == [True, True]
+    assert results[0][0] != results[1][0]
+
+
+def test_audio_rejects_symlink_parent(production_api):
+    s = production_api
+    path = make_ready(s)
+    parent = path.parent
+    moved = parent.with_name("formal")
+    parent.rename(moved)
+    parent.symlink_to(moved, target_is_directory=True)
+    response = s.client.get(s.url + "/" + REQUEST_ID + "/audio")
+    assert response.status_code == 500
+    assert response.json()["code"] == "candidate_persist_failed"
+    assert (moved / path.name).read_bytes() == b"0123456789"
+
+
+def test_final_app_lifespan_cleans_old_users_without_requests(
+    production_api, monkeypatch
+):
+    from importlib import import_module
+    from types import SimpleNamespace
+    from threading import Event
+    from fastapi.testclient import TestClient
+    from novelvideo.audio.voice_design_storage import sweep_candidates
+    from novelvideo.ports import registry
+    from novelvideo import sqlite_pragmas
+    from novelvideo.shared import runtime_env
+    from novelvideo.chat.director_auto import coordinator
+
+    s = production_api
+    path = make_ready(s)
+    import sqlite3
+
+    with sqlite3.connect(s.store.db_path) as db:
+        db.execute("UPDATE candidates SET expires_at=1")
+
+    async def noop(*args, **kwargs):
+        pass
+
+    original_get = registry.get_port
+    monkeypatch.setattr(registry, "ensure_bootstrap", lambda: None)
+    monkeypatch.setattr(
+        registry,
+        "get_port",
+        lambda name: (
+            SimpleNamespace(on_startup=noop, on_shutdown=noop)
+            if name == "lifecycle"
+            else original_get(name)
+        ),
+    )
+    monkeypatch.setattr(sqlite_pragmas, "litestream_enabled", lambda: False)
+    monkeypatch.setattr(runtime_env, "is_ce_effective", lambda: False)
+    monkeypatch.setattr(coordinator, "resume", noop)
+    monkeypatch.setattr(coordinator, "shutdown", noop)
+    completed = Event()
+
+    def sweep():
+        sweep_candidates(quota_path=s.store.quota_path)
+        completed.set()
+
+    monkeypatch.setattr(contract(), "sweep_candidates", sweep)
+    app = import_module("novelvideo.api.app").create_app()
+    with TestClient(app):
+        assert completed.wait(3)
+        assert not path.exists()
+        task = app.state.voice_design_cleanup
+        assert not task.done()
+    assert task.cancelled()

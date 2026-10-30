@@ -284,9 +284,9 @@ pnpm typecheck
 
 ### 3.1 候选状态与存储
 
-候选以 `(project_id, requester_id, candidate_id)` 隔离，`candidate_id` 取客户端本次生成的 `request_id`。先写入持久化操作记录，再入队，由 runner 调用网关。入队也以 candidate_id 排重；记录已落盘但尚未确认入队时，仅补投同一任务，不新建操作。同一个 request_id 和相同规范化请求只创建一次；相同 ID 换内容或来源 surface 返回 409。来源与候选一同持久化，重放与入队恢复使用已记录来源。真正的“重新生成”使用新 UUID，旧候选文件和回执不覆盖。
+候选以 `(project_id, requester_id, candidate_id)` 隔离，`candidate_id` 取客户端本次生成的 `request_id`。先写入持久化操作记录，再入队，由 runner 调用网关。入队 scope 由可信 requester ID 的 SHA256 与 candidate_id 组成，和存储的请求者隔离保持一致；记录已落盘但尚未确认入队时，仅补投同一任务，不新建操作。同一个 request_id 和相同规范化请求只创建一次；相同 ID 换内容或来源 surface 返回 409。来源与候选一同持久化，重放与入队恢复使用已记录来源。真正的“重新生成”使用新 UUID，旧候选文件和回执不覆盖。
 
-元数据存 `state_dir/voice-design/candidates.sqlite3`，媒体存 `runtime_dir/voice-design/{requester_id}/{candidate_id}.mp3`，不进入公开 static。状态为 `generating`、`ready`、`failed`、`unknown`、`expired`。只有文件写入并校验成功后才能转为 ready。数据库唯一约束和条件状态更新负责跨进程排重；worker 崩溃留下的 generating 在租约过期后转 unknown，不重新创建上游音色。
+元数据存 `state_dir/voice-design/candidates.sqlite3`，媒体存 `runtime_dir/voice-design/{requester_id}/{candidate_id}.mp3`，不进入公开 static。状态为 `generating`、`ready`、`failed`、`unknown`、`expired`。只有文件写入并校验成功后才能转为 ready。数据库唯一约束和条件状态更新负责跨进程排重；worker 崩溃留下的 generating 在租约过期后转 unknown，不重新创建上游音色。尚未 claim 的记录也持有十分钟入队期限，重启后超过期限转 unknown，保留输入供用户显式新生成，不自动重复模型调用。
 
 `ready` 的媒体不因保存而被移动或删除。保存回执独立记录 `(candidate_id, character, slot, save_request_id)`，防止保存成功后断线造成再次发布。候选 TTL 按 P1 为生成后 1 小时，与网关音色保留时长取值一致，作为配置项默认值；测试仍由配置注入，开发夹具可用任意短 TTL。两者只是取值相同：DramaClaw 的候选文件独立计时，不依赖网关句柄存活。
 
@@ -666,4 +666,5 @@ S0 验证环境为 macOS arm64、uv 管理的 Python 3.12.10。起点为
 候选数据库中的 claim 与共享配额数据库使用同一 SQLite 事务：限制请求者每日次数、渠道每日次数和请求者同时一次调用。
 共享配额位于全局 `STATE_DIR/voice-design/quota.sqlite3`；多节点上线时必须验证各节点使用同一权威配额存储，单机跨进程测试不能证明跨节点隔离配置正确。
 存储 TTL 可由 `VOICE_DESIGN_CANDIDATE_TTL_SECONDS` 配置（默认 3600，必须是有限正数）；TTL 和 lease 也可由构造参数注入；正式保存与保存回执由 S3/S6 完成，保存后须将候选排除出未保存上限。
+API router lifespan 启动时及每五分钟扫描持久登记的可信项目/请求者目录，清理不依赖该用户再次访问；应用关闭时取消后台任务。候选路径统一拒绝 runtime、候选根、请求者目录及文件的软链接，写入、试听与清理共用该边界检查。
 本片的服务/报价测试使用 S1 边界 fixture，真实 runner、可信凭据、组织目录和计费联调留给后续集成验证。

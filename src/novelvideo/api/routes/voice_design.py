@@ -4,6 +4,9 @@ from typing import Annotated, Generic, Literal, TypeVar
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 import sqlite3
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -18,6 +21,7 @@ from novelvideo.api.routes.model_credits import (
 from novelvideo.audio.voice_design_storage import (
     CandidateStorageError,
     VoiceDesignStorage,
+    sweep_candidates,
 )
 from novelvideo.project_context import (
     resolve_project_context,
@@ -371,8 +375,36 @@ class VoiceDesignRoute(APIRoute):
         return safe_handler
 
 
+CANDIDATE_SWEEP_INTERVAL = 300
+
+
+async def _cleanup_candidates_forever():
+    while True:
+        try:
+            await asyncio.to_thread(sweep_candidates)
+        except (OSError, sqlite3.Error):
+            logging.getLogger(__name__).warning("Voice design cleanup sweep failed")
+        await asyncio.sleep(CANDIDATE_SWEEP_INTERVAL)
+
+
+@asynccontextmanager
+async def candidate_lifespan(app):
+    task = asyncio.create_task(
+        _cleanup_candidates_forever(), name="voice-design-cleanup"
+    )
+    app.state.voice_design_cleanup = task
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
 router = APIRouter(
-    prefix="/projects/{project}/voice-design", route_class=VoiceDesignRoute
+    prefix="/projects/{project}/voice-design",
+    route_class=VoiceDesignRoute,
+    lifespan=candidate_lifespan,
 )
 
 
@@ -500,7 +532,7 @@ async def create_candidate(
             product_surface=_credit_product_surface(record["surface"]),
             queue_kind="default",
             episode=0,
-            scope=candidate_id,
+            scope=storage.task_scope(candidate_id),
             payload={"candidate_id": candidate_id, "billing": config.billing_params()},
         )
     except HTTPException:
