@@ -254,6 +254,12 @@ def gateway(monkeypatch, context):
 
     response = Response()
     response.payload = {}
+    response.meter = SimpleNamespace(
+        reserve_current_model_call_credit=AsyncMock(return_value=""),
+        bump_model_call=AsyncMock(),
+        refund_model_call_credit_reservation=AsyncMock(),
+    )
+    monkeypatch.setattr(service, "get_usage_meter", lambda: response.meter, raising=False)
 
     class Session:
         def __init__(self, **kwargs):
@@ -280,7 +286,13 @@ async def test_gateway_voice_enrollment_contract(
     from novelvideo.audio.voice_design_service import generate_voice_design
 
     calls, response, _ = gateway
+    # Gateway DTO normalizes Alibaba output.preview_audio.response_format to format.
     response.payload = {
+        "object": "audio.voice",
+        "id": "gateway-managed-voice",
+        "voice": "gateway-managed-voice",
+        "model": "voice-enrollment",
+        "target_model": "cosyvoice-v3.5-flash",
         "preview_audio": {
             "data": base64.b64encode(audio_bytes).decode(),
             "format": "mp3",
@@ -310,6 +322,112 @@ async def test_gateway_voice_enrollment_contract(
         "response_format": "mp3",
     }
     assert calls[0][1]["allow_redirects"] is False
+    response.meter.reserve_current_model_call_credit.assert_awaited_once_with(
+        model="voice-enrollment",
+        project_id=context.project_id,
+        resource_kind="audio",
+        billing_kind="audio",
+        metadata={"source": "voice_design"},
+    )
+    response.meter.bump_model_call.assert_awaited_once()
+    assert response.meter.bump_model_call.await_args.kwargs["credit_reservation_id"] == ""
+    response.meter.refund_model_call_credit_reservation.assert_not_awaited()
+
+
+async def test_bad_gateway_preview_finishes_observability_without_exposing_payload(
+    enabled, gateway, context, model_config, tmp_path, caplog
+):
+    import logging
+    from novelvideo.audio.voice_design_service import generate_voice_design
+
+    _, response, _ = gateway
+    response.payload = {
+        "voice": "private-voice-handle",
+        "preview_audio": {
+            "format": "wav",
+            "sample_rate": 24000,
+            "data": "private-base64-data",
+            "url": "https://private.example/audio?secret=token",
+        },
+    }
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(VoiceDesignError, match="provider_bad_audio"):
+            await generate_voice_design(
+                request={"description": "声音", "preview_text": "今天的天气很好，我们沿着河边慢慢走回家。"},
+                output_path=tmp_path / "result.mp3",
+                egress_context=context,
+                model_config=model_config,
+            )
+    response.meter.reserve_current_model_call_credit.assert_awaited_once()
+    response.meter.refund_model_call_credit_reservation.assert_awaited_once_with(
+        "", metadata={"source": "voice_design", "error": "provider_bad_audio"}
+    )
+    response.meter.bump_model_call.assert_not_awaited()
+    shape = next(record.preview_shape for record in caplog.records if hasattr(record, "preview_shape"))
+    assert shape["format"] == "wav" and shape["sample_rate"] == 24000
+    assert shape["data_length"] == len("private-base64-data")
+    assert "private" not in str(shape) and "private" not in caplog.text
+
+
+async def test_meter_reservation_failure_prevents_provider_request(
+    enabled, gateway, context, model_config, tmp_path
+):
+    from novelvideo.audio.voice_design_service import generate_voice_design
+
+    calls, response, _ = gateway
+    response.meter.reserve_current_model_call_credit.side_effect = RuntimeError("billing unavailable")
+    with pytest.raises(VoiceDesignError, match="provider_unavailable"):
+        await generate_voice_design(
+            request={"description": "声音", "preview_text": "今天的天气很好，我们沿着河边慢慢走回家。"},
+            output_path=tmp_path / "result.mp3",
+            egress_context=context,
+            model_config=model_config,
+        )
+    assert calls == []
+    response.meter.refund_model_call_credit_reservation.assert_not_awaited()
+
+
+async def test_cancelled_preview_finishes_model_call_observation(
+    enabled, gateway, context, model_config, tmp_path, monkeypatch
+):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from novelvideo.audio import voice_design_service as service
+
+    _, response, _ = gateway
+    monkeypatch.setattr(service, "persist_preview", AsyncMock(side_effect=asyncio.CancelledError))
+    with pytest.raises(asyncio.CancelledError):
+        await service.generate_voice_design(
+            request={"description": "声音", "preview_text": "今天的天气很好，我们沿着河边慢慢走回家。"},
+            output_path=tmp_path / "result.mp3",
+            egress_context=context,
+            model_config=model_config,
+        )
+    response.meter.refund_model_call_credit_reservation.assert_awaited_once_with(
+        "", metadata={"source": "voice_design", "error": "generation_unknown"}
+    )
+    response.meter.bump_model_call.assert_not_awaited()
+
+
+@pytest.mark.parametrize("preview", [None, {"format": "secret-value", "sample_rate": "secret-value", "data": "private"}])
+async def test_preview_shape_never_logs_untrusted_scalar_values(
+    preview, enabled, gateway, context, model_config, tmp_path, caplog
+):
+    import logging
+    from novelvideo.audio.voice_design_service import generate_voice_design
+
+    _, response, _ = gateway
+    response.payload = {"preview_audio": preview, "secret-value": "private"}
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(VoiceDesignError, match="provider_bad_audio"):
+            await generate_voice_design(
+                request={"description": "声音", "preview_text": "今天的天气很好，我们沿着河边慢慢走回家。"},
+                output_path=tmp_path / "result.mp3",
+                egress_context=context,
+                model_config=model_config,
+            )
+    assert "preview shape" in caplog.text
+    assert "secret-value" not in caplog.text and "private" not in caplog.text
 
 
 async def test_unknown_generation_is_not_resubmitted(

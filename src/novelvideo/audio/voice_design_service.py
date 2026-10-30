@@ -8,6 +8,7 @@ import binascii
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -28,11 +29,57 @@ from novelvideo.generators.tts_generator import (
     resolve_audio_gateway_credential,
 )
 from novelvideo.media_model_request_schema import validate_media_model_catalog_config
-from novelvideo.ports import get_credit_quote, get_model_credentials
+from novelvideo.ports import get_credit_quote, get_model_credentials, get_usage_meter
+from novelvideo.ports.usage import UsageMeter
 from novelvideo.project_context import ProjectContext
 from novelvideo.ports.registry import PortNotRegistered, get_port
 
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
+logger = logging.getLogger(__name__)
+
+
+def _log_preview_shape(payload: dict) -> None:
+    preview = payload.get("preview_audio")
+    shape = {
+        "preview_type": type(preview).__name__,
+        "field_types": {
+            field: type(payload[field]).__name__
+            for field in ("preview_audio", "output", "data", "error", "code", "message")
+            if field in payload
+        },
+    }
+    if isinstance(preview, dict):
+        audio_format = preview.get("format")
+        sample_rate = preview.get("sample_rate")
+        shape.update(
+            format=audio_format if audio_format in ("mp3", "wav", "pcm", "opus") else "unsupported",
+            format_type=type(audio_format).__name__,
+            sample_rate=sample_rate if type(sample_rate) is int else None,
+            sample_rate_type=type(sample_rate).__name__,
+            data_type=type(preview.get("data")).__name__,
+            data_length=len(preview["data"]) if isinstance(preview.get("data"), str) else 0,
+            url_type=type(preview.get("url")).__name__,
+        )
+    logger.info("Voice design preview shape: %s", shape, extra={"preview_shape": shape})
+
+
+async def _finish_model_call(
+    meter: UsageMeter, reservation_id: str, *, model: str, error: str = ""
+) -> None:
+    try:
+        if error:
+            await meter.refund_model_call_credit_reservation(
+                reservation_id, metadata={"source": "voice_design", "error": error}
+            )
+        else:
+            await meter.bump_model_call(
+                user_id=None,
+                model=model,
+                credit_reservation_id=reservation_id,
+                metadata={"source": "voice_design"},
+            )
+    except Exception:
+        logger.warning("Voice design model-call observation could not be completed")
 
 
 class VoiceDesignError(RuntimeError):
@@ -413,7 +460,18 @@ async def generate_voice_design(
         if lease is not None:
             await reject_audio_operation(lease)
         raise VoiceDesignError("voice_design_forbidden") from None
+    meter = get_usage_meter()
+    reservation_id = ""
+    call_reserved = False
     try:
+        reservation_id = await meter.reserve_current_model_call_credit(
+            model=model_config.model,
+            project_id=egress_context.project_id,
+            resource_kind="audio",
+            billing_kind="audio",
+            metadata={"source": "voice_design"},
+        )
+        call_reserved = True
         async with asyncio.timeout(90):
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=90)
@@ -440,17 +498,30 @@ async def generate_voice_design(
                     payload = json.loads(raw)
                     if not isinstance(payload, dict):
                         raise VoiceDesignError("provider_bad_audio")
+                    _log_preview_shape(payload)
             audio = await persist_preview(payload, output_path)
         if lease is not None:
             await complete_audio_operation(
                 lease, result_ref=f"voice-design:{audio.sha256}"
             )
+        await _finish_model_call(meter, reservation_id, model=model_config.model)
         return audio
     except asyncio.CancelledError:
+        if call_reserved:
+            await _finish_model_call(
+                meter, reservation_id, model=model_config.model, error="generation_unknown"
+            )
         if lease is not None:
             await mark_audio_operation_unknown(lease)
         raise
     except Exception as exc:
+        if call_reserved:
+            await _finish_model_call(
+                meter,
+                reservation_id,
+                model=model_config.model,
+                error=exc.code if isinstance(exc, VoiceDesignError) else "generation_unknown",
+            )
         if lease is not None:
             await mark_audio_operation_unknown(lease)
         if isinstance(exc, (TimeoutError, aiohttp.ClientError)):
