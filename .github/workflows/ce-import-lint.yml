@@ -7,7 +7,14 @@ name: ce-import-lint
 
 on:
   push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
+
+# Keep main/tag checks reusable; only superseded PR checks are cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

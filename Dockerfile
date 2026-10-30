@@ -32,6 +32,7 @@ ENV ST_EDITION=ce \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    UV_CACHE_DIR=/root/.cache/uv \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     DRAMACLAW_CHAT_BACKEND=codex \
     CODEX_BIN=/usr/local/bin/codex-dramaclaw
@@ -60,7 +61,29 @@ RUN set -eux; \
     test "$(codex-dramaclaw --version)" = "codex-cli ${CODEX_VERSION}"
 
 WORKDIR /app
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock ./
+
+# Cache dependency installation independently of application changes. uv's
+# download/build cache belongs to BuildKit, not the distributed image.
+ARG INSTALL_WORLD=0
+RUN --mount=type=cache,id=dramaclaw-uv-${TARGETARCH},target=/root/.cache/uv,sharing=locked \
+    set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends git; \
+    if [ "$INSTALL_WORLD" = "1" ]; then \
+        apt-get install -y --no-install-recommends nodejs npm; \
+        npm install -g @playcanvas/splat-transform; \
+        uv sync --frozen --no-dev --extra world --no-install-project \
+          --no-install-package openai-codex-cli-bin; \
+    else \
+        uv sync --frozen --no-dev --no-install-project \
+          --no-install-package openai-codex-cli-bin; \
+    fi; \
+    apt-get purge -y git; \
+    apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/*
+
+COPY README.md ./
 # license 正文按 REUSE 惯例只存于 LICENSES/(pyproject license-files 指向它),
 # hatchling 构建 wheel 时需要这份文件在上下文中。
 COPY LICENSES ./LICENSES
@@ -90,17 +113,13 @@ RUN test -f src/novelvideo/assets/login_bgm.mp3 \
 #     + 化解 da2 torch 冲突,与 host `uv sync --extra world` 完全一致)
 # 模型权重不烤进镜像:运行时自动下载到可写卷(Apple 研究许可,绝不再分发)。
 # 注:slim base 为 CPU;GPU 加速需 CUDA base + nvidia runtime。
-ARG INSTALL_WORLD=0
 # The SDK declares its stock runtime as a dependency. Remove that unused
 # binary so an operator cannot bypass CODEX_BIN and re-enable metadata logs.
-# uv.lock contains the pinned Codex Python SDK as a Git source. Keep git in
-# this build layer only; it is not needed by the running application.
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends git; \
+# Git-backed dependencies were installed in the cached layer above. The
+# application sync below keeps the same frozen graph and editable layout.
+RUN --mount=type=cache,id=dramaclaw-uv-${TARGETARCH},target=/root/.cache/uv,sharing=locked \
+    set -eux; \
     if [ "$INSTALL_WORLD" = "1" ]; then \
-        apt-get install -y --no-install-recommends nodejs npm; \
-        npm install -g @playcanvas/splat-transform; \
         uv sync --frozen --no-dev --extra world \
           --no-install-package openai-codex-cli-bin; \
     else \
@@ -108,10 +127,7 @@ RUN set -eux; \
           --no-install-package openai-codex-cli-bin; \
     fi; \
     /app/.venv/bin/python -m novelvideo.ladybug_json_extension; \
-    mkdir -p /data; \
-    apt-get purge -y git; \
-    apt-get autoremove -y; \
-    rm -rf /var/lib/apt/lists/*
+    mkdir -p /data
 
 ENV PATH="/app/.venv/bin:/usr/local/bin:$PATH"
 

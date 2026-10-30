@@ -517,3 +517,24 @@ We continuously curate and label [`good first issue`](https://github.com/dramacl
 ## Notices
 
 See `NOTICE` for required branding and third-party attribution notices.
+
+
+## Release image CI (maintainers)
+
+Build the release tag once with `release-images` (`push_latest=false`). Both
+architectures are required. Complete Compose packaging before publishing the
+release: the packaging workflow attaches `release-image-acceptance.json` only
+after its entire Compose job passes, including real chat, retained-data recovery
+and rotating-credential checks. The published-release event validates that
+receipt publisher and GitHub asset hash, the source/version labels and both
+platform digests, then updates
+`latest` using the accepted indexes. Missing or inconsistent acceptance fails
+closed; publication does not rebuild different bytes.
+
+`candidate_only=true` builds the workflow commit under an isolated
+`ci-<source SHA>-<run ID>` image tag. Pair it with the packaging workflow's
+Compose dry-run, exact `ce_ref` and `candidate_image_tag` for performance tests.
+`scripts/promote_release_images.py --benchmark` promotes only an isolated
+`-promoted` alias and refuses `--latest`. Ordinary PR checks retain the merge
+checkout; only main/version-tag pushes run in addition to PR checks, and only
+superseded PR runs are cancelled.
