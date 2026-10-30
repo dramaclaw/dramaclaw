@@ -50,14 +50,18 @@ from novelvideo.chat.turn_images import referenced_image_paths
 from novelvideo.freezone.canvas_command_bridge import (
     BRIDGE_PENDING_TTL_SECONDS,
     bridge_message_exists,
+    claim_legacy_bridge_message,
+    expire_bridge_messages,
     list_pending_bridge_messages,
     mark_bridge_message_delivered,
     read_bridge_message,
+    read_bridge_snapshot,
     resolve_clarification_result,
     resolve_canvas_command,
     resolve_canvas_context,
     resolve_skill_studio_result,
 )
+from novelvideo.freezone.canvas_command_watch import bridge_watch_hub
 from novelvideo.freezone.agent_config_store import save_user_agent_config_item
 from novelvideo.freezone.agent_product_operations import AGENT_PRODUCT_PRICE_REFERENCE
 from novelvideo.ports import get_product_surface_access, get_usage_meter
@@ -2503,10 +2507,15 @@ def _load_pending_canvas_command(path: Any) -> dict[str, Any] | None:
         }
     if not isinstance(envelope.get("commands"), list) or not envelope.get("commands"):
         return None
+    try:
+        created_at = float(payload.get("created_at", path.stat().st_mtime))
+    except (TypeError, ValueError, OSError):
+        return None
     return {
         "key": str(payload.get("key") or path.name.removesuffix(".pending.json")),
         "project_id": payload.get("project_id"),
         "canvas_id": payload.get("canvas_id") or envelope.get("canvas_id"),
+        "created_at": created_at,
         "envelope": envelope,
     }
 
@@ -2532,6 +2541,16 @@ async def list_pending_canvas_commands(
         raise HTTPException(status_code=400, detail="canvas_id is required")
 
     project_state_dir = await _bridge_project_state_dir(user, payload)
+    return await bridge_watch_hub().run(
+        _collect_pending_canvas_commands, payload, username, project_state_dir
+    )
+
+
+def _collect_pending_canvas_commands(
+    payload, username, project_state_dir, consumer_id=None, hub=None
+):
+    project_id = payload.project_id.strip()
+    canvas_id = payload.canvas_id.strip()
     requested_agent_ids = [
         str(value).strip() for value in payload.agent_ids if str(value).strip()
     ]
@@ -2559,12 +2578,24 @@ async def list_pending_canvas_commands(
             bridge_targets.append((agent_id, bridge_dir))
     for agent_id, bridge_dir in bridge_targets:
         try:
-            durable_pending = list_pending_bridge_messages(
-                project_id=project_id,
-                canvas_id=canvas_id,
-                kinds={"canvas_command"},
-                limit=10,
-                bridge_dir=bridge_dir,
+            if hub is None:
+                rows = read_bridge_snapshot(bridge_dir)
+                if any(
+                    row["created_at"] + BRIDGE_PENDING_TTL_SECONDS.get(row["kind"], 600)
+                    <= time.time()
+                    for row in rows
+                ):
+                    expire_bridge_messages(bridge_dir)
+            durable_pending = (
+                hub.pending(bridge_dir, project_id, canvas_id, {"canvas_command"})
+                if hub
+                else list_pending_bridge_messages(
+                    project_id=project_id,
+                    canvas_id=canvas_id,
+                    kinds={"canvas_command"},
+                    limit=10,
+                    bridge_dir=bridge_dir,
+                )
             )
         except Exception:
             durable_pending = []
@@ -2579,7 +2610,7 @@ async def list_pending_canvas_commands(
                 continue
             if not mark_bridge_message_delivered(
                 key,
-                consumer_id=f"poll:{username}:{agent_id}",
+                consumer_id=consumer_id or f"poll:{username}:{agent_id}",
                 bridge_dir=bridge_dir,
             ):
                 continue
@@ -2599,9 +2630,13 @@ async def list_pending_canvas_commands(
             if len(frames) >= 10:
                 return {"ok": True, "data": {"frames": frames}}
         try:
-            pending_paths = sorted(
-                bridge_dir.glob("*.pending.json"),
-                key=lambda item: item.stat().st_mtime,
+            pending_paths = (
+                hub.legacy_paths(bridge_dir)
+                if hub
+                else sorted(
+                    bridge_dir.glob("*.pending.json"),
+                    key=lambda item: item.stat().st_mtime,
+                )
             )
         except Exception:
             continue
@@ -2635,6 +2670,18 @@ async def list_pending_canvas_commands(
             # The canvas UI consumes bridge frames through the same approval
             # path as websocket commands. Dedupe is handled by seen_keys.
             if not _pending_canvas_command_allows_external_poll(envelope):
+                continue
+            legacy_scope = ChatScope(kind="project", id=project_id, surface="freezone", canvas_id=canvas_id)
+            if _resolve_stale_pending_canvas_command(
+                bridge_dir=bridge_dir, path=path, key=key, pending=pending,
+                scope=legacy_scope, turn_id=str(envelope.get("turn_id") or f"external-agent:{key}"),
+            ):
+                continue
+            if not claim_legacy_bridge_message(
+                key, {**pending, "project_id": project_id, "canvas_id": canvas_id},
+                kind="canvas_command", consumer_id=consumer_id or f"poll:{username}:{agent_id}",
+                bridge_dir=bridge_dir,
+            ):
                 continue
             frames.append(
                 {

@@ -650,6 +650,7 @@ def _put_pending_bridge_message(
     payload: dict[str, Any],
     request_fingerprint: str | None = None,
     terminal_result: dict[str, Any] | None = None,
+    created_at: float | None = None,
     bridge_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
     now = time.time()
@@ -718,12 +719,31 @@ def _put_pending_bridge_message(
                 canvas_id,
                 request_fingerprint,
                 _canonical_json(payload),
-                now,
+                now if created_at is None else created_at,
                 now,
                 now + BRIDGE_RESULT_TTL_SECONDS,
             ),
         )
     return None
+
+
+def claim_legacy_bridge_message(key, payload, *, kind, consumer_id, bridge_dir=None):
+    """Import an old JSON message before claiming, preserving its business age."""
+    with _key_lock(key, bridge_dir):
+        result = _read_json(_path("result", key, bridge_dir))
+        _put_pending_bridge_message(
+            key=key,
+            kind=kind,
+            project_id=payload.get("project_id"),
+            canvas_id=payload.get("canvas_id"),
+            payload=payload,
+            created_at=payload.get("created_at"),
+            terminal_result=result,
+            bridge_dir=bridge_dir,
+        )
+        return mark_bridge_message_delivered(
+            key, consumer_id=consumer_id, bridge_dir=bridge_dir
+        )
 
 
 def _read_durable_bridge_result(
