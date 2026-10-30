@@ -1305,6 +1305,7 @@ frontend/src/__tests__/features/previz/view.test.ts,Elastic-2.0,2026 SuperTale c
 frontend/src/__tests__/features/published-story-page.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/rewards/reward-events-store.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/story-publication-panel.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/superchat/background-workflow-notifications.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/superchat/canvas-command-flow.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/superchat/chat-task-status-bar.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/superchat/composer-waiting-status.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2683,6 +2684,7 @@ frontend/src/features/superchat/task-notification-batch.ts,Elastic-2.0,2026 Supe
 frontend/src/features/superchat/task-notification-label.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/superchat/timeline-scroll.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/superchat/types.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/superchat/use-background-workflow-notifications.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/superchat/use-superchat.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/version-update/VersionUpdateDialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/version-update/version-update-events.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

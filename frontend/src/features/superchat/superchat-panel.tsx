@@ -11210,6 +11210,8 @@ type CanvasCommandPlan = {
   type: CanvasChatCommand["type"];
   label: string;
   primary?: string;
+  nodeId?: string;
+  action?: string;
   details: string[];
   destructive?: boolean;
 };
@@ -11673,6 +11675,9 @@ function canvasCommandPlansFromEnvelopes(envelopes: CanvasChatCommandEnvelope[] 
         type: command.type,
         label: canvasCommandPlanLabel(command),
         primary: canvasCommandPlanPrimary(command),
+        ...(command.type === "run_node_action"
+          ? { nodeId: command.node_id, action: command.action }
+          : {}),
         details: canvasCommandPlanDetails(command),
         destructive: canvasCommandIsDestructive(command),
       });
@@ -11681,6 +11686,8 @@ function canvasCommandPlansFromEnvelopes(envelopes: CanvasChatCommandEnvelope[] 
   }
   return plans;
 }
+
+export const canvasCommandPlansFromEnvelopesForTest = canvasCommandPlansFromEnvelopes;
 
 function backgroundCanvasCommandPendingResult(
   plans: CanvasCommandPlan[],
@@ -11699,6 +11706,8 @@ function backgroundCanvasCommandPendingResult(
       type: plan.type,
       status: "pending",
       label: plan.label,
+      ...(plan.nodeId ? { nodeId: plan.nodeId } : {}),
+      ...(plan.action ? { action: plan.action } : {}),
       output: {
         pending: true,
         reason: "background_generation_running",
@@ -11722,21 +11731,36 @@ function canvasCommandResultFromWorkflowRun(
       : run.status === "interrupted"
         ? t("freezone.chat.backgroundGenerationInterrupted")
         : null;
+  const commands = feedback.envelopes?.flatMap((envelope) => envelope.commands) ?? [];
   const commandResults = (feedback.commandResults ?? []).map((step): CanvasChatCommandApplyStep => {
     if (step.status !== "pending") return step as CanvasChatCommandApplyStep;
-    const action = step.nodeId
-      ? run.actions.find((item) => item.node_id === step.nodeId && (!step.action || item.action === step.action))
+    // Older pending receipts omitted identity, but retained the original commands
+    // and display plans. Never infer identity from the server's action order.
+    const command = commands[step.commandIndex];
+    const plan = feedback.plans?.find((item) => item.index === step.commandIndex);
+    const nodeId = step.nodeId
+      || (command?.type === "run_node_action" ? command.node_id : undefined)
+      || plan?.nodeId
+      || (step.type === "run_node_action" ? plan?.primary : undefined);
+    const actionName = step.action
+      || (command?.type === "run_node_action" ? command.action : undefined)
+      || plan?.action
+      || plan?.details.find((detail) => detail.startsWith("动作："))?.slice("动作：".length);
+    const action = nodeId
+      ? run.actions.find((item) => item.node_id === nodeId && (!actionName || item.action === actionName))
       : undefined;
     const actionSucceeded = action?.status === "completed" || action?.status === "skipped";
-    const failedAction = run.actions.find((item) => item.status === "failed");
+    const failedAction = step.type === "run_workflow"
+      ? run.actions.find((item) => item.status === "failed")
+      : undefined;
     const actionError = action?.user_error || action?.error
       || failedAction?.user_error || failedAction?.error || terminalError || undefined;
     return {
       ...step,
       type: step.type as CanvasChatCommandApplyStep["type"],
       status: actionSucceeded || run.status === "completed" ? "success" : "error",
-      ...(action?.node_id ? { nodeId: action.node_id } : {}),
-      ...(action?.action ? { action: action.action } : {}),
+      ...(nodeId ? { nodeId } : {}),
+      ...(actionName ? { action: actionName } : {}),
       error: actionSucceeded || run.status === "completed" ? undefined : actionError,
       output: {
         workflow_run_id: run.run_id,

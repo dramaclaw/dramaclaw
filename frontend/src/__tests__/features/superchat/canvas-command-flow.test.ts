@@ -5,6 +5,7 @@ import {
   backgroundCanvasCommandPendingResultForTest,
   buildCanvasCommandFlowItemsForTest,
   canvasCommandResultFromWorkflowRunForTest,
+  canvasCommandPlansFromEnvelopesForTest,
   canvasCommandFeedbackNeedsRecoveryForTest,
   canvasCommandFeedbackVisualToneForTest,
   canvasCommandFeedbackIsValidationOnlyForTest,
@@ -49,6 +50,56 @@ describe("assistant success summary", () => {
 });
 
 describe("background canvas generation status", () => {
+  it.each(["current", "legacy envelopes", "legacy plans"])(
+    "restores mixed results from a persisted pending receipt (%s)", (format) => {
+      const envelopes = [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "create_node" as const, node_type: "imageGenNode" as const },
+          { type: "run_node_action" as const, node_id: "a", action: "generate_image" as const },
+          { type: "run_node_action" as const, node_id: "b", action: "generate_image" as const },
+          { type: "run_node_action" as const, node_id: "a", action: "generate_video" as const },
+        ],
+      }];
+      const plans = canvasCommandPlansFromEnvelopesForTest(envelopes);
+      const pending = backgroundCanvasCommandPendingResultForTest(plans, "run");
+      expect(pending.commandResults[0]).toMatchObject({
+        commandIndex: 1, nodeId: "a", action: "generate_image", status: "pending",
+      });
+      // JSON round-trip models saving the initial receipt and reloading history.
+      const feedback = JSON.parse(JSON.stringify({
+        ...pending, key: "bridge:run", plans, envelopes,
+      }));
+      if (format !== "current") {
+        for (const step of feedback.commandResults) {
+          delete step.nodeId;
+          delete step.action;
+        }
+        for (const plan of feedback.plans) {
+          delete plan.nodeId;
+          delete plan.action;
+        }
+        if (format === "legacy plans") delete feedback.envelopes;
+      }
+      const result = canvasCommandResultFromWorkflowRunForTest(feedback, {
+        schema_version: "freezone_workflow_run.v1", run_id: "run", project_id: "p", canvas_id: "c",
+        status: "failed", resumable: true, created_at: "now", started_at: "now", updated_at: "now",
+        actions: [
+          { node_id: "b", action: "generate_image", status: "failed", user_error: "B 失败" },
+          { node_id: "a", action: "generate_video", status: "failed", user_error: "视频失败" },
+          { node_id: "a", action: "generate_image", status: "completed" },
+        ],
+      }, zhT as never);
+      expect(result.commandResults.map((step) => [step.nodeId, step.action, step.status, step.error]))
+        .toEqual([
+          ["a", "generate_image", "success", undefined],
+          ["b", "generate_image", "error", "B 失败"],
+          ["a", "generate_video", "error", "视频失败"],
+        ]);
+      expect(result.errors).toEqual(["B 失败", "视频失败"]);
+    },
+  );
+
   it("stops recovery when a terminal live receipt supersedes a pending turn-id alias", () => {
     const pending = {
       key: "bridge:images", workflowRunId: "run-images",
