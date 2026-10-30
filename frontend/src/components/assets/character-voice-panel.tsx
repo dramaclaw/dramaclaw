@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -8,6 +10,7 @@ import {
   Loader2,
   Mic,
   Scissors,
+  Sparkles,
   Square,
   Trash2,
   Upload,
@@ -15,12 +18,15 @@ import {
 } from "lucide-react";
 
 import {
+  useSaveGeneratedCharacterVoice,
   useCharacterVoiceSamples,
   useDeleteCharacterVoiceSample,
   useRecordCharacterVoiceSample,
   useTrimCharacterVoiceSample,
   useUploadCharacterVoiceSample,
 } from "@/lib/queries/characters";
+import { VoiceDesignDialog } from "@/components/assets/voice-design-dialog";
+import { useVoiceDesignQuote } from "@/lib/queries/voice-design";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -137,6 +143,23 @@ export function CharacterVoicePanel({
   const trimVoice = useTrimCharacterVoiceSample(project, character.name);
   const deleteVoice = useDeleteCharacterVoiceSample(project, character.name);
 
+  const queryClient = useQueryClient();
+  const designQuote = useVoiceDesignQuote(project, "supertale");
+  const saveGenerated = useSaveGeneratedCharacterVoice(project, character.name);
+  const [designSlot, setDesignSlot] = useState<CharacterVoiceSlot | null>(null);
+  const [designOpen, setDesignOpen] = useState(false);
+  const designTrigger = useRef<HTMLElement | null>(null);
+  const designOwner = useRef({ project, name: character.name });
+  useEffect(() => {
+    if (
+      designOwner.current.project !== project ||
+      designOwner.current.name !== character.name
+    ) {
+      setDesignOpen(false);
+      setDesignSlot(null);
+      designOwner.current = { project, name: character.name };
+    }
+  }, [project, character.name]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadSlotRef = useRef<string>("default");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -423,6 +446,10 @@ export function CharacterVoicePanel({
             const audioSrc = resolveMediaUrl(actionSlot.url);
             const slotId = String(actionSlot.slot);
             const duration = slotDurations[slotId];
+            const canGenerate = Boolean(designQuote.data && !designQuote.isError);
+            const hasDraft = Boolean(queryClient.getQueryData(queryKeys.voiceDesignDraft(
+              project, "supertale", `character:${JSON.stringify([character.name, actionSlot.slot])}`,
+            )));
             return (
               <div
                 key={`${displaySlot}:${slotId}`}
@@ -491,6 +518,20 @@ export function CharacterVoicePanel({
                 </div>
 
                 <div className="flex items-center gap-1 shrink-0">
+                  {(canGenerate || hasDraft) && (
+                    <VoiceActionButton
+                      label={t(canGenerate ? "voiceDesign.entry" : "voiceDesign.resume")}
+                      icon={<Sparkles className="size-3.5" />}
+                      disabled={pending}
+                      onClick={() => {
+                        designTrigger.current = document.activeElement instanceof HTMLElement
+                          ? document.activeElement
+                          : null;
+                        setDesignSlot(actionSlot);
+                        setDesignOpen(true);
+                      }}
+                    />
+                  )}
                   <VoiceActionButton
                     label={t("characters.voiceSamples.upload")}
                     icon={<Upload className="size-3.5" />}
@@ -528,6 +569,41 @@ export function CharacterVoicePanel({
             );
           })}
         </div>
+      )}
+
+      {designSlot && designOwner.current.project === project && designOwner.current.name === character.name && (
+        <VoiceDesignDialog
+          project={project}
+          surface="supertale"
+          open={designOpen}
+          onOpenChange={(open) => {
+            setDesignOpen(open);
+            if (!open) requestAnimationFrame(() => designTrigger.current?.focus());
+          }}
+          target={{
+            kind: "character",
+            key: JSON.stringify([character.name, designSlot.slot]),
+            label: `${character.name} · ${designSlot.label}`,
+            saveLabel: t("voiceDesign.saveSlot", { slot: designSlot.label }),
+            expectedSlot: {
+              path: designSlot.path,
+              sha256: designSlot.sha256,
+              updated_at: designSlot.updated_at,
+            },
+            onSave: (input) => saveGenerated.mutateAsync({
+              ...input, slot: String(designSlot.slot),
+            }),
+            onRefresh: async () => {
+              const result = await samples.refetch();
+              if (result.error) throw result.error;
+              const refreshed = result.data?.data?.slots.find(
+                slot => slot.slot === designSlot.slot,
+              );
+              if (!refreshed) throw new Error(t("characters.voiceSamples.loadFailed"));
+              setDesignSlot(refreshed);
+            },
+          }}
+        />
       )}
 
       <input
