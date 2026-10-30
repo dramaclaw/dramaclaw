@@ -284,7 +284,7 @@ pnpm typecheck
 
 ### 3.1 候选状态与存储
 
-候选以 `(project_id, requester_id, candidate_id)` 隔离，`candidate_id` 取客户端本次生成的 `request_id`。先写入持久化操作记录，再入队，由 runner 调用网关。入队也以 candidate_id 排重；记录已落盘但尚未确认入队时，仅补投同一任务，不新建操作。同一个 request_id 和相同规范化请求只创建一次；相同 ID 换内容返回 409。真正的“重新生成”使用新 UUID，旧候选文件和回执不覆盖。
+候选以 `(project_id, requester_id, candidate_id)` 隔离，`candidate_id` 取客户端本次生成的 `request_id`。先写入持久化操作记录，再入队，由 runner 调用网关。入队也以 candidate_id 排重；记录已落盘但尚未确认入队时，仅补投同一任务，不新建操作。同一个 request_id 和相同规范化请求只创建一次；相同 ID 换内容或来源 surface 返回 409。来源与候选一同持久化，重放与入队恢复使用已记录来源。真正的“重新生成”使用新 UUID，旧候选文件和回执不覆盖。
 
 元数据存 `state_dir/voice-design/candidates.sqlite3`，媒体存 `runtime_dir/voice-design/{requester_id}/{candidate_id}.mp3`，不进入公开 static。状态为 `generating`、`ready`、`failed`、`unknown`、`expired`。只有文件写入并校验成功后才能转为 ready。数据库唯一约束和条件状态更新负责跨进程排重；worker 崩溃留下的 generating 在租约过期后转 unknown，不重新创建上游音色。
 
@@ -300,13 +300,14 @@ Content-Type: application/json
 ```json
 {
 	"request_id": "178727cd-e421-451c-87e7-68779d72a8ec",
+	"surface": "supertale",
 	"description": "六十岁左右的男人，嗓子有点沙，说话慢",
 	"preview_text": "今天的天气很好，我们沿着河边慢慢走回家。",
 	"language": "zh"
 }
 ```
 
-必填 `request_id`、`description`、`preview_text`；`language` 默认 `zh`，枚举 `zh|en`；首期部署只开放 `zh`（P4 测试值）。描述去首尾空白后 1～500 字符；试听文本去首尾空白后 15～60 字符；上限为配置项，默认 60，不得超过供应商的 200。未知字段拒绝，模型由服务端配置；前端展示文本长度但不将模型 Key 暴露为表单项。
+必填 `request_id`、`surface`、`description`、`preview_text`；`surface` 只接受现有入口 `supertale|canvas`，分别沿用 `mainline|freezone` 计费归属，不新增产品分类，不传给模型。`language` 默认 `zh`，枚举 `zh|en`；首期部署只开放 `zh`（P4 测试值）。描述去首尾空白后 1～500 字符；试听文本去首尾空白后 15～60 字符；上限为配置项，默认 60，不得超过供应商的 200。未知字段拒绝，模型由服务端配置；前端展示文本长度但不将模型 Key 暴露为表单项。
 
 生成权限为项目 editor，先校验再入队。首次接收及同请求仍 generating 时 HTTP 202，返回 `{ok:true,data:{candidate_id,status:"generating"}}`；同请求已 ready 时 HTTP 200，返回同一候选。客户端用候选 ID 查询，不依赖任务系统的内部状态结构。生成完成后的查询响应：
 
@@ -332,6 +333,12 @@ Content-Type: application/json
 `GET /api/v1/projects/{project}/voice-design/candidates/{candidate_id}` 只读查询同一请求者的候选，HTTP 200。ready 使用上述 data；generating 仅返回 ID 与状态；failed、unknown 返回 ID、状态及 `failure:{code,message,retryable}`。已知过期返回 HTTP 410；未知或其他请求者的 ID 均返回 404。
 
 生成失败沿用第 3.5 节错误体。客户端超时后按 request_id 查询，不能自动创建新候选。unknown 的重试按钮明确发起一次新生成；failed 若属于输入或余额错误，先修复原因。编辑过表单后不让迟到响应覆盖新内容，只更新对应 candidate_id。
+
+生成前报价使用 `GET /api/v1/projects/{project}/voice-design/quote?surface=supertale|canvas`。
+`surface` 必填；项目 editor 鉴权后，使用服务端解析的项目上下文查询实际项目/组织有效模型和价格。
+成功响应为 `{ok:true,data:{cost:1,display:"1",unit:"call",quantity:1}}`（数字仅为测试示例）。
+失败沿用第 3.5 节错误体；不接受客户端组织、模型或配置快照，不通过无项目的通用报价推断组织价格。
+报价和生成都沿用既有 surface 映射及 `audio.voice_design` 计费功能，不参加促销。
 
 ### 3.3 试听
 
@@ -651,3 +658,12 @@ S0 验证环境为 macOS arm64、uv 管理的 Python 3.12.10。起点为
 `novelvideo.api.routes.voice_design` 模块缺失。实现后同命令通过；交审前再次执行
 该测试、两个新增 Python 文件的 Ruff 检查及 `git diff --check`。
 最终测试数量和完整提交 SHA 由交审回报记录，不把未发生的 Git SHA 写入本文。
+
+### S2 候选生命周期接口补充（2026-10-30）
+
+创建契约新增必填 `surface`，错误详情字段白名单同步包含 `surface`；已有 S0 状态及成功响应保持不变。
+存储与试听使用项目私有 state/runtime，未保存候选最多五个，ready 后一小时过期。
+候选数据库中的 claim 与共享配额数据库使用同一 SQLite 事务：限制请求者每日次数、渠道每日次数和请求者同时一次调用。
+共享配额位于全局 `STATE_DIR/voice-design/quota.sqlite3`；多节点上线时必须验证各节点使用同一权威配额存储，单机跨进程测试不能证明跨节点隔离配置正确。
+存储 TTL 可由 `VOICE_DESIGN_CANDIDATE_TTL_SECONDS` 配置（默认 3600，必须是有限正数）；TTL 和 lease 也可由构造参数注入；正式保存与保存回执由 S3/S6 完成，保存后须将候选排除出未保存上限。
+本片的服务/报价测试使用 S1 边界 fixture，真实 runner、可信凭据、组织目录和计费联调留给后续集成验证。

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 REQUEST_ID = "178727cd-e421-451c-87e7-68779d72a8ec"
 SAVE_ID = "ca8fd0be-a220-4de4-bf4e-8d430788b698"
 CREATE = {
+    "surface": "supertale",
     "request_id": REQUEST_ID,
     "description": " 六十岁左右的男人 ",
     "preview_text": " 今天的天气很好，我们沿着河边慢慢走回家。 ",
@@ -426,3 +427,351 @@ def test_openapi_exports_input_limits_discriminators_and_errors(client):
         is False
     )
     assert components["ErrorDetails"]["additionalProperties"] is False
+
+
+@pytest.fixture
+def production_api(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from novelvideo.api.auth import get_api_user
+    from novelvideo.project_context import ProjectContext
+    from novelvideo.audio.voice_design_storage import VoiceDesignStorage
+
+    module = contract()
+    ctx = ProjectContext(
+        "project",
+        "demo",
+        "user",
+        "owner",
+        "owner",
+        "user",
+        "user",
+        (),
+        "editor",
+        "local",
+        tmp_path / "out",
+        tmp_path / "state",
+        tmp_path / "runtime",
+        True,
+    )
+    state = SimpleNamespace(
+        ctx=ctx,
+        calls=[],
+        enabled=True,
+        queue_error=False,
+        store=VoiceDesignStorage(ctx, quota_path=tmp_path / "quota.sqlite3"),
+    )
+
+    async def resolve(**kwargs):
+        from fastapi import HTTPException
+
+        if state.ctx.effective_role == "viewer" and kwargs["required_role"] == "editor":
+            raise HTTPException(403, "secret path /private/config")
+        return state.ctx
+
+    class ServiceError(Exception):
+        def __init__(self, code):
+            self.code = code
+
+    def enabled():
+        if not state.enabled:
+            raise ServiceError("voice_design_unavailable")
+        return 20
+
+    async def config(**kwargs):
+        return SimpleNamespace(
+            billing_params=lambda: {
+                "feature_key": "audio.voice_design",
+                "item_count": 1,
+            }
+        )
+
+    async def enqueue(*args, **kwargs):
+        state.calls.append(kwargs)
+        if state.queue_error:
+            raise RuntimeError("secret provider key")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "novelvideo.audio.voice_design_service",
+        SimpleNamespace(
+            ensure_voice_design_enabled=enabled,
+            resolve_voice_design_config=config,
+            VoiceDesignError=ServiceError,
+        ),
+    )
+    monkeypatch.setattr(module, "resolve_project_context", resolve)
+    monkeypatch.setattr(
+        module,
+        "VoiceDesignStorage",
+        lambda ctx: VoiceDesignStorage(ctx, quota_path=tmp_path / "quota.sqlite3"),
+    )
+    monkeypatch.setattr(module, "enqueue_project_task", enqueue)
+    app = FastAPI()
+    app.include_router(module.router, prefix="/api/v1")
+    app.dependency_overrides[get_api_user] = lambda: {"user_id": "user"}
+    state.client = TestClient(app)
+    state.url = "/api/v1/projects/project/voice-design/candidates"
+    return state
+
+
+def test_real_create_replay_and_conflict(production_api):
+    s = production_api
+    first = s.client.post(s.url, json=CREATE)
+    assert first.status_code == 202
+    assert s.client.post(s.url, json=CREATE).json() == first.json()
+    assert len(s.calls) == 1
+    assert s.calls[0]["scope"] == REQUEST_ID
+    assert s.calls[0]["payload"]["candidate_id"] == REQUEST_ID
+    changed = s.client.post(s.url, json={**CREATE, "description": "different"})
+    assert changed.status_code == 409
+    assert changed.json()["code"] == "idempotency_conflict"
+
+
+def test_real_queue_failure_recovers_same_candidate(production_api):
+    s = production_api
+    s.queue_error = True
+    failed = s.client.post(s.url, json=CREATE)
+    assert failed.status_code == 503
+    assert "secret" not in failed.text
+    assert s.store.get(REQUEST_ID)["status"] == "generating"
+    s.queue_error = False
+    assert s.client.post(s.url, json=CREATE).status_code == 202
+    assert s.calls[0]["scope"] == s.calls[1]["scope"]
+    s.store.claim(REQUEST_ID)
+    s.store.mark_unknown(REQUEST_ID)
+    assert s.client.post(s.url, json=CREATE).json()["data"]["status"] == "unknown"
+    assert len(s.calls) == 2
+
+
+def make_ready(s):
+    from hashlib import sha256
+
+    assert s.client.post(s.url, json=CREATE).status_code == 202
+    s.store.claim(REQUEST_ID)
+    path = s.store.output_path(REQUEST_ID)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"0123456789")
+    s.store.complete(
+        REQUEST_ID, duration_seconds=3, sha256=sha256(path.read_bytes()).hexdigest()
+    )
+    return path
+
+
+def test_real_audio_range_etag_and_disabled_existing_access(production_api):
+    from dataclasses import replace
+
+    s = production_api
+    make_ready(s)
+    s.enabled = False
+    s.ctx = replace(s.ctx, effective_role="viewer")
+    assert s.client.get(s.url + "/" + REQUEST_ID).json()["data"]["status"] == "ready"
+    audio = s.client.get(s.url + "/" + REQUEST_ID + "/audio")
+    assert audio.content == b"0123456789"
+    assert audio.headers["cache-control"] == "private, no-store"
+    assert audio.headers["etag"].startswith('"')
+    partial = s.client.get(
+        s.url + "/" + REQUEST_ID + "/audio", headers={"range": "bytes=2-4"}
+    )
+    assert partial.status_code == 206 and partial.content == b"234"
+    assert partial.headers["content-range"] == "bytes 2-4/10"
+    assert (
+        s.client.get(
+            s.url + "/" + REQUEST_ID + "/audio", headers={"range": "bytes=20-30"}
+        ).status_code
+        == 416
+    )
+    assert (
+        s.client.get(
+            s.url + "/" + REQUEST_ID + "/audio", headers={"range": "bytes=0-1,3-4"}
+        ).status_code
+        == 416
+    )
+    assert len(s.calls) == 1
+    assert s.client.post(s.url, json=CREATE).status_code == 403
+
+
+def test_real_isolation_validation_and_missing_audio(production_api):
+    from dataclasses import replace
+
+    s = production_api
+    path = make_ready(s)
+    s.ctx = replace(s.ctx, requester_user_id="other")
+    assert s.client.get(s.url + "/" + REQUEST_ID).status_code == 404
+    assert s.client.get(s.url + "/" + REQUEST_ID + "/audio").status_code == 404
+    s.ctx = replace(s.ctx, requester_user_id="user")
+    path.unlink()
+    assert (
+        s.client.get(s.url + "/" + REQUEST_ID + "/audio").json()["code"]
+        == "candidate_audio_missing"
+    )
+    invalid = s.client.post(s.url, json={**CREATE, "token": "top-secret"})
+    assert invalid.status_code == 422
+    assert invalid.json()["code"] == "invalid_input"
+    assert "top-secret" not in invalid.text
+    s.enabled = False
+    from uuid import uuid4
+
+    assert (
+        s.client.post(s.url, json={**CREATE, "request_id": str(uuid4())}).status_code
+        == 503
+    )
+
+
+def test_real_pending_and_expired(production_api):
+    s = production_api
+    s.client.post(s.url, json=CREATE)
+    assert s.client.get(s.url + "/" + REQUEST_ID + "/audio").status_code == 409
+    s.store.claim(REQUEST_ID)
+    s.store.mark_unknown(REQUEST_ID)
+    assert (
+        s.client.get(s.url + "/" + REQUEST_ID).json()["data"]["failure"]["code"]
+        == "generation_unknown"
+    )
+
+
+def test_real_expired_candidate_returns_410(production_api):
+    s = production_api
+    make_ready(s)
+    import sqlite3
+
+    with sqlite3.connect(s.store.db_path) as db:
+        db.execute("UPDATE candidates SET expires_at=0")
+    for suffix in ["", "/audio"]:
+        response = s.client.get(s.url + "/" + REQUEST_ID + suffix)
+        assert response.status_code == 410
+        assert response.json()["code"] == "candidate_expired"
+    assert s.client.post(s.url, json=CREATE).status_code == 410
+
+
+def test_real_authentication_failure_is_safe_envelope(production_api):
+    from fastapi import HTTPException
+    from novelvideo.api.auth import get_api_user
+
+    s = production_api
+
+    def denied():
+        raise HTTPException(401, "secret authentication details")
+
+    s.client.app.dependency_overrides[get_api_user] = denied
+    response = s.client.get(s.url + "/" + REQUEST_ID)
+    assert response.status_code == 401
+    assert response.json()["code"] == "unauthenticated"
+    assert "secret" not in response.text
+
+
+def test_real_registration():
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from novelvideo.api import api_router
+    from novelvideo.api.auth import get_api_user
+
+    app = FastAPI()
+    app.include_router(api_router)
+
+    def denied():
+        raise HTTPException(401)
+
+    app.dependency_overrides[get_api_user] = denied
+    client = TestClient(app)
+    for suffix in ["", "/audio"]:
+        response = client.get(
+            f"/api/v1/projects/project/voice-design/candidates/{REQUEST_ID}{suffix}"
+        )
+        assert response.status_code == 401
+        assert response.json()["code"] == "unauthenticated"
+
+
+@pytest.mark.parametrize(
+    "status,code",
+    [
+        (402, "insufficient_credits"),
+        (429, "rate_limited"),
+        (403, "voice_design_forbidden"),
+    ],
+)
+def test_real_admission_failure_keeps_status_and_sanitizes(
+    production_api, monkeypatch, status, code
+):
+    from fastapi import HTTPException
+
+    s = production_api
+
+    async def reject(*args, **kwargs):
+        raise HTTPException(status, "secret credentials and paths")
+
+    monkeypatch.setattr(contract(), "enqueue_project_task", reject)
+    response = s.client.post(s.url, json=CREATE)
+    assert response.status_code == status
+    assert response.json()["code"] == code
+    assert "secret" not in response.text
+
+
+def test_surface_required_and_existing_categories_only():
+    with pytest.raises(ValidationError):
+        contract().VoiceDesignCreateRequest.model_validate(
+            {k: v for k, v in CREATE.items() if k != "surface"}
+        )
+    with pytest.raises(ValidationError):
+        contract().VoiceDesignCreateRequest.model_validate(
+            {**CREATE, "surface": "audio"}
+        )
+
+
+@pytest.mark.parametrize(
+    "surface,product_surface", [("supertale", "mainline"), ("canvas", "freezone")]
+)
+def test_source_persists_across_queue_recovery(
+    production_api, surface, product_surface
+):
+    s = production_api
+    body = {**CREATE, "surface": surface}
+    s.queue_error = True
+    assert s.client.post(s.url, json=body).status_code == 503
+    s.queue_error = False
+    assert s.client.post(s.url, json=body).status_code == 202
+    assert s.store.get(REQUEST_ID)["surface"] == surface
+    assert [call["product_surface"] for call in s.calls] == [
+        product_surface,
+        product_surface,
+    ]
+    changed = {**body, "surface": "canvas" if surface == "supertale" else "supertale"}
+    response = s.client.post(s.url, json=changed)
+    assert response.status_code == 409
+    assert response.json()["code"] == "idempotency_conflict"
+    assert len(s.calls) == 2
+
+
+@pytest.mark.parametrize("surface", ["supertale", "canvas"])
+def test_project_quote_uses_authorized_context(production_api, monkeypatch, surface):
+    import sys
+    from dataclasses import replace
+
+    s = production_api
+    seen = []
+
+    async def quote(*, ctx, surface):
+        seen.append((ctx, surface))
+        return {
+            "ok": True,
+            "data": {"cost": 1, "display": "1", "unit": "call", "quantity": 1},
+        }
+
+    monkeypatch.setattr(
+        sys.modules["novelvideo.audio.voice_design_service"],
+        "quote_voice_design",
+        quote,
+        raising=False,
+    )
+    url = s.url.removesuffix("/candidates") + "/quote"
+    response = s.client.get(url, params={"surface": surface})
+    assert response.status_code == 200
+    assert response.json()["data"]["cost"] == 1
+    assert seen == [(s.ctx, surface)]
+    assert s.client.get(url).status_code == 422
+    assert s.client.get(url, params={"surface": "audio"}).status_code == 422
+    s.ctx = replace(s.ctx, effective_role="viewer")
+    assert s.client.get(url, params={"surface": surface}).status_code == 403
+    assert len(seen) == 1
