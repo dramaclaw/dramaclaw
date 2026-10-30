@@ -303,17 +303,28 @@ async def _download_preview(url: str) -> bytes:
     raise VoiceDesignError("provider_bad_audio")
 
 
-def _verify_audio(path: Path) -> float:
+def _verify_audio(path: Path, *, audio_format: str = "mp3") -> float:
     from novelvideo.freezone.reference_validation import _ffprobe
 
     info = _ffprobe(path)
     streams = info.get("streams", [])
+    if len(streams) != 1:
+        raise VoiceDesignError("provider_bad_audio")
+    if audio_format == "wav":
+        valid_encoding = (
+            info.get("format", {}).get("format_name") == "wav"
+            and streams[0].get("codec_name") == "pcm_s16le"
+            and streams[0].get("channels") in (1, 2)
+        )
+    else:
+        valid_encoding = (
+            info.get("format", {}).get("format_name") == "mp3"
+            and streams[0].get("codec_name") == "mp3"
+            and streams[0].get("channels") == 1
+        )
     if (
-        info.get("format", {}).get("format_name") != "mp3"
-        or len(streams) != 1
-        or streams[0].get("codec_name") != "mp3"
+        not valid_encoding
         or int(streams[0].get("sample_rate", 0)) != 16000
-        or streams[0].get("channels") != 1
     ):
         raise VoiceDesignError("provider_bad_audio")
     max_pcm_bytes = 15 * 16000 * 2
@@ -358,11 +369,38 @@ def _verify_audio(path: Path) -> float:
     return decoded_bytes / (16000 * 2)
 
 
+def _prepare_preview(data: bytes, audio_format: str) -> tuple[bytes, float]:
+    with tempfile.TemporaryDirectory(prefix="voice-design-") as directory:
+        source = Path(directory) / f"source.{audio_format}"
+        source.write_bytes(data)
+        duration = _verify_audio(source, audio_format=audio_format)
+        if audio_format == "mp3":
+            return data, duration
+        normalized = Path(directory) / "normalized.mp3"
+        subprocess.run(
+            [
+                "ffmpeg", "-v", "error", "-xerror", "-nostdin",
+                "-protocol_whitelist", "file,pipe", "-i", str(source),
+                "-map", "0:a:0", "-map_metadata", "-1",
+                "-c:a", "libmp3lame", "-ar", "16000", "-ac", "1",
+                str(normalized),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=True,
+            timeout=20,
+        )
+        if not 0 < normalized.stat().st_size <= MAX_AUDIO_BYTES:
+            raise VoiceDesignError("provider_bad_audio")
+        duration = _verify_audio(normalized)
+        return normalized.read_bytes(), duration
+
+
 async def persist_preview(payload: dict, output_path: Path) -> VoiceDesignAudio:
     preview = payload.get("preview_audio")
     if (
         not isinstance(preview, dict)
-        or preview.get("format") != "mp3"
+        or preview.get("format") not in ("mp3", "wav")
         or preview.get("sample_rate") != 16000
     ):
         raise VoiceDesignError("provider_bad_audio")
@@ -381,13 +419,13 @@ async def persist_preview(payload: dict, output_path: Path) -> VoiceDesignAudio:
             raise VoiceDesignError("provider_bad_audio")
         if not 0 < len(data) <= MAX_AUDIO_BYTES:
             raise VoiceDesignError("provider_bad_audio")
+        data, duration = await asyncio.to_thread(_prepare_preview, data, preview["format"])
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             dir=output_path.parent, suffix=".mp3", delete=False
         ) as stream:
             temporary = Path(stream.name)
             stream.write(data)
-        duration = await asyncio.to_thread(_verify_audio, temporary)
         os.replace(temporary, output_path)
         return VoiceDesignAudio(output_path, duration, hashlib.sha256(data).hexdigest())
     except (

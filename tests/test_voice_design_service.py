@@ -138,6 +138,158 @@ async def test_preview_is_real_decodable_mp3(tmp_path, audio_bytes):
     assert result.path.read_bytes() == audio_bytes
 
 
+def _wav_preview(samples: int, *, channels: int = 1) -> dict:
+    import base64
+    import io
+    import wave
+
+    with io.BytesIO() as buffer:
+        with wave.open(buffer, "wb") as audio:
+            audio.setnchannels(channels)
+            audio.setsampwidth(2)
+            audio.setframerate(16000)
+            audio.writeframes(b"\x01\x00" * samples * channels)
+        data = buffer.getvalue()
+    return {"format": "wav", "sample_rate": 16000, "data": base64.b64encode(data).decode()}
+
+
+@pytest.mark.parametrize(("samples", "channels"), [(16000, 1), (16000, 2), (240000, 1)])
+async def test_gateway_wav_is_normalized_to_verified_mp3(tmp_path, samples, channels):
+    import hashlib
+    from novelvideo.audio.voice_design_service import persist_preview, _verify_audio
+    from novelvideo.freezone.reference_validation import _ffprobe
+
+    result = await persist_preview({"preview_audio": _wav_preview(samples, channels=channels)}, tmp_path / "candidate.mp3")
+    info = _ffprobe(result.path)
+    assert info["format"]["format_name"] == "mp3"
+    assert info["streams"][0]["codec_name"] == "mp3"
+    assert info["streams"][0]["channels"] == 1
+    assert info["streams"][0]["sample_rate"] == "16000"
+    assert result.duration_seconds == samples / 16000 == _verify_audio(result.path)
+    assert result.sha256 == hashlib.sha256(result.path.read_bytes()).hexdigest()
+    assert [path.name for path in tmp_path.iterdir()] == ["candidate.mp3"]
+
+
+@pytest.mark.parametrize("samples", [240001, 256000])
+async def test_overlong_wav_is_rejected_before_encoding(tmp_path, samples, monkeypatch):
+    from novelvideo.audio import voice_design_service as service
+
+    original_run = service.subprocess.run
+
+    def reject_encoding(command, **kwargs):
+        assert "libmp3lame" not in command
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", reject_encoding)
+    with pytest.raises(VoiceDesignError, match="candidate_duration_exceeded"):
+        await service.persist_preview({"preview_audio": _wav_preview(samples)}, tmp_path / "candidate.mp3")
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("declared_format", ["wav", "mp3"])
+async def test_preview_container_must_match_format(tmp_path, audio_bytes, declared_format):
+    import base64
+    from novelvideo.audio.voice_design_service import persist_preview
+
+    preview = _wav_preview(16000)
+    if declared_format == "wav":
+        preview["data"] = base64.b64encode(audio_bytes).decode()
+    preview["format"] = declared_format
+    with pytest.raises(VoiceDesignError, match="provider_bad_audio"):
+        await persist_preview({"preview_audio": preview}, tmp_path / "candidate.mp3")
+    assert not (tmp_path / "candidate.mp3").exists()
+
+
+@pytest.mark.parametrize("data", ["broken base64", "bm90LWF1ZGlv"])
+async def test_bad_wav_is_not_published(tmp_path, data):
+    from novelvideo.audio.voice_design_service import persist_preview
+
+    with pytest.raises(VoiceDesignError, match="provider_bad_audio"):
+        await persist_preview({"preview_audio": {"format": "wav", "sample_rate": 16000, "data": data}}, tmp_path / "candidate.mp3")
+    assert not list(tmp_path.iterdir())
+
+
+async def test_wav_size_limit_applies_before_decode(tmp_path, monkeypatch):
+    import base64
+    from novelvideo.audio import voice_design_service as service
+
+    preview = _wav_preview(16000)
+    monkeypatch.setattr(service, "MAX_AUDIO_BYTES", len(base64.b64decode(preview["data"])) - 1)
+    with pytest.raises(VoiceDesignError, match="provider_bad_audio"):
+        await service.persist_preview({"preview_audio": preview}, tmp_path / "candidate.mp3")
+    assert not list(tmp_path.iterdir())
+
+
+async def test_normalized_wav_output_size_is_also_bounded(tmp_path, monkeypatch):
+    import base64
+    from novelvideo.audio import voice_design_service as service
+
+    preview = _wav_preview(1)
+    monkeypatch.setattr(service, "MAX_AUDIO_BYTES", len(base64.b64decode(preview["data"])))
+    with pytest.raises(VoiceDesignError, match="provider_bad_audio"):
+        await service.persist_preview({"preview_audio": preview}, tmp_path / "candidate.mp3")
+    assert not list(tmp_path.iterdir())
+
+
+async def test_wav_encoding_failure_preserves_existing_destination(tmp_path, monkeypatch):
+    import subprocess
+    from novelvideo.audio import voice_design_service as service
+
+    original_run = service.subprocess.run
+
+    def fail_encoding(command, **kwargs):
+        if "libmp3lame" in command:
+            raise subprocess.CalledProcessError(1, command)
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", fail_encoding)
+    output = tmp_path / "candidate.mp3"
+    output.write_bytes(b"existing")
+    with pytest.raises(VoiceDesignError, match="provider_bad_audio"):
+        await service.persist_preview({"preview_audio": _wav_preview(16000)}, output)
+    assert output.read_bytes() == b"existing"
+    assert len(list(tmp_path.iterdir())) == 1
+
+
+async def test_cancelled_wav_conversion_cleans_workspace_without_publishing(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+    from novelvideo.audio import voice_design_service as service
+
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    original_verify, original_prepare = service._verify_audio, service._prepare_preview
+    workspaces = []
+
+    def blocked_verify(path, *, audio_format="mp3"):
+        if audio_format == "wav":
+            workspaces.append(path.parent)
+            started.set()
+            assert release.wait(10)
+        return original_verify(path, audio_format=audio_format)
+
+    def prepare(*args):
+        try:
+            return original_prepare(*args)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(service, "_verify_audio", blocked_verify)
+    monkeypatch.setattr(service, "_prepare_preview", prepare)
+    output = tmp_path / "candidate.mp3"
+    task = asyncio.create_task(service.persist_preview({"preview_audio": _wav_preview(16000)}, output))
+    try:
+        assert await asyncio.to_thread(started.wait, 10)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not output.exists()
+    finally:
+        release.set()
+        assert await asyncio.to_thread(finished.wait, 10)
+    assert all(not path.exists() for path in workspaces)
+    assert not list(tmp_path.iterdir())
+
+
 @pytest.mark.parametrize("duration", [16])
 async def test_long_preview_is_not_published(tmp_path, duration):
     import base64
