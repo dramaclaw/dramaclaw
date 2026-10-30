@@ -595,3 +595,24 @@ def test_narrator_voice_resource_key_rejects_empty_state_dir(tmp_path, state_dir
 
     with pytest.raises(ValueError, match="state_dir"):
         narrator_voice_resource_key(project_dir=tmp_path, state_dir=state_dir)
+
+
+def test_rapid_replacements_keep_every_archived_audio(tmp_path):
+    from novelvideo.seedance2_i2v.character_voice_storage import (
+        persist_character_voice_file,
+    )
+
+    for content in (b"first", b"second", b"third"):
+        persist_character_voice_file(
+            project_dir=tmp_path,
+            character_name="hero",
+            slot="default",
+            filename="voice.mp3",
+            content=content,
+        )
+    directory = tmp_path / "assets/characters/hero/voices"
+    assert (directory / "voice_default.mp3").read_bytes() == b"third"
+    assert {p.read_bytes() for p in directory.glob("voice_default_*.mp3")} == {
+        b"first",
+        b"second",
+    }

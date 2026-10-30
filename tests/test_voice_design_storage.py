@@ -307,3 +307,53 @@ def test_multiple_cleanup_processes_are_idempotent(store):
         assert list(pool.map(sweep_process, [store.quota_path] * 2)) == [True, True]
     assert not store.output_path(record["candidate_id"]).exists()
     assert store.get(record["candidate_id"])["status"] == "expired"
+
+
+def test_saved_candidate_does_not_count_toward_unsaved_limit(store):
+    record, _ = reserve(store)
+    candidate_id = record["candidate_id"]
+    store.claim(candidate_id)
+    path = store.output_path(candidate_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"audio")
+    store.complete(
+        candidate_id, duration_seconds=4, sha256=sha256(b"audio").hexdigest()
+    )
+    store.save_receipt(
+        str(uuid4()), candidate_id, "character", "hero/default", {"sha256": "saved"}
+    )
+    for _ in range(5):
+        reserve(store)
+    assert store.get(candidate_id)["status"] == "ready"
+    assert path.read_bytes() == b"audio"
+
+
+def test_save_receipts_are_scoped_by_kind_and_reject_changed_target(store):
+    from novelvideo.audio.voice_design_storage import CandidateStorageError
+
+    record, _ = reserve(store)
+    request_id = str(uuid4())
+    for kind in ("character", "user_voice"):
+        store.save_receipt(request_id, record["candidate_id"], kind, "target", None)
+        store.save_receipt(
+            request_id, record["candidate_id"], kind, "target", {"path": kind}
+        )
+        assert store.receipt(request_id, kind)["result"] == {"path": kind}
+        with pytest.raises(CandidateStorageError, match="idempotency_conflict"):
+            store.save_receipt(request_id, record["candidate_id"], kind, "other", {})
+
+
+def test_saved_candidate_keeps_original_ttl(store):
+    record, _ = reserve(store)
+    cid = record["candidate_id"]
+    store.claim(cid)
+    path = store.output_path(cid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"audio")
+    ready = store.complete(cid, duration_seconds=4, sha256=sha256(b"audio").hexdigest())
+    store.save_receipt(
+        str(uuid4()), cid, "character", "hero/default", {"path": "saved"}
+    )
+    store.clock = lambda: ready["expires_at"] + 1
+    assert store.get(cid)["status"] == "expired"
+    assert not path.exists()

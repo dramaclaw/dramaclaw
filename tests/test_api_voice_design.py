@@ -866,3 +866,96 @@ def test_final_app_lifespan_cleans_old_users_without_requests(
         task = app.state.voice_design_cleanup
         assert not task.done()
     assert task.cancelled()
+
+
+def test_legacy_bindings_survive_generation(production_api):
+    import asyncio
+    from novelvideo.models import NovelCharacter, CharacterIdentity
+    from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo.seedance2_i2v.voice_clone import resolve_character_voice
+
+    s = production_api
+    paths = {}
+    for slot in ("default", "child", "identity"):
+        path = s.ctx.output_dir / f"{slot}.mp3"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(slot.encode())
+        paths[slot] = path.name
+    identity = CharacterIdentity(
+        identity_id="legacy",
+        identity_name="legacy",
+        character_name="hero",
+        age_group="child",
+        reference_audio_path=paths["identity"],
+    )
+    character = NovelCharacter(
+        name="hero",
+        reference_audio_path=paths["default"],
+        voice_samples_by_age_group={
+            "child": {"path": paths["child"], "sha256": "", "updated_at": ""}
+        },
+        identities_json="[]",
+    )
+    character.identities = [identity]
+
+    async def seed():
+        store = SQLiteStore(
+            "demo", output_dir=str(s.ctx.output_dir), state_dir=str(s.ctx.state_dir)
+        )
+        await store.initialize()
+        await store.add_character(character)
+        await store.close()
+
+    asyncio.run(seed())
+    before = character.model_dump()
+    tiers = [
+        resolve_character_voice(
+            project_dir=s.ctx.output_dir, character=character, identity=i
+        ).tier
+        for i in (
+            None,
+            CharacterIdentity(
+                identity_id="age",
+                identity_name="age",
+                character_name="hero",
+                age_group="child",
+            ),
+            identity,
+        )
+    ]
+    assert tiers == ["character_default", "age_group_preset", "identity_override"]
+    make_ready(s)
+
+    async def read():
+        store = SQLiteStore(
+            "demo", output_dir=str(s.ctx.output_dir), state_dir=str(s.ctx.state_dir)
+        )
+        await store.initialize()
+        result = await store.get_character_from_graph("hero")
+        await store.close()
+        return result
+
+    after = asyncio.run(read())
+    # Database row timestamps are independent of the binding contract.
+    assert {k: v for k, v in after.model_dump().items() if k != "updated_at"} == {
+        k: v for k, v in before.items() if k != "updated_at"
+    }
+    assert [
+        resolve_character_voice(
+            project_dir=s.ctx.output_dir, character=after, identity=i
+        ).tier
+        for i in (
+            None,
+            CharacterIdentity(
+                identity_id="age",
+                identity_name="age",
+                character_name="hero",
+                age_group="child",
+            ),
+            identity,
+        )
+    ] == tiers
+    assert all(
+        (s.ctx.output_dir / path).read_bytes() == slot.encode()
+        for slot, path in paths.items()
+    )

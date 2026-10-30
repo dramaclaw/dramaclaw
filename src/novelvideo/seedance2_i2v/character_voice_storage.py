@@ -11,13 +11,16 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import fcntl
+import os
+from contextlib import asynccontextmanager
 import json
 import re
 import shutil
 import subprocess
 import tempfile
 import weakref
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -446,6 +449,15 @@ def project_relative_path(project_dir: str | Path, path: str | Path) -> str:
     return Path(path).resolve().relative_to(Path(project_dir).resolve()).as_posix()
 
 
+def _archive_voice_file(path: Path) -> None:
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+    archive = path.with_name(f"{path.stem}_{timestamp}{path.suffix}")
+    while archive.exists():
+        timestamp += 1
+        archive = path.with_name(f"{path.stem}_{timestamp}{path.suffix}")
+    path.replace(archive)
+
+
 def persist_character_voice_file(
     *,
     project_dir: str | Path,
@@ -472,13 +484,16 @@ def persist_character_voice_file(
         filename=filename,
     )
     target.parent.mkdir(parents=True, exist_ok=True)
-    ts = int(datetime.now(timezone.utc).timestamp())
     for ext in VOICE_SAMPLE_EXTENSIONS:
         sibling = target.with_suffix(ext)
         if sibling.exists():
-            backup_name = f"{sibling.stem}_{ts}{sibling.suffix}"
-            sibling.replace(sibling.with_name(backup_name))
-    target.write_bytes(content)
+            _archive_voice_file(sibling)
+    staged = target.with_name(target.name + ".tmp")
+    with staged.open("wb") as stream:
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+    staged.replace(target)
 
     rel_path = project_relative_path(project_dir, target)
     return rel_path, voice_content_sha256(content), utc_now_iso()
@@ -530,11 +545,91 @@ def clear_character_voice_file(
     if not voices_dir.exists():
         return False
     stem = "voice_default" if slot == DEFAULT_SLOT else f"voice_{slot}"
-    ts = int(datetime.now(timezone.utc).timestamp())
     removed = False
     for ext in VOICE_SAMPLE_EXTENSIONS:
         candidate = voices_dir / f"{stem}{ext}"
         if candidate.exists():
-            candidate.replace(candidate.with_name(f"{candidate.stem}_{ts}{candidate.suffix}"))
+            _archive_voice_file(candidate)
             removed = True
     return removed
+
+
+@asynccontextmanager
+async def persistent_voice_lock(path: Path) -> AsyncIterator[None]:
+    """Serialize workers without blocking the event loop while waiting."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                await asyncio.sleep(0.01)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+class CharacterVoiceJournal:
+    """Recover a file publication by comparing its intended binding with SQLite.
+
+    The journal is installed before touching any slot file. A committed binding
+    rolls forward; otherwise the exact previous directory contents are restored.
+    Callers hold the character's persistent lock for the entire operation.
+    """
+
+    def __init__(self, project_dir: Path, character_name: str, *, state_dir: Path):
+        self.directory = character_voice_path(
+            project_dir=project_dir,
+            character_name=character_name,
+            slot="default",
+            filename="voice.mp3",
+        ).parent
+        key = hashlib.sha256(str(self.directory.resolve()).encode()).hexdigest()
+        self.path = state_dir / "character-voice-publications" / f"{key}.json"
+
+    def read(self) -> dict[str, Any] | None:
+        return json.loads(self.path.read_text()) if self.path.exists() else None
+
+    def write(self, record: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        staged = self.path.with_suffix(".tmp")
+        with staged.open("w") as stream:
+            json.dump(record, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        staged.replace(self.path)
+
+    def begin(self, slot: str, metadata: dict, save: dict | None = None) -> None:
+        names = [p.name for p in self.directory.glob(f"voice_{slot}*") if p.is_file()]
+        files = {
+            name: base64.b64encode((self.directory / name).read_bytes()).decode()
+            for name in names
+            if name in {f"voice_{slot}{ext}" for ext in VOICE_SAMPLE_EXTENSIONS}
+        }
+        self.write(
+            {
+                "slot": slot,
+                "before": metadata,
+                "files": files,
+                "existing_names": names,
+                "save": save,
+            }
+        )
+
+    def published(self, result: tuple[str, str, str]) -> None:
+        record = self.read()
+        record["after"] = dict(zip(("path", "sha256", "updated_at"), result))
+        self.write(record)
+
+    def rollback(self, record: dict) -> None:
+        for path in self.directory.glob(f"voice_{record['slot']}*"):
+            if path.is_file() and path.name not in record["existing_names"]:
+                path.unlink()
+        for name, content in record["files"].items():
+            (self.directory / name).write_bytes(base64.b64decode(content))
+        self.finish()
+
+    def finish(self) -> None:
+        self.path.unlink(missing_ok=True)

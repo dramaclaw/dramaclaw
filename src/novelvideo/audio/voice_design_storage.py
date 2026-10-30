@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
 import logging
+import json
 from hashlib import sha256 as file_sha256
 from pathlib import Path
 import math
@@ -69,6 +70,10 @@ class VoiceDesignStorage:
                 claimed INTEGER NOT NULL DEFAULT 0, lease_until REAL, error_code TEXT,
                 created_at REAL NOT NULL, expires_at REAL, duration_seconds REAL, sha256 TEXT,
                 PRIMARY KEY(project_id,user_id,candidate_id))""")
+            db.execute("""CREATE TABLE IF NOT EXISTS save_receipts (
+                project_id TEXT NOT NULL, user_id TEXT NOT NULL, request_id TEXT NOT NULL,
+                candidate_id TEXT NOT NULL, kind TEXT NOT NULL, target TEXT NOT NULL,
+                result TEXT NOT NULL, PRIMARY KEY(project_id,user_id,kind,request_id))""")
             db.execute("""CREATE TABLE IF NOT EXISTS quota.usage (
                 user_id TEXT NOT NULL, project_id TEXT NOT NULL, candidate_id TEXT NOT NULL,
                 day INTEGER NOT NULL, lease_until REAL NOT NULL, channel_key TEXT NOT NULL,
@@ -167,7 +172,7 @@ class VoiceDesignStorage:
                 ),
             )
             rows = db.execute(
-                "SELECT candidate_id FROM candidates WHERE project_id=? AND user_id=? AND status IN ('ready','generating') ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 5",
+                "SELECT candidate_id FROM candidates WHERE project_id=? AND user_id=? AND status IN ('ready','generating') AND NOT EXISTS (SELECT 1 FROM save_receipts s WHERE s.project_id=candidates.project_id AND s.user_id=candidates.user_id AND s.candidate_id=candidates.candidate_id AND s.result != 'null') ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 5",
                 self._key(candidate_id)[:2],
             ).fetchall()
             for row in rows:
@@ -178,6 +183,55 @@ class VoiceDesignStorage:
             record = self._read(db, candidate_id)
         self.cleanup()
         return record, True
+
+    def receipt(self, request_id: str, kind: str = "character") -> dict | None:
+        with self._transaction() as db:
+            row = db.execute(
+                "SELECT * FROM save_receipts WHERE project_id=? AND user_id=? AND request_id=? AND kind=?",
+                (*self._key(request_id), kind),
+            ).fetchone()
+            if row is None:
+                return None
+            result = dict(row)
+            result["result"] = json.loads(result["result"])
+            return result
+
+    def save_receipt(
+        self,
+        request_id: str,
+        candidate_id: str,
+        kind: str,
+        target: str,
+        result: dict | None,
+    ) -> None:
+        """Mark a candidate saved without deleting it or extending its TTL.
+
+        Request IDs are scoped to the project, requester, and save kind.
+        Callers serialize publication and persist this receipt after binding.
+        """
+        with self._transaction() as db:
+            values = (
+                *self._key(request_id),
+                str(candidate_id),
+                kind,
+                target,
+                json.dumps(result, sort_keys=True),
+            )
+            old = db.execute(
+                "SELECT * FROM save_receipts WHERE project_id=? AND user_id=? AND request_id=? AND kind=?",
+                (*self._key(request_id), kind),
+            ).fetchone()
+            if old:
+                if tuple(old)[:6] != values[:6] or (
+                    old["result"] != "null" and old["result"] != values[6]
+                ):
+                    raise CandidateStorageError("idempotency_conflict")
+                db.execute(
+                    "UPDATE save_receipts SET result=? WHERE project_id=? AND user_id=? AND request_id=? AND kind=?",
+                    (values[6], *self._key(request_id), kind),
+                )
+                return
+            db.execute("INSERT INTO save_receipts VALUES (?,?,?,?,?,?,?)", values)
 
     def mark_queued(self, candidate_id: str) -> None:
         with self._transaction() as db:
