@@ -162,3 +162,77 @@ CPU、sda IO 与端到端延迟仍需部署侧观测。
 
 本轮未创建发版计划、未改动周更流程、未发布后端或前端；这些动作与 3060 实机验收
 按实施清单继续保持待办。
+
+## 后续补齐记录（2026-10-30）
+
+清单剩余仓内实现分为两个仓库的独立分支，未混入根工作区原有未提交修改：
+
+| 仓库 / 分支 | 提交 | 内容 |
+| --- | --- | --- |
+| CE `feat/canvas-command-push` | `53dfabd8` | 一次性 Linux 验收镜像、真实 healthz ASGI 压测、Linux/HTTP 指标采集工具 |
+| CE `feat/canvas-command-push` | `8c24d483` | Linux/macOS 原生监听 CI，保留真实进程故障测试 |
+| EE `feat/canvas-command-push-ops` | `0f049e3bf` | OpenResty 按查询参数路由 canvas SSE 至项目归属节点，容器端到端代理验收 |
+| EE `feat/canvas-command-push-ops` | `8328bffed` | 每周一北京时间 09:00 固定两个 main SHA，生成发布证据记录及后端先行流程 |
+
+### Linux 原生事件
+
+一次性 Linux Python 3.12 容器中 22 项 bridge 测试通过，包含原生跨进程通知、
+真实 commit 后退出、重建窗口、静默降级、目录恢复、TTL 与写锁竞争。
+写入进程退出后约 0.091 秒发现命令；通知前退出后在 29.687 秒补获。
+该容器内核为 `7.2.12-orbstack-00394-gbecdd6130068`，临时目录是 overlayfs；
+尚未核对 3060 内核和数据目录文件系统，因此不代替清单要求的同环境实机验收。
+
+可重复运行：
+
+```bash
+docker build -f scripts/acceptance/Dockerfile.canvas-command-push \
+  -t canvas-command-push-acceptance:local .
+docker run --rm --mount type=bind,source="$PWD",target=/source,readonly \
+  canvas-command-push-acceptance:local
+```
+
+### 多画布与 healthz 对比
+
+新增 `scripts/benchmark_canvas_command_health.py`，使用真实应用的 `/healthz` 路由和
+中间件，经 HTTP ASGI transport 测量；不运行 lifespan，避免启动无关 worker。
+以 `30c7afae` 的 bridge 源码作为旧版本，单次顺序对比相同本机、32 目录、
+每目录 4 订阅、30 秒、每秒 10 条目标写入。生产入口和磁盘验收另行记录。
+
+| 指标 | 旧扫描实现 | 新推送实现 |
+| --- | --- | --- |
+| 实际发送 / 收到 | 263 / 263 | 277 / 277 |
+| healthz 请求数 | 460 | 571 |
+| healthz P99 | 48.114 ms | 3.395 ms |
+| 事件循环延迟 P99 | 58.433 ms | 1.227 ms |
+| 投递延迟 P99 | 397.486 ms | 127.579 ms |
+| 开库次数 | 9532 | 3572 |
+| 写事务开始次数 | 9269 | 2742 |
+| 进程 CPU 时间 | 6.649 s | 8.623 s |
+
+CPU 时间有所增加；本地延迟和事务数据不能关闭 3060 的 CPU / sda IO 恢复目标。
+压测器停止时会等待在途写入完成再冻结发送数，避免取消线程等待导致计数失配。
+
+### OpenResty 路由与发布流程
+
+原模板只有 `/api/v1/projects/...` 的项目归属路由，新 `/chat/.../stream` 会落入默认节点。
+已补专用 location，按与 FastAPI 一致的 URL 解码、重复参数取末值和去空白规则提取项目 ID，
+经现有归属映射转发，继续由上游执行 Cookie 与项目授权，关闭 SSE 缓冲和缓存。
+在独立 Redis、真实 OpenResty 和临时上游容器中验证：归属节点正确、Cookie 透传、
+首个事件 11.704 ms、重复及编码参数一致、缺少项目参数返回 400。
+
+EE 中 `scripts/acceptance/verify_canvas_proxy.py` 可重跑代理验收，仅创建和清理自己的容器。
+5 项代理契约与 5 项周发布候选测试通过；两个新增 workflow 通过 actionlint 1.7.12。
+每周流程生成固定 SHA 的候选与证据模板，生产发布继续使用既有受保护的后端、前端流程。
+代码合入 main 后定时准备才会生效，本轮没有发布或改动线上 BOM。
+
+### 实机采集与当前外部条件
+
+新增 `scripts/acceptance/collect_canvas_push_evidence.py`：读取 Linux 主机 CPU、指定磁盘
+扇区 / IO 时间、显式选定本地 API PID 的 CPU / 读写字节，以及 HTTP healthz 和鉴权诊断。
+Cookie 从本地 Netscape cookie 文件读取，不写入报告或日志；缺失设备、PID 重启和不可用计数
+返回 null，避免误报零 IO。采集边界的两项回归与 Linux 容器实读通过。
+
+当前 kubeconfig 只有本地 Docker/OrbStack context，没有 3060；SSH 配置没有 3060 主机；
+对既有流程引用的 GitOps 仓库查询返回 404。已向用户请求 3060 连接和实际入口。
+因此实际 ingress 核对、生产入口验收、发布、生产数据量压测及版本稳定观察仍保留待办。
+兼容轮询删除需在后端全部升级、至少一个兼容版本及完整一周观测后另开提交，遵守原清单顺序。
