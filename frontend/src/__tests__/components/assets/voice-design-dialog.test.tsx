@@ -490,3 +490,114 @@ it("server expiry on playback prevents saving and preserves text", async () => {
   expect(screen.getByRole("button", { name: "保存到默认" })).toBeDisabled();
   expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
 });
+
+it.each(["success", "failure"])(
+  "keeps target save pending across remount and binds its %s result",
+  async (outcome) => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pendingSave = vi.fn(async (_input: unknown) => {
+      await gate;
+      if (outcome === "failure")
+        throw new VoiceDesignApiError("save_failed", "旧保存失败", true, 500);
+    });
+    const onSaved = vi.fn();
+    const original = { ...target, onSave: pendingSave, onSaved };
+    const other = { ...target, key: "秦:elder", label: "秦 · 老年" };
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    function Root({ selected }: { selected: VoiceDesignTarget }) {
+      return (
+        <QueryClientProvider client={qc}>
+          <I18nextProvider i18n={i18n}>
+            <Harness selected={selected} />
+          </I18nextProvider>
+        </QueryClientProvider>
+      );
+    }
+    const view = render(<Root selected={original} />);
+    await generate();
+    fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+    fireEvent.click(screen.getByRole("button", { name: "替换" }));
+    await screen.findByRole("button", { name: "正在保存…" });
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    view.rerender(<Root selected={other} />);
+    fireEvent.click(screen.getByRole("button", { name: "打开" }));
+    view.rerender(<Root selected={original} />);
+    expect(screen.getByRole("button", { name: "正在保存…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "重新生成" })).toBeDisabled();
+    expect(pendingSave).toHaveBeenCalledOnce();
+    expect(creations).toBe(1);
+    release();
+    if (outcome === "success")
+      await screen.findByText("已保存到目标位置，可重新生成试听。");
+    else await screen.findByText("旧保存失败");
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新生成" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+    await waitFor(() => expect(creations).toBe(2));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "保存到默认" })).toBeEnabled(),
+    );
+    expect(
+      screen.queryByText("已保存到目标位置，可重新生成试听。"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("旧保存失败")).not.toBeInTheDocument();
+  },
+);
+it.each(["success", "failure"])(
+  "late save %s leaves another target's candidate and dialog untouched",
+  async (outcome) => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const onSaved = vi.fn();
+    const pendingSave = vi.fn(async () => {
+      await gate;
+      if (outcome === "failure")
+        throw new VoiceDesignApiError("slot_changed", "旧目标冲突", false, 409);
+    });
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    function Root({ selected }: { selected: VoiceDesignTarget }) {
+      return (
+        <QueryClientProvider client={qc}>
+          <I18nextProvider i18n={i18n}>
+            <Harness selected={selected} />
+          </I18nextProvider>
+        </QueryClientProvider>
+      );
+    }
+    const view = render(
+      <Root selected={{ ...target, onSave: pendingSave, onSaved }} />,
+    );
+    await generate();
+    fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+    fireEvent.click(screen.getByRole("button", { name: "替换" }));
+    await screen.findByRole("button", { name: "正在保存…" });
+    view.rerender(
+      <Root selected={{ ...target, key: "秦:elder", label: "秦 · 老年" }} />,
+    );
+    await generate();
+    release();
+    await waitFor(() =>
+      expect(pendingSave.mock.settledResults[0]?.type).toBe(
+        outcome === "success" ? "fulfilled" : "rejected",
+      ),
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("保存位置：秦 · 老年")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存到默认" })).toBeEnabled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(screen.queryByText("旧目标冲突")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("已保存到目标位置，可重新生成试听。"),
+    ).not.toBeInTheDocument();
+  },
+);

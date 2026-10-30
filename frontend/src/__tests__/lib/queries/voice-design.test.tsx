@@ -176,3 +176,69 @@ it("publishes generated voice through existing cache update only after successfu
       ?.isInvalidated ?? true,
   ).toBe(true);
 });
+
+it("publishes a delayed character save to its original target after hook scope changes", async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  qc.setQueryData(queryKeys.characters("demo"), {
+    ok: true,
+    data: [{ name: "秦", reference_audio_path: "original.wav" }],
+  });
+  qc.setQueryData(queryKeys.characters("other"), {
+    ok: true,
+    data: [{ name: "韩", reference_audio_path: "untouched.wav" }],
+  });
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requested = false;
+  server.use(
+    http.post(
+      `${base}/characters/%E7%A7%A6/voice-samples/default/save-generated`,
+      async () => {
+        requested = true;
+        await gate;
+        return HttpResponse.json({
+          ok: true,
+          data: {
+            slot: "default",
+            label: "默认",
+            path: "saved.wav",
+            url: "/saved.wav",
+            sha256: "saved-sha",
+            updated_at: "now",
+            required: true,
+            inherited_from_default: false,
+          },
+        });
+      },
+    ),
+  );
+  const { result, rerender } = renderHook(
+    ({ project, name }) => useSaveGeneratedCharacterVoice(project, name),
+    { initialProps: { project: "demo", name: "秦" }, wrapper: provider(qc) },
+  );
+  const pending = result.current.mutateAsync({
+    slot: "default",
+    candidate_id: id,
+    save_request_id: id,
+    expected_slot: { path: "original.wav", sha256: "", updated_at: "" },
+    replace_existing: true,
+  });
+  await waitFor(() => expect(requested).toBe(true));
+  rerender({ project: "other", name: "韩" });
+  release();
+  await pending;
+  expect(qc.getQueryData(queryKeys.characters("demo"))).toMatchObject({
+    data: [
+      {
+        name: "秦",
+        reference_audio_path: "saved.wav",
+        reference_audio_sha256: "saved-sha",
+      },
+    ],
+  });
+  expect(qc.getQueryData(queryKeys.characters("other"))).toMatchObject({
+    data: [{ name: "韩", reference_audio_path: "untouched.wav" }],
+  });
+});

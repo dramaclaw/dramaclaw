@@ -61,6 +61,9 @@ export type VoiceDesignTarget = TargetBase &
 type SaveAttempt =
   | { kind: "character"; input: SaveGeneratedCharacterVoice }
   | { kind: "account"; input: SaveGeneratedAccountVoice };
+type SaveOperation =
+  | { kind: "idle" }
+  | { kind: "pending" | "failed" | "saved"; attempt: SaveAttempt };
 type Generation =
   | { kind: "idle" }
   | { kind: "submitting" | "tracking" | "unresolved"; id: string }
@@ -72,8 +75,7 @@ type Draft = {
   generation: Generation;
   ready: VoiceDesignReady | null;
   error: string;
-  saveAttempt: SaveAttempt | null;
-  saved: boolean;
+  save: SaveOperation;
   conflict: boolean;
 };
 function newDraft(): Draft {
@@ -84,8 +86,7 @@ function newDraft(): Draft {
     generation: { kind: "idle" },
     ready: null,
     error: "",
-    saveAttempt: null,
-    saved: false,
+    save: { kind: "idle" },
     conflict: false,
   };
 }
@@ -141,12 +142,11 @@ function useVoiceDesignSession({
       ...update,
     }));
   const quote = useVoiceDesignQuote(project, surface);
-  const [saving, setSaving] = useState(false);
+  const saving = draft.save.kind === "pending";
   const [confirm, setConfirm] = useState(false);
   const [now, setNow] = useState(Date.now);
   const mounted = useRef(true);
   const busy = useRef(false);
-  const saveBusy = useRef(false);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -179,8 +179,7 @@ function useVoiceDesignSession({
       ...(result.status === "ready"
         ? {
             ready: result,
-            saveAttempt: null,
-            saved: false,
+            save: { kind: "idle" },
             conflict: false,
             error: "",
           }
@@ -232,7 +231,7 @@ function useVoiceDesignSession({
     !generating &&
     !uncertain &&
     !saving &&
-    !draft.saved &&
+    draft.save.kind !== "saved" &&
     !draft.conflict &&
     (target.kind !== "account" || !!draft.name.trim());
   const generate = async () => {
@@ -240,7 +239,7 @@ function useVoiceDesignSession({
       busy.current ||
       generating ||
       uncertain ||
-      saving ||
+      qc.getQueryData<Draft>(key)?.save.kind === "pending" ||
       !valid ||
       !quote.data ||
       quote.isError
@@ -289,62 +288,82 @@ function useVoiceDesignSession({
     else if (result.error) patch({ error: knownMessage(result.error) });
   };
   const save = async (replace: boolean) => {
-    if (!canSave || !draft.ready || saveBusy.current) return;
-    saveBusy.current = true;
-    setSaving(true);
+    const current = qc.getQueryData<Draft>(key);
+    if (!canSave || !current?.ready || current.save.kind === "pending") return;
     setConfirm(false);
     const common = {
-      candidate_id: draft.ready.candidate_id,
+      candidate_id: current.ready.candidate_id,
       save_request_id: crypto.randomUUID(),
     };
-    const attempt =
-      draft.saveAttempt ??
-      (target.kind === "character"
-        ? {
-            kind: "character" as const,
-            input: {
-              ...common,
-              expected_slot: { ...target.expectedSlot },
-              replace_existing: replace,
-            },
-          }
-        : {
-            kind: "account" as const,
-            input: { ...common, name: draft.name.trim() },
-          });
-    patch({ saveAttempt: attempt, error: "" });
+    const attempt: SaveAttempt =
+      current.save.kind === "failed"
+        ? current.save.attempt
+        : target.kind === "character"
+          ? {
+              kind: "character",
+              input: {
+                ...common,
+                expected_slot: { ...target.expectedSlot },
+                replace_existing: replace,
+              },
+            }
+          : {
+              kind: "account",
+              input: { ...common, name: current.name.trim() },
+            };
+    patch({ save: { kind: "pending", attempt }, error: "" });
+    const finish = (update: Partial<Draft>) => {
+      let applied = false;
+      qc.setQueryData<Draft>(key, (latest) => {
+        if (
+          !latest ||
+          latest.save.kind !== "pending" ||
+          latest.save.attempt.input.save_request_id !==
+            attempt.input.save_request_id ||
+          latest.save.attempt.input.candidate_id !==
+            attempt.input.candidate_id ||
+          latest.ready?.candidate_id !== attempt.input.candidate_id
+        )
+          return latest;
+        applied = true;
+        return { ...latest, ...update };
+      });
+      return applied;
+    };
     try {
       if (attempt.kind === "character" && target.kind === "character")
         await target.onSave(attempt.input);
       else if (attempt.kind === "account" && target.kind === "account")
         await target.onSave(attempt.input);
       else return;
-      patch({ saved: true });
-      if (mounted.current) {
+      if (finish({ save: { kind: "saved", attempt } }) && mounted.current) {
         target.onSaved?.();
         onOpenChange(false);
       }
     } catch (error) {
-      patch({
+      finish({
+        save: { kind: "failed", attempt },
         error: knownMessage(error),
         ...(error instanceof VoiceDesignApiError &&
         error.code === "candidate_expired"
-          ? { ready: { ...draft.ready, expires_at: new Date(0).toISOString() } }
+          ? {
+              ready: {
+                ...current.ready,
+                expires_at: new Date(0).toISOString(),
+              },
+            }
           : {}),
         conflict:
           error instanceof VoiceDesignApiError &&
           ["slot_changed", "slot_occupied"].includes(error.code),
       });
-    } finally {
-      saveBusy.current = false;
-      if (mounted.current) setSaving(false);
     }
   };
   const refreshTarget = async () => {
     if (target.kind !== "character") return;
     try {
       await target.onRefresh();
-      patch({ conflict: false, saveAttempt: null, error: "" });
+      patch({ conflict: false, save: { kind: "idle" }, error: "" });
     } catch (error) {
       patch({ error: knownMessage(error) });
     }
@@ -463,7 +482,7 @@ function VoiceDesignSession(props: Props) {
                 value={draft.name}
                 disabled={saving}
                 onChange={(e) =>
-                  patch({ name: e.target.value, saveAttempt: null })
+                  patch({ name: e.target.value, save: { kind: "idle" } })
                 }
               />
             </div>
@@ -504,7 +523,9 @@ function VoiceDesignSession(props: Props) {
               </p>
             </div>
           )}
-          {draft.saved && <p role="status">{t("voiceDesign.saved")}</p>}
+          {draft.save.kind === "saved" && (
+            <p role="status">{t("voiceDesign.saved")}</p>
+          )}
           {expired && <p role="status">{t("voiceDesign.expired")}</p>}
           {draft.error && (
             <p

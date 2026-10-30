@@ -315,6 +315,7 @@ function handleCharacterVoiceMutationSuccess(
 export function useSaveGeneratedCharacterVoice(project: string, name: string) {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: [...queryKeys.characterVoiceSamples(project, name), "save-generated"],
     retry: false,
     mutationFn: async ({ slot, ...input }: SaveGeneratedCharacterVoice & { slot: string }) => {
       const data = await readVoiceDesignResponse(
