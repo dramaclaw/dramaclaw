@@ -470,9 +470,11 @@ def mark_bridge_message_delivered(
     consumer_id: str,
     bridge_dir: str | Path | None = None,
 ) -> bool:
-    now = time.time()
     with _bridge_db(bridge_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        # Lock acquisition may wait for another worker. Check TTL against the
+        # time after acquiring that lock, not a stale pre-lock timestamp.
+        now = time.time()
         row = conn.execute(
             "SELECT kind, created_at FROM canvas_command_messages WHERE bridge_key = ?", (key,)
         ).fetchone()

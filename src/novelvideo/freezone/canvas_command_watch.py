@@ -62,15 +62,17 @@ class BridgeWatchHub:
     @asynccontextmanager
     async def subscribe(self, directories):
         requested = {Path(directory).absolute() for directory in directories}
-        directories = set()
+        aliases = {}
         for directory in requested:
             resolved = await self.run(directory.resolve)
-            self.aliases[directory] = resolved
-            directories.add(resolved)
+            await self.run(resolved.mkdir, parents=True, exist_ok=True)
+            aliases[directory] = resolved
+        # Finish all cancellable setup before registering any references.
+        self.aliases.update(aliases)
+        directories = set(aliases.values())
         event = asyncio.Event()
         added = False
         for directory in directories:
-            await self.run(directory.mkdir, parents=True, exist_ok=True)
             added |= directory not in self.directories
             state = self.directories.setdefault(directory, DirectoryState())
             state.subscribers.add(event)
@@ -78,7 +80,7 @@ class BridgeWatchHub:
         if added:
             self.changed.set()
         self.scheduled.set()
-        if self.task is None:
+        if self.task is None and self.directories:
             self.task = asyncio.create_task(self._schedule())
             self.watcher = asyncio.create_task(self._watch())
         try:
@@ -94,9 +96,7 @@ class BridgeWatchHub:
                         removed = True
             if removed:
                 self.aliases = {
-                    key: value
-                    for key, value in self.aliases.items()
-                    if value in self.directories
+                    key: value for key, value in self.aliases.items() if value in self.directories
                 }
                 self.changed.set()
             self.scheduled.set()
@@ -119,18 +119,13 @@ class BridgeWatchHub:
                 continue
             if kinds and row["kind"] not in kinds:
                 continue
-            if (
-                row["created_at"] + BRIDGE_PENDING_TTL_SECONDS.get(row["kind"], 600)
-                <= now
-            ):
+            if row["created_at"] + BRIDGE_PENDING_TTL_SECONDS.get(row["kind"], 600) <= now:
                 continue
             if row["status"] == "delivered" and (row["lease_expires_at"] or 0) > now:
                 continue
             payload = _decode_bridge_json(row["payload_json"])
             if payload is not None:
-                result.append(
-                    {**payload, "key": row["bridge_key"], "kind": row["kind"]}
-                )
+                result.append({**payload, "key": row["bridge_key"], "kind": row["kind"]})
         return result
 
     def legacy_paths(self, directory):
@@ -151,9 +146,7 @@ class BridgeWatchHub:
             return
         self.degraded = degraded
         self.metrics["degraded" if degraded else "restored"] += 1
-        logger.warning(
-            "Canvas bridge watcher %s", "degraded" if degraded else "restored"
-        )
+        logger.warning("Canvas bridge watcher %s", "degraded" if degraded else "restored")
         self._dirty(tuple(self.directories), scan_legacy=False)
 
     @staticmethod
@@ -188,28 +181,22 @@ class BridgeWatchHub:
                 state = self.directories.get(directory)
                 if state is None:
                     continue
-                scan = state.scan_legacy
+                scan = state.scan_legacy or self.degraded
                 state.dirty = state.scan_legacy = False
                 old_keys = {row["bridge_key"] for row in state.rows}
                 try:
                     now = time.time()
                     if any(
-                        row["created_at"]
-                        + BRIDGE_PENDING_TTL_SECONDS.get(row["kind"], 600)
-                        <= now
+                        row["created_at"] + BRIDGE_PENDING_TTL_SECONDS.get(row["kind"], 600) <= now
                         for row in state.rows
                     ):
                         await self.run(expire_bridge_messages, directory, now)
-                    rows, paths, identity = await self.run(
-                        self._read_directory, directory, scan
-                    )
+                    rows, paths, identity = await self.run(self._read_directory, directory, scan)
                     if state.identity is not None and state.identity != identity:
                         self.changed.set()
                         state.scan_legacy = state.dirty = True
                     state.identity = identity
-                    if not scan and any(
-                        row["bridge_key"] not in old_keys for row in rows
-                    ):
+                    if not scan and any(row["bridge_key"] not in old_keys for row in rows):
                         self.metrics["recovered"] += 1
                         logger.info("Canvas bridge reconciliation recovered messages")
                     state.rows = rows
@@ -220,17 +207,20 @@ class BridgeWatchHub:
                     for event in state.subscribers:
                         event.set()
                 except FileNotFoundError:
-                    await self.run(directory.mkdir, parents=True, exist_ok=True)
                     state.identity = None
-                    state.scan_legacy = state.dirty = True
-                    self.changed.set()
+                    try:
+                        await self.run(directory.mkdir, parents=True, exist_ok=True)
+                        state.scan_legacy = state.dirty = True
+                        self.changed.set()
+                    except OSError:
+                        logger.exception("Canvas bridge directory cannot be recreated")
+                        state.deadline = None
+                        self._set_degraded(True)
                 except Exception:
                     logger.exception("Canvas bridge reconciliation failed")
                     state.deadline = None
                     self._set_degraded(True)
-                interval = (
-                    self.degraded_seconds if self.degraded else self.reconcile_seconds
-                )
+                interval = self.degraded_seconds if self.degraded else self.reconcile_seconds
                 state.reconcile_at = time.monotonic() + interval
             delays = [
                 max(0.05, state.reconcile_at - time.monotonic())
@@ -267,8 +257,7 @@ class BridgeWatchHub:
                     yield_on_timeout=True,
                     force_polling=False,
                     watch_filter=lambda change, path: (
-                        Path(path).name == "canvas_command.signal"
-                        or path.endswith(".pending.json")
+                        Path(path).name == "canvas_command.signal" or path.endswith(".pending.json")
                     ),
                 ):
                     for _, path in changes:
