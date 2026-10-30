@@ -1,0 +1,4 @@
+# Reviewed false positives: these two historical lines contain delivery consumer labels,
+# not credentials. Keep exemptions specific to the exact commits/files/lines.
+53dfabd812e774a283a6c8fd2b807688ba2ed7f6:scripts/benchmark_canvas_command_health.py:generic-api-key:87
+db1cafb0bc41a337a0ea65a70450bb69c59243d0:src/novelvideo/api/routes/chat.py:generic-api-key:3159
