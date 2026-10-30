@@ -246,3 +246,31 @@ def test_runtime_identity_must_match_the_accepted_registry_manifest(
     with pytest.raises(promotion.PromotionError):
         promotion.promote(data, "v2.1.3", SOURCE, latest=True)
     assert writes == []
+
+
+@pytest.mark.parametrize("id_kind", ["index_digest", "manifest_digest"])
+def test_containerd_identity_is_verified_via_its_selected_platform(
+    monkeypatch, id_kind
+):
+    data = receipt()
+    for image in data["images"].values():
+        runtime = image["runtime"]
+        runtime["image_id"] = runtime[id_kind]
+        runtime["manifest_descriptor_digest"] = runtime["manifest_digest"]
+    writes = registry(monkeypatch, data)
+    assert promotion.promote(data, "v2.1.3", SOURCE, latest=True)["ok"]
+    assert len(writes) == 2
+
+
+@pytest.mark.parametrize("descriptor", [None, "sha256:" + "1" * 64])
+def test_containerd_id_without_matching_platform_evidence_cannot_promote(
+    monkeypatch, descriptor
+):
+    data = receipt()
+    runtime = data["images"]["dramaclaw"]["runtime"]
+    runtime["image_id"] = runtime["index_digest"]
+    runtime["manifest_descriptor_digest"] = descriptor
+    writes = registry(monkeypatch, data)
+    with pytest.raises(promotion.PromotionError):
+        promotion.promote(data, "v2.1.3", SOURCE, latest=True)
+    assert writes == []

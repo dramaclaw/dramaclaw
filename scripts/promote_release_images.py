@@ -133,6 +133,16 @@ def validate_receipt(
             "Missing image architecture",
         )
         runtime = image.get("runtime", {})
+        descriptor = runtime.get("manifest_descriptor_digest")
+        # Containerd image IDs identify an index/manifest, not a config. Its
+        # selected platform descriptor is required to bind the actual payload.
+        image_matches = (
+            runtime.get("image_id") == runtime.get("config_digest")
+            and descriptor in (None, runtime.get("manifest_digest"))
+        ) or (
+            runtime.get("image_id") in (image["digest"], runtime.get("manifest_digest"))
+            and descriptor == runtime.get("manifest_digest")
+        )
         require(
             runtime.get("verified_before_and_after") is True
             and runtime.get("platform") in ("linux/amd64", "linux/arm64")
@@ -149,7 +159,7 @@ def validate_receipt(
             )
             and bool(DIGEST.fullmatch(str(runtime.get("manifest_digest", ""))))
             and bool(DIGEST.fullmatch(str(runtime.get("config_digest", ""))))
-            and runtime.get("image_id") == runtime.get("config_digest"),
+            and image_matches,
             "Running container is not bound to the accepted digest",
         )
     return image_tag
@@ -241,8 +251,8 @@ def promote(
         )
         tested_manifest = inspect(repository + "@" + platforms[arch]["digest"], "Raw")
         require(
-            tested_manifest.get("config", {}).get("digest") == runtime["image_id"],
-            "Accepted registry config differs from the tested container image ID",
+            tested_manifest.get("config", {}).get("digest") == runtime["config_digest"],
+            "Accepted registry config differs from the tested platform config",
         )
         targets = (
             [image_tag + "-promoted"] if benchmark else (["latest"] if latest else [])
