@@ -8217,6 +8217,10 @@
       "provider": "Fornecedor",
       "providerAliyunOss": "Aliyun OSS",
       "providerCloudinary": "Cloudinary (gratuito)",
+      "providerS3": "Armazenamento compatível com S3",
+      "saveS3": "Guardar configuração S3",
+      "s3SaveSuccess": "Configuração S3 guardada",
+      "s3FieldsHint": "Introduza o URL http(s) completo do endpoint e credenciais de longa duração. O modelo deve conseguir aceder ao URL assinado. Ative path-style se o serviço exigir. Deixe as credenciais em branco para manter as guardadas.",
       "providerHint": "Com este fornecedor, sugerimos que mantenha «Carregamento de recursos totalmente gerido» desativado. O plano gratuito tem um limite de largura de banda, pelo que deve utilizá-lo apenas para edições ou carregamentos ponto a ponto.",
       "currentPlan": "Plano de carregamento atual",
       "status": "Configuração atual",
@@ -8224,7 +8228,7 @@
       "configured": "Configurado",
       "notConfigured": "Não configurado",
       "warningIconLabel": "O armazenamento de multimédia de referência não está configurado",
-      "notConfiguredImpact": "O armazenamento de conteúdos multimédia de referência não está configurado. Os fluxos exclusivamente de texto e de texto para imagem normalmente continuam a funcionar; as funcionalidades que necessitam de carregar imagens de referência locais irão falhar, incluindo imagens de referência do XiaHua, referências de personagens, imagens de identidade, imagem para imagem, primeiros fotogramas de vídeo e imagem para vídeo. Configure o Aliyun OSS ou o Cloudinary.",
+      "notConfiguredImpact": "O armazenamento de conteúdos multimédia de referência não está configurado. Os fluxos exclusivamente de texto e de texto para imagem normalmente continuam a funcionar; as funcionalidades que necessitam de carregar imagens de referência locais irão falhar, incluindo imagens de referência do XiaHua, referências de personagens, imagens de identidade, imagem para imagem, primeiros fotogramas de vídeo e imagem para vídeo. Configure o Aliyun OSS, S3 ou o Cloudinary.",
       "showSecret": "Mostrar",
       "hideSecret": "Ocultar",
       "fieldsHint": "Os valores guardados são armazenados na base de dados local de definições CE; as AccessKeys completas não são devolvidas. Deixe em branco as credenciais já guardadas e preencha apenas os campos que pretende substituir.",
@@ -8238,7 +8242,8 @@
       "testUpload": "Testar carregamento",
       "testUploadPlaceholder": "O teste de carregamento estará disponível em breve",
       "validation": {
-        "ttlSeconds": "O TTL do URL assinado tem de ser superior a 0"
+        "ttlSeconds": "O TTL do URL assinado tem de ser superior a 0",
+        "s3TtlSeconds": "A validade do URL S3 deve ser entre 1 e 604800 segundos"
       },
       "fields": {
         "cloudName": "Nome da cloud",
@@ -8246,6 +8251,8 @@
         "apiSecret": "API Secret",
         "apiFolder": "Pasta da API (opcional)",
         "materialsRoot": "Raiz dos materiais",
+        "region": "Região",
+        "pathStyle": "Usar endereçamento path-style",
         "accessKeyId": "ID da AccessKey",
         "accessKeySecret": "Secret da AccessKey",
         "bucket": "Bucket",

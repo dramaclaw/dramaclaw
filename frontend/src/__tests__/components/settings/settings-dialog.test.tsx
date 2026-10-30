@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import ky from "ky";
 
 import { SettingsDialog } from "@/components/settings/settings-dialog";
+import { DEFAULT_MEDIA_STORAGE_SETTINGS, useSettingsStore } from "@/stores/settingsStore";
 import { enT, zhT } from "@/__tests__/helpers/i18n-fixtures";
 
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: true }));
@@ -372,6 +373,7 @@ function openRecipesManagement() {
 }
 
 beforeEach(() => {
+  useSettingsStore.setState({ mediaStorage: structuredClone(DEFAULT_MEDIA_STORAGE_SETTINGS) });
   runtimeState.isCeRuntime = true;
   localeState.language = "zh";
   modelGatewayMocks.config = undefined;
@@ -400,6 +402,64 @@ beforeEach(() => {
 });
 
 describe("SettingsDialog pages", () => {
+  it("saves S3 configuration without sending OSS credential drafts", async () => {
+    useSettingsStore.getState().updateAliyunOssStorageConfig({
+      accessKeyId: "oss-draft-key", accessKeySecret: "oss-draft-secret",
+    });
+    modelGatewayMocks.saveMediaRelay.mockResolvedValue({ ok: true });
+    renderSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
+    fireEvent.click(screen.getByRole("tab", { name: zhT("settings.mediaStorage.providerS3") }));
+    fireEvent.change(screen.getByLabelText(zhT("settings.mediaStorage.fields.endpoint")), { target: { value: "http://localhost:9000" } });
+    fireEvent.change(screen.getByLabelText(zhT("settings.mediaStorage.fields.bucket")), { target: { value: "media" } });
+    fireEvent.change(screen.getByLabelText(zhT("settings.mediaStorage.fields.accessKeyId")), { target: { value: "s3-draft-key" } });
+    fireEvent.change(screen.getByLabelText(zhT("settings.mediaStorage.fields.accessKeySecret")), { target: { value: "s3-draft-secret" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: zhT("settings.mediaStorage.fields.pathStyle") }));
+    fireEvent.click(screen.getByRole("button", { name: zhT("settings.mediaStorage.saveS3") }));
+    await waitFor(() => expect(modelGatewayMocks.saveMediaRelay).toHaveBeenCalledWith({
+      provider: "s3", ttlSeconds: 1800, s3Endpoint: "http://localhost:9000", s3Bucket: "media",
+      s3Region: "us-east-1", s3PathStyle: true,
+      s3AccessKeyId: "s3-draft-key", s3AccessKeySecret: "s3-draft-secret",
+    }));
+    await waitFor(() => expect(useSettingsStore.getState().mediaStorage.s3.accessKeySecret).toBe(""));
+    expect(toast.success).toHaveBeenCalledWith(zhT("settings.mediaStorage.s3SaveSuccess"));
+    expect(localStorage.getItem("settings-storage")).not.toContain("draft-secret");
+  });
+
+  it("loads saved S3 fields and omits unchanged credentials", async () => {
+    modelGatewayMocks.config = {
+      mode: "official",
+      effective: { source: "official", configured: false },
+      llmEffective: { configured: false },
+      official: { configured: false },
+      custom: { configured: false },
+      mediaRelay: {
+      provider: "s3", configured: true, ttlSeconds: 7200, source: "database",
+      s3Endpoint: "https://storage.test", s3Bucket: "media", s3Region: "auto", s3PathStyle: true,
+      s3AccessKeyIdPreview: "save...dkey", s3AccessKeySecretPreview: "save...cret",
+    } };
+    modelGatewayMocks.saveMediaRelay.mockResolvedValue({ ok: true });
+    renderSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
+    expect(screen.getByRole("tab", { name: zhT("settings.mediaStorage.providerS3") })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText(zhT("settings.mediaStorage.fields.region"))).toHaveValue("auto");
+    fireEvent.click(screen.getByRole("button", { name: zhT("settings.mediaStorage.saveS3") }));
+    await waitFor(() => expect(modelGatewayMocks.saveMediaRelay).toHaveBeenCalledWith({
+      provider: "s3", ttlSeconds: 7200, s3Endpoint: "https://storage.test", s3Bucket: "media",
+      s3Region: "auto", s3PathStyle: true,
+    }));
+  });
+
+  it("rejects S3 TTL above seven days without saving", () => {
+    renderSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: /媒体存储/ }));
+    fireEvent.click(screen.getByRole("tab", { name: zhT("settings.mediaStorage.providerS3") }));
+    fireEvent.change(screen.getByLabelText(zhT("settings.mediaStorage.fields.ttlSeconds")), { target: { value: "604801" } });
+    fireEvent.click(screen.getByRole("button", { name: zhT("settings.mediaStorage.saveS3") }));
+    expect(modelGatewayMocks.saveMediaRelay).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(zhT("settings.mediaStorage.validation.s3TtlSeconds"));
+  });
+
   it.each([
     {
       language: "en",

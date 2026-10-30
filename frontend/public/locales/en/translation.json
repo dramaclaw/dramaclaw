@@ -8081,11 +8081,15 @@
     },
     "mediaStorage": {
       "title": "Image Host / Media Storage",
-      "description": "Configure the temporary reference media relay used by NewAPI/upstream models, with Aliyun OSS or Cloudinary.",
+      "description": "Configure the temporary reference media relay used by NewAPI/upstream models, with Aliyun OSS, S3-compatible storage or Cloudinary.",
       "fullyManagedUpload": "Fully-managed asset upload",
       "provider": "Provider",
       "providerAliyunOss": "Aliyun OSS",
       "providerCloudinary": "Cloudinary (Free)",
+      "providerS3": "S3 compatible",
+      "saveS3": "Save S3 config",
+      "s3SaveSuccess": "S3 config saved",
+      "s3FieldsHint": "Use a full http(s) endpoint URL and long-lived credentials. The signed URL must be reachable by upstream models. Enable path-style if your S3 service requires it. Leave saved credentials blank to keep them.",
       "providerHint": "With this provider we suggest leaving 「Fully-managed asset upload」 off; the free tier has a bandwidth quota, so use it only for point-to-point editing / uploads.",
       "currentPlan": "Current upload plan",
       "status": "Current config",
@@ -8093,7 +8097,7 @@
       "configured": "Configured",
       "notConfigured": "Not configured",
       "warningIconLabel": "Reference media storage is not configured",
-      "notConfiguredImpact": "Reference media storage is not configured. Text-only flows and text-to-image usually still work; features that need to upload local reference images will fail, including XiaHua reference images, character references, identity images, image-to-image, video first frames, and image-to-video. Configure Aliyun OSS or Cloudinary.",
+      "notConfiguredImpact": "Reference media storage is not configured. Text-only flows and text-to-image usually still work; features that need to upload local reference images will fail, including XiaHua reference images, character references, identity images, image-to-image, video first frames, and image-to-video. Configure Aliyun OSS, S3-compatible storage or Cloudinary.",
       "showSecret": "Show",
       "hideSecret": "Hide",
       "fieldsHint": "Saved values are stored in the local CE settings database; full AccessKeys are not returned. Leave saved credentials blank and enter only the fields you want to replace.",
@@ -8101,7 +8105,7 @@
       "saveCloudinary": "Save Cloudinary config",
       "saveSuccess": "OSS config saved",
       "cloudinarySaveSuccess": "Cloudinary config saved",
-      "saveFailed": "Failed to save OSS config",
+      "saveFailed": "Failed to save media storage config",
       "errors": {
         "MEDIA_STORAGE_TIMEOUT": "Media storage connection timed out. Check your network and try again.",
         "MEDIA_STORAGE_AUTH_INVALID": "Media storage credentials are invalid. Check your AccessKey / API Key.",
@@ -8116,7 +8120,8 @@
       "testUpload": "Test upload",
       "testUploadPlaceholder": "Test upload is coming soon",
       "validation": {
-        "ttlSeconds": "Signed URL TTL must be greater than 0"
+        "ttlSeconds": "Signed URL TTL must be greater than 0",
+        "s3TtlSeconds": "S3 signed URL TTL must be between 1 and 604800 seconds"
       },
       "fields": {
         "cloudName": "Cloud Name",
@@ -8124,6 +8129,8 @@
         "apiSecret": "API Secret",
         "apiFolder": "API Folder (optional)",
         "materialsRoot": "Materials Root",
+        "region": "Region",
+        "pathStyle": "Use path-style addressing",
         "accessKeyId": "AccessKey ID",
         "accessKeySecret": "AccessKey Secret",
         "bucket": "Bucket",
