@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -21,12 +21,13 @@ import {
 } from "@/lib/payment-navigation";
 import { queryKeys } from "@/lib/query-keys";
 import {
-  safeSubscriptionCheckout,
   useSubscription,
+  useRefreshSubscription,
 } from "@/lib/queries/subscriptions";
 import {
   SUBSCRIPTION_RETURN_KEY,
   subscriptionResultState,
+  subscriptionResultShouldPoll,
 } from "@/lib/subscription-checkout";
 import { cn } from "@/lib/utils";
 import { PaymentResultShell } from "@/components/credits/PaymentResultShell";
@@ -34,21 +35,34 @@ import { PaymentResultShell } from "@/components/credits/PaymentResultShell";
 export function SubscriptionPaymentReturn({ id }: { id: string }) {
   const { t, i18n } = useTranslation();
   const client = useQueryClient();
-  const query = useSubscription(id);
+  const [pollExpired, setPollExpired] = useState(false);
+  const [pollEpoch, setPollEpoch] = useState(0);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
+  const query = useSubscription(id, true, (value) =>
+    subscriptionResultShouldPoll(value), pollExpired ? 15_000 : 5_000);
+  const refresh = useRefreshSubscription();
   const subscription = query.data?.data;
-  const state = subscriptionResultState(subscription, query.isError);
+  const resultState = subscriptionResultState(subscription, query.isError);
+  const state = pollExpired &&
+    ["confirming", "awaitingPayment", "checkoutUnavailable"].includes(resultState)
+    ? "unconfirmed" : resultState;
   const paid = state === "active" || state === "paid";
-  const pending = state === "confirming" || state === "authorized";
+  const pending = ["confirming", "awaitingPayment", "authorized", "unconfirmed"].includes(state);
   const Icon =
     state === "active"
       ? CheckCircle2
-      : paid || state === "authorized"
+      : paid || ["authorized", "awaitingPayment", "unconfirmed"].includes(state)
         ? Clock3
         : pending
           ? LoaderCircle
           : state === "failed" || state === "cancelled"
             ? XCircle
             : TriangleAlert;
+  useEffect(() => {
+    setPollExpired(false);
+    const timer = window.setTimeout(() => setPollExpired(true), 60_000);
+    return () => window.clearTimeout(timer);
+  }, [id, pollEpoch]);
   useEffect(() => {
     if (paid) {
       void client.invalidateQueries({ queryKey: queryKeys.creditSummary() });
@@ -67,22 +81,47 @@ export function SubscriptionPaymentReturn({ id }: { id: string }) {
       safePaymentReturnPath(sessionStorage.getItem(CHECKOUT_RETURN_KEY)),
     );
   };
-  let checkout: string | null = null;
-  if (
-    subscription?.checkout_url &&
-    subscription.auto_renew &&
-    subscription.authorization_status === "pending" &&
-    !paid
-  ) {
+  const viewBills = () => {
+    sessionStorage.setItem(OPEN_CREDIT_CENTER_KEY, "1");
+    sessionStorage.setItem(CREDIT_CENTER_TAB_KEY, "orders");
+    sessionStorage.removeItem(CHECKOUT_DRAFT_KEY);
+    sessionStorage.removeItem(SUBSCRIPTION_RETURN_KEY);
+    window.location.assign(
+      safePaymentReturnPath(sessionStorage.getItem(CHECKOUT_RETURN_KEY)),
+    );
+  };
+  // A subscription spans multiple bills. Show the bill for the displayed paid
+  // period, not an upcoming renewal or the internal subscription identity.
+  const now = Date.now();
+  const invoice = [...(subscription?.invoices ?? [])]
+    .filter((item) => !paid || (item.status === "paid" && item.period_start &&
+      item.period_end && Date.parse(item.period_start) <= now && Date.parse(item.period_end) > now))
+    .sort((a, b) => b.cycle_index - a.cycle_index)[0];
+  const billNumber = invoice?.merchant_order_no || invoice?.invoice_id;
+  const priceAmount = subscription?.payment_method === "dodo"
+    ? subscription.offer.payment_amount_minor : subscription?.offer.amount_minor;
+  const priceCurrency = subscription?.payment_method === "dodo"
+    ? subscription.offer.payment_currency : subscription?.offer.currency;
+  const price = typeof priceAmount === "number" && Number.isSafeInteger(priceAmount) &&
+    priceAmount >= 0 && priceCurrency
+    ? new Intl.NumberFormat(i18n.language, {
+      style: "currency", currency: priceCurrency,
+    }).format(priceAmount / 100)
+    : null;
+  const refreshStatus = async () => {
+    setRecoveryNotice(null);
     try {
-      checkout = safeSubscriptionCheckout(
-        subscription.checkout_url,
-        subscription.payment_method,
-      );
+      const result = await refresh.mutateAsync(id);
+      setPollEpoch((epoch) => epoch + 1);
+      if (result.data.recovery_error) {
+        setRecoveryNotice(result.data.recovery_error === "SUBSCRIPTION_PAYMENT_CONFIG_INVALID"
+          ? "subscriptions.recoveryConfigUnavailable" : "subscriptions.recoveryUnavailable");
+        return;
+      }
     } catch {
-      /* An unsafe URL never becomes a navigation action. */
+      setRecoveryNotice("subscriptions.recoveryUnavailable");
     }
-  }
+  };
   return (
     <PaymentResultShell
       back={
@@ -119,12 +158,14 @@ export function SubscriptionPaymentReturn({ id }: { id: string }) {
       {subscription && (
         <div className="mt-6 w-full space-y-3 rounded-lg border border-border p-5 text-left text-sm">
           <p className="font-medium">
-            {subscription.offer.name} ·{" "}
-            {t(`subscriptions.cycle.${subscription.offer.billing_months}`)}
+            {subscription.offer.name}
+            {price && <> · {price}{t(`subscriptions.cycle.${subscription.offer.billing_months}`)}</>}
           </p>
-          <p className="break-all text-xs text-muted-foreground">
-            {t("subscriptionReturn.number")}: {subscription.subscription_id}
-          </p>
+          {billNumber && (
+            <p className="break-all text-xs text-muted-foreground">
+              {t("credits.recharge.columns.billId")}: {billNumber}
+            </p>
+          )}
           {paid && (
             <>
               <p>
@@ -165,29 +206,26 @@ export function SubscriptionPaymentReturn({ id }: { id: string }) {
           )}
         </div>
       )}
-      {(query.isError || pending) && (
+      {(query.isError ||
+        pending ||
+        state === "checkoutUnavailable" ||
+        state === "expired") && (
         <button
           type="button"
-          disabled={query.isFetching}
-          onClick={() => void query.refetch()}
+          disabled={query.isFetching || refresh.isPending}
+          onClick={() => void refreshStatus()}
           className="mt-5 inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm"
         >
           <RefreshCw className="size-4" />
           {t("paymentReturn.retry")}
         </button>
       )}
-      {checkout && (
-        <a href={checkout} className="mt-5 text-sm text-primary underline">
-          {t("subscriptions.continueCheckout")}
-        </a>
+      {recoveryNotice && (
+        <p role="status" className="mt-3 text-sm text-muted-foreground">{t(recoveryNotice)}</p>
       )}
       <button
         type="button"
-        onClick={() =>
-          window.location.assign(
-            `/credits?subscription_id=${encodeURIComponent(id)}`,
-          )
-        }
+        onClick={viewBills}
         className="mt-6 h-11 rounded-md bg-primary px-5 text-sm font-semibold text-primary-foreground"
       >
         {t("subscriptionReturn.manage")}

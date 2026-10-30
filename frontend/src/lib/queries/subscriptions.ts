@@ -68,6 +68,7 @@ export function groupSubscriptionPlans(
 }
 export interface SubscriptionInvoice {
   invoice_id: string;
+  merchant_order_no?: string | null;
   cycle_index: number;
   status: "pending" | "processing" | "paid" | "failed" | "refunded" | "closed";
   amount_minor: number;
@@ -77,6 +78,9 @@ export interface SubscriptionInvoice {
   fx_rate_snapshot: string | number | null;
   provider_total_minor: number | null;
   provider_tax_minor: number | null;
+  submitted_at?: string | null;
+  paid_at?: string | null;
+  payment_id?: string | null;
   period_start: string | null;
   period_end: string | null;
 }
@@ -88,6 +92,9 @@ export interface Subscription {
   offer: SubscriptionPlan & SubscriptionOffer;
   authorization_status: "pending" | "active" | "cancelled" | "failed";
   checkout_state: "pending" | "creating" | "ready" | "unknown" | "failed";
+  checkout_started_at?: string | null;
+  checkout_session_id?: string | null;
+  remote_subscription_id?: string | null;
   checkout_url: string | null;
   auto_renew: boolean;
   cancellation_requested_at: string | null;
@@ -95,6 +102,11 @@ export interface Subscription {
   paid_until: string | null;
   review_required: boolean;
   failure_code: string | null;
+  recovery_error?: string | null;
+  has_pending_payment?: boolean;
+  purchase_blocked?: boolean;
+  can_change_payment_method?: boolean;
+  settlement_state?: "open" | "active" | "compensating" | "closed";
   billing_status: "pending" | "processing" | "paid" | "failed" | "refunded";
   invoices?: SubscriptionInvoice[];
   grants?: Array<{
@@ -130,6 +142,47 @@ export function subscriptionStatus(value: Subscription): SubscriptionStatus {
   if (value.billing_status === "failed") return "paymentFailed";
   if (!value.paid_until) return "awaitingPayment";
   return "active";
+}
+export function isHistoricalSubscription(
+  value: Subscription,
+  now = Date.now(),
+): boolean {
+  const paidUntil = value.paid_until ? Date.parse(value.paid_until) : null;
+  return (
+    !value.auto_renew &&
+    !!value.cancellation_confirmed_at &&
+    !value.review_required &&
+    !value.has_pending_payment &&
+    (paidUntil === null || (Number.isFinite(paidUntil) && paidUntil <= now)) &&
+    value.billing_status !== "processing" &&
+    !value.invoices?.some((invoice) =>
+      ["pending", "processing"].includes(invoice.status),
+    )
+  );
+}
+export function subscriptionBlocksPurchase(value: Subscription, now = Date.now()): boolean {
+  if (value.settlement_state === "compensating" || value.settlement_state === "closed") return false;
+  if (typeof value.purchase_blocked === "boolean") return value.purchase_blocked;
+  // An unpaid checkout is an attempt, not an active membership. Older API
+  // responses may lack purchase_blocked, so fall back only to paid evidence.
+  const paidUntil = value.paid_until ? Date.parse(value.paid_until) : null;
+  return (paidUntil !== null && (!Number.isFinite(paidUntil) || paidUntil > now)) ||
+    value.invoices?.some((invoice) => invoice.status === "paid" &&
+      (!invoice.period_end || Date.parse(invoice.period_end) > now)) === true ||
+    (value.billing_status === "paid" && paidUntil === null);
+}
+export function subscriptionAttemptFinished(value: Subscription): boolean {
+  return !subscriptionBlocksPurchase(value) && !value.has_pending_payment &&
+    !value.invoices?.some((invoice) => invoice.status === "processing") &&
+    (value.checkout_state === "failed" || value.billing_status === "failed" ||
+      value.billing_status === "refunded" || value.authorization_status === "failed" ||
+      value.authorization_status === "cancelled");
+}
+export function reusableSubscriptionAttempt(value: Subscription): boolean {
+  return value.payment_method !== "dodo" && value.settlement_state !== "compensating" &&
+    value.settlement_state !== "closed" && !subscriptionBlocksPurchase(value) && !subscriptionAttemptFinished(value) &&
+    value.auto_renew !== false && !value.cancellation_requested_at &&
+    !value.review_required && ["pending", "creating", "ready", "unknown"].includes(value.checkout_state);
 }
 export function safeSubscriptionCheckout(
   raw: string,
@@ -238,6 +291,24 @@ export function useSubscriptions(enabled: boolean) {
     refetchInterval: enabled ? 15_000 : false,
   });
 }
+export function useSubscriptionBilling(enabled: boolean) {
+  const scope = useScope();
+  return useQuery({
+    queryKey: ["subscriptions", scope, "billing"],
+    enabled,
+    queryFn: ({ signal }) =>
+      api
+        .get("api/v1/payments/subscriptions/billing", { signal })
+        .json<OkResponse<{ items: Subscription[] }>>(),
+    retry: false,
+    refetchInterval: enabled ? 15_000 : false,
+    // Reconciliation can settle invoices while this tab is hidden or offline.
+    // Show the current result on return, including within the app's 30s cache window.
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+  });
+}
 export function useMembership(enabled: boolean) {
   const scope = useScope();
   return useQuery({
@@ -247,13 +318,26 @@ export function useMembership(enabled: boolean) {
       api
         .get("api/v1/payments/subscriptions/membership", { signal })
         .json<
-          OkResponse<{ active: boolean; name?: string; valid_until?: string }>
+          OkResponse<{
+            active: boolean;
+            subscription_id?: string;
+            plan_id?: string;
+            plan_version?: number;
+            name?: string;
+            valid_until?: string;
+            auto_renew?: boolean;
+          }>
         >(),
     retry: false,
     refetchInterval: enabled ? 15_000 : false,
   });
 }
-export function useSubscription(id: string | null, enabled = true) {
+export function useSubscription(
+  id: string | null,
+  enabled = true,
+  shouldPoll: boolean | ((value: Subscription | undefined) => boolean) = true,
+  pollInterval = 5_000,
+) {
   const scope = useScope();
   return useQuery({
     queryKey: ["subscriptions", scope, "detail", id],
@@ -265,7 +349,12 @@ export function useSubscription(id: string | null, enabled = true) {
         })
         .json<OkResponse<Subscription>>(),
     retry: false,
-    refetchInterval: enabled && id ? 5_000 : false,
+    refetchInterval: (query) =>
+      enabled && id &&
+      (typeof shouldPoll === "function" ? shouldPoll(query.state.data?.data) : shouldPoll)
+        ? pollInterval : false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 }
 export function useCreateSubscription() {
@@ -348,6 +437,18 @@ export function useRetrySubscription() {
           retry: 0,
         })
         .json<OkResponse<Subscription>>(),
+    onSettled: () => client.invalidateQueries({ queryKey: ["subscriptions"] }),
+  });
+}
+
+export function useRefreshSubscription() {
+  const client = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: (id: string) =>
+      api.post(`api/v1/payments/subscriptions/${encodeURIComponent(id)}/refresh`, {
+        retry: 0,
+      }).json<OkResponse<Subscription>>(),
     onSettled: () => client.invalidateQueries({ queryKey: ["subscriptions"] }),
   });
 }

@@ -1,52 +1,114 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { server } from "@/__mocks__/msw/server";
 import ky from "ky";
 import { afterEach, describe, expect, it, vi } from "vitest";
-vi.mock("@/lib/api", () => ({
-  api: ky.create({ prefix: "http://localhost:3000/" }),
-}));
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en" } }),
-}));
 import { SubscriptionPanel } from "@/components/credits/SubscriptionPanel";
-import {
-  safeSubscriptionCheckout,
-  subscriptionStatus,
-  subscriptionAttemptKey,
-  bindSubscriptionAttempt,
-  forgetSubscriptionAttempt,
-  type Subscription,
-} from "@/lib/queries/subscriptions";
+import { BillingOrdersTab } from "@/components/credits/BillingOrdersTab";
+import { safeSubscriptionCheckout, subscriptionStatus, subscriptionAttemptKey,
+  bindSubscriptionAttempt, forgetSubscriptionAttempt, useRetrySubscription,
+  type Subscription } from "@/lib/queries/subscriptions";
 import { useAuthStore } from "@/stores/auth-store";
-
-afterEach(() => {
-  server.resetHandlers();
-  sessionStorage.clear();
-});
-function mount() {
-  server.use(
-    http.get(
-      "http://localhost:3000/api/v1/payments/subscriptions/membership",
-      () => HttpResponse.json({ ok: true, data: { active: false } }),
-    ),
-  );
+import { CHECKOUT_DRAFT_KEY } from "@/lib/payment-navigation";
+vi.mock("@/lib/api", () => ({ api: ky.create({ prefix: "http://localhost:3000/" }) }));
+vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en" } }) }));
+const endpoint = "http://localhost:3000/api/v1/payments/subscriptions";
+let client: QueryClient;
+let view: ReturnType<typeof render> | undefined;
+afterEach(() => { view?.unmount(); client?.clear(); server.resetHandlers(); sessionStorage.clear(); });
+function mount(billing = false) {
   useAuthStore.setState({ username: "test-user" });
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const view = render(
-    <QueryClientProvider client={client}>
-      <SubscriptionPanel />
-    </QueryClientProvider>,
-  );
-  return () => {
-    view.unmount();
-    client.clear();
-  };
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  view = render(<QueryClientProvider client={client}>
+    {billing ? <BillingOrdersTab orders={[]} loading={false} language="en" enabled /> : <SubscriptionPanel />}
+  </QueryClientProvider>);
 }
+// Invoices now live in the billing tab; the catalog no longer contains the old
+// details accordion or manual recovery controls.
+it.each([
+  ["pending", "pending", "pending"], ["active", "processing", "unconfirmed"],
+  ["active", "paid", "paid"], ["cancelled", "refunded", "refunded"],
+  ["pending", "failed", "failed"], ["failed", "closed", "closed"],
+])("renders invoice facts for authorization %s / payment %s", async (authorization, status, label) => {
+  server.use(http.get(endpoint + "/billing", () => HttpResponse.json({ ok: true, data: { items: [{
+    subscription_id: "invoice-sub", authorization_status: authorization, checkout_state: "ready",
+    offer: { name: "Monthly" }, invoices: [{ invoice_id: "internal-invoice", merchant_order_no: "DC_BILL",
+      cycle_index: 0, status, payment_amount_minor: 500, payment_currency: "USD",
+      provider_total_minor: status === "paid" || status === "refunded" ? 550 : null,
+      created_at: "2026-10-29T00:00:00Z" }],
+  }] } })));
+  mount(true);
+  const table = await screen.findByRole("table");
+  expect(within(table).getByText("subscriptions.bill." + label)).toBeInTheDocument();
+  expect(within(table).getByText("DC_BILL")).toBeInTheDocument();
+  expect(within(table).getByText(status === "paid" || status === "refunded" ? "$5.5" : "$5")).toBeInTheDocument();
+  expect(within(table).queryByText("internal-invoice")).not.toBeInTheDocument();
+});
+it.each(["paid_at", "payment_id"])("does not relabel processing as paid from %s alone", async (evidence) => {
+  server.use(http.get(endpoint + "/billing", () => HttpResponse.json({ ok: true, data: { items: [{
+    subscription_id: "invoice-sub", offer: { name: "Monthly" }, invoices: [{ invoice_id: "invoice",
+      status: "processing", payment_amount_minor: 500, payment_currency: "USD", [evidence]: "present" }],
+  }] } })));
+  mount(true);
+  expect(await screen.findByText("subscriptions.bill.unconfirmed")).toBeInTheDocument();
+  expect(screen.queryByText("subscriptions.bill.paid")).not.toBeInTheDocument();
+});
+it("shows a ready but unpaid checkout as awaiting payment even when its creation was submitted", async () => {
+  server.use(http.get(endpoint + "/billing", () => HttpResponse.json({ ok: true, data: { items: [{
+    subscription_id: "ready-session", checkout_state: "ready", checkout_session_id: "checkout-session",
+    checkout_started_at: "2026-10-29T00:00:00Z", offer: { name: "Monthly" }, invoices: [{
+      invoice_id: "invoice", cycle_index: 0, status: "pending", submitted_at: "2026-10-29T00:00:00Z",
+      payment_amount_minor: 500, payment_currency: "USD",
+    }],
+  }] } })));
+  mount(true);
+  expect(await screen.findByText("subscriptions.bill.pending")).toBeInTheDocument();
+  expect(screen.queryByText("subscriptions.bill.unconfirmed")).not.toBeInTheDocument();
+});
+it("keeps a duplicate payment amount visible while compensation is pending", async () => {
+  server.use(http.get(endpoint + "/billing", () => HttpResponse.json({ ok: true, data: { items: [{
+    subscription_id: "duplicate", settlement_state: "compensating", offer: { name: "Monthly" }, invoices: [{
+      invoice_id: "duplicate-invoice", status: "paid", payment_amount_minor: 500,
+      payment_currency: "USD", provider_total_minor: 550,
+    }],
+  }] } })));
+  mount(true);
+  expect(await screen.findByText("subscriptions.bill.compensating")).toBeInTheDocument();
+  expect(screen.getByText("$5.5")).toBeInTheDocument();
+  expect(screen.queryByText("subscriptions.bill.failed")).not.toBeInTheDocument();
+});
+it("reads released purchase access and lets the next catalog selection proceed", async () => {
+  let blocked = true;
+  const plan = { plan_id: "monthly", version: 1, name: "Monthly", billing_months: 1,
+    credits_per_month: 3000, grant_mode: "monthly", offers: [{ payment_method: "wxpay", amount_minor: 2900, currency: "CNY" }] };
+  server.use(
+    http.get(endpoint + "/plans", () => HttpResponse.json({ ok: true, data: { items: [plan] } })),
+    http.get(endpoint + "/membership", () => HttpResponse.json({ ok: true, data: { active: false } })),
+    http.get(endpoint, () => HttpResponse.json({ ok: true, data: { items: [{ subscription_id: "old-attempt", purchase_blocked: blocked }] } })),
+  );
+  mount();
+  const action = await screen.findByRole("button", { name: "subscriptions.subscribe" });
+  await waitFor(() => expect(action).toBeEnabled());
+  fireEvent.click(action);
+  expect(await screen.findByText("subscriptionCheckout.existing")).toBeInTheDocument();
+  expect(sessionStorage.getItem(CHECKOUT_DRAFT_KEY)).toBeNull();
+  blocked = false;
+  await client.invalidateQueries({ queryKey: ["subscriptions", "test-user", "list"] });
+  await waitFor(() => expect(client.getQueryData<{ data: { items: { purchase_blocked: boolean }[] } }>(["subscriptions", "test-user", "list"])?.data.items[0].purchase_blocked).toBe(false));
+  fireEvent.click(action);
+  await waitFor(() => expect(sessionStorage.getItem(CHECKOUT_DRAFT_KEY)).toContain('"planId":"monthly"'));
+});
+it("does not automatically retry a Dodo renewal POST after a network failure", async () => {
+  let calls = 0;
+  server.use(http.post(endpoint + "/retry-sub/retry", () => { calls++; return HttpResponse.json({ detail: "UNCONFIRMED" }, { status: 503 }); }));
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const hook = renderHook(() => useRetrySubscription(), { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
+  await act(async () => { await expect(hook.result.current.mutateAsync("retry-sub")).rejects.toThrow(); });
+  expect(calls).toBe(1);
+  hook.unmount();
+});
 describe("subscription purchase", () => {
   it("does not call subscription APIs when the payment surface is disabled", () => {
     const client = new QueryClient();
@@ -136,157 +198,4 @@ describe("subscription purchase", () => {
   ])("rejects unsafe checkout %s", (url) => {
     expect(() => safeSubscriptionCheckout(url, "dodo")).toThrow();
   });
-});
-
-it("shows an incomplete signup without an empty paid membership period", async () => {
-  const row = {
-    subscription_id: "unconfirmed-signup",
-    payment_method: "wxpay",
-    auto_renew: false,
-    authorization_status: "pending",
-    billing_status: "pending",
-    checkout_state: "unknown",
-    paid_until: null,
-    cancellation_confirmed_at: null,
-    review_required: false,
-    offer: { name: "Monthly", amount_minor: 1000, currency: "CNY" },
-  };
-  server.use(
-    http.get("http://localhost:3000/api/v1/payments/subscriptions/plans", () =>
-      HttpResponse.json({ ok: true, data: { items: [] } }),
-    ),
-    http.get("http://localhost:3000/api/v1/payments/subscriptions", () =>
-      HttpResponse.json({ ok: true, data: { items: [row] } }),
-    ),
-  );
-  const unmount = mount();
-  await screen.findByText("subscriptions.status.cancellingSetup");
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "subscriptions.purchaseBlocked",
-  );
-  expect(screen.queryByText(/subscriptions.paidUntil/)).not.toBeInTheDocument();
-  expect(
-    screen.queryByText("subscriptions.status.cancelled"),
-  ).not.toBeInTheDocument();
-  unmount();
-});
-
-it.each([false, true])(
-  "keeps an unresolved signup blocked and restores purchase after a verified preflight failure (resolved=%s)",
-  async (resolved) => {
-    const plan = {
-      plan_id: "monthly-plan",
-      version: 1,
-      name: "Monthly",
-      description: "For creators",
-      billing_months: 1,
-      credits_per_month: 3000,
-      grant_mode: "monthly",
-      terms_url: "https://app.example.test/terms",
-      offers: [
-        {
-          payment_method: "wxpay",
-          currency: "CNY",
-          amount_minor: 2900,
-          first_amount_minor: null,
-        },
-      ],
-    };
-    const row = {
-      subscription_id: "preflight-signup",
-      plan_id: plan.plan_id,
-      plan_version: 1,
-      payment_method: "wxpay",
-      auto_renew: false,
-      authorization_status: resolved ? "failed" : "pending",
-      billing_status: "pending",
-      checkout_state: resolved ? "failed" : "unknown",
-      paid_until: null,
-      cancellation_confirmed_at: resolved ? "2026-10-22T09:00:00Z" : null,
-      review_required: false,
-      offer: { ...plan, ...plan.offers[0] },
-      invoices: [
-        {
-          invoice_id: "preflight-invoice",
-          status: resolved ? "closed" : "processing",
-          amount_minor: 2900,
-          currency: "CNY",
-          payment_currency: "CNY",
-          period_start: null,
-          period_end: null,
-        },
-      ],
-    };
-    server.use(
-      http.get(
-        "http://localhost:3000/api/v1/payments/subscriptions/plans",
-        () => HttpResponse.json({ ok: true, data: { items: [plan] } }),
-      ),
-      http.get("http://localhost:3000/api/v1/payments/subscriptions", () =>
-        HttpResponse.json({ ok: true, data: { items: [row] } }),
-      ),
-      http.get(
-        "http://localhost:3000/api/v1/payments/subscriptions/preflight-signup",
-        () => HttpResponse.json({ ok: true, data: row }),
-      ),
-    );
-    const unmount = mount();
-    await screen.findByText(
-      resolved
-        ? "subscriptions.status.setupFailed"
-        : "subscriptions.status.cancellingSetup",
-    );
-    const subscribe = await screen.findByRole("button", {
-      name: "subscriptions.subscribe",
-    });
-    expect(subscribe).toHaveProperty("disabled", !resolved);
-    expect(!!screen.queryByText("subscriptions.purchaseBlocked")).toBe(
-      !resolved,
-    );
-    expect(
-      screen.queryByText("subscriptions.status.paymentFailed"),
-    ).not.toBeInTheDocument();
-    if (resolved) {
-      fireEvent.click(
-        screen.getByRole("button", { name: "subscriptions.details" }),
-      );
-      await screen.findByText("subscriptions.invoiceStatus.closed");
-    }
-    unmount();
-  },
-);
-
-it("exposes one deliberate Dodo renewal retry without automatic POST retries", async () => {
-  let calls = 0;
-  const row = {
-    subscription_id: "retry-sub",
-    payment_method: "dodo",
-    auto_renew: true,
-    authorization_status: "active",
-    billing_status: "failed",
-    review_required: false,
-    checkout_state: "ready",
-    paid_until: "2026-01-01T00:00:00Z",
-    offer: { name: "Monthly", amount_minor: 1000, currency: "CNY" },
-  };
-  server.use(
-    http.get("http://localhost:3000/api/v1/payments/subscriptions/plans", () =>
-      HttpResponse.json({ ok: true, data: { items: [] } }),
-    ),
-    http.get("http://localhost:3000/api/v1/payments/subscriptions", () =>
-      HttpResponse.json({ ok: true, data: { items: [row] } }),
-    ),
-    http.post(
-      "http://localhost:3000/api/v1/payments/subscriptions/retry-sub/retry",
-      () => {
-        calls++;
-        return HttpResponse.json({ detail: "UNCONFIRMED" }, { status: 503 });
-      },
-    ),
-  );
-  const unmount = mount();
-  fireEvent.click(await screen.findByText("subscriptions.retryPayment"));
-  await screen.findByText("subscriptions.retryUnconfirmed");
-  expect(calls).toBe(1);
-  unmount();
 });

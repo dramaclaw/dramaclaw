@@ -8540,5 +8540,50 @@
     "confirm": "Xác nhận",
     "saving": "Đang lưu...",
     "resultTitle": "Kết quả cắt ảnh"
-  }
+  },
+  "subscriptions": {
+    "bill": {"empty": "Chưa có hóa đơn", "content": "Đăng ký {{name}}", "pending": "Chờ thanh toán", "unconfirmed": "Chưa xác nhận", "paid": "Đã thanh toán", "failed": "Thanh toán thất bại", "closed": "Đã đóng", "refunded": "Đã hoàn tiền", "compensating": "Đang xử lý thanh toán trùng"},
+    "createUnconfirmed": "Chưa xác nhận được kết quả yêu cầu. Bạn có thể chọn phương thức thanh toán khác trong khi hệ thống tự động kiểm tra yêu cầu trước đó.",
+    "periodPayment": "Số tiền thanh toán kỳ này: {{price}}",
+    "periodPaymentLabel": "Số tiền thanh toán kỳ này",
+    "currentPlan": "Gói hiện tại",
+    "previousPaymentUnconfirmed": "Kết quả thanh toán trước chưa được xác nhận. Vui lòng thử lại sau để tránh thanh toán trùng.",
+    "planPrice": "Giá gói: {{price}} mỗi {{months}} tháng",
+    "automaticRenewalEnabled": "Đã bật tự động gia hạn",
+    "automaticRenewalDisabled": "Đã tắt tự động gia hạn; quyền lợi đã trả phí được giữ đến khi hết hạn",
+    "automaticRenewalCancelling": "Đang xác nhận hủy tự động gia hạn",
+    "dodoQuoted": "Số tiền Dodo báo giá {{price}}",
+    "resubscribeAfterExpiry": "Quyền lợi thành viên hiện tại vẫn còn hiệu lực. Bạn có thể đăng ký lại sau khi hết hạn; không thể đăng ký trùng trong kỳ hiện tại.",
+    "cancelApplication": "Hủy yêu cầu đăng ký",
+    "cancelApplicationExplain": "Hệ thống sẽ kiểm tra với nhà cung cấp thanh toán và cố gắng hủy ủy quyền cùng các kỳ gia hạn sau. Nếu thanh toán đang xử lý, vẫn cần xác nhận kết quả. Thao tác này không yêu cầu hoàn tiền.",
+    "confirmCancelApplication": "Xác nhận yêu cầu hủy",
+    "pendingApplicationHint": "Nếu đã ủy quyền hoặc thanh toán, hãy kiểm tra trạng thái mới nhất trước để tránh thanh toán trùng. Nếu chưa hoàn tất, bạn có thể thử tiếp tục ủy quyền và thanh toán.",
+    "status": {
+      "awaitingPayment": "Chưa hoàn tất đăng ký; chưa xác nhận ủy quyền hoặc thanh toán đầu tiên"
+    }
+  },
+  "subscriptionReturn": {
+    "manage": "Xem hóa đơn",
+    "states": {
+      "compensating": {
+        "title": "Đang xử lý thanh toán trùng",
+        "description": "Hệ thống đang tự động xử lý khoản thanh toán trùng này. Gói đang hoạt động vẫn có thể sử dụng và quản lý bình thường. Kết quả sẽ được cập nhật trên hóa đơn."
+      },
+      "awaitingPayment": {
+        "title": "Chưa xác nhận ủy quyền và thanh toán đầu tiên",
+        "description": "Chưa xác nhận thanh toán đầu tiên. Bạn có thể quay lại chọn phương thức thanh toán. Khoản đã thanh toán sẽ được tự động kiểm tra và cập nhật trên hóa đơn."
+      },
+      "unconfirmed": {
+        "title": "Trạng thái vẫn chưa được xác nhận",
+        "description": "Hệ thống sẽ tiếp tục tự động kiểm tra và cập nhật hóa đơn. Bạn có thể quay lại để tiếp tục."
+      }
+    }
+  },
+  "subscriptionCheckout": {
+    "linkUnavailable": "Chưa nhận được liên kết thanh toán. Bạn có thể chọn phương thức khác; hệ thống sẽ tự động kiểm tra yêu cầu trước đó.",
+    "existing": "Bạn đã có gói còn hiệu lực hoặc khoản thanh toán đã xác nhận đang được kích hoạt quyền lợi. Hãy xem quyền lợi của bạn.",
+    "recover": "Lấy lại liên kết thanh toán",
+    "orgCreditsInsufficient": "Tổ chức không đủ điểm khả dụng cho gói này. Vui lòng liên hệ quản trị viên tổ chức.",
+    "linkFailed": "Không thể tạo trang ủy quyền. Hãy chọn phương thức khác hoặc thử lại sau."
+}
 }

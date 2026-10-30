@@ -43,10 +43,8 @@ import {
   PAYMENT_RETURN_ORDER_ID_KEY,
   PAYMENT_RETURN_ORDER_KEY,
 } from "@/lib/payment-navigation";
-import { resolveRechargeOrderStatus } from "@/lib/payment-return";
 import {
   type CustomRechargeConfig,
-  type RechargeOrder,
   type RechargePackage,
   useCustomRechargeConfig,
   useRechargeOrders,
@@ -56,8 +54,13 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 import { PricingCard, PricingCardPrice, PricingCardDetails, PricingCardNote, PricingCardAction } from "./PricingCard";
 import { SubscriptionPanel } from "@/components/credits/SubscriptionPanel";
+import { SubscriptionBenefits } from "@/components/credits/SubscriptionBenefits";
+import { BillingOrdersTab } from "@/components/credits/BillingOrdersTab";
+import { useMembership } from "@/lib/queries/subscriptions";
 
 const TRANSACTION_SOURCE_COPY = new Map<string, [string, string]>([
+  ["initial_credit", ["initialGrant", "accountInitialized"]],
+  ["legacy_initial_credit", ["initialGrant", "accountInitialized"]],
   ["subscription_grant", ["subscriptionGrant", "subscriptionReceived"]],
   ["subscription_org_grant", ["subscriptionGrant", "subscriptionReceived"]],
   ["payment_org_member_recharge", ["orgRecharge", "paymentReceived"]],
@@ -320,10 +323,10 @@ export function CreditCenterDialog({
               />
             ) : null}
             {visibleActiveTab === "benefits" ? (
-              <BenefitsTab promotions={promotions} loading={promotionsQuery.isPending} />
+              <BenefitsTab promotions={promotions} loading={promotionsQuery.isPending} paymentAvailable={paymentAvailable} />
             ) : null}
             {visibleActiveTab === "orders" ? (
-              <OrdersTab orders={orders} loading={ordersQuery.isPending} language={language} />
+              <BillingOrdersTab orders={orders} loading={ordersQuery.isPending} language={language} enabled={open && paymentAvailable} />
             ) : null}
             {visibleActiveTab === "usage" ? (
               <UsageTab summary={summary} language={language} />
@@ -591,13 +594,16 @@ function CustomRechargeTab({
   );
 }
 
-function BenefitsTab({ promotions, loading }: { promotions: Array<{ id: string; name: string; target_label: string; discount_basis_points: number; ends_at: string | null }>; loading: boolean }) {
+function BenefitsTab({ promotions, loading, paymentAvailable }: { promotions: Array<{ id: string; name: string; target_label: string; discount_basis_points: number; ends_at: string | null }>; loading: boolean; paymentAvailable: boolean }) {
   const { t, i18n } = useTranslation();
+  const membership = useMembership(paymentAvailable);
   const language = i18n.resolvedLanguage ?? i18n.language ?? "zh";
-  if (loading) return <LoadingState />;
-  if (promotions.length === 0) return <EmptyState text={t("credits.centerModal.noBenefits")} />;
+  if (loading || (paymentAvailable && membership.isPending)) return <LoadingState />;
+  if (promotions.length === 0 && !membership.data?.data.active && !membership.isError) return <EmptyState text={t("credits.centerModal.noBenefits")} />;
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <div className="space-y-4">
+      <SubscriptionBenefits enabled={paymentAvailable} />
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       {promotions.map((promotion) => (
         <article key={promotion.id} className="rounded-lg border border-white/10 bg-white/[0.035] p-5">
           <div className="flex items-start justify-between gap-3">
@@ -617,70 +623,7 @@ function BenefitsTab({ promotions, loading }: { promotions: Array<{ id: string; 
           </p>
         </article>
       ))}
-    </div>
-  );
-}
-
-function OrdersTab({ orders, loading, language }: { orders: RechargeOrder[]; loading: boolean; language: string }) {
-  const { t } = useTranslation();
-  if (loading) return <LoadingState />;
-  if (orders.length === 0) return <EmptyState text={t("credits.recharge.noOrders")} />;
-  return (
-    <div className="overflow-x-auto rounded-lg border border-white/10">
-      <table className="w-full min-w-[900px] text-left text-sm">
-        <thead className="bg-white/[0.045] text-xs text-white/40">
-          <tr>
-            <th className="px-4 py-3 font-medium">{t("credits.recharge.columns.billId")}</th>
-            <th className="px-4 py-3 font-medium">{t("credits.recharge.columns.transactionTime")}</th>
-            <th className="px-4 py-3 font-medium">{t("credits.recharge.columns.content")}</th>
-            <th className="px-4 py-3 font-medium">{t("credits.recharge.columns.amount")}</th>
-            <th className="px-4 py-3 font-medium">{t("credits.recharge.columns.status")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order) => {
-            const status = resolveRechargeOrderStatus(order);
-            return (
-              <tr key={order.order_id} className="border-t border-white/8">
-                <td className="px-4 py-3 font-mono text-xs font-medium text-white/82">
-                  {order.merchant_order_no}
-                </td>
-                <td className="px-4 py-3 text-xs tabular-nums text-white/48">
-                  {formatDateTime(order.created_at, language)}
-                </td>
-                <td className="max-w-80 px-4 py-3">
-                  <div className="truncate font-medium">{order.package_name}</div>
-                  <div className="mt-1 text-xs text-white/38">
-                    {formatNumber(order.base_credits + order.gift_credits, language)} {t("credits.short")}
-                  </div>
-                </td>
-                <td className="px-4 py-3 font-medium tabular-nums">
-                  {formatMoney(order.provider_total_cents ?? order.amount_cents, language, order.currency)}
-                </td>
-                <td className="px-4 py-3">
-                  <span
-                    className={cn(
-                      "inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium",
-                      status === "credited" && "bg-emerald-500/12 text-emerald-400",
-                      (status === "pending" || status === "paid") &&
-                        "bg-amber-400/12 text-amber-300",
-                      (status === "failed" ||
-                        status === "creditFailed" ||
-                        status === "manualReview") &&
-                        "bg-red-500/12 text-red-400",
-                      (status === "expired" || status === "closed") &&
-                        "bg-white/8 text-white/45",
-                      status === "refunded" && "bg-sky-500/12 text-sky-300",
-                    )}
-                  >
-                    {t(`credits.recharge.status.${status}`)}
-                  </span>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      </div>
     </div>
   );
 }

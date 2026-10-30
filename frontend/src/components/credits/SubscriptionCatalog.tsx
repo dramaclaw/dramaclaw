@@ -23,11 +23,13 @@ export function SubscriptionCatalog({
   disabled,
   onSelect,
   loaded = true,
+  currentPlan = null,
 }: {
   groups: SubscriptionPlanGroup[];
   disabled: boolean;
   onSelect: (plan: SubscriptionPlan) => void;
   loaded?: boolean;
+  currentPlan?: { plan_id?: string; version?: number } | null;
 }) {
   const { t, i18n } = useTranslation();
   const [period, setPeriod] = useState<BillingPeriod | "all" | null>(null);
@@ -146,6 +148,8 @@ export function SubscriptionCatalog({
               plan?.offers[0];
             if (!plan || !offer) return null;
             const canBuy = plan.offers.some((o) => o.available !== false);
+            const isCurrent = currentPlan?.plan_id === plan.plan_id &&
+              currentPlan.version === plan.version;
             return (
               <PricingCard
                 key={group.group_id}
@@ -232,11 +236,13 @@ export function SubscriptionCatalog({
                   {t("subscriptions.renewalNote")}
                 </PricingCardNote>
                 <PricingCardAction
-                  disabled={disabled || !canBuy}
+                  disabled={disabled || !canBuy || isCurrent}
                   onClick={() => onSelect(plan)}
                 >
                   {t(
-                    canBuy
+                    isCurrent
+                      ? "subscriptions.currentPlan"
+                      : canBuy
                       ? "subscriptions.subscribe"
                       : "subscriptions.periodUnavailable",
                   )}
