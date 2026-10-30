@@ -2700,6 +2700,86 @@ def _collect_pending_canvas_commands(
     return {"ok": True, "data": {"frames": frames}}
 
 
+@router.get("/chat/canvas-commands/stream")
+async def stream_canvas_commands(
+    project_id: str,
+    canvas_id: str,
+    agent_ids: str = "main",
+    user: dict = Depends(get_api_user),
+):
+    from sse_starlette.sse import EventSourceResponse
+
+    project_id, canvas_id = project_id.strip(), canvas_id.strip()
+    agents = list(
+        dict.fromkeys(value.strip() for value in agent_ids.split(",") if value.strip())
+    )
+    if not project_id or not canvas_id or not agents or len(agents) > 50:
+        raise HTTPException(
+            status_code=400, detail="Invalid canvas command subscription"
+        )
+    if any(
+        len(agent) > 128
+        or any(
+            ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+            for ch in agent
+        )
+        for agent in agents
+    ):
+        raise HTTPException(status_code=400, detail="Invalid agent id")
+    payload = PendingCanvasCommandsIn(
+        project_id=project_id, canvas_id=canvas_id, agent_ids=agents
+    )
+    state_dir = await _bridge_project_state_dir(user, payload)
+    hub = bridge_watch_hub()
+    username = str(user["username"])
+
+    def directories():
+        result = set()
+        for agent in agents:
+            scope = ChatScope(
+                kind="project",
+                id=project_id,
+                surface="freezone",
+                canvas_id=canvas_id,
+                agent_id=agent,
+                state_dir=str(state_dir) if state_dir else None,
+            )
+            result.update(_candidate_canvas_bridge_dirs_for_scope(username, scope))
+        return result
+
+    targets = await hub.run(directories)
+    consumer = f"sse:{username}:{uuid.uuid4().hex}"
+
+    async def events():
+        hub.metrics["sse_connections"] = hub.metrics.get("sse_connections", 0) + 1
+        try:
+            async with hub.subscribe(targets) as wake:
+                while True:
+                    await wake.wait()
+                    wake.clear()
+                    result = await hub.run(
+                        _collect_pending_canvas_commands,
+                        payload,
+                        username,
+                        state_dir,
+                        consumer,
+                        hub,
+                    )
+                    for frame in result["data"]["frames"]:
+                        yield {"id": frame["bridge_key"], "data": json.dumps(frame)}
+        finally:
+            hub.metrics["sse_connections"] -= 1
+
+    return EventSourceResponse(
+        events(),
+        ping=25,
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
 def _load_pending_canvas_context(path: Any) -> dict[str, Any] | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
