@@ -11692,6 +11692,7 @@ export const canvasCommandPlansFromEnvelopesForTest = canvasCommandPlansFromEnve
 function backgroundCanvasCommandPendingResult(
   plans: CanvasCommandPlan[],
   workflowRunId?: string | null,
+  nodeIdMap: Record<string, string> = {},
 ): CanvasChatCommandApplyResult {
   const generationPlans = plans.filter((plan) =>
     plan.type === "run_workflow" || plan.type === "run_node_action");
@@ -11706,7 +11707,10 @@ function backgroundCanvasCommandPendingResult(
       type: plan.type,
       status: "pending",
       label: plan.label,
-      ...(plan.nodeId ? { nodeId: plan.nodeId } : {}),
+      ...(plan.nodeId ? {
+        nodeId: Object.prototype.hasOwnProperty.call(nodeIdMap, plan.nodeId)
+          ? nodeIdMap[plan.nodeId] : plan.nodeId,
+      } : {}),
       ...(plan.action ? { action: plan.action } : {}),
       output: {
         pending: true,
@@ -14202,6 +14206,7 @@ export function SuperChatPanel({
         let result: CanvasChatCommandApplyResult;
         let backgroundAccepted = false;
         let persistedWorkflowRunId: string | null = null;
+        let persistedNodeIdMap: Record<string, string> = {};
         try {
           let resolveWorkflowRunPersisted: ((runId: string) => void) | undefined;
           const runsInBackground = canvasCommandEnvelopesRunInBackground(approval.envelopes);
@@ -14211,8 +14216,9 @@ export function SuperChatPanel({
           const execution = applyCanvasChatCommandsAsync(approval.envelopes, {
             projectId: params.project,
             canvasId: effectiveFreezoneCanvasId,
-            onWorkflowRunPersisted: (runId) => {
+            onWorkflowRunPersisted: (runId, nodeIdMap) => {
               persistedWorkflowRunId = runId;
+              persistedNodeIdMap = nodeIdMap;
               resolveWorkflowRunPersisted?.(runId);
             },
           });
@@ -14237,6 +14243,7 @@ export function SuperChatPanel({
               const pendingResult = backgroundCanvasCommandPendingResult(
                 approval.plans,
                 persistedWorkflowRunId,
+                persistedNodeIdMap,
               );
               appendCanvasCommandFeedback(
                 approval.messageId,

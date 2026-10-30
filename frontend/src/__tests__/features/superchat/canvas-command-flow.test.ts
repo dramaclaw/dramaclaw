@@ -50,27 +50,30 @@ describe("assistant success summary", () => {
 });
 
 describe("background canvas generation status", () => {
-  it.each(["current", "legacy envelopes", "legacy plans"])(
+  it.each(["current", "legacy envelopes", "legacy plans", "client aliases"])(
     "restores mixed results from a persisted pending receipt (%s)", (format) => {
       const envelopes = [{
         schema_version: "canvas_chat_commands.v1" as const,
         commands: [
-          { type: "create_node" as const, node_type: "imageGenNode" as const },
+          { type: "create_node" as const, node_type: "imageGenNode" as const, client_id: "a" },
+          { type: "create_node" as const, node_type: "imageGenNode" as const, client_id: "b" },
           { type: "run_node_action" as const, node_id: "a", action: "generate_image" as const },
           { type: "run_node_action" as const, node_id: "b", action: "generate_image" as const },
           { type: "run_node_action" as const, node_id: "a", action: "generate_video" as const },
         ],
       }];
       const plans = canvasCommandPlansFromEnvelopesForTest(envelopes);
-      const pending = backgroundCanvasCommandPendingResultForTest(plans, "run");
+      const nodeIdMap: Record<string, string> = format === "client aliases"
+        ? { a: "real-a", b: "real-b" } : {};
+      const pending = backgroundCanvasCommandPendingResultForTest(plans, "run", nodeIdMap);
       expect(pending.commandResults[0]).toMatchObject({
-        commandIndex: 1, nodeId: "a", action: "generate_image", status: "pending",
+        commandIndex: 2, nodeId: nodeIdMap.a ?? "a", action: "generate_image", status: "pending",
       });
       // JSON round-trip models saving the initial receipt and reloading history.
       const feedback = JSON.parse(JSON.stringify({
         ...pending, key: "bridge:run", plans, envelopes,
       }));
-      if (format !== "current") {
+      if (format.startsWith("legacy")) {
         for (const step of feedback.commandResults) {
           delete step.nodeId;
           delete step.action;
@@ -85,16 +88,16 @@ describe("background canvas generation status", () => {
         schema_version: "freezone_workflow_run.v1", run_id: "run", project_id: "p", canvas_id: "c",
         status: "failed", resumable: true, created_at: "now", started_at: "now", updated_at: "now",
         actions: [
-          { node_id: "b", action: "generate_image", status: "failed", user_error: "B 失败" },
-          { node_id: "a", action: "generate_video", status: "failed", user_error: "视频失败" },
-          { node_id: "a", action: "generate_image", status: "completed" },
+          { node_id: nodeIdMap.b ?? "b", action: "generate_image", status: "failed", user_error: "B 失败" },
+          { node_id: nodeIdMap.a ?? "a", action: "generate_video", status: "failed", user_error: "视频失败" },
+          { node_id: nodeIdMap.a ?? "a", action: "generate_image", status: "completed" },
         ],
       }, zhT as never);
       expect(result.commandResults.map((step) => [step.nodeId, step.action, step.status, step.error]))
         .toEqual([
-          ["a", "generate_image", "success", undefined],
-          ["b", "generate_image", "error", "B 失败"],
-          ["a", "generate_video", "error", "视频失败"],
+          [nodeIdMap.a ?? "a", "generate_image", "success", undefined],
+          [nodeIdMap.b ?? "b", "generate_image", "error", "B 失败"],
+          [nodeIdMap.a ?? "a", "generate_video", "error", "视频失败"],
         ]);
       expect(result.errors).toEqual(["B 失败", "视频失败"]);
     },
