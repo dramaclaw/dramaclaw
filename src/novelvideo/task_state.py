@@ -20,6 +20,7 @@ import os
 import sqlite3
 import threading
 import uuid
+from collections.abc import Iterable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -50,6 +51,14 @@ from novelvideo.task_identity import (
 logger = logging.getLogger(__name__)
 
 ACTIVE_PROJECT_TASK_STATUSES = {"submitting", "queued", "running"}
+TASK_READ_BATCH_SIZE = 200
+# Exclude potentially large log payloads for workflow reconciliation.
+TASK_SNAPSHOT_COLUMNS = (
+    "task_key", "task_id", "task_type", "queue_kind", "project_id",
+    "requester_user_id", "owner_username", "project_name", "username", "project",
+    "episode", "beat_num", "status", "progress", "current_task", "result_json",
+    "error", "created_at", "updated_at", "completed_at", "expires_at",
+)
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
 _PROJECT_LANE_LIMIT_UNSET = object()
 _CURRENT_PROJECT_TASK_ID: ContextVar[str | None] = ContextVar(
@@ -1499,6 +1508,37 @@ class TaskStateManager:
         if deleted:
             logger.debug("Project task deleted: %s", key)
         return deleted
+
+    def get_tasks_for_project(
+        self, ctx: ProjectContext, task_keys: Iterable[str], *, include_logs: bool = True
+    ) -> dict[str, TaskState]:
+        """Read bounded batches of explicit keys, scoped to this project.
+
+        Expired snapshots are invisible. Unlike the list/GC path, this read does
+        not delete them, so an expired snapshot cannot delete a replacement.
+        """
+        keys = sorted(set(task_keys))
+        if not keys:
+            return {}
+        tasks: dict[str, TaskState] = {}
+        columns = (
+            "*"
+            if include_logs
+            else ", ".join(TASK_SNAPSHOT_COLUMNS) + ", '[]' AS logs_json"
+        )
+        with self._connect_context(ctx) as conn:
+            for offset in range(0, len(keys), TASK_READ_BATCH_SIZE):
+                batch = keys[offset : offset + TASK_READ_BATCH_SIZE]
+                placeholders = ",".join("?" for _ in batch)
+                rows = conn.execute(
+                    f"SELECT {columns} FROM task_states "
+                    f"WHERE project_id = ? AND task_key IN ({placeholders})",
+                    [ctx.project_id, *batch],
+                ).fetchall()
+                for row in rows:
+                    if not self._is_expired(row["expires_at"]):
+                        tasks[row["task_key"]] = self._row_to_state(row)
+        return tasks
 
     def list_tasks_for_project(self, ctx: ProjectContext) -> List[TaskState]:
         tasks: list[TaskState] = []

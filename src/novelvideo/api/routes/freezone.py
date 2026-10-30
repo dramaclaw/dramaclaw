@@ -38,6 +38,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from novelvideo.api.auth import get_api_user
+from novelvideo.api.workflow_reads import (
+    WorkflowReadBusy,
+    workflow_read_executor,
+    workflow_read_maintenance,
+    workflow_read_stage,
+)
 from novelvideo.chat import evidence_metrics
 from novelvideo.chat import service as chat_service
 from novelvideo.api.deps import (
@@ -234,6 +240,7 @@ from novelvideo.freezone.workflow_runs import (
     recipe_attempt_ended_message,
     update_workflow_run,
     workflow_media_failure_awaits_retry,
+    workflow_task_keys,
 )
 from novelvideo.freezone.image_node import (
     DEFAULT_IMAGE_REVERSE_PROMPT_INSTRUCTION,
@@ -681,8 +688,8 @@ async def _enqueue_claimed_workflow_media(
                 queue=(existing.metadata or {}).get("queue"),
                 task_id=existing.task_id,
             )
-        run = await asyncio.to_thread(
-            read_workflow_run,
+        run = await workflow_read_executor().run(
+            "response_detail", read_workflow_run,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=str(payload.get("canvas_id") or ""),
             run_id=claim["run_id"],
@@ -16289,7 +16296,10 @@ async def _settle_delivered_agent_product_task(
     ):
         return
     manager = get_task_manager()
-    task = manager.get_task_for_project(ctx, task_type, 0, scope=operation_id)
+    io = workflow_read_executor()
+    task = await io.run(
+        "settlement_task_read", manager.get_task_for_project, ctx, task_type, 0, scope=operation_id
+    )
     if task is None or task.task_id != expected_task_id:
         return
     metadata = task.metadata if isinstance(task.metadata, dict) else {}
@@ -16330,7 +16340,8 @@ async def _settle_delivered_agent_product_task(
         task.status in {"failed", "running"}
         and metadata.get("error_code") == "AGENT_PRODUCT_SETTLEMENT_PENDING"
     ):
-        completed = manager.complete_task_for_project(
+        completed = await io.run(
+            "settlement_task_complete", manager.complete_task_for_project,
             ctx,
             task_type,
             0,
@@ -16348,7 +16359,10 @@ async def _settle_delivered_agent_product_task(
             expected_task_id=expected_task_id,
         )
         if not completed:
-            current = manager.get_task_for_project(ctx, task_type, 0, scope=operation_id)
+            current = await io.run(
+                "settlement_task_verify", manager.get_task_for_project,
+                ctx, task_type, 0, scope=operation_id,
+            )
             if current is None or current.task_id != expected_task_id or current.status != "completed":
                 raise RuntimeError("delivered agent product task did not reconcile")
         evidence_metrics.observe("agent_product_reconciled")
@@ -16994,10 +17008,29 @@ async def get_canvas_workflow_runs(
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = (
-        await _resolve_freezone_project(project, user, required_role="viewer")
-    )
+    with workflow_read_stage("authorization"):
+        ctx, _username, _project_name, project_dir, _output_dir = (
+            await _resolve_freezone_project(project, user, required_role="viewer")
+        )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
+    await workflow_read_maintenance().run(
+        (ctx.project_id, str(canvas_project_dir), canvas_id),
+        lambda: _maintain_canvas_workflow_runs(
+            ctx=ctx, project_dir=project_dir,
+            canvas_project_dir=canvas_project_dir, canvas_id=canvas_id,
+        ),
+    )
+    runs = await workflow_read_executor().run(
+        "response_list", list_workflow_runs,
+        project_dir=canvas_project_dir, canvas_id=canvas_id, limit=limit,
+    )
+    return {"ok": True, "data": {"runs": runs}}
+
+
+async def _maintain_canvas_workflow_runs(
+    *, ctx: ProjectContext, project_dir: Path, canvas_project_dir: Path, canvas_id: str
+) -> None:
+    io = workflow_read_executor()
     try:
         stale_after_seconds = max(
             int(os.getenv("ST_WORKFLOW_RUN_STALE_SECONDS", "300")), 60
@@ -17005,7 +17038,8 @@ async def get_canvas_workflow_runs(
     except ValueError:
         stale_after_seconds = 300
     try:
-        await asyncio.to_thread(
+        await io.run(
+            "expire_leases",
             interrupt_stale_workflow_runs,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
@@ -17014,21 +17048,23 @@ async def get_canvas_workflow_runs(
     except CanvasLockBusy:
         pass
     try:
-        canvas_payload = await asyncio.to_thread(
-            canvas_store.read_canvas, canvas_project_dir, canvas_id
+        canvas_payload = await io.run(
+            "canvas_read", canvas_store.read_canvas, canvas_project_dir, canvas_id
         )
         canvas_nodes = [
             node
             for node in (canvas_payload or {}).get("nodes") or []
             if isinstance(node, dict)
         ]
-        await asyncio.to_thread(
+        await io.run(
+            "canvas_results",
             reconcile_workflow_runs_with_canvas_results,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
             canvas_nodes=canvas_nodes,
         )
-        await asyncio.to_thread(
+        await io.run(
+            "canvas_nodes",
             reconcile_workflow_runs_with_canvas_nodes,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
@@ -17046,7 +17082,20 @@ async def get_canvas_workflow_runs(
     tasks_by_key: dict[str, dict[str, Any]] = {}
     generation_history: list[dict[str, Any]] = []
     try:
-        for task in get_task_manager().list_tasks_for_project(ctx):
+        generation_history = await io.run(
+            "history_read", read_canvas_generation_history,
+            project_dir=project_dir, canvas_id=canvas_id, limit=1000,
+        )
+        task_keys = await io.run(
+            "task_references", workflow_task_keys,
+            project_dir=canvas_project_dir, canvas_id=canvas_id,
+            generation_history=generation_history,
+        )
+        tasks = await io.run(
+            "task_batch", get_task_manager().get_tasks_for_project,
+            ctx, task_keys, include_logs=False,
+        )
+        for task_key, task in tasks.items():
             task_status = str(task.status or "")
             if (
                 task_status in {"submitting", "queued", "running"}
@@ -17055,31 +17104,21 @@ async def get_canvas_workflow_runs(
                 in {"完成", "completed", "done"}
             ):
                 task_status = "completed"
-            task_key = project_task_state_key(
-                task.task_type,
-                ctx.project_id,
-                task.episode,
-                beat_num=task.beat_num,
-                scope=task.scope,
-            )
             tasks_by_key[task_key] = {
                 "status": task_status,
                 "result": task.result,
                 "error": task.error,
             }
-        generation_history = await asyncio.to_thread(
-            read_canvas_generation_history,
-            project_dir=project_dir,
-            canvas_id=canvas_id,
-            limit=1000,
-        )
-        await asyncio.to_thread(
+        await io.run(
+            "task_reconciliation",
             reconcile_workflow_runs_with_tasks,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
             tasks_by_key=tasks_by_key,
             generation_history=generation_history,
         )
+    except WorkflowReadBusy:
+        raise
     except Exception as exc:
         # Task reconciliation is best-effort and must not block canvas loading.
         logger.warning("workflow task reconciliation skipped: %s", exc)
@@ -17089,7 +17128,8 @@ async def get_canvas_workflow_runs(
             int(os.getenv("ST_WORKFLOW_RUN_MAX_TERMINAL_RECORDS", "200")),
             1,
         )
-        await asyncio.to_thread(
+        await io.run(
+            "prune",
             prune_workflow_runs,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
@@ -17098,11 +17138,12 @@ async def get_canvas_workflow_runs(
         )
     except (CanvasLockBusy, OSError, ValueError):
         pass
-    runs = await asyncio.to_thread(
+    runs = await io.run(
+        "delivery_candidates",
         list_workflow_runs,
         project_dir=canvas_project_dir,
         canvas_id=canvas_id,
-        limit=limit,
+        limit=0,
     )
     history_by_task_node: dict[tuple[str, str], dict[str, Any]] = {}
     history_by_operation_attempt: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -17161,7 +17202,8 @@ async def get_canvas_workflow_runs(
                 # A cancelled run is deliberately not rewritten by the workflow
                 # reconciler. Its media task can nevertheless finish late, and
                 # that durable result must settle the separate Recipe operation.
-                artifact_status, _artifact_error = await asyncio.to_thread(
+                artifact_status, _artifact_error = await io.run(
+                    "artifact_check",
                     _validate_action_artifact,
                     action=str(action.get("action") or ""),
                     task_result=task.get("result") if isinstance(task.get("result"), dict) else None,
@@ -17170,7 +17212,8 @@ async def get_canvas_workflow_runs(
                     ),
                     project_dir=canvas_project_dir,
                 )
-            operation = await asyncio.to_thread(
+            operation = await io.run(
+                "operation_read",
                 read_agent_product_operation,
                 project_dir=canvas_project_dir,
                 operation_id=operation_id,
@@ -17212,11 +17255,9 @@ async def get_canvas_workflow_runs(
                     "node_id": action.get("node_id"),
                     "recipe_id": action.get("recipe_id"),
                 }
-            elif task_status == "failed" and workflow_media_failure_awaits_retry(
-                project_dir=canvas_project_dir,
-                run=run,
-                action=action,
-                error=task.get("error"),
+            elif task_status == "failed" and await io.run(
+                "retry_check", workflow_media_failure_awaits_retry,
+                project_dir=canvas_project_dir, run=run, action=action, error=task.get("error"),
             ):
                 # The runner is about to resubmit this attempt (issue #681).
                 continue
@@ -17231,7 +17272,8 @@ async def get_canvas_workflow_runs(
                 result_ref = {}
             else:
                 continue
-            operation = await asyncio.to_thread(
+            operation = await io.run(
+                "operation_finish",
                 finish_agent_product_operation,
                 project_dir=canvas_project_dir,
                 operation_id=operation_id,
@@ -17240,8 +17282,8 @@ async def get_canvas_workflow_runs(
                 result_ref=result_ref,
                 server_recipe_direct_audio=direct_voice and outcome == "delivered",
             )
-            await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
-    return {"ok": True, "data": {"runs": runs}}
+            with workflow_read_stage("settlement"):
+                await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
 
 
 @router.get(
