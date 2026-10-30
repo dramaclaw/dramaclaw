@@ -8086,11 +8086,15 @@
     },
     "mediaStorage": {
       "title": "图床 / 媒体存储",
-      "description": "配置 NewAPI/上游模型可访问的参考媒体临时 relay，支持阿里云 OSS 和 Cloudinary。",
+      "description": "配置 NewAPI/上游模型可访问的参考媒体临时 relay，支持阿里云 OSS、S3 兼容存储和 Cloudinary。",
       "fullyManagedUpload": "全托管素材上传",
       "provider": "提供商",
       "providerAliyunOss": "阿里云 OSS",
       "providerCloudinary": "Cloudinary（免费）",
+      "providerS3": "S3 兼容存储",
+      "saveS3": "保存 S3 配置",
+      "s3SaveSuccess": "S3 配置已保存",
+      "s3FieldsHint": "填写完整 http(s) endpoint URL 和长期凭据。签名 URL 必须能被上游模型访问；存储服务要求时开启 path-style。已保存的密钥留空即可保留。",
       "providerHint": "使用此方案建议不要开「全托管素材上传」；免费版有流量额度，建议仅在点对点编辑/上传时使用。",
       "currentPlan": "当前上传方案",
       "status": "当前配置",
@@ -8098,7 +8102,7 @@
       "configured": "已配置",
       "notConfigured": "未配置",
       "warningIconLabel": "参考媒体存储未配置",
-      "notConfiguredImpact": "未配置参考媒体存储。纯文本和纯文生图通常不受影响；但需要上传本地参考图的功能会失败，例如虾画参考图、角色参考图、身份图、图生图、视频首帧和图生视频。请配置阿里云 OSS 或 Cloudinary。",
+      "notConfiguredImpact": "未配置参考媒体存储。纯文本和纯文生图通常不受影响；但需要上传本地参考图的功能会失败，例如虾画参考图、角色参考图、身份图、图生图、视频首帧和图生视频。请配置阿里云 OSS、S3 兼容存储或 Cloudinary。",
       "showSecret": "显示",
       "hideSecret": "隐藏",
       "fieldsHint": "保存后写入 CE 本地配置库；后端不会回传完整 AccessKey。留空保持已保存值，只填写需要替换的字段即可。",
@@ -8106,7 +8110,7 @@
       "saveCloudinary": "保存 Cloudinary 配置",
       "saveSuccess": "OSS 配置已保存",
       "cloudinarySaveSuccess": "Cloudinary 配置已保存",
-      "saveFailed": "OSS 配置保存失败",
+      "saveFailed": "媒体存储配置保存失败",
       "errors": {
         "MEDIA_STORAGE_TIMEOUT": "媒体存储连接超时，请检查网络后重试。",
         "MEDIA_STORAGE_AUTH_INVALID": "媒体存储凭据无效，请检查 AccessKey / API Key。",
@@ -8121,7 +8125,8 @@
       "testUpload": "测试上传",
       "testUploadPlaceholder": "测试上传功能即将上线",
       "validation": {
-        "ttlSeconds": "签名 URL 有效期必须大于 0"
+        "ttlSeconds": "签名 URL 有效期必须大于 0",
+        "s3TtlSeconds": "S3 签名 URL 有效期须为 1 至 604800 秒"
       },
       "fields": {
         "cloudName": "Cloud Name",
@@ -8129,6 +8134,8 @@
         "apiSecret": "API Secret",
         "apiFolder": "API 文件夹（可选）",
         "materialsRoot": "素材根路径",
+        "region": "Region / 地域",
+        "pathStyle": "使用 path-style 寻址",
         "accessKeyId": "AccessKey ID",
         "accessKeySecret": "AccessKey Secret",
         "bucket": "Bucket",

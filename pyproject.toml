@@ -50,6 +50,7 @@ dependencies = [
     "celery>=5.4.0",
     "pypinyin>=0.55.0",
     "oss2>=2.19.1",
+    "boto3>=1.36.0,<2",
     "gunicorn>=21.2.0",
     "uvicorn[standard]>=0.27.0",
     "sse-starlette>=3.3.0",

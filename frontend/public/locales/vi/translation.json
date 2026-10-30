@@ -7739,11 +7739,15 @@
     },
     "mediaStorage": {
       "title": "Image host / Lưu trữ media",
-      "description": "Cấu hình nơi trung chuyển media tham chiếu tạm thời mà NewAPI/các model dùng, qua Aliyun OSS hoặc Cloudinary.",
+      "description": "Cấu hình nơi trung chuyển media tham chiếu tạm thời mà NewAPI/các model dùng, qua Aliyun OSS, S3 hoặc Cloudinary.",
       "fullyManagedUpload": "Tải asset lên có quản lý toàn phần",
       "provider": "Nhà cung cấp",
       "providerAliyunOss": "Aliyun OSS",
       "providerCloudinary": "Cloudinary (Miễn phí)",
+      "providerS3": "Lưu trữ tương thích S3",
+      "saveS3": "Lưu cấu hình S3",
+      "s3SaveSuccess": "Đã lưu cấu hình S3",
+      "s3FieldsHint": "Nhập URL endpoint http(s) đầy đủ và thông tin xác thực dài hạn. Model phải truy cập được URL đã ký. Bật path-style nếu dịch vụ yêu cầu. Để trống để giữ khóa đã lưu.",
       "providerHint": "Với nhà cung cấp này, nên tắt 「Tải asset lên có quản lý toàn phần」; gói miễn phí có hạn mức băng thông nên chỉ dùng cho chỉnh sửa / tải lên điểm-điểm.",
       "currentPlan": "Phương án tải lên hiện tại",
       "status": "Cấu hình hiện tại",
@@ -7751,7 +7755,7 @@
       "configured": "Đã cấu hình",
       "notConfigured": "Chưa cấu hình",
       "warningIconLabel": "Chưa cấu hình lưu trữ media tham chiếu",
-      "notConfiguredImpact": "Chưa cấu hình lưu trữ media tham chiếu. Các luồng chỉ có chữ và text-to-image thường vẫn chạy được; nhưng những tính năng cần tải ảnh tham chiếu từ máy lên sẽ thất bại, gồm ảnh tham chiếu XiaHua, ảnh tham chiếu nhân vật, ảnh tạo hình, image-to-image, khung đầu của video và image-to-video. Hãy cấu hình Aliyun OSS hoặc Cloudinary.",
+      "notConfiguredImpact": "Chưa cấu hình lưu trữ media tham chiếu. Các luồng chỉ có chữ và text-to-image thường vẫn chạy được; nhưng những tính năng cần tải ảnh tham chiếu từ máy lên sẽ thất bại, gồm ảnh tham chiếu XiaHua, ảnh tham chiếu nhân vật, ảnh tạo hình, image-to-image, khung đầu của video và image-to-video. Hãy cấu hình Aliyun OSS, S3 hoặc Cloudinary.",
       "showSecret": "Hiện",
       "hideSecret": "Ẩn",
       "fieldsHint": "Giá trị đã lưu được cất trong CSDL cài đặt CE cục bộ; AccessKey đầy đủ không được trả về. Hãy để trống các thông tin đã lưu và chỉ nhập những trường bạn muốn thay.",
@@ -7774,7 +7778,8 @@
       "testUpload": "Thử tải lên",
       "testUploadPlaceholder": "Chức năng thử tải lên sắp có",
       "validation": {
-        "ttlSeconds": "TTL của signed URL phải lớn hơn 0"
+        "ttlSeconds": "TTL của signed URL phải lớn hơn 0",
+        "s3TtlSeconds": "Thời hạn URL S3 phải từ 1 đến 604800 giây"
       },
       "fields": {
         "cloudName": "Cloud Name",
@@ -7782,6 +7787,8 @@
         "apiSecret": "API Secret",
         "apiFolder": "API Folder (tuỳ chọn)",
         "materialsRoot": "Thư mục gốc chứa tư liệu",
+        "region": "Region / Khu vực",
+        "pathStyle": "Dùng địa chỉ path-style",
         "accessKeyId": "AccessKey ID",
         "accessKeySecret": "AccessKey Secret",
         "bucket": "Bucket",

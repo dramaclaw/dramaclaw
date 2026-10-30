@@ -266,6 +266,25 @@ Provide a Bucket and an AccessKey with read/write permission for that Bucket. A 
 
 The Bucket does not need public-read access. DramaClaw generates temporary signed URLs for upstream access.
 
+### S3-compatible storage
+
+Select **S3 compatible** under Media Storage. This configures reference-media relay only; it does not migrate project files, backups, or OSS download acceleration.
+
+| UI field | Environment variable | Example or notes |
+|---|---|---|
+| Endpoint | `S3_RELAY_ENDPOINT` | Full origin URL, e.g. `https://s3.us-east-1.amazonaws.com`; no bucket or path |
+| Bucket | `S3_RELAY_BUCKET` | Existing private bucket |
+| AccessKey ID / Secret | `S3_RELAY_AK` / `S3_RELAY_SK` | Explicit long-lived credentials; host AWS credentials are not used |
+| Region | `S3_RELAY_REGION` | Default `us-east-1`; use the value required by your service |
+| Path-style | `S3_RELAY_PATH_STYLE` | Default `0` (virtual-hosted); set `1` when required, e.g. local MinIO |
+| TTL | `MEDIA_RELAY_TTL_SECONDS` | 1–604800 seconds; some media calls raise it to at least 7200 seconds |
+
+For environment-only configuration, set `MEDIA_RELAY_PROVIDER=s3`. Saved CE database settings take precedence as a whole; environment credentials are not mixed into saved settings. S3 credentials are stored separately from OSS and Cloudinary. Leave saved credentials blank to keep them; complete keys are not returned to the browser or persisted in browser storage.
+
+The credential needs `PutObject` and `GetObject` for `relay/*`. `DeleteObject` is optional for probe cleanup; public-read ACL and `ListBucket` are not required. Configure bucket lifecycle expiration: signed URL expiry does not delete objects. Temporary session tokens, automatic credential discovery/refresh, and separate upload/signing endpoints are not supported.
+
+HTTPS is recommended. HTTP is supported for local MinIO testing. The returned signed URL must be reachable by the upstream model; a successful local probe does not prove external reachability. S3-compatible services vary, so validate against your target service rather than assuming every S3 extension is supported.
+
 ### Cloudinary
 
 Enter Cloud name, API Key, API Secret, and an optional folder. Find them under **Product environment settings → API Keys** in Cloudinary. Saved database settings take precedence over environment variables, and full secrets are never returned to the frontend.
