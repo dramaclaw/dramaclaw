@@ -668,3 +668,34 @@ S0 验证环境为 macOS arm64、uv 管理的 Python 3.12.10。起点为
 存储 TTL 可由 `VOICE_DESIGN_CANDIDATE_TTL_SECONDS` 配置（默认 3600，必须是有限正数）；TTL 和 lease 也可由构造参数注入；正式保存与保存回执由 S3/S6 完成，保存后须将候选排除出未保存上限。
 API router lifespan 启动时及每五分钟扫描持久登记的可信项目/请求者目录，清理不依赖该用户再次访问；应用关闭时取消后台任务。候选路径统一拒绝 runtime、候选根、请求者目录及文件的软链接，写入、试听与清理共用该边界检查。
 本片的服务/报价测试使用 S1 边界 fixture，真实 runner、可信凭据、组织目录和计费联调留给后续集成验证。
+
+### S5 本机验收记录（2026-10-30）
+
+用户已解除 S5 的 P4 产品确认前置门；测试价格和额度继续使用测试值，第 8 节六类配置仍须在 PR 中标注「上线前产品确认」。此决定覆盖第 7 节 S5 行原有的 P4 前置依赖。只使用专用本机 CE/EE/admin 部署和空声线插槽，不修改共享、staging 或生产。A30 的线上账号目录挂载、线上路由及 home node 均标记为「未在线上部署验证」。
+
+本机为 macOS arm64、Python 3.12.10、PostgreSQL 16、Redis 7。私有配置、持久付费账本和实际结果位于 `/tmp/891-s5/`；API/admin API 为 18910/18911，产品/admin 前端为 18912/18913，PG/Redis 为 55439/56389。18914 是没有上游转发代码的确定性网关，仅用于无费状态分支，不能证明百炼链路成功。专用项目为 `01M65TYGKJ3K2K8YJ7Q608VCTH`，角色为「验收角色」。
+
+| 调用 | 本地 request_id | 代码 SHA 与实际结果 |
+| --- | --- | --- |
+| 1 | `51252446-d70d-4dfa-95e5-3d7d1c6b301b` | CE `cf4b9501b9efb26452516139f5c0a37bc5de16af`；HTTP 200 后预览元数据被拒绝，`provider_bad_audio`；测试积分预扣 1 后退款。原响应未持久化，不能具体断言失败字段。 |
+| 2 | `bd899795-ea8f-4f5d-9985-341771aa2cd5` | CE `3ad9e07cd430b92fbb9df65b4940935f640ab5bf`；HTTP 200，preview=dict、format=wav、sample_rate=int 16000、data=str、data_length=170508；请求 MP3，故严格格式检查拒绝。预扣退款及失败模型调用有记录。 |
+| 3 | `bb9e6604-dd9c-4bf7-ab9e-25dd46f3ffa2` | CE `9e19f950c45c43b86ab0e7118efd4c0103fbf1ef`；独立审查后的 WAV 归一化修复先通过本机 WAV 真实队列预检，再接真实网关成功；归一化 MP3 为 3.9938125 秒。两次读取试听成功，保存到空 default，候选和正式 SHA 均为 `8b03cd75e61013cac6badeb9a0eec711e4b7ff72fe16664c1b891f8a0a6432aa`，其他插槽原始绑定不变。 |
+| 4 | `1335717a-9f36-468b-bc59-0a7d7b1f268e` | 同一 CE SHA；现有 beat audio API 和 EE Celery 读取上述正式声线，任务 `474f622a-f455-47fd-8b64-2a79cb54556d` 完成，generated=1、failed=0。IndexTTS2 输出 4.527891 秒，SHA 为 `3fa5f600681097b1f17daedde3c9566d12db7436b7efb35557df3960cb94fd5e`。累计付费 4/4，后续调用均被账本拒绝。 |
+
+用户将累计付费上限从 3 提高到 4，条件为先完成同形态 WAV 的真实性、大小、时长校验及 mono 16k MP3 归一化无费回归，并经独立审查。剩余两次固定为生成一次、IndexTTS2 一次；生成再失败必须停止。账本保留两笔失败历史；脚本拒绝新账本重置、额外生成、未成功生成先调用 IndexTTS2 和第 5 次付费请求。试听和已有结果重放不再生成。
+
+真实候选随后又读取两次试听，并以原保存 UUID `2d5c196e-2e2d-4a43-b24e-16d181bfff6d` 重放成功回执，不重写已占用插槽。同一真实项目 feature ledger 14 行、model call log 5 行前后逐条相等，正式 SHA 不变，预算仍为 4/4；证据为本机 `artifacts/preview-save-nocharge.json`。已有真实文件可用 `--replay-evidence` 在候选 TTL 后继续离线核对，不再次出网。
+
+最终本机代码组合为 CE 应用 `9e19f950c45c43b86ab0e7118efd4c0103fbf1ef`、EE `29f5c9178ca73547590a5d4a59c0dd4f94b300c9`、admin `0f7c0e47abc28faae17ffb83e7cc5b664d196433`。本片只新增验收工具、dev 依赖和记录，应用源码保持该组合。当前 C1～C3 六文件为 285 passed；C4/C10 五文件既有证据为 53 passed（CE 前端未变）。EE audio 组织可见性补修、服务观察与 WAV 归一化补修、admin 组织目录解析补修均经过独立审查；其余旧回归不重复扩大。
+
+真实页面 U01～U12 在同一轮全部通过，耗时 89.495 秒；每次重放新建专用用户、项目、空角色及独立组织。页面、业务 API、保存、持久化、任务队列、配置和报价均使用真实实现；供应商状态分支明确使用无转发的确定性网关。U04 同时验证缺预览拒绝、3 秒无提示和 6 秒提示；U05 验证真实媒体读取故障重试及播放暂停重播；U07 验证空槽 SHA、其他绑定不变和真实并发保存的 409，已占用插槽替换只测试取消；U08 捕获下一次实际 clone/user_custom 提交体后在 API 前阻断，避免额外合成；U09 通过丢失响应、原任务查询和专用候选过期验证恢复；U10 覆盖焦点、1280/768 宽度及晚到响应归属。U12 真实后台将平台价 1 改为 3，独立项目报价为 3，随后恢复 1；组织覆盖价为 7 且组织报价为 7；禁用组织模型后真实报价 503，弹窗显示原因并禁用生成，新增生成提交为零。完整断言、脚本 SHA 和截图见本机 `artifacts/c11-final/results.json` 及 `U12-evidence.json`。
+
+安全重放使用相同隔离服务，脚本先核对 API/worker 的实际进程环境确实指向本机确定性网关；进程环境只在内存检查，不打印凭据。该模式不读取或修改付费账本。真实链路文件则离线复验：
+
+```sh
+.venv/bin/python scripts/acceptance/voice_design.py --self-check
+.venv/bin/python scripts/acceptance/voice_design.py --replay-evidence /tmp/891-s5/artifacts/live-indextts.json --formal-file /tmp/891-s5/output/s5-user2/s5_voice_design/assets/characters/验收角色/voices/voice_default.mp3 --tts-output /tmp/891-s5/output/s5-user2/s5_voice_design/audio/ep891/beat_01.mp3
+.venv/bin/python /tmp/891-s5/run.py .venv/bin/python scripts/acceptance/voice_design_ui.py --prepare-fixtures --test-gateway-url http://127.0.0.1:18914 --deployment-env /tmp/891-s5/env.json --artifacts-dir /tmp/891-s5/artifacts/review-S5 --project 01M65TYGKJ3K2K8YJ7Q608VCTH
+```
+
+`/tmp/891-s5/run.py` 仅在子进程内载入权限为 0600 的本机私有环境；账号仍使用现有正常登录 API，凭据不进入截图、报告或仓库。完整冻结门禁另包含 C1～C3 六文件、两脚本 `--help`、Ruff、Python 编译、CE `tsc -b` 与 diff 检查，见 feature-coord 的 `brief-S5.md` 和本机 `/tmp/891-s5/verify.sh`，末尾为 `VERIFY-OK`。最终本地提交 SHA 由交审回报记录；上线前六类配置仍只在 PR 列出供产品确认，不再阻塞 S5。

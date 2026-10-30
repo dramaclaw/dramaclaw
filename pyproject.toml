@@ -96,6 +96,7 @@ dev = [
     "fakeredis>=2.20.0",
     "respx>=0.22.0",
     "ruff==0.15.20",
+    "playwright>=1.58.0",
 ]
 
 [tool.ruff]
