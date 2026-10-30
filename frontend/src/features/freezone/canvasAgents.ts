@@ -1,3 +1,4 @@
+import { CANVAS_AGENTS_CHANGED_EVENT } from "./canvasCommandStream";
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 export const DEFAULT_FREEZONE_AGENT_ID = "main";
@@ -156,6 +157,7 @@ function writeState(projectId: string, canvasId: string, state: FreezoneCanvasAg
       // Keep the in-memory state update even if persistence is still full.
     }
   }
+  window.dispatchEvent(new Event(CANVAS_AGENTS_CHANGED_EVENT));
 }
 
 export function loadFreezoneCanvasAgents(
