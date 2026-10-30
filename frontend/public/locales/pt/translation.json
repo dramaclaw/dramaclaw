@@ -1591,7 +1591,11 @@
       "adminDecrease": "Créditos deduzidos pelo administrador",
       "adminRecharge": "Carregamento pelo administrador",
       "adminAdjustment": "Ajuste manual pelo administrador",
-      "adminRechargeReceived": "Carregamento manual creditado pelo administrador"
+      "adminRechargeReceived": "Carregamento manual creditado pelo administrador",
+      "initialGrant": "Initial credit grant",
+      "accountInitialized": "Account initialization credits",
+      "subscriptionGrant": "Subscription credit grant",
+      "subscriptionReceived": "Credits granted for your paid subscription"
     },
     "balance": "Saldo de crédito atual",
     "short": "Créditos",
@@ -1751,7 +1755,8 @@
         "benefits": "Consulte as promoções e os benefícios disponíveis para esta conta.",
         "orders": "Consulte os registos de carregamentos, atribuições, reembolsos e exceções.",
         "usage": "Consulte os créditos obtidos, os gastos e a utilização recente.",
-        "help": "Saiba mais sobre as regras de atribuição, validade e reembolso."
+        "help": "Saiba mais sobre as regras de atribuição, validade e reembolso.",
+        "subscriptions": "Renew automatically through your payment account and receive credits according to the plan."
       },
       "firstPurchase": "Novo cliente",
       "mostPopular": "Mais popular",
@@ -8880,5 +8885,257 @@
     "loadFailed": "Não foi possível carregar a imagem original. Tente novamente.",
     "saveFailed": "Não foi possível criar o resultado. Verifique a imagem e o projeto atual.",
     "invalidSize": "Introduza números inteiros positivos. Aresta máxima: 16384 píxeis; total máximo: 40 milhões de píxeis."
+  },
+  "subscriptions": {
+    "bill": {
+      "empty": "No billing records",
+      "content": "Subscribe to {{name}}",
+      "pending": "Awaiting payment",
+      "unconfirmed": "Unconfirmed",
+      "paid": "Paid",
+      "failed": "Payment failed",
+      "closed": "Closed",
+      "refunded": "Refunded",
+      "compensating": "Duplicate payment being resolved"
+    },
+    "periodPayment": "Payment for this period: {{price}}",
+    "periodPaymentLabel": "Payment for this period",
+    "currentPlan": "Current plan",
+    "previousPaymentUnconfirmed": "Your previous payment result is unconfirmed. Please try again later to avoid paying twice.",
+    "planPrice": "Plan price: {{price}} every {{months}} month(s)",
+    "automaticRenewalEnabled": "Automatic renewal is on",
+    "automaticRenewalDisabled": "Automatic renewal is off; paid benefits remain until expiry",
+    "automaticRenewalCancelling": "Confirming cancellation of automatic renewal",
+    "membershipActive": "{{name}} membership is valid until {{date}}.",
+    "membershipInactive": "No paid membership period is currently active.",
+    "renewAfterIntro": "After the first {{cycles}} cycles, renews every {{months}} month(s) at {{price}}.",
+    "monthlyEquivalent": "Equivalent to approximately {{price}} per month; the full period is charged at once.",
+    "introCycles": "First {{cycles}} billing cycles at {{price}} each.",
+    "title": "Subscription plans",
+    "intro": "Automatic renewal uses your payment account. Credits are granted under the plan rules and remain permanently valid.",
+    "refresh": "Refresh",
+    "loadError": "Unable to load subscriptions.",
+    "createUnconfirmed": "The request result is not confirmed. You can choose another payment method while we check the original attempt automatically.",
+    "noPlans": "No subscription plans are currently available.",
+    "mine": "My subscriptions",
+    "current": "Current subscriptions / applications",
+    "currentEmpty": "No active subscriptions or pending applications.",
+    "history": "History ({{count}})",
+    "historyDescription": "Ended subscriptions and failed applications retained for reference.",
+    "details": "Details",
+    "paidUntil": "Paid period ends",
+    "resubscribeAfterExpiry": "Your paid membership is still active. You can subscribe again after it expires; duplicate subscriptions are unavailable during the current period.",
+    "cancel": "Cancel automatic renewal",
+    "cancelApplication": "Cancel application",
+    "cancelApplicationExplain": "We will check with the payment provider and attempt to cancel authorization and future renewals. If payment is processing, its result still needs to be confirmed. This does not request a refund.",
+    "confirmCancelApplication": "Confirm cancellation request",
+    "pendingApplicationHint": "If you have authorized or paid, check the latest status first to avoid paying twice. Otherwise, you can try continuing authorization and payment.",
+    "retryPayment": "Retry this renewal",
+    "retryUnconfirmed": "Retry is not confirmed. Check the invoice status before trying again.",
+    "cancelExplain": "Stop future renewal charges. Your paid service period and already purchased monthly credit grants will continue. This does not request a refund.",
+    "confirmCancel": "Confirm cancellation",
+    "keep": "Keep subscription",
+    "cancelUnconfirmed": "Cancellation could not be confirmed. Refresh to check its status.",
+    "continueCheckout": "Continue authorization and payment",
+    "invoices": "Billing records",
+    "period": "Service period",
+    "amount": "Plan price / payment",
+    "dodoQuote": "At the configured exchange rate {{rate}}, Dodo payment is {{price}} before applicable tax. Confirm the amount at checkout.",
+    "dodoQuoted": "Dodo quoted amount {{price}}",
+    "dodoPaid": "Dodo payment {{price}}",
+    "quoteChanged": "The exchange-rate quote changed. No subscription was created. Review the updated payment amount and confirm the terms again.",
+    "creationRejected": "The payment channel cannot authorize this quote. No agreement or charge was requested. Ask an administrator to check the channel configuration.",
+    "state": "Status",
+    "grants": "Credit grants",
+    "method": "Payment method",
+    "renewPrice": "Renews every {{months}} month(s) at {{price}}.",
+    "monthlyCredits": "{{credits}} credits each month, permanently valid.",
+    "upfrontCredits": "{{credits}} credits granted after payment, permanently valid.",
+    "taxNote": "Applicable taxes, if any, are displayed at checkout.",
+    "consent": "I authorize automatic renewal and have read and accepted the",
+    "terms": "subscription terms",
+    "subscribe": "Subscribe",
+    "methods": {
+      "alipay": "Alipay",
+      "wxpay": "WeChat Pay",
+      "dodo": "Dodo"
+    },
+    "cycle": {
+      "1": "per month",
+      "3": "per quarter",
+      "12": "per year"
+    },
+    "status": {
+      "review": "Payment needs review; future renewal is stopped",
+      "cancellingSetup": "Setup is incomplete and cancellation was requested; authorization is still unconfirmed",
+      "cancelling": "Automatic renewal cancellation requested; checking the cancellation result with {{method}}",
+      "cancelled": "Future renewal cancelled; paid benefits remain",
+      "confirming": "Authorization or payment result is being confirmed",
+      "awaitingPayment": "Setup incomplete; authorization or first payment is not yet confirmed",
+      "setupFailed": "Setup failed; you can select a plan again",
+      "active": "Automatic renewal enabled",
+      "paymentFailed": "Renewal payment failed; check your payment account"
+    },
+    "invoiceStatus": {
+      "pending": "Pending",
+      "processing": "Processing",
+      "paid": "Paid",
+      "failed": "Failed",
+      "refunded": "Refunded",
+      "closed": "Closed"
+    },
+    "grantStatus": {
+      "pending": "Scheduled",
+      "credited": "Granted",
+      "blocked": "Awaiting fulfillment",
+      "held": "Held for review"
+    },
+    "catalog": "Subscription plans",
+    "billingPeriod": "Billing period",
+    "perMonth": "/month",
+    "billingTotal": {
+      "1": "Billed {{price}} monthly",
+      "3": "Billed {{price}} quarterly",
+      "12": "Billed {{price}} annually"
+    },
+    "chooseTier": "Choose monthly credits for {{name}}",
+    "creditsLabel": "Monthly credits",
+    "grantLabel": "Credit delivery",
+    "periodUnavailable": "Unavailable for this option",
+    "billingPeriodLabels": {
+      "1": "Monthly",
+      "3": "Quarterly",
+      "12": "Yearly"
+    },
+    "allPeriods": "All periods",
+    "periodCredits": "Credits per period",
+    "grantModeShort": {
+      "monthly": "Monthly",
+      "upfront": "Upfront"
+    },
+    "renewalNote": "Auto renewal · Credits never expire",
+    "purchaseBlocked": "Your account has a subscription or an unresolved application. View it below and use Check latest status to reconcile it.",
+    "paymentUnavailable": "Some payment channels are unavailable. An administrator needs to check the payment service configuration. Please check again later.",
+    "recheckPayment": "Recheck payment channels",
+    "refreshStatus": "Check latest status",
+    "refreshingStatus": "Checking…",
+    "recoveryPending": "Your cancellation request is saved and awaiting provider confirmation. Check the latest status before subscribing again.",
+    "recoveryConfigUnavailable": "Unable to query this application because its payment configuration is unavailable. Ask an administrator to restore it, then retry. Cancellation is not confirmed.",
+    "recoveryUnavailable": "The payment provider result could not be confirmed. Please check again later. The application is retained to prevent duplicate charges.",
+    "statusUpdated": "The payment provider was queried and the current status updated."
+  },
+  "subscriptionCheckout": {
+    "orgCreditsInsufficient": "Your organization has insufficient available credits for this plan. Please contact your organization administrator.",
+    "recover": "Recover payment link",
+    "selectPlan": "Select plan",
+    "renewal": "Automatic renewal: {{price}} every {{months}} month(s)",
+    "amountDue": "Due for this billing period",
+    "renewalTiming": "The service period starts when the first payment is confirmed. The next renewal date appears after activation.",
+    "membership": "Paid membership period",
+    "months": "{{months}} month(s)",
+    "periodCredits": "Credits for this period",
+    "monthlyGrants": "{{credits}} credits per month, {{count}} grants this period. Granted credits remain permanently valid.",
+    "upfrontGrants": "{{credits}} credits granted after payment confirmation, permanently valid.",
+    "fullPeriod": "The full period is charged at once.",
+    "account": "Account receiving subscription benefits",
+    "cancelPolicy": "Cancel future automatic renewal in subscription management. Paid membership and scheduled grants for the paid period remain. Cancellation does not request a refund.",
+    "existing": "You have an active plan or a confirmed payment whose benefits are being activated. Check My benefits.",
+    "planChanged": "The plan version changed. Return and select it again to confirm the price and benefits.",
+    "confirm": "Confirm subscription and continue to payment",
+    "channelUnavailable": "This channel is currently unavailable. Choose another payment method or try again later.",
+    "linkUnavailable": "The payment channel has not returned a signup link. You can choose another payment method while we check the original attempt automatically.",
+    "linkFailed": "Unable to create the authorization page. Choose another payment method or try again later.",
+    "viewStatus": "View request status",
+    "redirecting": "Opening payment page…",
+    "phoneRequiredTitle": "Bind a phone number first",
+    "phoneRequired": "To use the current Alipay subscription method, bind a phone number from the account menu at the top right of the workspace. Then return here and select Check again. You can also choose another payment method.",
+    "recheck": "Check again",
+    "checking": "Checking…",
+    "dodoDetails": "If email or billing details are needed, enter or confirm them at Dodo checkout.",
+    "agreementChanged": "Agreement terms changed or are unavailable. Review the current terms and confirm again.",
+    "agreementUnavailable": "This plan does not have published service terms and cannot be subscribed to yet."
+  },
+  "subscriptionReturn": {
+    "states": {
+      "compensating": {
+        "title": "Duplicate payment being resolved",
+        "description": "We are resolving this duplicate payment automatically. Your active subscription remains available to use and manage. The result will appear in your invoices."
+      },
+      "awaitingPayment": {
+        "title": "Authorization and first payment unconfirmed",
+        "description": "The first payment is not yet confirmed. You can return to choose a payment method. Completed payments are checked and reflected in your invoices automatically."
+      },
+      "unconfirmed": {
+        "title": "Status still unconfirmed",
+        "description": "We will keep checking and update your invoices automatically. You can return and continue."
+      },
+      "checkoutUnavailable": {
+        "title": "Signup page unavailable",
+        "description": "This payment method cannot open its signup page right now. You can return to choose another method while we check the original attempt automatically."
+      },
+      "confirming": {
+        "title": "Confirming authorization and payment",
+        "description": "Checking the payment record. This page and your invoices will update automatically once confirmed."
+      },
+      "authorized": {
+        "title": "Authorized; awaiting first payment",
+        "description": "Renewal authorization is confirmed. The first payment and benefits are not yet confirmed."
+      },
+      "expired": {
+        "title": "Paid membership period ended",
+        "description": "The previous paid period has ended. Check renewal status in View subscription and invoices. Credits already granted remain available."
+      },
+      "paid": {
+        "title": "Period paid; credit grant processing",
+        "description": "Payment and membership are confirmed. Credits currently due are being processed. Do not pay again."
+      },
+      "active": {
+        "title": "Subscription active",
+        "description": "Payment, membership, and credits currently due are confirmed. Future grants follow the schedule below."
+      },
+      "failed": {
+        "title": "Authorization or payment incomplete",
+        "description": "This authorization or payment was not completed. You can return to choose a plan or another payment method."
+      },
+      "cancelled": {
+        "title": "Authorization cancelled",
+        "description": "The channel confirmed cancellation. Check paid benefits in My Benefits."
+      },
+      "review": {
+        "title": "Subscription needs review",
+        "description": "A payment or benefit requires review. Do not pay again; check your invoices."
+      },
+      "refunded": {
+        "title": "Subscription invoice refunded",
+        "description": "Check subscription invoices for the final refund and benefit outcome."
+      },
+      "unavailable": {
+        "title": "Subscription result unavailable",
+        "description": "Retry or check your invoices. A query failure does not mean payment failed."
+      }
+    },
+    "number": "Subscription ID",
+    "manage": "View invoices",
+    "renewal": "Next renewal period starts {{date}}. Charge timing follows channel rules.",
+    "notRenewing": "Automatic renewal is off. Paid benefits remain."
+  },
+  "subscriptionAgreementDialog": {
+    "description": "Read the agreement, select the consent checkbox, and confirm to continue your current order.",
+    "body": "Agreement text",
+    "closeLabel": "Close agreement",
+    "close": "Close",
+    "consent": "I have read and agree to this agreement and authorize automatic renewal of my selected plan.",
+    "confirm": "Confirm and return to checkout",
+    "changed": "This agreement does not match the current plan or is not effective yet. Close this window and review the plan information."
+  },
+  "subscriptionAgreementPage": {
+    "back": "Back",
+    "backToSubscriptions": "Back to subscription plans",
+    "loading": "Loading agreement…",
+    "unavailable": "Agreement unavailable",
+    "unavailableHint": "This version may not be published or could not be loaded. Please retry later.",
+    "version": "Version v{{version}}",
+    "effectiveAt": "Effective: {{date}}",
+    "upcoming": "This version is not effective yet."
   }
 }
