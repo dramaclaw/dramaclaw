@@ -429,9 +429,25 @@ def create_app() -> FastAPI:
 
         await _resume_director_auto_best_effort(application)
 
+        from novelvideo.api.workflow_reads import observe_workflow_event_loop
+
+        application.state.workflow_event_loop_observer = asyncio.create_task(
+            observe_workflow_event_loop(), name="workflow-event-loop-observer"
+        )
+
     @application.on_event("shutdown")
     async def shutdown() -> None:
         from novelvideo.ports.registry import PortNotRegistered, get_port
+
+        observer = getattr(application.state, "workflow_event_loop_observer", None)
+        if observer is not None:
+            observer.cancel()
+            with suppress(asyncio.CancelledError):
+                await observer
+
+        from novelvideo.api.workflow_reads import shutdown_workflow_reads
+
+        await shutdown_workflow_reads()
 
         updater = getattr(application.state, "official_media_catalog_updater", None)
         if updater is not None:
