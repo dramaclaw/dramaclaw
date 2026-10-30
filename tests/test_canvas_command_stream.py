@@ -95,3 +95,41 @@ async def test_sse_preserves_project_authorization(monkeypatch):
     assert error.value.status_code == 403
 
 
+async def test_session_historical_keys_do_not_block_lease_redelivery(
+    scoped_bridge, monkeypatch
+):
+    directory = scoped_bridge
+    publish(directory, "session", False)
+    monkeypatch.setattr(bridge, "BRIDGE_DELIVERY_LEASE_SECONDS", 0.1)
+    hub = BridgeWatchHub()
+    scope = ChatScope(
+        kind="project", id="project", surface="freezone", canvas_id="canvas"
+    )
+    async with hub.subscribe([directory]) as wake:
+        for _ in range(100):
+            if hub.pending(directory, "project", "canvas"):
+                break
+            await asyncio.sleep(0.01)
+        first = await hub.run(
+            chat._collect_session_canvas_commands,
+            hub,
+            [directory],
+            scope,
+            "viewer",
+            "turn",
+            {"session"},
+            time.time(),
+        )
+        assert first[0]["bridge_key"] == "session"
+        await asyncio.sleep(0.15)
+        second = await hub.run(
+            chat._collect_session_canvas_commands,
+            hub,
+            [directory],
+            scope,
+            "viewer",
+            "turn",
+            {"session"},
+            time.time(),
+        )
+        assert second[0]["bridge_key"] == "session"
