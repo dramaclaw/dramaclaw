@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CANVAS_AGENTS_CHANGED_EVENT, startCanvasCommandStream } from "./canvasCommandStream";
+import { addFreezoneCanvasAgent, loadFreezoneCanvasAgentsWithSource } from "./canvasAgents";
 
 class Source {
   static instances: Source[] = [];
@@ -109,4 +110,14 @@ it("ignores stale callbacks after the canvas subscription is disposed", () => {
   source.onerror?.();
   expect(onFrame).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("reading the actual agent store does not recursively reconnect", () => {
+  window.localStorage.clear();
+  start(() => loadFreezoneCanvasAgentsWithSource("p", "c").state.agents.map((agent) => agent.id));
+  expect(Source.instances).toHaveLength(1);
+  addFreezoneCanvasAgent("p", "c", 2_000);
+  expect(Source.instances).toHaveLength(2);
+  expect(Source.instances[0].close).toHaveBeenCalledTimes(1);
+  expect(new URL(Source.instances[1].url).searchParams.get("agent_ids")).toBe("agent-2000,main");
 });
