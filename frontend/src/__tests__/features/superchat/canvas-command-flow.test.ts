@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   assistantCompletionPrefix,
@@ -8,6 +10,8 @@ import {
   canvasCommandPlansFromEnvelopesForTest,
   canvasCommandFeedbackNeedsRecoveryForTest,
   canvasCommandFeedbackVisualToneForTest,
+  canvasCommandFeedbackCompactTitleForTest,
+  CanvasCommandFeedbackCardForTest,
   canvasCommandFeedbackIsValidationOnlyForTest,
   canvasContextActivityVisualToneForTest,
   isGenerationSuccessSummaryText,
@@ -50,6 +54,67 @@ describe("assistant success summary", () => {
 });
 
 describe("background canvas generation status", () => {
+  it("shows the verification warning without expanding the receipt or offering a retry", () => {
+    const markup = renderToStaticMarkup(createElement(CanvasCommandFeedbackCardForTest, {
+      feedback: {
+        key: "legacy", applied: 0, openedUiActions: 0, errors: ["B 失败"],
+        commandResults: [
+          { commandIndex: 0, type: "run_node_action", status: "unverified", label: "生成图片" },
+          { commandIndex: 1, type: "run_node_action", status: "error", label: "生成 B", error: "B 失败" },
+        ],
+      },
+    }));
+    expect(markup).toContain("结果待核实");
+    expect(markup).toContain("请先核对画布已有素材");
+    expect(markup).toContain("B 失败");
+    expect(markup).not.toContain("重新执行");
+    expect(markup).not.toContain("生成图片失败");
+    expect(markup).not.toContain("后台生成中");
+  });
+
+  it.each(["failed", "completed", "interrupted", "cancelled"] as const)(
+    "keeps unmapped historical aliases unverified after a %s run", (status) => {
+      const envelopes = [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "create_node" as const, node_type: "imageGenNode" as const, client_id: "a" },
+          { type: "run_node_action" as const, node_id: "a", action: "generate_image" as const },
+          { type: "run_node_action" as const, node_id: "real-b", action: "generate_image" as const },
+          { type: "run_node_action" as const, node_id: "real-c", action: "generate_image" as const },
+        ],
+      }];
+      const plans = canvasCommandPlansFromEnvelopesForTest(envelopes);
+      const pending = backgroundCanvasCommandPendingResultForTest(plans, "run");
+      const feedback = JSON.parse(JSON.stringify({ ...pending, key: "legacy", plans, envelopes }));
+      for (const step of feedback.commandResults) {
+        delete step.nodeId;
+        delete step.action;
+      }
+      const result = canvasCommandResultFromWorkflowRunForTest(feedback, {
+        schema_version: "freezone_workflow_run.v1", run_id: "run", project_id: "p", canvas_id: "c",
+        status, resumable: true, created_at: "now", started_at: "now", updated_at: "now",
+        actions: [
+          { node_id: "real-b", action: "generate_image", status: status === "completed" ? "completed" : "failed", user_error: status === "completed" ? undefined : "B 失败" },
+          { node_id: "real-a", action: "generate_image", status: "completed" },
+          { node_id: "real-c", action: "generate_image", status: "completed" },
+        ],
+      }, zhT as never);
+      expect(result.commandResults.map((step) => step.status)).toEqual([
+        "unverified", status === "completed" ? "success" : "error", "success",
+      ]);
+      expect(result.commandResults[0]).toMatchObject({
+        output: { reason: "workflow_result_identity_unverified", workflow_run_status: status },
+      });
+      expect(result.commandResults[0].error).toBeUndefined();
+      expect(result.errors).toEqual(status === "completed" ? [] : ["B 失败"]);
+      const recovered = { ...result, key: "legacy", workflowRunId: "run" };
+      expect(canvasCommandFeedbackNeedsRecoveryForTest(recovered)).toBe(false);
+      expect(pendingCanvasWorkflowReceiptsForTest({ assistant: [recovered] }).size).toBe(0);
+      expect(canvasCommandFeedbackVisualToneForTest(recovered)).toBe("warning");
+      expect(canvasCommandFeedbackCompactTitleForTest(recovered, zhT as never)).toBe("结果待核实");
+    },
+  );
+
   it.each(["current", "legacy envelopes", "legacy plans", "client aliases"])(
     "restores mixed results from a persisted pending receipt (%s)", (format) => {
       const envelopes = [{

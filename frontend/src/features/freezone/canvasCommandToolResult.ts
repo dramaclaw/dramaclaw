@@ -6,8 +6,18 @@ import {
 } from "@/features/freezone/canvasCommandUserMessages";
 import { api } from "@/lib/api";
 
-type CanvasApplyStatus = "accepted" | "applied" | "pending" | "partially_applied" | "failed" | "cancelled_by_user";
-type BackgroundExecutionStatus = "running" | "succeeded" | "failed" | "cancelled";
+type CanvasApplyStatus = "accepted" | "applied" | "pending" | "partially_applied" | "failed" | "cancelled_by_user" | "unverified";
+type BackgroundExecutionStatus = "running" | "succeeded" | "failed" | "cancelled" | "unverified";
+
+const workflowResultUnverifiedMessage = () => i18next.t(
+  "freezone.chat.workflowResultUnverifiedMessage",
+  { defaultValue: "本轮部分结果待核实。请先核对画布已有素材，暂勿重复生成，以免产生额外费用。" },
+);
+const WORKFLOW_RESULT_UNVERIFIED_HINT =
+  "The workflow has stopped, but some historical receipts cannot be reliably matched to actions. " +
+  "Their results are unverified, not failed, running, or fully successful. " +
+  "Check existing canvas artifacts and the workflow record before taking any further action. " +
+  "Do not rerun generation or suggest retrying; this may duplicate successful work and incur extra charges.";
 
 const workflowResultSyncPendingMessage = () => i18next.t(
   "freezone.chat.workflowOutputSyncPendingMessage",
@@ -149,6 +159,7 @@ function workflowExecutionFailed(result: CanvasChatCommandApplyResult): boolean 
 }
 
 function canvasApplyStatusFromResult(result: CanvasChatCommandApplyResult): CanvasApplyStatus {
+  if (result.commandResults.some((step) => step.status === "unverified")) return "unverified";
   if (workflowExecutionFailed(result)) return "failed";
   const successCount = result.commandResults.filter((step) => step.status === "success").length;
   const errorCount = result.commandResults.filter((step) => step.status === "error").length;
@@ -235,6 +246,8 @@ function buildCanvasCommandToolResultPayload({
     ? undefined
     : cancelled
     ? "画布操作已取消，没有应用到画布。"
+    : canvasApplyStatus === "unverified"
+      ? workflowResultUnverifiedMessage()
     : canvasApplyStatus === "pending"
       ? reconciliationPending ? workflowReconciliationPendingMessage() : workflowResultSyncPendingMessage()
     : canvasApplyStatus === "failed"
@@ -244,6 +257,8 @@ function buildCanvasCommandToolResultPayload({
     ? "The canvas command has been submitted and is still running in the background. Reply briefly that generation is in progress and the status will update automatically. Do not claim completion."
     : cancelled
     ? "Do not claim the canvas change was applied; ask the user before retrying."
+    : canvasApplyStatus === "unverified"
+      ? WORKFLOW_RESULT_UNVERIFIED_HINT
     : canvasApplyStatus === "pending"
       ? reconciliationPending ? WORKFLOW_RECONCILIATION_PENDING_HINT : WORKFLOW_RESULT_SYNC_PENDING_HINT
     : canvasApplyStatus === "failed"
@@ -261,7 +276,9 @@ function buildCanvasCommandToolResultPayload({
     agent_id: agentId ?? null,
     tool_call_status: cancelled ? "cancelled" : canvasApplyStatus === "failed" ? "failed" : "completed",
     canvas_apply_status: canvasApplyStatus,
-    background_execution_status: accepted || canvasApplyStatus === "pending"
+    background_execution_status: canvasApplyStatus === "unverified"
+      ? "unverified"
+      : accepted || canvasApplyStatus === "pending"
       ? "running"
       : cancelled || canvasApplyStatus === "cancelled_by_user"
         ? "cancelled"
@@ -269,6 +286,7 @@ function buildCanvasCommandToolResultPayload({
           ? "failed"
           : "succeeded",
     applied: accepted || (!cancelled && !workflowFailed && canvasApplyStatus !== "pending"
+      && canvasApplyStatus !== "unverified"
       && Boolean(result && (result.applied > 0 || result.openedUiActions > 0))),
     cancelled,
     errors: result?.errors ?? [],
@@ -280,6 +298,8 @@ function buildCanvasCommandToolResultPayload({
       ? "Canvas command was submitted and is running in the background."
       : cancelled
       ? "画布操作已取消，没有应用到画布。"
+      : canvasApplyStatus === "unverified"
+        ? workflowResultUnverifiedMessage()
       : canvasApplyStatus === "pending"
         ? userMessage ?? workflowResultSyncPendingMessage()
       : canvasApplyStatus === "failed"

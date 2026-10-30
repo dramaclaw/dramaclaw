@@ -978,6 +978,8 @@
       "backgroundGenerationRunningLabel": "Đang tạo trong nền",
       "backgroundWorkflowCompletedQuestion": "Quy trình nền đã hoàn tất. Bạn muốn xác nhận kết quả và tiếp tục bước tiếp theo không?",
       "backgroundWorkflowFailedQuestion": "Quy trình nền chưa hoàn tất toàn bộ. Hãy xem kết quả trong thẻ thực thi. Bạn muốn tôi kiểm tra nguyên nhân lỗi không?",
+      "workflowResultUnverifiedLabel": "Cần xác minh kết quả",
+      "workflowResultUnverifiedMessage": "Một số kết quả cần được xác minh. Hãy kiểm tra tư liệu hiện có trên canvas trước khi tạo lại để tránh trùng lặp và phát sinh chi phí.",
       "backgroundGenerationRunningMessage": "Tác vụ đã được gửi và đang tạo trong nền. Trạng thái này sẽ tự động cập nhật khi thành công hoặc thất bại.",
       "backgroundGenerationFailed": "Tạo trong nền thất bại. Hãy kiểm tra chi tiết tác vụ rồi thử lại.",
       "backgroundGenerationCancelled": "Đã hủy quá trình tạo trong nền.",

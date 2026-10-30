@@ -12,6 +12,24 @@ const completed: CanvasChatCommandApplyResult = {
 };
 
 describe("background workflow completion questions", () => {
+  it.each([false, true])("asks to verify unknown historical results instead of retrying (known failure=%s)", async (failed) => {
+    const appendNotification = vi.fn().mockResolvedValue(true);
+    const { result } = renderHook(() => useBackgroundWorkflowNotifications({
+      scopeKey: "canvas", busy: false, appendNotification,
+    }));
+    act(() => result.current("run-legacy", {
+      ...completed, errors: failed ? ["B 失败"] : [],
+      commandResults: [
+        { commandIndex: 0, type: "run_node_action", status: "unverified", label: "生成 A" },
+        { commandIndex: 1, type: "run_node_action", status: failed ? "error" : "success", label: "生成 B" },
+      ],
+    }));
+    await waitFor(() => expect(appendNotification).toHaveBeenCalledWith(
+      "本轮部分结果待核实。请先核对画布已有素材，暂勿重复生成，以免产生额外费用。",
+      expect.any(String),
+    ));
+  });
+
   it("waits for the active turn and deduplicates live/recovered completion", async () => {
     const appendNotification = vi.fn().mockResolvedValue(true);
     const { result, rerender } = renderHook(({ busy }) => useBackgroundWorkflowNotifications({

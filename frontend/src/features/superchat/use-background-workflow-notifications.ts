@@ -21,7 +21,9 @@ export function useBackgroundWorkflowNotifications({
     if (result.commandResults.some((step) => step.status === "pending")) return;
     const key = `canvas-workflow-completion:${scopeKey}:${runId}`;
     if (notified.current.has(key)) return;
-    const text = result.errors.length || result.commandResults.some((step) => step.status === "error")
+    const text = result.commandResults.some((step) => step.status === "unverified")
+      ? t("freezone.chat.workflowResultUnverifiedMessage")
+      : result.errors.length || result.commandResults.some((step) => step.status === "error")
       ? t("freezone.chat.backgroundWorkflowFailedQuestion")
       : t("freezone.chat.backgroundWorkflowCompletedQuestion");
     setPending((current) => current[key] ? current : { ...current, [key]: { scopeKey, text } });

@@ -999,6 +999,8 @@
       "backgroundGenerationRunningLabel": "Generating in background",
       "backgroundWorkflowCompletedQuestion": "The background workflow has completed. Would you like to confirm these results and continue to the next step?",
       "backgroundWorkflowFailedQuestion": "The background workflow did not fully complete. Check the execution card for results. Would you like me to investigate the failure?",
+      "workflowResultUnverifiedLabel": "Results need verification",
+      "workflowResultUnverifiedMessage": "Some results need verification. Check existing canvas artifacts before generating again to avoid duplicate work and extra charges.",
       "backgroundGenerationRunningMessage": "The task was submitted and is generating in the background. This status will update automatically when it succeeds or fails.",
       "backgroundGenerationFailed": "Background generation failed. Check the task details and try again.",
       "backgroundGenerationCancelled": "Background generation was cancelled.",

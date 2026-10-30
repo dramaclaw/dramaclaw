@@ -4127,6 +4127,10 @@ function canvasCommandFeedbackHasPending(feedback: CanvasCommandFeedback): boole
   return (feedback.commandResults ?? []).some((step) => step.status === "pending");
 }
 
+function canvasCommandFeedbackHasUnverified(feedback: CanvasCommandFeedback): boolean {
+  return feedback.commandResults.some((step) => step.status === "unverified");
+}
+
 function canvasCommandFeedbackReconciliationPending(feedback: CanvasCommandFeedback): boolean {
   return (feedback.commandResults ?? []).some((step) =>
     step.status === "pending" && step.output?.reason === "workflow_server_reconciliation_pending");
@@ -4193,6 +4197,7 @@ function canvasContextActivityVisualTone(activity: CanvasContextActivity): Canva
 export const canvasContextActivityVisualToneForTest = canvasContextActivityVisualTone;
 
 function canvasCommandFeedbackVisualTone(feedback: CanvasCommandFeedback): CanvasFeedbackVisualTone {
+  if (canvasCommandFeedbackHasUnverified(feedback)) return "warning";
   const failed = canvasCommandFeedbackHasFailure(feedback);
   if (!failed) return feedback.warnings?.length ? "warning" : "success";
   if (canvasCommandFeedbackHasPending(feedback)) return "warning";
@@ -4204,6 +4209,7 @@ function canvasCommandFeedbackVisualTone(feedback: CanvasCommandFeedback): Canva
 export const canvasCommandFeedbackVisualToneForTest = canvasCommandFeedbackVisualTone;
 
 function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback, t: TFunction): string {
+  if (canvasCommandFeedbackHasUnverified(feedback)) return t("freezone.chat.workflowResultUnverifiedLabel");
   const firstFailedStep = (feedback.commandResults ?? []).find((step) => step.status !== "success");
   const firstPlan = feedback.plans?.[0];
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "画布操作已过期";
@@ -4221,6 +4227,8 @@ function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback, t: T
   if (firstFailedStep?.label) return firstFailedStep.label;
   return "画布操作失败";
 }
+
+export const canvasCommandFeedbackCompactTitleForTest = canvasCommandFeedbackCompactTitle;
 
 function expiredCanvasApprovalFeedback(approval: PendingCanvasCommandApproval): CanvasCommandFeedback | null {
   if (!approval.autoExpires || !approval.expiresAt || approval.expiresAt > Date.now()) return null;
@@ -4270,7 +4278,7 @@ function CanvasCommandFeedbackCard({
   const mutedFailure = failed && visualTone === "muted";
   const warningFailure = failed && visualTone === "warning";
   const warningOnly = !failed && warnings.length > 0;
-  const initiallyCompact = failed && successfulCount === 0;
+  const initiallyCompact = failed && successfulCount === 0 && !canvasCommandFeedbackHasUnverified(feedback);
   const collapseSuccessfulDetails = !failed && !warningOnly && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
   const compactTitle = canvasCommandFeedbackCompactTitle(feedback, t);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
@@ -4279,7 +4287,9 @@ function CanvasCommandFeedbackCard({
     : canvasCommandFeedbackIsUserCancelled(feedback)
       ? t("freezone.chat.canvasManuallyCancelled")
       : null;
-  const userFailureMessage = pending
+  const userFailureMessage = canvasCommandFeedbackHasUnverified(feedback)
+    ? t("freezone.chat.workflowResultUnverifiedMessage")
+    : pending
     ? canvasCommandFeedbackBackgroundRunning(feedback)
       ? t("freezone.chat.backgroundGenerationRunningMessage")
       : canvasCommandFeedbackReconciliationPending(feedback)
@@ -4364,14 +4374,14 @@ function CanvasCommandFeedbackCard({
             <div key={`${step.commandIndex}-${step.type}-${step.nodeId ?? ""}-${step.action ?? ""}-${index}`} className="flex items-start gap-2 leading-5">
               {ok ? <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-400" /> : <AlertCircle className={cn("mt-0.5 size-3.5 shrink-0", mutedFailure ? "text-muted-foreground" : invalidCommand || warningFailure ? "text-amber-300" : "text-destructive")} />}
               <div className="min-w-0 flex-1">
-                <div className={cn("font-medium", ok ? "text-foreground/90" : mutedFailure ? "text-muted-foreground" : invalidCommand || warningFailure ? "text-amber-300" : "text-destructive")}>{step.label}</div>
+                <div className={cn("font-medium", ok ? "text-foreground/90" : mutedFailure ? "text-muted-foreground" : invalidCommand || warningFailure ? "text-amber-300" : "text-destructive")}>{step.label}{step.status === "unverified" && ` · ${t("freezone.chat.workflowResultUnverifiedLabel")}`}</div>
                 {ok && <HtmlArtifactResultCard output={step.output}/>}
                 {(step.createdNodeId || step.nodeId || step.action || step.error) && (
                   <div className="mt-0.5 space-y-0.5 break-words text-[11px] text-muted-foreground">
                     {step.createdNodeId && <div>新节点：{step.createdNodeId}</div>}
                     {!step.createdNodeId && step.nodeId && <div>节点：{step.nodeId}</div>}
                     {step.action && <div>动作：{step.action}</div>}
-                    {step.error && ok && <div className={invalidCommand || warningFailure ? "text-amber-200/80" : "text-destructive"}>{step.error}</div>}
+                    {step.error && (ok || step.status === "error") && <div className={invalidCommand || warningFailure ? "text-amber-200/80" : "text-destructive"}>{step.error}</div>}
                   </div>
                 )}
               </div>
@@ -4404,6 +4414,8 @@ function CanvasCommandFeedbackCard({
     </div>
   );
 }
+
+export const CanvasCommandFeedbackCardForTest = CanvasCommandFeedbackCard;
 
 type SkillStudioQuestionOption = {
   id?: string;
@@ -11750,9 +11762,23 @@ function canvasCommandResultFromWorkflowRun(
       || (command?.type === "run_node_action" ? command.action : undefined)
       || plan?.action
       || plan?.details.find((detail) => detail.startsWith("动作："))?.slice("动作：".length);
-    const action = nodeId
-      ? run.actions.find((item) => item.node_id === nodeId && (!actionName || item.action === actionName))
-      : undefined;
+    const matchingActions = nodeId
+      ? run.actions.filter((item) => item.node_id === nodeId && (!actionName || item.action === actionName))
+      : [];
+    const action = matchingActions.length === 1 ? matchingActions[0] : undefined;
+    if (step.type === "run_node_action" && !action) {
+      return {
+        ...step,
+        type: "run_node_action",
+        status: "unverified",
+        error: undefined,
+        output: {
+          workflow_run_id: run.run_id,
+          workflow_run_status: run.status,
+          reason: "workflow_result_identity_unverified",
+        },
+      };
+    }
     const actionSucceeded = action?.status === "completed" || action?.status === "skipped";
     const failedAction = step.type === "run_workflow"
       ? run.actions.find((item) => item.status === "failed")
@@ -11776,7 +11802,9 @@ function canvasCommandResultFromWorkflowRun(
     .map((step) => step.error)
     .filter((error): error is string => Boolean(error));
   return {
-    applied: run.status === "completed"
+    applied: commandResults.some((step) => step.status === "unverified")
+      ? commandResults.filter((step) => step.status === "success").length
+      : run.status === "completed"
       ? run.actions.filter((action) => action.status === "completed").length
       : 0,
     openedUiActions: 0,

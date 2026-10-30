@@ -999,6 +999,8 @@
       "backgroundGenerationRunningLabel": "后台生成中",
       "backgroundWorkflowCompletedQuestion": "本轮后台工作流已完成。是否确认本轮结果并继续下一步？",
       "backgroundWorkflowFailedQuestion": "本轮后台工作流未全部完成，请查看执行卡片中的结果。需要我检查失败原因吗？",
+      "workflowResultUnverifiedLabel": "结果待核实",
+      "workflowResultUnverifiedMessage": "本轮部分结果待核实。请先核对画布已有素材，暂勿重复生成，以免产生额外费用。",
       "backgroundGenerationRunningMessage": "任务已提交，正在后台生成。完成或失败后会自动更新这里的状态。",
       "backgroundGenerationFailed": "后台生成失败，请检查任务详情后重试。",
       "backgroundGenerationCancelled": "后台生成已取消。",

@@ -417,8 +417,23 @@ def test_canvas_command_tool_result_accepts_background_workflow(
     assert "Do not claim" in result["agent_instruction"]
 
 
+def test_canvas_unverified_result_instructs_agent_to_check_artifacts_before_retrying(monkeypatch) -> None:
+    monkeypatch.setattr(chat_route, "resolve_canvas_command", lambda key, result, **kwargs: result)
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-legacy", canvas_id="canvas-a", tool_call_status="completed",
+        canvas_apply_status="unverified", background_execution_status="unverified", applied=False,
+        command_results=[{"type": "run_node_action", "status": "unverified"}],
+    )
+    result = chat_route._resolve_canvas_command_tool_result_payload(payload, username="admin")
+    assert result["ok"] is False
+    assert result["canvas_apply_status"] == "unverified"
+    assert "Do not rerun generation" in result["agent_instruction"]
+    assert "extra charges" in result["agent_instruction"]
+    assert "read its current persisted state" in result["agent_instruction"]
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize("apply_status", ["pending", "applied", "failed"])
+@pytest.mark.parametrize("apply_status", ["pending", "applied", "failed", "unverified"])
 async def test_canvas_background_followup_is_saved_for_agent_without_reresolving_bridge(
     monkeypatch, apply_status,
 ) -> None:
@@ -469,6 +484,10 @@ async def test_canvas_background_followup_is_saved_for_agent_without_reresolving
     assert "[CANVAS_BACKGROUND_RESULT]" in str(saved["content"])
     if apply_status == "pending":
         assert "do not rerun generation" in str(saved["content"])
+    if apply_status == "unverified":
+        assert "need verification" in str(saved["content"])
+        assert "Do not rerun generation or suggest retrying" in str(saved["content"])
+        assert "extra charges" in str(saved["content"])
     assert saved["idempotency_key"] == f"canvas-background-result:bridge-workflow:{apply_status}"
     assert getattr(saved["scope"], "agent_id") == "agent-1"
 

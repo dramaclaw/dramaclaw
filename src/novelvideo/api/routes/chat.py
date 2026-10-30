@@ -1120,6 +1120,14 @@ def _resolve_canvas_command_tool_result_payload(
         agent_instruction = (
             "Do not claim the canvas change was applied; ask the user before retrying."
         )
+    elif payload.canvas_apply_status == "unverified":
+        message = payload.user_message or payload.message or "Some workflow results need verification."
+        agent_instruction = (
+            "The workflow has stopped, but some historical receipts cannot be reliably "
+            "matched to actions. Results are unverified, not failed, running, or fully successful. "
+            "Check existing canvas artifacts and workflow records first. Do not rerun generation "
+            "or suggest retrying: this may duplicate successful work and incur extra charges."
+        )
     elif not command_ok:
         message = (
             payload.user_message
@@ -1159,7 +1167,9 @@ def _resolve_canvas_command_tool_result_payload(
                 not payload.cancelled
                 and (
                     (payload.applied and not has_open_node_action)
-                    or payload.canvas_apply_status in {"accepted", "pending", "partially_applied"}
+                    or payload.canvas_apply_status in {
+                        "accepted", "pending", "partially_applied", "unverified"
+                    }
                 )
             )
         )
@@ -1714,7 +1724,16 @@ async def resolve_canvas_command_tool_result(
         )
         project_ctx = await _project_context_for_scope(user, scope)
         store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
-        if payload.canvas_apply_status == "pending":
+        if payload.canvas_apply_status == "unverified":
+            instruction = (
+                "The background canvas workflow has stopped, but some historical results "
+                "cannot be reliably matched to actions and need verification. "
+                "Do not call them failed, still running, or fully successful. "
+                "Check existing canvas artifacts and workflow records first. "
+                "Do not rerun generation or suggest retrying: this may duplicate successful "
+                "work and incur extra charges."
+            )
+        elif payload.canvas_apply_status == "pending":
             instruction = (
                 "The background canvas workflow is still syncing or reconciling its result. "
                 "Do not claim the artifact is ready and do not rerun generation. "

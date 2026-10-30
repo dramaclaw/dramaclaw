@@ -238,7 +238,7 @@ export type CanvasChatCommandApplyResult = {
 export type CanvasChatCommandApplyStep = {
   commandIndex: number;
   type: CanvasChatCommand["type"] | "validate";
-  status: "success" | "pending" | "error";
+  status: "success" | "pending" | "error" | "unverified";
   label: string;
   nodeId?: string;
   action?: string;
