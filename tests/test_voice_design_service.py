@@ -960,3 +960,126 @@ def test_persistent_quota_precedes_runner_gateway(
     assert core_case.settlements == [("refund", "reservation")]
     assert core_case.completed == []
     assert gateway[0] == []
+
+
+@pytest.mark.parametrize("media_kind", ["forged_xing", "wav_mp3"])
+async def test_preview_cannot_hide_duration_or_container(
+    tmp_path, media_kind, monkeypatch
+):
+    import base64
+    import subprocess
+    from novelvideo.audio.voice_design_service import persist_preview
+    from novelvideo.freezone.reference_validation import _ffprobe
+
+    source = tmp_path / ("source.mp3" if media_kind == "forged_xing" else "source.wav")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=20"
+            if media_kind == "forged_xing"
+            else "sine=duration=1",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-c:a",
+            "libmp3lame",
+            str(source),
+        ],
+        check=True,
+    )
+    data = bytearray(source.read_bytes())
+    if media_kind == "forged_xing":
+        offset = data.find(b"Info")
+        if offset < 0:
+            offset = data.find(b"Xing")
+        assert offset >= 0
+        assert int.from_bytes(data[offset + 4 : offset + 8], "big") & 1
+        data[offset + 8 : offset + 12] = (100).to_bytes(4, "big")
+        source.write_bytes(data)
+        assert float(_ffprobe(source)["format"]["duration"]) < 15
+        expected = "candidate_duration_exceeded"
+    else:
+        assert data[:4] == b"RIFF"
+        assert _ffprobe(source)["streams"][0]["codec_name"] == "mp3"
+        expected = "provider_bad_audio"
+    import os
+
+    decoded_sizes = []
+    run = subprocess.run
+
+    def measured_decode(*args, **kwargs):
+        result = run(*args, **kwargs)
+        if kwargs.get("stdout") is not None:
+            decoded_sizes.append(os.fstat(kwargs["stdout"].fileno()).st_size)
+        return result
+
+    monkeypatch.setattr(subprocess, "run", measured_decode)
+    candidate = tmp_path / "candidate.mp3"
+    with pytest.raises(VoiceDesignError) as error:
+        await persist_preview(
+            {
+                "preview_audio": {
+                    "data": base64.b64encode(data).decode(),
+                    "format": "mp3",
+                    "sample_rate": 16000,
+                }
+            },
+            candidate,
+        )
+    assert error.value.code == expected
+    assert not candidate.exists()
+    if media_kind == "forged_xing":
+        assert len(decoded_sizes) == 1
+        assert 480000 < decoded_sizes[0] < 512 * 1024
+
+
+@pytest.mark.parametrize(("seconds", "accepted"), [(15, True), (15.001, False)])
+async def test_preview_duration_uses_decoded_samples_at_boundary(
+    tmp_path, seconds, accepted
+):
+    import base64
+    import subprocess
+    from novelvideo.audio.voice_design_service import persist_preview
+
+    source = tmp_path / "source.mp3"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=duration={seconds}",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-c:a",
+            "libmp3lame",
+            str(source),
+        ],
+        check=True,
+    )
+    payload = {
+        "preview_audio": {
+            "data": base64.b64encode(source.read_bytes()).decode(),
+            "format": "mp3",
+            "sample_rate": 16000,
+        }
+    }
+    destination = tmp_path / "candidate.mp3"
+    if accepted:
+        result = await persist_preview(payload, destination)
+        assert result.duration_seconds == 15
+        assert destination.read_bytes() == source.read_bytes()
+    else:
+        with pytest.raises(VoiceDesignError, match="candidate_duration_exceeded"):
+            await persist_preview(payload, destination)
+        assert not destination.exists()

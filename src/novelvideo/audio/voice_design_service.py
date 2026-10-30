@@ -8,7 +8,6 @@ import binascii
 import hashlib
 import ipaddress
 import json
-import math
 import os
 import socket
 import subprocess
@@ -262,37 +261,54 @@ def _verify_audio(path: Path) -> float:
 
     info = _ffprobe(path)
     streams = info.get("streams", [])
-    duration = float(info.get("format", {}).get("duration", 0))
     if (
-        len(streams) != 1
+        info.get("format", {}).get("format_name") != "mp3"
+        or len(streams) != 1
         or streams[0].get("codec_name") != "mp3"
         or int(streams[0].get("sample_rate", 0)) != 16000
         or streams[0].get("channels") != 1
-        or not math.isfinite(duration)
-        or duration <= 0
     ):
         raise VoiceDesignError("provider_bad_audio")
-    if duration > 15:
+    max_pcm_bytes = 15 * 16000 * 2
+    with tempfile.TemporaryFile() as decoded:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-xerror",
+                "-nostdin",
+                "-protocol_whitelist",
+                "file,pipe",
+                "-i",
+                str(path),
+                "-map",
+                "0:a:0",
+                "-c:a",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-f",
+                "s16le",
+                # Decode past the acceptance boundary, then reject any overflow.
+                # This limits probe output; it never truncates a published candidate.
+                "-fs",
+                str(max_pcm_bytes + 2),
+                "pipe:1",
+            ],
+            stdout=decoded,
+            stderr=subprocess.PIPE,
+            check=True,
+            timeout=20,
+        )
+        decoded_bytes = os.fstat(decoded.fileno()).st_size
+    if decoded_bytes > max_pcm_bytes:
         raise VoiceDesignError("candidate_duration_exceeded")
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-xerror",
-            "-protocol_whitelist",
-            "file,pipe",
-            "-i",
-            str(path),
-            "-f",
-            "null",
-            "-",
-        ],
-        capture_output=True,
-        check=True,
-        timeout=20,
-    )
-    return duration
+    if not decoded_bytes or decoded_bytes % 2:
+        raise VoiceDesignError("provider_bad_audio")
+    return decoded_bytes / (16000 * 2)
 
 
 async def persist_preview(payload: dict, output_path: Path) -> VoiceDesignAudio:
