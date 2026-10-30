@@ -16,6 +16,29 @@ vi.mock("@/lib/api", () => ({
 }));
 
 describe("Freezone canvas tool result reporting", () => {
+  it.each([false, true])("reports unverified historical results without encouraging a retry (known failure=%s)", (failed) => {
+    reportCanvasCommandToolResult({
+      bridgeKey: "bridge-unverified", turnId: "turn-a", projectId: "project-a", canvasId: "canvas-a",
+      followup: true,
+      result: {
+        applied: 1, openedUiActions: 0, createdNodeIds: [], errors: failed ? ["B failed"] : [],
+        commandResults: [
+          { commandIndex: 0, type: "run_node_action", status: "unverified", label: "A" },
+          { commandIndex: 1, type: "run_node_action", status: failed ? "error" : "success", label: "B" },
+        ],
+      },
+    });
+    expect(api.post).toHaveBeenCalledWith("api/v1/chat/canvas-command-tool-result", {
+      json: expect.objectContaining({
+        canvas_apply_status: "unverified", background_execution_status: "unverified",
+        tool_call_status: "completed", applied: false, followup: true,
+        user_message: expect.stringContaining("暂勿重复生成"),
+        message: expect.stringContaining("结果待核实"),
+        agent_hint: expect.stringContaining("Do not rerun generation or suggest retrying"),
+      }), timeout: 30_000,
+    });
+  });
+
   beforeEach(() => {
     vi.mocked(api.post).mockClear();
   });

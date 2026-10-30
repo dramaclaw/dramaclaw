@@ -162,6 +162,69 @@ def test_dangling_choice_edge_counts_as_lint_error() -> None:
 # --- service integration over the real projection -------------------------
 
 
+def test_reference_images_are_independent_of_confirmation_and_definitions() -> None:
+    group = {"id": "group", "type": "groupNode", "data": {
+        "interactiveStoryId": "story", "storyCharacters": [{"id": "aye"}],
+        "storyScenes": [{"id": "forest"}],
+    }}
+
+    def image(node_id, kind, entity_id, **data):
+        return {"id": node_id, "type": "imageGenNode", "data": {
+            "imageUrl": "/image.png", "storyAssetTarget": {
+                "storyId": "story", "kind": kind, "entityId": entity_id,
+                "segmentIds": ["opening"],
+            }, **data,
+        }}
+
+    canvas = {"nodes": [
+        group,
+        {"id": "video", "type": "videoNode", "parentId": "group", "data": {
+            "storySegmentId": "opening", "narration": "Start",
+        }},
+        image("portrait", "subject", "aye"),
+        image("portrait-copy", "subject", "aye"),
+        image("scene", "scene", "forest"),
+        image("generating", "subject", "not-defined", isGenerating=True),
+        image("blob", "scene", "forest", imageUrl="blob:preview"),
+        {"id": "legacy", "type": "imageGenNode", "data": {"imageUrl": "/legacy.png"}},
+        image("other-story", "subject", "aye", storyAssetTarget={
+            "storyId": "other", "kind": "subject", "entityId": "aye",
+        }),
+    ], "edges": [{"source": "portrait", "target": "video", "data": {
+        "link_type": "media_input_for", "edgeKind": "story_visual_reference",
+    }}]}
+    evidence = collect_stage_evidence(canvas, None, lint_error_count=0, story_group=group)
+    assert evidence.character_image_ready_count == 1
+    assert evidence.scene_count == evidence.scene_image_ready_count == 1
+    assert evidence.unmapped_image_node_ids == ["legacy"]
+    assets = {asset.node_id: asset for asset in evidence.reference_images}
+    assert assets["portrait"].linked_segment_ids == ["opening"]
+    assert assets["scene"].ready is True
+    assert assets["scene"].linked_segment_ids == []
+    assert not assets["generating"].ready
+    assert not assets["blob"].ready
+    assert "other-story" not in assets
+    assert evidence.confirmed_stages == []
+    assert next(stage for stage in derive_stages(evidence, None)
+                if stage.id == "characters").status == "manual"
+
+
+@pytest.mark.parametrize("data", [
+    {"imageUrl": ""}, {"imageUrl": None}, {"isGenerating": True},
+    {"assetMigration": {"status": "pending"}}, {"imageUrl": " blob:preview "},
+])
+def test_reference_image_placeholders_are_not_ready(data) -> None:
+    group = {"id": "group", "data": {"interactiveStoryId": "s", "storyScenes": [{"id": "x"}]}}
+    canvas = {"nodes": [{"id": "image", "type": "imageGenNode", "data": {
+        "imageUrl": "/image.png", "storyAssetTarget": {
+            "storyId": "s", "kind": "scene", "entityId": "x",
+        }, **data,
+    }}]}
+    evidence = collect_stage_evidence(canvas, None, lint_error_count=0, story_group=group)
+    assert evidence.scene_image_ready_count == 0
+
+
+
 def test_created_story_advances_script_and_video_follows_media(
     service, story
 ) -> None:

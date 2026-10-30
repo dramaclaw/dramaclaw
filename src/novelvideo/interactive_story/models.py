@@ -717,6 +717,14 @@ class InteractiveStoryStage(StoryContractModel):
     status: StoryStageStatus
 
 
+class StoryReferenceImageEvidence(StoryContractModel):
+    kind: Literal["subject", "scene"]
+    entity_id: str
+    node_id: str
+    ready: bool
+    linked_segment_ids: list[str] = Field(default_factory=list)
+
+
 class InteractiveStoryStageEvidence(StoryContractModel):
     """Raw canvas evidence counts behind the stage derivation.
 
@@ -734,6 +742,13 @@ class InteractiveStoryStageEvidence(StoryContractModel):
     video_ready_count: int = Field(default=0, ge=0)
     lint_error_count: int = Field(default=0, ge=0)
     character_count: int = Field(default=0, ge=0)
+    scene_count: int = Field(default=0, ge=0)
+    character_image_ready_count: int = Field(default=0, ge=0)
+    scene_image_ready_count: int = Field(default=0, ge=0)
+    reference_images: list[StoryReferenceImageEvidence] = Field(default_factory=list)
+    # Legacy images have no trustworthy story/entity mapping. Inspect them
+    # before concluding that a reference is missing; never guess from titles.
+    unmapped_image_node_ids: list[str] = Field(default_factory=list)
     confirmed_stages: list[ManualStoryStageId] = Field(default_factory=list)
 
 

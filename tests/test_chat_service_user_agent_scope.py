@@ -1480,6 +1480,18 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
         is True
     )
     assert chat_service._freezone_canvas_write_requested("怎么创建图片节点？") is False
+    assert chat_service._freezone_canvas_write_requested(
+        "请核实角色参考图和场景参考图是否已经生成。只读检查，不生成或修改。"
+    ) is False
+    assert chat_service._freezone_canvas_write_requested(
+        "请检查图片是否生成。只分析，不生成或修改任何内容。"
+    ) is False
+    assert chat_service._freezone_canvas_write_requested(
+        "先只分析场景，然后生成一个图片节点"
+    ) is True
+    assert chat_service._freezone_canvas_write_requested("角色参考图是否已经生成？") is False
+    assert chat_service._freezone_canvas_write_requested("查看场景图有没有生成成功") is False
+    assert chat_service._freezone_canvas_write_requested("图片是否已生成？没有的话生成一张图片") is True
     assert (
         chat_service._freezone_canvas_write_requested("能否帮我创建一个短视频工作流？")
         is True

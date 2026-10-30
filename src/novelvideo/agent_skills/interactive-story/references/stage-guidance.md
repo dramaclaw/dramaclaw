@@ -2,6 +2,8 @@
 
 故事 Create/Validate 成功后，以及用户问“下一步”、完成一项工作或要求确认阶段时，调用 `dramaclaw_get_interactive_story_progress`。以返回的 `current_stage_id` 为最早未完成项，结合 `stages` 和 `evidence` 说明：目前已完成什么、这一项还缺什么、用户现在可做的一个具体动作。不要仅凭聊天记忆、节点标题或截图推断状态；不要跳过 `manual` 阶段，将后面的“视频”说成当前阶段。局部编辑仍按用户指定范围执行，阶段引导只用于交接。
 
+素材状态与阶段确认必须分别汇报：`manual` 仅表示尚未获得用户确认，不表示图片未生成。角色和场景的实际产物分别看 `character_image_ready_count`、`scene_image_ready_count`，再看 `reference_images` 中的 `ready` 和 `linked_segment_ids`，区分“已生成并关联”“已生成但未关联”“尚未就绪”。如果存在 `unmapped_image_node_ids`，先读取这些旧图片节点的实际内容核实，不因缺少映射就宣称没有图片；不要仅凭标题猜测归属。已有可用素材直接复用，不为解除 `manual` 状态额外生成角色视图或重复生成场景图。用户只询问状态时只读核验，不要求写入回执。
+
 | 当前阶段 | 给用户的下一步 |
 | --- | --- |
 | `proposal` 策划案 | 尚无大纲时，补齐会影响方向的偏好并给可审核的创意、分支与单路时长；已有 `pending/needs_revision` 大纲时，指引用户审阅或修改画布方案卡，不重复从零策划。只要方案时止于对话。 |

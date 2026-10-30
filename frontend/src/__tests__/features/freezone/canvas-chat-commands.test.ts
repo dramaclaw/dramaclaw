@@ -9084,7 +9084,7 @@ describe("canvas chat commands", () => {
     }
   });
 
-  it("signals durable workflow acceptance only after Run creation succeeds", async () => {
+  it.each([false, true])("signals durable workflow acceptance with resolved node identities (alias=%s)", async (useAlias) => {
     const imageNodeId = useCanvasStore.getState().addNode(
       CANVAS_NODE_TYPES.imageGen,
       { x: 0, y: 0 },
@@ -9101,7 +9101,11 @@ describe("canvas chat commands", () => {
     const execution = applyCanvasChatCommandsAsync(
       extractCanvasChatCommandEnvelopes([{
         schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
-        commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        commands: useAlias ? [
+          { type: "create_node", node_type: CANVAS_NODE_TYPES.imageGen,
+            client_id: "new-image", data: { prompt: "持久化后执行" } },
+          { type: "run_node_action", node_id: "new-image", action: "generate_image" },
+        ] : [{ type: "run_workflow", node_ids: [imageNodeId] }],
       }]),
       {
         projectId: "project-a",
@@ -9130,18 +9134,27 @@ describe("canvas chat commands", () => {
       await vi.waitFor(() => expect(events).toHaveLength(1));
       const requestId = events[0]?.requestId;
       if (!requestId) throw new Error("expected workflow request id");
-      useCanvasStore.getState().updateNodeData(imageNodeId, {
+      const resolvedNodeId = events[0].nodeId;
+      if (useAlias) expect(resolvedNodeId).not.toBe("new-image");
+      expect(createFreezoneWorkflowRun).toHaveBeenCalledWith(
+        "project-a", "canvas-durable-acceptance",
+        expect.arrayContaining([expect.objectContaining({ node_id: resolvedNodeId })]),
+        expect.any(String), expect.any(String),
+      );
+      useCanvasStore.getState().updateNodeData(resolvedNodeId, {
         imageUrl: "/static/project/durable.png",
       });
       canvasEventBus.publish("freezone/node-action-result", {
         requestId,
-        nodeId: imageNodeId,
+        nodeId: resolvedNodeId,
         action: "generate_image",
         status: "success",
       });
       await execution;
       expect(persisted).toHaveBeenCalledOnce();
-      expect(persisted).toHaveBeenCalledWith("run-durable");
+      expect(persisted).toHaveBeenCalledWith(
+        "run-durable", useAlias ? { "new-image": resolvedNodeId } : {},
+      );
     } finally {
       unsubscribe();
     }

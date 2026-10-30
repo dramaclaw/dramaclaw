@@ -238,7 +238,7 @@ export type CanvasChatCommandApplyResult = {
 export type CanvasChatCommandApplyStep = {
   commandIndex: number;
   type: CanvasChatCommand["type"] | "validate";
-  status: "success" | "pending" | "error";
+  status: "success" | "pending" | "error" | "unverified";
   label: string;
   nodeId?: string;
   action?: string;
@@ -280,7 +280,7 @@ type ApplyCanvasChatCommandsOptions = {
   actionAcceptTimeoutMs?: number;
   actionResultFieldTimeoutMs?: number;
   actionRetryDelayMs?: number;
-  onWorkflowRunPersisted?: (runId: string) => void;
+  onWorkflowRunPersisted?: (runId: string, nodeIdMap: Record<string, string>) => void;
 };
 
 type PendingVideoFrameCapture = {
@@ -2907,6 +2907,7 @@ async function executeQueuedNodeActions(
   pendingActions: PendingNodeAction[],
   result: CanvasChatCommandApplyResult,
   options: ApplyCanvasChatCommandsOptions,
+  clientIdMap: ReadonlyMap<string, string>,
 ): Promise<void> {
   if (pendingActions.length === 0) return;
   const hasWorkflowRun = pendingActions.some((action) => action.executionMode === "workflow");
@@ -3062,7 +3063,7 @@ async function executeQueuedNodeActions(
           workflowRunnerId,
         );
         workflowRunId = createdRun.run_id;
-        options.onWorkflowRunPersisted?.(workflowRunId);
+        options.onWorkflowRunPersisted?.(workflowRunId, Object.fromEntries(clientIdMap));
         for (const action of createdRun.actions) {
           if (action.product_operation_id) {
             bindWorkflowProductOperation(action.node_id, {
@@ -4998,7 +4999,7 @@ function* applyCanvasChatCommandsInternal(
     yield (async () => {
       if (!(await executePendingVideoFrameCaptures(pendingVideoFrameCaptures, result, options))) return;
       await executePendingMainlineProjections(pendingMainlineProjections, result);
-      await executeQueuedNodeActions(pendingNodeActions, result, options);
+      await executeQueuedNodeActions(pendingNodeActions, result, options, clientIdMap);
     })();
   }
 
