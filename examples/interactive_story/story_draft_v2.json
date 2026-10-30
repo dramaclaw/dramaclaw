@@ -1,0 +1,203 @@
+{
+  "schema_version": "story_draft.v2",
+  "story_id": "fizz_choice_ad",
+  "revision": 0,
+  "title": "这一口，听你的",
+  "synopsis": "一支虚构气泡水的互动广告：观众先选择口味，系统记住偏好并自动呈现对应产品片段，最后由观众决定领取试饮还是邀请朋友参与。",
+  "start_segment_id": "heatwave_hook",
+  "characters": [
+    {
+      "id": "spark",
+      "name": "泡泡精灵",
+      "description": "引导观众选择口味的轻快品牌角色",
+      "visual_description": "半透明圆形气泡角色，薄荷绿色轮廓，表情灵动，尺寸和颜色始终一致"
+    }
+  ],
+  "variables": [
+    {
+      "name": "engagement",
+      "label": "参与感",
+      "initial": 0,
+      "minimum": 0,
+      "maximum": 3
+    }
+  ],
+  "flags": [
+    {
+      "name": "prefers_citrus",
+      "label": "偏爱青柚口味",
+      "initial": false
+    }
+  ],
+  "segments": [
+    {
+      "id": "heatwave_hook",
+      "title": "热浪来袭",
+      "script": "午后的城市像被按下了升温键。冰柜门亮起，泡泡精灵把两瓶气泡水推到你面前：今天的清爽，由你决定。",
+      "kind": "scene",
+      "character_ids": ["spark"],
+      "choice_time_limit_sec": 6,
+      "production_notes": "竖屏广告开场，前两秒完成热浪与冰柜的强反差；青柚瓶在左，莓果瓶在右，包装位置稳定",
+      "media": {"source": "placeholder", "status": "missing", "version": 1},
+      "choice_loop": {
+        "description": "冰柜冷雾缓慢流动，两瓶产品保持固定位置，泡泡精灵在中间轻微上下浮动。",
+        "production_notes": "2–4 秒无缝循环；镜头固定；产品标签、瓶身与点击锚点不得漂移；首尾帧连续。",
+        "media": {"source": "placeholder", "status": "missing", "version": 1}
+      }
+    },
+    {
+      "id": "flavor_scan",
+      "title": "口味扫描",
+      "script": "你选中的瓶盖咔哒一声弹开，气泡裹着果香冲向镜头。泡泡精灵读取了你的口味偏好。",
+      "kind": "scene",
+      "character_ids": ["spark"],
+      "production_notes": "1–2 秒过渡镜头，不露出具体口味包装，方便两条前置路径共用；结尾留白供自动跳转",
+      "media": {"source": "placeholder", "status": "missing", "version": 1}
+    },
+    {
+      "id": "citrus_reveal",
+      "title": "青柚清爽时刻",
+      "script": "青柚切面与冰块在空中展开，细密气泡沿瓶身上升。泡泡精灵说：酸甜轻快，这就是你选的清爽节奏。",
+      "kind": "scene",
+      "character_ids": ["spark"],
+      "production_notes": "青柚绿为主色；突出冰爽、气泡和口味氛围，不使用未经证实的功效或销量宣称",
+      "media": {"source": "placeholder", "status": "missing", "version": 1}
+    },
+    {
+      "id": "berry_reveal",
+      "title": "莓果清爽时刻",
+      "script": "莓果色水滴与冰块碰撞，气泡像烟花一样散开。泡泡精灵说：果香明亮，这就是你选的清爽节奏。",
+      "kind": "scene",
+      "character_ids": ["spark"],
+      "production_notes": "莓果紫红为主色；构图与青柚版一致，便于形成可比较的个性化广告分支",
+      "media": {"source": "placeholder", "status": "missing", "version": 1}
+    },
+    {
+      "id": "sample_ending",
+      "title": "领取试饮",
+      "script": "专属口味卡落入手机，画面出现“领取试饮”按钮和活动规则入口。泡泡精灵挥手：线下见，记得看看活动说明。",
+      "kind": "ending",
+      "ending_label": "SAMPLE",
+      "character_ids": ["spark"],
+      "production_notes": "明确这是虚构演示 CTA；真实投放时替换为合法活动信息、适用地区、期限和完整规则",
+      "media": {"source": "placeholder", "status": "missing", "version": 1}
+    },
+    {
+      "id": "share_ending",
+      "title": "好友来选",
+      "script": "两种口味并排变成一张互动邀请卡：发给朋友，看看你们会不会选中同一瓶。",
+      "kind": "ending",
+      "ending_label": "SHARE",
+      "character_ids": ["spark"],
+      "production_notes": "结尾保留分享卡和二维码安全区；真实投放时由平台分享能力生成链接，不在视频中写死",
+      "media": {"source": "placeholder", "status": "missing", "version": 1}
+    }
+  ],
+  "choices": [
+    {
+      "id": "pick_citrus",
+      "source_segment_id": "heatwave_hook",
+      "target_segment_id": "flavor_scan",
+      "mode": "visible",
+      "text": "青柚气泡，清爽一点",
+      "order": 0,
+      "condition": null,
+      "effects": [
+        {"kind": "increment", "variable": "engagement", "delta": 1},
+        {"kind": "set_flag", "flag": "prefers_citrus", "value": true}
+      ],
+      "feedback_text": "收到，你的清爽关键词是青柚。",
+      "is_default": true
+    },
+    {
+      "id": "pick_berry",
+      "source_segment_id": "heatwave_hook",
+      "target_segment_id": "flavor_scan",
+      "mode": "visible",
+      "text": "莓果气泡，果香一点",
+      "order": 1,
+      "condition": null,
+      "effects": [
+        {"kind": "increment", "variable": "engagement", "delta": 1},
+        {"kind": "set_flag", "flag": "prefers_citrus", "value": false}
+      ],
+      "feedback_text": "收到，你的清爽关键词是莓果。",
+      "is_default": false
+    },
+    {
+      "id": "route_citrus",
+      "source_segment_id": "flavor_scan",
+      "target_segment_id": "citrus_reveal",
+      "mode": "automatic",
+      "text": "",
+      "order": 0,
+      "condition": {
+        "kind": "group",
+        "join": "and",
+        "items": [
+          {"kind": "variable", "variable": "engagement", "operator": ">=", "value": 1},
+          {"kind": "flag", "flag": "prefers_citrus", "value": true}
+        ]
+      },
+      "effects": [],
+      "is_default": false
+    },
+    {
+      "id": "route_berry",
+      "source_segment_id": "flavor_scan",
+      "target_segment_id": "berry_reveal",
+      "mode": "automatic",
+      "text": "",
+      "order": 1,
+      "condition": null,
+      "effects": [],
+      "is_default": false
+    },
+    {
+      "id": "citrus_sample",
+      "source_segment_id": "citrus_reveal",
+      "target_segment_id": "sample_ending",
+      "mode": "visible",
+      "text": "领取青柚试饮",
+      "order": 0,
+      "condition": null,
+      "effects": [],
+      "feedback_text": "青柚口味卡已为你准备好。",
+      "is_default": false
+    },
+    {
+      "id": "citrus_share",
+      "source_segment_id": "citrus_reveal",
+      "target_segment_id": "share_ending",
+      "mode": "visible",
+      "text": "让朋友也选一次",
+      "order": 1,
+      "condition": null,
+      "effects": [],
+      "is_default": false
+    },
+    {
+      "id": "berry_sample",
+      "source_segment_id": "berry_reveal",
+      "target_segment_id": "sample_ending",
+      "mode": "visible",
+      "text": "领取莓果试饮",
+      "order": 0,
+      "condition": null,
+      "effects": [],
+      "feedback_text": "莓果口味卡已为你准备好。",
+      "is_default": false
+    },
+    {
+      "id": "berry_share",
+      "source_segment_id": "berry_reveal",
+      "target_segment_id": "share_ending",
+      "mode": "visible",
+      "text": "让朋友也选一次",
+      "order": 1,
+      "condition": null,
+      "effects": [],
+      "is_default": false
+    }
+  ]
+}

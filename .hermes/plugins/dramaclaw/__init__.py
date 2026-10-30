@@ -14,7 +14,7 @@ import threading
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -459,6 +459,33 @@ def _validate_ingest_api_path(path: str) -> None:
         raise ValueError(INGEST_PATH_ERROR)
 
 
+def _deny_interactive_story_api_path(path: str) -> None:
+    """Keep mainline HTTP calls within the existing canvas capability boundary."""
+    parts = [
+        part for part in unquote(urlparse(path).path).split("/")
+        if part and part != "."
+    ]
+    if ".." in parts:
+        raise ValueError("path traversal is not allowed")
+    if parts[:2] != ["api", "v1"] or len(parts) < 3:
+        return
+    story_route = parts[2] == "public-stories"
+    if parts[2] == "projects" and len(parts) >= 5:
+        route = parts[4:]
+        story_route = route[0] in {
+            "interactive-stories", "interactive-story-outline", "interactive-story-progress",
+        } or (
+            len(route) >= 5
+            and route[0] == "canvases"
+            and route[2] == "stories"
+            and route[4] == "publication"
+        )
+    if story_route:
+        raise ValueError(
+            "interactive_story_canvas_only: 影游仅在虾画画布中使用，请进入虾画继续创作。"
+        )
+
+
 def _query_string(params: Any) -> str:
     if not isinstance(params, dict) or not params:
         return ""
@@ -472,6 +499,7 @@ def _query_string(params: Any) -> str:
 
 def _request(method: str, path: str, *, query: Any = None, body: Any = None) -> dict[str, Any]:
     api_path = _normalize_api_path(path)
+    _deny_interactive_story_api_path(api_path)
     url = f"{_base_url()}{api_path}{_query_string(query)}"
     payload = None
     headers = _request_headers("dramaclaw-plugin/0.1.0")
@@ -2481,6 +2509,10 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
     "code": {"type": ["string", "null"]},
     "error": {"type": ["string", "object", "array", "null"]},
     "message": {"type": ["string", "null"]},
+    "details": {"type": ["array", "object", "string", "null"]},
+    "tool_name": {"type": ["string", "null"]},
+    "path": {"type": ["string", "null"]},
+    "phase": {"type": ["string", "null"]},
     "retryable": {"type": "boolean"},
     "next_action": {"type": ["string", "null"]},
     "agent_instruction": {"type": ["string", "null"]},
@@ -2492,6 +2524,7 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "candidates",
         "canvases",
         "characters",
+        "confirmed_stages",
         "edges",
         "episodes",
         "files",
@@ -2499,11 +2532,13 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "identities",
         "images",
         "items",
+        "issues",
         "nodes",
         "requested",
         "scenes",
         "sketches",
         "skills",
+        "stages",
         "started",
         "tasks",
         "waiting",
@@ -2519,6 +2554,9 @@ _RESULT_BOOLEAN_FIELDS = frozenset(
         "has_more",
         "exists",
         "saved",
+        "idempotent",
+        "refresh_canvas",
+        "valid",
         "upload_dir_available",
     }
 )
@@ -2536,6 +2574,7 @@ _RESULT_INTEGER_FIELDS = frozenset(
         "offset",
         "progress",
         "revision",
+        "current_revision",
     }
 )
 _RESULT_OBJECT_FIELDS = frozenset(
@@ -2543,9 +2582,12 @@ _RESULT_OBJECT_FIELDS = frozenset(
         "audio_prerequisites",
         "character",
         "episode_status",
+        "evidence",
         "global",
+        "outline",
         "pipeline",
         "script",
+        "story",
         "session",
         "task",
         "ui_spec",
@@ -3003,6 +3045,23 @@ _PRESET_CANVAS_SCHEMA = {
 }
 
 
+_CANVAS_READ_TOOLS = (
+    (
+        "dramaclaw_get_freezone_canvas",
+        _schema(
+            "dramaclaw_get_freezone_canvas",
+            "Read one persisted Freezone canvas, including its authoritative revision. If the revision is unavailable, stop; never infer it from an empty canvas. Create a new canvas with dramaclaw_create_freezone_canvas_from_preset.",
+            {
+                "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
+                "canvas_id": {"type": "string", "description": "Canvas id."},
+            },
+            ["canvas_id"],
+        ),
+        _handle_get_freezone_canvas,
+    ),
+)
+
+
 TOOLS = (
     (
         "dramaclaw_control_episode_auto",
@@ -3115,19 +3174,7 @@ TOOLS = (
         ),
         _handle_list_freezone_canvases,
     ),
-    (
-        "dramaclaw_get_freezone_canvas",
-        _schema(
-            "dramaclaw_get_freezone_canvas",
-            "Read one persisted Freezone canvas, including its authoritative revision. If the revision is unavailable, stop; never infer it from an empty canvas. Create a new canvas with dramaclaw_create_freezone_canvas_from_preset.",
-            {
-                "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
-                "canvas_id": {"type": "string", "description": "Canvas id."},
-            },
-            ["canvas_id"],
-        ),
-        _handle_get_freezone_canvas,
-    ),
+    *_CANVAS_READ_TOOLS,
     (
         "dramaclaw_save_freezone_canvas",
         _schema(

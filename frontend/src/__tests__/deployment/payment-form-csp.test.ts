@@ -43,6 +43,6 @@ describe("payment form CSP", () => {
     expect(defaultConfig.match(/form-action ([^;]+);/)?.[1]?.trim()).toBe("'self'");
     const dockerfile = readFileSync("Dockerfile", "utf8");
     expect(dockerfile.match(/COPY --chmod=755 docker\/19-payment-form-csp.envsh/g)).toHaveLength(2);
-    expect(dockerfile.match(/NGINX_ENVSUBST_FILTER="\^\(BACKEND_HOST\|BACKEND_PORT\|CSP_PAYMENT_FORM_ORIGINS\)\$"/g)).toHaveLength(2);
+    expect(dockerfile.match(/NGINX_ENVSUBST_FILTER="\^\(BACKEND_HOST\|BACKEND_PORT\|CSP_PAYMENT_FORM_ORIGINS\|CSP_OPENFILM_PREVIEW_ORIGIN\)\$"/g)).toHaveLength(2);
   });
 });

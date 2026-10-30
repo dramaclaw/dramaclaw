@@ -66,6 +66,7 @@ import {
 import { hydrateAssetDragPayload } from "@/features/canvas/domain/assetDragHydrate";
 import { directorSourceIdentityUrl } from "@/features/canvas/domain/directorWorldSources";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { CANVAS_CONTROL_EDGE_GAP, CANVAS_PANEL_SURFACE_CLASS } from '@/features/canvas/ui/canvasControlStyles';
 import { useAssetDropStore, type DropMediaType } from "@/stores/assetDropStore";
 import { assetToPushTarget } from "@/features/freezone/commit/pushTarget";
 import { promoteToAsset } from "@/features/freezone/commit/promoteToAsset";
@@ -203,7 +204,7 @@ interface AssetLibraryPanelProps {
 }
 
 const FLOATING_PANEL_CONTROL_SURFACE_CLASS =
-  "flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/[0.10] bg-[rgb(var(--surface-rgb)/0.78)] shadow-[0_10px_28px_rgba(0,0,0,0.30)] backdrop-blur-[20px] transition-[background-color,border-color,box-shadow] duration-200 group-hover/btn:border-white/[0.16] group-hover/btn:bg-[rgb(var(--surface-rgb)/0.86)]";
+  `flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/[0.10] ${CANVAS_PANEL_SURFACE_CLASS} shadow-[0_10px_28px_rgba(0,0,0,0.30)] transition-[background-color,border-color,box-shadow] duration-200 group-hover/btn:border-white/[0.16] group-hover/btn:bg-[rgb(var(--surface-rgb)/0.86)]`;
 
 /* ─────────────────── 资产缩略图卡片 ─────────────────── */
 
@@ -755,11 +756,10 @@ export function AssetLibraryPanel({
       <aside
         className="pointer-events-none absolute inset-y-3 left-3 z-30 overflow-visible"
       >
-        {/* 面板外控制栏：保留 main 的折叠/资产管理入口，同时让开 Freezone
-            左上角固定的「工作流/故事板」视图切换开关。 */}
+        {/* 外层定位12px + 按钮表面居中2px，共14px；补偿后可见边距统一为20px。 */}
         <div
-          className="pointer-events-auto absolute top-[52px] z-30 flex flex-col gap-2 transition-[left] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
-          style={{ left: collapsed ? 16 : 316 }}
+          className="pointer-events-auto absolute z-30 flex flex-col gap-2 transition-[left] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
+          style={{ left: collapsed ? CANVAS_CONTROL_EDGE_GAP - 14 : 316, top: CANVAS_CONTROL_EDGE_GAP - 14 }}
         >
           <div className="group/handle relative flex h-10 w-10 items-center justify-center">
             <button
@@ -808,14 +808,14 @@ export function AssetLibraryPanel({
 
         {/* 画布内悬浮的玻璃面板：四周留出画布间距，收起时连同左侧间距完整滑出。 */}
         <div
-          className={`flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--ui-radius-lg)] border border-white/[0.10] bg-[rgb(var(--surface-rgb)/0.78)] shadow-[0_18px_52px_rgba(0,0,0,0.34)] backdrop-blur-[20px] transition-transform duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
+          className={`flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--ui-radius-lg)] border border-white/[0.10] ${CANVAS_PANEL_SURFACE_CLASS} shadow-[0_18px_52px_rgba(0,0,0,0.34)] transition-transform duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
             collapsed
-              ? "pointer-events-none -translate-x-[calc(100%+12px)]"
-              : "pointer-events-auto translate-x-0"
+              ? "invisible pointer-events-none -translate-x-[calc(100%+28px)]"
+              : "visible pointer-events-auto translate-x-0"
           }`}
-          // marginTop 56：同上，给左上角那颗视图切换开关让出顶部窄带（把手在 52，卡片
-          // 比它再低 4px，沿用原来「把手比卡片高 4px」的相对关系）。
-          style={{ width: 288, marginLeft: 16, marginTop: 56, marginBottom: 16, height: 'calc(100% - 72px)' }}
+          aria-hidden={collapsed}
+          inert={collapsed}
+          style={{ width: 288, marginLeft: 16, marginTop: 4, marginBottom: 16, height: 'calc(100% - 20px)' }}
         >
           {/* ─ 面板 Tab 栏 ── 与下面的画布条同一种下划线 tab，后续加新 tab 只往
               panelTabItems 里塞一项即可 */}

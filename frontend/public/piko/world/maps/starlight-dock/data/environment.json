@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "mapId": "starlight-dock",
+  "globalLighting": {
+    "preset": "baked-daylight",
+    "intensity": 0
+  },
+  "effects": [],
+  "audioZones": []
+}

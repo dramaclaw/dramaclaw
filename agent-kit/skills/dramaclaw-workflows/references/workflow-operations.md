@@ -1,7 +1,11 @@
 # Backend workflow operations
 
 `freezone_prepare_workflow` takes exactly one `intent` or `plan`, the admitted `operation_id`,
-optional `run_after_create`, and optional `bindings`. It returns the persisted identity, revision,
+boolean `run_after_create`, and optional `bindings`. `run_after_create` is required only for plans
+bound to story targets through `source_context.targets` or `source_context.asset_targets`; ordinary
+workflows may omit it and default to `false` (create only). The API validates declared bindings
+against the saved canvas before requiring this decision. A terse confirmation inherits this
+decision from the immediately preceding proposal. It returns the persisted identity, revision,
 digest, preview and next action, not the full compiled graph. It does not execute the canvas.
 
 For an exact `plan`, shared generation controls may use these stable portable names under
@@ -55,8 +59,10 @@ its generator rather than connected as a prompt.
 - Exact plan: `step_updates` and/or `bindings`. A step update contains `node_id`, optional `prompt`,
   and optional `settings`. Settings include supported model, aspect_ratio, resolution, quality,
   duration_seconds, generate_audio, generation_mode, variants, or voice_ref for that node type.
-  Existing custom voice and generation-parameter rules still apply. Do not mix these changes with
-  compact intent fields.
+  Existing custom voice and generation-parameter rules still apply. An exact plan also accepts
+  `summary` (its preview title) and `analysis` (the complete replacement object); send revised ones
+  whenever a step change makes the current ones inaccurate. Do not mix these changes with compact
+  intent fields.
 
 All edits are revalidated before a compare-and-swap revision update. Unknown fields and invalid
 edges are rejected without modifying the stored draft. A revision conflict requires reading and

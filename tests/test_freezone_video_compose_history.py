@@ -321,3 +321,82 @@ async def test_video_compose_overlap_uses_speed_adjusted_duration(
     assert [kind for kind, _kwargs in calls] == ["video", "video"]
     assert calls[0][1]["duration"] == 4
     assert calls[0][1]["speed"] == 2
+
+
+@pytest.mark.asyncio
+async def test_video_compose_runner_renders_a_hand_cut_film_through_studio(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A payload that names a Studio film takes the Studio leaf; the ffmpeg leaf never runs."""
+    output_dir = tmp_path / "output"
+    state_dir = tmp_path / "state"
+    output = output_dir / "freezone" / "_outputs" / "freezone_video_compose" / "job-s.mp4"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    film_dir = output_dir / "freezone" / "studio" / "canvas-a" / "compose-a"
+    task_key = project_task_state_key("freezone_video_compose", "project-a", 0, scope="job-s")
+    canvas_store.atomic_write_json(
+        canvas_store.canvas_path(state_dir, "canvas-a"),
+        {
+            "schema_version": 2,
+            "canvas_id": "canvas-a",
+            "project_id": "project-a",
+            "revision": 1,
+            "nodes": [
+                {
+                    "id": "compose-a",
+                    "type": "videoComposeNode",
+                    "position": {"x": 0, "y": 0},
+                    "data": {
+                        "isGenerating": True,
+                        "generationTaskKey": task_key,
+                        "generationTaskType": "freezone_video_compose",
+                        "generationTaskJobId": "job-s",
+                    },
+                }
+            ],
+            "edges": [],
+        },
+    )
+    seen: dict[str, Any] = {}
+
+    async def fake_studio_export(**kwargs):
+        seen.update(kwargs)
+        output.write_bytes(b"studio render")
+        return output
+
+    async def never_ffmpeg(**_kwargs):
+        raise AssertionError("the timeline path must not run for a hand-cut film")
+
+    monkeypatch.setattr("novelvideo.freezone.jobs.run_freezone_studio_export", fake_studio_export)
+    monkeypatch.setattr("novelvideo.freezone.jobs.run_freezone_video_compose", never_ffmpeg)
+    monkeypatch.setattr(freezone_runner, "_update", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "novelvideo.api.deps.make_static_url_for_context",
+        lambda _ctx, relative: f"/static/project/{relative}",
+    )
+    ctx = SimpleNamespace(
+        project_id="project-a",
+        output_dir=str(output_dir),
+        state_dir=str(state_dir),
+        requester_user_id="user-a",
+    )
+    envelope = {
+        "payload": {
+            "job_id": "job-s",
+            "project_dir": str(output_dir),
+            "canvas_id": "canvas-a",
+            "node_id": "compose-a",
+            "fps": 24,
+            "tracks": [],
+            "studio_film_dir": str(film_dir),
+        }
+    }
+
+    result = await freezone_runner._run_freezone_video_compose_async(envelope, ctx)
+
+    assert seen["film_dir"] == str(film_dir) and seen["fps"] == 24
+    assert result["output_url"].endswith("job-s.mp4")
+    projected = canvas_store.read_canvas(state_dir, "canvas-a")
+    assert projected["nodes"][0]["data"]["resultVideoUrl"].endswith("job-s.mp4")
+    assert projected["nodes"][0]["data"]["isGenerating"] is False

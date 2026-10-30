@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { isStoryGroup } from '../domain/storyGroupLimit';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -19,6 +20,7 @@ import {
   ChevronDown,
   Group,
   Clapperboard,
+  Play,
   Trash2,
 } from 'lucide-react';
 
@@ -98,6 +100,7 @@ export const MultiSelectionToolbar = memo(({
   );
   const deleteNodes = useCanvasStore((state) => state.deleteNodes);
   const groupNodes = useCanvasStore((state) => state.groupNodes);
+  const createStoryGroup = useCanvasStore((state) => state.createStoryGroup);
   const mergeStoryboardGroup = useCanvasStore((state) => state.mergeStoryboardGroup);
 
   const [arrangeMenuOpen, setArrangeMenuOpen] = useState(false);
@@ -135,6 +138,16 @@ export const MultiSelectionToolbar = memo(({
       selectedNodes.length <= STORYBOARD_MAX_NODES &&
       selectedNodes.every((node) => STORYBOARD_IMAGE_NODE_TYPES.has(node.type ?? '')),
     [selectedNodes]
+  );
+
+  // 互动短剧的运行时只编译组内视频节点；在入口处收紧选择条件，避免用户先
+  // 创建一个必然无法试玩的混合组，再从编译错误里猜原因。
+  const hasStoryGroup = useCanvasStore((state) => state.nodes.some(isStoryGroup));
+  const canCreateStoryGroup = useMemo(
+    () =>
+      !hasStoryGroup && selectedNodes.length >= 2 &&
+      selectedNodes.every((node) => node.type === CANVAS_NODE_TYPES.video),
+    [selectedNodes, hasStoryGroup]
   );
 
   // Preset/mainline-managed nodes are not user-deletable — the store filters
@@ -283,8 +296,13 @@ export const MultiSelectionToolbar = memo(({
     if (selectedIds.length === 0) {
       return;
     }
-    duplicateNodesAsSiblings(collectDuplicableIds(nodes, selectedIds));
-  }, [duplicateNodesAsSiblings, nodes, selectedIds]);
+    const ids = collectDuplicableIds(nodes, selectedIds);
+    if (nodes.some((node) => ids.includes(node.id) && isStoryGroup(node))) {
+      toast.warning(t('canvas.story.messages.storyGroupLimit'));
+      return;
+    }
+    duplicateNodesAsSiblings(ids);
+  }, [duplicateNodesAsSiblings, nodes, selectedIds, t]);
 
   const handleRunWorkflow = useCallback(async (regenerate: boolean) => {
     if (isRunningWorkflow || selectedIds.length === 0) {
@@ -397,6 +415,21 @@ export const MultiSelectionToolbar = memo(({
     }
     mergeStoryboardGroup(selectedIds);
   }, [mergeStoryboardGroup, selectedIds]);
+
+  const handleCreateStoryGroup = useCallback(() => {
+    setGroupMenuOpen(false);
+    if (!canCreateStoryGroup) {
+      toast.warning(t(hasStoryGroup
+        ? 'canvas.story.messages.storyGroupLimit'
+        : 'canvas.story.messages.storyGroupMinimum'));
+      return;
+    }
+    if (!createStoryGroup(selectedIds)) {
+      toast.warning(t('canvas.story.messages.storyGroupLimit'));
+      return;
+    }
+    toast.success(t('canvas.story.messages.storyGroupCreated'));
+  }, [canCreateStoryGroup, hasStoryGroup, createStoryGroup, selectedIds, t]);
 
   useEffect(() => {
     if (!arrangeMenuOpen) {
@@ -564,7 +597,7 @@ export const MultiSelectionToolbar = memo(({
             </button>
 
             {groupMenuOpen && (
-              <div className="absolute right-0 top-full mt-2 min-w-[160px] overflow-hidden rounded-xl border border-white/10 bg-[#242426]/95 p-1.5 text-text-dark shadow-none backdrop-blur-3xl">
+              <div className="absolute right-0 top-full mt-2 min-w-[200px] overflow-hidden rounded-xl border border-white/10 bg-[#242426]/95 p-1.5 text-text-dark shadow-none backdrop-blur-3xl">
                 <button
                   type="button"
                   className={MULTI_TOOLBAR_MENU_ITEM_CLASS}
@@ -594,6 +627,25 @@ export const MultiSelectionToolbar = memo(({
                   {!canMergeStoryboard ? (
                     <div className="pointer-events-none absolute right-0 top-full z-10 mt-1.5 hidden w-max max-w-[240px] rounded-lg border border-white/10 bg-[#1c1c1e]/95 px-3 py-1.5 text-xs leading-relaxed text-white/80 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl group-hover/sb:block">
                       {t('canvas.multiSelect.mergeStoryboardHint')}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="group/story relative">
+                  <button
+                    type="button"
+                    // 与分镜组相同，保留 hover 以解释为什么当前选区不能创建。
+                    aria-disabled={!canCreateStoryGroup}
+                    className={`${MULTI_TOOLBAR_MENU_ITEM_CLASS} ${
+                      canCreateStoryGroup ? '' : 'cursor-not-allowed opacity-40'
+                    }`}
+                    onClick={handleCreateStoryGroup}
+                  >
+                    <Play className="h-4 w-4 text-text-muted" />
+                    <span className="whitespace-nowrap">{t('canvas.story.messages.createStoryGroup')}</span>
+                  </button>
+                  {!canCreateStoryGroup ? (
+                    <div className="pointer-events-none absolute right-0 top-full z-10 mt-1.5 hidden w-max max-w-[240px] rounded-lg border border-white/10 bg-[#1c1c1e]/95 px-3 py-1.5 text-xs leading-relaxed text-white/80 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl group-hover/story:block">
+                      {t(hasStoryGroup ? 'canvas.story.messages.storyGroupLimit' : 'canvas.story.messages.storyGroupMinimum')}
                     </div>
                   ) : null}
                 </div>

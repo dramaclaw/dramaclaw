@@ -55,9 +55,13 @@ from novelvideo.api.routes import (  # noqa: E402
     html_artifacts,
     generation,
     ingest,
+    interactive_stories,
+    story_publications,
     model_gateway,
     model_credits,
+    openfilm,
     pipeline,
+    piko,
     product_surfaces,
     projects,
     props,
@@ -87,6 +91,10 @@ OPENAPI_TAGS = [
     },
     {"name": "freezone-text", "description": "Freezone 文本节点接口，包括翻译与故事脚本生成。"},
     {"name": "freezone-canvas", "description": "Freezone 画布文档接口。"},
+    {
+        "name": "interactive-story",
+        "description": "Agent 互动故事的创建、读取、增量修改与校验接口。",
+    },
     {"name": "freezone-assets", "description": "Freezone canonical 资产与上下文接口。"},
     {
         "name": "freezone-commit",
@@ -100,11 +108,15 @@ if not runtime_env.is_ce_effective():
     for ep in entry_points(group="novelvideo.api_routes"):
         ep.load()(api_router)
 api_router.include_router(config.router, tags=["config"])
+api_router.include_router(openfilm.router)
 api_router.include_router(diagnostics.router, tags=["diagnostics"])
 api_router.include_router(product_surfaces.router, tags=["product-surfaces"])
 api_router.include_router(chat.router, tags=["chat"])
+api_router.include_router(piko.router, tags=["piko"])
 api_router.include_router(projects.router, tags=["projects"])
 api_router.include_router(ingest.router, tags=["ingest"])
+api_router.include_router(interactive_stories.router)
+api_router.include_router(story_publications.router)
 api_router.include_router(characters.router, tags=["characters"])
 api_router.include_router(assets.router, tags=["assets"])
 api_router.include_router(scenes.router, tags=["scenes"])

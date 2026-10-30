@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { toast } from "sonner";
+import { isStoryGroup } from "@/features/canvas/domain/storyGroupLimit";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -7,6 +9,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AudioLines,
   Box,
+  Camera,
   ChevronDown,
   ChevronRight,
   Clapperboard,
@@ -45,7 +48,7 @@ import {
 } from "@/features/canvas/domain/canvasNodes";
 import { resolveNodePrimaryAsset } from "@/features/canvas/domain/canvasAssets";
 import {
-  localizeDefaultNodeDisplayName,
+  localizeDefaultNodeTypeLabel,
   localizeNodeDisplayName,
   resolveNodeDisplayName,
 } from "@/features/canvas/domain/nodeDisplay";
@@ -101,6 +104,7 @@ const NODE_TYPE_ICON: Record<CanvasNodeType, LucideIcon> = {
   [CANVAS_NODE_TYPES.script]: ScrollText,
   [CANVAS_NODE_TYPES.pano360Viewer]: Globe,
   [CANVAS_NODE_TYPES.threeDWorld]: Box,
+  [CANVAS_NODE_TYPES.previz]: Camera,
   [CANVAS_NODE_TYPES.skill]: Sparkles,
   [CANVAS_NODE_TYPES.style]: Palette,
 };
@@ -150,7 +154,7 @@ function outlineMeta(
   t: TFunction,
 ): string | null {
   const parts: string[] = [];
-  const typeLabel = localizeDefaultNodeDisplayName(type, node.data, t);
+  const typeLabel = localizeDefaultNodeTypeLabel(type, node.data, t);
   if (typeLabel && typeLabel !== name) {
     parts.push(typeLabel);
   }
@@ -311,7 +315,14 @@ export const CANVAS_OUTLINE_FILTERS: ReadonlyArray<{
   { key: "beat", types: [CANVAS_NODE_TYPES.beatContext] },
   { key: "audio", types: [CANVAS_NODE_TYPES.audio] },
   { key: "script", types: [CANVAS_NODE_TYPES.script] },
-  { key: "world", types: [CANVAS_NODE_TYPES.pano360Viewer, CANVAS_NODE_TYPES.threeDWorld] },
+  {
+    key: "world",
+    types: [
+      CANVAS_NODE_TYPES.pano360Viewer,
+      CANVAS_NODE_TYPES.threeDWorld,
+      CANVAS_NODE_TYPES.previz,
+    ],
+  },
   { key: "skill", types: [CANVAS_NODE_TYPES.skill] },
   { key: "webpage", types: [CANVAS_NODE_TYPES.htmlArtifact] },
 ];
@@ -519,8 +530,14 @@ export function CanvasOutlineList({
 
   // 复制组时要连成员一起给，而且父必须排在成员前面（collectOutlineIds 是前序）。
   const duplicateItem = useCallback((item: CanvasOutlineItem) => {
-    useCanvasStore.getState().duplicateNodesAsSiblings(collectOutlineIds(item));
-  }, []);
+    const store = useCanvasStore.getState();
+    const ids = collectOutlineIds(item);
+    if (store.nodes.some((node) => ids.includes(node.id) && isStoryGroup(node))) {
+      toast.warning(t("canvas.story.messages.storyGroupLimit"));
+      return;
+    }
+    store.duplicateNodesAsSiblings(ids);
+  }, [t]);
 
   const commitRename = useCallback((item: CanvasOutlineItem, rawName: string) => {
     setRenamingId(null);

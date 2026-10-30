@@ -17,7 +17,7 @@ export const ADD_NODE_TO_CHAT_LABEL = '添加到对话';
 /**
  * 把节点作为引用加入虾导输入框。画布节点与故事板卡片共用这一个入口：两个视图是
  * 同一份节点数据的两种投影，引用语义必须一致，所以都只发事件、由 FreezoneShell
- * 统一落地（选中 + 展开聊天），避免两边各写一套选中逻辑后行为漂移。
+ * 统一落地（追加行内引用 + 展开聊天），避免两边各写一套引用逻辑后行为漂移。
  */
 export function addNodesToChat(nodeIds: string[]): void {
   const ids = nodeIds.filter((nodeId) => nodeId.trim().length > 0);
@@ -28,7 +28,7 @@ export function addNodesToChat(nodeIds: string[]): void {
 /** 画布节点用：卡片内右上角悬浮，平时透明，hover 节点根（`group`）或键盘聚焦时浮出。 */
 const FLOATING_BUTTON_CLASS = cn(
   // nodrag 必须留着，否则按下按钮会被 React Flow 当成拖节点。
-  'nodrag absolute right-1.5 top-1.5 z-30 inline-flex h-7 w-7 items-center justify-center rounded-md',
+  'nodrag absolute right-1.5 top-1.5 z-30 inline-flex h-9 w-9 items-center justify-center rounded-[8px]',
   'bg-black/55 text-white/85 opacity-0 backdrop-blur-sm transition-opacity',
   'hover:bg-black/75 hover:text-white focus-visible:opacity-100',
   'group-hover:opacity-100 group-focus-within:opacity-100',
@@ -74,7 +74,9 @@ function AddNodeToChatTrigger({
         >
           <MessageSquarePlus className={cn('h-4 w-4', iconClassName)} />
         </TooltipTrigger>
-        <TooltipContent side={side}>{ADD_NODE_TO_CHAT_LABEL}</TooltipContent>
+        <TooltipContent side={side} sideOffset={8} showArrow={false} className="rounded-[8px]">
+          {ADD_NODE_TO_CHAT_LABEL}
+        </TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );
@@ -101,7 +103,7 @@ export function AddNodeToChatButton({
     <AddNodeToChatTrigger
       nodeId={nodeId}
       className={cn(FLOATING_BUTTON_CLASS, className)}
-      iconClassName={iconClassName}
+      iconClassName={cn('h-5 w-5', iconClassName)}
       side={side}
     />
   );

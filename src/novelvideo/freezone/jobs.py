@@ -1220,6 +1220,36 @@ async def _mix_audio_tracks(
     await _run_cmd(cmd)
 
 
+async def run_freezone_studio_export(
+    *,
+    project_dir: Path,
+    job_id: str,
+    film_dir: str,
+    fps: int = 30,
+) -> Path:
+    """Render a compose node's hand-cut OpenFilm film into the compose output slot.
+
+    Local leaf: it talks to the Studio process on this host (loopback) and
+    Studio's own Chromium + ffmpeg write the file; nothing leaves the machine.
+    """
+    from novelvideo.freezone.studio import StudioError, export_studio_film
+
+    output_dir = outputs_dir(project_dir, "freezone_video_compose")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    final_output_path = output_dir / f"{job_id}.mp4"
+    film = Path(film_dir).resolve()
+    try:
+        film.relative_to(Path(project_dir).resolve())
+    except ValueError as exc:
+        raise RuntimeError("studio film folder is outside the project") from exc
+    try:
+        return await export_studio_film(
+            film_dir=film, output_path=final_output_path, fps=int(fps or 30)
+        )
+    except StudioError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
 async def run_freezone_video_compose(
     *,
     project_dir: Path,

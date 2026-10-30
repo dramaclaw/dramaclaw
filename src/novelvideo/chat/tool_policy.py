@@ -35,6 +35,13 @@ def freezone_canvas_id_from_context(
     )
 
 
+def freezone_compose_node_id_from_context(
+    surface_context: dict[str, Any] | None,
+) -> str:
+    """The videoComposeNode whose compose workspace the user is in, else ``""``."""
+    return str((surface_context or {}).get("freezone_compose_node_id") or "").strip()
+
+
 def freezone_canvas_execution_mode_from_context(
     surface_context: dict[str, Any] | None,
 ) -> str:
@@ -65,6 +72,7 @@ DRAMACLAW_WRITE_TOOLS: frozenset[str] = frozenset(
         "dramaclaw_build_characters",
         "dramaclaw_compose_episode",
         "dramaclaw_create_freezone_canvas_from_preset",
+        "dramaclaw_create_interactive_story",
         "dramaclaw_delete",
         "dramaclaw_delete_freezone_canvas",
         "dramaclaw_detect_sketch_identities",
@@ -77,6 +85,7 @@ DRAMACLAW_WRITE_TOOLS: frozenset[str] = frozenset(
         "dramaclaw_generate_sketches",
         "dramaclaw_optimize_video_global",
         "dramaclaw_patch",
+        "dramaclaw_patch_interactive_story",
         "dramaclaw_plan_episodes",
         "dramaclaw_plan_identities",
         "dramaclaw_plan_props",
@@ -85,16 +94,28 @@ DRAMACLAW_WRITE_TOOLS: frozenset[str] = frozenset(
         "dramaclaw_prepare_system_voices",
         "dramaclaw_render_first_frames",
         "dramaclaw_run_freezone_skill",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_outline",
         "dramaclaw_save_freezone_canvas",
         "dramaclaw_start_single_video",
         "dramaclaw_start_video_batch",
         "dramaclaw_update_character_face_prompt",
+        "dramaclaw_confirm_interactive_story_stages",
     }
 )
-"""Mainline write tools. A Hermes turn stops after one of these has run (one-step rule)."""
+"""Legacy one-step write classification, including canvas-only story writes.
+
+This set governs Hermes lifecycle, not tool exposure. Story entries remain for
+the native Freezone adapter; the mainline plugin does not publish them.
+"""
 
 FREEZONE_CANVAS_WRITE_TOOLS: frozenset[str] = frozenset(
     {
+        "dramaclaw_confirm_interactive_story_stages",
+        "dramaclaw_create_interactive_story",
+        "dramaclaw_patch_interactive_story",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_outline",
         "freezone_add_next_node",
         "freezone_confirm_canvas_action",
         "freezone_confirm_workflow_draft",
@@ -140,6 +161,20 @@ FREEZONE_WORKFLOW_DRAFT_TOOLS: frozenset[str] = (
     )
 )
 """Workflow draft tools. Repeated reads of these are legitimate and exempt from the read guard."""
+
+FREEZONE_STUDIO_TOOLS: frozenset[str] = frozenset(
+    {
+        "freezone_studio_get_film",
+        "freezone_studio_edit_film",
+        "freezone_studio_import_media",
+        "freezone_studio_export_film",
+    }
+)
+"""Compose-workspace tools that read and cut a node's OpenFilm film server-side.
+
+They edit the film through Studio and never touch canvas nodes, so they are not
+canvas writes: no browser bridge receipt, no draft, no product operation.
+"""
 
 AGENT_PRODUCT_RESULT_TOOLS: frozenset[str] = frozenset(
     {

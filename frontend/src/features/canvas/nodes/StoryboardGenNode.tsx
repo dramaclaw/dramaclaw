@@ -1503,7 +1503,6 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
         width: `${resolvedNodeWidth}px`,
         height: `${resolvedNodeHeight}px`,
       }}
-      onClick={() => setSelectedNode(id)}
     >
       {/* Floating title */}
       <NodeHeader

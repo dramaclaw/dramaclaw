@@ -85,8 +85,9 @@ def main() -> None:
     if not any(path.is_file() for path in python_candidates):
         missing.append(".venv Python (run uv sync)")
     kit_root = Path(__file__).resolve().parents[1]
-    if not (kit_root / "skills" / "dramaclaw-workflows" / "SKILL.md").is_file():
-        missing.append("agent-kit/skills/dramaclaw-workflows/SKILL.md")
+    for skill_name in ("dramaclaw-workflows", "interactive-story"):
+        if not (kit_root / "skills" / skill_name / "SKILL.md").is_file():
+            missing.append(f"agent-kit/skills/{skill_name}/SKILL.md")
     if missing:
         raise SystemExit("Missing required files:\n- " + "\n- ".join(missing))
     _validate_capability_contract(ce_root, requirement)

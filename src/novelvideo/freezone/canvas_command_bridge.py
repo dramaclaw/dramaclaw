@@ -33,7 +33,8 @@ BRIDGE_PENDING_TTL_SECONDS = {
     "canvas_command": 10 * 60,
     "canvas_context": 45,
     "skill_studio_event": 10 * 60,
-    "clarification_event": 10 * 60,
+    # A tool wait may end after ten minutes; the user's card must outlive it.
+    "clarification_event": 60 * 60,
 }
 _BRIDGE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS canvas_command_messages (
@@ -210,18 +211,22 @@ def find_clarification_bridge_message(
     project_id: str | None,
     canvas_id: str | None,
     clarification_id: str,
+    request_scope: dict[str, Any] | None = None,
+    include_expired: bool = False,
     bridge_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
-    """Locate the newest live clarification card for one clarification id.
+    """Locate the newest card by its id/version family or explicit target scope.
 
     Returns the stored pending payload plus ``key``, ``transport_status`` and,
     once the frontend answered, ``result``. Used to resume waiting on a card
     after the tool call that created it timed out, so the user's later answer
     is collected instead of a second card being shown. An expired card (its
     pending TTL passed before anyone answered) is reported as absent.
+    Scope lookup requires every requested field to match persisted metadata;
+    cards without that metadata are only recoverable by id.
     """
     wanted = str(clarification_id or "").strip()
-    if not wanted:
+    if not wanted and not request_scope:
         return None
     now = time.time()
     with _bridge_db(bridge_dir) as conn:
@@ -236,10 +241,19 @@ def find_clarification_bridge_message(
     for row in rows:
         payload = _decode_bridge_json(row["payload_json"])
         event = payload.get("event") if payload else None
-        if not isinstance(event, dict) or str(event.get("clarification_id") or "") != wanted:
+        if not isinstance(event, dict):
+            continue
+        event_id = str(event.get("clarification_id") or "")
+        if wanted and event_id != wanted and not event_id.startswith(f"{wanted}_v"):
+            continue
+        stored_scope = event.get("request_scope")
+        if request_scope and (
+            not isinstance(stored_scope, dict)
+            or any(stored_scope.get(key) != value for key, value in request_scope.items())
+        ):
             continue
         status = str(row["status"])
-        if status == "expired":
+        if status == "expired" and not include_expired:
             return None
         return {
             **payload,
@@ -263,6 +277,57 @@ def bridge_message_exists(key: str, *, bridge_dir: str | Path | None = None) -> 
             (key,),
         ).fetchone()
     return row is not None
+
+
+def put_clarification_turn_context(
+    *,
+    project_id: str,
+    canvas_id: str,
+    recovery_only: bool,
+    bridge_dir: str | Path | None = None,
+) -> None:
+    """Bind a host-observed reopen request to its latest answerable card.
+
+    This context is written by the chat host from the user's message, never from
+    model-generated tool arguments. A model cannot turn reopening into revision.
+    """
+    context = {"project_id": project_id, "canvas_id": canvas_id, "created_at": time.time()}
+    if recovery_only:
+        with _bridge_db(bridge_dir) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            _prune_bridge_rows(conn, now=time.time(), bridge_dir=bridge_dir)
+            row = conn.execute(
+                "SELECT payload_json, result_json, status FROM canvas_command_messages "
+                "WHERE project_id = ? AND canvas_id = ? AND kind = 'clarification_event' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (project_id, canvas_id),
+            ).fetchone()
+        if row is not None:
+            result = _decode_bridge_json(row["result_json"]) or {}
+            payload = _decode_bridge_json(row["payload_json"]) or {}
+            if row["status"] in {"pending", "delivered"} or (
+                row["status"] == "applied" and result.get("ok") is True
+            ):
+                context["recover_clarification_id"] = (payload.get("event") or {}).get(
+                    "clarification_id"
+                )
+    key = hashlib.sha256(_canonical_json([project_id, canvas_id]).encode()).hexdigest()[:32]
+    _write_json(_path("clarification-turn", key, bridge_dir), context)
+
+
+def read_clarification_turn_context(
+    *,
+    project_id: str | None,
+    canvas_id: str | None,
+    bridge_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    key = hashlib.sha256(_canonical_json([project_id, canvas_id]).encode()).hexdigest()[:32]
+    context = _read_json(_path("clarification-turn", key, bridge_dir)) or {}
+    if context.get("project_id") != project_id or context.get("canvas_id") != canvas_id:
+        return {}
+    if time.time() - float(context.get("created_at") or 0) > 60 * 60:
+        return {}
+    return context
 
 
 def list_pending_bridge_messages(
@@ -430,8 +495,13 @@ def clarification_bridge_key(
         "kind": "clarification_event",
         "project_id": project_id or "",
         "canvas_id": canvas_id or "",
-        "event": event,
-        "nonce": time.time_ns(),
+        # Retries and concurrent callers for the same logical card share an inbox.
+        "clarification_id": event.get("clarification_id"),
+        **(
+            {"event": event, "nonce": time.time_ns()}
+            if not event.get("clarification_id")
+            else {}
+        ),
     }
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()[:32]
 
@@ -588,6 +658,7 @@ def _resolve_durable_bridge_message(
     now = time.time()
     with _bridge_db(bridge_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        _prune_bridge_rows(conn, now=now, bridge_dir=bridge_dir)
         existing = conn.execute(
             "SELECT * FROM canvas_command_messages WHERE bridge_key = ?",
             (key,),
@@ -879,7 +950,7 @@ def put_pending_clarification_event(
     canvas_id: str | None,
     event: dict[str, Any],
     bridge_dir: str | Path | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     payload = {
         "key": key,
         "kind": "clarification_event",
@@ -888,16 +959,20 @@ def put_pending_clarification_event(
         "event": event,
         "created_at": time.time(),
     }
-    _put_pending_bridge_message(
-        key=key,
-        kind="clarification_event",
-        project_id=project_id,
-        canvas_id=canvas_id,
-        payload=payload,
-        bridge_dir=bridge_dir,
-    )
-    _unlink_if_exists(_path("result", key, bridge_dir))
-    _write_json(_path("pending", key, bridge_dir), payload)
+    with _key_lock(key, bridge_dir):
+        resolved = _put_pending_bridge_message(
+            key=key,
+            kind="clarification_event",
+            project_id=project_id,
+            canvas_id=canvas_id,
+            payload=payload,
+            bridge_dir=bridge_dir,
+        )
+        if resolved is not None:
+            return resolved
+        _unlink_if_exists(_path("result", key, bridge_dir))
+        _write_json(_path("pending", key, bridge_dir), payload)
+    return None
 
 
 def resolve_canvas_command(

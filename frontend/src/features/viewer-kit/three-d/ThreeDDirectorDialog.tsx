@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { Children, forwardRef, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Children, forwardRef, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -113,6 +113,8 @@ type NormalizedDirectorSource = {
 
 interface ThreeDDirectorDialogProps {
   open: boolean;
+  /** Keep a nested viewer above the modal that opened it. */
+  portalContainer?: ComponentProps<typeof DialogContent>["portalContainer"];
   onOpenChange: (open: boolean) => void;
   manifest: DirectorStageManifest | null;
   title?: string;
@@ -749,6 +751,7 @@ function captureFilename(manifest: DirectorStageManifest, kind: CaptureKind) {
 
 export function ThreeDDirectorDialog({
   open,
+  portalContainer,
   onOpenChange,
   manifest,
   title,
@@ -782,6 +785,7 @@ export function ThreeDDirectorDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
+        portalContainer={portalContainer}
         className="inset-0 left-0 top-0 h-dvh w-dvw max-w-none translate-x-0 translate-y-0 overflow-hidden rounded-none border-0 p-0 ring-0 data-open:zoom-in-100 data-closed:zoom-out-100 sm:max-w-none"
         overlayClassName="bg-black/55 supports-backdrop-filter:backdrop-blur-none"
         showCloseButton={false}

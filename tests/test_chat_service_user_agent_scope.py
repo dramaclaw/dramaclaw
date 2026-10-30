@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -445,6 +446,7 @@ def test_hermes_tool_call_update_attaches_recent_freezone_structured_result(tmp_
     payload = {
         "tool_name": "freezone_get_workflow_skill",
         "created_at": datetime.now(tz=timezone.utc).timestamp(),
+        "input_hash": hermes_sdk.hashlib.sha256(b"{}").hexdigest(),
         "result": {"ok": True, "skills": [{"id": "pixar-ip-brand-ad"}]},
     }
     (result_dir / "freezone_get_workflow_skill-1-2.json").write_text(
@@ -487,6 +489,73 @@ def test_hermes_tool_call_update_attaches_recent_freezone_structured_result(tmp_
         "text": "freezone_get_workflow_skill result\n- **count:** 1"
     }
     assert result.structured == {"ok": True, "skills": [{"id": "pixar-ip-brand-ad"}]}
+
+
+def test_hermes_tool_call_update_rejects_receipt_from_different_input(tmp_path):
+    result_dir = tmp_path / "freezone-tool-results"
+    result_dir.mkdir()
+    payload = {
+        "tool_name": "freezone_get_workflow_skill",
+        "created_at": datetime.now(tz=timezone.utc).timestamp(),
+        "input_hash": hermes_sdk.hashlib.sha256(
+            b'{"skill_id":"other-skill"}'
+        ).hexdigest(),
+        "result": {"ok": True, "skill_id": "other-skill"},
+    }
+    (result_dir / "freezone_get_workflow_skill-1-2.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    thread = hermes_sdk.HermesSdkThread(
+        cli_path=tmp_path / "hermes",
+        cwd=tmp_path,
+        env={"DRAMACLAW_FREEZONE_TOOL_RESULT_DIR": str(result_dir)},
+        model=None,
+        username="local",
+        session_id="session-1",
+    )
+    thread._tool_names_by_call_id["tc-list"] = "freezone_get_workflow_skill"
+    thread._tool_inputs_by_call_id["tc-list"] = {"skill_id": "wanted-skill"}
+
+    result = thread._translate_notification(
+        {
+            "method": "session/update",
+            "params": {"update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tc-list",
+                "status": "completed",
+                "content": {"text": "summarized"},
+            }},
+        },
+        "turn-1",
+    )
+
+    assert result is not None
+    assert result.structured is None
+
+
+def test_recent_freezone_result_rejects_receipt_older_than_call(tmp_path):
+    result_dir = tmp_path / "freezone-tool-results"
+    result_dir.mkdir()
+    arguments = {"skill_id": "wanted-skill"}
+    payload = {
+        "tool_name": "freezone_get_workflow_skill",
+        "created_at": 100.0,
+        "input_hash": hermes_sdk.hashlib.sha256(
+            b'{"skill_id":"wanted-skill"}'
+        ).hexdigest(),
+        "result": {"ok": True, "skill_id": "wanted-skill"},
+    }
+    (result_dir / "freezone_get_workflow_skill-1-2.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    assert hermes_sdk._load_recent_freezone_tool_result(
+        str(result_dir),
+        "freezone_get_workflow_skill",
+        tool_input=arguments,
+        min_created_at=101.0,
+        max_age_seconds=float("inf"),
+    ) is None
 
 
 def test_anonymous_hermes_tool_call_update_is_not_user_visible():
@@ -1033,8 +1102,13 @@ def test_codex_main_thread_key_is_discovery_protocol_scoped():
     assert chat_service._codex_scope_key("") == f'["main","home",null,"{protocol}"]'
 
 
+@pytest.mark.parametrize("old_key", [
+    "project:project-a",
+    '["main","project","project-a","tool-discovery-v2"]',
+    '["main","project","project-a","tool-discovery-v3"]',
+])
 def test_codex_discovery_upgrade_does_not_resume_legacy_main_thread(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, old_key
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     state_file = (
@@ -1048,7 +1122,7 @@ def test_codex_discovery_upgrade_does_not_resume_legacy_main_thread(
     )
     state_file.parent.mkdir(parents=True)
     state_file.write_text(
-        json.dumps({"project:project-a": "legacy-thread"}), encoding="utf-8"
+        json.dumps({old_key: "legacy-thread"}), encoding="utf-8"
     )
 
     assert chat_service._get_codex_thread_id("admin", "project-a") is None
@@ -1350,6 +1424,12 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "never include questions in the same call" in developer_instructions
         assert "applies only to image and video for now" in developer_instructions
         assert "run_after_create=true" in developer_instructions
+        assert "Workflows bound to story targets must explicitly pass run_after_create" in (
+            developer_instructions
+        )
+        assert "A terse confirmation such as 可以 or 确认 inherits" in (
+            developer_instructions
+        )
         assert "video_generation_mode" in developer_instructions
         assert "omit generation_media_types" in developer_instructions
     else:
@@ -1609,6 +1689,215 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "one-node workflow is still a workflow" in canvas_instructions
     assert "do not read node detail before starting it" in canvas_instructions
     assert "freezone_run_node_action" in canvas_instructions
+    assert "dramaclaw_confirm_interactive_story_stages" in canvas_instructions
+    assert "dramaclaw_get_interactive_story_progress" in canvas_instructions
+    assert "stage-guidance" in canvas_instructions
+    assert "Stage confirmation itself does not generate media" in canvas_instructions
+    assert "without a successful persisted" in canvas_instructions
+    previz_rule = canvas_instructions.index("预演台/previz requests")
+    assert previz_rule < canvas_instructions.index("load\n  and follow the dramaclaw-workflows")
+    assert "are previzNode scene edits, not media generation" in canvas_instructions
+    assert "the one empty previzNode of a 预演台 request" in canvas_instructions
+    assert "dry-run the same\n  {type: update_node_data" in canvas_instructions
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("当前角色和场景都完成了", True),
+        ("当前角色和场景已经完成了，可以做分镜了", True),
+        ("分镜确认完成，继续进入视频", True),
+        ("角色和场景完成了吗？", False),
+        ("场景还没完成", False),
+        ("分镜需要返工重做", False),
+        ("视频已经生成完成", False),
+        ("角色图片做好了，帮我看下下载地址。", False),
+        ("继续生成角色参考图", False),
+        ("角色参考图已经做好了", False),
+        ("继续查看角色素材", False),
+        ("继续写角色介绍", False),
+        ("确认角色阶段完成", True),
+        ("确认角色阶段完成，再生成场景参考图", True),
+        ("先不要确认角色阶段完成", False),
+        ("先别确认场景阶段完成", False),
+        ("暂时不确认分镜阶段完成", False),
+        ("不用确认交付阶段通过", False),
+        ("无需确认验收阶段完成", False),
+        ("不需要确认角色阶段完成", False),
+        ("先不要马上确认角色阶段完成", False),
+        ("先不要 再 确认角色阶段完成", False),
+        ("当前角色阶段已完成，先不要确认", False),
+        ("确认角色阶段完成，不用再生成角色图片", True),
+        ("别再生成角色图片，确认角色阶段完成", True),
+        ("分别确认角色和场景阶段完成", True),
+        ("请特别确认角色阶段完成", True),
+    ],
+)
+def test_interactive_story_manual_stage_confirmation_intent(prompt, expected):
+    assert (
+        chat_service._interactive_story_stage_confirmation_requested(prompt)
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("角色和场景确认完成", "阶段确认未写入"),
+        ("Confirm the character and scene stages", "Stage confirmation was not saved"),
+    ],
+)
+def test_stage_confirmation_failure_uses_prompt_language(prompt, expected):
+    assert chat_service._stage_confirmation_not_written_message(prompt).startswith(expected)
+
+
+@pytest.mark.parametrize(
+    ("canvas_kind", "prompt", "confirm_written", "blocked"),
+    [
+        ("ordinary", "角色图片做好了，帮我看下下载地址。", False, False),
+        ("ordinary", "继续生成角色参考图", False, False),
+        ("ordinary", "当前角色和场景都完成了", False, False),
+        ("missing", "当前角色和场景都完成了", False, False),
+        ("outline", "当前角色和场景都完成了", False, False),
+        ("other_canvas", "当前角色和场景都完成了", False, False),
+        ("other_project", "当前角色和场景都完成了", False, False),
+        ("fake_group", "当前角色和场景都完成了", False, False),
+        ("corrupt", "当前角色和场景都完成了", False, False),
+        ("story", "角色图片做好了，帮我看下下载地址。", False, False),
+        ("story", "继续生成角色参考图", False, False),
+        ("story", "先不要确认角色阶段完成", False, False),
+        ("story", "先别确认场景阶段完成", False, False),
+        ("story", "确认角色阶段完成，不用再生成角色图片", False, True),
+        ("story", "分别确认角色和场景阶段完成", False, True),
+        ("story", "当前角色和场景都完成了", False, True),
+        ("story", "当前角色和场景都完成了", True, False),
+    ],
+)
+async def test_codex_stage_confirmation_is_bound_to_existing_story_and_user_intent(
+    monkeypatch, tmp_path, canvas_kind, prompt, confirm_written, blocked
+):
+    from novelvideo.freezone import canvas_store
+
+    state_dir = tmp_path / "state" / "project-a"
+    project_dir = tmp_path / "managed-output" / "project-a"
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    story_node = {
+        "id": "story-group",
+        "type": "groupNode",
+        "data": {"storyGroup": True, "interactiveStoryId": "story-a"},
+    }
+    payload = {"revision": 1, "nodes": [], "edges": []}
+    if canvas_kind == "story":
+        payload["nodes"] = [story_node]
+    elif canvas_kind == "fake_group":
+        payload["nodes"] = [{**story_node, "data": {"storyGroup": False}}]
+    elif canvas_kind == "outline":
+        payload["metadata"] = {"interactiveStoryOutline": {"status": "confirmed"}}
+    if canvas_kind != "missing":
+        path = canvas_store.canvas_path(project_dir, "canvas-a")
+        path.parent.mkdir(parents=True)
+        path.write_text("{" if canvas_kind == "corrupt" else json.dumps(payload))
+    if canvas_kind in {"other_canvas", "other_project"}:
+        other_project = (
+            project_dir if canvas_kind == "other_canvas" else tmp_path / "project-b"
+        )
+        other_canvas = "canvas-b" if canvas_kind == "other_canvas" else "canvas-a"
+        path = canvas_store.canvas_path(other_project, other_canvas)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({**payload, "nodes": [story_node]}))
+
+    async def authorize(**kwargs):
+        return None
+
+    async def create_token(*args, **kwargs):
+        return "agent-token"
+
+    class AuthPort:
+        async def revoke_agent_session(self, token):
+            assert token == "agent-token"
+
+    reply_text = "正常画布回复。"
+    confirmation = None
+    if confirm_written:
+        receipt = {
+            "ok": True,
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "story_id": "story-a",
+            "revision": 2,
+            "refresh_canvas": True,
+            "confirmed_stages": ["characters", "scenes"],
+        }
+        confirmation = SimpleNamespace(
+            type="tool_updated",
+            name="dramaclaw_interactive_story.dramaclaw_confirm_interactive_story_stages",
+            text="[mcp:completed] stage confirmation",
+            call_id="confirm-call",
+            status="completed",
+            input={"story_id": "story-a"},
+            output=receipt,
+            structured=receipt,
+            error=None,
+        )
+
+    class Thread:
+        async def stream(self, request):
+            for event in _codex_turn_events(reply_text, tool=confirmation):
+                yield event
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", authorize)
+    monkeypatch.setattr(chat_service, "_create_page_agent_session_token", create_token)
+    monkeypatch.setattr(chat_service, "_build_codex_thread", lambda *a, **kw: Thread())
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: AuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **kw: None)
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+        state_dir=str(state_dir),
+    )
+    events = []
+
+    async def collect(event):
+        events.append(event)
+
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        prompt,
+        collect,
+        project_dir=project_dir,
+        project_state_dir=state_dir,
+        tool_mode="freezone_canvas",
+        store_scope=scope,
+        turn_id="business-turn",
+        # Client metadata must never make an ordinary persisted canvas a story.
+        surface_context={"freezone_canvas_id": "canvas-a", "nodes": [story_node]},
+    )
+
+    if blocked:
+        assert result["content"].startswith("阶段确认未写入")
+    elif chat_service._freezone_canvas_write_requested(prompt):
+        # A requested canvas write that ends without a receipt keeps the canvas
+        # write guard; it is still not a stage-confirmation block.
+        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
+        assert result["content"].endswith(reply_text)
+    else:
+        assert result["content"] == reply_text
+    assert [
+        event["text"] for event in events if event["type"] == "assistant_delta"
+    ] == [result["content"]]
+    thread_id = chat_service._get_codex_thread_id(
+        "admin",
+        "project-a",
+        agent_profile="freezone:main",
+        canvas_id="canvas-a",
+        project_state_dir=state_dir,
+    )
+    assert thread_id == (None if blocked else "codex-thread")
 
 
 def test_codex_freezone_thread_advertises_exact_agent_skill_locator(
@@ -1917,6 +2206,36 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "false_read_only",
         "mixed",
         "wrong_scope",
+        "story_retry",
+        "story_create_missing_id_retry",
+        "story_wrong_retry",
+        "story_conflict_retry",
+        "story_conflict_wrong_retry",
+        "story_conflict_chain_retry",
+        "story_conflict_changed_payload",
+        "story_validate_after_create",
+        "outline_conflict_retry",
+        "story_validation_save_kind",
+        "story_validation_save_kind_generated_id",
+        "story_validation_save_kind_wrong_generated_id",
+        "story_validation_save_kind_default_version",
+        "story_validation_save_kind_default_version_changed_title",
+        "story_validation_confirm_missing_id",
+        "story_validation_unreported_change",
+        "story_validation_incomplete_diagnostic",
+        "outline_missing_id_retry",
+        "outline_missing_id_changed_content",
+        "outline_missing_id_wrong_scope",
+        "outline_missing_id_wrong_project",
+        "outline_missing_id_wrong_tool",
+        "outline_missing_id_wrong_receipt",
+        "outline_missing_id_handler_failure",
+        "outline_missing_id_other_failure",
+        "outline_missing_id_duplicate",
+        "outline_missing_id_different_rejection",
+        "outline_missing_id_wrong_phase",
+        "unstructured_proposal",
+        "unstructured_json_proposal",
         "preflight_retry",
         "video_preflight_retry",
         "video_preflight_other_failure",
@@ -2027,6 +2346,381 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     structured={"ok": True, "status": "saved", "skill_id": "line-art"},
                     error=None,
                 )
+            elif tool_outcome in {"story_retry", "story_wrong_retry"}:
+                for call_id, story_id, payload in (
+                    (
+                        "rejected",
+                        "story-a",
+                        {"ok": False, "error": "tool_arguments_invalid", "phase": "tool_validation",
+                         "invalid_argument_paths": [["operations", 0, "value"]],
+                         "argument_corrections_complete": True},
+                    ),
+                    (
+                        "corrected",
+                        "story-a" if tool_outcome == "story_retry" else "story-b",
+                        {"ok": True, "project_id": "project-a", "canvas_id": "canvas-a",
+                         "story_id": "story-a" if tool_outcome == "story_retry" else "story-b",
+                         "revision": 4, "refresh_canvas": True},
+                    ),
+                ):
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.dramaclaw_patch_interactive_story",
+                        name="dramaclaw.dramaclaw_patch_interactive_story",
+                        call_id=call_id,
+                        status="completed",
+                        input={"story_id": story_id, "base_revision": 3,
+                               "idempotency_key": "story-key",
+                               "operations": [{"op": "replace", "value": "bad" if call_id == "rejected" else "fixed"}]},
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload,
+                        error=None,
+                    )
+            elif tool_outcome == "story_create_missing_id_retry":
+                for call_id, story, payload in (
+                    (
+                        "rejected",
+                        {"title": "耳机广告"},
+                        {"ok": False, "error": "tool_arguments_invalid", "phase": "tool_validation",
+                         "invalid_argument_paths": [["story", "story_id"]],
+                         "argument_corrections_complete": True},
+                    ),
+                    (
+                        "corrected",
+                        {"story_id": "story-a", "title": "耳机广告"},
+                        {"ok": True, "project_id": "project-a", "canvas_id": "canvas-a",
+                         "story_id": "story-a", "revision": 4, "refresh_canvas": True},
+                    ),
+                ):
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.dramaclaw_create_interactive_story",
+                        name="dramaclaw.dramaclaw_create_interactive_story",
+                        call_id=call_id,
+                        status="completed",
+                        input={"story": story, "base_revision": 3, "idempotency_key": "story-key"},
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload,
+                        error=None,
+                    )
+            elif tool_outcome in {"story_conflict_retry", "story_conflict_wrong_retry"}:
+                for call_id, story_id, base, key, payload in (
+                    ("conflict", "story-a", 23, "original-key", {
+                        "ok": False, "code": "revision_conflict", "story_id": "story-a",
+                        "current_revision": 35, "message": "canvas revision conflict",
+                    }),
+                    ("rebased", "story-a", 35 if tool_outcome == "story_conflict_retry" else 34,
+                     "fresh-key", {
+                        "ok": True, "project_id": "project-a", "canvas_id": "canvas-a",
+                        "story_id": "story-a", "revision": 36, "refresh_canvas": True,
+                    }),
+                ):
+                    yield SimpleNamespace(
+                        type="tool_updated", text="[mcp:completed] dramaclaw.dramaclaw_patch_interactive_story",
+                        name="dramaclaw.dramaclaw_patch_interactive_story",
+                        call_id=call_id, status="completed",
+                        input={"story_id": story_id, "base_revision": base, "idempotency_key": key},
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload, error=None,
+                    )
+            elif tool_outcome in {"story_conflict_chain_retry", "story_conflict_changed_payload"}:
+                for call_id, base, current, action in (
+                    ("first-conflict", 95, 96, "confirm"),
+                    ("second-conflict", 96, 97, "confirm"),
+                    ("saved", 97, None,
+                     "reopen" if tool_outcome == "story_conflict_changed_payload" else "confirm"),
+                ):
+                    payload = (
+                        {"ok": False, "code": "revision_conflict", "story_id": "story-a",
+                         "current_revision": current, "error": "Conflict"}
+                        if current is not None else
+                        {"ok": True, "project_id": "project-a", "canvas_id": "canvas-a",
+                         "story_id": "story-a", "revision": 98, "refresh_canvas": True}
+                    )
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.dramaclaw_confirm_interactive_story_stages",
+                        name="dramaclaw.dramaclaw_confirm_interactive_story_stages",
+                        call_id=call_id, status="completed",
+                        input={"story_id": "story-a", "stages": ["storyboard"],
+                               "action": action, "base_revision": base,
+                               "idempotency_key": f"save-{call_id}"},
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload, error=None,
+                    )
+            elif tool_outcome == "story_validate_after_create":
+                for call_id, name, input_payload, payload in (
+                    (
+                        "create-story",
+                        "dramaclaw_create_interactive_story",
+                        {
+                            "story": {"story_id": "story-a"},
+                            "base_revision": 3,
+                            "idempotency_key": "story-key",
+                        },
+                        {
+                            "ok": True,
+                            "project_id": "project-a",
+                            "canvas_id": "canvas-a",
+                            "story_id": "story-a",
+                            "revision": 4,
+                            "refresh_canvas": True,
+                        },
+                    ),
+                    (
+                        "validate-story",
+                        "dramaclaw_validate_interactive_story",
+                        {"story_id": "story-a"},
+                        {
+                            "ok": True,
+                            "valid": True,
+                            "canvas_id": "canvas-a",
+                            "story_id": "story-a",
+                            "revision": 5,
+                        },
+                    ),
+                ):
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text=f"[mcp:completed] dramaclaw.{name}",
+                        name=f"dramaclaw.{name}",
+                        call_id=call_id,
+                        status="completed",
+                        input=input_payload,
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload,
+                        error=None,
+                    )
+            elif tool_outcome.startswith("story_validation_"):
+                confirmation = tool_outcome == "story_validation_confirm_missing_id"
+                generated_id = tool_outcome in {
+                    "story_validation_save_kind_generated_id",
+                    "story_validation_save_kind_wrong_generated_id",
+                    "story_validation_save_kind_default_version",
+                    "story_validation_save_kind_default_version_changed_title",
+                }
+                tool = (
+                    "dramaclaw_confirm_interactive_story_outline"
+                    if confirmation else "dramaclaw_save_interactive_story_outline"
+                )
+                before = {"base_revision": 0 if generated_id else 1,
+                          "idempotency_key": "story-key", "canvas_id": "canvas-a"}
+                if confirmation:
+                    after = {**before, "outline_id": "outline-a"}
+                    paths = [["outline_id"]]
+                    identity = "outline-a"
+                else:
+                    outline = {"title": "Piko", "premise": "广告", "plot_summary": "故事"}
+                    if not generated_id:
+                        outline["outline_id"] = "outline-a"
+                    before["outline"] = outline
+                    after = {**before, "outline": {**outline, "kind": "ad"}}
+                    if tool_outcome in {
+                        "story_validation_save_kind_default_version",
+                        "story_validation_save_kind_default_version_changed_title",
+                    }:
+                        after["outline"]["schema_version"] = "pending_story_outline.v1"
+                    if tool_outcome == "story_validation_save_kind_default_version_changed_title":
+                        after["outline"]["title"] = "Another plan"
+                    if tool_outcome == "story_validation_unreported_change":
+                        after["outline"]["title"] = "Another plan"
+                    paths = [["outline", "kind"]]
+                    identity = ("outline_" + hashlib.sha256(b"story-key").hexdigest()[:32]
+                                if generated_id else "outline-a")
+                    if tool_outcome == "story_validation_save_kind_wrong_generated_id":
+                        identity = "outline-other"
+                rejected = {"ok": False, "error": "tool_arguments_invalid",
+                            "phase": "tool_validation", "invalid_argument_paths": paths,
+                            "argument_corrections_complete": tool_outcome != "story_validation_incomplete_diagnostic"}
+                saved = {"ok": True, "project_id": "project-a", "canvas_id": "canvas-a",
+                         "outline_id": identity, "revision": 2, "refresh_canvas": True}
+                for call_id, arguments, payload in (("rejected", before, rejected),
+                                                     ("corrected", after, saved)):
+                    yield SimpleNamespace(
+                        type="tool_updated", name=f"dramaclaw.{tool}", text=f"[mcp:completed] dramaclaw.{tool}",
+                        call_id=call_id, status="completed", input=arguments,
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload, error=None,
+                    )
+            elif tool_outcome.startswith("outline_missing_id_"):
+                original = {
+                    "title": "Piko",
+                    "kind": "ad",
+                    "premise": "广告",
+                    "plot_summary": "故事",
+                }
+                rejection = {
+                    "ok": False,
+                    "error": "tool_arguments_invalid",
+                    "phase": "tool_validation",
+                    "path": "outline",
+                    "message": "'outline_id' is a required property",
+                }
+                if tool_outcome == "outline_missing_id_wrong_phase":
+                    rejection["phase"] = "handler"
+                revised = {**original, "outline_id": "outline-a"}
+                if tool_outcome == "outline_missing_id_changed_content":
+                    revised["title"] = "Different"
+                result = {
+                    "ok": True,
+                    "project_id": "project-a",
+                    "canvas_id": "canvas-a",
+                    "outline_id": "other"
+                    if tool_outcome == "outline_missing_id_wrong_receipt"
+                    else "outline-a",
+                    "revision": 1,
+                    "refresh_canvas": True,
+                }
+                if tool_outcome == "outline_missing_id_handler_failure":
+                    result = {"ok": False, "error": "save_failed"}
+                if tool_outcome in {
+                    "outline_missing_id_duplicate",
+                    "outline_missing_id_different_rejection",
+                }:
+                    repeated = dict(original)
+                    if tool_outcome == "outline_missing_id_different_rejection":
+                        repeated["title"] = "Another outline"
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        name="dramaclaw.dramaclaw_save_interactive_story_outline",
+                        text="[mcp:completed] dramaclaw.dramaclaw_save_interactive_story_outline",
+                        call_id="another-rejected",
+                        status="completed",
+                        input={
+                            "outline": repeated,
+                            "canvas_id": "canvas-a",
+                            "base_revision": 0,
+                            "idempotency_key": "outline-key",
+                        },
+                        output={
+                            "content": [{"type": "text", "text": json.dumps(rejection)}]
+                        },
+                        structured=rejection,
+                        error=None,
+                    )
+                for call_id, outline, payload, canvas in (
+                    ("rejected", original, rejection, "canvas-a"),
+                    (
+                        "corrected",
+                        revised,
+                        result,
+                        "canvas-b"
+                        if tool_outcome == "outline_missing_id_wrong_scope"
+                        else "canvas-a",
+                    ),
+                ):
+                    tool_name = (
+                        "dramaclaw_confirm_interactive_story_outline"
+                        if call_id == "corrected"
+                        and tool_outcome == "outline_missing_id_wrong_tool"
+                        else "dramaclaw_save_interactive_story_outline"
+                    )
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        name=f"dramaclaw.{tool_name}",
+                        text=f"[mcp:completed] dramaclaw.{tool_name}",
+                        call_id=call_id,
+                        status="completed",
+                        input={
+                            "outline": outline,
+                            "canvas_id": canvas,
+                            **(
+                                {"project_id": "project-b"}
+                                if call_id == "corrected"
+                                and tool_outcome == "outline_missing_id_wrong_project"
+                                else {}
+                            ),
+                            "base_revision": 0,
+                            "idempotency_key": "outline-key",
+                        },
+                        output={
+                            "content": [{"type": "text", "text": json.dumps(payload)}]
+                        },
+                        structured=payload,
+                        error=None,
+                    )
+                if tool_outcome == "outline_missing_id_retry":
+                    payload = {
+                        "ok": True,
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                        "outline_id": "outline-a",
+                        "revision": 2,
+                        "refresh_canvas": True,
+                    }
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        name="dramaclaw.dramaclaw_confirm_interactive_story_outline",
+                        text="[mcp:completed] dramaclaw.dramaclaw_confirm_interactive_story_outline",
+                        call_id="confirmed",
+                        status="completed",
+                        input={
+                            "outline_id": "outline-a",
+                            "base_revision": 1,
+                            "idempotency_key": "confirm-key",
+                        },
+                        output={
+                            "content": [{"type": "text", "text": json.dumps(payload)}]
+                        },
+                        structured=payload,
+                        error=None,
+                    )
+                if tool_outcome == "outline_missing_id_other_failure":
+                    payload = {"ok": False, "error": "another_failure"}
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        name="dramaclaw.dramaclaw_confirm_interactive_story_outline",
+                        text="[mcp:completed] dramaclaw.dramaclaw_confirm_interactive_story_outline",
+                        call_id="unrelated",
+                        status="completed",
+                        input={},
+                        output={
+                            "content": [{"type": "text", "text": json.dumps(payload)}]
+                        },
+                        structured=payload,
+                        error=None,
+                    )
+            elif tool_outcome == "outline_conflict_retry":
+                for call_id, base_revision, payload in (
+                    (
+                        "outline-conflict",
+                        0,
+                        {
+                            "ok": False,
+                            "code": "revision_conflict",
+                            "story_id": "outline-a",
+                            "current_revision": 1,
+                            "message": "canvas revision conflict",
+                        },
+                    ),
+                    (
+                        "outline-rebased",
+                        1,
+                        {
+                            "ok": True,
+                            "project_id": "project-a",
+                            "canvas_id": "canvas-a",
+                            "outline_id": "outline-a",
+                            "revision": 2,
+                            "refresh_canvas": True,
+                        },
+                    ),
+                ):
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.dramaclaw_save_interactive_story_outline",
+                        name="dramaclaw.dramaclaw_save_interactive_story_outline",
+                        call_id=call_id,
+                        status="completed",
+                        input={
+                            "outline": {"outline_id": "outline-a"},
+                            "base_revision": base_revision,
+                            "idempotency_key": "outline-key",
+                        },
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload,
+                        error=None,
+                    )
             elif tool_outcome in {
                 "preflight_retry",
                 "video_preflight_retry",
@@ -2378,6 +3072,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 "blocked",
                 "read_only",
                 "false_read_only",
+                "unstructured_proposal",
+                "unstructured_json_proposal",
             }:
                 result_payload = (
                     {
@@ -2445,6 +3141,24 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 )
             if tool_outcome == "clarification_answered":
                 assistant_reply = "参数已确认，尚未执行画布操作。"
+            if tool_outcome in {
+                "story_retry",
+                "story_create_missing_id_retry",
+                "story_wrong_retry",
+                "story_conflict_retry",
+                "story_conflict_wrong_retry",
+                "story_conflict_chain_retry",
+                "story_conflict_changed_payload",
+                "story_validate_after_create",
+                "outline_conflict_retry",
+                "outline_missing_id_retry",
+                "outline_missing_id_duplicate",
+                "story_validation_save_kind",
+                "story_validation_save_kind_generated_id",
+                "story_validation_save_kind_default_version",
+                "story_validation_confirm_missing_id",
+            }:
+                assistant_reply = "互动故事已更新。"
             if tool_outcome.startswith("video_preflight"):
                 assistant_reply = "已提交视频生成任务。"
             if tool_outcome in {"single_run_retry", "workflow_run_retry"}:
@@ -2456,46 +3170,13 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 "draft_confirm_policy_unverified_retry",
             }:
                 assistant_reply = "工作流已提交创建。"
-            receipts = []
-            if tool_outcome in {
-                "single_run_retry",
-                "workflow_run_retry",
-                "single_run_only_update",
-            }:
-                receipts.append({"bridge_key": "bridge-update", "revision": None})
-            if tool_outcome in {
-                "success",
-                "preflight_retry",
-                "video_preflight_retry",
-                "video_preflight_other_failure",
-                "preflight_other_success",
-                "single_run_retry",
-                "workflow_run_retry",
-                "draft_confirm_retry",
-                "draft_confirm_other_success",
-                "draft_confirm_policy_retry",
-                "draft_confirm_policy_skip_patch",
-                "draft_confirm_policy_unverified_retry",
-            }:
-                receipts.append({"bridge_key": "bridge-call-1", "revision": None})
-            structured_reply = json.dumps(
-                {
-                    "message": assistant_reply,
-                    "mode": (
-                        "read_only"
-                        if tool_outcome
-                        in {
-                            "skill_saved",
-                            "read_only",
-                            "false_read_only",
-                            "clarification_answered",
-                        }
-                        else "blocked" if tool_outcome == "blocked" else "mutation"
-                    ),
-                    "canvas_receipts": receipts,
-                },
-            )
-            yield SimpleNamespace(type="assistant_delta", text=structured_reply)
+            reply_text = assistant_reply
+            if tool_outcome == "unstructured_proposal":
+                reply_text = "## 互动广告方案\n先展示口香糖，再让用户选择。"
+            if tool_outcome == "unstructured_json_proposal":
+                # A thread opened before #862 may still answer in the old envelope.
+                reply_text = '{"message":"视频按九段规划。","mode":"read_only","canvas_receipts":[]'
+            yield SimpleNamespace(type="assistant_delta", text=reply_text)
             yield SimpleNamespace(
                 type="complete",
                 thread_id="codex-thread",
@@ -2595,11 +3276,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert result["content"] == "画布操作未完成：文本节点缺少 content 字段"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "missing":
-        assert "已创建" not in result["content"]
-        assert (
-            result["content"]
-            == "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
-        )
+        # #862 trade-off: the prompt is not recognised as a canvas write request
+        # and no tool ran, so the host has no evidence to contradict the reply
+        # and delivers it as written. Prompt intent detection
+        # (_freezone_canvas_write_requested) is the only guard left for
+        # zero-write turns; the model's self-declared mode no longer exists.
+        assert result["content"] == "好的，已创建一个图片节点。"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome in {"draft_ready", "plan_draft_ready"}:
         assert result["content"] == (
@@ -2618,9 +3300,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert result["content"] == "建议保持当前节点位置，先检查配置。"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "false_read_only":
-        assert result["content"] == (
-            "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
-        )
+        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
+        assert result["content"].endswith("generate_audio。")
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "mixed":
         assert result["content"] == "画布操作未完成：第二个节点未保存"
@@ -2628,8 +3309,73 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     elif tool_outcome == "wrong_scope":
         assert "成功画布写入回执" in result["content"]
         assert assistant_deltas == [result["content"]]
+    elif tool_outcome in {"story_retry", "story_create_missing_id_retry"}:
+        assert result["content"] == "互动故事已更新。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "story_wrong_retry":
+        assert result["content"] == "画布操作未完成：tool_arguments_invalid"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "story_conflict_retry":
+        assert result["content"] == "互动故事已更新。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "story_conflict_chain_retry":
+        assert result["content"] == "互动故事已更新。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "story_conflict_changed_payload":
+        assert result["content"] == "画布操作未完成：Conflict"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome in {
+        "story_validate_after_create",
+        "outline_conflict_retry",
+        "outline_missing_id_retry",
+        "outline_missing_id_duplicate",
+        "story_validation_save_kind",
+        "story_validation_save_kind_generated_id",
+        "story_validation_save_kind_default_version",
+        "story_validation_confirm_missing_id",
+    }:
+        assert result["content"] == "互动故事已更新。"
+    elif tool_outcome in {
+        "outline_missing_id_changed_content",
+        "outline_missing_id_wrong_scope",
+        "outline_missing_id_wrong_project",
+        "outline_missing_id_wrong_tool",
+        "outline_missing_id_wrong_receipt",
+        "outline_missing_id_handler_failure",
+        "outline_missing_id_different_rejection",
+        "outline_missing_id_wrong_phase",
+        "story_validation_save_kind_wrong_generated_id",
+        "story_validation_save_kind_default_version_changed_title",
+        "story_validation_unreported_change",
+        "story_validation_incomplete_diagnostic",
+    }:
+        assert result["content"].startswith("画布操作未完成：")
+    elif tool_outcome == "outline_missing_id_other_failure":
+        assert result["content"] == "画布操作未完成：another_failure"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "story_conflict_wrong_retry":
+        assert result["content"] == "画布操作未完成：canvas revision conflict"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "unstructured_proposal":
+        # Markdown is a valid reply shape; only the missing write is reported.
+        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
+        assert result["content"].endswith("## 互动广告方案\n先展示口香糖，再让用户选择。")
+        # No format rejection, so the thread is kept.
+        assert chat_service._get_codex_thread_id(
+            "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
+            project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        ) == "codex-thread"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "unstructured_json_proposal":
+        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
+        assert result["content"].endswith("视频按九段规划。")
+        assert "canvas_receipts" not in result["content"]
+        assert assistant_deltas == [result["content"]]
     else:
-        assert result["content"] == ("未能创建工作流：找不到匹配的 Workflow Skill。")
+        # "blocked": the model explains why nothing was written; the host still
+        # leads with the verified outcome because a write was requested.
+        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
+        assert result["content"].endswith("未能创建工作流：找不到匹配的 Workflow Skill。")
         assert assistant_deltas == [result["content"]]
     assert revoked == ["agent-token"]
 
@@ -3268,8 +4014,12 @@ def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
     assert (
         codex_workspace / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
     ).is_file()
+    assert not (codex_workspace / ".agents" / "skills" / "interactive-story").exists()
     assert (
         freezone_workspace / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
+    ).is_file()
+    assert (
+        freezone_workspace / ".agents" / "skills" / "interactive-story" / "SKILL.md"
     ).is_file()
     authoring_guide = (
         freezone_workspace
@@ -3428,6 +4178,37 @@ def test_remove_managed_skill_path_defends_its_root_boundary(tmp_path):
     assert outside_dir.is_dir()
 
 
+@pytest.mark.parametrize(
+    ("prompt", "recovery"),
+    [
+        ("重新弹出", True),
+        ("请重新打开参数卡", True),
+        ("reopen the card", True),
+        ("重新弹出，我要修改参数", False),
+        ("重新选择模型", False),
+        ("为另一个角色确认参数", False),
+        ("重新打开项目，给另一个角色确认参数", False),
+        ("为另一个角色重新弹出参数卡", False),
+    ],
+)
+def test_clarification_recovery_uses_user_request_not_tool_arguments(
+    monkeypatch, tmp_path, prompt, recovery
+):
+    from novelvideo.freezone import canvas_command_bridge
+
+    calls = []
+    monkeypatch.setattr(
+        canvas_command_bridge, "put_clarification_turn_context", lambda **kw: calls.append(kw)
+    )
+    chat_service._bind_clarification_recovery(
+        project="project-a",
+        canvas_id="canvas-a",
+        request_prompt=prompt,
+        bridge_dir=tmp_path,
+    )
+    assert calls[0]["recovery_only"] is recovery
+
+
 def test_dramaclaw_mcp_server_config_is_agent_neutral():
     servers = chat_service._dramaclaw_mcp_servers()
 
@@ -3438,6 +4219,7 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_AGENT_TOKEN_FILE",
         "DRAMACLAW_CANVAS_ID",
         "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",
+        "DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS",
         "DRAMACLAW_CHAT_SURFACE",
         "DRAMACLAW_EXTERNAL_MCP",
         "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
@@ -3450,6 +4232,8 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_USERNAME",
         "NOVELVIDEO_OUTPUT_DIR",
         "PYTHONPATH",
+        "PYTHON_DOTENV_DISABLED",
+        "SUPERTALE_OPENFILM_STUDIO_ENABLED",
     ]
 
 
@@ -3458,7 +4242,18 @@ def test_freezone_adds_independent_workflow_mcp_without_changing_default():
     freezone_servers = chat_service._dramaclaw_mcp_servers("freezone_canvas")
 
     assert set(default_servers) == {"dramaclaw"}
-    assert freezone_servers["dramaclaw"] == default_servers["dramaclaw"]
+    assert freezone_servers["dramaclaw"]["args"] == [
+        *default_servers["dramaclaw"]["args"], "--exclude-interactive-story"
+    ]
+    assert freezone_servers["dramaclaw_interactive_story"] == {
+        "type": "stdio",
+        "command": __import__("sys").executable,
+        "args": ["-m", "novelvideo.chat.interactive_story_mcp"],
+        "env_vars": [
+            "DRAMACLAW_API_URL", "DRAMACLAW_AGENT_TOKEN_FILE",
+            "DRAMACLAW_PROJECT_ID", "DRAMACLAW_CANVAS_ID", "PYTHONPATH",
+        ],
+    }
     assert freezone_servers["dramaclaw_workflows"] == {
         "type": "stdio",
         "command": __import__("sys").executable,
@@ -3485,6 +4280,37 @@ def test_freezone_existing_execution_uses_focused_mcp_tools():
         "freezone_run_workflow",
         "freezone_update_node_data",
     ]
+
+
+@pytest.mark.parametrize("prompt", [
+    (
+        "明确使用 text-to-image-video（文生图生视频）Skill，规划一条最小可执行的"
+        "文本→图片→视频链路。唯一 general-video 节点以该图片为首帧生成 5 秒视频。"
+        "请准备 run_after_create=true 的完整待确认工作流草稿；"
+        "现在不要创建画布节点或执行任何任务，等我确认后再自动执行。"
+    ),
+    "请先规划当前工作流，等我确认后再自动执行。",
+    "请准备当前工作流的可执行草稿，等待确认。",
+    "Prepare the current workflow with run_after_create=true.",
+    "Prepare the current workflow. After I confirm execute it.",
+])
+def test_freezone_draft_planning_with_deferred_execution_keeps_workflow_mcp(prompt):
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas", prompt=prompt)
+
+    assert "dramaclaw_workflows" in servers
+    assert "enabled_tools" not in servers["dramaclaw"]
+
+
+@pytest.mark.parametrize("prompt", [
+    "当前工作流已经确认，请立即执行。",
+    "Run the current workflow now.",
+    "等我确认后再自动执行当前工作流。现在先执行当前工作流。",
+])
+def test_freezone_immediate_execution_keeps_focused_tools(prompt):
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas", prompt=prompt)
+
+    assert set(servers) == {"dramaclaw"}
+    assert "freezone_run_workflow" in servers["dramaclaw"]["enabled_tools"]
 
 
 def test_freezone_exact_node_action_uses_one_batch_write_tool():
@@ -3859,13 +4685,15 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
     assert (
         'mcp_servers.dramaclaw.env_vars=["DRAMACLAW_API_URL",'
         '"DRAMACLAW_AGENT_TOKEN_FILE","DRAMACLAW_CANVAS_ID",'
-        '"DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR","DRAMACLAW_CHAT_SURFACE",'
+        '"DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",'
+        '"DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS","DRAMACLAW_CHAT_SURFACE",'
         '"DRAMACLAW_EXTERNAL_MCP",'
         '"DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_ROOT","DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
         '"DRAMACLAW_TURN_ID","DRAMACLAW_USERNAME",'
-        '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH"]' in overrides
+        '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH","PYTHON_DOTENV_DISABLED",'
+        '"SUPERTALE_OPENFILM_STUDIO_ENABLED"]' in overrides
     )
     assert "mcp_servers.dramaclaw.required=true" in overrides
     assert 'mcp_servers.dramaclaw.default_tools_approval_mode="approve"' in overrides
@@ -4006,6 +4834,7 @@ def test_codex_client_keeps_gateway_credentials_in_turn_metadata(tmp_path):
 def test_codex_gateway_overrides_use_responses_without_embedding_secret(
     monkeypatch,
 ):
+    monkeypatch.delenv("CODEX_REASONING_EFFORT", raising=False)
     catalog_path = (
         Path(chat_service.__file__).resolve().parents[3]
         / "deploy"
@@ -4035,7 +4864,7 @@ def test_codex_gateway_overrides_use_responses_without_embedding_secret(
     assert "features.shell_tool=false" in overrides
     assert "memories.generate_memories=false" in overrides
     assert "memories.use_memories=false" in overrides
-    assert 'model_reasoning_effort="medium"' in overrides
+    assert 'model_reasoning_effort="low"' in overrides
     assert 'web_search="disabled"' in overrides
     catalog_override = next(
         item for item in overrides if item.startswith("model_catalog_json=")
@@ -4192,7 +5021,9 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     )
 
     assert env["NOVELVIDEO_OUTPUT_DIR"] == str(tmp_path / "authoritative-output")
-    for server in chat_service._dramaclaw_mcp_servers("freezone_canvas").values():
+    for name, server in chat_service._dramaclaw_mcp_servers("freezone_canvas").items():
+        if name == "dramaclaw_interactive_story":
+            continue  # This HTTP-only MCP has no filesystem asset tools.
         assert "NOVELVIDEO_OUTPUT_DIR" in server["env_vars"]
     assert env["CODEX_HOME"] == str(tmp_path / "state" / ".codex-app-server")
     assert env["DRAMACLAW_AGENT_SCOPE"] == "project"
@@ -5185,6 +6016,8 @@ def test_freezone_prompt_allows_creative_ideation_canvas_framework_without_mainl
     assert "freezone_prepare_workflow_plan_draft once" in prompt
     assert "not a Workflow catalog `skill_id`" in prompt
     assert "Do not ask for a second “创建并运行” confirmation" in prompt
+    assert "Workflows bound to story targets must explicitly include `run_after_create`" in prompt
+    assert "A terse confirmation such as “可以” or “确认” inherits" in prompt
     assert "the write tool creates it" in prompt
     assert "Never\n  use the host's built-in request_user_input" in prompt
     assert "canvas video/audio/composition nodes" in prompt
@@ -7863,6 +8696,28 @@ def test_dramaclaw_get_sketches_does_not_use_pool_candidates(monkeypatch, tmp_pa
     assert payload["ui_spec"] is None
 
 
+def test_fmv_skill_guidance_is_only_appended_to_canvas_instructions():
+    guidance = chat_service._CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS
+    from novelvideo.freezone.workflow_planning import WORKFLOW_PLANNING_INSTRUCTIONS
+
+    instructions = chat_service._codex_developer_instructions("freezone_canvas")
+    assert instructions.startswith(
+        chat_service._CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS + "\n" + guidance
+    )
+    assert WORKFLOW_PLANNING_INSTRUCTIONS in instructions
+    assert chat_service.CANVAS_FINAL_RESPONSE_INSTRUCTIONS in instructions
+    assert "canvas_receipts=[]" not in instructions
+    assert '"type": "object"' not in instructions
+    for mode in (None, "", "default"):
+        assert chat_service._codex_developer_instructions(mode) == chat_service._CODEX_DEVELOPER_INSTRUCTIONS
+    assert "list_mcp_resources" in guidance
+    assert "read_mcp_resource" in guidance
+    assert "Do not ask for video model, duration, resolution, or audio" in guidance
+    assert "stage-guidance" in guidance
+    assert "without treating 'next step' alone as confirmation" in guidance
+    assert "proposal-only" not in guidance.lower()
+
+
 def _codex_turn_events(text, *, tool=None, disposition="completed"):
     events = [
         SimpleNamespace(type="thread_started", thread_id="codex-thread", turn_id="t")
@@ -7896,7 +8751,10 @@ _READ_NODE_DETAIL = SimpleNamespace(
 )
 
 _READ_ONLY_ANSWER = "工作流失败，未生成视频。"
-_FORMAT_FAILURE = "回复未通过操作结果校验：未返回结构化结果，请重试。"
+_LEGACY_ENVELOPE = json.dumps(
+    {"message": _READ_ONLY_ANSWER, "mode": "read_only", "canvas_receipts": []},
+    ensure_ascii=False,
+)
 
 
 def _completed_tool_event(name, *, call_id, tool_input, structured):
@@ -8068,43 +8926,17 @@ def test_pending_workflow_clarification_is_not_cancelled(clarification_status):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("repair", "expected"),
+    "reply_text",
     [
-        (
-            _codex_turn_events(
-                json.dumps(
-                    {
-                        "message": _READ_ONLY_ANSWER,
-                        "mode": "read_only",
-                        "canvas_receipts": [],
-                    },
-                    ensure_ascii=False,
-                )
-            ),
-            _READ_ONLY_ANSWER,
-        ),
-        # The repair cannot turn a no-write turn into a claimed mutation.
-        (
-            _codex_turn_events(
-                json.dumps(
-                    {
-                        "message": "图片节点已创建成功。",
-                        "mode": "mutation",
-                        "canvas_receipts": [{"bridge_key": "forged", "revision": None}],
-                    },
-                    ensure_ascii=False,
-                )
-            ),
-            "画布操作未完成：本轮没有可验证的画布写入回执，请重试。",
-        ),
-        (_codex_turn_events(_READ_ONLY_ANSWER), _FORMAT_FAILURE),
-        (_codex_turn_events("", disposition="timeout"), _FORMAT_FAILURE),
-        (RuntimeError("Codex turn failed with status failed"), _FORMAT_FAILURE),
+        _READ_ONLY_ANSWER,
+        # Threads opened before #862 may still answer in the old envelope.
+        _LEGACY_ENVELOPE,
+        "```json\n" + _LEGACY_ENVELOPE + "\n```",
     ],
-    ids=["repaired", "forged_mutation", "still_plain", "timeout", "error"],
+    ids=["plain", "legacy_envelope", "fenced_legacy_envelope"],
 )
-async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
-    monkeypatch, tmp_path, repair, expected
+async def test_codex_freezone_read_only_reply_is_delivered_in_one_turn(
+    monkeypatch, tmp_path, reply_text
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
@@ -8126,19 +8958,14 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     class FakeThread:
         async def stream(self, prompt):
             prompts.append(prompt)
-            if len(prompts) == 1:
-                turn = _codex_turn_events(_READ_ONLY_ANSWER, tool=_READ_NODE_DETAIL)
-            elif isinstance(repair, Exception):
-                raise repair
-            else:
-                turn = repair
-            for event in turn:
+            for event in _codex_turn_events(reply_text, tool=_READ_NODE_DETAIL):
                 yield event
 
     monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
     monkeypatch.setattr(
         chat_service, "_create_page_agent_session_token", fake_create_token
     )
+
     def fake_build_thread(*_args, **kwargs):
         build_kwargs.append(kwargs)
         return FakeThread()
@@ -8150,13 +8977,14 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
     async def collect_event(event):
         events.append(event)
 
+    project_state_dir = tmp_path / "state" / "admin" / "project-a"
     scope = ChatScope(
         kind="project",
         id="project-a",
         surface="freezone",
         canvas_id="canvas-a",
         agent_id="main",
-        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+        state_dir=str(project_state_dir),
     )
     request_prompt = "检查刚才工作流的真实状态，只回答一句话。"
     result = await chat_service._stream_assistant_reply_codex(
@@ -8164,7 +8992,7 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
         "project-a",
         request_prompt,
         collect_event,
-        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        project_state_dir=project_state_dir,
         tool_mode="freezone_canvas",
         surface_context={"freezone_canvas_id": "canvas-a"},
         store_scope=scope,
@@ -8172,41 +9000,32 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
         route_prompt=request_prompt,
     )
 
-    assert prompts[1:] == [chat_service.CANVAS_FORMAT_REPAIR_PROMPT]
+    # One model turn: no format-repair prompt, no output schema, no thread reset.
+    assert len(prompts) == 1
     assert build_kwargs[0]["request_prompt"] == request_prompt
-    assert result["content"] == expected
+    assert build_kwargs[0].get("output_schema") is None
+    assert result["content"] == _READ_ONLY_ANSWER
     assert [
         event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == [expected]
+    ] == [_READ_ONLY_ANSWER]
     assert revoked == ["agent-token"]
+    assert chat_service._get_codex_thread_id(
+        "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
+        project_state_dir=project_state_dir,
+    ) == "codex-thread"
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     "first_turn",
     [
-        _codex_turn_events(
-            json.dumps(
-                {"message": "建议保持布局。", "mode": "read_only", "canvas_receipts": []},
-                ensure_ascii=False,
-            )
-        ),
-        _codex_turn_events(
-            json.dumps(
-                {
-                    "message": "图片节点已创建成功。",
-                    "mode": "read_only",
-                    "canvas_receipts": [{"bridge_key": "forged", "revision": None}],
-                },
-                ensure_ascii=False,
-            )
-        ),
         _codex_turn_events(_READ_ONLY_ANSWER, disposition="timeout"),
         _codex_turn_events(_READ_ONLY_ANSWER, disposition="interrupted"),
+        _codex_turn_events("图片节点已创建成功。"),
     ],
-    ids=["valid_envelope", "forged_read_only_receipts", "timeout", "interrupted"],
+    ids=["timeout", "interrupted", "unverified_claim"],
 )
-async def test_codex_freezone_format_repair_only_follows_completed_contract_failure(
+async def test_codex_freezone_turn_never_sends_a_second_prompt(
     monkeypatch, tmp_path, first_turn
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
@@ -8245,7 +9064,7 @@ async def test_codex_freezone_format_repair_only_follows_completed_contract_fail
     result = await chat_service._stream_assistant_reply_codex(
         "admin",
         "project-a",
-        "只给我布局建议",
+        "创建一个图片节点",
         collect_event,
         project_state_dir=tmp_path / "state" / "admin" / "project-a",
         tool_mode="freezone_canvas",
@@ -8259,8 +9078,62 @@ async def test_codex_freezone_format_repair_only_follows_completed_contract_fail
             state_dir=str(tmp_path / "state" / "admin" / "project-a"),
         ),
         turn_id="business-turn",
-        route_prompt="只给我布局建议",
+        route_prompt="创建一个图片节点",
     )
 
     assert len(prompts) == 1
-    assert "已创建成功" not in result["content"]
+    # A requested write with no receipt is reported by the host, whatever the
+    # model said; the claim is never delivered as the outcome.
+    assert not result["content"].startswith("图片节点已创建成功")
+
+
+def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
+
+    inside = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "把第二段提前一秒",
+        tool_mode="freezone_canvas",
+        surface_context={
+            "freezone_canvas_id": "canvas-a",
+            "freezone_compose_node_id": "compose-1",
+        },
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" in inside
+    assert "compose_node_id: compose-1" in inside
+    assert "freezone_studio_get_film" in inside
+    assert "Never rewrite this node's draftTimeline" in inside
+    assert "canvas_id: canvas-a" in inside
+
+    outside = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "把第二段提前一秒",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" not in outside
+    assert "[FREEZONE_CANVAS_CONTEXT]" in outside
+
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", raising=False)
+    disabled = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "把第二段提前一秒",
+        tool_mode="freezone_canvas",
+        surface_context={
+            "freezone_canvas_id": "canvas-a",
+            "freezone_compose_node_id": "compose-1",
+        },
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" not in disabled
+
+    mainline = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "hello",
+        surface_context={"freezone_compose_node_id": "compose-1"},
+    )
+    assert "[FREEZONE_COMPOSE_WORKSPACE]" not in mainline

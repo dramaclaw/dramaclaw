@@ -209,7 +209,6 @@ function ErrorStoryState({ message }: { message: string }) {
 export const VideoStoryNode = memo(({ id, data, selected, width, height }: VideoStoryNodeProps) => {
   const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -262,7 +261,6 @@ export const VideoStoryNode = memo(({ id, data, selected, width, height }: Video
     <div
       className="group relative h-full w-full overflow-visible"
       style={{ width: resolvedWidth, height: resolvedHeight }}
-      onClick={() => setSelectedNode(id)}
     >
       <Handle
         type="target"

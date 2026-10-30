@@ -18,7 +18,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
@@ -33,11 +33,8 @@ from novelvideo.chat.backend_sdk import (
     interrupt_live_codex_turn,
 )
 from novelvideo.chat.canvas_outcome import (
-    CANVAS_FORMAT_REPAIR_PROMPT,
-    CANVAS_REPLY_SCHEMA,
     CANVAS_FINAL_RESPONSE_INSTRUCTIONS,
     finalize_canvas_reply,
-    needs_canvas_format_repair,
     receipt_reference,
 )
 from novelvideo.chat.display_fallback import (
@@ -80,6 +77,7 @@ from novelvideo.chat.runtime_history import (
     _split_trace_contents,
     parse_codex_history_item,
 )
+from novelvideo.chat.turn_images import codex_image_input_enabled, image_data_urls
 from novelvideo.chat.presentation_text import (
     _completion_text_or_existing as _completion_text_or_existing,
     _is_completion_notice as _is_completion_notice,
@@ -157,12 +155,15 @@ from novelvideo.chat.runtime_event_evidence import (
     _codex_freezone_is_generation_preflight_rejection,
     _codex_freezone_is_write_event,
     _codex_freezone_ready_workflow_draft,
+    _codex_freezone_tool_argument_rejection,
+    _codex_freezone_tool_arguments,
     _codex_freezone_tool_name,
     _codex_freezone_write_receipt,
     _codex_freezone_write_result_error,
     _codex_freezone_write_result_state,
     _codex_freezone_write_result_succeeded as _codex_freezone_write_result_succeeded,
     _json_objects_from_codex_tool_value,
+    story_argument_retry_matches,
 )
 from novelvideo.chat.tool_policy import (
     AGENT_PRODUCT_RESULT_TOOLS as _AGENT_PRODUCT_RESULT_TOOLS,
@@ -170,9 +171,11 @@ from novelvideo.chat.tool_policy import (
     allows_mainline_media_ui_specs as _allows_mainline_media_ui_specs,
     freezone_canvas_execution_mode_from_context as _freezone_canvas_execution_mode_from_context,
     freezone_canvas_id_from_context as _freezone_canvas_id_from_context,
+    freezone_compose_node_id_from_context as _freezone_compose_node_id_from_context,
     tool_mode_for_surface as _tool_mode_for_surface,
 )
 from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
+from novelvideo.freezone.studio import openfilm_studio_enabled
 from novelvideo.ports import get_auth_session_port
 from novelvideo.project_context import ProjectContext
 from novelvideo.utils.document_parsers import count_billable_text_chars
@@ -192,7 +195,7 @@ _MERGEABLE_MEDIA_SPEC_TYPES = presentation.MERGEABLE_MEDIA_SPEC_TYPES
 
 _CODEX_MODEL_PROVIDER = "dramaclaw_gateway"
 _DEFAULT_CODEX_MODEL = "DC-codex-agent-LLM"
-_DEFAULT_CODEX_REASONING_EFFORT = "medium"
+_DEFAULT_CODEX_REASONING_EFFORT = "low"
 _CODEX_REASONING_EFFORT_VALUES = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 )
@@ -202,20 +205,32 @@ _CODEX_GATEWAY_KEY_METADATA = "dramaclaw_gateway_api_key"
 _CODEX_CONTROL_CAPABILITY_METADATA = "dramaclaw_control_context_capability"
 _ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str] | tuple[str, str, str]] = {}
 _ACTIVE_CODEX_TURNS_LOCK = threading.Lock()
+_MAINLINE_ASSISTANT_SCOPE_INSTRUCTIONS = (
+    "This conversation is the DramaClaw mainline assistant (虾导). When asked who you are, "
+    "answer briefly: 我是虾导. Describe current capabilities from the available mainline "
+    "tools: bound-project production, progress, tasks, media generation and delivery, plus "
+    "the existing canvas management and Skill operations. Interactive stories/FMV, branching "
+    "story canvas creation/editing, story stage guidance and interactive playback are available "
+    "only inside Xi画/Freezone. Do not advertise them as capabilities of this mainline "
+    "conversation, even if another Skill or earlier conversation describes them; direct users "
+    "to Xi画 for those features. Ordinary creative discussion may be answered as text without "
+    "claiming a story or canvas was created."
+)
 _CODEX_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant. Use the required dramaclaw MCP "
     "server for all DramaClaw data reads and writes. Inspect the available scope-filtered "
     "concrete MCP tools and their schemas, then call the selected tool directly. Do not guess "
     "a tool name or argument schema. "
     "Do not use shell commands, "
-    "local file editing, web search, or other external tools."
+    "local file editing, web search, or other external tools. "
+    + _MAINLINE_ASSISTANT_SCOPE_INSTRUCTIONS
 )
 _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant inside the Xi画/Freezone canvas. "
     "An assistant message ends the current agent turn. When the user's request requires a "
     "canvas read or write, call the required tool before emitting any assistant message. Do "
     "not send a progress or status message before that tool call. Continue using tools until "
-    "the requested operation is complete, then emit one final JSON response. "
+    "the requested operation is complete, then emit one final plain-text response. "
     "When the user names an exact action on an existing standalone node and also supplies changed "
     "node content or settings, submit update_node_data + run_node_action in one "
     "freezone_emit_canvas_command. The exact action name and the uniquely matching node_id from "
@@ -265,7 +280,9 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "preserve it as an external workflow input: use Workflow Skill discovery and draft with "
     "external_inputs and reference_inputs; never use freezone_get_node_action_catalog, "
     "freezone_run_node_action, freezone_add_next_node, or freezone_emit_canvas_command for that "
-    "request, and do not recreate or copy the source node. "
+    "request, and do not recreate or copy the source node. Declare an existing video with "
+    "media_kind video. Never drop a source the user named and still claim it was used; if it "
+    "cannot be used, say which one and why. "
     "If the user asks only to edit fields on one existing standalone node without generating, "
     "use freezone_update_node_data; do not call freezone_run_node_action. "
     "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
@@ -323,8 +340,14 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "write and display its approval surface. Never ask for a duplicate 'create and run' confirmation, "
     "and never claim that the environment cannot display an approval card: the Freezone write tool "
     "creates that card. In auto_execute mode the frontend applies the normal approval event, so once "
-    "required generation parameters are known, call the write tool immediately. For structured "
-    "clarification, call only the dramaclaw MCP tool freezone_request_user_clarification; never use "
+    "required generation parameters are known, call the write tool immediately. "
+    "Workflows bound to story targets must explicitly pass run_after_create when preparing. "
+    "Ordinary workflows may omit it and default to false (create only). Set it true when the user "
+    "asked to create and generate/run. A terse confirmation such as 可以 or 确认 inherits the execution "
+    "policy of the immediately preceding proposal; if that proposal included generation, preserve "
+    "run_after_create=true. Set false for an approved create-only request; story-bound workflows "
+    "must not rely on omission. For structured clarification, call only the dramaclaw MCP tool "
+    "freezone_request_user_clarification; never use "
     "the built-in request_user_input tool. Never call create_goal for a canvas request. For a "
     "workflow draft prepared with run_after_create=true, its confirmation, or a graph call with "
     "run_after_create=true, that same approved batch is "
@@ -345,9 +368,19 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "FREEZONE_CANVAS_EXECUTION_MODE contract for whether a fresh preliminary parameter selection is "
     "required; do not infer that policy from conversation history. When that contract requires a "
     "selection, call freezone_request_user_clarification once for the current request "
-    "with generation_media_types listing image and/or video. Do not hand-build the "
-    "generation questions and never include questions in the same call; generation clarification "
-    "is one exclusive server-owned mode that includes every required field. Pass the returned "
+    "with generation_media_types listing image and/or video for ordinary media tasks. "
+    "Do not hand-build the generation questions and never include questions in the same call; "
+    "generation clarification is one exclusive server-owned mode that includes every required field. "
+    "Interactive-story video segments are different: the approved story production plan "
+    "selects each segment's parameters, so do not call generic generation_media_types for "
+    "video or ask for one shared video_duration_seconds. Keep each segment's own durationSec. "
+    "Before asking for a model for existing video nodes, read every target node and its "
+    "references and pass their IDs as generation_video_node_ids to the clarification tool. "
+    "The host filters model choices by the nodes' current modes. Do not change a multi-image "
+    "shot to firstFrame merely to fit a model; retain the reference plan or ask the user to "
+    "change it. Check each model's reference types and counts separately. "
+    "If preflight returns required_choices for other missing fields, pass exactly those "
+    "choices as generation_required_choices without adding duration. Pass the returned "
     "answers object unchanged as generation_answers to the workflow prepare tool; "
     "the server maps it into node parameters. If a draft already exists, instead pass "
     "workflow_draft_id and workflow_expected_revision to the clarification tool so "
@@ -367,7 +400,12 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "until the answer is returned. If the clarification tool returns "
     "clarification_frontend_timeout, tell the user the card is still waiting and will reappear "
     "on their next message; when they reply, call the tool again with the same clarification_id "
-    "to resume that card instead of building a new one. This rule applies to generation or run requests, including "
+    "to resume that card instead of building a new one. Keep a stable context_key describing "
+    "the creative step and subject, and target_node_ids when known, across retries. "
+    "Set new_request=true when the user explicitly wants to change/reselect choices or "
+    "reopen a cancelled/expired card; reopening a pending card is recovery. "
+    "Reuse returned confirmed answers. "
+    "This rule applies to generation or run requests, including "
     "run_after_create=true. It also applies when run_after_create=false if the user explicitly asks "
     "to configure image/video node parameters. It does not apply when the user only asks to create "
     "empty nodes, connect, group, lay out, or edit them without generation parameters. It is an "
@@ -421,12 +459,50 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "or other external tools."
 )
 
+_CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
+    "For interactive stories (互动短剧、互动影游、剧情画布), load the project Agent Skill "
+    "interactive-story through the existing dramaclaw MCP resources. Call list_mcp_resources "
+    "with server=dramaclaw to discover its advertised SKILL.md URI, then call "
+    "read_mcp_resource with that server and URI; tool search discovers operations, not skill "
+    "documents. Read referenced documents through read_mcp_resource only when needed. This "
+    "Agent Skill takes precedence over generic workflow planning for stories and is not a "
+    "Workflow catalog skill_id. Before drafting a new story outline, collect missing visual style, "
+    "interaction intensity, single-playthrough duration, and thematic focus together through "
+    "freezone_request_user_clarification and wait for answers (one missing preference may use "
+    "a natural follow-up). Local edits do not restart intake; interactive ads follow their own "
+    "discovery rules. Reuse known preferences; explicit "
+    "delegation allows stated recommendations. A request to create an outline alone is not "
+    "delegation. Carry these preferences into the saved outline as the Skill specifies. "
+    "After explicit user approval of the current outline in chat, read the saved outline "
+    "and call dramaclaw_confirm_interactive_story_outline with its ID and revision. "
+    "A plan-card click is optional; both paths persist the same confirmation. "
+    "If the user also requested the script, continue to Create after confirmation succeeds, "
+    "including both write receipts. Never confirm revised content using an older approval. "
+    "After its production plan is approved, make missing storyboard "
+    "images with the existing text-to-image-video Workflow Skill, the general-image Recipe, and one validated image-only "
+    "WorkflowPlan. Map every frame to its existing story segment and video node in "
+    "source_context.targets so completed images and upstream character/scene references "
+    "can attach automatically; do not replace dedicated story writes or video nodes. "
+    "When the user asks for storyboard images only, ask only for missing image generation "
+    "parameters. Do not ask for video model, duration, resolution, or audio before submitting "
+    "the image-only plan; video settings belong to a separate video planning or generation "
+    "request. If a preflight mentions video parameters for this image-only plan, correct the "
+    "plan's execution scope rather than asking the user to configure video. "
+    "For a next-step question on the current interactive story, read live story progress and "
+    "the Skill's stage-guidance reference; guide the first unfinished stage, including manual "
+    "confirmation, without treating 'next step' alone as confirmation or media authorization. "
+    "During the characters/scenes production stages, a request to create character/scene "
+    "reference assets is not stage completion: prepare the relevant image workflow and verify "
+    "its canvas result. Do not call stage "
+    "confirmation or claim creation solely because a description or plan was written."
+)
+
 # A resumed App Server thread retains the MCP tool catalog and environment from
 # when it was created. Bump the relevant value whenever MCP discovery or the
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
-_CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v32"
+_CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v4"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v36"
 
 _CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS = (
     "You translate one explicit request for an existing Freezone audio node into the node data "
@@ -493,29 +569,18 @@ def _codex_developer_instructions(
             if workspace is not None
             else ""
         )
-        instructions_prefix = _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS + skill_locators
-        return instructions_prefix + (
-            " "
+        instructions_prefix = (
+            _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS
+            + skill_locators
+            + "\n"
+            + _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS
+        )
+        return (
+            instructions_prefix
+            + " "
             + WORKFLOW_PLANNING_INSTRUCTIONS
             + " "
             + CANVAS_FINAL_RESPONSE_INSTRUCTIONS
-            + " Your final response MUST be a JSON object, not plain text or Markdown. "
-            "This applies even to greetings and ordinary conversation. "
-            'For a greeting, return {"message":"你好！有什么我可以帮你的吗？",'
-            '"mode":"read_only","canvas_receipts":[]}. '
-            "Use mode=read_only for explanations, checks, proposals, clarification answers, "
-            "and catalog-only Skill saves, with canvas_receipts=[]. Never claim a canvas "
-            "mutation in a read_only message. Use mode=blocked when no canvas operation was "
-            "performed because of a limitation, also with canvas_receipts=[]. Use mode=mutation "
-            "only after all attempted canvas writes returned successful persistence receipts; "
-            "list their exact bridge_key (browser apply) or revision (direct apply), using null "
-            "for the unused field. Never invent receipt identities, reuse historical receipts, "
-            "or claim nodes exist when only a workflow draft is ready for approval. "
-            "A canvas receipt proves apply/submission, not generated-media completion. "
-            "Put the user-facing answer in message, not raw JSON inside message. "
-            "The complete final-response schema is included here because compatibility "
-            "gateways may not expose the transport outputSchema to the model:\n"
-            + json.dumps(CANVAS_REPLY_SCHEMA, ensure_ascii=False)
         )
     return _CODEX_DEVELOPER_INSTRUCTIONS
 
@@ -693,6 +758,51 @@ Clarification:
   request, reply normally without a card.
 
 Canvas write contract:
+- Interactive short dramas, branching stories, choices and endings use the interactive-story
+  Skill and its dedicated dramaclaw_*_interactive_story tools. This takes precedence over the generic
+  workflow and single-operation rules below. Before drafting a new story outline (including a
+  text-only proposal), collect missing visual style, interaction intensity, single-playthrough
+  duration, and thematic focus. Use freezone_request_user_clarification for multiple missing
+  preferences and wait for answers; a single missing preference may use a natural follow-up.
+  Reuse prior answers and existing outline preferences. Only explicit delegation lets you choose
+  and state recommendations; "create an outline" alone does not. Cancellation, empty answers,
+  or a timeout do not accept defaults. Follow the Skill to persist these preferences in the outline.
+  Local edits do not restart this intake; interactive ads follow their own discovery rules.
+  Read dramaclaw_get_freezone_canvas for the persisted
+  revision and save the outline with dramaclaw_save_interactive_story_outline. Explicit chat
+  approval of that exact outline can be recorded with dramaclaw_confirm_interactive_story_outline
+  after reading its ID and revision; a plan-card click is optional. If the user requested the
+  script too, confirm then create and validate without another approval question. Retain both
+  write receipts. Changed outline content requires renewed approval. Placeholder media is supported.
+  Characters, scenes, storyboard, and complete are manual progress stages. During the character
+  or scene production stage, a request to create reference assets is not a request to confirm the
+  stage or move past it.
+  Use the image workflow and verify its canvas result; if only a draft exists or generation is
+  running, say so. When the user explicitly
+  says one of these stages is complete, or explicitly asks to continue past it, this is a canvas
+  write request: read the current story/revision as needed, then call
+  dramaclaw_confirm_interactive_story_stages in that same turn before discussing the next stage.
+  Stage confirmation itself does not generate media and must not trigger image/video parameter
+  clarification. Never merely say a manual stage is confirmed: without a successful persisted
+  stage-confirmation receipt, report that its progress was not changed. When the user explicitly
+  asks to redo a confirmed stage, call the same tool with action=reopen.
+  For a next-step question on the current interactive story, read
+  dramaclaw_get_interactive_story_progress and the Skill's stage-guidance reference. Explain the
+  first unfinished stage and its concrete next action; "下一步" alone does not confirm a manual
+  stage or authorize media generation.
+  After a successful story Create and Validate, also read the progress tool before proposing what
+  to do next. Follow its first unfinished stage: characters and scenes precede storyboard and video.
+  A failed Create is not a completed story; do not claim creation or suggest production from it.
+  Never substitute ordinary nodes, text annotations, generic edges or freezone_emit_canvas_command
+  for an interactive story. If the story tools are unavailable, report the blocker; do not downgrade
+  the request. Report story creation only after a successful story write and report validation
+  separately from video generation and playback verification. Once a production plan is approved,
+  missing storyboard images are a media-production workflow, not story structure: use the
+  existing text-to-image-video Workflow Skill, the general-image Recipe, and one validated image-only WorkflowPlan for the batch.
+  Map each frame in source_context.targets to its existing story segment and video node so
+  completed frames and their upstream character/scene images can attach automatically.
+  Keep existing story video nodes outside that Plan; link finished images back to them only after
+  the image workflow has stopped, and never substitute repeated canvas create/generate commands.
 - Before writing, ground the operation in the current canvas summary/context. Read command catalog,
   node create schema, link type catalog, node detail, or action catalog only when needed. Validate
   multi-step or edge-creating commands before writing.
@@ -700,6 +810,16 @@ Canvas write contract:
   call a Freezone write tool. For one standalone operation, the first assistant output MUST be that
   matching single-operation write tool call; do not emit prose first. Workflow requests may perform
   only the Skill/catalog reads required by the next rule before their single workflow write call.
+- 预演台/previz requests (build a 3D scene or blockout, place characters, props or cameras, walk
+  paths, camera moves, shot cuts) are previzNode scene edits, not media generation, even when they
+  describe a film, shots or a long take. Do not load the dramaclaw-workflows Skill, do not ask for
+  image/video generation parameters, and do not create imageGenNode/videoNode unless the user also
+  asks to generate images or video. Reuse a referenced previzNode or create one empty previzNode
+  with freezone_create_node (at most displayName), read it with freezone_get_node_detail, then
+  write parameters.sceneEdit with freezone_update_node_data as its description specifies.
+  Before writing a sceneEdit with several objects or a timeline, dry-run the same
+  {type: update_node_data, node_id, data} command once with freezone_validate_canvas_commands and
+  fix every reported issue, so the single write succeeds.
 - For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, load
   and follow the dramaclaw-workflows Agent Skill. For an exact user-specified topology, read its
   references/custom-topology.md and call freezone_prepare_workflow_plan_draft once with one complete
@@ -752,7 +872,9 @@ Canvas write contract:
   it as an external workflow input: use Workflow Skill discovery and draft with external_inputs and
   reference_inputs; never use freezone_get_node_action_catalog, freezone_run_node_action,
   freezone_add_next_node, or freezone_emit_canvas_command for that request, and do not recreate or
-  copy the source node.
+  copy the source node. Declare an existing video with media_kind video.
+- Never drop a reference the user named and still claim it was used. If a named source cannot be
+  used, say in the reply which one and why.
 - If the user asks only to edit fields on one existing standalone node without generating, use
   freezone_update_node_data; do not call freezone_run_node_action.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never
@@ -760,11 +882,12 @@ Canvas write contract:
   matching production Workflow Skill returned by the catalog, such as text-to-image for a pure
   image pipeline or text-to-image-video for an image/video pipeline.
 - Use freezone_create_node only for exactly one standalone textAnnotationNode when the user asks for
-  one text node. Use one freezone_emit_canvas_command batch only for several ordinary non-workflow
+  one text node, or for the one empty previzNode of a 预演台 request. Use one freezone_emit_canvas_command batch only for several ordinary non-workflow
   canvas edits. Use FREEZONE_CANVAS_CONTEXT's canvas_id. Do not precheck pipeline failure unless the
   user asks about status.
-- Never claim any canvas change succeeded without a successful same-turn frontend write result. If
-  it fails or is absent, say the change could not be confirmed.
+- Never claim any canvas change succeeded without a successful same-turn frontend write result or
+  a persisted interactive-story receipt containing story_id, canvas_id, revision and refresh_canvas.
+  If it fails or is absent, say the change could not be confirmed.
 - Never submit reduced sample, smoke-test, or placeholder nodes such as A/B, T1/T2, or “测试节点” to
   the user's canvas while recovering from a workflow error. Use the read-only workflow compiler
   only with that same complete graph, preserving all nodes, edges, groups, and exact counts. Never
@@ -777,6 +900,12 @@ Canvas write contract:
   and show its approval card. Do not ask for a second “创建并运行” confirmation and do not say the
   environment cannot display the card; the write tool creates it. In auto_execute, submit the write
   immediately after required media parameters are known and let the frontend apply the approval.
+- Workflows bound to story targets must explicitly include `run_after_create` when preparing.
+  Ordinary workflows may omit it and default to `false` (create only). Use `true` when the user
+  asked to create and generate/run. A terse confirmation such as “可以” or “确认” inherits the
+  execution policy of the immediately preceding proposal, so preserve `true` when that proposal
+  included generation. Use `false` for an approved create-only request; story-bound workflows
+  must not rely on omission.
 - For structured clarification, call the MCP tool freezone_request_user_clarification only. Never
   use the host's built-in request_user_input, update_plan, or create_goal tools for canvas work.
 - In interactive Xi画 chat, never set auto_apply_after_mcp_approval; canvas writes must produce an
@@ -841,8 +970,21 @@ _FREEZONE_CANVAS_WRITE_NEGATION_RE = re.compile(
     r"[^。！？!?，,；;\n]{0,32}",
     re.IGNORECASE,
 )
+# “等我确认后再自动执行” defers execution to a later confirmation; like a
+# negation, it is not a request to run anything in this turn.
+_FREEZONE_DEFERRED_EXECUTION_RE = re.compile(
+    r"(?:"
+    r"(?:等|待)?[^。！？!?，,；;\n]{0,8}确认(?:之后|以后|后)"
+    r"[^。！？!?，,；;\n]{0,8}?(?:运行|执行)"
+    r"|(?:after|once|when)\s+(?:i|we|you)\s+confirm"
+    r"[^.!?,;\n]{0,24}?(?:run|execute)"
+    r")",
+    re.IGNORECASE,
+)
+# “可执行”/“可运行” are adjectives, and identifiers such as run_after_create
+# are field names; neither asks to run anything.
 _FREEZONE_EXISTING_EXECUTION_ACTION_RE = re.compile(
-    r"(?:运行|执行|继续|恢复|run|execute|continue|resume)",
+    r"(?:(?<!可)(?:运行|执行)|继续|恢复|\b(?:run|execute|continue|resume)\b)",
     re.IGNORECASE,
 )
 _FREEZONE_EXISTING_EXECUTION_TARGET_RE = re.compile(
@@ -935,8 +1077,6 @@ _FREEZONE_SKILL_RUNTIME_REQUEST_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
-
-
 def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     """Recognize an explicit canvas mutation without matching negated actions."""
 
@@ -998,6 +1138,7 @@ def _freezone_existing_execution_requested(prompt: str | None) -> bool:
     if not user_text:
         return False
     intent_text = _FREEZONE_CANVAS_WRITE_NEGATION_RE.sub("", user_text)
+    intent_text = _FREEZONE_DEFERRED_EXECUTION_RE.sub("", intent_text)
     return bool(
         _FREEZONE_EXISTING_EXECUTION_ACTION_RE.search(intent_text)
         and _FREEZONE_EXISTING_EXECUTION_TARGET_RE.search(intent_text)
@@ -1206,6 +1347,172 @@ async def _dispatch_exact_audio_node_action(
         timeout_result=timeout_result,
     )
     return resolved or timeout_result
+
+
+def _interactive_story_stage_confirmation_requested(prompt: str | None) -> bool:
+    """Recognize explicit manual-stage approval, not questions or negations."""
+
+    text = str(prompt or "").strip()
+    if not text or not re.search(r"(?:角色|场景|分镜|交付|验收)", text):
+        return False
+    if re.search(
+        r"(?:还没|没有|尚未|未完成|没完成|撤回|返工|重做)"
+        r"|(?:不(?:要|用|必|需要|再)?|无需|(?<![分特])别)\s*"
+        r"(?:(?:立即|马上|直接|继续|再|急着)\s*)*确认",
+        text,
+    ):
+        return False
+    if re.search(r"(?:吗|么|是否|是不是|有没有|为何|为什么|怎么|如何|进度)", text):
+        return False
+    if re.search(r"确认[^，。！？\n]*(?:完成|通过)", text):
+        return True
+    # Completed media and requests to inspect or generate it are not approval
+    # of a creative-pipeline stage, even on a canvas that contains a story.
+    if re.search(r"(?:下载|查看|看下|看看|展示|显示|生成|制作|参考图|图片|素材)", text):
+        return False
+    return bool(
+        re.search(
+            r"(?:已完成|完成了|做好了|已经做好|可以进入|可以做|"
+            r"继续(?:做|进入)(?:角色|场景|分镜|交付|验收|视频))",
+            text,
+        )
+    )
+
+
+def _canvas_has_interactive_story(project_dir: Path, canvas_id: str) -> bool:
+    """Gate story-stage postconditions on the bound canvas's persisted story."""
+    from novelvideo.freezone import canvas_store
+    from novelvideo.interactive_story.stage_progress import find_first_story_group
+
+    try:
+        canvas = canvas_store.read_canvas(project_dir, canvas_id)
+    except (canvas_store.CanvasStoreError, OSError, ValueError):
+        logger.warning(
+            "cannot establish story-stage context for canvas=%s", canvas_id, exc_info=True
+        )
+        return False
+    return canvas is not None and find_first_story_group(canvas) is not None
+
+
+def _stage_confirmation_not_written_message(prompt: str | None) -> str:
+    """Keep a blocked chat reply in the language of the user's request."""
+
+    if re.search(r"[\u4e00-\u9fff]", prompt or ""):
+        return (
+            "阶段确认未写入：虾导没有执行阶段确认工具，"
+            "因此画布进度没有改变。请重试本次确认。"
+        )
+    return (
+        "Stage confirmation was not saved because the assistant did not run the "
+        "confirmation tool. Canvas progress has not changed. Please try again."
+    )
+
+
+def _codex_story_preflight_rejection(
+    event: Any,
+) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+    """Identify story calls rejected by tool schema validation before execution."""
+    name = _codex_freezone_tool_name(event)
+    if name not in {
+        "dramaclaw_create_interactive_story",
+        "dramaclaw_patch_interactive_story",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_stages",
+    }:
+        return None
+    rejection = _codex_freezone_tool_argument_rejection(event)
+    arguments = _codex_freezone_tool_arguments(event)
+    if rejection is None or arguments is None:
+        return None
+    return name, arguments, rejection
+
+
+def _codex_story_write_intent(
+    event: Any, *, project: str, canvas_id: str
+) -> tuple[str, str, int, str] | None:
+    """Identify the exact story, revision and key used by a story write."""
+    name = _codex_freezone_tool_name(event)
+    if name not in {
+        "dramaclaw_create_interactive_story",
+        "dramaclaw_patch_interactive_story",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_stages",
+    }:
+        return None
+    for args in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        story = args.get("story")
+        outline = args.get("outline")
+        if name == "dramaclaw_create_interactive_story" and isinstance(story, dict):
+            story_id = story.get("story_id")
+        elif name == "dramaclaw_save_interactive_story_outline" and isinstance(
+            outline, dict
+        ):
+            story_id = outline.get("outline_id")
+            key = args.get("idempotency_key")
+            if (
+                "outline_id" not in outline
+                and type(args.get("base_revision")) is int
+                and args["base_revision"] == 0
+                and isinstance(key, str)
+                and 8 <= len(key) <= 200
+            ):
+                # Match the first-write ID generated by story_tools. A receipt
+                # for another ID must not settle a prior rejection.
+                story_id = "outline_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+        elif name == "dramaclaw_confirm_interactive_story_outline":
+            story_id = args.get("outline_id")
+        else:
+            story_id = args.get("story_id")
+        base = args.get("base_revision")
+        key = args.get("idempotency_key")
+        if (
+            isinstance(story_id, str) and story_id.strip()
+            and type(base) is int and base >= 0
+            and isinstance(key, str) and key.strip()
+            and args.get("project_id", project) == project
+            and args.get("canvas_id", canvas_id) == canvas_id
+        ):
+            return name, story_id.strip(), base, key.strip()
+    return None
+
+
+def _codex_story_write_payload_signature(event: Any) -> str | None:
+    """Match retries of the same story edit without revision or save-key noise."""
+    for args in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        payload = {
+            key: value for key, value in args.items()
+            if key not in {"base_revision", "idempotency_key"}
+        }
+        try:
+            return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _codex_story_revision_conflict(
+    event: Any, *, project: str, canvas_id: str
+) -> tuple[str, str, int, str] | None:
+    """Only a structured server conflict may be superseded by a saved retry."""
+    intent = _codex_story_write_intent(event, project=project, canvas_id=canvas_id)
+    if intent is None or str(getattr(event, "status", "")).lower() not in {
+        "completed", "failed",
+    }:
+        return None
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            revision = payload.get("current_revision")
+            if (
+                payload.get("ok") is False
+                and payload.get("code") == "revision_conflict"
+                and payload.get("story_id") == intent[1]
+                and type(revision) is int and revision >= 0
+                and revision != intent[2]
+            ):
+                return intent[0], intent[1], revision, intent[3]
+    return None
 
 
 async def _bind_server_observed_agent_product_execution(
@@ -1802,11 +2109,27 @@ def _prompt_with_user_context(
             "asking for another create/run confirmation. Use the MCP clarification tool, never built-in "
             "request_user_input.\n"
         )
+    compose_node_id = _freezone_compose_node_id_from_context(surface_context)
+    compose_context = (
+        "\n[FREEZONE_COMPOSE_WORKSPACE]\n"
+        f"compose_node_id: {compose_node_id}\n"
+        "The user is inside the video compose and editing workspace of this videoComposeNode; "
+        "its OpenFilm film is the cut. For trimming, moving, reordering, splitting, removing, "
+        "fades, volume or speed, call freezone_studio_get_film first, then "
+        "freezone_studio_edit_film with the returned rev and clip ids. To add media from the "
+        "canvas, call freezone_studio_import_media and insert the returned asset_path. To render "
+        "the final video, call freezone_studio_export_film. Never rewrite this node's "
+        "draftTimeline or rebuild its timeline through canvas commands while the workspace is open.\n"
+        "[/FREEZONE_COMPOSE_WORKSPACE]\n"
+        if compose_node_id and openfilm_studio_enabled()
+        else ""
+    )
     canvas_context = (
         "\n\n[FREEZONE_CANVAS_CONTEXT]\n"
         f"canvas_id: {canvas_id}\n"
         "Use this canvas_id for Freezone canvas tools unless the user explicitly names another canvas.\n"
-        "[/FREEZONE_CANVAS_CONTEXT]\n\n"
+        "[/FREEZONE_CANVAS_CONTEXT]\n"
+        f"{compose_context}\n"
         "[FREEZONE_CANVAS_EXECUTION_MODE]\n"
         f"mode: {canvas_execution_mode}\n"
         f"{generation_parameter_policy}"
@@ -1821,7 +2144,10 @@ def _prompt_with_user_context(
         f"{_freezone_skill_studio_context(username, route_prompt if route_prompt is not None else prompt)}"
         f"{canvas_context}"
         if tool_mode == "freezone_canvas"
-        else ""
+        else (
+            f"\n\n[DRAMACLAW_MAINLINE_SCOPE]\n{_MAINLINE_ASSISTANT_SCOPE_INSTRUCTIONS}"
+            "\n[/DRAMACLAW_MAINLINE_SCOPE]"
+        )
     )
     continuation_source = route_prompt if route_prompt is not None else prompt
     continuation_instructions = _pipeline_continuation_instructions(
@@ -2069,9 +2395,10 @@ def _sync_project_skills(skills_dir: Path, *, agent_profile: str = "main") -> No
 
 def _sync_project_skills_locked(skills_dir: Path, *, agent_profile: str) -> None:
     profile = str(agent_profile or "main").strip() or "main"
+    canvas_profile = profile.startswith("freezone")
     allowed = (
-        {"freezone", "workflows", "dramaclaw-workflows"}
-        if profile.startswith("freezone")
+        {"freezone", "workflows", "dramaclaw-workflows", "interactive-story"}
+        if canvas_profile
         else None
     )
     manifest_path = skills_dir / ".dramaclaw-managed-skills.json"
@@ -2097,7 +2424,11 @@ def _sync_project_skills_locked(skills_dir: Path, *, agent_profile: str) -> None
         if dst is None:
             continue
         src = sources.get(skill_name)
-        if src is None or (allowed is not None and skill_name not in allowed):
+        if (
+            src is None
+            or (allowed is not None and skill_name not in allowed)
+            or (not canvas_profile and skill_name == "interactive-story")
+        ):
             _remove_managed_skill_path(dst, root=skills_dir)
             continue
         source_digest = _skill_tree_digest(src)
@@ -2456,8 +2787,6 @@ def _append_message(
     return message_repository.append_message(
         conn, role, content, media, now_iso=_now_iso
     )
-
-
 
 
 def _bounded_workflow_planning_reply(text: str, *, draft_ready: bool) -> str:
@@ -3591,6 +3920,7 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_AGENT_TOKEN_FILE",
                 "DRAMACLAW_CANVAS_ID",
                 "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",
+                "DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS",
                 "DRAMACLAW_CHAT_SURFACE",
                 "DRAMACLAW_EXTERNAL_MCP",
                 "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
@@ -3603,6 +3933,8 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_USERNAME",
                 "NOVELVIDEO_OUTPUT_DIR",
                 "PYTHONPATH",
+                "PYTHON_DOTENV_DISABLED",
+                "SUPERTALE_OPENFILM_STUDIO_ENABLED",
             ],
         }
     }
@@ -3621,7 +3953,21 @@ def _dramaclaw_mcp_servers(
         servers["dramaclaw"]["enabled_tools"] = list(
             _CODEX_FREEZONE_EXECUTION_TOOLS
         )
+    if freezone_canvas:
+        servers["dramaclaw"]["args"].append("--exclude-interactive-story")
     if freezone_canvas and not focused_execution:
+        servers["dramaclaw_interactive_story"] = {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": ["-m", "novelvideo.chat.interactive_story_mcp"],
+            "env_vars": [
+                "DRAMACLAW_API_URL",
+                "DRAMACLAW_AGENT_TOKEN_FILE",
+                "DRAMACLAW_PROJECT_ID",
+                "DRAMACLAW_CANVAS_ID",
+                "PYTHONPATH",
+            ],
+        }
         # The shared Workflow MCP owns portable discovery and deterministic
         # compilation only. Protected canvas writes stay on the existing
         # DramaClaw MCP server, preserving the Hermes approval boundary.
@@ -3846,6 +4192,31 @@ def _codex_gateway_config_overrides(
     return tuple(overrides)
 
 
+def _bind_clarification_recovery(
+    *,
+    project: str,
+    canvas_id: str,
+    request_prompt: str | None,
+    bridge_dir: str | Path,
+) -> None:
+    from novelvideo.freezone.canvas_command_bridge import put_clarification_turn_context
+
+    text = re.sub(r"\s+", "", str(request_prompt or "")).lower()
+    changing = re.search(
+        r"修改|更改|改成|重选|重新选择|重新配置|另一个|其他角色|其他节点|别的|change|reselect|another|different",
+        text,
+    )
+    reopening = re.search(
+        r"重新弹出|重弹|再弹|重新打开(?:参数|选择|选项|问题)?(?:卡|框)|打开参数卡|reopen.*(?:card|question)|show.*(?:card|question).*again", text
+    )
+    put_clarification_turn_context(
+        project_id=project,
+        canvas_id=canvas_id,
+        recovery_only=bool(reopening and not changing),
+        bridge_dir=bridge_dir,
+    )
+
+
 def _build_codex_thread(
     username: str,
     project: str,
@@ -3883,6 +4254,18 @@ def _build_codex_thread(
         project_state_dir=project_state_dir,
         agent_token_file=agent_token_file,
     )
+    if (
+        tool_mode == "freezone_canvas"
+        and project
+        and canvas_id
+        and env.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR")
+    ):
+        _bind_clarification_recovery(
+            project=project,
+            canvas_id=canvas_id,
+            request_prompt=request_prompt,
+            bridge_dir=env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"],
+        )
     gateway_api_key, gateway_base_url = _codex_turn_gateway_credentials(authorization)
     exact_node_action = not exact_audio_action_plan and str(
         tool_mode or ""
@@ -3920,9 +4303,7 @@ def _build_codex_thread(
         thread_config_overrides=thread_config_overrides,
         turn_metadata=turn_metadata,
         output_schema=(
-            _CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA
-            if exact_audio_action_plan
-            else CANVAS_REPLY_SCHEMA if tool_mode == "freezone_canvas" else None
+            _CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA if exact_audio_action_plan else None
         ),
     )
     thread_id = _get_codex_thread_id(
@@ -4069,6 +4450,7 @@ async def stream_assistant_reply(
     backend: str | None = None,
     execution_context: AgentExecutionContext | None = None,
     project_context: ProjectContext | None = None,
+    image_paths: Sequence[Path] = (),
 ) -> dict[str, Any]:
     if project_context is not None and project != project_context.project_id:
         raise ValueError("project context project mismatch")
@@ -4141,6 +4523,7 @@ async def stream_assistant_reply(
                     else None
                 ),
                 project_context=project_context,
+                image_paths=image_paths,
             )
         if backend == "hermes":
             return await _stream_assistant_reply_hermes(
@@ -4449,6 +4832,21 @@ async def _stream_assistant_reply_hermes(
         requester_user_id=requester_user_id,
         authorization=authorization,
     )
+    if tool_mode == "freezone_canvas" and project and canvas_id:
+        from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
+        from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
+
+        home = ensure_user_hermes_workspace(
+            username,
+            profile="freezone",
+            project_state_dir=project_state_dir,
+        )
+        _bind_clarification_recovery(
+            project=project,
+            canvas_id=canvas_id,
+            request_prompt=route_prompt or prompt,
+            bridge_dir=canvas_bridge_dir_for_profile(home, agent_profile),
+        )
     if store_scope is not None:
         previous_assistant = await _store_history_contents_async(
             username,
@@ -5270,6 +5668,7 @@ async def _stream_assistant_reply_codex(
     agent_profile: str | None = None,
     canvas_id: str | None = None,
     project_context: ProjectContext | None = None,
+    image_paths: Sequence[Path] = (),
 ) -> dict[str, Any]:
     assistant_text = ""
     tool_text = ""
@@ -5283,9 +5682,14 @@ async def _stream_assistant_reply_codex(
         route_prompt or prompt
     )
     canvas_write_attempts: dict[str, str] = {}
+    preflight_rejections: dict[str, tuple[str, dict[str, Any], dict[str, Any]]] = {}
+    story_conflicts: dict[str, tuple[tuple[str, str, int, str], str]] = {}
     canvas_receipts: set[tuple[str, int | None]] = set()
     canvas_write_failures: dict[str, str] = {}
     canvas_generation_preflights: dict[str, str] = {}
+    stage_confirmation_expected = False
+    stage_confirmation_attempted = False
+    stage_confirmation_succeeded = False
     # call_id -> run_after_create the agent requested when the draft policy
     # guard rejected it; only a receipt reporting that policy may supersede it.
     canvas_policy_requirements: dict[str, bool] = {}
@@ -5342,6 +5746,21 @@ async def _stream_assistant_reply_codex(
         business_turn_id,
     )
     try:
+        if (
+            structured_canvas_reply
+            and project
+            and _interactive_story_stage_confirmation_requested(prompt)
+        ):
+            bound_project_dir = (
+                Path(project_dir)
+                if project_dir is not None
+                else _output_root() / username / project
+            )
+            stage_confirmation_expected = await asyncio.to_thread(
+                _canvas_has_interactive_story,
+                bound_project_dir,
+                canvas_id or "default",
+            )
         agent_token = await _create_page_agent_session_token(
             username,
             project,
@@ -5385,46 +5804,16 @@ async def _stream_assistant_reply_codex(
             agent_prompt += await _canvas_background_result_context_for_scope(
                 username, store_scope
             )
+        turn_images = (
+            await image_data_urls(image_paths)
+            if image_paths and codex_image_input_enabled()
+            else []
+        )
+        # Only pass the keyword when there is something to send: development
+        # adapters implement the plain ``stream(prompt)`` port.
+        stream_kwargs = {"images": turn_images} if turn_images else {}
 
-        async def turn_events():
-            nonlocal assistant_text, turn_disposition
-            async for event in thread.stream(agent_prompt):
-                yield event
-            if not (
-                structured_canvas_reply
-                and exact_audio_action_target is None
-                and turn_disposition == "completed"
-                and needs_canvas_format_repair(
-                    assistant_text,
-                    attempts=canvas_write_attempts,
-                    receipts=canvas_receipts,
-                    draft_ready=ready_workflow_draft is not None,
-                )
-            ):
-                return
-            # A no-write turn answered outside the envelope (#680). Ask once,
-            # on the same thread, for the same answer in the required format;
-            # its events go through the same write tracking as the first turn.
-            logger.info(
-                "codex canvas reply format repair user=%s project=%s turn=%s",
-                username,
-                project or "<home>",
-                business_turn_id,
-            )
-            original_text, original_disposition = assistant_text, turn_disposition
-            assistant_text, turn_disposition = "", _DEFAULT_TURN_DISPOSITION
-            try:
-                async for event in thread.stream(CANVAS_FORMAT_REPAIR_PROMPT):
-                    yield event
-            except Exception:
-                logger.warning("codex canvas reply format repair failed", exc_info=True)
-                turn_disposition = "failed"
-            if turn_disposition not in {"completed", "cancelled"}:
-                # A failed repair must not surface a transport error in place
-                # of the original contract failure.
-                assistant_text, turn_disposition = original_text, original_disposition
-
-        async for event in turn_events():
+        async for event in thread.stream(agent_prompt, **stream_kwargs):
             logger.debug(
                 "codex event user=%s project=%s profile=%s type=%s thread=%s turn=%s",
                 username,
@@ -5515,6 +5904,12 @@ async def _stream_assistant_reply_codex(
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft
                 if _codex_freezone_is_write_event(event):
+                    is_stage_confirmation = (
+                        _codex_freezone_tool_name(event)
+                        == "dramaclaw_confirm_interactive_story_stages"
+                    )
+                    if is_stage_confirmation:
+                        stage_confirmation_attempted = True
                     call_id = str(getattr(event, "call_id", "") or "")
                     identifiable_call = bool(call_id)
                     # An unidentified write cannot be associated with a final
@@ -5522,81 +5917,153 @@ async def _stream_assistant_reply_codex(
                     call_id = call_id or f"unidentified:{len(canvas_write_attempts)}"
                     canvas_write_attempts.setdefault(call_id, "in_progress")
                     if event.type == "tool_updated":
-                        receipt = _codex_freezone_write_receipt(
-                            event, expected_project=project, expected_canvas=canvas_id
-                        )
-                        retry_key = _codex_freezone_generation_retry_key(event)
-                        canvas_write_attempts[call_id] = (
-                            "succeeded"
-                            if receipt is not None and identifiable_call
-                            else _codex_freezone_write_result_state(event)
-                        )
-                        if receipt is not None and identifiable_call:
-                            canvas_receipts.add(receipt_reference(receipt))
-                            if retry_key is not None:
-                                confirmed_policy = (
-                                    _codex_freezone_confirmed_execution_policy(event)
+                        preflight_target = _codex_story_preflight_rejection(event)
+                        if preflight_target is not None and identifiable_call:
+                            # No API write was attempted. A corrected call to
+                            # the same story may satisfy this rejected input.
+                            canvas_write_attempts.pop(call_id, None)
+                            preflight_rejections[call_id] = preflight_target
+                            failure = _codex_freezone_write_result_error(event)
+                            if failure:
+                                canvas_write_failures[call_id] = failure
+                        else:
+                            receipt = _codex_freezone_write_receipt(
+                                event, expected_project=project, expected_canvas=canvas_id
+                            )
+                            retry_key = _codex_freezone_generation_retry_key(event)
+                            if receipt is not None and identifiable_call:
+                                intent = _codex_story_write_intent(
+                                    event, project=project, canvas_id=canvas_id or "default"
                                 )
-                                for rejected_call, rejected_key in list(
-                                    canvas_generation_preflights.items()
-                                ):
-                                    if rejected_key != retry_key or rejected_call == call_id:
-                                        continue
-                                    required_policy = canvas_policy_requirements.get(
-                                        rejected_call
+                                receipt_identity = receipt.get(
+                                    "outline_id"
+                                    if _codex_freezone_tool_name(event) in {
+                                        "dramaclaw_save_interactive_story_outline",
+                                        "dramaclaw_confirm_interactive_story_outline",
+                                    }
+                                    else "story_id"
+                                )
+                                if intent is not None and receipt_identity == intent[1]:
+                                    retry_args = _codex_freezone_tool_arguments(event)
+                                    for rejected_call, (rejected_name, rejected_args, rejection) in list(
+                                        preflight_rejections.items()
+                                    ):
+                                        if (
+                                            rejected_call == call_id
+                                            or rejected_name != intent[0]
+                                            or retry_args is None
+                                            or rejected_args.get("project_id", project) != project
+                                            or rejected_args.get("canvas_id", canvas_id or "default") != (canvas_id or "default")
+                                        ):
+                                            continue
+                                        # Omitted scope and explicitly supplied bound scope
+                                        # are equivalent; never permit another scope.
+                                        before = {**rejected_args, "project_id": project,
+                                                  "canvas_id": canvas_id or "default"}
+                                        after = {**retry_args, "project_id": project,
+                                                 "canvas_id": canvas_id or "default"}
+                                        if story_argument_retry_matches(
+                                            before, after, rejection, tool_name=intent[0]
+                                        ):
+                                            canvas_write_failures.pop(rejected_call, None)
+                                            del preflight_rejections[rejected_call]
+                                    # A server 409 rejected this exact story write
+                                    # before saving. Only its verified rebased
+                                    # successor can settle that failed attempt.
+                                    signature = _codex_story_write_payload_signature(event)
+                                    for rejected_call, (conflict, rejected_signature) in list(
+                                        story_conflicts.items()
+                                    ):
+                                        if (
+                                            intent[:2] == conflict[:2]
+                                            and signature is not None
+                                            and signature == rejected_signature
+                                            and intent[2] >= conflict[2]
+                                        ):
+                                            canvas_write_attempts.pop(rejected_call, None)
+                                            canvas_write_failures.pop(rejected_call, None)
+                                            del story_conflicts[rejected_call]
+                            else:
+                                conflict = _codex_story_revision_conflict(
+                                    event, project=project, canvas_id=canvas_id or "default"
+                                )
+                                signature = _codex_story_write_payload_signature(event)
+                                if conflict is not None and signature is not None:
+                                    story_conflicts[call_id] = conflict, signature
+                            canvas_write_attempts[call_id] = (
+                                "succeeded"
+                                if receipt is not None and identifiable_call
+                                else _codex_freezone_write_result_state(event)
+                            )
+                            if receipt is not None and identifiable_call:
+                                if is_stage_confirmation:
+                                    stage_confirmation_succeeded = True
+                                reference = receipt_reference(receipt)
+                                canvas_receipts.add(reference)
+                                if retry_key is not None:
+                                    confirmed_policy = (
+                                        _codex_freezone_confirmed_execution_policy(event)
                                     )
-                                    # A policy-guard rejection is resolved only by a
-                                    # confirmation whose receipt verifiably applied
-                                    # the requested run_after_create. An unverified
-                                    # or downgraded confirmation keeps it on record.
+                                    for rejected_call, rejected_key in list(
+                                        canvas_generation_preflights.items()
+                                    ):
+                                        if rejected_key != retry_key or rejected_call == call_id:
+                                            continue
+                                        required_policy = canvas_policy_requirements.get(
+                                            rejected_call
+                                        )
+                                        # A policy-guard rejection is resolved only by a
+                                        # confirmation whose receipt verifiably applied
+                                        # the requested run_after_create. An unverified
+                                        # or downgraded confirmation keeps it on record.
+                                        if (
+                                            required_policy is not None
+                                            and confirmed_policy != required_policy
+                                        ):
+                                            continue
+                                        canvas_write_attempts.pop(rejected_call, None)
+                                        canvas_write_failures.pop(rejected_call, None)
+                                        canvas_generation_preflights.pop(rejected_call, None)
+                                        canvas_policy_requirements.pop(rejected_call, None)
+                                signature = _codex_freezone_argument_retry_signature(event)
+                                for rejected_call, expected in list(
+                                    canvas_argument_rejections.items()
+                                ):
                                     if (
-                                        required_policy is not None
-                                        and confirmed_policy != required_policy
+                                        signature is None
+                                        or rejected_call == call_id
+                                        or expected != signature
                                     ):
                                         continue
                                     canvas_write_attempts.pop(rejected_call, None)
                                     canvas_write_failures.pop(rejected_call, None)
-                                    canvas_generation_preflights.pop(rejected_call, None)
-                                    canvas_policy_requirements.pop(rejected_call, None)
-                            signature = _codex_freezone_argument_retry_signature(event)
-                            for rejected_call, expected in list(
-                                canvas_argument_rejections.items()
+                                    canvas_argument_rejections.pop(rejected_call, None)
+                            elif (
+                                canvas_write_attempts[call_id] == "failed"
+                                and retry_key is not None
+                                and _codex_freezone_is_generation_preflight_rejection(event)
                             ):
-                                if (
-                                    signature is None
-                                    or rejected_call == call_id
-                                    or expected != signature
-                                ):
-                                    continue
-                                canvas_write_attempts.pop(rejected_call, None)
-                                canvas_write_failures.pop(rejected_call, None)
-                                canvas_argument_rejections.pop(rejected_call, None)
-                        elif (
-                            canvas_write_attempts[call_id] == "failed"
-                            and retry_key is not None
-                            and _codex_freezone_is_generation_preflight_rejection(event)
-                        ):
-                            if _codex_freezone_is_execution_policy_rejection(event):
-                                required_policy = (
-                                    _codex_freezone_execution_policy_requirement(event)
-                                )
-                                # A non-boolean request cannot be matched to a
-                                # receipt, so that rejection is never superseded.
-                                if required_policy is not None:
+                                if _codex_freezone_is_execution_policy_rejection(event):
+                                    required_policy = (
+                                        _codex_freezone_execution_policy_requirement(event)
+                                    )
+                                    # A non-boolean request cannot be matched to a
+                                    # receipt, so that rejection is never superseded.
+                                    if required_policy is not None:
+                                        canvas_generation_preflights[call_id] = retry_key
+                                        canvas_policy_requirements[call_id] = required_policy
+                                else:
                                     canvas_generation_preflights[call_id] = retry_key
-                                    canvas_policy_requirements[call_id] = required_policy
-                            else:
-                                canvas_generation_preflights[call_id] = retry_key
-                        elif canvas_write_attempts[call_id] == "failed":
-                            # Rejected before the handler ran, so nothing was
-                            # written; only the provably corrected call may
-                            # supersede it.
-                            expected = _codex_freezone_argument_retry_expectation(event)
-                            if expected is not None:
-                                canvas_argument_rejections[call_id] = expected
-                        failure = _codex_freezone_write_result_error(event)
-                        if failure:
-                            canvas_write_failures[call_id] = failure
+                            elif canvas_write_attempts[call_id] == "failed" and identifiable_call:
+                                # Rejected before the handler ran, so nothing was
+                                # written; only the provably corrected call may
+                                # supersede it.
+                                expected = _codex_freezone_argument_retry_expectation(event)
+                                if expected is not None:
+                                    canvas_argument_rejections[call_id] = expected
+                            failure = _codex_freezone_write_result_error(event)
+                            if failure:
+                                canvas_write_failures[call_id] = failure
                 event_tool_text = str(event.text or "")
                 if event_tool_text:
                     tool_text += event_tool_text
@@ -5678,16 +6145,7 @@ async def _stream_assistant_reply_codex(
                 if applied:
                     canvas_write_attempts[orchestrated_call_id] = "succeeded"
                     canvas_receipts.add((bridge_key, None))
-                    assistant_text = json.dumps(
-                        {
-                            "message": "已更新现有音频节点，并提交 generate_audio。",  # i18n-exempt
-                            "mode": "mutation",
-                            "canvas_receipts": [
-                                {"bridge_key": bridge_key, "revision": None}
-                            ],
-                        },
-                        ensure_ascii=False,
-                    )
+                    assistant_text = "已更新现有音频节点，并提交 generate_audio。"  # i18n-exempt
                 else:
                     errors = dispatch_result.get("errors")
                     failure = str(
@@ -5697,14 +6155,7 @@ async def _stream_assistant_reply_codex(
                         or "音频节点执行失败，前端没有返回有效回执。"  # i18n-exempt
                     ).strip()
                     canvas_write_failures[orchestrated_call_id] = failure
-                    assistant_text = json.dumps(
-                        {
-                            "message": failure,
-                            "mode": "blocked",
-                            "canvas_receipts": [],
-                        },
-                        ensure_ascii=False,
-                    )
+                    assistant_text = failure
     finally:
         logger.info(
             "codex turn cleanup user=%s project=%s profile=%s disposition=%s had_text=%s had_tool=%s",
@@ -5745,6 +6196,9 @@ async def _stream_assistant_reply_codex(
         if turn_operation is not None:
             await turn_operation.finish(turn_disposition)
 
+    for rejected_call in preflight_rejections:
+        canvas_write_attempts[rejected_call] = "failed"
+
     # A transport timeout/cancellation is not a canvas receipt failure. Keep
     # the runtime's actionable reason instead of replacing it with the
     # misleading "no canvas write" postcondition message.
@@ -5768,6 +6222,22 @@ async def _stream_assistant_reply_codex(
                     business_turn_id,
                 )
     elif structured_canvas_reply and canvas_postcondition_applies:
+        if (
+            stage_confirmation_expected
+            and not stage_confirmation_attempted
+            and not stage_confirmation_succeeded
+        ):
+            reset_codex_scope_thread(
+                username,
+                project,
+                agent_profile=agent_profile,
+                canvas_id=canvas_id,
+                project_state_dir=project_state_dir,
+            )
+            assistant_text = _stage_confirmation_not_written_message(prompt)
+            # A host-authored notice: the canvas write guard below must not
+            # replace it with the generic missing-receipt message.
+            canvas_write_requested = False
         assistant_text = finalize_canvas_reply(
             assistant_text,
             attempts=canvas_write_attempts,

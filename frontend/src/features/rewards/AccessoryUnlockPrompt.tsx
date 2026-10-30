@@ -71,8 +71,8 @@ export function AccessoryUnlockPrompt() {
 
   const handleClaim = () => {
     if (!seenEvent || isClaiming) return;
-    const targetButton = document.getElementById("mybuddy-companion-entry");
-    const targetIcon = targetButton?.querySelector(".companion-capsule-entry__icon");
+    const targetButton = document.getElementById("piko-hub-entry");
+    const targetIcon = targetButton?.querySelector("img");
     const targetRect = (targetIcon ?? targetButton)?.getBoundingClientRect();
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const flightSources = isBatchUnlock
@@ -114,9 +114,9 @@ export function AccessoryUnlockPrompt() {
     );
 
     window.setTimeout(() => {
-      targetButton.classList.add("companion-capsule-entry--reward-hit");
+      targetButton.setAttribute("data-reward-hit", "true");
       window.setTimeout(() => {
-        targetButton.classList.remove("companion-capsule-entry--reward-hit");
+        targetButton.removeAttribute("data-reward-hit");
       }, 520);
     }, REWARD_FLIGHT_HIT_DELAY_MS + lastDelayMs);
     window.setTimeout(completeClaim, REWARD_FLIGHT_COMPLETE_DELAY_MS + lastDelayMs);

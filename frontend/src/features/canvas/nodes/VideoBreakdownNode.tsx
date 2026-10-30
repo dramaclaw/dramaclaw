@@ -78,7 +78,6 @@ export const VideoBreakdownNode = memo(
   ({ id, data, selected }: VideoBreakdownNodeProps) => {
     const { t } = useTranslation();
     const updateNodeInternals = useUpdateNodeInternals();
-    const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const startPick = useCanvasPickStore((state) => state.startPick);
     const upstreamNodes = useUpstreamNodes(id);
@@ -334,7 +333,6 @@ export const VideoBreakdownNode = memo(
       <div
         className="group relative h-full w-full overflow-visible"
         style={{ width: NODE_WIDTH, height: NODE_HEIGHT }}
-        onClick={() => setSelectedNode(id)}
       >
         <Handle
           type="target"

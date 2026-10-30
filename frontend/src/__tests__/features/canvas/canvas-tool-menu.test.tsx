@@ -42,6 +42,7 @@ function renderBar() {
       onAddSkill={vi.fn()}
       onUseAsset={vi.fn()}
       onDeleteNode={vi.fn()}
+      onImportStory={vi.fn()}
     />,
   );
   return screen.getByRole("button", { name: "画布指针工具" });

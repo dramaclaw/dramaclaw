@@ -1,0 +1,125 @@
+.resizeHandle {
+  position: absolute;
+  z-index: 2;
+  top: 18px;
+  bottom: 18px;
+  left: -6px;
+  width: 12px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.resizeHandle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 5px;
+  width: 2px;
+  height: 44px;
+  transform: translateY(-50%);
+  border-radius: var(--ui-radius-pill);
+  background: rgb(var(--text-rgb) / .35);
+  transition: background var(--duration-fast);
+}
+
+.resizeHandle:hover::before,
+.resizeHandle:focus-visible::before,
+.resizeHandle[data-resizing='true']::before {
+  background: rgb(var(--accent-rgb));
+}
+
+.resizeHandle:focus-visible {
+  outline: 2px solid rgb(var(--accent-rgb));
+  outline-offset: 2px;
+}
+
+.branchTree,
+.branchChildren {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.branchItem {
+  min-width: 0;
+}
+
+.branchBody {
+  position: relative;
+  min-width: 0;
+  padding: 4px 0 8px;
+}
+
+.branchBody[data-has-children='true']::after {
+  content: '';
+  position: absolute;
+  top: 17px;
+  bottom: 0;
+  left: 9px;
+  border-left: 1px solid var(--ui-border-strong);
+}
+
+.branchHeading {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: var(--ui-radius-sm);
+  padding: 4px 6px;
+  text-align: left;
+  transition: background var(--duration-fast);
+}
+
+.branchHeading:hover { background: rgb(var(--text-rgb) / .06); }
+.branchHeading:focus-visible {
+  outline: 2px solid rgb(var(--accent-rgb));
+  outline-offset: 2px;
+}
+
+.branchDot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  margin-top: 5px;
+  border: 1px solid rgb(var(--text-rgb) / .5);
+  border-radius: 50%;
+  background: rgb(var(--surface-rgb));
+}
+
+.branchItem[data-root='true'] > .branchBody .branchDot {
+  border-color: rgb(var(--accent-rgb));
+  background: rgb(var(--accent-rgb));
+}
+
+.branchCopy {
+  margin: 0;
+  min-width: 0;
+  padding: 0 6px 0 21px;
+  overflow-wrap: anywhere;
+}
+
+.branchChildren {
+  margin-left: 9px;
+  padding-left: 12px;
+  border-left: 1px solid var(--ui-border-strong);
+}
+
+.branchChildren > .branchItem {
+  position: relative;
+}
+
+.branchChildren > .branchItem::before {
+  content: '';
+  position: absolute;
+  top: 17px;
+  left: -12px;
+  width: 12px;
+  border-top: 1px solid var(--ui-border-strong);
+}
+
+.branchChildrenCompact {
+  margin-left: 0;
+}

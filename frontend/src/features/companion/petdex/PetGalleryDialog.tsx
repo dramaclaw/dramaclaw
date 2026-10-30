@@ -633,7 +633,7 @@ export function PetGalleryDialog({
       onClick={handleRequestClose}
     >
       <div
-        className="relative flex max-h-[88vh] w-full max-w-[568px] flex-col rounded-[12px] border border-white/[0.08] bg-[#121212]/82 shadow-[0_18px_58px_rgba(0,0,0,0.56)] backdrop-blur-2xl"
+        className="dark relative flex max-h-[88vh] w-full max-w-[480px] flex-col rounded-[12px] border border-white/[0.08] bg-[#121212]/82 text-text-dark shadow-[0_18px_58px_rgba(0,0,0,0.56)] backdrop-blur-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         {mode === "gallery" ? (
@@ -641,7 +641,7 @@ export function PetGalleryDialog({
             <img
               src="/images/companion-title-ok-buddy.png"
               alt={t("myBuddy.companion.titleBadgeAlt")}
-              className="petdex-gallery-title-badge__image h-full w-full object-contain object-left drop-shadow-[0_12px_18px_rgba(0,0,0,0.45)]"
+              className="h-full w-full object-contain object-left drop-shadow-[0_12px_18px_rgba(0,0,0,0.45)]"
               draggable={false}
             />
           </div>

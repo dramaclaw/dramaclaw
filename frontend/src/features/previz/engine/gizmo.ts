@@ -1,0 +1,298 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import type * as THREE from 'three';
+
+import { RAD_TO_DEG } from '../domain/camera';
+import type { PrevizTransform } from '../domain/scene';
+import type { PrevizSnapAxes } from '../domain/snap';
+import { emphasizeTranslateHandles } from './gizmoEmphasis';
+import type { ThreeModule } from './sceneGraph';
+
+export type GizmoMode = 'translate' | 'rotate' | 'scale';
+
+/**
+ * `TransformControls` 里本模块用到的那部分。写成结构类型而不是直接引 three 的
+ * 类型，是为了 jsdom 里能塞一个假的进来——真控件要 DOM 事件和 WebGL 上下文。
+ */
+export interface TransformControlsLike {
+  enabled: boolean;
+  object: unknown;
+  attach(object: THREE.Object3D): unknown;
+  detach(): unknown;
+  setMode(mode: GizmoMode): void;
+  setSpace(space: 'world' | 'local'): void;
+  dispose(): void;
+  /** three 0.185 起 TransformControls 继承 Controls，可见的手柄要从这里拿。 */
+  getHelper(): THREE.Object3D;
+  /**
+   * 正在被拖的那根手柄的名字（`'X'` / `'XYZ'` / `'XZ'`…），没在拖时是 null。
+   *
+   * 三套手柄（平移 / 旋转 / 缩放）共用这批名字，所以光看它分不出用户在干什么，
+   * 还得配上当前模式——见 [PrevizGizmo.dropOnRelease]。
+   */
+  readonly axis: string | null;
+  addEventListener(type: string, handler: (event: { value?: boolean }) => void): void;
+}
+
+export interface PrevizGizmoDeps {
+  controls: TransformControlsLike;
+  /** OrbitControls 本体（只用到 enabled）。拖手柄期间必须把它关掉。 */
+  orbit: { enabled: boolean };
+  /** 手柄 helper 挂到哪个节点下，通常就是 three 的 Scene。 */
+  root: THREE.Object3D;
+  /** 拖拽结束时回调，把最终变换写回 store。 */
+  onCommit: (objectId: string, transform: PrevizTransform) => void;
+  /** 每次 objectChange 都调，用来请求重绘。 */
+  onChange: () => void;
+  /**
+   * three 命名空间本体，只用来重建手柄的几何体与材质（见 [emphasizeTranslateHandles]）。
+   *
+   * 刻意是**可选**的：jsdom 里那一堆塞假控件的用例关心的是拖拽状态机，跟手柄长什么样
+   * 无关，不传就整段跳过——否则它们全都得先手搭一棵 three 内部结构的假树才跑得起来，
+   * 而那棵树一旦抄错，红的会是一批跟外观毫无关系的用例。
+   */
+  three?: ThreeModule;
+  /**
+   * 松手吸附：把对象落到它正下方的表面上，返回落地后的**局部** y；返回 null 表示
+   * 这一次不该落地（机位与灯本来就该浮在空中，还没有几何体的模型也没法算包围盒）。
+   *
+   * 和 `three` 一样刻意是**可选**的：这里只认「谁来算」，算法整个在渲染器里（要
+   * 包围盒和射线）。不接这根线时行为与接线之前逐字一致，塞假控件的那批用例照跑。
+   */
+  dropToSurface?: (objectId: string) => number | null;
+  /**
+   * 拖动吸附（见 `domain/snap.ts`）。`begin` 在平移拖拽开始时调一次，让渲染器把别的
+   * 物件的包围盒量好存下；`offset` 每次 objectChange 调，返回这一刻还要额外挪多少米，
+   * null 表示不吸（吸附关着、对象不是物件、模型还没加载）。可选的理由同 `dropToSurface`。
+   */
+  snap?: {
+    begin: (objectId: string) => void;
+    offset: (objectId: string, axes: PrevizSnapAxes) => { dx: number; dz: number } | null;
+  };
+}
+
+/**
+ * 视口里的变换手柄。三件事：让手柄看得见、拖拽期间别和轨道相机打架、拖完把变换写回 store。
+ *
+ * 提交时机是**拖拽结束**而不是每帧：`objectChange` 一次拖拽能来几百次，每次都进 undo 栈
+ * 的话一次撤销只退回一个像素，撤销功能等于废掉。
+ */
+export class PrevizGizmo {
+  private attachedId: string | null = null;
+  private movedDuringDrag = false;
+  /**
+   * 手柄该不该看得见，互不相干的理由各记一份，画的时候取与（见 [applyVisibility]）。
+   *
+   * 合成一个裸开关就会出这个 bug：工具切到「选择」（不该有手柄）时用户按下截图，
+   * 截图前后是 `setHelperVisible(false)` / `setHelperVisible(true)` 一对，收尾那句会
+   * 把本来就不该在的手柄放回来。渲染器里这样的成对调用有 10 处（截图、机位预览、
+   * 四视图、录制…），任何一处都够把它放出来，而这条路径没人会手测。
+   */
+  private modeVisible = true;
+  private captureVisible = true;
+  /**
+   * 手柄正在被拖。切换要压到松手才生效，见 [setMode]。
+   */
+  private dragging = false;
+  /**
+   * 待生效的切换。`undefined` = 没有待生效的；`null` 本身是合法待生效值（「这颗工具
+   * 不要手柄」），所以不能拿 null 当哨兵。
+   */
+  private pendingMode: GizmoMode | null | undefined = undefined;
+  /**
+   * 手柄当前是哪种模式，自己记一份。
+   *
+   * 初值取 `'translate'` 而不是 null：three 的 `TransformControls` 里 `mode` 的默认值
+   * 就是 translate，打开编辑器到第一次 `setMode` 之间手柄真的在平移。记成 null 的话
+   * 这一段两边说法不一致——控件在平移，我们却当它没有模式。
+   *
+   * **只在 `applyMode` 里写，不要挪进 `setMode`。** 拖动中的切换是挂起的，`applyMode`
+   * 要等到松手、且 [dropOnRelease] 跑完之后才执行；写在 `setMode` 里的话，拖到一半按 R
+   * 就会让这一次**平移**拖拽按 rotate 结算、静默地不落地。
+   */
+  private mode: GizmoMode | null = 'translate';
+
+  constructor(private readonly deps: PrevizGizmoDeps) {
+    // 手柄本体不是 Object3D：加错了不会报错，只是永远看不见。
+    const helper = deps.controls.getHelper();
+    deps.root.add(helper);
+    // three 只在 TransformControls 构造里造一次手柄，所以改造也只需要跑这一次。
+    if (deps.three) emphasizeTranslateHandles(helper, deps.three);
+    deps.controls.setSpace('world');
+
+    deps.controls.addEventListener('dragging-changed', (event) => {
+      // 不关掉轨道控制的话，一次拖拽会同时转相机和移物体。
+      deps.orbit.enabled = event.value !== true;
+      if (event.value === true) {
+        this.dragging = true;
+        // 开始时清标记，而不是提交后清：留着上一次的 true，下一次「点一下不拖」
+        // 也会提交一步什么都没改的历史。
+        this.movedDuringDrag = false;
+        if (this.mode === 'translate' && this.attachedId) deps.snap?.begin(this.attachedId);
+        return;
+      }
+      // 提交那段原先是三个条件、两条 early return。改成嵌套的 if 再套一层 finally，为的是
+      // 让收尾那几句一定跑得到：
+      //   * 「点一下不拖」（!movedDuringDrag）是用户每天做几十次的事，早退的话
+      //     dragging 永远停在 true，之后所有的工具切换都被当成「还在拖」挂起，手柄再也换不动；
+      //   * onCommit 抛出（store 校验不过、对象刚被别处删掉）走的是 return 挡不住的那条路，
+      //     所以光靠嵌套 if 不够，得用 finally。用户看到的只是「按 W 没反应」，
+      //     根本联想不到几步之前那次拖拽。
+      try {
+        if (this.movedDuringDrag && this.attachedId) {
+          // 拖到一半对象被删了（撤销、另一个窗口）时 object 会是 null。照着它读变换会抛，
+          // 而这条处理链一断，上面那句 `orbit.enabled = true` 之后的收尾全没了。
+          const node = deps.controls.object as THREE.Object3D | null;
+          if (node) {
+            // 落地必须赶在读变换之前。反过来的话提交回 store 的是半空中那个位置，
+            // 而节点上已经是落地后的 y，下一帧引擎按 store 又把它写回去——画面上是
+            // 物体落下去又弹回原处，撤销一步也退不回来（历史里压根没记下落地）。
+            this.dropOnRelease(this.attachedId, node);
+            deps.onCommit(this.attachedId, readTransform(node));
+          }
+        }
+      } finally {
+        this.dragging = false;
+        // 先清再放：applyMode 里万一又抛，挂起的这一次也不会留到下一次拖拽结束再放一遍。
+        const pending = this.pendingMode;
+        this.pendingMode = undefined;
+        if (pending !== undefined) this.applyMode(pending);
+      }
+    });
+
+    deps.controls.addEventListener('objectChange', () => {
+      this.movedDuringDrag = true;
+      this.snapWhileDragging();
+      deps.onChange();
+    });
+  }
+
+  /**
+   * 挂到某个对象节点上。传 null 或锁定对象都等于摘掉手柄。
+   *
+   * 两条分支末尾都要重算一次可见性：three 的 `attach()` 内部会写死 `_root.visible = true`
+   * （`detach()` 写死 false），它并不知道当前工具要不要手柄、也不知道正在截图。少了这一句，
+   * 「W 工具下点另一个物体」和「录制途中换选中项」都会把本不该在的手柄放回画面——前者是
+   * 个接不到指针事件的鬼影，后者直接烤进成片。
+   */
+  attach(node: THREE.Object3D | null): void {
+    const objectId = node?.userData?.previzObjectId;
+    if (!node || node.userData?.previzLocked === true || typeof objectId !== 'string') {
+      this.attachedId = null;
+      this.deps.controls.detach();
+      this.applyVisibility();
+      return;
+    }
+    this.attachedId = objectId;
+    this.deps.controls.attach(node);
+    this.applyVisibility();
+  }
+
+  /**
+   * 换手柄模式；`null` 表示当前工具（选择/导航/绘制/标记）压根不要手柄。
+   *
+   * 拖拽中的切换必须压到松手：three 的 `TransformControls` 每个指针处理器都以
+   * `if ( this.enabled === false ) return;` 开头，拖到一半把 enabled 置 false，它内部的
+   * `dragging` 会永远停在 true，`dragging-changed` 的收尾再也不来，上面那句
+   * `orbit.enabled = true` 就永远不跑——轨道相机就此死掉，用户只能重开编辑器。
+   */
+  setMode(mode: GizmoMode | null): void {
+    if (this.dragging) {
+      this.pendingMode = mode;
+      return;
+    }
+    this.applyMode(mode);
+  }
+
+  /** 截图前把手柄藏掉——箭头进了截图就毁了整张参考图。 */
+  setHelperVisible(visible: boolean): void {
+    this.captureVisible = visible;
+    this.applyVisibility();
+  }
+
+  /**
+   * 松手吸附：把对象落到它正下方的表面上。
+   *
+   * 只认自由移动（`XYZ`）和水平面（`XZ`）这两根手柄。拖 Y 轴、拖 `XY` / `YZ` 这两个
+   * 竖直面，用户都是**刻意**在调高度，落一次就把他刚调好的高度抹掉，这几根手柄等于
+   * 失灵；单轴的 X / Z 同理，他要的就是「只动这一根」。
+   *
+   * 还得看模式：三套手柄共用同一批名字，旋转和缩放的中心那颗也叫 `XYZ`。只看 axis
+   * 的话原地转一个物体就会把它吸到地上——转的时候谁都没打算挪它。
+   *
+   * `axis` 必须在这一刻读。three 的 `pointerUp` 是先 `this.dragging = false`（这一句
+   * 经由 defineProperty 派发的正是我们所在的这个事件），**下一句**才 `this.axis = null`
+   * （0.185 `TransformControls.js:784-785`）。挪到别处读拿到的一定是 null，整个吸附
+   * 一次都不会发生，而且不报任何错。
+   */
+  private dropOnRelease(objectId: string, node: THREE.Object3D): void {
+    if (this.mode !== 'translate') return;
+    const axis = this.deps.controls.axis;
+    if (axis !== 'XYZ' && axis !== 'XZ') return;
+    const y = this.deps.dropToSurface?.(objectId);
+    // null 是「这次不该落地」，不是「落到 0」：当成 0 用的话，一个还在加载的模型
+    // 松手就被拍到地面上。
+    if (typeof y === 'number') node.position.y = y;
+  }
+
+  /**
+   * 拖动中吸附。three 每次指针移动都按「起点 + 位移」重算位置，而不是在上一帧的位置上
+   * 累加，所以这里在它算完之后再推一把不会越推越远：下一次移动又从干净的位置起算。
+   *
+   * 只吸正在拖的那几个轴：拖 X 轴手柄的人要的是「只动 X」，被吸得在 Z 上跳一下就失控了。
+   */
+  private snapWhileDragging(): void {
+    if (!this.dragging || this.mode !== 'translate' || !this.attachedId || !this.deps.snap) return;
+    const axis = this.deps.controls.axis ?? '';
+    const node = this.deps.controls.object as THREE.Object3D | null;
+    if (!node) return;
+    const offset = this.deps.snap.offset(this.attachedId, {
+      x: axis.includes('X'),
+      z: axis.includes('Z'),
+    });
+    if (!offset) return;
+    node.position.x += offset.dx;
+    node.position.z += offset.dz;
+  }
+
+  private applyMode(mode: GizmoMode | null): void {
+    this.mode = mode;
+    this.modeVisible = mode !== null;
+    // 只藏 helper 是不够的：控件还在接指针事件，用户会在一片看不见任何东西的画面里
+    // 莫名其妙地把选中的物体拖走，而且完全找不到是什么把它拖动的。
+    this.deps.controls.enabled = mode !== null;
+    if (mode) this.deps.controls.setMode(mode);
+    this.applyVisibility();
+  }
+
+  /**
+   * 三个理由取与，是可见性唯一的落笔处。
+   *
+   * `attachedId` 也要参与：没挂上对象时手柄拖不动任何东西，让它亮着只是在画面正中留一副
+   * 谁也用不了的箭头。three 自己是靠 attach/detach 管这半件事的，我们既然接管了另外两个
+   * 理由，就得把这一个也算进来——否则 `setMode` 会替一个空控件开灯。
+   */
+  private applyVisibility(): void {
+    this.deps.controls.getHelper().visible =
+      this.attachedId !== null && this.modeVisible && this.captureVisible;
+  }
+
+  dispose(): void {
+    this.deps.controls.detach();
+    this.deps.root.remove(this.deps.controls.getHelper());
+    this.deps.controls.dispose();
+  }
+}
+
+/** three 的 Euler 是弧度，场景里存的是度。 */
+function readTransform(node: THREE.Object3D): PrevizTransform {
+  return {
+    position: [node.position.x, node.position.y, node.position.z],
+    rotation: [
+      node.rotation.x * RAD_TO_DEG,
+      node.rotation.y * RAD_TO_DEG,
+      node.rotation.z * RAD_TO_DEG,
+    ],
+    scale: [node.scale.x, node.scale.y, node.scale.z],
+  };
+}

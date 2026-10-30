@@ -687,3 +687,54 @@ def test_save_canvas_allows_manual_clear_of_last_node(tmp_path: Path) -> None:
     assert result.payload["revision"] == 2
     assert saved["nodes"] == []
     assert len(list((canvas_file.parent / "_history").glob("default.rev1.*.json"))) == 1
+
+
+def test_save_rejects_multiple_story_groups_without_changing_canvas(tmp_path):
+    group = {"id": "story", "type": "groupNode", "data": {"storyGroup": True}}
+    original = {"revision": 1, "nodes": [group], "edges": []}
+    canvas_store.save_canvas(
+        tmp_path, "c", base_revision=0, build_payload=lambda _: original,
+    )
+    path = canvas_store.canvas_path(tmp_path, "c")
+    before = path.read_bytes()
+    history = canvas_store.list_canvas_history(tmp_path, "c")
+    with pytest.raises(canvas_store.CanvasStoryGroupLimit):
+        canvas_store.save_canvas(
+            tmp_path, "c", base_revision=1,
+            build_payload=lambda _: {**original, "revision": 2, "nodes": [group, {**group, "id": "second"}]},
+        )
+    assert path.read_bytes() == before
+    assert canvas_store.list_canvas_history(tmp_path, "c") == history
+    # Regular groups and stories on separate canvases remain supported.
+    canvas_store.save_canvas(
+        tmp_path, "c", base_revision=1,
+        build_payload=lambda _: {**original, "revision": 2, "nodes": [group, {"id": "normal", "type": "groupNode", "data": {}}]},
+    )
+    canvas_store.save_canvas(tmp_path, "other", base_revision=0, build_payload=lambda _: original)
+
+
+def test_story_group_limit_maps_to_structured_http_error():
+    from fastapi import HTTPException
+    from novelvideo.api.routes.freezone import _raise_canvas_store_http
+
+    with pytest.raises(HTTPException) as error:
+        _raise_canvas_store_http(canvas_store.CanvasStoryGroupLimit())
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "story_group_limit"
+
+
+def test_restore_cannot_reintroduce_multiple_story_groups(tmp_path, monkeypatch):
+    group = {"id": "story", "type": "groupNode", "data": {"storyGroup": True}}
+    payload = {"revision": 1, "nodes": [group], "edges": []}
+    canvas_store.save_canvas(tmp_path, "c", base_revision=0, build_payload=lambda _: payload)
+    path = canvas_store.canvas_path(tmp_path, "c")
+    before = path.read_bytes()
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps({**payload, "nodes": [group, {**group, "id": "second"}]}))
+    monkeypatch.setattr(canvas_store, "resolve_canvas_history_file", lambda *args: old)
+    with pytest.raises(canvas_store.CanvasStoryGroupLimit):
+        canvas_store.restore_canvas_version(
+            tmp_path, "c", base_revision=1, history_id="old",
+            build_payload=lambda _, historical: {**historical, "revision": 2},
+        )
+    assert path.read_bytes() == before

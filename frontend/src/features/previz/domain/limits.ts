@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import type { PrevizObject, PrevizObjectKind, PrevizScene } from './scene';
+
+/**
+ * 每种对象的数量上限，来源见设计文档「限制」一节。Record 保证新增对象类型时这里编译期报错。
+ *
+ * `prop` 这一项只管**导入的模型**（glb / gltf / obj）。基础几何体单独计数，
+ * 见 `PREVIZ_PRIMITIVE_LIMIT`。
+ */
+export const PREVIZ_OBJECT_LIMITS: Record<PrevizObjectKind, number> = {
+  character: 50,
+  camera: 30,
+  light: 12,
+  // 物件常拿来拼布景（地块、路灯、围栏），一条街就是几十块。同一个模型只下载一次，
+  // 副本共用几何体与材质，多一件的代价是一次绘制调用和几百字节的场景 JSON。
+  prop: 200,
+};
+
+/**
+ * 基础几何体的数量上限，与导入模型的上限互不占用。
+ *
+ * 分开算是因为两者根本不是一个量级的开销：导入模型一个就可能是几十万面外加贴图，
+ * 而一个方块 12 个三角面、场景里只多一条三百来字节的记录。一张参考图转出来的白模
+ * 是几十到上百个方块，跟模型挤同一个 20 的话，白模连一间屋子都搭不完。
+ */
+export const PREVIZ_PRIMITIVE_LIMIT = 150;
+
+/**
+ * 场景字节阈值。这是整画布 5 MB 请求体上限的前置护栏——canvasSyncCore 收到
+ * 413 / canvas_payload_too_large 后会进终态并永久停掉自动保存，炸掉的是整张
+ * 画布而不只是这一个节点，所以宁可在这里先拦。
+ */
+export const PREVIZ_SCENE_BYTE_LIMITS = {
+  warn: 256 * 1024,
+  offload: 1024 * 1024,
+} as const;
+
+/**
+ * 动作相关上限，来源见设计文档「边界与兼容 → 限制」。
+ *
+ * `durationSec` 是单条导入动作的时长上限：重定向在主线程逐帧重采样，60 秒 × 30 fps
+ * 已经是 1800 帧 × 60 根骨头，再长就是肉眼可见的卡顿。
+ */
+export const PREVIZ_MOTION_LIMITS = {
+  imported: 30,
+  fileBytes: 50 * 1024 * 1024,
+  durationSec: 60,
+  clipsPerCharacter: 60,
+} as const;
+
+export function isPrimitiveProp(object: PrevizObject): boolean {
+  return object.kind === 'prop' && object.assetFormat === 'primitive';
+}
+
+/** `kind` 为 `prop` 时只数导入的模型，基础几何体归 `countPrimitives`。 */
+export function countObjects(scene: PrevizScene, kind: PrevizObjectKind): number {
+  return scene.objects.filter((object) => object.kind === kind && !isPrimitiveProp(object)).length;
+}
+
+export function countPrimitives(scene: PrevizScene): number {
+  return scene.objects.filter(isPrimitiveProp).length;
+}
+
+/** `kind` 为 `prop` 时问的是「还能不能再导入一个模型」。 */
+export function canAddObject(scene: PrevizScene, kind: PrevizObjectKind): boolean {
+  return countObjects(scene, kind) < PREVIZ_OBJECT_LIMITS[kind];
+}
+
+export function canAddPrimitive(scene: PrevizScene): boolean {
+  return countPrimitives(scene) < PREVIZ_PRIMITIVE_LIMIT;
+}
+
+/** 估算的是 scene 子树自身，不含它写回 node.data 后外层 key 的开销（个位数字节，可忽略）。 */
+export function estimateSceneBytes(scene: PrevizScene): number {
+  return new TextEncoder().encode(JSON.stringify(scene)).length;
+}
+
+export type SceneSizeVerdict = 'ok' | 'warn' | 'offload';
+
+/** 非有限输入按最严档处理：判错的代价是丢掉整张画布的自动保存，不能往宽松方向兜。 */
+export function classifySceneSize(bytes: number): SceneSizeVerdict {
+  if (!Number.isFinite(bytes)) return 'offload';
+  if (bytes >= PREVIZ_SCENE_BYTE_LIMITS.offload) return 'offload';
+  if (bytes >= PREVIZ_SCENE_BYTE_LIMITS.warn) return 'warn';
+  return 'ok';
+}

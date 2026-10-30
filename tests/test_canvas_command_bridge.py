@@ -597,3 +597,87 @@ def test_find_clarification_bridge_message_ignores_expired_card(tmp_path) -> Non
         project_id="project-a", canvas_id="canvas-a",
         clarification_id="clarify_old", bridge_dir=bridge_dir,
     ) is None
+
+
+def test_clarification_remains_answerable_after_tool_wait_timeout(
+    monkeypatch, tmp_path
+):
+    clock = [1000.0]
+    monkeypatch.setattr(canvas_command_bridge.time, "time", lambda: clock[0])
+    canvas_command_bridge.put_pending_clarification_event(
+        key="late-card",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event={"clarification_id": "late-choice"},
+        bridge_dir=tmp_path,
+    )
+    clock[0] += 601
+    found = canvas_command_bridge.find_clarification_bridge_message(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        clarification_id="late-choice",
+        bridge_dir=tmp_path,
+    )
+    assert found is not None
+    result = canvas_command_bridge.resolve_clarification_result(
+        "late-card",
+        {"ok": True, "answers": {"model": "chosen"}},
+        bridge_dir=tmp_path,
+    )
+    assert result["ok"] is True
+
+
+def test_concurrent_clarification_retries_share_one_card_and_preserve_answer(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    event = {"clarification_id": "same-choice", "questions": [{"id": "model"}]}
+    key = canvas_command_bridge.clarification_bridge_key(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event=event,
+    )
+
+    def publish(_):
+        assert (
+            canvas_command_bridge.clarification_bridge_key(
+                project_id="project-a",
+                canvas_id="canvas-a",
+                event=event,
+            )
+            == key
+        )
+        return canvas_command_bridge.put_pending_clarification_event(
+            key=key,
+            project_id="project-a",
+            canvas_id="canvas-a",
+            event=event,
+            bridge_dir=tmp_path,
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(publish, range(8)))
+    assert (
+        len(
+            canvas_command_bridge.list_pending_bridge_messages(
+                project_id="project-a",
+                canvas_id="canvas-a",
+                bridge_dir=tmp_path,
+            )
+        )
+        == 1
+    )
+    answer = canvas_command_bridge.resolve_clarification_result(
+        key,
+        {"ok": True, "answers": {"model": "chosen"}},
+        bridge_dir=tmp_path,
+    )
+    assert publish(0) == answer
+    assert (
+        canvas_command_bridge.wait_clarification_result(
+            key,
+            timeout_seconds=0,
+            bridge_dir=tmp_path,
+        )
+        == answer
+    )
+    assert not (tmp_path / f"{key}.pending.json").exists()

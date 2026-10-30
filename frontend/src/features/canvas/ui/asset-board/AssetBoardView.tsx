@@ -12,6 +12,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
+import i18next from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown, ImageIcon, Maximize2, Minimize2, Play } from 'lucide-react';
 
@@ -38,6 +39,9 @@ import { KeyElementsBar } from './KeyElementsBar';
 
 type VideoFilter = 'all' | 'final' | 'clip';
 
+/** 第一栏显示文本还是预演台（栏标题处下拉切换）。 */
+type FirstColumn = 'text' | 'previz';
+
 /** 图片灯箱状态（视频不再走弹窗——详情面板里内联 <video controls> 播放）。 */
 type ViewerState = { urls: string[]; index: number } | null;
 
@@ -50,6 +54,8 @@ interface DetailEntry {
 interface AssetBoardViewProps {
   /** false 时保持挂载但不可见（Shell 用 visibility 隐藏），数据源同时冻结。 */
   visible: boolean;
+  /** Space reserved for a docked assistant; workflow canvas stays full width. */
+  rightInset?: string;
   /** 「在画布中定位」：由 Shell 切回工作流并 requestFocusNode。 */
   onLocateNode: (nodeId: string) => void;
 }
@@ -64,7 +70,7 @@ const GRID_LOCATE_HIGHLIGHT_MS = 1200;
 // 冻结时 item 引用稳定，memo 让隐藏→显示切换外的重渲染跳过整卡子树。
 const MemoAssetBoardCard = memo(AssetBoardCard);
 
-export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): ReactElement {
+export function AssetBoardView({ visible, rightInset, onLocateNode }: AssetBoardViewProps): ReactElement {
   const { t } = useTranslation();
   const videoFilters: ReadonlyArray<{ value: VideoFilter; label: string }> = [
     { value: 'all', label: t('assetBoard.all') },
@@ -90,6 +96,7 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
   const board = useMemo(() => buildAssetBoard(nodes, edges), [nodes, edges]);
 
   const [videoFilter, setVideoFilter] = useState<VideoFilter>('all');
+  const [firstColumn, setFirstColumn] = useState<FirstColumn>('text');
   // 放大态：把图片/视频栏摊成右半边的宽幅网格（左边只留关键元素 + 文本栏），
   // 再点收起按钮回三栏。详情打开时优先渲染详情，关掉详情仍回到放大态。
   const [expandedColumn, setExpandedColumn] = useState<'image' | 'video' | null>(null);
@@ -110,14 +117,14 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
     [board.video, videoFilter],
   );
 
-  // 关键元素：四栏里所有被标记（keyElementCategory 非空）的条目，跨栏收集，供顶部
-  // 关键元素栏常驻展示。按栏顺序（文本/图片/视频/音频，各栏内已是创建序新→旧）拼接。
+  // 关键元素：各栏里所有被标记（keyElementCategory 非空）的条目，跨栏收集，供顶部
+  // 关键元素栏常驻展示。按栏顺序（文本/预演台/图片/视频/音频，各栏内已是创建序新→旧）拼接。
   const keyElements = useMemo(
     () =>
-      [...board.text, ...board.image, ...board.video, ...board.audio].filter(
+      [...board.text, ...board.previz, ...board.image, ...board.video, ...board.audio].filter(
         (item) => item.keyElementCategory !== null,
       ),
-    [board.text, board.image, board.video, board.audio],
+    [board.text, board.previz, board.image, board.video, board.audio],
   );
 
   // 图片灯箱的翻页列表：图片栏全部有图卡片。
@@ -129,17 +136,25 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
   // nodeId → 故事板条目（详情面板与参考跨栏跳转的查找表）。
   const itemById = useMemo(() => {
     const map = new Map<string, AssetBoardItem>();
-    for (const list of [board.text, board.image, board.video, board.audio]) {
+    for (const list of [board.text, board.previz, board.image, board.video, board.audio]) {
       for (const item of list) map.set(item.nodeId, item);
     }
     return map;
-  }, [board.text, board.image, board.video, board.audio]);
+  }, [board.text, board.previz, board.image, board.video, board.audio]);
 
   // 点击语义：任意卡片/音频 chip（文本/图片/视频/音频）→ 打开详情面板。「跳画布」
   // 只保留卡片准星按钮与详情内「在画布中定位」。
-  const openItem = useCallback((item: AssetBoardItem) => {
-    setDetailStack([{ column: item.column, nodeId: item.nodeId }]);
-  }, []);
+  // 预演台例外：3D 编辑器挂在画布节点里，故事板没有它的详情 → 直接跳回画布定位。
+  const openItem = useCallback(
+    (item: AssetBoardItem) => {
+      if (item.column === 'previz') {
+        onLocateNode(item.nodeId);
+        return;
+      }
+      setDetailStack([{ column: item.column, nodeId: item.nodeId }]);
+    },
+    [onLocateNode],
+  );
 
   // 详情内点参考缩略图：被引用节点有故事板详情可开 → push（左栏自动切栏）；
   // 否则（参考图无对应画布节点详情，如已不入板的类型）退化为灯箱单图。
@@ -151,7 +166,7 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
     (ref: AssetBoardReference) => {
       // 自带参考图（nodeId=null）无对应画布节点详情 → 直接退化为灯箱看图。
       const target = ref.nodeId ? itemById.get(ref.nodeId) : undefined;
-      if (target && target.column !== 'audio') {
+      if (target && target.column !== 'audio' && target.column !== 'previz') {
         // 提出 const：属性收窄不会穿透进 setState 回调闭包。
         const column = target.column;
         const nodeId = target.nodeId;
@@ -182,6 +197,10 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
     (nodeId: string) => {
       const target = itemById.get(nodeId);
       if (!target) return; // 不在故事板里（无对应卡片）→ 无处可滚，静默忽略。
+      // 文本与预演台共用第一栏：目标在哪类就先把第一栏切过去，卡片才渲染得出来。
+      if (target.column === 'text' || target.column === 'previz') {
+        setFirstColumn(target.column);
+      }
       setDetailStack((stack) => {
         const active = stack.length > 0 ? stack[stack.length - 1] : null;
         return active && active.column === target.column ? stack : [];
@@ -196,6 +215,7 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
   // 重渲染，闭包里的 itemById 仍是上一帧的快照，查不到它——查表会让「创建副本」
   // 变成静默无事发生。副本与源节点同类型，栏必然相同，调用方直接把 column 带过来。
   const openNodeDetail = useCallback((nodeId: string, column: BoardColumnKind) => {
+    if (column === 'previz') return; // 预演台没有故事板详情（见 openItem）。
     setDetailStack([{ column, nodeId }]);
   }, []);
 
@@ -226,7 +246,7 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
   // 详情态左窄列表「显示哪一栏」——与右侧 activeDetail 解耦：头部下拉切栏只改这个，
   // 右侧详情面板始终跟 activeDetail 不变。默认（及每次 activeDetail 切到新节点）回到
   // 该节点所在栏；用户从下拉手动切栏后保持其选择，直到 activeDetail 再次变化。
-  const [leftListColumn, setLeftListColumn] = useState<'text' | 'image' | 'video'>('image');
+  const [leftListColumn, setLeftListColumn] = useState<LeftColumn>('image');
   // 渲染期同步派生 state（非 effect）：每当 activeDetail 切到新的(栏,节点)——打开卡片、
   // 参考跳转 push、← 弹栈——把左列表重置回该栏。用 last-key ref 守卫，保证「同一详情内
   // 用户手动下拉切栏」不会被这条同步覆盖（activeDetail 未变→key 未变→不重置）。
@@ -290,7 +310,7 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
   // 音频不走这里——它的切换器在顶栏音频标签里（KeyElementsBar）。
   // titleSlot：详情态左窄列表传入「文本/图片/视频」切换下拉替换默认标题（见 return 内主从分支）。
   const renderBoardColumn = (
-    column: 'text' | 'image' | 'video',
+    column: LeftColumn,
     titleSlot?: ReactNode,
     // 「放大」按钮只在总览三栏里有意义：详情态右半边被详情面板占着，放大态右半边
     // 被网格占着，两种布局下点它都不会有任何变化（只会埋下「关掉详情后突然变成
@@ -316,6 +336,24 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
             paused={!visible}
             // 文本卡只有一行图标+标题，本来就是一条条列表，不需要分割线（用户要求）；
             // 分割线只给图片/视频这种「一个节点一大块内容」的栏。
+          />
+        );
+      case 'previz':
+        return (
+          <BoardColumn
+            title={i18next.t('previz.editor.title')}
+            titleSlot={titleSlot}
+            items={board.previz}
+            emptyText={i18next.t('previz.board.emptyColumn')}
+            onOpen={openItem}
+            onLocate={onLocateNode}
+            onPreviewImage={previewImage}
+            onOpenReference={openReference}
+            onLocateReference={locateInBoard}
+            selectedNodeId={selectedNodeId}
+            scrollRequest={scrollRequest}
+            paused={!visible}
+            dividedItems
           />
         );
       case 'image':
@@ -422,19 +460,31 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
     );
   };
 
+  // 总览/放大态的第一栏：文本与预演台共用，栏标题即切换下拉。
+  const firstBoardColumn = renderBoardColumn(
+    firstColumn,
+    <BoardSelect
+      value={firstColumn}
+      options={FIRST_COLUMN_OPTIONS}
+      onSelect={setFirstColumn}
+      menuLabel={i18next.t('previz.board.switchFirstColumn')}
+      triggerClassName={COLUMN_TITLE_SELECT_CLASS}
+    />,
+  );
+
   return (
     <div
       aria-hidden={!visible}
       className={cn(
-        // pt-12: 给 Shell 顶部居中的视图切换开关(top-1.5, h-8 → 底沿距根顶 38px)留空间。
-        // 取 48px 让内容与开关只隔 ~10px（原 pt-16=64px 会空出 26px，用户嫌太远）。
+        // pt-12 leaves room for the header's floating workflow/storyboard tabs.
         // pb-0: 三栏面板贴到底部、与任务中心状态栏之间不留空隙（对标 liblib，
         // 栏壳底部配 rounded-b-none 直角贴边，见 AssetBoardColumn）。
         // 根背景保持语义 token bg-background：比 #262626 面板更暗，让三栏/音频条
         // 呈现"浮起"的层次（面板色见 AssetBoardColumn 与下方音频条）。
-        'absolute inset-0 z-30 flex flex-col gap-3 bg-background px-4 pt-12 pb-0',
+        'freezone-asset-board absolute inset-0 z-30 flex flex-col gap-3 overflow-x-auto bg-background px-4 pt-12 pb-0',
         visible ? 'visible' : 'invisible',
       )}
+      style={{ right: rightInset }}
     >
       {/* 三栏总览态：关键元素栏横在最上方通栏（对标 liblib「关键元素 · 全部 ▾ 音频」）。
           详情态/放大态它改挂到左列里，把右半边整个让给详情面板或宽幅网格。 */}
@@ -472,14 +522,14 @@ export function AssetBoardView({ visible, onLocateNode }: AssetBoardViewProps): 
         <div className="flex min-h-0 flex-1 gap-3">
           <div className="flex w-[340px] shrink-0 flex-col gap-3">
             {keyElementsBar}
-            {renderBoardColumn('text')}
+            {firstBoardColumn}
           </div>
           {renderExpandedColumn(expandedColumn)}
         </div>
       ) : (
         // 三栏可拖拽调宽：分隔条拖动改各栏占比，松手落库（AssetBoardColumns）。
         <AssetBoardColumns
-          text={renderBoardColumn('text')}
+          text={firstBoardColumn}
           image={renderBoardColumn('image', undefined, { expandable: true })}
           video={renderBoardColumn('video', undefined, { expandable: true })}
         />
@@ -530,7 +580,7 @@ interface BoardColumnProps {
   paused?: boolean;
 }
 
-// 内部薄封装：把 items 铺进栏壳，避免三栏重复 JSX。
+// 内部薄封装：把 items 铺进栏壳，避免各栏重复 JSX。
 function BoardColumn({
   title,
   items,
@@ -577,7 +627,19 @@ function BoardColumn({
   );
 }
 
-type LeftColumn = 'text' | 'image' | 'video';
+type LeftColumn = 'text' | 'previz' | 'image' | 'video';
+
+const LEFT_COLUMN_OPTIONS: ReadonlyArray<{ value: LeftColumn; label: string }> = [
+  { value: 'text', get label() { return i18next.t('assetBoard.text'); } },
+  {
+    value: 'previz',
+    get label() {
+      return i18next.t('previz.editor.title');
+    },
+  },
+  { value: 'image', get label() { return i18next.t('assetBoard.image'); } },
+  { value: 'video', get label() { return i18next.t('assetBoard.video'); } },
+];
 
 /**
  * 栏头右上角的「放大 / 收起」按钮：把图片或视频栏摊成右半边的宽幅网格，再点收回
@@ -790,7 +852,16 @@ function BoardSelect<T extends string>({
   );
 }
 
-/** 详情态左窄列表头部的「文本/图片/视频」切换下拉（切栏只改左列表，右侧详情不受影响）。 */
+const FIRST_COLUMN_OPTIONS = LEFT_COLUMN_OPTIONS.filter(
+  (option): option is { value: FirstColumn; label: string } =>
+    option.value === 'text' || option.value === 'previz',
+);
+
+/** 栏标题位置的切换下拉触发器样式（第一栏与详情态左窄列表共用）。 */
+const COLUMN_TITLE_SELECT_CLASS =
+  '-mx-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-sm font-medium text-foreground transition-colors hover:bg-white/5';
+
+/** 详情态左窄列表头部的「文本/预演台/图片/视频」切换下拉（切栏只改左列表，右侧详情不受影响）。 */
 function LeftColumnSwitcher({
   current,
   onSelect,
@@ -801,6 +872,7 @@ function LeftColumnSwitcher({
   const { t } = useTranslation();
   const options: ReadonlyArray<{ value: LeftColumn; label: string }> = [
     { value: 'text', label: t('assetBoard.text') },
+    { value: 'previz', label: t('previz.editor.title') },
     { value: 'image', label: t('assetBoard.image') },
     { value: 'video', label: t('assetBoard.video') },
   ];
@@ -810,7 +882,7 @@ function LeftColumnSwitcher({
       options={options}
       onSelect={onSelect}
       menuLabel={t('assetBoard.switchColumn')}
-      triggerClassName="-mx-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-sm font-medium text-foreground transition-colors hover:bg-white/5"
+      triggerClassName={COLUMN_TITLE_SELECT_CLASS}
     />
   );
 }

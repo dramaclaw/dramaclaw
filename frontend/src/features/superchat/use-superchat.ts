@@ -40,6 +40,10 @@ import {
   type CanvasContextToolResultPayload,
 } from "@/features/freezone/canvasContextToolResult";
 import { FREEZONE_CANVAS_WRITE_TOOL_NAME_SET } from "@/features/freezone/canvasCommandTools";
+import {
+  interactiveStoryRefreshTarget,
+  refreshInteractiveStoryCanvasFromToolFrame,
+} from "@/features/freezone/interactiveStoryCanvasRefresh";
 import { CANVAS_NODE_REFERENCE_ATTACHMENT_TYPE } from "@/features/freezone/chatNodeReferences";
 import { api } from "@/lib/api";
 import {
@@ -1103,7 +1107,7 @@ function upsertAssistantUiEvent(
   event: unknown,
 ): ChatMessage[] {
   const receivedAt = Date.now();
-  const eventWithReceivedAt = event && typeof event === "object" && !Array.isArray(event)
+  let eventWithReceivedAt = event && typeof event === "object" && !Array.isArray(event)
     ? {
         ...(event as Record<string, unknown>),
         received_at:
@@ -1112,6 +1116,29 @@ function upsertAssistantUiEvent(
             : receivedAt,
       }
     : event;
+  // A delayed delivery must not reopen a card already answered in another turn.
+  const incoming = eventWithReceivedAt as Record<string, unknown> | null;
+  if (incoming?.type === "assistant.clarification.request" && incoming.submitted !== true) {
+    const settled = messages.flatMap((message) => [
+      ...(message.uiEvents ?? []),
+      ...(message.parts ?? []).filter((part) => part.type !== "text").map((part) => part.event),
+    ]).find((candidate) => {
+      if (!candidate || typeof candidate !== "object") return false;
+      const previous = candidate as Record<string, unknown>;
+      return previous.type === incoming.type && previous.submitted === true && (
+        (incoming.bridge_key && previous.bridge_key === incoming.bridge_key)
+        || (incoming.clarification_id && previous.clarification_id === incoming.clarification_id)
+      );
+    }) as Record<string, unknown> | undefined;
+    if (settled) {
+      const settledEvent: Record<string, unknown> = { ...incoming };
+      for (const field of ["submitted", "cancelled", "action", "clarification_status",
+        "answers", "questions", "skipped", "used_recommended"] as const) {
+        if (settled[field] !== undefined) settledEvent[field] = settled[field];
+      }
+      eventWithReceivedAt = settledEvent;
+    }
+  }
   const id = `assistant-${turnId}`;
   const existingIndex = messages.findIndex((message) => message.id === id);
   if (existingIndex >= 0) {
@@ -1163,13 +1190,13 @@ export const resolveUiEventTurnIdForTest = resolveUiEventTurnId;
 
 function updateAssistantUiEvents(
   messages: ChatMessage[],
-  turnId: string,
+  turnId: string | null,
   shouldUpdate: (event: unknown) => boolean,
   updateEvent: (event: unknown) => unknown,
 ): ChatMessage[] {
   let changed = false;
   const nextMessages = messages.map((message) => {
-    if (message.role !== "assistant" || message.turnId !== turnId) {
+    if (message.role !== "assistant" || (turnId !== null && message.turnId !== turnId)) {
       return message;
     }
     const uiEvents = message.uiEvents?.map((event) => {
@@ -1910,6 +1937,7 @@ export function useSuperChat({
   canvasId,
   freezoneCanvasId,
   freezoneAgentId,
+  freezoneComposeNodeId = null,
   connectionEnabled = true,
 }: {
   project?: string;
@@ -1918,9 +1946,12 @@ export function useSuperChat({
   canvasId?: string | null;
   freezoneCanvasId?: string | null;
   freezoneAgentId?: string | null;
+  /** 视频合成与剪辑工作区里正在剪的节点；不在工作区时为 null，不随消息发送。 */
+  freezoneComposeNodeId?: string | null;
   connectionEnabled?: boolean;
 }) {
   const normalizedFreezoneCanvasId = canvasId ?? freezoneCanvasId ?? null;
+  const normalizedComposeNodeId = freezoneComposeNodeId?.trim() || null;
   const desiredScope = useMemo(
     () => scopeForProject(project, surface, normalizedFreezoneCanvasId, freezoneAgentId),
     [freezoneAgentId, normalizedFreezoneCanvasId, project, surface],
@@ -2574,6 +2605,12 @@ export function useSuperChat({
           : activeTurnIdRef.current;
         if (!turnId || cancelledTurnIdsRef.current.has(turnId)) break;
         updatePendingSkillStudioDraftChunksFromToolFrame(pendingSkillStudioDraftChunksRef.current, frame);
+        const storyRefresh = interactiveStoryRefreshTarget(frame);
+        if (storyRefresh && frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
+          void refreshInteractiveStoryCanvasFromToolFrame(frame).catch((error) => {
+            console.warn("[interactive-story] failed to refresh canvas after agent write", error);
+          });
+        }
         if (frame.type === "agent.tool.started") {
           dispatchCanvasContextRequestFrame(frame);
         }
@@ -3058,11 +3095,14 @@ export function useSuperChat({
           ? {
               freezone_canvas_id: normalizedFreezoneCanvasId,
               canvas_command_execution_mode: freezoneCanvasCommandExecutionMode(),
+              ...(normalizedComposeNodeId
+                ? { freezone_compose_node_id: normalizedComposeNodeId }
+                : {}),
             }
           : undefined,
     });
     return true;
-  }, [connected, desiredScope, displayName, markTurnActive, normalizedFreezoneCanvasId, sendFrame, surface]);
+  }, [connected, desiredScope, displayName, markTurnActive, normalizedComposeNodeId, normalizedFreezoneCanvasId, sendFrame, surface]);
 
   const appendNotification = useCallback(async (text: string): Promise<boolean> => {
     const trimmed = text.trim();
@@ -3279,19 +3319,18 @@ export function useSuperChat({
   }, []);
 
   const updateUiEvent = useCallback((
-    turnId: string,
+    turnId: string | null,
     shouldUpdate: (event: unknown) => boolean,
     updateEvent: (event: unknown) => unknown,
   ) => {
     setMessages((current) => {
       const next = updateAssistantUiEvents(current, turnId, shouldUpdate, updateEvent);
       if (next !== current) {
-        const persistedMessage = next.find((message) => message.role === "assistant" && message.turnId === turnId);
-        persistAssistantMessageParts(
-          turnId,
-          persistedMessage?.parts,
-          persistedMessage?.text,
-        );
+        for (const [index, message] of next.entries()) {
+          if (message !== current[index] && message.role === "assistant" && message.turnId) {
+            persistAssistantMessageParts(message.turnId, message.parts, message.text);
+          }
+        }
       }
       return next;
     });
