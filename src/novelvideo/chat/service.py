@@ -400,7 +400,12 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "until the answer is returned. If the clarification tool returns "
     "clarification_frontend_timeout, tell the user the card is still waiting and will reappear "
     "on their next message; when they reply, call the tool again with the same clarification_id "
-    "to resume that card instead of building a new one. This rule applies to generation or run requests, including "
+    "to resume that card instead of building a new one. Keep a stable context_key describing "
+    "the creative step and subject, and target_node_ids when known, across retries. "
+    "Set new_request=true when the user explicitly wants to change/reselect choices or "
+    "reopen a cancelled/expired card; reopening a pending card is recovery. "
+    "Reuse returned confirmed answers. "
+    "This rule applies to generation or run requests, including "
     "run_after_create=true. It also applies when run_after_create=false if the user explicitly asks "
     "to configure image/video node parameters. It does not apply when the user only asks to create "
     "empty nodes, connect, group, lay out, or edit them without generation parameters. It is an "
@@ -2782,8 +2787,6 @@ def _append_message(
     )
 
 
-
-
 def _bounded_workflow_planning_reply(text: str, *, draft_ready: bool) -> str:
     """Do not deliver a large unmetered text artifact as a planning reply."""
     if (
@@ -3915,6 +3918,7 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_AGENT_TOKEN_FILE",
                 "DRAMACLAW_CANVAS_ID",
                 "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",
+                "DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS",
                 "DRAMACLAW_CHAT_SURFACE",
                 "DRAMACLAW_EXTERNAL_MCP",
                 "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
@@ -3927,6 +3931,7 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_USERNAME",
                 "NOVELVIDEO_OUTPUT_DIR",
                 "PYTHONPATH",
+                "PYTHON_DOTENV_DISABLED",
                 "SUPERTALE_OPENFILM_STUDIO_ENABLED",
             ],
         }
@@ -4185,6 +4190,31 @@ def _codex_gateway_config_overrides(
     return tuple(overrides)
 
 
+def _bind_clarification_recovery(
+    *,
+    project: str,
+    canvas_id: str,
+    request_prompt: str | None,
+    bridge_dir: str | Path,
+) -> None:
+    from novelvideo.freezone.canvas_command_bridge import put_clarification_turn_context
+
+    text = re.sub(r"\s+", "", str(request_prompt or "")).lower()
+    changing = re.search(
+        r"修改|更改|改成|重选|重新选择|重新配置|另一个|其他角色|其他节点|别的|change|reselect|another|different",
+        text,
+    )
+    reopening = re.search(
+        r"重新弹出|重弹|再弹|重新打开(?:参数|选择|选项|问题)?(?:卡|框)|打开参数卡|reopen.*(?:card|question)|show.*(?:card|question).*again", text
+    )
+    put_clarification_turn_context(
+        project_id=project,
+        canvas_id=canvas_id,
+        recovery_only=bool(reopening and not changing),
+        bridge_dir=bridge_dir,
+    )
+
+
 def _build_codex_thread(
     username: str,
     project: str,
@@ -4222,6 +4252,18 @@ def _build_codex_thread(
         project_state_dir=project_state_dir,
         agent_token_file=agent_token_file,
     )
+    if (
+        tool_mode == "freezone_canvas"
+        and project
+        and canvas_id
+        and env.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR")
+    ):
+        _bind_clarification_recovery(
+            project=project,
+            canvas_id=canvas_id,
+            request_prompt=request_prompt,
+            bridge_dir=env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"],
+        )
     gateway_api_key, gateway_base_url = _codex_turn_gateway_credentials(authorization)
     exact_node_action = not exact_audio_action_plan and str(
         tool_mode or ""
@@ -4788,6 +4830,21 @@ async def _stream_assistant_reply_hermes(
         requester_user_id=requester_user_id,
         authorization=authorization,
     )
+    if tool_mode == "freezone_canvas" and project and canvas_id:
+        from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
+        from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
+
+        home = ensure_user_hermes_workspace(
+            username,
+            profile="freezone",
+            project_state_dir=project_state_dir,
+        )
+        _bind_clarification_recovery(
+            project=project,
+            canvas_id=canvas_id,
+            request_prompt=route_prompt or prompt,
+            bridge_dir=canvas_bridge_dir_for_profile(home, agent_profile),
+        )
     if store_scope is not None:
         previous_assistant = await _store_history_contents_async(
             username,

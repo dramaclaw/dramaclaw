@@ -3453,7 +3453,10 @@ def test_clarification_timeout_result_tells_agent_how_to_resume(monkeypatch):
     ).validate(result)
 
 
-def test_same_turn_repeated_clarification_without_id_reuses_existing_card(monkeypatch):
+@pytest.mark.parametrize("second_turn", ["turn-a", "turn-b"])
+def test_repeated_clarification_without_id_reuses_existing_card(
+    monkeypatch, second_turn
+):
     plugin = _load_plugin_module()
     monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-a")
     stored = {}
@@ -3494,12 +3497,311 @@ def test_same_turn_repeated_clarification_without_id_reuses_existing_card(monkey
     }
 
     first = _clarification_handler(plugin)(args)
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", second_turn)
     second = _clarification_handler(plugin)(args)
 
     assert first["ok"] is True
     assert second["ok"] is True
     assert len(emitted) == 1
     assert emitted[0]["clarification_id"].startswith("clarify_canvas-a_")
+    assert first["answers"] == second["answers"]
+
+    # A different subject or an explicit choice revision must not reuse the answer.
+    _clarification_handler(plugin)({**args, "target_node_ids": ["different-character"]})
+    assert len(emitted) == 2
+    _clarification_handler(plugin)({**args, "new_request": True})
+    assert len(emitted) == 3
+
+
+def test_clarification_recovery_and_choice_revision_use_durable_inbox(
+    monkeypatch, tmp_path
+):
+    from novelvideo.freezone import canvas_command_bridge as bridge
+
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "wait_clarification_result",
+        lambda key, **kw: bridge.wait_clarification_result(key, timeout_seconds=0),
+    )
+    args = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "context_key": "character-reference:阿叶",
+        "target_node_ids": ["character-a"],
+        "questions": [
+            {
+                "id": "style",
+                "title": "风格",
+                "options": [
+                    {"id": "a", "label": "A"},
+                    {"id": "b", "label": "B"},
+                ],
+            }
+        ],
+    }
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "first-turn")
+    first = _clarification_handler(plugin)(args)
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "reopen-turn")
+    retry = _clarification_handler(plugin)({**args, "title": "重新确认"})
+    assert retry["bridge_key"] == first["bridge_key"]
+    bridge.put_clarification_turn_context(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        recovery_only=True,
+    )
+    mistaken_reopen = {**args, "new_request": True, "clarification_id": "invented-id"}
+    assert _clarification_handler(plugin)(mistaken_reopen)["bridge_key"] == first["bridge_key"]
+    assert (
+        len(
+            bridge.list_pending_bridge_messages(
+                project_id="project-a",
+                canvas_id="canvas-a",
+            )
+        )
+        == 1
+    )
+
+    def answer(card, choice):
+        return bridge.resolve_clarification_result(
+            card["bridge_key"],
+            {
+                "ok": True,
+                "status": "clarification_frontend_result",
+                "clarification_status": "answered",
+                "action": "submit",
+                "answers": {"style": {"option_ids": [choice]}},
+            },
+        )
+
+    answer(first, "a")
+    assert _clarification_handler(plugin)(mistaken_reopen)["answers"]["style"]["option_ids"] == [
+        "a"
+    ]
+    bridge.put_clarification_turn_context(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        recovery_only=False,
+    )
+    assert _clarification_handler(plugin)(args)["answers"]["style"]["option_ids"] == [
+        "a"
+    ]
+    revised = _clarification_handler(plugin)({**args, "new_request": True})
+    assert revised["bridge_key"] != first["bridge_key"]
+    answer(revised, "b")
+    # Recovery without an id must select the newest version, not the old answer.
+    assert _clarification_handler(plugin)(args)["answers"]["style"]["option_ids"] == [
+        "b"
+    ]
+    pending_revision = _clarification_handler(plugin)({**args, "new_request": True})
+    newest = _clarification_handler(plugin)({**args, "new_request": True})
+    assert (
+        len(
+            bridge.list_pending_bridge_messages(
+                project_id="project-a",
+                canvas_id="canvas-a",
+            )
+        )
+        == 1
+    )
+    assert (
+        bridge.wait_clarification_result(
+            pending_revision["bridge_key"],
+            timeout_seconds=0,
+        )["clarification_status"]
+        == "cancelled"
+    )
+    answer(newest, "a")
+    assert _clarification_handler(plugin)(args)["answers"]["style"]["option_ids"] == [
+        "a"
+    ]
+
+
+@pytest.fixture
+def clarification_inbox(monkeypatch, tmp_path):
+    from novelvideo.freezone import canvas_command_bridge as bridge
+
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "wait_clarification_result",
+        lambda key, **kw: bridge.wait_clarification_result(key, timeout_seconds=0),
+    )
+    return plugin, bridge
+
+
+def _character_clarification(name):
+    return {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "context_key": f"character:{name}",
+        "target_node_ids": [name],
+        "questions": [
+            {
+                "id": "style",
+                "title": "Style",
+                "options": [
+                    {"id": "a", "label": "A"},
+                    {"id": "b", "label": "B"},
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize("explicit_id", [False, True])
+@pytest.mark.parametrize("answered", [False, True])
+def test_recovery_keeps_requested_character_instead_of_latest_card(
+    clarification_inbox,
+    explicit_id,
+    answered,
+):
+    plugin, bridge = clarification_inbox
+    handler = _clarification_handler(plugin)
+    alice_args = _character_clarification("alice")
+    alice = handler(alice_args)
+    if answered:
+        bridge.resolve_clarification_result(
+            alice["bridge_key"],
+            {
+                "ok": True,
+                "status": "clarification_frontend_result",
+                "clarification_status": "answered",
+                "answers": {"style": {"option_ids": ["a"]}},
+            },
+        )
+    bob = handler(_character_clarification("bob"))
+    bridge.resolve_clarification_result(
+        bob["bridge_key"],
+        {
+            "ok": True,
+            "status": "clarification_frontend_result",
+            "clarification_status": "answered",
+            "answers": {"style": {"option_ids": ["b"]}},
+        },
+    )
+    bridge.put_clarification_turn_context(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        recovery_only=True,
+    )
+    reopened = handler(
+        {**alice_args, **({"clarification_id": alice["clarification_id"]} if explicit_id else {})}
+    )
+    assert reopened["bridge_key"] == alice["bridge_key"]
+    if answered:
+        assert reopened["answers"]["style"]["option_ids"] == ["a"]
+    else:
+        assert reopened["status"] == "clarification_frontend_timeout"
+
+
+@pytest.mark.parametrize("explicit_id", [False, True])
+def test_reselecting_changed_questions_cancels_the_original_card(clarification_inbox, explicit_id):
+    plugin, bridge = clarification_inbox
+    handler = _clarification_handler(plugin)
+    args = _character_clarification("alice")
+    original = handler(args)
+    revised = handler(
+        {
+            **args,
+            "new_request": True,
+            **({"clarification_id": original["clarification_id"]} if explicit_id else {}),
+            "questions": [
+                {
+                    "id": "style",
+                    "title": "Choose a new style",
+                    "options": [
+                        {"id": "c", "label": "C"},
+                        {"id": "d", "label": "D"},
+                    ],
+                }
+            ],
+        }
+    )
+    assert revised["bridge_key"] != original["bridge_key"]
+    pending = bridge.list_pending_bridge_messages(project_id="project-a", canvas_id="canvas-a")
+    assert [item["key"] for item in pending] == [revised["bridge_key"]]
+    assert (
+        bridge.wait_clarification_result(original["bridge_key"], timeout_seconds=0)[
+            "clarification_status"
+        ]
+        == "cancelled"
+    )
+    bridge.resolve_clarification_result(
+        revised["bridge_key"],
+        {
+            "ok": True,
+            "status": "clarification_frontend_result",
+            "clarification_status": "answered",
+            "answers": {"style": {"option_ids": ["c"]}},
+        },
+    )
+    resumed = handler(
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "clarification_id": original["clarification_id"],
+        }
+    )
+    assert resumed["answers"]["style"]["option_ids"] == ["c"]
+
+
+def test_recovery_preserves_explicit_id_for_legacy_card_without_scope(clarification_inbox):
+    plugin, bridge = clarification_inbox
+    handler = _clarification_handler(plugin)
+    args = _character_clarification("alice")
+    bridge.put_pending_clarification_event(
+        key="legacy-alice-key",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event={"clarification_id": "legacy-alice", "questions": args["questions"]},
+    )
+    handler(_character_clarification("bob"))
+    bridge.put_clarification_turn_context(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        recovery_only=True,
+    )
+    result = handler({**args, "clarification_id": "legacy-alice"})
+    assert result["bridge_key"] == "legacy-alice-key"
+
+
+def test_conflicting_card_id_and_character_scope_are_rejected(clarification_inbox):
+    plugin, bridge = clarification_inbox
+    handler = _clarification_handler(plugin)
+    alice = handler(_character_clarification("alice"))
+    bob = handler(_character_clarification("bob"))
+    bridge.put_clarification_turn_context(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        recovery_only=True,
+    )
+    result = handler(
+        {**_character_clarification("bob"), "clarification_id": alice["clarification_id"]}
+    )
+    assert result["status"] == "clarification_scope_mismatch"
+    pending = bridge.list_pending_bridge_messages(project_id="project-a", canvas_id="canvas-a")
+    assert {item["key"] for item in pending} == {alice["bridge_key"], bob["bridge_key"]}
+
+
+def test_invalid_new_question_does_not_cancel_original_card(clarification_inbox):
+    plugin, bridge = clarification_inbox
+    handler = _clarification_handler(plugin)
+    args = _character_clarification("alice")
+    original = handler(args)
+    result = handler(
+        {
+            **args,
+            "clarification_id": original["clarification_id"],
+            "new_request": True,
+            "questions": [],
+        }
+    )
+    assert result["status"] == "questions_required"
+    pending = bridge.list_pending_bridge_messages(project_id="project-a", canvas_id="canvas-a")
+    assert [item["key"] for item in pending] == [original["bridge_key"]]
 
 
 def test_clarification_resume_collects_late_answer_without_second_card(monkeypatch):
@@ -3549,8 +3851,14 @@ def test_clarification_resume_collects_late_answer_without_second_card(monkeypat
         "clarification_id": "clarify_resume", "generation_media_types": ["image"],
     })
 
-    assert lookups == [{"project_id": "project-a", "canvas_id": "canvas-a",
-                        "clarification_id": "clarify_resume"}]
+    assert lookups == [
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "clarification_id": "clarify_resume",
+            "include_expired": True,
+        }
+    ]
     assert result["ok"] is True
     assert result["bridge_key"] == "clarify-key-old"
     assert result["used_recommended"] is True
@@ -7019,7 +7327,7 @@ def test_freezone_plugin_clarification_tool_generates_missing_id(monkeypatch):
     assert result["bridge_key"] == "clarify-key-2"
     generated_id = pending_events[0]["event"]["clarification_id"]
     assert generated_id.startswith("clarify_ss-distill-a_")
-    assert len(generated_id.rsplit("_", 1)[-1]) == 8
+    assert len(generated_id.rsplit("_", 1)[-1]) == 20
 
 
 def test_freezone_plugin_skill_studio_draft_tool_waits_for_frontend_result(monkeypatch):

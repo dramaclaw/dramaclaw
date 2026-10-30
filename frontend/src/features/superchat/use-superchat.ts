@@ -1107,7 +1107,7 @@ function upsertAssistantUiEvent(
   event: unknown,
 ): ChatMessage[] {
   const receivedAt = Date.now();
-  const eventWithReceivedAt = event && typeof event === "object" && !Array.isArray(event)
+  let eventWithReceivedAt = event && typeof event === "object" && !Array.isArray(event)
     ? {
         ...(event as Record<string, unknown>),
         received_at:
@@ -1116,6 +1116,29 @@ function upsertAssistantUiEvent(
             : receivedAt,
       }
     : event;
+  // A delayed delivery must not reopen a card already answered in another turn.
+  const incoming = eventWithReceivedAt as Record<string, unknown> | null;
+  if (incoming?.type === "assistant.clarification.request" && incoming.submitted !== true) {
+    const settled = messages.flatMap((message) => [
+      ...(message.uiEvents ?? []),
+      ...(message.parts ?? []).filter((part) => part.type !== "text").map((part) => part.event),
+    ]).find((candidate) => {
+      if (!candidate || typeof candidate !== "object") return false;
+      const previous = candidate as Record<string, unknown>;
+      return previous.type === incoming.type && previous.submitted === true && (
+        (incoming.bridge_key && previous.bridge_key === incoming.bridge_key)
+        || (incoming.clarification_id && previous.clarification_id === incoming.clarification_id)
+      );
+    }) as Record<string, unknown> | undefined;
+    if (settled) {
+      const settledEvent: Record<string, unknown> = { ...incoming };
+      for (const field of ["submitted", "cancelled", "action", "clarification_status",
+        "answers", "questions", "skipped", "used_recommended"] as const) {
+        if (settled[field] !== undefined) settledEvent[field] = settled[field];
+      }
+      eventWithReceivedAt = settledEvent;
+    }
+  }
   const id = `assistant-${turnId}`;
   const existingIndex = messages.findIndex((message) => message.id === id);
   if (existingIndex >= 0) {
@@ -1167,13 +1190,13 @@ export const resolveUiEventTurnIdForTest = resolveUiEventTurnId;
 
 function updateAssistantUiEvents(
   messages: ChatMessage[],
-  turnId: string,
+  turnId: string | null,
   shouldUpdate: (event: unknown) => boolean,
   updateEvent: (event: unknown) => unknown,
 ): ChatMessage[] {
   let changed = false;
   const nextMessages = messages.map((message) => {
-    if (message.role !== "assistant" || message.turnId !== turnId) {
+    if (message.role !== "assistant" || (turnId !== null && message.turnId !== turnId)) {
       return message;
     }
     const uiEvents = message.uiEvents?.map((event) => {
@@ -3296,19 +3319,18 @@ export function useSuperChat({
   }, []);
 
   const updateUiEvent = useCallback((
-    turnId: string,
+    turnId: string | null,
     shouldUpdate: (event: unknown) => boolean,
     updateEvent: (event: unknown) => unknown,
   ) => {
     setMessages((current) => {
       const next = updateAssistantUiEvents(current, turnId, shouldUpdate, updateEvent);
       if (next !== current) {
-        const persistedMessage = next.find((message) => message.role === "assistant" && message.turnId === turnId);
-        persistAssistantMessageParts(
-          turnId,
-          persistedMessage?.parts,
-          persistedMessage?.text,
-        );
+        for (const [index, message] of next.entries()) {
+          if (message !== current[index] && message.role === "assistant" && message.turnId) {
+            persistAssistantMessageParts(message.turnId, message.parts, message.text);
+          }
+        }
       }
       return next;
     });

@@ -4178,6 +4178,37 @@ def test_remove_managed_skill_path_defends_its_root_boundary(tmp_path):
     assert outside_dir.is_dir()
 
 
+@pytest.mark.parametrize(
+    ("prompt", "recovery"),
+    [
+        ("重新弹出", True),
+        ("请重新打开参数卡", True),
+        ("reopen the card", True),
+        ("重新弹出，我要修改参数", False),
+        ("重新选择模型", False),
+        ("为另一个角色确认参数", False),
+        ("重新打开项目，给另一个角色确认参数", False),
+        ("为另一个角色重新弹出参数卡", False),
+    ],
+)
+def test_clarification_recovery_uses_user_request_not_tool_arguments(
+    monkeypatch, tmp_path, prompt, recovery
+):
+    from novelvideo.freezone import canvas_command_bridge
+
+    calls = []
+    monkeypatch.setattr(
+        canvas_command_bridge, "put_clarification_turn_context", lambda **kw: calls.append(kw)
+    )
+    chat_service._bind_clarification_recovery(
+        project="project-a",
+        canvas_id="canvas-a",
+        request_prompt=prompt,
+        bridge_dir=tmp_path,
+    )
+    assert calls[0]["recovery_only"] is recovery
+
+
 def test_dramaclaw_mcp_server_config_is_agent_neutral():
     servers = chat_service._dramaclaw_mcp_servers()
 
@@ -4188,6 +4219,7 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_AGENT_TOKEN_FILE",
         "DRAMACLAW_CANVAS_ID",
         "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",
+        "DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS",
         "DRAMACLAW_CHAT_SURFACE",
         "DRAMACLAW_EXTERNAL_MCP",
         "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
@@ -4200,6 +4232,7 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_USERNAME",
         "NOVELVIDEO_OUTPUT_DIR",
         "PYTHONPATH",
+        "PYTHON_DOTENV_DISABLED",
         "SUPERTALE_OPENFILM_STUDIO_ENABLED",
     ]
 
@@ -4652,13 +4685,14 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
     assert (
         'mcp_servers.dramaclaw.env_vars=["DRAMACLAW_API_URL",'
         '"DRAMACLAW_AGENT_TOKEN_FILE","DRAMACLAW_CANVAS_ID",'
-        '"DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR","DRAMACLAW_CHAT_SURFACE",'
+        '"DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",'
+        '"DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS","DRAMACLAW_CHAT_SURFACE",'
         '"DRAMACLAW_EXTERNAL_MCP",'
         '"DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_ROOT","DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
         '"DRAMACLAW_TURN_ID","DRAMACLAW_USERNAME",'
-        '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH",'
+        '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH","PYTHON_DOTENV_DISABLED",'
         '"SUPERTALE_OPENFILM_STUDIO_ENABLED"]' in overrides
     )
     assert "mcp_servers.dramaclaw.required=true" in overrides

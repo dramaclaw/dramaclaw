@@ -157,6 +157,8 @@ try:
         canvas_context_bridge_key,
         clarification_bridge_key,
         find_clarification_bridge_message,
+        read_clarification_turn_context,
+        resolve_clarification_result,
         put_pending_clarification_event,
         put_pending_canvas_command,
         put_or_reuse_pending_canvas_command,
@@ -175,6 +177,8 @@ except Exception as exc:
     canvas_context_bridge_key = None
     clarification_bridge_key = None
     find_clarification_bridge_message = None
+    read_clarification_turn_context = None
+    resolve_clarification_result = None
     put_pending_clarification_event = None
     put_pending_canvas_command = None
     put_or_reuse_pending_canvas_command = None
@@ -906,12 +910,27 @@ def _emit_clarification_event(
     if mismatch is not None:
         return tool_result(mismatch)
     key = clarification_bridge_key(project_id=project, canvas_id=canvas, event=event)
-    put_pending_clarification_event(
+    resolved = put_pending_clarification_event(
         key=key,
         project_id=project,
         canvas_id=canvas,
         event=event,
     )
+    if isinstance(resolved, dict):
+        if resolved.get("canvas_apply_status") == "timeout":
+            return tool_result(
+                {
+                    **resolved,
+                    "status": "clarification_expired",
+                    "clarification_id": event.get("clarification_id"),
+                    "agent_instruction": (
+                        "The original card has expired and cannot accept answers. Tell the user "
+                        "it expired, then use new_request=true to open a fresh version. "
+                        "Do not claim that the expired card is still answerable."
+                    ),
+                }
+            )
+        return tool_result(resolved)
     return _await_clarification_result(key, project, canvas, event)
 
 
@@ -942,7 +961,7 @@ def _clarification_timeout_result(
         "clarification_id": event.get("clarification_id"),
         "message": (
             "Clarification UI is still waiting for the user's frontend response. "
-            "The card stays answerable for ten minutes and reappears on the user's "
+            "The card stays answerable for one hour from creation and reappears on the user's "
             "next message."
         ),
         "agent_instruction": (
@@ -968,21 +987,55 @@ def _await_clarification_result(
 
 
 def _resume_clarification(
-    project: str | None, canvas: str | None, clarification_id: str
+    project: str | None,
+    canvas: str | None,
+    clarification_id: str,
+    *,
+    request_scope: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any] | None] | None:
     """Return (key, stored event, result-or-None) for a card the agent already showed."""
-    if find_clarification_bridge_message is None or not clarification_id:
+    if find_clarification_bridge_message is None or (not clarification_id and not request_scope):
         return None
     try:
         found = find_clarification_bridge_message(
-            project_id=project, canvas_id=canvas, clarification_id=clarification_id
+            project_id=project,
+            canvas_id=canvas,
+            clarification_id=clarification_id,
+            include_expired=True,
+            **({"request_scope": request_scope} if request_scope else {}),
         )
     except Exception:  # noqa: BLE001 - a lookup failure only means a fresh card
         return None
     if not isinstance(found, dict) or not isinstance(found.get("event"), dict):
         return None
     result = found.get("result")
+    if found.get("transport_status") == "expired" and isinstance(result, dict):
+        result = {
+            **result,
+            "status": "clarification_expired",
+            "agent_instruction": (
+                "The card expired. Explain that it is no longer answerable and use "
+                "new_request=true to open a fresh version. Do not reuse the expired card."
+            ),
+        }
     return str(found["key"]), found["event"], result if isinstance(result, dict) else None
+
+
+def _clarification_request_scope(args: dict[str, Any]) -> dict[str, Any]:
+    scope = {
+        key: args[key]
+        for key in (
+            "context_key",
+            "skill_studio_session_id",
+            "workflow_draft_id",
+            "workflow_expected_revision",
+        )
+        if args.get(key) not in (None, "")
+    }
+    for key in ("target_node_ids", "generation_video_node_ids"):
+        if args.get(key):
+            scope[key] = sorted(set(args[key]))
+    return scope
 
 
 def _workflow_bypass_clarification_error(
@@ -1145,14 +1198,53 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     clarification_id = str(
         args.get("clarification_id") or args.get("request_id") or ""
     ).strip()
+    # A new version is explicit; merely reopening a card must retain its identity.
+    new_request = args.get("new_request") is True
+    request_scope = _clarification_request_scope(args)
     # The bridge directory is shared per user/profile and may hold cards from
     # other projects; never look one up outside this session's bound scope.
     mismatch = _bound_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
+    explicit = _resume_clarification(project, canvas, clarification_id)
+    if explicit is not None and request_scope and explicit[1].get("request_scope"):
+        stored_scope = explicit[1]["request_scope"]
+        if any(
+            stored_scope.get(key) != value
+            for key, value in request_scope.items()
+            if key not in {"title", "description"}
+        ):
+            return tool_result(
+                {
+                    "ok": False,
+                    "status": "clarification_scope_mismatch",
+                    "error": "The requested card belongs to another clarification target.",
+                }
+            )
+    recovery_card = None
+    if read_clarification_turn_context is not None:
+        recovery = read_clarification_turn_context(project_id=project, canvas_id=canvas)
+        if recovery.get("recover_clarification_id"):
+            # An explicit valid card/target takes precedence over the latest
+            # canvas card. Recovery must never turn Alice's answer into Bob's.
+            recovery_card = explicit or (
+                _resume_clarification(project, canvas, "", request_scope=request_scope)
+                if request_scope
+                else _resume_clarification(
+                    project,
+                    canvas,
+                    recovery["recover_clarification_id"],
+                )
+            )
+            if recovery_card is not None:
+                clarification_id = str(recovery_card[1]["clarification_id"])
+            new_request = False
+    revision_source = explicit if new_request else None
+    if new_request and revision_source is None and request_scope:
+        revision_source = _resume_clarification(project, canvas, "", request_scope=request_scope)
     # An id the agent already holds may name a card that is still waiting (or
     # was answered late). Resolve it first so a bare resume call needs no questions.
-    resumed = _resume_clarification(project, canvas, clarification_id)
+    resumed = None if new_request else recovery_card or explicit
     questions = _safe_list(args.get("questions"))
     generation_media_types = args.get("generation_media_types")
     generation_required_choices = args.get("generation_required_choices")
@@ -1632,14 +1724,13 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                     "the user's confirmed model in answers before retrying."
                 ),
             })
-    if not clarification_id:
+    if not clarification_id or new_request:
         context_id = str(
             args.get("skill_studio_session_id") or canvas or "default"
         ).strip()
         safe_context = "".join(
             ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in context_id
         ).strip("-")
-        turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
         fingerprint_questions = (
             [
                 str(question.get("id") or "").strip().lower()
@@ -1653,10 +1744,24 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         fingerprint = hashlib.sha256(
             json.dumps(
                 {
-                    "turn_id": turn_id or uuid.uuid4().hex,
                     "project_id": project or "",
                     "canvas_id": canvas or "",
                     "workflow_draft_id": str(args.get("workflow_draft_id") or ""),
+                    "workflow_expected_revision": args.get(
+                        "workflow_expected_revision"
+                    ),
+                    "context_key": args.get("context_key")
+                    or {
+                        "title": str(args.get("title") or "").strip(),
+                        "description": str(args.get("description") or "").strip(),
+                    },
+                    "skill_studio_session_id": args.get("skill_studio_session_id"),
+                    "target_node_ids": sorted(args.get("target_node_ids") or []),
+                    "generation_video_node_ids": sorted(
+                        args.get("generation_video_node_ids") or []
+                    ),
+                    "generation_preferences": generation_preferences,
+                    "answers": answers,
                     "questions": fingerprint_questions,
                     "required_video_modes": required_video_modes,
                 },
@@ -1664,8 +1769,17 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                 sort_keys=True,
                 separators=(",", ":"),
             ).encode("utf-8")
-        ).hexdigest()[:8]
+        ).hexdigest()[:20]
         clarification_id = f"clarify_{safe_context or 'default'}_{fingerprint}"
+        if new_request:
+            revision_source = revision_source or _resume_clarification(
+                project, canvas, clarification_id
+            )
+            if revision_source is not None:
+                clarification_id = re.sub(
+                    r"_v[0-9a-f]{32}$", "", str(revision_source[1]["clarification_id"])
+                )
+            clarification_id = f"{clarification_id}_v{uuid.uuid4().hex}"
         resumed = _resume_clarification(project, canvas, clarification_id)
     if not questions and resumed is None:
         return tool_result(
@@ -1800,12 +1914,27 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             description_parts.append(
                 "当前推荐模型无法满足已明确的声音或画面规格，请逐项选择兼容配置。"
             )
+        if revision_source is not None and revision_source[2] is None:
+            resolve_clarification_result(
+                revision_source[0],
+                {
+                    "ok": False,
+                    "status": "clarification_frontend_result",
+                    "tool_call_status": "completed",
+                    "clarification_status": "cancelled",
+                    "cancelled": True,
+                    "action": "cancel",
+                    "answers": {},
+                    "message": "The user requested a new version of this parameter card.",
+                },
+            )
         result = _emit_clarification_event(
             project,
             canvas,
             {
                 "type": "assistant.clarification.request",
                 "clarification_id": clarification_id,
+                "request_scope": request_scope,
                 "title": str(args.get("title") or "").strip(),
                 "description": " ".join(part for part in description_parts if part),
                 "questions": questions,
@@ -11673,7 +11802,6 @@ _STORY_CANVAS_TOOLS = (
 ) if _INCLUDE_INTERACTIVE_STORY else ()
 
 
-
 # ---------------------------------------------------------------------------
 # Compose workspace: the node's OpenFilm film, edited through Studio by clip id.
 # These are server-side edits of the film file, not canvas writes: no bridge
@@ -12012,7 +12140,20 @@ TOOLS = (
             {
                 "clarification_id": {
                     "type": "string",
-                    "description": "Optional stable id for this clarification request. Omit it for a new card; Freezone will generate it automatically. Pass the clarification_id from a clarification_frontend_timeout result to resume waiting on that same card and collect the user's answer instead of showing a second card.",
+                    "description": "Optional stable id; Freezone will generate it automatically. Reuse it after a timeout. Without it, identical scoped requests reuse their pending card or submitted answer across turns. Use new_request only when the user explicitly asks to change the confirmed choices.",
+                },
+                "context_key": {
+                    "type": "string",
+                    "description": "Stable creative step and subject, e.g. character-reference:阿叶+环保背包. Retain it across recovery calls; use a different key for a different step or subject.",
+                },
+                "target_node_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Exact target node ids for this parameter confirmation, when nodes already exist.",
+                },
+                "new_request": {
+                    "type": "boolean",
+                    "description": "Create a new choice version when the user explicitly asks to change/reselect parameters, or reopens an expired/cancelled card. Reopening a still-pending card after a tool timeout is recovery, not a new request.",
                 },
                 "skill_studio_session_id": {
                     "type": "string",
