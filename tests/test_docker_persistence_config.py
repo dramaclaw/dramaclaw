@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import runpy
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -68,8 +69,7 @@ def test_gateway_is_the_dramaclaw_fork_pinned_by_variable() -> None:
 
 
 def test_ce_images_share_one_version_variable() -> None:
-    # The default moves with every release (the packaging workflow opens a PR that bumps it),
-    # so assert the shape and that api and web move together — never the literal version.
+    # Release preparation must move API and Web together with the application.
     services = _compose()["services"]
     versions = set()
     for name, repository in (("api", "dramaclaw"), ("web", "dramaclaw-frontend")):
@@ -81,7 +81,14 @@ def test_ce_images_share_one_version_variable() -> None:
         )
         assert match, image
         versions.add(match.group(1))
-    assert len(versions) == 1, versions
+    version = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text())[
+        "project"
+    ]["version"]
+    assert versions == {version}
+    assert (
+        f"# DRAMACLAW_VERSION={version}\n"
+        in (REPOSITORY_ROOT / ".env.example").read_text()
+    )
 
 
 def test_api_persists_generated_media_in_ce_data_volume() -> None:
@@ -182,8 +189,8 @@ def test_compose_runtime_matches_the_selected_image() -> None:
     release = _api(RELEASE_FILE)["environment"]
     assert source["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-codex}"
     assert source["HERMES_CLI_PATH"] == "/usr/local/bin/hermes"
-    assert release["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-hermes}"
-    assert release["HERMES_CLI_PATH"] == "/root/.local/bin/hermes"
+    assert release["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-codex}"
+    assert release["HERMES_CLI_PATH"] == "/usr/local/bin/hermes"
 
 
 def test_all_ce_compose_variants_keep_hermes_explicit_fallback_enabled() -> None:

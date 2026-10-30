@@ -6,6 +6,7 @@ import gzip
 import json
 import os
 import sqlite3
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -21,9 +22,48 @@ from novelvideo.chat.backend_sdk import (
 )
 
 
+def _integration_codex_binary() -> Path:
+    configured = os.environ.get("CODEX_BIN", "").strip()
+    if configured:
+        binary = Path(configured)
+        assert binary.is_file(), "CODEX_BIN must point to the compiled runtime"
+        return binary
+    return Path(
+        distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
+    )
+
+
 def test_runtime_rejects_sdk_bundled_binary():
     with pytest.raises(RuntimeError, match="DramaClaw-patched Codex runtime"):
         codex_app_server._resolve_codex_bin(SimpleNamespace(codex_bin=None))
+
+
+def test_windows_websocket_uses_preconnected_socket_and_closes_on_failure(
+    monkeypatch, tmp_path
+):
+    from unittest.mock import Mock
+    import websockets.sync.client
+
+    stream = Mock()
+    native_connect = Mock(return_value=stream)
+    monkeypatch.setitem(
+        sys.modules,
+        "novelvideo.chat.codex_app_server_windows",
+        SimpleNamespace(connect_unix_socket=native_connect),
+    )
+    monkeypatch.setattr(codex_app_server, "os", SimpleNamespace(name="nt"))
+    handshake = Mock(side_effect=TimeoutError("handshake timed out"))
+    monkeypatch.setattr(websockets.sync.client, "unix_connect", handshake)
+    path = tmp_path / "codex.sock"
+    with pytest.raises(TimeoutError, match="handshake timed out"):
+        codex_app_server._connect_local_websocket(
+            path, uri="ws://localhost/rpc", open_timeout=0.2
+        )
+    native_connect.assert_called_once_with(path, 0.2)
+    assert handshake.call_args.args == ()
+    assert handshake.call_args.kwargs["sock"] is stream
+    assert 0 <= handshake.call_args.kwargs["open_timeout"] <= 0.2
+    stream.close.assert_called_once()
 
 
 def test_control_rpc_uses_shared_app_server_for_lifecycle(monkeypatch, tmp_path):
@@ -543,7 +583,7 @@ def test_turn_images_follow_the_prompt_as_image_input(output_schema):
 
 
 def test_codex_149_sdk_exposes_required_runtime_notifications():
-    from importlib.metadata import version
+    from importlib.metadata import requires
 
     from openai_codex import Codex
     from openai_codex.client import CodexClient
@@ -558,7 +598,7 @@ def test_codex_149_sdk_exposes_required_runtime_notifications():
         hasattr(CodexClient, name)
         for name in ("initialize", "thread_start", "turn_start")
     )
-    assert version("openai-codex-cli-bin") == "0.149.0"
+    assert "openai-codex-cli-bin==0.149.0" in requires("openai-codex")
     assert {
         "item/agentMessage/delta",
         "item/completed",
@@ -598,6 +638,45 @@ def _response_completed(response_id: str) -> dict:
             },
         },
     }
+
+
+def _contract_codex_bin() -> Path:
+    # Opt-in runtime smoke uses the exact public artifact without replacing the
+    # SDK's installed binary. All Responses traffic below goes to a local stub.
+    override = os.environ.get("DRAMACLAW_TEST_CODEX_BIN", "").strip()
+    if override:
+        return Path(override)
+    return _integration_codex_binary()
+
+
+@pytest.mark.parametrize("selection", ["test_override", "configured", "sdk"])
+def test_contract_runtime_selection_preserves_both_overrides(
+    monkeypatch, tmp_path, selection
+):
+    test_binary = tmp_path / "test-codex"
+    configured_binary = tmp_path / "configured-codex"
+    bundled_binary = tmp_path / "sdk-codex"
+    for binary in (test_binary, configured_binary, bundled_binary):
+        binary.touch()
+    monkeypatch.delenv("DRAMACLAW_TEST_CODEX_BIN", raising=False)
+    monkeypatch.delenv("CODEX_BIN", raising=False)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "distribution",
+        lambda _name: SimpleNamespace(locate_file=lambda _path: bundled_binary),
+    )
+    if selection != "sdk":
+        monkeypatch.setenv("CODEX_BIN", str(configured_binary))
+    if selection == "test_override":
+        monkeypatch.setenv("DRAMACLAW_TEST_CODEX_BIN", str(test_binary))
+    assert (
+        _contract_codex_bin()
+        == {
+            "test_override": test_binary,
+            "configured": configured_binary,
+            "sdk": bundled_binary,
+        }[selection]
+    )
 
 
 @contextmanager
@@ -716,9 +795,7 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
     ]
 
     with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
-        bundled_codex = Path(
-            distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
-        )
+        bundled_codex = _contract_codex_bin()
         assert bundled_codex.is_file(), "the pinned App Server binary is required"
         token_file = tmp_path / "turn.token"
         token_file.write_text("contract-test-token", encoding="utf-8")
@@ -869,9 +946,7 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
     ]
 
     with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
-        bundled_codex = Path(
-            distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
-        )
+        bundled_codex = _contract_codex_bin()
         token_file = tmp_path / "turn.token"
         token_file.write_text("contract-test-token", encoding="utf-8")
         token_file.chmod(0o600)
@@ -988,9 +1063,7 @@ async def test_app_server_exact_node_action_searches_only_batch_write_tool(
     ]
 
     with _recording_responses_gateway(scripted_responses) as (gateway_url, requests):
-        bundled_codex = Path(
-            distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
-        )
+        bundled_codex = _contract_codex_bin()
         token_file = tmp_path / "turn.token"
         token_file.write_text("contract-test-token", encoding="utf-8")
         token_file.chmod(0o600)
@@ -1034,8 +1107,7 @@ async def test_app_server_exact_node_action_searches_only_batch_write_tool(
 
         try:
             events = [
-                event
-                async for event in client.thread_start().stream(execution_prompt)
+                event async for event in client.thread_start().stream(execution_prompt)
             ]
         finally:
             codex_app_server.stop_shared_codex_runtime()
@@ -1057,6 +1129,62 @@ async def test_app_server_exact_node_action_searches_only_batch_write_tool(
     assert any(
         event.type == "complete" and event.text == final_reply for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_public_patched_runtime_keeps_turn_key_out_of_metadata_and_disk(
+    monkeypatch, tmp_path
+):
+    if not os.environ.get("DRAMACLAW_TEST_CODEX_BIN", "").strip():
+        pytest.skip("set DRAMACLAW_TEST_CODEX_BIN to verify a public patched artifact")
+    secret = "synthetic-native-runtime-test-key-not-a-real-credential"
+    scripted = _responses_sse(
+        _response_created("native-runtime-test"),
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "id": "native-message",
+                "content": [{"type": "output_text", "text": "native runtime OK"}],
+            },
+        },
+        _response_completed("native-runtime-test"),
+    )
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    with _recording_responses_gateway([scripted]) as (gateway_url, requests):
+        client = backend_sdk.CodexClient(
+            codex_bin=_contract_codex_bin(),
+            cwd=tmp_path,
+            env={
+                **os.environ,
+                "CODEX_HOME": str(tmp_path / "codex-home"),
+                "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+            },
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions="Reply briefly without tools.",
+            config_overrides=service._codex_gateway_config_overrides(gateway_url),
+            turn_metadata={"dramaclaw_gateway_api_key": secret},
+        )
+        try:
+            events = [event async for event in client.thread_start().stream("Say OK")]
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+    assert len(requests) == 1
+    headers = {key.lower(): value for key, value in requests[0]["headers"].items()}
+    assert headers.pop("authorization") == f"Bearer {secret}"
+    assert secret not in json.dumps(headers)
+    assert secret not in json.dumps(requests[0]["body"])
+    assert any(
+        event.type == "complete" and event.text == "native runtime OK"
+        for event in events
+    )
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            assert (
+                secret.encode() not in path.read_bytes()
+            ), f"Turn key persisted in {path.name}"
 
 
 @pytest.mark.e2e
@@ -1083,9 +1211,7 @@ async def test_real_gateway_app_server_native_tool_search_calls_concrete_mcp(
     if not gateway_base_url or not gateway_api_key:
         pytest.skip("a Tool Search-capable DramaClaw Gateway URL and key are required")
 
-    bundled_codex = Path(
-        distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
-    )
+    bundled_codex = _integration_codex_binary()
     codex_bin = Path(os.environ.get("CODEX_BIN", "") or bundled_codex)
     if not codex_bin.is_file():
         pytest.skip("DramaClaw-patched Codex binary is unavailable")

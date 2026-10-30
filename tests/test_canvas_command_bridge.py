@@ -1,9 +1,84 @@
 # SPDX-License-Identifier: Elastic-2.0
 # Copyright (c) 2026 ClaymoreLab
 
+import multiprocessing
+import os
 import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+import portalocker
+import pytest
 
 from novelvideo.freezone import canvas_command_bridge
+
+
+def _hold_bridge_lock(directory, entered, release):
+    with canvas_command_bridge._key_lock("portable", directory):
+        entered.set()
+        if not release.wait(15):
+            raise RuntimeError("test did not release the bridge lock")
+
+
+def test_bridge_lock_excludes_other_processes_and_releases_on_exit(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    entered, release = context.Event(), context.Event()
+    worker = context.Process(target=_hold_bridge_lock, args=(str(tmp_path), entered, release))
+    worker.start()
+    try:
+        assert entered.wait(15), "worker did not acquire the bridge lock"
+        with (tmp_path / "portable.lock").open("a+") as lock:
+            with pytest.raises(portalocker.exceptions.AlreadyLocked):
+                portalocker.lock(lock, portalocker.LOCK_EX | portalocker.LOCK_NB)
+    finally:
+        release.set()
+        worker.join(15)
+        if worker.is_alive():
+            worker.terminate()
+            worker.join()
+    assert worker.exitcode == 0
+    with (tmp_path / "portable.lock").open("a+") as lock:
+        portalocker.lock(lock, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        portalocker.unlock(lock)
+
+
+def test_bridge_lock_is_released_when_a_command_raises(tmp_path):
+    with pytest.raises(RuntimeError, match="command failed"):
+        with canvas_command_bridge._key_lock("portable", tmp_path):
+            raise RuntimeError("command failed")
+    with (tmp_path / "portable.lock").open("a+") as lock:
+        portalocker.lock(lock, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        portalocker.unlock(lock)
+
+
+def test_api_imports_without_the_unix_fcntl_module(tmp_path):
+    source = Path(__file__).resolve().parents[1] / "src"
+    script = """
+import builtins
+original_import = builtins.__import__
+def portable_import(name, globals=None, *args, **kwargs):
+    if name == 'fcntl' and (globals or {}).get('__name__', '').startswith('novelvideo.'):
+        raise ModuleNotFoundError("No module named 'fcntl'", name='fcntl')
+    return original_import(name, globals, *args, **kwargs)
+builtins.__import__ = portable_import
+import novelvideo.api
+import novelvideo.freezone.agent_bundle_store
+import novelvideo.freezone.skill_import
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join((str(source), os.environ.get("PYTHONPATH", ""))),
+            "ST_EDITION": "ce",
+            "ST_CONTROL_PLANE_DSN": "",
+            "NOVELVIDEO_DATA_ROOT": str(tmp_path),
+            "NOVELVIDEO_STATE_DIR": str(tmp_path / "state"),
+        },
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_repeated_canvas_commands_receive_unique_bridge_keys(monkeypatch):

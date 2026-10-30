@@ -1,12 +1,13 @@
 """Requester-scoped external Skill conversion jobs and candidate installation."""
 from __future__ import annotations
 
-import fcntl
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+import portalocker
 
 from novelvideo.api.deps import get_api_user
 from novelvideo.api.routes.freezone import _resolve_freezone_project
@@ -113,8 +114,8 @@ async def retry(project: str, import_id: str, user: dict = Depends(get_api_user)
     read_item(root, username, import_id)
     with record_path(root, username, import_id).with_suffix('.lock').open('a') as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            portalocker.lock(lock, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        except portalocker.exceptions.AlreadyLocked:
             raise HTTPException(409, 'Import is already being updated') from None
         record = reconcile(ctx, root, username, read_item(root, username, import_id))
         if record['status'] not in {'failed', 'needs_review', 'ready'}:
@@ -145,8 +146,8 @@ async def install(project: str, import_id: str, payload: InstallRequest, user: d
     read_item(root, username, import_id)
     with path.with_suffix('.lock').open('a') as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            portalocker.lock(lock, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        except portalocker.exceptions.AlreadyLocked:
             raise HTTPException(409, 'Import is already being updated') from None
         record = read_item(root, username, import_id)
         if record['status'] == 'installed':
@@ -176,8 +177,8 @@ async def validate_draft(project: str, import_id: str, payload: InstallRequest, 
     read_item(root, username, import_id)
     with record_path(root, username, import_id).with_suffix('.lock').open('a') as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            portalocker.lock(lock, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        except portalocker.exceptions.AlreadyLocked:
             raise HTTPException(409, 'Import is already being updated') from None
         record = reconcile(ctx, root, username, read_item(root, username, import_id))
         if record['status'] not in {'ready', 'needs_review', 'failed'}:

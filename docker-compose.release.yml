@@ -2,13 +2,13 @@
 # docker-compose.yml（源码构建）通过 extends 复用它。
 #   cp .env.example .env && docker compose -f docker-compose.release.yml up -d
 # 版本：DRAMACLAW_VERSION（api/web）与 DRAMACLAW_GATEWAY_VERSION（网关）来自 .env，未设时用下面的默认值；
-#      每次发行包打包（SuperTale 的 dramaclaw-release-packages 非 dry_run 跑完）由它向本仓开 PR 抬默认值。国内拉取慢：.env 设 DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw（ACR 只放钉 tag）。
+#      发布准备时同步更新应用与 api/web 默认版本，再合入 main、打 tag。国内拉取慢：.env 设 DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw（ACR 只放钉 tag）。
 # 三服务：api + 内置 newapi 网关（DramaClaw 维护的 dramaclaw-gateway，:3000）+ web（:8080）。
 # 首启打开 http://localhost:8080 → 设置 → 模型：选「官方」粘贴 DC key、或「自定义」一键初始化内置网关、或「本地 + 官方混合」。
 # 默认模式是官方，此时内置网关只是常驻待命；.env 写 NEWAPI_PROVISIONER_ENABLED=false 可禁用一键初始化。
 services:
   api:
-    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw:${DRAMACLAW_VERSION:-2.0.4}
+    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw:${DRAMACLAW_VERSION:-2.1.1}
     restart: unless-stopped
     # 运行时从宿主 .env 注入 model/LLM key；镜像版允许没有 .env（首启后再补也行）。
     # environment: 块仍覆盖此处同名变量，保持 CE inline 模式强制不变。
@@ -25,8 +25,8 @@ services:
       NOVELVIDEO_OUTPUT_DIR: /data/output
       NOVELVIDEO_STATE_DIR: /data/state
       NOVELVIDEO_RUNTIME_DIR: /data/runtime
-      DRAMACLAW_CHAT_BACKEND: "${DRAMACLAW_CHAT_BACKEND:-hermes}"
-      HERMES_CLI_PATH: /root/.local/bin/hermes
+      DRAMACLAW_CHAT_BACKEND: "${DRAMACLAW_CHAT_BACKEND:-codex}"
+      HERMES_CLI_PATH: /usr/local/bin/hermes
       SUPERTALE_ALLOW_UNSANDBOXED: "1"
       # OpenFilm binds inside the API container's loopback namespace, which the host browser cannot
       # reach. Keep the original timeline editor in Compose deployments until an authenticated proxy
@@ -58,7 +58,7 @@ services:
   # 内置 newAPI 网关（OpenAI 兼容），DramaClaw 维护的修改版，源码 https://github.com/dramaclaw/dramaclaw-gateway 。
   # 默认使用 newapi-data 卷里的 SQLite；DramaClaw 通过共享卷自动初始化管理员、运行令牌、渠道与模型映射。
   newapi:
-    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw-gateway:${DRAMACLAW_GATEWAY_VERSION:-v1.0.0-rc.24-dramaclaw.2}
+    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw-gateway:${DRAMACLAW_GATEWAY_VERSION:-v1.0.0-rc.24-dramaclaw.3}
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
@@ -82,7 +82,7 @@ services:
   # they are overridden to the compose `api` service (internal port 8780). Open
   # the app at http://localhost:8080 — the browser only ever talks to web.
   web:
-    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw-frontend:${DRAMACLAW_VERSION:-2.0.4}
+    image: ${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/dramaclaw-frontend:${DRAMACLAW_VERSION:-2.1.1}
     restart: unless-stopped
     environment:
       BACKEND_HOST: api

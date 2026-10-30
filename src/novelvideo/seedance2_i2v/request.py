@@ -33,6 +33,10 @@ def normalize_seedance2_prompt(prompt: str) -> str:
 
 def _common_params(config: Seedance2VideoConfig) -> dict[str, Any]:
     prompt = normalize_seedance2_prompt(config.final_prompt)
+    if not config.generate_audio:
+        # Keep saved voice references for re-enabling audio; omit their markers
+        # from the silent request, which carries no audio assets.
+        prompt = re.sub(r"@?音频\d+", "声音", prompt)
     if not prompt:
         raise ValueError("seedance2 final_prompt is required")
     params: dict[str, Any] = {
@@ -150,7 +154,7 @@ def build_seedance2_huimeng_params(
     if config.mode == Seedance2I2VMode.MULTIMODAL_REFERENCE:
         images = clean_reference_list(reference_images)
         videos = clean_reference_list(reference_videos)
-        audios = clean_reference_list(reference_audios)
+        audios = clean_reference_list(reference_audios) if config.generate_audio else []
         if not images and not videos:
             raise ValueError(
                 "reference_images or reference_videos is required for Seedance 2.0 multimodal mode"

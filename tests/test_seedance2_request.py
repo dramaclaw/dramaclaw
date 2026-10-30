@@ -1591,3 +1591,23 @@ async def test_newapi_source_video_request_preserves_dc_media_contract(
     assert "reference_link" not in payload["metadata"]
     if expected_ratio == "auto":
         assert not {"width", "height", "size"}.intersection(payload)
+
+
+@pytest.mark.parametrize("marker", ["音频1", "@音频2"])
+def test_silent_request_omits_audio_references_without_changing_saved_prompt(marker):
+    from novelvideo.seedance2_i2v.models import Seedance2VideoConfig, Seedance2I2VMode
+    from novelvideo.seedance2_i2v.request import build_seedance2_huimeng_params
+
+    config = Seedance2VideoConfig(
+        mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+        generate_audio=False, generate_audio_user_set=True,
+        final_prompt=f"图片1中的人物使用{marker}的声音。",
+    )
+    params = build_seedance2_huimeng_params(
+        config, reference_images=["https://example.com/image.png"],
+        reference_audios=["https://example.com/voice.mp3"],
+    )
+    assert params["generate_audio"] is False
+    assert "reference_audios" not in params
+    assert marker not in params["prompt"]
+    assert marker in config.final_prompt

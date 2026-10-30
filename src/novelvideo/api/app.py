@@ -492,15 +492,44 @@ def create_app() -> FastAPI:
 
             StaticFiles 未命中时 raise HTTPException(404)(仅 dist 含 404.html
             时才返回 404 响应),回落必须捕获异常;带扩展名的缺失资产照常 404。
+
+            同时显式声明缓存策略:外壳 HTML 必须每次回源校验,否则桌面端
+            自动升级后浏览器会继续用缓存里的旧 index.html,而它引用的
+            哈希资产已被新版本替换 —— 入口 JS 404,窗口只剩底色(黑屏)。
+            构建产物 /assets/ 带内容哈希,可以长期 immutable。
             """
+
+            SHELL_CACHE_CONTROL = "no-cache"
+            ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
+            # 长期缓存只给真实内容;跳转/错误响应一旦被 immutable 固化,
+            # URL 不变就再也刷不掉。
+            ASSET_ERROR_CACHE_CONTROL = "no-store"
+            _CACHEABLE_ASSET_STATUSES = frozenset({200, 206, 304})
+
+            @classmethod
+            def _with_cache_control(cls, response, request_path: str):
+                # StaticFiles hands us an OS-normalized path ("assets\app.js" on
+                # Windows), so compare on a POSIX separator.
+                clean_path = str(request_path or "").replace("\\", "/").lstrip("/")
+                if clean_path.startswith("assets/"):
+                    if response.status_code in cls._CACHEABLE_ASSET_STATUSES:
+                        cache_control = cls.ASSET_CACHE_CONTROL
+                    else:
+                        cache_control = cls.ASSET_ERROR_CACHE_CONTROL
+                    response.headers.setdefault("Cache-Control", cache_control)
+                else:
+                    response.headers.setdefault("Cache-Control", cls.SHELL_CACHE_CONTROL)
+                return response
 
             async def get_response(self, path: str, scope):  # type: ignore[override]
                 try:
-                    return await super().get_response(path, scope)
+                    response = await super().get_response(path, scope)
                 except _StarletteHTTPException as exc:
                     if exc.status_code == 404 and "." not in Path(path).name:
-                        return await super().get_response("index.html", scope)
+                        response = await super().get_response("index.html", scope)
+                        return self._with_cache_control(response, "index.html")
                     raise
+                return self._with_cache_control(response, path)
 
         application.mount(
             "/", _SpaStaticFiles(directory=frontend_dist, html=True), name="spa"
