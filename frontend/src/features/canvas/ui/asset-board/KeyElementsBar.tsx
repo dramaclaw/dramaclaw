@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useRef, useState, type ReactElement } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronDown, ImageIcon, MessageSquarePlus } from 'lucide-react';
 
 import {
@@ -19,7 +20,6 @@ import type { AssetBoardItem } from '@/features/canvas/domain/assetBoard';
 import { ADD_NODE_TO_CHAT_LABEL, addNodesToChat } from '@/features/canvas/ui/AddNodeToChatButton';
 import {
   KEY_ELEMENT_CATEGORY_KEYS,
-  KEY_ELEMENT_CATEGORY_LABEL,
   type KeyElementCategory,
 } from '@/features/canvas/domain/keyElements';
 import { cn } from '@/lib/utils';
@@ -28,11 +28,6 @@ import { AssetBoardAudioChip } from './AssetBoardAudioChip';
 
 /** 「全部」+ 四个分类；关键元素标签内的分类下拉用它。 */
 type CategoryFilter = 'all' | KeyElementCategory;
-
-const FILTER_LABEL: Record<CategoryFilter, string> = {
-  all: '全部',
-  ...KEY_ELEMENT_CATEGORY_LABEL,
-};
 
 const FILTER_OPTIONS: readonly CategoryFilter[] = ['all', ...KEY_ELEMENT_CATEGORY_KEYS];
 
@@ -64,6 +59,14 @@ export function KeyElementsBar({
   /** 点 chip 打开该节点详情（关键元素与音频共用）。 */
   onOpen: (item: AssetBoardItem) => void;
 }): ReactElement {
+  const { t } = useTranslation();
+  const filterLabel: Record<CategoryFilter, string> = {
+    all: t('assetBoard.all'),
+    character: t('assetBoard.categoryCharacter'),
+    scene: t('assetBoard.categoryScene'),
+    object: t('assetBoard.categoryObject'),
+    other: t('assetBoard.categoryOther'),
+  };
   const hasKey = keyItems.length > 0;
   const hasAudio = audioItems.length > 0;
   const [tab, setTab] = useState<BarTab>(hasKey ? 'keyElements' : 'audio');
@@ -104,7 +107,7 @@ export function KeyElementsBar({
                   tabClass(activeTab === 'keyElements'),
                 )}
               >
-                关键元素 · {FILTER_LABEL[filter]}
+                {t('assetBoard.keyElements')} · {filterLabel[filter]}
                 <ChevronDown className="h-3.5 w-3.5 text-white/40" />
               </button>
             </DropdownMenuTrigger>
@@ -125,7 +128,7 @@ export function KeyElementsBar({
                     setTab('keyElements');
                   }}
                 >
-                  {FILTER_LABEL[option]}
+                  {filterLabel[option]}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -133,7 +136,7 @@ export function KeyElementsBar({
         )}
         {hasAudio && (
           <button type="button" onClick={() => setTab('audio')} className={tabClass(activeTab === 'audio')}>
-            音频
+            {t('assetBoard.audioLabel')}
           </button>
         )}
       </div>
@@ -210,7 +213,7 @@ export function KeyElementsBar({
         </TooltipProvider>
       ) : (
         // 关键元素标签下、当前分类为空（切了个空分类）：占位而不塌成没有内容。
-        <p className="py-1 text-[12px] text-white/40">该分类下暂无关键元素</p>
+        <p className="py-1 text-[12px] text-white/40">{t('assetBoard.noKeyElements')}</p>
       )}
     </div>
   );

@@ -1037,12 +1037,16 @@ def run_project_task_core_sync(
                         "operation_status": exc.status,
                         "settlement_status": "awaiting_reconciliation",
                     }
-                    if task_type == "freezone_agent_workflow_result":
-                        # The worker is intentionally released while the Agent prepares
-                        # and delivers the workflow draft. This is a durable waiting
-                        # state, not a task failure. Agent-product waiters are excluded
-                        # from lane counters, so keeping the logical task running does
-                        # not block the work that will produce its delivery receipt.
+                    if task_type in {
+                        "freezone_agent_workflow_result",
+                        "freezone_agent_recipe_result",
+                    }:
+                        # The worker is intentionally released while the Agent or
+                        # workflow runtime prepares and delivers the product. This is
+                        # a durable waiting state, not a task failure. Agent-product
+                        # waiters are excluded from lane counters, so keeping the
+                        # logical task running does not block the work that will
+                        # produce its delivery receipt.
                         logger.info(
                             "agent_product_pending.projecting_task_running "
                             "task_type=%s task_id=%s operation_id=%s "

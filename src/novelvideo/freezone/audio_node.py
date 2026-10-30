@@ -802,6 +802,10 @@ async def _write_newapi_audio_speech(
     if not key:
         raise RuntimeError("NEWAPI_API_KEY is required for NewAPI audio generation")
 
+    from novelvideo.storage.media_preflight import require_ce_media_storage
+
+    await require_ce_media_storage()
+
     body: dict[str, Any] = {
         "model": str(model or "").strip(),
         "input": str(input_text or ""),

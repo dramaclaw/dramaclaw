@@ -513,7 +513,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         t('pricing.grsaiTier', {
           price: resolvedPriceDisplay.grsaiCreditTier.priceCny.toFixed(2),
           credits: resolvedPriceDisplay.grsaiCreditTier.credits.toLocaleString(
-            i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US'
+            i18n.language.startsWith('zh') ? 'zh-CN' : i18n.language.startsWith('pt') ? 'pt-PT' : i18n.language.startsWith('vi') ? 'vi-VN' : 'en-US'
           ),
         })
       );

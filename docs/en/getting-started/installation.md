@@ -12,7 +12,7 @@ DramaClaw CE is a single-machine service that needs **no PostgreSQL / Redis**. D
 | Method | Best for | Prerequisites |
 |---|---|---|
 | **Docker (recommended)** | Deployment, trials, production self-hosting | Just Docker; ffmpeg and friends are in the image |
-| **Local development (uv)** | Editing code, debugging | Python 3.11–3.12, uv, ffmpeg (installed yourself) |
+| **Local development (uv)** | Editing code, debugging | Python 3.11–3.12, uv, Node.js/pnpm, ffmpeg (installed yourself) |
 
 > ffmpeg/ffprobe are **system dependencies**; CE does not distribute their binaries (see [ADR-0002](../../adr/0002-ffmpeg-system-dependency.md) for the reasoning). The Docker image already bundles them; for local development you install them yourself — see the [ffmpeg guide](../guides/ffmpeg.md).
 
@@ -28,7 +28,11 @@ Prerequisites: Docker + `docker compose`.
 | **Windows** | Docker Desktop with the **WSL2** backend enabled (Settings → General → Use WSL2) |
 | **Linux** | Docker Engine + `docker-compose-plugin` (from your distro's package manager) — Docker Compose **≥ 2.24** (`docker compose version`; the compose file uses the `env_file` long syntax) |
 
-Once installed:
+Once installed, choose **published images** or a **source build**. For published
+v2.1.1 images, no gateway checkout is needed; follow [Quickstart option A](quickstart.md)
+to pin `DRAMACLAW_VERSION=2.1.1` and `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`.
+
+To build your local code instead:
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
@@ -36,8 +40,10 @@ git clone https://github.com/dramaclaw/dramaclaw-gateway.git   # bundled gateway
 cd dramaclaw
 cp .env.example .env        # at minimum, change PROMPT_EXPORT_PASSWORD to a non-default value
 docker compose up -d --build    # builds api, web and the gateway from the two checkouts
-# no build? docker compose -f docker-compose.release.yml up -d   # pulls published images, no gateway clone needed
 ```
+
+Source Docker is not hot-reloading. After changes, rebuild with
+`docker compose up -d --build api web` (or `newapi` for gateway-only changes).
 
 After it's up, open **`http://localhost:8080`** in your browser (the app UI); the REST API is at `http://localhost:8780`. Go to Settings → Model Configuration → Official Channel, paste your DC key, save, and you're ready. For the full walkthrough see [Quickstart](quickstart.md); for start/stop/backup see the [Self-Hosting Handbook](../guides/self-hosting.md).
 
@@ -57,52 +63,62 @@ After it's up, open **`http://localhost:8080`** in your browser (the app UI); th
 
 > Python must be in the **3.11–3.12** range (`requires-python = ">=3.11,<3.13"`). uv pins dependency versions according to `uv.lock`.
 
+The frontend also needs Node.js and pnpm; use the pnpm version declared in
+`frontend/package.json`. Python alone only provides the API, not the Vite dev server.
+
+The Agent uses Codex. `scripts/start-ce.sh` downloads the public **credential-safe
+DramaClaw Codex 0.164.0** build matching your host: macOS Apple Silicon/Intel or
+Linux x64/ARM64. No private repository access is needed. The first download is about
+250–310 MB and requires curl plus `shasum` (macOS) or `sha256sum` (Linux).
+The launcher checks the pinned SHA256 before execution, checks the version, and reuses
+the verified cache under `runtime/codex/bin/` on subsequent starts. Custom storage roots
+(`NOVELVIDEO_RUNTIME_DIR` / `NOVELVIDEO_DATA_ROOT`) are respected.
+Windows native startup is not supported by this launcher; use WSL2 or Docker.
+
 ### 2. Install dependencies and start
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
-cp .env.example .env && $EDITOR .env     # set the gateway and key
+cp .env.example .env && $EDITOR .env     # change PROMPT_EXPORT_PASSWORD; configure the model channel/key in the UI
 
-scripts/start-ce.sh                      # install dependencies and start API + frontend
+scripts/start-ce.sh
 ```
 
-Docker images and direct `novelvideo api` invocations default to Codex. Images include the
-credential-safe patched Codex App Server runtime; direct source invocations need a valid `CODEX_BIN`.
-`scripts/start-ce.sh` installs Hermes in an isolated environment for source development and selects
-Hermes only when no chat backend is explicitly configured. `DRAMACLAW_CHAT_BACKEND` takes
-precedence over the legacy `SUPERTALE_CHAT_BACKEND` variable.
-CE defaults to `ST_EDITION=ce`, no-login single local user, and in-process inline task execution
-(no Ray/Redis/Celery).
+Open `http://localhost:5173` for the Vite development UI; the API is at
+`http://localhost:8780`. The launcher installs dependencies and starts both services;
+Ctrl+C stops them. Keep `DRAMACLAW_CHAT_BACKEND=codex` in `.env`; an older setting
+selecting another backend produces an actionable error rather than a silent fallback.
 
-### Linux source-checkout Hermes sandbox choice
-
-This applies only to Hermes; Codex does not use this sandbox switch. On Linux, Hermes
-refuses chat by default when the sandbox is missing, unusable, or not activated.
-When neither `SUPERTALE_ALLOW_UNSANDBOXED` nor `SUPERTALE_LINUX_SANDBOX` is enabled,
-`scripts/start-ce.sh` prints configuration guidance before installing dependencies. Enabled values are `1/true/yes/on`, ignoring case and surrounding
-whitespace; `0/false` does not enable a switch. Direct `novelvideo api` invocations with Hermes
-explicitly selected follow the same sandbox enforcement rule.
-
-For **single-user local development**, if you accept running Hermes without a sandbox,
-explicitly add this to `.env`:
-
-```dotenv
-SUPERTALE_ALLOW_UNSANDBOXED=1
-```
-
-Or scope it to one launch:
+To manage the API and frontend separately, prepare the same runtime before starting
+the API (the standalone setup command reads exported variables, not `.env`):
 
 ```bash
-SUPERTALE_ALLOW_UNSANDBOXED=1 scripts/start-ce.sh
+uv sync --group dev
+CODEX_BIN="$(bash scripts/setup-codex.sh)" &&
+  CODEX_BIN="$CODEX_BIN" DRAMACLAW_CHAT_BACKEND=codex \
+    uv run --no-sync novelvideo api --host 127.0.0.1 --port 8780
 ```
 
-This permits a warning-backed fallback only when the sandbox is unavailable; it does not
-disable a usable sandbox. `SUPERTALE_ENV=production` or a nonempty `ST_CONTROL_PLANE_DSN`
-still requires sandboxing, and the opt-in cannot override that boundary. Do not set
-`SUPERTALE_LINUX_SANDBOX=1` merely to suppress the error: that switch requires a deployment
-that isolates the current user's data directories through mounts.
+In a second terminal, from the repository root:
+
+```bash
+cd frontend && pnpm install && pnpm dev --host 127.0.0.1 --port 5173
+```
+
+To skip downloading, set `CODEX_BIN=/absolute/path/to/codex-dramaclaw` in `.env`
+for the launcher, or export it before the standalone setup command. An explicit binary
+is operator-managed: the script checks that it runs, but cannot prove it contains the
+credential-safety patches. Do not use the stock Codex CLI. A download/checksum failure
+stops startup before either service is launched and never falls back to another backend.
+
+Docker builds at v2.1.1 already include credential-safe Codex 0.164.0. Both source and
+release Compose select Codex by default; keep `DRAMACLAW_CHAT_BACKEND=codex` if setting
+it explicitly. `CODEX_BIN` in the native instructions above is a host-side path, not a
+container path.
+CE defaults to `ST_EDITION=ce`, no-login single local user, and in-process inline task execution
+(no Ray/Redis/Celery).
 
 ### 3. Verify
 
@@ -118,7 +134,7 @@ Official mode needs nothing else. For the other two modes the API expects a gate
 mkdir -p state/newapi
 docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
   -v "$PWD/state/newapi:/data" \
-  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.1
+  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.3
 ```
 
 or build and run the gateway from the sibling `dramaclaw-gateway` checkout with `SQLITE_PATH` pointing at that file. See [Configuring Models](configuring-models.md) for the mode setup.

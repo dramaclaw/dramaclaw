@@ -563,7 +563,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
               </SelectContent>
             </Select>
           </Field>
-          <Field label={t("episode.workbench.text.sceneVariant", { defaultValue: "变体" })}>
+          <Field label={t("episode.workbench.text.sceneVariant")}>
             <Select
               value={currentSceneRef.variant_id || NO_SCENE_VARIANT_MARKER}
               onValueChange={(v) => {
@@ -580,14 +580,12 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
               disabled={!currentSceneRef.scene_id}
             >
               <SelectTrigger
-                aria-label={t("episode.workbench.text.sceneVariant", { defaultValue: "变体" })}
+                aria-label={t("episode.workbench.text.sceneVariant")}
                 className={cn(COMPACT_CONTROL_CLASS, "w-full")}
               >
                 <SelectValue>
                   {currentSceneRef.variant_id ||
-                    t("episode.workbench.text.noSceneVariant", {
-                      defaultValue: "无变体",
-                    })}
+                    t("episode.workbench.text.noSceneVariant")}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent
@@ -599,9 +597,7 @@ export function TextPane({ beat, project, episode, spineTemplate = "drama" }: Te
                   value={NO_SCENE_VARIANT_MARKER}
                   className={SELECT_ITEM_CLASS}
                 >
-                  {t("episode.workbench.text.noSceneVariant", {
-                    defaultValue: "无变体",
-                  })}
+                  {t("episode.workbench.text.noSceneVariant")}
                 </SelectItem>
                 {sceneVariantChoices.map((variant) => (
                   <SelectItem

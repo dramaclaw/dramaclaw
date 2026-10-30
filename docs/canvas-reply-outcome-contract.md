@@ -1,8 +1,10 @@
 # Freezone Codex final response contract
 
-Issue #575 removes user-text classification from canvas receipt enforcement.
-The legacy `_freezone_canvas_write_requested` helper is not an execution or
-authorization boundary and is no longer used by the Codex streaming adapter.
+Receipt validation remains the source of truth for canvas success. The Codex
+streaming adapter also uses `_freezone_canvas_write_requested` as a fail-closed
+safety check: when an explicit write request ends as `read_only` without even
+one write attempt, it reports that the operation did not complete. This check
+never turns user text into success evidence or authorization.
 
 ## Evidence and declarations
 
@@ -29,10 +31,11 @@ threads. The final response contains:
   same-turn receipts. A direct receipt uses `bridge_key: null` and its integer
   `revision`. Historical or wrong-scope receipts cannot satisfy the declaration.
 
-The adapter validates structured declarations, not natural-language keywords.
-The model must not put canvas success claims in a `read_only` message; this is a
-response-protocol obligation, not a second prose classifier. Missing/invalid
-structured responses fail closed and never fall back to unverified raw prose.
+The adapter never scans the assistant's prose for success keywords. The model
+must not put canvas success claims in a `read_only` message. If the user clearly
+requested a canvas write, a zero-attempt `read_only` response fails closed;
+otherwise read-only explanations remain valid. Missing or invalid structured
+responses fail closed and never fall back to unverified raw prose.
 
 ## Non-success states and compatibility
 

@@ -784,6 +784,14 @@ async def _start_or_enqueue_freezone_video_gen(
     from novelvideo.api.routes.model_credits import (
         freezone_video_generate_task_billing,
     )
+    from novelvideo.freezone.video_node import effective_video_human_review
+
+    human_review = effective_video_human_review(
+        human_review,
+        gen_mode=gen_mode,
+        reference_items=reference_items,
+        last_frame_path=last_frame_path,
+    )
 
     workflow_link: dict[str, str] = {}
     if ctx is not None:

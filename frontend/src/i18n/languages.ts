@@ -11,7 +11,7 @@
  * Adding a locale: add the tag here, add `locales/<tag>/translation.json`, and
  * add its label key to `LANGUAGE_LABEL_KEYS` in `components/layout/header.tsx`.
  */
-export const SUPPORTED = ["zh", "en", "vi"] as const;
+export const SUPPORTED = ["zh", "en", "vi", "pt"] as const;
 export type Supported = (typeof SUPPORTED)[number];
 
 export function normalize(lng: string | undefined): Supported {

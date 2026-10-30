@@ -454,28 +454,28 @@ export const MultiSelectionToolbar = memo(({
                     type="button"
                     disabled
                     className={`${MULTI_TOOLBAR_BUTTON_CLASS} cursor-not-allowed opacity-70`}
-                    title="工作流正在运行"
+                    title={t('canvas.multiSelect.workflowRunning')}
                   >
                     {workflowStopRequested ? (
                       <CirclePause className="h-4 w-4 text-text-muted" />
                     ) : (
                       <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
                     )}
-                    <span>{workflowStopRequested ? '已停止后续' : '运行中'}</span>
+                    <span>{workflowStopRequested ? t('canvas.multiSelect.workflowStoppedNext') : t('canvas.multiSelect.workflowRunningShort')}</span>
                   </button>
                   <button
                     type="button"
                     disabled={workflowStopRequested}
                     className={`${MULTI_TOOLBAR_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
                     onClick={handleStopWorkflow}
-                    title="停止启动后续工作流节点"
+                    title={t('canvas.multiSelect.workflowStopNextTitle')}
                   >
                     {workflowStopRequested ? (
                       <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
                     ) : (
                       <CirclePause className="h-4 w-4 text-text-muted" />
                     )}
-                    <span>{workflowStopRequested ? '等待当前节点' : '停止后续'}</span>
+                    <span>{workflowStopRequested ? t('canvas.multiSelect.workflowWaitingCurrent') : t('canvas.multiSelect.workflowStopNext')}</span>
                   </button>
                 </>
               ) : (
@@ -485,14 +485,14 @@ export const MultiSelectionToolbar = memo(({
                     disabled={isRunningWorkflow || !workflowState.canContinue}
                     className={`${MULTI_TOOLBAR_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
                     onClick={() => void handleRunWorkflow(false)}
-                    title={workflowState.status === 'completed' ? '工作流已完成' : '运行工作流'}
+                    title={workflowState.status === 'completed' ? t('canvas.multiSelect.workflowCompleted') : t('canvas.multiSelect.workflowRun')}
                   >
                     {isRunningWorkflow ? (
                       <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
                     ) : (
                       <Workflow className="h-4 w-4 text-text-muted" />
                     )}
-                    <span>{isRunningWorkflow ? '运行中' : workflowState.primaryLabel}</span>
+                    <span>{isRunningWorkflow ? t('canvas.multiSelect.workflowRunningShort') : workflowState.primaryLabel}</span>
                   </button>
                   {workflowState.canRegenerate && (
                     <button
@@ -500,10 +500,10 @@ export const MultiSelectionToolbar = memo(({
                       disabled={isRunningWorkflow}
                       className={`${MULTI_TOOLBAR_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
                       onClick={() => void handleRunWorkflow(true)}
-                      title="重新运行全部工作流节点"
+                      title={t('canvas.multiSelect.workflowRerunAllTitle')}
                     >
                       <RefreshCw className="h-4 w-4 text-text-muted" />
-                      <span>重新运行全部</span>
+                      <span>{t('canvas.multiSelect.workflowRerunAll')}</span>
                     </button>
                   )}
                 </>
@@ -631,7 +631,7 @@ export const MultiSelectionToolbar = memo(({
               onClick={() => handleArrange('grid')}
             >
               <LayoutGrid className="h-4 w-4 text-text-muted" />
-              <span>宫格排列</span>
+              <span>{t('canvas.multiSelect.arrangeGrid')}</span>
             </button>
             <button
               type="button"

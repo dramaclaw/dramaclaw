@@ -31,7 +31,9 @@ describe("canvas video breakdown credit contract", () => {
     // 与 EE 侧 FEATURE_BILLING_SPECS["freezone_video_breakdown"] 以及 CE 路由
     // _enqueue_or_start_freezone_video_analysis 的 billing_operation 对齐。
     expect(nodeSource).toContain('const breakdownCreditCost = useGenerationCreditCost(');
-    expect(nodeSource).toContain('"feature",\n      "freezone.video_analyze",');
+    expect(nodeSource).toMatch(
+      flexible('"feature", "freezone.video_analyze",'),
+    );
     expect(nodeSource).toContain(
       '{ surface: "canvas", params: { operation: "video_breakdown" } }',
     );

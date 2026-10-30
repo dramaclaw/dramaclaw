@@ -740,8 +740,10 @@ export function VideoPane({
   };
   const missingVoice =
     showSeedance2Config &&
-    seedance2StatusData?.voice.required !== false &&
-    seedance2StatusData?.voice.ready !== true;
+    seedance2Draft.mode === "multimodal_reference" &&
+    seedance2StatusData != null &&
+    seedance2StatusData.voice.required &&
+    !seedance2StatusData.voice.ready;
   const [audioConfirm, setAudioConfirm] = useState(false);
   const setGenerateAudio = (enabled: boolean) => {
     const next = {

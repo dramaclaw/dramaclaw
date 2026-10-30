@@ -1192,12 +1192,17 @@ def append_seedance2_user_reference_assets(
 def apply_prompt_audio_selection(
     assets: list[Seedance2ResolvedAsset],
     final_prompt: str,
+    *,
+    generate_audio: bool = True,
 ) -> list[Seedance2ResolvedAsset]:
-    """Mark audio references as sent only when the current prompt mentions their label."""
+    """Select prompt-referenced audio assets only when audio generation is enabled."""
 
     prompt_text = str(final_prompt or "")
     result: list[Seedance2ResolvedAsset] = []
     for asset in assets:
+        if asset.media_type == "audio" and not generate_audio:
+            result.append(replace(asset, selected=False, request_field=""))
+            continue
         if asset.media_type != "audio" or not asset.reference_label.startswith("音频"):
             result.append(asset)
             continue

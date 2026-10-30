@@ -19,19 +19,17 @@ def test_local_ce_keeps_hermes_out_of_application_venv():
     start_script = (ROOT / "scripts" / "start-ce.sh").read_text(encoding="utf-8")
     setup_script = (ROOT / "scripts" / "setup-hermes.sh").read_text(encoding="utf-8")
 
-    assert ".cache/hermes-venv" in start_script
-    assert '$root_dir/.venv/bin/hermes' not in start_script
+    assert "setup-hermes.sh" not in start_script
+    assert "HERMES_ENV_DIR" not in start_script
+    assert 'codex_bin="$(bash "$root_dir/scripts/setup-codex.sh")"' in start_script
+    assert 'export CODEX_BIN="$codex_bin"' in start_script
     assert (
-        'if [ -z "${DRAMACLAW_CHAT_BACKEND:-}" ] '
-        '&& [ -z "${SUPERTALE_CHAT_BACKEND:-}" ]; then\n'
-        "  export DRAMACLAW_CHAT_BACKEND=hermes\n"
-        "fi"
-    ) in start_script
-    assert 'HERMES_PYTHON="${HERMES_PYTHON:-$HERMES_ENV_DIR/bin/python}"' in setup_script
+        'HERMES_PYTHON="${HERMES_PYTHON:-$HERMES_ENV_DIR/bin/python}"' in setup_script
+    )
     assert 'uv pip install --python "$HERMES_PYTHON"' in setup_script
 
 
-def test_source_startup_docs_use_supported_local_launcher():
+def test_source_startup_docs_configure_codex_runtime():
     documented_paths = (
         ROOT / "README.md",
         ROOT / "docs" / "en" / "getting-started" / "installation.md",
@@ -41,3 +39,14 @@ def test_source_startup_docs_use_supported_local_launcher():
     for path in documented_paths:
         content = path.read_text(encoding="utf-8")
         assert "scripts/start-ce.sh" in content
+        assert "0.164.0" in content
+        assert "SHA256" in content
+        assert "CODEX_BIN" in content
+        assert "hermes" not in content.lower()
+
+
+def test_env_example_selects_codex_for_source_development():
+    content = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert "\nDRAMACLAW_CHAT_BACKEND=codex\n" in content
+    assert "HERMES_MODEL=" not in content

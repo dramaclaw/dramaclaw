@@ -9,6 +9,7 @@ import {
   listFreezoneStyleTemplates,
   submitFreezoneAudioSpeech,
   submitFreezoneGen,
+  submitFreezoneVideoGen,
 } from "@/api/ops";
 import {
   bindWorkflowProductOperation,
@@ -19,6 +20,17 @@ vi.mock("@/api/client", () => ({
   apiCall: vi.fn(),
   apiClient: vi.fn(),
 }));
+
+it("forces text-to-video human review off even for stale enabled node data", async () => {
+  vi.mocked(apiCall).mockResolvedValueOnce({ task_key: "video-1", job_id: "video-1" });
+  await submitFreezoneVideoGen("project-1", {
+    prompt: "a sunset", genMode: "textToVideo", humanReview: true,
+  });
+  expect(apiCall).toHaveBeenLastCalledWith(
+    "projects/project-1/freezone/video/gen",
+    expect.objectContaining({ json: expect.objectContaining({ human_review: false }) }),
+  );
+});
 
 describe("workflow media task association", () => {
   beforeEach(() => {

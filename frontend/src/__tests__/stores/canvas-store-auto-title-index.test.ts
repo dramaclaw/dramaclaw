@@ -6,8 +6,42 @@ import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/can
 import {
   nextAutoTitleIndex,
   resolveNodeDisplayName,
+  localizeNodeDisplayName,
 } from '@/features/canvas/domain/nodeDisplay';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { enT, zhT } from '@/__tests__/helpers/i18n-fixtures';
+
+describe('numbered node title localization', () => {
+  it.each([
+    [CANVAS_NODE_TYPES.textAnnotation, '文本7', 7, 'Text7'],
+    [CANVAS_NODE_TYPES.imageGen, '图片节点16', 16, 'Image node16'],
+  ])('localizes the default %s title without changing saved data', (type, displayName, index, english) => {
+    const data = { displayName: String(displayName), autoTitleIndex: Number(index) };
+    expect(localizeNodeDisplayName(type as typeof CANVAS_NODE_TYPES.imageGen, data, enT)).toBe(english);
+    expect(localizeNodeDisplayName(type as typeof CANVAS_NODE_TYPES.imageGen, data, zhT)).toBe(displayName);
+    expect(data.displayName).toBe(displayName);
+  });
+
+  it('localizes an empty title while keeping its automatic number', () => {
+    expect(localizeNodeDisplayName(CANVAS_NODE_TYPES.imageGen, { autoTitleIndex: 16 }, enT))
+      .toBe('Image node16');
+  });
+
+  it('keeps custom titles and legacy titles without numbering metadata unchanged', () => {
+    for (const data of [
+      { displayName: '我的图片16', autoTitleIndex: 16 },
+      { displayName: '图片节点42', autoTitleIndex: 16 },
+      { displayName: '图片节点16' },
+    ]) {
+      expect(localizeNodeDisplayName(CANVAS_NODE_TYPES.imageGen, data, enT)).toBe(data.displayName);
+    }
+    expect(localizeNodeDisplayName(CANVAS_NODE_TYPES.group, { label: '我的自定义分组' }, enT))
+      .toBe('我的自定义分组');
+    // A title that is another type's default is still a custom title here.
+    expect(localizeNodeDisplayName(CANVAS_NODE_TYPES.imageEdit, { displayName: '图片节点' }, enT))
+      .toBe('图片节点');
+  });
+});
 
 function nodeOf(id: string, type: string, data: Record<string, unknown> = {}): CanvasNode {
   return { id, type, position: { x: 0, y: 0 }, data } as unknown as CanvasNode;

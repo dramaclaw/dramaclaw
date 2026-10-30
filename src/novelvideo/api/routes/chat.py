@@ -97,6 +97,12 @@ _REASONING_REQUIRED_ERROR_MESSAGE = (
 def _user_facing_chat_error(exc: BaseException) -> str:
     """Turn provider/runtime failures into stable, safe chat copy."""
 
+    from novelvideo.chat.codex_app_server import CodexRuntimeError
+    from novelvideo.chat.hermes_fork_requirement import HermesForkMissing
+
+    if isinstance(exc, (CodexRuntimeError, HermesForkMissing)):
+        return "本地助手运行时不可用：请重启应用；若仍失败，请更新应用并导出诊断日志。"
+
     raw = safe_exception_message(exc).strip()
     lowered = raw.lower()
     if "reasoning is mandatory" in lowered and "cannot be disabled" in lowered:

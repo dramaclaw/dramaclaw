@@ -15,8 +15,8 @@ import {
  * 换语言不能跟着变，否则同一张画布在中英文下存出不同内容；后者才该翻译。
  *
  * 所以下面这份中文表保持不动当「规范默认值」，另配一份 key 表；渲染时用
- * localizeNodeDisplayName：名字为空、或恰好等于某个规范默认值（说明用户没改过
- * 名），就按当前语言显示，否则原样显示用户起的名字。
+ * localizeNodeDisplayName：当前类型的默认名（含自动编号）按当前语言显示，
+ * 用户自定义名称原样保留，即使它恰好等于另一种节点的默认名。
  */
 // i18n-exempt-start: 规范默认值，会写进画布 JSON；显示用 NODE_DISPLAY_NAME_KEYS
 export const DEFAULT_NODE_DISPLAY_NAME: Record<CanvasNodeType, string> = {
@@ -63,12 +63,6 @@ const EXPORT_RESULT_DISPLAY_NAME_KEYS: Record<ExportImageNodeResultKind, string>
   Object.fromEntries(
     Object.keys(EXPORT_RESULT_DISPLAY_NAME).map((kind) => [kind, `node.exportResult.${kind}`]),
   ) as Record<ExportImageNodeResultKind, string>;
-
-/** 所有规范默认值，用来判断「这名字是系统给的还是用户起的」。 */
-const CANONICAL_DEFAULT_NAMES = new Set<string>([
-  ...Object.values(DEFAULT_NODE_DISPLAY_NAME),
-  ...Object.values(EXPORT_RESULT_DISPLAY_NAME),
-]);
 
 function resolveExportResultKind(data: Partial<CanvasNodeData>): ExportImageNodeResultKind {
   return (data as { resultKind?: ExportImageNodeResultKind }).resultKind ?? 'generic';
@@ -182,7 +176,17 @@ export function localizeNodeDisplayName(
   t: TFunction,
 ): string {
   const name = resolveNodeDisplayName(type, data);
-  return CANONICAL_DEFAULT_NAMES.has(name)
+  if (name === getDefaultNodeDisplayName(type, data)) {
+    const index = data.autoTitleIndex;
+    const suffix = typeof index === 'number' && Number.isFinite(index) && index > 0
+      ? String(index)
+      : '';
+    return `${localizeDefaultNodeDisplayName(type, data, t)}${suffix}`;
+  }
+  const defaultBase = type === CANVAS_NODE_TYPES.exportImage
+    ? resolveExportResultDefault(data)
+    : DEFAULT_NODE_DISPLAY_NAME[type];
+  return name === defaultBase
     ? localizeDefaultNodeDisplayName(type, data, t)
     : name;
 }

@@ -59,11 +59,16 @@ vi.mock("@/api/ops", async (importOriginal) => ({
       providerId: "huimeng",
       apiModel: "test_video_api",
       label: "测试视频模型",
+      humanReview: true,
+      supportedModes: ["text_to_video", "first_frame"],
     },
   ]),
   fetchFreezoneVideoCameraTemplates: vi.fn(async () => []),
   listFreezoneGenerationHistory: vi.fn(async () => []),
   submitFreezoneVideoGen: vi.fn(async () => {
+    throw new Error(RAW_BACKEND_ERROR);
+  }),
+  submitFreezoneVideoKeyframes: vi.fn(async () => {
     throw new Error(RAW_BACKEND_ERROR);
   }),
 }));
@@ -93,6 +98,16 @@ describe("VideoNode error notification contract", () => {
   });
 
   it("routes a policy-blocked failure to the real-person-review guidance", async () => {
+    useCanvasStore.getState().setCanvasData([
+      {
+        id: "vid-1", type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 },
+        data: { prompt: "a cat", model: "huimeng/test-video", genMode: "firstFrame" },
+      } as CanvasNode,
+      {
+        id: "img-1", type: CANVAS_NODE_TYPES.upload, position: { x: 0, y: 0 },
+        data: { imageUrl: "/static/frame.png" },
+      } as CanvasNode,
+    ], [{ id: "ref", source: "img-1", target: "vid-1" }]);
     const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
 
     await waitFor(() => {
@@ -109,6 +124,15 @@ describe("VideoNode error notification contract", () => {
     expect(String(title)).toBe("素材被拦截");
     // 诊断报文原样透传给对话框——展开「详情」时看到的必须是厂商原文。
     expect(String(details)).toContain(POLICY_CODE);
+  });
+
+  it("does not tell text-to-video users to enable a hidden review switch", async () => {
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    await result.current.submit();
+    const calls = vi.mocked(showErrorDialog).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    expect(String(calls[calls.length - 1][0])).not.toContain("真人素材审核");
   });
 
   it("falls back to the generic dialog when the failure is not policy-related", async () => {

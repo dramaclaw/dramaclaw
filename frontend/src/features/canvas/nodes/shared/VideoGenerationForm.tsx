@@ -798,6 +798,7 @@ interface CharacterLibraryChipProps {
 }
 
 function CharacterLibraryChip({ onOpen }: CharacterLibraryChipProps) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
@@ -808,12 +809,13 @@ function CharacterLibraryChip({ onOpen }: CharacterLibraryChipProps) {
       className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} group/asset px-1.5`}
     >
       <Library className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/asset:text-text-dark`} />
-      <span>资产库</span>
+      <span>{t("node.imageGen.assetLibrary")}</span>
     </button>
   );
 }
 
 function ExternalAssetChip({ onOpen }: { onOpen: () => void }) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
@@ -824,7 +826,7 @@ function ExternalAssetChip({ onOpen }: { onOpen: () => void }) {
       className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} group/external px-1.5`}
     >
       <Plus className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/external:text-text-dark`} />
-      <span>外部素材</span>
+      <span>{t("node.videoOps.externalMedia")}</span>
     </button>
   );
 }
@@ -1623,7 +1625,7 @@ export const VideoGenerationForm = memo((props: VideoGenerationFormProps) => {
         candidates={mentionCandidates}
         placeholder={
           upstreamTextJoined.length > 0
-            ? "上游内容已自动接入，可继续补充提示词…"
+            ? t("node.videoOps.upstreamPlaceholder")
             : t("node.videoNode.placeholder")
         }
         className={`nodrag nowheel min-h-0 w-full flex-1 overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent px-3 py-2 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
@@ -1667,7 +1669,7 @@ export const VideoGenerationForm = memo((props: VideoGenerationFormProps) => {
               type="button"
               role="switch"
               aria-checked={humanReview}
-              title="素材含真实人脸时开启，可能增加审核时间，不保证通过。"
+              title={t("node.videoOps.humanReviewTitle")}
               onClick={(event) => {
                 event.stopPropagation();
                 updateNodeData(nodeId, { humanReview: !humanReview });
@@ -1678,7 +1680,7 @@ export const VideoGenerationForm = memo((props: VideoGenerationFormProps) => {
                   : "text-text-dark/72 hover:text-text-dark"
               }`}
             >
-              <span>真人验证</span>
+              <span>{t("node.videoOps.humanReviewLabel")}</span>
               <span
                 className={`relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors ${
                   humanReview
@@ -1700,7 +1702,7 @@ export const VideoGenerationForm = memo((props: VideoGenerationFormProps) => {
           />
           <button
             type="button"
-            title="翻译提示词（中英文互译）"
+            title={t("node.videoOps.translateTitle")}
             disabled={translateDisabled}
             onClick={(event) => {
               event.stopPropagation();

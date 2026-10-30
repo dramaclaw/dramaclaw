@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, type ReactElement, type RefObject } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronLeft, Copy, ImageIcon, Loader2, Music, Play, Trash2, X } from 'lucide-react';
 
 import type {
@@ -23,7 +24,7 @@ import { cn } from '@/lib/utils';
 import { useCanvasStore } from '@/stores/canvasStore';
 
 import { AssetBoardAudioGenForm } from './AssetBoardAudioGenForm';
-import { Chip, EMPTY_MEDIA_PLACEHOLDER_TEXT, estimatedGenerationDurationMs } from './AssetBoardCard';
+import { Chip, estimatedGenerationDurationMs } from './AssetBoardCard';
 import {
   AssetBoardImageDetailToolbar,
   AssetBoardVideoDetailToolbar,
@@ -111,14 +112,15 @@ function ReferencesRow({
   onOpenReference: (ref: AssetBoardReference) => void;
   onLocateReference: (nodeId: string) => void;
 }) {
+  const { t } = useTranslation();
   if (references.length === 0) return null;
   // role=group + aria-label：给这一组一个可定位的容器，让「点参考缩略图」的
   // 编辑/定位交互有明确落点。底部行现在只在「无生成表单」的只读详情里渲染
   // （见 MediaBody 的 !showGenerationForm 守卫），不会再与生成表单的引用 chip
   // 并存，因此也不会出现同名缩略图两处歧义的问题。
   return (
-    <div role="group" aria-label="参考素材" className="flex flex-col gap-1.5">
-      <span className="text-[12px] text-white/40">参考素材</span>
+    <div role="group" aria-label={t('assetBoard.referenceMaterials')} className="flex flex-col gap-1.5">
+      <span className="text-[12px] text-white/40">{t('assetBoard.referenceMaterials')}</span>
       <div className="flex flex-wrap gap-2">
         {references.map((ref) => {
           const refNodeId = ref.nodeId;
@@ -158,6 +160,7 @@ function MediaBody({
   onLocateReference: (nodeId: string) => void;
   onZoomImage: (url: string) => void;
 }): ReactElement {
+  const { t } = useTranslation();
   const prompt = promptOf(node);
   // 图片/视频生成节点在详情里挂完整生成表单（空节点直接出图出片 / 已有产物改参数
   // 重生成）。表单自带提示词输入框，因此这类节点不再另渲染只读提示词块——同一段
@@ -170,7 +173,7 @@ function MediaBody({
   // 信息的第二份，且位置在表单下方更像是漏掉的碎片（用户要求去掉）。
   const badges: ReactElement[] = [];
   if (!showGenerationForm) {
-    if (item.durationSec !== null) badges.push(<Chip key="dur">{`${item.durationSec}秒`}</Chip>);
+    if (item.durationSec !== null) badges.push(<Chip key="dur">{t('assetBoard.durationSeconds', { count: item.durationSec })}</Chip>);
     if (item.widthPx !== null && item.heightPx !== null) {
       badges.push(<Chip key="dim">{`${item.widthPx} × ${item.heightPx}`}</Chip>);
     }
@@ -221,8 +224,8 @@ function MediaBody({
           <div className={cn('relative', fill && 'h-full')}>
             <button
               type="button"
-              aria-label="放大查看"
-              title="放大查看"
+              aria-label={t('assetBoard.zoomImage')}
+              title={t('assetBoard.zoomImage')}
               disabled={item.isGenerating}
               onClick={() => onZoomImage(item.mediaUrl as string)}
               className={cn('cursor-zoom-in disabled:cursor-not-allowed', fill && 'block h-full')}
@@ -272,7 +275,7 @@ function MediaBody({
 
       {prompt && !showGenerationForm && (
         <div className="flex flex-col gap-1.5">
-          <span className="text-[12px] text-white/40">提示词</span>
+          <span className="text-[12px] text-white/40">{t('assetBoard.prompt')}</span>
           {/* @图片N / @视频N / @音频N 渲染成带缩略图的只读 chip（hover 出大图），
               编号复用工作流那份映射；解析不到的引用原样留作纯文本。 */}
           <AssetBoardPromptText
@@ -384,11 +387,13 @@ function AudioBody({
  * 拆成独立子组件，让 120ms 轮询定时器只在真正生成中的占位上才挂载。
  */
 function GeneratingPlaceholderLabel({ item }: { item: AssetBoardItem }) {
+  const { t } = useTranslation();
   const percent = useEstimatedProgress(item.generationStartedAt, estimatedGenerationDurationMs(item.column));
-  return <span className="text-[12px] text-muted-foreground">{`生成中 ${percent}%...`}</span>;
+  return <span className="text-[12px] text-muted-foreground">{t('assetBoard.generatingProgress', { percent })}</span>;
 }
 
 function AudioPlaceholder({ item, className }: { item: AssetBoardItem; className: string }) {
+  const { t } = useTranslation();
   return (
     // 尺寸与播放器框完全同款（见 AudioBody 的 mediaBoxClass）：内容区不跟着铺满
     // 面板的生成条一起拉宽。
@@ -401,7 +406,7 @@ function AudioPlaceholder({ item, className }: { item: AssetBoardItem; className
       ) : (
         <>
           <Music className="h-8 w-8 text-muted-foreground" />
-          <span className="text-[12px] text-muted-foreground">{EMPTY_MEDIA_PLACEHOLDER_TEXT}</span>
+          <span className="text-[12px] text-muted-foreground">{t('assetBoard.pendingGeneration')}</span>
         </>
       )}
     </div>
@@ -418,6 +423,7 @@ function MediaPlaceholder({
   /** 撑满父级剩余高度（详情挂了生成表单时）；否则按 16:9 占位。 */
   fill?: boolean;
 }) {
+  const { t } = useTranslation();
   const Icon = kind === 'video' ? Play : ImageIcon;
   return (
     // 空节点（还没出图/出片）媒体区用纯黑底，与已有媒体的黑背景一致、留白更干净。
@@ -439,7 +445,7 @@ function MediaPlaceholder({
           <Icon className="h-8 w-8 text-muted-foreground" />
           {/* 空态明说「还没出图/出片、确认参数后才生成」（对齐 liblib 空节点），
               而不是一个没有说明的灰图标；下方的生成表单就是那个确认入口。 */}
-          <span className="text-[12px] text-muted-foreground">{EMPTY_MEDIA_PLACEHOLDER_TEXT}</span>
+          <span className="text-[12px] text-muted-foreground">{t('assetBoard.pendingGeneration')}</span>
         </>
       )}
     </div>
@@ -448,10 +454,11 @@ function MediaPlaceholder({
 
 /** 已有媒体上的生成中遮罩：半透明 + 居中 spinner，同时挡掉下层交互（放大/播放器）。 */
 function GeneratingOverlay() {
+  const { t } = useTranslation();
   return (
     <span
       role="status"
-      aria-label="生成中"
+      aria-label={t('assetBoard.generating')}
       className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/40"
     >
       <Loader2 className="h-6 w-6 animate-spin text-white" />
@@ -475,6 +482,7 @@ export function AssetBoardDetail({
   onZoomImage,
   onOpenNode,
 }: AssetBoardDetailProps): ReactElement {
+  const { t } = useTranslation();
   // 直接从 store 取原始节点（详情要渲染完整内容，AssetBoardItem 只有卡片摘要字段）。
   // 隐藏时 selector 恒返回 undefined（Object.is 相等）→ 冻结重渲染，与 AssetBoardView
   // 的 liveNodes 冻结模式一致；undefined=冻结、null=可见但节点已被删除。
@@ -518,14 +526,14 @@ export function AssetBoardDetail({
 
   return (
     <section
-      aria-label="资产详情"
+      aria-label={t('assetBoard.assetDetail')}
       // group/detail：头部那条视频工具条「hover 到详情才浮现」的悬停源。**具名** group
       // 是必须的——详情子树里已经有一堆匿名 group-hover 的消费者（图片操作 chip、音频
       // 条、卡片……），挂匿名 group 会让它们在鼠标进详情任意位置时一起误触发。
       className="group/detail flex min-h-0 min-w-0 flex-1 flex-col rounded-lg rounded-b-none border border-white/5 bg-[#262626]"
     >
       <header className="flex shrink-0 items-center gap-1.5 px-3 py-2.5">
-        <button type="button" aria-label="返回" title="返回" onClick={onBack} className={HEADER_ICON_BUTTON_CLASS}>
+        <button type="button" aria-label={t('assetBoard.back')} title={t('assetBoard.back')} onClick={onBack} className={HEADER_ICON_BUTTON_CLASS}>
           <ChevronLeft className="h-4 w-4" />
         </button>
         {showHeaderTitle && (
@@ -561,14 +569,14 @@ export function AssetBoardDetail({
           <DetailMoreMenu
             key={node.id}
             triggerClassName={HEADER_ICON_BUTTON_CLASS}
-            triggerLabel="节点操作"
+            triggerLabel={t('assetBoard.nodeActions')}
             entries={[
-              keyElementMenuEntry(node, updateNodeData),
+              keyElementMenuEntry(node, updateNodeData, t),
               {
                 kind: 'action',
                 key: 'duplicate',
                 icon: Copy,
-                label: '创建副本',
+                label: t('assetBoard.duplicate'),
                 // 复制到源节点下方一格并克隆上游连线（与工作流多选工具条同一个 store
                 // 动作）；建好直接把详情切到副本，否则用户看不出发生了什么。
                 onSelect: () => {
@@ -580,7 +588,7 @@ export function AssetBoardDetail({
                 kind: 'action',
                 key: 'delete',
                 icon: Trash2,
-                label: '删除',
+                label: t('assetBoard.delete'),
                 // 节点没了详情也就没了对象——先关详情再删，避免详情闪一下「节点已不存在」。
                 onSelect: () => {
                   onClose();
@@ -592,8 +600,8 @@ export function AssetBoardDetail({
         )}
         <button
           type="button"
-          aria-label="关闭详情"
-          title="关闭详情"
+          aria-label={t('assetBoard.closeDetail')}
+          title={t('assetBoard.closeDetail')}
           onClick={onClose}
           className={HEADER_ICON_BUTTON_CLASS}
         >
@@ -640,7 +648,7 @@ export function AssetBoardDetail({
         )}
       >
         {missing ? (
-          <p className="py-16 text-center text-[13px] text-muted-foreground">节点已不存在</p>
+          <p className="py-16 text-center text-[13px] text-muted-foreground">{t('assetBoard.nodeMissing')}</p>
         ) : item.column === 'text' ? (
           // 左对齐、顶起：正文从详情区左上角开始（对齐 liblib 阅读页），不再水平居中。
           // 正文占面板 90% 宽（原来卡在 max-w-3xl=768px，面板一宽就只用了半边，
