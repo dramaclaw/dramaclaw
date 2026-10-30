@@ -5,10 +5,18 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import i18next from "i18next";
 import { http, HttpResponse } from "msw";
-import { setupServer } from "msw/node";
+import { server } from "@/__mocks__/msw/server";
 import ky from "ky";
 import type { ReactNode } from "react";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
@@ -18,7 +26,6 @@ vi.mock("@/lib/api", () => ({
 import { CharacterVoicePanel } from "@/components/assets/character-voice-panel";
 import type { Character } from "@/types/character";
 
-const server = setupServer();
 const i18n = i18next.createInstance();
 
 beforeAll(async () => {
@@ -28,6 +35,17 @@ beforeAll(async () => {
     resources: {
       zh: {
         translation: {
+          voiceDesign: {
+            entry: "按描述生成",
+            title: "按描述生成声线",
+            target: "保存位置：{{target}}",
+            saveSlot: "保存到{{slot}}",
+            description: "音色描述",
+            previewText: "试听文本",
+            generate: "生成试听",
+            replace: "替换",
+            close: "关闭",
+          },
           characters: {
             voiceSamples: {
               title: "声线管理 (IndexTTS2)",
@@ -61,10 +79,26 @@ beforeAll(async () => {
     },
     interpolation: { escapeValue: false },
   });
-  server.listen();
 });
+beforeEach(() =>
+  server.use(
+    http.get(
+      "http://localhost:3000/api/v1/projects/demo/voice-design/quote",
+      () =>
+        HttpResponse.json(
+          {
+            ok: false,
+            code: "voice_design_unavailable",
+            error: "disabled",
+            retryable: false,
+            request_id: "178727cd-e421-451c-87e7-68779d72a8ec",
+          },
+          { status: 503 },
+        ),
+    ),
+  ),
+);
 afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
 
 function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -76,10 +110,9 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 function renderPanel(character: Character) {
-  return render(
-    <CharacterVoicePanel project="demo" character={character} />,
-    { wrapper },
-  );
+  return render(<CharacterVoicePanel project="demo" character={character} />, {
+    wrapper,
+  });
 }
 
 describe("CharacterVoicePanel", () => {
@@ -159,9 +192,16 @@ describe("CharacterVoicePanel", () => {
       "title",
       "assets/characters/秦/voices/voice_elder.wav",
     );
-    expect(screen.getAllByRole("button", { name: "上传声音样本" })).toHaveLength(4);
+    expect(
+      screen.getAllByRole("button", { name: "上传声音样本" }),
+    ).toHaveLength(4);
     expect(screen.getAllByRole("button", { name: "录音" })).toHaveLength(4);
-    expect(screen.getAllByRole("button", { name: "裁剪到 3-5 秒" })).toHaveLength(2);
+    expect(
+      screen.queryByRole("button", { name: "按描述生成" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "裁剪到 3-5 秒" }),
+    ).toHaveLength(2);
     expect(screen.getAllByRole("button", { name: "清除" })).toHaveLength(2);
 
     const audio = await waitFor(() => {
@@ -169,7 +209,10 @@ describe("CharacterVoicePanel", () => {
       expect(el).not.toBeNull();
       return el as HTMLAudioElement;
     });
-    Object.defineProperty(audio, "duration", { value: 6.5, configurable: true });
+    Object.defineProperty(audio, "duration", {
+      value: 6.5,
+      configurable: true,
+    });
     fireEvent.loadedMetadata(audio);
     expect(await screen.findByText("当前约 6.5 秒")).toBeInTheDocument();
   });
@@ -223,4 +266,115 @@ describe("CharacterVoicePanel", () => {
 
     expect(await screen.findByText("读取声线样本失败")).toBeInTheDocument();
   });
+});
+
+it("saves a primary-age entry to actionSlot default, preserving upload actions", async () => {
+  const slot = {
+    slot: "default",
+    label: "默认（兜底）",
+    path: "",
+    url: "",
+    sha256: "",
+    updated_at: "",
+    required: true,
+    inherited_from_default: false,
+  };
+  const base = "http://localhost:3000/api/v1/projects/demo";
+  let saved: unknown;
+  let uploads = 0;
+  server.use(
+    http.get(`${base}/voice-design/quote`, () =>
+      HttpResponse.json({
+        ok: true,
+        data: { cost: 2, display: "2", unit: "call", quantity: 1 },
+      }),
+    ),
+    http.get(`${base}/characters/%E7%A7%A6/voice-samples`, () =>
+      HttpResponse.json({ ok: true, data: { character: "秦", slots: [slot] } }),
+    ),
+    http.post(`${base}/voice-design/candidates`, async ({ request }) => {
+      const data = (await request.json()) as {
+        request_id: string;
+        surface: string;
+      };
+      expect(data.surface).toBe("supertale");
+      return HttpResponse.json({
+        ok: true,
+        data: {
+          candidate_id: data.request_id,
+          status: "ready",
+          description: "温柔",
+          preview_text: "今天的天气很好，我们沿着河边慢慢走回家。",
+          language: "zh",
+          preview_url: `/api/v1/projects/demo/voice-design/candidates/${data.request_id}/audio`,
+          mime_type: "audio/mpeg",
+          duration_seconds: 4,
+          sha256: "a".repeat(64),
+          created_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 3600000).toISOString(),
+        },
+      });
+    }),
+    http.post(
+      `${base}/characters/%E7%A7%A6/voice-samples/default/save-generated`,
+      async ({ request }) => {
+        saved = await request.json();
+        return HttpResponse.json({
+          ok: true,
+          data: { ...slot, path: "new.wav", url: "/new.wav", sha256: "new" },
+        });
+      },
+    ),
+    http.post(
+      `${base}/characters/%E7%A7%A6/voice-samples/default/upload`,
+      () => {
+        uploads++;
+        return HttpResponse.json({
+          ok: true,
+          data: { ...slot, path: "uploaded.wav", url: "/uploaded.wav" },
+        });
+      },
+    ),
+  );
+  const { container } = renderPanel({ name: "秦", age_group: "youth" });
+  const entries = await screen.findAllByRole("button", { name: "按描述生成" });
+  expect(entries).toHaveLength(4);
+  fireEvent.click(entries[1]);
+  expect(
+    await screen.findByText("保存位置：秦 · 默认（兜底）"),
+  ).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("音色描述"), {
+    target: { value: "温柔" },
+  });
+  fireEvent.change(screen.getByLabelText("试听文本"), {
+    target: { value: "今天的天气很好，我们沿着河边慢慢走回家。" },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "生成试听" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "保存到默认（兜底）" }),
+    ).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认（兜底）" }));
+  await waitFor(() =>
+    expect(saved).toMatchObject({
+      expected_slot: { path: "", sha256: "", updated_at: "" },
+      replace_existing: false,
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getAllByRole("button", { name: "上传声音样本" })[1]);
+  const input = container.querySelector('input[type="file"]');
+  if (!input) throw new Error("missing file input");
+  fireEvent.change(input, {
+    target: {
+      files: [new File(["audio"], "voice.wav", { type: "audio/wav" })],
+    },
+  });
+  await waitFor(() => expect(uploads).toBe(1));
 });
