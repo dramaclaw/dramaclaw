@@ -1,7 +1,33 @@
-"""Voice design boundary contracts. Production routes are added by later slices."""
+"""Voice design contracts and private candidate endpoints."""
 
 from typing import Annotated, Generic, Literal, TypeVar
-from uuid import UUID
+from uuid import UUID, uuid4
+from datetime import datetime, timezone
+import sqlite3
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
+from fastapi.responses import JSONResponse, Response
+
+from novelvideo.api.auth import get_api_user
+from novelvideo.api.routes.model_credits import (
+    GenerationCreditSurface,
+    _credit_product_surface,
+)
+from novelvideo.audio.voice_design_storage import (
+    CandidateStorageError,
+    VoiceDesignStorage,
+    sweep_candidates,
+)
+from novelvideo.project_context import (
+    resolve_project_context,
+    require_project_home_node,
+)
+from novelvideo.task_backend.client import enqueue_project_task
 
 from pydantic import (
     AwareDatetime,
@@ -35,6 +61,7 @@ Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 class VoiceDesignCreateRequest(ContractModel):
     request_id: UUID
+    surface: GenerationCreditSurface
     description: Description
     preview_text: PreviewText
     language: Language = "zh"
@@ -108,6 +135,7 @@ class ErrorDetails(ContractModel):
     field: (
         Literal[
             "request_id",
+            "surface",
             "description",
             "preview_text",
             "language",
@@ -272,3 +300,324 @@ class UserCustomVoice(ContractModel):
 
 CharacterVoiceResponse = Success[CharacterVoiceSlot]
 UserVoiceResponse = Success[UserCustomVoice]
+
+
+_PUBLIC_MESSAGES = {
+    "unauthenticated": "请先登录",
+    "voice_design_forbidden": "没有执行此操作的权限",
+    "project_not_found": "项目不存在",
+    "candidate_not_found": "生成结果不存在",
+    "candidate_audio_missing": "试听文件不存在",
+    "candidate_expired": "生成结果已过期，请重新生成",
+    "candidate_not_ready": "生成结果尚不可用",
+    "idempotency_conflict": "请求标识已用于不同内容",
+    "invalid_input": "请检查输入内容",
+    "generation_unknown": "生成结果未知，请查询原请求后再决定是否重新生成",
+    "voice_design_unavailable": "声音设计暂不可用",
+    "voice_design_quota_exceeded": "今日生成额度已用完",
+    "rate_limited": "请求过于频繁，请稍后重试",
+}
+
+
+def _message(code):
+    return _PUBLIC_MESSAGES.get(code, "声音设计操作失败，请稍后重试")
+
+
+def _error(code, request_id):
+    return JSONResponse(
+        status_code=ERROR_POLICY[code][0],
+        content=VoiceDesignError(
+            code=code,
+            error=_message(code),
+            retryable=ERROR_POLICY[code][1],
+            request_id=request_id,
+        ).model_dump(mode="json", exclude_none=True),
+    )
+
+
+class VoiceDesignRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def safe_handler(request: Request):
+            request_id = uuid4()
+            try:
+                candidate_id = request.path_params.get("candidate_id")
+                if candidate_id:
+                    request_id = UUID(candidate_id)
+                elif request.method == "POST":
+                    body = await request.json()
+                    if isinstance(body, dict):
+                        request_id = UUID(str(body.get("request_id")))
+            except (ValueError, TypeError):
+                pass
+            try:
+                return await handler(request)
+            except RequestValidationError:
+                return _error("invalid_input", request_id)
+            except CandidateStorageError as exc:
+                return _error(exc.code, request_id)
+            except HTTPException as exc:
+                code = {
+                    401: "unauthenticated",
+                    402: "insufficient_credits",
+                    422: "invalid_input",
+                    429: "rate_limited",
+                    502: "provider_unavailable",
+                    504: "generation_unknown",
+                    403: "voice_design_forbidden",
+                    404: "project_not_found",
+                }.get(exc.status_code, "voice_design_unavailable")
+                return _error(code, request_id)
+            except (OSError, sqlite3.Error):
+                return _error("candidate_persist_failed", request_id)
+
+        return safe_handler
+
+
+CANDIDATE_SWEEP_INTERVAL = 300
+
+
+async def _cleanup_candidates_forever():
+    while True:
+        try:
+            await asyncio.to_thread(sweep_candidates)
+        except (OSError, sqlite3.Error):
+            logging.getLogger(__name__).warning("Voice design cleanup sweep failed")
+        await asyncio.sleep(CANDIDATE_SWEEP_INTERVAL)
+
+
+@asynccontextmanager
+async def candidate_lifespan(app):
+    task = asyncio.create_task(
+        _cleanup_candidates_forever(), name="voice-design-cleanup"
+    )
+    app.state.voice_design_cleanup = task
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+router = APIRouter(
+    prefix="/projects/{project}/voice-design",
+    route_class=VoiceDesignRoute,
+    lifespan=candidate_lifespan,
+)
+
+
+async def _context(project, user, role):
+    ctx = await resolve_project_context(
+        user=user, project_id=project, required_role=role
+    )
+    require_project_home_node(ctx, operation="voice design")
+    return ctx
+
+
+def _candidate(record, project):
+    candidate_id = record["candidate_id"]
+    status = record["status"]
+    if status == "expired":
+        raise CandidateStorageError("candidate_expired")
+    data = {"candidate_id": candidate_id, "status": status}
+    if status == "ready":
+        data.update(
+            {
+                key: record[key]
+                for key in (
+                    "description",
+                    "preview_text",
+                    "language",
+                    "duration_seconds",
+                    "sha256",
+                )
+            }
+        )
+        data.update(
+            preview_url=f"/api/v1/projects/{project}/voice-design/candidates/{candidate_id}/audio",
+            mime_type="audio/mpeg",
+            created_at=datetime.fromtimestamp(
+                record["created_at"], timezone.utc
+            ).isoformat(),
+            expires_at=datetime.fromtimestamp(
+                record["expires_at"], timezone.utc
+            ).isoformat(),
+        )
+    elif status in {"failed", "unknown"}:
+        code = record["error_code"]
+        if code not in ERROR_POLICY:
+            code = "provider_unavailable"
+        data["failure"] = {
+            "code": code,
+            "message": _message(code),
+            "retryable": ERROR_POLICY[code][1],
+        }
+    return {"ok": True, "data": data}
+
+
+def _required_candidate(storage, candidate_id):
+    record = storage.get(candidate_id)
+    if record is None:
+        raise CandidateStorageError("candidate_not_found")
+    if record["status"] == "expired":
+        raise CandidateStorageError("candidate_expired")
+    return record
+
+
+@router.get("/quote")
+async def quote_candidate(
+    project: str, surface: GenerationCreditSurface, user: dict = Depends(get_api_user)
+):
+    ctx = await _context(project, user, "editor")
+    from novelvideo.audio.voice_design_service import (
+        VoiceDesignError as ServiceError,
+        quote_voice_design,
+    )
+
+    try:
+        return await quote_voice_design(ctx=ctx, surface=surface)
+    except ServiceError as exc:
+        raise CandidateStorageError(exc.code) from None
+
+
+@router.post("/candidates", response_model=CandidateResponse, status_code=202)
+async def create_candidate(
+    project: str, body: VoiceDesignCreateRequest, user: dict = Depends(get_api_user)
+):
+    ctx = await _context(project, user, "editor")
+    storage = VoiceDesignStorage(ctx)
+    candidate_id = str(body.request_id)
+    existing = storage.get(candidate_id)
+    if existing:
+        record, _ = storage.reserve(
+            candidate_id,
+            description=body.description,
+            preview_text=body.preview_text,
+            language=body.language,
+            surface=body.surface,
+        )
+        if record["status"] != "generating" or record["queued"] or record["claimed"]:
+            return JSONResponse(
+                _candidate(record, project),
+                status_code=202 if record["status"] == "generating" else 200,
+            )
+    from novelvideo.audio.voice_design_service import (
+        VoiceDesignError as ServiceError,
+        ensure_voice_design_enabled,
+        resolve_voice_design_config,
+    )
+
+    try:
+        ensure_voice_design_enabled()
+        config = await resolve_voice_design_config(
+            user_id=ctx.requester_user_id, project_id=ctx.project_id
+        )
+    except ServiceError as exc:
+        raise CandidateStorageError(exc.code) from None
+    if body.language != "zh":
+        raise CandidateStorageError("invalid_input")
+    record, _ = storage.reserve(
+        candidate_id,
+        description=body.description,
+        preview_text=body.preview_text,
+        language=body.language,
+        surface=body.surface,
+    )
+    try:
+        await enqueue_project_task(
+            ctx,
+            task_type="voice_design",
+            product_surface=_credit_product_surface(record["surface"]),
+            queue_kind="default",
+            episode=0,
+            scope=storage.task_scope(candidate_id),
+            payload={"candidate_id": candidate_id, "billing": config.billing_params()},
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        # An uncertain submission is retried only with the same persistent candidate.
+        raise CandidateStorageError("voice_design_unavailable") from None
+    storage.mark_queued(candidate_id)
+    return JSONResponse(_candidate(record, project), status_code=202)
+
+
+@router.get("/candidates/{candidate_id}", response_model=CandidateResponse)
+async def get_candidate(
+    project: str, candidate_id: UUID, user: dict = Depends(get_api_user)
+):
+    ctx = await _context(project, user, "viewer")
+    return _candidate(
+        _required_candidate(VoiceDesignStorage(ctx), str(candidate_id)), project
+    )
+
+
+@router.get("/candidates/{candidate_id}/audio")
+async def candidate_audio(
+    project: str,
+    candidate_id: UUID,
+    request: Request,
+    user: dict = Depends(get_api_user),
+):
+    ctx = await _context(project, user, "viewer")
+    storage = VoiceDesignStorage(ctx)
+    record = _required_candidate(storage, str(candidate_id))
+    if record["status"] != "ready":
+        raise CandidateStorageError("candidate_not_ready")
+    path = storage.output_path(str(candidate_id))
+    try:
+        if path.is_symlink():
+            raise FileNotFoundError
+        content = path.read_bytes()
+    except OSError:
+        raise CandidateStorageError("candidate_audio_missing") from None
+    headers = {
+        "Cache-Control": "private, no-store",
+        "ETag": f'"{record["sha256"]}"',
+        "Accept-Ranges": "bytes",
+    }
+    length = len(content)
+    range_header = request.headers.get("range")
+    if (
+        range_header
+        and request.headers.get("if-range", headers["ETag"]) == headers["ETag"]
+    ):
+        try:
+            unit, value = range_header.split("=", 1)
+            start, end = value.split("-", 1)
+            if unit != "bytes" or not length:
+                raise ValueError
+            if not start:
+                suffix = int(end)
+                if suffix <= 0:
+                    raise ValueError
+                start, end = max(0, length - suffix), length - 1
+            else:
+                start, end = (
+                    int(start),
+                    min(int(end), length - 1) if end else length - 1,
+                )
+            if start < 0 or start >= length or end < start:
+                raise ValueError
+        except ValueError:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "无效的音频范围",
+                    "code": "invalid_input",
+                    "retryable": False,
+                    "request_id": str(candidate_id),
+                },
+                status_code=416,
+                headers={**headers, "Content-Range": f"bytes */{length}"},
+            )
+        headers["Content-Range"] = f"bytes {start}-{end}/{length}"
+        return Response(
+            content[start : end + 1],
+            status_code=206,
+            media_type="audio/mpeg",
+            headers=headers,
+        )
+    return Response(content, media_type="audio/mpeg", headers=headers)

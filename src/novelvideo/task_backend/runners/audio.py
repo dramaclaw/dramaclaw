@@ -213,6 +213,25 @@ def run_voice_design(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str,
     )
 
 
+async def _await_voice_design_result(storage: Any, candidate_id: str) -> dict[str, Any]:
+    from novelvideo.audio.voice_design_service import VoiceDesignError
+
+    while True:
+        record = storage.get(candidate_id)
+        if record is None:
+            raise VoiceDesignError("candidate_not_found")
+        if record["status"] == "ready":
+            return record
+        if record["status"] != "generating":
+            raise VoiceDesignError(
+                record.get("error_code") or "candidate_expired",
+                unknown=record["status"] == "unknown",
+            )
+        # The original delivery owns generation. Wait for its persisted result
+        # (or lease expiry) so a replay cannot settle an unfinished task.
+        await asyncio.sleep(0.25)
+
+
 async def _run_voice_design(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
@@ -246,7 +265,7 @@ async def _run_voice_design(
     if record is None:
         raise VoiceDesignError("candidate_not_found")
     if record["status"] != "generating" or record.get("claimed"):
-        return record
+        return await _await_voice_design_result(storage, candidate_id)
     try:
         daily_limit = ensure_voice_design_enabled()
         record = storage.claim(
@@ -256,7 +275,7 @@ async def _run_voice_design(
             channel_daily_limit=int(os.environ["VOICE_DESIGN_CHANNEL_DAILY_LIMIT"]),
         )
         if record is None:
-            return storage.get(candidate_id) or {}
+            return await _await_voice_design_result(storage, candidate_id)
         config = await resolve_voice_design_config(
             user_id=ctx.requester_user_id, project_id=ctx.project_id
         )
