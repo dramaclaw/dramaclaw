@@ -245,6 +245,15 @@
 - 当前只有本地 Kubernetes context，SSH 未配置 3060，GitOps 仓库请求返回 404；
   已请求 3060 连接与入口。上方未勾选条目需要实际执行或稳定观察，不能以工具实现替代。
 
+## 发布前复查补充
+
+- EE 审查分支已从最新 main `0e70661df` 重新整理为 `feat/canvas-command-push-release`，
+  仅携带本次三个运维提交；旧 `feat/canvas-command-push-ops` 保留实施历史。
+- 可用 Grafana 仅覆盖 ACK；当前及过去 24 小时未查到 3060 数据，不能据此完成实机项。
+- CE 本次 14 个提交密钥扫描通过；部分克隆的完整历史扫描仍待完整 checkout 的 CI。
+- 两份 PR 描述已准备；补 DCO 签署、接受贡献条款并提交前，等待用户明确确认。
+- 详细证据见 [审查准备记录](canvas-command-push-review-readiness.md)。完成数仍为 83/92。
+
 ## 另行立项
 
 - applying：执行权原子授予、领取凭证、租约和 TTL 校验、执行中超时、迟到结果、
