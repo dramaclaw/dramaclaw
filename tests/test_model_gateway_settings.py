@@ -4170,3 +4170,16 @@ def test_ee_media_relay_ignores_ce_database_config(monkeypatch, tmp_path):
     assert status["endpoint"] == "ee.endpoint"
     assert status["bucket"] == "ee-bucket"
     assert status["configured"] is True
+
+
+def test_audio_voice_design_catalog_round_trip(monkeypatch):
+    mappings = {
+        'design-id': {'mediaType': 'audio', 'provider': 'ali', 'upstreamModel': 'voice-enrollment',
+                      'config': {'request': {'endpoint': 'audio/voice-designs'}, 'targetModel': 'speech-id'}},
+        'speech-id': {'mediaType': 'audio', 'provider': 'ali', 'upstreamModel': 'cosyvoice-v3.5-flash',
+                      'config': {'request': {'endpoint': 'audio/speech'}}},
+    }
+    monkeypatch.setattr(model_gateway_settings, 'get_newapi_media_model_mappings', lambda: mappings)
+    entries = get_ce_media_model_catalog('audio')
+    assert {e['apiModel'] for e in entries} == {'voice-enrollment', 'cosyvoice-v3.5-flash'}
+    assert next(e for e in entries if e['id'] == 'design-id')['targetModel'] == 'speech-id'

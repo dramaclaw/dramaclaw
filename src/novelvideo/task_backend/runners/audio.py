@@ -20,7 +20,9 @@ INDEXTTS2_AUDIO_TASK_TYPE = "audio_generation_indextts2"
 SYSTEM_VOICE_SETUP_TASK_TYPE = "system_voice_setup"
 
 
-def run_system_voice_setup(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_system_voice_setup(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return asyncio.run(
         await_envelope_with_cancel_watch(
             _run_system_voice_setup(envelope, ctx),
@@ -173,8 +175,7 @@ async def _run_indextts2_audio(
         )
         if result.generated == 0 and result.failed:
             raise RuntimeError(
-                "音频生成失败：没有生成可用结果；"
-                f"最后错误：{result.failed[-1]}"
+                f"音频生成失败：没有生成可用结果；最后错误：{result.failed[-1]}"
             )
         skipped = (
             result.skipped_existing
@@ -197,3 +198,89 @@ async def _run_indextts2_audio(
 
 register_project_task_runner(INDEXTTS2_AUDIO_TASK_TYPE, run_indextts2_audio)
 register_project_task_runner(SYSTEM_VOICE_SETUP_TASK_TYPE, run_system_voice_setup)
+
+
+VOICE_DESIGN_TASK_TYPE = "voice_design"
+
+
+def run_voice_design(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+    return asyncio.run(
+        await_envelope_with_cancel_watch(
+            _run_voice_design(envelope, ctx),
+            envelope,
+            task_type=VOICE_DESIGN_TASK_TYPE,
+        )
+    )
+
+
+async def _run_voice_design(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
+    import os
+    from dataclasses import asdict
+
+    from novelvideo.audio.voice_design_service import (
+        VoiceDesignError,
+        ensure_voice_design_enabled,
+        generate_voice_design,
+        resolve_voice_design_config,
+    )
+    from novelvideo.audio.voice_design_storage import (
+        CandidateStorageError,
+        VoiceDesignStorage,
+    )
+    from novelvideo.project_context import require_project_home_node
+
+    require_project_home_node(ctx, operation="voice design")
+    context = _extract_trusted_egress_context(envelope)
+    if (
+        context is None
+        or context.project_id != ctx.project_id
+        or context.requester_user_id != ctx.requester_user_id
+    ):
+        raise InvalidTaskEnvelope()
+    storage = VoiceDesignStorage(ctx)
+    payload = envelope.get("payload") or {}
+    candidate_id = str(payload.get("candidate_id") or "")
+    record = storage.get(candidate_id)
+    if record is None:
+        raise VoiceDesignError("candidate_not_found")
+    if record["status"] != "generating" or record.get("claimed"):
+        return record
+    try:
+        daily_limit = ensure_voice_design_enabled()
+        record = storage.claim(
+            candidate_id,
+            daily_limit=daily_limit,
+            channel_key=context.credential.credential_id,
+            channel_daily_limit=int(os.environ["VOICE_DESIGN_CHANNEL_DAILY_LIMIT"]),
+        )
+        if record is None:
+            return storage.get(candidate_id) or {}
+        config = await resolve_voice_design_config(
+            user_id=ctx.requester_user_id, project_id=ctx.project_id
+        )
+        snapshot = (payload.get("billing") or {}).get("voice_design_config")
+        if snapshot != asdict(config):
+            raise VoiceDesignError("voice_design_unavailable")
+        audio = await generate_voice_design(
+            request=record,
+            output_path=storage.output_path(candidate_id),
+            egress_context=context,
+            model_config=config,
+        )
+        return storage.complete(
+            candidate_id, duration_seconds=audio.duration_seconds, sha256=audio.sha256
+        )
+    except (VoiceDesignError, CandidateStorageError) as exc:
+        if getattr(exc, "unknown", False):
+            storage.mark_unknown(candidate_id)
+        else:
+            storage.fail(candidate_id, exc.code)
+        raise
+    except BaseException:
+        storage.mark_unknown(candidate_id)
+        raise
+
+
+register_project_task_runner(VOICE_DESIGN_TASK_TYPE, run_voice_design)
