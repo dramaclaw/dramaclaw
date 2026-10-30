@@ -321,7 +321,7 @@ class _TurnToolCallGuard:
                 self._failed_signature_counts[failure_signature] = failure_count
                 if failure_count >= REPEATED_FAILED_TOOL_CALL_LIMIT:
                     return (
-                        "本轮操作已停止：同一个工具以相同参数重复返回相同错误。"
+                        "本轮操作已停止：同一个工具重复返回相同错误，修正未解决校验问题。"
                         "请检查工具参数或等待相关状态变化后再重试。"
                     )
         call_id = str(event.call_id or "").strip()
@@ -411,10 +411,38 @@ def _failed_tool_call_signature(event: ChatBackendEvent) -> str | None:
     failure_payload = _tool_failure_payload(event)
     if failure_payload is None:
         return None
+    tool_name = _canonical_tool_name(event.name)
+    tool_input = event.input
+    receipt = _story_tool_receipt(event.structured) or _story_tool_receipt(event.output)
+    if (
+        tool_name in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"}
+        and receipt.get("error") == "tool_arguments_invalid"
+        and isinstance(receipt.get("errors"), list)
+        and receipt["errors"]
+        and all(
+            isinstance(issue, dict) and issue.get("path") and issue.get("message")
+            for issue in receipt["errors"]
+        )
+        and isinstance(tool_input, dict)
+        and isinstance(tool_input.get("plan"), dict)
+    ):
+        # Cosmetic edits must not reset recovery for the same rejected graph.
+        # Keep operation and node scope so independent plans do not collide.
+        nodes = tool_input["plan"].get("nodes")
+        if isinstance(nodes, list):
+            tool_input = {
+                "operation_id": tool_input.get("operation_id"),
+                "node_ids": sorted(
+                    str(node.get("id", "")) for node in nodes if isinstance(node, dict)
+                ),
+            }
+            failure_payload = sorted(
+                (str(issue["path"]), str(issue["message"])) for issue in receipt["errors"]
+            )
     encoded = json.dumps(
         {
-            "tool": str(event.name or "").strip(),
-            "input": event.input,
+            "tool": tool_name,
+            "input": tool_input,
             "failure": _stable_tool_failure_payload(failure_payload),
         },
         ensure_ascii=False,

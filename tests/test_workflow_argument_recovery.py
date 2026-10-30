@@ -498,6 +498,15 @@ async def test_plan_identity_and_edge_errors_are_reported_without_invalid_nodes(
     assert "plan.skill: field is required" in message
     assert "plan.edges[0]" in message and "explicit_ref" in message
     assert arguments == original
+    if adapter == "dramaclaw":
+        assert {issue["path"] for issue in payload["errors"]} >= {
+            "plan.schema_version", "plan.skill",
+        }
+        instruction = payload["agent_instruction"]
+        assert "plan.schema_version 必须为 freezone_workflow_plan.v1" in instruction
+        assert "节点 data.workflowCatalog.skillId 不能代替 plan.skill" in instruction
+        assert "最多重试一次" in instruction
+        assert "不能无证据断言传输丢字段" in instruction
 
 
 @pytest.mark.parametrize(
@@ -535,3 +544,50 @@ def test_plan_envelope_diagnostics_handle_missing_or_malformed_fields(
 
     assert {issue["path"] for issue in issues} == expected_paths
     assert arguments == original
+
+
+@pytest.mark.asyncio
+async def test_missing_plan_identity_can_be_corrected_without_changing_admission(monkeypatch):
+    import json
+    from novelvideo.chat import dramaclaw_mcp
+    from novelvideo.freezone.workflow_schema import workflow_plan_json_schema
+
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    name = "freezone_prepare_workflow_plan_draft"
+    schema = dramaclaw_mcp._agent_tools()[name][0]
+    seen = []
+
+    def prepare(arguments):
+        seen.append(deepcopy(arguments))
+        return json.dumps({"ok": False, "status": "handler_reached", "error": "sentinel"})
+
+    tool_index = {name: ({
+        **schema,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "plan": workflow_plan_json_schema(),
+                "operation_id": {"type": "string"},
+                "run_after_create": {"type": "boolean"},
+            },
+            "required": ["plan", "operation_id", "run_after_create"],
+        },
+    }, prepare)}
+    plan = _plan_with({
+        "id": "portrait", "node_type": "imageGenNode",
+        "data": {"workflowCatalog": {"recipeId": "general-image"}},
+    })
+    identity = plan.pop("skill")
+    version = plan.pop("schema_version")
+    arguments = {"plan": plan, "operation_id": "original-op", "run_after_create": True}
+    rejected = await dramaclaw_mcp.call_tool(name, arguments, tool_index=tool_index)
+    assert rejected.isError
+    assert not seen
+
+    corrected = deepcopy(arguments)
+    corrected["plan"].update(schema_version=version, skill=identity)
+    result = await dramaclaw_mcp.call_tool(name, corrected, tool_index=tool_index)
+    assert result.structuredContent["status"] == "handler_reached"
+    assert seen == [corrected]
+    assert "skill" not in arguments["plan"]

@@ -70,7 +70,7 @@
 
 ## 提交前检查与恢复
 
-提交前核对完整 `nodes`、当前工具 Schema、Skill 身份和 Recipe；图片 ID 集合必须等于两种目标中的 ID 集合，且无重复。逐个核对 `entity_id` 的资产类型、片段存在性和最新故事中的 `character_ids` / `scene_refs`；确认没有执行策划节点、视频节点或范围外的资产。缺少资产定义时，只按已获授权的设定补齐故事规划并回读，不猜测映射，不要求用户填写内部 ID。
+提交前核对完整 `nodes`、当前工具 Schema、Skill 身份和 Recipe；`plan.schema_version` 必须为 `freezone_workflow_plan.v1`，`plan.skill` 必须包含从当前规划包复制的 `id` 和 `version`，并与原 `operation_id` 的准入身份一致。这两个字段与 `nodes`、`edges` 同级，全部位于工具参数 `plan` 对象内；节点的 `data.workflowCatalog` 不能代替顶层 `plan.skill`。图片 ID 集合必须等于两种目标中的 ID 集合，且无重复。逐个核对 `entity_id` 的资产类型、片段存在性和最新故事中的 `character_ids` / `scene_refs`；确认没有执行策划节点、视频节点或范围外的资产。缺少资产定义时，只按已获授权的设定补齐故事规划并回读，不猜测映射，不要求用户填写内部 ID。
 
 如果图片草稿返回 `skill_stage_missing`（缺少策划／视频），先检查为何没有命中已有故事图片契约：`story_id`、遗漏或重复的映射、将参考图错放到 `targets`、带 Recipe 的简报及额外执行节点。修正原始完整图片 Plan，保持原 `operation_id` 和用户范围；不能直接补可执行策划或视频，不能改用完整视频模板、逐节点操作或建议放宽校验。
 
