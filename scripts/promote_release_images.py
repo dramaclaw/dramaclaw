@@ -60,7 +60,10 @@ def validate_receipt(
         bool(TAG.fullmatch(tag)) and bool(SHA.fullmatch(source)),
         "Invalid source identity",
     )
-    require(data.get("schema_version") == 1, "Unsupported acceptance receipt")
+    require(
+        data.get("schema_version") == 2,
+        "Running-image acceptance receipt v2 is required",
+    )
     require(
         data.get("release_tag") == tag and data.get("source_sha") == source,
         "Acceptance source/tag mismatch",
@@ -120,7 +123,7 @@ def validate_receipt(
     require(protocol.get("packaged_hermes_absent") is True, "Retired runtime present")
     images = data.get("images", {})
     require(set(images) == set(REPOSITORIES), "Incomplete image set")
-    for image in images.values():
+    for name, image in images.items():
         require(
             bool(DIGEST.fullmatch(str(image.get("digest", "")))),
             "Invalid image index digest",
@@ -129,10 +132,55 @@ def validate_receipt(
             set(image.get("platforms", [])) == {"linux/amd64", "linux/arm64"},
             "Missing image architecture",
         )
+        runtime = image.get("runtime", {})
+        descriptor = runtime.get("manifest_descriptor_digest")
+        # Containerd image IDs identify an index/manifest, not a config. Its
+        # selected platform descriptor is required to bind the actual payload.
+        image_matches = (
+            runtime.get("image_id") == runtime.get("config_digest")
+            and descriptor in (None, runtime.get("manifest_digest"))
+        ) or (
+            runtime.get("image_id") in (image["digest"], runtime.get("manifest_digest"))
+            and descriptor == runtime.get("manifest_digest")
+        )
+        require(
+            runtime.get("verified_before_and_after") is True
+            and runtime.get("platform") in ("linux/amd64", "linux/arm64")
+            and runtime.get("service") == ("api" if name == "dramaclaw" else "web"),
+            "Missing actual running image acceptance",
+        )
+        require(
+            runtime.get("index_digest") == image["digest"]
+            and str(runtime.get("image_ref", "")).endswith(
+                "/" + name + "@" + image["digest"]
+            )
+            and bool(
+                re.fullmatch(r"[0-9a-f]{64}", str(runtime.get("container_id", "")))
+            )
+            and bool(DIGEST.fullmatch(str(runtime.get("manifest_digest", ""))))
+            and bool(DIGEST.fullmatch(str(runtime.get("config_digest", ""))))
+            and image_matches,
+            "Running container is not bound to the accepted digest",
+        )
     return image_tag
 
 
 def inspect(ref: str, field: str = "Manifest") -> dict:
+    if field == "Raw":
+        return json.loads(
+            subprocess.check_output(
+                [
+                    "docker",
+                    "buildx",
+                    "--builder",
+                    "default",
+                    "imagetools",
+                    "inspect",
+                    "--raw",
+                    ref,
+                ]
+            )
+        )
     return json.loads(
         subprocess.check_output(
             [
@@ -195,6 +243,17 @@ def promote(
                 labels.get("org.opencontainers.image.version") == tag[1:],
                 "Image version label mismatch",
             )
+        runtime = data["images"][name]["runtime"]
+        arch = runtime["platform"].split("/")[1]
+        require(
+            runtime["manifest_digest"] == platforms[arch]["digest"],
+            "Tested platform manifest is not in the accepted index",
+        )
+        tested_manifest = inspect(repository + "@" + platforms[arch]["digest"], "Raw")
+        require(
+            tested_manifest.get("config", {}).get("digest") == runtime["config_digest"],
+            "Accepted registry config differs from the tested platform config",
+        )
         targets = (
             [image_tag + "-promoted"] if benchmark else (["latest"] if latest else [])
         )

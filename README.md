@@ -527,7 +527,7 @@ release: the packaging workflow attaches `release-image-acceptance.json` only
 after its entire Compose job passes, including real chat, retained-data recovery
 and rotating-credential checks. The published-release event validates that
 receipt publisher and GitHub asset hash, the source/version labels and both
-platform digests, then updates
+platform digests and the actual tested container/config identities from receipt v2, then updates
 `latest` using the accepted indexes. Missing or inconsistent acceptance fails
 closed; publication does not rebuild different bytes.
 

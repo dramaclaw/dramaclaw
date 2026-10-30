@@ -19,13 +19,44 @@
    ```bash
    git tag vX.Y.Z && git push origin vX.Y.Z
    ```
-   ⚠️ **只打 tag 不产生任何效果**：没有 release 页、应用内不提示升级（(B) 拉的是 `releases/latest` API）、Docker 镜像也不构建（workflow 触发条件是 `release: published`）。必须走第 5 步。
-5. **发 GitHub Release**：先按下方「GitHub Release 页面结构」写好人工部分（zh/en Highlights + New Features / Bug Fixes 等分类节）存为 `body.md`，然后一条命令发布：
+   tag 只固定源码。镜像需要在发布前构建和验收；发布事件只晋升通过验收的镜像，不会补做构建。
+5. **建立草稿 Release**：按下方标准准备 `body.md`，先保留为草稿，供打包流程上传制品及验收回执：
    ```bash
-   gh release create vX.Y.Z --title "vX.Y.Z" --notes-file body.md --generate-notes
+   tag=vX.Y.Z
+   gh release create "$tag" --repo dramaclaw/dramaclaw --verify-tag --draft \
+     --title "$tag" --notes-file body.md --generate-notes
    ```
-   `--generate-notes` 会把自动生成的 What's Changed / New Contributors / Full Changelog **追加在 body.md 内容之后**，正好构成完整标准结构（网页操作等价：贴入人工部分后点 "Generate release notes" 按钮）。front-matter 中 `version:` 可省；想让已部署旧版用户的铃铛红点亮起，需写 `attention: medium` 或 `high`，见下。
-6. 发布后 `.github/workflows/release-images.yml` 会在 `release: published` 时自动构建并推送 Docker 镜像，无需手动操作。
+   `--generate-notes` 将 What's Changed / New Contributors / Full Changelog 追加在人工内容之后。日常发版省略 `attention: low`；需要提醒旧版用户时填写 `medium` 或 `high`。
+6. **构建两个架构的镜像**：在已合入 main 的工作流上手动构建正式 tag，保持 `push_latest=false`，此时不更新 `latest`：
+   ```bash
+   gh workflow run release-images.yml --repo dramaclaw/dramaclaw --ref main \
+     -f tag="$tag" -f push_latest=false -f candidate_only=false
+   gh run watch BUILD_RUN_ID --repo dramaclaw/dramaclaw --exit-status
+   ```
+   记录这次 dispatch 返回的运行链接/ID，确认 backend 和 frontend 都成功，并且均包含 `linux/amd64`、`linux/arm64`。不要用其他并发运行的成功状态代替本次结果。
+7. **完成所有制品和实际验收**：选择已经发布且通过校验的 DramaClaw Gateway tag；在 EE 仓库运行完整正式打包：
+   ```bash
+   gateway_tag="填写已验证的网关 Release tag"
+   gh workflow run dramaclaw-release-packages.yml --repo claymorelab/SuperTale --ref main \
+     -f ce_tag="$tag" -f gateway_tag="$gateway_tag" \
+     -f target=all -f dry_run=false
+   gh run watch PACKAGE_RUN_ID --repo claymorelab/SuperTale --exit-status
+   ```
+   正式运行不传 `ce_ref` 或 `candidate_image_tag`。必须等待三种桌面目标、Compose、回执上传和完整发行审计全部成功。签名、公证、安装后的真实聊天、新安装/保留数据升级、凭据轮换及 CDN 检查均不能省略。
+
+   Compose 验收使用本轮已验证的不可变 digest，并在测试前后检查后端、前端和网关容器身份。完整 Compose job 成功后，发布器才将 `release-image-acceptance.json` 上传到草稿 Release。回执 v2 包含实际运行的平台 manifest、镜像配置 ID 和容器 ID；缺少这类身份的旧回执不能用于晋升。
+8. **核对草稿后再正式发布**：确认 tag 指向最终源码，安装包版本、更新清单及校验值一致，且草稿包含本轮回执：
+   ```bash
+   gh release view "$tag" --repo dramaclaw/dramaclaw --json isDraft,assets
+   gh release edit "$tag" --repo dramaclaw/dramaclaw --draft=false
+   ```
+   只有前一步完整打包/验收成功后才执行发布。仅有镜像构建成功或一份手工补写的回执不能代替验收。
+9. **确认镜像晋升成功**：发布触发 `release-images` 的 promote 路径，检查回执上传者及文件哈希、源码和版本、两种架构，以及实际测试过的镜像身份，再将同一 index digest 标成 `latest`。不会重新构建镜像。
+   ```bash
+   gh run list --repo dramaclaw/dramaclaw --workflow release-images.yml --event release --limit 5
+   gh run watch PROMOTION_RUN_ID --repo dramaclaw/dramaclaw --exit-status
+   ```
+   缺少回执或身份不匹配时晋升失败；先修复并重新完成相应验收。已发布版本需要修复时发新版本，不覆盖同名安装包或更新清单。重建未发布版本导致 digest 变化后，也必须重新验收、生成回执，不能复用旧回执。
 
 ## Release body / 包内 notes 共用模板
 
