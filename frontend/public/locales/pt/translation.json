@@ -8880,5 +8880,8 @@
     "loadFailed": "Não foi possível carregar a imagem original. Tente novamente.",
     "saveFailed": "Não foi possível criar o resultado. Verifique a imagem e o projeto atual.",
     "invalidSize": "Introduza números inteiros positivos. Aresta máxima: 16384 píxeis; total máximo: 40 milhões de píxeis."
+  },
+  "voiceDesign": {
+    "saveAccount": "Salvar nas minhas vozes"
   }
 }

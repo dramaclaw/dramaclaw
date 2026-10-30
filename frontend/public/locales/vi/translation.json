@@ -8918,6 +8918,7 @@
       "network": "Kết nối thất bại. Kiểm tra yêu cầu ban đầu hoặc thử lưu lại.",
       "invalidResponse": "Phản hồi máy chủ không hợp lệ. Kiểm tra yêu cầu sau.",
       "playback": "Không thể phát bản nghe thử. Hãy thử lại."
-    }
+    },
+    "saveAccount": "Lưu vào giọng của tôi"
   }
 }

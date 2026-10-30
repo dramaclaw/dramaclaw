@@ -959,3 +959,326 @@ def test_legacy_bindings_survive_generation(production_api):
         (s.ctx.output_dir / path).read_bytes() == slot.encode()
         for slot, path in paths.items()
     )
+
+
+@pytest.fixture
+def generated_user_api(production_api, monkeypatch, tmp_path):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone import audio_node
+
+    s = production_api
+    monkeypatch.setattr(
+        freezone, "resolve_project_context", contract().resolve_project_context
+    )
+    monkeypatch.setattr(freezone, "VoiceDesignStorage", contract().VoiceDesignStorage)
+    monkeypatch.setattr(audio_node, "OUTPUT_DIR", tmp_path / "accounts")
+    monkeypatch.setattr(audio_node, "_duration_ms", lambda path: 3000)
+
+    class EmptyStore:
+        async def list_characters(self):
+            return []
+
+    async def store(ctx):
+        return EmptyStore()
+
+    monkeypatch.setattr(freezone, "make_sqlite_store_for_context", store)
+    s.client.app.include_router(freezone.router, prefix="/api/v1")
+    s.save_url = "/api/v1/projects/project/freezone/audio/voices/save-generated"
+    s.references_url = "/api/v1/projects/project/freezone/audio/references"
+    s.audio_node = audio_node
+    s.freezone = freezone
+    return s
+
+
+def test_generated_user_voice_save_and_replay(generated_user_api):
+    s = generated_user_api
+    path = make_ready(s)
+    s.enabled = False
+    first = s.client.post(s.save_url, json=SAVE_USER)
+    assert first.status_code == 200, first.text
+    voice = first.json()["data"]
+    assert voice["scope"] == "user_custom" and voice["voice_id"].startswith("fv_")
+    assert voice["sha256"] == s.store.get(REQUEST_ID)["sha256"]
+    assert s.client.get(voice["url"]).content == path.read_bytes()
+    assert s.client.post(s.save_url, json=SAVE_USER).json() == first.json()
+    references = s.client.get(s.references_url).json()["data"]
+    assert references["available"] == references["user_voices"] == [voice]
+    assert len(s.calls) == 1
+    for change in ({"name": "other"}, {"candidate_id": SAVE_ID}):
+        response = s.client.post(s.save_url, json={**SAVE_USER, **change})
+        assert response.status_code == 409
+        assert response.json()["code"] == "idempotency_conflict"
+        assert response.json()["request_id"] == SAVE_ID
+    s.store.clock = lambda: 10**12
+    s.store.cleanup()
+    assert not path.exists()
+    assert s.client.post(s.save_url, json=SAVE_USER).json() == first.json()
+    assert s.client.get(voice["url"]).content == b"0123456789"
+
+
+def test_generated_user_voice_belongs_to_requester(generated_user_api):
+    s = generated_user_api
+    make_ready(s)
+    voice = s.client.post(s.save_url, json=SAVE_USER).json()["data"]
+    assert s.ctx.owner_username != s.ctx.requester_username
+    assert s.audio_node.list_user_audio_voices(s.ctx.owner_username) == []
+    assert (
+        s.audio_node.list_user_audio_voices(s.ctx.requester_username)[0]["voice_id"]
+        == voice["voice_id"]
+    )
+    assert (
+        s.client.post(s.save_url, json={**SAVE_USER, "username": "owner"}).status_code
+        == 422
+    )
+
+
+@pytest.mark.parametrize(
+    "body", [b"{bad json", b'{"voices": "bad"}', b'{"voices": [null]}']
+)
+def test_generated_user_voice_rejects_corrupt_index(generated_user_api, body):
+    s = generated_user_api
+    make_ready(s)
+    index = s.audio_node.user_audio_voices_index_path("user")
+    index.parent.mkdir(parents=True, exist_ok=True)
+    index.write_bytes(body)
+    response = s.client.post(s.save_url, json=SAVE_USER)
+    assert response.status_code == 500
+    assert response.json()["code"] == "save_failed"
+    upload = s.client.post(
+        s.save_url.removesuffix("/save-generated"),
+        files={"file": ("voice.mp3", b"upload", "audio/mpeg")},
+    )
+    assert upload.status_code == 400
+    assert index.read_bytes() == body
+
+
+def test_generated_user_voice_isolation_and_readiness(generated_user_api):
+    from dataclasses import replace
+
+    s = generated_user_api
+    original = s.ctx
+    make_ready(s)
+    for changed in (
+        replace(original, requester_user_id="other", requester_username="other"),
+        replace(original, project_id="other"),
+    ):
+        s.ctx = changed
+        response = s.client.post(s.save_url, json=SAVE_USER)
+        assert (
+            response.status_code == 404
+            and response.json()["code"] == "candidate_not_found"
+        )
+    s.ctx = replace(original, effective_role="viewer")
+    assert s.client.post(s.save_url, json=SAVE_USER).status_code == 403
+    s.ctx = original
+    assert (
+        s.client.post(s.url, json={**CREATE, "request_id": SAVE_ID}).status_code == 202
+    )
+    response = s.client.post(s.save_url, json={**SAVE_USER, "candidate_id": SAVE_ID})
+    assert (
+        response.status_code == 409 and response.json()["code"] == "candidate_not_ready"
+    )
+    s.store.clock = lambda: 10**12
+    s.store.cleanup()
+    response = s.client.post(s.save_url, json=SAVE_USER)
+    assert (
+        response.status_code == 410 and response.json()["code"] == "candidate_expired"
+    )
+
+
+def test_generated_user_voice_recovers_interrupted_receipt(
+    generated_user_api, monkeypatch
+):
+    import sqlite3
+    from novelvideo.audio.voice_design_storage import VoiceDesignStorage
+
+    s = generated_user_api
+    make_ready(s)
+    original = VoiceDesignStorage.save_receipt
+    failures = []
+
+    def interrupted(storage, request_id, candidate_id, kind, target, result):
+        if kind == "account" and result is not None and not failures:
+            failures.append(True)
+            raise sqlite3.OperationalError("simulated interrupted receipt")
+        return original(storage, request_id, candidate_id, kind, target, result)
+
+    monkeypatch.setattr(VoiceDesignStorage, "save_receipt", interrupted)
+    assert s.client.post(s.save_url, json=SAVE_USER).status_code == 500
+    published = s.audio_node.list_user_audio_voices("user")
+    assert len(published) == 1
+    s.store.clock = lambda: 10**12
+    s.store.cleanup()
+    response = s.client.post(s.save_url, json=SAVE_USER)
+    assert response.status_code == 200
+    assert response.json()["data"]["voice_id"] == published[0]["voice_id"]
+    assert len(s.audio_node.list_user_audio_voices("user")) == 1
+    assert s.store.receipt(SAVE_ID, "account")["result"] is not None
+
+
+def _concurrent_user_voice_upload(output, event, queue, number):
+    from pathlib import Path
+    from novelvideo.freezone import audio_node
+
+    audio_node.OUTPUT_DIR = Path(output)
+    audio_node._duration_ms = lambda path: 0
+    event.wait(10)
+    try:
+        voice = audio_node.create_user_audio_voice(
+            username="user",
+            name=f"upload-{number}",
+            filename="upload.mp3",
+            content=b"upload",
+        )
+        queue.put(voice["voice_id"])
+    except Exception as exc:
+        queue.put(str(exc))
+
+
+def test_generated_user_voice_concurrent_upload(generated_user_api):
+    import multiprocessing
+
+    s = generated_user_api
+    make_ready(s)
+    s.audio_node.create_user_audio_voice(
+        username="user", name="existing", filename="old.mp3", content=b"old"
+    )
+    context = multiprocessing.get_context("spawn")
+    event, queue = context.Event(), context.Queue()
+    processes = [
+        context.Process(
+            target=_concurrent_user_voice_upload,
+            args=(str(s.audio_node.OUTPUT_DIR), event, queue, i),
+        )
+        for i in range(4)
+    ]
+    for process in processes:
+        process.start()
+    event.set()
+    try:
+        response = s.client.post(s.save_url, json=SAVE_USER)
+        assert response.status_code == 200
+        ids = [queue.get(timeout=10) for _ in processes]
+        assert all(voice_id.startswith("fv_") for voice_id in ids)
+    finally:
+        for process in processes:
+            process.join(10)
+            if process.is_alive():
+                process.kill()
+                process.join()
+    records = s.audio_node.list_user_audio_voices("user")
+    assert len(records) == 6
+    assert {r["name"] for r in records} == {
+        "existing",
+        SAVE_USER["name"],
+        *(f"upload-{i}" for i in range(4)),
+    }
+    assert all(r["exists"] for r in records)
+
+
+def test_candidate_reused_across_character_and_canvas(generated_user_api, monkeypatch):
+    import asyncio
+    from novelvideo.api.routes import characters
+    from novelvideo.models import NovelCharacter
+    from novelvideo.sqlite_store import SQLiteStore
+
+    s = generated_user_api
+    path = make_ready(s)
+    content = path.read_bytes()
+
+    async def exercise():
+        store = SQLiteStore(
+            "demo", output_dir=str(s.ctx.output_dir), state_dir=str(s.ctx.state_dir)
+        )
+        await store.initialize()
+        try:
+            await store.add_character(NovelCharacter(name="hero"))
+
+            async def resolve(*args, **kwargs):
+                return (
+                    s.ctx,
+                    "owner",
+                    "demo",
+                    s.ctx.output_dir,
+                    str(s.ctx.output_dir),
+                    store,
+                )
+
+            monkeypatch.setattr(characters, "_resolve_character_project", resolve)
+            monkeypatch.setattr(
+                characters, "VoiceDesignStorage", contract().VoiceDesignStorage
+            )
+            monkeypatch.setattr(
+                characters,
+                "make_static_url_for_context",
+                lambda ctx, rel, local_path=None: "/static/" + rel,
+            )
+            s.client.app.include_router(characters.router, prefix="/api/v1")
+            invalid = s.client.post(
+                "/api/v1/projects/project/characters/hero/voice-samples/default/save-generated",
+                json={**SAVE_CHARACTER, "username": "owner"},
+            )
+            assert invalid.status_code == 422
+            assert invalid.json()["request_id"] == SAVE_ID
+            character = await characters.save_generated_character_voice(
+                project="project",
+                name="hero",
+                slot="default",
+                body=contract().SaveCharacterVoiceRequest.model_validate(
+                    SAVE_CHARACTER
+                ),
+                user={"user_id": "user"},
+            )
+            voice = s.client.post(s.save_url, json=SAVE_USER)
+            assert voice.status_code == 200
+            assert s.store.receipt(SAVE_ID, "character") is not None
+            assert s.store.receipt(SAVE_ID, "account") is not None
+            s.store.clock = lambda: 10**12
+            s.store.cleanup()
+            assert not path.exists()
+            assert (
+                s.ctx.output_dir / character["data"]["path"]
+            ).read_bytes() == content
+            assert s.client.get(voice.json()["data"]["url"]).content == content
+            assert len(s.calls) == 1
+        finally:
+            await store.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.asyncio
+async def test_generated_user_voice_cancellation_finishes_publication(
+    generated_user_api, monkeypatch
+):
+    import asyncio
+    import threading
+
+    s = generated_user_api
+    make_ready(s)
+    entered, release = threading.Event(), threading.Event()
+    original = s.freezone.create_user_audio_voice
+
+    def slow(**kwargs):
+        entered.set()
+        assert release.wait(10)
+        return original(**kwargs)
+
+    monkeypatch.setattr(s.freezone, "create_user_audio_voice", slow)
+    task = asyncio.create_task(
+        s.freezone.save_generated_freezone_audio_voice(
+            project="project",
+            body=contract().SaveUserVoiceRequest.model_validate(SAVE_USER),
+            user={"user_id": "user"},
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 5)
+    task.cancel()
+    release.set()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert s.store.receipt(SAVE_ID, "account")["result"] is not None
+    assert s.client.post(s.save_url, json=SAVE_USER).status_code == 200
+    assert len(s.audio_node.list_user_audio_voices("user")) == 1

@@ -348,7 +348,9 @@ class VoiceDesignRoute(APIRoute):
                 elif request.method == "POST":
                     body = await request.json()
                     if isinstance(body, dict):
-                        request_id = UUID(str(body.get("request_id")))
+                        request_id = UUID(
+                            str(body.get("save_request_id", body.get("request_id")))
+                        )
             except (ValueError, TypeError):
                 pass
             try:

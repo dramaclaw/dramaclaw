@@ -8918,6 +8918,7 @@
       "network": "Connection failed. Check the original request or retry saving.",
       "invalidResponse": "Invalid server response. Check the original request later.",
       "playback": "Could not play the preview. Try playback again."
-    }
+    },
+    "saveAccount": "Save to my voices"
   }
 }

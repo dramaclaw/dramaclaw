@@ -18,8 +18,10 @@ import type { AudioVoiceRef } from '@/features/canvas/domain/canvasNodes';
 import {
   createFreezoneAudioVoice,
   fetchFreezoneAudioReferences,
+  saveGeneratedFreezoneAudioVoice,
   type FreezoneAudioReferenceItem,
 } from '@/api/ops';
+import { VoiceDesignDialog } from '@/components/assets/voice-design-dialog';
 import { readUrl } from '@/lib/url-params';
 import { CANVAS_NODE_INPUT_PLACEHOLDER_CLASS } from '@/features/canvas/ui/nodeFrameStyles';
 
@@ -97,6 +99,8 @@ export function VoiceSelectionModal({
   initialTab = 'library',
 }: VoiceSelectionModalProps) {
   const { t } = useTranslation();
+  const [designOpen, setDesignOpen] = useState(false);
+  const project = readUrl().project;
   const [tab, setTab] = useState<TabId>('library');
   const [items, setItems] = useState<FreezoneAudioReferenceItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -114,7 +118,9 @@ export function VoiceSelectionModal({
       const res = await fetchFreezoneAudioReferences(project);
       setItems(res.available ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('node.voiceModal.loadFailed'));
+      setError(
+        err instanceof Error ? err.message : t('node.voiceModal.loadFailed'),
+      );
     } finally {
       setLoading(false);
     }
@@ -122,13 +128,13 @@ export function VoiceSelectionModal({
 
   // ESC 关闭
   useEffect(() => {
-    if (!open) return;
+    if (!open || designOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, designOpen, onClose]);
 
   // 打开时拉一次（音色库 + 我的音色共享同一份 references 数据）
   useEffect(() => {
@@ -148,8 +154,10 @@ export function VoiceSelectionModal({
 
   const content = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-6 backdrop-blur-sm"
-      onClick={onClose}
+      className={`fixed inset-0 z-[100] items-center justify-center bg-black/50 p-6 ${designOpen ? 'hidden' : 'flex'}`}
+      onClick={() => {
+        if (!designOpen) onClose();
+      }}
     >
       <div
         className="flex h-[620px] max-h-[88vh] w-full max-w-[760px] flex-col overflow-hidden rounded-[10px] border border-white/[0.14] bg-[#141518]/96 shadow-[0_18px_48px_rgba(0,0,0,0.48)]"
@@ -169,7 +177,16 @@ export function VoiceSelectionModal({
           </button>
         </header>
 
-        <TabsRow tab={tab} onChange={setTab} />
+        <div className="flex items-center justify-between pr-5">
+          <TabsRow tab={tab} onChange={setTab} />
+          <button
+            type="button"
+            className="tap-button tap-button-quiet-primary"
+            onClick={() => setDesignOpen(true)}
+          >
+            {t('voiceDesign.entry')}
+          </button>
+        </div>
 
         {tab === 'library' ? (
           <LibraryTab
@@ -190,6 +207,25 @@ export function VoiceSelectionModal({
           />
         )}
       </div>
+      {project && (
+        <VoiceDesignDialog
+          project={project}
+          surface="canvas"
+          open={designOpen}
+          onOpenChange={setDesignOpen}
+          target={{
+            kind: 'account',
+            key: 'my-voices',
+            label: t('node.voiceModal.tab.mine'),
+            saveLabel: t('voiceDesign.saveAccount'),
+            onSave: (input) => saveGeneratedFreezoneAudioVoice(project, input),
+            onSaved: () => {
+              setTab('mine');
+              void reload();
+            },
+          }}
+        />
+      )}
     </div>
   );
 
