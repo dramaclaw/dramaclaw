@@ -13,6 +13,7 @@
 // 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
 // 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
 import i18n from 'i18next';
+import { imageGenerationResultUrls } from './imageGenerationResults';
 import { completeDerivedMedia } from './derivedMedia';
 import type { CanvasNode, CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
@@ -280,7 +281,12 @@ async function buildSuccessPatch(
       if (!url) {
         return { ...CLEARED_GENERATION_TASK_FIELDS, generationError: i18n.t('canvas.resumeGeneration.noImageResult') };
       }
-      return { ...CLEARED_GENERATION_TASK_FIELDS, imageUrl: url, previewImageUrl: url, generationError: null };
+      return {
+        ...CLEARED_GENERATION_TASK_FIELDS, imageUrl: url, previewImageUrl: url,
+        generationError: null,
+        ...(Array.isArray(completed.result?.output_urls)
+          ? { generationBatch: imageGenerationResultUrls(completed.result) } : {}),
+      };
     }
     case 'video': {
       let url = resolveUrlFromResult(completed.result, ['video_url', 'output_url', 'url']);

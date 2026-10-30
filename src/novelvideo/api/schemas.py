@@ -445,6 +445,7 @@ class FreezoneWorkflowMediaLink(BaseModel):
 
 class FreezoneGenRequest(FreezoneWorkflowMediaLink):
     prompt: str
+    variant_count: Literal[1, 2, 4] = 1
     aspect_ratio: str = "1:1"
     image_size: str = "2K"
     reference_urls: list[str] = Field(default_factory=list)

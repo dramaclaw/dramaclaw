@@ -23,6 +23,8 @@ import { isSystemManagedNodeData } from '@/features/canvas/domain/mainlineNodeFl
 import { setAlbumPendingTotal } from '@/features/canvas/nodes/shared/albumPendingTotals';
 import { resolveImageGenerationCompletionMode } from '@/features/canvas/nodes/imageGenCompletionMode';
 import { compileWorkflowNodePrompt } from '@/features/canvas/application/workflowRecipeRuntime';
+import { workflowProductOperation } from '@/features/canvas/application/workflowExecutionActivity';
+import { imageGenerationResultUrls } from '@/features/canvas/application/imageGenerationResults';
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
   fetchFreezoneJobResult,
@@ -72,15 +74,6 @@ const IMAGE_GENERATE_FEATURE_KEY = 'freezone.image_generate';
 // 节点被删除 / 尚未出现在 store 里时的空数据兜底，保持 hook 的 early-return-free
 // 结构（hooks 数量必须每帧一致）。
 const EMPTY_NODE_DATA = {} as ImageGenNodeData;
-
-function resolveOutputUrl(result: Record<string, unknown> | null | undefined): string | null {
-  if (!result) return null;
-  for (const key of ['output_url', 'image_url', 'url']) {
-    const value = result[key];
-    if (typeof value === 'string' && value.length > 0) return value;
-  }
-  return null;
-}
 
 /**
  * `ImageGenerationForm` 的 props 里，由本 hook 负责供给的那一部分。
@@ -642,7 +635,13 @@ export function useImageGenerationForm(
     // generationBatch（叠卡画册）：第 1 张完成的设为主图（imageUrl），其余
     // 逐张追加进画册，收拢态渲染成叠起的卡片。
     const total = Math.min(Math.max(effectiveCount, 1), 4);
-    const resolvedCompletionMode = resolveImageGenerationCompletionMode(completionMode, total);
+    // One admitted workflow attempt owns one batch task. Retrying its submission
+    // reuses the batch, while the backend generates each candidate separately.
+    const batchVariants = total > 1 && (
+      executionSource === 'workflow' || Boolean(workflowProductOperation(id)?.generationAttemptId)
+    );
+    const resolvedCompletionMode = batchVariants ? 'completed'
+      : resolveImageGenerationCompletionMode(completionMode, total);
     // Clear any prior failure / album on resubmit — the on-node error banner
     // should only reflect the most recent attempt.
     updateNodeData(id, { generationBatch: null });
@@ -652,6 +651,7 @@ export function useImageGenerationForm(
     const canvasId = readUrl().canvas ?? 'default';
     // 各并发任务完成顺序不定，本地累积已完成的 URL，整组写回（避免读改写竞态）。
     const completedUrls: string[] = [];
+    const submittedTaskKeys = new Set<string>();
     const submittedRefs: Array<{
       task_key: string;
       task_type: string;
@@ -666,8 +666,11 @@ export function useImageGenerationForm(
           ...genPayload,
           canvasId,
           nodeId: id,
+          ...(batchVariants ? { variantCount: total as ImageGenCount } : {}),
         });
         taskKey = ref.task_key;
+        if (submittedTaskKeys.has(ref.task_key)) return 'handled';
+        submittedTaskKeys.add(ref.task_key);
         if (!panelCollapsedAfterSubmit && isCurrentGenerationAttempt()) {
           panelCollapsedAfterSubmit = true;
           optionsRef.current?.onTaskAccepted?.();
@@ -675,7 +678,7 @@ export function useImageGenerationForm(
         // Persist the task handle so a page refresh can resume polling this
         // job. With N concurrent runs on one node only one handle can persist —
         // keep the first (main-image) run's.
-        if (runIndex === 0) {
+        if (runIndex === 0 || submittedRefs.length === 0) {
           updateNodeData(id, generationTaskDescriptor(ref));
         }
         submittedRefs.push({
@@ -687,19 +690,22 @@ export function useImageGenerationForm(
           const completed = await awaitTaskCompletion(ref.task_key, projectId, {
             taskType: ref.task_type,
           });
-          let url = resolveOutputUrl(completed.result as Record<string, unknown> | null);
-          if (!url) {
+          let urls = imageGenerationResultUrls(completed.result as Record<string, unknown> | null);
+          if (urls.length === 0) {
             try {
               const fallback = await fetchFreezoneJobResult(projectId, ref.task_type, ref.job_id);
-              url = fallback.url;
+              if (fallback.url) urls = [fallback.url];
             } catch (error) {
               console.warn('[image-gen] fallback fetch failed', error);
             }
           }
-          if (url) {
+          if (urls.length > 0) {
             if (!isCurrentGenerationAttempt()) return 'ignored';
-            completedUrls.push(url);
-            const isFirstCompleted = completedUrls.length === 1;
+            const isFirstCompleted = completedUrls.length === 0;
+            const freshUrls = urls.filter((url) => !completedUrls.includes(url));
+            if (freshUrls.length === 0) return 'completed';
+            completedUrls.push(...freshUrls);
+            const url = completedUrls[0];
             updateNodeData(id, {
               // 第 1 张完成的设为主图并结束 loading；后续只扩充画册。
               ...(isFirstCompleted ? buildImageGenerationSuccessPatch(url) : {}),
@@ -843,7 +849,7 @@ export function useImageGenerationForm(
     };
 
     const settledRuns = await Promise.allSettled(
-      Array.from({ length: total }, (_, runIndex) => runOne(runIndex)),
+      Array.from({ length: batchVariants ? 1 : total }, (_, runIndex) => runOne(runIndex)),
     );
     // 全部尘埃落定后撤掉占位（失败的任务不留空槽，画册按实际完成数收口）。
     setAlbumPendingTotal(id, 0);

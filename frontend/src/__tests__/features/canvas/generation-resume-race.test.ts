@@ -197,6 +197,18 @@ describe("恢复路径：列表漏项不等于任务不存在", () => {
 });
 
 describe("恢复路径：文本任务按任务类型取回结果", () => {
+  it("刷新后恢复图片批次全部候选并去重主图", async () => {
+    listTasks.mockResolvedValue([{ task_key: TASK_KEY, status: "running" }]);
+    awaitTaskCompletion.mockResolvedValue({
+      task_key: TASK_KEY, status: "completed",
+      result: { output_url: "a.png", output_urls: ["a.png", "b.png", "b.png"] },
+    });
+    const updateNodeData = vi.fn();
+    await resumeNodeGeneration({ node: resumableNode(), projectId: "demo", updateNodeData });
+    expect(updateNodeData).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      imageUrl: "a.png", generationBatch: ["a.png", "b.png"],
+    }));
+  });
   it("刷新后使用文本生成结果接口恢复正文和模型", async () => {
     const taskKey = "freezone_text_generate:text-job-1";
     listTasks.mockResolvedValue([{ task_key: taskKey, status: "running" }]);

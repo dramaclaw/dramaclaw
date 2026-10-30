@@ -1408,7 +1408,7 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         "image_aspect_ratio": "图片比例",
         "image_resolution": "图片分辨率",
         "image_quality": "图片画质",
-        "image_variants_per_node": "图片生成数量",
+        "image_variants_per_node": "每个场景/节点的候选图数量",
         "video_model": "视频模型",
         "video_aspect_ratio": "视频比例",
         "video_resolution": "视频分辨率",
@@ -1489,8 +1489,12 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             {
                 **question,
                 "id": question_id,
-                "title": str(question.get("title") or "").strip()
-                or generation_question_titles[question_id],
+                "title": (
+                    generation_question_titles[question_id]
+                    if question_id == "image_variants_per_node"
+                    else str(question.get("title") or "").strip()
+                    or generation_question_titles[question_id]
+                ),
                 "options": _safe_list(question.get("options")),
                 "mode": str(question.get("mode") or "single").strip() or "single",
                 "options_source": generation_option_sources[question_id],

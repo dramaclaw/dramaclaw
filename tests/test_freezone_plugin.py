@@ -4106,7 +4106,7 @@ def test_generation_clarification_fills_titles_live_sources_and_legacy_count_ali
     assert [question["title"] for question in questions] == [
         "图片模型",
         "图片画质",
-        "图片生成数量",
+        "每个场景/节点的候选图数量",
     ]
     assert [question["options_source"] for question in questions] == [
         "image_models",

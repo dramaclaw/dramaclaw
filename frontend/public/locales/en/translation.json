@@ -1030,8 +1030,8 @@
           "medium": "Standard quality",
           "high": "High quality"
         },
-        "imageCount": "{{count}} image",
-        "imageCount_other": "{{count}} images",
+        "imageCount": "{{count}} image per scene/node",
+        "imageCount_other": "{{count}} images per scene/node",
         "videoCount": "{{count}} video",
         "videoCount_other": "{{count}} videos",
         "durationSeconds": "{{count}} second",

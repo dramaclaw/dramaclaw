@@ -737,13 +737,18 @@ async def _run_freezone_gen_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, task_type, job_id, 0.1, "调用图像生成器...")
-    out_path = await _await_with_cancel_watch(
-        _call_freezone_leaf(
+    variant_count = payload.get("variant_count", 1)
+    if type(variant_count) is not int or variant_count not in (1, 2, 4):
+        raise ValueError("invalid image variant count")
+
+    async def generate_variant(index: int) -> Path:
+        # Keep the primary path compatible with the single-image result endpoint.
+        return await _call_freezone_leaf(
             envelope,
             run_freezone_gen,
             "run_freezone_gen",
             project_dir=project_dir,
-            job_id=job_id,
+            job_id=job_id if index == 0 else f"{job_id}_v{index + 1}",
             prompt=str(payload.get("prompt") or ""),
             aspect_ratio=str(payload.get("aspect_ratio") or "1:1"),
             image_size=str(payload.get("image_size") or "2K"),
@@ -754,19 +759,41 @@ async def _run_freezone_gen_async(
             model_params=payload.get("model_params") or None,
             request_schema=payload.get("request_schema") or None,
             output_task_type=task_type,
-        ),
-        project_id=ctx.project_id,
-        task_type=task_type,
-        episode=0,
-        task_id=str(envelope.get("__run_task_id") or ""),
-        scope=job_id,
-    )
+        )
+
+    variants = [asyncio.create_task(generate_variant(index)) for index in range(variant_count)]
+
+    async def generate_batch() -> list[Path]:
+        return await asyncio.gather(*variants)
+
+    try:
+        paths = await _await_with_cancel_watch(
+            generate_batch(),
+            project_id=ctx.project_id,
+            task_type=task_type,
+            episode=0,
+            task_id=str(envelope.get("__run_task_id") or ""),
+            scope=job_id,
+        )
+    finally:
+        # A failed/cancelled batch must not leave sibling model calls running.
+        for variant in variants:
+            if not variant.done():
+                variant.cancel()
+        await asyncio.gather(*variants, return_exceptions=True)
+    out_path = paths[0]
     rel = out_path.relative_to(project_dir).as_posix()
     result = {
         "job_id": job_id,
         "output_path": str(out_path),
         "output_url": make_static_url_for_context(ctx, rel),
     }
+    if variant_count > 1:
+        result["output_urls"] = [
+            make_static_url_for_context(ctx, path.relative_to(project_dir).as_posix())
+            for path in paths
+        ]
+        result["output_paths"] = [str(path) for path in paths]
     history_record = _append_node_history(
         ctx=ctx,
         project_dir=project_dir,
