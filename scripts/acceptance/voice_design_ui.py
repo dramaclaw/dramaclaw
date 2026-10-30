@@ -495,23 +495,63 @@ class Acceptance:
         self.page.get_by_role("dialog", name="按描述生成声线").get_by_role("button", name="关闭", exact=True).click()
 
     def U01(self) -> list[str]:
-        self.characters()
-        buttons = self.page.get_by_role("button", name="按描述生成", exact=True)
-        count = buttons.count()
-        if count < 4:
-            raise AssertionError("expected at least four displayed age slots")
-        labels = []
-        for index in range(count):
-            dialog = self.open_voice(index)
-            text = dialog.inner_text()
-            if self.args.character not in text:
-                raise AssertionError("dialog targets another character")
-            labels.append(dialog.locator('[data-slot="dialog-description"]').inner_text())
-            expect(dialog.get_by_role("button", name=re.compile("^保存到"))).to_be_disabled()
-            self.close_voice()
-        expect(self.page.get_by_role("button", name="上传声音样本", exact=True).first).to_be_enabled()
-        expect(self.page.get_by_role("button", name="录音", exact=True).first).to_be_enabled()
-        return labels
+        expected = (
+            ("幼年（可选覆盖）", "child", "幼年"),
+            ("青年（可选覆盖）", "youth", "青年"),
+            ("中年（可选覆盖）", "middle", "中年"),
+            ("老年（默认 · 必填）", "default", "默认（兜底）"),
+        )
+        original_character = self.args.character
+        self.args.character = original_character + "-U01"
+        response = self.page.context.request.post(
+            f"{self.args.base_url}/api/v1/projects/{self.args.project}/characters",
+            data={"name": self.args.character, "role": "supporting", "gender": "male", "age_group": "elder"},
+        )
+        if response.status != 200 or response.json().get("ok") is not True:
+            self.args.character = original_character
+            raise RuntimeError("could not create the isolated U01 character")
+        attempts = []
+
+        def capture_save(route):
+            attempts.append(route.request)
+            route.abort("blockedbyclient")
+
+        pattern = "**/voice-samples/*/save-generated"
+        self.page.route(pattern, capture_save)
+        try:
+            self.characters()
+            entries = self.page.get_by_role("button", name="按描述生成", exact=True)
+            expect(entries).to_have_count(len(expected))
+            labels = []
+            for index, (age_label, action_slot, action_label) in enumerate(expected):
+                card = entries.nth(index).locator("../..")
+                expect(card.get_by_text(age_label, exact=True)).to_be_visible()
+                expect(card.get_by_role("button", name="上传声音样本", exact=True)).to_be_enabled()
+                expect(card.get_by_role("button", name="录音", exact=True)).to_be_enabled()
+                dialog = self.open_voice(index)
+                expect(dialog.locator('[data-slot="dialog-description"]')).to_have_text(
+                    f"保存位置：{self.args.character} · {action_label}"
+                )
+                save = dialog.get_by_role("button", name=f"保存到{action_label}", exact=True)
+                expect(save).to_be_disabled()
+                self.fill(dialog)
+                self.gateway("success")
+                candidate_id = self.generate(dialog)
+                with self.page.expect_request(lambda request: request.method == "POST" and "/voice-samples/" in request.url and request.url.endswith("/save-generated")) as submitted:
+                    save.click()
+                request = submitted.value
+                expected_path = f"/characters/{quote(self.args.character, safe='')}/voice-samples/{action_slot}/save-generated"
+                if len(attempts) != index + 1 or not request.url.endswith(expected_path):
+                    raise AssertionError(f"{age_label} submitted the wrong actionSlot; expected {action_slot}")
+                body = request.post_data_json
+                if body["candidate_id"] != candidate_id or body["replace_existing"] is not False:
+                    raise AssertionError("card save request changed its candidate or replacement policy")
+                labels.append(f"{age_label}; dialog actionSlot={action_slot}; captured save slot={action_slot}")
+                self.close_voice()
+            return labels
+        finally:
+            self.page.unroute(pattern, capture_save)
+            self.args.character = original_character
 
     def canvas(self) -> None:
         page = self.page
