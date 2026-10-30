@@ -1,182 +1,53 @@
 name: release-images
-
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Release tag matching the application version"
+      acceptance_json:
+        description: "Actual Compose acceptance receipt for isolated promotion measurement"
         required: true
         type: string
-      push_latest:
-        description: "Promote the accepted release receipt to latest; never rebuild"
-        type: boolean
-        default: false
-      candidate_only:
-        description: "Benchmark this workflow commit with an isolated ci-SHA-run image tag"
-        type: boolean
-        default: false
-
 permissions:
   contents: read
-
-concurrency:
-  group: release-images-${{ github.event_name == 'release' && github.ref_name || inputs.tag }}-${{ inputs.candidate_only && github.run_id || 'release' }}
-  cancel-in-progress: false
-
-env:
-  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-
 jobs:
-  source:
+  benchmark:
     runs-on: ubuntu-latest
-    outputs:
-      sha: ${{ steps.source.outputs.sha }}
-      image_tag: ${{ steps.source.outputs.image_tag }}
-      version: ${{ steps.source.outputs.version }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.candidate_only && github.sha || env.RELEASE_TAG }}
-          persist-credentials: false
-      - id: source
-        env:
-          CANDIDATE_ONLY: ${{ inputs.candidate_only }}
-          PUSH_LATEST: ${{ inputs.push_latest }}
-        run: |
-          python3 - <<'PY'
-          import os, pathlib, re, subprocess, tomllib
-          tag = os.environ['RELEASE_TAG']
-          if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z.-]+)?', tag):
-              raise SystemExit('Invalid release tag')
-          version = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version']
-          if version != tag[1:]:
-              raise SystemExit('Application version must match release tag')
-          candidate = os.environ['CANDIDATE_ONLY'] == 'true'
-          if candidate and os.environ['PUSH_LATEST'] == 'true':
-              raise SystemExit('Candidate builds cannot promote latest')
-          sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
-          image_tag = f'ci-{sha}-{os.environ["GITHUB_RUN_ID"]}' if candidate else version
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              out.write(f'sha={sha}\nimage_tag={image_tag}\nversion={version}\n')
-          PY
-
-  build:
-    if: github.event_name == 'workflow_dispatch' && !inputs.push_latest
-    needs: source
-    name: ${{ matrix.name }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: backend
-            image: dramaclaw
-            context: .
-            file: Dockerfile
-          - name: frontend
-            image: dramaclaw-frontend
-            context: frontend
-            file: frontend/Dockerfile
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.source.outputs.sha }}
-          persist-credentials: false
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
-      - uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: claymorelab/${{ matrix.image }}
-          tags: type=raw,value=${{ needs.source.outputs.image_tag }}
-          flavor: latest=false
-          labels: |
-            org.opencontainers.image.revision=${{ needs.source.outputs.sha }}
-            org.opencontainers.image.version=${{ needs.source.outputs.version }}
-      - name: Build and push candidate
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.file }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: VITE_APP_VERSION=v${{ needs.source.outputs.version }}
-          cache-from: type=registry,ref=claymorelab/${{ matrix.image }}:buildcache-v1
-          cache-to: type=registry,ref=claymorelab/${{ matrix.image }}:buildcache-v1,mode=max,image-manifest=true,oci-mediatypes=true
-      - name: Record candidate identity
-        env:
-          IMAGE: ${{ matrix.image }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-          SOURCE_SHA: ${{ needs.source.outputs.sha }}
-          IMAGE_TAG: ${{ needs.source.outputs.image_tag }}
-        run: |
-          python3 - <<'PY'
-          import json, os
-          fields = {key.lower(): os.environ[key] for key in ('IMAGE', 'DIGEST', 'SOURCE_SHA', 'IMAGE_TAG')}
-          fields['run_id'] = os.environ['GITHUB_RUN_ID']
-          open('candidate-image.json', 'w').write(json.dumps(fields, indent=2) + '\n')
-          print(json.dumps(fields))
-          PY
-      - uses: actions/upload-artifact@v4
-        with:
-          name: candidate-image-${{ matrix.name }}
-          path: candidate-image.json
-          if-no-files-found: error
-
-  promote:
-    if: github.event_name == 'release' || inputs.push_latest
-    needs: source
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # Promotion tooling comes from this workflow, independently of an older tag.
-          ref: ${{ github.sha }}
+          ref: 71347f183eb13c76b93db0c3bf019e122f4f2fe6
           persist-credentials: false
       - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Download the packaging acceptance receipt
+      - name: Validate and promote isolated accepted image indexes
         env:
-          GH_TOKEN: ${{ github.token }}
+          RECEIPT_JSON: ${{ inputs.acceptance_json }}
         run: |
-          set -euo pipefail
-          mkdir -p acceptance
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > acceptance/release.json
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern release-image-acceptance.json --dir acceptance
-      - name: Promote only the accepted immutable indexes
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ needs.source.outputs.sha }}
-          MANUAL_LATEST: ${{ inputs.push_latest }}
-        run: |
-          set -euo pipefail
-          args=()
-          # Do not let a late event for an older release roll latest backwards.
-          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
-          if [ "$latest" = "$RELEASE_TAG" ] || [ "$MANUAL_LATEST" = true ]; then
-            args+=(--latest)
-          fi
-          python3 scripts/promote_release_images.py \
-            --receipt acceptance/release-image-acceptance.json \
-            --release-metadata acceptance/release.json \
-            --release-tag "$RELEASE_TAG" --source-sha "$SOURCE_SHA" \
-            --output promotion.json "${args[@]}"
+          python3 - <<'PYTHON'
+          import json, os, pathlib, subprocess, time
+          pathlib.Path('receipt.json').write_text(os.environ['RECEIPT_JSON'])
+          start = time.monotonic()
+          subprocess.run([
+              'python3', 'scripts/promote_release_images.py',
+              '--receipt', 'receipt.json', '--release-tag', 'v2.1.3',
+              '--source-sha', '71347f183eb13c76b93db0c3bf019e122f4f2fe6',
+              '--benchmark', '--output', 'promotion.json',
+          ], check=True)
+          proof = {
+              'ok': True, 'rebuilt': False,
+              'source': '71347f183eb13c76b93db0c3bf019e122f4f2fe6',
+              'totalSecondsIncludingValidation': round(time.monotonic() - start, 2),
+              'method': 'GitHub Actions: full receipt/registry validation, isolated alias writes and digest readbacks',
+          }
+          pathlib.Path('promotion-timing.json').write_text(json.dumps(proof, indent=2) + '\n')
+          print(json.dumps(proof))
+          PYTHON
       - uses: actions/upload-artifact@v4
         with:
-          name: image-promotion
-          path: promotion.json
+          name: image-promotion-benchmark
+          path: |
+            promotion.json
+            promotion-timing.json
           if-no-files-found: error
