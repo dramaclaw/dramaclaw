@@ -467,6 +467,7 @@ class SQLiteStore:
     ):
         self.project_name = project_name
         self._db: Optional[aiosqlite.Connection] = None
+        self._db_init_lock = asyncio.Lock()
         self._characters: Dict[str, NovelCharacter] = {}
         self._episodes: Dict[int, NovelEpisode] = {}
         self._props: Dict[str, NovelProp] = {}
@@ -512,15 +513,33 @@ class SQLiteStore:
         if self._closed or (self._closing and self._current_task_lease_depth() <= 0):
             raise StoreClosedError(self.project_dir)
         if self._db is None:
-            if self._closing:
-                raise StoreClosedError(self.project_dir)
-            await self._ensure_project_schema()
-            self._db = await aiosqlite.connect(self.db_path, timeout=10)
-            self._db.row_factory = aiosqlite.Row
-            await configure_sqlite_connection_async(
-                self._db,
-                set_journal_mode=False,
-            )
+            async with self._db_init_lock:
+                if self._db is None:
+                    if self._closing or self._closed:
+                        raise StoreClosedError(self.project_dir)
+                    await self._ensure_project_schema()
+                    connection = await aiosqlite.connect(self.db_path, timeout=10)
+                    connection.row_factory = aiosqlite.Row
+                    from novelvideo.seedance2_i2v.character_voice_storage import (
+                        recover_character_voice_publications,
+                    )
+
+                    try:
+                        await configure_sqlite_connection_async(
+                            connection,
+                            set_journal_mode=False,
+                        )
+                        await recover_character_voice_publications(
+                            project_dir=Path(self.project_dir),
+                            state_dir=Path(self.state_dir),
+                            connection=connection,
+                        )
+                        if self._closing or self._closed:
+                            raise StoreClosedError(self.project_dir)
+                    except BaseException:
+                        await connection.close()
+                        raise
+                    self._db = connection
         return self._db
 
     async def _ensure_project_schema(self) -> None:

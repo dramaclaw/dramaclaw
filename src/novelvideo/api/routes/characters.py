@@ -94,6 +94,7 @@ from novelvideo.seedance2_i2v.character_voice_storage import (
     trim_existing_character_voice_file,
     persistent_voice_lock,
     CharacterVoiceJournal,
+    character_voice_slot_metadata as _voice_slot_metadata,
     voice_content_sha256,
 )
 from novelvideo.sqlite_store import SQLiteStore
@@ -493,25 +494,6 @@ def _character_asset_links(
     return {
         "history_url": f"{base}/asset-history?{urlencode(query)}",
         "restore_url": f"{base}/asset-history/restore",
-    }
-
-
-def _voice_slot_metadata(character, slot: str) -> dict[str, str]:
-    if slot == VOICE_DEFAULT_SLOT:
-        return {
-            "path": getattr(character, "reference_audio_path", "") or "",
-            "sha256": getattr(character, "reference_audio_sha256", "") or "",
-            "updated_at": getattr(character, "reference_audio_updated_at", "") or "",
-        }
-
-    samples = getattr(character, "voice_samples_by_age_group", None) or {}
-    entry = samples.get(slot) if isinstance(samples, dict) else None
-    if not isinstance(entry, dict):
-        return {"path": "", "sha256": "", "updated_at": ""}
-    return {
-        "path": entry.get("path", "") or "",
-        "sha256": entry.get("sha256", "") or "",
-        "updated_at": entry.get("updated_at", "") or "",
     }
 
 
@@ -1390,32 +1372,7 @@ async def _recover_character_voice(journal, name, store):
     cached = store.get_character(name)
     for field in type(fresh).model_fields:
         setattr(cached, field, getattr(fresh, field))
-    record = journal.read()
-    if record:
-        current = _voice_slot_metadata(cached, record["slot"])
-        if record.get("after") == current:
-            save = record.get("save")
-            if save:
-                from novelvideo.audio.voice_design_storage import CandidateScope
-
-                storage = VoiceDesignStorage(
-                    CandidateScope(
-                        save["project_id"],
-                        save["user_id"],
-                        Path(save["state_dir"]),
-                        Path(save["runtime_dir"]),
-                    )
-                )
-                storage.save_receipt(
-                    save["request_id"],
-                    save["candidate_id"],
-                    "character",
-                    save["target"],
-                    current,
-                )
-            journal.finish()
-        else:
-            journal.rollback(record)
+    journal.recover(cached)
     return cached
 
 

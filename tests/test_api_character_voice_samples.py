@@ -1132,9 +1132,14 @@ async def test_save_compare_and_set_preserves_concurrent_updates(
         )
 
 
-@pytest.mark.parametrize("crash,exitcode", [("published", 17), ("committed", 18)])
+@pytest.mark.parametrize("crash,exitcode,consumer", [
+    pytest.param("published", 17, "sqlite", id="published-17"),
+    pytest.param("committed", 18, "sqlite", id="committed-18"),
+    pytest.param("published", 17, "cognee", id="cognee-published-17"),
+    pytest.param("committed", 18, "cognee", id="cognee-committed-18"),
+])
 async def test_save_failure_recovers_file_and_metadata_after_process_restart(
-    generated_api, crash, exitcode
+    generated_api, crash, exitcode, consumer
 ):
     import multiprocessing
 
@@ -1152,8 +1157,38 @@ async def test_save_failure_recovers_file_and_metadata_after_process_restart(
     process.start()
     await asyncio.to_thread(process.join, 60)
     assert process.exitcode == exitcode
+    from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo.seedance2_i2v.voice_clone import resolve_character_voice
+
+    restarted = SQLiteStore(
+        "demo", output_dir=str(env.ctx.output_dir), state_dir=str(env.ctx.state_dir)
+    )
+    try:
+        if consumer == "cognee":
+            from novelvideo.cognee.store import CogneeStore
+
+            facade = CogneeStore.__new__(CogneeStore)
+            facade.sqlite_store = restarted
+            await facade._ensure_db()
+        else:
+            await restarted.initialize()
+        await restarted.load_graph_state()
+        resolution = resolve_character_voice(
+            project_dir=env.ctx.output_dir, character=restarted.get_character("hero")
+        )
+        assert (
+            resolution.sha256
+            == hashlib.sha256(resolution.audio_path.read_bytes()).hexdigest()
+        )
+        assert resolution.audio_path.read_bytes() == (
+            b"old" if crash == "published" else b"generated audio"
+        )
+    finally:
+        await restarted.close()
     # Restarted access recovers before reads; replay never republishes a committed save.
-    recovered = await env.client.get("/api/v1/projects/demo/characters/hero/voice-samples")
+    recovered = await env.client.get(
+        "/api/v1/projects/demo/characters/hero/voice-samples"
+    )
     assert recovered.status_code == 200
     current = env.characters._voice_slot_metadata(
         env.store.get_character("hero"), "default"
@@ -1254,3 +1289,96 @@ async def test_generated_save_scopes_permissions_and_candidate_owner(
     assert (
         response.status_code == 404 and response.json()["code"] == "candidate_not_found"
     )
+
+
+async def test_project_connection_waits_for_voice_recovery_before_concurrent_reads(
+    tmp_path, monkeypatch
+):
+    from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo.seedance2_i2v import character_voice_storage
+
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def recover(**kwargs):
+        calls.append(kwargs["connection"])
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(
+        character_voice_storage, "recover_character_voice_publications", recover
+    )
+    store = SQLiteStore(
+        "demo", output_dir=str(tmp_path / "output"), state_dir=str(tmp_path / "state")
+    )
+    first = asyncio.create_task(store.initialize())
+    await asyncio.wait_for(started.wait(), 3)
+    second = asyncio.create_task(store.list_characters())
+    await asyncio.sleep(0.05)
+    assert not second.done()
+    assert store._db is None
+    release.set()
+    try:
+        await asyncio.wait_for(asyncio.gather(first, second), 3)
+        assert len(calls) == 1
+        assert await store.list_characters() == []
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("failure", ["io", "cancel"])
+async def test_project_connection_closes_when_voice_recovery_fails(
+    tmp_path, monkeypatch, failure
+):
+    from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo.seedance2_i2v import character_voice_storage
+
+    connections = []
+
+    async def recover(**kwargs):
+        connections.append(kwargs["connection"])
+        if failure == "cancel":
+            raise asyncio.CancelledError()
+        raise OSError("cannot restore voice")
+
+    monkeypatch.setattr(
+        character_voice_storage, "recover_character_voice_publications", recover
+    )
+    store = SQLiteStore(
+        "demo", output_dir=str(tmp_path / "output"), state_dir=str(tmp_path / "state")
+    )
+    with pytest.raises(asyncio.CancelledError if failure == "cancel" else OSError):
+        await store.initialize()
+    assert store._db is None
+    with pytest.raises(ValueError, match="no active connection"):
+        await connections[0].execute("SELECT 1")
+    await store.close()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("project_dir", "/other-project"), ("character_name", "other-character")],
+)
+async def test_project_initialization_rejects_foreign_voice_journal(
+    generated_api, field, value
+):
+    import json
+    from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo.seedance2_i2v.character_voice_storage import CharacterVoiceJournal
+
+    env = generated_api
+    journal = CharacterVoiceJournal(
+        env.ctx.output_dir, "hero", state_dir=env.ctx.state_dir
+    )
+    journal.begin("default", {"path": "", "sha256": "", "updated_at": ""})
+    record = json.loads(journal.path.read_text())
+    record[field] = value
+    journal.path.write_text(json.dumps(record))
+    restarted = SQLiteStore(
+        "demo", output_dir=str(env.ctx.output_dir), state_dir=str(env.ctx.state_dir)
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        await restarted.initialize()
+    assert journal.path.exists()
+    assert restarted._db is None
+    await restarted.close()

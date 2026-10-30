@@ -571,6 +571,25 @@ async def persistent_voice_lock(path: Path) -> AsyncIterator[None]:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
+def character_voice_slot_metadata(character, slot: str) -> dict[str, str]:
+    if slot == DEFAULT_SLOT:
+        return {
+            "path": getattr(character, "reference_audio_path", "") or "",
+            "sha256": getattr(character, "reference_audio_sha256", "") or "",
+            "updated_at": getattr(character, "reference_audio_updated_at", "") or "",
+        }
+
+    samples = getattr(character, "voice_samples_by_age_group", None) or {}
+    entry = samples.get(slot) if isinstance(samples, dict) else None
+    if not isinstance(entry, dict):
+        return {"path": "", "sha256": "", "updated_at": ""}
+    return {
+        "path": entry.get("path", "") or "",
+        "sha256": entry.get("sha256", "") or "",
+        "updated_at": entry.get("updated_at", "") or "",
+    }
+
+
 class CharacterVoiceJournal:
     """Recover a file publication by comparing its intended binding with SQLite.
 
@@ -580,6 +599,9 @@ class CharacterVoiceJournal:
     """
 
     def __init__(self, project_dir: Path, character_name: str, *, state_dir: Path):
+        self.character_name = character_name
+        self.project_dir = Path(project_dir).resolve()
+        self.state_dir = Path(state_dir).resolve()
         self.directory = character_voice_path(
             project_dir=project_dir,
             character_name=character_name,
@@ -590,7 +612,24 @@ class CharacterVoiceJournal:
         self.path = state_dir / "character-voice-publications" / f"{key}.json"
 
     def read(self) -> dict[str, Any] | None:
-        return json.loads(self.path.read_text()) if self.path.exists() else None
+        if not self.path.exists():
+            return None
+        record = json.loads(self.path.read_text())
+        if (
+            record["character_name"] != self.character_name
+            or Path(record["project_dir"]).resolve() != self.project_dir
+            or record["slot"] not in ALL_SLOTS
+        ):
+            raise ValueError(
+                "Character voice journal does not match its project/character"
+            )
+        save = record.get("save")
+        if save and (
+            Path(save["state_dir"]).resolve() != self.state_dir
+            or save["target"] != f"{self.character_name}/{record['slot']}"
+        ):
+            raise ValueError("Character voice receipt does not match its journal")
+        return record
 
     def write(self, record: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -611,6 +650,8 @@ class CharacterVoiceJournal:
         self.write(
             {
                 "slot": slot,
+                "character_name": self.character_name,
+                "project_dir": str(self.project_dir),
                 "before": metadata,
                 "files": files,
                 "existing_names": names,
@@ -631,5 +672,79 @@ class CharacterVoiceJournal:
             (self.directory / name).write_bytes(base64.b64decode(content))
         self.finish()
 
+    def recover(self, character: Any) -> None:
+        record = self.read()
+        if record is None:
+            return
+        current = character_voice_slot_metadata(character, record["slot"])
+        if record.get("after") != current:
+            self.rollback(record)
+            return
+        save = record.get("save")
+        if save:
+            from novelvideo.audio.voice_design_storage import (
+                CandidateScope,
+                VoiceDesignStorage,
+            )
+
+            storage = VoiceDesignStorage(
+                CandidateScope(
+                    save["project_id"],
+                    save["user_id"],
+                    self.state_dir,
+                    Path(save["runtime_dir"]),
+                )
+            )
+            storage.save_receipt(
+                save["request_id"],
+                save["candidate_id"],
+                "character",
+                save["target"],
+                current,
+            )
+        self.finish()
+
     def finish(self) -> None:
         self.path.unlink(missing_ok=True)
+
+
+async def recover_character_voice_publications(
+    *,
+    project_dir: Path,
+    state_dir: Path,
+    connection: Any,
+) -> None:
+    """Recover before exposing a new project connection to any consumer.
+
+    Use the already-open connection directly: querying through a store factory
+    here would recurse into initialization while holding a publication lock.
+    """
+    from novelvideo.models import NovelCharacter
+
+    directory = state_dir / "character-voice-publications"
+    for path in directory.glob("*.json"):
+        async with persistent_voice_lock(path.with_suffix(".lock")):
+            if not path.exists():
+                continue
+            name = json.loads(path.read_text())["character_name"]
+            journal = CharacterVoiceJournal(project_dir, name, state_dir=state_dir)
+            if journal.path.resolve() != path.resolve():
+                raise ValueError(
+                    "Character voice journal filename does not match its character"
+                )
+            fields = (
+                "reference_audio_path",
+                "reference_audio_sha256",
+                "reference_audio_updated_at",
+                "voice_samples_by_age_group_json",
+            )
+            async with connection.execute(
+                "SELECT " + ",".join(fields) + " FROM characters WHERE name=?",
+                (name,),
+            ) as cursor:
+                row = await cursor.fetchone()
+            if row is None:
+                raise ValueError(
+                    "Character voice journal references a missing character"
+                )
+            journal.recover(NovelCharacter(name=name, **dict(zip(fields, row))))
