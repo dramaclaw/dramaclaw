@@ -186,3 +186,28 @@ def test_dry_run_validates_every_image_without_mutation(monkeypatch):
         copy.deepcopy(data), "v2.1.3", SOURCE, latest=True, dry_run=True
     )
     assert result["dry_run"] and result["ok"] and writes == []
+
+
+def test_release_asset_must_authenticate_the_packaging_publisher_and_exact_bytes():
+    payload = b'{"schema_version": 1}'
+    meta = {
+        "tag_name": "v2.1.3",
+        "draft": False,
+        "assets": [
+            {
+                "name": "release-image-acceptance.json",
+                "size": len(payload),
+                "digest": "sha256:" + hashlib.sha256(payload).hexdigest(),
+                "uploader": {"id": 1857277},
+            }
+        ],
+    }
+    promotion.validate_release_asset(meta, "v2.1.3", payload)
+    with pytest.raises(promotion.PromotionError):
+        promotion.validate_release_asset(meta, "v2.1.3", payload + b" ")
+    wrong = copy.deepcopy(meta)
+    wrong["assets"][0]["uploader"]["id"] = 1
+    with pytest.raises(promotion.PromotionError):
+        promotion.validate_release_asset(wrong, "v2.1.3", payload)
+    with pytest.raises(promotion.PromotionError):
+        promotion.validate_release_asset(meta, "v2.1.4", payload)

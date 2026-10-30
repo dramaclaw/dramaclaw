@@ -153,6 +153,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          mkdir -p acceptance
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > acceptance/release.json
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern release-image-acceptance.json --dir acceptance
       - name: Promote only the accepted immutable indexes
@@ -170,6 +172,7 @@ jobs:
           fi
           python3 scripts/promote_release_images.py \
             --receipt acceptance/release-image-acceptance.json \
+            --release-metadata acceptance/release.json \
             --release-tag "$RELEASE_TAG" --source-sha "$SOURCE_SHA" \
             --output promotion.json "${args[@]}"
       - uses: actions/upload-artifact@v4

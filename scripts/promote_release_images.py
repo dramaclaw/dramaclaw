@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -10,6 +11,8 @@ import subprocess
 import time
 
 PACKAGING_REPOSITORY_ID = "1127546821"
+# Existing packaging publisher account; token ownership changes require review.
+PACKAGING_PUBLISHER_ID = 1857277
 REPOSITORIES = ("dramaclaw", "dramaclaw-frontend")
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -24,6 +27,30 @@ class PromotionError(ValueError):
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise PromotionError(message)
+
+
+def validate_release_asset(release: dict, tag: str, payload: bytes) -> None:
+    """Authenticate the receipt through GitHub asset metadata, not JSON claims."""
+    require(
+        release.get("tag_name") == tag and release.get("draft") is False,
+        "Promotion requires the published release",
+    )
+    assets = [
+        a
+        for a in release.get("assets", [])
+        if a.get("name") == "release-image-acceptance.json"
+    ]
+    require(len(assets) == 1, "Missing or ambiguous image acceptance asset")
+    asset = assets[0]
+    require(
+        asset.get("uploader", {}).get("id") == PACKAGING_PUBLISHER_ID,
+        "Acceptance asset was not uploaded by the trusted packaging publisher",
+    )
+    require(
+        asset.get("size") == len(payload)
+        and asset.get("digest") == "sha256:" + hashlib.sha256(payload).hexdigest(),
+        "Downloaded acceptance asset differs from GitHub metadata",
+    )
 
 
 def validate_receipt(
@@ -211,13 +238,20 @@ def main() -> None:
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--release-tag", required=True)
     parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--release-metadata", type=Path)
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument("--latest", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    payload = args.receipt.read_bytes()
+    if not args.benchmark:
+        require(args.release_metadata is not None, "Release asset metadata is required")
+        validate_release_asset(
+            json.loads(args.release_metadata.read_text()), args.release_tag, payload
+        )
     result = promote(
-        json.loads(args.receipt.read_text()),
+        json.loads(payload),
         args.release_tag,
         args.source_sha,
         benchmark=args.benchmark,
