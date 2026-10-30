@@ -50,14 +50,18 @@ from novelvideo.chat.turn_images import referenced_image_paths
 from novelvideo.freezone.canvas_command_bridge import (
     BRIDGE_PENDING_TTL_SECONDS,
     bridge_message_exists,
+    claim_legacy_bridge_message,
+    expire_bridge_messages,
     list_pending_bridge_messages,
     mark_bridge_message_delivered,
     read_bridge_message,
+    read_bridge_snapshot,
     resolve_clarification_result,
     resolve_canvas_command,
     resolve_canvas_context,
     resolve_skill_studio_result,
 )
+from novelvideo.freezone.canvas_command_watch import bridge_watch_hub
 from novelvideo.freezone.agent_config_store import save_user_agent_config_item
 from novelvideo.freezone.agent_product_operations import AGENT_PRODUCT_PRICE_REFERENCE
 from novelvideo.ports import get_product_surface_access, get_usage_meter
@@ -2503,10 +2507,15 @@ def _load_pending_canvas_command(path: Any) -> dict[str, Any] | None:
         }
     if not isinstance(envelope.get("commands"), list) or not envelope.get("commands"):
         return None
+    try:
+        created_at = float(payload.get("created_at", path.stat().st_mtime))
+    except (TypeError, ValueError, OSError):
+        return None
     return {
         "key": str(payload.get("key") or path.name.removesuffix(".pending.json")),
         "project_id": payload.get("project_id"),
         "canvas_id": payload.get("canvas_id") or envelope.get("canvas_id"),
+        "created_at": created_at,
         "envelope": envelope,
     }
 
@@ -2532,6 +2541,16 @@ async def list_pending_canvas_commands(
         raise HTTPException(status_code=400, detail="canvas_id is required")
 
     project_state_dir = await _bridge_project_state_dir(user, payload)
+    return await bridge_watch_hub().run(
+        _collect_pending_canvas_commands, payload, username, project_state_dir
+    )
+
+
+def _collect_pending_canvas_commands(
+    payload, username, project_state_dir, consumer_id=None, hub=None
+):
+    project_id = payload.project_id.strip()
+    canvas_id = payload.canvas_id.strip()
     requested_agent_ids = [
         str(value).strip() for value in payload.agent_ids if str(value).strip()
     ]
@@ -2559,12 +2578,24 @@ async def list_pending_canvas_commands(
             bridge_targets.append((agent_id, bridge_dir))
     for agent_id, bridge_dir in bridge_targets:
         try:
-            durable_pending = list_pending_bridge_messages(
-                project_id=project_id,
-                canvas_id=canvas_id,
-                kinds={"canvas_command"},
-                limit=10,
-                bridge_dir=bridge_dir,
+            if hub is None:
+                rows = read_bridge_snapshot(bridge_dir)
+                if any(
+                    row["created_at"] + BRIDGE_PENDING_TTL_SECONDS.get(row["kind"], 600)
+                    <= time.time()
+                    for row in rows
+                ):
+                    expire_bridge_messages(bridge_dir)
+            durable_pending = (
+                hub.pending(bridge_dir, project_id, canvas_id, {"canvas_command"})
+                if hub
+                else list_pending_bridge_messages(
+                    project_id=project_id,
+                    canvas_id=canvas_id,
+                    kinds={"canvas_command"},
+                    limit=10,
+                    bridge_dir=bridge_dir,
+                )
             )
         except Exception:
             durable_pending = []
@@ -2579,7 +2610,7 @@ async def list_pending_canvas_commands(
                 continue
             if not mark_bridge_message_delivered(
                 key,
-                consumer_id=f"poll:{username}:{agent_id}",
+                consumer_id=consumer_id or f"poll:{username}:{agent_id}",
                 bridge_dir=bridge_dir,
             ):
                 continue
@@ -2599,9 +2630,13 @@ async def list_pending_canvas_commands(
             if len(frames) >= 10:
                 return {"ok": True, "data": {"frames": frames}}
         try:
-            pending_paths = sorted(
-                bridge_dir.glob("*.pending.json"),
-                key=lambda item: item.stat().st_mtime,
+            pending_paths = (
+                hub.legacy_paths(bridge_dir)
+                if hub
+                else sorted(
+                    bridge_dir.glob("*.pending.json"),
+                    key=lambda item: item.stat().st_mtime,
+                )
             )
         except Exception:
             continue
@@ -2636,6 +2671,18 @@ async def list_pending_canvas_commands(
             # path as websocket commands. Dedupe is handled by seen_keys.
             if not _pending_canvas_command_allows_external_poll(envelope):
                 continue
+            legacy_scope = ChatScope(kind="project", id=project_id, surface="freezone", canvas_id=canvas_id)
+            if _resolve_stale_pending_canvas_command(
+                bridge_dir=bridge_dir, path=path, key=key, pending=pending,
+                scope=legacy_scope, turn_id=str(envelope.get("turn_id") or f"external-agent:{key}"),
+            ):
+                continue
+            if not claim_legacy_bridge_message(
+                key, {**pending, "project_id": project_id, "canvas_id": canvas_id},
+                kind="canvas_command", consumer_id=consumer_id or f"poll:{username}:{agent_id}",
+                bridge_dir=bridge_dir,
+            ):
+                continue
             frames.append(
                 {
                     "type": "canvas.command",
@@ -2651,6 +2698,89 @@ async def list_pending_canvas_commands(
             if len(frames) >= 10:
                 return {"ok": True, "data": {"frames": frames}}
     return {"ok": True, "data": {"frames": frames}}
+
+
+@router.get("/chat/canvas-commands/stream")
+async def stream_canvas_commands(
+    project_id: str,
+    canvas_id: str,
+    agent_ids: str = "main",
+    user: dict = Depends(get_api_user),
+):
+    from sse_starlette.sse import EventSourceResponse
+
+    project_id, canvas_id = project_id.strip(), canvas_id.strip()
+    agents = list(
+        dict.fromkeys(value.strip() for value in agent_ids.split(",") if value.strip())
+    )
+    if not project_id or not canvas_id or not agents or len(agents) > 50:
+        raise HTTPException(
+            status_code=400, detail="Invalid canvas command subscription"
+        )
+    if any(
+        len(agent) > 128
+        or any(
+            ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+            for ch in agent
+        )
+        for agent in agents
+    ):
+        raise HTTPException(status_code=400, detail="Invalid agent id")
+    payload = PendingCanvasCommandsIn(
+        project_id=project_id, canvas_id=canvas_id, agent_ids=agents
+    )
+    state_dir = await _bridge_project_state_dir(user, payload)
+    hub = bridge_watch_hub()
+    username = str(user["username"])
+
+    def directories():
+        result = set()
+        for agent in agents:
+            scope = ChatScope(
+                kind="project",
+                id=project_id,
+                surface="freezone",
+                canvas_id=canvas_id,
+                agent_id=agent,
+                state_dir=str(state_dir) if state_dir else None,
+            )
+            result.update(_candidate_canvas_bridge_dirs_for_scope(username, scope))
+        return result
+
+    targets = await hub.run(directories)
+    consumer = f"sse:{username}:{uuid.uuid4().hex}"
+
+    async def events():
+        hub.metrics["sse_connections"] = hub.metrics.get("sse_connections", 0) + 1
+        try:
+            async with hub.subscribe(targets) as wake:
+                # Flush an initial body chunk through development/reverse proxies
+                # so an idle stream opens before the first 25-second heartbeat.
+                yield {"comment": "connected"}
+                while True:
+                    await wake.wait()
+                    wake.clear()
+                    result = await hub.run(
+                        _collect_pending_canvas_commands,
+                        payload,
+                        username,
+                        state_dir,
+                        consumer,
+                        hub,
+                    )
+                    for frame in result["data"]["frames"]:
+                        yield {"id": frame["bridge_key"], "data": json.dumps(frame)}
+        finally:
+            hub.metrics["sse_connections"] -= 1
+
+    return EventSourceResponse(
+        events(),
+        ping=25,
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 def _load_pending_canvas_context(path: Any) -> dict[str, Any] | None:
@@ -2881,6 +3011,102 @@ def _load_pending_clarification_event(path: Any) -> dict[str, Any] | None:
     }
 
 
+def _collect_session_canvas_commands(
+    hub, bridge_dirs, scope, username, turn_id, emitted_bridge_keys, started_at
+):
+    frames = []
+    for bridge_dir in bridge_dirs:
+        for pending in hub.pending(
+            bridge_dir,
+            str(scope.id or ""),
+            str(scope.canvas_id or ""),
+            {"canvas_command"},
+        ):
+            key = str(pending.get("key") or "")
+            envelope = pending.get("envelope")
+            if not key or not isinstance(envelope, dict):
+                continue
+            # Durable leases, rather than historical keys, govern redelivery.
+            if not mark_bridge_message_delivered(
+                key,
+                consumer_id=f"websocket:{username}:{turn_id}",
+                bridge_dir=bridge_dir,
+            ):
+                continue
+            emitted_bridge_keys.add(key)
+            frames.append(
+                {
+                    "type": "canvas.command",
+                    "turn_id": turn_id,
+                    "canvas_id": envelope.get("canvas_id"),
+                    "agent_id": scope.agent_id or "main",
+                    "bridge_key": key,
+                    "envelope": envelope,
+                }
+            )
+    pending_items = []
+    for bridge_dir in bridge_dirs:
+        try:
+            pending_items.extend(
+                (bridge_dir, path) for path in hub.legacy_paths(bridge_dir)
+            )
+        except Exception:
+            continue
+    # Paths can disappear between a signal snapshot and this bounded worker.
+    for bridge_dir, path in pending_items:
+        try:
+            is_preexisting_pending = path.stat().st_mtime < started_at - 1.0
+        except Exception:
+            continue
+        key = path.name.removesuffix(".pending.json")
+        if not _is_unmigrated_legacy_bridge_file(
+            bridge_dir=bridge_dir,
+            key=key,
+        ):
+            continue
+        if _drop_resolved_pending_bridge_file(
+            bridge_dir=bridge_dir,
+            key=key,
+            pending_path=path,
+        ):
+            continue
+        pending = _load_pending_canvas_command(path)
+        if pending is None:
+            continue
+        if pending.get("project_id") and pending.get("project_id") != scope.id:
+            continue
+        if _resolve_stale_pending_canvas_command(
+            bridge_dir=bridge_dir,
+            path=path,
+            key=key,
+            pending=pending,
+            scope=scope,
+            turn_id=turn_id,
+        ):
+            continue
+        if is_preexisting_pending:
+            continue
+        if key in emitted_bridge_keys:
+            continue
+        if not claim_legacy_bridge_message(
+            key, {**pending, "project_id": scope.id, "canvas_id": scope.canvas_id},
+            kind="canvas_command", consumer_id=f"websocket:{username}:{turn_id}", bridge_dir=bridge_dir,
+        ):
+            continue
+        emitted_bridge_keys.add(key)
+        frames.append(
+            {
+                "type": "canvas.command",
+                "turn_id": turn_id,
+                "canvas_id": pending["envelope"].get("canvas_id"),
+                "agent_id": scope.agent_id or "main",
+                "bridge_key": key,
+                "envelope": pending["envelope"],
+            }
+        )
+    return frames
+
+
 async def _watch_pending_canvas_commands(
     *,
     websocket: WebSocket,
@@ -2893,83 +3119,78 @@ async def _watch_pending_canvas_commands(
 ) -> None:
     if not _is_freezone_scope(scope):
         return
-    bridge_dirs = _candidate_canvas_bridge_dirs_for_scope(username, scope)
-    while True:
-        await asyncio.sleep(0.4)
-        for bridge_dir in bridge_dirs:
-            try:
-                durable_pending = list_pending_bridge_messages(
-                    project_id=str(scope.id or ""),
-                    canvas_id=str(scope.canvas_id or ""),
-                    kinds={"canvas_command"},
-                    limit=100,
-                    bridge_dir=bridge_dir,
-                )
-            except Exception:
-                durable_pending = []
-            for pending in durable_pending:
-                key = str(pending.get("key") or "")
-                envelope = pending.get("envelope")
-                if (
-                    not key
-                    or key in emitted_bridge_keys
-                    or not isinstance(envelope, dict)
-                ):
-                    continue
-                if not mark_bridge_message_delivered(
-                    key,
-                    consumer_id=f"websocket:{username}:{turn_id}",
-                    bridge_dir=bridge_dir,
-                ):
-                    continue
-                emitted_bridge_keys.add(key)
-                sent = await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "canvas.command",
-                        "turn_id": turn_id,
-                        "canvas_id": envelope.get("canvas_id"),
-                        "agent_id": scope.agent_id or "main",
-                        "bridge_key": key,
-                        "envelope": envelope,
-                    },
-                    send_lock,
-                )
-                if not sent:
+    hub = bridge_watch_hub()
+    bridge_dirs = await hub.run(
+        _candidate_canvas_bridge_dirs_for_scope, username, scope
+    )
+    async with hub.subscribe(bridge_dirs) as wake:
+        while True:
+            await wake.wait()
+            wake.clear()
+            frames = await hub.run(
+                _collect_session_canvas_commands,
+                hub,
+                bridge_dirs,
+                scope,
+                username,
+                turn_id,
+                emitted_bridge_keys,
+                started_at,
+            )
+            for frame in frames:
+                if not await _send_json_best_effort(websocket, frame, send_lock):
                     return
-        pending_items = []
-        for bridge_dir in bridge_dirs:
-            try:
-                pending_items.extend(
-                    (bridge_dir, path) for path in bridge_dir.glob("*.pending.json")
-                )
-            except Exception:
+
+
+def _collect_bridge_events(
+    hub, bridge_dirs, scope, username, turn_id, emitted_bridge_keys, started_at, kind
+):
+    items = []
+    for directory in bridge_dirs:
+        for pending in hub.pending(
+            directory, str(scope.id or ""), str(scope.canvas_id or ""), {kind}
+        ):
+            key = str(pending.get("key") or "")
+            field = "envelope" if kind == "canvas_context" else "event"
+            if (
+                not key
+                or key in emitted_bridge_keys
+                or not isinstance(pending.get(field), dict)
+            ):
                 continue
-        pending_items = sorted(pending_items, key=lambda item: item[1].stat().st_mtime)
-        for bridge_dir, path in pending_items:
+            if mark_bridge_message_delivered(
+                key, consumer_id=f"websocket:{username}:{turn_id}", bridge_dir=directory
+            ):
+                emitted_bridge_keys.add(key)
+                items.append(pending)
+        for path in hub.legacy_paths(directory):
             try:
-                is_preexisting_pending = path.stat().st_mtime < started_at - 1.0
-            except Exception:
+                preexisting = path.stat().st_mtime < started_at - 1.0
+            except OSError:
                 continue
             key = path.name.removesuffix(".pending.json")
-            if not _is_unmigrated_legacy_bridge_file(
-                bridge_dir=bridge_dir,
-                key=key,
+            if key in emitted_bridge_keys or not _is_unmigrated_legacy_bridge_file(
+                bridge_dir=directory, key=key
             ):
                 continue
             if _drop_resolved_pending_bridge_file(
-                bridge_dir=bridge_dir,
-                key=key,
-                pending_path=path,
+                bridge_dir=directory, key=key, pending_path=path
             ):
                 continue
-            pending = _load_pending_canvas_command(path)
-            if pending is None:
+            loader = {
+                "canvas_context": _load_pending_canvas_context,
+                "skill_studio_event": _load_pending_skill_studio_event,
+                "clarification_event": _load_pending_clarification_event,
+            }[kind]
+            pending = loader(path)
+            if pending is None or (
+                pending.get("project_id") and pending["project_id"] != scope.id
+            ):
                 continue
-            if pending.get("project_id") and pending.get("project_id") != scope.id:
+            if pending.get("canvas_id") and pending["canvas_id"] != scope.canvas_id:
                 continue
-            if _resolve_stale_pending_canvas_command(
-                bridge_dir=bridge_dir,
+            if kind == "canvas_context" and _resolve_stale_pending_canvas_context(
+                bridge_dir=directory,
                 path=path,
                 key=key,
                 pending=pending,
@@ -2977,449 +3198,111 @@ async def _watch_pending_canvas_commands(
                 turn_id=turn_id,
             ):
                 continue
-            if is_preexisting_pending:
-                continue
-            if key in emitted_bridge_keys:
+            if preexisting:
                 continue
             emitted_bridge_keys.add(key)
-            envelope = pending["envelope"]
-            logger.info(
-                "emitting canvas.command from pending bridge turn_id=%s canvas_id=%s commands=%s",
-                turn_id,
-                envelope.get("canvas_id"),
-                len(envelope.get("commands") or []),
-            )
-            sent = await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "canvas.command",
-                    "turn_id": turn_id,
-                    "canvas_id": envelope.get("canvas_id"),
-                    "agent_id": scope.agent_id or "main",
-                    "bridge_key": key,
-                    "envelope": envelope,
-                },
-                send_lock,
-            )
-            if not sent:
-                return
+            items.append(pending)
+    return items
 
 
-async def _watch_pending_skill_studio_events(
+async def _watch_bridge_events(
     *,
-    websocket: WebSocket,
-    username: str,
-    scope: ChatScope,
-    store_scope: ChatScope | None = None,
-    turn_id: str,
-    send_lock: asyncio.Lock | None,
-    emitted_bridge_keys: set[str],
-    started_at: float,
-) -> None:
+    websocket,
+    username,
+    scope,
+    turn_id,
+    send_lock,
+    emitted_bridge_keys,
+    started_at,
+    kind,
+    store_scope=None,
+):
     if not _is_freezone_scope(scope):
         return
-    bridge_dir = _canvas_bridge_dir(
-        username,
-        project_state_dir=scope.state_dir,
-        profile=_canvas_bridge_profile_for_scope(scope),
-    )
-    while True:
-        await asyncio.sleep(0.4)
-        try:
-            durable_pending = list_pending_bridge_messages(
-                project_id=str(scope.id or ""),
-                canvas_id=str(scope.canvas_id or ""),
-                kinds={"skill_studio_event"},
-                limit=100,
-                bridge_dir=bridge_dir,
-            )
-        except Exception:
-            durable_pending = []
-        for pending in durable_pending:
-            key = str(pending.get("key") or "")
-            event = pending.get("event")
-            if not key or key in emitted_bridge_keys or not isinstance(event, dict):
-                continue
-            if not mark_bridge_message_delivered(
-                key,
-                consumer_id=f"websocket:{username}:{turn_id}",
-                bridge_dir=bridge_dir,
-            ):
-                continue
-            emitted_bridge_keys.add(key)
-            ui_event = {
-                **event,
-                "bridge_key": key,
-                "project_id": pending.get("project_id") or scope.id,
-                "canvas_id": pending.get("canvas_id") or scope.canvas_id,
-                "agent_id": scope.agent_id or "main",
-                "turn_id": turn_id,
-            }
-            try:
-                await chat_store.append_ui_event_async(
-                    username,
-                    store_scope or scope,
-                    turn_id,
-                    ui_event,
-                )
-            except Exception:
-                logger.exception("failed to persist skill_studio.event ui event")
-            sent = await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "skill_studio.event",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "canvas_id": pending.get("canvas_id"),
-                    "agent_id": scope.agent_id or "main",
-                    "bridge_key": key,
-                    "event": event,
-                },
-                send_lock,
-            )
-            if not sent:
-                return
-        try:
-            pending_paths = sorted(
-                bridge_dir.glob("*.pending.json"),
-                key=lambda item: item.stat().st_mtime,
-            )
-        except Exception:
-            continue
-        for path in pending_paths:
-            try:
-                if path.stat().st_mtime < started_at - 1.0:
-                    continue
-            except Exception:
-                continue
-            key = path.name.removesuffix(".pending.json")
-            if key in emitted_bridge_keys:
-                continue
-            if not _is_unmigrated_legacy_bridge_file(
-                bridge_dir=bridge_dir,
-                key=key,
-            ):
-                continue
-            if _drop_resolved_pending_bridge_file(
-                bridge_dir=bridge_dir,
-                key=key,
-                pending_path=path,
-            ):
-                continue
-            pending = _load_pending_skill_studio_event(path)
-            if pending is None:
-                continue
-            if pending.get("project_id") and pending.get("project_id") != scope.id:
-                continue
-            emitted_bridge_keys.add(key)
-            ui_event = {
-                **pending["event"],
-                "bridge_key": key,
-                "project_id": pending.get("project_id") or scope.id,
-                "canvas_id": pending.get("canvas_id") or scope.canvas_id,
-                "agent_id": scope.agent_id or "main",
-                "turn_id": turn_id,
-            }
-            try:
-                await chat_store.append_ui_event_async(
-                    username,
-                    store_scope or scope,
-                    turn_id,
-                    ui_event,
-                )
-            except Exception:
-                logger.exception("failed to persist skill_studio.event ui event")
-            logger.info(
-                "emitting skill_studio.event from pending bridge turn_id=%s canvas_id=%s type=%s",
+    hub = bridge_watch_hub()
+    if kind == "canvas_context":
+        directories = await hub.run(
+            _candidate_canvas_bridge_dirs_for_scope, username, scope
+        )
+    else:
+        directory = await hub.run(
+            _canvas_bridge_dir,
+            username,
+            project_state_dir=scope.state_dir,
+            profile=_canvas_bridge_profile_for_scope(scope),
+        )
+        directories = [directory]
+    async with hub.subscribe(directories) as wake:
+        while True:
+            await wake.wait()
+            wake.clear()
+            items = await hub.run(
+                _collect_bridge_events,
+                hub,
+                directories,
+                scope,
+                username,
                 turn_id,
-                pending.get("canvas_id"),
-                pending["event"].get("type"),
+                emitted_bridge_keys,
+                started_at,
+                kind,
             )
-            sent = await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "skill_studio.event",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "canvas_id": pending.get("canvas_id"),
-                    "agent_id": scope.agent_id or "main",
-                    "bridge_key": key,
-                    "event": pending["event"],
-                },
-                send_lock,
-            )
-            if not sent:
-                return
-
-
-async def _watch_pending_clarification_events(
-    *,
-    websocket: WebSocket,
-    username: str,
-    scope: ChatScope,
-    store_scope: ChatScope | None = None,
-    turn_id: str,
-    send_lock: asyncio.Lock | None,
-    emitted_bridge_keys: set[str],
-    started_at: float,
-) -> None:
-    if not _is_freezone_scope(scope):
-        return
-    bridge_dir = _canvas_bridge_dir(
-        username,
-        project_state_dir=scope.state_dir,
-        profile=_canvas_bridge_profile_for_scope(scope),
-    )
-    while True:
-        await asyncio.sleep(0.4)
-        try:
-            durable_pending = list_pending_bridge_messages(
-                project_id=str(scope.id or ""),
-                canvas_id=str(scope.canvas_id or ""),
-                kinds={"clarification_event"},
-                limit=100,
-                bridge_dir=bridge_dir,
-            )
-        except Exception:
-            durable_pending = []
-        for pending in durable_pending:
-            key = str(pending.get("key") or "")
-            event = pending.get("event")
-            if not key or key in emitted_bridge_keys or not isinstance(event, dict):
-                continue
-            if not mark_bridge_message_delivered(
-                key,
-                consumer_id=f"websocket:{username}:{turn_id}",
-                bridge_dir=bridge_dir,
-            ):
-                continue
-            emitted_bridge_keys.add(key)
-            ui_event = {
-                **event,
-                "bridge_key": key,
-                "project_id": pending.get("project_id") or scope.id,
-                "canvas_id": pending.get("canvas_id") or scope.canvas_id,
-                "agent_id": scope.agent_id or "main",
-                "turn_id": turn_id,
-            }
-            try:
-                await chat_store.append_ui_event_async(
-                    username,
-                    store_scope or scope,
-                    turn_id,
-                    ui_event,
-                )
-            except Exception:
-                logger.exception("failed to persist assistant.clarification ui event")
-            sent = await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.clarification.event",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "canvas_id": pending.get("canvas_id"),
-                    "agent_id": scope.agent_id or "main",
-                    "bridge_key": key,
-                    "event": event,
-                },
-                send_lock,
-            )
-            if not sent:
-                return
-        try:
-            pending_paths = sorted(
-                bridge_dir.glob("*.pending.json"),
-                key=lambda item: item.stat().st_mtime,
-            )
-        except Exception:
-            continue
-        for path in pending_paths:
-            try:
-                if path.stat().st_mtime < started_at - 1.0:
-                    continue
-            except Exception:
-                continue
-            key = path.name.removesuffix(".pending.json")
-            if key in emitted_bridge_keys:
-                continue
-            if not _is_unmigrated_legacy_bridge_file(
-                bridge_dir=bridge_dir,
-                key=key,
-            ):
-                continue
-            if _drop_resolved_pending_bridge_file(
-                bridge_dir=bridge_dir,
-                key=key,
-                pending_path=path,
-            ):
-                continue
-            pending = _load_pending_clarification_event(path)
-            if pending is None:
-                continue
-            if pending.get("project_id") and pending.get("project_id") != scope.id:
-                continue
-            emitted_bridge_keys.add(key)
-            ui_event = {
-                **pending["event"],
-                "bridge_key": key,
-                "project_id": pending.get("project_id") or scope.id,
-                "canvas_id": pending.get("canvas_id") or scope.canvas_id,
-                "agent_id": scope.agent_id or "main",
-                "turn_id": turn_id,
-            }
-            try:
-                await chat_store.append_ui_event_async(
-                    username,
-                    store_scope or scope,
-                    turn_id,
-                    ui_event,
-                )
-            except Exception:
-                logger.exception("failed to persist assistant.clarification ui event")
-            logger.info(
-                "emitting assistant.clarification.event from pending bridge turn_id=%s canvas_id=%s",
-                turn_id,
-                pending.get("canvas_id"),
-            )
-            sent = await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.clarification.event",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "canvas_id": pending.get("canvas_id"),
-                    "agent_id": scope.agent_id or "main",
-                    "bridge_key": key,
-                    "event": pending["event"],
-                },
-                send_lock,
-            )
-            if not sent:
-                return
-
-
-async def _watch_pending_canvas_context_requests(
-    *,
-    websocket: WebSocket,
-    username: str,
-    scope: ChatScope,
-    turn_id: str,
-    send_lock: asyncio.Lock,
-    emitted_bridge_keys: set[str],
-    started_at: float,
-) -> None:
-    if not _is_freezone_scope(scope):
-        return
-    bridge_dirs = _candidate_canvas_bridge_dirs_for_scope(username, scope)
-    while True:
-        await asyncio.sleep(0.4)
-        for bridge_dir in bridge_dirs:
-            try:
-                durable_pending = list_pending_bridge_messages(
-                    project_id=str(scope.id or ""),
-                    canvas_id=str(scope.canvas_id or ""),
-                    kinds={"canvas_context"},
-                    limit=100,
-                    bridge_dir=bridge_dir,
-                )
-            except Exception:
-                durable_pending = []
-            for pending in durable_pending:
-                key = str(pending.get("key") or "")
-                envelope = pending.get("envelope")
-                if (
-                    not key
-                    or key in emitted_bridge_keys
-                    or not isinstance(envelope, dict)
-                ):
-                    continue
-                if not mark_bridge_message_delivered(
-                    key,
-                    consumer_id=f"websocket:{username}:{turn_id}",
-                    bridge_dir=bridge_dir,
-                ):
-                    continue
-                emitted_bridge_keys.add(key)
-                sent = await _send_json_best_effort(
-                    websocket,
-                    {
+            for pending in items:
+                key = pending["key"]
+                if kind == "canvas_context":
+                    frame = {
                         "type": "canvas.context.request",
                         "turn_id": turn_id,
-                        "canvas_id": envelope.get("canvas_id"),
+                        "canvas_id": pending["envelope"].get("canvas_id"),
                         "agent_id": scope.agent_id or "main",
                         "bridge_key": key,
-                        "envelope": envelope,
-                    },
-                    send_lock,
-                )
-                if not sent:
+                        "envelope": pending["envelope"],
+                    }
+                else:
+                    event = pending["event"]
+                    ui_event = {
+                        **event,
+                        "bridge_key": key,
+                        "project_id": pending.get("project_id") or scope.id,
+                        "canvas_id": pending.get("canvas_id") or scope.canvas_id,
+                        "agent_id": scope.agent_id or "main",
+                        "turn_id": turn_id,
+                    }
+                    try:
+                        await chat_store.append_ui_event_async(
+                            username, store_scope or scope, turn_id, ui_event
+                        )
+                    except Exception:
+                        logger.exception("Failed to persist bridge UI event")
+                    frame = {
+                        "type": (
+                            "skill_studio.event"
+                            if kind == "skill_studio_event"
+                            else "assistant.clarification.event"
+                        ),
+                        "scope": scope.to_dict(),
+                        "turn_id": turn_id,
+                        "canvas_id": pending.get("canvas_id"),
+                        "agent_id": scope.agent_id or "main",
+                        "bridge_key": key,
+                        "event": event,
+                    }
+                if not await _send_json_best_effort(websocket, frame, send_lock):
                     return
-        pending_items = []
-        for bridge_dir in bridge_dirs:
-            try:
-                pending_items.extend(
-                    (bridge_dir, path) for path in bridge_dir.glob("*.pending.json")
-                )
-            except Exception:
-                continue
-        pending_items = sorted(pending_items, key=lambda item: item[1].stat().st_mtime)
-        for bridge_dir, path in pending_items:
-            try:
-                is_preexisting_pending = path.stat().st_mtime < started_at - 1.0
-            except Exception:
-                continue
-            key = path.name.removesuffix(".pending.json")
-            if not _is_unmigrated_legacy_bridge_file(
-                bridge_dir=bridge_dir,
-                key=key,
-            ):
-                continue
-            if _drop_resolved_pending_bridge_file(
-                bridge_dir=bridge_dir,
-                key=key,
-                pending_path=path,
-            ):
-                continue
-            pending = _load_pending_canvas_context(path)
-            if pending is None:
-                continue
-            if pending.get("project_id") and pending.get("project_id") != scope.id:
-                continue
-            if _resolve_stale_pending_canvas_context(
-                bridge_dir=bridge_dir,
-                path=path,
-                key=key,
-                pending=pending,
-                scope=scope,
-                turn_id=turn_id,
-            ):
-                continue
-            if is_preexisting_pending:
-                continue
-            if key in emitted_bridge_keys:
-                continue
-            emitted_bridge_keys.add(key)
-            envelope = pending["envelope"]
-            logger.info(
-                "emitting canvas.context.request from pending bridge turn_id=%s canvas_id=%s requests=%s",
-                turn_id,
-                envelope.get("canvas_id"),
-                len(envelope.get("requests") or []),
-            )
-            sent = await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "canvas.context.request",
-                    "turn_id": turn_id,
-                    "canvas_id": envelope.get("canvas_id"),
-                    "agent_id": scope.agent_id or "main",
-                    "bridge_key": key,
-                    "envelope": envelope,
-                },
-                send_lock,
-            )
-            if not sent:
-                return
+
+
+async def _watch_pending_skill_studio_events(**kwargs):
+    await _watch_bridge_events(**kwargs, kind="skill_studio_event")
+
+
+async def _watch_pending_clarification_events(**kwargs):
+    await _watch_bridge_events(**kwargs, kind="clarification_event")
+
+
+async def _watch_pending_canvas_context_requests(**kwargs):
+    await _watch_bridge_events(**kwargs, kind="canvas_context")
+
+
 
 
 def _skill_studio_status_frame(

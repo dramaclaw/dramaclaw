@@ -12,12 +12,32 @@ public ``/config`` route).
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from novelvideo.chat import evidence_metrics
+from novelvideo.api.auth import get_api_user
+from novelvideo.freezone.canvas_command_watch import bridge_watch_hub
 
 router = APIRouter()
+
+
+@router.get("/diagnostics/canvas-command-push")
+async def get_canvas_command_push_counters(user: dict = Depends(get_api_user)):
+    """Worker-local counters only; never expose directory or project identities."""
+    import os
+
+    hub = bridge_watch_hub()
+    return {
+        "ok": True,
+        "data": {
+            "worker_pid": os.getpid(),
+            "counters": dict(hub.metrics),
+            "degraded": hub.degraded,
+            "directories": len(hub.directories),
+            "subscriptions": sum(len(state.subscribers) for state in hub.directories.values()),
+        },
+    }
 
 
 @router.get("/diagnostics/evidence")

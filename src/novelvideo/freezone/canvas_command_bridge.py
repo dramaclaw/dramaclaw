@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import tempfile
@@ -61,6 +62,7 @@ ON canvas_command_messages(expires_at);
 _TERMINAL_BRIDGE_STATUSES = {"applied", "failed", "cancelled", "expired"}
 _BRIDGE_SCHEMA_READY_PATHS: set[Path] = set()
 _BRIDGE_SCHEMA_LOCK = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def _bridge_dir(bridge_dir: str | Path | None = None) -> Path:
@@ -92,12 +94,86 @@ def _bridge_db(bridge_dir: str | Path | None = None):
                 _BRIDGE_SCHEMA_READY_PATHS.add(path)
     try:
         yield conn
+        changed = conn.total_changes > 0
         conn.commit()
+        if changed:
+            _notify_bridge(bridge_dir)
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+
+
+def touch_bridge_signal(bridge_dir=None) -> None:
+    directory = _bridge_dir(bridge_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=".canvas-signal-", dir=directory)
+    try:
+        os.close(fd)
+        os.replace(name, directory / "canvas_command.signal")
+    finally:
+        try:
+            os.unlink(name)
+        except FileNotFoundError:
+            pass
+
+
+def _notify_bridge(bridge_dir=None) -> None:
+    # The transaction is already durable. A failed hint must not fail a write.
+    try:
+        touch_bridge_signal(bridge_dir)
+    except OSError:
+        logger.warning("Canvas bridge notification failed; reconciliation will recover", exc_info=True)
+
+
+@contextmanager
+def _bridge_read_db(bridge_dir=None):
+    path = _bridge_db_path(bridge_dir)
+    if not path.exists():
+        yield None
+        return
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def expire_bridge_messages(bridge_dir=None, now=None) -> None:
+    if not _bridge_db_path(bridge_dir).exists():
+        return
+    with _bridge_db(bridge_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _prune_bridge_rows(conn, now=time.time() if now is None else now, bridge_dir=bridge_dir)
+
+
+def read_bridge_snapshot(bridge_dir=None):
+    """One read-only open per directory, shared by all local subscriptions."""
+    with _bridge_read_db(bridge_dir) as conn:
+        if conn is None:
+            return []
+        rows = conn.execute(
+            "SELECT * FROM canvas_command_messages "
+            "WHERE status IN ('pending','delivered') ORDER BY created_at"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def bridge_deadlines(rows, now):
+    deadlines = []
+    for row in rows:
+        deadlines.append(row["created_at"] + BRIDGE_PENDING_TTL_SECONDS.get(row["kind"], 600))
+        if row["status"] == "delivered" and row["lease_expires_at"] and row["lease_expires_at"] > now:
+            deadlines.append(row["lease_expires_at"])
+    return min(deadlines, default=None)
+
+
+def next_bridge_deadline(project_id, canvas_id, bridge_dir=None, now=None):
+    rows = [row for row in read_bridge_snapshot(bridge_dir)
+            if row["project_id"] == project_id and row["canvas_id"] == canvas_id]
+    return bridge_deadlines(rows, time.time() if now is None else now)
 
 
 def _decode_bridge_json(value: Any) -> dict[str, Any] | None:
@@ -188,7 +264,9 @@ def bridge_status_counts(*, bridge_dir: str | Path | None = None) -> dict[str, i
 def read_bridge_message(
     key: str, *, bridge_dir: str | Path | None = None
 ) -> dict[str, Any] | None:
-    with _bridge_db(bridge_dir) as conn:
+    with _bridge_read_db(bridge_dir) as conn:
+        if conn is None:
+            return None
         row = conn.execute(
             "SELECT * FROM canvas_command_messages WHERE bridge_key = ?",
             (key,),
@@ -271,7 +349,9 @@ def find_clarification_bridge_message(
 
 def bridge_message_exists(key: str, *, bridge_dir: str | Path | None = None) -> bool:
     """Return whether SQLite owns a key, even if its payload cannot be decoded."""
-    with _bridge_db(bridge_dir) as conn:
+    with _bridge_read_db(bridge_dir) as conn:
+        if conn is None:
+            return False
         row = conn.execute(
             "SELECT 1 FROM canvas_command_messages WHERE bridge_key = ?",
             (key,),
@@ -346,6 +426,11 @@ def list_pending_bridge_messages(
         "project_id = ? AND canvas_id = ? AND "
         "(status = 'pending' OR (status = 'delivered' AND lease_expires_at <= ?))"
     )
+    ttl_case = "CASE kind " + " ".join(
+        f"WHEN '{kind}' THEN {ttl}" for kind, ttl in BRIDGE_PENDING_TTL_SECONDS.items()
+    ) + " ELSE 600 END"
+    where += f" AND created_at + ({ttl_case}) > ?"
+    parameters.append(now)
     if kinds:
         placeholders = ",".join("?" for _ in kinds)
         where += f" AND kind IN ({placeholders})"
@@ -354,9 +439,9 @@ def list_pending_bridge_messages(
         where += " AND created_at >= ?"
         parameters.append(float(created_after))
     parameters.append(max(1, min(int(limit), 500)))
-    with _bridge_db(bridge_dir) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        _prune_bridge_rows(conn, now=now, bridge_dir=bridge_dir)
+    with _bridge_read_db(bridge_dir) as conn:
+        if conn is None:
+            return []
         rows = conn.execute(
             f"SELECT * FROM canvas_command_messages WHERE {where} "
             "ORDER BY created_at ASC LIMIT ?",
@@ -385,9 +470,16 @@ def mark_bridge_message_delivered(
     consumer_id: str,
     bridge_dir: str | Path | None = None,
 ) -> bool:
-    now = time.time()
     with _bridge_db(bridge_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        # Lock acquisition may wait for another worker. Check TTL against the
+        # time after acquiring that lock, not a stale pre-lock timestamp.
+        now = time.time()
+        row = conn.execute(
+            "SELECT kind, created_at FROM canvas_command_messages WHERE bridge_key = ?", (key,)
+        ).fetchone()
+        if row is None or row["created_at"] + BRIDGE_PENDING_TTL_SECONDS.get(row["kind"], 600) <= now:
+            return False
         cursor = conn.execute(
             """
             UPDATE canvas_command_messages
@@ -516,6 +608,8 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
     tmp.write_text(_canonical_json(data), encoding="utf-8")
     tmp.replace(path)
+    if path.name.endswith((".pending.json", ".result.json")):
+        _notify_bridge(path.parent)
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -558,6 +652,7 @@ def _put_pending_bridge_message(
     payload: dict[str, Any],
     request_fingerprint: str | None = None,
     terminal_result: dict[str, Any] | None = None,
+    created_at: float | None = None,
     bridge_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
     now = time.time()
@@ -626,7 +721,7 @@ def _put_pending_bridge_message(
                 canvas_id,
                 request_fingerprint,
                 _canonical_json(payload),
-                now,
+                now if created_at is None else created_at,
                 now,
                 now + BRIDGE_RESULT_TTL_SECONDS,
             ),
@@ -634,12 +729,31 @@ def _put_pending_bridge_message(
     return None
 
 
+def claim_legacy_bridge_message(key, payload, *, kind, consumer_id, bridge_dir=None):
+    """Import an old JSON message before claiming, preserving its business age."""
+    with _key_lock(key, bridge_dir):
+        result = _read_json(_path("result", key, bridge_dir))
+        _put_pending_bridge_message(
+            key=key,
+            kind=kind,
+            project_id=payload.get("project_id"),
+            canvas_id=payload.get("canvas_id"),
+            payload=payload,
+            created_at=payload.get("created_at"),
+            terminal_result=result,
+            bridge_dir=bridge_dir,
+        )
+        return mark_bridge_message_delivered(
+            key, consumer_id=consumer_id, bridge_dir=bridge_dir
+        )
+
+
 def _read_durable_bridge_result(
     key: str, *, bridge_dir: str | Path | None = None
 ) -> dict[str, Any] | None:
-    with _bridge_db(bridge_dir) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        _prune_bridge_rows(conn, now=time.time(), bridge_dir=bridge_dir)
+    with _bridge_read_db(bridge_dir) as conn:
+        if conn is None:
+            return None
         row = conn.execute(
             "SELECT status, result_json FROM canvas_command_messages WHERE bridge_key = ?",
             (key,),
@@ -1055,17 +1169,32 @@ def wait_canvas_command_result(
     bridge_dir: str | Path | None = None,
     timeout_result: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    deadline = time.time() + max(0.0, timeout_seconds)
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    signal = _bridge_dir(bridge_dir) / "canvas_command.signal"
+    def signature():
+        try:
+            info = signal.stat()
+            return (info.st_ino, info.st_mtime_ns)
+        except FileNotFoundError:
+            return None
+    previous = signature()
+    reconcile = 0.0
     while True:
-        durable_result = _read_durable_bridge_result(key, bridge_dir=bridge_dir)
-        if durable_result is not None:
-            return durable_result
+        current = signature()
+        now = time.monotonic()
+        if current != previous or now >= reconcile or now >= deadline:
+            previous = current
+            durable_result = _read_durable_bridge_result(key, bridge_dir=bridge_dir)
+            if durable_result is not None:
+                return durable_result
+            reconcile = now + 30
+        # Legacy writers may not emit a signal.
         result = _read_json(_path("result", key, bridge_dir))
         if result is not None:
             return result
-        if time.time() >= deadline:
+        if now >= deadline:
             break
-        time.sleep(max(0.05, poll_seconds))
+        time.sleep(min(max(0.05, poll_seconds), deadline - now))
     if timeout_result is not None:
         return resolve_canvas_command(key, timeout_result, bridge_dir=bridge_dir)
     return None

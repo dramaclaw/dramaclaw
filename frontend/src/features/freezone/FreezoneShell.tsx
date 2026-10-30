@@ -1,3 +1,4 @@
+import { startCanvasCommandStream } from "./canvasCommandStream";
 import { canvasCreationActions } from "@/features/canvas/application/nodeCatalog";
 import { uuidGenerator } from "@/features/canvas/infrastructure/idGenerator";
 import { htmlArtifactNodePatches } from '@/features/html-artifacts/nodeMetadata';
@@ -256,7 +257,6 @@ const FREEZONE_CHAT_FLOAT_MARGIN = 12;
 const FREEZONE_CHAT_FLOAT_MIN_TOP = APP_HEADER_HEIGHT + 8;
 const FREEZONE_CHAT_FLOAT_BOTTOM_RESERVE = TASK_STATUS_BAR_HEIGHT + 8;
 const FREEZONE_CHAT_FLOAT_DEFAULT_POS = { right: 24, top: FREEZONE_CHAT_FLOAT_MIN_TOP + 8 };
-const EXTERNAL_CANVAS_COMMAND_POLL_MS = 800;
 const EXTERNAL_CANVAS_REVISION_POLL_MS = 2_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -359,13 +359,16 @@ async function listPendingCanvasCommandFrames({
   canvasId,
   agentIds,
   seenKeys,
+  signal,
 }: {
   projectId: string;
   canvasId: string;
   agentIds: string[];
   seenKeys: string[];
+  signal?: AbortSignal;
 }): Promise<ServerFrame[]> {
   const response = await api.post("api/v1/chat/pending-canvas-commands", {
+    signal,
     json: {
       project_id: projectId,
       canvas_id: canvasId,
@@ -2033,69 +2036,36 @@ export function FreezoneShell({
     emittedExternalCanvasCommandKeysRef.current.clear();
   }, [canvasId, projectId]);
 
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | null = null;
-
-    const tick = async () => {
-      if (cancelled) return;
-      try {
-        const seenKeys = confirmedExternalCanvasCommandKeys(
-          emittedExternalCanvasCommandKeysRef.current,
-        ).slice(-200);
-        const agentIds = loadFreezoneCanvasAgentsWithSource(projectId, canvasId).state.agents
-          .map((agent) => agent.id);
-        const frames = await listPendingCanvasCommandFrames({
-          projectId,
-          canvasId,
-          agentIds,
-          seenKeys,
-        });
-        if (frames.length > 0) {
-          console.info("[freezone-canvas-command] pending frames polled", {
-            count: frames.length,
-            bridgeKeys: frames
-              .map((frame) => {
-                const record = frame as Record<string, unknown>;
-                return typeof record.bridge_key === "string" ? record.bridge_key : null;
-              })
-              .filter((key): key is string => Boolean(key)),
-          });
-        }
-        const now = Date.now();
-        frames.forEach((frame, index) => {
-          const frameRecord = frame as Record<string, unknown>;
-          const bridgeKey =
-            typeof frameRecord.bridge_key === "string"
-              ? frameRecord.bridge_key
-              : typeof frameRecord.bridgeKey === "string"
-                ? frameRecord.bridgeKey
-                : null;
-          if (!bridgeKey) return;
-          window.dispatchEvent(new CustomEvent(SUPERCHAT_CANVAS_COMMAND_EVENT, {
-            detail: {
-              frame,
-              anchorTextPrefix: "外部 Agent",
-              receivedAt: now + index,
-              externalMcpCommand: true,
-            },
-          }));
-        });
-      } catch {
-        // The page can be open before auth/API is ready. Retry quietly.
-      } finally {
-        if (!cancelled) {
-          timer = window.setTimeout(tick, EXTERNAL_CANVAS_COMMAND_POLL_MS);
-        }
-      }
-    };
-
-    timer = window.setTimeout(tick, EXTERNAL_CANVAS_COMMAND_POLL_MS);
-    return () => {
-      cancelled = true;
-      if (timer !== null) window.clearTimeout(timer);
-    };
-  }, [canvasId, projectId]);
+  useEffect(() => startCanvasCommandStream<ServerFrame>({
+    projectId,
+    canvasId,
+    getAgentIds: () => loadFreezoneCanvasAgentsWithSource(projectId, canvasId).state.agents
+      .map((agent) => agent.id),
+    poll: (agentIds, signal) => listPendingCanvasCommandFrames({
+      projectId, canvasId, agentIds, signal,
+      seenKeys: confirmedExternalCanvasCommandKeys(
+        emittedExternalCanvasCommandKeysRef.current,
+      ).slice(-200),
+    }),
+    onFrame: (frame) => {
+      const frameRecord = frame as Record<string, unknown>;
+      const bridgeKey =
+        typeof frameRecord.bridge_key === "string"
+          ? frameRecord.bridge_key
+          : typeof frameRecord.bridgeKey === "string"
+            ? frameRecord.bridgeKey
+            : null;
+      if (!bridgeKey) return;
+      window.dispatchEvent(new CustomEvent(SUPERCHAT_CANVAS_COMMAND_EVENT, {
+        detail: {
+          frame,
+          anchorTextPrefix: "外部 Agent",
+          receivedAt: Date.now(),
+          externalMcpCommand: true,
+        },
+      }));
+    },
+  }), [canvasId, projectId]);
 
   useEffect(() => {
     const handleCanvasContextRequest = (event: Event) => {

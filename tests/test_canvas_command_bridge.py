@@ -73,6 +73,9 @@ import novelvideo.freezone.skill_import
             "PYTHONPATH": os.pathsep.join((str(source), os.environ.get("PYTHONPATH", ""))),
             "ST_EDITION": "ce",
             "ST_CONTROL_PLANE_DSN": "",
+            "PIKO_WORLD_BACKEND": "demo",
+            "ST_REDIS_URL": "",
+            "PYTHON_DOTENV_DISABLED": "1",
             "NOVELVIDEO_DATA_ROOT": str(tmp_path),
             "NOVELVIDEO_STATE_DIR": str(tmp_path / "state"),
         },
@@ -518,6 +521,7 @@ def test_sqlite_bridge_expires_abandoned_pending_message(tmp_path) -> None:
             "WHERE bridge_key = 'abandoned'"
         )
 
+    canvas_command_bridge.expire_bridge_messages(bridge_dir)
     result = canvas_command_bridge.wait_canvas_command_result(
         "abandoned", timeout_seconds=0, bridge_dir=bridge_dir
     )

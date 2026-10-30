@@ -1,3 +1,4 @@
+import { CANVAS_AGENTS_CHANGED_EVENT } from "./canvasCommandStream";
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 export const DEFAULT_FREEZONE_AGENT_ID = "main";
@@ -142,7 +143,12 @@ function removeOtherCanvasAgentStates(currentKey: string): void {
   }
 }
 
-function writeState(projectId: string, canvasId: string, state: FreezoneCanvasAgentState): void {
+function writeState(
+  projectId: string,
+  canvasId: string,
+  state: FreezoneCanvasAgentState,
+  notify = true,
+): void {
   const key = storageKey(projectId, canvasId);
   const value = JSON.stringify(state);
   try {
@@ -156,6 +162,7 @@ function writeState(projectId: string, canvasId: string, state: FreezoneCanvasAg
       // Keep the in-memory state update even if persistence is still full.
     }
   }
+  if (notify) window.dispatchEvent(new Event(CANVAS_AGENTS_CHANGED_EVENT));
 }
 
 export function loadFreezoneCanvasAgents(
@@ -179,7 +186,7 @@ export function loadFreezoneCanvasAgentsWithSource(
     }
   })();
   const state = readState(projectId, canvasId, now);
-  writeState(projectId, canvasId, state);
+  writeState(projectId, canvasId, state, false);
   return { state, hadStoredState };
 }
 
