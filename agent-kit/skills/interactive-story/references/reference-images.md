@@ -4,6 +4,8 @@
 
 ## 图片批次契约
 
+场景/角色数量与每个节点的候选图数量是两个维度。用户要求“4 个场景各一张”时，创建 4 个独立图片节点，各自使用对应场景提示词，`data.count=1`；不能把场景数量 4 填入 `image_variants_per_node` 或每个节点的 `data.count`。未明确要求多候选时，每个节点默认 1 张。只有用户明确要求“每个场景 4 张候选”等多候选需求时才设为 2 或 4，并告知预计总张数等于图片节点数乘以每节点候选数（例如 4 个场景 × 4 张 = 16 张），按实际候选数量计费。
+
 使用 `text-to-image-video` 的 `general-image` Recipe，但已有故事提供策划和视频目标，本批不执行策划或视频阶段。读当前 `freezone_get_workflow_skill` 的版本与 Recipe，取得 `freezone_begin_agent_product_generation` 的原始 `operation_id`，然后用完整 Plan 调用 `freezone_prepare_workflow_plan_draft`，不使用会展开完整视频模板的普通 Intent。
 
 - `nodes` 只含本次新图片，以及可选的非执行简报。简报用 `textAnnotationNode`、节点级 `stage="input"`、`data.content`，不带 Recipe；用 `prompt_for` 向独立图片分支扇出，不串联图片。

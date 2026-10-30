@@ -16,6 +16,15 @@ const record = (url: string, status = 'completed', media = 'image', date = '2026
 beforeEach(() => { fetchHistory.mockReset(); useCanvasStore.getState().closeImageViewer(); });
 
 describe('node image details', () => {
+  it('includes every candidate from a persisted batch without duplicating the primary', () => {
+    const batch = record('/static/a.png');
+    const history = [{ ...batch, result: {
+      ...batch.result, output_urls: ['/static/a.png', '/static/b.png', '/static/b.png'],
+    } }];
+    expect(nodeImageViewerUrls('/static/a.png', [], history)).toEqual([
+      '/static/a.png', '/static/b.png',
+    ]);
+  });
   it('deduplicates local outputs and successful image history without changing record order', () => {
     const records = [record('/static/older.png', 'succeeded', 'image', '2026-10-07T00:00:00Z'), record('/static/new.png'), record('/static/current.png'), record('/static/fail.png', 'failed'), record('/static/video.mp4', 'completed', 'video')];
     expect(nodeImageViewerUrls('/static/current.png', [null, '', '/static/batch.png', '/static/current.png'], records)).toEqual([

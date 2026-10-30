@@ -52,6 +52,7 @@ describe("workflow media task association", () => {
 
     await submitFreezoneGen("project-1", {
       prompt: "frame", referenceUrls: [], canvasId: "default", nodeId: "image-1",
+      variantCount: 4,
     });
     await submitFreezoneAudioSpeech("project-1", {
       text: "voice", canvasId: "default", nodeId: "audio-1",
@@ -61,6 +62,7 @@ describe("workflow media task association", () => {
       json: expect.objectContaining({
         product_operation_id: "operation-image",
         generation_attempt_id: "attempt-image",
+        variant_count: 4,
       }),
     }));
     expect(vi.mocked(apiCall).mock.calls[1][1]).toEqual(expect.objectContaining({

@@ -607,11 +607,13 @@ def test_recipe_media_claim_accepts_trusted_compile_and_rejects_replay_change(
     [(False, False), (True, False), (True, True)],
 )
 @pytest.mark.asyncio
+@pytest.mark.parametrize("variant_count", [1, 4])
 async def test_recipe_media_enqueue_replays_terminal_task_without_rebilling(
     workflow_run_client: TestClient,
     monkeypatch,
     cancel_during_enqueue: bool,
     fail_cancel_once: bool,
+    variant_count: int,
 ) -> None:
     from novelvideo.api.routes import freezone
     from novelvideo.freezone.agent_product_operations import (
@@ -701,6 +703,7 @@ async def test_recipe_media_enqueue_replays_terminal_task_without_rebilling(
         "product_operation_id": operation_id,
         "generation_attempt_id": "attempt-image",
         "prompt": "a castle",
+        "variant_count": variant_count,
     }
 
     async def enqueue(data):

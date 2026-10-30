@@ -5,6 +5,7 @@ import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { historyRecordOutputUrl, isCompletedGeneration } from '../domain/generationHistory';
 import { mediaViewerUrls } from '../domain/mediaViewerState';
+import { imageGenerationResultUrls } from './imageGenerationResults';
 
 type MediaType = 'image' | 'video';
 type ViewerUrls = Array<string | null | undefined>;
@@ -18,7 +19,9 @@ export function nodeMediaViewerUrls(
   const history = records
     .filter(record => record.media_type === mediaType && isCompletedGeneration(record))
     .sort((a, b) => (Date.parse(b.recorded_at) || 0) - (Date.parse(a.recorded_at) || 0))
-    .map(historyRecordOutputUrl);
+    .flatMap(record => mediaType === 'image'
+      ? [historyRecordOutputUrl(record), ...imageGenerationResultUrls(record.result)]
+      : [historyRecordOutputUrl(record)]);
   return mediaViewerUrls(currentUrl, [currentUrl, ...urls, ...history]);
 }
 

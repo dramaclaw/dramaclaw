@@ -17,6 +17,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { submitFreezoneGen } from "@/api/ops";
 import { TaskCompletionError } from "@/api/tasks";
 import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
+import {
+  bindWorkflowProductOperation, clearWorkflowProductOperation,
+} from "@/features/canvas/application/workflowExecutionActivity";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { useImageGenerationForm } from "@/features/canvas/nodes/shared/useImageGenerationForm";
 import { useCanvasStore } from "@/stores/canvasStore";
@@ -135,6 +138,7 @@ async function submitAndSettle(options?: { onGenerationSettled?: () => void }) {
 }
 
 beforeEach(() => {
+  clearWorkflowProductOperation("img-1");
   submitSeq = 0;
   vi.mocked(submitFreezoneGen).mockClear();
   vi.mocked(compileWorkflowNodePrompt).mockClear();
@@ -275,6 +279,36 @@ describe("图片节点：多结果画册", () => {
     expect(payloads()).toHaveLength(1);
     expect(nodeData().generationBatch).toBeNull();
     expect(nodeData().imageUrl).toBe("/static/task-1.png");
+  });
+
+  it.each(["workflow", "manual"] as const)("%s 入口的工作流候选只提交一个批次任务", async (executionSource) => {
+    useCanvasStore.getState().setCanvasData([imageGenNode({ count: 4 })], []);
+    bindWorkflowProductOperation("img-1", {
+      projectId: "demo-project", operationId: "op-image", generationAttemptId: "attempt-image",
+    });
+    const urls = [1, 2, 3, 4].map(index => `/static/candidate-${index}.png`);
+    awaitTaskCompletion.mockResolvedValueOnce({
+      status: "completed", result: { output_url: urls[0], output_urls: urls },
+    });
+    const { result } = renderHook(() => useImageGenerationForm("img-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    const output = await result.current.submit({ executionSource, completionMode: "submitted" });
+    expect(payloads()).toHaveLength(1);
+    expect(payloads()[0]).toMatchObject({ variantCount: 4, nodeId: "img-1" });
+    expect(nodeData().generationBatch).toEqual(urls);
+    expect(output?.imageUrls).toEqual(urls);
+  });
+
+  it("后端重复返回同一个任务结果时不会把同一张图追加四次", async () => {
+    useCanvasStore.getState().setCanvasData([imageGenNode({ count: 4 })], []);
+    for (let index = 0; index < 4; index++) {
+      vi.mocked(submitFreezoneGen).mockResolvedValueOnce({
+        task_key: "same-task", task_type: "freezone_gen", job_id: "same-job",
+      });
+    }
+    await submitAndSettle();
+    expect(nodeData().generationBatch).toEqual(["/static/same-task.png"]);
+    expect(awaitTaskCompletion).toHaveBeenCalledTimes(1);
   });
 });
 

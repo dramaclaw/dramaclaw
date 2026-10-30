@@ -361,6 +361,7 @@ export interface FreezoneGenStyle {
 
 export interface FreezoneGenPayload extends FreezoneNodeContext {
   prompt: string;
+  variantCount?: 1 | 2 | 4;
   aspectRatio?: string;
   imageSize?: string;
   referenceUrls?: string[];
@@ -903,6 +904,7 @@ export async function submitFreezoneGen(
       method: "POST",
       json: {
         prompt: payload.prompt,
+        ...(payload.variantCount ? { variant_count: payload.variantCount } : {}),
         aspect_ratio: payload.aspectRatio ?? "1:1",
         image_size: payload.imageSize ?? "2K",
         reference_urls: referenceUrls,
