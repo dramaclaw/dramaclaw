@@ -45,6 +45,7 @@ async def test_sse_only_claims_external_frames_and_releases_subscription(scoped_
     assert response.headers["cache-control"] == "no-cache"
     iterator = response.body_iterator
     try:
+        assert await asyncio.wait_for(anext(iterator), 1) == {"comment": "connected"}
         event = await asyncio.wait_for(anext(iterator), 2)
         assert event["id"] == "external"
         frame = json.loads(event["data"])
@@ -62,6 +63,18 @@ async def test_sse_only_claims_external_frames_and_releases_subscription(scoped_
     finally:
         await iterator.aclose()
     assert not chat.bridge_watch_hub().directories
+    assert chat.bridge_watch_hub().metrics["sse_connections"] == 0
+
+
+async def test_idle_sse_flushes_before_any_command_or_heartbeat(scoped_bridge):
+    response = await chat.stream_canvas_commands("project", "canvas", user={"username": "viewer"})
+    iterator = response.body_iterator
+    try:
+        event = await asyncio.wait_for(anext(iterator), 1)
+        assert event == {"comment": "connected"}
+        assert "data" not in event
+    finally:
+        await iterator.aclose()
     assert chat.bridge_watch_hub().metrics["sse_connections"] == 0
 
 

@@ -2754,6 +2754,9 @@ async def stream_canvas_commands(
         hub.metrics["sse_connections"] = hub.metrics.get("sse_connections", 0) + 1
         try:
             async with hub.subscribe(targets) as wake:
+                # Flush an initial body chunk through development/reverse proxies
+                # so an idle stream opens before the first 25-second heartbeat.
+                yield {"comment": "connected"}
                 while True:
                     await wake.wait()
                     wake.clear()
