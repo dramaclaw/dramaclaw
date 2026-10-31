@@ -65,7 +65,7 @@ describe("credits entry", () => {
     state.available = available;
     render(<CreditsPage />);
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
-    expect(screen.getByRole("dialog")).toHaveAttribute("data-tab", "usage");
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-tab", "subscriptions");
     expect(screen.getByRole("dialog")).toHaveAttribute("data-payment", String(available ?? false));
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(state.navigate).toHaveBeenCalledWith({ to: "/", replace: true });
