@@ -3490,7 +3490,7 @@ wheels = [
 
 [[package]]
 name = "supertale-ce"
-version = "2.1.1"
+version = "2.1.3"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },

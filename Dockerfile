@@ -32,18 +32,17 @@ ENV ST_EDITION=ce \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    UV_CACHE_DIR=/root/.cache/uv \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
-    HERMES_CLI_PATH=/usr/local/bin/hermes \
+    DRAMACLAW_CHAT_BACKEND=codex \
     CODEX_BIN=/usr/local/bin/codex-dramaclaw
 
 COPY --from=codex-runtime /codex /usr/local/bin/codex-dramaclaw
 COPY --from=codex-runtime /codex-runtime.sha /opt/codex-runtime.sha
 COPY --from=codex-runtime /codex-runtime.json /opt/codex-runtime.json
 
-# ffmpeg for media; bubblewrap (`bwrap`) for the Hermes Linux sandbox — the
-# vendored codex-linux-sandbox binary's default pipeline execs system bwrap
-# (Landlock is only its --use-legacy-landlock fallback, which we do not use).
-# The binary itself is installed further down, per TARGETARCH.
+# Keep the media tools and OS sandbox dependencies independently of the chat
+# runtime. Retiring Hermes must not weaken the application's sandbox boundary.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg bubblewrap \
     && rm -rf /var/lib/apt/lists/*
@@ -62,7 +61,29 @@ RUN set -eux; \
     test "$(codex-dramaclaw --version)" = "codex-cli ${CODEX_VERSION}"
 
 WORKDIR /app
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock ./
+
+# Cache dependency installation independently of application changes. uv's
+# download/build cache belongs to BuildKit, not the distributed image.
+ARG INSTALL_WORLD=0
+RUN --mount=type=cache,id=dramaclaw-uv-${TARGETARCH},target=/root/.cache/uv,sharing=locked \
+    set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends git; \
+    if [ "$INSTALL_WORLD" = "1" ]; then \
+        apt-get install -y --no-install-recommends nodejs npm; \
+        npm install -g @playcanvas/splat-transform; \
+        uv sync --frozen --no-dev --extra world --no-install-project \
+          --no-install-package openai-codex-cli-bin; \
+    else \
+        uv sync --frozen --no-dev --no-install-project \
+          --no-install-package openai-codex-cli-bin; \
+    fi; \
+    apt-get purge -y git; \
+    apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/*
+
+COPY README.md ./
 # license 正文按 REUSE 惯例只存于 LICENSES/(pyproject license-files 指向它),
 # hatchling 构建 wheel 时需要这份文件在上下文中。
 COPY LICENSES ./LICENSES
@@ -71,13 +92,8 @@ COPY src ./src
 COPY .hermes ./.hermes
 COPY deploy ./deploy
 
-# Hermes Linux sandbox binary: install the vendored codex-linux-sandbox for
-# this image's target arch onto PATH, where sandbox_wrap._wrap_linux looks it
-# up (`shutil.which` / /usr/local/bin). TARGETARCH is amd64|arm64 (BuildKit),
-# matching deploy/sandbox/linux-{amd64,arm64}/. The `--help` smoke only proves
-# the ELF loads (loader/arch OK); it creates no sandbox, so it does not need
-# host user namespaces; the worker performs its cached functional probe before
-# wrapping a Hermes command.
+# Preserve the reviewed OS sandbox executable for the target architecture.
+# This loader check does not replace runtime isolation and credential gates.
 RUN set -eux; \
     sbx="deploy/sandbox/linux-${TARGETARCH}/codex-linux-sandbox"; \
     test -x "$sbx" || { echo "no vendored codex-linux-sandbox for TARGETARCH='${TARGETARCH}'" >&2; exit 1; }; \
@@ -97,17 +113,13 @@ RUN test -f src/novelvideo/assets/login_bgm.mp3 \
 #     + 化解 da2 torch 冲突,与 host `uv sync --extra world` 完全一致)
 # 模型权重不烤进镜像:运行时自动下载到可写卷(Apple 研究许可,绝不再分发)。
 # 注:slim base 为 CPU;GPU 加速需 CUDA base + nvidia runtime。
-ARG INSTALL_WORLD=0
 # The SDK declares its stock runtime as a dependency. Remove that unused
 # binary so an operator cannot bypass CODEX_BIN and re-enable metadata logs.
-# uv.lock contains the pinned Codex Python SDK as a Git source. Keep git in
-# this build layer only; it is not needed by the running application.
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends git; \
+# Git-backed dependencies were installed in the cached layer above. The
+# application sync below keeps the same frozen graph and editable layout.
+RUN --mount=type=cache,id=dramaclaw-uv-${TARGETARCH},target=/root/.cache/uv,sharing=locked \
+    set -eux; \
     if [ "$INSTALL_WORLD" = "1" ]; then \
-        apt-get install -y --no-install-recommends nodejs npm; \
-        npm install -g @playcanvas/splat-transform; \
         uv sync --frozen --no-dev --extra world \
           --no-install-package openai-codex-cli-bin; \
     else \
@@ -115,45 +127,14 @@ RUN set -eux; \
           --no-install-package openai-codex-cli-bin; \
     fi; \
     /app/.venv/bin/python -m novelvideo.ladybug_json_extension; \
-    mkdir -p /data; \
-    apt-get purge -y git; \
-    apt-get autoremove -y; \
-    rm -rf /var/lib/apt/lists/*
-
-# Hermes comes from this project's own fork, always. A PyPI release cannot
-# serve this image: it keeps the same version string as the fork and then drops
-# the `_meta` extension the per-turn credential travels in, so every turn fails
-# closed and reports it as a connection error. There is no version to pin here
-# — which upstream release the fork carries is a property of the branch.
-# Hermes comes from this project's own fork, cloned and installed editable.
-#
-# Not from PyPI: a release keeps the same version string as the fork and then
-# drops the `_meta` extension the per-turn credential travels in, so every turn
-# fails closed and reports it as a connection error. Not as a wheel either —
-# upstream refuses to build one on purpose ("distributed via the shell
-# installer, Docker image, or Nix"), and an editable install from a clone is
-# the supported path that a pinned commit can actually use.
-#
-# HERMES_REF is a branch by default and resolves to whatever it points at when
-# the image is built. Pass a commit sha to make a build reproducible.
-ARG HERMES_REPO="https://github.com/dramaclaw/hermes-agent.git"
-ARG HERMES_REF="brainclaw/evidence-plane"
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends git; \
-    rm -rf /var/lib/apt/lists/*; \
-    git clone --depth 1 --branch "$HERMES_REF" "$HERMES_REPO" /opt/hermes-agent \
-      || { git clone "$HERMES_REPO" /opt/hermes-agent; git -C /opt/hermes-agent checkout "$HERMES_REF"; }; \
-    HERMES_SHA="$(git -C /opt/hermes-agent rev-parse HEAD)"; \
-    echo "$HERMES_SHA" > /opt/hermes-agent.sha; \
-    rm -rf /opt/hermes-agent/.git; \
-    uv pip install --system -e "/opt/hermes-agent[acp]"; \
-    python3 deploy/patch_hermes_acp_toolsets.py; \
-    hermes --version; \
-    python3 deploy/verify_hermes_fork.py; \
-    apt-get purge -y git; apt-get autoremove -y
+    mkdir -p /data
 
 ENV PATH="/app/.venv/bin:/usr/local/bin:$PATH"
+
+# The retired Hermes runtime must not reappear through a dependency or layer.
+RUN ! command -v hermes \
+    && test ! -e /opt/hermes-agent \
+    && /app/.venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('hermes_cli') is None; assert importlib.util.find_spec('acp_adapter') is None"
 
 EXPOSE 8780
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8780/api/v1/config', timeout=2).status == 200 else 1)"

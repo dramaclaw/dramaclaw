@@ -38,6 +38,39 @@ def test_runtime_rejects_sdk_bundled_binary():
         codex_app_server._resolve_codex_bin(SimpleNamespace(codex_bin=None))
 
 
+@pytest.mark.asyncio
+async def test_codex_worker_preserves_local_runtime_error_type(monkeypatch, tmp_path):
+    pytest.importorskip("openai_codex")
+    from novelvideo.api.routes.chat import _user_facing_chat_error
+
+    error = codex_app_server.CodexRuntimeError(
+        "connection error starting local runtime"
+    )
+
+    def fail_runtime(_config):
+        raise error
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fail_runtime)
+    thread = CodexThread(
+        codex_bin=None,
+        cwd=tmp_path,
+        env={},
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="",
+        config_overrides=(),
+        thread_config={},
+        turn_metadata={},
+        thread_id=None,
+    )
+    with pytest.raises(codex_app_server.CodexRuntimeError) as caught:
+        async for _event in thread.stream("hello"):
+            pass
+    assert caught.value is error
+    assert "本地助手运行时不可用" in _user_facing_chat_error(caught.value)
+    assert "上游模型" not in _user_facing_chat_error(caught.value)
+
+
 def test_windows_websocket_uses_preconnected_socket_and_closes_on_failure(
     monkeypatch, tmp_path
 ):

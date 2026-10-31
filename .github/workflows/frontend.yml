@@ -6,6 +6,8 @@ name: frontend
 
 on:
   push:
+    branches: [main]
+    tags: ["v*"]
     paths:
       - "frontend/**"
       - "scripts/check_frontend_i18n.py"
@@ -15,6 +17,11 @@ on:
       - "frontend/**"
       - "scripts/check_frontend_i18n.py"
       - ".github/workflows/frontend.yml"
+
+# Keep main/tag checks reusable; only superseded PR checks are cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
