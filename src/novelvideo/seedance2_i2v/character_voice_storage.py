@@ -11,7 +11,6 @@ import asyncio
 import base64
 import binascii
 import hashlib
-import fcntl
 import os
 from contextlib import asynccontextmanager
 import json
@@ -26,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import portalocker
 from anyio.lowlevel import RunVar
 
 from novelvideo.utils.async_ops import run_sync_bounded
@@ -559,16 +559,19 @@ async def persistent_voice_lock(path: Path) -> AsyncIterator[None]:
     """Serialize workers without blocking the event loop while waiting."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+b") as lock:
-        while True:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                await asyncio.sleep(0.01)
         try:
-            yield
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            while True:
+                try:
+                    portalocker.lock(lock, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                    break
+                except portalocker.exceptions.AlreadyLocked:
+                    await asyncio.sleep(0.01)
+            try:
+                yield
+            finally:
+                portalocker.unlock(lock)
+        except portalocker.exceptions.LockException as exc:
+            raise OSError("character voice storage lock failed") from exc
 
 
 def character_voice_slot_metadata(character, slot: str) -> dict[str, str]:

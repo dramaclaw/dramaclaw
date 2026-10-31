@@ -1052,6 +1052,33 @@ def test_generated_user_voice_rejects_corrupt_index(generated_user_api, body):
     assert index.read_bytes() == body
 
 
+def test_generated_user_voice_lock_timeout_is_retryable_without_publication(generated_user_api, monkeypatch):
+    import portalocker
+
+    s = generated_user_api
+    preview = make_ready(s)
+    original_preview = preview.read_bytes()
+    directory = s.audio_node.user_audio_voices_dir("user")
+    directory.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(s.audio_node, "_USER_AUDIO_VOICE_LOCK_TIMEOUT_SECONDS", 0)
+    with (directory / ".voices.lock").open("a+b") as holder:
+        portalocker.lock(holder, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        try:
+            response = s.client.post(s.save_url, json=SAVE_USER)
+        finally:
+            portalocker.unlock(holder)
+    assert response.status_code == 500
+    assert response.json()["code"] == "save_failed"
+    assert response.json()["retryable"] is True
+    assert s.store.get(REQUEST_ID)["status"] == "ready"
+    assert preview.read_bytes() == original_preview
+    assert s.audio_node.list_user_audio_voices("user") == []
+    assert not s.audio_node.user_audio_voices_index_path("user").exists()
+    recovered = s.client.post(s.save_url, json=SAVE_USER)
+    assert recovered.status_code == 200, recovered.text
+    assert len(s.audio_node.list_user_audio_voices("user")) == 1
+
+
 def test_generated_user_voice_isolation_and_readiness(generated_user_api):
     from dataclasses import replace
 

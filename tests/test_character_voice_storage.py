@@ -9,6 +9,7 @@ import weakref
 from pathlib import Path
 
 import pytest
+import portalocker
 
 from novelvideo.seedance2_i2v.character_voice_storage import (
     AGE_GROUP_SLOTS,
@@ -17,7 +18,70 @@ from novelvideo.seedance2_i2v.character_voice_storage import (
     clear_character_voice_file,
     is_supported_voice_sample,
     persist_character_voice_file,
+    persistent_voice_lock,
 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["acquire", "release"])
+async def test_persistent_voice_lock_maps_lock_io_failure_and_closes_fd(tmp_path, monkeypatch, phase):
+    path = tmp_path / "voice.lock"
+    original_lock, original_unlock = portalocker.lock, portalocker.unlock
+    handles = []
+
+    def fail(stream, *_flags):
+        handles.append(stream)
+        raise portalocker.exceptions.LockException("filesystem lock failed")
+
+    monkeypatch.setattr(portalocker, "lock" if phase == "acquire" else "unlock", fail)
+    with pytest.raises(OSError, match="voice storage lock"):
+        async with persistent_voice_lock(path):
+            pass
+    assert len(handles) == 1 and handles[0].closed
+    with path.open("a+b") as probe:
+        original_lock(probe, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        original_unlock(probe)
+
+
+@pytest.mark.asyncio
+async def test_persistent_voice_lock_waiter_cancellation_keeps_holder_locked(tmp_path):
+    path = tmp_path / "voice.lock"
+    started = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def wait_for_lock():
+        started.set()
+        async with persistent_voice_lock(path):
+            entered.set()
+
+    with path.open("a+b") as holder:
+        portalocker.lock(holder, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        waiter = asyncio.create_task(wait_for_lock())
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert not entered.is_set()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        with path.open("a+b") as probe:
+            with pytest.raises(portalocker.exceptions.AlreadyLocked):
+                portalocker.lock(probe, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        portalocker.unlock(holder)
+    async with persistent_voice_lock(path):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_persistent_voice_lock_releases_after_exception(tmp_path):
+    path = tmp_path / "voice.lock"
+    with pytest.raises(RuntimeError, match="publish failed"):
+        async with persistent_voice_lock(path):
+            with path.open("a+b") as probe:
+                with pytest.raises(portalocker.exceptions.AlreadyLocked):
+                    portalocker.lock(probe, portalocker.LOCK_EX | portalocker.LOCK_NB)
+            raise RuntimeError("publish failed")
+    with path.open("a+b") as probe:
+        portalocker.lock(probe, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        portalocker.unlock(probe)
 
 
 def test_character_voice_path_routes_default_and_age_groups(tmp_path):

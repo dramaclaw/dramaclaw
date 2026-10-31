@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import fcntl
 import os
 import tempfile
+import time
 from contextlib import contextmanager
 import re
 import subprocess
@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import portalocker
 
 from novelvideo.config import INDEXTTS2_RECORD_MODEL, OUTPUT_DIR
 from novelvideo.media_archive_copy import copy_archived_result
@@ -197,16 +199,30 @@ def _load_user_voice_records(username: str, *, strict: bool = False) -> list[dic
     return records
 
 
+_USER_AUDIO_VOICE_LOCK_TIMEOUT_SECONDS = 30.0
+
+
 @contextmanager
 def _user_audio_voice_lock(username: str):
     directory = user_audio_voices_dir(username)
     directory.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + _USER_AUDIO_VOICE_LOCK_TIMEOUT_SECONDS
     with (directory / ".voices.lock").open("a+b") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
         try:
-            yield
-        finally:
-            fcntl.flock(stream, fcntl.LOCK_UN)
+            while True:
+                try:
+                    portalocker.lock(stream, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                    break
+                except portalocker.exceptions.AlreadyLocked:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.01)
+            try:
+                yield
+            finally:
+                portalocker.unlock(stream)
+        except portalocker.exceptions.LockException as exc:
+            raise OSError("account voice storage lock failed") from exc
 
 
 def _atomic_voice_write(path: Path, content: bytes) -> None:

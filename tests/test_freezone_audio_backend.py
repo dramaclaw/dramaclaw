@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import portalocker
 import respx
 from httpx import Response
 
@@ -21,6 +22,41 @@ from novelvideo.freezone.audio_node import (
     user_audio_voices_index_path,
 )
 from novelvideo.model_gateway_settings import save_custom_newapi_gateway
+
+
+@pytest.mark.parametrize("phase", ["acquire", "release"])
+def test_account_voice_lock_maps_io_failure_and_closes_fd(tmp_path, monkeypatch, phase):
+    monkeypatch.setattr(audio_node, "OUTPUT_DIR", tmp_path)
+    path = audio_node.user_audio_voices_dir("alice") / ".voices.lock"
+    original_lock, original_unlock = portalocker.lock, portalocker.unlock
+    handles = []
+
+    def fail(stream, *_flags):
+        handles.append(stream)
+        raise portalocker.exceptions.LockException("filesystem lock failed")
+
+    monkeypatch.setattr(portalocker, "lock" if phase == "acquire" else "unlock", fail)
+    with pytest.raises(OSError, match="voice storage lock"):
+        with audio_node._user_audio_voice_lock("alice"):
+            pass
+    assert len(handles) == 1 and handles[0].closed
+    with path.open("a+b") as probe:
+        original_lock(probe, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        original_unlock(probe)
+
+
+def test_account_voice_lock_excludes_other_writers_and_releases_after_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio_node, "OUTPUT_DIR", tmp_path)
+    path = audio_node.user_audio_voices_dir("alice") / ".voices.lock"
+    with pytest.raises(RuntimeError, match="save failed"):
+        with audio_node._user_audio_voice_lock("alice"):
+            with path.open("a+b") as probe:
+                with pytest.raises(portalocker.exceptions.AlreadyLocked):
+                    portalocker.lock(probe, portalocker.LOCK_EX | portalocker.LOCK_NB)
+            raise RuntimeError("save failed")
+    with path.open("a+b") as probe:
+        portalocker.lock(probe, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        portalocker.unlock(probe)
 
 
 @pytest.fixture(autouse=True)
