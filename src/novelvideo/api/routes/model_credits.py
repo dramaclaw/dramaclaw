@@ -928,6 +928,8 @@ async def get_generation_credit_cost(
         "quantity": _clean_quantity(quantity),
         "product_surface": _credit_product_surface(surface),
     }
+    if kind == "feature" and value == "audio.voice_design":
+        raise HTTPException(status_code=422, detail="voice design requires a project quote")
     quote = await get_credit_quote().generation_credit_quote(
         **quote_args,
         user_id=str(user.get("id") or user.get("user_id") or ""),

@@ -824,3 +824,13 @@ def test_video_catalog_rejects_inverted_reference_duration_range():
             },
             "video",
         )
+
+
+def test_audio_voice_design_catalog_contract():
+    config = {"request": {"endpoint": "audio/voice-designs"}, "targetModel": "cosy-id"}
+    assert validate_media_model_catalog_config(config, "audio") == config
+    assert validate_media_model_catalog_config({"request": {"endpoint": "audio/speech"}}, "audio")
+    with pytest.raises(MediaModelSchemaError):
+        validate_media_model_catalog_config({"request": {"endpoint": "audio/voice-designs"}}, "audio")
+    with pytest.raises(MediaModelSchemaError):
+        validate_media_model_catalog_config({"request": {"endpoint": "video/generations"}}, "audio")

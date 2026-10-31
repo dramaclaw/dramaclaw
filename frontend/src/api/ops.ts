@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { z } from "zod";
+import { readVoiceDesignResponse } from "@/lib/queries/voice-design";
+import type { SaveGeneratedAccountVoice } from "@/types/voice-design";
 import { apiCall, apiCallEnvelope, apiClient } from "./client";
 import { workflowProductOperation } from "@/features/canvas/application/workflowExecutionActivity";
 import { readReferenceMediaLimits, type ReferenceMediaLimits } from "./referenceMediaLimits";
@@ -2655,6 +2658,37 @@ export async function createFreezoneAudioVoice(
     throw new Error(resp.error ?? "voice upload failed");
   }
   return resp.data;
+}
+
+const generatedAccountVoiceSchema = z.object({
+  scope: z.literal("user_custom"),
+  voice_id: z.string().regex(/^fv_[A-Za-z0-9_-]+$/),
+  name: z.string(),
+  label: z.string(),
+  path: z.string(),
+  url: z.string(),
+  exists: z.boolean(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  duration_ms: z.number().int().nonnegative(),
+  mime_type: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  source_filename: z.string(),
+});
+
+export function saveGeneratedFreezoneAudioVoice(
+  project: string,
+  input: SaveGeneratedAccountVoice,
+) {
+  return readVoiceDesignResponse(
+    apiClient(`projects/${encodeURIComponent(project)}/freezone/audio/voices/save-generated`, {
+      method: "POST",
+      json: input,
+      retry: 0,
+      throwHttpErrors: false,
+    }),
+    generatedAccountVoiceSchema,
+  );
 }
 
 // /freezone/text/translate ------------------------------------------------ //

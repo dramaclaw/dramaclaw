@@ -4,6 +4,8 @@ import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { api, uploadApi } from "@/lib/api";
+import { readVoiceDesignResponse } from "@/lib/queries/voice-design";
+import { generatedCharacterVoiceSchema, type SaveGeneratedCharacterVoice } from "@/types/voice-design";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
 import { invalidateAssetReferences } from "@/lib/queries/asset-references";
@@ -308,6 +310,23 @@ function handleCharacterVoiceMutationSuccess(
 ) {
   updateCharacterVoiceCache(qc, project, name, response);
   invalidateCharacterVoiceQueries(qc, project, name);
+}
+
+export function useSaveGeneratedCharacterVoice(project: string, name: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationKey: [...queryKeys.characterVoiceSamples(project, name), "save-generated"],
+    retry: false,
+    mutationFn: async ({ slot, ...input }: SaveGeneratedCharacterVoice & { slot: string }) => {
+      const data = await readVoiceDesignResponse(
+        api.post(p`api/v1/projects/${project}/characters/${name}/voice-samples/${slot}/save-generated`, {
+          json: input, retry: 0, throwHttpErrors: false,
+        }), generatedCharacterVoiceSchema,
+      );
+      return { ok: true as const, data };
+    },
+    onSuccess: response => handleCharacterVoiceMutationSuccess(qc, project, name, response),
+  });
 }
 
 export function useCharacterVoiceSamples(project: string, name: string) {

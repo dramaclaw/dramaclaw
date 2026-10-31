@@ -9144,5 +9144,45 @@
       "regenerate": "Regenerate",
       "generate": "Generate"
     }
+  },
+  "voiceDesign": {
+    "resume": "View generated preview",
+    "saved": "Saved to the destination. You can generate another preview.",
+    "title": "Design a voice",
+    "entry": "Design from description",
+    "target": "Save to: {{target}}",
+    "description": "Voice description",
+    "descriptionHint": "Use 1–500 characters.",
+    "previewText": "Preview text",
+    "previewHint": "Use 15–60 characters (about 15 seconds).",
+    "name": "Voice name",
+    "generating": "Generating. Closing this dialog will not cancel the task.",
+    "result": "Generated preview",
+    "duration": "{{seconds}} seconds",
+    "videoHint": "For video references, 3–5 seconds is recommended. Trim after saving.",
+    "expires": "Unsaved preview expires at {{time}}",
+    "expired": "This preview has expired. Generate another.",
+    "check": "Check original request",
+    "refreshTarget": "Refresh save destination",
+    "price": "This generation: {{price}} credits / call",
+    "quoteLoading": "Loading price and availability…",
+    "close": "Close",
+    "generate": "Generate preview",
+    "regenerate": "Regenerate",
+    "saving": "Saving…",
+    "saveSlot": "Save to {{slot}}",
+    "replaceTitle": "Replace existing voice?",
+    "replaceHint": "This slot already has a voice. Replacing it archives the previous voice.",
+    "cancel": "Cancel",
+    "replace": "Replace",
+    "play": "Play preview",
+    "retryPlayback": "Retry playback",
+    "audioLabel": "Generated voice preview",
+    "errors": {
+      "network": "Connection failed. Check the original request or retry saving.",
+      "invalidResponse": "Invalid server response. Check the original request later.",
+      "playback": "Could not play the preview. Try playback again."
+    },
+    "saveAccount": "Save to my voices"
   }
 }

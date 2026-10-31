@@ -882,7 +882,7 @@ def _media_model_catalog(
     from novelvideo.media_model_request_schema import normalize_media_model_catalog_config
 
     wanted = str(media_type or "").strip().lower()
-    if wanted not in {"image", "video"}:
+    if wanted not in {"image", "video", "audio"}:
         return []
     result: list[dict[str, Any]] = []
     for model, item in mappings.items():
@@ -896,14 +896,19 @@ def _media_model_catalog(
         config.setdefault(
             "request",
             {
-                "endpoint": (
-                    "images/generations" if wanted == "image" else "video/generations"
-                ),
+                "endpoint": {
+                    "image": "images/generations",
+                    "video": "video/generations",
+                    "audio": "audio/speech",
+                }[wanted],
                 "parameters": [],
             },
         )
         gateway_model = str(item.get("upstreamModel") or model)
-        api_model = model if wanted == "image" else f"newapi_{model}"
+        api_model = (
+            gateway_model if wanted == "audio"
+            else model if wanted == "image" else f"newapi_{model}"
+        )
         aliases = item.get("aliases") if isinstance(item.get("aliases"), list) else []
         result.append(
             {

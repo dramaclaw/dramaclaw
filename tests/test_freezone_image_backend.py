@@ -3671,8 +3671,9 @@ def test_nineties_style_prompt_keeps_second_line() -> None:
 
 def test_build_style_prompt_uses_chinese_block_without_author() -> None:
     from novelvideo.api.schemas import FreezoneImageStyleConfig
+    from novelvideo.freezone.route_helpers import build_style_prompt
 
-    block = freezone_routes._build_style_prompt(
+    block = build_style_prompt(
         FreezoneImageStyleConfig(template_id="golden_age")
     )
 
@@ -3683,11 +3684,15 @@ def test_build_style_prompt_uses_chinese_block_without_author() -> None:
 
 def test_unknown_style_template_is_ignored_instead_of_rejected() -> None:
     from novelvideo.api.schemas import FreezoneImageStyleConfig
+    from novelvideo.freezone.route_helpers import (
+        build_style_prompt,
+        resolve_freezone_image_style_template,
+    )
 
     config = FreezoneImageStyleConfig(template_id="three_oclock_2300")
 
-    assert freezone_routes._resolve_freezone_image_style_template(config) is None
-    assert freezone_routes._build_style_prompt(config) == ""
+    assert resolve_freezone_image_style_template(config) is None
+    assert build_style_prompt(config) == ""
 
 
 def test_unknown_style_template_does_not_break_prompt_merge() -> None:

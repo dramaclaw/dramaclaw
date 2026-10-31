@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import wave
 
 import pytest
 from fastapi import FastAPI
@@ -195,6 +197,8 @@ def m04_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         path.mkdir(parents=True, exist_ok=True)
     (project_dir / "novel.txt").write_text("测试原文", encoding="utf-8")
     store.project_dir = str(project_dir)
+    store.state_dir = str(state_dir)
+    store.db_path = state_dir / "data.db"
     (project_dir / "assets" / "characters" / _CHARACTER).mkdir(parents=True, exist_ok=True)
     portrait = project_dir / "assets" / "characters" / _CHARACTER / "portrait.png"
     portrait.write_bytes(_png_bytes())
@@ -202,6 +206,17 @@ def m04_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     source_audio = project_dir / "audio" / "ep001" / "beat_01.mp3"
     source_audio.parent.mkdir(parents=True, exist_ok=True)
     source_audio.write_bytes(b"voice-source")
+    narrator = project_dir / "assets" / "narrator" / "contract.wav"
+    narrator.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(narrator), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16000)
+        audio.writeframes(b"\x00\x00" * 16000)
+    project_config.set_narrator_reference_audio_in_state_dir(
+        state_dir, relative_path=narrator.relative_to(project_dir).as_posix(),
+        sha256=hashlib.sha256(narrator.read_bytes()).hexdigest(),
+    )
 
     monkeypatch.setattr(project_config, "OUTPUT_DIR", tmp_path / "output", raising=False)
     monkeypatch.setattr(project_config, "STATE_DIR", tmp_path / "state", raising=False)
@@ -279,10 +294,6 @@ def m04_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     for module in (characters, props, projects):
         monkeypatch.setattr(module, "make_static_url_for_context", static_url)
 
-    async def no_prereq_errors(**_kwargs):
-        return []
-
-    monkeypatch.setattr(generation, "_collect_audio_prereq_errors", no_prereq_errors)
     monkeypatch.setattr(
         characters,
         "trim_existing_character_voice_file",
@@ -617,6 +628,14 @@ def test_m04_l2_exercises_all_57_endpoint_contracts(m04_client_factory):
         )
     )
     _assert_ok(client.post(f"/api/v1/projects/{_PROJECT}/narrator-voice/delete"))
+    missing = client.post(f"/api/v1/projects/{_PROJECT}/episodes/1/audio/generate", json={})
+    assert missing.json()["code"] == "voice_prereq_required"
+    _assert_ok(
+        client.post(
+            f"/api/v1/projects/{_PROJECT}/narrator-voice/copy",
+            json={"source_path": str(project_dir / "audio" / "ep001" / "beat_01.mp3")},
+        )
+    )
 
     assert (
         client.post(f"/api/v1/projects/{_PROJECT}/episodes/1/tts/generate", json={}).status_code

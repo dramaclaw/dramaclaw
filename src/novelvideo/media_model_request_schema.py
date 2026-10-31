@@ -337,7 +337,9 @@ def validate_media_request_schema(schema: object) -> dict[str, Any]:
     if not isinstance(schema, dict):
         raise MediaModelSchemaError("request schema must be an object")
     endpoint = str(schema.get("endpoint") or "").strip()
-    if endpoint not in {"images/generations", "video/generations", "audio/speech"}:
+    if endpoint not in {
+        "images/generations", "video/generations", "audio/speech", "audio/voice-designs",
+    }:
         raise MediaModelSchemaError("unsupported NewAPI media endpoint")
     parameters = schema.get("parameters") or []
     if not isinstance(parameters, list) or len(parameters) > 32:
@@ -422,8 +424,8 @@ def validate_media_model_catalog_config(
 ) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise MediaModelSchemaError("media model config must be an object")
-    if media_type not in {"image", "video"}:
-        raise MediaModelSchemaError("media type must be image or video")
+    if media_type not in {"image", "video", "audio"}:
+        raise MediaModelSchemaError("media type must be image, video or audio")
     reserved_fields = sorted(RESERVED_CATALOG_CONFIG_FIELDS.intersection(config))
     if reserved_fields:
         raise MediaModelSchemaError(
@@ -436,6 +438,18 @@ def validate_media_model_catalog_config(
     except ValueError as exc:
         raise MediaModelSchemaError(str(exc)) from exc
     request_schema = validate_media_request_schema(config.get("request"))
+    if media_type == "audio":
+        endpoint = request_schema.get("endpoint")
+        if endpoint not in {"audio/speech", "audio/voice-designs"}:
+            raise MediaModelSchemaError("audio model requires an audio endpoint")
+        target = config.get("targetModel")
+        if endpoint == "audio/voice-designs" and (
+            not isinstance(target, str) or not target.strip()
+        ):
+            raise MediaModelSchemaError("voice design requires targetModel catalog ID")
+        if endpoint == "audio/speech" and target is not None:
+            raise MediaModelSchemaError("speech model cannot declare targetModel")
+        return config
     expected_endpoint = (
         "images/generations" if media_type == "image" else "video/generations"
     )

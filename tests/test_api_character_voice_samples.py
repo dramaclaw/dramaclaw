@@ -51,6 +51,7 @@ def _patch_project(
     # 整片从 ``sys.modules`` 里弹掉重建 app，模块级绑定到那时是死对象，patch 会落空。
     from novelvideo.api import deps
 
+    store.state_dir = str(project_dir / "state")
     ctx = SimpleNamespace(project_id="proj_demo", output_dir=project_dir, is_home_node=True)
 
     # 打在解析层，不打 ``_resolve_character_project``：角色列表和 identities 两条读取
@@ -778,3 +779,606 @@ async def test_upload_then_trim_same_voice_slot_uses_uploaded_file(
     assert character.reference_audio_sha256 == hashlib.sha256(
         b"trimmed-uploaded"
     ).hexdigest()
+
+
+@pytest.fixture
+async def generated_api(tmp_path, monkeypatch):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from novelvideo.api.routes import characters
+    from novelvideo.audio.voice_design_storage import VoiceDesignStorage
+    from novelvideo.project_context import ProjectContext
+    from novelvideo.sqlite_store import SQLiteStore
+    from uuid import uuid4
+
+    ctx = ProjectContext(
+        "project",
+        "demo",
+        "user",
+        "owner",
+        "owner",
+        "user",
+        "user",
+        (),
+        "editor",
+        "local",
+        tmp_path / "output",
+        tmp_path / "state",
+        tmp_path / "runtime",
+        True,
+    )
+    store = SQLiteStore(
+        "demo", output_dir=str(ctx.output_dir), state_dir=str(ctx.state_dir)
+    )
+    await store.initialize()
+    await store.add_character(NovelCharacter(name="hero"))
+    await store.add_character(NovelCharacter(name="other"))
+
+    async def resolve(*args, **kwargs):
+        return ctx, "user", "demo", ctx.output_dir, str(ctx.output_dir), store
+
+    monkeypatch.setattr(characters, "_resolve_character_project", resolve)
+    monkeypatch.setattr(
+        characters,
+        "make_static_url_for_context",
+        lambda ctx, rel, local_path=None: "/static/" + rel,
+    )
+    monkeypatch.setattr(
+        "novelvideo.audio.voice_design_storage.STATE_DIR", str(tmp_path / "quota")
+    )
+    storage = VoiceDesignStorage(ctx)
+
+    def candidate(content=b"generated audio"):
+        cid = str(uuid4())
+        storage.reserve(
+            cid,
+            description="voice",
+            preview_text="preview",
+            language="zh",
+            surface="supertale",
+        )
+        storage.claim(cid)
+        path = storage.output_path(cid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        storage.complete(
+            cid, duration_seconds=4, sha256=hashlib.sha256(content).hexdigest()
+        )
+        return cid
+
+    app = FastAPI()
+    app.include_router(characters.router, prefix="/api/v1")
+    app.dependency_overrides[characters.get_api_user] = lambda: {"username": "user"}
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        yield SimpleNamespace(
+            client=client,
+            ctx=ctx,
+            store=store,
+            storage=storage,
+            candidate=candidate,
+            characters=characters,
+        )
+    await store.close()
+
+
+def save_body(candidate_id, **kwargs):
+    from uuid import uuid4
+
+    return {
+        "save_request_id": str(uuid4()),
+        "candidate_id": candidate_id,
+        "expected_slot": {"path": "", "sha256": "", "updated_at": ""},
+        **kwargs,
+    }
+
+
+def voice_url(slot="default", name="hero", action="save-generated"):
+    return f"/api/v1/projects/demo/characters/{name}/voice-samples/{slot}/{action}"
+
+
+@pytest.mark.parametrize("slot", ["default", "child", "youth", "middle", "elder"])
+async def test_generated_and_uploaded_voice_share_binding_flow(generated_api, slot):
+    from novelvideo.seedance2_i2v.voice_clone import resolve_character_voice
+
+    env = generated_api
+    cid = env.candidate()
+    response = await env.client.post(voice_url(slot), json=save_body(cid))
+    assert response.status_code == 200, response.text
+    saved = response.json()["data"]
+    uploaded = await env.client.post(
+        voice_url(slot, "other", "upload"),
+        files={"file": ("audio.mp3", b"generated audio", "audio/mpeg")},
+    )
+    assert uploaded.status_code == 200
+    assert saved.keys() == uploaded.json()["data"].keys()
+    assert (env.ctx.output_dir / saved["path"]).read_bytes() == env.storage.output_path(
+        cid
+    ).read_bytes()
+    assert saved["sha256"] == hashlib.sha256(b"generated audio").hexdigest()
+    identity = None if slot == "default" else SimpleNamespace(age_group=slot)
+    resolutions = [
+        resolve_character_voice(
+            project_dir=env.ctx.output_dir,
+            character=env.store.get_character(name),
+            identity=identity,
+        )
+        for name in ("hero", "other")
+    ]
+    assert resolutions[0].tier == resolutions[1].tier
+    assert resolutions[0].sha256 == resolutions[1].sha256
+
+
+async def test_save_is_idempotent(generated_api):
+    env = generated_api
+    body = save_body(env.candidate())
+    first = await env.client.post(voice_url(), json=body)
+    assert first.status_code == 200
+    path = env.ctx.output_dir / first.json()["data"]["path"]
+    mtime = path.stat().st_mtime_ns
+    assert (await env.client.post(voice_url(), json=body)).json() == first.json()
+    assert path.stat().st_mtime_ns == mtime
+    conflict = await env.client.post(voice_url("child"), json=body)
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "idempotency_conflict"
+    await env.client.post(
+        voice_url(action="upload"), files={"file": ("new.mp3", b"new")}
+    )
+    conflict = await env.client.post(voice_url(), json=body)
+    assert conflict.json()["code"] == "slot_changed"
+
+
+async def test_replace_existing_archives_previous_voice(generated_api):
+    env = generated_api
+    old = (
+        await env.client.post(
+            voice_url(action="upload"), files={"file": ("old.mp3", b"old")}
+        )
+    ).json()["data"]
+    expected = {k: old[k] for k in ("path", "sha256", "updated_at")}
+    body = save_body(env.candidate(), expected_slot=expected)
+    denied = await env.client.post(voice_url(), json=body)
+    assert denied.status_code == 409 and denied.json()["code"] == "slot_occupied"
+    assert (env.ctx.output_dir / old["path"]).read_bytes() == b"old"
+    success = await env.client.post(
+        voice_url(), json={**body, "replace_existing": True}
+    )
+    assert success.status_code == 200, success.text
+    assert any(
+        p.read_bytes() == b"old"
+        for p in (env.ctx.output_dir / old["path"]).parent.glob("voice_default_*.mp3")
+    )
+    stale = await env.client.post(
+        voice_url(),
+        json=save_body(env.candidate(), expected_slot=expected, replace_existing=True),
+    )
+    assert stale.status_code == 409 and stale.json()["code"] == "slot_changed"
+
+
+async def test_save_failure_recovers_file_and_metadata(generated_api, monkeypatch):
+    import sqlite3
+
+    env = generated_api
+    await env.client.post(voice_url("child", action="upload"), files={"file": ("child.mp3", b"child")})
+    await env.store.update_character("hero", identities=[CharacterIdentity(
+        identity_id="legacy", identity_name="legacy", character_name="hero",
+        reference_audio_path="legacy-identity.mp3", reference_audio_sha256="identity-sha",
+    )])
+    old = (
+        await env.client.post(
+            voice_url(action="upload"), files={"file": ("old.mp3", b"old")}
+        )
+    ).json()["data"]
+    expected = {k: old[k] for k in ("path", "sha256", "updated_at")}
+    before = (await env.store.get_character_from_graph("hero")).model_dump()
+    real_update = env.store.update_character
+
+    async def fail(*args, **kwargs):
+        raise sqlite3.OperationalError("injected DB failure")
+
+    monkeypatch.setattr(env.store, "update_character", fail)
+    body = save_body(env.candidate(), expected_slot=expected, replace_existing=True)
+    result = await env.client.post(voice_url(), json=body)
+    assert result.status_code == 500, result.text
+    assert (env.ctx.output_dir / old["path"]).read_bytes() == b"old"
+    assert (await env.store.get_character_from_graph("hero")).model_dump() == before
+    monkeypatch.setattr(env.store, "update_character", real_update)
+    retry = await env.client.post(voice_url(), json=body)
+    assert retry.status_code == 200, retry.text
+    after = (await env.store.get_character_from_graph("hero")).model_dump()
+    for field in ("identities_json", "voice_samples_by_age_group_json"):
+        assert after[field] == before[field]
+    child = env.store.get_character("hero").voice_samples_by_age_group["child"]
+    assert (env.ctx.output_dir / child["path"]).read_bytes() == b"child"
+
+
+async def test_save_disabled_generation_and_candidate_errors(
+    generated_api, monkeypatch
+):
+    env = generated_api
+    cid = env.candidate()
+    def disabled():
+        raise AssertionError("saving must not call generation configuration or provider")
+    monkeypatch.setattr("novelvideo.audio.voice_design_service.ensure_voice_design_enabled", disabled)
+    assert (await env.client.post(voice_url(), json=save_body(cid))).status_code == 200
+    from uuid import uuid4
+
+    missing = await env.client.post(voice_url("child"), json=save_body(str(uuid4())))
+    assert missing.status_code == 404
+    invalid = await env.client.post(voice_url("bad"), json=save_body(cid))
+    assert invalid.status_code == 422 and invalid.json()["code"] == "invalid_input"
+    env.storage.output_path(cid).unlink()
+    missing_audio = await env.client.post(voice_url("child"), json=save_body(cid))
+    assert missing_audio.json()["code"] == "candidate_audio_missing"
+
+
+def _voice_worker(
+    ctx, body, slot, barrier_dir=None, crash=None, action="save-generated"
+):
+    import os
+    import time
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from novelvideo.api.routes import characters
+    from novelvideo.audio import voice_design_storage
+    from novelvideo.sqlite_store import SQLiteStore
+
+    voice_design_storage.STATE_DIR = str(ctx.state_dir.parent / "quota")
+
+    async def run():
+        store = SQLiteStore(
+            "demo", output_dir=str(ctx.output_dir), state_dir=str(ctx.state_dir)
+        )
+        await store.initialize()
+        await store.load_graph_state()
+
+        async def resolve(*args, **kwargs):
+            return ctx, "user", "demo", ctx.output_dir, str(ctx.output_dir), store
+
+        characters._resolve_character_project = resolve
+        characters.make_static_url_for_context = lambda ctx, rel, local_path=None: (
+            "/static/" + rel
+        )
+        if crash == "published":
+            original = characters.persist_character_voice_file
+
+            def terminate(**kwargs):
+                original(**kwargs)
+                os._exit(17)
+
+            characters.persist_character_voice_file = terminate
+        elif crash == "committed":
+            original_update = characters._apply_character_voice_update
+
+            async def terminate(**kwargs):
+                await original_update(**kwargs)
+                os._exit(18)
+
+            characters._apply_character_voice_update = terminate
+        if barrier_dir:
+            (barrier_dir / str(os.getpid())).touch()
+            deadline = time.monotonic() + 30
+            while len(list(barrier_dir.iterdir())) < 2:
+                assert time.monotonic() < deadline
+                await asyncio.sleep(0.01)
+        app = FastAPI()
+        app.include_router(characters.router, prefix="/api/v1")
+        app.dependency_overrides[characters.get_api_user] = lambda: {"username": "user"}
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                if action == "upload":
+                    result = await client.post(
+                        voice_url(slot, action=action),
+                        files={"file": ("upload.mp3", b"uploaded")},
+                    )
+                else:
+                    result = await client.post(voice_url(slot), json=body)
+                return result.status_code, result.json()
+        finally:
+            await store.close()
+
+    return asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "slots,actions",
+    [
+        (("child", "elder"), ("save-generated", "save-generated")),
+        (("child", "child"), ("save-generated", "save-generated")),
+        (("child", "child"), ("upload", "save-generated")),
+    ],
+)
+async def test_save_compare_and_set_preserves_concurrent_updates(
+    generated_api, tmp_path, slots, actions
+):
+    from concurrent.futures import ProcessPoolExecutor
+    import multiprocessing
+
+    env = generated_api
+    bodies = [save_body(env.candidate(b"first")), save_body(env.candidate(b"second"))]
+    barrier = tmp_path / "barrier"
+    barrier.mkdir()
+
+    def compete():
+        with ProcessPoolExecutor(
+            2, mp_context=multiprocessing.get_context("spawn")
+        ) as pool:
+            futures = [
+                pool.submit(_voice_worker, env.ctx, body, slot, barrier, None, action)
+                for body, slot, action in zip(bodies, slots, actions)
+            ]
+            return [f.result(timeout=90) for f in futures]
+
+    results = await asyncio.to_thread(compete)
+    character = await env.store.get_character_from_graph("hero")
+    if slots[0] != slots[1]:
+        assert [r[0] for r in results] == [200, 200], results
+        assert set(character.voice_samples_by_age_group) == {"child", "elder"}
+    elif actions[0] == "save-generated":
+        assert sorted(r[0] for r in results) == [200, 409], results
+        assert next(r[1]["code"] for r in results if r[0] == 409) == "slot_changed"
+    else:
+        assert results[0][0] == 200
+        assert results[1][0] in (200, 409)
+        if results[1][0] == 409:
+            assert results[1][1]["code"] == "slot_changed"
+    for meta in character.voice_samples_by_age_group.values():
+        assert (
+            hashlib.sha256((env.ctx.output_dir / meta["path"]).read_bytes()).hexdigest()
+            == meta["sha256"]
+        )
+
+
+@pytest.mark.parametrize("crash,exitcode,consumer", [
+    pytest.param("published", 17, "sqlite", id="published-17"),
+    pytest.param("committed", 18, "sqlite", id="committed-18"),
+    pytest.param("published", 17, "cognee", id="cognee-published-17"),
+    pytest.param("committed", 18, "cognee", id="cognee-committed-18"),
+])
+async def test_save_failure_recovers_file_and_metadata_after_process_restart(
+    generated_api, crash, exitcode, consumer
+):
+    import multiprocessing
+
+    env = generated_api
+    old = (
+        await env.client.post(
+            voice_url(action="upload"), files={"file": ("old.mp3", b"old")}
+        )
+    ).json()["data"]
+    expected = {k: old[k] for k in ("path", "sha256", "updated_at")}
+    body = save_body(env.candidate(), expected_slot=expected, replace_existing=True)
+    process = multiprocessing.get_context("spawn").Process(
+        target=_voice_worker, args=(env.ctx, body, "default", None, crash)
+    )
+    process.start()
+    await asyncio.to_thread(process.join, 60)
+    assert process.exitcode == exitcode
+    from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo.seedance2_i2v.voice_clone import resolve_character_voice
+
+    restarted = SQLiteStore(
+        "demo", output_dir=str(env.ctx.output_dir), state_dir=str(env.ctx.state_dir)
+    )
+    try:
+        if consumer == "cognee":
+            from novelvideo.cognee.store import CogneeStore
+
+            facade = CogneeStore.__new__(CogneeStore)
+            facade.sqlite_store = restarted
+            await facade._ensure_db()
+        else:
+            await restarted.initialize()
+        await restarted.load_graph_state()
+        resolution = resolve_character_voice(
+            project_dir=env.ctx.output_dir, character=restarted.get_character("hero")
+        )
+        assert (
+            resolution.sha256
+            == hashlib.sha256(resolution.audio_path.read_bytes()).hexdigest()
+        )
+        assert resolution.audio_path.read_bytes() == (
+            b"old" if crash == "published" else b"generated audio"
+        )
+    finally:
+        await restarted.close()
+    # Restarted access recovers before reads; replay never republishes a committed save.
+    recovered = await env.client.get(
+        "/api/v1/projects/demo/characters/hero/voice-samples"
+    )
+    assert recovered.status_code == 200
+    current = env.characters._voice_slot_metadata(
+        env.store.get_character("hero"), "default"
+    )
+    if crash == "published":
+        assert current == expected
+        assert (env.ctx.output_dir / current["path"]).read_bytes() == b"old"
+    else:
+        assert current["sha256"] == hashlib.sha256(b"generated audio").hexdigest()
+    result = await env.client.post(voice_url(), json=body)
+    assert result.status_code == 200, result.text
+    if crash == "committed":
+        assert result.json()["data"]["updated_at"] == current["updated_at"]
+    assert not list((env.ctx.state_dir / "character-voice-publications").glob("*.json"))
+
+
+async def test_cancelled_generated_save_finishes_file_and_metadata(
+    generated_api, monkeypatch
+):
+    env = generated_api
+    body = save_body(env.candidate())
+    started, release = threading.Event(), threading.Event()
+    original = env.characters.persist_character_voice_file
+
+    def blocked(**kwargs):
+        started.set()
+        assert release.wait(3)
+        return original(**kwargs)
+
+    monkeypatch.setattr(env.characters, "persist_character_voice_file", blocked)
+    task = asyncio.create_task(env.client.post(voice_url(), json=body))
+    assert await asyncio.to_thread(started.wait, 2)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    result = await env.client.post(voice_url(), json=body)
+    assert result.status_code == 200
+    data = result.json()["data"]
+    assert (
+        hashlib.sha256((env.ctx.output_dir / data["path"]).read_bytes()).hexdigest()
+        == data["sha256"]
+    )
+
+
+async def test_save_database_commit_failure_rolls_back_pending_sql(
+    generated_api, monkeypatch
+):
+    import sqlite3
+
+    env = generated_api
+    body = save_body(env.candidate())
+    db = await env.store._ensure_db()
+    original = db.commit
+
+    async def fail():
+        raise sqlite3.OperationalError("commit failure")
+
+    monkeypatch.setattr(db, "commit", fail)
+    result = await env.client.post(voice_url(), json=body)
+    assert result.status_code == 500
+    assert (await env.store.get_character_from_graph("hero")).reference_audio_path == ""
+    assert not list(env.ctx.output_dir.glob("assets/characters/hero/voices/voice_*"))
+    monkeypatch.setattr(db, "commit", original)
+    assert (await env.client.post(voice_url(), json=body)).status_code == 200
+
+
+async def test_generated_save_scopes_permissions_and_candidate_owner(
+    generated_api, monkeypatch
+):
+    from dataclasses import replace
+    from fastapi import HTTPException
+
+    env = generated_api
+    body = save_body(env.candidate())
+    original = env.characters._resolve_character_project
+    for status, expected in [
+        (403, "voice_design_forbidden"),
+        (404, "project_not_found"),
+    ]:
+
+        async def denied(project, user, *, required_role="editor"):
+            assert required_role == "editor"
+            raise HTTPException(status, "private details")
+
+        monkeypatch.setattr(env.characters, "_resolve_character_project", denied)
+        response = await env.client.post(voice_url(), json=body)
+        assert response.status_code == status and response.json()["code"] == expected
+        assert "private details" not in response.text
+
+    async def foreign(*args, **kwargs):
+        result = list(await original(*args, **kwargs))
+        result[0] = replace(env.ctx, requester_user_id="someone-else")
+        return tuple(result)
+
+    monkeypatch.setattr(env.characters, "_resolve_character_project", foreign)
+    response = await env.client.post(voice_url(), json=body)
+    assert (
+        response.status_code == 404 and response.json()["code"] == "candidate_not_found"
+    )
+
+
+async def test_project_connection_waits_for_voice_recovery_before_concurrent_reads(
+    tmp_path, monkeypatch
+):
+    from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo.seedance2_i2v import character_voice_storage
+
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def recover(**kwargs):
+        calls.append(kwargs["connection"])
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(
+        character_voice_storage, "recover_character_voice_publications", recover
+    )
+    store = SQLiteStore(
+        "demo", output_dir=str(tmp_path / "output"), state_dir=str(tmp_path / "state")
+    )
+    first = asyncio.create_task(store.initialize())
+    await asyncio.wait_for(started.wait(), 3)
+    second = asyncio.create_task(store.list_characters())
+    await asyncio.sleep(0.05)
+    assert not second.done()
+    assert store._db is None
+    release.set()
+    try:
+        await asyncio.wait_for(asyncio.gather(first, second), 3)
+        assert len(calls) == 1
+        assert await store.list_characters() == []
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("failure", ["io", "cancel"])
+async def test_project_connection_closes_when_voice_recovery_fails(
+    tmp_path, monkeypatch, failure
+):
+    from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo.seedance2_i2v import character_voice_storage
+
+    connections = []
+
+    async def recover(**kwargs):
+        connections.append(kwargs["connection"])
+        if failure == "cancel":
+            raise asyncio.CancelledError()
+        raise OSError("cannot restore voice")
+
+    monkeypatch.setattr(
+        character_voice_storage, "recover_character_voice_publications", recover
+    )
+    store = SQLiteStore(
+        "demo", output_dir=str(tmp_path / "output"), state_dir=str(tmp_path / "state")
+    )
+    with pytest.raises(asyncio.CancelledError if failure == "cancel" else OSError):
+        await store.initialize()
+    assert store._db is None
+    with pytest.raises(ValueError, match="no active connection"):
+        await connections[0].execute("SELECT 1")
+    await store.close()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("project_dir", "/other-project"), ("character_name", "other-character")],
+)
+async def test_project_initialization_rejects_foreign_voice_journal(
+    generated_api, field, value
+):
+    import json
+    from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo.seedance2_i2v.character_voice_storage import CharacterVoiceJournal
+
+    env = generated_api
+    journal = CharacterVoiceJournal(
+        env.ctx.output_dir, "hero", state_dir=env.ctx.state_dir
+    )
+    journal.begin("default", {"path": "", "sha256": "", "updated_at": ""})
+    record = json.loads(journal.path.read_text())
+    record[field] = value
+    journal.path.write_text(json.dumps(record))
+    restarted = SQLiteStore(
+        "demo", output_dir=str(env.ctx.output_dir), state_dir=str(env.ctx.state_dir)
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        await restarted.initialize()
+    assert journal.path.exists()
+    assert restarted._db is None
+    await restarted.close()

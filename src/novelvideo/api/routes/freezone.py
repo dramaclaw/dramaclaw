@@ -37,6 +37,21 @@ from fastapi import (
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from novelvideo.api.routes.voice_design import (
+    SaveUserVoiceRequest,
+    UserVoiceResponse,
+    VoiceDesignRoute,
+    _required_candidate,
+)
+from novelvideo.audio.voice_design_storage import (
+    CandidateStorageError,
+    VoiceDesignStorage,
+)
+from novelvideo.seedance2_i2v.character_voice_storage import (
+    persistent_voice_lock,
+    run_voice_media_operation,
+)
+from novelvideo.freezone.audio_node import recover_user_audio_voice_save
 from novelvideo.api.auth import get_api_user
 from novelvideo.chat import evidence_metrics
 from novelvideo.chat import service as chat_service
@@ -285,9 +300,6 @@ from novelvideo.freezone.route_helpers import (
     build_scene_360_prompt as _build_scene_360_prompt,
 )
 from novelvideo.freezone.route_helpers import (
-    build_style_prompt as _build_style_prompt,
-)
-from novelvideo.freezone.route_helpers import (
     build_template_edit_prompt as _build_template_edit_prompt,
 )
 from novelvideo.freezone.route_helpers import (
@@ -322,9 +334,6 @@ from novelvideo.freezone.route_helpers import (
 )
 from novelvideo.freezone.route_helpers import (
     resolve_freezone_image_provider as _resolve_freezone_image_provider,
-)
-from novelvideo.freezone.route_helpers import (
-    resolve_freezone_image_style_template as _resolve_freezone_image_style_template,
 )
 from novelvideo.freezone.route_helpers import (
     resolve_outpaint_aspect_ratio as _resolve_outpaint_aspect_ratio,
@@ -385,7 +394,6 @@ from novelvideo.freezone.video_node import (
     get_video_camera_templates,
     is_freezone_happyhorse_backend,
     is_freezone_seedance2_backend,
-    is_freezone_seedance_backend,
     library_folder_keys,
     load_video_character_folders,
     load_video_character_library,
@@ -439,7 +447,6 @@ from novelvideo.utils.path_resolver import (
     canonical_identity_portrait_path,
     canonical_portrait_path,
     canonical_prop_reference_path,
-    canonical_scene_360_path,
     canonical_scene_master_path,
     canonical_scene_reverse_master_path,
 )
@@ -8842,7 +8849,8 @@ async def create_freezone_audio_voice(
     )
     content = await file.read()
     try:
-        voice = create_user_audio_voice(
+        voice = await asyncio.to_thread(
+            create_user_audio_voice,
             username=username,
             name=name or Path(file.filename or "").stem,
             filename=file.filename,
@@ -8854,6 +8862,81 @@ async def create_freezone_audio_voice(
     voice = _attach_user_voice_media_urls(project, [voice])[0]
 
     return {"ok": True, "data": voice}
+
+
+async def save_generated_freezone_audio_voice(
+    project: str,
+    body: SaveUserVoiceRequest,
+    user: dict = Depends(get_api_user),
+):
+    ctx, _, _, _, _ = await _resolve_freezone_project(project, user)
+    username = ctx.requester_username
+    if not username:
+        raise CandidateStorageError("voice_design_forbidden")
+    storage = VoiceDesignStorage(ctx)
+    request_id, candidate_id = str(body.save_request_id), str(body.candidate_id)
+    identity = {
+        "key": f"{ctx.project_id}/{ctx.requester_user_id}/{request_id}",
+        "candidate_id": candidate_id,
+        "name": body.name,
+    }
+
+    def publish():
+        receipt = storage.receipt(request_id, "account")
+        if receipt and (receipt["candidate_id"], receipt["target"]) != (
+            candidate_id,
+            body.name,
+        ):
+            raise CandidateStorageError("idempotency_conflict")
+        if receipt and receipt["result"] is not None:
+            voice = receipt["result"]
+        else:
+            try:
+                voice = recover_user_audio_voice_save(username, identity)
+                if voice is None:
+                    candidate = _required_candidate(storage, candidate_id)
+                    if candidate["status"] != "ready":
+                        raise CandidateStorageError("candidate_not_ready")
+                    path = storage.output_path(candidate_id)
+                    try:
+                        content = path.read_bytes()
+                    except FileNotFoundError:
+                        raise CandidateStorageError("candidate_audio_missing") from None
+                    if hashlib.sha256(content).hexdigest() != candidate["sha256"]:
+                        raise CandidateStorageError("candidate_persist_failed")
+                    storage.save_receipt(
+                        request_id, candidate_id, "account", body.name, None
+                    )
+                    # The worker completes publication even if its HTTP caller disconnects.
+                    voice = create_user_audio_voice(
+                        username=username,
+                        name=body.name,
+                        filename="candidate.mp3",
+                        content=content,
+                        mime_type="audio/mpeg",
+                        save_identity=identity,
+                    )
+                storage.save_receipt(
+                    request_id, candidate_id, "account", body.name, voice
+                )
+            except (OSError, ValueError):
+                raise CandidateStorageError("save_failed") from None
+        return voice
+
+    async with persistent_voice_lock(storage.db_path.with_suffix(".save.lock")):
+        voice = await run_voice_media_operation(publish)
+
+    return {"ok": True, "data": _attach_user_voice_media_urls(project, [voice])[0]}
+
+
+router.add_api_route(
+    "/projects/{project}/freezone/audio/voices/save-generated",
+    save_generated_freezone_audio_voice,
+    methods=["POST"],
+    response_model=UserVoiceResponse,
+    route_class_override=VoiceDesignRoute,
+    tags=[TAG_FREEZONE_AUDIO],
+)
 
 
 @router.get(

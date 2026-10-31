@@ -424,19 +424,18 @@ def _build_media_model_channel_specs(
         if media_type not in {"image", "video", "audio"}:
             raise ValueError(f"invalid mediaType for media model {model}")
         model_config = dict(item.config)
-        if media_type in {"image", "video"}:
-            model_config.setdefault(
-                "request",
-                {
-                    "endpoint": (
-                        "images/generations"
-                        if media_type == "image"
-                        else "video/generations"
-                    ),
-                    "parameters": [],
-                },
-            )
-            validate_media_model_catalog_config(model_config, media_type)
+        model_config.setdefault(
+            "request",
+            {
+                "endpoint": {
+                    "image": "images/generations",
+                    "video": "video/generations",
+                    "audio": "audio/speech",
+                }[media_type],
+                "parameters": [],
+            },
+        )
+        validate_media_model_catalog_config(model_config, media_type)
         grouped.setdefault(provider, {})[model] = upstream_model
         normalized[model] = {
             "provider": provider,

@@ -9144,5 +9144,45 @@
       "regenerate": "重新生成",
       "generate": "生成"
     }
+  },
+  "voiceDesign": {
+    "resume": "查看生成结果",
+    "saved": "已保存到目标位置，可重新生成试听。",
+    "title": "按描述生成声线",
+    "entry": "按描述生成",
+    "target": "保存位置：{{target}}",
+    "description": "音色描述",
+    "descriptionHint": "描述需要 1～500 个字符。",
+    "previewText": "试听文本",
+    "previewHint": "试听文本需要 15～60 个字符（约 15 秒）。",
+    "name": "音色名称",
+    "generating": "正在生成，关闭弹窗不会取消任务。",
+    "result": "生成结果",
+    "duration": "{{seconds}} 秒",
+    "videoHint": "用于视频参考建议 3～5 秒，保存后可用裁剪缩短。",
+    "expires": "未保存试听有效期至 {{time}}",
+    "expired": "试听已过期，请重新生成。",
+    "check": "查询原任务",
+    "refreshTarget": "刷新保存位置",
+    "price": "本次生成：{{price}} 积分 / 次",
+    "quoteLoading": "正在读取价格与可用性…",
+    "close": "关闭",
+    "generate": "生成试听",
+    "regenerate": "重新生成",
+    "saving": "正在保存…",
+    "saveSlot": "保存到{{slot}}",
+    "replaceTitle": "替换已有声线？",
+    "replaceHint": "该插槽已有声线，替换后旧声线会归档。",
+    "cancel": "取消",
+    "replace": "替换",
+    "play": "播放试听",
+    "retryPlayback": "重试试听",
+    "audioLabel": "生成的试听音频",
+    "errors": {
+      "network": "连接失败，请查询原任务或重试保存。",
+      "invalidResponse": "服务器响应无效，请稍后查询原任务。",
+      "playback": "试听播放失败，请重试试听。"
+    },
+    "saveAccount": "保存到我的音色"
   }
 }

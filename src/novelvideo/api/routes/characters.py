@@ -13,6 +13,17 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, Depends, UploadFile, File, Query
 from fastapi.responses import JSONResponse
 
+from novelvideo.api.routes.voice_design import (
+    SaveCharacterVoiceRequest,
+    VoiceSlot,
+    VoiceDesignRoute,
+    _required_candidate,
+)
+from novelvideo.audio.voice_design_storage import (
+    CandidateStorageError,
+    VoiceDesignStorage,
+)
+
 from novelvideo.api.asset_metadata import newest_updated_at, tree_updated_at
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.upload_workers import (
@@ -76,13 +87,15 @@ from novelvideo.seedance2_i2v.character_voice_storage import (
     AGE_GROUP_SLOTS as VOICE_AGE_GROUP_SLOTS,
     ALL_SLOTS as VOICE_SAMPLE_SLOTS,
     DEFAULT_SLOT as VOICE_DEFAULT_SLOT,
-    character_voice_resource_key,
     clear_character_voice_file,
     decode_recorded_audio_data_url,
     persist_character_voice_file,
     run_voice_media_operation,
     trim_existing_character_voice_file,
-    voice_resource_lock,
+    persistent_voice_lock,
+    CharacterVoiceJournal,
+    character_voice_slot_metadata as _voice_slot_metadata,
+    voice_content_sha256,
 )
 from novelvideo.sqlite_store import SQLiteStore
 
@@ -484,25 +497,6 @@ def _character_asset_links(
     }
 
 
-def _voice_slot_metadata(character, slot: str) -> dict[str, str]:
-    if slot == VOICE_DEFAULT_SLOT:
-        return {
-            "path": getattr(character, "reference_audio_path", "") or "",
-            "sha256": getattr(character, "reference_audio_sha256", "") or "",
-            "updated_at": getattr(character, "reference_audio_updated_at", "") or "",
-        }
-
-    samples = getattr(character, "voice_samples_by_age_group", None) or {}
-    entry = samples.get(slot) if isinstance(samples, dict) else None
-    if not isinstance(entry, dict):
-        return {"path": "", "sha256": "", "updated_at": ""}
-    return {
-        "path": entry.get("path", "") or "",
-        "sha256": entry.get("sha256", "") or "",
-        "updated_at": entry.get("updated_at", "") or "",
-    }
-
-
 def _voice_slot_update_fields(
     character,
     slot: str,
@@ -675,7 +669,12 @@ async def _apply_character_voice_update(
         sha256=sha256,
         updated_at=updated_at,
     )
-    await store.update_character(character.name, **fields)
+    try:
+        await store.update_character(character.name, **fields)
+    except BaseException:
+        db = await store._ensure_db()
+        await db.rollback()
+        raise
     for key, value in fields.items():
         setattr(character, key, value)
     return _voice_slot_payload(
@@ -1336,20 +1335,193 @@ async def list_character_voice_samples(
     user: dict = Depends(get_api_user),
 ):
     """获取角色 IndexTTS2 声线样本插槽。"""
-    ctx, _username, _project_name, project_dir, _output_dir, store = (
-        await _resolve_character_project(project, user, required_role="viewer")
-    )
+    (
+        ctx,
+        _username,
+        _project_name,
+        project_dir,
+        _output_dir,
+        store,
+    ) = await _resolve_character_project(project, user, required_role="viewer")
     character = store.get_character(name)
     if character is None:
         return {"ok": False, "error": f"Character '{name}' not found"}
-    return {
-        "ok": True,
-        "data": _voice_samples_payload(
-            ctx=ctx,
-            project_dir=project_dir,
-            character=character,
-        ),
-    }
+    async with _locked_character_voice(project_dir, character.name, store) as character:
+        return {
+            "ok": True,
+            "data": _voice_samples_payload(
+                ctx=ctx,
+                project_dir=project_dir,
+                character=character,
+            ),
+        }
+
+
+@asynccontextmanager
+async def _locked_character_voice(project_dir, name, store):
+    journal = CharacterVoiceJournal(project_dir, name, state_dir=Path(store.state_dir))
+    async with persistent_voice_lock(journal.path.with_suffix(".lock")):
+        yield await _recover_character_voice(journal, name, store)
+
+
+async def _recover_character_voice(journal, name, store):
+    # SQLiteStore.get_character is a request-local cache, not a database read.
+    fresh = next((c for c in await store.list_characters() if c.name == name), None)
+    if fresh is None:
+        raise CandidateStorageError("character_not_found")
+    cached = store.get_character(name)
+    for field in type(fresh).model_fields:
+        setattr(cached, field, getattr(fresh, field))
+    journal.recover(cached)
+    return cached
+
+
+async def _publish_character_voice(
+    operation,
+    *args,
+    character,
+    finalize,
+    save=None,
+    storage=None,
+    store,
+    worker_limiter=None,
+    **kwargs,
+):
+    journal = CharacterVoiceJournal(
+        kwargs["project_dir"], kwargs["character_name"], state_dir=Path(store.state_dir)
+    )
+    slot = kwargs["slot"]
+
+    def publish():
+        journal.begin(slot, _voice_slot_metadata(character, slot), save)
+        try:
+            result = operation(*args, **kwargs)
+            journal.published(result if isinstance(result, tuple) else ("", "", ""))
+            return result
+        except BaseException:
+            journal.rollback(journal.read())
+            raise
+
+    async def commit(result):
+        try:
+            data = await finalize(result)
+        except BaseException:
+            await _recover_character_voice(journal, character.name, store)
+            raise
+        if save:
+            storage.save_receipt(
+                save["request_id"],
+                save["candidate_id"],
+                "character",
+                save["target"],
+                {k: data[k] for k in ("path", "sha256", "updated_at")},
+            )
+        journal.finish()
+        return data
+
+    return await run_voice_media_operation(
+        publish, finalize=commit, worker_limiter=worker_limiter
+    )
+
+
+async def save_generated_character_voice(
+    project: str,
+    name: str,
+    slot: VoiceSlot,
+    body: SaveCharacterVoiceRequest,
+    user: dict = Depends(get_api_user),
+):
+    ctx, _, _, project_dir, _, store = await _resolve_character_project(project, user)
+    character = store.get_character(name)
+    if character is None:
+        raise CandidateStorageError("character_not_found")
+    storage = VoiceDesignStorage(ctx)
+    candidate_id, request_id = str(body.candidate_id), str(body.save_request_id)
+    target = f"{character.name}/{slot}"
+    # A request ID cannot concurrently publish to two different characters.
+    async with persistent_voice_lock(storage.db_path.with_suffix(".save.lock")):
+        async with _locked_character_voice(
+            project_dir, character.name, store
+        ) as character:
+            current = _voice_slot_metadata(character, slot)
+            receipt = storage.receipt(request_id)
+            if receipt:
+                if (receipt["candidate_id"], receipt["kind"], receipt["target"]) != (
+                    candidate_id,
+                    "character",
+                    target,
+                ):
+                    raise CandidateStorageError("idempotency_conflict")
+                if receipt["result"] is not None and receipt["result"] != current:
+                    raise CandidateStorageError("slot_changed")
+                if receipt["result"] is not None:
+                    return {
+                        "ok": True,
+                        "data": _voice_slot_payload(
+                            ctx=ctx,
+                            project_dir=project_dir,
+                            character=character,
+                            slot=slot,
+                        ),
+                    }
+            candidate = _required_candidate(storage, candidate_id)
+            if candidate["status"] != "ready":
+                raise CandidateStorageError("candidate_not_ready")
+            if current != body.expected_slot.model_dump():
+                raise CandidateStorageError("slot_changed")
+            if current["path"] and not body.replace_existing:
+                raise CandidateStorageError("slot_occupied")
+            path = storage.output_path(candidate_id)
+            if not path.exists():
+                raise CandidateStorageError("candidate_audio_missing")
+            content = path.read_bytes()
+            if voice_content_sha256(content) != candidate["sha256"]:
+                raise CandidateStorageError("candidate_persist_failed")
+
+            async def finalize(result):
+                rel_path, sha256, updated_at = result
+                return await _apply_character_voice_update(
+                    ctx=ctx,
+                    project_dir=project_dir,
+                    character=character,
+                    store=store,
+                    slot=slot,
+                    path=rel_path,
+                    sha256=sha256,
+                    updated_at=updated_at,
+                )
+
+            storage.save_receipt(request_id, candidate_id, "character", target, None)
+            data = await _publish_character_voice(
+                persist_character_voice_file,
+                project_dir=project_dir,
+                character_name=character.name,
+                slot=slot,
+                filename="candidate.mp3",
+                content=content,
+                character=character,
+                store=store,
+                finalize=finalize,
+                storage=storage,
+                save={
+                    "request_id": request_id,
+                    "candidate_id": candidate_id,
+                    "target": target,
+                    "project_id": ctx.project_id,
+                    "user_id": ctx.requester_user_id,
+                    "state_dir": str(ctx.state_dir),
+                    "runtime_dir": str(ctx.runtime_dir),
+                },
+            )
+            return {"ok": True, "data": data}
+
+
+router.add_api_route(
+    "/projects/{project}/characters/{name}/voice-samples/{slot}/save-generated",
+    save_generated_character_voice,
+    methods=["POST"],
+    route_class_override=VoiceDesignRoute,
+)
 
 
 @router.post("/projects/{project}/characters/{name}/voice-samples/{slot}/upload")
@@ -1361,9 +1533,14 @@ async def upload_character_voice_sample(
     user: dict = Depends(get_api_user),
 ):
     """上传角色 IndexTTS2 声线样本。"""
-    ctx, _username, _project_name, project_dir, _output_dir, store = (
-        await _resolve_character_project(project, user)
-    )
+    (
+        ctx,
+        _username,
+        _project_name,
+        project_dir,
+        _output_dir,
+        store,
+    ) = await _resolve_character_project(project, user)
     character = store.get_character(name)
     if character is None:
         return {"ok": False, "error": f"Character '{name}' not found"}
@@ -1386,17 +1563,15 @@ async def upload_character_voice_sample(
         )
 
     try:
-        key = character_voice_resource_key(
-            project_dir=project_dir, character_name=name, slot=slot
-        )
-        async with voice_resource_lock(key):
-            data = await run_voice_media_operation(
+        async with _locked_character_voice(project_dir, character.name, store) as character:
+            data = await _publish_character_voice(
                 _persist_uploaded_character_voice,
                 file,
                 project_dir=project_dir,
-                character_name=name,
+                character_name=character.name,
                 slot=slot,
                 filename=filename,
+                character=character, store=store,
                 finalize=finalize_voice_update,
             )
     except ValueError as exc:
@@ -1437,16 +1612,14 @@ async def record_character_voice_sample(
         )
 
     try:
-        key = character_voice_resource_key(
-            project_dir=project_dir, character_name=name, slot=slot
-        )
-        async with voice_resource_lock(key):
-            data = await run_voice_media_operation(
+        async with _locked_character_voice(project_dir, character.name, store) as character:
+            data = await _publish_character_voice(
                 _persist_recorded_character_voice,
                 body.data_url,
                 project_dir=project_dir,
-                character_name=name,
+                character_name=character.name,
                 slot=slot,
+                character=character, store=store,
                 finalize=finalize_voice_update,
             )
     except ValueError as exc:
@@ -1487,18 +1660,16 @@ async def trim_character_voice_sample(
         )
 
     try:
-        key = character_voice_resource_key(
-            project_dir=project_dir, character_name=name, slot=slot
-        )
-        async with voice_resource_lock(key):
-            data = await run_voice_media_operation(
+        async with _locked_character_voice(project_dir, character.name, store) as character:
+            data = await _publish_character_voice(
                 trim_existing_character_voice_file,
                 project_dir=project_dir,
-                character_name=name,
+                character_name=character.name,
                 slot=slot,
                 source_path=body.source_path,
                 start_seconds=body.start_seconds,
                 duration_seconds=body.duration_seconds,
+                character=character, store=store,
                 finalize=finalize_voice_update,
             )
     except ValueError as exc:
@@ -1536,15 +1707,13 @@ async def delete_character_voice_sample(
             updated_at="",
         )
 
-    key = character_voice_resource_key(
-        project_dir=project_dir, character_name=name, slot=slot
-    )
-    async with voice_resource_lock(key):
-        data = await run_voice_media_operation(
+    async with _locked_character_voice(project_dir, character.name, store) as character:
+        data = await _publish_character_voice(
             clear_character_voice_file,
             project_dir=project_dir,
-            character_name=name,
+            character_name=character.name,
             slot=slot,
+            character=character, store=store,
             finalize=finalize_voice_delete,
             worker_limiter=metadata_io_limiter(),
         )

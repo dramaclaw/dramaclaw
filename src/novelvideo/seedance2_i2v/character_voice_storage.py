@@ -11,18 +11,21 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import os
+from contextlib import asynccontextmanager
 import json
 import re
 import shutil
 import subprocess
 import tempfile
 import weakref
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import anyio
+import portalocker
 from anyio.lowlevel import RunVar
 
 from novelvideo.utils.async_ops import run_sync_bounded
@@ -446,6 +449,15 @@ def project_relative_path(project_dir: str | Path, path: str | Path) -> str:
     return Path(path).resolve().relative_to(Path(project_dir).resolve()).as_posix()
 
 
+def _archive_voice_file(path: Path) -> None:
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+    archive = path.with_name(f"{path.stem}_{timestamp}{path.suffix}")
+    while archive.exists():
+        timestamp += 1
+        archive = path.with_name(f"{path.stem}_{timestamp}{path.suffix}")
+    path.replace(archive)
+
+
 def persist_character_voice_file(
     *,
     project_dir: str | Path,
@@ -472,13 +484,16 @@ def persist_character_voice_file(
         filename=filename,
     )
     target.parent.mkdir(parents=True, exist_ok=True)
-    ts = int(datetime.now(timezone.utc).timestamp())
     for ext in VOICE_SAMPLE_EXTENSIONS:
         sibling = target.with_suffix(ext)
         if sibling.exists():
-            backup_name = f"{sibling.stem}_{ts}{sibling.suffix}"
-            sibling.replace(sibling.with_name(backup_name))
-    target.write_bytes(content)
+            _archive_voice_file(sibling)
+    staged = target.with_name(target.name + ".tmp")
+    with staged.open("wb") as stream:
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+    staged.replace(target)
 
     rel_path = project_relative_path(project_dir, target)
     return rel_path, voice_content_sha256(content), utc_now_iso()
@@ -530,11 +545,209 @@ def clear_character_voice_file(
     if not voices_dir.exists():
         return False
     stem = "voice_default" if slot == DEFAULT_SLOT else f"voice_{slot}"
-    ts = int(datetime.now(timezone.utc).timestamp())
     removed = False
     for ext in VOICE_SAMPLE_EXTENSIONS:
         candidate = voices_dir / f"{stem}{ext}"
         if candidate.exists():
-            candidate.replace(candidate.with_name(f"{candidate.stem}_{ts}{candidate.suffix}"))
+            _archive_voice_file(candidate)
             removed = True
     return removed
+
+
+@asynccontextmanager
+async def persistent_voice_lock(path: Path) -> AsyncIterator[None]:
+    """Serialize workers without blocking the event loop while waiting."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as lock:
+        try:
+            while True:
+                try:
+                    portalocker.lock(lock, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                    break
+                except portalocker.exceptions.AlreadyLocked:
+                    await asyncio.sleep(0.01)
+            try:
+                yield
+            finally:
+                portalocker.unlock(lock)
+        except portalocker.exceptions.LockException as exc:
+            raise OSError("character voice storage lock failed") from exc
+
+
+def character_voice_slot_metadata(character, slot: str) -> dict[str, str]:
+    if slot == DEFAULT_SLOT:
+        return {
+            "path": getattr(character, "reference_audio_path", "") or "",
+            "sha256": getattr(character, "reference_audio_sha256", "") or "",
+            "updated_at": getattr(character, "reference_audio_updated_at", "") or "",
+        }
+
+    samples = getattr(character, "voice_samples_by_age_group", None) or {}
+    entry = samples.get(slot) if isinstance(samples, dict) else None
+    if not isinstance(entry, dict):
+        return {"path": "", "sha256": "", "updated_at": ""}
+    return {
+        "path": entry.get("path", "") or "",
+        "sha256": entry.get("sha256", "") or "",
+        "updated_at": entry.get("updated_at", "") or "",
+    }
+
+
+class CharacterVoiceJournal:
+    """Recover a file publication by comparing its intended binding with SQLite.
+
+    The journal is installed before touching any slot file. A committed binding
+    rolls forward; otherwise the exact previous directory contents are restored.
+    Callers hold the character's persistent lock for the entire operation.
+    """
+
+    def __init__(self, project_dir: Path, character_name: str, *, state_dir: Path):
+        self.character_name = character_name
+        self.project_dir = Path(project_dir).resolve()
+        self.state_dir = Path(state_dir).resolve()
+        self.directory = character_voice_path(
+            project_dir=project_dir,
+            character_name=character_name,
+            slot="default",
+            filename="voice.mp3",
+        ).parent
+        key = hashlib.sha256(str(self.directory.resolve()).encode()).hexdigest()
+        self.path = state_dir / "character-voice-publications" / f"{key}.json"
+
+    def read(self) -> dict[str, Any] | None:
+        if not self.path.exists():
+            return None
+        record = json.loads(self.path.read_text())
+        if (
+            record["character_name"] != self.character_name
+            or Path(record["project_dir"]).resolve() != self.project_dir
+            or record["slot"] not in ALL_SLOTS
+        ):
+            raise ValueError(
+                "Character voice journal does not match its project/character"
+            )
+        save = record.get("save")
+        if save and (
+            Path(save["state_dir"]).resolve() != self.state_dir
+            or save["target"] != f"{self.character_name}/{record['slot']}"
+        ):
+            raise ValueError("Character voice receipt does not match its journal")
+        return record
+
+    def write(self, record: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        staged = self.path.with_suffix(".tmp")
+        with staged.open("w") as stream:
+            json.dump(record, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        staged.replace(self.path)
+
+    def begin(self, slot: str, metadata: dict, save: dict | None = None) -> None:
+        names = [p.name for p in self.directory.glob(f"voice_{slot}*") if p.is_file()]
+        files = {
+            name: base64.b64encode((self.directory / name).read_bytes()).decode()
+            for name in names
+            if name in {f"voice_{slot}{ext}" for ext in VOICE_SAMPLE_EXTENSIONS}
+        }
+        self.write(
+            {
+                "slot": slot,
+                "character_name": self.character_name,
+                "project_dir": str(self.project_dir),
+                "before": metadata,
+                "files": files,
+                "existing_names": names,
+                "save": save,
+            }
+        )
+
+    def published(self, result: tuple[str, str, str]) -> None:
+        record = self.read()
+        record["after"] = dict(zip(("path", "sha256", "updated_at"), result))
+        self.write(record)
+
+    def rollback(self, record: dict) -> None:
+        for path in self.directory.glob(f"voice_{record['slot']}*"):
+            if path.is_file() and path.name not in record["existing_names"]:
+                path.unlink()
+        for name, content in record["files"].items():
+            (self.directory / name).write_bytes(base64.b64decode(content))
+        self.finish()
+
+    def recover(self, character: Any) -> None:
+        record = self.read()
+        if record is None:
+            return
+        current = character_voice_slot_metadata(character, record["slot"])
+        if record.get("after") != current:
+            self.rollback(record)
+            return
+        save = record.get("save")
+        if save:
+            from novelvideo.audio.voice_design_storage import (
+                CandidateScope,
+                VoiceDesignStorage,
+            )
+
+            storage = VoiceDesignStorage(
+                CandidateScope(
+                    save["project_id"],
+                    save["user_id"],
+                    self.state_dir,
+                    Path(save["runtime_dir"]),
+                )
+            )
+            storage.save_receipt(
+                save["request_id"],
+                save["candidate_id"],
+                "character",
+                save["target"],
+                current,
+            )
+        self.finish()
+
+    def finish(self) -> None:
+        self.path.unlink(missing_ok=True)
+
+
+async def recover_character_voice_publications(
+    *,
+    project_dir: Path,
+    state_dir: Path,
+    connection: Any,
+) -> None:
+    """Recover before exposing a new project connection to any consumer.
+
+    Use the already-open connection directly: querying through a store factory
+    here would recurse into initialization while holding a publication lock.
+    """
+    from novelvideo.models import NovelCharacter
+
+    directory = state_dir / "character-voice-publications"
+    for path in directory.glob("*.json"):
+        async with persistent_voice_lock(path.with_suffix(".lock")):
+            if not path.exists():
+                continue
+            name = json.loads(path.read_text())["character_name"]
+            journal = CharacterVoiceJournal(project_dir, name, state_dir=state_dir)
+            if journal.path.resolve() != path.resolve():
+                raise ValueError(
+                    "Character voice journal filename does not match its character"
+                )
+            fields = (
+                "reference_audio_path",
+                "reference_audio_sha256",
+                "reference_audio_updated_at",
+                "voice_samples_by_age_group_json",
+            )
+            async with connection.execute(
+                "SELECT " + ",".join(fields) + " FROM characters WHERE name=?",
+                (name,),
+            ) as cursor:
+                row = await cursor.fetchone()
+            if row is None:
+                raise ValueError(
+                    "Character voice journal references a missing character"
+                )
+            journal.recover(NovelCharacter(name=name, **dict(zip(fields, row))))
