@@ -27,13 +27,11 @@ from voice_design import digest, require_local, write_json
 ALL_CASES = tuple(f"U{number:02}" for number in range(1, 13))
 
 
-def login(context: BrowserContext, base_url: str, admin_url: str) -> None:
+def login(context: BrowserContext, base_url: str) -> None:
     # Normal login endpoints establish HttpOnly cookies. The profile marker is
     # the same optimistic routing state written by the login forms, not a token.
     username = os.environ.get("VOICE_DESIGN_TEST_USERNAME", "")
     password = os.environ.get("VOICE_DESIGN_TEST_PASSWORD", "")
-    admin_username = os.environ.get("VOICE_DESIGN_TEST_ADMIN_USERNAME", "")
-    admin_password = os.environ.get("VOICE_DESIGN_TEST_ADMIN_PASSWORD", "")
     if username and password:
         response = context.request.post(f"{base_url}/api/v1/auth/login", data={"username": username, "password": password})
         if response.status != 200:
@@ -41,12 +39,6 @@ def login(context: BrowserContext, base_url: str, admin_url: str) -> None:
         profile = response.json()["data"]
         marker = {"username": profile["username"], "displayName": profile["username"], "role": profile["role"]}
         context.add_init_script("localStorage.setItem('supertale-auth', " + json.dumps(json.dumps({"state": marker, "version": 0})) + ")")
-    if admin_username and admin_password:
-        response = context.request.post(f"{admin_url}/auth/login", data={"username": admin_username, "password": admin_password})
-        if response.status != 200:
-            raise RuntimeError(f"admin login HTTP {response.status}")
-        marker = {"user": response.json()["data"]}
-        context.add_init_script("localStorage.setItem('supertale-admin-auth', " + json.dumps(json.dumps({"state": marker, "version": 0})) + ")")
 
 
 def prepare_fixtures(context: BrowserContext, args: argparse.Namespace) -> dict:
@@ -91,8 +83,8 @@ def prepare_fixtures(context: BrowserContext, args: argparse.Namespace) -> dict:
 def run_u12(browser, args):
     """Exercise local platform/organization pricing without any generation request.
 
-    Needs the existing script's login(context, base_url, admin_base_url) helper.
-    Uses only base_url, admin_base_url, artifacts_dir and platform login env vars.
+    Uses a supplied browser storage state for the platform session.
+    Organization and member sessions start without inherited browser state.
     Every invocation creates its own organization, users, and projects.
     The global feature price is restored in finally; caller coordinates its window.
     """
@@ -142,7 +134,10 @@ def run_u12(browser, args):
         return response.json() if response.body() else None
 
     def new_context(username=None):
-        context = browser.new_context(locale="zh-CN", viewport={"width": 1400, "height": 1100})
+        context = browser.new_context(
+            locale="zh-CN", viewport={"width": 1400, "height": 1100},
+            storage_state=args.storage_state if username is None else None,
+        )
         contexts.append(context)
 
         def guard(route):
@@ -156,17 +151,12 @@ def run_u12(browser, args):
         names = (
             "VOICE_DESIGN_TEST_USERNAME",
             "VOICE_DESIGN_TEST_PASSWORD",
-            "VOICE_DESIGN_TEST_ADMIN_USERNAME",
-            "VOICE_DESIGN_TEST_ADMIN_PASSWORD",
         )
         previous = {name: os.environ.get(name) for name in names}
         try:
             os.environ["VOICE_DESIGN_TEST_USERNAME"] = username or ""
             os.environ["VOICE_DESIGN_TEST_PASSWORD"] = password if username else ""
-            if username:
-                os.environ["VOICE_DESIGN_TEST_ADMIN_USERNAME"] = ""
-                os.environ["VOICE_DESIGN_TEST_ADMIN_PASSWORD"] = ""
-            login(context, base, admin_base)
+            login(context, base)
         finally:
             for name, value in previous.items():
                 if value is None:
@@ -968,7 +958,7 @@ def main() -> int:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=not args.headed)
         context = browser.new_context(locale="zh-CN", viewport={"width": 1280, "height": 900}, storage_state=args.storage_state)
-        login(context, args.base_url, args.admin_base_url)
+        login(context, args.base_url)
         acceptance = Acceptance(context.new_page(), args)
         fixtures = prepare_fixtures(context, args) if args.prepare_fixtures else {"project": args.project, "character": args.character}
         for case in args.cases:
