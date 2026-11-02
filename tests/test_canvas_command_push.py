@@ -163,8 +163,13 @@ async def test_hub_recovers_commit_without_notification(tmp_path, monkeypatch):
     from novelvideo.freezone.canvas_command_watch import BridgeWatchHub
 
     hub = BridgeWatchHub(reconcile_seconds=0.15)
+    async def no_native_notifications():
+        await asyncio.Event().wait()
+
+    # Exercise periodic reconciliation without native startup/rebuild scans.
+    monkeypatch.setattr(hub, "_watch", no_native_notifications)
     async with hub.subscribe([tmp_path]):
-        await asyncio.sleep(0.4)
+        await eventually(lambda: hub.metrics["reads"] >= 1)
         monkeypatch.setattr(bridge, "_notify_bridge", lambda *_: None)
         # No compatibility file event either: simulate death between commit and notify.
         bridge._put_pending_bridge_message(
