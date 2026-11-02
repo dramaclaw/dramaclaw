@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -627,63 +627,68 @@ function VoicePreview({
   const audio = useRef<HTMLAudioElement>(null);
   const url = useRef<string | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const onExpiredRef = useRef(onExpired);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  useEffect(
-    () => () => {
-      abort.current?.abort();
-      if (url.current) URL.revokeObjectURL(url.current);
-    },
-    [],
-  );
   useEffect(() => {
-    if (disabled) {
+    onExpiredRef.current = onExpired;
+  }, [onExpired]);
+  const load = useCallback(
+    async (playAfterLoad: boolean) => {
+      if (disabled) return;
       abort.current?.abort();
-      audio.current?.pause();
-      audio.current?.removeAttribute("src");
-      if (url.current) URL.revokeObjectURL(url.current);
-      url.current = null;
-    }
-  }, [disabled]);
-  const play = async () => {
-    if (disabled || loading) return;
-    setLoading(true);
-    setError("");
-    abort.current = new AbortController();
-    try {
-      if (!url.current) {
-        const blob = await fetchVoiceDesignAudio(
-          ready.preview_url,
-          abort.current.signal,
-        );
-        if (abort.current.signal.aborted) return;
-        url.current = URL.createObjectURL(blob);
-      }
-      if (audio.current) {
-        audio.current.src = url.current;
-        await audio.current.play();
-      }
-    } catch (error) {
-      if (
-        error instanceof VoiceDesignApiError &&
-        error.code === "candidate_expired"
-      )
-        onExpired();
-      if (!abort.current.signal.aborted)
+      const controller = new AbortController();
+      abort.current = controller;
+      setLoading(true);
+      setError("");
+      try {
+        if (!url.current) {
+          const blob = await fetchVoiceDesignAudio(
+            ready.preview_url,
+            controller.signal,
+          );
+          if (controller.signal.aborted) return;
+          url.current = URL.createObjectURL(blob);
+          if (audio.current) audio.current.src = url.current;
+        }
+        if (playAfterLoad && audio.current) {
+          await audio.current.play();
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if (
+          error instanceof VoiceDesignApiError &&
+          error.code === "candidate_expired"
+        )
+          onExpiredRef.current();
         setError(
           error instanceof VoiceDesignApiError
             ? error.message
             : "voiceDesign.errors.playback",
         );
-    } finally {
-      setLoading(false);
-    }
-  };
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    },
+    [disabled, ready.preview_url],
+  );
+  useEffect(() => {
+    const element = audio.current;
+    void load(false);
+    return () => {
+      abort.current?.abort();
+      element?.pause();
+      element?.removeAttribute("src");
+      if (url.current) URL.revokeObjectURL(url.current);
+      url.current = null;
+    };
+  }, [load]);
   return (
     <>
       <audio
         ref={audio}
         controls
+        preload="metadata"
         aria-label={t("voiceDesign.audioLabel")}
         className="h-10 w-full min-w-0"
         onError={() => {
@@ -694,7 +699,7 @@ function VoicePreview({
       />
       <Button
         variant="outline"
-        onClick={() => void play()}
+        onClick={() => void load(true)}
         disabled={disabled || loading}
       >
         {t(error ? "voiceDesign.retryPlayback" : "voiceDesign.play")}

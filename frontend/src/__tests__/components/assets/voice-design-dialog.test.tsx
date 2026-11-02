@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import i18next from "i18next";
 import { delay, http, HttpResponse } from "msw";
@@ -101,6 +101,7 @@ beforeEach(() => {
   );
 });
 afterEach(() => {
+  cleanup();
   server.resetHandlers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -148,6 +149,100 @@ async function generate() {
   fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
   await screen.findByText("8.4 秒");
 }
+it("loads the preview before playback without autoplay or a second audio fetch", async () => {
+  let reads = 0;
+  server.use(
+    http.get(`${base}/candidates/:id/audio`, () => {
+      reads++;
+      return new HttpResponse(new Uint8Array([1, 2]), {
+        headers: { "Content-Type": "audio/mpeg" },
+      });
+    }),
+  );
+  mount();
+  await generate();
+  await waitFor(() =>
+    expect(screen.getByLabelText("生成的试听音频")).toHaveAttribute(
+      "src",
+      "blob:test",
+    ),
+  );
+  expect(reads).toBe(1);
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "播放试听" }));
+  await waitFor(() =>
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledOnce(),
+  );
+  expect(reads).toBe(1);
+  expect(creations).toBe(1);
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:test");
+});
+it("retries a failed preview preload without creating another candidate", async () => {
+  let reads = 0;
+  server.use(
+    http.get(`${base}/candidates/:id/audio`, () => {
+      reads++;
+      return reads === 1
+        ? HttpResponse.json({ error: "bad" }, { status: 502 })
+        : new HttpResponse(new Uint8Array([1, 2]), {
+            headers: { "Content-Type": "audio/mpeg" },
+          });
+    }),
+  );
+  mount();
+  await generate();
+  const retry = await screen.findByRole("button", { name: "重试试听" });
+  await waitFor(() => expect(retry).toBeEnabled());
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  fireEvent.click(retry);
+  await waitFor(() =>
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledOnce(),
+  );
+  expect(reads).toBe(2);
+  expect(creations).toBe(1);
+  expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
+});
+it("cancels a pending preview on close and reloads it on reopen", async () => {
+  let reads = 0;
+  let pendingSignal: AbortSignal | undefined;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  server.use(
+    http.get(`${base}/candidates/:id/audio`, async ({ request }) => {
+      reads++;
+      if (reads === 1) {
+        pendingSignal = request.signal;
+        await gate;
+      }
+      return new HttpResponse(new Uint8Array([1, 2]), {
+        headers: { "Content-Type": "audio/mpeg" },
+      });
+    }),
+  );
+  try {
+    mount();
+    await generate();
+    await waitFor(() => expect(reads).toBe(1));
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    await waitFor(() => expect(pendingSignal?.aborted).toBe(true));
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "打开" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("生成的试听音频")).toHaveAttribute("src", "blob:test"),
+    );
+    release();
+    await delay(0);
+    expect(reads).toBe(2);
+    expect(URL.createObjectURL).toHaveBeenCalledOnce();
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+    expect(creations).toBe(1);
+  } finally {
+    release();
+  }
+});
 it("requires Unicode lengths and shows actual quote; retains draft on reopen", async () => {
   mount();
   expect(screen.getByRole("button", { name: "保存到默认" })).toBeDisabled();
@@ -188,8 +283,6 @@ it("confirms occupied slot, cancel sends nothing, confirmed save uses snapshot",
 it.each(["fetch", "element", "play"])(
   "retains inputs after generation and playback failures: %s",
   async (mode) => {
-    mount();
-    await generate();
     if (mode === "fetch")
       server.use(
         http.get(`${base}/candidates/:id/audio`, () =>
@@ -200,7 +293,13 @@ it.each(["fetch", "element", "play"])(
       vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValue(
         new Error("blocked"),
       );
-    fireEvent.click(screen.getByRole("button", { name: "播放试听" }));
+    mount();
+    await generate();
+    if (mode !== "fetch") {
+      const play = screen.getByRole("button", { name: "播放试听" });
+      await waitFor(() => expect(play).toBeEnabled());
+      fireEvent.click(play);
+    }
     if (mode === "element") {
       await waitFor(() =>
         expect(HTMLMediaElement.prototype.play).toHaveBeenCalled(),
@@ -468,9 +567,7 @@ it("requires refresh after slot conflict before another save", async () => {
     expect(screen.getByRole("button", { name: "保存到默认" })).toBeEnabled(),
   );
 });
-it("server expiry on playback prevents saving and preserves text", async () => {
-  mount();
-  await generate();
+it("server expiry while loading the preview prevents saving and preserves text", async () => {
   server.use(
     http.get(`${base}/candidates/:id/audio`, () =>
       HttpResponse.json(
@@ -485,7 +582,8 @@ it("server expiry on playback prevents saving and preserves text", async () => {
       ),
     ),
   );
-  fireEvent.click(screen.getByRole("button", { name: "播放试听" }));
+  mount();
+  await generate();
   await screen.findByText("试听已过期，请重新生成。");
   expect(screen.getByRole("button", { name: "保存到默认" })).toBeDisabled();
   expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
