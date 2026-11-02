@@ -43,6 +43,26 @@ def _set_run_timestamps(
         )
 
 
+def test_run_list_batches_actions_without_per_run_queries(tmp_path):
+    from novelvideo.freezone.workflow_runs import _list_runs_in_transaction
+
+    expected = []
+    for index in range(3):
+        run = create_workflow_run(
+            project_dir=tmp_path, project_id="project-a", canvas_id="default",
+            actions=[{"node_id": f"image-{index}", "action": "generate_image"}], actor_id="alice",
+        )
+        expected.append(run["run_id"])
+    statements = []
+    with sqlite3.connect(workflow_runs_db_path(tmp_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.set_trace_callback(statements.append)
+        runs = _list_runs_in_transaction(conn, canvas_id="default")
+    assert {run["run_id"] for run in runs} == set(expected)
+    assert all(len(run["actions"]) == 1 for run in runs)
+    assert len(statements) == 2
+
+
 def test_workflow_run_tracks_actions_and_completion(tmp_path: Path) -> None:
     run = create_workflow_run(
         project_dir=tmp_path,

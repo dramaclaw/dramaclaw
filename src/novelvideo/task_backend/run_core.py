@@ -387,14 +387,19 @@ async def _confirm_feature_credit_reservation(
     reservation_id: str,
     *,
     metadata: dict[str, Any] | None = None,
-) -> None:
+) -> bool:
     if not reservation_id:
-        return
+        return False
     try:
-        await get_usage_meter().settle_feature_credit_reservation(
+        settlement = await get_usage_meter().settle_feature_credit_reservation(
             reservation_id,
             action="confirm",
             metadata=metadata,
+        )
+        return (
+            isinstance(settlement, dict)
+            and settlement.get("status") in {"pending", "completed"}
+            and settlement.get("action") in {None, "confirm"}
         )
     except FeatureCreditSettlementConflict as exc:
         logger.warning(
@@ -414,6 +419,7 @@ async def _confirm_feature_credit_reservation(
                 "error_id": uuid.uuid4().hex,
             },
         )
+    return False
 
 
 async def _refund_feature_credit_reservation(
@@ -1233,7 +1239,7 @@ def run_project_task_core_sync(
                 # fail after an asset has already been durably saved.
                 completion_error = exc
 
-            asyncio.run(
+            credit_confirmed = asyncio.run(
                 _confirm_feature_credit_reservation(
                     feature_reservation_id,
                     metadata={
@@ -1243,6 +1249,25 @@ def run_project_task_core_sync(
                     },
                 )
             )
+            if credit_confirmed and task_type in {
+                "freezone_agent_recipe_result",
+                "freezone_agent_workflow_result",
+            }:
+                try:
+                    manager.update_task_metadata_for_project(
+                        ctx,
+                        task_type,
+                        episode,
+                        beat_num=beat_num,
+                        scope=scope,
+                        expected_task_id=run_task_id,
+                        metadata={
+                            "feature_credit_confirmed_reservation_id": feature_reservation_id,
+                        },
+                    )
+                except Exception:
+                    # The durable delivery remains recoverable by polling.
+                    logger.warning("Product credit confirmation marker deferred", exc_info=True)
             if completion_error is not None:
                 raise completion_error
             asyncio.run(

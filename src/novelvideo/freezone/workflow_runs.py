@@ -475,6 +475,10 @@ def _read_run(
         """,
         (run_id,),
     ).fetchall()
+    return _run_from_rows(row, action_rows)
+
+
+def _run_from_rows(row: sqlite3.Row, action_rows: list[sqlite3.Row]) -> dict[str, Any]:
     return {
         "schema_version": row["schema_version"],
         "run_id": row["run_id"],
@@ -614,17 +618,22 @@ def _list_runs_in_transaction(
         placeholders = ",".join("?" for _ in statuses)
         where += f" AND status IN ({placeholders})"
         parameters.extend(sorted(statuses))
-    sql = f"SELECT run_id FROM workflow_runs WHERE {where} ORDER BY created_at DESC"
+    sql = f"SELECT * FROM workflow_runs WHERE {where} ORDER BY created_at DESC"
     if limit > 0:
         sql += " LIMIT ?"
         parameters.append(limit)
     rows = conn.execute(sql, parameters).fetchall()
-    return [
-        run
-        for row in rows
-        if (run := _read_run(conn, canvas_id=canvas_id, run_id=row["run_id"]))
-        is not None
-    ]
+    actions_by_run: dict[str, list[sqlite3.Row]] = {}
+    for offset in range(0, len(rows), 200):
+        run_ids = [row["run_id"] for row in rows[offset : offset + 200]]
+        placeholders = ",".join("?" for _ in run_ids)
+        for action in conn.execute(
+            "SELECT * FROM workflow_run_actions "
+            f"WHERE run_id IN ({placeholders}) ORDER BY run_id, sequence_no ASC",
+            run_ids,
+        ):
+            actions_by_run.setdefault(action["run_id"], []).append(action)
+    return [_run_from_rows(row, actions_by_run.get(row["run_id"], [])) for row in rows]
 
 
 def _normalize_actions(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1313,6 +1322,55 @@ def list_workflow_runs(
     _validate_scope(canvas_id)
     with _connect(project_dir) as conn:
         return _list_runs_in_transaction(conn, canvas_id=canvas_id, limit=limit)
+
+
+def workflow_task_keys(
+    *, project_dir: Path, canvas_id: str, generation_history: list[dict[str, Any]]
+) -> set[str]:
+    """Collect linked keys before batching, including taskless late delivery.
+
+    No response limit: older/cancelled runs can still have delivery obligations.
+    History candidates must match the operation, attempt, node and media type.
+    The delivery reconciler remains responsible for choosing an unambiguous key.
+    """
+    _validate_scope(canvas_id)
+    with _connect(project_dir) as conn:
+        actions = conn.execute(
+            "SELECT a.task_key, a.product_operation_id, a.generation_attempt_id, "
+            "a.node_id, a.action FROM workflow_run_actions a "
+            "JOIN workflow_runs r ON r.run_id = a.run_id WHERE r.canvas_id = ?",
+            (canvas_id,),
+        ).fetchall()
+    keys = {str(action["task_key"]).strip() for action in actions if action["task_key"]}
+    missing = {
+        (
+            action["product_operation_id"],
+            action["generation_attempt_id"],
+            action["node_id"],
+        ): action["action"]
+        for action in actions
+        if action["product_operation_id"] and not str(action["task_key"] or "").strip()
+    }
+    expected_types = {
+        "generate_image": {"freezone_gen"},
+        "generate_video": {"freezone_video_gen"},
+        "generate_text_video": {"freezone_video_gen"},
+        "generate_audio": {"freezone_audio_speech", "freezone_audio_eleven_music"},
+    }
+    for record in generation_history:
+        if not isinstance(record, dict) or record.get("status") != "completed":
+            continue
+        action = missing.get(
+            (
+                str(record.get("product_operation_id") or "").strip(),
+                str(record.get("generation_attempt_id") or "").strip(),
+                str(record.get("node_id") or "").strip(),
+            )
+        )
+        key = str(record.get("task_key") or "").strip()
+        if key and record.get("task_type") in expected_types.get(action, set()):
+            keys.add(key)
+    return keys
 
 
 def prune_workflow_runs(
