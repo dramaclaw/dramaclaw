@@ -29,6 +29,14 @@ vi.mock("react-i18next", () => ({
 vi.mock("@/stores/auth-store", () => ({
   useAuthStore: (select: (state: { username: string }) => unknown) => select({ username: "AAA" }),
 }));
+vi.mock("@/lib/queries/product-surfaces", async (original) => ({
+  ...await original<typeof import("@/lib/queries/product-surfaces")>(),
+  useProductSurfaces: () => ({
+    data: { data: { items: [{ surface_code: "payment", available: true }] } },
+    isPending: false,
+    isError: false,
+  }),
+}));
 vi.mock("@/lib/queries/credits", async (original) => ({
   ...await original<typeof import("@/lib/queries/credits")>(),
   useCreditSummary: () => ({

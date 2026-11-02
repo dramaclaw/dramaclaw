@@ -127,6 +127,12 @@ export interface MediaRelayConfig {
   cloudinaryApiSecretPreview?: string;
   apiFolder?: string;
   configured: boolean;
+  s3Endpoint?: string;
+  s3Bucket?: string;
+  s3Region?: string;
+  s3PathStyle?: boolean;
+  s3AccessKeyIdPreview?: string;
+  s3AccessKeySecretPreview?: string;
 }
 
 export interface ModelGatewayConfig {
@@ -276,7 +282,7 @@ export interface SaveEmbeddingModelInput {
 }
 
 export interface SaveMediaRelayConfigInput {
-  provider: "aliyun_oss" | "cloudinary";
+  provider: "aliyun_oss" | "cloudinary" | "s3";
   ttlSeconds: number;
   endpoint?: string;
   bucket?: string;
@@ -286,6 +292,12 @@ export interface SaveMediaRelayConfigInput {
   apiKey?: string;
   apiSecret?: string;
   apiFolder?: string;
+  s3Endpoint?: string;
+  s3Bucket?: string;
+  s3AccessKeyId?: string;
+  s3AccessKeySecret?: string;
+  s3Region?: string;
+  s3PathStyle?: boolean;
 }
 
 export interface SaveCustomChannelsBatchInput {

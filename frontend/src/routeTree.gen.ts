@@ -21,6 +21,7 @@ import { Route as WatchWorkRouteImport } from './routes/watch.$work'
 import { Route as AppPaymentReturnRouteImport } from './routes/_app/payment-return'
 import { Route as AppCreditsRouteImport } from './routes/_app/credits'
 import { Route as AppAccessUnavailableRouteImport } from './routes/_app/access-unavailable'
+import { Route as TermsSubscriptionAgreementIdVersionRouteImport } from './routes/terms.subscription.$agreementId.$version'
 import { Route as AppProjectsProjectTasksRouteImport } from './routes/_app/projects.$project/tasks'
 import { Route as AppProjectsProjectStylesRouteImport } from './routes/_app/projects.$project/styles'
 import { Route as AppProjectsProjectIngestRouteImport } from './routes/_app/projects.$project/ingest'
@@ -139,6 +140,12 @@ const AppProjectsProjectCharactersLazyRoute =
       (d) => d.Route,
     ),
   )
+const TermsSubscriptionAgreementIdVersionRoute =
+  TermsSubscriptionAgreementIdVersionRouteImport.update({
+    id: '/terms/subscription/$agreementId/$version',
+    path: '/terms/subscription/$agreementId/$version',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AppProjectsProjectTasksRoute = AppProjectsProjectTasksRouteImport.update({
   id: '/projects/$project/tasks',
   path: '/projects/$project/tasks',
@@ -266,6 +273,7 @@ export interface FileRoutesByFullPath {
   '/projects/$project/ingest': typeof AppProjectsProjectIngestRoute
   '/projects/$project/styles': typeof AppProjectsProjectStylesRoute
   '/projects/$project/tasks': typeof AppProjectsProjectTasksRoute
+  '/terms/subscription/$agreementId/$version': typeof TermsSubscriptionAgreementIdVersionRoute
   '/projects/$project/characters': typeof AppProjectsProjectCharactersLazyRoute
   '/projects/$project/freezone': typeof AppProjectsProjectFreezoneLazyRoute
   '/projects/$project/episodes/$episode/audio': typeof AppProjectsProjectEpisodesEpisodeAudioLazyRoute
@@ -294,6 +302,7 @@ export interface FileRoutesByTo {
   '/projects/$project/ingest': typeof AppProjectsProjectIngestRoute
   '/projects/$project/styles': typeof AppProjectsProjectStylesRoute
   '/projects/$project/tasks': typeof AppProjectsProjectTasksRoute
+  '/terms/subscription/$agreementId/$version': typeof TermsSubscriptionAgreementIdVersionRoute
   '/projects/$project/characters': typeof AppProjectsProjectCharactersLazyRoute
   '/projects/$project/freezone': typeof AppProjectsProjectFreezoneLazyRoute
   '/projects/$project/episodes/$episode/audio': typeof AppProjectsProjectEpisodesEpisodeAudioLazyRoute
@@ -324,6 +333,7 @@ export interface FileRoutesById {
   '/_app/projects/$project/ingest': typeof AppProjectsProjectIngestRoute
   '/_app/projects/$project/styles': typeof AppProjectsProjectStylesRoute
   '/_app/projects/$project/tasks': typeof AppProjectsProjectTasksRoute
+  '/terms/subscription/$agreementId/$version': typeof TermsSubscriptionAgreementIdVersionRoute
   '/_app/projects/$project/characters': typeof AppProjectsProjectCharactersLazyRoute
   '/_app/projects/$project/freezone': typeof AppProjectsProjectFreezoneLazyRoute
   '/_app/projects/$project/episodes/$episode/audio': typeof AppProjectsProjectEpisodesEpisodeAudioLazyRoute
@@ -354,6 +364,7 @@ export interface FileRouteTypes {
     | '/projects/$project/ingest'
     | '/projects/$project/styles'
     | '/projects/$project/tasks'
+    | '/terms/subscription/$agreementId/$version'
     | '/projects/$project/characters'
     | '/projects/$project/freezone'
     | '/projects/$project/episodes/$episode/audio'
@@ -382,6 +393,7 @@ export interface FileRouteTypes {
     | '/projects/$project/ingest'
     | '/projects/$project/styles'
     | '/projects/$project/tasks'
+    | '/terms/subscription/$agreementId/$version'
     | '/projects/$project/characters'
     | '/projects/$project/freezone'
     | '/projects/$project/episodes/$episode/audio'
@@ -411,6 +423,7 @@ export interface FileRouteTypes {
     | '/_app/projects/$project/ingest'
     | '/_app/projects/$project/styles'
     | '/_app/projects/$project/tasks'
+    | '/terms/subscription/$agreementId/$version'
     | '/_app/projects/$project/characters'
     | '/_app/projects/$project/freezone'
     | '/_app/projects/$project/episodes/$episode/audio'
@@ -432,6 +445,7 @@ export interface RootRouteChildren {
   DownloadLazyRoute: typeof DownloadLazyRoute
   WatchWorkRoute: typeof WatchWorkRoute
   PlayPublicIdLazyRoute: typeof PlayPublicIdLazyRoute
+  TermsSubscriptionAgreementIdVersionRoute: typeof TermsSubscriptionAgreementIdVersionRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -533,6 +547,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/projects/$project/characters'
       preLoaderRoute: typeof AppProjectsProjectCharactersLazyRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/terms/subscription/$agreementId/$version': {
+      id: '/terms/subscription/$agreementId/$version'
+      path: '/terms/subscription/$agreementId/$version'
+      fullPath: '/terms/subscription/$agreementId/$version'
+      preLoaderRoute: typeof TermsSubscriptionAgreementIdVersionRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_app/projects/$project/tasks': {
       id: '/_app/projects/$project/tasks'
@@ -703,6 +724,8 @@ const rootRouteChildren: RootRouteChildren = {
   DownloadLazyRoute: DownloadLazyRoute,
   WatchWorkRoute: WatchWorkRoute,
   PlayPublicIdLazyRoute: PlayPublicIdLazyRoute,
+  TermsSubscriptionAgreementIdVersionRoute:
+    TermsSubscriptionAgreementIdVersionRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

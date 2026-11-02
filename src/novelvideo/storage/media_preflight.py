@@ -22,10 +22,14 @@ from novelvideo.model_gateway_settings import (
     get_effective_media_relay_config,
 )
 from novelvideo.shared.runtime_env import uses_local_ce_runtime
+from novelvideo.storage.media_errors import (
+    MediaRelayConfigError,
+    MediaStorageUnavailable,
+    safe_media_storage_error,
+)
 from novelvideo.storage.media_relay import (
     AliyunOSSRelay,
     CloudinaryRelay,
-    MediaRelayConfigError,
 )
 
 _PROBE_PNG = base64.b64decode(
@@ -35,14 +39,6 @@ _CACHE_TTL_SECONDS = 60.0
 _PROBE_TIMEOUT_SECONDS = 5.0
 _probe_lock = threading.Lock()
 _verified_config: tuple[str, float] | None = None
-
-
-class MediaStorageUnavailable(MediaRelayConfigError):
-    """A stable, credential-free error suitable for the CE task/settings UI."""
-
-    def __init__(self, code: str, message: str) -> None:
-        self.code = code
-        super().__init__(f"{code}: {message}")
 
 
 def effective_media_storage_config() -> EffectiveMediaRelayConfig:
@@ -58,58 +54,6 @@ def effective_media_storage_config() -> EffectiveMediaRelayConfig:
         env_cloudinary_api_key=config.CLOUDINARY_RELAY_API_KEY,
         env_cloudinary_api_secret=config.CLOUDINARY_RELAY_API_SECRET,
         env_cloudinary_folder=config.CLOUDINARY_RELAY_FOLDER,
-    )
-
-
-def _safe_probe_error(exc: Exception) -> MediaStorageUnavailable:
-    code = getattr(exc, "code", "")
-    status = getattr(exc, "status", None)
-    # Cloudinary's adapter wraps HTTP errors; classify their status without
-    # reflecting the provider's body, URL or credentials into a task error.
-    if isinstance(exc.__cause__, httpx.HTTPStatusError):
-        status = exc.__cause__.response.status_code
-    if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-    if isinstance(exc, (httpx.TimeoutException, TimeoutError)) or isinstance(
-        exc.__cause__, (httpx.TimeoutException, TimeoutError)
-    ):
-        return MediaStorageUnavailable(
-            "MEDIA_STORAGE_TIMEOUT", "媒体存储连接超时，请检查网络后重试。"
-        )
-    if (
-        code
-        in {
-            "InvalidAccessKeyId",
-            "SignatureDoesNotMatch",
-            "InvalidSecurityToken",
-            "SecurityTokenExpired",
-        }
-        or status == 401
-    ):
-        return MediaStorageUnavailable(
-            "MEDIA_STORAGE_AUTH_INVALID",
-            "媒体存储凭据无效，请检查 AccessKey / API Key。",
-        )
-    if code in {"AccessDenied", "AccessForbidden"} or status == 403:
-        return MediaStorageUnavailable(
-            "MEDIA_STORAGE_ACCESS_DENIED",
-            "媒体存储拒绝访问，请检查凭据及上传、读取权限。",
-        )
-    if code in {"NoSuchBucket", "InvalidBucketName", "PermanentRedirect"} or status in {
-        301,
-        404,
-    }:
-        return MediaStorageUnavailable(
-            "MEDIA_STORAGE_TARGET_INVALID",
-            "媒体存储目标不可用，请检查 bucket、endpoint 或文件夹。",
-        )
-    if isinstance(exc, MediaRelayConfigError):
-        return MediaStorageUnavailable(
-            "MEDIA_STORAGE_CONFIG_INVALID",
-            "媒体存储配置不完整或上传失败，请检查所选存储配置。",
-        )
-    return MediaStorageUnavailable(
-        "MEDIA_STORAGE_UNAVAILABLE", "媒体存储读写验证失败，请检查连接和配置后重试。"
     )
 
 
@@ -134,10 +78,10 @@ def verify_media_storage(
 ) -> None:
     """Upload/read a small image, caching only success for the exact configuration.
 
-    OSS must preserve the stored bytes. Cloudinary may re-encode delivered
+    OSS and S3 must preserve the stored bytes. Cloudinary may re-encode delivered
     images, so verify decoded dimensions and pixels instead of file bytes.
 
-    Probe objects use the normal relay prefix and random names. OSS cleanup is
+    Probe objects use the normal relay prefix and random names. OSS/S3 cleanup is
     best effort: a key with PutObject/GetObject but no DeleteObject is valid.
     Cloudinary probes follow the configured folder's normal retention policy.
     """
@@ -176,6 +120,16 @@ def verify_media_storage(
                     request_timeout=_PROBE_TIMEOUT_SECONDS,
                 )
                 url = relay.upload_bytes(_PROBE_PNG, object_key=key, ttl=60)
+            elif settings.provider == "s3":
+                from novelvideo.storage.s3_relay import MAX_S3_TTL_SECONDS, build_s3_relay
+
+                if not 0 < settings.ttl_seconds <= MAX_S3_TTL_SECONDS:
+                    raise MediaRelayConfigError(
+                        "S3 URL TTL must be between 1 and 604800 seconds"
+                    )
+                relay = build_s3_relay(settings, timeout=_PROBE_TIMEOUT_SECONDS)
+                bucket = relay
+                url = relay.upload_bytes(_PROBE_PNG, object_key=key, ttl=60)
             else:
                 raise MediaRelayConfigError("unsupported provider")
             with httpx.Client(
@@ -196,7 +150,7 @@ def verify_media_storage(
         except MediaStorageUnavailable:
             raise
         except Exception as exc:
-            raise _safe_probe_error(exc) from None
+            raise safe_media_storage_error(exc) from None
         finally:
             if bucket is not None:
                 try:
@@ -213,6 +167,13 @@ async def require_ce_media_storage() -> None:
     settings = effective_media_storage_config()
     if settings.provider == "aliyun_oss":
         configured = bool(settings.access_key_id or settings.access_key_secret)
+    elif settings.provider == "s3":
+        configured = bool(
+            settings.s3_endpoint
+            or settings.s3_bucket
+            or settings.s3_access_key_id
+            or settings.s3_access_key_secret
+        )
     elif settings.provider == "cloudinary":
         configured = bool(
             settings.cloud_name

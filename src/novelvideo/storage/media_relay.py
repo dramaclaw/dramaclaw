@@ -13,9 +13,15 @@ import mimetypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from novelvideo.storage.media_errors import MediaRelayConfigError
+
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from novelvideo.storage.s3_relay import S3Relay
 
 AI_REFERENCE_JPEG_QUALITY = 95
 IMAGE_TRANSFORM_AI_REFERENCE_JPEG = "ai_reference_jpeg"
@@ -108,10 +114,6 @@ def validate_tenant_source_url(
     ):
         raise ServiceEgressDenied("source-url")
     return str(value).strip()
-
-
-class MediaRelayConfigError(RuntimeError):
-    """Raised when the media relay is not configured for URL input."""
 
 
 class AliyunOSSRelay:
@@ -290,7 +292,7 @@ class CloudinaryRelay:
         )
 
 
-def get_media_relay() -> AliyunOSSRelay | CloudinaryRelay:
+def get_media_relay() -> AliyunOSSRelay | CloudinaryRelay | S3Relay:
     """Build the configured media relay.
 
     The relay is intentionally not cached so tests can monkeypatch config and
@@ -312,6 +314,10 @@ def get_media_relay() -> AliyunOSSRelay | CloudinaryRelay:
         env_cloudinary_folder=getattr(config, "CLOUDINARY_RELAY_FOLDER", ""),
     )
     provider = relay_config.provider
+    if provider == "s3":
+        from novelvideo.storage.s3_relay import build_s3_relay
+
+        return build_s3_relay(relay_config)
     if provider == "cloudinary":
         return CloudinaryRelay(
             cloud_name=relay_config.cloud_name,

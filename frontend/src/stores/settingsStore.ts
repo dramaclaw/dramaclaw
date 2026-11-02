@@ -21,7 +21,7 @@ export type CanvasEdgeRoutingMode = 'spline' | 'orthogonal' | 'smartOrthogonal';
 export type ProviderApiKeys = Record<string, string>;
 export const DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL = 'nano-banana-pro';
 
-export type MediaStorageProvider = 'aliyun_oss' | 'cloudinary';
+export type MediaStorageProvider = 'aliyun_oss' | 'cloudinary' | 's3';
 
 export type FeatureModelProvider = string;
 
@@ -172,6 +172,16 @@ export interface MediaStorageSettings {
   fullyManagedUpload: boolean;
   cloudinary: CloudinaryStorageConfig;
   aliyunOss: AliyunOssStorageConfig;
+  s3: S3StorageConfig;
+}
+
+export interface S3StorageConfig {
+  accessKeyId: string;
+  accessKeySecret: string;
+  bucket: string;
+  endpoint: string;
+  region: string;
+  pathStyle: boolean;
 }
 
 export const DEFAULT_MEDIA_STORAGE_SETTINGS: MediaStorageSettings = {
@@ -192,7 +202,42 @@ export const DEFAULT_MEDIA_STORAGE_SETTINGS: MediaStorageSettings = {
     apiFolder: '',
     materialsRoot: 'canvas-materials/',
   },
+  s3: {
+    accessKeyId: '',
+    accessKeySecret: '',
+    bucket: '',
+    endpoint: '',
+    region: 'us-east-1',
+    pathStyle: false,
+  },
 };
+
+function prepareMediaStorageForPersistence(
+  value?: Partial<MediaStorageSettings>
+): MediaStorageSettings {
+  return {
+    ...DEFAULT_MEDIA_STORAGE_SETTINGS,
+    ...value,
+    aliyunOss: {
+      ...DEFAULT_MEDIA_STORAGE_SETTINGS.aliyunOss,
+      ...value?.aliyunOss,
+      accessKeyId: '',
+      accessKeySecret: '',
+    },
+    cloudinary: {
+      ...DEFAULT_MEDIA_STORAGE_SETTINGS.cloudinary,
+      ...value?.cloudinary,
+      apiKey: '',
+      apiSecret: '',
+    },
+    s3: {
+      ...DEFAULT_MEDIA_STORAGE_SETTINGS.s3,
+      ...value?.s3,
+      accessKeyId: '',
+      accessKeySecret: '',
+    },
+  };
+}
 
 interface SettingsState {
   isHydrated: boolean;
@@ -270,6 +315,7 @@ interface SettingsState {
   setMediaStorageFullyManagedUpload: (enabled: boolean) => void;
   updateCloudinaryStorageConfig: (patch: Partial<CloudinaryStorageConfig>) => void;
   updateAliyunOssStorageConfig: (patch: Partial<AliyunOssStorageConfig>) => void;
+  updateS3StorageConfig: (patch: Partial<S3StorageConfig>) => void;
   setProviderApiKey: (providerId: string, key: string) => void;
   setGrsaiNanoBananaProModel: (model: string) => void;
   setHideProviderGuidePopover: (hide: boolean) => void;
@@ -900,6 +946,13 @@ export const useSettingsStore = create<SettingsState>()(
             aliyunOss: { ...state.mediaStorage.aliyunOss, ...patch },
           },
         })),
+      updateS3StorageConfig: (patch) =>
+        set((state) => ({
+          mediaStorage: {
+            ...state.mediaStorage,
+            s3: { ...state.mediaStorage.s3, ...patch },
+          },
+        })),
       setProviderApiKey: (providerId, key) =>
         set((state) => ({
           apiKeys: {
@@ -946,7 +999,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'settings-storage',
-      version: 18,
+      version: 19,
       // Quota-safe persistence: on a QuotaExceededError, prune stale freezone
       // canvas keys (via the registered reclaimer) and retry once instead of
       // letting the whole store fail to hydrate/persist.
@@ -972,6 +1025,7 @@ export const useSettingsStore = create<SettingsState>()(
         void _featureModelConfigBackendSnapshotKey;
         return {
           ...persisted,
+          mediaStorage: prepareMediaStorageForPersistence(state.mediaStorage),
           featureModelConfig: prepareFeatureModelSettingsForPersistence(
             state.featureModelConfig
           ),
@@ -1008,6 +1062,7 @@ export const useSettingsStore = create<SettingsState>()(
           preferDiscountedPrice?: boolean;
           grsaiCreditTierId?: GrsaiCreditTierId | string;
           featureModelConfig?: Partial<FeatureModelSettings>;
+          mediaStorage?: Partial<MediaStorageSettings>;
         };
 
         const migratedApiKeys = normalizeApiKeys(state.apiKeys);
@@ -1016,6 +1071,7 @@ export const useSettingsStore = create<SettingsState>()(
         if (Object.keys(migratedApiKeys).length > 0) {
           return {
             ...(persistedState as object),
+            mediaStorage: prepareMediaStorageForPersistence(state.mediaStorage),
             isHydrated: true,
             apiKeys: migratedApiKeys,
             ignoreAtTagWhenCopyingAndGenerating,
@@ -1046,6 +1102,7 @@ export const useSettingsStore = create<SettingsState>()(
 
         return {
           ...(persistedState as object),
+          mediaStorage: prepareMediaStorageForPersistence(state.mediaStorage),
           isHydrated: true,
           apiKeys: state.apiKey ? { ppio: normalizeApiKey(state.apiKey) } : {},
           ignoreAtTagWhenCopyingAndGenerating,

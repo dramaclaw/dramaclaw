@@ -27,7 +27,7 @@ export function CreditBalanceBadge() {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const [centerOpen, setCenterOpen] = useState(false);
-  const [centerTab, setCenterTab] = useState<CreditCenterTab>("packages");
+  const [centerTab, setCenterTab] = useState<CreditCenterTab>("subscriptions");
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pinnedRef = useRef(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

@@ -49,6 +49,11 @@ vi.mock("@/lib/queries/payments", () => ({
   useRechargeOrder: orderQuery,
   useCreateRechargeOrder: () => ({ isPending: false }),
 }));
+// The billing table also reads subscription invoices; this test isolates the
+// existing one-time order presentation from that independent query.
+vi.mock("@/lib/queries/subscriptions", () => ({
+  useSubscriptionBilling: () => ({ data: { data: { items: [] } }, isPending: false }),
+}));
 
 const closedOrder: RechargeOrder = {
   order_id: "order-closed",

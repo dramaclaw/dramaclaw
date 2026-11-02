@@ -2,7 +2,6 @@
 // Copyright (c) 2026 ClaymoreLab
 import {
   BarChart3,
-  Check,
   ChevronLeft,
   ChevronRight,
   CircleHelp,
@@ -44,10 +43,8 @@ import {
   PAYMENT_RETURN_ORDER_ID_KEY,
   PAYMENT_RETURN_ORDER_KEY,
 } from "@/lib/payment-navigation";
-import { resolveRechargeOrderStatus } from "@/lib/payment-return";
 import {
   type CustomRechargeConfig,
-  type RechargeOrder,
   type RechargePackage,
   useCustomRechargeConfig,
   useRechargeOrders,
@@ -55,9 +52,17 @@ import {
 } from "@/lib/queries/payments";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
-import { businessWechatQrUrl } from "@/components/login/cinematic/media";
+import { PricingCard, PricingCardPrice, PricingCardDetails, PricingCardNote, PricingCardAction } from "./PricingCard";
+import { SubscriptionPanel } from "@/components/credits/SubscriptionPanel";
+import { SubscriptionBenefits } from "@/components/credits/SubscriptionBenefits";
+import { BillingOrdersTab } from "@/components/credits/BillingOrdersTab";
+import { useMembership } from "@/lib/queries/subscriptions";
 
 const TRANSACTION_SOURCE_COPY = new Map<string, [string, string]>([
+  ["initial_credit", ["initialGrant", "accountInitialized"]],
+  ["legacy_initial_credit", ["initialGrant", "accountInitialized"]],
+  ["subscription_grant", ["subscriptionGrant", "subscriptionReceived"]],
+  ["subscription_org_grant", ["subscriptionGrant", "subscriptionReceived"]],
   ["payment_org_member_recharge", ["orgRecharge", "paymentReceived"]],
   ["payment_personal_recharge", ["personalRecharge", "paymentReceived"]],
   ["admin_credit_increase", ["adminIncrease", "adminAdjustment"]],
@@ -70,6 +75,7 @@ const TRANSACTION_SOURCE_COPY = new Map<string, [string, string]>([
 ]);
 
 export type CreditCenterTab =
+  | "subscriptions"
   | "packages"
   | "custom"
   | "benefits"
@@ -117,6 +123,7 @@ function beginCheckout(draft: CheckoutDraft): void {
   clearPaymentAttempt();
   sessionStorage.removeItem(PAYMENT_RETURN_ORDER_ID_KEY);
   sessionStorage.removeItem(PAYMENT_RETURN_ORDER_KEY);
+  sessionStorage.removeItem("dramaclaw-subscription-return");
   sessionStorage.setItem(CHECKOUT_DRAFT_KEY, JSON.stringify(draft));
   sessionStorage.setItem(
     CHECKOUT_RETURN_KEY,
@@ -132,6 +139,7 @@ const NAV_GROUPS: Array<{
   {
     label: "credits.centerModal.groups.recharge",
     items: [
+      { tab: "subscriptions", icon: History },
       { tab: "packages", icon: Gift },
       { tab: "custom", icon: WalletCards },
     ],
@@ -150,12 +158,12 @@ const NAV_GROUPS: Array<{
   },
 ];
 
-const PAYMENT_TABS = new Set<CreditCenterTab>(["packages", "custom", "orders"]);
+const PAYMENT_TABS = new Set<CreditCenterTab>(["packages", "custom", "orders", "subscriptions"]);
 
 export function CreditCenterDialog({
   open,
   onOpenChange,
-  initialTab = "packages",
+  initialTab = "subscriptions",
   paymentAvailable,
 }: {
   open: boolean;
@@ -244,7 +252,7 @@ export function CreditCenterDialog({
                       )}
                     >
                       <Icon className="size-4" strokeWidth={1.75} />
-                      {t(`credits.centerModal.tabs.${tab}`)}
+                      {tab === "subscriptions" ? t("subscriptions.title") : t(`credits.centerModal.tabs.${tab}`)}
                     </button>
                   ))}
                 </div>
@@ -257,7 +265,7 @@ export function CreditCenterDialog({
           <header className="flex shrink-0 items-center justify-between border-b border-white/8 px-5 py-4 pr-14 md:px-7">
             <div>
               <h2 className="text-lg font-semibold">
-                {t(`credits.centerModal.tabs.${visibleActiveTab}`)}
+                {visibleActiveTab === "subscriptions" ? t("subscriptions.title") : t(`credits.centerModal.tabs.${visibleActiveTab}`)}
               </h2>
               <p className="mt-1 text-xs text-white/45">
                 {t(`credits.centerModal.descriptions.${visibleActiveTab}`)}
@@ -282,12 +290,14 @@ export function CreditCenterDialog({
                   visibleActiveTab === tab ? "bg-white text-black" : "bg-white/6 text-white/55",
                 )}
               >
-                {t(`credits.centerModal.tabs.${tab}`)}
+                {tab === "subscriptions" ? t("subscriptions.title") : t(`credits.centerModal.tabs.${tab}`)}
               </button>
             ))}
           </div>
 
           <div className="ui-scrollbar min-h-0 flex-1 overflow-y-auto p-5 md:p-7">
+            {visibleActiveTab === "subscriptions" ? <SubscriptionPanel enabled={paymentAvailable}
+              initialId={new URLSearchParams(window.location.search).get("subscription_id")} /> : null}
             {visibleActiveTab === "packages" ? (
               <PackageTab
                 packages={packages}
@@ -313,10 +323,10 @@ export function CreditCenterDialog({
               />
             ) : null}
             {visibleActiveTab === "benefits" ? (
-              <BenefitsTab promotions={promotions} loading={promotionsQuery.isPending} />
+              <BenefitsTab promotions={promotions} loading={promotionsQuery.isPending} paymentAvailable={paymentAvailable} />
             ) : null}
             {visibleActiveTab === "orders" ? (
-              <OrdersTab orders={orders} loading={ordersQuery.isPending} language={language} />
+              <BillingOrdersTab orders={orders} loading={ordersQuery.isPending} language={language} enabled={open && paymentAvailable} />
             ) : null}
             {visibleActiveTab === "usage" ? (
               <UsageTab summary={summary} language={language} />
@@ -341,9 +351,7 @@ function PackageTab({
   onCheckout: (packageId: string) => void;
 }) {
   const { t } = useTranslation();
-  const [view, setView] = useState<"packages" | "enterprise">("packages");
   const [selectedOptions, setSelectedOptions] = useState<Record<string, number>>({});
-  const [showBusinessContact, setShowBusinessContact] = useState(false);
   const packageGroups = useMemo(() => {
     const grouped = new Map<string, {
       id: string;
@@ -386,66 +394,7 @@ function PackageTab({
 
   return (
     <div>
-      <div className="mb-5 flex justify-center">
-        <div className="flex rounded-lg border border-white/10 bg-black/25 p-1">
-          {(["packages", "enterprise"] as const).map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setView(item)}
-              className={cn(
-                "h-8 rounded-md px-4 text-xs font-medium transition-colors",
-                view === item ? "bg-white/14 text-white" : "text-white/42 hover:text-white/75",
-              )}
-            >
-              {t(`credits.centerModal.packageViews.${item}`)}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {view === "enterprise" ? (
-        <section className="grid min-h-[430px] overflow-hidden rounded-lg border border-white/10 bg-white/[0.035] lg:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.6fr)]">
-          <div className="flex flex-col justify-between p-7 lg:p-10">
-            <div>
-              <p className="max-w-xl text-lg font-semibold leading-8">
-                {t("credits.centerModal.enterprise.headline")}
-              </p>
-              <div className="mt-16 text-4xl font-semibold">Custom</div>
-              <p className="mt-2 text-sm text-white/40">
-                {t("credits.centerModal.enterprise.subtitle")}
-              </p>
-            </div>
-            <div className="text-xs text-white/28">DramaClaw Enterprise</div>
-          </div>
-          <div className="border-t border-white/10 bg-black/10 p-7 lg:border-l lg:border-t-0 lg:p-10">
-            <h3 className="text-sm font-semibold text-white/55">
-              {t("credits.centerModal.enterprise.benefitsTitle")}
-            </h3>
-            <ul className="mt-6 space-y-4">
-              {["quota", "priority", "templates", "security", "support"].map((benefit) => (
-                <li key={benefit} className="flex items-start gap-2 text-sm text-white/68">
-                  <Check className="mt-0.5 size-4 shrink-0 text-primary" />
-                  {t(`credits.centerModal.enterprise.benefits.${benefit}`)}
-                </li>
-              ))}
-            </ul>
-            <button
-              type="button"
-              onClick={() => setShowBusinessContact((current) => !current)}
-              className="mt-8 inline-flex h-10 w-full items-center justify-center rounded-md bg-white text-sm font-semibold text-black hover:bg-white/88"
-            >
-              {t("credits.centerModal.enterprise.contact")}
-            </button>
-            {showBusinessContact ? (
-              <div className="mt-4 rounded-md border border-white/10 bg-white p-3 text-center">
-                <img src={businessWechatQrUrl} alt={t("auth.businessWechat.qrAlt")} className="mx-auto size-40 object-contain" />
-                <p className="mt-2 text-xs text-black/60">{t("auth.businessWechat.note")}</p>
-              </div>
-            ) : null}
-          </div>
-        </section>
-      ) : loading ? (
+      {loading ? (
         <LoadingState />
       ) : packageGroups.length === 0 ? (
         <EmptyState text={t("credits.centerModal.packagesUnavailable")} />
@@ -460,28 +409,16 @@ function PackageTab({
             if (!option) return null;
             const totalCredits = option.base_credits + option.gift_credits;
             return (
-              <article
+              <PricingCard
                 key={group.id}
-                className={cn(
-                  "flex min-h-[430px] flex-col rounded-lg border border-white/10 bg-white/[0.035] p-5",
-                  (group.badge || groupIndex === 1) && "border-primary/40 ring-1 ring-inset ring-primary/12",
-                )}
+                name={group.name}
+                description={group.description}
+                badge={group.badge}
+                highlighted={!!group.badge || groupIndex === 1}
               >
-                <div className="flex min-h-7 items-start justify-between gap-3">
-                  <h3 className="text-lg font-semibold">{group.name}</h3>
-                  {group.badge ? (
-                    <span className="rounded-full bg-primary/15 px-2 py-1 text-[10px] font-medium text-primary">
-                      {group.badge}
-                    </span>
-                  ) : null}
-                </div>
-                <p className="mt-1 min-h-9 text-xs leading-5 text-white/38">
-                  {group.description}
-                </p>
-                <div className="mt-5 text-3xl font-semibold tabular-nums">
+                <PricingCardPrice caption={group.validity}>
                   {formatMoney(option.amount_cents, language)}
-                </div>
-                <div className="mt-1 text-xs text-white/40">{group.validity}</div>
+                </PricingCardPrice>
 
                 {group.options.length > 1 ? (
                   <div className="mt-5">
@@ -505,7 +442,7 @@ function PackageTab({
                   </div>
                 ) : <div className="mt-5 h-[37px]" />}
 
-                <dl className="mt-5 space-y-3 rounded-md border border-white/8 bg-white/[0.035] p-4 text-sm">
+                <PricingCardDetails>
                   <div className="flex items-center justify-between">
                     <dt className="text-white/45">{t("credits.centerModal.baseCredits")}</dt>
                     <dd className="tabular-nums">{formatNumber(option.base_credits, language)}</dd>
@@ -518,19 +455,17 @@ function PackageTab({
                     <dt>{t("credits.centerModal.totalCredits")}</dt>
                     <dd className="tabular-nums text-primary">{formatNumber(totalCredits, language)}</dd>
                   </div>
-                </dl>
-                <p className="mt-4 text-center text-xs text-white/35">
+                </PricingCardDetails>
+                <PricingCardNote>
                   {group.purchaseNote}
-                </p>
-                <button
-                  type="button"
+                </PricingCardNote>
+                <PricingCardAction
                   disabled={loading}
                   onClick={() => onCheckout(option.package_id)}
-                  className="mt-auto inline-flex h-10 items-center justify-center rounded-md bg-white px-4 text-sm font-semibold text-black transition-colors hover:bg-white/88 disabled:cursor-not-allowed disabled:bg-white/8 disabled:text-white/30"
                 >
                   {t("credits.centerModal.buyNow")}
-                </button>
-              </article>
+                </PricingCardAction>
+              </PricingCard>
             );
           })}
         </div>
@@ -659,13 +594,16 @@ function CustomRechargeTab({
   );
 }
 
-function BenefitsTab({ promotions, loading }: { promotions: Array<{ id: string; name: string; target_label: string; discount_basis_points: number; ends_at: string | null }>; loading: boolean }) {
+function BenefitsTab({ promotions, loading, paymentAvailable }: { promotions: Array<{ id: string; name: string; target_label: string; discount_basis_points: number; ends_at: string | null }>; loading: boolean; paymentAvailable: boolean }) {
   const { t, i18n } = useTranslation();
+  const membership = useMembership(paymentAvailable);
   const language = i18n.resolvedLanguage ?? i18n.language ?? "zh";
-  if (loading) return <LoadingState />;
-  if (promotions.length === 0) return <EmptyState text={t("credits.centerModal.noBenefits")} />;
+  if (loading || (paymentAvailable && membership.isPending)) return <LoadingState />;
+  if (promotions.length === 0 && !membership.data?.data.active && !membership.isError) return <EmptyState text={t("credits.centerModal.noBenefits")} />;
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <div className="space-y-4">
+      <SubscriptionBenefits enabled={paymentAvailable} />
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       {promotions.map((promotion) => (
         <article key={promotion.id} className="rounded-lg border border-white/10 bg-white/[0.035] p-5">
           <div className="flex items-start justify-between gap-3">
@@ -685,70 +623,7 @@ function BenefitsTab({ promotions, loading }: { promotions: Array<{ id: string; 
           </p>
         </article>
       ))}
-    </div>
-  );
-}
-
-function OrdersTab({ orders, loading, language }: { orders: RechargeOrder[]; loading: boolean; language: string }) {
-  const { t } = useTranslation();
-  if (loading) return <LoadingState />;
-  if (orders.length === 0) return <EmptyState text={t("credits.recharge.noOrders")} />;
-  return (
-    <div className="overflow-x-auto rounded-lg border border-white/10">
-      <table className="w-full min-w-[900px] text-left text-sm">
-        <thead className="bg-white/[0.045] text-xs text-white/40">
-          <tr>
-            <th className="px-4 py-3 font-medium">{t("credits.recharge.columns.billId")}</th>
-            <th className="px-4 py-3 font-medium">{t("credits.recharge.columns.transactionTime")}</th>
-            <th className="px-4 py-3 font-medium">{t("credits.recharge.columns.content")}</th>
-            <th className="px-4 py-3 font-medium">{t("credits.recharge.columns.amount")}</th>
-            <th className="px-4 py-3 font-medium">{t("credits.recharge.columns.status")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order) => {
-            const status = resolveRechargeOrderStatus(order);
-            return (
-              <tr key={order.order_id} className="border-t border-white/8">
-                <td className="px-4 py-3 font-mono text-xs font-medium text-white/82">
-                  {order.merchant_order_no}
-                </td>
-                <td className="px-4 py-3 text-xs tabular-nums text-white/48">
-                  {formatDateTime(order.created_at, language)}
-                </td>
-                <td className="max-w-80 px-4 py-3">
-                  <div className="truncate font-medium">{order.package_name}</div>
-                  <div className="mt-1 text-xs text-white/38">
-                    {formatNumber(order.base_credits + order.gift_credits, language)} {t("credits.short")}
-                  </div>
-                </td>
-                <td className="px-4 py-3 font-medium tabular-nums">
-                  {formatMoney(order.provider_total_cents ?? order.amount_cents, language, order.currency)}
-                </td>
-                <td className="px-4 py-3">
-                  <span
-                    className={cn(
-                      "inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium",
-                      status === "credited" && "bg-emerald-500/12 text-emerald-400",
-                      (status === "pending" || status === "paid") &&
-                        "bg-amber-400/12 text-amber-300",
-                      (status === "failed" ||
-                        status === "creditFailed" ||
-                        status === "manualReview") &&
-                        "bg-red-500/12 text-red-400",
-                      (status === "expired" || status === "closed") &&
-                        "bg-white/8 text-white/45",
-                      status === "refunded" && "bg-sky-500/12 text-sky-300",
-                    )}
-                  >
-                    {t(`credits.recharge.status.${status}`)}
-                  </span>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      </div>
     </div>
   );
 }
