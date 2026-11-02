@@ -242,6 +242,54 @@ async def test_gateway_wav_is_normalized_to_verified_mp3(tmp_path, samples, chan
     assert [path.name for path in tmp_path.iterdir()] == ["candidate.mp3"]
 
 
+@pytest.mark.parametrize("is_json", [True, False])
+@pytest.mark.parametrize(
+    ("seconds", "rate", "error"),
+    [(1, 16000, None), (16, 16000, "candidate_duration_exceeded"), (1, 24000, "provider_bad_audio")],
+)
+async def test_seed_stereo_preview_is_normalized_with_real_media_limits(
+    tmp_path, monkeypatch, seconds, rate, error, is_json
+):
+    import hashlib
+    import json
+    import subprocess
+    from unittest.mock import AsyncMock
+    from novelvideo.audio import voice_design_service as service
+    from novelvideo.freezone.reference_validation import _ffprobe
+
+    source = tmp_path / "stereo.mp3"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"sine=duration={seconds}",
+         "-ar", str(rate), "-ac", "2", str(source)],
+        check=True,
+    )
+    download = AsyncMock(return_value=source.read_bytes())
+    monkeypatch.setattr(service, "_download_preview", download)
+    output = tmp_path / "candidate.mp3"
+    raw = (
+        json.dumps({"audio": {"url": "https://media.example/seed.mp3"}}).encode()
+        if is_json else source.read_bytes()
+    )
+    if error is None:
+        result = await service._persist_speech_preview(raw, is_json=is_json, output_path=output)
+        info = _ffprobe(output)
+        assert info["streams"][0]["codec_name"] == "mp3"
+        assert info["streams"][0]["channels"] == 1
+        assert info["streams"][0]["sample_rate"] == "16000"
+        assert result.duration_seconds == service._verify_audio(output)
+        assert 0 < result.duration_seconds <= 15
+        assert result.sha256 == hashlib.sha256(output.read_bytes()).hexdigest()
+        assert output.read_bytes() != source.read_bytes()
+    else:
+        with pytest.raises(VoiceDesignError, match=error):
+            await service._persist_speech_preview(raw, is_json=is_json, output_path=output)
+        assert not output.exists()
+    if is_json:
+        download.assert_awaited_once()
+    else:
+        download.assert_not_awaited()
+
+
 @pytest.mark.parametrize("samples", [240001, 256000])
 async def test_overlong_wav_is_rejected_before_encoding(tmp_path, samples, monkeypatch):
     from novelvideo.audio import voice_design_service as service
@@ -332,16 +380,16 @@ async def test_cancelled_wav_conversion_cleans_workspace_without_publishing(tmp_
     original_verify, original_prepare = service._verify_audio, service._prepare_preview
     workspaces = []
 
-    def blocked_verify(path, *, audio_format="mp3"):
+    def blocked_verify(path, *, audio_format="mp3", allow_stereo=False):
         if audio_format == "wav":
             workspaces.append(path.parent)
             started.set()
             assert release.wait(10)
-        return original_verify(path, audio_format=audio_format)
+        return original_verify(path, audio_format=audio_format, allow_stereo=allow_stereo)
 
-    def prepare(*args):
+    def prepare(*args, **kwargs):
         try:
-            return original_prepare(*args)
+            return original_prepare(*args, **kwargs)
         finally:
             finished.set()
 

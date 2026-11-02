@@ -402,7 +402,9 @@ async def _download_preview(url: str) -> bytes:
     raise VoiceDesignError("provider_bad_audio")
 
 
-def _verify_audio(path: Path, *, audio_format: str = "mp3") -> float:
+def _verify_audio(
+    path: Path, *, audio_format: str = "mp3", allow_stereo: bool = False
+) -> float:
     from novelvideo.freezone.reference_validation import _ffprobe
 
     info = _ffprobe(path)
@@ -419,7 +421,7 @@ def _verify_audio(path: Path, *, audio_format: str = "mp3") -> float:
         valid_encoding = (
             info.get("format", {}).get("format_name") == "mp3"
             and streams[0].get("codec_name") == "mp3"
-            and streams[0].get("channels") == 1
+            and streams[0].get("channels") in ((1, 2) if allow_stereo else (1,))
         )
     if (
         not valid_encoding
@@ -468,12 +470,20 @@ def _verify_audio(path: Path, *, audio_format: str = "mp3") -> float:
     return decoded_bytes / (16000 * 2)
 
 
-def _prepare_preview(data: bytes, audio_format: str) -> tuple[bytes, float]:
+def _prepare_preview(
+    data: bytes, audio_format: str, *, allow_stereo: bool = False
+) -> tuple[bytes, float]:
+    from novelvideo.freezone.reference_validation import _ffprobe
+
     with tempfile.TemporaryDirectory(prefix="voice-design-") as directory:
         source = Path(directory) / f"source.{audio_format}"
         source.write_bytes(data)
-        duration = _verify_audio(source, audio_format=audio_format)
-        if audio_format == "mp3":
+        duration = _verify_audio(
+            source, audio_format=audio_format, allow_stereo=allow_stereo
+        )
+        if audio_format == "mp3" and (
+            not allow_stereo or _ffprobe(source)["streams"][0]["channels"] == 1
+        ):
             return data, duration
         normalized = Path(directory) / "normalized.mp3"
         subprocess.run(
@@ -521,13 +531,15 @@ async def persist_preview(payload: dict, output_path: Path) -> VoiceDesignAudio:
 
 
 async def _persist_audio_bytes(
-    data: bytes, audio_format: str, output_path: Path
+    data: bytes, audio_format: str, output_path: Path, *, allow_stereo: bool = False
 ) -> VoiceDesignAudio:
     temporary = None
     try:
         if not 0 < len(data) <= MAX_AUDIO_BYTES:
             raise VoiceDesignError("provider_bad_audio")
-        data, duration = await asyncio.to_thread(_prepare_preview, data, audio_format)
+        data, duration = await asyncio.to_thread(
+            _prepare_preview, data, audio_format, allow_stereo=allow_stereo
+        )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             dir=output_path.parent, suffix=".mp3", delete=False
@@ -551,7 +563,7 @@ async def _persist_speech_preview(
     raw: bytes, *, is_json: bool, output_path: Path
 ) -> VoiceDesignAudio:
     if not is_json:
-        return await _persist_audio_bytes(raw, "mp3", output_path)
+        return await _persist_audio_bytes(raw, "mp3", output_path, allow_stereo=True)
     try:
         payload = json.loads(raw)
     except (ValueError, UnicodeError):
@@ -563,7 +575,9 @@ async def _persist_speech_preview(
     url = audio.get("url") or audio.get("preview_url")
     if not isinstance(url, str):
         raise VoiceDesignError("provider_bad_audio")
-    return await _persist_audio_bytes(await _download_preview(url), "mp3", output_path)
+    return await _persist_audio_bytes(
+        await _download_preview(url), "mp3", output_path, allow_stereo=True
+    )
 
 
 def _is_loopback_gateway(base_url: str) -> bool:
