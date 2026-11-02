@@ -226,8 +226,9 @@ it("cancels a pending preview on close and reloads it on reopen", async () => {
     mount();
     await generate();
     await waitFor(() => expect(reads).toBe(1));
+    expect(pendingSignal?.aborted).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-    await waitFor(() => expect(pendingSignal?.aborted).toBe(true));
+    expect(pendingSignal?.aborted).toBe(true);
     expect(URL.createObjectURL).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "打开" }));
     await waitFor(() =>
