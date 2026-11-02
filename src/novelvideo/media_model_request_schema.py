@@ -438,6 +438,14 @@ def validate_media_model_catalog_config(
     except ValueError as exc:
         raise MediaModelSchemaError(str(exc)) from exc
     request_schema = validate_media_request_schema(config.get("request"))
+    if "voiceDesignMode" in config and (
+        media_type != "audio"
+        or request_schema.get("endpoint") != "audio/speech"
+        or config["voiceDesignMode"] != "prompted_speech"
+    ):
+        raise MediaModelSchemaError(
+            "voiceDesignMode requires prompted_speech on audio/speech"
+        )
     if media_type == "audio":
         endpoint = request_schema.get("endpoint")
         if endpoint not in {"audio/speech", "audio/voice-designs"}:

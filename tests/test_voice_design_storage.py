@@ -90,7 +90,7 @@ def test_claim_expiry_is_unknown_never_reclaimed(store):
     store.clock = lambda: now[0]
     record, _ = reserve(store)
     assert store.claim(record["candidate_id"])
-    now[0] += 121
+    now[0] += store.lease_seconds + 1
     assert store.get(record["candidate_id"])["status"] == "unknown"
     assert store.claim(record["candidate_id"]) is None
 
@@ -218,7 +218,7 @@ def test_ttl_starts_after_generation_and_late_completion_fails(store):
     path = store.output_path(second["candidate_id"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"audio")
-    now[0] += 121
+    now[0] += store.lease_seconds + 1
     with pytest.raises(CandidateStorageError, match="candidate_not_ready"):
         store.complete(
             second["candidate_id"],
@@ -357,3 +357,50 @@ def test_saved_candidate_keeps_original_ttl(store):
     store.clock = lambda: ready["expires_at"] + 1
     assert store.get(cid)["status"] == "expired"
     assert not path.exists()
+
+
+def test_upgrade_preserves_legacy_candidates_without_inventing_model(store, ctx):
+    from novelvideo.audio.voice_design_storage import VoiceDesignStorage
+
+    candidate, _ = reserve(store)
+    assert candidate["model"] is None
+    with store._transaction() as db:
+        for column in ("catalog_id", "config_digest", "model_snapshot"):
+            db.execute(f"ALTER TABLE candidates DROP COLUMN {column}")
+    upgraded = VoiceDesignStorage(ctx, quota_path=store.quota_path)
+    record = upgraded.get(candidate["candidate_id"])
+    assert record["description"] == candidate["description"]
+    assert record["status"] == "generating"
+    assert record["model"] is None
+    assert record["catalog_id"] is None
+    assert record["config_digest"] is None
+
+
+def test_model_snapshot_is_immutable_across_reopen_and_idempotent_create(store, ctx):
+    from novelvideo.audio.voice_design_storage import (
+        VoiceDesignStorage,
+        CandidateStorageError,
+    )
+
+    model = {"catalog_id": "seed", "model": "seed-audio-1.0", "config_digest": "a" * 64}
+    candidate_id = str(uuid4())
+    args = dict(
+        description="A low voice",
+        preview_text="A calm voice speaks this preview.",
+        language="zh",
+        surface="supertale",
+        catalog_id="seed",
+        config_digest="a" * 64,
+        model=model,
+    )
+    candidate, _ = store.reserve(candidate_id, **args)
+    model["model"] = "changed-in-caller"
+    reopened = VoiceDesignStorage(ctx, quota_path=store.quota_path)
+    assert reopened.get(candidate_id)["model"]["model"] == "seed-audio-1.0"
+    assert reopened.reserve(candidate_id, **{**args, "model": None}) == (
+        candidate,
+        False,
+    )
+    for changed in ({"catalog_id": "qwen"}, {"config_digest": "b" * 64}):
+        with pytest.raises(CandidateStorageError, match="idempotency_conflict"):
+            reopened.reserve(candidate_id, **{**args, **changed})

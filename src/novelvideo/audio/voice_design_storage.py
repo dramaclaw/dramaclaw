@@ -38,7 +38,7 @@ class VoiceDesignStorage:
         *,
         clock: Callable[[], float] = time.time,
         ttl_seconds: float | None = None,
-        lease_seconds: float = 120,
+        lease_seconds: float = 360,
         quota_path: Path | None = None,
         enqueue_timeout_seconds: float = 600,
     ) -> None:
@@ -70,6 +70,10 @@ class VoiceDesignStorage:
                 claimed INTEGER NOT NULL DEFAULT 0, lease_until REAL, error_code TEXT,
                 created_at REAL NOT NULL, expires_at REAL, duration_seconds REAL, sha256 TEXT,
                 PRIMARY KEY(project_id,user_id,candidate_id))""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(candidates)")}
+            for column in ("catalog_id", "config_digest", "model_snapshot"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE candidates ADD COLUMN {column} TEXT")
             db.execute("""CREATE TABLE IF NOT EXISTS save_receipts (
                 project_id TEXT NOT NULL, user_id TEXT NOT NULL, request_id TEXT NOT NULL,
                 candidate_id TEXT NOT NULL, kind TEXT NOT NULL, target TEXT NOT NULL,
@@ -119,7 +123,13 @@ class VoiceDesignStorage:
             "SELECT * FROM candidates WHERE project_id=? AND user_id=? AND candidate_id=?",
             self._key(candidate_id),
         ).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        record = dict(row)
+        record["model"] = (
+            json.loads(record["model_snapshot"]) if record["model_snapshot"] else None
+        )
+        return record
 
     def output_path(self, candidate_id: str) -> Path:
         user = self.ctx.requester_user_id
@@ -147,26 +157,44 @@ class VoiceDesignStorage:
         preview_text: str,
         language: str,
         surface: str,
+        catalog_id: str | None = None,
+        config_digest: str | None = None,
+        model: dict | None = None,
     ) -> tuple[dict[str, Any], bool]:
         self.cleanup()
         with self._transaction() as db:
             previous = self._read(db, candidate_id)
-            values = (description.strip(), preview_text.strip(), language, surface)
+            values = (
+                description.strip(),
+                preview_text.strip(),
+                language,
+                surface,
+                catalog_id,
+                config_digest,
+            )
             if previous:
                 if (
                     tuple(
                         previous[k]
-                        for k in ("description", "preview_text", "language", "surface")
+                        for k in (
+                            "description",
+                            "preview_text",
+                            "language",
+                            "surface",
+                            "catalog_id",
+                            "config_digest",
+                        )
                     )
                     != values
                 ):
                     raise CandidateStorageError("idempotency_conflict")
                 return previous, False
             db.execute(
-                "INSERT INTO candidates(project_id,user_id,candidate_id,description,preview_text,language,surface,created_at,lease_until) VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO candidates(project_id,user_id,candidate_id,description,preview_text,language,surface,catalog_id,config_digest,model_snapshot,created_at,lease_until) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     *self._key(candidate_id),
                     *values,
+                    json.dumps(model, sort_keys=True) if model is not None else None,
                     self.clock(),
                     self.clock() + self.enqueue_timeout_seconds,
                 ),

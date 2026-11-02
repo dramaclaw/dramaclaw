@@ -277,10 +277,17 @@ async def _run_voice_design(
         if record is None:
             return await _await_voice_design_result(storage, candidate_id)
         config = await resolve_voice_design_config(
-            user_id=ctx.requester_user_id, project_id=ctx.project_id
+            user_id=ctx.requester_user_id,
+            project_id=ctx.project_id,
+            catalog_id=record.get("catalog_id") or "",
         )
         snapshot = (payload.get("billing") or {}).get("voice_design_config")
-        if snapshot != asdict(config):
+        if (
+            snapshot != asdict(config)
+            or record.get("catalog_id") != config.model_id
+            or record.get("config_digest") != config.config_digest
+            or record.get("model") != config.snapshot()
+        ):
             raise VoiceDesignError("voice_design_unavailable")
         audio = await generate_voice_design(
             request=record,

@@ -9,6 +9,8 @@ from pydantic import ValidationError
 REQUEST_ID = "178727cd-e421-451c-87e7-68779d72a8ec"
 SAVE_ID = "ca8fd0be-a220-4de4-bf4e-8d430788b698"
 CREATE = {
+    "catalog_id": "design",
+    "config_digest": "d" * 64,
     "surface": "supertale",
     "request_id": REQUEST_ID,
     "description": " 六十岁左右的男人 ",
@@ -49,6 +51,7 @@ def test_create_rejects_invalid_input(field, value):
 READY = {
     "candidate_id": REQUEST_ID,
     "status": "ready",
+    "model": None,
     "description": "沙哑男声",
     "preview_text": CREATE["preview_text"].strip(),
     "language": "zh",
@@ -65,19 +68,25 @@ FAILURE = {
     "retryable": True,
 }
 CANDIDATES = {
-    "generating": {"candidate_id": REQUEST_ID, "status": "generating"},
+    "generating": {"candidate_id": REQUEST_ID, "status": "generating", "model": None},
     "ready": READY,
-    "failed": {"candidate_id": REQUEST_ID, "status": "failed", "failure": FAILURE},
+    "failed": {
+        "candidate_id": REQUEST_ID,
+        "status": "failed",
+        "failure": FAILURE,
+        "model": None,
+    },
     "unknown": {
         "candidate_id": REQUEST_ID,
         "status": "unknown",
+        "model": None,
         "failure": {
             "code": "generation_unknown",
             "message": "请先查询原请求",
             "retryable": True,
         },
     },
-    "expired": {"candidate_id": REQUEST_ID, "status": "expired"},
+    "expired": {"candidate_id": REQUEST_ID, "status": "expired", "model": None},
 }
 SAVE_CHARACTER = {
     "save_request_id": SAVE_ID,
@@ -182,7 +191,8 @@ def test_candidate_states_and_http_expiry_boundary(state):
 
 @pytest.mark.parametrize(
     "state,missing",
-    [("ready", key) for key in READY] + [("failed", "failure"), ("unknown", "failure")],
+    [("ready", key) for key in READY if key != "model"]
+    + [("failed", "failure"), ("unknown", "failure")],
 )
 def test_state_required_fields(state, missing):
     value = {k: v for k, v in CANDIDATES[state].items() if k != missing}
@@ -333,7 +343,11 @@ def client():
     def create(body: model.VoiceDesignCreateRequest):
         return {
             "ok": True,
-            "data": {"candidate_id": body.request_id, "status": "generating"},
+            "data": {
+                "candidate_id": body.request_id,
+                "status": "generating",
+                "model": None,
+            },
         }
 
     @app.get(
@@ -481,12 +495,56 @@ def production_api(tmp_path, monkeypatch):
         return 20
 
     async def config(**kwargs):
+        if not state.enabled or kwargs["catalog_id"] not in state.models:
+            raise ServiceError("voice_design_unavailable")
+        model = state.models[kwargs["catalog_id"]]
         return SimpleNamespace(
+            config_digest=model["config_digest"],
+            snapshot=lambda: model,
             billing_params=lambda: {
                 "feature_key": "audio.voice_design",
                 "item_count": 1,
-            }
+                "catalog_id": model["catalog_id"],
+                "voice_design_config": model,
+            },
         )
+
+    state.models = {
+        "design": {
+            "catalog_id": "design",
+            "label": "CosyVoice",
+            "model": "voice-enrollment",
+            "mode": "resource",
+            "target_model": {"catalog_id": "target", "model": "cosyvoice-v3.5-flash"},
+            "config_digest": "d" * 64,
+            "execution_mode": "gateway",
+        },
+        "qwen": {
+            "catalog_id": "qwen",
+            "label": "Qwen",
+            "model": "qwen-voice-design",
+            "mode": "resource",
+            "target_model": {
+                "catalog_id": "qwen-tts",
+                "model": "qwen3-tts-vd-2026-01-26",
+            },
+            "config_digest": "e" * 64,
+            "execution_mode": "gateway",
+        },
+        "seed": {
+            "catalog_id": "seed",
+            "label": "Seed Audio",
+            "model": "seed-audio-1.0",
+            "mode": "prompted_speech",
+            "target_model": None,
+            "config_digest": "f" * 64,
+            "execution_mode": "gateway",
+        },
+    }
+
+    async def list_configs(**kwargs):
+        enabled()
+        return [await config(catalog_id=key, **kwargs) for key in state.models]
 
     async def enqueue(*args, **kwargs):
         state.calls.append(kwargs)
@@ -499,6 +557,7 @@ def production_api(tmp_path, monkeypatch):
         SimpleNamespace(
             ensure_voice_design_enabled=enabled,
             resolve_voice_design_config=config,
+            list_voice_design_configs=list_configs,
             VoiceDesignError=ServiceError,
         ),
     )
@@ -752,8 +811,8 @@ def test_project_quote_uses_authorized_context(production_api, monkeypatch, surf
     s = production_api
     seen = []
 
-    async def quote(*, ctx, surface):
-        seen.append((ctx, surface))
+    async def quote(*, ctx, surface, catalog_id):
+        seen.append((ctx, surface, catalog_id))
         return {
             "ok": True,
             "data": {"cost": 1, "display": "1", "unit": "call", "quantity": 1},
@@ -766,14 +825,19 @@ def test_project_quote_uses_authorized_context(production_api, monkeypatch, surf
         raising=False,
     )
     url = s.url.removesuffix("/candidates") + "/quote"
-    response = s.client.get(url, params={"surface": surface})
+    response = s.client.get(url, params={"surface": surface, "catalog_id": "design"})
     assert response.status_code == 200
     assert response.json()["data"]["cost"] == 1
-    assert seen == [(s.ctx, surface)]
+    assert seen == [(s.ctx, surface, "design")]
     assert s.client.get(url).status_code == 422
     assert s.client.get(url, params={"surface": "audio"}).status_code == 422
     s.ctx = replace(s.ctx, effective_role="viewer")
-    assert s.client.get(url, params={"surface": surface}).status_code == 403
+    assert (
+        s.client.get(
+            url, params={"surface": surface, "catalog_id": "design"}
+        ).status_code
+        == 403
+    )
     assert len(seen) == 1
 
 
@@ -1309,3 +1373,79 @@ async def test_generated_user_voice_cancellation_finishes_publication(
     assert s.store.receipt(SAVE_ID, "account")["result"] is not None
     assert s.client.post(s.save_url, json=SAVE_USER).status_code == 200
     assert len(s.audio_node.list_user_audio_voices("user")) == 1
+
+
+@pytest.mark.parametrize("catalog_id", ["design", "qwen", "seed"])
+def test_selected_model_is_persisted_and_replay_survives_catalog_removal(
+    production_api, catalog_id
+):
+    s = production_api
+    expected = s.models[catalog_id]
+    listing = s.client.get(s.url.removesuffix("/candidates") + "/models")
+    assert listing.status_code == 200
+    assert listing.json()["data"]["models"] == list(s.models.values())
+    body = {
+        **CREATE,
+        "catalog_id": catalog_id,
+        "config_digest": expected["config_digest"],
+    }
+    first = s.client.post(s.url, json=body)
+    assert first.status_code == 202
+    assert first.json()["data"]["model"] == expected
+    assert s.store.get(REQUEST_ID)["model"] == expected
+    assert s.calls[0]["payload"]["billing"]["catalog_id"] == catalog_id
+    assert s.calls[0]["payload"]["billing"]["voice_design_config"] == expected
+    s.models.clear()
+    assert s.client.get(s.url + "/" + REQUEST_ID).json()["data"]["model"] == expected
+    assert s.client.post(s.url, json=body).json() == first.json()
+    assert len(s.calls) == 1
+    assert (
+        s.client.post(s.url, json={**body, "catalog_id": "another"}).status_code == 409
+    )
+    assert (
+        s.client.post(s.url, json={**body, "config_digest": "0" * 64}).status_code
+        == 409
+    )
+
+
+def test_create_requires_selected_catalog_and_current_digest(production_api):
+    s = production_api
+    for field in ("catalog_id", "config_digest"):
+        assert (
+            s.client.post(
+                s.url,
+                json={key: value for key, value in CREATE.items() if key != field},
+            ).status_code
+            == 422
+        )
+    assert (
+        s.client.post(s.url, json={**CREATE, "catalog_id": "hidden"}).status_code == 503
+    )
+    assert (
+        s.client.post(s.url, json={**CREATE, "config_digest": "0" * 64}).status_code
+        == 503
+    )
+    assert s.store.get(REQUEST_ID) is None
+    assert s.calls == []
+
+
+def test_model_snapshot_contract_has_no_target_for_prompted_speech():
+    from pydantic import TypeAdapter
+
+    schema = TypeAdapter(contract().ModelSnapshot)
+    resource = {
+        "catalog_id": "qwen",
+        "label": "Qwen",
+        "model": "qwen-voice-design",
+        "mode": "resource",
+        "target_model": {"catalog_id": "tts", "model": "qwen3-tts-vd-2026-01-26"},
+        "config_digest": "a" * 64,
+        "execution_mode": "gateway",
+    }
+    assert schema.validate_python(resource).mode == "resource"
+    with pytest.raises(ValidationError):
+        schema.validate_python({**resource, "target_model": None})
+    prompted = {**resource, "mode": "prompted_speech", "target_model": None}
+    assert schema.validate_python(prompted).target_model is None
+    with pytest.raises(ValidationError):
+        schema.validate_python({**prompted, "target_model": resource["target_model"]})

@@ -30,11 +30,68 @@ def test_catalog_target_visibility_and_billing_once():
         "request": {"endpoint": "audio/speech"},
     }
     with pytest.raises(VoiceDesignError):
-        resolve_voice_design_catalog([design])
-    resolved = resolve_voice_design_catalog([design, target])
+        resolve_voice_design_catalog([design], catalog_id="design")
+    resolved = resolve_voice_design_catalog([design, target], catalog_id="design")
     assert resolved.billing_params()["item_count"] == 1
     assert resolved.billing_params()["pricing_kind"] == "audio"
     assert resolved.target_model == "cosyvoice-v3.5-flash"
+
+
+def test_three_catalogs_are_selected_explicitly_and_snapshotted(monkeypatch):
+    from novelvideo.audio.voice_design_service import list_voice_design_catalog
+
+    entries = [
+        {
+            "id": "cosy",
+            "label": "CosyVoice",
+            "gateway_model": "voice-enrollment",
+            "request": {"endpoint": "audio/voice-designs"},
+            "targetModel": "cosy-tts",
+        },
+        {
+            "id": "cosy-tts",
+            "gateway_model": "cosyvoice-v3.5-flash",
+            "request": {"endpoint": "audio/speech"},
+        },
+        {
+            "id": "qwen",
+            "label": "Qwen",
+            "gateway_model": "qwen-voice-design",
+            "request": {"endpoint": "audio/voice-designs"},
+            "targetModel": "qwen-tts",
+        },
+        {
+            "id": "qwen-tts",
+            "gateway_model": "qwen3-tts-vd-2026-01-26",
+            "request": {"endpoint": "audio/speech"},
+        },
+        {
+            "id": "seed",
+            "label": "Seed Audio",
+            "gateway_model": "seed-audio-1.0",
+            "request": {"endpoint": "audio/speech"},
+            "voiceDesignMode": "prompted_speech",
+        },
+    ]
+    models = list_voice_design_catalog(entries)
+    assert [model.model_id for model in models] == ["cosy", "qwen", "seed"]
+    for model in models:
+        selected = resolve_voice_design_catalog(entries, catalog_id=model.model_id)
+        assert selected.snapshot()["catalog_id"] == model.model_id
+        assert selected.billing_params()["catalog_id"] == model.model_id
+        assert selected.snapshot()["execution_mode"] == "gateway"
+    assert models[-1].snapshot()["target_model"] is None
+    monkeypatch.setenv("VOICE_DESIGN_TEST_REPLAY", "1")
+    replay = resolve_voice_design_catalog(entries, catalog_id="seed")
+    assert replay.snapshot()["execution_mode"] == "test_replay"
+    assert replay.config_digest != models[-1].config_digest
+    entries[3]["enabled"] = False
+    assert [model.model_id for model in list_voice_design_catalog(entries)] == [
+        "cosy",
+        "seed",
+    ]
+    with pytest.raises(VoiceDesignError):
+        resolve_voice_design_catalog(entries, catalog_id="qwen")
 
 
 @pytest.mark.parametrize(
@@ -87,11 +144,26 @@ def context():
 
 
 @pytest.fixture
-def model_config():
-    from novelvideo.audio.voice_design_service import ResolvedVoiceDesignConfig
+def model_config(request):
+    from novelvideo.audio.voice_design_service import (
+        PromptedSpeechConfig,
+        ResolvedVoiceDesignConfig,
+    )
+
+    if getattr(request, "param", "cosy") == "seed":
+        return PromptedSpeechConfig("seed", "seed-audio-1.0", "d" * 64, "Seed Audio")
+    if getattr(request, "param", "cosy") == "qwen":
+        return ResolvedVoiceDesignConfig(
+            "qwen",
+            "qwen-tts",
+            "qwen-voice-design",
+            "qwen3-tts-vd-2026-01-26",
+            "d" * 64,
+            "Qwen",
+        )
 
     return ResolvedVoiceDesignConfig(
-        "design", "target", "voice-enrollment", "cosyvoice-v3.5-flash", "digest"
+        "design", "target", "voice-enrollment", "cosyvoice-v3.5-flash", "d" * 64
     )
 
 
@@ -386,6 +458,7 @@ def gateway(monkeypatch, context):
 
     class Response:
         status = 200
+        headers = {"Content-Type": "application/json"}
 
         async def __aenter__(self):
             return self
@@ -402,10 +475,15 @@ def gateway(monkeypatch, context):
 
             if isinstance(self.payload, Exception):
                 raise self.payload
-            yield json.dumps(self.payload).encode()
+            yield (
+                self.payload
+                if isinstance(self.payload, bytes)
+                else json.dumps(self.payload).encode()
+            )
 
     response = Response()
     response.payload = {}
+    response.session_options = []
     response.meter = SimpleNamespace(
         reserve_current_model_call_credit=AsyncMock(return_value=""),
         bump_model_call=AsyncMock(),
@@ -415,7 +493,7 @@ def gateway(monkeypatch, context):
 
     class Session:
         def __init__(self, **kwargs):
-            pass
+            response.session_options.append(kwargs)
 
         async def __aenter__(self):
             return self
@@ -686,7 +764,9 @@ async def test_scoped_catalog_never_falls_back(enabled, monkeypatch, code, expec
         _PORTS, "media_model_catalog", SimpleNamespace(list_models_for_project=scoped)
     )
     with pytest.raises(VoiceDesignError) as error:
-        await resolve_voice_design_config(user_id="requester", project_id="project")
+        await resolve_voice_design_config(
+            user_id="requester", project_id="project", catalog_id="design"
+        )
     assert error.value.code == expected
     assert str(error.value) == expected
     scoped.assert_awaited_once_with("audio", user_id="requester", project_id="project")
@@ -714,18 +794,27 @@ async def test_project_quote_uses_trusted_scope_and_one_item(
     result = await service.quote_voice_design(
         ctx=SimpleNamespace(requester_user_id="requester", project_id="project"),
         surface=surface,
+        catalog_id="design",
     )
-    resolve.assert_awaited_once_with(user_id="requester", project_id="project")
+    resolve.assert_awaited_once_with(
+        user_id="requester", project_id="project", catalog_id="design"
+    )
     assert quote.call_args.kwargs["params"] == model_config.billing_params()
     assert quote.call_args.kwargs["quantity"] == 1
     assert quote.call_args.kwargs["product_surface"] == product
     assert result == {
         "ok": True,
-        "data": {"cost": 1, "display": "1", "unit": "call", "quantity": 1},
+        "data": {
+            "cost": 1,
+            "display": "1",
+            "unit": "call",
+            "quantity": 1,
+            "model": model_config.snapshot(),
+        },
     }
 
 
-def test_voice_design_rejects_non_cosyvoice_target():
+def test_voice_design_target_is_resolved_from_effective_catalog():
     design = {
         "id": "design",
         "gateway_model": "voice-enrollment",
@@ -737,11 +826,10 @@ def test_voice_design_rejects_non_cosyvoice_target():
         "gateway_model": "unsupported-tts",
         "request": {"endpoint": "audio/speech"},
     }
-    with pytest.raises(VoiceDesignError):
-        resolve_voice_design_catalog([design, target])
-    target["aliases"] = ["cosyvoice-v3.5-flash"]
+    target["aliases"] = []
     assert (
-        resolve_voice_design_catalog([design, target]).target_model == "unsupported-tts"
+        resolve_voice_design_catalog([design, target], catalog_id="design").target_model
+        == "unsupported-tts"
     )
 
 
@@ -939,6 +1027,9 @@ def runner_case(enabled, monkeypatch, tmp_path, context, model_config):
         preview_text="今天的天气很好，我们沿着河边慢慢走回家。",
         language="zh",
         surface="supertale",
+        catalog_id=model_config.model_id,
+        config_digest=model_config.config_digest,
+        model=model_config.snapshot(),
     )
     monkeypatch.setattr(storage_module, "VoiceDesignStorage", lambda _ctx: store)
     monkeypatch.setattr(
@@ -1076,7 +1167,7 @@ def test_core_does_not_confirm_terminal_failure(
         store.fail(candidate_id, "provider_bad_audio")
     elif status == "unknown":
         store.claim(candidate_id)
-        runner_case.now[0] += 121
+        runner_case.now[0] += runner_case.store.lease_seconds + 1
     elif status == "queued_timeout":
         store.mark_queued(candidate_id)
         runner_case.now[0] += 601
@@ -1160,7 +1251,7 @@ def test_claimed_core_replay_expires_without_confirm(runner_case, core_case, gat
         pending = executor.submit(core_case.run)
         assert seen.wait(2)
         assert core_case.settlements == []
-        runner_case.now[0] += 121
+        runner_case.now[0] += runner_case.store.lease_seconds + 1
         with pytest.raises(VoiceDesignError) as error:
             pending.result(timeout=2)
         assert error.value.unknown
@@ -1353,3 +1444,310 @@ async def test_preview_duration_uses_decoded_samples_at_boundary(
         with pytest.raises(VoiceDesignError, match="candidate_duration_exceeded"):
             await persist_preview(payload, destination)
         assert not destination.exists()
+
+
+@pytest.mark.parametrize("mode", ["binary", "json"])
+async def test_seed_speech_contract_and_real_media_validation(
+    enabled, gateway, context, tmp_path, audio_bytes, monkeypatch, mode
+):
+    from unittest.mock import AsyncMock
+    from novelvideo.audio import voice_design_service as service
+
+    config = service.PromptedSpeechConfig(
+        "seed", "seed-audio-1.0", "a" * 64, "Seed Audio"
+    )
+    calls, response, _ = gateway
+    response.headers = {
+        "Content-Type": "audio/mpeg" if mode == "binary" else "application/json"
+    }
+    response.payload = (
+        audio_bytes
+        if mode == "binary"
+        else {
+            "audio": {
+                "url": "https://media.example/result.mp3",
+                "format": "mp3",
+                "duration": 999,
+            }
+        }
+    )
+    download = AsyncMock(return_value=audio_bytes)
+    monkeypatch.setattr(service, "_download_preview", download)
+    result = await service.generate_voice_design(
+        request={
+            "description": "Low warm voice",
+            "preview_text": "A calm voice speaks this preview.",
+            "language": "zh",
+        },
+        output_path=tmp_path / "seed.mp3",
+        egress_context=context,
+        model_config=config,
+    )
+    assert result.path.read_bytes() == audio_bytes
+    assert 0 < result.duration_seconds <= 15
+    assert len(calls) == 1
+    assert calls[0][0] == "https://gateway.example/v1/audio/speech"
+    assert calls[0][1]["json"] == {
+        "model": "seed-audio-1.0",
+        "instructions": "Low warm voice",
+        "input": "A calm voice speaks this preview.",
+        "response_format": "mp3",
+        "metadata": {"sample_rate": 16000},
+    }
+    response.meter.reserve_current_model_call_credit.assert_awaited_once()
+    response.meter.bump_model_call.assert_awaited_once()
+    if mode == "json":
+        download.assert_awaited_once_with("https://media.example/result.mp3")
+    else:
+        download.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"not audio", b"", b'{"audio":{"url":"http://127.0.0.1/private","format":"mp3"}}'],
+)
+async def test_seed_rejects_bad_audio_and_private_json_url(
+    enabled, gateway, context, tmp_path, body
+):
+    from novelvideo.audio import voice_design_service as service
+
+    config = service.PromptedSpeechConfig("seed", "seed-audio-1.0", "a" * 64)
+    calls, response, _ = gateway
+    response.headers = {
+        "Content-Type": "application/json" if body.startswith(b"{") else "audio/mpeg"
+    }
+    response.payload = body
+    destination = tmp_path / "seed.mp3"
+    with pytest.raises(VoiceDesignError, match="provider_bad_audio"):
+        await service.generate_voice_design(
+            request={
+                "description": "Low warm voice",
+                "preview_text": "A calm voice speaks this preview.",
+            },
+            output_path=destination,
+            egress_context=context,
+            model_config=config,
+        )
+    assert len(calls) == 1
+    assert not destination.exists()
+    response.meter.bump_model_call.assert_not_awaited()
+
+
+async def test_replay_mode_cannot_egress_to_a_remote_gateway(
+    enabled, gateway, context, model_config, tmp_path, monkeypatch
+):
+    from dataclasses import replace
+    from novelvideo.audio import voice_design_service as service
+
+    calls, response, _ = gateway
+    monkeypatch.setenv("VOICE_DESIGN_TEST_REPLAY", "1")
+    with pytest.raises(VoiceDesignError, match="voice_design_forbidden"):
+        await service.generate_voice_design(
+            request={
+                "description": "Low warm voice",
+                "preview_text": "A calm voice speaks this preview.",
+            },
+            output_path=tmp_path / "candidate.mp3",
+            egress_context=context,
+            model_config=replace(model_config, execution_mode="test_replay"),
+        )
+    assert calls == []
+    response.meter.reserve_current_model_call_credit.assert_not_awaited()
+
+
+async def test_model_execution_mode_drift_is_rejected_before_egress(
+    enabled, gateway, context, model_config, tmp_path, monkeypatch
+):
+    from novelvideo.audio import voice_design_service as service
+
+    monkeypatch.setenv("VOICE_DESIGN_TEST_REPLAY", "1")
+    with pytest.raises(VoiceDesignError, match="voice_design_unavailable"):
+        await service.generate_voice_design(
+            request={
+                "description": "Low warm voice",
+                "preview_text": "A calm voice speaks this preview.",
+            },
+            output_path=tmp_path / "candidate.mp3",
+            egress_context=context,
+            model_config=model_config,
+        )
+    assert gateway[0] == []
+
+
+async def test_qwen_resource_uses_catalog_target(
+    enabled, gateway, context, model_config, tmp_path, audio_bytes
+):
+    import base64
+    from dataclasses import replace
+    from novelvideo.audio import voice_design_service as service
+
+    calls, response, _ = gateway
+    response.payload = {
+        "preview_audio": {
+            "data": base64.b64encode(audio_bytes).decode(),
+            "format": "mp3",
+            "sample_rate": 16000,
+        }
+    }
+    config = replace(
+        model_config,
+        model_id="qwen",
+        model="qwen-voice-design",
+        target_model="qwen3-tts-vd-2026-01-26",
+    )
+    result = await service.generate_voice_design(
+        request={
+            "description": "Low warm voice",
+            "preview_text": "A calm voice speaks this preview.",
+        },
+        output_path=tmp_path / "qwen.mp3",
+        egress_context=context,
+        model_config=config,
+    )
+    assert result.path.read_bytes() == audio_bytes
+    assert calls[0][0].endswith("/audio/voice-designs")
+    assert calls[0][1]["json"]["model"] == "qwen-voice-design"
+    assert calls[0][1]["json"]["target_model"] == "qwen3-tts-vd-2026-01-26"
+
+
+@pytest.mark.parametrize("model_config", ["cosy", "qwen", "seed"], indirect=True)
+async def test_quote_worker_and_persisted_result_keep_selected_model(
+    runner_case, model_config, gateway, audio_bytes, monkeypatch
+):
+    import base64
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from novelvideo.audio import voice_design_service as service
+    from novelvideo.ports.credit_quote import CreditQuote
+    from novelvideo.task_backend.runners.audio import _run_voice_design
+
+    calls, response, _ = gateway
+    if model_config.mode == "prompted_speech":
+        response.headers = {"Content-Type": "audio/mpeg"}
+        response.payload = audio_bytes
+    else:
+        response.payload = {
+            "preview_audio": {
+                "data": base64.b64encode(audio_bytes).decode(),
+                "format": "mp3",
+                "sample_rate": 16000,
+            }
+        }
+    quote = AsyncMock(return_value=CreditQuote(total_cost=7, display="7"))
+    monkeypatch.setattr(
+        service,
+        "get_credit_quote",
+        lambda: SimpleNamespace(generation_credit_quote=quote),
+    )
+    quoted = await service.quote_voice_design(
+        ctx=runner_case.ctx, surface="supertale", catalog_id=model_config.model_id
+    )
+    assert quoted["data"]["model"] == model_config.snapshot()
+    assert quote.call_args.kwargs["params"]["catalog_id"] == model_config.model_id
+    if model_config.mode == "prompted_speech":
+        # Simulate a gateway completing after its documented 280s polling window.
+        # No real sleep or external gateway is involved.
+        read = response.iter_chunked
+
+        async def delayed_read(size):
+            runner_case.now[0] += 281
+            async for chunk in read(size):
+                yield chunk
+
+        response.iter_chunked = delayed_read
+    result = await _run_voice_design(runner_case.envelope, runner_case.ctx)
+    assert result["status"] == "ready"
+    assert result["model"] == quoted["data"]["model"]
+    assert result["catalog_id"] == model_config.model_id
+    assert result["config_digest"] == model_config.config_digest
+    assert calls[0][1]["json"]["model"] == model_config.model
+    assert len(calls) == 1
+    if model_config.mode == "prompted_speech":
+        assert response.session_options[0]["timeout"].total > 280
+        assert (
+            runner_case.store.lease_seconds
+            > response.session_options[0]["timeout"].total
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("catalog_id", "another-model"), ("config_digest", "0" * 64), ("model", None)],
+)
+async def test_worker_rejects_candidate_binding_drift_without_gateway(
+    runner_case, gateway, field, value
+):
+    import json
+    from novelvideo.task_backend.runners.audio import _run_voice_design
+
+    column = "model_snapshot" if field == "model" else field
+    with runner_case.store._transaction() as db:
+        db.execute(
+            f"UPDATE candidates SET {column}=?",
+            (json.dumps(value) if field == "model" else value,),
+        )
+    with pytest.raises(VoiceDesignError, match="voice_design_unavailable"):
+        await _run_voice_design(runner_case.envelope, runner_case.ctx)
+    assert gateway[0] == []
+    assert runner_case.store.get(runner_case.candidate_id)["status"] == "failed"
+
+
+async def test_seed_timeout_is_unknown_and_replay_does_not_resubmit(
+    enabled, gateway, context, tmp_path
+):
+    from novelvideo.audio import voice_design_service as service
+
+    config = service.PromptedSpeechConfig("seed", "seed-audio-1.0", "a" * 64)
+    calls, response, _ = gateway
+    response.payload = TimeoutError()
+    for _ in range(2):
+        with pytest.raises(VoiceDesignError) as error:
+            await service.generate_voice_design(
+                request={
+                    "description": "Low warm voice",
+                    "preview_text": "A calm voice speaks this preview.",
+                },
+                output_path=tmp_path / "seed.mp3",
+                egress_context=context,
+                model_config=config,
+            )
+        assert error.value.code == "generation_unknown"
+        assert error.value.unknown
+    assert len(calls) == 1
+    response.meter.reserve_current_model_call_credit.assert_awaited_once()
+    response.meter.bump_model_call.assert_not_awaited()
+
+
+async def test_explicit_replay_accepts_only_loopback_and_records_mode(
+    enabled, gateway, context, model_config, tmp_path, audio_bytes, monkeypatch
+):
+    import base64
+    from dataclasses import replace
+    from novelvideo.audio import voice_design_service as service
+    from novelvideo.ports.model_credentials import RequestCredential
+
+    calls, response, credentials = gateway
+    monkeypatch.setenv("VOICE_DESIGN_TEST_REPLAY", "1")
+    credentials.return_value = RequestCredential(
+        context.credential, "test-secret", "http://127.0.0.1:18914/v1"
+    )
+    response.payload = {
+        "preview_audio": {
+            "data": base64.b64encode(audio_bytes).decode(),
+            "format": "mp3",
+            "sample_rate": 16000,
+        }
+    }
+    config = replace(model_config, execution_mode="test_replay")
+    result = await service.generate_voice_design(
+        request={
+            "description": "Low warm voice",
+            "preview_text": "A calm voice speaks this preview.",
+        },
+        output_path=tmp_path / "replay.mp3",
+        egress_context=context,
+        model_config=config,
+    )
+    assert result.path.read_bytes() == audio_bytes
+    assert config.snapshot()["execution_mode"] == "test_replay"
+    assert calls[0][0] == "http://127.0.0.1:18914/v1/audio/voice-designs"

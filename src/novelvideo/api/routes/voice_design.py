@@ -65,6 +65,10 @@ class VoiceDesignCreateRequest(ContractModel):
     description: Description
     preview_text: PreviewText
     language: Language = "zh"
+    catalog_id: Annotated[
+        str, StringConstraints(strict=True, min_length=1, max_length=200)
+    ]
+    config_digest: Sha256
 
 
 ErrorCode = Literal[
@@ -145,6 +149,8 @@ class ErrorDetails(ContractModel):
             "replace_existing",
             "name",
             "slot",
+            "catalog_id",
+            "config_digest",
         ]
         | None
     ) = None
@@ -167,12 +173,45 @@ class VoiceDesignError(ContractModel):
         return self
 
 
-class CandidateGenerating(ContractModel):
+class TargetModelSnapshot(ContractModel):
+    catalog_id: StrictStr
+    model: StrictStr
+
+
+class BaseModelSnapshot(ContractModel):
+    catalog_id: StrictStr
+    label: StrictStr
+    model: StrictStr
+    config_digest: Sha256
+    execution_mode: Literal["gateway", "test_replay"]
+
+
+class ResourceModelSnapshot(BaseModelSnapshot):
+    mode: Literal["resource"]
+    target_model: TargetModelSnapshot
+
+
+class PromptedSpeechModelSnapshot(BaseModelSnapshot):
+    mode: Literal["prompted_speech"]
+    target_model: None
+
+
+ModelSnapshot = Annotated[
+    ResourceModelSnapshot | PromptedSpeechModelSnapshot, Field(discriminator="mode")
+]
+
+
+class CandidateModel(ContractModel):
+    # Existing persisted candidates predate model snapshots.
+    model: ModelSnapshot | None = None
+
+
+class CandidateGenerating(CandidateModel):
     candidate_id: UUID
     status: Literal["generating"]
 
 
-class CandidateReady(ContractModel):
+class CandidateReady(CandidateModel):
     candidate_id: UUID
     status: Literal["ready"]
     description: Description
@@ -204,19 +243,19 @@ class CandidateReady(ContractModel):
         return self
 
 
-class CandidateFailed(ContractModel):
+class CandidateFailed(CandidateModel):
     candidate_id: UUID
     status: Literal["failed"]
     failure: Failure
 
 
-class CandidateUnknown(ContractModel):
+class CandidateUnknown(CandidateModel):
     candidate_id: UUID
     status: Literal["unknown"]
     failure: Failure
 
 
-class CandidateExpired(ContractModel):
+class CandidateExpired(CandidateModel):
     candidate_id: UUID
     status: Literal["expired"]
 
@@ -423,7 +462,11 @@ def _candidate(record, project):
     status = record["status"]
     if status == "expired":
         raise CandidateStorageError("candidate_expired")
-    data = {"candidate_id": candidate_id, "status": status}
+    data = {
+        "candidate_id": candidate_id,
+        "status": status,
+        "model": record.get("model"),
+    }
     if status == "ready":
         data.update(
             {
@@ -468,9 +511,29 @@ def _required_candidate(storage, candidate_id):
     return record
 
 
+@router.get("/models", response_model=Success[dict[str, list[ModelSnapshot]]])
+async def list_models(project: str, user: dict = Depends(get_api_user)):
+    ctx = await _context(project, user, "editor")
+    from novelvideo.audio.voice_design_service import (
+        VoiceDesignError as ServiceError,
+        list_voice_design_configs,
+    )
+
+    try:
+        models = await list_voice_design_configs(
+            user_id=ctx.requester_user_id, project_id=ctx.project_id
+        )
+        return {"ok": True, "data": {"models": [model.snapshot() for model in models]}}
+    except ServiceError as exc:
+        raise CandidateStorageError(exc.code) from None
+
+
 @router.get("/quote")
 async def quote_candidate(
-    project: str, surface: GenerationCreditSurface, user: dict = Depends(get_api_user)
+    project: str,
+    surface: GenerationCreditSurface,
+    catalog_id: str,
+    user: dict = Depends(get_api_user),
 ):
     ctx = await _context(project, user, "editor")
     from novelvideo.audio.voice_design_service import (
@@ -479,7 +542,7 @@ async def quote_candidate(
     )
 
     try:
-        return await quote_voice_design(ctx=ctx, surface=surface)
+        return await quote_voice_design(ctx=ctx, surface=surface, catalog_id=catalog_id)
     except ServiceError as exc:
         raise CandidateStorageError(exc.code) from None
 
@@ -499,6 +562,8 @@ async def create_candidate(
             preview_text=body.preview_text,
             language=body.language,
             surface=body.surface,
+            catalog_id=body.catalog_id,
+            config_digest=body.config_digest,
         )
         if record["status"] != "generating" or record["queued"] or record["claimed"]:
             return JSONResponse(
@@ -514,8 +579,12 @@ async def create_candidate(
     try:
         ensure_voice_design_enabled()
         config = await resolve_voice_design_config(
-            user_id=ctx.requester_user_id, project_id=ctx.project_id
+            user_id=ctx.requester_user_id,
+            project_id=ctx.project_id,
+            catalog_id=body.catalog_id,
         )
+        if config.config_digest != body.config_digest:
+            raise CandidateStorageError("voice_design_unavailable")
     except ServiceError as exc:
         raise CandidateStorageError(exc.code) from None
     if body.language != "zh":
@@ -526,6 +595,9 @@ async def create_candidate(
         preview_text=body.preview_text,
         language=body.language,
         surface=body.surface,
+        catalog_id=body.catalog_id,
+        config_digest=body.config_digest,
+        model=config.snapshot(),
     )
     try:
         await enqueue_project_task(

@@ -13,8 +13,9 @@ import os
 import socket
 import subprocess
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -36,6 +37,14 @@ from novelvideo.ports.registry import PortNotRegistered, get_port
 
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
 logger = logging.getLogger(__name__)
+
+
+def _execution_mode() -> Literal["gateway", "test_replay"]:
+    return (
+        "test_replay"
+        if os.environ.get("VOICE_DESIGN_TEST_REPLAY") == "1"
+        else "gateway"
+    )
 
 
 def _log_preview_shape(payload: dict) -> None:
@@ -89,14 +98,7 @@ class VoiceDesignError(RuntimeError):
         self.unknown = unknown
 
 
-@dataclass(frozen=True)
-class ResolvedVoiceDesignConfig:
-    model_id: str
-    target_model_id: str
-    model: str
-    target_model: str
-    config_digest: str
-
+class _VoiceDesignBilling:
     def billing_params(self) -> dict:
         return {
             "feature_key": "audio.voice_design",
@@ -107,6 +109,46 @@ class ResolvedVoiceDesignConfig:
             "pricing_metrics": {"call_count": 1, "item_count": 1},
             "voice_design_config": asdict(self),
         }
+
+    def snapshot(self) -> dict:
+        return {
+            "catalog_id": self.model_id,
+            "label": self.label or self.model,
+            "model": self.model,
+            "mode": self.mode,
+            "target_model": (
+                {"catalog_id": self.target_model_id, "model": self.target_model}
+                if isinstance(self, ResolvedVoiceDesignConfig)
+                else None
+            ),
+            "config_digest": self.config_digest,
+            "execution_mode": self.execution_mode,
+        }
+
+
+@dataclass(frozen=True)
+class ResolvedVoiceDesignConfig(_VoiceDesignBilling):
+    model_id: str
+    target_model_id: str
+    model: str
+    target_model: str
+    config_digest: str
+    label: str = ""
+    execution_mode: Literal["gateway", "test_replay"] = "gateway"
+    mode: Literal["resource"] = field(default="resource", init=False)
+
+
+@dataclass(frozen=True)
+class PromptedSpeechConfig(_VoiceDesignBilling):
+    model_id: str
+    model: str
+    config_digest: str
+    label: str = ""
+    execution_mode: Literal["gateway", "test_replay"] = "gateway"
+    mode: Literal["prompted_speech"] = field(default="prompted_speech", init=False)
+
+
+VoiceDesignConfig = ResolvedVoiceDesignConfig | PromptedSpeechConfig
 
 
 @dataclass(frozen=True)
@@ -127,45 +169,87 @@ def ensure_voice_design_enabled() -> int:
     return limit
 
 
-def resolve_voice_design_catalog(entries: list[dict]) -> ResolvedVoiceDesignConfig:
+def list_voice_design_catalog(entries: list[dict]) -> list[VoiceDesignConfig]:
     visible = {
         str(e.get("catalogId") or e.get("catalog_id") or e.get("id")): e
         for e in entries
         if e.get("enabled") is not False
     }
-    designs = [
-        (key, e)
-        for key, e in visible.items()
-        if e.get("request", {}).get("endpoint") == "audio/voice-designs"
-    ]
-    if len(designs) != 1:
-        raise VoiceDesignError("voice_design_unavailable")
-    model_id, design = designs[0]
-    target_id = design.get("targetModel")
-    target = visible.get(target_id)
-    if not target or target.get("request", {}).get("endpoint") != "audio/speech":
-        raise VoiceDesignError("voice_design_unavailable")
-    try:
-        validate_media_model_catalog_config(
-            {"request": design.get("request"), "targetModel": target_id}, "audio"
+    execution_mode = _execution_mode()
+    resolved = []
+    for model_id, design in visible.items():
+        endpoint = design.get("request", {}).get("endpoint")
+        prompted = (
+            endpoint == "audio/speech"
+            and design.get("voiceDesignMode") == "prompted_speech"
         )
-        validate_media_model_catalog_config({"request": target.get("request")}, "audio")
-    except ValueError:
-        raise VoiceDesignError("voice_design_unavailable") from None
-    model = str(design.get("gateway_model") or design.get("gatewayModel") or "")
-    target_model = str(target.get("gateway_model") or target.get("gatewayModel") or "")
-    target_names = {target_model, target_id, *(target.get("aliases") or [])}
-    if not model or "cosyvoice-v3.5-flash" not in target_names:
-        raise VoiceDesignError("voice_design_unavailable")
-    digest = hashlib.sha256(
-        json.dumps([design, target], sort_keys=True).encode()
-    ).hexdigest()
-    return ResolvedVoiceDesignConfig(model_id, target_id, model, target_model, digest)
+        if endpoint != "audio/voice-designs" and not prompted:
+            continue
+        config = {
+            key: design[key]
+            for key in ("request", "targetModel", "voiceDesignMode")
+            if key in design
+        }
+        try:
+            validate_media_model_catalog_config(config, "audio")
+            target_id = design.get("targetModel")
+            target = visible.get(target_id) if not prompted else None
+            if not prompted:
+                if (
+                    not target
+                    or target.get("request", {}).get("endpoint") != "audio/speech"
+                ):
+                    continue
+                validate_media_model_catalog_config(
+                    {
+                        key: target[key]
+                        for key in ("request", "voiceDesignMode", "targetModel")
+                        if key in target
+                    },
+                    "audio",
+                )
+            model = str(design.get("gateway_model") or design.get("gatewayModel") or "")
+            target_model = str(
+                (target or {}).get("gateway_model")
+                or (target or {}).get("gatewayModel")
+                or ""
+            )
+            if not model or (not prompted and not target_model):
+                continue
+            digest = hashlib.sha256(
+                json.dumps([design, target, execution_mode], sort_keys=True).encode()
+            ).hexdigest()
+            label = str(design.get("label") or model)
+            resolved.append(
+                PromptedSpeechConfig(model_id, model, digest, label, execution_mode)
+                if prompted
+                else ResolvedVoiceDesignConfig(
+                    model_id,
+                    target_id,
+                    model,
+                    target_model,
+                    digest,
+                    label,
+                    execution_mode,
+                )
+            )
+        except (ValueError, TypeError):
+            continue
+    return resolved
 
 
-async def resolve_voice_design_config(
+def resolve_voice_design_catalog(
+    entries: list[dict], *, catalog_id: str
+) -> VoiceDesignConfig:
+    for config in list_voice_design_catalog(entries):
+        if config.model_id == catalog_id:
+            return config
+    raise VoiceDesignError("voice_design_unavailable")
+
+
+async def list_voice_design_configs(
     *, user_id: str, project_id: str
-) -> ResolvedVoiceDesignConfig:
+) -> list[VoiceDesignConfig]:
     ensure_voice_design_enabled()
     if not user_id or not project_id:
         raise VoiceDesignError("voice_design_forbidden")
@@ -199,10 +283,23 @@ async def resolve_voice_design_config(
                 else "voice_design_unavailable"
             )
             raise VoiceDesignError(code) from None
-    return resolve_voice_design_catalog(entries)
+    return list_voice_design_catalog(entries)
 
 
-async def quote_voice_design(*, ctx: ProjectContext, surface: str) -> dict:
+async def resolve_voice_design_config(
+    *, user_id: str, project_id: str, catalog_id: str
+) -> VoiceDesignConfig:
+    for config in await list_voice_design_configs(
+        user_id=user_id, project_id=project_id
+    ):
+        if config.model_id == catalog_id:
+            return config
+    raise VoiceDesignError("voice_design_unavailable")
+
+
+async def quote_voice_design(
+    *, ctx: ProjectContext, surface: str, catalog_id: str
+) -> dict:
     from novelvideo.api.routes.model_credits import _credit_product_surface
 
     if surface not in {"supertale", "canvas"}:
@@ -210,6 +307,7 @@ async def quote_voice_design(*, ctx: ProjectContext, surface: str) -> dict:
     resolved = await resolve_voice_design_config(
         user_id=ctx.requester_user_id,
         project_id=ctx.project_id,
+        catalog_id=catalog_id,
     )
     quote = await get_credit_quote().generation_credit_quote(
         kind="feature",
@@ -226,6 +324,7 @@ async def quote_voice_design(*, ctx: ProjectContext, surface: str) -> dict:
             "display": str(quote.total_cost),
             "unit": "call",
             "quantity": 1,
+            "model": resolved.snapshot(),
         },
     }
 
@@ -404,7 +503,6 @@ async def persist_preview(payload: dict, output_path: Path) -> VoiceDesignAudio:
         or preview.get("sample_rate") != 16000
     ):
         raise VoiceDesignError("provider_bad_audio")
-    temporary = None
     try:
         encoded = preview.get("data")
         if encoded:
@@ -417,9 +515,19 @@ async def persist_preview(payload: dict, output_path: Path) -> VoiceDesignAudio:
             data = await _download_preview(preview["url"])
         else:
             raise VoiceDesignError("provider_bad_audio")
+        return await _persist_audio_bytes(data, preview["format"], output_path)
+    except (ValueError, binascii.Error, aiohttp.ClientError):
+        raise VoiceDesignError("provider_bad_audio") from None
+
+
+async def _persist_audio_bytes(
+    data: bytes, audio_format: str, output_path: Path
+) -> VoiceDesignAudio:
+    temporary = None
+    try:
         if not 0 < len(data) <= MAX_AUDIO_BYTES:
             raise VoiceDesignError("provider_bad_audio")
-        data, duration = await asyncio.to_thread(_prepare_preview, data, preview["format"])
+        data, duration = await asyncio.to_thread(_prepare_preview, data, audio_format)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             dir=output_path.parent, suffix=".mp3", delete=False
@@ -430,10 +538,8 @@ async def persist_preview(payload: dict, output_path: Path) -> VoiceDesignAudio:
         return VoiceDesignAudio(output_path, duration, hashlib.sha256(data).hexdigest())
     except (
         ValueError,
-        binascii.Error,
         OSError,
         subprocess.SubprocessError,
-        aiohttp.ClientError,
     ):
         raise VoiceDesignError("provider_bad_audio") from None
     finally:
@@ -441,12 +547,41 @@ async def persist_preview(payload: dict, output_path: Path) -> VoiceDesignAudio:
             temporary.unlink(missing_ok=True)
 
 
+async def _persist_speech_preview(
+    raw: bytes, *, is_json: bool, output_path: Path
+) -> VoiceDesignAudio:
+    if not is_json:
+        return await _persist_audio_bytes(raw, "mp3", output_path)
+    try:
+        payload = json.loads(raw)
+    except (ValueError, UnicodeError):
+        raise VoiceDesignError("provider_bad_audio") from None
+    audio = payload.get("audio") if isinstance(payload, dict) else None
+    if not isinstance(audio, dict) or audio.get("format") != "mp3":
+        raise VoiceDesignError("provider_bad_audio")
+    url = audio.get("url") or audio.get("preview_url")
+    if not isinstance(url, str):
+        raise VoiceDesignError("provider_bad_audio")
+    return await _persist_audio_bytes(await _download_preview(url), "mp3", output_path)
+
+
+def _is_loopback_gateway(base_url: str) -> bool:
+    parsed = urlsplit(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    try:
+        return ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError:
+        # No hostname resolution or redirects may turn a replay into remote egress.
+        return False
+
+
 async def generate_voice_design(
     *,
     request: dict,
     output_path: Path,
     egress_context: TrustedEgressContext,
-    model_config: ResolvedVoiceDesignConfig,
+    model_config: VoiceDesignConfig,
 ) -> VoiceDesignAudio:
     ensure_voice_design_enabled()
     if (
@@ -464,16 +599,30 @@ async def generate_voice_design(
         or request.get("language", "zh") != "zh"
     ):
         raise VoiceDesignError("invalid_input")
-    body = {
-        "model": model_config.model,
-        "target_model": model_config.target_model,
-        "preferred_name": "dc891",
-        "voice_prompt": description,
-        "preview_text": preview_text,
-        "language": "zh",
-        "sample_rate": 16000,
-        "response_format": "mp3",
-    }
+    execution_mode = _execution_mode()
+    if model_config.execution_mode != execution_mode:
+        raise VoiceDesignError("voice_design_unavailable")
+    if isinstance(model_config, ResolvedVoiceDesignConfig):
+        endpoint = "audio/voice-designs"
+        body = {
+            "model": model_config.model,
+            "target_model": model_config.target_model,
+            "preferred_name": "dc891",
+            "voice_prompt": description,
+            "preview_text": preview_text,
+            "language": "zh",
+            "sample_rate": 16000,
+            "response_format": "mp3",
+        }
+    else:
+        endpoint = "audio/speech"
+        body = {
+            "model": model_config.model,
+            "instructions": description,
+            "input": preview_text,
+            "response_format": "mp3",
+            "metadata": {"sample_rate": 16000},
+        }
     lease = None
     if egress_context.is_organization:
         lease = await claim_audio_operation(
@@ -494,6 +643,10 @@ async def generate_voice_design(
         )
         if credential.reference != egress_context.credential:
             raise VoiceDesignError("voice_design_forbidden")
+        if execution_mode == "test_replay" and not _is_loopback_gateway(
+            credential.base_url
+        ):
+            raise VoiceDesignError("voice_design_forbidden")
     except Exception:
         if lease is not None:
             await reject_audio_operation(lease)
@@ -510,12 +663,13 @@ async def generate_voice_design(
             metadata={"source": "voice_design"},
         )
         call_reserved = True
-        async with asyncio.timeout(90):
+        timeout = 330 if isinstance(model_config, PromptedSpeechConfig) else 90
+        async with asyncio.timeout(timeout):
             async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=90)
+                timeout=aiohttp.ClientTimeout(total=timeout)
             ) as session:
                 async with session.post(
-                    credential.base_url.rstrip("/") + "/audio/voice-designs",
+                    credential.base_url.rstrip("/") + "/" + endpoint,
                     json=body,
                     headers={"Authorization": f"Bearer {credential.api_key}"},
                     allow_redirects=False,
@@ -533,11 +687,20 @@ async def generate_voice_design(
                         raw.extend(chunk)
                         if len(raw) > 4 * ((MAX_AUDIO_BYTES + 2) // 3) + 65536:
                             raise VoiceDesignError("provider_bad_audio")
+                    is_json = "json" in response.headers.get("Content-Type", "").lower()
+            if isinstance(model_config, PromptedSpeechConfig):
+                audio = await _persist_speech_preview(
+                    bytes(raw), is_json=is_json, output_path=output_path
+                )
+            else:
+                try:
                     payload = json.loads(raw)
-                    if not isinstance(payload, dict):
-                        raise VoiceDesignError("provider_bad_audio")
-                    _log_preview_shape(payload)
-            audio = await persist_preview(payload, output_path)
+                except (ValueError, UnicodeError):
+                    raise VoiceDesignError("provider_bad_audio") from None
+                if not isinstance(payload, dict):
+                    raise VoiceDesignError("provider_bad_audio")
+                _log_preview_shape(payload)
+                audio = await persist_preview(payload, output_path)
         if lease is not None:
             await complete_audio_operation(
                 lease, result_ref=f"voice-design:{audio.sha256}"
