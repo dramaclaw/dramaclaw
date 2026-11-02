@@ -1117,6 +1117,28 @@ class TaskStateManager:
         self._save(state, ttl=self.COMPLETED_TTL)
         logger.info(f"Task completed: {task_type}/{username}/{project}/{episode}")
 
+    def update_task_metadata_for_project(
+        self,
+        ctx: ProjectContext,
+        task_type: str,
+        episode: int,
+        *,
+        metadata: dict,
+        expected_task_id: str,
+        beat_num: int | None = None,
+        scope: str | None = None,
+    ) -> bool:
+        """Persist metadata for the same task without changing its lifecycle or result."""
+        state = self.get_task_for_project(ctx, task_type, episode, beat_num, scope)
+        if state is None or state.task_id != expected_task_id:
+            return False
+        state.metadata = self._merge_task_metadata(state.metadata, metadata)
+        state.result = self._merge_metadata_into_result(state.result, state.metadata)
+        state.updated_at = utc_now_iso()
+        ttl = self.COMPLETED_TTL if state.status in TERMINAL_TASK_STATUSES else None
+        self._save_for_context(ctx, state, ttl=ttl)
+        return True
+
     def complete_task_for_project(
         self,
         ctx: ProjectContext,

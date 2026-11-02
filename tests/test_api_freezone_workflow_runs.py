@@ -13,6 +13,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 
+class _TaskMetadataWriter:
+    def update_task_metadata_for_project(self, *args, metadata, expected_task_id, **kwargs):
+        task = self.get_task_for_project(*args, **kwargs)
+        if task is None or task.task_id != expected_task_id:
+            return False
+        task.metadata.update(metadata)
+        return True
+
+
 def _task_batch(ctx, keys, tasks):
     from novelvideo.task_identity import project_task_state_key
 
@@ -1755,7 +1764,7 @@ async def test_late_recipe_compile_receipt_reconciles_timed_out_task(
             settlements.add((reservation_id, action))
             return {"status": "completed", "action": action}
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -1812,7 +1821,7 @@ async def test_late_recipe_compile_receipt_reconciles_timed_out_task(
     assert len(completions) == 1
     assert completions[0]["metadata"]["settlement_status"] == "reconciled"
     assert attempts == [("original-reservation", "confirm")] * (
-        4 if settlement_fails_once else 2
+        2 if settlement_fails_once else 1
     )
     assert settlements == {("original-reservation", "confirm")}
 
@@ -1874,7 +1883,7 @@ async def test_settlement_failure_preserves_successful_recipe_response(
         ):
             reviews.append((reservation_id, metadata))
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -2442,7 +2451,7 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
             assert metadata["source"] == "agent_product_late_delivery"
             return {"status": settlement_status}
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -2484,7 +2493,7 @@ async def test_failed_workflow_delivery_terminalizes_waiting_task(monkeypatch) -
     )
     failures: list[dict] = []
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -2543,7 +2552,7 @@ async def test_late_agent_product_delivery_waits_for_durable_confirmation(
         async def settle_feature_credit_reservation(self, *_args, **_kwargs):
             return settlement_result
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -2599,7 +2608,7 @@ async def test_late_agent_product_delivery_does_not_claim_failed_task_reconciled
             settlements.append(reservation_id)
             return {"status": "completed"}
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -3609,7 +3618,8 @@ def test_direct_voice_recipe_result_is_delivered_from_completed_audio_task(
 
 
 @pytest.mark.parametrize(
-    "overload_stage", [None, "settlement_task_read", "settlement_task_complete"]
+    "overload_stage",
+    [None, "settlement_task_read", "settlement_task_metadata", "settlement_task_complete"],
 )
 @pytest.mark.parametrize("post_settlement_failure", [None, "unavailable", "exception"])
 def test_cancelled_workflow_reconciles_late_recipe_media_result(
@@ -3717,6 +3727,11 @@ def test_cancelled_workflow_reconciles_late_recipe_media_result(
         product_task.metadata.update(kwargs["metadata"])
         return True
 
+    def update_metadata(*_args, metadata, expected_task_id, **_kwargs):
+        assert expected_task_id == product_task.task_id
+        product_task.metadata.update(metadata)
+        return True
+
     io = freezone.workflow_read_executor()
     overloaded = overload_stage is not None
 
@@ -3738,6 +3753,7 @@ def test_cancelled_workflow_reconciles_late_recipe_media_result(
             # next poll must use saved metadata rather than an in-memory flag.
             get_task_for_project=lambda *_args, **_kwargs: deepcopy(product_task),
             complete_task_for_project=complete_task,
+            update_task_metadata_for_project=update_metadata,
         ),
     )
     if overloaded:
@@ -3768,7 +3784,7 @@ def test_cancelled_workflow_reconciles_late_recipe_media_result(
     assert product_task.metadata["settlement_status"] == "reconciled"
     assert len(completions) == 1
     assert settlements == [("original-reservation", "confirm")] * (
-        3 if overload_stage == "settlement_task_complete" else 1
+        3 if overload_stage == "settlement_task_metadata" else 1
     )
     assert listed.json()["data"]["runs"][0]["status"] == "cancelled"
 

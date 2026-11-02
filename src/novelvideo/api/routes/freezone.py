@@ -16312,7 +16312,10 @@ async def _settle_delivered_agent_product_task(
         or metadata.get("feature_credit_charge_id")
         or ""
     ).strip()
-    if reservation_id:
+    if (
+        reservation_id
+        and metadata.get("feature_credit_confirmed_reservation_id") != reservation_id
+    ):
         settlement = await get_usage_meter().settle_feature_credit_reservation(
             reservation_id,
             action="confirm",
@@ -16340,6 +16343,18 @@ async def _settle_delivered_agent_product_task(
             raise RuntimeError(
                 "delivered agent product credit confirmation unavailable"
             )
+        saved = await io.run(
+            "settlement_task_metadata",
+            manager.update_task_metadata_for_project,
+            ctx,
+            task_type,
+            0,
+            scope=operation_id,
+            expected_task_id=expected_task_id,
+            metadata={"feature_credit_confirmed_reservation_id": reservation_id},
+        )
+        if not saved:
+            raise RuntimeError("delivered agent product credit confirmation marker not saved")
     if (
         task.status in {"failed", "running"}
         and metadata.get("error_code") == "AGENT_PRODUCT_SETTLEMENT_PENDING"
