@@ -289,7 +289,9 @@ def run_u12(browser, args):
         voice = product.get_by_role("dialog", name="按描述生成声线")
         selected = models[0]
         selector = voice.get_by_role("combobox", name="生成模型", exact=True)
-        selector.select_option(selected["catalog_id"])
+        selector.click()
+        product.get_by_role("option", name=selected["label"], exact=True).click()
+        expect(selector.locator('[data-slot="select-value"]')).to_have_text(selected["label"])
         voice.get_by_label("音色描述", exact=True).fill("沉稳清晰的男性声音，稍慢语速")
         voice.get_by_label("试听文本", exact=True).fill("今天的天气很好，我们沿着河边慢慢走回家。")
         expect(voice.get_by_role("button", name="生成试听", exact=True)).to_be_enabled()
@@ -307,9 +309,11 @@ def run_u12(browser, args):
         member_context.set_offline(True)
         member_context.set_offline(False)
         expect(voice.get_by_role("button", name="生成试听", exact=True)).to_be_disabled(timeout=15000)
-        expect(selector).to_have_value(selected["catalog_id"])
+        expect(selector.locator('[data-slot="select-value"]')).to_have_text("所选模型已不可用，仍可试听和保存已有候选。")
         product.screenshot(path=str(artifacts / "U12-model-disabled.png"), full_page=True)
-        selector.select_option(remaining[0]["catalog_id"])
+        selector.click()
+        product.get_by_role("option", name=remaining[0]["label"], exact=True).click()
+        expect(selector.locator('[data-slot="select-value"]')).to_have_text(remaining[0]["label"])
         expect(voice.get_by_role("button", name="生成试听", exact=True)).to_be_enabled()
         assert not submissions, "U12 attempted a generation submission"
         evidence["generation_submissions"] = len(submissions)
@@ -421,8 +425,10 @@ class Acceptance:
     def select_model(self, dialog, catalog_id):
         selector = dialog.get_by_role("combobox", name="生成模型", exact=True)
         expect(selector).to_be_enabled()
-        selector.select_option(catalog_id)
-        expect(selector).to_have_value(catalog_id)
+        selected = self.model_snapshot(catalog_id)
+        selector.click()
+        self.page.get_by_role("option", name=selected["label"], exact=True).click()
+        expect(selector.locator('[data-slot="select-value"]')).to_have_text(selected["label"])
         quote_url = "/voice-design/quote?surface=supertale&catalog_id=" + quote(catalog_id, safe="")
         response = self.api(quote_url)
         if response.status != 200:
@@ -433,6 +439,43 @@ class Acceptance:
             raise AssertionError("model list and quote differ")
         expect(dialog.get_by_text("本次请求模型：" + snapshot["model"], exact=True)).to_be_visible()
         return snapshot
+
+    def assert_model_menu(self, dialog, width):
+        selector = dialog.get_by_role("combobox", name="生成模型", exact=True)
+        models = self.models()
+        original = next(model for model in models if model["label"] == selector.locator('[data-slot="select-value"]').inner_text())
+        selector.click()
+        menu = self.page.get_by_role("listbox")
+        expect(menu).to_be_visible()
+        expect(menu.get_by_role("option")).to_have_count(len(models))
+        for model in models:
+            expect(menu.get_by_role("option", name=model["label"], exact=True)).to_be_visible()
+        popup = self.page.locator('[data-slot="select-content"][data-open]')
+        popup.evaluate("e => Promise.all(e.getAnimations().map(animation => animation.finished))")
+        trigger_box = selector.bounding_box()
+        menu_box = popup.bounding_box()
+        font_size = self.page.get_by_role("option").first.evaluate("e => getComputedStyle(e).fontSize")
+        assert trigger_box and menu_box
+        assert abs(menu_box["width"] - trigger_box["width"]) <= 1, {"trigger": trigger_box, "menu": menu_box}
+        assert 0 <= menu_box["x"] and menu_box["x"] + menu_box["width"] <= width
+        assert trigger_box["y"] + trigger_box["height"] <= menu_box["y"] <= trigger_box["y"] + trigger_box["height"] + 8
+        assert font_size == "12px"
+        assert not self.page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        self.page.screenshot(path=str(self.args.artifacts_dir / f"U10-model-menu-{width}.png"))
+        self.page.keyboard.press("Escape")
+        expect(menu).not_to_be_visible()
+        expect(dialog).to_be_visible()
+        expect(selector).to_be_focused()
+        selector.press("ArrowDown")
+        expect(menu).to_be_visible()
+        expect(menu.get_by_role("option", name=original["label"], exact=True)).to_be_focused()
+        self.page.keyboard.press("End")
+        expect(menu.get_by_role("option", name=models[-1]["label"], exact=True)).to_be_focused()
+        self.page.keyboard.press("Enter")
+        expect(selector.locator('[data-slot="select-value"]')).to_have_text(models[-1]["label"])
+        expect(menu).not_to_be_visible()
+        self.select_model(dialog, original["catalog_id"])
+        return {"viewport_width": width, "trigger": trigger_box, "menu": menu_box, "option_font_size": font_size, "keyboard_selection_and_escape": True}
 
     def assert_metadata(self, dialog):
         self.page.wait_for_function("""() => {
@@ -911,9 +954,11 @@ class Acceptance:
 
     def U10(self) -> list[str]:
         self.characters()
-        for width in (1280, 768):
+        menu_evidence = []
+        for width in (1440, 768):
             self.page.set_viewport_size({"width": width, "height": 900})
             dialog = self.open_voice()
+            menu_evidence.append(self.assert_model_menu(dialog, width))
             description = dialog.get_by_label("音色描述", exact=True)
             description.fill("保留输入" + "中" * 496)
             dialog.get_by_label("试听文本", exact=True).fill("今天的天气很好，我们沿着河边慢慢走回家。")
@@ -929,6 +974,7 @@ class Acceptance:
             dialog = self.open_voice()
             expect(dialog.get_by_label("音色描述", exact=True)).to_have_value("保留输入" + "中" * 496)
             self.close_voice()
+        write_json(self.args.artifacts_dir / "U10-model-menu.json", menu_evidence)
         dialog = self.open_voice()
         models = self.models()
         for model in models:
@@ -986,7 +1032,7 @@ class Acceptance:
         held[0].fulfill(response=response)
         self.page.unroute(pattern)
         expect(dialog).not_to_be_visible()
-        return ["1280/768 widths and focus; shared inputs and per-catalog results restored without new calls; generating/unknown/saving selection locks; late old-target result isolation; pending-save survives close/reopen and saves once"]
+        return ["1440/768 matching menu/trigger widths, 12px options, viewport bounds, keyboard selection/Escape and focus; shared inputs and per-catalog results restored without new calls; generating/unknown/saving selection locks; late old-target result isolation; pending-save survives close/reopen and saves once"]
 
     def U11(self) -> list[str]:
         page = self.page

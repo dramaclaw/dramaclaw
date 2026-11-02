@@ -8,6 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -567,30 +574,45 @@ function VoiceDesignSession(props: Props) {
         <div className="min-w-0 space-y-4">
           <div className="space-y-2">
             <Label htmlFor={`${id}-model`}>{t("voiceDesign.model")}</Label>
-            <select
-              id={`${id}-model`}
-              value={session.selectedCatalogId ?? ""}
+            <Select
+              value={session.selectedCatalogId}
               disabled={selectionLocked || !models.data?.models.length}
-              onChange={(e) => selectModel(e.target.value)}
-              className="w-full rounded-lg border border-input bg-[var(--ui-surface-field)] px-2.5 py-2 text-sm disabled:opacity-50"
+              onValueChange={(value) => {
+                if (value) selectModel(value);
+              }}
             >
-              {!selectedModel && (
-                <option value={session.selectedCatalogId ?? ""}>
-                  {t(
-                    models.isPending
-                      ? "voiceDesign.modelsLoading"
-                      : session.selectedCatalogId
-                        ? "voiceDesign.modelUnavailable"
-                        : "voiceDesign.modelsEmpty",
-                  )}
-                </option>
-              )}
-              {models.data?.models.map((model) => (
-                <option key={model.catalog_id} value={model.catalog_id}>
-                  {model.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger
+                id={`${id}-model`}
+                aria-label={t("voiceDesign.model")}
+                className="h-8 w-full rounded-[8px] border-white/10 bg-[var(--ui-surface-field)] px-3 text-xs font-normal shadow-none hover:bg-white/[0.04] dark:bg-[var(--ui-surface-field)]"
+              >
+                <SelectValue>
+                  {selectedModel?.label ??
+                    t(
+                      models.isPending
+                        ? "voiceDesign.modelsLoading"
+                        : session.selectedCatalogId
+                          ? "voiceDesign.modelUnavailable"
+                          : "voiceDesign.modelsEmpty",
+                    )}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent
+                align="start"
+                alignItemWithTrigger={false}
+                className="rounded-md border border-white/10 bg-popover p-1 shadow-xl shadow-black/20 ring-0"
+              >
+                {models.data?.models.map((model) => (
+                  <SelectItem
+                    key={model.catalog_id}
+                    value={model.catalog_id}
+                    className="min-h-8 gap-2 rounded-sm px-2 py-1.5 text-xs focus:bg-white/8 focus:text-current"
+                  >
+                    {model.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {models.isError ? (
               <p role="alert">{feedback(knownMessage(models.error))}</p>
             ) : !selectedModel ? (

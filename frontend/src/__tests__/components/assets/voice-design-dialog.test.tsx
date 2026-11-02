@@ -8,6 +8,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import i18next from "i18next";
 import { delay, http, HttpResponse } from "msw";
@@ -167,6 +168,13 @@ async function fill() {
   });
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "生成试听" })).toBeEnabled(),
+  );
+}
+async function selectModel(label: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "生成模型" }));
+  await user.click(
+    await screen.findByRole("option", { name: label }),
   );
 }
 async function generate() {
@@ -666,8 +674,9 @@ it.each(["success", "failure"])(
     expect(screen.getByRole("button", { name: "重新生成" })).toBeDisabled();
     const selector = screen.getByRole("combobox", { name: "生成模型" });
     expect(selector).toBeDisabled();
-    fireEvent.change(selector, { target: { value: "seed" } });
-    expect(selector).toHaveValue("qwen");
+    await userEvent.setup().click(selector);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(selector).toHaveTextContent("Qwen");
     expect(pendingSave).toHaveBeenCalledOnce();
     expect(creations).toBe(1);
     release();
@@ -782,9 +791,9 @@ it("selects all catalog models with matching quotes and restores each candidate 
     target: { value: "海风" },
   });
   const selector = await screen.findByRole("combobox", { name: "生成模型" });
-  expect(selector).toHaveValue("qwen");
+  expect(selector).toHaveTextContent("Qwen");
   for (const model of designModels) {
-    fireEvent.change(selector, { target: { value: model.catalog_id } });
+    await selectModel(model.label);
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "生成试听" })).toBeEnabled(),
     );
@@ -800,7 +809,7 @@ it("selects all catalog models with matching quotes and restores each candidate 
   expect(
     screen.getAllByText("测试回放，未调用真实模型").length,
   ).toBeGreaterThan(0);
-  fireEvent.change(selector, { target: { value: "qwen" } });
+  await selectModel("Qwen");
   expect(
     await screen.findByText("请求模型：qwen-voice-design"),
   ).toBeInTheDocument();
@@ -866,9 +875,7 @@ it("keeps a late quote for another catalog out of the selected price and request
     fireEvent.change(screen.getByLabelText("试听文本"), {
       target: { value: text },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "生成模型" }), {
-      target: { value: "cosy" },
-    });
+    await selectModel("CosyVoice");
     await screen.findByText("本次生成：11 积分 / 次");
     release();
     await delay(0);
@@ -904,8 +911,8 @@ it("keeps an unavailable catalog's existing candidate playable and savable witho
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "重新生成" })).toBeDisabled(),
   );
-  expect(screen.getByRole("combobox", { name: "生成模型" })).toHaveValue(
-    "qwen",
+  expect(screen.getByRole("combobox", { name: "生成模型" })).toHaveTextContent(
+    "所选模型已不可用，仍可试听和保存已有候选。",
   );
   expect(
     screen.getAllByText("所选模型已不可用，仍可试听和保存已有候选。").length,
@@ -1006,4 +1013,25 @@ it("isolates a mismatched candidate snapshot and only unlocks after checking the
   await screen.findByText("请求模型：qwen-voice-design");
   expect(screen.getByRole("combobox", { name: "生成模型" })).toBeEnabled();
   expect(creations).toBe(1);
+});
+
+it("opens a themed model listbox and supports keyboard selection and Escape", async () => {
+  const user = userEvent.setup();
+  mount();
+  await fill();
+  const trigger = screen.getByRole("combobox", { name: "生成模型" });
+  await user.click(trigger);
+  const menu = await screen.findByRole("listbox");
+  expect(menu).toBeVisible();
+  expect(
+    screen.getAllByRole("option").map((option) => option.textContent),
+  ).toEqual(designModels.map((model) => model.label));
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument(),
+  );
+  expect(screen.getByRole("dialog")).toBeVisible();
+  expect(trigger).toHaveFocus();
+  await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+  await waitFor(() => expect(trigger).toHaveTextContent("CosyVoice"));
 });
