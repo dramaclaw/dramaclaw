@@ -6,6 +6,7 @@ import {
   orderedReferenceUrlsWithOwnFirst,
   sortUpstreamByReferenceOrder,
   upstreamNodesInEdgeOrder,
+  videoReferenceNodesInEdgeOrder,
 } from "@/features/canvas/nodes/referenceOrdering";
 
 type Node = { id: string; position?: { y?: number } };
@@ -140,5 +141,21 @@ describe("orderedReferenceUrlsWithOwnFirst", () => {
     expect(
       orderedReferenceUrlsWithOwnFirst("a.png", ["a.png", "b.png"]),
     ).toEqual(["a.png", "b.png"]);
+  });
+});
+
+
+describe("videoReferenceNodesInEdgeOrder", () => {
+  it("仅视频引用排除剧情线，同源显式素材线保留，通用遍历不变", () => {
+    const nodes = [{ id: "previous" }, { id: "character" }, { id: "dependency" }];
+    const edges = [
+      { source: "previous", target: "clip", type: "storyChoiceEdge" },
+      { source: "previous", target: "clip", type: "storyChoiceEdge" },
+      { source: "character", target: "clip", data: { link_type: "media_input_for" } },
+      { source: "previous", target: "clip" },
+      { source: "dependency", target: "clip", data: { link_type: "dependency_for" } },
+    ];
+    expect(ids(videoReferenceNodesInEdgeOrder(nodes, edges, "clip"))).toEqual(["character", "previous"]);
+    expect(ids(upstreamNodesInEdgeOrder(nodes, edges, "clip"))).toEqual(["previous", "previous", "character", "previous"]);
   });
 });

@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "mapId": "starlight-dock",
+  "walkableAreas": [
+    {
+      "id": "map-preview-bounds",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 1152
+        },
+        {
+          "x": 0,
+          "y": 1152
+        }
+      ]
+    }
+  ],
+  "colliders": [],
+  "spawnPoints": [
+    {
+      "id": "lantern-canal-street-arrival",
+      "position": {
+        "x": 305,
+        "y": 565
+      },
+      "facing": "east"
+    },
+    {
+      "id": "starfall-tidal-wetland-arrival",
+      "position": {
+        "x": 610,
+        "y": 965
+      },
+      "facing": "north"
+    }
+  ],
+  "exits": [
+    {
+      "id": "to-lantern-canal-street",
+      "trigger": {
+        "id": "to-lantern-canal-street-trigger",
+        "points": [
+          {
+            "x": 30,
+            "y": 475
+          },
+          {
+            "x": 105,
+            "y": 475
+          },
+          {
+            "x": 105,
+            "y": 535
+          },
+          {
+            "x": 30,
+            "y": 535
+          }
+        ]
+      },
+      "targetMapId": "lantern-canal-street",
+      "targetSpawnId": "starlight-dock-arrival"
+    },
+    {
+      "id": "to-starfall-tidal-wetland",
+      "trigger": {
+        "id": "to-starfall-tidal-wetland-trigger",
+        "points": [
+          {
+            "x": 670,
+            "y": 1043
+          },
+          {
+            "x": 730,
+            "y": 1043
+          },
+          {
+            "x": 730,
+            "y": 1087
+          },
+          {
+            "x": 670,
+            "y": 1087
+          }
+        ]
+      },
+      "targetMapId": "starfall-tidal-wetland",
+      "targetSpawnId": "starlight-dock-arrival"
+    }
+  ]
+}

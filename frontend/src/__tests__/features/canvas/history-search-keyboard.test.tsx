@@ -35,6 +35,7 @@ const enTranslations: Record<string, string> = {
 
 const i18nState = vi.hoisted(() => ({ language: "zh" }));
 const canvasState = vi.hoisted(() => ({ nodes: [] as unknown[] }));
+const viewerState = vi.hoisted(() => ({ imageUrl: "", open: false }));
 const historyState = vi.hoisted(() => ({
   records: [] as Record<string, unknown>[],
   removeRecord: vi.fn(),
@@ -66,7 +67,13 @@ vi.mock("@/features/canvas/hooks/useCanvasGenerationHistory", () => ({
     removeRecord: historyState.removeRecord,
   }),
 }));
-vi.mock("@/features/canvas/ui/ImageViewerModal", () => ({ ImageViewerModal: () => null }));
+vi.mock("@/features/canvas/ui/ImageViewerModal", () => ({
+  ImageViewerModal: (props: { imageUrl: string; open: boolean }) => {
+    viewerState.imageUrl = props.imageUrl;
+    viewerState.open = props.open;
+    return null;
+  },
+}));
 vi.mock("@/features/canvas/ui/VideoViewerModal", () => ({ VideoViewerModal: () => null }));
 vi.mock("@/features/viewer-kit/three-d/ThreeDDirectorDialog", () => ({
   ThreeDDirectorDialog: () => null,
@@ -282,4 +289,21 @@ describe("CanvasHistoryAssetsModal 跨分类空态", () => {
     expect(empty).toHaveTextContent("try Videos or Audio");
     expect(empty.textContent).not.toContain("、");
   });
+});
+
+
+it("keeps the opened image stable when background history inserts a newer record", async () => {
+  const user = userEvent.setup();
+  const existing = {
+    schema_version: 1, canvas_id: "default", node_id: "node", id: "old", job_id: "old",
+    task_type: "image", task_key: "image", status: "completed", media_type: "image",
+    recorded_at: "2026-10-07T00:00:00Z", result: { output_url: "/static/demo/opened.png" },
+  };
+  historyState.records = [existing];
+  const view = render(<CanvasHistoryAssetsModal onClose={() => {}} onUseAsset={() => {}} onDeleteNode={() => {}} />);
+  await user.click(screen.getByRole("button", { name: "canvas.history.view" }));
+  expect(viewerState).toMatchObject({ open: true, imageUrl: "/static/demo/opened.png" });
+  historyState.records = [{ ...existing, id: "new", recorded_at: "2026-10-08T00:00:00Z", result: { output_url: "/static/demo/new.png" } }, existing];
+  view.rerender(<CanvasHistoryAssetsModal onClose={() => {}} onUseAsset={() => {}} onDeleteNode={() => {}} />);
+  expect(viewerState).toMatchObject({ open: true, imageUrl: "/static/demo/opened.png" });
 });

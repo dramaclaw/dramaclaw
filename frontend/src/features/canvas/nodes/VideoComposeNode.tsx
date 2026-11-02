@@ -11,6 +11,7 @@ import { Film } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useCanvasStore } from "@/stores/canvasStore";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import { useUpstreamNodes } from "@/features/canvas/application/useUpstreamGraph";
 import {
   CANVAS_NODE_TYPES,
@@ -28,13 +29,17 @@ import {
   canvasNodeFrameClass,
 } from "@/features/canvas/ui/nodeFrameStyles";
 import { AddNodeToChatButton } from "@/features/canvas/ui/AddNodeToChatButton";
-import { readUrl } from "@/lib/url-params";
 import {
-  buildInitialTimeline,
-  reconcileDraftWithUpstream,
-  resolveUnknownClipDurations,
+  NODE_PRIMARY_ACTION_BASE_CLASS,
+  NODE_PRIMARY_ACTION_DISABLED_CLASS,
+  NODE_PRIMARY_ACTION_ENABLED_CLASS,
+} from "@/features/canvas/ui/nodeControlStyles";
+import { readUrl, writeUrl } from "@/lib/url-params";
+import {
+  resolveComposeTimeline,
   VideoComposeModal,
 } from "@/features/canvas/compose/VideoComposeModal";
+import { openFilmStudioEnabled } from "@/lib/runtime-config";
 import {
   buildComposePayload,
   hasExportableClips,
@@ -65,8 +70,8 @@ type VideoComposeNodeProps = NodeProps & {
   selected?: boolean;
 };
 
-const NODE_WIDTH = 240;
-const NODE_HEIGHT = 136;
+const NODE_WIDTH = 360;
+const NODE_HEIGHT = 220;
 const MIN_UPSTREAM_VIDEOS = 2;
 const MIN_AUTO_COMPOSE_VIDEOS = 1;
 const MIN_AUTO_COMPOSE_MEDIA = 2;
@@ -75,7 +80,6 @@ export const VideoComposeNode = memo(
   ({ id, data, selected }: VideoComposeNodeProps) => {
     const { t } = useTranslation();
     const updateNodeInternals = useUpdateNodeInternals();
-    const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const upstreamNodes = useUpstreamNodes(id);
     const [isEditorOpen, setEditorOpen] = useState(false);
@@ -111,10 +115,17 @@ export const VideoComposeNode = memo(
     const handleOpen = useCallback(() => {
       if (!project) return false;
       if (!canOpen) return false;
-      setSelectedNode(id);
-      setEditorOpen(true);
+      selectNodeExclusively(id);
+      if (openFilmStudioEnabled()) {
+        // 本机显式启用时，整页工作区由地址栏驱动：刷新、后退仍停在此节点。
+        writeUrl({ compose: id });
+      } else {
+        // 默认和远程部署保留原时间线编辑器；Studio 只监听后端回环地址，不能把
+        // 该地址交给另一台机器上的浏览器，也不能以公开共享端口绕过租户隔离。
+        setEditorOpen(true);
+      }
       return true;
-    }, [canOpen, id, project, setSelectedNode]);
+    }, [canOpen, id, project]);
 
     const handleAutoCompose = useCallback(async () => {
       if (!project || !canAutoCompose) {
@@ -122,11 +133,7 @@ export const VideoComposeNode = memo(
       }
       let taskCompleted = false;
       const draft = data.draftTimeline as ComposeTimelineState | undefined;
-      const timeline = await resolveUnknownClipDurations(
-        draft?.tracks?.length
-          ? reconcileDraftWithUpstream(draft, seedNodeIds)
-          : buildInitialTimeline(seedNodeIds),
-      );
+      const timeline = await resolveComposeTimeline(draft, seedNodeIds);
       if (!hasExportableClips(timeline)) throw new Error("视频合成没有可用素材");
       if (hasOverlappingVideoClips(timeline)) {
         throw new Error("视频轨道存在重叠片段，请先在时间线中调整");
@@ -262,7 +269,6 @@ export const VideoComposeNode = memo(
       <div
         className="group relative h-full w-full overflow-visible"
         style={{ width: NODE_WIDTH, height: NODE_HEIGHT }}
-        onClick={() => setSelectedNode(id)}
       >
         <Handle
           type="target"
@@ -299,11 +305,11 @@ export const VideoComposeNode = memo(
                 event.stopPropagation();
                 handleOpen();
               }}
-              className="flex h-10 w-full items-center justify-center rounded-[12px] border border-white/15 bg-white/[0.04] px-4 text-center text-[13px] text-text-dark transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+              className={`${NODE_PRIMARY_ACTION_BASE_CLASS} ${canOpen ? NODE_PRIMARY_ACTION_ENABLED_CLASS : NODE_PRIMARY_ACTION_DISABLED_CLASS}`}
             >
               {t("videoCompose.node.open")}
             </button>
-            <span className="text-[12px] text-text-muted/90">
+            <span className="text-[12px] leading-5 text-text-muted/90">
               {t("videoCompose.node.hint", { min: MIN_UPSTREAM_VIDEOS })}
             </span>
           </div>
@@ -322,8 +328,6 @@ export const VideoComposeNode = memo(
             }
             onClose={() => setEditorOpen(false)}
             onComposed={(url, coverUrl) => {
-              // 合成完成：在本节点下游新建一个视频节点承载结果，并连边、聚焦。
-              // 封面（若设置）写进结果视频节点 + 本合成节点的 previewImageUrl。
               const store = useCanvasStore.getState();
               const position = store.findNodePosition(id, 580, 380);
               const newId = store.addNode(CANVAS_NODE_TYPES.video, position, {
@@ -334,7 +338,7 @@ export const VideoComposeNode = memo(
                 composeSourceNodeId: id,
               } as Partial<CanvasNodeData>);
               store.addEdge(id, newId);
-              store.setSelectedNode(newId);
+              selectNodeExclusively(newId);
               store.requestFocusNode(newId);
               updateNodeData(id, {
                 resultVideoUrl: url,

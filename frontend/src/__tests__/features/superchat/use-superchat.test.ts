@@ -1,6 +1,7 @@
+import { enT, zhT } from "@/__tests__/helpers/i18n-fixtures";
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { act, render, renderHook, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { useCanvasStore } from "@/stores/canvasStore";
 import {
@@ -66,6 +67,7 @@ import {
   assistantClarificationCanSubmit,
   assistantClarificationCanSubmitRecommended,
   assistantClarificationGenerationCatalogIssue,
+  assistantClarificationCanExitUnavailableVideoModel,
   assistantClarificationShowsRecommended,
   imageApprovalInitialParamsForTest,
   imageApprovalParamGroupsForTest,
@@ -155,7 +157,10 @@ vi.mock("@/features/canvas/hooks/useFreezoneImageModels", async (importOriginal)
   return { ...await importOriginal<typeof import("@/features/canvas/hooks/useFreezoneImageModels")>(), useFreezoneImageModels: () => ({ models }) };
 });
 vi.mock("@/features/canvas/hooks/useFreezoneVideoModels", async (importOriginal) => {
-  const models = [{ id: "video-model", label: "测试视频模型", minDuration: 5, maxDuration: 15 }];
+  const models = [
+    { id: "video-model", label: "测试视频模型", minDuration: 5, maxDuration: 15 },
+    { id: "review-model", label: "支持真人验证的模型", humanReview: true },
+  ];
   return { ...await importOriginal<typeof import("@/features/canvas/hooks/useFreezoneVideoModels")>(), useFreezoneVideoModels: () => ({ models }) };
 });
 
@@ -1707,6 +1712,39 @@ describe("updateAssistantUiEvents", () => {
 });
 
 describe("Skill Studio question response", () => {
+  it("settles every replay of a clarification and preserves readable model choices", () => {
+    const pending = {
+      type: "assistant.clarification.request", bridge_key: "shared-card",
+      clarification_id: "shared-choice", questions: [{ id: "image_model", options: [] }],
+    };
+    const current = ["old-turn", "recovery-turn"].map((turn, index) => ({
+      ...message(`assistant-${turn}`, "assistant", "", index + 1, turn),
+      uiEvents: [pending],
+    }));
+    const questions = [{
+      id: "image_model", title: "图片模型",
+      options: [{ id: "internal-model-id", label: "LingShan G2" }],
+    }];
+    const answers = { image_model: { option_ids: ["internal-model-id"] } };
+    const settled = updateAssistantUiEventsForTest(current, null,
+      (event) => (event as typeof pending).bridge_key === "shared-card",
+      (event) => ({ ...(event as object), submitted: true, questions, answers }),
+    );
+    for (const turn of ["old-turn", "recovery-turn"]) {
+      expect(pendingAssistantClarificationEventsForTurnForTest(settled, turn)).toHaveLength(0);
+    }
+    expect(visibleAssistantClarificationTimelineItemsForTest(questions, answers)[0]?.summary)
+      .toBe("LingShan G2");
+    // A delayed websocket delivery in a third turn must stay settled.
+    const replayed = upsertAssistantUiEventForTest(settled, "late-turn", pending);
+    expect(pendingAssistantClarificationEventsForTurnForTest(replayed, "late-turn")).toHaveLength(0);
+    // A new choice version for another subject remains answerable.
+    const different = upsertAssistantUiEventForTest(replayed, "new-turn", {
+      ...pending, bridge_key: "new-card", clarification_id: "new-choice",
+    });
+    expect(pendingAssistantClarificationEventsForTurnForTest(different, "new-turn")).toHaveLength(1);
+  });
+
   it("uses the server turn id for incoming UI events before pending local turns", () => {
     expect(resolveUiEventTurnIdForTest("server-turn", "pending-turn", "active-turn")).toBe("server-turn");
     expect(resolveUiEventTurnIdForTest("  ", "pending-turn", "active-turn")).toBe("pending-turn");
@@ -2499,6 +2537,16 @@ describe("Assistant clarification response", () => {
       { projectId: "project-a", canvasId: "canvas-a", agentId: "main" },
     );
     expect(payload).toMatchObject({project_id: "project-a", canvas_id: "canvas-a", agent_id: "main"});
+  });
+
+  it("returns cancellation to the agent without treating it as generation consent", () => {
+    const payload = buildAssistantClarificationToolResultForTest(
+      { type: "assistant.clarification.request", clarification_id: "c", bridge_key: "key", questions: [] },
+      { __action: "cancel" },
+      { cancelMessage: "请调整镜头模式。" },
+    );
+    expect(payload).toMatchObject({ action: "cancel", clarification_status: "cancelled",
+      ok: false, answers: {}, message: "请调整镜头模式。" });
   });
 
   it("builds a generic bridge tool result payload", () => {
@@ -3351,6 +3399,62 @@ describe("Canvas command approval image params", () => {
     ]);
   });
 
+  it("only offers models supporting every verified target mode and rejects stale answers", () => {
+    const rawQuestions = [{
+      id: "video_model", title: "视频模型", options_source: "video_models" as const,
+      required_video_modes: ["all_reference", "image_to_video"], options: [],
+    }];
+    const models = [
+      { id: "single", supportedModes: ["image_to_video"] },
+      { id: "unknown" },
+      { id: "omni", supportedModes: ["image_to_video", "all_reference"] },
+    ];
+    const questions = clarificationQuestionsWithLiveModelCatalogsForTest(rawQuestions, [], models);
+    expect(questions[0]?.options).toEqual([{ id: "omni", label: "omni" }]);
+    expect(assistantClarificationCanSubmit(questions, { video_model: { option_ids: ["single"] } })).toBe(false);
+    expect(assistantClarificationCanSubmit(questions, { video_model: { option_ids: ["omni"] } })).toBe(true);
+    expect(assistantClarificationShowsRecommended(questions, true,
+      { video_model: { option_ids: ["single"] } })).toBe(false);
+    const catalog = { models: models.slice(0, 2), isLoading: false, isFallback: false };
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions, catalog)).toBe(true);
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions,
+      { ...catalog, isLoading: true })).toBe(false);
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions,
+      { ...catalog, models })).toBe(false);
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions,
+      { ...catalog, isFallback: true })).toBe(true);
+    expect(assistantClarificationGenerationCatalogIssue(rawQuestions,
+      { models: [], isLoading: false, isFallback: false }, catalog)).toBe("no_compatible_video_model");
+    const unavailableQuestions = clarificationQuestionsWithLiveModelCatalogsForTest(rawQuestions, [], catalog.models);
+    expect(assistantClarificationCanSubmit(unavailableQuestions, { video_model: { option_ids: ["single"] } })).toBe(false);
+  });
+
+  it("blocks partial cards when a previously confirmed video model disappears or loses a required mode", () => {
+    const rawQuestions = [{ id: "video_resolution", title: "视频分辨率",
+      options_source: "selected_video_model_resolutions" as const,
+      required_video_modes: ["all_reference"], options: [] }];
+    const imageCatalog = { models: [], isLoading: false, isFallback: false };
+    const models = [
+      { id: "old", supportedModes: ["image_to_video"], resolutionOptions: ["720P"] },
+      { id: "new", supportedModes: ["all_reference"], resolutionOptions: ["720P"] },
+    ];
+    const videoCatalog = { models, isLoading: false, isFallback: false };
+    const answers = { video_model: { option_ids: ["old"] }, video_resolution: { option_ids: ["720P"] } };
+    expect(assistantClarificationGenerationCatalogIssue(rawQuestions, imageCatalog, videoCatalog, answers))
+      .toBe("model_incompatible");
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions, videoCatalog, answers)).toBe(true);
+    const questions = clarificationQuestionsWithLiveModelCatalogsForTest(rawQuestions, [], models, answers);
+    expect(questions[0]?.options).toEqual([]);
+    expect(assistantClarificationCanSubmit(questions, answers)).toBe(false);
+    const removed = { ...videoCatalog, models: models.slice(1) };
+    expect(assistantClarificationGenerationCatalogIssue(rawQuestions, imageCatalog, removed, answers))
+      .toBe("model_unavailable");
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions, removed, answers)).toBe(true);
+    const validAnswers = { ...answers, video_model: { option_ids: ["new"] } };
+    expect(assistantClarificationGenerationCatalogIssue(rawQuestions, imageCatalog, videoCatalog, validAnswers)).toBeNull();
+    expect(assistantClarificationCanExitUnavailableVideoModel(rawQuestions, videoCatalog, validAnswers)).toBe(false);
+  });
+
   it("derives dependent generation options from the selected live model", () => {
     const questions = clarificationQuestionsWithLiveModelCatalogsForTest(
       [
@@ -4166,6 +4270,102 @@ describe("Canvas command approval image params", () => {
       "video-model",
     )).toHaveLength(2);
   });
+
+  it("keeps interactive-story durations dynamic and exposes segment continuity", () => {
+    const approval = {
+      id: "story-dynamic-duration", key: "story-dynamic-duration", messageId: "assistant",
+      receivedAt: 1, commandCount: 4, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "update_node_data" as const, node_id: "story-a", data: { durationSec: 6, continuityMode: "independent" } },
+          { type: "update_node_data" as const, node_id: "story-b", data: { durationSec: 11, continuityMode: "auto" } },
+          { type: "run_node_action" as const, node_id: "story-a", action: "generate_video" },
+          { type: "run_node_action" as const, node_id: "story-b", action: "generate_video" },
+        ],
+      }],
+    };
+    const canvasNodes = [
+      {
+        id: "story-a", type: "videoNode" as const, position: { x: 0, y: 0 },
+        data: { storySegmentId: "a", storyRole: "start", displayName: "开场", model: "video-model" },
+      },
+      {
+        id: "story-b", type: "videoNode" as const, position: { x: 0, y: 0 },
+        data: { storySegmentId: "b", displayName: "追问", model: "video-model" },
+      },
+    ];
+    const groups = videoApprovalParamGroupsForTest(
+      approval as never,
+      canvasNodes as never,
+      [],
+      [{ id: "video-model", minDuration: 5, maxDuration: 15 }],
+      "video-model",
+    );
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => ({
+      durationSec: group.durationSec,
+      labels: group.storySegmentLabels,
+      continuityMode: group.continuityMode,
+    }))).toEqual([
+      { durationSec: 6, labels: ["开场"], continuityMode: "independent" },
+      { durationSec: 11, labels: ["追问"], continuityMode: "auto" },
+    ]);
+  });
+
+  it("shows an unsupported story duration verbatim instead of silently clamping it", () => {
+    const approval = {
+      id: "story-long-shot", key: "story-long-shot", messageId: "assistant",
+      receivedAt: 1, commandCount: 1, plans: [],
+      envelopes: [{ schema_version: "canvas_chat_commands.v1" as const, commands: [
+        { type: "run_node_action" as const, node_id: "story-a", action: "generate_video" },
+      ] }],
+    };
+    const canvasNodes = [{ id: "story-a", type: "videoNode" as const,
+      position: { x: 0, y: 0 }, data: {
+        storySegmentId: "a", displayName: "长镜头", model: "video-model",
+        durationSec: 30, aspectRatio: "16:9", quality: "720P",
+      } }];
+    const groups = videoApprovalParamGroupsForTest(
+      approval as never, canvasNodes as never, [],
+      [{ id: "video-model", minDuration: 5, maxDuration: 15 }], "video-model",
+    );
+    expect(groups[0].durationSec).toBe(30);
+    expect(groups[0].storySegmentLabels).toEqual(["长镜头"]);
+  });
+
+  it("keeps equal-duration interactive-story segments independently editable", () => {
+    const approval = {
+      id: "story-independent-rows", key: "story-independent-rows", messageId: "assistant",
+      receivedAt: 1, commandCount: 4, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "update_node_data" as const, node_id: "story-a", data: { durationSec: 8, continuityMode: "auto" } },
+          { type: "update_node_data" as const, node_id: "story-b", data: { durationSec: 8, continuityMode: "auto" } },
+          { type: "run_node_action" as const, node_id: "story-a", action: "generate_video" },
+          { type: "run_node_action" as const, node_id: "story-b", action: "generate_video" },
+        ],
+      }],
+    };
+    const canvasNodes = ["a", "b"].map((id) => ({
+      id: `story-${id}`,
+      type: "videoNode" as const,
+      position: { x: 0, y: 0 },
+      data: { storySegmentId: id, displayName: `片段${id}`, model: "video-model" },
+    }));
+
+    const groups = videoApprovalParamGroupsForTest(
+      approval as never,
+      canvasNodes as never,
+      [],
+      [{ id: "video-model", minDuration: 5, maxDuration: 15 }],
+      "video-model",
+    );
+
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.storySegmentLabels)).toEqual([["片段a"], ["片段b"]]);
+  });
 });
 
 describe("Canvas command approval audio params", () => {
@@ -4473,6 +4673,143 @@ describe("Canvas command approval audio params", () => {
 });
 
 describe("Canvas command approval video params", () => {
+  it.each([false, true])("checks each final review flag in a mixed batch (explicit first: %s)", (explicitFirst) => {
+    const previous = useCanvasStore.getState();
+    const nodes = [false, true].map((explicit) => ({
+      id: explicit ? "explicit-review" : "default-review", type: "videoNode" as const,
+      position: { x: 0, y: 0 }, data: { model: "review-model", genMode: "imageToVideo" as const,
+        prompt: "人物走路", ...(explicit ? { humanReview: true } : {}) },
+    }));
+    if (explicitFirst) nodes.reverse();
+    useCanvasStore.setState({ nodes, edges: [] });
+    const approval = { id: "mixed-review", key: "mixed-review", messageId: "assistant",
+      receivedAt: 1, commandCount: 2, plans: [], envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: nodes.map((node) => ({ type: "run_node_action" as const,
+          node_id: node.id, action: "generate_video" })),
+      }] };
+    const onApply = vi.fn();
+    const view = render(createElement(CanvasCommandApprovalCardForTest,
+      { approval, onApply, onCancel: vi.fn() }));
+    try {
+      expect(view.getAllByLabelText("视频模型")).toHaveLength(1);
+      fireEvent.click(view.getByRole("switch", { name: "真人审核" }));
+      fireEvent.change(view.getByLabelText("视频模型"), { target: { value: "video-model" } });
+      const confirm = view.getAllByRole("button").find((button) =>
+        button.textContent?.includes("canvasConfirmExecution") || button.textContent === "确认执行")!;
+      expect((confirm as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(confirm);
+      expect(onApply).not.toHaveBeenCalled();
+      fireEvent.change(view.getByLabelText("切换到支持真人验证的模型"),
+        { target: { value: "review-model" } });
+      expect((confirm as HTMLButtonElement).disabled).toBe(false);
+      fireEvent.click(confirm);
+      const commands = onApply.mock.calls[0][0].envelopes[0].commands;
+      for (const nodeId of ["default-review", "explicit-review"]) {
+        const finalData = Object.assign({}, ...commands.filter((command: {
+          type: string; node_id: string;
+        }) => command.type === "update_node_data" && command.node_id === nodeId)
+          .map((command: { data: object }) => command.data));
+        expect(finalData).toMatchObject({ model: "review-model", humanReview: nodeId === "explicit-review" });
+      }
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+
+  const reviewApproval = {
+    id: "review-capability", key: "review-capability", messageId: "assistant",
+    receivedAt: 1, commandCount: 1, plans: [],
+    envelopes: [{ schema_version: "canvas_chat_commands.v1" as const, commands: [
+      { type: "run_node_action" as const, node_id: "review-video", action: "generate_video" },
+    ] }],
+  };
+
+  it("pauses auto execution for an explicitly requested but unsupported review", () => {
+    const nodes = [{ id: "review-video", type: "videoNode", position: { x: 0, y: 0 },
+      data: { model: "custom-model", humanReview: true } }];
+    expect(canvasApprovalRequiresHumanReviewConfirmationForTest(
+      reviewApproval as never, nodes as never, [], [{ id: "custom-model", humanReview: false }],
+    )).toBe(true);
+  });
+
+  it("recognizes review capability on custom model IDs", () => {
+    const nodes = [{ id: "review-video", type: "videoNode", position: { x: 0, y: 0 },
+      data: { model: "custom-model", genMode: "imageToVideo" } }];
+    expect(canvasApprovalRequiresHumanReviewConfirmationForTest(
+      reviewApproval as never, nodes as never, [], [{ id: "custom-model", humanReview: true }],
+    )).toBe(true);
+  });
+
+  it("pauses text-to-video even when the selected model supports material review", () => {
+    const nodes = [{ id: "review-video", type: "videoNode", position: { x: 0, y: 0 },
+      data: { model: "review-model", genMode: "textToVideo", humanReview: true } }];
+    expect(canvasApprovalRequiresHumanReviewConfirmationForTest(
+      reviewApproval as never, nodes as never, [], [{ id: "review-model", humanReview: true }],
+    )).toBe(true);
+  });
+
+  it("does not suggest switching models to enable review for text-to-video", () => {
+    const previous = useCanvasStore.getState();
+    useCanvasStore.setState({ nodes: [{ id: "review-video", type: "videoNode",
+      position: { x: 0, y: 0 }, data: { model: "review-model", humanReview: true,
+        genMode: "textToVideo", prompt: "人物走路" },
+    }], edges: [] });
+    const view = render(createElement(CanvasCommandApprovalCardForTest,
+      { approval: reviewApproval, onApply: vi.fn(), onCancel: vi.fn() }));
+    try {
+      expect(view.getByText(/当前文生视频模式不支持真人验证/)).toBeTruthy();
+      expect((view.getByLabelText("切换到支持真人验证的模型") as HTMLSelectElement).disabled).toBe(true);
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+
+  it.each(["disable", "switch", "cancel"])("requires an explicit %s choice before generation", (choice) => {
+    const previous = useCanvasStore.getState();
+    useCanvasStore.setState({ nodes: [{ id: "review-video", type: "videoNode",
+      position: { x: 0, y: 0 }, data: { model: "video-model", humanReview: true,
+        genMode: "imageToVideo", prompt: "人物走路" },
+    }], edges: [] });
+    const onApply = vi.fn();
+    const onCancel = vi.fn();
+    const view = render(createElement(CanvasCommandApprovalCardForTest,
+      { approval: reviewApproval, onApply, onCancel }));
+    try {
+      const confirm = view.getAllByRole("button").find((button) =>
+        button.textContent?.includes("canvasConfirmExecution") || button.textContent === "确认执行")!;
+      expect(confirm).toBeTruthy();
+      expect((confirm as HTMLButtonElement).disabled).toBe(true);
+      expect(onApply).not.toHaveBeenCalled();
+      if (choice === "cancel") {
+        fireEvent.click(view.getByText("取消本次生成"));
+        expect(onCancel).toHaveBeenCalledOnce();
+        expect(onApply).not.toHaveBeenCalled();
+        return;
+      }
+      if (choice === "disable") {
+        fireEvent.click(view.getByText("关闭本次视频的真人验证"));
+      } else {
+        fireEvent.change(view.getByLabelText("切换到支持真人验证的模型"),
+          { target: { value: "review-model" } });
+      }
+      expect((confirm as HTMLButtonElement).disabled).toBe(false);
+      expect(onApply).not.toHaveBeenCalled();
+      fireEvent.click(confirm);
+      const commands = onApply.mock.calls[0][0].envelopes[0].commands;
+      expect(commands[0]).toMatchObject({ type: "update_node_data", data: {
+        model: choice === "switch" ? "review-model" : "video-model",
+        humanReview: choice === "switch",
+      } });
+      expect(commands.at(-1)).toMatchObject({ type: "run_node_action", action: "generate_video" });
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+
   it("updates video node data before running generate_video", () => {
     const approval = {
       id: "approval-a",
@@ -5122,6 +5459,93 @@ describe("useSuperChat websocket lifecycle", () => {
       context: {
         freezone_canvas_id: "canvas-a",
         canvas_command_execution_mode: "auto_execute",
+      },
+    }));
+  });
+
+  it("names the open compose node in the chat context only while the workspace is open", async () => {
+    localStorage.setItem("freezone.canvasCommandExecutionMode", "manual_confirm");
+    const sentFrames: string[] = [];
+    class TestWebSocket {
+      static OPEN = 1;
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+
+      constructor() {
+        sockets.push(this);
+      }
+
+      send(frame: string) {
+        sentFrames.push(frame);
+      }
+
+      close() {}
+    }
+    const sockets: TestWebSocket[] = [];
+    Object.defineProperty(globalThis, "WebSocket", {
+      value: TestWebSocket,
+      writable: true,
+      configurable: true,
+    });
+
+    const hook = renderHook(
+      ({ composeNodeId }: { composeNodeId: string | null }) =>
+        useSuperChat({
+          project: "project-a",
+          displayName: "Tester",
+          surface: "freezone",
+          freezoneCanvasId: "canvas-a",
+          freezoneComposeNodeId: composeNodeId,
+        }),
+      { initialProps: { composeNodeId: "compose-1" as string | null } },
+    );
+
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => {
+      sockets[0]?.onopen?.();
+      sockets[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: "scope.changed",
+          scope: {
+            kind: "project",
+            id: "project-a",
+            surface: "freezone",
+            canvasId: "canvas-a",
+          },
+          history: [],
+        }),
+      } as MessageEvent);
+    });
+    await waitFor(() => expect(hook.result.current.connected).toBe(true));
+
+    act(() => {
+      hook.result.current.send("把第二段提前一秒");
+    });
+    const inside = sentFrames
+      .map((frame) => JSON.parse(frame) as Record<string, unknown>)
+      .filter((frame) => frame.type === "chat.message");
+    expect(inside[inside.length - 1]).toEqual(expect.objectContaining({
+      context: {
+        freezone_canvas_id: "canvas-a",
+        canvas_command_execution_mode: "manual_confirm",
+        freezone_compose_node_id: "compose-1",
+      },
+    }));
+
+    hook.rerender({ composeNodeId: null });
+    act(() => {
+      hook.result.current.send("看看画布");
+    });
+    const outside = sentFrames
+      .map((frame) => JSON.parse(frame) as Record<string, unknown>)
+      .filter((frame) => frame.type === "chat.message");
+    expect(outside[outside.length - 1]).toEqual(expect.objectContaining({
+      context: {
+        freezone_canvas_id: "canvas-a",
+        canvas_command_execution_mode: "manual_confirm",
       },
     }));
   });
@@ -6268,6 +6692,7 @@ describe("tool status parts", () => {
     const toolMessage = (part as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "failed",
       title: genericToolTitleForTest(toolMessage),
       toolMessage,
@@ -6298,16 +6723,19 @@ describe("tool status parts", () => {
     }, "turn-a") as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "done",
       title: genericToolTitleForTest(prepareCompleted),
       toolMessage: prepareCompleted,
     })).toBe("已生成工作流草稿");
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "failed",
       title: genericToolTitleForTest(prepareFailed),
       toolMessage: prepareFailed,
     })).toBe("待重新生成工作流草稿");
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "done",
       title: genericToolTitleForTest(confirmCompleted),
       toolMessage: confirmCompleted,
@@ -6330,10 +6758,32 @@ describe("tool status parts", () => {
     }, "turn-a") as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "failed",
       title: genericToolTitleForTest(waiting),
       toolMessage: waiting,
     })).toBe("等待选择生成参数");
+  });
+
+  it.each([
+    ["clarification_required", "Waiting for generation parameters"],
+    ["clarification_frontend_timeout", "Waiting for an answer is paused"],
+  ])("translates %s in the English interface", (businessStatus, expected) => {
+    const toolMessage = (toolStatusPartForTest("agent.tool.updated", {
+      type: "agent.tool.updated",
+      turn_id: "turn-a",
+      call_id: "call-clarification",
+      name: "freezone_prepare_workflow_draft",
+      status: "failed",
+      result: { ok: false, status: businessStatus },
+    }, "turn-a") as { event: ChatMessage }).event;
+
+    expect(toolStatusRuntimeTextForTest({
+      t: enT,
+      status: "failed",
+      title: genericToolTitleForTest(toolMessage),
+      toolMessage,
+    })).toBe(expected);
   });
 
   it("hides a superseded parameter handoff after the same draft operation succeeds", () => {
@@ -7058,5 +7508,43 @@ describe("pruneOldMessageCaches", () => {
     );
     pruneOldMessageCaches(now);
     expect(localStorage.getItem(`${MESSAGE_CACHE_PREFIX}future`)).toBeNull();
+  });
+});
+
+describe("story approval continuity translations", () => {
+  it.each(["zh", "en", "vi"])("renders continuity labels from the %s locale", async (language) => {
+    const { readFileSync } = await import("node:fs");
+    const { createInstance } = await import("i18next");
+    const { I18nextProvider } = await import("react-i18next");
+    const translations = JSON.parse(readFileSync(`public/locales/${language}/translation.json`, "utf8"));
+    const i18n = createInstance();
+    await i18n.init({ lng: language, fallbackLng: false,
+      resources: { [language]: { translation: translations } },
+      interpolation: { escapeValue: false }, react: { useSuspense: false },
+    });
+    const previous = useCanvasStore.getState();
+    const nodes = (["independent", "auto"] as const).map((continuityMode) => ({
+      id: `story-${continuityMode}`, type: "videoNode" as const, position: { x: 0, y: 0 },
+      data: { storySegmentId: continuityMode, storyRole: "scene", continuityMode,
+        displayName: `Clip ${continuityMode}`, prompt: "Story video", model: "video-model", durationSec: 5 },
+    }));
+    useCanvasStore.setState({ nodes, edges: [] });
+    const approval = { id: "continuity", key: "continuity", messageId: "assistant", receivedAt: 1,
+      commandCount: 1, plans: [], envelopes: [{ schema_version: "canvas_chat_commands.v1" as const,
+        commands: [{ type: "run_workflow" as const, scope: "canvas" as const }] }],
+    };
+    const view = render(createElement(I18nextProvider, { i18n },
+      createElement(CanvasCommandApprovalCardForTest, { approval, onApply: vi.fn(), onCancel: vi.fn() }),
+    ));
+    try {
+      for (const mode of ["independent", "auto"] as const) {
+        expect(view.getByText(translations.canvas.story.continuity[mode])).toBeTruthy();
+      }
+      expect(view.container.textContent).not.toContain("freezone.story.continuity.");
+      expect(view.container.textContent).not.toContain("canvas.story.continuity.");
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
   });
 });

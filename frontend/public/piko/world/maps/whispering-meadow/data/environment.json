@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "mapId": "whispering-meadow",
+  "globalLighting": {
+    "preset": "baked-daylight",
+    "intensity": 0
+  },
+  "effects": [],
+  "audioZones": []
+}

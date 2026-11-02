@@ -10,7 +10,16 @@ compatibility: Requires Freezone/虾画 chat surface with frontend-injected curr
 
 - 这个 skill 是虾画/Freezone 的总入口，负责判断当前是不是画布场景、用户意图属于咨询还是画布操作，以及用户可见回复应该怎么说。
 - 具体节点职责、连线语义、视频节点和合成节点的产品建模，读取 `references/canvas-modeling-guide.md`。
+- 系统提示里出现 `[FREEZONE_COMPOSE_WORKSPACE]`（用户正在某个合成节点的「视频合成与剪辑」工作区里）时，剪辑类请求读取 `references/studio-editing-guide.md`，用 `freezone_studio_*` 工具改该节点的 film，不改画布时间线。
 - 只有复杂批量命令的字段不明确时，才读取 `references/canvas-command-guide.md`。删除、选择、布局等参数已经明确的单步操作禁止先读取该指南。
+
+## 互动影游边界
+
+互动短剧/互动剧同样属于此边界，即使用户称之为“剧情画布”。本节优先于下方普通画布命令与工作流规则。若工具发现后仍缺少互动故事工具，必须报告创建受阻；禁止回退到普通文本节点、普通连线或 `freezone_emit_canvas_command` 并声称互动故事已完成。
+
+互动故事 Create/Patch 的失败处理统一遵循 `interactive-story` Skill；下方普通画布工具的失败修正重试规则不适用于互动故事写入。
+
+涉及分支故事、选择、结局或互动广告剧情时，先读取 `interactive-story` Skill。故事结构使用其业务工具；普通工作流只负责素材生产，不替代故事创建或修改。剧情选择线表示播放路由，不是素材输入依赖。恢复已准备的生成任务仍复用现有执行器；仅在制作备注中写明等待上一镜头尾帧而尚未绑定真实尾帧素材或已支持的依赖时，先准备该输入，不能直接把该片段当作就绪任务运行。不要擅自为此重建整套工作流。
 
 ## 意图判断
 
@@ -20,13 +29,14 @@ compatibility: Requires Freezone/虾画 chat surface with frontend-injected curr
 - **创意咨询**：可以自然语言回答；如果用户希望"落到画布"，使用画布工具创建可继续工作的材料。
 - **选择式澄清/互动类**：当用户希望助手通过提问推进对话，或当前任务需要用户补充/选择几个关键信息后才能继续时，优先调用 `freezone_request_user_clarification` 展示问题卡片。适用场景包括：帮用户理清想法、做偏好选择、做小测验/问答互动、确认方向、收集必要条件。问题应贴近用户表达方式，让用户能凭直觉选择或补充；不要询问内部实现细节、工具参数、节点类型、link_type、schema、模型参数等。若只是普通闲聊、简单知识问答、单个自然追问，或用户已经给出明确指令，则直接自然语言回复，不要强行发卡片。
 - **全局画布请求**：用户说"看看画布""整理当前画布"时，优先使用当前注入的画布上下文；不足时再读取。
+- **剪辑工作区内的剪辑请求**：`[FREEZONE_COMPOSE_WORKSPACE]` 存在且用户要剪、挪、删、分割、淡入淡出、调音量/变速、加素材或导出成片时，先 `freezone_studio_get_film`，再 `freezone_studio_edit_film` / `freezone_studio_import_media` / `freezone_studio_export_film`；禁止改该节点的 `draftTimeline`、禁止用画布命令或新工作流重建这条时间线。详见 `references/studio-editing-guide.md`。
 - **运行已有工作流**：复用已有节点、内容和连线，优先运行已有工作流；不要重新规划一套重复节点，除非用户明确要求新增、重写或替换。
 - **继续/恢复未完成工作流**：直接调用 `freezone_run_workflow` 交给确定性 DAG Runner；不要逐个读取节点、逐个触发动作，也不要自行轮询任务。一次运行返回失败后，根据返回的错误类别暂停并说明下一步，不要在同一请求或后续自动恢复中反复修改节点。
 - **单节点工作流仍是工作流**：用户明确要求运行、执行、继续或恢复工作流时，即使其中只有一个可执行节点，也直接调用 `freezone_run_workflow`；不要读取子节点后改用 `freezone_run_node_action`。
 - **内容安全失败不是提示词诊断**：`content_policy`、`OutputVideoSensitiveContentDetected`、`OutputImageSensitiveContentDetected` 只说明上游拒绝了输入或输出，不能证明某个具体词敏感。除非上游错误明确指出具体字段或内容，禁止声称“全息”“服务器机柜”等词触发审核，禁止靠猜词反复改写提示词。
 - **审核失败的返工边界**：内容安全失败不可自动重试，也不可由 Agent 自主修改提示词。先保留原提示词和原始错误，向用户说明是输入素材审核还是输出内容审核；只有用户明确要求修改某个节点的提示词时，才修改该节点一次。修改后再次失败就暂停，等待用户更换素材、调整创意方向或手动编辑，不得继续换词试错。
 - **动态工作流**：工作流选择只使用 Hermes 原生 Skill 机制。用户可在输入框键入 `/` 选择 Workflow Skill；未显式选择且存在多个候选时，使用 `skills_list` 展示并让用户选择。纯图片工作流使用 `text-to-image`，只有用户要求视频阶段时才使用 `text-to-image-video`；社交平台套图需求才使用 `social-content-campaign`。加载后生成精简 `freezone_workflow_intent.v1`，调用 `freezone_prepare_workflow_draft` 得到确定性预览；调整时调用 `freezone_patch_workflow_draft`，确认后调用 `freezone_confirm_workflow_draft`。对于 `ecommerce-ad`、`text-to-image`、`text-to-image-video`、`video-tutorial`、`short-drama-quick`，优先传 `planner={mode:"standard", item_count, total_duration_seconds, deliverable, include_audio, units}`，其中 `units` 只描述每段的标题、内容、旁白和可选 `duration_seconds`；`include_audio=true` 时每个 unit 都必须带 `narration`（该段实际朗读的原文，不能缺省、不能写占位说明）；不要为标准流程选择 Recipe 或编写依赖。用户指定总时长时必须传 `total_duration_seconds`，编译器会为未指定时长的片段进行确定性分配。只有用户明确要求特殊拓扑时才传完整 `items`；自定义视频 item 必须传 `duration_seconds`，并确保所有视觉片段时长之和等于用户目标时长；自定义音频 item 用 `audio_kind:"speech"`（narration 填实际朗读原文）或 `audio_kind:"music"` 区分。不要使用固定 `workflow_type`，不要手写画布命令，也不要调用旧的模板 Plan Builder。草稿校验失败时按返回的 `errors`/`hint` 修正后重试即可，不要读插件源码。
-- **已有图片作为 Recipe 输入**：在 Intent 顶层声明 `external_inputs=[{"id":"source_image","node_id":"画布真实节点 ID","media_kind":"image"}]`，目标 item 用 `reference_inputs=["source_image"]`；自定义 Plan 用同一声明及 `media_input_for` 边。保持源节点原样，等待草稿确认，不要退回普通 `add_next_node` 或手填图片 URL。
+- **已有图片作为 Recipe 输入**：在 Intent 顶层声明 `external_inputs=[{"id":"source_image","node_id":"画布真实节点 ID","media_kind":"image"}]`，目标 item 用 `reference_inputs=["source_image"]`；自定义 Plan 用同一声明及 `media_input_for` 边。已有视频（videoNode 或装视频的上传节点）用 `"media_kind":"video"`，只能参考到 videoNode（如 `allReference` 模式）。外部输入被拒时按报错修正声明；不得悄悄去掉用户指定的素材，确实用不上时必须在回复里说明哪个素材没用上、原因是什么。保持源节点原样，等待草稿确认，不要退回普通 `add_next_node` 或手填图片 URL。
 - **外部 Skill 导入**：用户提供 Markdown 并明确要求转成虾画 Skill 时，调用 `freezone_import_external_skill` 提交后台转换，正文完整传入，不手工编码。ZIP 或带引用资料的完整包使用设置中的“导入外部 Skill”上传入口。返回后告知任务与导入编号，不反复轮询、不声称已安装。用户要求查看时调用 `freezone_get_skill_import`；完成的 `import_result.bundle` 是原生 Skill 与 Recipes 草稿，用户要求修改时交给现有 Skill Studio 草稿流程，不创建画布节点。
 - **Skill Studio 配置类**：用户明确要求创建、编辑、保存、沉淀 Skill / Recipe / 技能 / 配方时，这是 catalog 配置草稿流程，不是画布写入，也不是纯文本完成。不要调用画布写入工具，不要声称已保存；需要澄清方向时调用 `freezone_request_user_clarification`，生成或修改草稿时按 `freezone_begin_agent_catalog_draft` → `freezone_put_agent_catalog_skill` → `freezone_put_agent_catalog_recipe` → `freezone_finish_agent_catalog_draft` 的分片流程提交，由 Freezone bridge 触发前端卡片展示。
 - **编写或沉淀 Skill / Recipe**：用户要求创建、编写、编辑、总结、抽成、沉淀或保存 Skill / Recipe 时，必须读取 `references/skill-studio-authoring-guide.md`。先判定来源模式再做能力建模：从用户一句话新建时，不要把当前画布当来源；只有用户明确说当前画布/流程/选中节点时，才做画布工作流分析；不要只按 tool schema 字段或节点类型摘要。

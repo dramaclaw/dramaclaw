@@ -1,0 +1,61 @@
+diff --git a/packages/openfilm/studio/ui/src/components/ProjectView.tsx b/packages/openfilm/studio/ui/src/components/ProjectView.tsx
+index e91ddab..6b57b1f 100644
+--- a/packages/openfilm/studio/ui/src/components/ProjectView.tsx
++++ b/packages/openfilm/studio/ui/src/components/ProjectView.tsx
+@@ -7,7 +7,7 @@
+  * are written one at a time (see editor/use-film.ts); the agent's writes come in through the folder's events.
+  */
+ import * as React from 'react';
+-import { BookmarkPlus, ClipboardCopy, ClipboardPaste, GalleryVerticalEnd, Layers, LibraryBig, MessageSquarePlus, MonitorDown, Settings2, TriangleAlert, Upload } from 'lucide-react';
++import { ArrowLeft, BookmarkPlus, ClipboardCopy, ClipboardPaste, GalleryVerticalEnd, Layers, LibraryBig, MessageSquarePlus, MonitorDown, Settings2, TriangleAlert, Upload } from 'lucide-react';
+ import { applyOps } from '../../../server/ops.mjs';
+ import { api, ApiError, PREFS_EVENT, projectEvents, type Clip, type Film, type Listing, type Op, type ProjectFilm, type ProjectSettings } from '@/api';
+ import { useT } from '@/i18n';
+@@ -683,7 +683,7 @@ export function ProjectView({ projectId, onProject, onLeave }: {
+   const [assetsPaneOpen, setAssetsPaneOpen] = useKeptFlag('openfilm.project.assets');
+   const [assetsWidth, setAssetsWidth] = React.useState(280);
+   /* the Layers panel (components/LayersPanel), left of the picture, after the assets */
+-  const [layersPaneOpen, setLayersPaneOpen] = useKeptFlag('openfilm.project.layers', false);
++  const [layersPaneOpen, setLayersPaneOpen] = useKeptFlag('openfilm.project.layers', true);
+   const [layersWidth, setLayersWidth] = React.useState(240);
+   const layersPaneRef = React.useRef<HTMLDivElement | null>(null);
+   const [timelineOpen, setTimelineOpen] = useKeptFlag('openfilm.project.timeline');
+@@ -2662,12 +2662,16 @@ export function ProjectView({ projectId, onProject, onLeave }: {
+ 
+   const value = film.film;
+   const viewerReady = Boolean(info);
++  /* the host that embedded Studio: its way back out, kept in the address (see App.tsx keepKey) */
++  const hostSearch = new URLSearchParams(location.search);
++  const hostBack = hostSearch.get('hostBack');
++  const hostBackLabel = hostSearch.get('hostBackLabel') || t('nav.projects');
+   return (
+     <div className="workspace-shell flex flex-col bg-[var(--dock-shell)]">
+       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" style={{ paddingLeft: DOCK_GAP, paddingRight: DOCK_GAP, paddingBottom: DOCK_GAP }}>
+         <div className="relative z-10 grid min-h-0 min-w-0 flex-1" style={{ gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto minmax(0, 1fr)', gridTemplateAreas: '"bar" "main"' }}>
+           {/* ── top bar: the title centered, whatever is on either side ── */}
+-          <div data-titlebar className="relative flex h-8 min-w-0 items-center gap-1" style={{ gridArea: 'bar' }}>
++          <div data-titlebar className="relative flex h-11 min-w-0 items-center gap-1" style={{ gridArea: 'bar' }}>
+             {inTabs ? null : <div className="pointer-events-none absolute inset-0 flex min-w-0 items-center justify-center">
+               <div className="pointer-events-auto flex min-w-0 max-w-full items-center">
+                 {renaming ? (
+@@ -2704,10 +2708,16 @@ export function ProjectView({ projectId, onProject, onLeave }: {
+                   <BrandLogo size={15} />
+                 </button>
+               </Tooltip>
+-              {inTabs ? null : <Tooltip label={t('nav.projects')} side="bottom">
+-                <button type="button" aria-label={t('nav.projects')} onClick={() => setProjectsOpen((v) => !v)}
+-                  className={`${TOP_BTN} ${projectsOpen ? 'bg-[var(--bg-hover)] text-[var(--text)]' : ''}`}>
+-                  <GalleryVerticalEnd size={15} />
++              {inTabs ? null : <Tooltip label={hostBack ? hostBackLabel : t('nav.projects')} side="bottom">
++                <button type="button" aria-label={hostBack ? hostBackLabel : t('nav.projects')}
++                  onClick={() => {
++                    if (!hostBack) { setProjectsOpen((v) => !v); return; }
++                    /* framed: leaving must move the host page, not load it inside this frame */
++                    if (window.parent !== window) { window.parent.postMessage({ type: 'dramaclaw:studio-back' }, '*'); return; }
++                    window.location.assign(hostBack);
++                  }}
++                  className={`${TOP_BTN} ${!hostBack && projectsOpen ? 'bg-[var(--bg-hover)] text-[var(--text)]' : ''}`}>
++                  {hostBack ? <ArrowLeft size={15} /> : <GalleryVerticalEnd size={15} />}
+                 </button>
+               </Tooltip>}
+               <UpdateButton />

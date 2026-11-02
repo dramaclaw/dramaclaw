@@ -152,30 +152,46 @@ async def test_two_coordinators_only_one_process_continues_the_same_run(
     tmp_path: Path,
 ) -> None:
     entered: list[str] = []
+    started = asyncio.Event()
     release = asyncio.Event()
+    claims: asyncio.Queue[bool] = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    class RecordingStore(DirectorAutoStore):
+        def claim_lease(self, *args, **kwargs):
+            claimed = super().claim_lease(*args, **kwargs)
+            loop.call_soon_threadsafe(claims.put_nowait, claimed)
+            return claimed
 
     class RecordingCoordinator(DirectorAutoCoordinator):
         async def _run(self, run_id, _username, _project_id):
             entered.append(self.owner_token)
+            started.set()
             await release.wait()
 
     db_path = tmp_path / "director-auto.db"
-    store_a = DirectorAutoStore(db_path)
+    store_a = RecordingStore(db_path)
     store_a.upsert(run_record(tmp_path))
     first = RecordingCoordinator(store_a)
-    second = RecordingCoordinator(DirectorAutoStore(db_path))
+    second = RecordingCoordinator(RecordingStore(db_path))
     run = store_a.get("alice", "project-1")
     assert run is not None
 
     first._ensure_worker(run)
     second._ensure_worker(run)
-    await asyncio.sleep(0.05)
-
-    assert len(entered) == 1
-    assert entered[0] in {first.owner_token, second.owner_token}
-    release.set()
-    await first.shutdown()
-    await second.shutdown()
+    try:
+        # Wait for both real lease attempts before checking exclusivity; thread-pool
+        # scheduling and SQLite I/O can exceed a fixed sleep on busy CI runners.
+        first_claim, second_claim, _ = await asyncio.wait_for(
+            asyncio.gather(claims.get(), claims.get(), started.wait()), timeout=5
+        )
+        assert sorted([first_claim, second_claim]) == [False, True]
+        assert len(entered) == 1
+        assert entered[0] in {first.owner_token, second.owner_token}
+    finally:
+        release.set()
+        await first.shutdown()
+        await second.shutdown()
 
 
 @pytest.mark.asyncio

@@ -49,6 +49,7 @@ import {
   CANVAS_NODE_INPUT_BODY_FRAME_CLASS,
   CANVAS_NODE_INPUT_BODY_SELECTED_FRAME_CLASS,
   CANVAS_NODE_INPUT_SURFACE_CLASS,
+  CANVAS_NODE_MEDIA_FRAME_CLASS,
   CANVAS_NODE_PANEL_SURFACE_CLASS,
   canvasNodeFrameClass,
 } from '@/features/canvas/ui/nodeFrameStyles';
@@ -268,7 +269,6 @@ async function uploadDirectorCaptureBundle(
 export const UploadNode = memo(({ id, data, selected, width, height }: UploadNodeProps) => {
   const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const convertNodeType = useCanvasStore((state) => state.convertNodeType);
   const addPanoCaptureGroup = useCanvasStore((state) => state.addPanoCaptureGroup);
@@ -632,10 +632,6 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
   // shell 挂载，只订阅事件会漏掉投递（见 useExternalFileHandoff）。
   useExternalFileHandoff('upload-node/external-file', id, consumeExternalFile);
 
-  const handleNodeClick = useCallback(() => {
-    setSelectedNode(id);
-  }, [id, setSelectedNode]);
-
   const handlePickFile = useCallback(() => {
     inputRef.current?.click();
   }, []);
@@ -907,11 +903,10 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
   return (
     <div
       className={`
-        group relative overflow-visible rounded-[var(--node-radius)] border ${surfaceClass} p-0 transition-colors duration-150
+        group relative overflow-visible rounded-[var(--node-radius)] ${hasMediaContent ? CANVAS_NODE_MEDIA_FRAME_CLASS : 'border'} ${surfaceClass} p-0 transition-colors duration-150
         ${frameToneClass}
       `}
       style={{ width: resolvedWidth, height: resolvedHeight }}
-      onClick={handleNodeClick}
       onDrop={handleDrop}
       onDragOver={handleDragOver}
     >

@@ -47,7 +47,7 @@ import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canv
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import { DirectorControlBundleBadge } from '@/features/canvas/ui/DirectorControlBundleBadge';
-import { CANVAS_NODE_PANEL_SURFACE_CLASS, canvasNodeFrameClass } from '@/features/canvas/ui/nodeFrameStyles';
+import { CANVAS_NODE_MEDIA_FRAME_CLASS, CANVAS_NODE_PANEL_SURFACE_CLASS, canvasNodeFrameClass } from '@/features/canvas/ui/nodeFrameStyles';
 import { NodeGenerationOverlay } from '@/features/canvas/ui/NodeGenerationOverlay';
 import { NodeMediaReplaceButton } from '@/features/canvas/ui/NodeMediaReplaceButton';
 import {
@@ -87,7 +87,6 @@ function resolveNodeDimension(value: number | undefined, fallback: number): numb
 export const ImageNode = memo(({ id, data, selected, type, width, height }: ImageNodeProps) => {
   const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const updateNodeSize = useCanvasStore((state) => state.updateNodeSize);
   // 只订阅连到本节点的边(useShallow 逐元素比较),避免拖动无关节点触发重渲染。
@@ -280,7 +279,7 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
   return (
     <div
       className={`
-        group relative overflow-visible rounded-[var(--node-radius)] border ${CANVAS_NODE_PANEL_SURFACE_CLASS} p-0 transition-colors duration-150
+        group relative overflow-visible rounded-[var(--node-radius)] ${data.imageUrl ? CANVAS_NODE_MEDIA_FRAME_CLASS : 'border'} ${CANVAS_NODE_PANEL_SURFACE_CLASS} p-0 transition-colors duration-150
         ${hasGenerationError
           ? (selected
             ? 'border-red-400 shadow-[0_0_0_1px_rgba(248,113,113,0.42)]'
@@ -288,7 +287,6 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
           : canvasNodeFrameClass({ selected, mainline: hasMainlineContext })}
       `}
       style={{ width: resolvedWidth, height: resolvedHeight }}
-      onClick={() => setSelectedNode(id)}
     >
       <NodeHeader
         className={NODE_HEADER_FLOATING_POSITION_CLASS}
@@ -322,6 +320,7 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             src={imageSource ?? ''}
             alt={isExportResultNode ? t('node.imageNode.resultAlt') : t('node.imageNode.generatedAlt')}
             viewerSourceUrl={originalImageUrl}
+            viewerNodeId={id}
             onLoad={(event) => {
               // 记录描述的不是这张图：降采样副本上量不出源图真尺寸。第一次退回
               // 原图重测（preferOriginal 会让下一轮 downscaled 为 false，不会来回

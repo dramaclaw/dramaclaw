@@ -48,12 +48,25 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (re.compile(r"^ST_EDITION$"), "Launcher/test gate env, not operator template config."),
     (
+        re.compile(r"^KUBERNETES_SERVICE_HOST$"),
+        "Kubernetes-injected pod marker used to keep OpenFilm listener state local to the pod; "
+        "not operator configuration.",
+    ),
+    (
         re.compile(r"^ST_ORG_(?:EGRESS_MODE|GATEWAY_API_KEY|GATEWAY_BASE_URL)$"),
         "Process-local handoff written by the parent when it launches a model child "
         "(task_backend/subprocesses.build_model_child_env); never operator-set, and "
         "setting it externally has no effect because the parent rebuilds the child env.",
     ),
     (re.compile(r"^DRAMACLAW_CE_ROOT$"), "Audit script discovery override, not runtime app config."),
+    (
+        re.compile(
+            r"^(?:BRAND_TOKENS|CODE_BRAND|COPY_OVERRIDES|EDITOR_TITLE|JS_STRING_VALUE|"
+            r"PATCHED_CHUNK|SKILL_FILE|SOURCE_CHUNK|SOURCE_PATCHES|TOP_BTN)$"
+        ),
+        "JavaScript template-literal constants in scripts/openfilm_studio/*.mjs (the OpenFilm "
+        "re-vendor and bundle patcher); the shell-style ${NAME} scan reads them as env refs.",
+    ),
     (
         re.compile(
             r"^(?:PROJECT_ID|PROJECT_DIR|PROJECT_DIR_FILE|DIRS_FILE|TASK_FILE|TASK_ID|LANE|MODE|"

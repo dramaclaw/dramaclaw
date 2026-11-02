@@ -3,6 +3,7 @@
 import { useTranslation } from "react-i18next";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import { MapPin } from "lucide-react";
 import { formatAudioDurationSeconds, type AudioDurationRejection } from "./videoModelCapabilities";
 
@@ -101,7 +102,7 @@ export function ReferenceValidationDialog({ issues, open, onClose }: {
               event.stopPropagation();
               const store = useCanvasStore.getState();
               if (store.nodes.some((node) => node.id === issue.nodeId)) {
-                store.setSelectedNode(issue.nodeId!);
+                selectNodeExclusively(issue.nodeId!);
                 store.requestFocusNode(issue.nodeId!);
               }
               onClose();

@@ -13,7 +13,8 @@ type Draft = {
   updated_at?: number;
   expires_at?: number;
   preview?: { title?: string; node_count?: number; edge_count?: number;
-    external_inputs?: Array<{id: string; node_id: string; display_name?: string}> };
+    external_inputs?: Array<{id: string; node_id: string; display_name?: string}>;
+    preflight?: { warnings?: Array<{ code?: string; frame_name?: string; entity_name?: string; message?: string }> } };
 };
 
 export type CancelledWorkflowDraft = { draftId: string; updatedAt: number };
@@ -152,6 +153,9 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
   }, [busy, awaitingTurn]);
   if (busy || hasApproval || awaitingTurn || !draft || draft.status !== "ready" ||
     (draft.expires_at && draft.expires_at * 1000 <= Date.now())) return null;
+  const storyWarnings = (draft.preview?.preflight?.warnings ?? []).filter((warning) =>
+    warning?.code === "story_reference_unmapped" &&
+    ((warning.frame_name && warning.entity_name) || warning.message));
   const confirm = async () => {
     if (inFlight.current || busy) return;
     inFlight.current = true;
@@ -217,6 +221,15 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
       <p className="mt-2 text-muted-foreground">{t("workflowDraftContinuation.referenceImages")}: {draft.preview!.external_inputs!.map(
         (source) => source.display_name || source.node_id,
       ).join("、")}</p>}
+    {storyWarnings.length > 0 && <div className="mt-2 break-words" role="status">
+      <p>{t("workflowDraftContinuation.storyReferencesUnverified")}</p>
+      <ul className="mt-1 list-disc pl-5">
+        {storyWarnings.map((warning, index) => <li key={index}>{warning.frame_name && warning.entity_name
+          ? t("workflowDraftContinuation.storyReferenceItem", { frame: warning.frame_name, entity: warning.entity_name })
+          : warning.message}</li>)}
+      </ul>
+      <p className="mt-1">{t("workflowDraftContinuation.storyReferencesAction")}</p>
+    </div>}
     {error && <p role="alert" className="mt-2">{error}</p>}
     <div className="mt-3 flex justify-end gap-2">
       <button type="button" className="tap-button" disabled={busy || sending !== null} onClick={() => void cancel()}>

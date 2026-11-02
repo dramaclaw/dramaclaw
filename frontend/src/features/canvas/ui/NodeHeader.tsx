@@ -246,7 +246,6 @@ export function NodeHeader({
         )}
         style={titleFadeStyle}
         title={titleText}
-        onClick={(event) => event.stopPropagation()}
         onDoubleClick={(event) => {
           event.stopPropagation();
           setIsEditingTitle(true);

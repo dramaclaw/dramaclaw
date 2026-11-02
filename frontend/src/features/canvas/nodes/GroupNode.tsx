@@ -17,6 +17,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
+
 import { uploadFreezoneImage } from '@/api/ops';
 import { readUrl } from '@/lib/url-params';
 import { CanvasHistoryAssetsModal } from '@/features/canvas/ui/CanvasHistoryAssetsModal';
@@ -87,6 +88,7 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
   const reactFlow = useReactFlow();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const isStoryboard = data.storyboardGroup === true;
+
   const showIndex = isStoryboard && data.storyboardShowIndex === true;
 
   // 只订阅本组自身节点 + 其成员节点(useShallow 逐元素比较)。groupPosition / board /
@@ -435,6 +437,7 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
           displayName: nextTitle,
           label: nextTitle,
         })}
+
       />
 
       {isStoryboard

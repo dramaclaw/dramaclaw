@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: Elastic-2.0 */
+.anchor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.name {
+  position: absolute;
+  left: 0;
+  bottom: 101px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font: 12px Arial, "PingFang SC", sans-serif;
+  color: #fff8df;
+  -webkit-text-stroke: 2.5px #24301e;
+  paint-order: stroke fill;
+  opacity: 0.95;
+}

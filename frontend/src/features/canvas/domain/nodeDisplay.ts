@@ -40,6 +40,7 @@ export const DEFAULT_NODE_DISPLAY_NAME: Record<CanvasNodeType, string> = {
   [CANVAS_NODE_TYPES.script]: '脚本生成器',
   [CANVAS_NODE_TYPES.pano360Viewer]: '360° 全景查看器',
   [CANVAS_NODE_TYPES.threeDWorld]: '3D 世界',
+  [CANVAS_NODE_TYPES.previz]: '预演台',
   [CANVAS_NODE_TYPES.skill]: '技能',
   [CANVAS_NODE_TYPES.style]: '风格',
 };
@@ -72,22 +73,20 @@ function resolveExportResultDefault(data: Partial<CanvasNodeData>): string {
   return EXPORT_RESULT_DISPLAY_NAME[resolveExportResultKind(data)];
 }
 
-/**
- * 未命名节点的自动序号：新建时写进 data.autoTitleIndex，默认名后面拼上它
- * （「文本1」「文本2」「图片节点1」…），避免同类型节点重名分不清。
- *
- * 刻意不把序号写进 displayName —— displayName 的语义是「用户自己起的标题」，
- * isNodeUsingDefaultDisplayName / UploadNode 的自动改名都依赖这一点。
- */
+/** 自动序号跟在默认名后面（「文本1」「文本2」…）。规范默认值和翻译后的显示名共用这一条规则。 */
+function withAutoTitle(label: string, data: Partial<CanvasNodeData>): string {
+  const index = (data as { autoTitleIndex?: unknown }).autoTitleIndex;
+  return typeof index === 'number' && Number.isFinite(index) && index > 0
+    ? `${label}${index}`
+    : label;
+}
+
 export function getDefaultNodeDisplayName(type: CanvasNodeType, data: Partial<CanvasNodeData>): string {
   const base =
     type === CANVAS_NODE_TYPES.exportImage
       ? resolveExportResultDefault(data)
       : DEFAULT_NODE_DISPLAY_NAME[type];
-  const index = (data as { autoTitleIndex?: unknown }).autoTitleIndex;
-  return typeof index === 'number' && Number.isFinite(index) && index > 0
-    ? `${base}${index}`
-    : base;
+  return withAutoTitle(base, data);
 }
 
 /**
@@ -115,16 +114,27 @@ export function nextAutoTitleIndex(
   return Math.max(maxIndex, sameTypeCount) + 1;
 }
 
+/**
+ * 类型的显示名，不带自动序号：大纲行里说的是「这是一条视频」，不是节点名字，
+ * 带上序号会和标题列的「视频1」读成同一件事、还显得像改名没生效。
+ */
+export function localizeDefaultNodeTypeLabel(
+  type: CanvasNodeType,
+  data: Partial<CanvasNodeData>,
+  t: TFunction,
+): string {
+  return type === CANVAS_NODE_TYPES.exportImage
+    ? t(EXPORT_RESULT_DISPLAY_NAME_KEYS[resolveExportResultKind(data)])
+    : t(NODE_DISPLAY_NAME_KEYS[type]);
+}
+
 /** 默认名的显示版本，跟随界面语言。 */
 export function localizeDefaultNodeDisplayName(
   type: CanvasNodeType,
   data: Partial<CanvasNodeData>,
   t: TFunction,
 ): string {
-  if (type === CANVAS_NODE_TYPES.exportImage) {
-    return t(EXPORT_RESULT_DISPLAY_NAME_KEYS[resolveExportResultKind(data)]);
-  }
-  return t(NODE_DISPLAY_NAME_KEYS[type]);
+  return withAutoTitle(localizeDefaultNodeTypeLabel(type, data, t), data);
 }
 
 export function resolveNodeDisplayName(type: CanvasNodeType, data: Partial<CanvasNodeData>): string {
@@ -169,24 +179,17 @@ export function withAutoTitleIndex<T extends Partial<CanvasNodeData>>(
   return { ...withIndex, displayName: getDefaultNodeDisplayName(type, withIndex) };
 }
 
-/** 渲染用：用户没改过名就按当前语言显示，改过就原样显示。 */
+/** 渲染用：系统给的默认名按当前语言显示（带自动序号），用户改过的名字原样显示。 */
 export function localizeNodeDisplayName(
   type: CanvasNodeType,
   data: Partial<CanvasNodeData>,
   t: TFunction,
 ): string {
   const name = resolveNodeDisplayName(type, data);
-  if (name === getDefaultNodeDisplayName(type, data)) {
-    const index = data.autoTitleIndex;
-    const suffix = typeof index === 'number' && Number.isFinite(index) && index > 0
-      ? String(index)
-      : '';
-    return `${localizeDefaultNodeDisplayName(type, data, t)}${suffix}`;
-  }
   const defaultBase = type === CANVAS_NODE_TYPES.exportImage
     ? resolveExportResultDefault(data)
     : DEFAULT_NODE_DISPLAY_NAME[type];
-  return name === defaultBase
+  return name === getDefaultNodeDisplayName(type, data) || name === defaultBase
     ? localizeDefaultNodeDisplayName(type, data, t)
     : name;
 }

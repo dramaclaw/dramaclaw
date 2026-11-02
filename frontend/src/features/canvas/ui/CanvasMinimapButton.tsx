@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import {
   CANVAS_CONTROL_ICON_BUTTON_ACTIVE_CLASS,
   CANVAS_CONTROL_ICON_BUTTON_CLASS,
+  canvasControlPositionStyle,
 } from './canvasControlStyles';
 
 interface CanvasMinimapButtonProps {
@@ -25,9 +26,8 @@ export function CanvasMinimapButton({
   const isTop = placement === 'top-right';
   return (
     <div
-      className={`nopan nowheel pointer-events-auto group absolute right-3 z-30 ${
-        isTop ? 'top-3' : 'bottom-3'
-      }`}
+      className="nopan nowheel pointer-events-auto group absolute z-30"
+      style={canvasControlPositionStyle(placement, 0)}
       onPointerDown={(event) => event.stopPropagation()}
       onMouseEnter={() => onHoverChange(true)}
       onMouseLeave={() => onHoverChange(false)}
