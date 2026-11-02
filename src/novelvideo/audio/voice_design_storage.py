@@ -38,7 +38,7 @@ class VoiceDesignStorage:
         *,
         clock: Callable[[], float] = time.time,
         ttl_seconds: float | None = None,
-        lease_seconds: float = 360,
+        lease_seconds: float = 420,
         quota_path: Path | None = None,
         enqueue_timeout_seconds: float = 600,
     ) -> None:

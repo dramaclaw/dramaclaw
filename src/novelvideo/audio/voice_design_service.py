@@ -663,7 +663,9 @@ async def generate_voice_design(
             metadata={"source": "voice_design"},
         )
         call_reserved = True
-        timeout = 330 if isinstance(model_config, PromptedSpeechConfig) else 90
+        # Leave time after the gateway's 280s poll window for a safe download
+        # and full media decoding before the candidate lease expires.
+        timeout = 360 if isinstance(model_config, PromptedSpeechConfig) else 90
         async with asyncio.timeout(timeout):
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=timeout)
