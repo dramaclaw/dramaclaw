@@ -21,7 +21,7 @@
 
 ### 1.1 用户界面改动
 
-以下为本期交互方案。角色管理和虾画共用一个生成弹窗，只按入口切换保存目标；生成服务、错误处理和试听行为不分别实现。
+以下为原始交互方案。2026-11-02 已确认的三模型增量见第 10 节；其中模型范围、模型选择与结果记录覆盖本文早期的单模型限制。角色管理和虾画仍共用一个生成弹窗。
 
 | 界面 | 具体改动 | 用户操作后的可见结果 |
 | --- | --- | --- |
@@ -690,3 +690,43 @@ API router lifespan 启动时及每五分钟扫描持久登记的可信项目/�
 ```
 
 `/tmp/891-s5/run.py` 仅在子进程内载入权限为 0600 的本机私有环境；产品账号仍使用现有正常登录 API；后台登录由验收环境的外部工具完成，提前导出权限为 0600 的 Playwright 会话文件，通过 `--storage-state` 注入主上下文和 U12 平台上下文。组织及成员上下文保持独立，不继承平台会话。凭据和会话文件不进入截图、报告或仓库。完整冻结门禁另包含 C1～C3 六文件、两脚本 `--help`、Ruff、Python 编译、CE `tsc -b` 与 diff 检查，见 feature-coord 的 `brief-S5.md` 和本机 `/tmp/891-s5/verify.sh`，末尾为 `VERIFY-OK`。最终本地提交 SHA 由交审回报记录；上线前六类配置仍只在 PR 列出供产品确认，不再阻塞 S5。
+
+## 10. 2026-11-02 已确认增量：三模型选择与生成记录
+
+用户要求同时接入网关支持的 Qwen、CosyVoice、Seed Audio。此节覆盖早期仅接入 CosyVoice、Seed 未适配和模型不可选的限制；原 P1、P3、按入口计费及保存语义保持。协议依据：[媒体协议](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/dc-media-protocol.md)。本增量仅使用无费夹具回归，不增加已用完的真实调用预算。
+
+### 10.1 目录与两种执行方式
+
+| 选择 | 网关请求模型 | 端点与参数 |
+| --- | --- | --- |
+| Qwen | qwen-voice-design | audio/voice-designs；target_model 来自有效目录，如 qwen3-tts-vd-2026-01-26 |
+| CosyVoice | voice-enrollment | audio/voice-designs；target_model 来自有效目录，如 cosyvoice-v3.5-flash |
+| Seed Audio | seed-audio-1.0 | audio/speech；instructions=音色描述、input=试听文本、response_format=mp3、metadata.sample_rate=16000；不传 voice 或参考音频 |
+
+资源式设计沿用 audio/voice-designs 与 targetModel 有效目标关系；提示式参考音频使用 audio/speech 加显式配置 voiceDesignMode=prompted_speech，无 targetModel。普通 speech 条目不出现在设计选择器。目录标记只允许 audio/speech，未知值或矛盾配置拒绝保存。有效目录、组织权限和每目录按次价格沿用现有机制，不新增计费政策或数据库迁移。
+
+### 10.2 选择、快照与隔离
+
+共享弹窗从项目有效目录获取模型，按目录顺序初选首项，不内建供应商兜底。生成前显示模型与当前报价，结果显示该次请求模型及目标模型；供应商内部映射不作为已确认事实。生成、结果未知及保存期间锁定切换。保留描述、试听文本和音色名，按模型隔离候选；迟到响应不得覆盖其他模型或保存目标。目录失效不应使已有候选失去原有试听/保存能力。
+
+新增 GET /models 返回 models 数组。每项 ModelSnapshot 含 catalog_id、label、model、mode（resource 或 prompted_speech）、target_model（资源式为含 catalog_id/model 的对象，提示式为 null）、config_digest、execution_mode（gateway 或 test_replay）。不返回密钥、地址或供应商句柄。
+
+报价请求增加必填 catalog_id，返回原报价字段和 model 快照；创建请求增加必填 catalog_id/config_digest。服务端解析可见目录并核对配置摘要，幂等比较也包括所选模型和摘要；排队冻结同一配置，执行前漂移拒绝，不能改选其他模型。所有候选状态返回持久 model 快照；历史候选无记录时为 null，不能补成当前默认模型。保存请求仍使用候选 ID。
+
+本机固定回放通过显式 VOICE_DESIGN_TEST_REPLAY=1 标记，并仅允许 loopback 网关凭据；不能因网关位于 localhost 就自行推断为回放。快照绑定该模式，排队后模式漂移拒绝。UI 明示“测试回放，未调用真实模型”。
+
+Seed 网关可能等待 280 秒，任务 HTTP 超时和租约须覆盖处理及落盘。两种路径共用真实媒体解码、时长和大小检查、安全下载及 mono 16k MP3 归一化；未知结果不自动重发。试听文本、语言、15 秒上限、TTL、配额、替换确认与归档不放松。
+
+### 10.3 PASS、守法与事前验尸
+
+| 假设失败原因 | 不变量 | 守法及 PASS 判据 |
+| --- | --- | --- |
+| 多模型使报价与执行串线 | 所选 catalog 和配置摘要贯穿全链路 | test：三模型目录→报价→创建→执行→结果逐项断言；禁用、隐身、摘要漂移及 UUID 参数冲突拒绝 |
+| Seed 被当作创建音色或超时自动重发 | 两端点按目录策略执行；每候选一次调用 | test：请求形态、二进制/JSON响应、长租约和 unknown 不重发；按目录一次结算 |
+| 新路径绕过媒体与网络边界 | 只存真实且符合大小/时长/采样规则的规范文件 | test：坏数据、过长、过大和 SSRF 拒绝；原 WAV 回归保持 |
+| 切换串候选或保存目标 | 模型和目标隔离，目标级保存锁不被绕过 | test：晚到响应、切换/重开、pending-save、actionSlot 和画布显式选择 |
+| 固定回放被当作真实模型生成 | 执行模式如实记录 | test：回放标签、非 loopback 拒绝；mechanical：真实调用账本不变 |
+| 后台丢配置或绕过权限 | 三模式配置往返与组织目录隔离 | test：表单/导入导出、组织隐藏与各目录价格、普通 speech 排除 |
+| 公开材料泄漏或签署不合格 | 公开仓边界和签署门保持 | mechanical：ee-terms、banned-words、DCO、diff-check；三个 PR 保持 draft |
+
+增量切片：S15 服务端契约、目录解析、执行及持久化；S16 配套服务目录/计费回归；S17 管理表单；S18 共享弹窗；S19 无费全栈夹具与浏览器验收。S18、S19 与 S15 顺序推进，跨仓库部分在契约冻结后并行，wip=3。每片独立审查后登记 evidence/merged。上线配置在私有配套 PR 维护。
