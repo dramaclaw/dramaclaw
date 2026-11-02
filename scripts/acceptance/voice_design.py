@@ -188,23 +188,33 @@ def serve_test_gateway(args: argparse.Namespace) -> None:
     """Explicit deterministic provider boundary; this server has no forwarding code."""
     if not args.fixture_audio or not args.fixture_audio.is_file():
         raise ValueError("--fixture-audio is required for the deterministic gateway")
-    encoded = base64.b64encode(args.fixture_audio.read_bytes()).decode()
+    fixture = args.fixture_audio.read_bytes()
+    encoded = base64.b64encode(fixture).decode()
     audio_format = "wav" if args.fixture_audio.suffix == ".wav" else "mp3"
     with tempfile.TemporaryDirectory() as directory:
         short_path = Path(directory) / f"short.{audio_format}"
         subprocess.run(["ffmpeg", "-v", "error", "-i", str(args.fixture_audio), "-t", "3", "-ar", "16000", "-ac", "1", str(short_path)], check=True)
         short_audio = short_path.read_bytes()
+        long_path = Path(directory) / f"long.{audio_format}"
+        subprocess.run(["ffmpeg", "-v", "error", "-stream_loop", "-1", "-i", str(args.fixture_audio), "-t", "6", "-ar", "16000", "-ac", "1", str(long_path)], check=True)
+        long_audio = long_path.read_bytes()
+        speech_audio = {}
+        for mode, source in (("success", args.fixture_audio), ("short", short_path), ("long", long_path)):
+            output = Path(directory) / f"speech-{mode}.mp3"
+            subprocess.run(["ffmpeg", "-v", "error", "-i", str(source), "-ar", "16000", "-ac", "1", str(output)], check=True)
+            speech_audio[mode] = output.read_bytes()
     short_encoded = base64.b64encode(short_audio).decode()
-    state = {"mode": "success", "calls": 0}
+    long_encoded = base64.b64encode(long_audio).decode()
+    state = {"mode": "success", "calls": 0, "requests": []}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *parts):
             return
 
-        def reply(self, status, data):
-            content = json.dumps(data).encode()
+        def reply(self, status, data, *, audio=False):
+            content = data if audio else json.dumps(data).encode()
             self.send_response(status)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", "audio/mpeg" if audio else "application/json")
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)
@@ -219,24 +229,47 @@ def serve_test_gateway(args: argparse.Namespace) -> None:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
             if self.path == "/control":
                 mode = body.get("mode")
-                if mode not in {"success", "provider_error", "bad_audio", "slow", "short"}:
+                if mode not in {"success", "provider_error", "bad_audio", "slow", "short", "long", "json_local"}:
                     self.reply(400, {})
                     return
                 state["mode"] = mode
                 self.reply(200, state)
                 return
-            if self.path != "/v1/audio/voice-designs":
+            if self.path not in {"/v1/audio/voice-designs", "/v1/audio/speech"}:
                 self.reply(404, {})
                 return
+            speech = self.path == "/v1/audio/speech"
+            if speech and (body.get("model") != "seed-audio-1.0" or not body.get("instructions")
+                           or not body.get("input") or body.get("response_format") != "mp3"
+                           or body.get("metadata") != {"sample_rate": 16000}
+                           or "voice" in body or "target_model" in body):
+                self.reply(400, {"error": "invalid prompted speech contract"})
+                return
+            if not speech and (body.get("model"), body.get("target_model")) not in {
+                ("voice-enrollment", "cosyvoice-v3.5-flash"),
+                ("qwen-voice-design", "qwen3-tts-vd-2026-01-26"),
+            }:
+                self.reply(400, {"error": "invalid resource model pairing"})
+                return
             state["calls"] += 1
+            state["requests"].append({"endpoint": self.path, **{key: body[key] for key in (
+                "model", "target_model", "instructions", "input", "voice_prompt", "preview_text",
+                "response_format", "metadata") if key in body}})
             mode = state["mode"]
-            write_json(args.gateway_record, {"kind": "deterministic", "calls": state["calls"], "last_mode": mode})
+            write_json(args.gateway_record, {"kind": "deterministic", **state})
             if mode == "slow":
                 time.sleep(3)
             if mode == "provider_error":
                 self.reply(503, {"error": {"message": "deterministic upstream failure"}})
                 return
-            preview = {} if mode == "bad_audio" else {"format": audio_format, "sample_rate": 16000, "data": short_encoded if mode == "short" else encoded}
+            if speech:
+                if mode == "json_local":
+                    self.reply(200, {"audio": {"url": "https://127.0.0.1/private.mp3", "format": "mp3"}})
+                else:
+                    audio = b"invalid audio" if mode == "bad_audio" else speech_audio.get(mode, speech_audio["success"])
+                    self.reply(200, audio, audio=True)
+                return
+            preview = {} if mode == "bad_audio" else {"format": audio_format, "sample_rate": 16000, "data": short_encoded if mode == "short" else long_encoded if mode == "long" else encoded}
             self.reply(200, {"object": "audio.voice", "id": "deterministic-handle", "voice": "deterministic-handle",
                              "model": body.get("model"), "target_model": body.get("target_model"),
                              "preview_audio": preview, "request_id": f"deterministic-{state['calls']}"})
@@ -273,7 +306,14 @@ def run(args: argparse.Namespace) -> None:
     prefix = f"/api/v1/projects/{project}"
     evidence = {"code_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()}
     with client(args.base_url) as api:
-        evidence["quote"] = checked(api.get(f"{prefix}/voice-design/quote", params={"surface": "supertale"}))
+        models = checked(api.get(f"{prefix}/voice-design/models"))["models"]
+        selected = next((model for model in models if model["catalog_id"] == args.catalog_id), None) if args.catalog_id else next(iter(models), None)
+        if selected is None:
+            raise ValueError("select an available --catalog-id from /models")
+        evidence["models"] = models
+        evidence["quote"] = checked(api.get(f"{prefix}/voice-design/quote", params={"surface": "supertale", "catalog_id": selected["catalog_id"]}))
+        if evidence["quote"]["model"] != selected:
+            raise AssertionError("quote snapshot differs from selected model")
         before = checked(api.get(f"{prefix}/characters/{character}/voice-samples"))
         evidence["slots_before"] = before
         if args.generate:
@@ -283,6 +323,7 @@ def run(args: argparse.Namespace) -> None:
             ledger.reserve(args.request_id, "voice-design")
             checked(api.post(f"{prefix}/voice-design/candidates", json={
                 "request_id": args.request_id, "surface": "supertale",
+                "catalog_id": selected["catalog_id"], "config_digest": selected["config_digest"],
                 "description": args.description, "preview_text": args.preview_text, "language": "zh",
             }))
         candidate_id = args.candidate_id or (args.request_id if args.generate else None)
@@ -299,6 +340,8 @@ def run(args: argparse.Namespace) -> None:
             if time.monotonic() >= deadline:
                 raise TimeoutError("candidate unresolved; do not automatically regenerate")
             time.sleep(1)
+        if args.generate and candidate["model"] != evidence["quote"]["model"]:
+            raise AssertionError("candidate model snapshot differs from quote/create")
         evidence["candidate"] = candidate
         write_json(args.evidence, evidence)
         if args.generate:
@@ -391,6 +434,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--project", default=os.environ.get("VOICE_DESIGN_TEST_PROJECT"))
     result.add_argument("--character", default=os.environ.get("VOICE_DESIGN_TEST_CHARACTER"))
     result.add_argument("--slot", choices=("default", "child", "youth", "middle", "elder"), default="default")
+    result.add_argument("--catalog-id", help="design catalog from /models; defaults to its first available entry")
     result.add_argument("--candidate-id", help="reuse an existing result; never calls the provider")
     result.add_argument("--generate", action="store_true")
     result.add_argument("--allow-paid", action="store_true")

@@ -22,7 +22,7 @@ from uuid import uuid4
 from playwright.sync_api import BrowserContext, Page, expect, sync_playwright
 import httpx
 
-from voice_design import digest, require_local, write_json
+from voice_design import digest, require_local, self_check, write_json
 
 ALL_CASES = tuple(f"U{number:02}" for number in range(1, 13))
 
@@ -138,6 +138,7 @@ def run_u12(browser, args):
             locale="zh-CN", viewport={"width": 1400, "height": 1100},
             storage_state=args.storage_state if username is None else None,
         )
+        context.add_init_script("localStorage.setItem('i18nextLng','zh-CN')")
         contexts.append(context)
 
         def guard(route):
@@ -165,10 +166,8 @@ def run_u12(browser, args):
                     os.environ[name] = value
         return context
 
-    def quote(context, project):
-        return api(
-            context, "GET", f"/api/v1/projects/{project}/voice-design/quote?surface=supertale"
-        )
+    def quote(context, project, catalog_id):
+        return api(context, "GET", f"/api/v1/projects/{project}/voice-design/quote?surface=supertale&catalog_id={catalog_id}")
 
     def open_price(page, path, all_tab=False):
         page.goto(admin_base + path)
@@ -237,124 +236,84 @@ def run_u12(browser, args):
                 "age_group": "elder",
             },
         )
-        evidence["organization_initial_quote"] = quote(member_context, fixture["project"])
-
+        models = api(member_context, "GET", f"/api/v1/projects/{fixture['project']}/voice-design/models")["data"]["models"]
+        assert {model["model"] for model in models} == {"voice-enrollment", "qwen-voice-design", "seed-audio-1.0"}
+        initial = {model["catalog_id"]: quote(member_context, fixture["project"], model["catalog_id"])["data"] for model in models}
+        evidence["organization_initial_quotes"] = initial
         org_page = org_context.new_page()
         form = open_price(org_page, "/org-admin/pricing", all_tab=True)
-        form.get_by_role("spinbutton").fill("7")
-        with org_page.expect_response(
-            lambda r: "/org/admin/feature-prices" in r.url and r.request.method in {"POST", "PUT"}
-        ) as saved:
+        for index, model in enumerate(models):
+            form.get_by_role("spinbutton", name=re.compile("^" + re.escape(model["label"]) + " ")).fill(str(7 + index))
+        with org_page.expect_response(lambda r: "/org/admin/feature-prices" in r.url and r.request.method in {"POST", "PUT"}) as saved:
             form.get_by_role("button", name="保存", exact=True).click()
         assert saved.value.status == 200
         evidence["organization_saved_price"] = saved.value.json()
         expect(form).not_to_be_visible()
         evidence["organization_page_alerts"] = org_page.get_by_role("alert").all_text_contents()
-        assert not evidence[
-            "organization_page_alerts"
-        ], "organization pricing page contains a read error"
-        evidence["organization_quote"] = quote(member_context, fixture["project"])
-        assert evidence["organization_quote"]["data"]["cost"] == 7
+        assert not evidence["organization_page_alerts"], "organization pricing page contains a read error"
+        evidence["organization_quotes"] = {}
+        for index, model in enumerate(models):
+            result = quote(member_context, fixture["project"], model["catalog_id"])["data"]
+            assert result["cost"] == 7 + index and result["model"] == model
+            evidence["organization_quotes"][model["catalog_id"]] = result
         org_page.screenshot(path=str(artifacts / "U12-organization-price.png"), full_page=True)
-        evidence["assertions"].append(
-            "organization All UI saves audio override 7; real organization project quote is 7"
-        )
-
+        evidence["assertions"].append("organization All UI saves distinct catalog prices; each real project quote keeps its catalog/model snapshot")
         prices = api(platform, "GET", "/admin/feature-credit-prices", admin=True)
         original = next(row for row in prices if row["feature_key"] == "audio.voice_design")
-        original_body = {
-            key: original[key]
-            for key in (
-                "feature_key",
-                "label",
-                "params",
-                "unit",
-                "unit_cost",
-                "enabled",
-                "media_model_prices",
-            )
-        }
+        original_body = {key: original[key] for key in ("feature_key", "label", "params", "unit", "unit_cost", "enabled", "media_model_prices")}
         evidence["original_platform_price"] = original_body
-        new_cost = original["unit_cost"] + 2
         try:
             platform_page = platform.new_page()
             form = open_price(platform_page, "/feature-credits")
-            form.get_by_role("spinbutton").fill(str(new_cost))
-            with platform_page.expect_response(
-                lambda r: "/admin/feature-credit-prices/" in r.url and r.request.method == "PUT"
-            ) as saved:
+            for index, model in enumerate(models):
+                form.get_by_role("spinbutton", name=re.compile("^" + re.escape(model["label"]) + " ")).fill(str(11 + index))
+            with platform_page.expect_response(lambda r: "/admin/feature-credit-prices/" in r.url and r.request.method == "PUT") as saved:
                 form.get_by_role("button", name="保存", exact=True).click()
             assert saved.value.status == 200
             evidence["platform_saved_price"] = saved.value.json()
             expect(form).not_to_be_visible()
-            evidence["platform_quote"] = quote(standalone, fixture["standalone_project"])
-            assert evidence["platform_quote"]["data"]["cost"] == new_cost
-            # The organization override must continue to win while platform pricing changes.
-            assert quote(member_context, fixture["project"])["data"]["cost"] == 7
-            platform_page.screenshot(
-                path=str(artifacts / "U12-platform-all-price.png"), full_page=True
-            )
+            for index, model in enumerate(models):
+                assert quote(standalone, fixture["standalone_project"], model["catalog_id"])["data"]["cost"] == 11 + index
+                assert quote(member_context, fixture["project"], model["catalog_id"])["data"]["cost"] == 7 + index
+            platform_page.screenshot(path=str(artifacts / "U12-platform-all-price.png"), full_page=True)
         finally:
-            restored = api(
-                platform,
-                "PUT",
-                "/admin/feature-credit-prices/" + original["id"],
-                original_body,
-                admin=True,
-            )
-            assert restored["unit_cost"] == original["unit_cost"]
-        evidence["restored_platform_quote"] = quote(standalone, fixture["standalone_project"])
-        assert evidence["restored_platform_quote"]["data"]["cost"] == original["unit_cost"]
-        evidence["assertions"].append(
-            "platform All UI price changes real standalone quote; "
-            "organization override wins; original platform price restored"
-        )
-
+            restored = api(platform, "PUT", "/admin/feature-credit-prices/" + original["id"], original_body, admin=True)
+            assert {(row["catalog_id"], row["unit_cost"], row["enabled"]) for row in restored["media_model_prices"]} == {(row["catalog_id"], row["unit_cost"], row["enabled"]) for row in original["media_model_prices"]}
+        for model in models:
+            assert quote(standalone, fixture["standalone_project"], model["catalog_id"])["data"]["cost"] == initial[model["catalog_id"]]["cost"]
+        evidence["assertions"].append("platform All UI per-catalog prices affect standalone quotes; organization overrides win; all original platform tiers restored")
         product = member_context.new_page()
         product.goto(base + f"/projects/{fixture['project']}/characters")
         product.get_by_text(fixture["character"], exact=True).first.click()
         product.get_by_role("button", name="按描述生成", exact=True).first.click()
         voice = product.get_by_role("dialog", name="按描述生成声线")
+        selected = models[0]
+        selector = voice.get_by_role("combobox", name="生成模型", exact=True)
+        selector.select_option(selected["catalog_id"])
         voice.get_by_label("音色描述", exact=True).fill("沉稳清晰的男性声音，稍慢语速")
         voice.get_by_label("试听文本", exact=True).fill("今天的天气很好，我们沿着河边慢慢走回家。")
         expect(voice.get_by_role("button", name="生成试听", exact=True)).to_be_enabled()
         expect(voice.get_by_text("本次生成：7 积分 / 次", exact=True)).to_be_visible()
-        models = api(
-            platform,
-            "GET",
-            f"/admin/orgs/{fixture['org_id']}/media-models?media_type=audio",
-            admin=True,
-        )
-        design = next(row for row in models if row["gateway_model"] == "voice-enrollment")
-        evidence["disabled_model"] = api(
-            platform,
-            "PUT",
-            f"/admin/orgs/{fixture['org_id']}/media-models/{design['catalog_id']}",
-            {"visibility": "disabled", "expected_version": design["version"]},
-            admin=True,
-        )
-        response = member_context.request.get(
-            base + f"/api/v1/projects/{fixture['project']}/voice-design/quote?surface=supertale"
-        )
+        org_models = api(platform, "GET", f"/admin/orgs/{fixture['org_id']}/media-models?media_type=audio", admin=True)
+        design = next(row for row in org_models if row["catalog_id"] == selected["catalog_id"])
+        api(platform, "PUT", f"/admin/orgs/{fixture['org_id']}/media-models/{design['catalog_id']}", {"visibility": "disabled", "expected_version": design["version"]}, admin=True)
+        response = member_context.request.get(base + f"/api/v1/projects/{fixture['project']}/voice-design/quote?surface=supertale&catalog_id={selected['catalog_id']}")
         assert response.status == 503
         evidence["disabled_quote"] = response.json()
+        remaining = api(member_context, "GET", f"/api/v1/projects/{fixture['project']}/voice-design/models")["data"]["models"]
+        evidence["remaining_models"] = remaining
+        assert {model["catalog_id"] for model in remaining} == {model["catalog_id"] for model in models[1:]}
         product.wait_for_timeout(31000)
         member_context.set_offline(True)
-        with product.expect_response(lambda r: "/voice-design/quote?" in r.url) as refreshed:
-            member_context.set_offline(False)
-        assert refreshed.value.status == 503
-        expect(voice.get_by_role("button", name="生成试听", exact=True)).to_be_disabled()
-        expect(voice.get_by_text("声音设计暂不可用", exact=True)).to_be_visible()
+        member_context.set_offline(False)
+        expect(voice.get_by_role("button", name="生成试听", exact=True)).to_be_disabled(timeout=15000)
+        expect(selector).to_have_value(selected["catalog_id"])
         product.screenshot(path=str(artifacts / "U12-model-disabled.png"), full_page=True)
+        selector.select_option(remaining[0]["catalog_id"])
+        expect(voice.get_by_role("button", name="生成试听", exact=True)).to_be_enabled()
         assert not submissions, "U12 attempted a generation submission"
         evidence["generation_submissions"] = len(submissions)
-        evidence["refresh_trigger"] = (
-            "browser network reconnect after actual 30-second quote cache expiration"
-        )
-        evidence["assertions"].append(
-            "organization model disable returns real 503; refreshed dialog explains unavailable "
-            "and disables generation; zero generation submissions"
-        )
+        evidence["assertions"].append("single catalog disable rejects its quote, retains other models; reconnect refresh disables invalid selection without fallback; explicit valid selection recovers; zero generation submissions")
         evidence["status"] = "passed"
         write_evidence()
         return evidence["assertions"]
@@ -376,10 +335,12 @@ class Acceptance:
         self.ready = None
         self.slot_before = None
         self.drop_next_create = False
+        self.create_bodies = {}
+        self.quotes = {}
         if args.test_gateway_url:
             deployed = json.loads(args.deployment_env.read_text()) if args.deployment_env else {}
             gateway = require_local(args.test_gateway_url)
-            if deployed.get("NEWAPI_BASE_URL") != gateway + "/v1":
+            if deployed.get("NEWAPI_BASE_URL") != gateway + "/v1" or deployed.get("VOICE_DESIGN_TEST_REPLAY") != "1":
                 raise ValueError("deterministic requests require matching isolated deployment configuration")
             for role in ("product", "worker"):
                 pid = int((args.deployment_env.parent / f"{role}.pid").read_text())
@@ -387,7 +348,8 @@ class Acceptance:
                 running = subprocess.check_output(["ps", "eww", "-p", str(pid), "-o", "command="], text=True)
                 actual = re.search(r"(?:^|\s)NEWAPI_BASE_URL=([^\s]+)", running)
                 edition = re.search(r"(?:^|\s)ST_EDITION=([^\s]+)", running)
-                if not actual or actual.group(1) != gateway + "/v1" or not edition or edition.group(1) != "ee":
+                replay = re.search(r"(?:^|\s)VOICE_DESIGN_TEST_REPLAY=([^\s]+)", running)
+                if not actual or actual.group(1) != gateway + "/v1" or not edition or edition.group(1) != "ee" or not replay or replay.group(1) != "1":
                     raise RuntimeError(f"{role} is not running the isolated EE test gateway configuration")
             marker = httpx.get(gateway + "/healthz").json()
             if marker.get("kind") != "voice-design-deterministic":
@@ -402,7 +364,13 @@ class Acceptance:
             route.continue_()
             return
         self.submissions += 1
-        self.candidate_ids.append(route.request.post_data_json["request_id"])
+        body = route.request.post_data_json
+        self.candidate_ids.append(body["request_id"])
+        if self.args.test_gateway_url:
+            expected = self.model_snapshot(body["catalog_id"])
+            if body["config_digest"] != expected["config_digest"]:
+                raise AssertionError("create digest differs from model/quote snapshot")
+            self.create_bodies[body["request_id"]] = body
         if self.args.test_gateway_url:
             if self.drop_next_create:
                 self.drop_next_create = False
@@ -417,7 +385,11 @@ class Acceptance:
         # The server checks the persisted request digest; changing the source or
         # input cannot turn this replay into a second model request.
         body = route.request.post_data_json
-        body.update(request_id=self.replay["candidate_id"], description=self.replay["description"],
+        model = self.replay.get("model")
+        if model is None:
+            route.abort("blockedbyclient")
+            raise RuntimeError("historical candidate without a model snapshot is GET-only")
+        body.update(catalog_id=model["catalog_id"], config_digest=model["config_digest"], request_id=self.replay["candidate_id"], description=self.replay["description"],
                     preview_text=self.replay["preview_text"], language=self.replay["language"], surface="supertale")
         route.continue_(post_data=json.dumps(body), headers=route.request.headers | {"content-type": "application/json"})
 
@@ -436,6 +408,39 @@ class Acceptance:
         if response.status != 200:
             raise RuntimeError(f"voice samples HTTP {response.status}")
         return response.json()["data"]["slots"]
+
+    def models(self):
+        response = self.api("/voice-design/models")
+        if response.status != 200:
+            raise RuntimeError(f"model list HTTP {response.status}")
+        return response.json()["data"]["models"]
+
+    def model_snapshot(self, catalog_id):
+        return next(model for model in self.models() if model["catalog_id"] == catalog_id)
+
+    def select_model(self, dialog, catalog_id):
+        selector = dialog.get_by_role("combobox", name="生成模型", exact=True)
+        expect(selector).to_be_enabled()
+        selector.select_option(catalog_id)
+        expect(selector).to_have_value(catalog_id)
+        quote_url = "/voice-design/quote?surface=supertale&catalog_id=" + quote(catalog_id, safe="")
+        response = self.api(quote_url)
+        if response.status != 200:
+            raise RuntimeError(f"selected quote HTTP {response.status}")
+        self.quotes[catalog_id] = response.json()["data"]
+        snapshot = self.quotes[catalog_id]["model"]
+        if snapshot != self.model_snapshot(catalog_id):
+            raise AssertionError("model list and quote differ")
+        expect(dialog.get_by_text("本次请求模型：" + snapshot["model"], exact=True)).to_be_visible()
+        return snapshot
+
+    def assert_metadata(self, dialog):
+        self.page.wait_for_function("""() => {
+            const a = document.querySelector('audio[aria-label="生成的试听音频"]');
+            return a && Number.isFinite(a.duration) && a.duration > 0 && a.readyState >= 1
+                && a.paused && a.currentTime === 0;
+        }""")
+        return dialog.get_by_label("生成的试听音频", exact=True).evaluate("a => ({duration:a.duration, readyState:a.readyState, paused:a.paused, currentTime:a.currentTime})")
 
     def fill(self, dialog, description="沉稳清晰的男性声音，稍慢语速") -> None:
         dialog.get_by_label("音色描述", exact=True).fill(description)
@@ -500,19 +505,12 @@ class Acceptance:
         if response.status != 200 or response.json().get("ok") is not True:
             self.args.character = original_character
             raise RuntimeError("could not create the isolated U01 character")
-        attempts = []
-
-        def capture_save(route):
-            attempts.append(route.request)
-            route.abort("blockedbyclient")
-
-        pattern = "**/voice-samples/*/save-generated"
-        self.page.route(pattern, capture_save)
         try:
             self.characters()
             entries = self.page.get_by_role("button", name="按描述生成", exact=True)
             expect(entries).to_have_count(len(expected))
             labels = []
+            evidence = []
             for index, (age_label, action_slot, action_label) in enumerate(expected):
                 card = entries.nth(index).locator("../..")
                 expect(card.get_by_text(age_label, exact=True)).to_be_visible()
@@ -527,20 +525,31 @@ class Acceptance:
                 self.fill(dialog)
                 self.gateway("success")
                 candidate_id = self.generate(dialog)
-                with self.page.expect_request(lambda request: request.method == "POST" and "/voice-samples/" in request.url and request.url.endswith("/save-generated")) as submitted:
+                before = self.samples()
+                with self.page.expect_response(lambda response: response.request.method == "POST" and "/voice-samples/" in response.url and response.url.endswith("/save-generated")) as saved:
                     save.click()
-                request = submitted.value
+                response = saved.value
                 expected_path = f"/characters/{quote(self.args.character, safe='')}/voice-samples/{action_slot}/save-generated"
-                if len(attempts) != index + 1 or not request.url.endswith(expected_path):
+                if response.status != 200 or not response.url.endswith(expected_path):
                     raise AssertionError(f"{age_label} submitted the wrong actionSlot; expected {action_slot}")
-                body = request.post_data_json
+                body = response.request.post_data_json
                 if body["candidate_id"] != candidate_id or body["replace_existing"] is not False:
-                    raise AssertionError("card save request changed its candidate or replacement policy")
-                labels.append(f"{age_label}; dialog actionSlot={action_slot}; captured save slot={action_slot}")
-                self.close_voice()
+                    raise AssertionError("card save changed its candidate or replacement policy")
+                actual = response.json()["data"]
+                if actual["slot"] != action_slot or actual["sha256"] != self.ready["sha256"]:
+                    raise AssertionError("actual saved slot/SHA differs from the card action")
+                expect(dialog).not_to_be_visible()
+                after = self.samples()
+                for old in before:
+                    if old["slot"] != action_slot:
+                        current = next(slot for slot in after if slot["slot"] == old["slot"])
+                        if any(current[key] != old[key] for key in ("path", "sha256", "updated_at")):
+                            raise AssertionError("card save changed a non-target slot")
+                evidence.append({"age_label": age_label, "actionSlot": action_slot, "request": body, "save": actual})
+                labels.append(f"{age_label}; dialog actionSlot={action_slot}; actual save.slot={actual['slot']}")
+            write_json(self.args.artifacts_dir / "U01-card-slots.json", {"cards": evidence})
             return labels
         finally:
-            self.page.unroute(pattern, capture_save)
             self.args.character = original_character
 
     def canvas(self) -> None:
@@ -562,7 +571,12 @@ class Acceptance:
         page = self.page
         if entry == "node":
             # Exercise the public node action consumed by the real AudioNode.
-            page.evaluate("async id => { const { dispatchNodeAction } = await import('/src/features/canvas/application/nodeActionResult.ts'); dispatchNodeAction({nodeId:id, action:'open_voice_picker', parameters:{initialTab:'mine'}, requestId:crypto.randomUUID()}); }", self.node_id)
+            node = page.locator(f'.react-flow__node[data-id="{self.node_id}"]')
+            node.click()
+            if self.node_data().get("voiceRef"):
+                page.evaluate("async id => { const { dispatchNodeAction } = await import('/src/features/canvas/application/nodeActionResult.ts'); dispatchNodeAction({nodeId:id, action:'open_voice_picker', parameters:{initialTab:'mine'}, requestId:crypto.randomUUID()}); }", self.node_id)
+            else:
+                node.get_by_role("button", name="选择声线", exact=True).click()
         elif entry == "panel":
             page.locator(f'.react-flow__node[data-id="{self.node_id}"]').click()
             page.get_by_title("音色设置", exact=True).click()
@@ -627,30 +641,72 @@ class Acceptance:
         self.characters()
         self.slot_before = self.samples()
         dialog = self.open_voice()
-        self.fill(dialog)
-        before = self.gateway("slow")["calls"]
-        generate = dialog.get_by_role("button", name=re.compile("^(生成试听|重新生成)$"))
-        generate.click()
-        expect(dialog.get_by_text("正在生成，关闭弹窗不会取消任务。", exact=True)).to_be_visible()
-        expect(generate).to_be_disabled()
-        expect(dialog.get_by_role("button", name=re.compile("^保存到"))).to_be_disabled()
-        expect(dialog.get_by_role("button", name="播放试听", exact=True)).to_be_enabled(timeout=20000)
-        if self.gateway()["calls"] != before + 1:
-            raise AssertionError("duplicate upstream generation")
-        self.ready = self.api("/voice-design/candidates/" + self.last_candidate_id()).json()["data"]
-        expect(dialog.get_by_text(re.compile("用于视频参考建议"))).to_be_visible()
-        self.page.screenshot(path=str(self.args.artifacts_dir / "U04-ready.png"))
-        self.gateway("bad_audio")
-        invalid = self.generate(dialog, success=False)
-        if self.api(f"/voice-design/candidates/{invalid}").json()["data"]["failure"]["code"] != "provider_bad_audio":
-            raise AssertionError("unreadable preview was accepted")
-        self.gateway("short")
-        self.generate(dialog)
-        expect(dialog.get_by_text(re.compile("用于视频参考建议"))).to_have_count(0)
-        self.gateway("success")
-        self.generate(dialog)
-        expect(dialog.get_by_text(re.compile("用于视频参考建议"))).to_be_visible()
-        return ["deterministic: actual queue generating/ready, one request per explicit generation; pending save disabled, missing preview rejected, six-second hint and three-second absence"]
+        models = self.models()
+        if {model["model"] for model in models} != {"voice-enrollment", "qwen-voice-design", "seed-audio-1.0"}:
+            raise AssertionError("expected all three design models and no ordinary speech")
+        snapshots = []
+        for model in models:
+            selected = self.select_model(dialog, model["catalog_id"])
+            self.fill(dialog)
+            before = self.gateway("slow")["calls"]
+            generate = dialog.get_by_role("button", name=re.compile("^(生成试听|重新生成)$"))
+            generate.click()
+            expect(dialog.get_by_text("正在生成，关闭弹窗不会取消任务。", exact=True)).to_be_visible()
+            expect(generate).to_be_disabled()
+            expect(dialog.get_by_role("combobox", name="生成模型", exact=True)).to_be_disabled()
+            expect(dialog.get_by_role("button", name=re.compile("^保存到"))).to_be_disabled()
+            expect(dialog.get_by_role("button", name="播放试听", exact=True)).to_be_enabled(timeout=20000)
+            candidate_id = self.last_candidate_id()
+            self.ready = self.settled(candidate_id)
+            if self.ready["status"] != "ready" or self.ready["model"] != selected:
+                raise AssertionError("candidate snapshot differs from models/quote")
+            submitted = self.create_bodies[candidate_id]
+            if (submitted["catalog_id"], submitted["config_digest"]) != (selected["catalog_id"], selected["config_digest"]):
+                raise AssertionError("create did not freeze selected catalog/digest")
+            gateway = self.gateway()
+            if gateway["calls"] != before + 1:
+                raise AssertionError("duplicate upstream generation")
+            upstream = gateway["requests"][-1]
+            if upstream["model"] != selected["model"]:
+                raise AssertionError("gateway executed a different model")
+            if selected["mode"] == "resource":
+                if upstream["endpoint"] != "/v1/audio/voice-designs" or upstream["target_model"] != selected["target_model"]["model"]:
+                    raise AssertionError("resource target/endpoint differs from snapshot")
+                if upstream["voice_prompt"] != submitted["description"] or upstream["preview_text"] != submitted["preview_text"]:
+                    raise AssertionError("resource prompt differs from submitted input")
+                expect(dialog.get_by_text("目标模型：" + selected["target_model"]["model"], exact=True)).to_be_visible()
+            else:
+                if upstream["endpoint"] != "/v1/audio/speech" or upstream["instructions"] != submitted["description"] or upstream["input"] != submitted["preview_text"]:
+                    raise AssertionError("prompted speech request differs from submitted input")
+                if any(key in upstream for key in ("voice", "target_model")):
+                    raise AssertionError("prompted speech included a voice/target")
+                expect(dialog.get_by_text(re.compile("^目标模型："))).to_have_count(0)
+            if selected["execution_mode"] != "test_replay":
+                raise AssertionError("fixture was not marked as explicit replay")
+            expect(dialog.get_by_text("请求模型：" + selected["model"], exact=True)).to_be_visible()
+            expect(dialog.get_by_text("测试回放，未调用真实模型", exact=True)).to_have_count(2)
+            self.assert_metadata(dialog)
+            snapshots.append({"model": selected, "quote": self.quotes[selected["catalog_id"]], "create": submitted, "gateway": upstream, "candidate": self.ready})
+            self.page.screenshot(path=str(self.args.artifacts_dir / ("U04-" + selected["model"] + ".png")))
+            self.gateway("bad_audio")
+            invalid = self.generate(dialog, success=False)
+            if self.settled(invalid)["failure"]["code"] != "provider_bad_audio":
+                raise AssertionError("unreadable preview was accepted")
+            if selected["mode"] == "prompted_speech":
+                self.gateway("json_local")
+                rejected = self.generate(dialog, success=False)
+                if self.settled(rejected)["failure"]["code"] != "provider_bad_audio":
+                    raise AssertionError("local JSON audio URL passed SSRF boundary")
+            self.gateway("short")
+            self.generate(dialog)
+            expect(dialog.get_by_text(re.compile("用于视频参考建议"))).to_have_count(0)
+            self.gateway("long")
+            self.generate(dialog)
+            expect(dialog.get_by_text(re.compile("用于视频参考建议"))).to_be_visible()
+            if not 5 < self.ready["duration_seconds"] < 7:
+                raise AssertionError("long human-speech fixture was not six seconds")
+        write_json(self.args.artifacts_dir / "U04-model-snapshots.json", {"models": snapshots})
+        return ["all three model/quote/create/gateway/candidate snapshots match; explicit replay labels; binary speech success, local JSON URL rejected; real short/long human audio and bad media for each model"]
 
     def last_candidate_id(self) -> str:
         if not hasattr(self, "candidate_ids") or not self.candidate_ids:
@@ -664,8 +720,13 @@ class Acceptance:
         before = self.gateway()["calls"]
         description = dialog.get_by_label("音色描述", exact=True).input_value()
         preview = dialog.get_by_label("试听文本", exact=True).input_value()
+        metadata = self.assert_metadata(dialog)
+        self.close_voice()
+        dialog = self.open_voice()
+        self.assert_metadata(dialog)
+        self.close_voice()
         self.page.route("**/voice-design/candidates/*/audio", lambda route: route.abort("failed"), times=1)
-        dialog.get_by_role("button", name="播放试听", exact=True).click()
+        dialog = self.open_voice()
         expect(dialog.get_by_role("button", name="重试试听", exact=True)).to_be_enabled()
         expect(dialog.get_by_label("音色描述", exact=True)).to_have_value(description)
         expect(dialog.get_by_label("试听文本", exact=True)).to_have_value(preview)
@@ -680,7 +741,8 @@ class Acceptance:
         if self.gateway()["calls"] != before:
             raise AssertionError("playback called the provider")
         self.page.screenshot(path=str(self.args.artifacts_dir / "U05-playback.png"))
-        return ["real authenticated audio fetch failure/retry, input preservation, play/pause/replay, zero provider calls"]
+        write_json(self.args.artifacts_dir / "U05-metadata.json", metadata)
+        return ["finite eager metadata before play, paused/time zero, reopen; real authenticated audio fetch failure/retry, input preservation, play/pause/replay, zero provider calls"]
 
     def U06(self) -> list[str]:
         if not self.ready:
@@ -768,6 +830,10 @@ class Acceptance:
             raise RuntimeError("run U02 first")
         self.page.goto(f"{self.args.base_url}/projects/{self.args.project}/freezone")
         expect(self.page.locator(f'[data-id="{self.node_id}"].react-flow__node')).to_be_attached()
+        self.page.get_by_role("button", name="缩放选项", exact=True).click()
+        zoom = self.page.get_by_role("textbox", name="缩放比例", exact=True)
+        zoom.fill("100")
+        zoom.press("Enter")
         self.voice_picker("node")
         before = self.node_data().get("voiceRef")
         self.page.get_by_role("button", name="按描述生成", exact=True).click()
@@ -816,6 +882,7 @@ class Acceptance:
         self.page.route("**/voice-design/candidates/*", lambda route: route.abort("failed"), times=1)
         dialog.get_by_role("button", name="生成试听", exact=True).click()
         expect(dialog.get_by_role("button", name="查询原任务", exact=True)).to_be_visible()
+        expect(dialog.get_by_role("combobox", name="生成模型", exact=True)).to_be_disabled()
         dialog.get_by_role("button", name="查询原任务", exact=True).click()
         expect(dialog.get_by_role("button", name="播放试听", exact=True)).to_be_enabled(timeout=20000)
         if self.submissions != before_submissions + 1 or self.gateway()["calls"] != before_calls + 1:
@@ -833,7 +900,8 @@ class Acceptance:
             result = connection.execute("UPDATE candidates SET expires_at=0 WHERE candidate_id=?", (candidate_id,))
             if result.rowcount != 1:
                 raise AssertionError("expiry fixture did not address exactly one candidate")
-        dialog.get_by_role("button", name="播放试听", exact=True).click()
+        self.close_voice()
+        dialog = self.open_voice(2)
         expect(dialog.get_by_text("试听已过期，请重新生成。", exact=True)).to_be_visible()
         expect(dialog.get_by_role("button", name="保存到中年", exact=True)).to_be_disabled()
         expect(dialog.get_by_label("音色描述", exact=True)).to_have_value("连接中断后仍应保留的声线描述")
@@ -861,6 +929,23 @@ class Acceptance:
             dialog = self.open_voice()
             expect(dialog.get_by_label("音色描述", exact=True)).to_have_value("保留输入" + "中" * 496)
             self.close_voice()
+        dialog = self.open_voice()
+        models = self.models()
+        for model in models:
+            self.select_model(dialog, model["catalog_id"])
+            self.fill(dialog, "目录独立草稿" + model["model"])
+            self.gateway("success")
+            self.generate(dialog)
+            expect(dialog.get_by_text("请求模型：" + model["model"], exact=True)).to_be_visible()
+        before_switch_calls = self.gateway()["calls"]
+        for model in reversed(models):
+            self.select_model(dialog, model["catalog_id"])
+            expect(dialog.get_by_label("音色描述", exact=True)).to_have_value("目录独立草稿" + models[-1]["model"])
+            expect(dialog.get_by_text("请求模型：" + model["model"], exact=True)).to_be_visible()
+            self.assert_metadata(dialog)
+        if self.gateway()["calls"] != before_switch_calls:
+            raise AssertionError("switching back generated a new candidate")
+        self.close_voice()
         self.open_voice(1)
         expect(self.page.get_by_label("音色描述", exact=True)).not_to_have_value("保留输入" + "中" * 496)
         self.close_voice()
@@ -869,6 +954,7 @@ class Acceptance:
         self.gateway("slow")
         dialog.get_by_role("button", name=re.compile("^(生成试听|重新生成)$")).click()
         expect(dialog.get_by_text("正在生成，关闭弹窗不会取消任务。", exact=True)).to_be_visible()
+        expect(dialog.get_by_role("combobox", name="生成模型", exact=True)).to_be_disabled()
         old_id = self.last_candidate_id()
         self.close_voice()
         dialog = self.open_voice(1)
@@ -879,43 +965,80 @@ class Acceptance:
         expect(dialog.get_by_text(f"保存位置：{self.args.character} · 青年", exact=True)).to_be_visible()
         expect(dialog.get_by_role("button", name="保存到青年", exact=True)).to_be_disabled()
         self.close_voice()
-        return ["1280/768 widths, focus trap/restoration, same-target drafts, cross-slot isolation and late old-target response ownership"]
+        dialog = self.open_voice(2)
+        self.fill(dialog, "保存期间锁定同一目标全部模型")
+        self.gateway("success")
+        self.generate(dialog)
+        held = []
+        pattern = "**/voice-samples/middle/save-generated"
+        self.page.route(pattern, lambda route: held.append(route))
+        dialog.get_by_role("button", name="保存到中年", exact=True).click()
+        expect(dialog.get_by_role("button", name="正在保存…", exact=True)).to_be_visible()
+        expect(dialog.get_by_role("combobox", name="生成模型", exact=True)).to_be_disabled()
+        self.close_voice()
+        dialog = self.open_voice(2)
+        expect(dialog.get_by_role("combobox", name="生成模型", exact=True)).to_be_disabled()
+        if len(held) != 1:
+            raise AssertionError("pending save was submitted more than once")
+        response = held[0].fetch()
+        if response.status != 200:
+            raise AssertionError("pending save fixture failed")
+        held[0].fulfill(response=response)
+        self.page.unroute(pattern)
+        expect(dialog).not_to_be_visible()
+        return ["1280/768 widths and focus; shared inputs and per-catalog results restored without new calls; generating/unknown/saving selection locks; late old-target result isolation; pending-save survives close/reopen and saves once"]
 
     def U11(self) -> list[str]:
         page = self.page
+        models = self.models()
+        response = page.context.request.get(self.args.admin_base_url + "/admin/media-models?media_type=audio")
+        if response.status != 200:
+            raise RuntimeError(f"admin catalog HTTP {response.status}")
+        catalog = response.json()
+        ordinary = next(model for model in catalog if model["gateway_model"] == "cosyvoice-v3.5-flash")
+        fixtures = [next(row for row in catalog if row["catalog_id"] == model["catalog_id"]) for model in models] + [ordinary]
         page.goto(f"{self.args.admin_base_url}/media-models")
         page.get_by_role("combobox").first.click()
         page.get_by_role("option", name="音频", exact=True).click()
-        row = page.get_by_role("row").filter(has_text=self.args.design_label)
-        row.get_by_role("button", name="编辑", exact=True).click()
-        dialog = page.get_by_role("dialog")
-        expect(dialog.locator("#mm-targetModel")).to_contain_text(self.args.speech_label)
-        target = dialog.locator("#mm-targetModel").inner_text()
-        dialog.get_by_role("button", name="保存", exact=True).click()
-        expect(dialog).not_to_be_visible(timeout=10000)
-        row.get_by_role("button", name="编辑", exact=True).click()
-        expect(page.locator("#mm-targetModel")).to_have_text(target)
-        page.screenshot(path=str(self.args.artifacts_dir / "U11-reopened.png"))
-        page.get_by_role("dialog").get_by_role("button", name="取消", exact=True).click()
+        for model in fixtures:
+            row = page.get_by_role("row").filter(has_text=model["label"])
+            row.get_by_role("button", name="编辑", exact=True).click()
+            dialog = page.get_by_role("dialog")
+            purpose = model["config"].get("voiceDesignMode") or model["config"]["request"]["endpoint"]
+            expect(dialog.get_by_role("combobox", name="音频端点", exact=True)).to_have_attribute("value", purpose)
+            if purpose == "audio/voice-designs":
+                expect(dialog.locator("#mm-targetModel")).to_have_attribute("value", model["config"]["targetModel"])
+            else:
+                expect(dialog.locator("#mm-targetModel")).to_have_count(0)
+            with page.expect_response(lambda response: response.request.method == "PUT" and "/admin/media-models/" in response.url) as saved:
+                dialog.get_by_role("button", name="保存", exact=True).click()
+            if saved.value.status != 200:
+                raise AssertionError("admin audio mode save failed")
+            persisted = saved.value.json()
+            if persisted["config"] != model["config"]:
+                raise AssertionError("admin form changed audio mode/target configuration")
+            expect(dialog).not_to_be_visible(timeout=10000)
+            row.get_by_role("button", name="编辑", exact=True).click()
+            expect(page.get_by_role("dialog").get_by_role("combobox", name="音频端点", exact=True)).to_have_attribute("value", purpose)
+            page.screenshot(path=str(self.args.artifacts_dir / ("U11-" + model["gateway_model"] + ".png")))
+            page.get_by_role("dialog").get_by_role("button", name="取消", exact=True).click()
         page.get_by_role("button", name="新增模型", exact=True).click()
         dialog = page.get_by_role("dialog")
         dialog.get_by_role("combobox", name="类型", exact=True).click()
         page.get_by_role("option", name="音频", exact=True).click()
-        dialog.get_by_role("textbox").nth(0).fill("S5 invalid target")
+        dialog.get_by_role("textbox").nth(0).fill("S19 invalid target")
         dialog.get_by_role("textbox").nth(1).fill("voice-enrollment")
         dialog.get_by_role("combobox", name="音频端点", exact=True).click()
         page.get_by_role("option", name="声线设计", exact=True).click()
         dialog.get_by_role("button", name="保存", exact=True).click()
         expect(dialog.get_by_role("alert")).to_be_visible()
-        page.screenshot(path=str(self.args.artifacts_dir / "U11-invalid-target.png"))
-        for kind in ("图片", "视频"):
+        for kind in ("image", "video"):
             dialog.get_by_role("combobox", name="类型", exact=True).click()
-            page.get_by_role("option", name=kind, exact=True).click()
-            if kind != "音频":
-                expect(dialog.get_by_role("combobox", name="音频端点", exact=True)).to_have_count(0)
-                expect(dialog.locator("#mm-targetModel")).to_have_count(0)
+            page.get_by_role("option", name="图片" if kind == "image" else "视频", exact=True).click()
+            expect(dialog.get_by_role("combobox", name="音频端点", exact=True)).to_have_count(0)
+            expect(dialog.locator("#mm-targetModel")).to_have_count(0)
         dialog.get_by_role("button", name="取消", exact=True).click()
-        return ["audio filter, design target saved/reopened, invalid target rejected; image/video forms exclude audio fields"]
+        return ["Qwen/Cosy resources, Seed prompted and ordinary speech save/reopen preserve configuration; invalid target rejected; image/video exclude audio fields"]
 
     def run_case(self, case: str) -> list[str]:
         method = getattr(self, case, None)
@@ -929,6 +1052,7 @@ class Acceptance:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
+    result.add_argument("--self-check", action="store_true", help="verify local guards without network")
     result.add_argument("--base-url", default=os.environ.get("VOICE_DESIGN_TEST_BASE_URL", "http://127.0.0.1:18912"))
     result.add_argument("--admin-base-url", default=os.environ.get("VOICE_DESIGN_TEST_ADMIN_BASE_URL", "http://127.0.0.1:18913"))
     result.add_argument("--project", default=os.environ.get("VOICE_DESIGN_TEST_PROJECT"))
@@ -948,6 +1072,9 @@ def parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = parser().parse_args()
+    if args.self_check:
+        self_check()
+        return 0
     args.base_url = require_local(args.base_url)
     args.admin_base_url = require_local(args.admin_base_url)
     if not args.project:
@@ -958,6 +1085,7 @@ def main() -> int:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=not args.headed)
         context = browser.new_context(locale="zh-CN", viewport={"width": 1280, "height": 900}, storage_state=args.storage_state)
+        context.add_init_script("localStorage.setItem('i18nextLng','zh-CN')")
         login(context, args.base_url)
         acceptance = Acceptance(context.new_page(), args)
         fixtures = prepare_fixtures(context, args) if args.prepare_fixtures else {"project": args.project, "character": args.character}
@@ -968,7 +1096,7 @@ def main() -> int:
                 results[case] = {"status": "passed", "assertions": notes}
             except Exception as error:
                 # Error text may include DOM data, never server response bodies.
-                results[case] = {"status": "failed", "error_type": type(error).__name__, "error": str(error).splitlines()[0]}
+                results[case] = {"status": "failed", "error_type": type(error).__name__, "error": next(iter(str(error).splitlines()), type(error).__name__)}
                 error_path = args.artifacts_dir / f"{case}-error.txt"
                 error_path.write_text(traceback.format_exc())
                 error_path.chmod(0o600)
@@ -976,8 +1104,11 @@ def main() -> int:
             print(f"{case}: {results[case]['status']}", flush=True)
             results[case]["elapsed_seconds"] = round(time.monotonic() - case_started, 3)
         browser.close()
-    write_json(args.artifacts_dir / "results.json", {"cases": results, "fixtures": fixtures, "provider": "deterministic" if args.test_gateway_url else "no-new-generation", "elapsed_seconds": round(time.monotonic() - started, 3), "code_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(), "script_sha256": digest(Path(__file__).read_bytes())})
-    return 0 if all(value["status"] == "passed" for value in results.values()) else 1
+    write_json(args.artifacts_dir / "results.json", {"cases": results, "fixtures": fixtures, "provider": "deterministic" if args.test_gateway_url else "no-new-generation", "elapsed_seconds": round(time.monotonic() - started, 3), "code_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(), "script_sha256": digest(Path(__file__).read_bytes()), "working_diff_sha256": digest(subprocess.check_output(["git", "diff", "HEAD", "--binary"])), "index_tree": subprocess.check_output(["git", "write-tree"], text=True).strip()})
+    passed = all(value["status"] == "passed" for value in results.values())
+    if passed:
+        print("VERIFY-OK (real browser; no paid model calls)")
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
