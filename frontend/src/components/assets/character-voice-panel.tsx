@@ -26,7 +26,7 @@ import {
   useUploadCharacterVoiceSample,
 } from "@/lib/queries/characters";
 import { VoiceDesignDialog } from "@/components/assets/voice-design-dialog";
-import { useVoiceDesignQuote } from "@/lib/queries/voice-design";
+import { useVoiceDesignModels } from "@/lib/queries/voice-design";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -144,7 +144,7 @@ export function CharacterVoicePanel({
   const deleteVoice = useDeleteCharacterVoiceSample(project, character.name);
 
   const queryClient = useQueryClient();
-  const designQuote = useVoiceDesignQuote(project, "supertale");
+  const designModels = useVoiceDesignModels(project);
   const saveGenerated = useSaveGeneratedCharacterVoice(project, character.name);
   const [designSlot, setDesignSlot] = useState<CharacterVoiceSlot | null>(null);
   const [designOpen, setDesignOpen] = useState(false);
@@ -446,7 +446,7 @@ export function CharacterVoicePanel({
             const audioSrc = resolveMediaUrl(actionSlot.url);
             const slotId = String(actionSlot.slot);
             const duration = slotDurations[slotId];
-            const canGenerate = Boolean(designQuote.data && !designQuote.isError);
+            const canGenerate = Boolean(designModels.data?.models.length && !designModels.isError);
             const hasDraft = Boolean(queryClient.getQueryData(queryKeys.voiceDesignDraft(
               project, "supertale", `character:${JSON.stringify([character.name, actionSlot.slot])}`,
             )));

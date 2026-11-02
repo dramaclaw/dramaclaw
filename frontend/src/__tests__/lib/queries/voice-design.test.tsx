@@ -15,16 +15,20 @@ import {
   createVoiceDesign,
   getVoiceDesign,
   useVoiceDesignQuote,
+  useVoiceDesignModels,
   VoiceDesignApiError,
 } from "@/lib/queries/voice-design";
 import { useSaveGeneratedCharacterVoice } from "@/lib/queries/characters";
 import { queryKeys } from "@/lib/query-keys";
 
+import { designModels } from "@/__tests__/voice-design-fixtures";
 afterEach(() => server.resetHandlers());
 
 const id = "178727cd-e421-451c-87e7-68779d72a8ec";
 const body = {
   request_id: id,
+  catalog_id: designModels[0].catalog_id,
+  config_digest: designModels[0].config_digest,
   surface: "canvas" as const,
   description: "温柔",
   preview_text: "今天的天气很好，我们沿着河边慢慢走回家。",
@@ -40,15 +44,25 @@ it("uses project quote and actual surface", async () => {
   server.use(
     http.get(`${base}/voice-design/quote`, ({ request }) => {
       expect(new URL(request.url).searchParams.get("surface")).toBe("canvas");
+      expect(new URL(request.url).searchParams.get("catalog_id")).toBe("qwen");
       return HttpResponse.json({
         ok: true,
-        data: { cost: 7, display: "7", unit: "call", quantity: 1 },
+        data: {
+          cost: 7,
+          display: "7",
+          unit: "call",
+          quantity: 1,
+          model: designModels[0],
+        },
       });
     }),
   );
-  const { result } = renderHook(() => useVoiceDesignQuote("demo", "canvas"), {
-    wrapper: provider(new QueryClient()),
-  });
+  const { result } = renderHook(
+    () => useVoiceDesignQuote("demo", "canvas", designModels[0]),
+    {
+      wrapper: provider(new QueryClient()),
+    },
+  );
   await waitFor(() => expect(result.current.data?.display).toBe("7"));
 });
 it("creates one request without touching formal character cache and queries its original ID", async () => {
@@ -57,7 +71,14 @@ it("creates one request without touching formal character cache and queries its 
     http.post(`${base}/voice-design/candidates`, async ({ request }) => {
       calls.push(await request.json());
       return HttpResponse.json(
-        { ok: true, data: { candidate_id: id, status: "generating" } },
+        {
+          ok: true,
+          data: {
+            candidate_id: id,
+            status: "generating",
+            model: designModels[0],
+          },
+        },
         { status: 202 },
       );
     }),
@@ -67,6 +88,7 @@ it("creates one request without touching formal character cache and queries its 
         data: {
           candidate_id: id,
           status: "unknown",
+          model: designModels[0],
           failure: {
             code: "generation_unknown",
             message: "查询原任务",
@@ -79,6 +101,7 @@ it("creates one request without touching formal character cache and queries its 
   expect(await createVoiceDesign("demo", body)).toMatchObject({
     candidate_id: id,
     status: "generating",
+    model: designModels[0],
   });
   expect(await getVoiceDesign("demo", id)).toMatchObject({ status: "unknown" });
   expect(calls).toEqual([body]);
@@ -241,4 +264,131 @@ it("publishes a delayed character save to its original target after hook scope c
   expect(qc.getQueryData(queryKeys.characters("other"))).toMatchObject({
     data: [{ name: "韩", reference_audio_path: "untouched.wav" }],
   });
+});
+
+it("reads only the models envelope and preserves all three immutable snapshots", async () => {
+  server.use(
+    http.get(`${base}/voice-design/models`, () =>
+      HttpResponse.json({ ok: true, data: { models: designModels } }),
+    ),
+  );
+  const { result } = renderHook(() => useVoiceDesignModels("demo"), {
+    wrapper: provider(new QueryClient()),
+  });
+  await waitFor(() =>
+    expect(result.current.data?.models).toEqual(designModels),
+  );
+});
+it.each(["catalog", "digest", "request"])(
+  "rejects a created candidate with mismatched %s identity",
+  async (identity) => {
+    let calls = 0;
+    const model =
+      identity === "catalog"
+        ? designModels[1]
+        : {
+            ...designModels[0],
+            config_digest:
+              identity === "digest"
+                ? "f".repeat(64)
+                : designModels[0].config_digest,
+          };
+    server.use(
+      http.post(`${base}/voice-design/candidates`, () => {
+        calls++;
+        return HttpResponse.json({
+          ok: true,
+          data: {
+            candidate_id: identity === "request" ? crypto.randomUUID() : id,
+            status: "generating",
+            model,
+          },
+        });
+      }),
+    );
+    await expect(createVoiceDesign("demo", body)).rejects.toThrow(
+      "voiceDesign.errors.invalidResponse",
+    );
+    expect(calls).toBe(1);
+  },
+);
+it("preserves historical null model records when reading a candidate", async () => {
+  server.use(
+    http.get(`${base}/voice-design/candidates/${id}`, () =>
+      HttpResponse.json({
+        ok: true,
+        data: { candidate_id: id, status: "expired", model: null },
+      }),
+    ),
+  );
+  expect(await getVoiceDesign("demo", id)).toEqual({
+    candidate_id: id,
+    status: "expired",
+    model: null,
+  });
+});
+it.each(["catalog", "digest"])(
+  "rejects a quote whose %s differs from the requested snapshot",
+  async (identity) => {
+    const model =
+      identity === "catalog"
+        ? designModels[1]
+        : { ...designModels[0], config_digest: "f".repeat(64) };
+    server.use(
+      http.get(`${base}/voice-design/quote`, () =>
+        HttpResponse.json({
+          ok: true,
+          data: { cost: 7, display: "7", unit: "call", quantity: 1, model },
+        }),
+      ),
+    );
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(
+      () => useVoiceDesignQuote("demo", "canvas", designModels[0]),
+      { wrapper: provider(qc) },
+    );
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.data).toBeUndefined();
+  },
+);
+it("refetches a new quote when the same catalog changes its configuration digest", async () => {
+  const changed = { ...designModels[0], config_digest: "f".repeat(64) };
+  let calls = 0;
+  server.use(
+    http.get(`${base}/voice-design/quote`, () =>
+      HttpResponse.json({
+        ok: true,
+        data: {
+          cost: ++calls,
+          display: String(calls),
+          unit: "call",
+          quantity: 1,
+          model: calls === 1 ? designModels[0] : changed,
+        },
+      }),
+    ),
+  );
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { result, rerender } = renderHook(
+    ({ model }) => useVoiceDesignQuote("demo", "canvas", model),
+    {
+      initialProps: {
+        model: {
+          ...designModels[0],
+          config_digest: designModels[0].config_digest,
+        },
+      },
+      wrapper: provider(qc),
+    },
+  );
+  await waitFor(() => expect(result.current.data?.display).toBe("1"));
+  rerender({ model: changed });
+  await waitFor(() =>
+    expect(result.current.data?.model.config_digest).toBe(
+      changed.config_digest,
+    ),
+  );
+  expect(calls).toBe(2);
 });

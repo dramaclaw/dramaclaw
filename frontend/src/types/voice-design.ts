@@ -23,7 +23,45 @@ export const voiceDesignErrorSchema = z.object({
     })
     .nullish(),
 });
-const candidateId = { candidate_id: z.string().uuid() };
+const modelFields = {
+  catalog_id: z.string().min(1),
+  label: z.string(),
+  model: z.string().min(1),
+  config_digest: z.string().regex(/^[0-9a-f]{64}$/),
+  execution_mode: z.enum(["gateway", "test_replay"]),
+};
+export const voiceDesignModelSchema = z.discriminatedUnion("mode", [
+  z.object({
+    ...modelFields,
+    mode: z.literal("resource"),
+    target_model: z.object({
+      catalog_id: z.string().min(1),
+      model: z.string().min(1),
+    }),
+  }),
+  z.object({
+    ...modelFields,
+    mode: z.literal("prompted_speech"),
+    target_model: z.null(),
+  }),
+]);
+export const voiceDesignModelsSchema = z.object({
+  models: z.array(voiceDesignModelSchema),
+});
+export type VoiceDesignModel = z.infer<typeof voiceDesignModelSchema>;
+export function matchesVoiceDesignModel(
+  model: VoiceDesignModel | null,
+  expected: Pick<VoiceDesignModel, "catalog_id" | "config_digest">,
+): boolean {
+  return (
+    model?.catalog_id === expected.catalog_id &&
+    model?.config_digest === expected.config_digest
+  );
+}
+const candidateId = {
+  candidate_id: z.string().uuid(),
+  model: voiceDesignModelSchema.nullable(),
+};
 export const voiceDesignReadySchema = z.object({
   ...candidateId,
   status: z.literal("ready"),
@@ -57,6 +95,7 @@ export const voiceDesignCandidateSchema = z.discriminatedUnion("status", [
   z.object({ ...candidateId, status: z.literal("expired") }),
 ]);
 export const voiceDesignQuoteSchema = z.object({
+  model: voiceDesignModelSchema,
   cost: z.number().nonnegative(),
   display: z.string(),
   unit: z.literal("call"),
@@ -66,6 +105,8 @@ export type VoiceDesignCandidate = z.infer<typeof voiceDesignCandidateSchema>;
 export type VoiceDesignReady = z.infer<typeof voiceDesignReadySchema>;
 export interface VoiceDesignCreate {
   request_id: string;
+  catalog_id: string;
+  config_digest: string;
   surface: VoiceDesignSurface;
   description: string;
   preview_text: string;

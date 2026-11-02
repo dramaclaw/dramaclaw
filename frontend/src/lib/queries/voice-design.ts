@@ -9,6 +9,9 @@ import {
   voiceDesignCandidateSchema,
   voiceDesignErrorSchema,
   voiceDesignQuoteSchema,
+  voiceDesignModelsSchema,
+  matchesVoiceDesignModel,
+  type VoiceDesignModel,
   type VoiceDesignCreate,
   type VoiceDesignSurface,
 } from "@/types/voice-design";
@@ -58,7 +61,10 @@ export async function createVoiceDesign(
     }),
     voiceDesignCandidateSchema,
   );
-  if (result.candidate_id !== input.request_id)
+  if (
+    result.candidate_id !== input.request_id ||
+    !matchesVoiceDesignModel(result.model, input)
+  )
     throw new Error("voiceDesign.errors.invalidResponse");
   return result;
 }
@@ -79,23 +85,51 @@ export async function getVoiceDesign(
     throw new Error("voiceDesign.errors.invalidResponse");
   return result;
 }
+export function useVoiceDesignModels(project: string) {
+  return useQuery({
+    queryKey: queryKeys.voiceDesignModels(project),
+    queryFn: ({ signal }) =>
+      readVoiceDesignResponse(
+        api.get(p`api/v1/projects/${project}/voice-design/models`, {
+          signal,
+          retry: 0,
+          throwHttpErrors: false,
+        }),
+        voiceDesignModelsSchema,
+      ),
+    enabled: !!project,
+    retry: false,
+    staleTime: 30_000,
+  });
+}
 export function useVoiceDesignQuote(
   project: string,
   surface: VoiceDesignSurface,
+  model: VoiceDesignModel | undefined,
 ) {
   return useQuery({
-    queryKey: queryKeys.voiceDesignQuote(project, surface),
-    queryFn: ({ signal }) =>
-      readVoiceDesignResponse(
+    queryKey: queryKeys.voiceDesignQuote(
+      project,
+      surface,
+      model?.catalog_id ?? "",
+      model?.config_digest ?? "",
+    ),
+    queryFn: async ({ signal }) => {
+      if (!model) throw new Error("voiceDesign.modelUnavailable");
+      const quote = await readVoiceDesignResponse(
         api.get(p`api/v1/projects/${project}/voice-design/quote`, {
-          searchParams: { surface },
+          searchParams: { surface, catalog_id: model.catalog_id },
           signal,
           retry: 0,
           throwHttpErrors: false,
         }),
         voiceDesignQuoteSchema,
-      ),
-    enabled: !!project,
+      );
+      if (!matchesVoiceDesignModel(quote.model, model))
+        throw new Error("voiceDesign.errors.invalidResponse");
+      return quote;
+    },
+    enabled: !!project && !!model,
     retry: false,
     staleTime: 30_000,
   });

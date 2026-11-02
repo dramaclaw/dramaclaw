@@ -9183,6 +9183,16 @@
       "invalidResponse": "Invalid server response. Check the original request later.",
       "playback": "Could not play the preview. Try playback again."
     },
-    "saveAccount": "Save to my voices"
+    "saveAccount": "Save to my voices",
+    "model": "Design model",
+    "modelsEmpty": "No design models are available.",
+    "modelsLoading": "Loading design models…",
+    "modelUnavailable": "The selected model is unavailable. Existing previews can still be played and saved.",
+    "modelUnknown": "Model record unavailable.",
+    "selectedModel": "Selected request model: {{model}}",
+    "selectedTarget": "Selected target model: {{model}}",
+    "resultModel": "Request model: {{model}}",
+    "resultTarget": "Target model: {{model}}",
+    "testReplay": "Test replay; no real model was called"
   }
 }

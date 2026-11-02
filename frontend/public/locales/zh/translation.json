@@ -9183,6 +9183,16 @@
       "invalidResponse": "服务器响应无效，请稍后查询原任务。",
       "playback": "试听播放失败，请重试试听。"
     },
-    "saveAccount": "保存到我的音色"
+    "saveAccount": "保存到我的音色",
+    "model": "生成模型",
+    "modelsEmpty": "暂无可用的生成模型。",
+    "modelsLoading": "正在读取生成模型…",
+    "modelUnavailable": "所选模型已不可用，仍可试听和保存已有候选。",
+    "modelUnknown": "模型记录不可用。",
+    "selectedModel": "本次请求模型：{{model}}",
+    "selectedTarget": "本次目标模型：{{model}}",
+    "resultModel": "请求模型：{{model}}",
+    "resultTarget": "目标模型：{{model}}",
+    "testReplay": "测试回放，未调用真实模型"
   }
 }

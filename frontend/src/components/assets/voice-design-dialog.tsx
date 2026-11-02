@@ -27,9 +27,11 @@ import {
   fetchVoiceDesignAudio,
   getVoiceDesign,
   useVoiceDesignQuote,
+  useVoiceDesignModels,
   VoiceDesignApiError,
 } from "@/lib/queries/voice-design";
 import { queryKeys } from "@/lib/query-keys";
+import { matchesVoiceDesignModel } from "@/types/voice-design";
 import type {
   ExpectedVoiceSlot,
   SaveGeneratedAccountVoice,
@@ -37,6 +39,7 @@ import type {
   VoiceDesignCandidate,
   VoiceDesignReady,
   VoiceDesignSurface,
+  VoiceDesignModel,
 } from "@/types/voice-design";
 
 type TargetBase = {
@@ -66,29 +69,48 @@ type SaveOperation =
   | { kind: "pending" | "failed" | "saved"; attempt: SaveAttempt };
 type Generation =
   | { kind: "idle" }
-  | { kind: "submitting" | "tracking" | "unresolved"; id: string }
-  | { kind: "settled"; candidate: VoiceDesignCandidate };
-type Draft = {
-  description: string;
-  previewText: string;
-  name: string;
+  | {
+      kind: "submitting" | "tracking" | "unresolved";
+      id: string;
+      model: VoiceDesignModel;
+    }
+  | { kind: "settled" };
+type ModelDraft = {
   generation: Generation;
   ready: VoiceDesignReady | null;
   error: string;
   save: SaveOperation;
   conflict: boolean;
 };
-function newDraft(): Draft {
+function newModelDraft(): ModelDraft {
   return {
-    description: "",
-    previewText: "",
-    name: "",
     generation: { kind: "idle" },
     ready: null,
     error: "",
     save: { kind: "idle" },
     conflict: false,
   };
+}
+type DraftInputs = { description: string; previewText: string; name: string };
+type Draft = DraftInputs & {
+  selectedCatalogId: string | null;
+  models: Record<string, ModelDraft>;
+};
+function newDraft(): Draft {
+  return {
+    description: "",
+    previewText: "",
+    name: "",
+    selectedCatalogId: null,
+    models: {},
+  };
+}
+function isLocked(draft: Draft): boolean {
+  return Object.values(draft.models).some(
+    (model) =>
+      model.save.kind === "pending" ||
+      ["submitting", "tracking", "unresolved"].includes(model.generation.kind),
+  );
 }
 function knownMessage(error: unknown): string {
   return error instanceof VoiceDesignApiError
@@ -129,20 +151,60 @@ function useVoiceDesignSession({
     surface,
     `${target.kind}:${target.key}`,
   );
-  const { data: draft } = useQuery({
+  const { data: session } = useQuery({
     queryKey: key,
     queryFn: newDraft,
     initialData: newDraft,
     enabled: false,
     gcTime: Infinity,
   });
-  const patch = (update: Partial<Draft>) =>
-    qc.setQueryData<Draft>(key, (current) => ({
-      ...(current ?? newDraft()),
-      ...update,
-    }));
-  const quote = useVoiceDesignQuote(project, surface);
-  const saving = draft.save.kind === "pending";
+  const catalogId = session.selectedCatalogId;
+  const draft = session.models[catalogId ?? ""] ?? newModelDraft();
+  const patch = (update: Partial<ModelDraft>, requestId?: string) =>
+    qc.setQueryData<Draft>(key, (current) => {
+      if (!current || !catalogId) return current;
+      const model = current.models[catalogId] ?? newModelDraft();
+      if (
+        requestId &&
+        (!("id" in model.generation) || model.generation.id !== requestId)
+      )
+        return current;
+      return {
+        ...current,
+        models: { ...current.models, [catalogId]: { ...model, ...update } },
+      };
+    });
+  const patchInputs = (update: Partial<DraftInputs>) =>
+    qc.setQueryData<Draft>(key, (current) =>
+      current ? { ...current, ...update } : current,
+    );
+  const models = useVoiceDesignModels(project);
+  const selectedModel = models.isError
+    ? undefined
+    : models.data?.models.find((model) => model.catalog_id === catalogId);
+  useEffect(() => {
+    const first = models.data?.models[0];
+    if (!first) return;
+    qc.setQueryData<Draft>(key, (current) =>
+      current?.selectedCatalogId === null
+        ? { ...current, selectedCatalogId: first.catalog_id }
+        : current,
+    );
+  }, [models.data]);
+  const selectModel = (nextId: string) => {
+    qc.setQueryData<Draft>(key, (current) =>
+      current &&
+      !isLocked(current) &&
+      models.data?.models.some((model) => model.catalog_id === nextId)
+        ? { ...current, selectedCatalogId: nextId }
+        : current,
+    );
+  };
+  const quote = useVoiceDesignQuote(project, surface, selectedModel);
+  const saving = Object.values(session.models).some(
+    (model) => model.save.kind === "pending",
+  );
+  const selectionLocked = isLocked(session);
   const [confirm, setConfirm] = useState(false);
   const [now, setNow] = useState(Date.now);
   const mounted = useRef(true);
@@ -170,55 +232,89 @@ function useVoiceDesignSession({
     refetchInterval: (q) =>
       !q.state.error && q.state.data?.status === "generating" ? 1500 : false,
   });
-  function receive(result: VoiceDesignCandidate) {
-    patch({
-      generation:
-        result.status === "generating"
-          ? { kind: "tracking", id: result.candidate_id }
-          : { kind: "settled", candidate: result },
-      ...(result.status === "ready"
-        ? {
-            ready: result,
-            save: { kind: "idle" },
-            conflict: false,
-            error: "",
-          }
-        : {}),
-      ...(result.status === "failed" || result.status === "unknown"
-        ? { error: result.failure.message }
-        : {}),
-      ...(result.status === "expired" ? { error: "voiceDesign.expired" } : {}),
-    });
+  function receive(
+    result: VoiceDesignCandidate,
+    { id, model }: { id: string; model: VoiceDesignModel },
+  ) {
+    const expected = { id, model };
+    if (
+      result.candidate_id !== expected.id ||
+      !matchesVoiceDesignModel(result.model, expected.model)
+    ) {
+      patch(
+        {
+          generation: { kind: "unresolved", ...expected },
+          error: "voiceDesign.errors.invalidResponse",
+        },
+        expected.id,
+      );
+      return;
+    }
+    patch(
+      {
+        generation:
+          result.status === "generating"
+            ? { kind: "tracking", ...expected }
+            : result.status === "unknown"
+              ? { kind: "unresolved", ...expected }
+              : { kind: "settled" },
+        ...(result.status === "ready"
+          ? {
+              ready: result,
+              save: { kind: "idle" },
+              conflict: false,
+              error: "",
+            }
+          : {}),
+        ...(result.status === "failed" || result.status === "unknown"
+          ? { error: result.failure.message }
+          : {}),
+        ...(result.status === "expired"
+          ? { error: "voiceDesign.expired" }
+          : {}),
+      },
+      expected.id,
+    );
   }
   useEffect(() => {
-    if (candidate.data && candidate.data.candidate_id === activeId)
-      receive(candidate.data);
+    if (
+      candidate.data &&
+      "id" in draft.generation &&
+      candidate.data.candidate_id === activeId
+    )
+      receive(candidate.data, draft.generation);
   }, [candidate.data]);
   useEffect(() => {
-    if (!candidate.error || !activeId) return;
+    if (!candidate.error || !activeId || !("id" in draft.generation)) return;
     if (
       candidate.error instanceof VoiceDesignApiError &&
       ["candidate_expired", "candidate_not_found"].includes(
         candidate.error.code,
       )
     ) {
-      patch({
-        generation: { kind: "idle" },
-        error: knownMessage(candidate.error),
-        ...(draft.ready?.candidate_id === activeId ? { ready: null } : {}),
-      });
+      patch(
+        {
+          generation: { kind: "idle" },
+          error: knownMessage(candidate.error),
+          ...(draft.ready?.candidate_id === activeId ? { ready: null } : {}),
+        },
+        activeId,
+      );
     } else
-      patch({
-        generation: { kind: "unresolved", id: activeId },
-        error: knownMessage(candidate.error),
-      });
+      patch(
+        {
+          generation: { ...draft.generation, kind: "unresolved" },
+          error: knownMessage(candidate.error),
+        },
+        activeId,
+      );
   }, [candidate.error]);
   const generating =
     draft.generation.kind === "submitting" ||
     draft.generation.kind === "tracking";
   const uncertain = draft.generation.kind === "unresolved";
-  const descriptionLength = Array.from(draft.description.trim()).length;
-  const previewLength = Array.from(draft.previewText.trim()).length;
+  const descriptionLength = Array.from(session.description.trim()).length;
+  const previewLength = Array.from(session.previewText.trim()).length;
   const valid =
     descriptionLength > 0 &&
     descriptionLength <= 500 &&
@@ -228,49 +324,59 @@ function useVoiceDesignSession({
   const canSave =
     !!draft.ready &&
     !expired &&
-    !generating &&
-    !uncertain &&
-    !saving &&
+    !selectionLocked &&
     draft.save.kind !== "saved" &&
     !draft.conflict &&
-    (target.kind !== "account" || !!draft.name.trim());
+    (target.kind !== "account" || !!session.name.trim());
   const generate = async () => {
+    const current = qc.getQueryData<Draft>(key);
     if (
       busy.current ||
+      current?.selectedCatalogId !== catalogId ||
       generating ||
       uncertain ||
-      qc.getQueryData<Draft>(key)?.save.kind === "pending" ||
+      (current && isLocked(current)) ||
       !valid ||
+      !selectedModel ||
       !quote.data ||
       quote.isError
     )
       return;
     busy.current = true;
     const requestId = crypto.randomUUID();
-    patch({ generation: { kind: "submitting", id: requestId }, error: "" });
+    const expected = { id: requestId, model: quote.data.model };
+    patch({ generation: { kind: "submitting", ...expected }, error: "" });
     try {
       const result = await createVoiceDesign(project, {
         request_id: requestId,
+        catalog_id: expected.model.catalog_id,
+        config_digest: expected.model.config_digest,
         surface,
-        description: draft.description.trim(),
-        preview_text: draft.previewText.trim(),
+        description: session.description.trim(),
+        preview_text: session.previewText.trim(),
         language: "zh",
       });
       if (result.status === "unknown")
-        patch({
-          generation: { kind: "tracking", id: requestId },
-          error: result.failure.message,
-        });
-      else receive(result);
+        patch(
+          {
+            generation: { kind: "tracking", ...expected },
+            error: result.failure.message,
+          },
+          requestId,
+        );
+      else receive(result, expected);
     } catch (error) {
       const uncertainResult =
         !(error instanceof VoiceDesignApiError) || error.status >= 500;
-      patch({
-        generation: uncertainResult
-          ? { kind: "tracking", id: requestId }
-          : { kind: "idle" },
-        error: knownMessage(error),
-      });
+      patch(
+        {
+          generation: uncertainResult
+            ? { kind: "tracking", ...expected }
+            : { kind: "idle" },
+          error: knownMessage(error),
+        },
+        requestId,
+      );
       if (
         error instanceof VoiceDesignApiError &&
         [401, 403, 402, 429, 503].includes(error.status)
@@ -284,12 +390,22 @@ function useVoiceDesignSession({
     if (!activeId) return;
     patch({ error: "" });
     const result = await candidate.refetch();
-    if (result.data) receive(result.data);
-    else if (result.error) patch({ error: knownMessage(result.error) });
+    if (result.data && "id" in draft.generation)
+      receive(result.data, draft.generation);
+    else if (result.error)
+      patch({ error: knownMessage(result.error) }, activeId);
   };
   const save = async (replace: boolean) => {
-    const current = qc.getQueryData<Draft>(key);
-    if (!canSave || !current?.ready || current.save.kind === "pending") return;
+    const currentSession = qc.getQueryData<Draft>(key);
+    const current = currentSession?.models[catalogId ?? ""];
+    if (
+      !canSave ||
+      !current?.ready ||
+      !currentSession ||
+      currentSession.selectedCatalogId !== catalogId ||
+      isLocked(currentSession)
+    )
+      return;
     setConfirm(false);
     const common = {
       candidate_id: current.ready.candidate_id,
@@ -309,13 +425,16 @@ function useVoiceDesignSession({
             }
           : {
               kind: "account",
-              input: { ...common, name: current.name.trim() },
+              input: { ...common, name: currentSession.name.trim() },
             };
     patch({ save: { kind: "pending", attempt }, error: "" });
-    const finish = (update: Partial<Draft>) => {
+    const finish = (update: Partial<ModelDraft>) => {
       let applied = false;
-      qc.setQueryData<Draft>(key, (latest) => {
+      qc.setQueryData<Draft>(key, (latestSession) => {
+        const latest = latestSession?.models[catalogId ?? ""];
         if (
+          !latestSession ||
+          !catalogId ||
           !latest ||
           latest.save.kind !== "pending" ||
           latest.save.attempt.input.save_request_id !==
@@ -324,9 +443,15 @@ function useVoiceDesignSession({
             attempt.input.candidate_id ||
           latest.ready?.candidate_id !== attempt.input.candidate_id
         )
-          return latest;
+          return latestSession;
         applied = true;
-        return { ...latest, ...update };
+        return {
+          ...latestSession,
+          models: {
+            ...latestSession.models,
+            [catalogId]: { ...latest, ...update },
+          },
+        };
       });
       return applied;
     };
@@ -370,7 +495,13 @@ function useVoiceDesignSession({
   };
   return {
     draft,
+    session,
     patch,
+    patchInputs,
+    models,
+    selectedModel,
+    selectModel,
+    selectionLocked,
     id,
     quote,
     saving,
@@ -395,7 +526,13 @@ function VoiceDesignSession(props: Props) {
   const { target, open, onOpenChange } = props;
   const {
     draft,
+    session,
     patch,
+    patchInputs,
+    models,
+    selectedModel,
+    selectModel,
+    selectionLocked,
     id,
     quote,
     saving,
@@ -429,6 +566,48 @@ function VoiceDesignSession(props: Props) {
         </DialogHeader>
         <div className="min-w-0 space-y-4">
           <div className="space-y-2">
+            <Label htmlFor={`${id}-model`}>{t("voiceDesign.model")}</Label>
+            <select
+              id={`${id}-model`}
+              value={session.selectedCatalogId ?? ""}
+              disabled={selectionLocked || !models.data?.models.length}
+              onChange={(e) => selectModel(e.target.value)}
+              className="w-full rounded-lg border border-input bg-[var(--ui-surface-field)] px-2.5 py-2 text-sm disabled:opacity-50"
+            >
+              {!selectedModel && (
+                <option value={session.selectedCatalogId ?? ""}>
+                  {t(
+                    models.isPending
+                      ? "voiceDesign.modelsLoading"
+                      : session.selectedCatalogId
+                        ? "voiceDesign.modelUnavailable"
+                        : "voiceDesign.modelsEmpty",
+                  )}
+                </option>
+              )}
+              {models.data?.models.map((model) => (
+                <option key={model.catalog_id} value={model.catalog_id}>
+                  {model.label}
+                </option>
+              ))}
+            </select>
+            {models.isError ? (
+              <p role="alert">{feedback(knownMessage(models.error))}</p>
+            ) : !selectedModel ? (
+              <p role="status">
+                {t(
+                  models.isPending
+                    ? "voiceDesign.modelsLoading"
+                    : session.selectedCatalogId
+                      ? "voiceDesign.modelUnavailable"
+                      : "voiceDesign.modelsEmpty",
+                )}
+              </p>
+            ) : (
+              <ModelDetails model={selectedModel} prefix="selected" />
+            )}
+          </div>
+          <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <Label htmlFor={`${id}-description`}>
                 {t("voiceDesign.description")}
@@ -439,8 +618,8 @@ function VoiceDesignSession(props: Props) {
             </div>
             <Textarea
               id={`${id}-description`}
-              value={draft.description}
-              onChange={(e) => patch({ description: e.target.value })}
+              value={session.description}
+              onChange={(e) => patchInputs({ description: e.target.value })}
               aria-describedby={`${id}-description-help`}
               aria-invalid={descriptionLength === 0 || descriptionLength > 500}
             />
@@ -462,8 +641,8 @@ function VoiceDesignSession(props: Props) {
             </div>
             <Textarea
               id={`${id}-preview`}
-              value={draft.previewText}
-              onChange={(e) => patch({ previewText: e.target.value })}
+              value={session.previewText}
+              onChange={(e) => patchInputs({ previewText: e.target.value })}
               aria-describedby={`${id}-preview-help`}
               aria-invalid={previewLength < 15 || previewLength > 60}
             />
@@ -479,11 +658,12 @@ function VoiceDesignSession(props: Props) {
               <Label htmlFor={`${id}-name`}>{t("voiceDesign.name")}</Label>
               <Input
                 id={`${id}-name`}
-                value={draft.name}
+                value={session.name}
                 disabled={saving}
-                onChange={(e) =>
-                  patch({ name: e.target.value, save: { kind: "idle" } })
-                }
+                onChange={(e) => {
+                  patchInputs({ name: e.target.value });
+                  patch({ save: { kind: "idle" } });
+                }}
               />
             </div>
           )}
@@ -491,6 +671,7 @@ function VoiceDesignSession(props: Props) {
           {draft.ready && (
             <div className="min-w-0 space-y-2 rounded-lg border p-3">
               <p className="font-medium">{t("voiceDesign.result")}</p>
+              <ModelDetails model={draft.ready.model} prefix="result" />
               <VoicePreview
                 key={draft.ready.candidate_id}
                 ready={draft.ready}
@@ -553,11 +734,13 @@ function VoiceDesignSession(props: Props) {
             className="break-words text-xs text-muted-foreground"
             role="status"
           >
-            {quote.isError
-              ? feedback(knownMessage(quote.error))
-              : quote.data
-                ? t("voiceDesign.price", { price: quote.data.display })
-                : t("voiceDesign.quoteLoading")}
+            {!selectedModel
+              ? t("voiceDesign.modelUnavailable")
+              : quote.isError
+                ? feedback(knownMessage(quote.error))
+                : quote.data
+                  ? t("voiceDesign.price", { price: quote.data.display })
+                  : t("voiceDesign.quoteLoading")}
           </p>
         </div>
         <DialogFooter className="px-0 pb-0">
@@ -568,11 +751,10 @@ function VoiceDesignSession(props: Props) {
             variant={draft.ready ? "outline" : "default"}
             disabled={
               !valid ||
+              !selectedModel ||
               !quote.data ||
               quote.isError ||
-              generating ||
-              uncertain ||
-              saving
+              selectionLocked
             }
             onClick={() => void generate()}
           >
@@ -612,6 +794,36 @@ function VoiceDesignSession(props: Props) {
         </AlertDialog>
       </DialogContent>
     </Dialog>
+  );
+}
+function ModelDetails({
+  model,
+  prefix,
+}: {
+  model: VoiceDesignModel | null;
+  prefix: "selected" | "result";
+}) {
+  const { t } = useTranslation();
+  if (!model)
+    return (
+      <p className="text-xs text-muted-foreground">
+        {t("voiceDesign.modelUnknown")}
+      </p>
+    );
+  return (
+    <div className="break-words text-xs text-muted-foreground">
+      <p>{t(`voiceDesign.${prefix}Model`, { model: model.model })}</p>
+      {model.target_model && (
+        <p>
+          {t(`voiceDesign.${prefix}Target`, {
+            model: model.target_model.model,
+          })}
+        </p>
+      )}
+      {model.execution_mode === "test_replay" && (
+        <p>{t("voiceDesign.testReplay")}</p>
+      )}
+    </div>
   );
 }
 function VoicePreview({

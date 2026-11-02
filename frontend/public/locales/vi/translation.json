@@ -8931,7 +8931,17 @@
       "invalidResponse": "Phản hồi máy chủ không hợp lệ. Kiểm tra yêu cầu sau.",
       "playback": "Không thể phát bản nghe thử. Hãy thử lại."
     },
-    "saveAccount": "Lưu vào giọng của tôi"
+    "saveAccount": "Lưu vào giọng của tôi",
+    "model": "Mô hình thiết kế",
+    "modelsEmpty": "Không có mô hình thiết kế khả dụng.",
+    "modelsLoading": "Đang tải mô hình thiết kế…",
+    "modelUnavailable": "Mô hình đã chọn không còn khả dụng. Bạn vẫn có thể nghe và lưu bản xem trước hiện có.",
+    "modelUnknown": "Không có bản ghi mô hình.",
+    "selectedModel": "Mô hình yêu cầu đã chọn: {{model}}",
+    "selectedTarget": "Mô hình đích đã chọn: {{model}}",
+    "resultModel": "Mô hình yêu cầu: {{model}}",
+    "resultTarget": "Mô hình đích: {{model}}",
+    "testReplay": "Phát lại thử nghiệm; không gọi mô hình thực"
   },
   "subscriptions": {
     "bill": {

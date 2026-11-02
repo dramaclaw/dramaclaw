@@ -26,6 +26,7 @@ vi.mock("@/lib/api", () => ({
 import { CharacterVoicePanel } from "@/components/assets/character-voice-panel";
 import type { Character } from "@/types/character";
 
+import { designModels } from "@/__tests__/voice-design-fixtures";
 const i18n = i18next.createInstance();
 
 beforeAll(async () => {
@@ -83,7 +84,7 @@ beforeAll(async () => {
 beforeEach(() =>
   server.use(
     http.get(
-      "http://localhost:3000/api/v1/projects/demo/voice-design/quote",
+      "http://localhost:3000/api/v1/projects/demo/voice-design/models",
       () =>
         HttpResponse.json(
           {
@@ -283,10 +284,11 @@ it("saves a primary-age entry to actionSlot default, preserving upload actions",
   let saved: unknown;
   let uploads = 0;
   server.use(
+    http.get(`${base}/voice-design/models`, () => HttpResponse.json({ ok: true, data: { models: designModels } })),
     http.get(`${base}/voice-design/quote`, () =>
       HttpResponse.json({
         ok: true,
-        data: { cost: 2, display: "2", unit: "call", quantity: 1 },
+        data: { cost: 2, display: "2", unit: "call", quantity: 1, model: designModels[0] },
       }),
     ),
     http.get(`${base}/characters/%E7%A7%A6/voice-samples`, () =>
@@ -302,7 +304,7 @@ it("saves a primary-age entry to actionSlot default, preserving upload actions",
         ok: true,
         data: {
           candidate_id: data.request_id,
-          status: "ready",
+          status: "ready", model: designModels[0],
           description: "温柔",
           preview_text: "今天的天气很好，我们沿着河边慢慢走回家。",
           language: "zh",

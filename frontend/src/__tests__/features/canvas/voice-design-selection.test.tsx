@@ -58,6 +58,7 @@ vi.mock('@/lib/url-params', async (original) => ({
   readUrl: () => ({ project: 'demo', canvas: 'default' }),
 }));
 
+import { designModels } from '@/__tests__/voice-design-fixtures';
 const base = 'http://localhost:3000/api/v1/projects/demo';
 const oldRef = {
   scope: 'user_custom',
@@ -117,10 +118,11 @@ beforeEach(() => {
     http.get(`${base}/freezone/audio/references`, () =>
       HttpResponse.json({ ok: true, data: { available } }),
     ),
+    http.get(`${base}/voice-design/models`, () => HttpResponse.json({ ok: true, data: { models: designModels } })),
     http.get(`${base}/voice-design/quote`, () =>
       HttpResponse.json({
         ok: true,
-        data: { cost: 7, display: '7', unit: 'call', quantity: 1 },
+        data: { cost: 7, display: '7', unit: 'call', quantity: 1, model: designModels[0] },
       }),
     ),
     http.post(`${base}/voice-design/candidates`, async ({ request }) => {
@@ -143,7 +145,7 @@ beforeEach(() => {
       return HttpResponse.json(
         {
           ok: true,
-          data: { candidate_id: body.request_id, status: 'generating' },
+          data: { candidate_id: body.request_id, status: 'generating', model: designModels[0] },
         },
         { status: 202 },
       );
@@ -153,7 +155,7 @@ beforeEach(() => {
         ok: true,
         data: {
           candidate_id: params.id,
-          status: 'ready',
+          status: 'ready', model: designModels[0],
           description: '温柔',
           preview_text: text,
           language: 'zh',

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 export const queryKeys = {
-  voiceDesignQuote: (project: string, surface: string) => ["projects", project, "voice-design", "quote", surface] as const,
+  voiceDesignModels: (project: string) => ["projects", project, "voice-design", "models"] as const,
+  voiceDesignQuote: (project: string, surface: string, catalogId: string, digest: string) => ["projects", project, "voice-design", "quote", surface, catalogId, digest] as const,
   voiceDesignDraft: (project: string, surface: string, target: string) => ["projects", project, "voice-design", "draft", surface, target] as const,
   voiceDesignCandidate: (project: string, id: string) => ["projects", project, "voice-design", "candidate", id] as const,
   currentUser: () => ["auth", "me"] as const,

@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import i18next from "i18next";
 import { delay, http, HttpResponse } from "msw";
@@ -19,6 +25,8 @@ import {
 } from "@/components/assets/voice-design-dialog";
 import { VoiceDesignApiError } from "@/lib/queries/voice-design";
 import zh from "../../../../public/locales/zh/translation.json";
+import { queryKeys } from "@/lib/query-keys";
+import { designModels } from "@/__tests__/voice-design-fixtures";
 const i18n = i18next.createInstance();
 const base = "http://localhost:3000/api/v1/projects/demo/voice-design";
 const text = "今天的天气很好，我们沿着河边慢慢走回家。";
@@ -39,6 +47,7 @@ function ready(
   expiry = new Date(Date.now() + 3600000).toISOString(),
 ) {
   return {
+    model: designModels[0],
     candidate_id: id,
     status: "ready",
     description: "温柔",
@@ -63,10 +72,19 @@ beforeEach(() => {
   creations = 0;
   save.mockClear();
   server.use(
+    http.get(`${base}/models`, () =>
+      HttpResponse.json({ ok: true, data: { models: designModels } }),
+    ),
     http.get(`${base}/quote`, () =>
       HttpResponse.json({
         ok: true,
-        data: { cost: 7, display: "7", unit: "call", quantity: 1 },
+        data: {
+          cost: 7,
+          display: "7",
+          unit: "call",
+          quantity: 1,
+          model: designModels[0],
+        },
       }),
     ),
     http.post(`${base}/candidates`, async ({ request }) => {
@@ -74,7 +92,14 @@ beforeEach(() => {
       const body = (await request.json()) as { request_id: string };
       candidateId = body.request_id;
       return HttpResponse.json(
-        { ok: true, data: { candidate_id: candidateId, status: "generating" } },
+        {
+          ok: true,
+          data: {
+            candidate_id: candidateId,
+            status: "generating",
+            model: designModels[0],
+          },
+        },
         { status: 202 },
       );
     }),
@@ -232,7 +257,10 @@ it("cancels a pending preview on close and reloads it on reopen", async () => {
     expect(URL.createObjectURL).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "打开" }));
     await waitFor(() =>
-      expect(screen.getByLabelText("生成的试听音频")).toHaveAttribute("src", "blob:test"),
+      expect(screen.getByLabelText("生成的试听音频")).toHaveAttribute(
+        "src",
+        "blob:test",
+      ),
     );
     release();
     await delay(0);
@@ -331,6 +359,7 @@ it("queries original request after uncertain creation and never auto creates aga
         data: {
           candidate_id: queried,
           status: "unknown",
+          model: designModels[0],
           failure: {
             code: "generation_unknown",
             message: "结果未知，请确认后重新生成",
@@ -346,6 +375,7 @@ it("queries original request after uncertain creation and never auto creates aga
   await screen.findByText("结果未知，请确认后重新生成");
   expect(queried).toBe(candidateId);
   expect(creations).toBe(1);
+  expect(screen.getByRole("combobox", { name: "生成模型" })).toBeDisabled();
   expect(screen.getByLabelText("试听文本")).toHaveValue(text);
 });
 it("failed regeneration retains the previous successful candidate", async () => {
@@ -487,7 +517,11 @@ it("blocks duplicate clicks while generating and saves nothing until ready", asy
     http.get(`${base}/candidates/:id`, ({ params }) =>
       HttpResponse.json({
         ok: true,
-        data: { candidate_id: String(params.id), status: "generating" },
+        data: {
+          candidate_id: String(params.id),
+          status: "generating",
+          model: designModels[0],
+        },
       }),
     ),
   );
@@ -496,6 +530,7 @@ it("blocks duplicate clicks while generating and saves nothing until ready", asy
   fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
   const again = await screen.findByRole("button", { name: "重新生成" });
   expect(again).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "生成模型" })).toBeDisabled();
   fireEvent.click(again);
   expect(screen.getByRole("button", { name: "保存到默认" })).toBeDisabled();
   await waitFor(() => expect(creations).toBe(1));
@@ -530,6 +565,7 @@ it.each([403, 422, 502, 504, "timeout"])(
           data: {
             candidate_id: queried,
             status: "failed",
+            model: designModels[0],
             failure: {
               code: "provider_unavailable",
               message: "生成暂不可用",
@@ -628,6 +664,10 @@ it.each(["success", "failure"])(
     view.rerender(<Root selected={original} />);
     expect(screen.getByRole("button", { name: "正在保存…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "重新生成" })).toBeDisabled();
+    const selector = screen.getByRole("combobox", { name: "生成模型" });
+    expect(selector).toBeDisabled();
+    fireEvent.change(selector, { target: { value: "seed" } });
+    expect(selector).toHaveValue("qwen");
     expect(pendingSave).toHaveBeenCalledOnce();
     expect(creations).toBe(1);
     release();
@@ -700,3 +740,270 @@ it.each(["success", "failure"])(
     ).not.toBeInTheDocument();
   },
 );
+
+it("selects all catalog models with matching quotes and restores each candidate and shared inputs", async () => {
+  const requests: Array<{ catalog_id: string; config_digest: string }> = [];
+  server.use(
+    http.get(`${base}/quote`, ({ request }) => {
+      const model = designModels.find(
+        (m) =>
+          m.catalog_id === new URL(request.url).searchParams.get("catalog_id"),
+      );
+      return HttpResponse.json({
+        ok: true,
+        data: { cost: 7, display: "7", unit: "call", quantity: 1, model },
+      });
+    }),
+    http.post(`${base}/candidates`, async ({ request }) => {
+      const body = (await request.json()) as {
+        request_id: string;
+        catalog_id: string;
+        config_digest: string;
+      };
+      requests.push(body);
+      return HttpResponse.json({
+        ok: true,
+        data: {
+          ...ready(body.request_id),
+          model: designModels.find((m) => m.catalog_id === body.catalog_id),
+        },
+      });
+    }),
+  );
+  mount({
+    kind: "account",
+    key: "my-voices",
+    label: "我的音色",
+    saveLabel: "保存",
+    onSave: save,
+  });
+  await fill();
+  fireEvent.change(screen.getByLabelText("音色名称"), {
+    target: { value: "海风" },
+  });
+  const selector = await screen.findByRole("combobox", { name: "生成模型" });
+  expect(selector).toHaveValue("qwen");
+  for (const model of designModels) {
+    fireEvent.change(selector, { target: { value: model.catalog_id } });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "生成试听" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+    await screen.findByText(`请求模型：${model.model}`);
+    expect(screen.getByLabelText("音色名称")).toHaveValue("海风");
+    expect(screen.getByLabelText("试听文本")).toHaveValue(text);
+    if (model.target_model)
+      expect(
+        screen.getByText(`目标模型：${model.target_model.model}`),
+      ).toBeInTheDocument();
+  }
+  expect(
+    screen.getAllByText("测试回放，未调用真实模型").length,
+  ).toBeGreaterThan(0);
+  fireEvent.change(selector, { target: { value: "qwen" } });
+  expect(
+    await screen.findByText("请求模型：qwen-voice-design"),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText("请求模型：seed-audio-1.0"),
+  ).not.toBeInTheDocument();
+  expect(
+    requests.map(({ catalog_id, config_digest }) => ({
+      catalog_id,
+      config_digest,
+    })),
+  ).toEqual(
+    designModels.map(({ catalog_id, config_digest }) => ({
+      catalog_id,
+      config_digest,
+    })),
+  );
+});
+
+it("keeps a late quote for another catalog out of the selected price and request", async () => {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requested = false;
+  let created: unknown;
+  server.use(
+    http.get(`${base}/quote`, async ({ request }) => {
+      const model = designModels.find(
+        (m) =>
+          m.catalog_id === new URL(request.url).searchParams.get("catalog_id"),
+      );
+      if (model?.catalog_id === "qwen") {
+        requested = true;
+        await gate;
+      }
+      return HttpResponse.json({
+        ok: true,
+        data: {
+          cost: 11,
+          display: model?.catalog_id === "qwen" ? "99" : "11",
+          unit: "call",
+          quantity: 1,
+          model,
+        },
+      });
+    }),
+    http.post(`${base}/candidates`, async ({ request }) => {
+      const body = (await request.json()) as { request_id: string };
+      created = body;
+      return HttpResponse.json({
+        ok: true,
+        data: { ...ready(body.request_id), model: designModels[1] },
+      });
+    }),
+  );
+  try {
+    mount();
+    await waitFor(() => expect(requested).toBe(true));
+    fireEvent.change(screen.getByLabelText("音色描述"), {
+      target: { value: "温柔" },
+    });
+    fireEvent.change(screen.getByLabelText("试听文本"), {
+      target: { value: text },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "生成模型" }), {
+      target: { value: "cosy" },
+    });
+    await screen.findByText("本次生成：11 积分 / 次");
+    release();
+    await delay(0);
+    expect(
+      screen.queryByText("本次生成：99 积分 / 次"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+    await screen.findByText("请求模型：voice-enrollment");
+    expect(created).toMatchObject({
+      catalog_id: "cosy",
+      config_digest: "b".repeat(64),
+    });
+  } finally {
+    release();
+  }
+});
+it("keeps an unavailable catalog's existing candidate playable and savable without selecting a fallback", async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <I18nextProvider i18n={i18n}>
+        <Harness />
+      </I18nextProvider>
+    </QueryClientProvider>,
+  );
+  await generate();
+  server.use(
+    http.get(`${base}/models`, () =>
+      HttpResponse.json({ ok: true, data: { models: [designModels[1]] } }),
+    ),
+  );
+  await qc.invalidateQueries({ queryKey: queryKeys.voiceDesignModels("demo") });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "重新生成" })).toBeDisabled(),
+  );
+  expect(screen.getByRole("combobox", { name: "生成模型" })).toHaveValue(
+    "qwen",
+  );
+  expect(
+    screen.getAllByText("所选模型已不可用，仍可试听和保存已有候选。").length,
+  ).toBeGreaterThan(0);
+  expect(screen.getByText("请求模型：qwen-voice-design")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "保存到默认" })).toBeEnabled();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "播放试听" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "播放试听" }));
+  await waitFor(() =>
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledOnce(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  fireEvent.click(screen.getByRole("button", { name: "替换" }));
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
+});
+it("explains an empty model catalog and never requests a fallback quote or generation", async () => {
+  let quotes = 0;
+  server.use(
+    http.get(`${base}/models`, () =>
+      HttpResponse.json({ ok: true, data: { models: [] } }),
+    ),
+    http.get(`${base}/quote`, () => {
+      quotes++;
+      return HttpResponse.error();
+    }),
+  );
+  mount();
+  await waitFor(() =>
+    expect(screen.getAllByText("暂无可用的生成模型。").length).toBeGreaterThan(
+      0,
+    ),
+  );
+  expect(screen.getByRole("combobox", { name: "生成模型" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "生成试听" })).toBeDisabled();
+  expect(quotes).toBe(0);
+  expect(creations).toBe(0);
+});
+it("displays a historical candidate with no model record without inventing a model", async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const candidate = { ...ready(crypto.randomUUID()), model: null };
+  qc.setQueryData(
+    queryKeys.voiceDesignDraft("demo", "supertale", `character:${target.key}`),
+    {
+      description: "温柔",
+      previewText: text,
+      name: "",
+      selectedCatalogId: "qwen",
+      models: {
+        qwen: {
+          generation: { kind: "settled" },
+          ready: candidate,
+          error: "",
+          save: { kind: "idle" },
+          conflict: false,
+        },
+      },
+    },
+  );
+  render(
+    <QueryClientProvider client={qc}>
+      <I18nextProvider i18n={i18n}>
+        <Harness />
+      </I18nextProvider>
+    </QueryClientProvider>,
+  );
+  await screen.findByText("模型记录不可用。");
+  expect(
+    screen.queryByText("请求模型：qwen-voice-design"),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "保存到默认" })).toBeEnabled();
+});
+
+it("isolates a mismatched candidate snapshot and only unlocks after checking the original request", async () => {
+  let correct = false;
+  server.use(
+    http.get(`${base}/candidates/:id`, ({ params }) =>
+      HttpResponse.json({
+        ok: true,
+        data: {
+          ...ready(String(params.id)),
+          model: correct ? designModels[0] : designModels[2],
+        },
+      }),
+    ),
+  );
+  mount();
+  await fill();
+  fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+  await screen.findByText("服务器响应无效，请稍后查询原任务。");
+  expect(screen.getByRole("combobox", { name: "生成模型" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "重新生成" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "保存到默认" })).toBeDisabled();
+  expect(screen.queryByText("8.4 秒")).not.toBeInTheDocument();
+  correct = true;
+  fireEvent.click(screen.getByRole("button", { name: "查询原任务" }));
+  await screen.findByText("请求模型：qwen-voice-design");
+  expect(screen.getByRole("combobox", { name: "生成模型" })).toBeEnabled();
+  expect(creations).toBe(1);
+});
