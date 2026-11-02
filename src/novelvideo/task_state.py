@@ -1129,15 +1129,40 @@ class TaskStateManager:
         scope: str | None = None,
     ) -> bool:
         """Persist metadata for the same task without changing its lifecycle or result."""
-        state = self.get_task_for_project(ctx, task_type, episode, beat_num, scope)
-        if state is None or state.task_id != expected_task_id:
-            return False
-        state.metadata = self._merge_task_metadata(state.metadata, metadata)
-        state.result = self._merge_metadata_into_result(state.result, state.metadata)
-        state.updated_at = utc_now_iso()
-        ttl = self.COMPLETED_TTL if state.status in TERMINAL_TASK_STATUSES else None
-        self._save_for_context(ctx, state, ttl=ttl)
-        return True
+        task_key = self._project_key(task_type, ctx.project_id, episode, beat_num, scope)
+        with self._connect_context(ctx) as conn:
+            # Lock before reading: another worker may complete or replace this
+            # task while a billing confirmation is being persisted.
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT task_id, result_json, expires_at FROM task_states "
+                "WHERE task_key = ? AND project_id = ?",
+                (task_key, ctx.project_id),
+            ).fetchone()
+            if (
+                row is None
+                or row["task_id"] != expected_task_id
+                or self._is_expired(row["expires_at"])
+            ):
+                return False
+            result = json.loads(row["result_json"]) if row["result_json"] else None
+            existing = result.get("task_metadata") if isinstance(result, dict) else None
+            merged = self._merge_metadata_into_result(
+                result, self._merge_task_metadata(existing, metadata)
+            )
+            # Preserve lifecycle, delivery results, logs and the original TTL.
+            cursor = conn.execute(
+                "UPDATE task_states SET result_json = ?, updated_at = ? "
+                "WHERE task_key = ? AND project_id = ? AND task_id = ?",
+                (
+                    json.dumps(merged, ensure_ascii=False) if merged is not None else None,
+                    utc_now_iso(),
+                    task_key,
+                    ctx.project_id,
+                    expected_task_id,
+                ),
+            )
+            return cursor.rowcount == 1
 
     def complete_task_for_project(
         self,

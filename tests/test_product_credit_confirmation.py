@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
+import threading
+from contextlib import contextmanager
 
 import pytest
 
@@ -242,3 +246,140 @@ def test_confirmation_metadata_rejects_stale_task_id(product_task):
         ctx, task.task_type, 0, scope=task.scope
     )
     assert "feature_credit_confirmed_reservation_id" not in saved.metadata
+
+
+@pytest.mark.parametrize("concurrent_change", ["completed", "replaced"])
+def test_confirmation_does_not_overwrite_concurrent_task_change(
+    product_task, monkeypatch, concurrent_change
+):
+    ctx, manager, task, _operation = product_task
+    other = TaskStateManager()
+    # Finish the one-time stale-task sweep before testing write contention.
+    other.get_task_for_project(ctx, task.task_type, 0, scope=task.scope)
+    first_attempt = threading.Event()
+    confirmation_finished = threading.Event()
+    errors = []
+    threads = []
+    connect = manager._connect_context
+
+    def concurrent_write():
+        try:
+            with other._connect_context(ctx) as conn:
+                conn.execute("PRAGMA busy_timeout = 0")
+                if concurrent_change == "completed":
+                    sql = (
+                        "UPDATE task_states SET status = 'completed', progress = 1, "
+                        "completed_at = 'finished', expires_at = '2999-01-01T00:00:00Z' "
+                        "WHERE task_id = ?"
+                    )
+                    params = (task.task_id,)
+                else:
+                    sql = (
+                        "UPDATE task_states SET task_id = 'replacement', "
+                        "result_json = ? WHERE task_id = ?"
+                    )
+                    params = (json.dumps({"asset": "replacement"}), task.task_id)
+                try:
+                    conn.execute(sql, params)
+                    conn.commit()
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc):
+                        raise
+                    # A transactional confirmation holds the write lock. Retry
+                    # after it commits; the old implementation allows this
+                    # write to finish before saving its stale snapshot.
+                    first_attempt.set()
+                    assert confirmation_finished.wait(10)
+                    conn.execute(sql, params)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            first_attempt.set()
+
+    class Cursor:
+        def __init__(self, cursor):
+            self.cursor = cursor
+
+        def fetchone(self):
+            row = self.cursor.fetchone()
+            thread = threading.Thread(target=concurrent_write)
+            threads.append(thread)
+            thread.start()
+            assert first_attempt.wait(10)
+            return row
+
+    class Connection:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def execute(self, sql, params=()):
+            cursor = self.conn.execute(sql, params)
+            if sql.startswith("SELECT ") and "WHERE task_key = ? AND project_id = ?" in sql:
+                return Cursor(cursor)
+            return cursor
+
+    @contextmanager
+    def interleaved_connection(*args, **kwargs):
+        with connect(*args, **kwargs) as conn:
+            yield Connection(conn)
+
+    monkeypatch.setattr(manager, "_connect_context", interleaved_connection)
+    try:
+        assert manager.update_task_metadata_for_project(
+            ctx,
+            task.task_type,
+            0,
+            scope=task.scope,
+            expected_task_id=task.task_id,
+            metadata={"feature_credit_confirmed_reservation_id": "reservation"},
+        )
+    finally:
+        confirmation_finished.set()
+        for thread in threads:
+            thread.join(10)
+            assert not thread.is_alive()
+    assert not errors
+    saved = other.get_task_for_project(ctx, task.task_type, 0, scope=task.scope)
+    if concurrent_change == "completed":
+        assert saved.status == "completed"
+        assert saved.progress == 1
+        assert saved.completed_at == "finished"
+        assert saved.expires_at == "2999-01-01T00:00:00Z"
+    else:
+        assert saved.task_id == "replacement"
+        assert saved.result == {"asset": "replacement"}
+
+
+def test_confirmation_preserves_latest_completed_result_and_expiry(product_task):
+    ctx, manager, task, _operation = product_task
+    other = TaskStateManager()
+    other.complete_task_for_project(
+        ctx,
+        task.task_type,
+        0,
+        scope=task.scope,
+        expected_task_id=task.task_id,
+        result={"asset": "saved"},
+        metadata={"latest_metadata": True},
+        logs=["finished"],
+    )
+    before = other.get_task_for_project(ctx, task.task_type, 0, scope=task.scope)
+    assert manager.update_task_metadata_for_project(
+        ctx,
+        task.task_type,
+        0,
+        scope=task.scope,
+        expected_task_id=task.task_id,
+        metadata={"feature_credit_confirmed_reservation_id": "reservation"},
+    )
+    saved = other.get_task_for_project(ctx, task.task_type, 0, scope=task.scope)
+    assert saved.status == before.status == "completed"
+    assert saved.progress == before.progress
+    assert saved.completed_at == before.completed_at
+    assert saved.expires_at == before.expires_at
+    assert saved.logs == before.logs
+    assert saved.result["asset"] == "saved"
+    assert saved.metadata == {
+        **before.metadata,
+        "feature_credit_confirmed_reservation_id": "reservation",
+    }
