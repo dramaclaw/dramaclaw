@@ -17219,10 +17219,16 @@ async def _maintain_canvas_workflow_runs(
                 operation_id=operation_id,
             )
             if operation is None or operation.get("status") in {
-                "delivered",
                 "failed",
                 "cancelled",
             }:
+                continue
+            if operation.get("status") == "delivered":
+                # Delivery is durable before settlement starts. Retry from that
+                # receipt when an earlier read/complete was rejected by the pool,
+                # including after a process restart. Confirmation is idempotent.
+                with workflow_read_stage("settlement"):
+                    await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
                 continue
             evidence = operation.get("model_evidence") or {}
             operation_metadata = operation.get("metadata") or {}
