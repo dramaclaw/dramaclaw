@@ -3611,10 +3611,12 @@ def test_direct_voice_recipe_result_is_delivered_from_completed_audio_task(
 @pytest.mark.parametrize(
     "overload_stage", [None, "settlement_task_read", "settlement_task_complete"]
 )
+@pytest.mark.parametrize("post_settlement_failure", [None, "unavailable", "exception"])
 def test_cancelled_workflow_reconciles_late_recipe_media_result(
     workflow_run_client: TestClient,
     monkeypatch,
     overload_stage: str | None,
+    post_settlement_failure: str | None,
 ) -> None:
     from novelvideo.api.routes import freezone
     from novelvideo.api.workflow_reads import WorkflowReadBusy
@@ -3701,6 +3703,11 @@ def test_cancelled_workflow_reconciles_late_recipe_media_result(
     class Meter:
         async def settle_feature_credit_reservation(self, reservation_id, *, action, metadata):
             settlements.append((reservation_id, action))
+            if product_task.status == "completed":
+                if post_settlement_failure == "unavailable":
+                    return {"status": "unavailable"}
+                if post_settlement_failure == "exception":
+                    raise RuntimeError("billing service unavailable")
             return {"status": "completed", "action": action}
 
     def complete_task(*_args, **kwargs):
@@ -3727,7 +3734,9 @@ def test_cancelled_workflow_reconciles_late_recipe_media_result(
         lambda: SimpleNamespace(
             list_tasks_for_project=lambda _ctx: [media_task],
             get_tasks_for_project=lambda ctx, keys, **_kwargs: _task_batch(ctx, keys, [media_task]),
-            get_task_for_project=lambda *_args, **_kwargs: product_task,
+            # Return fresh snapshots, as a persistent task store would. The
+            # next poll must use saved metadata rather than an in-memory flag.
+            get_task_for_project=lambda *_args, **_kwargs: deepcopy(product_task),
             complete_task_for_project=complete_task,
         ),
     )
@@ -3758,7 +3767,9 @@ def test_cancelled_workflow_reconciles_late_recipe_media_result(
     assert product_task.status == "completed"
     assert product_task.metadata["settlement_status"] == "reconciled"
     assert len(completions) == 1
-    assert set(settlements) == {("original-reservation", "confirm")}
+    assert settlements == [("original-reservation", "confirm")] * (
+        3 if overload_stage == "settlement_task_complete" else 1
+    )
     assert listed.json()["data"]["runs"][0]["status"] == "cancelled"
 
 

@@ -16303,6 +16303,10 @@ async def _settle_delivered_agent_product_task(
     if task is None or task.task_id != expected_task_id:
         return
     metadata = task.metadata if isinstance(task.metadata, dict) else {}
+    if task.status == "completed" and metadata.get("settlement_status") == "reconciled":
+        # The task store durably records successful reconciliation. Replaying
+        # its receipt must not contact billing again, even after a restart.
+        return
     reservation_id = str(
         metadata.get("feature_credit_reservation_id")
         or metadata.get("feature_credit_charge_id")
