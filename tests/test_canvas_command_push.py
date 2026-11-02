@@ -181,23 +181,54 @@ async def test_hub_recovers_commit_without_notification(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_hub_deadline_redelivery_and_expiry(tmp_path, monkeypatch):
-    from novelvideo.freezone.canvas_command_watch import BridgeWatchHub
+    from types import SimpleNamespace
 
-    monkeypatch.setattr(bridge, "BRIDGE_DELIVERY_LEASE_SECONDS", 0.15)
-    monkeypatch.setitem(bridge.BRIDGE_PENDING_TTL_SECONDS, "canvas_command", 0.7)
+    from novelvideo.freezone import canvas_command_watch as watch
+
+    # Advance business time explicitly: a busy CI worker can overshoot a short
+    # sleep or consume the entire TTL while establishing the initial snapshot.
+    # Keep the event loop and eventually() on the real monotonic clock.
+    now = time.time()
+    created_at = now
+    clock = SimpleNamespace(time=lambda: now, monotonic=time.monotonic, time_ns=time.time_ns)
+    monkeypatch.setattr(bridge, "time", clock)
+    monkeypatch.setattr(watch, "time", clock)
     publish(tmp_path)
-    hub = BridgeWatchHub()
+    hub = watch.BridgeWatchHub()
     async with hub.subscribe([tmp_path]):
         await eventually(lambda: hub.pending(tmp_path, "project", "canvas"))
         assert bridge.mark_bridge_message_delivered(
             "command", consumer_id="one", bridge_dir=tmp_path
         )
-        await asyncio.sleep(0.2)
+        # Reconcile the claim independently of native file event timing, then
+        # wake the scheduler when advancing its wall-clock deadline.
+        hub._dirty([tmp_path], scan_legacy=False)
+        await eventually(
+            lambda: hub.directories[tmp_path].deadline == now + bridge.BRIDGE_DELIVERY_LEASE_SECONDS
+        )
+        assert not hub.pending(tmp_path, "project", "canvas")
+        assert not bridge.mark_bridge_message_delivered(
+            "command", consumer_id="two", bridge_dir=tmp_path
+        )
+
+        now += bridge.BRIDGE_DELIVERY_LEASE_SECONDS + 1
+        hub.scheduled.set()
+        expires_at = created_at + bridge.BRIDGE_PENDING_TTL_SECONDS["canvas_command"]
+        await eventually(lambda: hub.directories[tmp_path].deadline == expires_at)
         assert hub.pending(tmp_path, "project", "canvas")
         assert bridge.mark_bridge_message_delivered(
             "command", consumer_id="two", bridge_dir=tmp_path
         )
+        hub._dirty([tmp_path], scan_legacy=False)
+        await eventually(
+            lambda: hub.directories[tmp_path].deadline == now + bridge.BRIDGE_DELIVERY_LEASE_SECONDS
+        )
+
+        now = expires_at + 1
+        hub.scheduled.set()
         await eventually(lambda: bridge._read_durable_bridge_result("command", bridge_dir=tmp_path))
+        result = bridge._read_durable_bridge_result("command", bridge_dir=tmp_path)
+        assert result["canvas_apply_status"] == "timeout"
         assert not hub.pending(tmp_path, "project", "canvas")
 
 
