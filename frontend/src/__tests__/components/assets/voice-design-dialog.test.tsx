@@ -173,9 +173,7 @@ async function fill() {
 async function selectModel(label: string) {
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "生成模型" }));
-  await user.click(
-    await screen.findByRole("option", { name: label }),
-  );
+  await user.click(await screen.findByRole("option", { name: label }));
 }
 async function generate() {
   await fill();
@@ -1032,6 +1030,14 @@ it("opens a themed model listbox and supports keyboard selection and Escape", as
   );
   expect(screen.getByRole("dialog")).toBeVisible();
   expect(trigger).toHaveFocus();
-  await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Qwen" })).toHaveFocus(),
+  );
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "CosyVoice" })).toHaveFocus(),
+  );
+  await user.keyboard("{Enter}");
   await waitFor(() => expect(trigger).toHaveTextContent("CosyVoice"));
 });
