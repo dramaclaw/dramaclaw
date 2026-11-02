@@ -1446,7 +1446,7 @@ async def test_preview_duration_uses_decoded_samples_at_boundary(
         assert not destination.exists()
 
 
-@pytest.mark.parametrize("mode", ["binary", "json"])
+@pytest.mark.parametrize("mode", ["binary", "json", "archive"])
 async def test_seed_speech_contract_and_real_media_validation(
     enabled, gateway, context, tmp_path, audio_bytes, monkeypatch, mode
 ):
@@ -1471,6 +1471,11 @@ async def test_seed_speech_contract_and_real_media_validation(
             }
         }
     )
+    if mode == "archive":
+        response.payload = {
+            "audio": {"url": "https://media.example/result.mp3"},
+            "archive": {"status": "success", "content_type": "audio/mpeg"},
+        }
     download = AsyncMock(return_value=audio_bytes)
     monkeypatch.setattr(service, "_download_preview", download)
     result = await service.generate_voice_design(
@@ -1496,7 +1501,7 @@ async def test_seed_speech_contract_and_real_media_validation(
     }
     response.meter.reserve_current_model_call_credit.assert_awaited_once()
     response.meter.bump_model_call.assert_awaited_once()
-    if mode == "json":
+    if mode != "binary":
         download.assert_awaited_once_with("https://media.example/result.mp3")
     else:
         download.assert_not_awaited()
@@ -1504,7 +1509,11 @@ async def test_seed_speech_contract_and_real_media_validation(
 
 @pytest.mark.parametrize(
     "body",
-    [b"not audio", b"", b'{"audio":{"url":"http://127.0.0.1/private","format":"mp3"}}'],
+    [
+        b"not audio", b"",
+        b'{"audio":{"url":"http://127.0.0.1/private","format":"mp3"}}',
+        b'{"audio":{"url":"http://127.0.0.1/private"},"archive":{"content_type":"audio/mpeg"}}',
+    ],
 )
 async def test_seed_rejects_bad_audio_and_private_json_url(
     enabled, gateway, context, tmp_path, body
@@ -1531,6 +1540,48 @@ async def test_seed_rejects_bad_audio_and_private_json_url(
     assert len(calls) == 1
     assert not destination.exists()
     response.meter.bump_model_call.assert_not_awaited()
+
+
+@pytest.mark.parametrize("audio_format", [None, "wav", "opus", "", 1, [], {}])
+async def test_seed_json_rejects_explicit_non_mp3_format(
+    tmp_path, monkeypatch, audio_format
+):
+    import json
+    from unittest.mock import AsyncMock
+    from novelvideo.audio import voice_design_service as service
+
+    download = AsyncMock()
+    monkeypatch.setattr(service, "_download_preview", download)
+    output = tmp_path / "candidate.mp3"
+    with pytest.raises(VoiceDesignError, match="provider_bad_audio"):
+        await service._persist_speech_preview(
+            json.dumps({"audio": {"url": "https://media.example/a.mp3", "format": audio_format}}).encode(),
+            is_json=True,
+            output_path=output,
+        )
+    download.assert_not_awaited()
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("bad_audio", [b"", b"not an mp3"])
+async def test_seed_archive_without_format_still_decodes_downloaded_audio(
+    tmp_path, monkeypatch, bad_audio
+):
+    import json
+    from unittest.mock import AsyncMock
+    from novelvideo.audio import voice_design_service as service
+
+    download = AsyncMock(return_value=bad_audio)
+    monkeypatch.setattr(service, "_download_preview", download)
+    output = tmp_path / "candidate.mp3"
+    with pytest.raises(VoiceDesignError, match="provider_bad_audio"):
+        await service._persist_speech_preview(
+            json.dumps({"audio": {"url": "https://media.example/a.mp3"}, "archive": {"content_type": "audio/mpeg"}}).encode(),
+            is_json=True,
+            output_path=output,
+        )
+    download.assert_awaited_once()
+    assert not output.exists()
 
 
 async def test_replay_mode_cannot_egress_to_a_remote_gateway(

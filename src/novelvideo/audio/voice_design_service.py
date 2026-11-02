@@ -557,7 +557,8 @@ async def _persist_speech_preview(
     except (ValueError, UnicodeError):
         raise VoiceDesignError("provider_bad_audio") from None
     audio = payload.get("audio") if isinstance(payload, dict) else None
-    if not isinstance(audio, dict) or audio.get("format") != "mp3":
+    # Archived responses may omit format; the request and byte validation use MP3.
+    if not isinstance(audio, dict) or audio.get("format", "mp3") != "mp3":
         raise VoiceDesignError("provider_bad_audio")
     url = audio.get("url") or audio.get("preview_url")
     if not isinstance(url, str):
