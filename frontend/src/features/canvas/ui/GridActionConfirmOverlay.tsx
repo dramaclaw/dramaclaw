@@ -14,6 +14,7 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveFixedFeatureModelRequest } from '@/features/canvas/domain/fixedFeatureModelRequest';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 import {
   fetchFreezoneJobResult,
   submitFreezoneTemplateEdit,
@@ -89,7 +90,6 @@ export const GridActionConfirmOverlay = memo(
     const { t } = useTranslation();
     const addNode = useCanvasStore((state) => state.addNode);
     const addEdge = useCanvasStore((state) => state.addEdge);
-    const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const findNodePosition = useCanvasStore((state) => state.findNodePosition);
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const imageCatalog = useFreezoneImageModels();
@@ -153,7 +153,7 @@ export const GridActionConfirmOverlay = memo(
         }
       );
       addEdge(node.id, nextNodeId);
-      setSelectedNode(nextNodeId);
+      selectNodeExclusively(nextNodeId);
       onClose();
 
       try {
@@ -204,7 +204,6 @@ export const GridActionConfirmOverlay = memo(
       node,
       onClose,
       request,
-      setSelectedNode,
       t,
       updateNodeData,
     ]);

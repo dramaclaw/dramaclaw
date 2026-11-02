@@ -1,0 +1,117 @@
+{
+  "description": "automatic-priority",
+  "story": {
+    "schema_version": "story_draft.v2",
+    "story_id": "automatic-priority",
+    "title": "automatic-priority",
+    "start_segment_id": "start",
+    "segments": [
+      {
+        "id": "start",
+        "title": "start",
+        "script": "start",
+        "media": {
+          "source": "imported",
+          "url": "start.mp4",
+          "status": "ready"
+        }
+      },
+      {
+        "id": "end",
+        "title": "end",
+        "script": "end",
+        "media": {
+          "source": "imported",
+          "url": "end.mp4",
+          "status": "ready"
+        },
+        "kind": "ending",
+        "ending_label": "END"
+      }
+    ],
+    "choices": [
+      {
+        "id": "second",
+        "source_segment_id": "start",
+        "target_segment_id": "end",
+        "order": 1,
+        "mode": "automatic",
+        "text": "",
+        "condition": {
+          "kind": "variable",
+          "variable": "score",
+          "operator": ">=",
+          "value": 0
+        },
+        "effects": [
+          {
+            "variable": "score",
+            "delta": 10,
+            "kind": "increment"
+          }
+        ]
+      },
+      {
+        "id": "first",
+        "source_segment_id": "start",
+        "target_segment_id": "end",
+        "order": 0,
+        "mode": "automatic",
+        "text": "",
+        "condition": {
+          "kind": "variable",
+          "variable": "score",
+          "operator": "==",
+          "value": 0
+        },
+        "effects": [
+          {
+            "variable": "score",
+            "delta": 1,
+            "kind": "increment"
+          }
+        ]
+      },
+      {
+        "id": "fallback",
+        "source_segment_id": "start",
+        "target_segment_id": "end",
+        "order": 2,
+        "mode": "automatic",
+        "text": ""
+      }
+    ],
+    "variables": [
+      {
+        "name": "score",
+        "label": "score",
+        "initial": 0
+      }
+    ],
+    "flags": []
+  },
+  "expectedIssues": [
+    {
+      "code": "condition_unreachable",
+      "entityId": "second",
+      "severity": "warning"
+    },
+    {
+      "code": "condition_unreachable",
+      "entityId": "fallback",
+      "severity": "warning"
+    }
+  ],
+  "playthroughs": [
+    {
+      "choices": [],
+      "expectedSegments": [
+        "start",
+        "end"
+      ],
+      "expectedVariables": {
+        "score": 1
+      }
+    }
+  ]
+}

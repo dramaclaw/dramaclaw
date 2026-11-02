@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "mapId": "town-hall-interior",
+  "globalLighting": {
+    "preset": "warm-afternoon-interior",
+    "intensity": 1
+  },
+  "effects": [],
+  "audioZones": []
+}

@@ -1,0 +1,12 @@
+Use case: identity-preserve and style-transfer.
+Asset: a high-definition three-pose idle sprite sheet for a NEW female bookkeeper NPC in a cozy fantasy town hall.
+Input image 1: EDIT TARGET and identity reference, existing resident f02; keep her identity, hairstyle, costume design, skin tone and proportions. Input image 2: STYLE REFERENCE ONLY, existing HD female town NPC f01 sprite sheet; match its clean hand-drawn chibi rendering, not its identity.
+Recreate image1 in the HD style of image2: cheerful calm young adult woman, warm tan skin, large dark brown eyes, dark brown hair swept into a high side ponytail with teal/gold hair ornament and small gold earrings, navy Chinese-inspired short-sleeve tunic with gold fasteners, brown belt with gold buckle, cream and navy layered knee-length skirt with small gold botanical embroidery, black ankle boots. Remove pixelated stair-step contours and colored matte fringes.
+Change the pose: BOTH hands gently hold an OPEN SMALL HARDCOVER BOOK at waist/chest height, pale cream pages and a muted teal cover. Keep the face unobstructed. She looks toward the viewer while reading, soft friendly closed-mouth smile. No tools or weapon in her hands. Character is a quiet welcoming bookkeeper.
+Output exactly THREE full-body FRONT-facing poses in ONE horizontal row, equal cells, preferably a 1536×1024 genuinely transparent RGBA canvas. Use equal 512px-wide cells, feet at y=900 in all cells, same character scale and about 760px body height, generous transparent margins.
+Pose1: relaxed standing, holding the open book with eyes open.
+Pose2: same figure and fixed feet, tiny forearm/book motion only, as if gently settling the pages; no head movement.
+Pose3: EXACT Pose1 body, head, book and stance, with eyes gently CLOSED for a short blink.
+Every head must have identical size, position, contours and hair, keep the entire body/costume proportions and feet anchors fixed across poses. No walking, no head bob or body squash. At runtime this sheet is sampled as three separate idle frames.
+Style: crisp smooth dark navy outlines, clean controlled colors, restrained soft painted shading; readable at roughly 140 world pixels body height, consistent with the existing game characters. No chunky pixels, no noise, no neon fringe, no halo.
+Transparent background only, no room, no floor, no cast shadow, no labels, no guides, no text or watermarks. Do not redraw image2 or any old sprite sheet; deliver only the new f02 bookkeeper three-frame sheet.

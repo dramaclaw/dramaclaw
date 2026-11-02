@@ -251,6 +251,26 @@ describe("timelineModel", () => {
     expect(payload.tracks[0].items[0].speed).toBe(1.5);
   });
 
+  it("buildComposePayload keeps sourceEnd inside the file when durationMs is rounded", () => {
+    // 老节点把 14.066667s 四舍五入存成 14067ms；直接用会生成 #t=0,14.067，
+    // Studio 判定越过文件末尾并拒绝整条 film（预览只剩错误卡片）。
+    const state: ComposeTimelineState = {
+      resolution: "720p",
+      tracks: [
+        videoTrack([
+          clip({ id: "rounded", durationMs: 14_067, trimStartMs: 0, trimEndMs: 14_067 }),
+          clip({ id: "trimmed", durationMs: 14_067, trimStartMs: 0, trimEndMs: 10_000 }),
+          { ...clip({ id: "unknown", trimStartMs: 0, trimEndMs: 5_000 }), durationMs: null },
+        ]),
+      ],
+    };
+    const items = buildComposePayload(state).tracks[0].items;
+    expect(items[0].sourceEnd).toBeCloseTo(14.066, 6);
+    expect(items[1].sourceEnd).toBe(10);
+    // 时长未知时不做无依据的收缩，保留裁剪值。
+    expect(items[2].sourceEnd).toBe(5);
+  });
+
   it("hasOverlappingVideoClips detects video time-overlap across tracks (audio ignored)", () => {
     const a = clip({ id: "a", kind: "video", timelineStartMs: 0, trimEndMs: 4000 }); // 0–4000
     // 同一时间另一条视频轨上的片段 → 重叠
@@ -329,7 +349,8 @@ describe("timelineModel", () => {
     expect(b).toMatchObject({ durationMs: 10080, trimEndMs: 10080, timelineStartMs: 10000 });
     expect(timelineDurationMs(next)).toBe(20080);
     const payload = buildComposePayload(next);
-    expect(payload.tracks[0].items.map((item) => item.sourceEnd)).toEqual([10, 10.08]);
+    // 贴边裁剪各留 1ms：durationMs 是整数毫秒，真实文件可能比它短零头。
+    expect(payload.tracks[0].items.map((item) => item.sourceEnd)).toEqual([9.999, 10.079]);
   });
 
   it("applyProbedDurations repacks successors when an earlier fallback clip grows", () => {

@@ -14,6 +14,7 @@ import {
 import { resolveFixedFeatureModelRequest } from '@/features/canvas/domain/fixedFeatureModelRequest';
 import { CreditCostInline } from '@/components/credit-cost-inline';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import {
@@ -64,7 +65,6 @@ export const Scene360Overlay = memo(
     const { t } = useTranslation();
     const addNode = useCanvasStore((state) => state.addNode);
     const addEdge = useCanvasStore((state) => state.addEdge);
-    const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const findNodePosition = useCanvasStore((state) => state.findNodePosition);
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const imageCatalog = useFreezoneImageModels();
@@ -127,7 +127,7 @@ export const Scene360Overlay = memo(
         },
       );
       addEdge(node.id, nextNodeId);
-      setSelectedNode(nextNodeId);
+      selectNodeExclusively(nextNodeId);
       onClose();
 
       try {
@@ -185,7 +185,6 @@ export const Scene360Overlay = memo(
       modelUnavailable,
       node,
       onClose,
-      setSelectedNode,
       t,
       updateNodeData,
     ]);

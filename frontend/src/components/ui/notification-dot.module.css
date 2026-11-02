@@ -1,0 +1,9 @@
+.dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--notification-dot);
+  pointer-events: none;
+}

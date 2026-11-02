@@ -1,0 +1,364 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import { describe, expect, it } from "vitest";
+
+import {
+  PREVIZ_DEFAULT_VIEW,
+  PREVIZ_VIEW_DIRECTIONS,
+  boundsCenter,
+  boundsRadius,
+  framingDistance,
+  orbitDepthRange,
+  orthoPlacement,
+  unionBounds,
+  viewPlacement,
+} from "@/features/previz/domain/view";
+import type { PrevizViewDirection } from "@/features/previz/domain/view";
+
+/** three 的空 `Box3`：`makeEmpty()` 之后就是这副样子，取景路径上会真的收到它。 */
+const EMPTY_BOX = {
+  min: [Infinity, Infinity, Infinity],
+  max: [-Infinity, -Infinity, -Infinity],
+} as const;
+
+/** 与 `view.ts` 的 `POLE_TILT_RATIO` 对齐。全仓只有下面那条循环用例钉着这个值。 */
+const POLE_TILT_RATIO = 0.005;
+
+describe("bounds helpers", () => {
+  it("takes the centre and the half-diagonal of a box", () => {
+    const bounds = { min: [-1, 0, -1] as const, max: [1, 2, 1] as const };
+
+    expect(boundsCenter(bounds)).toEqual([0, 1, 0]);
+    // 半对角线而不是最长半边：用半边长会让立方体的角伸出取景框。
+    expect(boundsRadius(bounds)).toBeCloseTo(Math.sqrt(3), 6);
+  });
+
+  // 上面那个盒子对称又居中，实现里把结果写死也能过；这个盒子三轴各不相同且偏离原点。
+  it("follows an off-centre box with unequal extents", () => {
+    const bounds = { min: [2, -4, 10] as const, max: [8, 0, 12] as const };
+
+    expect(boundsCenter(bounds)).toEqual([5, -2, 11]);
+    expect(boundsRadius(bounds)).toBeCloseTo(Math.sqrt(9 + 4 + 1), 6);
+  });
+
+  it("unions boxes and returns null for an empty list", () => {
+    expect(unionBounds([])).toBeNull();
+    expect(
+      unionBounds([
+        { min: [-1, -1, -1], max: [0, 0, 0] },
+        { min: [1, 1, 1], max: [2, 3, 2] },
+      ]),
+    ).toEqual({ min: [-1, -1, -1], max: [2, 3, 2] });
+  });
+
+  // 一个没有几何体的对象会贡献一个空 Box3。让 ±∞ 进了并集，中心就是 NaN，
+  // 相机被赋成 NaN 之后画面全黑，而报错点离病因隔着整个引擎层。
+  it("skips unusable boxes when unioning", () => {
+    expect(unionBounds([EMPTY_BOX])).toBeNull();
+    expect(unionBounds([EMPTY_BOX, { min: [1, 1, 1], max: [2, 3, 2] }])).toEqual({
+      min: [1, 1, 1],
+      max: [2, 3, 2],
+    });
+  });
+
+  it("collapses an unusable box to a point instead of yielding NaN", () => {
+    expect(boundsCenter(EMPTY_BOX)).toEqual([0, 0, 0]);
+    expect(boundsRadius(EMPTY_BOX)).toBe(0);
+  });
+});
+
+describe("framingDistance", () => {
+  it("backs off far enough for the tighter of the two axes", () => {
+    // 16:9 下水平比垂直宽，垂直是紧的那一边，距离由垂直视场角决定。
+    expect(framingDistance(1, 50, 16 / 9)).toBeCloseTo(2.9578, 3);
+    // 9:16 反过来：水平是紧的那一边，同样半径要退得更远。
+    expect(framingDistance(1, 50, 9 / 16)).toBeCloseTo(4.9268, 3);
+    expect(framingDistance(2.5, 50, 1)).toBeCloseTo(7.3944, 3);
+  });
+
+  it("backs off less as the field of view widens", () => {
+    // 90° 方形画幅：半角 45°，半径 1 的包围球在 √2 处正好切到视锥，再乘留白系数。
+    expect(framingDistance(1, 90, 1)).toBeCloseTo(1.7678, 3);
+    expect(framingDistance(1, 90, 1)).toBeLessThan(framingDistance(1, 50, 1));
+  });
+
+  // 180° 以上半角的正弦掉头变小，不钳上界的话 359°（半角 179.5°，正弦只剩 0.0087）
+  // 会算出 143 这种「越广角退得越远」的距离。钳到 179° 之后它就是个贴脸的广角。
+  it("clamps an absurdly wide field of view instead of backing away", () => {
+    expect(framingDistance(1, 359, 1)).toBe(framingDistance(1, 179, 1));
+    expect(framingDistance(1, 359, 1)).toBeCloseTo(1.25, 3);
+    expect(framingDistance(1, 359, 1)).toBeLessThan(framingDistance(1, 50, 1));
+  });
+
+  // 竖幅方向没有对称的自限：aspect 越小水平越紧，距离几乎线性发散。不钳下界的话
+  // aspect=0.001 要退到半径的 2680 倍，早越过渲染器 500 的远平面，画面全黑。
+  it("clamps an absurdly tall aspect instead of retreating past the far plane", () => {
+    expect(framingDistance(1, 50, 0.001)).toBe(framingDistance(1, 50, 0.25));
+    expect(framingDistance(1, 50, 0.001)).toBeCloseTo(10.795, 3);
+    // 最竖的出片画幅比下界宽，不该被这条护栏碰到。
+    expect(framingDistance(1, 50, 9 / 16)).toBeLessThan(framingDistance(1, 50, 0.25));
+  });
+
+  it("never returns a degenerate distance for a zero-size target", () => {
+    // 一盏灯的包围盒是个点。距离算成 0 会把相机塞进对象里，近裁面直接吃掉画面。
+    expect(framingDistance(0, 50, 16 / 9)).toBeGreaterThanOrEqual(1);
+  });
+
+  // 非有限的和有限但越界的混在一起：两类都得收敛成一个能用的距离。
+  const unusableInputs: Array<[string, number, number, number]> = [
+    ["radius is NaN", NaN, 50, 16 / 9],
+    ["radius is negative", -3, 50, 16 / 9],
+    ["fov is NaN", 1, NaN, 16 / 9],
+    ["fov is zero", 1, 0, 16 / 9],
+    ["fov is negative", 1, -50, 16 / 9],
+    ["fov is 180", 1, 180, 16 / 9],
+    ["aspect is NaN", 1, 50, NaN],
+    ["aspect is Infinity", 1, 50, Infinity],
+    ["aspect is zero", 1, 50, 0],
+    ["aspect is negative", 1, 50, -1.5],
+  ];
+
+  it.each(unusableInputs)("stays usable when %s", (_label, radius, fov, aspect) => {
+    const distance = framingDistance(radius, fov, aspect);
+
+    expect(Number.isFinite(distance)).toBe(true);
+    expect(distance).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("viewPlacement", () => {
+  const bounds = { min: [-1, 0, -1] as const, max: [1, 2, 1] as const };
+
+  // 六个方向各自站在自己的轴上、退到同一个取景距离，且两个离轴分量都贴着中心。
+  // 正视图在 +Z 是因为 three 的相机默认朝 -Z，从 +Z 看回原点才是「正面」。
+  it("places every direction on its own axis, looking at the centre", () => {
+    const distance = framingDistance(boundsRadius(bounds), 50, 16 / 9);
+    const axes: Record<PrevizViewDirection, { index: 0 | 1 | 2; sign: 1 | -1 }> = {
+      front: { index: 2, sign: 1 },
+      back: { index: 2, sign: -1 },
+      right: { index: 0, sign: 1 },
+      left: { index: 0, sign: -1 },
+      top: { index: 1, sign: 1 },
+      bottom: { index: 1, sign: -1 },
+    };
+
+    for (const direction of PREVIZ_VIEW_DIRECTIONS) {
+      const { index, sign } = axes[direction];
+      const placement = viewPlacement(direction, bounds, 50, 16 / 9);
+      const polar = direction === "top" || direction === "bottom";
+
+      expect(placement.target).toEqual([0, 1, 0]);
+      expect(placement.position[index] - placement.target[index]).toBeCloseTo(sign * distance, 6);
+
+      for (const offAxis of [0, 1, 2] as const) {
+        if (offAxis === index) continue;
+        // 离轴分量必须贴着中心，否则相机就不是正对着轴的了。顶/底的 Z 是那条有意的
+        // 微倾（见 view.ts 的 POLE_TILT_RATIO），这里顺带把比例本身钉住。
+        const offset = polar && offAxis === 2 ? distance * POLE_TILT_RATIO : 0;
+        expect(placement.position[offAxis]).toBeCloseTo(placement.target[offAxis] + offset, 6);
+      }
+    }
+  });
+
+  // 微倾的来龙去脉写在 view.ts 的 POLE_TILT_RATIO 上，别在这里抄第二份。
+  it("tilts the top and bottom views off the pole", () => {
+    const top = viewPlacement("top", bounds, 50, 16 / 9);
+
+    expect(top.position[1]).toBeGreaterThan(1);
+    expect(Math.abs(top.position[2])).toBeGreaterThan(0);
+    expect(Math.abs(top.position[2])).toBeLessThan(0.05);
+
+    const bottom = viewPlacement("bottom", bounds, 50, 16 / 9);
+    expect(bottom.position[1]).toBeLessThan(1);
+  });
+
+  // phi = π 那一端钳得一样狠，所以底视图同样不能正落在 −Y 极点上。
+  it("tilts the bottom view off the pole exactly like the top view", () => {
+    const distance = framingDistance(boundsRadius(bounds), 50, 16 / 9);
+    const top = viewPlacement("top", bounds, 50, 16 / 9);
+    const bottom = viewPlacement("bottom", bounds, 50, 16 / 9);
+
+    expect(Math.abs(bottom.position[2] - bottom.target[2])).toBeGreaterThan(0);
+    // 两个极点共用同一个微倾，差别只在 Y 的符号；同一表达式算出来，差值就是 0。
+    expect(bottom.position[2]).toBe(top.position[2]);
+    expect(bottom.position[1] - bottom.target[1]).toBeCloseTo(-distance, 6);
+    expect(top.position[1] - top.target[1]).toBeCloseTo(distance, 6);
+  });
+
+  // 微倾按距离成比例给，才能在大小场景里都是同一个「几乎看不出来」的角度：
+  // 写成固定长度的话，小盒子会歪得很明显，大场景又退化回正极点。
+  it("keeps the pole tilt proportional to the framing distance", () => {
+    const big = viewPlacement("top", { min: [-10, -10, -10], max: [10, 10, 10] }, 50, 16 / 9);
+    const small = viewPlacement("top", { min: [-0.1, -0.1, -0.1], max: [0.1, 0.1, 0.1] }, 50, 16 / 9);
+
+    const bigRatio = (big.position[2] - 0) / (big.position[1] - 0);
+    const smallRatio = (small.position[2] - 0) / (small.position[1] - 0);
+    expect(bigRatio).toBe(smallRatio);
+    expect(bigRatio).toBeGreaterThan(0);
+  });
+
+  // 空场景聚焦（一个没几何体的对象、或者根本没选中东西）不该把 NaN 喂给相机。
+  it("stays finite for an unusable box", () => {
+    const placement = viewPlacement("front", EMPTY_BOX, 50, 16 / 9);
+
+    expect(placement.target).toEqual([0, 0, 0]);
+    expect(placement.position.every((value) => Number.isFinite(value))).toBe(true);
+    expect(placement.position[2]).toBeGreaterThanOrEqual(1);
+  });
+
+  it("exposes all six directions and a default placement", () => {
+    expect(PREVIZ_VIEW_DIRECTIONS).toEqual(["front", "back", "left", "right", "top", "bottom"]);
+    // 默认机位与 PrevizRenderer.create() 里建相机时用的一致，别各写一份。
+    expect(PREVIZ_DEFAULT_VIEW).toEqual({ position: [6, 4, 8], target: [0, 1, 0] });
+  });
+});
+
+/**
+ * 四视图那两块预览用的正交取景。
+ *
+ * 这里的每一条都对应一种「画面看起来没坏、但判断会出错」的失效：窗口开小了主体被切、
+ * 相机站进包围球里近处的东西被裁掉、顶视图 up 没定死导致画面整个转过去。
+ */
+describe("orthoPlacement", () => {
+  /** 半径 √3 的立方体，居中在原点上方 1 米。 */
+  const BOX = { min: [-1, 0, -1] as const, max: [1, 2, 1] as const };
+  const RADIUS = Math.sqrt(3);
+
+  it("frames the bounding sphere with padding", () => {
+    const placement = orthoPlacement("front", BOX, 16 / 9);
+
+    expect(placement.target).toEqual([0, 1, 0]);
+    // 竖直方向是宽画布上紧的那一边：半高恰好是半径乘留白系数。
+    expect(placement.halfHeight).toBeCloseTo(RADIUS * 1.25, 6);
+    expect(placement.halfWidth / placement.halfHeight).toBeCloseTo(16 / 9, 6);
+    expect(placement.halfWidth).toBeGreaterThan(RADIUS);
+  });
+
+  // 竖幅画布上紧的换成了水平方向。只按高算的话左右会被切掉——预览里最要命的一种切，
+  // 因为俯视图看的就是横向走位。
+  it("grows the window vertically when the canvas is taller than it is wide", () => {
+    const placement = orthoPlacement("top", BOX, 0.5);
+
+    expect(placement.halfWidth).toBeCloseTo(RADIUS * 1.25, 6);
+    expect(placement.halfHeight).toBeCloseTo(RADIUS * 1.25 * 2, 6);
+  });
+
+  it.each([
+    ["front", [0, 0, 1]],
+    ["back", [0, 0, -1]],
+    ["right", [1, 0, 0]],
+    ["left", [-1, 0, 0]],
+    ["top", [0, 1, 0]],
+    ["bottom", [0, -1, 0]],
+  ] as const)("stands the %s camera off along its own axis", (direction, unit) => {
+    const placement = orthoPlacement(direction, BOX, 16 / 9);
+
+    const offset = [
+      placement.position[0] - placement.target[0],
+      placement.position[1] - placement.target[1],
+      placement.position[2] - placement.target[2],
+    ];
+    const distance = Math.hypot(...offset);
+    expect(offset.map((value) => value / distance)).toEqual(unit.map((value) => value));
+    // 站进包围球里的话，靠近相机那半个场景会被近平面切掉。
+    expect(distance).toBeGreaterThan(RADIUS);
+  });
+
+  // 正交投影下站多远不改变画面大小，只改变裁切：整个包围球必须落在近远平面之间。
+  it("brackets the whole bounding sphere between near and far", () => {
+    const placement = orthoPlacement("right", BOX, 16 / 9);
+
+    const distance = Math.hypot(
+      placement.position[0] - placement.target[0],
+      placement.position[1] - placement.target[1],
+      placement.position[2] - placement.target[2],
+    );
+    expect(placement.near).toBeLessThan(distance - RADIUS);
+    expect(placement.far).toBeGreaterThan(distance + RADIUS);
+    expect(placement.near).toBeGreaterThan(0);
+  });
+
+  /*
+    顶/底视图的视线与世界 up 平行，`lookAt` 会走 three 内部那条加 0.0001 扰动的兜底分支，
+    画面的滚转由那个隐藏量决定——换个 three 版本俯视图就可能整个转过去。所以 up 在这里
+    显式定死，顺带定下「俯视图里 +Z 朝下」这个读图习惯。
+  */
+  it.each([
+    ["top", [0, 0, -1]],
+    ["bottom", [0, 0, 1]],
+  ] as const)("pins the %s view's up vector off the pole", (direction, up) => {
+    expect(orthoPlacement(direction, BOX, 16 / 9).up).toEqual([...up]);
+  });
+
+  it("keeps the up vector vertical for the four side views", () => {
+    for (const direction of ["front", "back", "left", "right"] as const) {
+      expect(orthoPlacement(direction, BOX, 16 / 9).up).toEqual([0, 1, 0]);
+    }
+  });
+
+  // 空场景（还没建对象、或者选中的东西没有几何体）不能把 0 尺寸的取景窗交给相机：
+  // left===right 的投影矩阵里全是 Infinity，预览一片黑。
+  it("still opens a usable window for an unusable box", () => {
+    const placement = orthoPlacement("top", EMPTY_BOX, 16 / 9);
+
+    expect(placement.halfHeight).toBeGreaterThanOrEqual(1);
+    expect(placement.halfWidth).toBeGreaterThanOrEqual(1);
+    const numbers = [
+      ...placement.position,
+      ...placement.target,
+      placement.halfWidth,
+      placement.halfHeight,
+      placement.near,
+      placement.far,
+    ];
+    expect(numbers.every((value) => Number.isFinite(value))).toBe(true);
+  });
+
+  // 画幅比是从 DOM 量出来的：侧栏折叠动画中途会量到 0，容器还没布局时会量到 NaN。
+  it.each([0, Number.NaN, Infinity, -3])("survives an aspect of %s", (aspect) => {
+    const placement = orthoPlacement("front", BOX, aspect);
+
+    expect(placement.halfWidth).toBeGreaterThan(0);
+    expect(placement.halfHeight).toBeGreaterThan(0);
+    expect(Number.isFinite(placement.halfWidth * placement.halfHeight)).toBe(true);
+  });
+});
+
+describe("orbitDepthRange", () => {
+  // 这条是回归护栏，不是新行为的期望值：远平面从写死改成跟着轨道距离走之后，过去能
+  // 正常工作的每一个场景（默认机位离轨道中心 √116 ≈ 10.8 m，聚焦一屋子人也就几十米）
+  // 都必须逐位拿到从前那对参数。差一点点都算改了取景表现——z-fighting 的花纹和近处
+  // 被切掉的一角都不会有人报「远平面变了」，只会报「渲染坏了」。
+  it.each([0.5, 10, 100, 125])("keeps the historical 0.1/500 at %s m", (distance) => {
+    expect(orbitDepthRange(distance)).toEqual({ near: 0.1, far: 500 });
+  });
+
+  // 用户自备的模型没有单位约定，一份按厘米建的房子进来就是几百米高；聚焦它要退到
+  // 七八百米开外，而写死的 500 m 远平面会把整个模型切掉，地面网格从缺口里透出来。
+  it("opens the far plane to four times the orbit distance", () => {
+    expect(orbitDepthRange(1000).far).toBe(4000);
+    expect(orbitDepthRange(200).far).toBe(800);
+  });
+
+  // 远平面涨到几万而 near 还钉在 0.1，深度精度会赔在远处：相邻两个面落进同一个深度
+  // 值，墙上出现一片随镜头闪烁的花纹。
+  it("only pushes the near plane out once the depth ratio would break precision", () => {
+    // far 正好 2000（= 0.1 × 20000）是临界点，仍是老的近平面。
+    expect(orbitDepthRange(500)).toEqual({ near: 0.1, far: 2000 });
+    const far = orbitDepthRange(1000);
+    expect(far.near).toBeCloseTo(0.2, 12);
+    expect(far.far / far.near).toBeCloseTo(20000, 6);
+  });
+
+  // 轨道距离由相机位置减注视点得来，两边都可能被导入的场景写成天文数字。
+  it("caps the far plane instead of pushing the projection to infinity", () => {
+    const range = orbitDepthRange(1e12);
+    expect(range.far).toBe(5_000_000);
+    expect(range.near).toBe(250);
+  });
+
+  // three 拿到 NaN 的投影矩阵不报错，只给一片黑——症状离病因隔着整个引擎层。
+  it.each([Number.NaN, Infinity, -1, 0])("falls back to the fixed pair for %s", (distance) => {
+    expect(orbitDepthRange(distance)).toEqual({ near: 0.1, far: 500 });
+  });
+});

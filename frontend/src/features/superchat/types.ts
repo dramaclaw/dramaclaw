@@ -12,6 +12,8 @@ export type ClientFrame =
       context?: {
         freezone_canvas_id?: string | null;
         canvas_command_execution_mode?: "manual_confirm" | "auto_execute";
+        /** 视频合成与剪辑工作区打开时，正在剪的 videoComposeNode id。 */
+        freezone_compose_node_id?: string | null;
       };
     }
   | {
@@ -44,8 +46,8 @@ export type ClientFrame =
       agent_id?: string | null;
       agentId?: string | null;
       tool_call_status?: "completed" | "cancelled" | "failed";
-      canvas_apply_status: "accepted" | "applied" | "pending" | "partially_applied" | "failed" | "cancelled_by_user";
-      background_execution_status?: "running" | "succeeded" | "failed" | "cancelled";
+      canvas_apply_status: "accepted" | "applied" | "pending" | "partially_applied" | "failed" | "cancelled_by_user" | "unverified";
+      background_execution_status?: "running" | "succeeded" | "failed" | "cancelled" | "unverified";
       applied?: boolean;
       cancelled?: boolean;
       errors?: string[];
@@ -235,6 +237,7 @@ export type ServerFrame =
       input?: unknown;
       output?: unknown;
       error?: unknown;
+      result_json?: unknown;
       raw?: unknown;
     }
   | {

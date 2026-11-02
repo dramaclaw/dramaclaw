@@ -36,6 +36,8 @@ export interface CompileWorkflowNodePromptInput {
   upstreamText?: string;
   upstreamContents?: UpstreamContent[];
   fallbackPrompt: string;
+  /** Omitted callers retain the pre-existing workflow behavior and always recompile. */
+  executionSource?: 'manual' | 'workflow';
   referenceMedia?: Array<{
     kind: 'image' | 'video' | 'audio';
     label?: string;
@@ -131,6 +133,27 @@ export async function compileWorkflowNodePrompt(
   const catalog = readCatalog(input.nodeData);
   const recipeId = text(catalog?.recipeId);
   if (!recipeId) return input.fallbackPrompt;
+  const productOperation = workflowProductOperation(input.nodeId);
+  const nodeData = asRecord(input.nodeData);
+  const previouslyCompiledPrompt = text(nodeData?.workflowRecipeCompiledPrompt);
+  const hasPriorGeneratedOutput = [
+    nodeData?.imageUrl,
+    nodeData?.videoUrl,
+    nodeData?.resultVideoUrl,
+    nodeData?.audioUrl,
+  ].some((value) => text(value).length > 0);
+
+  // 虾导工作流首次运行时会绑定已准入的 product operation，并在节点上保存编译
+  // 后的最终 prompt。用户随后在画布上手动重发时，不应再次调用计费 Recipe
+  // 编译接口（它必然要求新的 product_operation_id）。工作流执行则始终重新编译，
+  // 即使 CE 工作流没有 product operation，也要让新的上游内容和 Recipe 策略生效。
+  // 未编辑时复用已编译结果；编辑过则把当前输入视为最终 prompt 直接生成。
+  if (
+    input.executionSource === 'manual'
+    && (previouslyCompiledPrompt || hasPriorGeneratedOutput)
+  ) {
+    return text(input.nodePrompt) || previouslyCompiledPrompt || input.fallbackPrompt;
+  }
   const isMusicRecipe = input.nodeKind === 'audio' && recipeId === 'drama-background-music';
   const upstreamText = isMusicRecipe
     ? ''
@@ -143,7 +166,6 @@ export async function compileWorkflowNodePrompt(
 
   reportWorkflowExecutionActivity(input.nodeId, 'compiling_recipe');
   try {
-    const productOperation = workflowProductOperation(input.nodeId);
     return await compileFreezoneRecipePrompt({
       ...(productOperation
         ? {

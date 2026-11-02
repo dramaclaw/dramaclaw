@@ -48,6 +48,20 @@ describe("NodeSelectionMenu", () => {
     expect(screen.getByText("镜头上下文")).toBeInTheDocument();
   });
 
+  it("keeps hover feedback immediate", () => {
+    render(
+      <NodeSelectionMenu
+        position={{ x: 12, y: 16 }}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    for (const button of screen.getAllByRole("button")) {
+      expect(button.style.transitionDelay).toBe("");
+    }
+  });
+
   it("offers 逐帧拉片 when dragging a line out of a video node", () => {
     // 「引用该节点生成」的条目是手写的，白名单放行了但这里漏写条目的类型会被静默
     // 吞掉 —— 从真实的下游候选喂进去，漏项就在这里红。

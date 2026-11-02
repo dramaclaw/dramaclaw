@@ -417,9 +417,25 @@ def test_canvas_command_tool_result_accepts_background_workflow(
     assert "Do not claim" in result["agent_instruction"]
 
 
+def test_canvas_unverified_result_instructs_agent_to_check_artifacts_before_retrying(monkeypatch) -> None:
+    monkeypatch.setattr(chat_route, "resolve_canvas_command", lambda key, result, **kwargs: result)
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-legacy", canvas_id="canvas-a", tool_call_status="completed",
+        canvas_apply_status="unverified", background_execution_status="unverified", applied=False,
+        command_results=[{"type": "run_node_action", "status": "unverified"}],
+    )
+    result = chat_route._resolve_canvas_command_tool_result_payload(payload, username="admin")
+    assert result["ok"] is False
+    assert result["canvas_apply_status"] == "unverified"
+    assert "Do not rerun generation" in result["agent_instruction"]
+    assert "extra charges" in result["agent_instruction"]
+    assert "read its current persisted state" in result["agent_instruction"]
+
+
 @pytest.mark.anyio
+@pytest.mark.parametrize("apply_status", ["pending", "applied", "failed", "unverified"])
 async def test_canvas_background_followup_is_saved_for_agent_without_reresolving_bridge(
-    monkeypatch,
+    monkeypatch, apply_status,
 ) -> None:
     saved: dict[str, object] = {}
 
@@ -453,7 +469,7 @@ async def test_canvas_background_followup_is_saved_for_agent_without_reresolving
         agent_id="agent-1",
         followup=True,
         tool_call_status="completed",
-        canvas_apply_status="pending",
+        canvas_apply_status=apply_status,
         applied=False,
         agent_hint="Do not rerun generation.",
     )
@@ -463,11 +479,47 @@ async def test_canvas_background_followup_is_saved_for_agent_without_reresolving
         {"username": "admin"},
     )
 
-    assert response["data"]["canvas_apply_status"] == "pending"
+    assert response["data"]["canvas_apply_status"] == apply_status
     assert saved["role"] == "agent_notification"
-    assert "do not rerun generation" in str(saved["content"])
-    assert saved["idempotency_key"] == "canvas-background-result:bridge-workflow"
+    assert "[CANVAS_BACKGROUND_RESULT]" in str(saved["content"])
+    if apply_status == "pending":
+        assert "do not rerun generation" in str(saved["content"])
+    if apply_status == "unverified":
+        assert "need verification" in str(saved["content"])
+        assert "Do not rerun generation or suggest retrying" in str(saved["content"])
+        assert "extra charges" in str(saved["content"])
+    assert saved["idempotency_key"] == f"canvas-background-result:bridge-workflow:{apply_status}"
     assert getattr(saved["scope"], "agent_id") == "agent-1"
+
+
+@pytest.mark.anyio
+async def test_workflow_completion_notification_is_idempotent_per_canvas(monkeypatch, tmp_path):
+    from novelvideo.chat.store import ChatStore
+
+    store = ChatStore()
+    monkeypatch.setattr(store, "db_for", lambda _username, scope: tmp_path / f"{scope.canvas_id}.db")
+    monkeypatch.setattr(chat_route, "chat_store", store)
+
+    async def fake_project_context(_user, _scope):
+        return None
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", fake_project_context)
+    payload = chat_route.ChatNotificationIn(
+        scope=chat_route.ChatScopePayload(
+            kind="project", id="p", surface="freezone", canvasId="canvas-a", agentId="main",
+        ),
+        text="本轮工作流已完成，是否继续？",
+        idempotency_key="workflow-completion:run-1",
+    )
+    first = await chat_route.append_chat_notification(payload, {"username": "admin"})
+    second = await chat_route.append_chat_notification(payload, {"username": "admin"})
+    assert first["data"]["id"] == second["data"]["id"]
+    with sqlite3.connect(tmp_path / "canvas-a.db") as conn:
+        assert conn.execute("SELECT count(*) FROM chat_messages").fetchone()[0] == 1
+    payload.scope.canvasId = "canvas-b"
+    await chat_route.append_chat_notification(payload, {"username": "admin"})
+    with sqlite3.connect(tmp_path / "canvas-b.db") as conn:
+        assert conn.execute("SELECT count(*) FROM chat_messages").fetchone()[0] == 1
 
 
 @pytest.mark.anyio
@@ -2067,8 +2119,9 @@ def test_resolve_clarification_tool_result_writes_bridge_result(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("replayed", [False, True])
 async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, replayed
 ) -> None:
     async def bridge_project_state(user, payload):
         return tmp_path / "project"
@@ -2100,9 +2153,25 @@ async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
         },
     )
 
+    if replayed:
+        chat_route.chat_store.append_message(
+            "admin", scope, "user", "重新弹出", turn_id="turn-b"
+        )
+        chat_route.chat_store.append_ui_event(
+            "admin",
+            scope,
+            "turn-b",
+            {
+                "type": "assistant.clarification.request",
+                "bridge_key": "clarify-key-1",
+                "clarification_id": "clarify-1",
+                "questions": [],
+            },
+        )
+
     await chat_route.resolve_clarification_tool_result(
         chat_route.ClarificationToolResultIn(
-            turn_id="turn-a",
+            turn_id="turn-b" if replayed else "turn-a",
             bridge_key="clarify-key-1",
             project_id="project-a",
             canvas_id="canvas-a",
@@ -2116,6 +2185,15 @@ async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
     )
 
     messages = chat_route.chat_store.list_messages("admin", scope)
+    if replayed:
+        for turn in ("turn-a", "turn-b"):
+            events = [
+                event
+                for message in messages
+                if message.get("turn_id") == turn
+                for event in message.get("ui_events", [])
+            ]
+            assert any(event.get("submitted") is True for event in events)
     submitted_events = [
         event
         for event in messages[-1]["ui_events"]
@@ -2127,6 +2205,49 @@ async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
     assert submitted_events[-1]["answers"] == {
         "scope": {"option_ids": ["user"], "custom_text": ""}
     }
+
+
+@pytest.mark.anyio
+async def test_expired_clarification_submission_is_not_acknowledged_or_persisted(
+    monkeypatch,
+    tmp_path,
+):
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    async def must_not_persist(*args, **kwargs):
+        pytest.fail("An expired submission must not be saved as answered")
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
+    monkeypatch.setattr(
+        chat_route.chat_store, "append_ui_event_async", must_not_persist
+    )
+    monkeypatch.setattr(chat_route, "_canvas_bridge_dir", lambda *a, **kw: tmp_path)
+    clock = [1000.0]
+    monkeypatch.setattr(canvas_command_bridge.time, "time", lambda: clock[0])
+    put_pending_clarification_event(
+        key="expired-choice",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event={"clarification_id": "expired-choice"},
+        bridge_dir=tmp_path,
+    )
+    clock[0] += (
+        canvas_command_bridge.BRIDGE_PENDING_TTL_SECONDS["clarification_event"] + 1
+    )
+    result = await chat_route.resolve_clarification_tool_result(
+        chat_route.ClarificationToolResultIn(
+            turn_id="turn-a",
+            bridge_key="expired-choice",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            answers={"image_model": "chosen"},
+        ),
+        user={"username": "admin"},
+    )
+    assert result["ok"] is False
+    assert result["data"]["canvas_apply_status"] == "timeout"
+    assert "expired" in result["message"]
 
 
 @pytest.mark.anyio
@@ -2391,3 +2512,37 @@ def test_catalog_save_error_overrides_frontend_success(
     )
     assert result["draft"] == payload.draft
     assert result["errors"]
+
+
+@pytest.mark.parametrize(
+    ("status", "applied", "applied_count", "cancelled", "needs_refresh"),
+    [
+        ("applied", True, 4, False, True),
+        ("accepted", True, 0, False, True),
+        ("pending", False, 0, False, True),
+        ("partially_applied", False, 1, False, True),
+        ("failed", False, 1, False, True),
+        ("failed", False, 0, False, False),
+        ("cancelled_by_user", False, 0, True, False),
+        ("cancelled_by_user", False, 1, True, True),
+    ],
+)
+def test_canvas_command_receipt_invalidates_revision_after_possible_write(
+    monkeypatch, tmp_path, status, applied, applied_count, cancelled, needs_refresh,
+):
+    monkeypatch.setattr(chat_route, "_bridge_dir_for_pending_key", lambda *_a, **_k: tmp_path)
+    monkeypatch.setattr(chat_route, "resolve_canvas_command", lambda _key, result, **_k: result)
+    result = chat_route._resolve_canvas_command_tool_result_payload(
+        chat_route.CanvasCommandToolResultIn(
+            bridge_key="revision-refresh", project_id="project-a", canvas_id="canvas-a",
+            canvas_apply_status=status, applied=applied, applied_count=applied_count,
+            cancelled=cancelled,
+        ),
+        username="alice",
+    )
+    assert result["requires_canvas_refresh"] is needs_refresh
+    # A receipt is not a fresh canvas snapshot; it must not invent a revision.
+    assert "revision" not in result and "base_revision" not in result
+    if needs_refresh:
+        assert "read its current persisted state" in result["agent_instruction"]
+        assert "replay generation" in result["agent_instruction"]

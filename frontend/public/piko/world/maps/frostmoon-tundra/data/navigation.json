@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "mapId": "frostmoon-tundra",
+  "walkableAreas": [
+    {
+      "id": "map-preview-bounds",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 1152
+        },
+        {
+          "x": 0,
+          "y": 1152
+        }
+      ]
+    }
+  ],
+  "colliders": [],
+  "spawnPoints": [
+    {
+      "id": "cloudtop-slope-arrival",
+      "position": {
+        "x": 1000,
+        "y": 940
+      },
+      "facing": "north"
+    }
+  ],
+  "exits": [
+    {
+      "id": "to-cloudtop-slope",
+      "trigger": {
+        "id": "to-cloudtop-slope-trigger",
+        "points": [
+          {
+            "x": 950,
+            "y": 1068
+          },
+          {
+            "x": 1010,
+            "y": 1068
+          },
+          {
+            "x": 1010,
+            "y": 1112
+          },
+          {
+            "x": 950,
+            "y": 1112
+          }
+        ]
+      },
+      "targetMapId": "cloudtop-slope",
+      "targetSpawnId": "frostmoon-tundra-arrival"
+    }
+  ]
+}

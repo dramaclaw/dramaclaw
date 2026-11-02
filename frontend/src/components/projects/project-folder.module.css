@@ -2,11 +2,36 @@
 /* Copyright (c) 2026 ClaymoreLab */
 .folder {
   width: var(--folder-width);
-  height: 75px;
+  height: 84px;
   cursor: inherit;
   transform-origin: center bottom;
   transform: scale(var(--folder-size));
   transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* 材质参数只在这一处声明，亮/暗各给一组值，而不是两套色值。
+     亮色按 DESIGN.md 刻意弱化玻璃隐喻（不透明、不模糊）；暗色才是磨砂玻璃：
+     半透 + 折射背后的纸。色相一律用项目色和本主题 surface 混出来，8 色调色板
+     的每个项目都保留自己的色相识别。 */
+  --back-hue: 82%;
+  --glass-hue: 62%;
+  --glass-alpha: 90%;
+  --glass-blur: 3px;
+  --glass-edge-line: var(--ui-border-strong);
+  /* 前后台阶 12px（= 背板高的 14%），盖子仍是 72px。这一档台阶不再是"没对齐"的暗带，
+     而是要装下一张文件的头：背板顶往下 7px 才是纸顶，纸头露 5px，然后才是盖口。 */
+  --front-rim: 12px;
+  --folder-back-color: color-mix(in oklab, var(--folder-color) var(--back-hue), rgb(var(--surface-rgb)));
+}
+
+/* 玻璃片必须比它背后的东西亮、背后的东西必须够暗，半透才读得出来。
+   所以暗色下背板压到 26% 色相，玻璃片给 44% 色相 + 64% 不透明度 —— 参考图那块
+   玻璃的中调明度约在 L 0.36，比它下面的背板亮、比里面的纸暗。 */
+:global(html.dark) .folder {
+  --back-hue: 26%;
+  --glass-hue: 44%;
+  --glass-alpha: 64%;
+  --glass-blur: 7px;
+  --glass-edge-line: color-mix(in oklab, rgb(var(--text-rgb)) 34%, transparent);
 }
 
 .folder:hover,
@@ -14,50 +39,57 @@
   transform: scale(var(--folder-size)) translateY(-4px);
 }
 
+/* 掀盖时只让最后两张纸探出盖口，并且朝两侧各歪一点 —— 参考图就是两张错落的纸，
+   三张齐刷刷平行探出来读成色带，不像文件。最前面那张（.paper3）留在盖子里头，
+   它的顶边压在盖口下面，不然盖口会被切成三条。 */
 .folder:hover .paper,
 :global(.group:hover) .folder .paper {
-  transform: translate(-50%, 0%);
+  transform: translate(-50%, 0%) rotate(-3deg);
 }
 
 .folder:hover .paper2,
 :global(.group:hover) .folder .paper2 {
-  transform: translate(-50%, -3%);
+  transform: translate(-50%, -3%) rotate(2.5deg);
 }
 
 .folder:hover .paper3,
 :global(.group:hover) .folder .paper3 {
-  transform: translate(-50%, -6%);
+  transform: translate(-50%, 2%);
 }
 
+/* 盖子绕底边朝正前方掀开：用透视把顶边转向镜头，左右两边才会分别朝外斜（上宽下窄的
+   梯形），这才是正视下"往前翻"的形变。skew 只能整片朝一个方向倒，读出来是朝左/朝右。
+   d、θ、scaleY 三个数是绑在一起的：外扩 = W·(d/(d−h·s·sinθ) − 1)/2，盖高或背板高（--front-rim、
+   .folder height）一变就要重算，才能同时钉住两个已验收的数：外扩 ±10px、盖口掀到背板高的 30%
+   （25.4/84，跟原来 22.7/75 同一比例），露出的纸带仍是两张错落文件。 */
 .folder:hover .front,
 :global(.group:hover) .folder .front {
-  transform: skew(10deg) scaleY(0.72);
-}
-
-.folder:hover .right,
-:global(.group:hover) .folder .right {
-  transform: skew(-10deg) scaleY(0.72);
+  transform: perspective(218px) rotateX(-30deg) scaleY(0.814);
 }
 
 .back {
   position: relative;
   width: 100%;
-  height: 75px;
+  height: 100%;
   background: var(--folder-back-color);
   border-radius: 0 10px 10px 10px;
   box-shadow: 0 18px 36px rgba(0, 0, 0, 0.18);
 }
 
+/* 页签凸起 7px（原 11px）：盖子拉到 72px 后，11px 的页签是台阶的 3.7 倍，
+   视觉重量全跑到左上角，读成"背板比盖子还高"。
+   bottom 用 calc(100% − 1px) 让它压进背板 1px：原来 98% 留的 1.5px 缝在实色面板上看不出来，
+   换成同色页签 + 玻璃盖后那条缝会透出卡片底色，像裂了一道线。 */
 .back::after {
   position: absolute;
   z-index: 0;
-  bottom: 98%;
+  bottom: calc(100% - 1px);
   left: 0;
   content: "";
   width: min(38px, calc(var(--folder-width) * 0.32));
-  height: 11px;
+  height: 7px;
   background: var(--folder-back-color);
-  border-radius: 6px 6px 0 0;
+  border-radius: 5px 5px 0 0;
 }
 
 .paper {
@@ -81,12 +113,21 @@
   display: block;
 }
 
-.paper2 {
-  width: 80%;
-  height: 68%;
-  background: var(--paper-2);
+/* 最后面那张（绘制顺序在最底）兼任静止态露出的文件头。它不能沿用 .paper 的 bottom:10% +
+   translate(10%)：那组几何里顶边最高只能到 13.8px（再高底边就会从盖子下面漏出卡片），而盖口在
+   12px，永远露不出头。所以这张单独走 bottom + 不往下推，用高度直接定顶边 = 7px（露 5px 头）。
+   bottom 留 3px 是给悬停那 3° 倾角让位的：不然后下角会摆到背板底边外面，在盖子下面漏出一道亮角。 */
+.paper1 {
+  bottom: 3px;
+  height: calc(100% - 10px);
+  transform: translate(-50%, 0);
 }
 
+.paper2 {
+  width: 80%;
+  height: 72%;
+  background: var(--paper-2);
+}
 .paper3 {
   width: 90%;
   height: 58%;
@@ -96,20 +137,30 @@
 .front {
   position: absolute;
   z-index: 3;
-  inset: 0;
+  inset: var(--front-rim) 0 0;
   display: flex;
   align-items: flex-end;
   padding: 0 0 16px 17px;
-  background: linear-gradient(135deg, var(--folder-color) 0%, var(--folder-front-highlight) 100%);
+  /* 前景只有这一片。原实现还有一片同样式、被 clip-path 裁成右半边的副本，跟这片反向
+     skew 冒充第二个翻盖：前面板不透明时重叠看不出来，换成半透玻璃后重叠区被双倍着色、
+     折射在 x=50% 处断层，所以副本删掉。
+     三层叠出玻璃：① 贴着顶边的一条镜面高光（玻璃的高光只在边缘，
+     铺满上半片就成磨砂漆）② 被 surface 拉淡彩度的项目色，按主题给不透明度
+     ③ 折射：模糊并提饱和背后的纸与背板。18px 那套 .backdrop-blur-tap 是给整屏
+     面板的，84px 高的物件会把纸糊成一片均匀色，恰好毁掉「看得见亮、看不见边」。 */
+  background:
+    linear-gradient(180deg, var(--ui-border-strong) 0%, transparent 24%),
+    color-mix(in oklab, color-mix(in oklab, var(--folder-color) var(--glass-hue), rgb(var(--surface-rgb))) var(--glass-alpha), transparent);
+  /* 玻璃的高光只在顶边：左右和底边不描边，轮廓靠明度差站住（玻璃压暗背板 92 vs 47）。
+     参考图就是这样 —— 四周描一圈亮边会把玻璃读成贴纸。
+     这里刻意不用 border-top：inset 阴影画在 padding box 上，1px 顶边框会把亮线整体往下顶一格，
+     盖顶第 0 行就漏成无高亮的盖体（实测 91 vs 亮线 139）。亮线只由 inset 承担，正好压在第 0 行。 */
   border-radius: 5px 10px 10px 10px;
+  box-shadow: inset 0 1px 0 var(--glass-edge-line);
+  backdrop-filter: saturate(135%) blur(var(--glass-blur));
+  -webkit-backdrop-filter: saturate(135%) blur(var(--glass-blur));
   transform-origin: bottom;
   transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.right {
-  display: block;
-  padding-left: 0;
-  clip-path: polygon(50% 0, 100% 0, 100% 100%, 50% 100%);
 }
 
 .badges {
@@ -127,12 +178,13 @@
 .initial {
   position: relative;
   z-index: 1;
-  color: rgba(255, 255, 255, 0.68);
+  color: rgb(var(--text-rgb) / 0.92);
   font-size: 32px;
   font-weight: 760;
   line-height: 1;
   letter-spacing: -0.02em;
-  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.30);
+  /* 玻璃上的字是「搁」在表面上的，靠自身对比度站住；重投影会读成印进了面板。 */
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.22);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -142,14 +194,27 @@
     transition: none;
   }
 
+  /* 关掉动效不等于把 transform 清成 none：.folder 的 scale 和 .paper 的 translate(-50%) 是
+     静止态布局的一部分，抹掉会让卡片在悬停时跳成原尺寸、三张纸整体右移到半张卡外面。
+     所以这里还原成各自的静止值，只留 transition 关闭。 */
   .folder:hover,
+  :global(.group:hover) .folder {
+    transform: scale(var(--folder-size));
+  }
+
   .folder:hover .paper,
+  :global(.group:hover) .folder .paper {
+    transform: translate(-50%, 10%);
+  }
+
+  /* .paper1 的静止态不在 10%（见上），这里跟着还原，否则关掉动效后悬停会把文件头缩回盖子里。 */
+  .folder:hover .paper1,
+  :global(.group:hover) .folder .paper1 {
+    transform: translate(-50%, 0);
+  }
+
   .folder:hover .front,
-  .folder:hover .right,
-  :global(.group:hover) .folder,
-  :global(.group:hover) .folder .paper,
-  :global(.group:hover) .folder .front,
-  :global(.group:hover) .folder .right {
+  :global(.group:hover) .folder .front {
     transform: none;
   }
 }

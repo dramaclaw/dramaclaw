@@ -41,6 +41,7 @@ _VIDEO_CATALOG_MODES = {
     "imageReference": "image_reference",
     "allReference": "all_reference",
     "videoEdit": "video_edit",
+    "videoExtend": "video_extend",
 }
 
 

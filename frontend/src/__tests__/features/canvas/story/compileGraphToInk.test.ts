@@ -1,0 +1,514 @@
+import i18next from 'i18next';
+import { enTranslation } from '@/__tests__/helpers/i18n-fixtures';
+import { describe, expect, it } from 'vitest';
+import type { CanvasEdge, CanvasNode } from '@/features/canvas/domain/canvasNodes';
+import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
+import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
+import type { StoryFlag, StoryVariable } from '@/features/canvas/story/storyTypes';
+import { compileGraphToInk, StoryCompileError } from '@/features/canvas/story/compileGraphToInk';
+
+function videoNode(id: string, videoUrl: string | null, storyRole?: 'start'): CanvasNode {
+  return {
+    id,
+    type: CANVAS_NODE_TYPES.video,
+    position: { x: 0, y: 0 },
+    data: { videoUrl, aspectRatio: '16:9', ...(storyRole ? { storyRole } : {}) },
+  } as CanvasNode;
+}
+
+function choiceEdge(source: string, target: string, choiceText: string, order: number): CanvasEdge {
+  return {
+    id: `${source}->${target}`,
+    source,
+    target,
+    type: STORY_CHOICE_EDGE_TYPE,
+    data: { choiceText, order },
+  } as CanvasEdge;
+}
+
+describe('compileGraphToInk', () => {
+  it('localizes compilation errors without changing their error codes', async () => {
+    i18next.addResourceBundle('en', 'translation', enTranslation, true, true);
+    try {
+      await i18next.changeLanguage('en');
+      expect(() => compileGraphToInk([], [])).toThrow('There are no video nodes on the canvas.');
+      try {
+        compileGraphToInk([], []);
+      } catch (error) {
+        expect(error).toBeInstanceOf(StoryCompileError);
+        expect((error as StoryCompileError).code).toBe('empty');
+      }
+      await i18next.changeLanguage('zh');
+      expect(() => compileGraphToInk([], [])).toThrow('画布上没有视频节点');
+    } finally {
+      await i18next.changeLanguage('zh');
+    }
+  });
+
+  it('单起点两选项:生成入口 divert、两个 knot、叶子补 -> END', () => {
+    const nodes = [
+      videoNode('intro', 'intro.mp4', 'start'),
+      videoNode('meet', 'meet.mp4'),
+      videoNode('awk', 'awk.mp4'),
+    ];
+    const edges = [
+      choiceEdge('intro', 'meet', '先自我介绍', 0),
+      choiceEdge('intro', 'awk', '直接坐下', 1),
+    ];
+
+    const result = compileGraphToInk(nodes, edges);
+
+    expect(result.ink).toContain('-> clip_intro');
+    expect(result.ink).toContain('=== clip_intro ===');
+    expect(result.ink).toContain('# clip: intro');
+    expect(result.ink).toContain('+ [先自我介绍]');
+    expect(result.ink).toContain('-> clip_meet');
+    expect(result.ink).toContain('+ [直接坐下]');
+    expect(result.ink).toContain('-> clip_awk');
+    expect(result.ink).toContain('-> END');
+    expect(result.clipByNodeId.intro).toBe('intro.mp4');
+    expect(result.knotByNodeId.intro).toBe('clip_intro');
+    expect(result.explorationNodes?.[0].choices).toEqual([
+      { target: 'meet', text: '先自我介绍' }, { target: 'awk', text: '直接坐下' },
+    ]);
+  });
+
+  it('placeholderByNodeId 收录每个节点的旁白/显示名(供无视频时占位试玩)', () => {
+    const intro = {
+      id: 'intro',
+      type: CANVAS_NODE_TYPES.video,
+      position: { x: 0, y: 0 },
+      data: { videoUrl: null, aspectRatio: '16:9', storyRole: 'start', narration: '雨夜,门铃响起', displayName: '开场' },
+    } as CanvasNode;
+    const result = compileGraphToInk(
+      [intro, videoNode('meet', 'meet.mp4')],
+      [choiceEdge('intro', 'meet', '开门', 0)],
+    );
+    expect(result.placeholderByNodeId.intro).toEqual({ text: '雨夜,门铃响起', label: '开场' });
+  });
+
+  it('把选择阶段循环片段与主剧情视频分开编译', () => {
+    const intro = videoNode('intro', 'story.mp4', 'start');
+    intro.data = { ...intro.data, choiceLoopVideoUrl: 'choice-loop.mp4' };
+    const result = compileGraphToInk(
+      [intro, videoNode('meet', 'meet.mp4')],
+      [choiceEdge('intro', 'meet', '继续', 0)],
+    );
+
+    expect(result.clipByNodeId.intro).toBe('story.mp4');
+    expect(result.choiceLoopClipByNodeId).toEqual({ intro: 'choice-loop.mp4' });
+  });
+
+  it('关键选择把变量效果编译为不含数值的语义箭头，与剧情反馈一起关联', () => {
+    const edge = choiceEdge('intro', 'meet', '接过手电筒', 0);
+    edge.data = {
+      ...edge.data,
+      feedbackText: '她没有松手，只是点了点头。',
+      effects: [{ var: 'trust', delta: 1 }],
+    };
+    const result = compileGraphToInk(
+      [videoNode('intro', 'intro.mp4', 'start'), videoNode('meet', 'meet.mp4')],
+      [edge],
+      [{ name: 'trust', label: '信任', initial: 0 }],
+    );
+    expect(result.choiceFeedbackById['feedback-0']).toBe('她没有松手，只是点了点头。');
+    expect(result.choiceStateChangesById['feedback-0']).toEqual([{ label: '信任', direction: 'up' }]);
+    expect(result.ink).toContain('[接过手电筒 # choice-feedback: feedback-0]');
+    expect(result.clipByNodeId).toEqual({ intro: 'intro.mp4', meet: 'meet.mp4' });
+  });
+
+  it('没有剧情反馈的常规选择即使改变变量，也不产生状态箭头', () => {
+    const edge = choiceEdge('intro', 'meet', '继续前进', 0);
+    edge.data = { ...edge.data, effects: [{ var: 'trust', delta: 1 }] };
+    const result = compileGraphToInk(
+      [videoNode('intro', 'intro.mp4', 'start'), videoNode('meet', 'meet.mp4')],
+      [edge],
+      [{ name: 'trust', label: '信任', initial: 0 }],
+    );
+    expect(result.choiceFeedbackById).toEqual({});
+    expect(result.choiceStateChangesById).toEqual({});
+  });
+
+  it('物品锚定互动通过 Ink choice tag 与具体选项关联', () => {
+    const edge = choiceEdge('intro', 'meet', '拿起手电筒', 0);
+    edge.data = {
+      ...edge.data,
+      interaction: {
+        presentation: 'object-anchor',
+        anchor: { x: 0.68, y: 0.64, objectLabel: '手电筒' },
+        uiStyle: 'glass',
+        motion: 'pop',
+      },
+    };
+    const result = compileGraphToInk(
+      [videoNode('intro', 'intro.mp4', 'start'), videoNode('meet', 'meet.mp4')],
+      [edge],
+    );
+    expect(result.choiceInteractionById['interaction-0']).toEqual({
+      presentation: 'object-anchor',
+      anchor: { x: 0.68, y: 0.64, objectLabel: '手电筒' },
+      uiStyle: 'glass',
+      motion: 'pop',
+      transition: 'fade',
+    });
+    expect(result.ink).toContain('[拿起手电筒 # choice-interaction: interaction-0]');
+  });
+
+  it('视频内 UI 热区保留中心点与矩形宽高', () => {
+    const edge = choiceEdge('intro', 'meet', '打开舱门', 0);
+    edge.data = {
+      ...edge.data,
+      interaction: {
+        presentation: 'baked-video',
+        anchor: { x: 0.58, y: 0.62, width: 0.3, height: 0.16 },
+      },
+    };
+    const result = compileGraphToInk(
+      [videoNode('intro', 'intro.mp4', 'start'), videoNode('meet', 'meet.mp4')],
+      [edge],
+    );
+
+    expect(result.choiceInteractionById['interaction-0']?.anchor).toEqual({
+      x: 0.58,
+      y: 0.62,
+      width: 0.3,
+      height: 0.16,
+    });
+  });
+
+  it('缺少宽高的 baked-video 不兼容为旧点位，直接回退普通选项', () => {
+    const edge = choiceEdge('intro', 'meet', '打开舱门', 0);
+    edge.data = {
+      ...edge.data,
+      interaction: {
+        presentation: 'baked-video',
+        anchor: { x: 0.58, y: 0.62 },
+      },
+    };
+    const result = compileGraphToInk(
+      [videoNode('intro', 'intro.mp4', 'start'), videoNode('meet', 'meet.mp4')],
+      [edge],
+    );
+
+    expect(result.choiceInteractionById).toEqual({});
+    expect(result.ink).not.toContain('choice-interaction:');
+  });
+
+  it('选项按 order 升序排列', () => {
+    const nodes = [
+      videoNode('a', 'a.mp4', 'start'),
+      videoNode('b', 'b.mp4'),
+      videoNode('c', 'c.mp4'),
+    ];
+    const edges = [
+      choiceEdge('a', 'c', '第二项', 5),
+      choiceEdge('a', 'b', '第一项', 1),
+    ];
+    const ink = compileGraphToInk(nodes, edges).ink;
+    expect(ink.indexOf('第一项')).toBeLessThan(ink.indexOf('第二项'));
+  });
+
+  it('只编译从起点可达的节点,忽略孤立节点', () => {
+    const nodes = [
+      videoNode('a', 'a.mp4', 'start'),
+      videoNode('b', 'b.mp4'),
+      videoNode('orphan', 'orphan.mp4'),
+    ];
+    const edges = [choiceEdge('a', 'b', '去 b', 0)];
+    const ink = compileGraphToInk(nodes, edges).ink;
+    expect(ink).toContain('=== clip_a ===');
+    expect(ink).toContain('=== clip_b ===');
+    expect(ink).not.toContain('clip_orphan');
+  });
+
+  it('无起点节点时抛出结构化错误,code 为 no_start', () => {
+    const nodes = [videoNode('a', 'a.mp4')];
+    expect(() => compileGraphToInk(nodes, [])).toThrow(StoryCompileError);
+    try {
+      compileGraphToInk(nodes, []);
+    } catch (err) {
+      expect((err as StoryCompileError).code).toBe('no_start');
+    }
+  });
+
+  it('起点 videoUrl 为 null 时 clipByNodeId 为空串', () => {
+    const nodes = [videoNode('a', null, 'start')];
+    const result = compileGraphToInk(nodes, []);
+    expect(result.clipByNodeId['a']).toBe('');
+  });
+
+  it('自环选项边不死循环,只生成一个 knot', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start')];
+    const edges = [choiceEdge('a', 'a', '回头', 0)];
+    const result = compileGraphToInk(nodes, edges);
+    expect((result.ink.match(/=== clip_a ===/g) ?? []).length).toBe(1);
+  });
+
+  it('无显式起点但有唯一树根时,自动推断根为起点', () => {
+    const nodes = [
+      videoNode('root', 'root.mp4'),
+      videoNode('b', 'b.mp4'),
+      videoNode('c', 'c.mp4'),
+    ];
+    const edges = [
+      choiceEdge('root', 'b', '选 b', 0),
+      choiceEdge('root', 'c', '选 c', 1),
+    ];
+    const result = compileGraphToInk(nodes, edges);
+    expect(result.ink).toContain('-> clip_root');
+    expect(result.knotByNodeId['root']).toBe('clip_root');
+  });
+
+  it('显式起点优先于推断的根', () => {
+    const nodes = [
+      videoNode('root', 'root.mp4'),
+      videoNode('mid', 'mid.mp4', 'start'),
+    ];
+    const edges = [choiceEdge('root', 'mid', '去 mid', 0)];
+    const result = compileGraphToInk(nodes, edges);
+    expect(result.ink).toContain('-> clip_mid');
+  });
+
+  it('存在多个根(多棵树)时仍抛 no_start,要求显式指定', () => {
+    const nodes = [
+      videoNode('r1', 'r1.mp4'),
+      videoNode('a', 'a.mp4'),
+      videoNode('r2', 'r2.mp4'),
+      videoNode('b', 'b.mp4'),
+    ];
+    const edges = [choiceEdge('r1', 'a', '走', 0), choiceEdge('r2', 'b', '走', 0)];
+    try {
+      compileGraphToInk(nodes, edges);
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect((err as StoryCompileError).code).toBe('no_start');
+    }
+  });
+});
+
+function richEdge(
+  source: string,
+  target: string,
+  choiceText: string,
+  order: number,
+  extra: { condition?: { var: string; op: '>=' | '<=' | '==' | '>' | '<'; value: number }; effects?: { var: string; delta: number }[] },
+): CanvasEdge {
+  return {
+    id: `${source}->${target}`,
+    source,
+    target,
+    type: STORY_CHOICE_EDGE_TYPE,
+    data: { choiceText, order, ...extra },
+  } as CanvasEdge;
+}
+
+function groupEdge(
+  source: string,
+  target: string,
+  choiceText: string,
+  order: number,
+  join: 'and' | 'or',
+  items: { var: string; op: '>=' | '<=' | '==' | '>' | '<'; value: number }[],
+): CanvasEdge {
+  return {
+    id: `${source}->${target}`,
+    source,
+    target,
+    type: STORY_CHOICE_EDGE_TYPE,
+    data: { choiceText, order, condition: { join, items } },
+  } as CanvasEdge;
+}
+
+describe('compileGraphToInk variables', () => {
+  const vars: StoryVariable[] = [{ name: 'fav', label: '好感度', initial: 0 }];
+
+  it('为每个变量生成 VAR 声明', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start')];
+    const result = compileGraphToInk(nodes, [], vars);
+    expect(result.ink).toContain('VAR state_fav = 0');
+  });
+
+  it('带条件的选项生成 + {var op value}', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
+    const edges = [richEdge('a', 'b', '去 b', 0, { condition: { var: 'fav', op: '>=', value: 3 } })];
+    const result = compileGraphToInk(nodes, edges, vars);
+    expect(result.ink).toContain('+ {state_fav >= 3} [去 b]');
+    expect(result.ink).toContain('-> clip_b');
+  });
+
+  it('带效果的选项生成 ~ var += delta', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
+    const edges = [richEdge('a', 'b', '去 b', 0, { effects: [{ var: 'fav', delta: 2 }] })];
+    const result = compileGraphToInk(nodes, edges, vars);
+    expect(result.ink).toContain('~ state_fav += 2');
+  });
+
+  it('引用未注册变量的条件/效果被静默跳过且记 warning', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
+    const edges = [
+      richEdge('a', 'b', '去 b', 0, {
+        condition: { var: 'ghost', op: '>=', value: 1 },
+        effects: [{ var: 'ghost', delta: 1 }],
+      }),
+    ];
+    const result = compileGraphToInk(nodes, edges, vars);
+    expect(result.ink).not.toContain('ghost');
+    expect(result.ink).toContain('+ [去 b]'); // 退化为无条件无效果
+    expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('不传剧情状态时仍能编译简单故事', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
+    const edges = [richEdge('a', 'b', '去 b', 0, {})];
+    const result = compileGraphToInk(nodes, edges);
+    expect(result.ink).toContain('+ [去 b]');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('访问计数叶子编译成 { clip_<id> op n }', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('secret', 's.mp4'), videoNode('b', 'b.mp4')];
+    const edges: CanvasEdge[] = [
+      { id: 'a->secret', source: 'a', target: 'secret', type: STORY_CHOICE_EDGE_TYPE, data: { choiceText: '去密室', order: 0 } } as CanvasEdge,
+      { id: 'secret->b', source: 'secret', target: 'b', type: STORY_CHOICE_EDGE_TYPE, data: { choiceText: '回去', order: 0 } } as CanvasEdge,
+      { id: 'a->b', source: 'a', target: 'b', type: STORY_CHOICE_EDGE_TYPE,
+        data: { choiceText: '只有去过密室才出现', order: 1, condition: { visitedNodeId: 'secret', op: '>=', value: 1 } } } as CanvasEdge,
+    ];
+    const ink = compileGraphToInk(nodes, edges).ink;
+    expect(ink).toContain('{clip_secret >= 1} [只有去过密室才出现]');
+  });
+
+  it('访问叶子与变量叶子混在 AND 组', () => {
+    const vars2: StoryVariable[] = [{ name: 'favor', label: '好感', initial: 0 }];
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('secret', 's.mp4'), videoNode('b', 'b.mp4')];
+    const edges: CanvasEdge[] = [
+      { id: 'a->secret', source: 'a', target: 'secret', type: STORY_CHOICE_EDGE_TYPE, data: { choiceText: '去', order: 0 } } as CanvasEdge,
+      { id: 'secret->b', source: 'secret', target: 'b', type: STORY_CHOICE_EDGE_TYPE, data: { choiceText: '回', order: 0 } } as CanvasEdge,
+      { id: 'a->b', source: 'a', target: 'b', type: STORY_CHOICE_EDGE_TYPE, data: { choiceText: '混合', order: 1,
+        condition: { join: 'and', items: [{ var: 'favor', op: '>=', value: 5 }, { visitedNodeId: 'secret', op: '>=', value: 1 }] } } } as CanvasEdge,
+    ];
+    const ink = compileGraphToInk(nodes, edges, vars2).ink;
+    expect(ink).toContain('{state_favor >= 5 && clip_secret >= 1} [混合]');
+  });
+
+  it('访问叶子指向不可达/组外节点 → 跳过该叶子 + warning', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
+    const edges: CanvasEdge[] = [
+      { id: 'a->b', source: 'a', target: 'b', type: STORY_CHOICE_EDGE_TYPE,
+        data: { choiceText: '去 b', order: 0, condition: { visitedNodeId: 'ghost', op: '>=', value: 1 } } } as CanvasEdge,
+    ];
+    const result = compileGraphToInk(nodes, edges);
+    expect(result.ink).not.toContain('clip_ghost');
+    expect(result.ink).toContain('+ [去 b]');
+    expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('复合 AND 条件组生成 { a >= 5 && b >= 0 }', () => {
+    const vars2: StoryVariable[] = [
+      { name: 'fav', label: '好感度', initial: 0 },
+      { name: 'trust', label: '信任', initial: 0 },
+    ];
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
+    const edges = [groupEdge('a', 'b', '去 b', 0, 'and', [
+      { var: 'fav', op: '>=', value: 5 },
+      { var: 'trust', op: '>=', value: 0 },
+    ])];
+    const result = compileGraphToInk(nodes, edges, vars2);
+    expect(result.ink).toContain('+ {state_fav >= 5 && state_trust >= 0} [去 b]');
+  });
+
+  it('复合 OR 条件组生成 { a >= 5 || b < 1 }', () => {
+    const vars2: StoryVariable[] = [
+      { name: 'fav', label: '好感度', initial: 0 },
+      { name: 'trust', label: '信任', initial: 0 },
+    ];
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
+    const edges = [groupEdge('a', 'b', '去 b', 0, 'or', [
+      { var: 'fav', op: '>=', value: 5 },
+      { var: 'trust', op: '<', value: 1 },
+    ])];
+    const result = compileGraphToInk(nodes, edges, vars2);
+    expect(result.ink).toContain('+ {state_fav >= 5 || state_trust < 1} [去 b]');
+  });
+
+  it('组里任一叶子引用未注册变量 → 整组丢弃 + warning', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
+    const edges = [groupEdge('a', 'b', '去 b', 0, 'and', [
+      { var: 'fav', op: '>=', value: 5 },
+      { var: 'ghost', op: '>=', value: 1 },
+    ])];
+    const result = compileGraphToInk(nodes, edges, vars);
+    expect(result.ink).not.toContain('ghost');
+    expect(result.ink).toContain('+ [去 b]'); // 整组丢弃,退化为无条件
+    expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('限时:输出 choiceTimeByNodeId + defaultChoiceIndexByNodeId(默认项排序后位置)', () => {
+    const start = {
+      id: 'intro',
+      type: CANVAS_NODE_TYPES.video,
+      position: { x: 0, y: 0 },
+      data: { videoUrl: 'i.mp4', aspectRatio: '16:9', storyRole: 'start', choiceTimeLimitSec: 4 },
+    } as CanvasNode;
+    const nodes = [start, videoNode('meet', 'm.mp4'), videoNode('awk', 'a.mp4')];
+    const defaultEdge = {
+      id: 'intro->awk',
+      source: 'intro',
+      target: 'awk',
+      type: STORY_CHOICE_EDGE_TYPE,
+      data: { choiceText: '直接坐下', order: 1, isDefault: true },
+    } as CanvasEdge;
+    const edges = [choiceEdge('intro', 'meet', '先自我介绍', 0), defaultEdge];
+
+    const result = compileGraphToInk(nodes, edges);
+    expect(result.choiceTimeByNodeId.intro).toBe(4);
+    // 默认项 order=1,排序后位于第 1 位(0-based)→ inkjs choice index 1
+    expect(result.defaultChoiceIndexByNodeId.intro).toBe(1);
+    // 无限时节点不进表
+    expect(result.choiceTimeByNodeId.meet).toBeUndefined();
+  });
+
+  it('无默认/无限时:两张表为空', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('b', 'b.mp4')];
+    const edges = [choiceEdge('a', 'b', '去 b', 0)];
+    const result = compileGraphToInk(nodes, edges);
+    expect(result.choiceTimeByNodeId).toEqual({});
+    expect(result.defaultChoiceIndexByNodeId).toEqual({});
+  });
+
+  it('自动分支与布尔开关编译为片段结束后的条件跳转', () => {
+    const nodes = [videoNode('a', 'a.mp4', 'start'), videoNode('open', 'open.mp4'), videoNode('closed', 'closed.mp4')];
+    const flags: StoryFlag[] = [{ name: 'has_key', label: '已拿到钥匙', initial: false }];
+    const edges: CanvasEdge[] = [
+      { id: 'with-key', source: 'a', target: 'open', type: STORY_CHOICE_EDGE_TYPE, data: {
+        choiceText: '', order: 0, transitionMode: 'automatic', condition: { flag: 'has_key', value: true },
+      } } as CanvasEdge,
+      { id: 'otherwise', source: 'a', target: 'closed', type: STORY_CHOICE_EDGE_TYPE, data: {
+        choiceText: '', order: 1, transitionMode: 'automatic', effects: [{ flag: 'has_key', value: true }],
+      } } as CanvasEdge,
+    ];
+    const result = compileGraphToInk(nodes, edges, [], flags);
+    expect(result.ink).toContain('VAR state_has_5f_key = false');
+    expect(result.ink).toContain('{ state_has_5f_key == true:');
+    expect(result.ink).toContain('~ state_has_5f_key = true');
+    expect(result.ink).not.toContain('+ [');
+  });
+
+  it('endingByNodeId 仅含叶子结局:不将旁白用作标题，保留 endingLabel', () => {
+    const start = {
+      id: 'a',
+      type: CANVAS_NODE_TYPES.video,
+      position: { x: 0, y: 0 },
+      data: { videoUrl: 'a.mp4', aspectRatio: '16:9', storyRole: 'start', narration: '开场' },
+    } as CanvasNode;
+    const leaf = {
+      id: 'b',
+      type: CANVAS_NODE_TYPES.video,
+      position: { x: 0, y: 0 },
+      data: { videoUrl: 'b.mp4', aspectRatio: '16:9', narration: '宠冠后宫', endingLabel: 'GE' },
+    } as CanvasNode;
+    const result = compileGraphToInk([start, leaf], [choiceEdge('a', 'b', '去 b', 0)]);
+    expect(result.endingByNodeId.b).toEqual({ title: '', label: 'GE' });
+    // 非叶子(有选项)不进结局表
+    expect(result.endingByNodeId.a).toBeUndefined();
+  });
+});
