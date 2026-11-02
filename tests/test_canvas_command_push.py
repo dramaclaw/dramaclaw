@@ -180,11 +180,10 @@ async def test_hub_recovers_commit_without_notification(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_hub_deadline_redelivery_and_expiry(tmp_path, monkeypatch):
+async def test_hub_redelivers_after_lease_expires(tmp_path, monkeypatch):
     from novelvideo.freezone.canvas_command_watch import BridgeWatchHub
 
     monkeypatch.setattr(bridge, "BRIDGE_DELIVERY_LEASE_SECONDS", 0.15)
-    monkeypatch.setitem(bridge.BRIDGE_PENDING_TTL_SECONDS, "canvas_command", 0.7)
     publish(tmp_path)
     hub = BridgeWatchHub()
     async with hub.subscribe([tmp_path]):
@@ -192,12 +191,31 @@ async def test_hub_deadline_redelivery_and_expiry(tmp_path, monkeypatch):
         assert bridge.mark_bridge_message_delivered(
             "command", consumer_id="one", bridge_dir=tmp_path
         )
-        await asyncio.sleep(0.2)
-        assert hub.pending(tmp_path, "project", "canvas")
-        assert bridge.mark_bridge_message_delivered(
-            "command", consumer_id="two", bridge_dir=tmp_path
+        def claim_redelivery():
+            return bool(hub.pending(tmp_path, "project", "canvas")) and (
+                bridge.mark_bridge_message_delivered(
+                    "command", consumer_id="two", bridge_dir=tmp_path
+                )
+            )
+
+        await eventually(claim_redelivery, timeout=5)
+        assert bridge._read_durable_bridge_result("command", bridge_dir=tmp_path) is None
+
+
+@pytest.mark.asyncio
+async def test_hub_persists_timeout_after_message_expires(tmp_path, monkeypatch):
+    from novelvideo.freezone.canvas_command_watch import BridgeWatchHub
+
+    monkeypatch.setitem(bridge.BRIDGE_PENDING_TTL_SECONDS, "canvas_command", 0.15)
+    publish(tmp_path)
+    hub = BridgeWatchHub()
+    async with hub.subscribe([tmp_path]):
+        await eventually(
+            lambda: bridge._read_durable_bridge_result("command", bridge_dir=tmp_path),
+            timeout=5,
         )
-        await eventually(lambda: bridge._read_durable_bridge_result("command", bridge_dir=tmp_path))
+        result = bridge._read_durable_bridge_result("command", bridge_dir=tmp_path)
+        assert result["canvas_apply_status"] == "timeout"
         assert not hub.pending(tmp_path, "project", "canvas")
 
 
