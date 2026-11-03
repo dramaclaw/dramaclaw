@@ -163,8 +163,13 @@ async def test_hub_recovers_commit_without_notification(tmp_path, monkeypatch):
     from novelvideo.freezone.canvas_command_watch import BridgeWatchHub
 
     hub = BridgeWatchHub(reconcile_seconds=0.15)
+    async def no_native_notifications():
+        await asyncio.Event().wait()
+
+    # Exercise periodic reconciliation without native startup/rebuild scans.
+    monkeypatch.setattr(hub, "_watch", no_native_notifications)
     async with hub.subscribe([tmp_path]):
-        await asyncio.sleep(0.4)
+        await eventually(lambda: hub.metrics["reads"] >= 1)
         monkeypatch.setattr(bridge, "_notify_bridge", lambda *_: None)
         # No compatibility file event either: simulate death between commit and notify.
         bridge._put_pending_bridge_message(
@@ -180,11 +185,10 @@ async def test_hub_recovers_commit_without_notification(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_hub_deadline_redelivery_and_expiry(tmp_path, monkeypatch):
+async def test_hub_redelivers_after_lease_expires(tmp_path, monkeypatch):
     from novelvideo.freezone.canvas_command_watch import BridgeWatchHub
 
     monkeypatch.setattr(bridge, "BRIDGE_DELIVERY_LEASE_SECONDS", 0.15)
-    monkeypatch.setitem(bridge.BRIDGE_PENDING_TTL_SECONDS, "canvas_command", 0.7)
     publish(tmp_path)
     hub = BridgeWatchHub()
     async with hub.subscribe([tmp_path]):
@@ -192,12 +196,31 @@ async def test_hub_deadline_redelivery_and_expiry(tmp_path, monkeypatch):
         assert bridge.mark_bridge_message_delivered(
             "command", consumer_id="one", bridge_dir=tmp_path
         )
-        await asyncio.sleep(0.2)
-        assert hub.pending(tmp_path, "project", "canvas")
-        assert bridge.mark_bridge_message_delivered(
-            "command", consumer_id="two", bridge_dir=tmp_path
+        def claim_redelivery():
+            return bool(hub.pending(tmp_path, "project", "canvas")) and (
+                bridge.mark_bridge_message_delivered(
+                    "command", consumer_id="two", bridge_dir=tmp_path
+                )
+            )
+
+        await eventually(claim_redelivery, timeout=5)
+        assert bridge._read_durable_bridge_result("command", bridge_dir=tmp_path) is None
+
+
+@pytest.mark.asyncio
+async def test_hub_persists_timeout_after_message_expires(tmp_path, monkeypatch):
+    from novelvideo.freezone.canvas_command_watch import BridgeWatchHub
+
+    monkeypatch.setitem(bridge.BRIDGE_PENDING_TTL_SECONDS, "canvas_command", 0.15)
+    publish(tmp_path)
+    hub = BridgeWatchHub()
+    async with hub.subscribe([tmp_path]):
+        await eventually(
+            lambda: bridge._read_durable_bridge_result("command", bridge_dir=tmp_path),
+            timeout=5,
         )
-        await eventually(lambda: bridge._read_durable_bridge_result("command", bridge_dir=tmp_path))
+        result = bridge._read_durable_bridge_result("command", bridge_dir=tmp_path)
+        assert result["canvas_apply_status"] == "timeout"
         assert not hub.pending(tmp_path, "project", "canvas")
 
 

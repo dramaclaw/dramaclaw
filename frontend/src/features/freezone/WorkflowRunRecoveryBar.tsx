@@ -142,14 +142,14 @@ export function WorkflowRunRecoveryBar({
       const response = await listFreezoneWorkflowRuns(projectId, canvasId);
       setRuns(response.runs);
     } catch {
-      // Recovery is optional and must not add an error state to the canvas itself.
-      setRuns([]);
+      // A busy/failed refresh must not erase persisted recovery information.
     }
   }, [canvasId, projectId]);
 
   useEffect(() => {
     setDismissedRunId(null);
     setError(null);
+    setRuns([]);
     void refresh();
   }, [refresh]);
 

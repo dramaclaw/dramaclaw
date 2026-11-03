@@ -3158,8 +3158,9 @@ def _collect_bridge_events(
                 or not isinstance(pending.get(field), dict)
             ):
                 continue
+            delivery_consumer = f"websocket:{username}:{turn_id}"
             if mark_bridge_message_delivered(
-                key, consumer_id=f"websocket:{username}:{turn_id}", bridge_dir=directory
+                key, consumer_id=delivery_consumer, bridge_dir=directory
             ):
                 emitted_bridge_keys.add(key)
                 items.append(pending)

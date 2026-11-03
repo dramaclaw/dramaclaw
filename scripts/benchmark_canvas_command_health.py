@@ -74,6 +74,7 @@ async def benchmark(duration, directories, subscribers, rate, legacy_module=None
                             )
 
         async def legacy_consume():
+            delivery_consumer = "legacy"
             while True:
                 await asyncio.sleep(0.4)
                 for directory in targets:
@@ -84,7 +85,7 @@ async def benchmark(duration, directories, subscribers, rate, legacy_module=None
                     ):
                         key = pending["key"]
                         if legacy.mark_bridge_message_delivered(
-                            key, consumer_id="legacy", bridge_dir=directory
+                            key, consumer_id=delivery_consumer, bridge_dir=directory
                         ):
                             delivery_times.append((time.time() - pending["created_at"]) * 1000)
                             counts["received"] += 1

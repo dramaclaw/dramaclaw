@@ -3267,6 +3267,7 @@ src/novelvideo/api/story_publication_lifecycle.py,Elastic-2.0,2026 SuperTale con
 src/novelvideo/api/task_start_errors.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/api/upload_workers.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/api/viewer_manifests.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/api/workflow_reads.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/api/wsgi.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/assets/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/assets/ladybug-json/0.16.0/SHA256SUMS,MIT,2022-2025 Kùzu Inc.; 2025-2026 Ladybug Memory Inc.; 2020 YaoYuan,unmodified upstream Ladybug JSON extension (links yyjson); see bundled LICENSE.txt and SHA256SUMS
@@ -4207,6 +4208,7 @@ tests/test_previz_blockout_prompts.py,Elastic-2.0,2026 SuperTale contributors,RE
 tests/test_previz_blockout_render.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_previz_blockout_route.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_previz_blockout_task.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_product_credit_confirmation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_product_surface_routes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_config_narration.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_context.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4316,6 +4318,7 @@ tests/test_task_runner_home_node_placement.py,Elastic-2.0,2026 SuperTale contrib
 tests/test_task_runner_state_dir.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_script_runner_store_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_sketch_runner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_task_state_batch_reads.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_state_celery_zombie_ttl.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_state_manager_seam.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_state_restart_reconcile.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4344,6 +4347,7 @@ tests/test_workflow_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml ag
 tests/test_workflow_observation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_plan.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_preflight.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_workflow_read_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_run_failure_guard.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_semantics.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_stable_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
