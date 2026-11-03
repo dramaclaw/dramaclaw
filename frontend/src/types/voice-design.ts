@@ -94,6 +94,9 @@ export const voiceDesignCandidateSchema = z.discriminatedUnion("status", [
   }),
   z.object({ ...candidateId, status: z.literal("expired") }),
 ]);
+export const voiceDesignHistorySchema = z.object({
+  candidates: z.array(voiceDesignReadySchema).max(5),
+});
 export const voiceDesignQuoteSchema = z.object({
   model: voiceDesignModelSchema,
   cost: z.number().nonnegative(),

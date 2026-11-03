@@ -8941,7 +8941,15 @@
     "selectedTarget": "Mô hình đích đã chọn: {{model}}",
     "resultModel": "Mô hình yêu cầu: {{model}}",
     "resultTarget": "Mô hình đích: {{model}}",
-    "testReplay": "Phát lại thử nghiệm; không gọi mô hình thực"
+    "testReplay": "Phát lại thử nghiệm; không gọi mô hình thực",
+    "historyTitle": "Bản nghe thử gần đây",
+    "temporaryHint": "Bản nghe thử chưa lưu hết hạn và tự động bị xóa sau 1 giờ. Giữ tối đa 5 bản gần nhất. Giọng đã lưu không bị ảnh hưởng.",
+    "historyRetry": "Làm mới danh sách",
+    "selectHistory": "Chọn bản nghe thử: {{description}}",
+    "historyEmpty": "Không có bản nghe thử chưa lưu.",
+    "originalDescription": "Mô tả khi tạo: {{description}}",
+    "modelDetails": "Chi tiết mô hình",
+    "modelUnavailableShort": "{{model}} (không dùng cho lần tạo mới)"
   },
   "subscriptions": {
     "bill": {

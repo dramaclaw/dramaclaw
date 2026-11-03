@@ -10,6 +10,7 @@ import {
   voiceDesignErrorSchema,
   voiceDesignQuoteSchema,
   voiceDesignModelsSchema,
+  voiceDesignHistorySchema,
   matchesVoiceDesignModel,
   type VoiceDesignModel,
   type VoiceDesignCreate,
@@ -100,6 +101,23 @@ export function useVoiceDesignModels(project: string) {
     enabled: !!project,
     retry: false,
     staleTime: 30_000,
+  });
+}
+export function useVoiceDesignHistory(project: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.voiceDesignHistory(project),
+    queryFn: ({ signal }) =>
+      readVoiceDesignResponse(
+        api.get(p`api/v1/projects/${project}/voice-design/candidates`, {
+          signal,
+          retry: 0,
+          throwHttpErrors: false,
+        }),
+        voiceDesignHistorySchema,
+      ),
+    enabled: !!project && enabled,
+    retry: false,
+    staleTime: 0,
   });
 }
 export function useVoiceDesignQuote(
