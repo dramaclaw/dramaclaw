@@ -11,10 +11,13 @@ import {
   voiceDesignQuoteSchema,
   voiceDesignModelsSchema,
   voiceDesignHistorySchema,
+  voiceDesignLibraryAssetSchema,
+  generatedCharacterVoiceSchema,
   matchesVoiceDesignModel,
   type VoiceDesignModel,
   type VoiceDesignCreate,
   type VoiceDesignSurface,
+  type ApplyLibraryCharacterVoice,
 } from "@/types/voice-design";
 
 export class VoiceDesignApiError extends Error {
@@ -107,18 +110,64 @@ export function useVoiceDesignHistory(project: string, enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.voiceDesignHistory(project),
     queryFn: ({ signal }) =>
-      readVoiceDesignResponse(
-        api.get(p`api/v1/projects/${project}/voice-design/candidates`, {
-          signal,
-          retry: 0,
-          throwHttpErrors: false,
-        }),
-        voiceDesignHistorySchema,
-      ),
+      fetchVoiceDesignHistory(project, { signal, limit: 5 }),
     enabled: !!project && enabled,
     retry: false,
     staleTime: 0,
   });
+}
+export function fetchVoiceDesignHistory(
+  project: string,
+  {
+    cursor,
+    limit = 20,
+    signal,
+  }: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
+) {
+  return readVoiceDesignResponse(
+    api.get(p`api/v1/projects/${project}/voice-design/candidates`, {
+      searchParams: { limit, ...(cursor ? { cursor } : {}) },
+      signal,
+      retry: 0,
+      throwHttpErrors: false,
+    }),
+    voiceDesignHistorySchema,
+  );
+}
+export function saveVoiceDesignToLibrary(
+  project: string,
+  candidateId: string,
+  input: { save_request_id: string; name: string },
+) {
+  return readVoiceDesignResponse(
+    api.post(
+      p`api/v1/projects/${project}/voice-design/candidates/${candidateId}/save-to-library`,
+      {
+        json: input,
+        retry: 0,
+        throwHttpErrors: false,
+      },
+    ),
+    voiceDesignLibraryAssetSchema,
+  );
+}
+export function applyLibraryCharacterVoice(
+  project: string,
+  character: string,
+  slot: string,
+  input: ApplyLibraryCharacterVoice,
+) {
+  return readVoiceDesignResponse(
+    api.post(
+      p`api/v1/projects/${project}/characters/${character}/voice-samples/${slot}/apply-library`,
+      {
+        json: input,
+        retry: 0,
+        throwHttpErrors: false,
+      },
+    ),
+    generatedCharacterVoiceSchema,
+  );
 }
 export function useVoiceDesignQuote(
   project: string,

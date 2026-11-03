@@ -95,8 +95,22 @@ export const voiceDesignCandidateSchema = z.discriminatedUnion("status", [
   z.object({ ...candidateId, status: z.literal("expired") }),
 ]);
 export const voiceDesignHistorySchema = z.object({
-  candidates: z.array(voiceDesignReadySchema).max(5),
+  candidates: z.array(voiceDesignReadySchema).max(100),
+  next_cursor: z.string().nullable(),
+  retention_seconds: z.number().positive().finite(),
 });
+export const voiceDesignLibraryAssetSchema = z.object({
+  asset_id: z.string().uuid(),
+  name: z.string().min(1).refine(value => Array.from(value).length <= 60),
+  url: z.string().min(1),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  duration_seconds: z.number().positive().max(15),
+  model: voiceDesignModelSchema.nullable().optional(),
+});
+export type VoiceDesignLibraryAsset = z.infer<
+  typeof voiceDesignLibraryAssetSchema
+>;
+export type VoiceDesignHistory = z.infer<typeof voiceDesignHistorySchema>;
 export const voiceDesignQuoteSchema = z.object({
   model: voiceDesignModelSchema,
   cost: z.number().nonnegative(),
@@ -130,6 +144,12 @@ export interface SaveGeneratedCharacterVoice extends SaveGeneratedVoice {
 }
 export interface SaveGeneratedAccountVoice extends SaveGeneratedVoice {
   name: string;
+}
+export interface ApplyLibraryCharacterVoice {
+  save_request_id: string;
+  asset_id: string;
+  expected_slot: ExpectedVoiceSlot;
+  replace_existing: boolean;
 }
 export const generatedCharacterVoiceSchema = z.object({
   slot: z.enum(["default", "child", "youth", "middle", "elder"]),

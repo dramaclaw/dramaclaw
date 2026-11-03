@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { AudioPreviewPlayer, formatAudioClock } from "@/components/ui/audio-preview-player";
+import { formatAudioClock } from "@/components/ui/audio-preview-player";
 import {
   Select,
   SelectContent,
@@ -32,13 +32,15 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   createVoiceDesign,
-  fetchVoiceDesignAudio,
   getVoiceDesign,
   useVoiceDesignQuote,
   useVoiceDesignModels,
   useVoiceDesignHistory,
   VoiceDesignApiError,
 } from "@/lib/queries/voice-design";
+import { AssetLibraryModal } from "@/features/canvas/ui/AssetLibraryModal";
+import { VoiceDesignRetentionHint } from "@/components/assets/voice-design-history";
+import { VoicePreview } from "@/components/assets/voice-design-preview";
 import { queryKeys } from "@/lib/query-keys";
 import { matchesVoiceDesignModel } from "@/types/voice-design";
 import type {
@@ -627,6 +629,7 @@ function useVoiceDesignSession({
 function VoiceDesignSession(props: Props) {
   const { t } = useTranslation();
   const { target, open, onOpenChange } = props;
+  const [historyOpen, setHistoryOpen] = useState(false);
   const {
     draft,
     session,
@@ -794,16 +797,17 @@ function VoiceDesignSession(props: Props) {
           <section aria-label={t("voiceDesign.historyTitle")} className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-medium">{t("voiceDesign.historyTitle")}</h3>
+              <Button size="sm" variant="ghost" disabled={selectionLocked} onClick={() => setHistoryOpen(true)}>{t("voiceDesign.viewAll")}</Button>
               {history.isError && (
                 <Button variant="ghost" size="sm" onClick={() => void history.refetch()}>
                   {t("voiceDesign.historyRetry")}
                 </Button>
               )}
             </div>
-            <p className="text-xs leading-relaxed text-muted-foreground">{t("voiceDesign.temporaryHint")}</p>
+            <VoiceDesignRetentionHint seconds={history.data?.retention_seconds} />
             {history.isError ? <p role="alert" className="text-xs">{feedback(knownMessage(history.error))}</p> : (
               <div className="ui-scrollbar max-h-40 space-y-1 overflow-y-auto">
-                {history.data?.candidates.filter((item) => Date.parse(item.expires_at) > now).map((item) => (
+                {history.data?.candidates.filter((item) => Date.parse(item.expires_at) > now).slice(0, 5).map((item) => (
                   <button
                     key={item.candidate_id}
                     type="button"
@@ -819,7 +823,7 @@ function VoiceDesignSession(props: Props) {
                     </span>
                     <span className="mt-1 block truncate text-sm">{item.description}</span>
                     <span className="mt-1 block text-xs text-muted-foreground">
-                      {new Date(item.created_at).toLocaleTimeString()} · {t("voiceDesign.expires", { time: new Date(item.expires_at).toLocaleTimeString() })}
+                      {new Date(item.created_at).toLocaleTimeString()} · {t("voiceDesign.expires", { time: new Date(item.expires_at).toLocaleString() })}
                     </span>
                   </button>
                 ))}
@@ -835,7 +839,7 @@ function VoiceDesignSession(props: Props) {
               <VoicePreview
                 key={draft.ready.candidate_id}
                 ready={draft.ready}
-                disabled={expired || !open}
+                disabled={expired || !open || historyOpen}
                 onExpired={expirePreview}
               />
               <p>
@@ -940,6 +944,21 @@ function VoiceDesignSession(props: Props) {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+        <AssetLibraryModal
+          mode="manage"
+          open={open && historyOpen}
+          project={props.project}
+          initialView="recent"
+          allowedMedia={["audio"]}
+          selectionDisabled={selectionLocked}
+          onClose={() => setHistoryOpen(false)}
+          onSelectCandidate={ready => {
+            if (!selectionLocked) {
+              selectHistory(ready);
+              setHistoryOpen(false);
+            }
+          }}
+        />
       </DialogContent>
     </Dialog>
   );
@@ -976,78 +995,5 @@ function ModelDetails({
       )}
       </details>
     </div>
-  );
-}
-function VoicePreview({
-  ready,
-  disabled,
-  onExpired,
-}: {
-  ready: VoiceDesignReady;
-  disabled: boolean;
-  onExpired: () => void;
-}) {
-  const { t } = useTranslation();
-  const url = useRef<string | null>(null);
-  const abort = useRef<AbortController | null>(null);
-  const onExpiredRef = useRef(onExpired);
-  const [source, setSource] = useState<string>();
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  useEffect(() => { onExpiredRef.current = onExpired; }, [onExpired]);
-  const load = useCallback(async () => {
-    if (disabled) return;
-    abort.current?.abort();
-    const controller = new AbortController();
-    abort.current = controller;
-    setLoading(true);
-    setError("");
-    try {
-      const blob = await fetchVoiceDesignAudio(ready.preview_url, controller.signal);
-      if (controller.signal.aborted) return;
-      url.current = URL.createObjectURL(blob);
-      setSource(url.current);
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      if (error instanceof VoiceDesignApiError && error.code === "candidate_expired")
-        onExpiredRef.current();
-      setError(error instanceof VoiceDesignApiError ? error.message : "voiceDesign.errors.playback");
-    } finally {
-      if (!controller.signal.aborted) setLoading(false);
-    }
-  }, [disabled, ready.preview_url]);
-  useEffect(() => {
-    void load();
-    return () => {
-      abort.current?.abort();
-      if (url.current) URL.revokeObjectURL(url.current);
-      url.current = null;
-      setSource(undefined);
-    };
-  }, [load]);
-  return (
-    <>
-      <AudioPreviewPlayer
-        src={source}
-        durationSeconds={ready.duration_seconds}
-        disabled={disabled || loading}
-        label={t("voiceDesign.audioLabel")}
-        playLabel={t("voiceDesign.play")}
-        onError={() => {
-          setError("voiceDesign.errors.playback");
-          if (url.current) URL.revokeObjectURL(url.current);
-          url.current = null;
-          setSource(undefined);
-        }}
-      />
-      {error && (
-        <div className="flex items-center justify-between gap-2">
-          <p role="alert" className="break-words text-xs">{t(error, { defaultValue: error })}</p>
-          <Button variant="ghost" size="sm" onClick={() => void load()} disabled={disabled || loading}>
-            {t("voiceDesign.retryPlayback")}
-          </Button>
-        </div>
-      )}
-    </>
   );
 }

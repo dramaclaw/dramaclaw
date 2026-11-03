@@ -6,12 +6,12 @@
 // 只列图片——视频抽帧要解码、音频压根没有画面，都不适合当封面；文件夹里一张图
 // 都没有时给一句空态提示，而不是弹一个空网格。封面存的是素材 URL 本身，所以这里
 // 不涉及上传，素材被删掉后封面自然回落到默认图标。
-import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useState, type ComponentProps } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { folderCoverUrl, type AssetFolder } from './assetLibraryItems';
 
@@ -21,6 +21,7 @@ export interface AssetLibraryFolderCoverDialogProps {
   onClose: () => void;
   /** 抛错即视为失败，错误信息显示在底部，弹窗保持打开。 */
   onSubmit: (cover: string) => Promise<void>;
+  finalFocus?: ComponentProps<typeof DialogContent>['finalFocus'];
 }
 
 export function AssetLibraryFolderCoverDialog({
@@ -28,6 +29,7 @@ export function AssetLibraryFolderCoverDialog({
   folder,
   onClose,
   onSubmit,
+  finalFocus,
 }: AssetLibraryFolderCoverDialogProps) {
   const { t } = useTranslation();
   const [picked, setPicked] = useState<string | null>(null);
@@ -61,17 +63,28 @@ export function AssetLibraryFolderCoverDialog({
     }
   };
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[320] flex items-center justify-center"
-      role="dialog"
-      aria-label={t('canvas.assetLibrary.cover.title')}
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next, details) => {
+        if (!next) {
+          if (submitting) details.cancel();
+          else onClose();
+        }
+      }}
     >
-      <div className="absolute inset-0 bg-black/55" onClick={onClose} />
-      <div className="relative flex max-h-[80vh] w-[min(720px,92vw)] flex-col overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#1b1c22] shadow-[0_18px_48px_rgba(0,0,0,0.5)]">
+      <DialogContent
+        showCloseButton={false}
+        finalFocus={finalFocus}
+        aria-label={t('canvas.assetLibrary.cover.title')}
+        overlayClassName="z-[320] bg-black/55"
+        className="z-[320] flex max-h-[80vh] w-[min(720px,92vw)] max-w-none sm:max-w-none flex-col overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#1b1c22] p-0 gap-0 ring-0 shadow-[0_18px_48px_rgba(0,0,0,0.5)]"
+      >
         <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-3.5">
           <h3 className="text-sm font-semibold text-text-dark">
-            {t('canvas.assetLibrary.cover.titleWithFolder', { name: folder.label })}
+            {t('canvas.assetLibrary.cover.titleWithFolder', {
+              name: folder.label,
+            })}
           </h3>
           <button
             type="button"
@@ -100,7 +113,9 @@ export function AssetLibraryFolderCoverDialog({
                   key={entry.id ?? `img-${idx}`}
                   type="button"
                   onClick={() => setPicked(entry.url)}
-                  aria-label={t('canvas.assetLibrary.cover.pickAria', { name: entry.name })}
+                  aria-label={t('canvas.assetLibrary.cover.pickAria', {
+                    name: entry.name,
+                  })}
                   className={`relative aspect-square overflow-hidden rounded-[8px] border transition-colors ${
                     picked === entry.url
                       ? 'border-accent/70 ring-1 ring-accent/45'
@@ -117,7 +132,9 @@ export function AssetLibraryFolderCoverDialog({
               ))}
             </div>
           )}
-          {error && <div className="mt-3 text-[11px] text-red-400">{error}</div>}
+          {error && (
+            <div className="mt-3 text-[11px] text-red-400">{error}</div>
+          )}
         </div>
 
         <div className="flex shrink-0 items-center justify-end gap-2 px-5 pb-4 pt-1">
@@ -135,12 +152,13 @@ export function AssetLibraryFolderCoverDialog({
             disabled={!canSubmit}
             onClick={() => void handleSubmit()}
           >
-            {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+            {submitting && (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            )}
             {t('common.save')}
           </Button>
         </div>
-      </div>
-    </div>,
-    document.body,
+      </DialogContent>
+    </Dialog>
   );
 }

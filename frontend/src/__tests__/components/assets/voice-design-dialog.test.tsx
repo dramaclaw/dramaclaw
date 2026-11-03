@@ -2,11 +2,13 @@
 // Copyright (c) 2026 ClaymoreLab
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nextProvider, initReactI18next } from "react-i18next";
@@ -15,9 +17,32 @@ import { delay, http, HttpResponse } from "msw";
 import { server } from "@/__mocks__/msw/server";
 import ky from "ky";
 import { useState } from "react";
-import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+// Budget for complete component flows; per-step waits and request deadlines stay unchanged.
+vi.setConfig({ testTimeout: 15_000 });
+afterAll(() => vi.resetConfig());
+const requestDeadlines = vi.hoisted(
+  (): {
+    next: number | null;
+    used: { method: string; timeout: number }[];
+  } => ({ next: null, used: [] }),
+);
 vi.mock("@/lib/api", () => ({
-  api: ky.create({ baseUrl: "http://localhost:3000/", timeout: 500 }),
+  api: ky.create({
+    baseUrl: "http://localhost:3000/",
+    hooks: {
+      init: [
+        (options) => {
+          const method = options.method?.toUpperCase() ?? "GET";
+          const timeout =
+            method === "POST" ? requestDeadlines.next ?? 30_000 : 30_000;
+          if (method === "POST") requestDeadlines.next = null;
+          options.timeout = timeout;
+          requestDeadlines.used.push({ method, timeout });
+        },
+      ],
+    },
+  }),
   uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 import {
@@ -25,6 +50,7 @@ import {
   type VoiceDesignTarget,
 } from "@/components/assets/voice-design-dialog";
 import { VoiceDesignApiError } from "@/lib/queries/voice-design";
+import * as voiceDesignApi from "@/lib/queries/voice-design";
 import zh from "../../../../public/locales/zh/translation.json";
 import { queryKeys } from "@/lib/query-keys";
 import { designModels } from "@/__tests__/voice-design-fixtures";
@@ -72,12 +98,14 @@ beforeAll(async () => {
   });
 });
 beforeEach(() => {
+  requestDeadlines.next = null;
+  requestDeadlines.used = [];
   creations = 0;
   historyCandidates = [];
   save.mockClear();
   server.use(
     http.get(`${base}/candidates`, () =>
-      HttpResponse.json({ ok: true, data: { candidates: historyCandidates } }),
+      HttpResponse.json({ ok: true, data: { candidates: historyCandidates, next_cursor: null, retention_seconds: 604800 } }),
     ),
     http.get(`${base}/models`, () =>
       HttpResponse.json({ ok: true, data: { models: designModels } }),
@@ -494,12 +522,29 @@ it("keeps an existing preview playable and savable when generation becomes unava
 });
 it("separates targets and late generation responses, and restores each draft", async () => {
   let release: () => void = () => {};
+  let entered: () => void = () => {};
+  let completed: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const finished = new Promise<void>((resolve) => {
+    completed = resolve;
+  });
+  const realCreate = voiceDesignApi.createVoiceDesign;
+  vi.spyOn(voiceDesignApi, "createVoiceDesign").mockImplementation(async (...args) => {
+    try {
+      return await realCreate(...args);
+    } finally {
+      completed();
+    }
   });
   server.use(
     http.post(`${base}/candidates`, async ({ request }) => {
       const input = (await request.json()) as { request_id: string };
+      entered();
       await gate;
       return HttpResponse.json({ ok: true, data: ready(input.request_id) });
     }),
@@ -515,18 +560,42 @@ it("separates targets and late generation responses, and restores each draft", a
     );
   }
   const view = render(<Root selected={target} />);
-  await fill();
-  fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
-  view.rerender(
-    <Root selected={{ ...target, key: "秦:elder", label: "秦 · 老年" }} />,
-  );
-  expect(screen.getByLabelText("音色描述")).toHaveValue("");
-  release();
-  await new Promise((resolve) => setTimeout(resolve, 30));
-  expect(screen.queryByText("8.4 秒")).not.toBeInTheDocument();
-  view.rerender(<Root selected={target} />);
-  expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
-  await screen.findByText("8.4 秒");
+  const other = { ...target, key: "秦:elder", label: "秦 · 老年" };
+  try {
+    await fill();
+    fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+    await started;
+    view.rerender(<Root selected={other} />);
+    expect(screen.getByLabelText("音色描述")).toHaveValue("");
+    expect(screen.queryByLabelText("生成的试听音频")).not.toBeInTheDocument();
+    await act(async () => {
+      release();
+      await finished;
+    });
+    expect(screen.getByLabelText("音色描述")).toHaveValue("");
+    expect(screen.getByLabelText("试听文本")).toHaveValue("");
+    expect(screen.queryByText("8.4 秒")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("生成的试听音频")).not.toBeInTheDocument();
+
+    view.rerender(<Root selected={target} />);
+    await screen.findByText("8.4 秒");
+    expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
+    expect(screen.getByLabelText("试听文本")).toHaveValue(text);
+    expect(screen.getByLabelText("生成的试听音频")).toBeInTheDocument();
+
+    view.rerender(<Root selected={other} />);
+    expect(screen.getByLabelText("音色描述")).toHaveValue("");
+    expect(screen.getByLabelText("试听文本")).toHaveValue("");
+    expect(screen.queryByText("8.4 秒")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("生成的试听音频")).not.toBeInTheDocument();
+
+    view.rerender(<Root selected={target} />);
+    await screen.findByText("8.4 秒");
+    expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
+    expect(screen.getByLabelText("试听文本")).toHaveValue(text);
+  } finally {
+    release();
+  }
 });
 it("blocks duplicate clicks while generating and saves nothing until ready", async () => {
   server.use(
@@ -557,13 +626,17 @@ it.each([403, 422, 502, 504, "timeout"])(
   "retains inputs after generation failure %s",
   async (mode) => {
     let queried = "";
+    let handled: () => void = () => {};
+    const handlerFinished = new Promise<void>((resolve) => {
+      handled = resolve;
+    });
     server.use(
       http.post(`${base}/candidates`, async ({ request }) => {
         const input = (await request.json()) as { request_id: string };
         candidateId = input.request_id;
         creations++;
         if (mode === "timeout") await delay(700);
-        return HttpResponse.json(
+        const response = HttpResponse.json(
           {
             ok: false,
             code: "provider_unavailable",
@@ -573,6 +646,8 @@ it.each([403, 422, 502, 504, "timeout"])(
           },
           { status: typeof mode === "number" ? mode : 504 },
         );
+        handled();
+        return response;
       }),
       http.get(`${base}/candidates/:id`, ({ params }) => {
         queried = String(params.id);
@@ -593,14 +668,23 @@ it.each([403, 422, 502, 504, "timeout"])(
     );
     mount();
     await fill();
+    if (mode === "timeout") requestDeadlines.next = 500;
     fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
     await screen.findByText("生成暂不可用");
     expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
     expect(screen.getByLabelText("试听文本")).toHaveValue(text);
     expect(creations).toBe(1);
+    expect(
+      requestDeadlines.used.filter((request) => request.timeout === 500),
+    ).toEqual(mode === "timeout" ? [{ method: "POST", timeout: 500 }] : []);
+    expect(
+      requestDeadlines.used.every(
+        (request) => request.timeout === 30_000 || request.timeout === 500,
+      ),
+    ).toBe(true);
     if (mode === "timeout" || (typeof mode === "number" && mode >= 500))
       expect(queried).toBe(candidateId);
-    if (mode === "timeout") await delay(250);
+    if (mode === "timeout") await handlerFinished;
   },
 );
 it("requires refresh after slot conflict before another save", async () => {
@@ -1065,6 +1149,36 @@ it("S29 selects an earlier temporary preview and saves its exact ID without gene
   expect(creations).toBe(0);
 });
 
+it("opens the shared full history and applies the sixth preview using its original snapshot", async () => {
+  const all = Array.from({ length: 6 }, (_, i) => ({ ...ready(`00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`), description: `历史声音 ${i + 1}` }));
+  server.use(http.get(`${base}/candidates`, ({ request }) => {
+    const limit = Number(new URL(request.url).searchParams.get("limit"));
+    return HttpResponse.json({ ok: true, data: { candidates: all.slice(0, limit), next_cursor: limit === 5 ? "older" : null, retention_seconds: 604800 } });
+  }));
+  mount({ ...target, expectedSlot: { path: "", sha256: "", updated_at: "" } });
+  expect(await screen.findByRole("button", { name: "选择试听：历史声音 1" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "选择试听：历史声音 6" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "查看全部" }));
+  expect(await screen.findByRole("tab", { name: "最近生成" })).toHaveAttribute("aria-selected", "true");
+  await screen.findByText("历史声音 6");
+  fireEvent.click(screen.getAllByRole("button", { name: "选择此试听" })[5]!);
+  await waitFor(() => expect(screen.getByLabelText("音色描述")).toHaveValue("历史声音 6"));
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ candidate_id: all[5]?.candidate_id })));
+  expect(creations).toBe(0);
+});
+
+it("hands focus to full history and returns it to view-all when the library closes", async () => {
+  const user = userEvent.setup();
+  mount();
+  const opener = await screen.findByRole("button", { name: "查看全部" });
+  await user.click(opener);
+  const library = await screen.findByRole("dialog", { name: "资产库" });
+  await waitFor(() => expect(library.contains(document.activeElement)).toBe(true));
+  await user.click(within(library).getByRole("button", { name: "关闭" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "查看全部" })).toHaveFocus());
+});
+
 it("S29 restores temporary previews after remount without silently generating", async () => {
   const item = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "刷新前的试听" };
   historyCandidates = [item];
@@ -1139,7 +1253,7 @@ it("S29 blocks switching history while generation status is unresolved", async (
 it("S29 shows clear temporary retention and a single playback and close control", async () => {
   mount();
   await generate();
-  expect(screen.getByText("未保存试听保留 1 小时，过期后自动删除；最多保留最近 5 条。已保存音色不受影响。")).toBeInTheDocument();
+  expect(screen.getByText("未保存试听保留 7 天，到期后自动删除；已保存音频不受影响。")).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "播放试听" })).toHaveLength(1);
   expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
   expect(screen.queryByRole("button", { name: "关闭" })).not.toBeInTheDocument();

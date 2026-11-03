@@ -9,7 +9,7 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import { beforeEach, afterEach, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, afterAll, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import ky from 'ky';
 import { server } from '@/__mocks__/msw/server';
@@ -22,6 +22,10 @@ import {
   type AudioNodeData,
 } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
+
+// Budget for complete component flows; per-step waits and request deadlines stay unchanged.
+vi.setConfig({ testTimeout: 15_000 });
+afterAll(() => vi.resetConfig());
 
 // Node fetch needs absolute fixture URLs; response parsing remains the production code.
 vi.mock('@/api/client', async (original) => {
@@ -101,7 +105,7 @@ beforeEach(() => {
     }),
   );
   server.use(
-    http.get(`${base}/voice-design/candidates`, () => HttpResponse.json({ ok: true, data: { candidates: [] } })),
+    http.get(`${base}/voice-design/candidates`, () => HttpResponse.json({ ok: true, data: { candidates: [], next_cursor: null, retention_seconds: 604800 } })),
     http.get(`${base}/freezone/jobs/:kind/:id/result`, () =>
       HttpResponse.json({ ok: true, data: { url: '/fixture-speech.mp3' } }),
     ),
@@ -300,6 +304,11 @@ const current = () =>
   useCanvasStore.getState().nodes.find((n) => n.id === 'audio-1')?.data;
 async function generate() {
   fireEvent.click(screen.getByRole('button', { name: '按描述生成' }));
+  await waitFor(() =>
+    expect(screen.getByRole('combobox', { name: '生成模型' })).toHaveTextContent(
+      designModels[0].label,
+    ),
+  );
   fireEvent.change(screen.getByLabelText('音色描述', { exact: true }), {
     target: { value: '温柔，明亮的青年声音' },
   });
@@ -307,7 +316,11 @@ async function generate() {
     target: { value: text },
   });
   await screen.findByText('本次生成：7 积分 / 次');
-  fireEvent.click(screen.getByRole('button', { name: '生成试听' }));
+  await screen.findByText('暂无未保存的试听。');
+  expect(screen.queryByRole('button', { name: '刷新列表' })).toBeNull();
+  const generateButton = screen.getByRole('button', { name: '生成试听' });
+  await waitFor(() => expect(generateButton).toBeEnabled());
+  fireEvent.click(generateButton);
   await screen.findByText('3.0 秒', { exact: true });
 }
 
@@ -324,7 +337,9 @@ it.each(
     mount(entry);
     await generate();
     expect(calls[0]).toMatchObject({ surface: 'canvas' });
-    fireEvent.click(screen.getByRole('button', { name: '播放试听' }));
+    const play = screen.getByRole('button', { name: '播放试听' });
+    await waitFor(() => expect(play).toBeEnabled());
+    fireEvent.click(play);
     await waitFor(() =>
       expect(HTMLMediaElement.prototype.play).toHaveBeenCalled(),
     );

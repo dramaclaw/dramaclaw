@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { applyLibraryCharacterVoice } from "@/lib/queries/voice-design";
+import type { ApplyLibraryCharacterVoice } from "@/types/voice-design";
 import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { jsonWithBackendError } from "@/lib/api-errors";
@@ -325,6 +327,19 @@ export function useSaveGeneratedCharacterVoice(project: string, name: string) {
       );
       return { ok: true as const, data };
     },
+    onSuccess: response => handleCharacterVoiceMutationSuccess(qc, project, name, response),
+  });
+}
+
+export function useApplyLibraryCharacterVoice(project: string, name: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationKey: [...queryKeys.characterVoiceSamples(project, name), "apply-library"],
+    retry: false,
+    mutationFn: async ({ slot, ...input }: ApplyLibraryCharacterVoice & { slot: string }) => ({
+      ok: true as const,
+      data: await applyLibraryCharacterVoice(project, name, slot, input),
+    }),
     onSuccess: response => handleCharacterVoiceMutationSuccess(qc, project, name, response),
   });
 }
