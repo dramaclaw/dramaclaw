@@ -24,7 +24,7 @@ import httpx
 
 from voice_design import digest, require_local, self_check, write_json
 
-ALL_CASES = tuple(f"U{number:02}" for number in range(1, 14))
+ALL_CASES = tuple(f"U{number:02}" for number in range(1, 15))
 
 
 def login(context: BrowserContext, base_url: str) -> None:
@@ -70,6 +70,7 @@ def prepare_fixtures(context: BrowserContext, args: argparse.Namespace) -> dict:
         raise RuntimeError(f"fixture project HTTP {response.status}")
     args.project = response.json()["data"]["project_id"]
     args.fixture_username = username
+    args.fixture_user_id = user_id
     args.fixture_project_name = f"s5_c11_{tag}"
     args.character = f"S5验收{tag}"
     response = context.request.post(f"{args.base_url}/api/v1/projects/{args.project}/characters", data={
@@ -355,6 +356,10 @@ class Acceptance:
                 replay = re.search(r"(?:^|\s)VOICE_DESIGN_TEST_REPLAY=([^\s]+)", running)
                 if not actual or actual.group(1) != gateway + "/v1" or not edition or edition.group(1) != "ee" or not replay or replay.group(1) != "1":
                     raise RuntimeError(f"{role} is not running the isolated EE test gateway configuration")
+                for key in ("NOVELVIDEO_STATE_DIR", "NOVELVIDEO_RUNTIME_DIR"):
+                    value = re.search(r"(?:^|\s)" + key + r"=([^\s]+)", running)
+                    if not value or Path(value.group(1)).resolve() != Path(deployed[key]).resolve():
+                        raise RuntimeError(f"{role} has a different isolated storage directory")
             marker = httpx.get(gateway + "/healthz").json()
             if marker.get("kind") != "voice-design-deterministic":
                 raise ValueError("expected the non-forwarding deterministic gateway")
@@ -1193,7 +1198,321 @@ class Acceptance:
             raise AssertionError("history selection, refresh or save called the model")
         write_json(self.args.artifacts_dir / "U13-history.json", {"first_candidate_id": first_id, "second_candidate_id": second_id, "saved_candidate_id": saves[0]["candidate_id"], "saved_slot": "middle", "saved_sha256": first["sha256"], "fixture_generation_calls": 2, "history_selection_refresh_save_extra_calls": 0, "remaining_unsaved": len(candidates)})
         self.ready = first
-        return ["two same-model temporary previews; select first with original description; refresh recovers; exact first candidate ID/SHA saved to middle only; saved excluded, at most five; single player and no footer close; no extra model call"]
+        return ["two same-model temporary previews; select first with original description; refresh recovers; exact first candidate ID/SHA saved to middle only; saved excluded from the default five-item shortcut page; single player and no footer close; no extra model call"]
+
+
+    def U14(self) -> list[str]:
+        if not (self.args.test_gateway_url and self.args.prepare_fixtures and self.args.deployment_env):
+            raise RuntimeError("project library acceptance requires an isolated deterministic deployment and fresh fixtures")
+        original = self.args.character
+        name = original + "-library-" + uuid4().hex[:6]
+        response = self.page.context.request.post(
+            f"{self.args.base_url}/api/v1/projects/{quote(self.args.project, safe='')}/characters",
+            data={"name": name, "role": "supporting", "gender": "female", "age_group": "elder"},
+        )
+        if response.status != 200 or response.json().get("ok") is not True:
+            raise RuntimeError("could not create isolated library acceptance character")
+        self.args.character = name
+        try:
+            return self._project_library()
+        finally:
+            self.args.character = original
+
+
+    def _project_library(self) -> list[str]:
+        """Verify project assets against the non-forwarding local deployment."""
+        from datetime import datetime
+        from urllib.parse import urljoin, urlsplit
+
+        if not self.args.test_gateway_url:
+            raise RuntimeError("project history acceptance requires the deterministic gateway")
+        project = quote(self.args.project, safe="")
+        prefix = f"{self.args.base_url}/api/v1/projects/{project}"
+        tag = uuid4().hex[:8]
+        records = []
+        descriptions = [f"历史方案{number:02}-{tag}，沉稳清晰的女性声音，语速适中。" for number in range(21)]
+        before_slots = self.samples()
+        empty_history = self.api("/voice-design/candidates?limit=1")
+        assert empty_history.status == 200
+        assert empty_history.json()["data"]["candidates"] == [], "run U14 alone with fresh project fixtures"
+        self.characters()
+        dialog = self.open_voice(2)
+        model = next(item for item in self.models() if item["model"] == "voice-enrollment")
+        self.select_model(dialog, model["catalog_id"])
+        initial_calls = self.gateway("success")["calls"]
+        initial_ui_calls = self.submissions
+        for number in range(2):
+            self.gateway("success" if number == 0 else "short")
+            self.fill(dialog, descriptions[number])
+            self.generate(dialog)
+            records.append(dict(self.ready))
+        if records[0]["sha256"] == records[1]["sha256"]:
+            raise AssertionError("fixture voices must contain different audio")
+        self.close_voice()
+        self.gateway("success")
+        for number in range(2, 21):
+            request_id = str(uuid4())
+            response = self.page.context.request.post(prefix + "/voice-design/candidates", data={
+                "request_id": request_id, "surface": "supertale", "catalog_id": model["catalog_id"],
+                "config_digest": model["config_digest"], "description": descriptions[number],
+                "preview_text": "今天的天气很好，我们沿着河边慢慢走回家。", "language": "zh",
+            })
+            if response.status not in (200, 202):
+                raise RuntimeError(f"history fixture create HTTP {response.status}")
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline:
+                response = self.page.context.request.get(prefix + f"/voice-design/candidates/{request_id}")
+                if response.status != 200:
+                    raise RuntimeError(f"history fixture query HTTP {response.status}")
+                result = response.json()["data"]
+                if result["status"] == "ready":
+                    records.append(result)
+                    break
+                if result["status"] != "generating":
+                    raise AssertionError("history fixture did not complete successfully")
+                time.sleep(.1)
+            else:
+                raise AssertionError("history fixture did not become ready; POST was not retried")
+        assert len(records) == 21
+        assert self.gateway()["calls"] == initial_calls + 21
+        assert self.submissions == initial_ui_calls + 2
+        for record in records:
+            lifetime = datetime.fromisoformat(record["expires_at"]) - datetime.fromisoformat(record["created_at"])
+            assert abs(lifetime.total_seconds() - 604800) < 1
+        page = self.api("/voice-design/candidates?limit=100").json()["data"]
+        assert page["retention_seconds"] == 604800
+        assert {item["candidate_id"] for item in records} <= {item["candidate_id"] for item in page["candidates"]}
+        paged_ids = []
+        cursor = None
+        while True:
+            response = self.api("/voice-design/candidates?limit=20" + ("&cursor=" + quote(cursor, safe="") if cursor else ""))
+            assert response.status == 200
+            data = response.json()["data"]
+            paged_ids.extend(item["candidate_id"] for item in data["candidates"])
+            cursor = data["next_cursor"]
+            if cursor is None:
+                break
+            assert len(paged_ids) <= len(records), "paging repeated records"
+        expected = sorted(records, key=lambda item: (item["created_at"], item["candidate_id"]), reverse=True)
+        assert paged_ids == [item["candidate_id"] for item in expected]
+        assert len(set(paged_ids)) == 21
+        self.characters()
+        dialog = self.open_voice(2)
+        recent = dialog.get_by_role("region", name="最近试听", exact=True)
+        expect(recent.get_by_role("button", name=re.compile("^选择试听："))).to_have_count(5)
+        expect(recent.get_by_text(descriptions[0], exact=True)).not_to_be_visible()
+        dialog.get_by_role("button", name="查看全部", exact=True).click()
+        library = self.page.get_by_role("dialog", name="资产库", exact=True)
+        expect(library).to_be_visible()
+        history = library.get_by_role("region", name="最近生成", exact=True)
+        expect(history.get_by_role("listitem")).to_have_count(20)
+        history.get_by_role("button", name="下一页", exact=True).click()
+        oldest = history.get_by_role("listitem").filter(has_text=descriptions[0])
+        expect(oldest).to_be_visible()
+        for width in (1280, 760):
+            self.page.set_viewport_size({"width": width, "height": 1000})
+            for key in ("Tab", "Shift+Tab", "Tab", "Tab"):
+                self.page.keyboard.press(key)
+                self.page.wait_for_function("() => [...document.querySelectorAll('[role=dialog]')].some(d => d.getAttribute('aria-label') === '资产库' && d.contains(document.activeElement))", timeout=5000)
+            assert library.evaluate("element => element.scrollWidth <= element.clientWidth")
+            self.page.screenshot(path=str(self.args.artifacts_dir / f"U14-library-{width}.png"))
+        self.page.set_viewport_size({"width": 1280, "height": 900})
+        with self.page.expect_response(lambda response: response.url.endswith(f"/voice-design/candidates/{records[0]['candidate_id']}/audio")) as selected_audio:
+            oldest.get_by_role("button", name="选择此试听", exact=True).click()
+        assert selected_audio.value.status == 200
+        assert digest(selected_audio.value.body()) == records[0]["sha256"]
+        expect(library).not_to_be_visible()
+        expect(dialog.get_by_label("音色描述", exact=True)).to_have_value(descriptions[0])
+        expect(dialog.get_by_role("button", name="查看全部", exact=True)).to_be_focused()
+        self.ready = records[0]
+        self.assert_metadata(dialog)
+        playing_bytes = dialog.get_by_label("生成的试听音频", exact=True).evaluate("async audio => Array.from(new Uint8Array(await (await fetch(audio.src)).arrayBuffer()))")
+        assert digest(bytes(playing_bytes)) == records[0]["sha256"]
+        assert self.samples() == before_slots
+        assert self.gateway()["calls"] == initial_calls + 21
+        dialog.get_by_role("button", name="查看全部", exact=True).click()
+        history.get_by_role("button", name="下一页", exact=True).click()
+
+        def save_row(description, name):
+            row = history.get_by_role("listitem").filter(has_text=description)
+            expect(row).to_be_visible()
+            row.get_by_role("button", name="保存到项目资产库", exact=True).click()
+            row.get_by_label("资产名称", exact=True).fill(name)
+            with self.page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/save-to-library")) as result:
+                row.get_by_role("button", name="确认保存到项目", exact=True).click()
+            response = result.value
+            assert response.status == 200
+            value = response.json()["data"]
+            expect(row).not_to_be_visible()
+            return value
+
+        asset_a = save_row(descriptions[0], "历史声音A-" + tag)
+        history.get_by_role("button", name="上一页", exact=True).click()
+        asset_b = save_row(descriptions[1], "历史声音B-" + tag)
+        assert asset_a["sha256"] == records[0]["sha256"]
+        assert asset_b["sha256"] == records[1]["sha256"]
+        assert self.samples() == before_slots
+        library.press("Escape")
+        expect(dialog.get_by_role("button", name="查看全部", exact=True)).to_be_focused()
+        self.close_voice()
+        def audio_url(asset):
+            value = urljoin(self.args.base_url, asset["url"])
+            assert urlsplit(value).hostname in {"localhost", "127.0.0.1"}
+            return value
+
+        items = self.api("/freezone/video/character-library").json()["data"]
+        for asset in (asset_a, asset_b):
+            item = next(item for item in items if (item.get("voice_design") or {}).get("asset_id") == asset["asset_id"])
+            assert "/voice-design/candidates/" not in json.dumps(item)
+            assert digest(self.page.context.request.get(audio_url(asset)).body()) == asset["sha256"]
+        deployed = json.loads(self.args.deployment_env.read_text())
+        state_root = Path(deployed["NOVELVIDEO_STATE_DIR"]).resolve()
+        assert state_root.is_relative_to(Path("/tmp").resolve())
+        database = state_root / self.args.fixture_username / self.args.fixture_project_name / "voice-design/candidates.sqlite3"
+        assert database.is_file()
+        assert database.resolve().is_relative_to(state_root)
+        runtime_root = Path(deployed["NOVELVIDEO_RUNTIME_DIR"]).resolve()
+        assert runtime_root.is_relative_to(Path("/tmp").resolve())
+        temporary_files = []
+        for record in records[:2]:
+            matches = list(runtime_root.rglob(record["candidate_id"] + ".mp3"))
+            assert len(matches) == 1
+            assert matches[0].resolve().is_relative_to(runtime_root)
+            assert digest(matches[0].read_bytes()) == record["sha256"]
+            temporary_files.extend(matches)
+        with sqlite3.connect(database) as connection:
+            scope = (self.args.project, str(self.args.fixture_user_id), records[0]["candidate_id"], records[1]["candidate_id"])
+            rows = connection.execute("SELECT candidate_id,status,sha256 FROM candidates WHERE project_id=? AND user_id=? AND candidate_id IN (?,?)", scope).fetchall()
+            assert {(row[0], row[1], row[2]) for row in rows} == {(item["candidate_id"], "ready", item["sha256"]) for item in records[:2]}
+            result = connection.execute("UPDATE candidates SET expires_at=0 WHERE project_id=? AND user_id=? AND candidate_id IN (?,?)", scope)
+            assert result.rowcount == 2
+        for record in records[:2]:
+            assert self.api(f"/voice-design/candidates/{record['candidate_id']}/audio").status == 410
+        assert all(not path.exists() for path in temporary_files)
+        for asset in (asset_a, asset_b):
+            assert digest(self.page.context.request.get(audio_url(asset)).body()) == asset["sha256"]
+
+        readonly_requests = []
+
+        def see_assets(popup):
+            search = popup.get_by_placeholder("搜索当前范围", exact=True)
+            for asset in (asset_a, asset_b):
+                search.fill(asset["name"])
+                expect(popup.get_by_text(asset["name"], exact=True)).to_be_visible()
+            search.clear()
+
+        def record_readonly(request):
+            if "/voice-design/quote" in request.url or (
+                request.method == "POST" and (
+                    "/voice-design/candidates" in request.url or
+                    "/asset-library/sync-from-mainline" in request.url
+                )
+            ):
+                readonly_requests.append({"method": request.method, "path": urlsplit(request.url).path})
+
+        self.page.on("request", record_readonly)
+        self.page.get_by_role("button", name="资产库", exact=True).click()
+        see_assets(library)
+        library.press("Escape")
+        self.page.goto(f"{self.args.base_url}/projects/{project}/freezone")
+        self.page.get_by_role("button", name="资产管理", exact=True).click()
+        see_assets(library)
+        library.press("Escape")
+        self.page.remove_listener("request", record_readonly)
+        assert readonly_requests == [], "read-only library opened a sync/quote/generation request"
+
+        browser = self.page.context.browser
+        admin = browser.new_context(storage_state=self.args.storage_state)
+        viewer = browser.new_context(locale="zh-CN", viewport={"width": 1280, "height": 900})
+        try:
+            username, password = "u14viewer_" + tag, uuid4().hex
+            response = admin.request.post(self.args.admin_base_url + "/admin/users", data={"username": username, "password": password, "role": "worker", "initial_credits": 100})
+            assert response.status == 200
+            user_id = response.json()["id"]
+            response = self.page.context.request.post(prefix + "/grants", data={"principal_type": "user", "principal_id": user_id, "role": "viewer"})
+            assert response.status == 200
+            response = viewer.request.post(self.args.base_url + "/api/v1/auth/login", data={"username": username, "password": password})
+            assert response.status == 200
+            profile = response.json()["data"]
+            marker = {"username": profile["username"], "displayName": profile["username"], "role": profile["role"]}
+            viewer.add_init_script("localStorage.setItem('i18nextLng','zh-CN'); localStorage.setItem('supertale-auth', " + json.dumps(json.dumps({"state": marker, "version": 0})) + ")")
+            viewer_history = viewer.request.get(prefix + "/voice-design/candidates?limit=100")
+            assert viewer_history.status == 200
+            assert viewer_history.json()["data"]["candidates"] == []
+            assert viewer.request.get(prefix + f"/voice-design/candidates/{records[2]['candidate_id']}/audio").status == 404
+            assert viewer.request.post(prefix + f"/voice-design/candidates/{records[0]['candidate_id']}/save-to-library", data={"save_request_id": str(uuid4()), "name": "forbidden viewer publish"}).status == 403
+            for asset in (asset_a, asset_b):
+                shared_audio = viewer.request.get(audio_url(asset))
+                assert shared_audio.status == 200
+                assert digest(shared_audio.body()) == asset["sha256"]
+            viewer_page = viewer.new_page()
+            viewer_page.goto(f"{self.args.base_url}/projects/{project}/characters")
+            viewer_page.get_by_role("button", name="资产库", exact=True).click()
+            see_assets(viewer_page.get_by_role("dialog", name="资产库", exact=True))
+            viewer_page.screenshot(path=str(self.args.artifacts_dir / "U14-viewer.png"))
+        finally:
+            viewer.close()
+            admin.close()
+
+        self.characters()
+
+        def choose_asset(asset):
+            entry = self.page.get_by_role("button", name="从资产库选择声线", exact=True).nth(2)
+            expect(entry.locator("../..").get_by_text("中年（可选覆盖）", exact=True)).to_be_visible()
+            entry.click()
+            library.get_by_placeholder("搜索当前范围", exact=True).fill(asset["name"])
+            library.get_by_role("button", name="使用此声音", exact=True).click()
+
+        path = f"/characters/{quote(self.args.character, safe='')}/voice-samples/middle/apply-library"
+        def assert_binding(asset):
+            current = next(item for item in self.samples() if item["slot"] == "middle")
+            assert current["sha256"] == asset["sha256"]
+            audio = self.page.context.request.get(audio_url(current))
+            assert audio.status == 200
+            assert digest(audio.body()) == asset["sha256"]
+            return current
+
+        def snapshot(slot):
+            return {key: slot[key] for key in ("path", "sha256", "updated_at")}
+
+        empty_slot = next(item for item in before_slots if item["slot"] == "middle")
+        with self.page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith(path)) as applied:
+            choose_asset(asset_a)
+        assert applied.value.status == 200
+        assert applied.value.json()["data"]["sha256"] == asset_a["sha256"]
+        first_request = applied.value.request.post_data_json
+        assert first_request["asset_id"] == asset_a["asset_id"]
+        assert first_request["expected_slot"] == snapshot(empty_slot)
+        assert first_request["replace_existing"] is False
+        first_middle = assert_binding(asset_a)
+        first_binding = self.samples()
+        choose_asset(asset_b)
+        replace = self.page.get_by_role("dialog", name="替换已有声线？", exact=True)
+        replace.get_by_role("button", name="取消", exact=True).click()
+        assert self.samples() == first_binding
+        choose_asset(asset_b)
+        with self.page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith(path)) as replaced:
+            replace.get_by_role("button", name="替换", exact=True).click()
+        assert replaced.value.status == 200
+        assert replaced.value.json()["data"]["sha256"] == asset_b["sha256"]
+        second_request = replaced.value.request.post_data_json
+        assert second_request["asset_id"] == asset_b["asset_id"]
+        assert second_request["expected_slot"] == snapshot(first_middle)
+        assert second_request["replace_existing"] is True
+        assert_binding(asset_b)
+        final_slots = self.samples()
+        stale = self.page.context.request.post(prefix + path, data={"save_request_id": str(uuid4()), "asset_id": asset_a["asset_id"], "expected_slot": snapshot(first_middle), "replace_existing": True})
+        assert stale.status == 409 and stale.json()["code"] == "slot_changed"
+        assert self.samples() == final_slots
+        for slot in before_slots:
+            if slot["slot"] != "middle":
+                assert next(item for item in final_slots if item["slot"] == slot["slot"]) == slot
+        for asset in (asset_a, asset_b):
+            assert digest(self.page.context.request.get(audio_url(asset)).body()) == asset["sha256"]
+        assert self.gateway()["calls"] == initial_calls + 21
+        assert self.submissions == initial_ui_calls + 2
+        write_json(self.args.artifacts_dir / "U14-project-library.json", {"candidates": [record["candidate_id"] for record in records], "assets": [asset_a, asset_b], "fixture_generation_calls": 21, "extra_model_calls_after_generation": 0, "readonly_mutation_quote_requests": readonly_requests, "retention_seconds": 604800, "viewer_history_count": 0, "applied_slot": "middle", "applied_sha256": asset_b["sha256"]})
+        return ["21 previews retained and paged; oldest selected with original snapshot; explicit independent project copies survive temporary expiry; mainline and canvas share assets; viewer reads shared audio but cannot read or publish private previews; middle-slot apply/replace confirmation and CAS use exact assets; other slots and both source hashes unchanged; keyboard focus at two widths; zero extra model calls"]
 
 
 def parser() -> argparse.ArgumentParser:

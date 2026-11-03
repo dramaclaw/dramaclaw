@@ -147,3 +147,26 @@ def test_preflight_uses_explicit_catalog_quote_without_generation(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("missing", ("test_gateway_url", "prepare_fixtures", "deployment_env"))
+def test_project_library_browser_case_requires_isolation_before_any_request(monkeypatch, missing):
+    import importlib.util
+    from types import SimpleNamespace
+
+    monkeypatch.syspath_prepend(str(SCRIPT.parent))
+    spec = importlib.util.spec_from_file_location("voice_design_ui_acceptance", SCRIPT.with_name("voice_design_ui.py"))
+    assert spec and spec.loader
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+    args = {
+        "test_gateway_url": "http://127.0.0.1:18914",
+        "prepare_fixtures": True,
+        "deployment_env": Path("isolated-env.json"),
+    }
+    args[missing] = None
+    acceptance = ui.Acceptance.__new__(ui.Acceptance)
+    acceptance.args = SimpleNamespace(**args)
+    # No page exists: touching a request or character fixture would fail first.
+    with pytest.raises(RuntimeError, match="isolated deterministic deployment and fresh fixtures"):
+        acceptance.run_case("U14")
