@@ -663,8 +663,7 @@ function VoiceDesignSession(props: Props) {
   } = useVoiceDesignSession(props);
   const feedback = (message: string) => t(message, { defaultValue: message });
   return (
-    <>
-    <Dialog open={open && !historyOpen} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden bg-[var(--ui-surface-modal)] sm:max-w-xl"
         overlayClassName="backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
@@ -840,7 +839,7 @@ function VoiceDesignSession(props: Props) {
               <VoicePreview
                 key={draft.ready.candidate_id}
                 ready={draft.ready}
-                disabled={expired || !open}
+                disabled={expired || !open || historyOpen}
                 onExpired={expirePreview}
               />
               <p>
@@ -945,24 +944,23 @@ function VoiceDesignSession(props: Props) {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+        <AssetLibraryModal
+          mode="manage"
+          open={open && historyOpen}
+          project={props.project}
+          initialView="recent"
+          allowedMedia={["audio"]}
+          selectionDisabled={selectionLocked}
+          onClose={() => setHistoryOpen(false)}
+          onSelectCandidate={ready => {
+            if (!selectionLocked) {
+              selectHistory(ready);
+              setHistoryOpen(false);
+            }
+          }}
+        />
       </DialogContent>
     </Dialog>
-    <AssetLibraryModal
-      mode="manage"
-      open={open && historyOpen}
-      project={props.project}
-      initialView="recent"
-      allowedMedia={["audio"]}
-      selectionDisabled={selectionLocked}
-      onClose={() => setHistoryOpen(false)}
-      onSelectCandidate={ready => {
-        if (!selectionLocked) {
-          selectHistory(ready);
-          setHistoryOpen(false);
-        }
-      }}
-    />
-    </>
   );
 }
 function ModelDetails({

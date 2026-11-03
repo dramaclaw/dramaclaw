@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nextProvider, initReactI18next } from "react-i18next";
@@ -1082,6 +1083,17 @@ it("opens the shared full history and applies the sixth preview using its origin
   fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
   await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ candidate_id: all[5]?.candidate_id })));
   expect(creations).toBe(0);
+});
+
+it("hands focus to full history and returns it to view-all when the library closes", async () => {
+  const user = userEvent.setup();
+  mount();
+  const opener = await screen.findByRole("button", { name: "查看全部" });
+  await user.click(opener);
+  const library = await screen.findByRole("dialog", { name: "资产库" });
+  await waitFor(() => expect(library.contains(document.activeElement)).toBe(true));
+  await user.click(within(library).getByRole("button", { name: "关闭" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "查看全部" })).toHaveFocus());
 });
 
 it("S29 restores temporary previews after remount without silently generating", async () => {

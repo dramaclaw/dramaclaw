@@ -2,7 +2,6 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { createPortal } from 'react-dom';
 import {
   Check,
   ChevronLeft,
@@ -47,6 +46,7 @@ import {
 import { AssetLibraryItemMedia } from './AssetLibraryItemMedia';
 import { AssetLibraryPreviewDialog } from './AssetLibraryPreviewDialog';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { confirmDialog } from '@/components/confirm-dialog-host';
 import { AssetLibraryFolderCoverDialog } from './AssetLibraryFolderCoverDialog';
 import { AssetLibraryNewFolderDialog } from './AssetLibraryNewFolderDialog';
@@ -79,7 +79,7 @@ import {
 const ASSET_LIBRARY_PAGE_SIZES = [20, 40, 80, 100] as const;
 
 const ASSET_LIBRARY_MODAL_CLASS =
-  'relative flex h-[min(780px,88vh)] w-[min(1180px,94vw)] flex-col overflow-hidden rounded-xl border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.96)] shadow-[0_18px_48px_rgba(0,0,0,0.45)]';
+  'z-[300] flex gap-0 p-0 ring-0 max-w-none sm:max-w-none h-[min(780px,88vh)] w-[min(1180px,94vw)] flex-col overflow-hidden rounded-xl border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.96)] shadow-[0_18px_48px_rgba(0,0,0,0.45)]';
 
 export type { AssetLibraryMedia };
 
@@ -207,35 +207,6 @@ export function AssetLibraryModal({
   const [pageSize, setPageSize] = useState<number>(ASSET_LIBRARY_PAGE_SIZES[0]);
   const [assetQuery, setAssetQuery] = useState('');
 
-  useEffect(() => {
-    if (
-      !open ||
-      newFolderOpen ||
-      uploadOpen ||
-      renameFolderKey ||
-      coverFolderKey
-    ) {
-      return;
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (previewEntry) {
-        setPreviewEntry(null);
-        return;
-      }
-      onClose();
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [
-    coverFolderKey,
-    newFolderOpen,
-    onClose,
-    open,
-    previewEntry,
-    renameFolderKey,
-    uploadOpen,
-  ]);
 
   useEffect(() => {
     setPage(1);
@@ -771,13 +742,12 @@ export function AssetLibraryModal({
     'inline-flex h-7 items-center gap-1.5 rounded-[8px] px-2.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40';
   const headerButtonClass = `${headerButtonLayout} border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.34)] font-medium text-foreground hover:border-[var(--ui-border-strong)] hover:bg-[rgba(var(--surface-rgb)/0.88)]`;
 
-  return createPortal(
-    <div className="fixed inset-0 z-[300] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/55 backdrop-blur-sm" onClick={onClose} />
-      <div
+  return (
+    <Dialog open={open} onOpenChange={next => { if (!next) onClose(); }}>
+      <DialogContent
         className={ASSET_LIBRARY_MODAL_CLASS}
-        role="dialog"
-        aria-modal="true"
+        overlayClassName="z-[300] bg-black/55 backdrop-blur-sm"
+        showCloseButton={false}
         aria-label={t('canvas.assetLibrary.title')}
         onClick={(event) => event.stopPropagation()}
         onDragOver={(event) => {
@@ -1341,7 +1311,6 @@ export function AssetLibraryModal({
           </section>
         </div>
         )}
-      </div>
 
       {previewEntry && (
         <AssetLibraryPreviewDialog
@@ -1421,8 +1390,8 @@ export function AssetLibraryModal({
           await refreshFolders();
         }}
       />
-    </div>,
-    document.body,
+      </DialogContent>
+    </Dialog>
   );
 }
 

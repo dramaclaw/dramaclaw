@@ -7,12 +7,12 @@
 //
 // 文件夹改名、素材改名也复用这一个：都是「弹个框收一个名字」，差别只在标题、
 // 字段名和长度上限，各自传进来即可。
-import { useEffect, useId, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { FOLDER_NAME_MAX_LEN } from './assetLibraryItems';
 
 export interface AssetLibraryNewFolderDialogProps {
@@ -49,6 +49,7 @@ export function AssetLibraryNewFolderDialog({
   const { t } = useTranslation();
   // 素材改名弹窗和文件夹弹窗可能同时挂在树上，写死 id 会重复。
   const inputId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
   const errorId = useId();
   const [name, setName] = useState(initialName);
   const [error, setError] = useState<string | null>(null);
@@ -61,15 +62,6 @@ export function AssetLibraryNewFolderDialog({
       setSubmitting(false);
     }
   }, [open, initialName]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !submitting) onClose();
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [open, onClose, submitting]);
 
   if (typeof document === 'undefined' || !open) return null;
 
@@ -92,21 +84,25 @@ export function AssetLibraryNewFolderDialog({
     }
   };
 
-  return createPortal(
-    <div
-      className="fixed inset-0 flex items-center justify-center"
-      style={{ zIndex: z }}
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next, details) => {
+        if (!next) {
+          if (submitting) details.cancel();
+          else onClose();
+        }
+      }}
     >
-      <div
-        className="absolute inset-0 bg-black/60"
-        onClick={() => {
-          if (!submitting) onClose();
-        }}
-      />
-      <div className="relative w-[min(420px,90vw)] overflow-hidden rounded-xl border border-[var(--ui-border-strong)] bg-[var(--ui-surface-modal)] shadow-[0_18px_48px_rgba(0,0,0,0.5)]">
+      <DialogContent
+        showCloseButton={false}
+        initialFocus={inputRef}
+        aria-label={title ?? t('canvas.assetLibrary.newFolder')}
+        overlayClassName="bg-black/60"
+        overlayStyle={{ zIndex: z }}
+        style={{ zIndex: z }}
+        className="w-[min(420px,90vw)] max-w-none sm:max-w-none overflow-hidden rounded-xl border border-[var(--ui-border-strong)] bg-[var(--ui-surface-modal)] p-0 gap-0 ring-0 shadow-[0_18px_48px_rgba(0,0,0,0.5)]"
+      >
         <div className="flex items-start justify-between gap-4 px-5 pb-2 pt-5">
           <div>
             <h3 className="text-lg font-semibold text-foreground">
@@ -146,8 +142,8 @@ export function AssetLibraryNewFolderDialog({
           <div className="flex items-center rounded-sm border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.5)] px-3 transition-[border-color,box-shadow] focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
             <input
               id={inputId}
+              ref={inputRef}
               value={name}
-              autoFocus
               maxLength={maxLength}
               placeholder={
                 placeholder ?? t('canvas.assetLibrary.folderDialog.placeholder')
@@ -187,12 +183,13 @@ export function AssetLibraryNewFolderDialog({
             disabled={!canSubmit}
             onClick={() => void handleSubmit()}
           >
-            {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+            {submitting && (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            )}
             {t('common.save')}
           </Button>
         </div>
-      </div>
-    </div>,
-    document.body,
+      </DialogContent>
+    </Dialog>
   );
 }

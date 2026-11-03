@@ -197,3 +197,23 @@ it("shows an explicitly configured short retention without rounding it up", () =
   render(<VoiceDesignRetentionHint seconds={30} />);
   expect(screen.getByText("未保存试听保留 30 秒，到期后自动删除；已保存音频不受影响。")).toBeInTheDocument();
 });
+
+it("keeps a valid emoji in a sixty-character default asset name and response", async () => {
+  const name = "a".repeat(59) + "🙂";
+  const original = { ...candidate(1), description: name + "后续描述" };
+  let savedName: unknown;
+  server.use(
+    http.get(`${base}/voice-design/candidates`, () => HttpResponse.json({ ok: true, data: { candidates: [original], next_cursor: null, retention_seconds: 604800 } })),
+    http.post(`${base}/voice-design/candidates/${original.candidate_id}/save-to-library`, async ({ request }) => {
+      const body = await request.json();
+      savedName = typeof body === "object" && body !== null && "name" in body ? body.name : undefined;
+      return HttpResponse.json({ ok: true, data: { ...asset, name } });
+    }),
+  );
+  const { onSaved } = show();
+  fireEvent.click(await screen.findByRole("button", { name: "保存到项目资产库" }));
+  expect(screen.getByRole("textbox", { name: "资产名称" })).toHaveValue(name);
+  fireEvent.click(screen.getByRole("button", { name: "确认保存到项目" }));
+  await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+  expect(savedName).toBe(name);
+});

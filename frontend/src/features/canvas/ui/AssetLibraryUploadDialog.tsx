@@ -7,7 +7,6 @@
 // 顶部类目 tab 按标签筛。这里只负责收集参数，真正的上传仍由 AssetLibraryModal
 // 执行（进度条和失败重试都在那边的卡片上）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   AlertCircle,
@@ -22,6 +21,7 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { AssetLibraryNewFolderDialog } from './AssetLibraryNewFolderDialog';
 import {
   mediaOfFile,
@@ -130,20 +130,6 @@ export function AssetLibraryUploadDialog({
     [],
   );
 
-  useEffect(() => {
-    if (!open || newFolderOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (folderOpen || categoryOpen) {
-        setFolderOpen(false);
-        setCategoryOpen(false);
-      } else {
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [categoryOpen, folderOpen, newFolderOpen, onClose, open]);
 
   const addFiles = useCallback(
     (files: FileList | File[]) => {
@@ -207,15 +193,20 @@ export function AssetLibraryUploadDialog({
   const fieldButtonClass =
     'flex h-10 w-full items-center justify-between rounded-sm border border-[var(--ui-border-soft)] bg-[rgba(var(--bg-rgb)/0.5)] px-3 text-xs transition-[border-color,background-color] hover:border-[var(--ui-border-strong)] hover:bg-[rgba(var(--bg-rgb)/0.65)]';
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[310] flex items-center justify-center"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t('canvas.assetLibrary.upload.title')}
-    >
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="ui-scrollbar relative flex max-h-[88vh] w-[min(860px,92vw)] flex-col overflow-y-auto rounded-xl border border-[var(--ui-border-strong)] bg-[var(--ui-surface-modal)] shadow-[0_18px_48px_rgba(0,0,0,0.5)]">
+  return (
+    <Dialog open={open} onOpenChange={(next, details) => {
+      if (!next && details.reason === 'escape-key' && (folderOpen || categoryOpen)) {
+        details.cancel();
+        setFolderOpen(false);
+        setCategoryOpen(false);
+      } else if (!next) onClose();
+    }}>
+      <DialogContent
+        showCloseButton={false}
+        aria-label={t('canvas.assetLibrary.upload.title')}
+        overlayClassName="z-[310] bg-black/60"
+        className="ui-scrollbar z-[310] flex max-h-[88vh] w-[min(860px,92vw)] max-w-none sm:max-w-none flex-col overflow-y-auto rounded-xl border border-[var(--ui-border-strong)] bg-[var(--ui-surface-modal)] p-0 gap-0 ring-0 shadow-[0_18px_48px_rgba(0,0,0,0.5)]"
+      >
         <div className="flex items-start justify-between gap-4 px-5 pb-3 pt-5">
           <div>
             <h3 className="text-lg font-semibold text-foreground">{t('canvas.assetLibrary.upload.title')}</h3>
@@ -511,7 +502,6 @@ export function AssetLibraryUploadDialog({
             {picked.length > 0 ? t('canvas.assetLibrary.upload.submitCount', { count: picked.length }) : t('canvas.assetLibrary.upload.submit')}
           </Button>
         </div>
-      </div>
 
       <AssetLibraryNewFolderDialog
         open={newFolderOpen}
@@ -524,7 +514,7 @@ export function AssetLibraryUploadDialog({
           setFolderOpen(false);
         }}
       />
-    </div>,
-    document.body,
+      </DialogContent>
+    </Dialog>
   );
 }

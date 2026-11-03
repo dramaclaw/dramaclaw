@@ -212,7 +212,7 @@ export function VoiceDesignHistoryPanel({
                   setPublication({
                     kind: "editing",
                     candidate,
-                    name: candidate.description.slice(0, 60),
+                      name: Array.from(candidate.description).slice(0, 60).join(""),
                   })
                 }
               >

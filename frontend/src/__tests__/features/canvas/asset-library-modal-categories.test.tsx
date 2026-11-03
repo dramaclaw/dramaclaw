@@ -4,6 +4,8 @@
 // 资产库弹窗：左侧文件夹控制存放范围，右侧类目只筛选当前范围内的资产。
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 
 const fetchFreezoneVideoCharacterLibrary = vi.fn();
 const syncFreezoneAssetLibraryFromMainline = vi.fn();
@@ -124,6 +126,69 @@ describe("AssetLibraryModal 类目与文件夹", () => {
     expect(syncFreezoneAssetLibraryFromMainline).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "同步主线" }));
     await waitFor(() => expect(syncFreezoneAssetLibraryFromMainline).toHaveBeenCalledTimes(1));
+  });
+
+  it("moves focus into the library, traps both Tab directions and restores its opener", async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return <><button onClick={() => setOpen(true)}>打开项目库</button><button>背景按钮</button><AssetLibraryModal mode="manage" project="demo" open={open} onClose={() => setOpen(false)} /></>;
+    }
+    const user = userEvent.setup();
+    render(<Harness />);
+    const opener = screen.getByRole("button", { name: "打开项目库" });
+    await user.click(opener);
+    const dialog = await screen.findByRole("dialog", { name: "资产库" });
+    await screen.findByText("参考图A");
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    const controls = [...dialog.querySelectorAll<HTMLButtonElement>("button")].filter(button => !button.disabled && button.tabIndex >= 0);
+    const first = controls[0]; const last = controls[controls.length - 1];
+    if (!first || !last) throw new Error("Expected library controls");
+    last.focus(); await user.tab();
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    first.focus(); await user.tab({ shift: true });
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    await user.click(within(dialog).getByRole("button", { name: "关闭" }));
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it("keeps nested upload and folder controls focused and closes only the top layer", async () => {
+    const user = userEvent.setup();
+    renderModal();
+    await screen.findByText("参考图A");
+    const uploadOpener = screen.getByRole("button", { name: "上传资产" });
+    await user.click(uploadOpener);
+    const upload = await screen.findByRole("dialog", { name: "上传资产" });
+    await waitFor(() => expect(upload.contains(document.activeElement)).toBe(true));
+    await user.click(within(upload).getByRole("button", { name: "选择保存位置" }));
+    await user.click(within(upload).getByRole("button", { name: "新建文件夹" }));
+    const folder = await screen.findByRole("dialog", { name: "新建文件夹" });
+    const input = within(folder).getByPlaceholderText("请输入文件夹名称");
+    await waitFor(() => expect(input).toHaveFocus());
+    await user.type(input, "键");
+    expect(input).toHaveValue("键");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(upload.contains(document.activeElement)).toBe(true));
+    expect(screen.getByRole("dialog", { name: "上传资产" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "上传资产" })).toBeInTheDocument();
+    expect(within(upload).queryByRole("button", { name: "新建文件夹" })).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(uploadOpener).toHaveFocus());
+    expect(screen.getByRole("dialog", { name: "资产库" })).toBeInTheDocument();
+  });
+
+  it("focuses preview controls and returns to the selected card after Escape", async () => {
+    const user = userEvent.setup();
+    renderModal();
+    await screen.findByText("参考图A");
+    const detailsOpener = screen.getByRole("button", { name: "查看 参考图A 详情" });
+    await user.click(detailsOpener);
+    const preview = await screen.findByRole("dialog", { name: "资产详情" });
+    await waitFor(() => expect(preview.contains(document.activeElement)).toBe(true));
+    expect(within(preview).getByRole("button", { name: "下载" })).toBeEnabled();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(detailsOpener).toHaveFocus());
+    expect(screen.getByRole("dialog", { name: "资产库" })).toBeInTheDocument();
   });
 
   it("文件夹只改变资产范围，全部资产入口能恢复全量视图", async () => {

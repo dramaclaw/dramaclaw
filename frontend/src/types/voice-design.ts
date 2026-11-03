@@ -101,7 +101,7 @@ export const voiceDesignHistorySchema = z.object({
 });
 export const voiceDesignLibraryAssetSchema = z.object({
   asset_id: z.string().uuid(),
-  name: z.string().min(1).max(60),
+  name: z.string().min(1).refine(value => Array.from(value).length <= 60),
   url: z.string().min(1),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   duration_seconds: z.number().positive().max(15),

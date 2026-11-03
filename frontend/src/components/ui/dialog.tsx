@@ -46,18 +46,20 @@ function DialogContent({
   children,
   closeButtonClassName,
   overlayClassName,
+  overlayStyle,
   portalContainer,
   showCloseButton = true,
   ...props
 }: DialogPrimitive.Popup.Props & {
   closeButtonClassName?: string
   overlayClassName?: string
+  overlayStyle?: React.CSSProperties
   portalContainer?: HTMLElement | ShadowRoot | null | React.RefObject<HTMLElement | ShadowRoot | null>
   showCloseButton?: boolean
 }) {
   return (
     <DialogPortal container={portalContainer}>
-      <DialogOverlay className={overlayClassName} />
+      <DialogOverlay className={overlayClassName} style={overlayStyle} />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
