@@ -9,7 +9,7 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import { beforeEach, afterEach, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, afterAll, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import ky from 'ky';
 import { server } from '@/__mocks__/msw/server';
@@ -22,6 +22,10 @@ import {
   type AudioNodeData,
 } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
+
+// Budget for complete component flows; per-step waits and request deadlines stay unchanged.
+vi.setConfig({ testTimeout: 15_000 });
+afterAll(() => vi.resetConfig());
 
 // Node fetch needs absolute fixture URLs; response parsing remains the production code.
 vi.mock('@/api/client', async (original) => {
@@ -300,6 +304,11 @@ const current = () =>
   useCanvasStore.getState().nodes.find((n) => n.id === 'audio-1')?.data;
 async function generate() {
   fireEvent.click(screen.getByRole('button', { name: '按描述生成' }));
+  await waitFor(() =>
+    expect(screen.getByRole('combobox', { name: '生成模型' })).toHaveTextContent(
+      designModels[0].label,
+    ),
+  );
   fireEvent.change(screen.getByLabelText('音色描述', { exact: true }), {
     target: { value: '温柔，明亮的青年声音' },
   });

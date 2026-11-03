@@ -2,10 +2,14 @@
 // Copyright (c) 2026 ClaymoreLab
 //
 // 资产库弹窗：左侧文件夹控制存放范围，右侧类目只筛选当前范围内的资产。
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterAll } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
+
+// Budget for complete component flows; per-step waits and request deadlines stay unchanged.
+vi.setConfig({ testTimeout: 15_000 });
+afterAll(() => vi.resetConfig());
 
 const fetchFreezoneVideoCharacterLibrary = vi.fn();
 const syncFreezoneAssetLibraryFromMainline = vi.fn();

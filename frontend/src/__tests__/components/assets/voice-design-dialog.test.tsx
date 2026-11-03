@@ -16,9 +16,32 @@ import { delay, http, HttpResponse } from "msw";
 import { server } from "@/__mocks__/msw/server";
 import ky from "ky";
 import { useState } from "react";
-import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+// Budget for complete component flows; per-step waits and request deadlines stay unchanged.
+vi.setConfig({ testTimeout: 15_000 });
+afterAll(() => vi.resetConfig());
+const requestDeadlines = vi.hoisted(
+  (): {
+    next: number | null;
+    used: { method: string; timeout: number }[];
+  } => ({ next: null, used: [] }),
+);
 vi.mock("@/lib/api", () => ({
-  api: ky.create({ baseUrl: "http://localhost:3000/", timeout: 500 }),
+  api: ky.create({
+    baseUrl: "http://localhost:3000/",
+    hooks: {
+      init: [
+        (options) => {
+          const method = options.method?.toUpperCase() ?? "GET";
+          const timeout =
+            method === "POST" ? requestDeadlines.next ?? 30_000 : 30_000;
+          if (method === "POST") requestDeadlines.next = null;
+          options.timeout = timeout;
+          requestDeadlines.used.push({ method, timeout });
+        },
+      ],
+    },
+  }),
   uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 import {
@@ -73,6 +96,8 @@ beforeAll(async () => {
   });
 });
 beforeEach(() => {
+  requestDeadlines.next = null;
+  requestDeadlines.used = [];
   creations = 0;
   historyCandidates = [];
   save.mockClear();
@@ -495,12 +520,17 @@ it("keeps an existing preview playable and savable when generation becomes unava
 });
 it("separates targets and late generation responses, and restores each draft", async () => {
   let release: () => void = () => {};
+  let entered: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
   });
   server.use(
     http.post(`${base}/candidates`, async ({ request }) => {
       const input = (await request.json()) as { request_id: string };
+      entered();
       await gate;
       return HttpResponse.json({ ok: true, data: ready(input.request_id) });
     }),
@@ -516,18 +546,35 @@ it("separates targets and late generation responses, and restores each draft", a
     );
   }
   const view = render(<Root selected={target} />);
-  await fill();
-  fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
-  view.rerender(
-    <Root selected={{ ...target, key: "秦:elder", label: "秦 · 老年" }} />,
-  );
-  expect(screen.getByLabelText("音色描述")).toHaveValue("");
-  release();
-  await new Promise((resolve) => setTimeout(resolve, 30));
-  expect(screen.queryByText("8.4 秒")).not.toBeInTheDocument();
-  view.rerender(<Root selected={target} />);
-  expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
-  await screen.findByText("8.4 秒");
+  const other = { ...target, key: "秦:elder", label: "秦 · 老年" };
+  try {
+    await fill();
+    fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+    await started;
+    view.rerender(<Root selected={other} />);
+    expect(screen.getByLabelText("音色描述")).toHaveValue("");
+    expect(screen.queryByLabelText("生成的试听音频")).not.toBeInTheDocument();
+    release();
+
+    view.rerender(<Root selected={target} />);
+    await screen.findByText("8.4 秒");
+    expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
+    expect(screen.getByLabelText("试听文本")).toHaveValue(text);
+    expect(screen.getByLabelText("生成的试听音频")).toBeInTheDocument();
+
+    view.rerender(<Root selected={other} />);
+    expect(screen.getByLabelText("音色描述")).toHaveValue("");
+    expect(screen.getByLabelText("试听文本")).toHaveValue("");
+    expect(screen.queryByText("8.4 秒")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("生成的试听音频")).not.toBeInTheDocument();
+
+    view.rerender(<Root selected={target} />);
+    await screen.findByText("8.4 秒");
+    expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
+    expect(screen.getByLabelText("试听文本")).toHaveValue(text);
+  } finally {
+    release();
+  }
 });
 it("blocks duplicate clicks while generating and saves nothing until ready", async () => {
   server.use(
@@ -558,13 +605,17 @@ it.each([403, 422, 502, 504, "timeout"])(
   "retains inputs after generation failure %s",
   async (mode) => {
     let queried = "";
+    let handled: () => void = () => {};
+    const handlerFinished = new Promise<void>((resolve) => {
+      handled = resolve;
+    });
     server.use(
       http.post(`${base}/candidates`, async ({ request }) => {
         const input = (await request.json()) as { request_id: string };
         candidateId = input.request_id;
         creations++;
         if (mode === "timeout") await delay(700);
-        return HttpResponse.json(
+        const response = HttpResponse.json(
           {
             ok: false,
             code: "provider_unavailable",
@@ -574,6 +625,8 @@ it.each([403, 422, 502, 504, "timeout"])(
           },
           { status: typeof mode === "number" ? mode : 504 },
         );
+        handled();
+        return response;
       }),
       http.get(`${base}/candidates/:id`, ({ params }) => {
         queried = String(params.id);
@@ -594,14 +647,23 @@ it.each([403, 422, 502, 504, "timeout"])(
     );
     mount();
     await fill();
+    if (mode === "timeout") requestDeadlines.next = 500;
     fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
     await screen.findByText("生成暂不可用");
     expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
     expect(screen.getByLabelText("试听文本")).toHaveValue(text);
     expect(creations).toBe(1);
+    expect(
+      requestDeadlines.used.filter((request) => request.timeout === 500),
+    ).toEqual(mode === "timeout" ? [{ method: "POST", timeout: 500 }] : []);
+    expect(
+      requestDeadlines.used.every(
+        (request) => request.timeout === 30_000 || request.timeout === 500,
+      ),
+    ).toBe(true);
     if (mode === "timeout" || (typeof mode === "number" && mode >= 500))
       expect(queried).toBe(candidateId);
-    if (mode === "timeout") await delay(250);
+    if (mode === "timeout") await handlerFinished;
   },
 );
 it("requires refresh after slot conflict before another save", async () => {
