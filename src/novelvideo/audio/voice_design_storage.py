@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import base64
 import logging
 import json
 from hashlib import sha256 as file_sha256
@@ -46,7 +47,7 @@ class VoiceDesignStorage:
         self.clock = clock
         try:
             self.ttl_seconds = (
-                float(os.environ.get("VOICE_DESIGN_CANDIDATE_TTL_SECONDS", "3600"))
+                float(os.environ.get("VOICE_DESIGN_CANDIDATE_TTL_SECONDS", "604800"))
                 if ttl_seconds is None
                 else ttl_seconds
             )
@@ -201,15 +202,6 @@ class VoiceDesignStorage:
                     self.clock() + self.enqueue_timeout_seconds,
                 ),
             )
-            rows = db.execute(
-                "SELECT candidate_id FROM candidates WHERE project_id=? AND user_id=? AND status IN ('ready','generating') AND NOT EXISTS (SELECT 1 FROM save_receipts s WHERE s.project_id=candidates.project_id AND s.user_id=candidates.user_id AND s.candidate_id=candidates.candidate_id AND s.result != 'null') ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 5",
-                self._key(candidate_id)[:2],
-            ).fetchall()
-            for row in rows:
-                db.execute(
-                    "UPDATE candidates SET status='expired' WHERE project_id=? AND user_id=? AND candidate_id=?",
-                    self._key(row["candidate_id"]),
-                )
             record = self._read(db, candidate_id)
         self.cleanup()
         return record, True
@@ -275,10 +267,35 @@ class VoiceDesignStorage:
         with self._transaction() as db:
             return self._read(db, candidate_id)
 
-    def list_ready(self) -> list[dict[str, Any]]:
-        """Return this requester's temporary, unsaved previews newest first."""
+    def list_ready(
+        self, *, limit: int = 5, cursor: str | None = None
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Page private previews without evicting them or shifting earlier pages."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise CandidateStorageError("invalid_input")
+        after = None
+        if cursor is not None:
+            try:
+                if not cursor or len(cursor) > 256:
+                    raise ValueError
+                raw = base64.b64decode(cursor, altchars=b"-_", validate=True)
+                value = json.loads(raw)
+                if (
+                    not isinstance(value, list)
+                    or len(value) != 2
+                    or type(value[0]) not in (int, float)
+                    or not math.isfinite(value[0])
+                    or value[0] < 0
+                    or not isinstance(value[1], str)
+                    or str(UUID(value[1])) != value[1]
+                ):
+                    raise ValueError
+                after = value
+            except (ValueError, TypeError, UnicodeError):
+                raise CandidateStorageError("invalid_input") from None
         self.cleanup()
         with self._transaction() as db:
+            boundary = " AND (created_at,candidate_id) < (?,?)" if after else ""
             rows = db.execute(
                 """SELECT * FROM candidates
                 WHERE project_id=? AND user_id=? AND status='ready' AND expires_at>?
@@ -287,11 +304,25 @@ class VoiceDesignStorage:
                     WHERE s.project_id=candidates.project_id
                       AND s.user_id=candidates.user_id
                       AND s.candidate_id=candidates.candidate_id AND s.result != 'null'
-                  )
-                ORDER BY created_at DESC, rowid DESC LIMIT 5""",
-                (self.ctx.project_id, self.ctx.requester_user_id, self.clock()),
+                  )"""
+                + boundary
+                + " ORDER BY created_at DESC, candidate_id DESC LIMIT ?",
+                (
+                    self.ctx.project_id,
+                    self.ctx.requester_user_id,
+                    self.clock(),
+                    *(after or ()),
+                    limit + 1,
+                ),
             ).fetchall()
-            return [self._record(row) for row in rows]
+            page = [self._record(row) for row in rows[:limit]]
+            next_cursor = None
+            if len(rows) > limit:
+                last = page[-1]
+                next_cursor = base64.urlsafe_b64encode(
+                    json.dumps([last["created_at"], last["candidate_id"]]).encode()
+                ).decode()
+            return page, next_cursor
 
     def claim(
         self,

@@ -123,7 +123,71 @@ def finish(store, candidate_id):
     )
 
 
-def test_ttl_and_eviction_keep_formal_files(store, ctx):
+def test_seven_day_default_keeps_more_than_five_previews(store):
+    store.clock = lambda: 1000
+    records = []
+    for _ in range(7):
+        record, _ = reserve(store)
+        records.append(finish(store, record["candidate_id"]))
+    assert records[0]["expires_at"] == 1000 + 7 * 24 * 3600
+    assert store.get(records[0]["candidate_id"])["status"] == "ready"
+    assert store.output_path(records[0]["candidate_id"]).exists()
+
+
+def test_keyset_pages_keep_original_snapshot_when_new_result_arrives(store):
+    store.clock = lambda: 1000
+    records = []
+    for _ in range(7):
+        record, _ = reserve(store)
+        records.append(finish(store, record["candidate_id"]))
+    page, cursor = store.list_ready(limit=2)
+    collected = [r["candidate_id"] for r in page]
+    store.clock = lambda: 1001
+    newest, _ = reserve(store)
+    finish(store, newest["candidate_id"])
+    while cursor:
+        page, cursor = store.list_ready(limit=2, cursor=cursor)
+        collected.extend(r["candidate_id"] for r in page)
+    assert collected == sorted((r["candidate_id"] for r in records), reverse=True)
+    assert len(collected) == len(set(collected)) == 7
+
+
+@pytest.mark.parametrize("cursor", ["", "bad", "*", "bnVsbA==", "W3RydWUsICJ4Il0=", "a" * 257])
+def test_keyset_rejects_invalid_cursor(store, cursor):
+    from novelvideo.audio.voice_design_storage import CandidateStorageError
+
+    with pytest.raises(CandidateStorageError, match="invalid_input"):
+        store.list_ready(cursor=cursor)
+
+
+@pytest.mark.parametrize("limit", [0, 101, True, 1.5])
+def test_keyset_rejects_invalid_page_size(store, limit):
+    from novelvideo.audio.voice_design_storage import CandidateStorageError
+
+    with pytest.raises(CandidateStorageError, match="invalid_input"):
+        store.list_ready(limit=limit)
+
+
+def test_new_ttl_never_extends_existing_records_or_revives_expired(ctx, tmp_path):
+    from novelvideo.audio.voice_design_storage import VoiceDesignStorage
+
+    now = [1000.0]
+    old = VoiceDesignStorage(ctx, clock=lambda: now[0], ttl_seconds=3600, quota_path=tmp_path / "quota.db")
+    record, _ = reserve(old)
+    cid = record["candidate_id"]
+    assert finish(old, cid)["expires_at"] == 4600
+    current = VoiceDesignStorage(ctx, clock=lambda: now[0], quota_path=old.quota_path)
+    assert current.ttl_seconds == 604800
+    assert current.get(cid)["expires_at"] == 4600
+    now[0] = 4600
+    assert current.get(cid)["status"] == "expired"
+    assert current.list_ready()[0] == []
+    assert not current.output_path(cid).exists()
+    fresh, _ = reserve(current)
+    assert finish(current, fresh["candidate_id"])["expires_at"] == 4600 + 604800
+
+
+def test_ttl_without_quantity_eviction_keeps_formal_files(store, ctx):
     now = [1000.0]
     store.clock = lambda: now[0]
     formal = ctx.output_dir / "formal.mp3"
@@ -134,10 +198,10 @@ def test_ttl_and_eviction_keep_formal_files(store, ctx):
         record, _ = reserve(store)
         records.append(finish(store, record["candidate_id"]))
         now[0] += 1
-    assert store.get(records[0]["candidate_id"])["status"] == "expired"
-    assert not store.output_path(records[0]["candidate_id"]).exists()
-    assert records[-1]["expires_at"] == records[-1]["created_at"] + 3600
-    now[0] += 3600
+    assert store.get(records[0]["candidate_id"])["status"] == "ready"
+    assert store.output_path(records[0]["candidate_id"]).exists()
+    assert records[-1]["expires_at"] == records[-1]["created_at"] + 604800
+    now[0] += 604800
     store.cleanup()
     assert store.get(records[-1]["candidate_id"])["status"] == "expired"
     assert formal.read_bytes() == b"formal"
@@ -212,7 +276,7 @@ def test_ttl_starts_after_generation_and_late_completion_fails(store):
     now[0] += 60
     completed = finish(store, first["candidate_id"])
     assert completed["created_at"] == 1060
-    assert completed["expires_at"] == 4660
+    assert completed["expires_at"] == 1060 + 604800
     second, _ = reserve(store)
     store.claim(second["candidate_id"])
     path = store.output_path(second["candidate_id"])
@@ -288,14 +352,14 @@ def test_sweep_discovers_candidates_without_requests(store):
     record, _ = reserve(store)
     finish(store, record["candidate_id"])
     path = store.output_path(record["candidate_id"])
-    sweep_candidates(quota_path=store.quota_path, clock=lambda: 4601)
+    sweep_candidates(quota_path=store.quota_path, clock=lambda: 605801)
     assert not path.exists()
 
 
 def sweep_process(quota_path):
     from novelvideo.audio.voice_design_storage import sweep_candidates
 
-    sweep_candidates(quota_path=quota_path, clock=lambda: 5000)
+    sweep_candidates(quota_path=quota_path, clock=lambda: 605801)
     return True
 
 
@@ -410,17 +474,17 @@ def test_recent_unsaved_ready_is_newest_first_and_survives_reopen(store, ctx):
     from novelvideo.audio.voice_design_storage import VoiceDesignStorage
 
     store.clock = lambda: 1000
-    assert store.list_ready() == []
+    assert store.list_ready()[0] == []
     records = []
     for _ in range(6):
         record, _ = reserve(store)
         records.append(finish(store, record["candidate_id"]))
-    expected = [record["candidate_id"] for record in reversed(records[-5:])]
-    assert [r["candidate_id"] for r in store.list_ready()] == expected
+    expected = sorted((record["candidate_id"] for record in records), reverse=True)[:5]
+    assert [r["candidate_id"] for r in store.list_ready()[0]] == expected
     reopened = VoiceDesignStorage(ctx, clock=lambda: 1000, quota_path=store.quota_path)
-    assert [r["candidate_id"] for r in reopened.list_ready()] == expected
-    assert reopened.list_ready()[0]["description"] == records[-1]["description"]
-    assert reopened.list_ready()[0]["model"] is None
+    assert [r["candidate_id"] for r in reopened.list_ready()[0]] == expected
+    assert reopened.list_ready()[0][0]["description"] == records[-1]["description"]
+    assert reopened.list_ready()[0][0]["model"] is None
 
 
 def test_recent_unsaved_excludes_completed_saves_but_keeps_pending_save(store):
@@ -434,7 +498,7 @@ def test_recent_unsaved_excludes_completed_saves_but_keeps_pending_save(store):
         ({"path": "formal.mp3"}, {"voice_id": "saved"}, None),
     ):
         store.save_receipt(str(uuid4()), record["candidate_id"], kind, "target", result)
-    assert {r["candidate_id"] for r in store.list_ready()} == {
+    assert {r["candidate_id"] for r in store.list_ready()[0]} == {
         record["candidate_id"] for record in records[2:]
     }
 
@@ -456,7 +520,7 @@ def test_recent_ready_excludes_other_states_and_preserves_model_snapshot(store):
             store.fail(record["candidate_id"], "provider_bad_audio")
         elif status == "unknown":
             store.mark_unknown(record["candidate_id"])
-    result = store.list_ready()
+    result = store.list_ready()[0]
     assert [record["candidate_id"] for record in result] == [ready["candidate_id"]]
     assert result[0]["model"] == model
     assert result[0]["preview_text"] == "A calm preview."
@@ -471,8 +535,8 @@ def test_recent_ready_never_lists_peer_scope(store, ctx, scope):
     other = VoiceDesignStorage(
         replace(ctx, **{scope: "peer"}), quota_path=store.quota_path
     )
-    assert other.list_ready() == []
-    assert len(store.list_ready()) == 1
+    assert other.list_ready()[0] == []
+    assert len(store.list_ready()[0]) == 1
 
 
 def test_listing_expires_temporary_media_without_deleting_formal_copy(store, ctx):
@@ -485,9 +549,9 @@ def test_listing_expires_temporary_media_without_deleting_formal_copy(store, ctx
     formal.parent.mkdir(parents=True)
     formal.write_bytes(path.read_bytes())
     store.clock = lambda: 1029.9
-    assert len(store.list_ready()) == 1
+    assert len(store.list_ready()[0]) == 1
     store.clock = lambda: 1030
-    assert store.list_ready() == []
+    assert store.list_ready()[0] == []
     assert not path.exists()
     assert store.get(record["candidate_id"])["status"] == "expired"
     assert formal.read_bytes() == b"validated mp3 bytes"

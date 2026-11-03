@@ -878,6 +878,96 @@ def voice_url(slot="default", name="hero", action="save-generated"):
     return f"/api/v1/projects/demo/characters/{name}/voice-samples/{slot}/{action}"
 
 
+async def test_apply_library_voice_after_temporary_expiry(generated_api):
+    from uuid import uuid4
+    from novelvideo.audio.voice_design_assets import save_candidate_asset, load_library_voice_asset
+    from novelvideo.freezone.video_node import delete_video_character_library_item
+
+    env = generated_api
+    cid = env.candidate()
+    asset = save_candidate_asset(
+        ctx=env.ctx, storage=env.storage, candidate_id=cid,
+        request_id=str(uuid4()), name="Project voice",
+    )
+    env.storage.clock = lambda: 10**12
+    env.storage.cleanup()
+    assert not env.storage.output_path(cid).exists()
+    body = save_body(cid)
+    body["asset_id"] = asset["asset_id"]
+    del body["candidate_id"]
+    url = voice_url("child", action="apply-library")
+    result = await env.client.post(url, json=body)
+    assert result.status_code == 200, result.text
+    saved = result.json()["data"]
+    assert saved["slot"] == "child"
+    assert saved["sha256"] == asset["sha256"]
+    assert (env.ctx.output_dir / saved["path"]).read_bytes() == b"generated audio"
+    assert not env.store.get_character("hero").reference_audio_path
+    assert not env.store.get_character("other").voice_samples_by_age_group
+    assert (await env.client.post(url, json=body)).json() == result.json()
+    assert load_library_voice_asset(env.ctx.output_dir, asset["asset_id"])[1] == b"generated audio"
+    delete_video_character_library_item(env.ctx.output_dir, f"voice-design:{asset['asset_id']}")
+    assert (env.ctx.output_dir / saved["path"]).read_bytes() == b"generated audio"
+
+
+async def test_apply_library_keeps_occupancy_confirmation_and_slot_cas(generated_api):
+    from uuid import uuid4
+    from novelvideo.audio.voice_design_assets import save_candidate_asset, load_library_voice_asset
+
+    env = generated_api
+    first = await env.client.post(voice_url(), json=save_body(env.candidate(b"first voice")))
+    current = first.json()["data"]
+    cid = env.candidate(b"project voice")
+    asset = save_candidate_asset(ctx=env.ctx, storage=env.storage, candidate_id=cid, request_id=str(uuid4()), name="Project voice")
+    body = {
+        "save_request_id": str(uuid4()), "asset_id": asset["asset_id"],
+        "expected_slot": {k: current[k] for k in ("path", "sha256", "updated_at")},
+    }
+    url = voice_url(action="apply-library")
+    occupied = await env.client.post(url, json=body)
+    assert occupied.status_code == 409 and occupied.json()["code"] == "slot_occupied"
+    accepted = await env.client.post(url, json={**body, "replace_existing": True})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["data"]["sha256"] == asset["sha256"]
+    stale = await env.client.post(url, json={**body, "save_request_id": str(uuid4()), "replace_existing": True})
+    assert stale.status_code == 409 and stale.json()["code"] == "slot_changed"
+    assert load_library_voice_asset(env.ctx.output_dir, asset["asset_id"])[1] == b"project voice"
+
+
+@pytest.mark.parametrize("failure", ["binding", "receipt"])
+async def test_apply_library_failure_recovers_with_original_publication_journal(generated_api, monkeypatch, failure):
+    from uuid import uuid4
+    from novelvideo.audio.voice_design_assets import save_candidate_asset, load_library_voice_asset
+    from novelvideo.audio.voice_design_storage import VoiceDesignStorage
+
+    env = generated_api
+    cid = env.candidate()
+    asset = save_candidate_asset(ctx=env.ctx, storage=env.storage, candidate_id=cid, request_id=str(uuid4()), name="Project voice")
+    body = {"save_request_id": str(uuid4()), "asset_id": asset["asset_id"], "expected_slot": {"path": "", "sha256": "", "updated_at": ""}}
+    original_bind = env.characters._apply_character_voice_update
+    original_receipt = VoiceDesignStorage.save_receipt
+    if failure == "binding":
+        async def failed_bind(**kwargs):
+            raise OSError("binding interrupted")
+        monkeypatch.setattr(env.characters, "_apply_character_voice_update", failed_bind)
+    else:
+        def failed_receipt(self, request_id, candidate_id, kind, target, result):
+            if kind == "character" and result is not None:
+                raise OSError("receipt interrupted")
+            return original_receipt(self, request_id, candidate_id, kind, target, result)
+        monkeypatch.setattr(VoiceDesignStorage, "save_receipt", failed_receipt)
+    url = voice_url("elder", action="apply-library")
+    failed = await env.client.post(url, json=body)
+    assert failed.status_code == 500
+    monkeypatch.setattr(env.characters, "_apply_character_voice_update", original_bind)
+    monkeypatch.setattr(VoiceDesignStorage, "save_receipt", original_receipt)
+    retried = await env.client.post(url, json=body)
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["data"]["sha256"] == asset["sha256"]
+    assert load_library_voice_asset(env.ctx.output_dir, asset["asset_id"])[1] == b"generated audio"
+    assert not list((env.ctx.state_dir / "character-voice-publications").glob("*.json"))
+
+
 @pytest.mark.parametrize("slot", ["default", "child", "youth", "middle", "elder"])
 async def test_generated_and_uploaded_voice_share_binding_flow(generated_api, slot):
     from novelvideo.seedance2_i2v.voice_clone import resolve_character_voice

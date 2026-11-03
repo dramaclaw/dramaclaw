@@ -624,13 +624,13 @@ def test_real_recent_candidates_empty_and_openapi(production_api):
     s = production_api
     response = s.client.get(s.url)
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "data": {"candidates": []}}
+    assert response.json() == {"ok": True, "data": {"candidates": [], "next_cursor": None, "retention_seconds": 604800}}
     schema = s.client.get("/openapi.json").json()
     assert (
         "get" in schema["paths"]["/api/v1/projects/{project}/voice-design/candidates"]
     )
     items = schema["components"]["schemas"]["CandidateList"]["properties"]["candidates"]
-    assert items["maxItems"] == 5
+    assert items["maxItems"] == 100
     assert items["items"]["$ref"].endswith("/CandidateReady")
 
 
@@ -646,6 +646,77 @@ def test_real_recent_candidates_return_latest_five(production_api):
     assert len(s.calls) == 6
 
 
+def test_real_recent_candidates_page_without_eviction_or_model_call(production_api):
+    from uuid import uuid4
+
+    s = production_api
+    ids = [str(uuid4()) for _ in range(7)]
+    for candidate_id in ids:
+        make_ready(s, {**CREATE, "request_id": candidate_id})
+    collected = []
+    cursor = None
+    while True:
+        params = {"limit": 2}
+        if cursor:
+            params["cursor"] = cursor
+        response = s.client.get(s.url, params=params)
+        assert response.status_code == 200, response.text
+        page = response.json()["data"]
+        assert page["retention_seconds"] == 604800
+        collected.extend(item["candidate_id"] for item in page["candidates"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert collected == list(reversed(ids))
+    assert len(s.calls) == 7
+    assert s.client.get(s.url + "/" + ids[0]).status_code == 200
+    for params in ({"limit": 0}, {"limit": 101}, {"cursor": "not-a-cursor"}):
+        response = s.client.get(s.url, params=params)
+        assert response.status_code == 422
+        assert response.json()["code"] == "invalid_input"
+
+
+def test_real_candidate_library_publish_is_explicit_idempotent_and_editor_only(production_api, monkeypatch):
+    from dataclasses import replace
+    from novelvideo.freezone.video_node import load_video_character_library
+
+    s = production_api
+    make_ready(s)
+    role_file = s.ctx.output_dir / "assets/characters/hero/voices/voice_default.mp3"
+    role_file.parent.mkdir(parents=True)
+    role_file.write_bytes(b"formal voice unchanged")
+    url = s.url + f"/{REQUEST_ID}/save-to-library"
+    body = {"save_request_id": SAVE_ID, "name": " Project voice "}
+    s.ctx = replace(s.ctx, effective_role="viewer")
+    assert s.client.post(url, json=body).status_code == 403
+    assert load_video_character_library(s.ctx.output_dir) == []
+    s.ctx = replace(s.ctx, effective_role="editor")
+    result = s.client.post(url, json=body)
+    assert result.status_code == 200, result.text
+    data = result.json()["data"]
+    assert set(data) == {"asset_id", "name", "url", "sha256", "duration_seconds"}
+    assert data["name"] == "Project voice"
+    assert data["url"].startswith("/static/projects/project/assets/audio/voice-design/")
+    assert role_file.read_bytes() == b"formal voice unchanged"
+    assert s.client.post(url, json=body).json() == result.json()
+    assert len(load_video_character_library(s.ctx.output_dir)) == 1
+    assert s.client.get(s.url).json()["data"]["candidates"] == []
+    assert len(s.calls) == 1
+    from novelvideo.api.routes import freezone
+
+    # Exercise the real shared-library resolver and viewer read route. Private
+    # candidate ownership remains independent of project asset visibility.
+    monkeypatch.setattr(freezone, "resolve_project_context", contract().resolve_project_context)
+    s.client.app.include_router(freezone.router, prefix="/api/v1")
+    s.ctx = replace(s.ctx, requester_user_id="other", effective_role="viewer")
+    shared = s.client.get("/api/v1/projects/project/freezone/video/character-library")
+    assert shared.status_code == 200, shared.text
+    assert shared.json()["data"][0]["voice_design"]["asset_id"] == data["asset_id"]
+    assert s.client.get(s.url).json()["data"]["candidates"] == []
+    assert s.client.post(url, json=body).status_code == 403
+    assert len(s.calls) == 1
+
+
 def test_real_recent_legacy_candidate_does_not_invent_model(production_api):
     import sqlite3
 
@@ -659,6 +730,23 @@ def test_real_recent_legacy_candidate_does_not_invent_model(production_api):
     assert len(items) == 1
     assert items[0]["model"] is None
     assert items[0]["candidate_id"] == REQUEST_ID
+
+
+def test_real_library_publish_concurrent_retries_converge(production_api):
+    from concurrent.futures import ThreadPoolExecutor
+    from novelvideo.freezone.video_node import load_video_character_library
+
+    s = production_api
+    make_ready(s)
+    url = s.url + f"/{REQUEST_ID}/save-to-library"
+    body = {"save_request_id": SAVE_ID, "name": "Shared voice"}
+    with ThreadPoolExecutor(2) as pool:
+        responses = list(pool.map(lambda _: s.client.post(url, json=body), range(2)))
+    assert [response.status_code for response in responses] == [200, 200]
+    assert responses[0].json() == responses[1].json()
+    assert len(load_video_character_library(s.ctx.output_dir)) == 1
+    assert len(list((s.ctx.output_dir / "assets/audio/voice-design").glob("*.mp3"))) == 1
+    assert len(s.calls) == 1
 
 
 def test_real_recent_candidates_reuse_snapshot_without_gateway_or_catalog(
@@ -708,7 +796,7 @@ def test_real_recent_candidates_are_requester_and_project_private(
     s.ctx = replace(s.ctx, **{scope: "other"})
     response = s.client.get(s.url)
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "data": {"candidates": []}}
+    assert response.json() == {"ok": True, "data": {"candidates": [], "next_cursor": None, "retention_seconds": 604800}}
     assert len(s.calls) == 1
 
 
