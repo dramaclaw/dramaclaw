@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { AudioPreviewPlayer, formatAudioClock } from "@/components/ui/audio-preview-player";
 import {
   Select,
   SelectContent,
@@ -35,6 +36,7 @@ import {
   getVoiceDesign,
   useVoiceDesignQuote,
   useVoiceDesignModels,
+  useVoiceDesignHistory,
   VoiceDesignApiError,
 } from "@/lib/queries/voice-design";
 import { queryKeys } from "@/lib/query-keys";
@@ -102,6 +104,7 @@ type DraftInputs = { description: string; previewText: string; name: string };
 type Draft = DraftInputs & {
   selectedCatalogId: string | null;
   models: Record<string, ModelDraft>;
+  failedSaves: Record<string, SaveAttempt>;
 };
 function newDraft(): Draft {
   return {
@@ -110,6 +113,7 @@ function newDraft(): Draft {
     name: "",
     selectedCatalogId: null,
     models: {},
+    failedSaves: {},
   };
 }
 function isLocked(draft: Draft): boolean {
@@ -149,6 +153,7 @@ function useVoiceDesignSession({
   project,
   surface,
   target,
+  open,
   onOpenChange,
 }: Props) {
   const qc = useQueryClient();
@@ -186,6 +191,7 @@ function useVoiceDesignSession({
       current ? { ...current, ...update } : current,
     );
   const models = useVoiceDesignModels(project);
+  const history = useVoiceDesignHistory(project, open);
   const selectedModel = models.isError
     ? undefined
     : models.data?.models.find((model) => model.catalog_id === catalogId);
@@ -206,6 +212,29 @@ function useVoiceDesignSession({
         ? { ...current, selectedCatalogId: nextId }
         : current,
     );
+  };
+  const selectHistory = (ready: VoiceDesignReady) => {
+    if (Date.parse(ready.expires_at) <= Date.now()) return;
+    qc.setQueryData<Draft>(key, (current) => {
+      if (!current || isLocked(current)) return current;
+      const nextId = ready.model?.catalog_id ?? `legacy:${ready.candidate_id}`;
+      const failedAttempt = current.failedSaves?.[ready.candidate_id];
+      return {
+        ...current,
+        description: ready.description,
+        previewText: ready.preview_text,
+        selectedCatalogId: nextId,
+        models: {
+          ...current.models,
+          [nextId]: {
+            ...newModelDraft(),
+            generation: { kind: "settled" },
+            ready,
+            save: failedAttempt ? { kind: "failed", attempt: failedAttempt } : { kind: "idle" },
+          },
+        },
+      };
+    });
   };
   const quote = useVoiceDesignQuote(project, surface, selectedModel);
   const saving = Object.values(session.models).some(
@@ -282,6 +311,17 @@ function useVoiceDesignSession({
       },
       expected.id,
     );
+    if (result.status === "ready") {
+      qc.setQueryData<{ candidates: VoiceDesignReady[] }>(
+        queryKeys.voiceDesignHistory(project),
+        (current) => ({
+          candidates: [result, ...(current?.candidates ?? []).filter(
+            (item) => item.candidate_id !== result.candidate_id,
+          )].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 5),
+        }),
+      );
+      void qc.invalidateQueries({ queryKey: queryKeys.voiceDesignHistory(project) });
+    }
   }
   useEffect(() => {
     if (
@@ -335,6 +375,15 @@ function useVoiceDesignSession({
     draft.save.kind !== "saved" &&
     !draft.conflict &&
     (target.kind !== "account" || !!session.name.trim());
+  const expirePreview = () => {
+    if (!draft.ready) return;
+    const candidateId = draft.ready.candidate_id;
+    patch({ ready: { ...draft.ready, expires_at: new Date(0).toISOString() } });
+    qc.setQueryData<{ candidates: VoiceDesignReady[] }>(
+      queryKeys.voiceDesignHistory(project),
+      (current) => current ? { candidates: current.candidates.filter((item) => item.candidate_id !== candidateId) } : current,
+    );
+  };
   const generate = async () => {
     const current = qc.getQueryData<Draft>(key);
     if (
@@ -454,6 +503,11 @@ function useVoiceDesignSession({
         applied = true;
         return {
           ...latestSession,
+          failedSaves: update.save?.kind === "failed"
+            ? { ...latestSession.failedSaves, [attempt.input.candidate_id]: attempt }
+            : update.save?.kind === "saved"
+              ? Object.fromEntries(Object.entries(latestSession.failedSaves ?? {}).filter(([id]) => id !== attempt.input.candidate_id))
+              : latestSession.failedSaves,
           models: {
             ...latestSession.models,
             [catalogId]: { ...latest, ...update },
@@ -468,6 +522,13 @@ function useVoiceDesignSession({
       else if (attempt.kind === "account" && target.kind === "account")
         await target.onSave(attempt.input);
       else return;
+      await qc.cancelQueries({ queryKey: queryKeys.voiceDesignHistory(project) });
+      qc.setQueryData<{ candidates: VoiceDesignReady[] }>(
+        queryKeys.voiceDesignHistory(project),
+        (current) => current ? {
+          candidates: current.candidates.filter((item) => item.candidate_id !== attempt.input.candidate_id),
+        } : current,
+      );
       if (finish({ save: { kind: "saved", attempt } }) && mounted.current) {
         target.onSaved?.();
         onOpenChange(false);
@@ -506,6 +567,9 @@ function useVoiceDesignSession({
     patch,
     patchInputs,
     models,
+    history,
+    selectHistory,
+    now,
     selectedModel,
     selectModel,
     selectionLocked,
@@ -522,6 +586,7 @@ function useVoiceDesignSession({
     valid,
     expired,
     canSave,
+    expirePreview,
     generate,
     check,
     save,
@@ -537,6 +602,9 @@ function VoiceDesignSession(props: Props) {
     patch,
     patchInputs,
     models,
+    history,
+    selectHistory,
+    now,
     selectedModel,
     selectModel,
     selectionLocked,
@@ -553,6 +621,7 @@ function VoiceDesignSession(props: Props) {
     valid,
     expired,
     canSave,
+    expirePreview,
     generate,
     check,
     save,
@@ -588,6 +657,7 @@ function VoiceDesignSession(props: Props) {
               >
                 <SelectValue>
                   {selectedModel?.label ??
+                    (draft.ready ? t("voiceDesign.modelUnavailableShort", { model: draft.ready.model?.label ?? t("voiceDesign.modelUnknown") }) : undefined) ??
                     t(
                       models.isPending
                         ? "voiceDesign.modelsLoading"
@@ -690,24 +760,52 @@ function VoiceDesignSession(props: Props) {
             </div>
           )}
           {generating && <p role="status">{t("voiceDesign.generating")}</p>}
+          <section aria-label={t("voiceDesign.historyTitle")} className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-medium">{t("voiceDesign.historyTitle")}</h3>
+              {history.isError && (
+                <Button variant="ghost" size="sm" onClick={() => void history.refetch()}>
+                  {t("voiceDesign.historyRetry")}
+                </Button>
+              )}
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">{t("voiceDesign.temporaryHint")}</p>
+            {history.isError ? <p role="alert" className="text-xs">{feedback(knownMessage(history.error))}</p> : (
+              <div className="ui-scrollbar max-h-40 space-y-1 overflow-y-auto">
+                {history.data?.candidates.filter((item) => Date.parse(item.expires_at) > now).map((item) => (
+                  <button
+                    key={item.candidate_id}
+                    type="button"
+                    aria-label={t("voiceDesign.selectHistory", { description: item.description })}
+                    aria-pressed={draft.ready?.candidate_id === item.candidate_id}
+                    disabled={selectionLocked}
+                    onClick={() => selectHistory(item)}
+                    className="w-full rounded-md border border-transparent bg-muted/20 px-3 py-2 text-left transition hover:bg-muted/50 aria-pressed:border-primary/50 aria-pressed:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <span className="flex items-center justify-between gap-2 text-xs">
+                      <span>{item.model?.label ?? t("voiceDesign.modelUnknown")}</span>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">{formatAudioClock(item.duration_seconds)}</span>
+                    </span>
+                    <span className="mt-1 block truncate text-sm">{item.description}</span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {new Date(item.created_at).toLocaleTimeString()} · {t("voiceDesign.expires", { time: new Date(item.expires_at).toLocaleTimeString() })}
+                    </span>
+                  </button>
+                ))}
+                {!history.isPending && !history.data?.candidates.some((item) => Date.parse(item.expires_at) > now) && <p className="text-xs text-muted-foreground">{t("voiceDesign.historyEmpty")}</p>}
+              </div>
+            )}
+          </section>
           {draft.ready && (
             <div className="min-w-0 space-y-2 rounded-lg border p-3">
               <p className="font-medium">{t("voiceDesign.result")}</p>
               <ModelDetails model={draft.ready.model} prefix="result" />
+              <p className="break-words text-xs text-muted-foreground">{t("voiceDesign.originalDescription", { description: draft.ready.description })}</p>
               <VoicePreview
                 key={draft.ready.candidate_id}
                 ready={draft.ready}
                 disabled={expired || !open}
-                onExpired={() =>
-                  patch({
-                    ready: draft.ready
-                      ? {
-                          ...draft.ready,
-                          expires_at: new Date(0).toISOString(),
-                        }
-                      : null,
-                  })
-                }
+                onExpired={expirePreview}
               />
               <p>
                 {t("voiceDesign.duration", {
@@ -766,9 +864,6 @@ function VoiceDesignSession(props: Props) {
           </p>
         </div>
         <DialogFooter className="px-0 pb-0">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t("voiceDesign.close")}
-          </Button>
           <Button
             variant={draft.ready ? "outline" : "default"}
             disabled={
@@ -786,7 +881,7 @@ function VoiceDesignSession(props: Props) {
                 : "voiceDesign.generate",
             )}
           </Button>
-          <Button
+          {draft.save.kind !== "saved" && <Button
             variant={draft.ready ? "default" : "outline"}
             disabled={!canSave}
             onClick={() =>
@@ -796,7 +891,7 @@ function VoiceDesignSession(props: Props) {
             }
           >
             {saving ? t("voiceDesign.saving") : target.saveLabel}
-          </Button>
+          </Button>}
         </DialogFooter>
         <AlertDialog open={confirm} onOpenChange={setConfirm}>
           <AlertDialogContent className="bg-[var(--ui-surface-modal)] backdrop-blur-none">
@@ -834,6 +929,9 @@ function ModelDetails({
     );
   return (
     <div className="break-words text-xs text-muted-foreground">
+      {prefix === "result" && <p className="font-medium text-foreground">{model.label}</p>}
+      <details>
+        <summary className="cursor-pointer">{t("voiceDesign.modelDetails")}</summary>
       <p>{t(`voiceDesign.${prefix}Model`, { model: model.model })}</p>
       {model.target_model && (
         <p>
@@ -845,6 +943,7 @@ function ModelDetails({
       {model.execution_mode === "test_replay" && (
         <p>{t("voiceDesign.testReplay")}</p>
       )}
+      </details>
     </div>
   );
 }
@@ -858,90 +957,65 @@ function VoicePreview({
   onExpired: () => void;
 }) {
   const { t } = useTranslation();
-  const audio = useRef<HTMLAudioElement>(null);
   const url = useRef<string | null>(null);
   const abort = useRef<AbortController | null>(null);
   const onExpiredRef = useRef(onExpired);
+  const [source, setSource] = useState<string>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  useEffect(() => { onExpiredRef.current = onExpired; }, [onExpired]);
+  const load = useCallback(async () => {
+    if (disabled) return;
+    abort.current?.abort();
+    const controller = new AbortController();
+    abort.current = controller;
+    setLoading(true);
+    setError("");
+    try {
+      const blob = await fetchVoiceDesignAudio(ready.preview_url, controller.signal);
+      if (controller.signal.aborted) return;
+      url.current = URL.createObjectURL(blob);
+      setSource(url.current);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (error instanceof VoiceDesignApiError && error.code === "candidate_expired")
+        onExpiredRef.current();
+      setError(error instanceof VoiceDesignApiError ? error.message : "voiceDesign.errors.playback");
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
+    }
+  }, [disabled, ready.preview_url]);
   useEffect(() => {
-    onExpiredRef.current = onExpired;
-  }, [onExpired]);
-  const load = useCallback(
-    async (playAfterLoad: boolean) => {
-      if (disabled) return;
-      abort.current?.abort();
-      const controller = new AbortController();
-      abort.current = controller;
-      setLoading(true);
-      setError("");
-      try {
-        if (!url.current) {
-          const blob = await fetchVoiceDesignAudio(
-            ready.preview_url,
-            controller.signal,
-          );
-          if (controller.signal.aborted) return;
-          url.current = URL.createObjectURL(blob);
-          if (audio.current) audio.current.src = url.current;
-        }
-        if (playAfterLoad && audio.current) {
-          await audio.current.play();
-        }
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        if (
-          error instanceof VoiceDesignApiError &&
-          error.code === "candidate_expired"
-        )
-          onExpiredRef.current();
-        setError(
-          error instanceof VoiceDesignApiError
-            ? error.message
-            : "voiceDesign.errors.playback",
-        );
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    },
-    [disabled, ready.preview_url],
-  );
-  useEffect(() => {
-    const element = audio.current;
-    void load(false);
+    void load();
     return () => {
       abort.current?.abort();
-      element?.pause();
-      element?.removeAttribute("src");
       if (url.current) URL.revokeObjectURL(url.current);
       url.current = null;
+      setSource(undefined);
     };
   }, [load]);
   return (
     <>
-      <audio
-        ref={audio}
-        controls
-        preload="metadata"
-        aria-label={t("voiceDesign.audioLabel")}
-        className="h-10 w-full min-w-0"
+      <AudioPreviewPlayer
+        src={source}
+        durationSeconds={ready.duration_seconds}
+        disabled={disabled || loading}
+        label={t("voiceDesign.audioLabel")}
+        playLabel={t("voiceDesign.play")}
         onError={() => {
           setError("voiceDesign.errors.playback");
           if (url.current) URL.revokeObjectURL(url.current);
           url.current = null;
+          setSource(undefined);
         }}
       />
-      <Button
-        variant="outline"
-        onClick={() => void load(true)}
-        disabled={disabled || loading}
-      >
-        {t(error ? "voiceDesign.retryPlayback" : "voiceDesign.play")}
-      </Button>
       {error && (
-        <p role="alert" className="break-words text-sm">
-          {t(error, { defaultValue: error })}
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <p role="alert" className="break-words text-xs">{t(error, { defaultValue: error })}</p>
+          <Button variant="ghost" size="sm" onClick={() => void load()} disabled={disabled || loading}>
+            {t("voiceDesign.retryPlayback")}
+          </Button>
+        </div>
       )}
     </>
   );

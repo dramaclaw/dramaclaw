@@ -101,6 +101,7 @@ beforeEach(() => {
     }),
   );
   server.use(
+    http.get(`${base}/voice-design/candidates`, () => HttpResponse.json({ ok: true, data: { candidates: [] } })),
     http.get(`${base}/freezone/jobs/:kind/:id/result`, () =>
       HttpResponse.json({ ok: true, data: { url: '/fixture-speech.mp3' } }),
     ),

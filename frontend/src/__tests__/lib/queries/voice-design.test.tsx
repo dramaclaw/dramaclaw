@@ -16,6 +16,7 @@ import {
   getVoiceDesign,
   useVoiceDesignQuote,
   useVoiceDesignModels,
+  useVoiceDesignHistory,
   VoiceDesignApiError,
 } from "@/lib/queries/voice-design";
 import { useSaveGeneratedCharacterVoice } from "@/lib/queries/characters";
@@ -35,6 +36,20 @@ const body = {
   language: "zh" as const,
 };
 const base = "http://localhost:3000/api/v1/projects/demo";
+const historyReady = {
+  candidate_id: id,
+  model: null,
+  status: "ready",
+  description: body.description,
+  preview_text: body.preview_text,
+  language: "zh",
+  preview_url: `/api/v1/projects/demo/voice-design/candidates/${id}/audio`,
+  mime_type: "audio/mpeg",
+  duration_seconds: 4.5,
+  sha256: "a".repeat(64),
+  created_at: new Date().toISOString(),
+  expires_at: new Date(Date.now() + 3600000).toISOString(),
+};
 function provider(qc: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
     return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
@@ -391,4 +406,29 @@ it("refetches a new quote when the same catalog changes its configuration digest
     ),
   );
   expect(calls).toBe(2);
+});
+
+it("reads legacy temporary history only when opened without creating or quoting", async () => {
+  let reads = 0;
+  let writes = 0;
+  server.use(
+    http.get(`${base}/voice-design/candidates`, () => { reads++; return HttpResponse.json({ ok: true, data: { candidates: [historyReady] } }); }),
+    http.post(`${base}/voice-design/candidates`, () => { writes++; return HttpResponse.json({}); }),
+  );
+  const { result, rerender } = renderHook(({ open }) => useVoiceDesignHistory("demo", open), { initialProps: { open: false }, wrapper: provider(new QueryClient()) });
+  expect(reads).toBe(0);
+  rerender({ open: true });
+  await waitFor(() => expect(result.current.data?.candidates).toEqual([historyReady]));
+  expect(reads).toBe(1);
+  expect(writes).toBe(0);
+});
+
+it.each([
+  { candidates: [{ ...historyReady, status: "generating" }] },
+  { candidates: Array.from({ length: 6 }, () => historyReady) },
+])("rejects a temporary history response outside the ready/five-item contract", async (data) => {
+  server.use(http.get(`${base}/voice-design/candidates`, () => HttpResponse.json({ ok: true, data })));
+  const { result } = renderHook(() => useVoiceDesignHistory("demo", true), { wrapper: provider(new QueryClient()) });
+  await waitFor(() => expect(result.current.isError).toBe(true));
+  expect(result.current.data).toBeUndefined();
 });

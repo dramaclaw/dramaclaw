@@ -9193,6 +9193,14 @@
     "selectedTarget": "Selected target model: {{model}}",
     "resultModel": "Request model: {{model}}",
     "resultTarget": "Target model: {{model}}",
-    "testReplay": "Test replay; no real model was called"
+    "testReplay": "Test replay; no real model was called",
+    "historyTitle": "Recent previews",
+    "temporaryHint": "Unsaved previews expire and are automatically deleted after 1 hour. Up to 5 recent previews are kept. Saved voices are unaffected.",
+    "historyRetry": "Refresh list",
+    "selectHistory": "Select preview: {{description}}",
+    "historyEmpty": "No unsaved previews.",
+    "originalDescription": "Original description: {{description}}",
+    "modelDetails": "Model details",
+    "modelUnavailableShort": "{{model}} (unavailable for new generation)"
   }
 }

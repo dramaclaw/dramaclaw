@@ -3050,3 +3050,5 @@ src/novelvideo/freezone/canvas_command_watch.py,Elastic-2.0,2026 SuperTale contr
 tests/test_canvas_command_push.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_command_stream.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_push_evidence_collection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/components/ui/audio-preview-player.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/components/ui/audio-preview-player.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

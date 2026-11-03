@@ -9193,6 +9193,14 @@
     "selectedTarget": "本次目标模型：{{model}}",
     "resultModel": "请求模型：{{model}}",
     "resultTarget": "目标模型：{{model}}",
-    "testReplay": "测试回放，未调用真实模型"
+    "testReplay": "测试回放，未调用真实模型",
+    "historyTitle": "最近试听",
+    "temporaryHint": "未保存试听保留 1 小时，过期后自动删除；最多保留最近 5 条。已保存音色不受影响。",
+    "historyRetry": "刷新列表",
+    "selectHistory": "选择试听：{{description}}",
+    "historyEmpty": "暂无未保存的试听。",
+    "originalDescription": "生成时描述：{{description}}",
+    "modelDetails": "模型详情",
+    "modelUnavailableShort": "{{model}}（不可用于新生成）"
   }
 }

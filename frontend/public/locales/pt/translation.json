@@ -8941,7 +8941,15 @@
     "selectedTarget": "Modelo de destino selecionado: {{model}}",
     "resultModel": "Modelo da solicitação: {{model}}",
     "resultTarget": "Modelo de destino: {{model}}",
-    "testReplay": "Reprodução de teste; nenhum modelo real foi chamado"
+    "testReplay": "Reprodução de teste; nenhum modelo real foi chamado",
+    "historyTitle": "Prévias recentes",
+    "temporaryHint": "As prévias não salvas expiram e são excluídas automaticamente após 1 hora. Até 5 prévias recentes são mantidas. As vozes salvas não são afetadas.",
+    "historyRetry": "Atualizar lista",
+    "selectHistory": "Selecionar prévia: {{description}}",
+    "historyEmpty": "Nenhuma prévia não salva.",
+    "originalDescription": "Descrição original: {{description}}",
+    "modelDetails": "Detalhes do modelo",
+    "modelUnavailableShort": "{{model}} (indisponível para nova geração)"
   },
   "subscriptions": {
     "bill": {

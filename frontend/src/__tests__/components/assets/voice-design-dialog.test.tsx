@@ -17,7 +17,7 @@ import ky from "ky";
 import { useState } from "react";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 vi.mock("@/lib/api", () => ({
-  api: ky.create({ baseUrl: "http://localhost:3000/", timeout: 100 }),
+  api: ky.create({ baseUrl: "http://localhost:3000/", timeout: 500 }),
   uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 import {
@@ -28,11 +28,13 @@ import { VoiceDesignApiError } from "@/lib/queries/voice-design";
 import zh from "../../../../public/locales/zh/translation.json";
 import { queryKeys } from "@/lib/query-keys";
 import { designModels } from "@/__tests__/voice-design-fixtures";
+import type { SaveGeneratedAccountVoice, VoiceDesignReady } from "@/types/voice-design";
 const i18n = i18next.createInstance();
 const base = "http://localhost:3000/api/v1/projects/demo/voice-design";
 const text = "今天的天气很好，我们沿着河边慢慢走回家。";
 let creations = 0;
 let candidateId = "";
+let historyCandidates: VoiceDesignReady[] = [];
 const save = vi.fn(async (_input: unknown) => {});
 const target: VoiceDesignTarget = {
   kind: "character",
@@ -46,7 +48,7 @@ const target: VoiceDesignTarget = {
 function ready(
   id: string,
   expiry = new Date(Date.now() + 3600000).toISOString(),
-) {
+): VoiceDesignReady {
   return {
     model: designModels[0],
     candidate_id: id,
@@ -71,8 +73,12 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   creations = 0;
+  historyCandidates = [];
   save.mockClear();
   server.use(
+    http.get(`${base}/candidates`, () =>
+      HttpResponse.json({ ok: true, data: { candidates: historyCandidates } }),
+    ),
     http.get(`${base}/models`, () =>
       HttpResponse.json({ ok: true, data: { models: designModels } }),
     ),
@@ -104,9 +110,12 @@ beforeEach(() => {
         { status: 202 },
       );
     }),
-    http.get(`${base}/candidates/:id`, ({ params }) =>
-      HttpResponse.json({ ok: true, data: ready(String(params.id)) }),
-    ),
+    http.get(`${base}/candidates/:id`, ({ params }) => {
+      const result = ready(String(params.id));
+      if (!historyCandidates.some((item) => item.candidate_id === result.candidate_id))
+        historyCandidates.unshift(result);
+      return HttpResponse.json({ ok: true, data: result });
+    }),
     http.get(
       `${base}/candidates/:id/audio`,
       () =>
@@ -178,7 +187,7 @@ async function selectModel(label: string) {
 async function generate() {
   await fill();
   fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
-  await screen.findByText("8.4 秒");
+  await screen.findByLabelText("生成的试听音频");
 }
 it("loads the preview before playback without autoplay or a second audio fetch", async () => {
   let reads = 0;
@@ -206,7 +215,7 @@ it("loads the preview before playback without autoplay or a second audio fetch",
   );
   expect(reads).toBe(1);
   expect(creations).toBe(1);
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:test");
 });
 it("retries a failed preview preload without creating another candidate", async () => {
@@ -227,9 +236,10 @@ it("retries a failed preview preload without creating another candidate", async 
   await waitFor(() => expect(retry).toBeEnabled());
   expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
   fireEvent.click(retry);
-  await waitFor(() =>
-    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledOnce(),
-  );
+  await waitFor(() => expect(screen.getByRole("button", { name: "播放试听" })).toBeEnabled());
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "播放试听" }));
+  await waitFor(() => expect(HTMLMediaElement.prototype.play).toHaveBeenCalledOnce());
   expect(reads).toBe(2);
   expect(creations).toBe(1);
   expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
@@ -258,7 +268,7 @@ it("cancels a pending preview on close and reloads it on reopen", async () => {
     await generate();
     await waitFor(() => expect(reads).toBe(1));
     expect(pendingSignal?.aborted).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(pendingSignal?.aborted).toBe(true);
     expect(URL.createObjectURL).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "打开" }));
@@ -292,7 +302,7 @@ it("requires Unicode lengths and shows actual quote; retains draft on reopen", a
   );
   expect(screen.getByText("500/500")).toBeInTheDocument();
   expect(screen.getByText("本次生成：7 积分 / 次")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
   fireEvent.click(await screen.findByRole("button", { name: "打开" }));
   expect(screen.getByLabelText("音色描述")).toHaveValue("😀".repeat(500));
 });
@@ -552,7 +562,7 @@ it.each([403, 422, 502, 504, "timeout"])(
         const input = (await request.json()) as { request_id: string };
         candidateId = input.request_id;
         creations++;
-        if (mode === "timeout") await delay(180);
+        if (mode === "timeout") await delay(700);
         return HttpResponse.json(
           {
             ok: false,
@@ -590,7 +600,7 @@ it.each([403, 422, 502, 504, "timeout"])(
     expect(creations).toBe(1);
     if (mode === "timeout" || (typeof mode === "number" && mode >= 500))
       expect(queried).toBe(candidateId);
-    if (mode === "timeout") await delay(100);
+    if (mode === "timeout") await delay(250);
   },
 );
 it("requires refresh after slot conflict before another save", async () => {
@@ -664,7 +674,7 @@ it.each(["success", "failure"])(
     fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
     fireEvent.click(screen.getByRole("button", { name: "替换" }));
     await screen.findByRole("button", { name: "正在保存…" });
-    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     view.rerender(<Root selected={other} />);
     fireEvent.click(screen.getByRole("button", { name: "打开" }));
     view.rerender(<Root selected={original} />);
@@ -910,7 +920,7 @@ it("keeps an unavailable catalog's existing candidate playable and savable witho
     expect(screen.getByRole("button", { name: "重新生成" })).toBeDisabled(),
   );
   expect(screen.getByRole("combobox", { name: "生成模型" })).toHaveTextContent(
-    "所选模型已不可用，仍可试听和保存已有候选。",
+    "Qwen（不可用于新生成）",
   );
   expect(
     screen.getAllByText("所选模型已不可用，仍可试听和保存已有候选。").length,
@@ -1040,4 +1050,163 @@ it("opens a themed model listbox and supports keyboard selection and Escape", as
   );
   await user.keyboard("{Enter}");
   await waitFor(() => expect(trigger).toHaveTextContent("CosyVoice"));
+});
+
+it("S29 selects an earlier temporary preview and saves its exact ID without generation", async () => {
+  const first = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "第一版温柔女声" };
+  const second = { ...ready("cf09708d-4a16-4cee-93eb-fee58deaa162"), description: "第二版清亮女声" };
+  historyCandidates = [second, first];
+  mount({ ...target, expectedSlot: { path: "", sha256: "", updated_at: "" } });
+  fireEvent.click(await screen.findByRole("button", { name: "选择试听：第一版温柔女声" }));
+  await waitFor(() => expect(screen.getByLabelText("音色描述")).toHaveValue(first.description));
+  expect(screen.getByLabelText("试听文本")).toHaveValue(first.preview_text);
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ candidate_id: first.candidate_id })));
+  expect(creations).toBe(0);
+});
+
+it("S29 restores temporary previews after remount without silently generating", async () => {
+  const item = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "刷新前的试听" };
+  historyCandidates = [item];
+  const first = mount();
+  expect(await screen.findByRole("button", { name: "选择试听：刷新前的试听" })).toBeInTheDocument();
+  first.unmount();
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: "选择试听：刷新前的试听" }));
+  await waitFor(() => expect(screen.getByLabelText("音色描述")).toHaveValue(item.description));
+  expect(creations).toBe(0);
+});
+
+it("S29 keeps both same-model generations and saves the earlier audio", async () => {
+  const ids: string[] = [];
+  server.use(http.post(`${base}/candidates`, async ({ request }) => {
+    const input = await request.json();
+    if (!input || typeof input !== "object" || !("request_id" in input) || !("description" in input) || typeof input.request_id !== "string" || typeof input.description !== "string")
+      return HttpResponse.json({ error: "invalid test request" }, { status: 422 });
+    const result = { ...ready(input.request_id), description: input.description };
+    ids.push(result.candidate_id);
+    historyCandidates.unshift(result);
+    creations++;
+    return HttpResponse.json({ ok: true, data: result });
+  }));
+  mount({ ...target, expectedSlot: { path: "", sha256: "", updated_at: "" } });
+  await generate();
+  fireEvent.change(screen.getByLabelText("音色描述"), { target: { value: "第二次更清亮" } });
+  await waitFor(() => expect(screen.getByLabelText("音色描述")).toHaveValue("第二次更清亮"));
+  fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+  await screen.findByRole("button", { name: "选择试听：第二次更清亮" });
+  fireEvent.click(screen.getByRole("button", { name: "选择试听：温柔" }));
+  await waitFor(() => expect(screen.getByLabelText("音色描述")).toHaveValue("温柔"));
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ candidate_id: ids[0] })));
+  expect(ids).toHaveLength(2);
+  expect(ids[0]).not.toBe(ids[1]);
+  expect(creations).toBe(2);
+});
+
+it.each([designModels[1], null])("S29 reads and saves history for unavailable or legacy model %s", async (model) => {
+  const item = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), model, description: "旧目录试听" };
+  historyCandidates = [item];
+  server.use(http.get(`${base}/models`, () => HttpResponse.json({ ok: true, data: { models: [designModels[0]] } })));
+  mount({ ...target, expectedSlot: { path: "", sha256: "", updated_at: "" } });
+  fireEvent.click(await screen.findByRole("button", { name: "选择试听：旧目录试听" }));
+  await screen.findByText("生成时描述：旧目录试听");
+  expect(screen.getByRole("button", { name: "重新生成" })).toBeDisabled();
+  await waitFor(() => expect(screen.getByRole("button", { name: "播放试听" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ candidate_id: item.candidate_id })));
+  expect(creations).toBe(0);
+});
+
+it("S29 blocks switching history while generation status is unresolved", async () => {
+  historyCandidates = [{ ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "另一条旧试听" }];
+  server.use(http.get(`${base}/candidates/:id`, ({ params }) => HttpResponse.json({
+    ok: true, data: { candidate_id: String(params.id), model: designModels[0], status: "unknown", failure: { code: "generation_unknown", message: "请查询原任务", retryable: true } },
+  })));
+  mount();
+  await screen.findByRole("button", { name: "选择试听：另一条旧试听" });
+  await fill();
+  fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+  await screen.findByRole("button", { name: "查询原任务" });
+  const previous = screen.getByRole("button", { name: "选择试听：另一条旧试听" });
+  expect(previous).toBeDisabled();
+  fireEvent.click(previous);
+  expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
+  expect(screen.getByRole("button", { name: "保存到默认" })).toBeDisabled();
+  expect(creations).toBe(1);
+});
+
+it("S29 shows clear temporary retention and a single playback and close control", async () => {
+  mount();
+  await generate();
+  expect(screen.getByText("未保存试听保留 1 小时，过期后自动删除；最多保留最近 5 条。已保存音色不受影响。")).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "播放试听" })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "关闭" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("生成的试听音频")).not.toHaveAttribute("controls");
+  const details = screen.getAllByText("模型详情");
+  expect(details).toHaveLength(2);
+  expect(details.every((summary) => !summary.closest("details")?.open)).toBe(true);
+});
+
+it("S29 locks history during a pending save and removes saved previews", async () => {
+  const first = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "正在保存的试听" };
+  const second = { ...ready("cf09708d-4a16-4cee-93eb-fee58deaa162"), description: "另一条未保存试听" };
+  historyCandidates = [first, second];
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const pendingSave = vi.fn(async () => { await gate; historyCandidates = [second]; });
+  mount({ ...target, expectedSlot: { path: "", sha256: "", updated_at: "" }, onSave: pendingSave });
+  fireEvent.click(await screen.findByRole("button", { name: "选择试听：正在保存的试听" }));
+  await screen.findByText("生成时描述：正在保存的试听");
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  await waitFor(() => expect(pendingSave).toHaveBeenCalledOnce());
+  expect(screen.getByRole("button", { name: "选择试听：另一条未保存试听" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "选择试听：另一条未保存试听" }));
+  expect(screen.getByLabelText("音色描述")).toHaveValue(first.description);
+  release();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "打开" }));
+  await screen.findByRole("button", { name: "选择试听：另一条未保存试听" });
+  await waitFor(() => expect(screen.queryByRole("button", { name: "选择试听：正在保存的试听" })).not.toBeInTheDocument());
+  expect(creations).toBe(0);
+});
+
+it("S29 removes expired history and disables playback and save without regeneration", async () => {
+  const item = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b", new Date(Date.now() + 1500).toISOString()), description: "即将过期的试听" };
+  historyCandidates = [item];
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: "选择试听：即将过期的试听" }));
+  await screen.findByText("生成时描述：即将过期的试听");
+  await waitFor(() => expect(screen.getByRole("button", { name: "保存到默认" })).toBeDisabled(), { timeout: 3500 });
+  expect(screen.queryByRole("button", { name: "选择试听：即将过期的试听" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "播放试听" })).toBeDisabled();
+  expect(creations).toBe(0);
+});
+
+it.each([false, true])("S29 preserves a failed save request when reselecting history (via another preview: %s)", async (viaOther) => {
+  const first = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "保存断线的试听" };
+  const second = { ...ready("cf09708d-4a16-4cee-93eb-fee58deaa162"), description: "另一条试听" };
+  historyCandidates = [first, second];
+  const attempts: SaveGeneratedAccountVoice[] = [];
+  mount({
+    kind: "account", key: "mine", label: "我的音色", saveLabel: "保存到我的音色",
+    onSave: async (input) => { attempts.push(input); if (attempts.length === 1) throw new Error("connection lost"); },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "选择试听：保存断线的试听" }));
+  fireEvent.change(screen.getByLabelText("音色名称"), { target: { value: "满意的女声" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "保存到我的音色" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "保存到我的音色" }));
+  await screen.findByRole("alert");
+  if (viaOther) {
+    fireEvent.click(screen.getByRole("button", { name: "选择试听：另一条试听" }));
+    await screen.findByText("生成时描述：另一条试听");
+  }
+  fireEvent.click(screen.getByRole("button", { name: "选择试听：保存断线的试听" }));
+  await screen.findByText("生成时描述：保存断线的试听");
+  fireEvent.click(screen.getByRole("button", { name: "保存到我的音色" }));
+  await waitFor(() => expect(attempts).toHaveLength(2));
+  expect(attempts[1]).toEqual(attempts[0]);
+  expect(attempts[1]?.candidate_id).toBe(first.candidate_id);
+  expect(creations).toBe(0);
 });
