@@ -3052,3 +3052,10 @@ tests/test_canvas_command_stream.py,Elastic-2.0,2026 SuperTale contributors,REUS
 tests/test_canvas_push_evidence_collection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/ui/audio-preview-player.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/ui/audio-preview-player.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/components/assets/library-voice-picker.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/components/assets/voice-design-history.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/components/assets/library-voice-picker.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/components/assets/voice-design-history.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/components/assets/voice-design-preview.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/audio/voice_design_assets.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_voice_design_assets.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
