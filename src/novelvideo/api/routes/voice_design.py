@@ -284,6 +284,10 @@ CandidateResponse = Success[QueryableCandidate]
 CandidateAcceptedResponse = Success[CandidateGenerating]
 
 
+class CandidateList(ContractModel):
+    candidates: list[CandidateReady] = Field(max_length=5)
+
+
 class ExpectedSlot(ContractModel):
     path: StrictStr
     sha256: Annotated[str, StringConstraints(pattern=r"^(?:[0-9a-f]{64})?$")]
@@ -616,6 +620,18 @@ async def create_candidate(
         raise CandidateStorageError("voice_design_unavailable") from None
     storage.mark_queued(candidate_id)
     return JSONResponse(_candidate(record, project), status_code=202)
+
+
+@router.get("/candidates", response_model=Success[CandidateList])
+async def list_candidates(project: str, user: dict = Depends(get_api_user)):
+    ctx = await _context(project, user, "viewer")
+    records = VoiceDesignStorage(ctx).list_ready()
+    return {
+        "ok": True,
+        "data": {
+            "candidates": [_candidate(record, project)["data"] for record in records]
+        },
+    }
 
 
 @router.get("/candidates/{candidate_id}", response_model=CandidateResponse)

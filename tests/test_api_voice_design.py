@@ -605,18 +605,179 @@ def test_real_queue_failure_recovers_same_candidate(production_api):
     assert len(s.calls) == 2
 
 
-def make_ready(s):
+def make_ready(s, create=CREATE):
     from hashlib import sha256
 
-    assert s.client.post(s.url, json=CREATE).status_code == 202
-    s.store.claim(REQUEST_ID)
-    path = s.store.output_path(REQUEST_ID)
+    candidate_id = create["request_id"]
+    assert s.client.post(s.url, json=create).status_code == 202
+    s.store.claim(candidate_id)
+    path = s.store.output_path(candidate_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"0123456789")
     s.store.complete(
-        REQUEST_ID, duration_seconds=3, sha256=sha256(path.read_bytes()).hexdigest()
+        candidate_id, duration_seconds=3, sha256=sha256(path.read_bytes()).hexdigest()
     )
     return path
+
+
+def test_real_recent_candidates_empty_and_openapi(production_api):
+    s = production_api
+    response = s.client.get(s.url)
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "data": {"candidates": []}}
+    schema = s.client.get("/openapi.json").json()
+    assert (
+        "get" in schema["paths"]["/api/v1/projects/{project}/voice-design/candidates"]
+    )
+    items = schema["components"]["schemas"]["CandidateList"]["properties"]["candidates"]
+    assert items["maxItems"] == 5
+    assert items["items"]["$ref"].endswith("/CandidateReady")
+
+
+def test_real_recent_candidates_return_latest_five(production_api):
+    from uuid import uuid4
+
+    s = production_api
+    ids = [str(uuid4()) for _ in range(6)]
+    for candidate_id in ids:
+        make_ready(s, {**CREATE, "request_id": candidate_id})
+    items = s.client.get(s.url).json()["data"]["candidates"]
+    assert [item["candidate_id"] for item in items] == list(reversed(ids[-5:]))
+    assert len(s.calls) == 6
+
+
+def test_real_recent_legacy_candidate_does_not_invent_model(production_api):
+    import sqlite3
+
+    s = production_api
+    make_ready(s)
+    with sqlite3.connect(s.store.db_path) as db:
+        db.execute(
+            "UPDATE candidates SET model_snapshot=NULL,catalog_id=NULL,config_digest=NULL"
+        )
+    items = s.client.get(s.url).json()["data"]["candidates"]
+    assert len(items) == 1
+    assert items[0]["model"] is None
+    assert items[0]["candidate_id"] == REQUEST_ID
+
+
+def test_real_recent_candidates_reuse_snapshot_without_gateway_or_catalog(
+    production_api,
+):
+    from dataclasses import replace
+    from uuid import uuid4
+
+    s = production_api
+    make_ready(s)
+    newer_id = str(uuid4())
+    original_prompt = "A clear and calm voice"
+    make_ready(
+        s,
+        {
+            **CREATE,
+            "request_id": newer_id,
+            "catalog_id": "seed",
+            "config_digest": "f" * 64,
+            "description": original_prompt,
+        },
+    )
+    s.enabled = False
+    s.models = {}
+    s.ctx = replace(s.ctx, effective_role="viewer")
+    response = s.client.get(s.url)
+    assert response.status_code == 200
+    items = response.json()["data"]["candidates"]
+    assert [item["candidate_id"] for item in items] == [newer_id, REQUEST_ID]
+    assert items[0]["description"] == original_prompt
+    assert items[0]["model"]["model"] == "seed-audio-1.0"
+    assert items[1]["model"]["model"] == "voice-enrollment"
+    for item in items:
+        contract().CandidateReady.model_validate(item)
+        assert s.client.get(item["preview_url"]).content == b"0123456789"
+    assert len(s.calls) == 2
+
+
+@pytest.mark.parametrize("scope", ["requester_user_id", "project_id"])
+def test_real_recent_candidates_are_requester_and_project_private(
+    production_api, scope
+):
+    from dataclasses import replace
+
+    s = production_api
+    make_ready(s)
+    s.ctx = replace(s.ctx, **{scope: "other"})
+    response = s.client.get(s.url)
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "data": {"candidates": []}}
+    assert len(s.calls) == 1
+
+
+def test_real_recent_candidates_exclude_successful_saves_and_expire(production_api):
+    import sqlite3
+    from uuid import uuid4
+
+    s = production_api
+    path = make_ready(s)
+    s.store.save_receipt(SAVE_ID, REQUEST_ID, "account", "voice", None)
+    assert len(s.client.get(s.url).json()["data"]["candidates"]) == 1
+    s.store.save_receipt(SAVE_ID, REQUEST_ID, "account", "voice", {"voice_id": "saved"})
+    assert s.client.get(s.url).json()["data"]["candidates"] == []
+    unsaved_id = str(uuid4())
+    temporary = make_ready(s, {**CREATE, "request_id": unsaved_id})
+    with sqlite3.connect(s.store.db_path) as db:
+        db.execute("UPDATE candidates SET expires_at=0")
+    assert s.client.get(s.url).json()["data"]["candidates"] == []
+    assert not temporary.exists() and not path.exists()
+
+
+def test_real_recent_candidates_require_authentication_and_home_node(
+    production_api,
+    monkeypatch,
+):
+    from fastapi import HTTPException
+    from novelvideo.api.auth import get_api_user
+
+    s = production_api
+
+    def wrong_home(*args, **kwargs):
+        raise HTTPException(503, "private internal home node")
+
+    monkeypatch.setattr(contract(), "require_project_home_node", wrong_home)
+    response = s.client.get(s.url)
+    assert response.status_code == 503
+    assert response.json()["code"] == "voice_design_unavailable"
+    assert "private" not in response.text
+
+    def denied():
+        raise HTTPException(401, "secret authentication details")
+
+    s.client.app.dependency_overrides[get_api_user] = denied
+    response = s.client.get(s.url)
+    assert response.status_code == 401
+    assert response.json()["code"] == "unauthenticated"
+    assert "secret" not in response.text
+
+
+@pytest.mark.parametrize(
+    "status,code", [(403, "voice_design_forbidden"), (404, "project_not_found")]
+)
+def test_real_recent_candidates_require_project_viewer(
+    production_api,
+    monkeypatch,
+    status,
+    code,
+):
+    from fastapi import HTTPException
+
+    async def denied(**kwargs):
+        assert kwargs["required_role"] == "viewer"
+        raise HTTPException(status, "private project membership details")
+
+    monkeypatch.setattr(contract(), "resolve_project_context", denied)
+    response = production_api.client.get(production_api.url)
+    assert response.status_code == status
+    assert response.json()["code"] == code
+    assert "private" not in response.text
 
 
 def test_real_audio_range_etag_and_disabled_existing_access(production_api):
@@ -1116,7 +1277,9 @@ def test_generated_user_voice_rejects_corrupt_index(generated_user_api, body):
     assert index.read_bytes() == body
 
 
-def test_generated_user_voice_lock_timeout_is_retryable_without_publication(generated_user_api, monkeypatch):
+def test_generated_user_voice_lock_timeout_is_retryable_without_publication(
+    generated_user_api, monkeypatch
+):
     import portalocker
 
     s = generated_user_api
