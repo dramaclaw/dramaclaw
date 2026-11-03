@@ -118,18 +118,20 @@ class VoiceDesignStorage:
             str(UUID(str(candidate_id))),
         )
 
-    def _read(self, db, candidate_id):
-        row = db.execute(
-            "SELECT * FROM candidates WHERE project_id=? AND user_id=? AND candidate_id=?",
-            self._key(candidate_id),
-        ).fetchone()
-        if row is None:
-            return None
+    @staticmethod
+    def _record(row: sqlite3.Row) -> dict[str, Any]:
         record = dict(row)
         record["model"] = (
             json.loads(record["model_snapshot"]) if record["model_snapshot"] else None
         )
         return record
+
+    def _read(self, db, candidate_id):
+        row = db.execute(
+            "SELECT * FROM candidates WHERE project_id=? AND user_id=? AND candidate_id=?",
+            self._key(candidate_id),
+        ).fetchone()
+        return self._record(row) if row is not None else None
 
     def output_path(self, candidate_id: str) -> Path:
         user = self.ctx.requester_user_id
@@ -272,6 +274,24 @@ class VoiceDesignStorage:
         self.cleanup()
         with self._transaction() as db:
             return self._read(db, candidate_id)
+
+    def list_ready(self) -> list[dict[str, Any]]:
+        """Return this requester's temporary, unsaved previews newest first."""
+        self.cleanup()
+        with self._transaction() as db:
+            rows = db.execute(
+                """SELECT * FROM candidates
+                WHERE project_id=? AND user_id=? AND status='ready' AND expires_at>?
+                  AND NOT EXISTS (
+                    SELECT 1 FROM save_receipts s
+                    WHERE s.project_id=candidates.project_id
+                      AND s.user_id=candidates.user_id
+                      AND s.candidate_id=candidates.candidate_id AND s.result != 'null'
+                  )
+                ORDER BY created_at DESC, rowid DESC LIMIT 5""",
+                (self.ctx.project_id, self.ctx.requester_user_id, self.clock()),
+            ).fetchall()
+            return [self._record(row) for row in rows]
 
     def claim(
         self,

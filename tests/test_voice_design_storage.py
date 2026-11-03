@@ -404,3 +404,90 @@ def test_model_snapshot_is_immutable_across_reopen_and_idempotent_create(store, 
     for changed in ({"catalog_id": "qwen"}, {"config_digest": "b" * 64}):
         with pytest.raises(CandidateStorageError, match="idempotency_conflict"):
             reopened.reserve(candidate_id, **{**args, **changed})
+
+
+def test_recent_unsaved_ready_is_newest_first_and_survives_reopen(store, ctx):
+    from novelvideo.audio.voice_design_storage import VoiceDesignStorage
+
+    store.clock = lambda: 1000
+    assert store.list_ready() == []
+    records = []
+    for _ in range(6):
+        record, _ = reserve(store)
+        records.append(finish(store, record["candidate_id"]))
+    expected = [record["candidate_id"] for record in reversed(records[-5:])]
+    assert [r["candidate_id"] for r in store.list_ready()] == expected
+    reopened = VoiceDesignStorage(ctx, clock=lambda: 1000, quota_path=store.quota_path)
+    assert [r["candidate_id"] for r in reopened.list_ready()] == expected
+    assert reopened.list_ready()[0]["description"] == records[-1]["description"]
+    assert reopened.list_ready()[0]["model"] is None
+
+
+def test_recent_unsaved_excludes_completed_saves_but_keeps_pending_save(store):
+    records = []
+    for _ in range(4):
+        record, _ = reserve(store)
+        records.append(finish(store, record["candidate_id"]))
+    for record, kind, result in zip(
+        records,
+        ("character", "account", "character"),
+        ({"path": "formal.mp3"}, {"voice_id": "saved"}, None),
+    ):
+        store.save_receipt(str(uuid4()), record["candidate_id"], kind, "target", result)
+    assert {r["candidate_id"] for r in store.list_ready()} == {
+        record["candidate_id"] for record in records[2:]
+    }
+
+
+def test_recent_ready_excludes_other_states_and_preserves_model_snapshot(store):
+    model = {"catalog_id": "seed", "model": "seed-audio-1.0"}
+    ready, _ = store.reserve(
+        str(uuid4()),
+        description="A low voice",
+        preview_text="A calm preview.",
+        language="en",
+        surface="canvas",
+        model=model,
+    )
+    finish(store, ready["candidate_id"])
+    for status in ("generating", "failed", "unknown"):
+        record, _ = reserve(store)
+        if status == "failed":
+            store.fail(record["candidate_id"], "provider_bad_audio")
+        elif status == "unknown":
+            store.mark_unknown(record["candidate_id"])
+    result = store.list_ready()
+    assert [record["candidate_id"] for record in result] == [ready["candidate_id"]]
+    assert result[0]["model"] == model
+    assert result[0]["preview_text"] == "A calm preview."
+
+
+@pytest.mark.parametrize("scope", ["requester_user_id", "project_id"])
+def test_recent_ready_never_lists_peer_scope(store, ctx, scope):
+    from novelvideo.audio.voice_design_storage import VoiceDesignStorage
+
+    record, _ = reserve(store)
+    finish(store, record["candidate_id"])
+    other = VoiceDesignStorage(
+        replace(ctx, **{scope: "peer"}), quota_path=store.quota_path
+    )
+    assert other.list_ready() == []
+    assert len(store.list_ready()) == 1
+
+
+def test_listing_expires_temporary_media_without_deleting_formal_copy(store, ctx):
+    store.clock = lambda: 1000
+    store.ttl_seconds = 30
+    record, _ = reserve(store)
+    finish(store, record["candidate_id"])
+    path = store.output_path(record["candidate_id"])
+    formal = ctx.output_dir / "saved.mp3"
+    formal.parent.mkdir(parents=True)
+    formal.write_bytes(path.read_bytes())
+    store.clock = lambda: 1029.9
+    assert len(store.list_ready()) == 1
+    store.clock = lambda: 1030
+    assert store.list_ready() == []
+    assert not path.exists()
+    assert store.get(record["candidate_id"])["status"] == "expired"
+    assert formal.read_bytes() == b"validated mp3 bytes"
