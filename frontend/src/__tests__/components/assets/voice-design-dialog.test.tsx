@@ -77,7 +77,7 @@ beforeEach(() => {
   save.mockClear();
   server.use(
     http.get(`${base}/candidates`, () =>
-      HttpResponse.json({ ok: true, data: { candidates: historyCandidates } }),
+      HttpResponse.json({ ok: true, data: { candidates: historyCandidates, next_cursor: null, retention_seconds: 604800 } }),
     ),
     http.get(`${base}/models`, () =>
       HttpResponse.json({ ok: true, data: { models: designModels } }),
@@ -1065,6 +1065,25 @@ it("S29 selects an earlier temporary preview and saves its exact ID without gene
   expect(creations).toBe(0);
 });
 
+it("opens the shared full history and applies the sixth preview using its original snapshot", async () => {
+  const all = Array.from({ length: 6 }, (_, i) => ({ ...ready(`00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`), description: `历史声音 ${i + 1}` }));
+  server.use(http.get(`${base}/candidates`, ({ request }) => {
+    const limit = Number(new URL(request.url).searchParams.get("limit"));
+    return HttpResponse.json({ ok: true, data: { candidates: all.slice(0, limit), next_cursor: limit === 5 ? "older" : null, retention_seconds: 604800 } });
+  }));
+  mount({ ...target, expectedSlot: { path: "", sha256: "", updated_at: "" } });
+  expect(await screen.findByRole("button", { name: "选择试听：历史声音 1" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "选择试听：历史声音 6" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "查看全部" }));
+  expect(await screen.findByRole("tab", { name: "最近生成" })).toHaveAttribute("aria-selected", "true");
+  await screen.findByText("历史声音 6");
+  fireEvent.click(screen.getAllByRole("button", { name: "选择此试听" })[5]!);
+  await waitFor(() => expect(screen.getByLabelText("音色描述")).toHaveValue("历史声音 6"));
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ candidate_id: all[5]?.candidate_id })));
+  expect(creations).toBe(0);
+});
+
 it("S29 restores temporary previews after remount without silently generating", async () => {
   const item = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "刷新前的试听" };
   historyCandidates = [item];
@@ -1139,7 +1158,7 @@ it("S29 blocks switching history while generation status is unresolved", async (
 it("S29 shows clear temporary retention and a single playback and close control", async () => {
   mount();
   await generate();
-  expect(screen.getByText("未保存试听保留 1 小时，过期后自动删除；最多保留最近 5 条。已保存音色不受影响。")).toBeInTheDocument();
+  expect(screen.getByText("未保存试听保留 7 天，到期后自动删除；已保存音频不受影响。")).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "播放试听" })).toHaveLength(1);
   expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
   expect(screen.queryByRole("button", { name: "关闭" })).not.toBeInTheDocument();

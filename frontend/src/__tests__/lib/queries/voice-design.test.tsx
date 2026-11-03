@@ -412,7 +412,7 @@ it("reads legacy temporary history only when opened without creating or quoting"
   let reads = 0;
   let writes = 0;
   server.use(
-    http.get(`${base}/voice-design/candidates`, () => { reads++; return HttpResponse.json({ ok: true, data: { candidates: [historyReady] } }); }),
+    http.get(`${base}/voice-design/candidates`, () => { reads++; return HttpResponse.json({ ok: true, data: { candidates: [historyReady], next_cursor: null, retention_seconds: 604800 } }); }),
     http.post(`${base}/voice-design/candidates`, () => { writes++; return HttpResponse.json({}); }),
   );
   const { result, rerender } = renderHook(({ open }) => useVoiceDesignHistory("demo", open), { initialProps: { open: false }, wrapper: provider(new QueryClient()) });
@@ -424,9 +424,9 @@ it("reads legacy temporary history only when opened without creating or quoting"
 });
 
 it.each([
-  { candidates: [{ ...historyReady, status: "generating" }] },
-  { candidates: Array.from({ length: 6 }, () => historyReady) },
-])("rejects a temporary history response outside the ready/five-item contract", async (data) => {
+  { candidates: [{ ...historyReady, status: "generating" }], next_cursor: null, retention_seconds: 604800 },
+  { candidates: Array.from({ length: 101 }, () => historyReady), next_cursor: null, retention_seconds: 604800 },
+])("rejects a temporary history response outside the ready/bounded-page contract", async (data) => {
   server.use(http.get(`${base}/voice-design/candidates`, () => HttpResponse.json({ ok: true, data })));
   const { result } = renderHook(() => useVoiceDesignHistory("demo", true), { wrapper: provider(new QueryClient()) });
   await waitFor(() => expect(result.current.isError).toBe(true));

@@ -118,6 +118,14 @@ describe("AssetLibraryModal 类目与文件夹", () => {
     expect(screen.getByRole("button", { name: "上传资产" })).toBeInTheDocument();
   });
 
+  it("打开资产库只读，只有明确同步才写入主线素材", async () => {
+    renderModal();
+    await screen.findByText("参考图A");
+    expect(syncFreezoneAssetLibraryFromMainline).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "同步主线" }));
+    await waitFor(() => expect(syncFreezoneAssetLibraryFromMainline).toHaveBeenCalledTimes(1));
+  });
+
   it("文件夹只改变资产范围，全部资产入口能恢复全量视图", async () => {
     renderModal();
 

@@ -38,6 +38,12 @@ import {
 } from '@/api/ops';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { downloadUrlAsFile } from '@/lib/browserDownload';
+import { VoiceDesignHistoryPanel } from '@/components/assets/voice-design-history';
+import {
+  voiceDesignLibraryAssetSchema,
+  type VoiceDesignLibraryAsset,
+  type VoiceDesignReady,
+} from '@/types/voice-design';
 import { AssetLibraryItemMedia } from './AssetLibraryItemMedia';
 import { AssetLibraryPreviewDialog } from './AssetLibraryPreviewDialog';
 import { Button } from '@/components/ui/button';
@@ -98,6 +104,10 @@ export interface AssetLibrarySelection {
 export interface AssetLibraryModalProps {
   /** 管理态负责查看/维护资产；选材态只负责把素材交给节点。 */
   mode: 'manage' | 'pick';
+  initialView?: 'assets' | 'recent';
+  onSelectCandidate?: (candidate: VoiceDesignReady) => void;
+  onSelectVoiceAsset?: (asset: VoiceDesignLibraryAsset) => void;
+  selectionDisabled?: boolean;
   open: boolean;
   project: string | null;
   onClose: () => void;
@@ -135,8 +145,15 @@ export function AssetLibraryModal({
   maxSelectable = 9,
   allowedMedia,
   onSendFolderToCanvas,
+  initialView = 'assets',
+  onSelectCandidate,
+  onSelectVoiceAsset,
+  selectionDisabled = false,
 }: AssetLibraryModalProps) {
   const { t } = useTranslation();
+  const [view, setView] = useState(initialView);
+  useEffect(() => { if (open) setView(initialView); }, [open, project, initialView]);
+  const showRecent = !allowedMedia || allowedMedia.includes('audio');
   // 类目（标签）按用途分，不按媒介分；allowedMedia 只在两个地方起作用：整类都装
   // 不下的类目（如只收音频的「音效」在只要图片的节点里）不出现在筛选条上，条目
   // 本身再过滤一遍。
@@ -148,8 +165,7 @@ export function AssetLibraryModal({
       ),
     [allowedMedia],
   );
-  // 把 onSuccess 收进 ref，避免它进 initializeLibrary 依赖后，父组件每次渲染换新
-  // 函数身份就触发「打开自动同步」effect 反复重跑。
+  // 回调不参与初始化依赖，避免父组件渲染导致重复加载。
   const onSuccessRef = useRef(onSuccess);
   onSuccessRef.current = onSuccess;
   const [library, setLibrary] = useState<LibraryItem[]>([]);
@@ -244,7 +260,8 @@ export function AssetLibraryModal({
       setLibrary(items);
       return items;
     } catch (err) {
-      console.warn('[asset-library] load failed, treat as empty', err);
+      console.warn('[asset-library] load failed', err);
+      setLibraryError(err instanceof Error ? err.message : String(err));
       setLibrary([]);
       return [];
     }
@@ -263,41 +280,20 @@ export function AssetLibraryModal({
     }
   }, [project]);
 
-  // 打开即自动同步：先加载已有库(静默兜底)，再从主线自动同步合并。只有当
-  // 既无已有库、同步又失败时，才提示错误(通常代表后端还没重启/路由缺失)。
   const initializeLibrary = useCallback(
     async (isCancelled?: () => boolean) => {
       if (!project) return;
       setIsLoadingLibrary(true);
       setLibraryError(null);
-      const [base] = await Promise.all([refreshLibrary(), refreshFolders()]);
-      if (isCancelled?.()) return;
-      setIsSyncing(true);
-      try {
-        const items = await syncFreezoneAssetLibraryFromMainline(project);
-        if (isCancelled?.()) return;
-        setLibrary(normalizeLibraryList(items));
-        onSuccessRef.current?.();
-      } catch (err) {
-        if (isCancelled?.()) return;
-        console.warn('[asset-library] auto sync failed', err);
-        if (base.length === 0) {
-          setLibraryError(err instanceof Error ? err.message : String(err));
-        }
-      } finally {
-        if (!isCancelled?.()) {
-          setIsSyncing(false);
-          setIsLoadingLibrary(false);
-        }
-      }
+      await Promise.all([refreshLibrary(), refreshFolders()]);
+      if (!isCancelled?.()) setIsLoadingLibrary(false);
     },
     [project, refreshLibrary, refreshFolders],
   );
 
   useEffect(() => {
     if (!open || !project) return;
-    // 弹窗在自动同步 resolve 前就关闭时，用 cancelled 丢弃过期结果，避免关闭态回填 library
-    // 与 240ms 关闭重置 effect 打架。
+    // 关闭后不再更新加载状态。
     let cancelled = false;
     void initializeLibrary(() => cancelled);
     return () => {
@@ -785,13 +781,14 @@ export function AssetLibraryModal({
         aria-label={t('canvas.assetLibrary.title')}
         onClick={(event) => event.stopPropagation()}
         onDragOver={(event) => {
+          if (view !== 'assets') return;
           event.preventDefault();
           setIsDragging(true);
         }}
         onDragLeave={(event) => {
           if (event.currentTarget === event.target) setIsDragging(false);
         }}
-        onDrop={handleDrop}
+        onDrop={view === 'assets' ? handleDrop : undefined}
       >
         {/* 标题与高频操作同层：上传和建夹直接暴露，避免为了两个选项再开一层菜单。 */}
         <div className="flex shrink-0 flex-col items-stretch justify-between gap-3 px-5 pb-3 pt-5 sm:flex-row sm:items-center sm:gap-4">
@@ -802,6 +799,7 @@ export function AssetLibraryModal({
             </p>
           </div>
           <div className="ui-scrollbar-hidden flex shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:pb-0">
+            {view === 'assets' && <>
             <button
               type="button"
               onClick={() => void handleSyncFromMainline()}
@@ -857,6 +855,7 @@ export function AssetLibraryModal({
               <Upload className="h-3.5 w-3.5" />
               {t('canvas.assetLibrary.uploadAssets')}
             </button>
+            </>}
             <button
               type="button"
               onClick={onClose}
@@ -869,6 +868,43 @@ export function AssetLibraryModal({
           </div>
         </div>
 
+        {showRecent && (
+          <div role="tablist" aria-label={t('voiceDesign.libraryViews')} className="flex shrink-0 gap-2 border-b border-border px-5 pb-3">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'assets'}
+              onClick={() => setView('assets')}
+              className={`rounded-md px-3 py-1.5 text-xs ${view === 'assets' ? 'bg-secondary text-primary' : 'text-muted-foreground'}`}
+            >
+              {t('voiceDesign.projectAssets')}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'recent'}
+              onClick={() => setView('recent')}
+              className={`rounded-md px-3 py-1.5 text-xs ${view === 'recent' ? 'bg-secondary text-primary' : 'text-muted-foreground'}`}
+            >
+              {t('voiceDesign.recentGenerations')}
+            </button>
+          </div>
+        )}
+        {view === 'recent' && showRecent && project ? (
+          <VoiceDesignHistoryPanel
+            key={project}
+            project={project}
+            selectionDisabled={selectionDisabled}
+            onSelect={onSelectCandidate ? candidate => {
+              onSelectCandidate(candidate);
+              onClose();
+            } : undefined}
+            onSaved={() => {
+              void refreshLibrary();
+              onSuccessRef.current?.();
+            }}
+          />
+        ) : (
         <div className="flex min-h-0 flex-1 bg-[rgba(var(--bg-rgb)/0.16)]">
           {/* 位置导航：只表达资产存放范围，不再与人物 / 场景等类目混为同级 Tab。 */}
           <aside className="ui-scrollbar flex w-52 shrink-0 flex-col overflow-y-auto bg-black/10 p-3">
@@ -1073,6 +1109,7 @@ export function AssetLibraryModal({
             {/* Existing items */}
             {pagedItems.map((entry, idx) => {
               const key = selectionKey(entry);
+              const voiceAsset = voiceDesignLibraryAssetSchema.safeParse(entry.raw.voice_design);
               const pickMode = mode === 'pick';
               // 批量删除只给本地上传资产显示复选框；主线资产仍保持可查看，不伪装成
               // 一张“坏掉、点不了”的卡片。
@@ -1164,6 +1201,20 @@ export function AssetLibraryModal({
                     >
                       <Maximize2 className="h-3.5 w-3.5" />
                     </button>
+                  )}
+
+                  {onSelectVoiceAsset && voiceAsset.success && (
+                    <Button
+                      size="sm"
+                      disabled={selectionDisabled}
+                      className="absolute right-2 top-2 z-10"
+                      onClick={event => {
+                        event.stopPropagation();
+                        onSelectVoiceAsset({ ...voiceAsset.data, name: entry.name });
+                      }}
+                    >
+                      {t('voiceDesign.chooseProjectVoice')}
+                    </Button>
                   )}
 
                   {/* Source badge top-right */}
@@ -1289,6 +1340,7 @@ export function AssetLibraryModal({
             </div>
           </section>
         </div>
+        )}
       </div>
 
       {previewEntry && (

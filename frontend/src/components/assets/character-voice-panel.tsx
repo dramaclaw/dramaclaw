@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   Loader2,
+  Library,
   Mic,
   Scissors,
   Sparkles,
@@ -25,6 +26,7 @@ import {
   useTrimCharacterVoiceSample,
   useUploadCharacterVoiceSample,
 } from "@/lib/queries/characters";
+import { LibraryVoicePicker } from "@/components/assets/library-voice-picker";
 import { VoiceDesignDialog } from "@/components/assets/voice-design-dialog";
 import { useVoiceDesignModels } from "@/lib/queries/voice-design";
 import { resolveMediaUrl } from "@/lib/media-url";
@@ -148,6 +150,7 @@ export function CharacterVoicePanel({
   const saveGenerated = useSaveGeneratedCharacterVoice(project, character.name);
   const [designSlot, setDesignSlot] = useState<CharacterVoiceSlot | null>(null);
   const [designOpen, setDesignOpen] = useState(false);
+  const [librarySlot, setLibrarySlot] = useState<CharacterVoiceSlot | null>(null);
   const designTrigger = useRef<HTMLElement | null>(null);
   const designOwner = useRef({ project, name: character.name });
   useEffect(() => {
@@ -157,6 +160,7 @@ export function CharacterVoicePanel({
     ) {
       setDesignOpen(false);
       setDesignSlot(null);
+      setLibrarySlot(null);
       designOwner.current = { project, name: character.name };
     }
   }, [project, character.name]);
@@ -518,6 +522,12 @@ export function CharacterVoicePanel({
                 </div>
 
                 <div className="flex items-center gap-1 shrink-0">
+                  <VoiceActionButton
+                    label={t("voiceDesign.fromProjectLibrary")}
+                    icon={<Library className="size-3.5" />}
+                    disabled={pending}
+                    onClick={() => setLibrarySlot(actionSlot)}
+                  />
                   {(canGenerate || hasDraft) && (
                     <VoiceActionButton
                       label={t(canGenerate ? "voiceDesign.entry" : "voiceDesign.resume")}
@@ -569,6 +579,23 @@ export function CharacterVoicePanel({
             );
           })}
         </div>
+      )}
+
+      {librarySlot && designOwner.current.project === project && designOwner.current.name === character.name && (
+        <LibraryVoicePicker
+          key={JSON.stringify([project, character.name, librarySlot.slot, librarySlot.updated_at])}
+          project={project}
+          character={character.name}
+          slot={librarySlot}
+          onClose={() => setLibrarySlot(null)}
+          onRefresh={async () => {
+            const result = await samples.refetch();
+            if (result.error) throw result.error;
+            const refreshed = result.data?.data?.slots.find(slot => slot.slot === librarySlot.slot);
+            if (!refreshed) throw new Error(t("characters.voiceSamples.loadFailed"));
+            setLibrarySlot(refreshed);
+          }}
+        />
       )}
 
       {designSlot && designOwner.current.project === project && designOwner.current.name === character.name && (

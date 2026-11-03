@@ -77,6 +77,7 @@ import { SlidingTabs } from "@/components/nav/sliding-tabs";
 import { CharacterSearch, filterCharacters } from "@/components/assets/character-search";
 import { CharacterImageSourceSelect } from "@/components/assets/character-image-source-select";
 import { CharacterStatsStrip } from "@/components/assets/character-stats-strip";
+import { AssetLibraryModal } from "@/features/canvas/ui/AssetLibraryModal";
 import { CharacterVoicePanel } from "@/components/assets/character-voice-panel";
 import { NarratorVoicePanel } from "@/components/assets/narrator-voice-panel";
 import { ProjectStyleChip } from "@/components/assets/project-style-chip";
@@ -561,6 +562,7 @@ function CharactersPageHeader({
 }) {
   const { t } = useTranslation();
   const isCharactersTab = activeTab === "characters";
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   return (
     <div className="flex shrink-0 flex-col gap-3 border-b border-border/30 bg-background px-9 py-5 lg:flex-row lg:items-center lg:justify-between">
@@ -590,7 +592,9 @@ function CharactersPageHeader({
         </div>
       </div>
 
+      <AssetLibraryModal key={project} mode="manage" open={libraryOpen} project={project} onClose={() => setLibraryOpen(false)} />
       <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
+        <Button variant="outline" size="sm" className={SUBTLE_HEADER_ACTION_BUTTON_CLASS} onClick={() => setLibraryOpen(true)}>{t("canvas.assetLibrary.title")}</Button>
         {isCharactersTab && (
           <>
             <CharacterImageSourceSelect
