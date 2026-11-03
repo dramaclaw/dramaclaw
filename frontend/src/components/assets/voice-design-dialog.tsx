@@ -104,7 +104,7 @@ type DraftInputs = { description: string; previewText: string; name: string };
 type Draft = DraftInputs & {
   selectedCatalogId: string | null;
   models: Record<string, ModelDraft>;
-  failedSaves: Record<string, SaveAttempt>;
+  failedSaves: Record<string, { attempt: SaveAttempt; conflict: boolean }>;
 };
 function newDraft(): Draft {
   return {
@@ -115,6 +115,14 @@ function newDraft(): Draft {
     models: {},
     failedSaves: {},
   };
+}
+function matchesSaveTarget(attempt: SaveAttempt, target: VoiceDesignTarget, name: string): boolean {
+  if (attempt.kind === "account")
+    return target.kind === "account" && attempt.input.name === name.trim();
+  return target.kind === "character" &&
+    attempt.input.expected_slot.path === target.expectedSlot.path &&
+    attempt.input.expected_slot.sha256 === target.expectedSlot.sha256 &&
+    attempt.input.expected_slot.updated_at === target.expectedSlot.updated_at;
 }
 function isLocked(draft: Draft): boolean {
   return Object.values(draft.models).some(
@@ -218,7 +226,9 @@ function useVoiceDesignSession({
     qc.setQueryData<Draft>(key, (current) => {
       if (!current || isLocked(current)) return current;
       const nextId = ready.model?.catalog_id ?? `legacy:${ready.candidate_id}`;
-      const failedAttempt = current.failedSaves?.[ready.candidate_id];
+      const failed = current.failedSaves?.[ready.candidate_id];
+      const failedAttempt = failed && matchesSaveTarget(failed.attempt, target, current.name)
+        ? failed.attempt : undefined;
       return {
         ...current,
         description: ready.description,
@@ -231,6 +241,7 @@ function useVoiceDesignSession({
             generation: { kind: "settled" },
             ready,
             save: failedAttempt ? { kind: "failed", attempt: failedAttempt } : { kind: "idle" },
+            conflict: !!failedAttempt && !!failed?.conflict,
           },
         },
       };
@@ -468,7 +479,9 @@ function useVoiceDesignSession({
       save_request_id: crypto.randomUUID(),
     };
     const attempt: SaveAttempt =
-      current.save.kind === "failed"
+      current.save.kind === "failed" &&
+      matchesSaveTarget(current.save.attempt, target, currentSession.name) &&
+      (current.save.attempt.kind !== "character" || current.save.attempt.input.replace_existing === replace)
         ? current.save.attempt
         : target.kind === "character"
           ? {
@@ -504,7 +517,7 @@ function useVoiceDesignSession({
         return {
           ...latestSession,
           failedSaves: update.save?.kind === "failed"
-            ? { ...latestSession.failedSaves, [attempt.input.candidate_id]: attempt }
+            ? { ...latestSession.failedSaves, [attempt.input.candidate_id]: { attempt, conflict: update.conflict ?? false } }
             : update.save?.kind === "saved"
               ? Object.fromEntries(Object.entries(latestSession.failedSaves ?? {}).filter(([id]) => id !== attempt.input.candidate_id))
               : latestSession.failedSaves,
@@ -554,11 +567,29 @@ function useVoiceDesignSession({
   };
   const refreshTarget = async () => {
     if (target.kind !== "character") return;
+    const candidateId = draft.ready?.candidate_id;
+    if (!candidateId) return;
     try {
       await target.onRefresh();
-      patch({ conflict: false, save: { kind: "idle" }, error: "" });
+      qc.setQueryData<Draft>(key, (current) => {
+        if (!current || !catalogId) return current;
+        const model = current.models[catalogId];
+        return {
+          ...current,
+          failedSaves: Object.fromEntries(Object.entries(current.failedSaves ?? {}).filter(([id]) => id !== candidateId)),
+          models: model?.ready?.candidate_id === candidateId && model.save.kind !== "pending"
+            ? { ...current.models, [catalogId]: { ...model, conflict: false, save: { kind: "idle" }, error: "" } }
+            : current.models,
+        };
+      });
     } catch (error) {
-      patch({ error: knownMessage(error) });
+      qc.setQueryData<Draft>(key, (current) => {
+        if (!current || !catalogId) return current;
+        const model = current.models[catalogId];
+        return model?.ready?.candidate_id === candidateId && model.save.kind !== "pending"
+          ? { ...current, models: { ...current.models, [catalogId]: { ...model, error: knownMessage(error) } } }
+          : current;
+      });
     }
   };
   return {
@@ -631,16 +662,16 @@ function VoiceDesignSession(props: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-h-[calc(100dvh-2rem)] overflow-y-auto bg-[var(--ui-surface-modal)] sm:max-w-xl"
+        className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden bg-[var(--ui-surface-modal)] sm:max-w-xl"
         overlayClassName="backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
       >
-        <DialogHeader>
+        <DialogHeader className="shrink-0">
           <DialogTitle>{t("voiceDesign.title")}</DialogTitle>
           <DialogDescription>
             {t("voiceDesign.target", { target: target.label })}
           </DialogDescription>
         </DialogHeader>
-        <div className="min-w-0 space-y-4">
+        <div className="ui-scrollbar min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto pr-1">
           <div className="space-y-2">
             <Label htmlFor={`${id}-model`}>{t("voiceDesign.model")}</Label>
             <Select
@@ -863,7 +894,7 @@ function VoiceDesignSession(props: Props) {
                   : t("voiceDesign.quoteLoading")}
           </p>
         </div>
-        <DialogFooter className="px-0 pb-0">
+        <DialogFooter className="shrink-0 px-0 pb-0">
           <Button
             variant={draft.ready ? "outline" : "default"}
             disabled={

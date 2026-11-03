@@ -28,7 +28,7 @@ import { VoiceDesignApiError } from "@/lib/queries/voice-design";
 import zh from "../../../../public/locales/zh/translation.json";
 import { queryKeys } from "@/lib/query-keys";
 import { designModels } from "@/__tests__/voice-design-fixtures";
-import type { SaveGeneratedAccountVoice, VoiceDesignReady } from "@/types/voice-design";
+import type { SaveGeneratedAccountVoice, SaveGeneratedCharacterVoice, VoiceDesignReady } from "@/types/voice-design";
 const i18n = i18next.createInstance();
 const base = "http://localhost:3000/api/v1/projects/demo/voice-design";
 const text = "今天的天气很好，我们沿着河边慢慢走回家。";
@@ -36,7 +36,7 @@ let creations = 0;
 let candidateId = "";
 let historyCandidates: VoiceDesignReady[] = [];
 const save = vi.fn(async (_input: unknown) => {});
-const target: VoiceDesignTarget = {
+const target: Extract<VoiceDesignTarget, { kind: "character" }> = {
   kind: "character",
   key: "秦:default",
   label: "秦 · 默认",
@@ -156,7 +156,7 @@ function Harness({ selected = target }: { selected?: VoiceDesignTarget }) {
     </>
   );
 }
-function mount(selected = target) {
+function mount(selected: VoiceDesignTarget = target) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -1209,4 +1209,128 @@ it.each([false, true])("S29 preserves a failed save request when reselecting his
   expect(attempts[1]).toEqual(attempts[0]);
   expect(attempts[1]?.candidate_id).toBe(first.candidate_id);
   expect(creations).toBe(0);
+});
+
+it("S29 treats an edited account voice name as a new save intent after reselecting history", async () => {
+  const first = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "需要改名的试听" };
+  historyCandidates = [first];
+  const attempts: SaveGeneratedAccountVoice[] = [];
+  mount({
+    kind: "account", key: "mine", label: "我的音色", saveLabel: "保存到我的音色",
+    onSave: async (input) => { attempts.push(input); if (attempts.length === 1) throw new Error("connection lost"); },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "选择试听：需要改名的试听" }));
+  fireEvent.change(screen.getByLabelText("音色名称"), { target: { value: "旧名称" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "保存到我的音色" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "保存到我的音色" }));
+  await screen.findByRole("alert");
+  fireEvent.change(screen.getByLabelText("音色名称"), { target: { value: "新名称" } });
+  await waitFor(() => expect(screen.getByLabelText("音色名称")).toHaveValue("新名称"));
+  fireEvent.click(screen.getByRole("button", { name: "选择试听：需要改名的试听" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "选择试听：需要改名的试听" })).toHaveAttribute("aria-pressed", "true"));
+  fireEvent.click(screen.getByRole("button", { name: "保存到我的音色" }));
+  await waitFor(() => expect(attempts).toHaveLength(2));
+  expect(attempts[0]?.name).toBe("旧名称");
+  expect(attempts[1]?.name).toBe("新名称");
+  expect(attempts[1]?.candidate_id).toBe(first.candidate_id);
+  expect(attempts[1]?.save_request_id).not.toBe(attempts[0]?.save_request_id);
+  expect(creations).toBe(0);
+});
+
+it("S29 uses the refreshed character slot snapshot after reselecting failed-save history", async () => {
+  const first = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "刷新位置后的试听" };
+  historyCandidates = [first];
+  const attempts: SaveGeneratedCharacterVoice[] = [];
+  const refreshedSlot = { path: "changed.wav", sha256: "changed-sha", updated_at: "after" };
+  function RefreshHarness() {
+    const [expectedSlot, setSlot] = useState(target.expectedSlot);
+    const [open, setOpen] = useState(true);
+    return <VoiceDesignDialog project="demo" surface="supertale" open={open} onOpenChange={setOpen} target={{
+      ...target, expectedSlot,
+      onRefresh: async () => { setSlot(refreshedSlot); },
+      onSave: async (input: SaveGeneratedCharacterVoice) => {
+        attempts.push(input);
+        if (attempts.length === 1) throw new VoiceDesignApiError("slot_changed", "保存位置已改变", false, 409);
+      },
+    }} />;
+  }
+  render(<QueryClientProvider client={new QueryClient()}><I18nextProvider i18n={i18n}><RefreshHarness /></I18nextProvider></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: "选择试听：刷新位置后的试听" }));
+  await screen.findByText("生成时描述：刷新位置后的试听");
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  fireEvent.click(await screen.findByRole("button", { name: "替换" }));
+  fireEvent.click(await screen.findByRole("button", { name: "刷新保存位置" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "保存到默认" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "选择试听：刷新位置后的试听" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  fireEvent.click(await screen.findByRole("button", { name: "替换" }));
+  await waitFor(() => expect(attempts).toHaveLength(2));
+  expect(attempts[0]?.expected_slot).toEqual(target.expectedSlot);
+  expect(attempts[1]?.expected_slot).toEqual(refreshedSlot);
+  expect(attempts[1]?.save_request_id).not.toBe(attempts[0]?.save_request_id);
+  expect(attempts[1]?.candidate_id).toBe(first.candidate_id);
+  expect(creations).toBe(0);
+});
+
+it("S29 preserves a slot conflict when selecting another preview and returning", async () => {
+  const first = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "冲突的试听" };
+  const second = { ...ready("cf09708d-4a16-4cee-93eb-fee58deaa162"), description: "另一条试听" };
+  historyCandidates = [first, second];
+  const conflictedSave = vi.fn(async () => { throw new VoiceDesignApiError("slot_changed", "保存位置已改变", false, 409); });
+  mount({ ...target, onSave: conflictedSave });
+  fireEvent.click(await screen.findByRole("button", { name: "选择试听：冲突的试听" }));
+  await screen.findByText("生成时描述：冲突的试听");
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  fireEvent.click(await screen.findByRole("button", { name: "替换" }));
+  await screen.findByRole("button", { name: "刷新保存位置" });
+  expect(screen.getByRole("button", { name: "保存到默认" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "选择试听：另一条试听" }));
+  await screen.findByText("生成时描述：另一条试听");
+  fireEvent.click(screen.getByRole("button", { name: "选择试听：冲突的试听" }));
+  await screen.findByText("生成时描述：冲突的试听");
+  expect(screen.getByRole("button", { name: "保存到默认" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "刷新保存位置" })).toBeInTheDocument();
+  expect(conflictedSave).toHaveBeenCalledOnce();
+  expect(creations).toBe(0);
+});
+
+it("S29 does not let a late target refresh reset a different preview's pending save", async () => {
+  const first = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "等待刷新位置的试听" };
+  const second = { ...ready("cf09708d-4a16-4cee-93eb-fee58deaa162"), description: "正在保存的另一条试听" };
+  historyCandidates = [first, second];
+  let releaseRefresh = () => {};
+  let releaseSave = () => {};
+  const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+  const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  let attempts = 0;
+  const refreshed = vi.fn(async () => { await refreshGate; });
+  mount({ ...target,
+    onRefresh: refreshed,
+    onSave: async () => {
+      attempts++;
+      if (attempts === 1) throw new VoiceDesignApiError("slot_changed", "保存位置已改变", false, 409);
+      await saveGate;
+    },
+  });
+  try {
+    fireEvent.click(await screen.findByRole("button", { name: "选择试听：等待刷新位置的试听" }));
+    await screen.findByText("生成时描述：等待刷新位置的试听");
+    fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+    fireEvent.click(await screen.findByRole("button", { name: "替换" }));
+    fireEvent.click(await screen.findByRole("button", { name: "刷新保存位置" }));
+    await waitFor(() => expect(refreshed).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "选择试听：正在保存的另一条试听" }));
+    await screen.findByText("生成时描述：正在保存的另一条试听");
+    fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+    fireEvent.click(await screen.findByRole("button", { name: "替换" }));
+    await waitFor(() => expect(attempts).toBe(2));
+    releaseRefresh();
+    await delay(20);
+    expect(screen.getByRole("button", { name: "正在保存…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "选择试听：等待刷新位置的试听" })).toBeDisabled();
+    expect(creations).toBe(0);
+  } finally {
+    releaseRefresh();
+    releaseSave();
+  }
 });
