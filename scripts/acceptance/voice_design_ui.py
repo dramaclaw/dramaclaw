@@ -24,7 +24,7 @@ import httpx
 
 from voice_design import digest, require_local, self_check, write_json
 
-ALL_CASES = tuple(f"U{number:02}" for number in range(1, 13))
+ALL_CASES = tuple(f"U{number:02}" for number in range(1, 14))
 
 
 def login(context: BrowserContext, base_url: str) -> None:
@@ -437,8 +437,14 @@ class Acceptance:
         snapshot = self.quotes[catalog_id]["model"]
         if snapshot != self.model_snapshot(catalog_id):
             raise AssertionError("model list and quote differ")
+        self.show_model_details(dialog)
         expect(dialog.get_by_text("本次请求模型：" + snapshot["model"], exact=True)).to_be_visible()
         return snapshot
+
+    def show_model_details(self, dialog):
+        for details in dialog.locator("details").all():
+            if details.get_attribute("open") is None:
+                details.locator("summary").click()
 
     def assert_model_menu(self, dialog, width):
         selector = dialog.get_by_role("combobox", name="生成模型", exact=True)
@@ -498,6 +504,7 @@ class Acceptance:
         candidate = self.settled(candidate_id)
         if success:
             expect(dialog.get_by_role("button", name="播放试听", exact=True)).to_be_enabled(timeout=20000)
+            self.show_model_details(dialog)
             if candidate["status"] != "ready":
                 raise AssertionError("candidate did not become ready")
             self.ready = candidate
@@ -530,7 +537,9 @@ class Acceptance:
         return dialog
 
     def close_voice(self) -> None:
-        self.page.get_by_role("dialog", name="按描述生成声线").get_by_role("button", name="关闭", exact=True).click()
+        dialog = self.page.get_by_role("dialog", name="按描述生成声线")
+        dialog.press("Escape")
+        expect(dialog).not_to_be_visible()
 
     def U01(self) -> list[str]:
         expected = (
@@ -701,6 +710,7 @@ class Acceptance:
             expect(dialog.get_by_role("button", name="播放试听", exact=True)).to_be_enabled(timeout=20000)
             candidate_id = self.last_candidate_id()
             self.ready = self.settled(candidate_id)
+            self.show_model_details(dialog)
             if self.ready["status"] != "ready" or self.ready["model"] != selected:
                 raise AssertionError("candidate snapshot differs from models/quote")
             submitted = self.create_bodies[candidate_id]
@@ -774,9 +784,10 @@ class Acceptance:
         expect(dialog.get_by_label("音色描述", exact=True)).to_have_value(description)
         expect(dialog.get_by_label("试听文本", exact=True)).to_have_value(preview)
         dialog.get_by_role("button", name="重试试听", exact=True).click()
-        audio = dialog.get_by_label("生成的试听音频", exact=True)
+        expect(dialog.get_by_role("button", name="播放试听", exact=True)).to_be_enabled()
+        dialog.get_by_role("button", name="播放试听", exact=True).click()
         self.page.wait_for_function("() => { const a = document.querySelector('audio[aria-label=\"生成的试听音频\"]'); return a && !a.paused && a.currentTime > 0.1; }")
-        audio.focus()
+        dialog.get_by_role("button", name="暂停", exact=True).focus()
         self.page.keyboard.press("Space")
         self.page.wait_for_function("() => document.querySelector('audio[aria-label=\"生成的试听音频\"]').paused")
         dialog.get_by_role("button", name="播放试听", exact=True).click()
@@ -1094,6 +1105,95 @@ class Acceptance:
 
     def U12(self) -> list[str]:
         return run_u12(self.page.context.browser, self.args)
+
+    def U13(self) -> list[str]:
+        """Exercise temporary selection against the no-forwarding local gateway."""
+        if not self.args.test_gateway_url:
+            raise RuntimeError("temporary history generation requires the deterministic gateway")
+        original_character = self.args.character
+        name = original_character + "-history-" + uuid4().hex[:6]
+        response = self.page.context.request.post(
+            f"{self.args.base_url}/api/v1/projects/{quote(self.args.project, safe='')}/characters",
+            data={"name": name, "role": "supporting", "gender": "female", "age_group": "elder"},
+        )
+        if response.status != 200 or response.json().get("ok") is not True:
+            raise RuntimeError("could not create isolated temporary-history character")
+        self.args.character = name
+        try:
+            return self._temporary_history()
+        finally:
+            self.args.character = original_character
+
+    def _temporary_history(self) -> list[str]:
+        self.characters()
+        before_slots = self.samples()
+        middle = next(slot for slot in before_slots if slot["slot"] == "middle")
+        if middle["path"]:
+            raise RuntimeError("use a dedicated empty middle slot for temporary-history acceptance")
+        dialog = self.open_voice(2)
+        model = next(model for model in self.models() if model["model"] == "voice-enrollment")
+        self.select_model(dialog, model["catalog_id"])
+        before_calls = self.gateway("success")["calls"]
+        first_description = "临时试听第一版，沉稳清晰的女性声音，语速适中。"
+        self.fill(dialog, first_description)
+        first_id = self.generate(dialog)
+        first = self.ready
+        self.gateway("short")
+        self.fill(dialog, "临时试听第二版，轻快明亮的女性声音，语速适中。")
+        second_id = self.generate(dialog)
+        if first_id == second_id or first["sha256"] == self.ready["sha256"] or self.gateway()["calls"] != before_calls + 2:
+            raise AssertionError("two intended fixture generations were not distinct")
+        history = dialog.get_by_role("region", name="最近试听", exact=True)
+        choose_first = history.get_by_role("button", name="选择试听：" + first_description, exact=True)
+        expect(choose_first).to_be_visible()
+        choose_first.click()
+        expect(choose_first).to_have_attribute("aria-pressed", "true")
+        expect(dialog.get_by_label("音色描述", exact=True)).to_have_value(first_description)
+        self.assert_metadata(dialog)
+        for width in (1280, 760):
+            self.page.set_viewport_size({"width": width, "height": 1000})
+            if not dialog.get_by_role("button", name="保存到中年", exact=True).evaluate("button => { const r = button.getBoundingClientRect(); return r.top >= 0 && r.bottom <= window.innerHeight; }"):
+                raise AssertionError("history content obscured the primary save action")
+            if not dialog.evaluate("d => d.scrollWidth <= d.clientWidth"):
+                raise AssertionError("temporary history caused horizontal overflow")
+            self.page.screenshot(path=str(self.args.artifacts_dir / f"U13-history-{width}.png"))
+        self.page.set_viewport_size({"width": 1280, "height": 900})
+        if dialog.get_by_role("button", name="关闭", exact=True).count():
+            raise AssertionError("duplicate footer close button remains")
+        expect(dialog.get_by_role("button", name="播放试听", exact=True)).to_have_count(1)
+        self.close_voice()
+        self.page.reload()
+        expect(self.page.get_by_text(self.args.character, exact=True).first).to_be_visible()
+        self.page.get_by_text(self.args.character, exact=True).first.click()
+        dialog = self.open_voice(2)
+        history = dialog.get_by_role("region", name="最近试听", exact=True)
+        history.get_by_role("button", name="选择试听：" + first_description, exact=True).click()
+        saves = []
+        self.page.on("request", lambda request: saves.append(request.post_data_json) if request.method == "POST" and request.url.endswith("/middle/save-generated") else None)
+        with self.page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/middle/save-generated")) as response:
+            dialog.get_by_role("button", name="保存到中年", exact=True).click()
+        if response.value.status != 200 or len(saves) != 1 or saves[0]["candidate_id"] != first_id:
+            raise AssertionError("saving selected history did not use the first candidate exactly once")
+        expect(dialog).not_to_be_visible()
+        after_slots = self.samples()
+        if next(slot for slot in after_slots if slot["slot"] == "middle")["sha256"] != first["sha256"]:
+            raise AssertionError("saved history audio does not match the selected candidate")
+        for old in before_slots:
+            if old["slot"] != "middle":
+                current = next(slot for slot in after_slots if slot["slot"] == old["slot"])
+                if any(current[key] != old[key] for key in ("path", "sha256", "updated_at")):
+                    raise AssertionError("history save changed another slot")
+        listing = self.api("/voice-design/candidates")
+        if listing.status != 200:
+            raise AssertionError("temporary history endpoint failed")
+        candidates = listing.json()["data"]["candidates"]
+        if len(candidates) > 5 or first_id in {item["candidate_id"] for item in candidates}:
+            raise AssertionError("saved candidate remained in the unsaved history")
+        if self.gateway()["calls"] != before_calls + 2:
+            raise AssertionError("history selection, refresh or save called the model")
+        write_json(self.args.artifacts_dir / "U13-history.json", {"first_candidate_id": first_id, "second_candidate_id": second_id, "saved_candidate_id": saves[0]["candidate_id"], "saved_slot": "middle", "saved_sha256": first["sha256"], "fixture_generation_calls": 2, "history_selection_refresh_save_extra_calls": 0, "remaining_unsaved": len(candidates)})
+        self.ready = first
+        return ["two same-model temporary previews; select first with original description; refresh recovers; exact first candidate ID/SHA saved to middle only; saved excluded, at most five; single player and no footer close; no extra model call"]
 
 
 def parser() -> argparse.ArgumentParser:
