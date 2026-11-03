@@ -7,7 +7,7 @@
 //
 // 文件夹改名、素材改名也复用这一个：都是「弹个框收一个名字」，差别只在标题、
 // 字段名和长度上限，各自传进来即可。
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ComponentProps } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, X } from 'lucide-react';
 
@@ -32,6 +32,7 @@ export interface AssetLibraryNewFolderDialogProps {
   placeholder?: string;
   /** 字数上限，与后端校验保持一致。 */
   maxLength?: number;
+  finalFocus?: ComponentProps<typeof DialogContent>['finalFocus'];
 }
 
 export function AssetLibraryNewFolderDialog({
@@ -45,6 +46,7 @@ export function AssetLibraryNewFolderDialog({
   fieldLabel,
   placeholder,
   maxLength = FOLDER_NAME_MAX_LEN,
+  finalFocus,
 }: AssetLibraryNewFolderDialogProps) {
   const { t } = useTranslation();
   // 素材改名弹窗和文件夹弹窗可能同时挂在树上，写死 id 会重复。
@@ -97,6 +99,7 @@ export function AssetLibraryNewFolderDialog({
       <DialogContent
         showCloseButton={false}
         initialFocus={inputRef}
+        finalFocus={finalFocus}
         aria-label={title ?? t('canvas.assetLibrary.newFolder')}
         overlayClassName="bg-black/60"
         overlayStyle={{ zIndex: z }}

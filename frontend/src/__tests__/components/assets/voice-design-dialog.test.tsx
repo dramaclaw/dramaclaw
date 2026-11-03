@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -49,6 +50,7 @@ import {
   type VoiceDesignTarget,
 } from "@/components/assets/voice-design-dialog";
 import { VoiceDesignApiError } from "@/lib/queries/voice-design";
+import * as voiceDesignApi from "@/lib/queries/voice-design";
 import zh from "../../../../public/locales/zh/translation.json";
 import { queryKeys } from "@/lib/query-keys";
 import { designModels } from "@/__tests__/voice-design-fixtures";
@@ -521,11 +523,23 @@ it("keeps an existing preview playable and savable when generation becomes unava
 it("separates targets and late generation responses, and restores each draft", async () => {
   let release: () => void = () => {};
   let entered: () => void = () => {};
+  let completed: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
   const started = new Promise<void>((resolve) => {
     entered = resolve;
+  });
+  const finished = new Promise<void>((resolve) => {
+    completed = resolve;
+  });
+  const realCreate = voiceDesignApi.createVoiceDesign;
+  vi.spyOn(voiceDesignApi, "createVoiceDesign").mockImplementation(async (...args) => {
+    try {
+      return await realCreate(...args);
+    } finally {
+      completed();
+    }
   });
   server.use(
     http.post(`${base}/candidates`, async ({ request }) => {
@@ -554,7 +568,14 @@ it("separates targets and late generation responses, and restores each draft", a
     view.rerender(<Root selected={other} />);
     expect(screen.getByLabelText("音色描述")).toHaveValue("");
     expect(screen.queryByLabelText("生成的试听音频")).not.toBeInTheDocument();
-    release();
+    await act(async () => {
+      release();
+      await finished;
+    });
+    expect(screen.getByLabelText("音色描述")).toHaveValue("");
+    expect(screen.getByLabelText("试听文本")).toHaveValue("");
+    expect(screen.queryByText("8.4 秒")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("生成的试听音频")).not.toBeInTheDocument();
 
     view.rerender(<Root selected={target} />);
     await screen.findByText("8.4 秒");

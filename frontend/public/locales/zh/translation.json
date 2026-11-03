@@ -4994,7 +4994,7 @@
     },
     "assetLibrary": {
       "title": "资产库",
-      "resyncTitle": "打开时已自动同步；如主线新增了人物 / 场景 / 道具，可点此重新同步",
+      "resyncTitle": "从主线同步最新的人物、场景和道具到资产库",
       "close": "关闭",
       "allAssets": "全部资产",
       "searchAssets": "搜索资产",

@@ -4994,7 +4994,7 @@
     },
     "assetLibrary": {
       "title": "Biblioteca de recursos",
-      "resyncTitle": "Sincronizada automaticamente ao abrir. Se tiverem sido adicionadas personagens, cenas ou adereços à linha principal, clica para voltar a sincronizar.",
+      "resyncTitle": "Sincroniza as personagens, os cenários e os adereços mais recentes da linha principal com a biblioteca de recursos.",
       "close": "Fechar",
       "allAssets": "Todos os recursos",
       "searchAssets": "Pesquisar recursos",

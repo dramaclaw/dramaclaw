@@ -6,7 +6,7 @@
 // 只列图片——视频抽帧要解码、音频压根没有画面，都不适合当封面；文件夹里一张图
 // 都没有时给一句空态提示，而不是弹一个空网格。封面存的是素材 URL 本身，所以这里
 // 不涉及上传，素材被删掉后封面自然回落到默认图标。
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ComponentProps } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, X } from 'lucide-react';
 
@@ -21,6 +21,7 @@ export interface AssetLibraryFolderCoverDialogProps {
   onClose: () => void;
   /** 抛错即视为失败，错误信息显示在底部，弹窗保持打开。 */
   onSubmit: (cover: string) => Promise<void>;
+  finalFocus?: ComponentProps<typeof DialogContent>['finalFocus'];
 }
 
 export function AssetLibraryFolderCoverDialog({
@@ -28,6 +29,7 @@ export function AssetLibraryFolderCoverDialog({
   folder,
   onClose,
   onSubmit,
+  finalFocus,
 }: AssetLibraryFolderCoverDialogProps) {
   const { t } = useTranslation();
   const [picked, setPicked] = useState<string | null>(null);
@@ -73,6 +75,7 @@ export function AssetLibraryFolderCoverDialog({
     >
       <DialogContent
         showCloseButton={false}
+        finalFocus={finalFocus}
         aria-label={t('canvas.assetLibrary.cover.title')}
         overlayClassName="z-[320] bg-black/55"
         className="z-[320] flex max-h-[80vh] w-[min(720px,92vw)] max-w-none sm:max-w-none flex-col overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#1b1c22] p-0 gap-0 ring-0 shadow-[0_18px_48px_rgba(0,0,0,0.5)]"

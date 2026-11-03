@@ -4994,7 +4994,7 @@
     },
     "assetLibrary": {
       "title": "Asset Library",
-      "resyncTitle": "Synced automatically when opened. If the mainline added characters, scenes, or props, click to resync.",
+      "resyncTitle": "Sync the latest characters, scenes, and props from the mainline to the asset library.",
       "close": "Close",
       "allAssets": "All assets",
       "searchAssets": "Search assets",

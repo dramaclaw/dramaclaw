@@ -411,6 +411,64 @@ describe("AssetLibraryModal 文件夹操作", () => {
     deleteFreezoneAssetLibraryFolder.mockResolvedValue({ deleted_items: 1 });
   });
 
+  it.each([
+    { action: "修改封面", close: "Escape" },
+    { action: "修改封面", close: "保存" },
+    { action: "重命名", close: "Escape" },
+    { action: "重命名", close: "保存" },
+  ])("returns focus inside the library after $action / $close", async ({ action, close }) => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return <><button onClick={() => setOpen(true)}>打开项目库</button><button>背景按钮</button><AssetLibraryModal mode="manage" project="demo" open={open} onClose={() => setOpen(false)} /></>;
+    }
+    if (action === "重命名" && close === "保存") {
+      fetchFreezoneAssetLibraryFolders.mockResolvedValueOnce([CUSTOM])
+        .mockResolvedValue([{ ...CUSTOM, name: "第一集" }]);
+    }
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "打开项目库" }));
+    const library = await screen.findByRole("dialog", { name: "资产库" });
+    const more = await screen.findByRole("button", { name: "第一集素材 更多操作" });
+    await user.click(more);
+    await user.click(screen.getByRole("button", { name: action }));
+    const child = await screen.findByRole("dialog", { name: action });
+    await waitFor(() => expect(child.contains(document.activeElement)).toBe(true));
+    if (close === "Escape") {
+      await user.keyboard("{Escape}");
+      expect(updateFreezoneAssetLibraryFolder).not.toHaveBeenCalled();
+    } else {
+      if (action === "重命名") {
+        const input = within(child).getByPlaceholderText("请输入文件夹名称");
+        await user.clear(input);
+        await user.type(input, "第一集");
+      } else {
+        await user.click(within(child).getByRole("button", { name: "选择封面 女主定妆" }));
+      }
+      await user.click(within(child).getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(updateFreezoneAssetLibraryFolder).toHaveBeenCalledWith(
+        "demo", "fld-1", action === "重命名" ? { name: "第一集" } : { cover: "/static/c.png" },
+      ));
+      if (action === "重命名")
+        await screen.findByRole("button", { name: "第一集 更多操作" });
+    }
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: action })).toBeNull());
+    expect(screen.getByRole("dialog", { name: "资产库" })).toBe(library);
+    await waitFor(() => expect(more).toHaveFocus());
+    await user.tab();
+    expect(library.contains(document.activeElement)).toBe(true);
+    await user.tab({ shift: true });
+    expect(library.contains(document.activeElement)).toBe(true);
+    const controls = [...library.querySelectorAll<HTMLButtonElement>("button")].filter(button => !button.disabled && button.tabIndex >= 0);
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (!first || !last) throw new Error("Expected library controls");
+    last.focus(); await user.tab();
+    await waitFor(() => expect(library.contains(document.activeElement)).toBe(true));
+    first.focus(); await user.tab({ shift: true });
+    await waitFor(() => expect(library.contains(document.activeElement)).toBe(true));
+  });
+
   it("只有自建文件夹带「…」菜单，系统文件夹没有", async () => {
     renderModal();
 

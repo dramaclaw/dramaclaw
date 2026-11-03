@@ -4880,7 +4880,7 @@
     },
     "assetLibrary": {
       "title": "Thư viện asset",
-      "resyncTitle": "Tự đồng bộ khi mở. Nếu luồng chính vừa thêm nhân vật, bối cảnh hay đạo cụ, bấm để đồng bộ lại.",
+      "resyncTitle": "Đồng bộ nhân vật, bối cảnh và đạo cụ mới nhất từ luồng chính vào thư viện tài sản.",
       "close": "Đóng",
       "allAssets": "Tất cả asset",
       "searchAssets": "Tìm asset",

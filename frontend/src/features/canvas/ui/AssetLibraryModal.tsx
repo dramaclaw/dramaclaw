@@ -194,6 +194,13 @@ export function AssetLibraryModal({
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   // 文件夹卡片上的「…」菜单与它派生的两个弹窗。都按 key 存而不是存整个 folder
   // 对象——folders 每次刷新都是新对象，存 key 才能跟着最新数据走。
+  // 菜单项在打开弹窗时卸载，关闭后返回仍保留的菜单触发按钮。
+  const libraryPopupRef = useRef<HTMLDivElement>(null);
+  const folderMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const folderDialogFinalFocus = () =>
+    folderMenuTriggerRef.current?.isConnected
+      ? folderMenuTriggerRef.current
+      : libraryPopupRef.current;
   const [folderMenuKey, setFolderMenuKey] = useState<AssetFolderKey | null>(null);
   const [renameFolderKey, setRenameFolderKey] = useState<AssetFolderKey | null>(
     null,
@@ -745,6 +752,7 @@ export function AssetLibraryModal({
   return (
     <Dialog open={open} onOpenChange={next => { if (!next) onClose(); }}>
       <DialogContent
+        ref={libraryPopupRef}
         className={ASSET_LIBRARY_MODAL_CLASS}
         overlayClassName="z-[300] bg-black/55 backdrop-blur-sm"
         showCloseButton={false}
@@ -910,11 +918,12 @@ export function AssetLibraryModal({
                   folder={folder}
                   active={activeFolder?.key === folder.key}
                   menuOpen={folderMenuKey === folder.key}
-                  onToggleMenu={() =>
+                  onToggleMenu={(trigger) => {
+                    if (trigger) folderMenuTriggerRef.current = trigger;
                     setFolderMenuKey((prev) =>
                       prev === folder.key ? null : folder.key,
-                    )
-                  }
+                    );
+                  }}
                   onOpen={() => {
                     setActiveFolderKey(folder.key);
                     setActiveCategoryKey(ALL_CATEGORY_KEY);
@@ -1363,6 +1372,7 @@ export function AssetLibraryModal({
 
       <AssetLibraryNewFolderDialog
         open={Boolean(renameFolder)}
+        finalFocus={folderDialogFinalFocus}
         title={t('canvas.assetLibrary.rename')}
         mode="rename"
         initialName={renameFolder?.label ?? ''}
@@ -1379,6 +1389,7 @@ export function AssetLibraryModal({
 
       <AssetLibraryFolderCoverDialog
         open={Boolean(coverFolder)}
+        finalFocus={folderDialogFinalFocus}
         folder={coverFolder}
         onClose={() => setCoverFolderKey(null)}
         onSubmit={async (cover) => {
@@ -1410,7 +1421,7 @@ function FolderCard({
   folder: AssetFolder;
   active: boolean;
   menuOpen: boolean;
-  onToggleMenu: () => void;
+  onToggleMenu: (trigger?: HTMLButtonElement) => void;
   onOpen: () => void;
   /** 不传表示当前场景没有画布可发（如节点里打开的选素材弹窗）。 */
   onSend?: () => void;
@@ -1485,7 +1496,7 @@ function FolderCard({
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
-                onToggleMenu();
+                onToggleMenu(event.currentTarget);
               }}
               aria-label={t('canvas.assetLibrary.folderMoreAria', { label: folder.label })}
               className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
@@ -1494,7 +1505,7 @@ function FolderCard({
             </button>
             {menuOpen && (
               <>
-                <div className="fixed inset-0 z-10" onClick={onToggleMenu} />
+                <div className="fixed inset-0 z-10" onClick={() => onToggleMenu()} />
                 <div className="absolute right-0 top-8 z-20 w-28 overflow-hidden rounded-sm border border-border bg-popover py-1 text-popover-foreground shadow-[0_12px_28px_rgba(0,0,0,0.45)]">
                   <button
                     type="button"
