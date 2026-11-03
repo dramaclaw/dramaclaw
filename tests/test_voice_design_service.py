@@ -1231,7 +1231,7 @@ def test_core_does_not_confirm_terminal_failure(
             duration_seconds=1,
             sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
         )
-        runner_case.now[0] += 3601
+        runner_case.now[0] += store.ttl_seconds + 1
     expected_status = store.get(candidate_id)["status"]
     with pytest.raises(VoiceDesignError):
         core_case.run()

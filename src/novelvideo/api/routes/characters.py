@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from novelvideo.api.routes.voice_design import (
     SaveCharacterVoiceRequest,
+    ApplyLibraryVoiceRequest,
     VoiceSlot,
     VoiceDesignRoute,
     _required_candidate,
@@ -1432,11 +1433,52 @@ async def save_generated_character_voice(
     user: dict = Depends(get_api_user),
 ):
     ctx, _, _, project_dir, _, store = await _resolve_character_project(project, user)
+    candidate_id = str(body.candidate_id)
+
+    def read_content(storage):
+        candidate = _required_candidate(storage, candidate_id)
+        if candidate["status"] != "ready":
+            raise CandidateStorageError("candidate_not_ready")
+        path = storage.output_path(candidate_id)
+        if not path.exists():
+            raise CandidateStorageError("candidate_audio_missing")
+        content = path.read_bytes()
+        if voice_content_sha256(content) != candidate["sha256"]:
+            raise CandidateStorageError("candidate_persist_failed")
+        return content
+
+    return await _save_character_voice_source(
+        ctx=ctx, project_dir=project_dir, store=store, name=name, slot=slot,
+        body=body, source_id=candidate_id, read_content=read_content,
+    )
+
+
+async def apply_library_character_voice(
+    project: str,
+    name: str,
+    slot: VoiceSlot,
+    body: ApplyLibraryVoiceRequest,
+    user: dict = Depends(get_api_user),
+):
+    from novelvideo.audio.voice_design_assets import load_library_voice_asset
+
+    ctx, _, _, project_dir, _, store = await _resolve_character_project(project, user)
+    asset_id = str(body.asset_id)
+    return await _save_character_voice_source(
+        ctx=ctx, project_dir=project_dir, store=store, name=name, slot=slot,
+        body=body, source_id=f"library:{asset_id}",
+        read_content=lambda _storage: load_library_voice_asset(project_dir, asset_id)[1],
+    )
+
+
+async def _save_character_voice_source(
+    *, ctx, project_dir, store, name, slot, body, source_id, read_content
+):
     character = store.get_character(name)
     if character is None:
         raise CandidateStorageError("character_not_found")
     storage = VoiceDesignStorage(ctx)
-    candidate_id, request_id = str(body.candidate_id), str(body.save_request_id)
+    candidate_id, request_id = source_id, str(body.save_request_id)
     target = f"{character.name}/{slot}"
     # A request ID cannot concurrently publish to two different characters.
     async with persistent_voice_lock(storage.db_path.with_suffix(".save.lock")):
@@ -1464,19 +1506,11 @@ async def save_generated_character_voice(
                             slot=slot,
                         ),
                     }
-            candidate = _required_candidate(storage, candidate_id)
-            if candidate["status"] != "ready":
-                raise CandidateStorageError("candidate_not_ready")
             if current != body.expected_slot.model_dump():
                 raise CandidateStorageError("slot_changed")
             if current["path"] and not body.replace_existing:
                 raise CandidateStorageError("slot_occupied")
-            path = storage.output_path(candidate_id)
-            if not path.exists():
-                raise CandidateStorageError("candidate_audio_missing")
-            content = path.read_bytes()
-            if voice_content_sha256(content) != candidate["sha256"]:
-                raise CandidateStorageError("candidate_persist_failed")
+            content = read_content(storage)
 
             async def finalize(result):
                 rel_path, sha256, updated_at = result
@@ -1519,6 +1553,12 @@ async def save_generated_character_voice(
 router.add_api_route(
     "/projects/{project}/characters/{name}/voice-samples/{slot}/save-generated",
     save_generated_character_voice,
+    methods=["POST"],
+    route_class_override=VoiceDesignRoute,
+)
+router.add_api_route(
+    "/projects/{project}/characters/{name}/voice-samples/{slot}/apply-library",
+    apply_library_character_voice,
     methods=["POST"],
     route_class_override=VoiceDesignRoute,
 )

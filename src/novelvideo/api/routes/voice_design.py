@@ -8,7 +8,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse, Response
@@ -285,7 +285,9 @@ CandidateAcceptedResponse = Success[CandidateGenerating]
 
 
 class CandidateList(ContractModel):
-    candidates: list[CandidateReady] = Field(max_length=5)
+    candidates: list[CandidateReady] = Field(max_length=100)
+    next_cursor: str | None
+    retention_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)]
 
 
 class ExpectedSlot(ContractModel):
@@ -299,6 +301,28 @@ class SaveCharacterVoiceRequest(ContractModel):
     candidate_id: UUID
     expected_slot: ExpectedSlot
     replace_existing: StrictBool = False
+
+
+class SaveLibraryVoiceRequest(ContractModel):
+    save_request_id: UUID
+    name: Annotated[
+        str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=60)
+    ]
+
+
+class ApplyLibraryVoiceRequest(ContractModel):
+    save_request_id: UUID
+    asset_id: UUID
+    expected_slot: ExpectedSlot
+    replace_existing: StrictBool = False
+
+
+class LibraryVoiceAsset(ContractModel):
+    asset_id: UUID
+    name: StrictStr
+    url: StrictStr
+    sha256: Sha256
+    duration_seconds: Annotated[float, Field(gt=0, le=15, allow_inf_nan=False)]
 
 
 class SaveUserVoiceRequest(ContractModel):
@@ -623,15 +647,53 @@ async def create_candidate(
 
 
 @router.get("/candidates", response_model=Success[CandidateList])
-async def list_candidates(project: str, user: dict = Depends(get_api_user)):
+async def list_candidates(
+    project: str,
+    user: dict = Depends(get_api_user),
+    limit: Annotated[int, Query(ge=1, le=100)] = 5,
+    cursor: Annotated[str | None, Query(max_length=256)] = None,
+):
     ctx = await _context(project, user, "viewer")
-    records = VoiceDesignStorage(ctx).list_ready()
+    storage = VoiceDesignStorage(ctx)
+    records, next_cursor = storage.list_ready(limit=limit, cursor=cursor)
     return {
         "ok": True,
         "data": {
-            "candidates": [_candidate(record, project)["data"] for record in records]
+            "candidates": [_candidate(record, project)["data"] for record in records],
+            "next_cursor": next_cursor,
+            "retention_seconds": storage.ttl_seconds,
         },
     }
+
+
+@router.post(
+    "/candidates/{candidate_id}/save-to-library",
+    response_model=Success[LibraryVoiceAsset],
+)
+async def save_candidate_to_library(
+    project: str,
+    candidate_id: UUID,
+    body: SaveLibraryVoiceRequest,
+    user: dict = Depends(get_api_user),
+):
+    from novelvideo.audio.voice_design_assets import save_candidate_asset
+    from novelvideo.seedance2_i2v.character_voice_storage import (
+        persistent_voice_lock,
+        run_voice_media_operation,
+    )
+
+    ctx = await _context(project, user, "editor")
+    storage = VoiceDesignStorage(ctx)
+    async with persistent_voice_lock(ctx.state_dir / "voice-design-assets.lock"):
+        data = await run_voice_media_operation(
+            save_candidate_asset,
+            ctx=ctx,
+            storage=storage,
+            candidate_id=str(candidate_id),
+            request_id=str(body.save_request_id),
+            name=body.name,
+        )
+    return {"ok": True, "data": data}
 
 
 @router.get("/candidates/{candidate_id}", response_model=CandidateResponse)
