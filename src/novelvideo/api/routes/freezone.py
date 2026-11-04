@@ -17213,7 +17213,32 @@ async def _maintain_canvas_workflow_runs(
                     recovered_history = candidates[0]
                     task_key = str(recovered_history["task_key"])
             task = tasks_by_key.get(task_key)
-            if not operation_id or task is None:
+            if not operation_id:
+                continue
+            if task is None:
+                if (
+                    run.get("status") in {"failed", "cancelled"}
+                    and action.get("status") == "blocked"
+                    and not task_key
+                    and not action.get("job_id")
+                    and not action.get("media_claimed_at")
+                ):
+                    operation = await io.run(
+                        "operation_read", read_agent_product_operation,
+                        project_dir=canvas_project_dir, operation_id=operation_id,
+                    )
+                    if operation is not None:
+                        if operation.get("status") == "reserved":
+                            operation = await io.run(
+                                "operation_finish", finish_agent_product_operation,
+                                project_dir=canvas_project_dir,
+                                operation_id=operation_id, outcome="cancelled",
+                                expected_task_id=str(operation.get("task_id") or ""),
+                            )
+                        with workflow_read_stage("settlement"):
+                            await terminalize_undelivered_agent_product_task(
+                                ctx=ctx, operation=operation,
+                            )
                 continue
             task_status = str(task.get("status") or "")
             artifact_status = str(action.get("artifact_status") or "")
@@ -17237,10 +17262,13 @@ async def _maintain_canvas_workflow_runs(
                 project_dir=canvas_project_dir,
                 operation_id=operation_id,
             )
-            if operation is None or operation.get("status") in {
-                "failed",
-                "cancelled",
-            }:
+            if operation is None:
+                continue
+            if operation.get("status") in {"failed", "cancelled"}:
+                with workflow_read_stage("settlement"):
+                    await terminalize_undelivered_agent_product_task(
+                        ctx=ctx, operation=operation,
+                    )
                 continue
             if operation.get("status") == "delivered":
                 # Delivery is durable before settlement starts. Retry from that
@@ -17308,7 +17336,12 @@ async def _maintain_canvas_workflow_runs(
                 server_recipe_direct_audio=direct_voice and outcome == "delivered",
             )
             with workflow_read_stage("settlement"):
-                await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+                if operation.get("status") == "delivered":
+                    await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+                else:
+                    await terminalize_undelivered_agent_product_task(
+                        ctx=ctx, operation=operation,
+                    )
 
 
 @router.get(

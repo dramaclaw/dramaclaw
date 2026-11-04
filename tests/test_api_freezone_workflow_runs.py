@@ -5542,3 +5542,95 @@ def test_story_frame_legacy_unmapped_reference_warning_is_reviewable_without_blo
     assert any("hero" in w["message"] for w in warnings) is not exclude_hero
     assert any(item["node_id"] == "legacy-image" for item in draft["preview"]["external_inputs"])
     assert not draft["preview"]["preflight"]["blockers"]
+
+
+@pytest.mark.parametrize("existing_outcome", [None, "failed", "cancelled"])
+@pytest.mark.parametrize("downstream_submission", [None, "job_id", "task_key", "media_claimed_at"])
+def test_failed_workflow_read_closes_recipe_tasks_and_refunds_once(
+    workflow_run_client, monkeypatch, existing_outcome, downstream_submission
+):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone import agent_product_operations as products
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(base, json={"actions": [
+        {"node_id": node, "action": action, "recipe_id": "product-image",
+         "recipe_version": "1.0.0", "generation_attempt_id": f"attempt-{node}"}
+        for node, action in [("image", "generate_image"), ("video", "generate_video")]
+    ]}).json()["data"]
+    product_tasks = {}
+    for action in created["actions"]:
+        op = products.read_agent_product_operation(
+            project_dir=workflow_run_client.state_dir,
+            operation_id=action["product_operation_id"],
+        )
+        product_tasks[op["operation_id"]] = SimpleNamespace(
+            task_id=op["task_id"], status="running", progress=0,
+            metadata={"feature_credit_reservation_id": f"credit-{action['node_id']}"},
+        )
+    media = SimpleNamespace(
+        task_type="freezone_gen", episode=0, beat_num=None, scope="image-job",
+        status="failed", progress=0, current_task="failed", result={},
+        error="HTTP 400: invalid image request",
+    )
+
+    class Manager:
+        def get_tasks_for_project(self, ctx, keys, **kwargs):
+            return _task_batch(ctx, keys, [media])
+
+        def get_task_for_project(self, *args, scope, **kwargs):
+            return product_tasks.get(scope)
+
+        def update_progress_for_project(self, *args, scope, status, metadata, **kwargs):
+            product_tasks[scope].status = status
+            product_tasks[scope].metadata.update(metadata)
+
+        def fail_task_for_project(self, *args, scope, **kwargs):
+            product_tasks[scope].status = "failed"
+
+    manager = Manager()
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: manager)
+    monkeypatch.setattr(products, "get_task_manager", lambda: manager)
+    refunds = []
+
+    async def refund(reservation_id, **kwargs):
+        refunds.append(reservation_id)
+        return SimpleNamespace(accepted=True, retryable=False)
+
+    monkeypatch.setattr(products, "refund_undelivered_feature_credit_reservation", refund)
+    monkeypatch.setattr(freezone.canvas_store, "read_canvas", lambda *_: {
+        "nodes": [{"id": "image"}, {"id": "video"}], "edges": [],
+    })
+    response = workflow_run_client.patch(f"{base}/{created['run_id']}", json={
+        "status": "failed", "action_updates": [
+            {"node_id": "image", "action": "generate_image", "status": "failed",
+             "task_key": "task:freezone_gen:project:proj_demo:0:image-job"},
+            {"node_id": "video", "action": "generate_video", "status": "blocked"},
+        ],
+    })
+    assert response.status_code == 200
+    if downstream_submission:
+        # A claimed/submitted child can still deliver late; missing task lookup
+        # must not turn its reservation into an automatic refund.
+        values = {"job_id": "video-job", "task_key": "unavailable-video-task", "media_claimed_at": time.time()}
+        with sqlite3.connect(workflow_run_client.state_dir / "data.db") as conn:
+            conn.execute(
+                f"UPDATE workflow_run_actions SET {downstream_submission} = ? "
+                "WHERE run_id = ? AND node_id = ?",
+                (values[downstream_submission], created["run_id"], "video"),
+            )
+    if existing_outcome:
+        op_id = created["actions"][0]["product_operation_id"]
+        products.finish_agent_product_operation(
+            project_dir=workflow_run_client.state_dir, operation_id=op_id,
+            outcome=existing_outcome, expected_task_id=product_tasks[op_id].task_id,
+        )
+    for _ in range(2):
+        response = workflow_run_client.get(base)
+        assert response.status_code == 200
+        assert response.json()["data"]["runs"][0]["status"] == "failed"
+    assert [product_tasks[a["product_operation_id"]].status for a in created["actions"]] == [
+        existing_outcome or "failed", "running" if downstream_submission else "cancelled",
+    ]
+    assert sorted(refunds) == (["credit-image"] if downstream_submission else ["credit-image", "credit-video"])
