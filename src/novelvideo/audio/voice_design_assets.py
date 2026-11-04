@@ -154,7 +154,7 @@ def save_candidate_asset(
         name=name,
         media="audio",
         source="upload",
-        category="audio",
+        category="character",
         item_id=f"voice-design:{asset_id}",
         audio_url=result["url"],
         voice_design={**result, "model": record["model"]},

@@ -70,6 +70,9 @@ def test_library_save_survives_expiry_and_does_not_modify_character(env):
     )
     assert formal.read_bytes() == b"existing role"
     item = load_video_character_library(ctx.output_dir)[0]
+    assert item["category"] == "character"
+    assert item["media"] == "audio"
+    assert item["voice_design"]["sha256"] == sha256(content).hexdigest()
     assert item["audio_url"] == asset["url"]
     assert "voice-design/candidates" not in item["audio_url"]
     assert "user_id" not in item["voice_design"]
