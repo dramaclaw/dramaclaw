@@ -4673,6 +4673,68 @@ describe("Canvas command approval audio params", () => {
 });
 
 describe("Canvas command approval video params", () => {
+  it.each(["480p", "480P", " 480p "])("preserves %s through workflow approval and execution updates", (quality) => {
+    const approval = {
+      id: "resolution", key: "resolution", messageId: "assistant",
+      receivedAt: 1, commandCount: 1, plans: [],
+      envelopes: [{ schema_version: "canvas_chat_commands.v1" as const,
+        commands: [{ type: "run_workflow" as const, node_ids: ["video-a"],
+          scope: "selection" as const, direction: "node" as const }],
+      }],
+    };
+    const nodes = [{ id: "video-a", type: "videoNode", position: { x: 0, y: 0 },
+      data: { model: "video-model", quality, durationSec: 10, prompt: "草原", genMode: "textToVideo" } }];
+    const previous = useCanvasStore.getState();
+    useCanvasStore.setState({ nodes: nodes as never, edges: [] });
+    try {
+      const params = videoApprovalInitialParamsForTest(approval as never, nodes as never, [],
+        [{ id: "video-model", resolutionOptions: ["480p", "720p"] }], "video-model");
+      expect(params?.quality).toBe("480P");
+      const amended = amendCanvasApprovalWithVideoParamsForTest(approval as never, params);
+      expect(amended.envelopes[0].commands[0]).toMatchObject({
+        type: "update_node_data", node_id: "video-a", data: { quality: "480P" },
+      });
+      const commands = amended.envelopes[0].commands;
+      expect(commands[commands.length - 1]).toMatchObject({ type: "run_workflow" });
+    } finally {
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+
+  it("keeps the selected 480P when unrelated canvas state changes before confirmation", () => {
+    const previous = useCanvasStore.getState();
+    const node = { id: "video-a", type: "videoNode" as const, position: { x: 0, y: 0 },
+      data: { model: "video-model", quality: "720p", durationSec: 10,
+        genMode: "textToVideo" as const, humanReview: false } };
+    useCanvasStore.setState({ nodes: [node], edges: [] });
+    const approval = {
+      id: "resolution-ui", key: "resolution-ui", messageId: "assistant",
+      receivedAt: 1, commandCount: 1, plans: [],
+      envelopes: [{ schema_version: "canvas_chat_commands.v1" as const,
+        commands: [{ type: "run_node_action" as const, node_id: "video-a", action: "generate_video" }],
+      }],
+    };
+    const onApply = vi.fn();
+    const view = render(createElement(CanvasCommandApprovalCardForTest,
+      { approval, onApply, onCancel: vi.fn() }));
+    try {
+      fireEvent.click(view.getByRole("button", { name: /视频参数/ }));
+      fireEvent.click(view.getByRole("button", { name: /^480P$/ }));
+      fireEvent.click(view.getByRole("button", { name: /视频参数/ }));
+      act(() => useCanvasStore.setState({ nodes: [{ ...node, position: { x: 30, y: 20 } }] }));
+      expect(view.getByRole("button", { name: /视频参数.*480P/ })).toBeTruthy();
+      const confirm = view.getAllByRole("button").find((button) =>
+        button.textContent?.includes("canvasConfirmExecution") || button.textContent === "确认执行")!;
+      fireEvent.click(confirm);
+      expect(onApply.mock.calls[0][0].envelopes[0].commands[0]).toMatchObject({
+        type: "update_node_data", data: { quality: "480P" },
+      });
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+
   it.each([false, true])("checks each final review flag in a mixed batch (explicit first: %s)", (explicitFirst) => {
     const previous = useCanvasStore.getState();
     const nodes = [false, true].map((explicit) => ({

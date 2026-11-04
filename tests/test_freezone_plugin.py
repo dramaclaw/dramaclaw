@@ -10990,6 +10990,56 @@ def test_workflow_http_error_preserves_safe_diagnostics(monkeypatch, body, expec
     assert structured.get("code") == expected.get("code")
 
 
+def test_fastapi_422_diagnostics_survive_http_and_mcp(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_API_URL", "http://localhost:8780")
+    monkeypatch.setattr(plugin, "_request_headers", lambda _agent: {})
+    body = {"detail": [{
+        "loc": ["body", "plan", "nodes", 0, "id"],
+        "msg": "Field required",
+        "input": {"private": "request payload"},
+        "ctx": {"private": "server context"},
+    }]}
+
+    def reject(request, timeout):
+        raise HTTPError(
+            request.full_url, 422, "Unprocessable Entity", None,
+            io.BytesIO(json.dumps(body).encode()),
+        )
+
+    monkeypatch.setattr(plugin, "urlopen", reject)
+    result = plugin._request("POST", "/projects/p/freezone/canvases/c/workflow-drafts")
+    assert result["ok"] is False
+    assert result["status_code"] == 422
+    assert result["errors"] == [{"path": "body.plan.nodes.0.id", "message": "Field required"}]
+    assert "private" not in json.dumps(result)
+    assert "phase" not in result and "retryable" not in result
+    structured = _assert_real_mcp_output(plugin, "freezone_prepare_workflow_plan_draft", result)
+    assert structured["errors"] == result["errors"]
+
+
+@pytest.mark.parametrize("item", [
+    {"loc": ["body", {}], "msg": "Invalid"},
+    {"loc": "body.plan", "msg": "Invalid"},
+    {"loc": ["body", "plan"], "msg": "Authorization: Bearer secret"},
+    {"loc": ["body", "password"], "msg": "Invalid"},
+    {"loc": [], "msg": "Invalid"},
+])
+def test_fastapi_422_omits_unsafe_or_malformed_diagnostics(item):
+    result = _load_plugin_module()._http_error_result(
+        422, json.dumps({"detail": [item]}), "Unprocessable Entity",
+    )
+    assert "errors" not in result
+
+
+def test_fastapi_422_diagnostics_obey_count_and_byte_limits():
+    plugin = _load_plugin_module()
+    detail = [{"loc": ["body", "plan", i], "msg": "错误" * 120} for i in range(20)]
+    result = plugin._http_error_result(422, json.dumps({"detail": detail}), "Unprocessable Entity")
+    assert 0 < len(result["errors"]) <= 5
+    assert len(json.dumps(result, ensure_ascii=False).encode()) <= 4096
+
+
 @pytest.mark.parametrize("body", [b"<html>upstream failure</html>", b""])
 def test_workflow_http_error_handles_non_json_and_empty_body(monkeypatch, body):
     plugin = _load_plugin_module()

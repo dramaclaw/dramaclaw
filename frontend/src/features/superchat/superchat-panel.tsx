@@ -2649,9 +2649,8 @@ function normalizeVideoQualityForApproval(
   options: readonly VideoGenQuality[],
 ): VideoGenQuality {
   const fallback = options.includes("720P") ? "720P" : options[0] ?? "720P";
-  return typeof value === "string" && options.includes(value as VideoGenQuality)
-    ? (value as VideoGenQuality)
-    : fallback;
+  const requested = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return options.find((option) => option.toLowerCase() === requested) ?? fallback;
 }
 
 function videoDurationBoundsForApproval(
@@ -3591,6 +3590,8 @@ function CanvasCommandApprovalCard({
   );
   const [imageParams, setImageParams] = useState<CanvasApprovalImageParams[]>(() => initialImageParams);
   const [videoParams, setVideoParams] = useState<CanvasApprovalVideoParams[]>(() => initialVideoParams);
+  const videoParamsSource = JSON.stringify([approval.id, initialVideoParams]);
+  const previousVideoParamsSource = useRef(videoParamsSource);
   const [videoUpscaleParams, setVideoUpscaleParams] = useState<CanvasApprovalVideoUpscaleParams | null>(
     () => initialVideoUpscaleParams,
   );
@@ -3614,8 +3615,13 @@ function CanvasCommandApprovalCard({
   }, [initialImageParams, isExecuting]);
 
   useEffect(() => {
-    if (!isExecuting) setVideoParams(initialVideoParams);
-  }, [initialVideoParams, isExecuting]);
+    // Canvas saves and unrelated node updates recreate the groups. Preserve the
+    // user's edits unless the approval or its actual source parameters changed.
+    if (!isExecuting && previousVideoParamsSource.current !== videoParamsSource) {
+      previousVideoParamsSource.current = videoParamsSource;
+      setVideoParams(initialVideoParams);
+    }
+  }, [initialVideoParams, isExecuting, videoParamsSource]);
 
   useEffect(() => {
     if (!isExecuting) setVideoUpscaleParams(initialVideoUpscaleParams);

@@ -181,6 +181,27 @@ def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, An
         if safe_missing:
             result["missing_parameters"] = safe_missing
     errors = source.get("errors")
+    if not isinstance(errors, list) and isinstance(detail, list):
+        # FastAPI/Pydantic uses detail/loc/msg. Normalize only diagnostics;
+        # input and ctx may contain request data or secrets and must stay private.
+        errors = []
+        for item in detail[:5]:
+            if not isinstance(item, dict):
+                continue
+            loc = item.get("loc")
+            if not isinstance(loc, list) or not loc or len(loc) > 32:
+                continue
+            if any(type(part) not in {str, int} for part in loc):
+                continue
+            message = _safe_error_string(item.get("msg"), 240)
+            if message:
+                errors.append(
+                    {
+                        "path": ".".join(str(part) for part in loc),
+                        "message": message,
+                    }
+                )
+        # Diagnostics alone do not establish safe retry or a pre-write phase.
     if isinstance(errors, list):
         safe_errors = []
         for item in errors[:5]:
