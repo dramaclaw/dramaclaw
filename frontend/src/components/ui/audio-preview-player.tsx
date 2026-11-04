@@ -82,7 +82,6 @@ export function AudioPreviewPlayer({
       className={layout === "card"
         ? "relative flex h-full w-full flex-col items-center justify-center gap-2.5 bg-[radial-gradient(120%_100%_at_50%_0%,rgba(120,140,255,0.16),rgba(255,255,255,0.02))] pb-7"
         : "flex min-w-0 items-center gap-3 rounded-md bg-muted/30 p-3"}
-      onClick={(event) => event.stopPropagation()}
     >
       <audio
         ref={audioRef}
@@ -107,7 +106,8 @@ export function AudioPreviewPlayer({
         type="button"
         disabled={unavailable}
         aria-label={playing ? t("canvas.assetLibrary.audioPause") : playLabel ?? t("canvas.assetLibrary.audioPlay")}
-        onClick={() => {
+        onClick={(event) => {
+          event.stopPropagation();
           const audio = audioRef.current;
           if (!audio || unavailable) return;
           if (audio.paused) {
@@ -130,6 +130,7 @@ export function AudioPreviewPlayer({
           aria-disabled={unavailable || duration <= 0}
           tabIndex={unavailable || duration <= 0 ? -1 : 0}
           onClick={(event) => {
+            event.stopPropagation();
             if (unavailable || duration <= 0) return;
             const rect = event.currentTarget.getBoundingClientRect();
             if (rect.width > 0) seek(((event.clientX - rect.left) / rect.width) * duration);
@@ -163,6 +164,7 @@ export function AudioPreviewPlayer({
         value={Math.min(time, duration || 1)}
         disabled={unavailable || duration <= 0}
         aria-label={t("canvas.assetLibrary.audioProgress")}
+        onClick={(event) => event.stopPropagation()}
         onChange={(event) => {
           seek(Number(event.target.value));
         }}

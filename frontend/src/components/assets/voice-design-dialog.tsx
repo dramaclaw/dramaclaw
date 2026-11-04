@@ -81,7 +81,7 @@ type SaveOperation =
 type Generation =
   | { kind: "idle" }
   | {
-      kind: "submitting" | "tracking" | "unresolved";
+      kind: "submitting" | "tracking" | "unresolved" | "unknown";
       id: string;
       model: VoiceDesignModel;
     }
@@ -130,7 +130,7 @@ function isLocked(draft: Draft): boolean {
   return Object.values(draft.models).some(
     (model) =>
       model.save.kind === "pending" ||
-      ["submitting", "tracking", "unresolved"].includes(model.generation.kind),
+      ["submitting", "tracking", "unresolved", "unknown"].includes(model.generation.kind),
   );
 }
 function knownMessage(error: unknown): string {
@@ -270,7 +270,8 @@ function useVoiceDesignSession({
   }, []);
   const activeId =
     draft.generation.kind === "tracking" ||
-    draft.generation.kind === "unresolved"
+    draft.generation.kind === "unresolved" ||
+    draft.generation.kind === "unknown"
       ? draft.generation.id
       : "";
   const candidate = useQuery({
@@ -305,7 +306,7 @@ function useVoiceDesignSession({
           result.status === "generating"
             ? { kind: "tracking", ...expected }
             : result.status === "unknown"
-              ? { kind: "unresolved", ...expected }
+              ? { kind: "unknown", ...expected }
               : { kind: "settled" },
         ...(result.status === "ready"
           ? {
@@ -363,7 +364,7 @@ function useVoiceDesignSession({
     } else
       patch(
         {
-          generation: { ...draft.generation, kind: "unresolved" },
+          generation: { ...draft.generation, kind: draft.generation.kind === "unknown" ? "unknown" : "unresolved" },
           error: knownMessage(candidate.error),
         },
         activeId,
@@ -372,7 +373,7 @@ function useVoiceDesignSession({
   const generating =
     draft.generation.kind === "submitting" ||
     draft.generation.kind === "tracking";
-  const uncertain = draft.generation.kind === "unresolved";
+  const uncertain = draft.generation.kind === "unresolved" || draft.generation.kind === "unknown";
   const descriptionLength = Array.from(session.description.trim()).length;
   const previewLength = Array.from(session.previewText.trim()).length;
   const valid =
@@ -463,6 +464,20 @@ function useVoiceDesignSession({
       receive(result.data, draft.generation);
     else if (result.error)
       patch({ error: knownMessage(result.error) }, activeId);
+  };
+  const restart = (requestId: string) => {
+    if (busy.current || candidate.isFetching || !catalogId) return;
+    qc.setQueryData<Draft>(key, (current) => {
+      const model = current?.models[catalogId];
+      if (
+        !current || current.selectedCatalogId !== catalogId ||
+        model?.generation.kind !== "unknown" || model.generation.id !== requestId
+      ) return current;
+      return {
+        ...current,
+        models: { ...current.models, [catalogId]: { ...model, generation: { kind: "idle" }, error: "" } },
+      };
+    });
   };
   const save = async (replace: boolean) => {
     const currentSession = qc.getQueryData<Draft>(key);
@@ -622,6 +637,7 @@ function useVoiceDesignSession({
     expirePreview,
     generate,
     check,
+    restart,
     save,
     refreshTarget,
   };
@@ -630,6 +646,7 @@ function VoiceDesignSession(props: Props) {
   const { t } = useTranslation();
   const { target, open, onOpenChange } = props;
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [restartId, setRestartId] = useState<string | null>(null);
   const {
     draft,
     session,
@@ -658,6 +675,7 @@ function VoiceDesignSession(props: Props) {
     expirePreview,
     generate,
     check,
+    restart,
     save,
     refreshTarget,
   } = useVoiceDesignSession(props);
@@ -880,6 +898,17 @@ function VoiceDesignSession(props: Props) {
               {t("voiceDesign.check")}
             </Button>
           )}
+          {draft.generation.kind === "unknown" && (
+            <Button
+              variant="outline"
+              disabled={candidate.isFetching}
+              onClick={() => {
+                if (draft.generation.kind === "unknown") setRestartId(draft.generation.id);
+              }}
+            >
+              {t("voiceDesign.restart")}
+            </Button>
+          )}
           {draft.conflict && target.kind === "character" && (
             <Button variant="outline" onClick={() => void refreshTarget()}>
               {t("voiceDesign.refreshTarget")}
@@ -941,6 +970,19 @@ function VoiceDesignSession(props: Props) {
               <Button onClick={() => void save(true)}>
                 {t("voiceDesign.replace")}
               </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <AlertDialog open={restartId !== null} onOpenChange={(open) => { if (!open) setRestartId(null); }}>
+          <AlertDialogContent className="bg-[var(--ui-surface-modal)] backdrop-blur-none">
+            <AlertDialogTitle>{t("voiceDesign.restartTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("voiceDesign.restartHint")}</AlertDialogDescription>
+            <AlertDialogFooter>
+              <Button variant="outline" onClick={() => setRestartId(null)}>{t("voiceDesign.cancel")}</Button>
+              <Button disabled={candidate.isFetching} onClick={() => {
+                if (restartId) restart(restartId);
+                setRestartId(null);
+              }}>{t("voiceDesign.restart")}</Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

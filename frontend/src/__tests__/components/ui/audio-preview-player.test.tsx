@@ -72,3 +72,18 @@ it("keeps asset-card seek controls accessible from the keyboard", () => {
   fireEvent.keyDown(slider, { key: "Home" });
   expect(audio.currentTime).toBe(0);
 });
+
+it.each(["card", "inline"] as const)("lets %s background clicks activate the card but isolates playback and seeking", (layout) => {
+  const activate = vi.fn();
+  const { container } = render(<div onClick={activate}><AudioPreviewPlayer src="/saved.mp3" durationSeconds={10} layout={layout} label="saved voice" /></div>);
+  const audio = screen.getByLabelText<HTMLAudioElement>("saved voice");
+  fireEvent.click(screen.getByRole("button"));
+  expect(audio.play).toHaveBeenCalledOnce();
+  expect(activate).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("slider"));
+  expect(activate).not.toHaveBeenCalled();
+  const player = container.querySelector("audio")?.parentElement;
+  expect(player).not.toBeNull();
+  if (player) fireEvent.click(player);
+  expect(activate).toHaveBeenCalledOnce();
+});

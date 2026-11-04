@@ -320,6 +320,30 @@ describe("AssetLibraryModal 类目与文件夹", () => {
     })));
   });
 
+  it.each(["pick", "manage"] as const)("%s模式点击音频背景可选材或打开详情，播放与进度不触发卡片", async (mode) => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    fetchFreezoneVideoCharacterLibrary.mockResolvedValue({ items: [SAVED_VOICE] });
+    const onConfirm = vi.fn();
+    const { container } = renderModal({ mode, allowedMedia: ["audio"], onConfirm });
+    await screen.findByText(SAVED_VOICE.name);
+    const player = container.ownerDocument.querySelector("audio")?.parentElement;
+    expect(player).not.toBeNull();
+    if (!player) return;
+    const play = within(player).getByRole("button");
+    fireEvent.click(play);
+    fireEvent.click(within(player).getByRole("slider"));
+    expect(screen.queryByRole("dialog", { name: "资产详情" })).not.toBeInTheDocument();
+    if (mode === "pick") expect(screen.getByRole("button", { name: "确定" })).toBeDisabled();
+    fireEvent.click(player);
+    if (mode === "pick") {
+      expect(screen.getByRole("button", { name: "确定" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "确定" }));
+      expect(onConfirm).toHaveBeenCalledWith([{ media: "audio", name: SAVED_VOICE.name, url: SAVED_VOICE.audio_url }]);
+    } else {
+      expect(await screen.findByRole("dialog", { name: "资产详情" })).toBeInTheDocument();
+    }
+  });
+
   it("兼容旧正式设计声线时保留已有和缺省保存位置及原始数据", () => {
     const legacy = { ...SAVED_VOICE, folder: undefined };
     const snapshot = structuredClone([SAVED_VOICE, legacy]);

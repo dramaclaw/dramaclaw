@@ -422,6 +422,108 @@ it("queries original request after uncertain creation and never auto creates aga
   expect(screen.getByRole("combobox", { name: "生成模型" })).toBeDisabled();
   expect(screen.getByLabelText("试听文本")).toHaveValue(text);
 });
+it("explicitly restarts a terminal unknown without resubmitting until the user generates a new request", async () => {
+  const previous = { ...ready("59152ef5-2466-4056-99e5-2192e18a993b"), description: "先前的试听" };
+  historyCandidates = [previous];
+  server.use(http.get(`${base}/candidates/:id`, ({ params }) => HttpResponse.json({
+    ok: true,
+    data: creations === 1 ? {
+      candidate_id: String(params.id), model: designModels[0], status: "unknown",
+      failure: { code: "generation_unknown", message: "结果未知，请确认后重新生成", retryable: true },
+    } : ready(String(params.id)),
+  })));
+  mount();
+  await fill();
+  fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+  await screen.findByText("结果未知，请确认后重新生成");
+  const originalId = candidateId;
+  expect(screen.getByRole("combobox", { name: "生成模型" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  fireEvent.click(screen.getByRole("button", { name: "打开" }));
+  fireEvent.click(await screen.findByRole("button", { name: "重新开始" }));
+  let confirmation = await screen.findByRole("alertdialog");
+  expect(confirmation).toHaveTextContent("再次生成会创建新任务，并可能再次计费");
+  fireEvent.click(within(confirmation).getByRole("button", { name: "取消" }));
+  expect(screen.getByRole("combobox", { name: "生成模型" })).toBeDisabled();
+  expect(creations).toBe(1);
+  fireEvent.click(screen.getByRole("button", { name: "重新开始" }));
+  confirmation = await screen.findByRole("alertdialog");
+  fireEvent.click(within(confirmation).getByRole("button", { name: "重新开始" }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "生成模型" })).toBeEnabled());
+  expect(screen.getByLabelText("音色描述")).toHaveValue("温柔");
+  expect(screen.getByLabelText("试听文本")).toHaveValue(text);
+  expect(creations).toBe(1);
+  const history = screen.getByRole("button", { name: "选择试听：先前的试听" });
+  expect(history).toBeEnabled();
+  fireEvent.click(history);
+  await screen.findByText("生成时描述：先前的试听");
+  expect(creations).toBe(1);
+  const generateAgain = screen.getByRole("button", { name: "重新生成" });
+  fireEvent.click(generateAgain);
+  fireEvent.click(generateAgain);
+  await waitFor(() => expect(creations).toBe(2));
+  expect(candidateId).not.toBe(originalId);
+  await screen.findByLabelText("生成的试听音频");
+});
+
+it("does not offer restart for an unreachable original request without a verified terminal status", async () => {
+  server.use(http.get(`${base}/candidates/:id`, () => HttpResponse.error()));
+  mount();
+  await fill();
+  fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+  await screen.findByRole("button", { name: "查询原任务" });
+  expect(screen.queryByRole("button", { name: "重新开始" })).not.toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "生成模型" })).toBeDisabled();
+  expect(creations).toBe(1);
+});
+
+it("retains terminal-unknown restart after a later status check loses its connection", async () => {
+  let disconnected = false;
+  let queries = 0;
+  server.use(http.get(`${base}/candidates/:id`, ({ params }) => {
+    queries++;
+    return disconnected ? HttpResponse.error() : HttpResponse.json({
+      ok: true, data: { candidate_id: String(params.id), model: designModels[0], status: "unknown",
+        failure: { code: "generation_unknown", message: "结果未知", retryable: true } },
+    });
+  }));
+  mount();
+  await fill();
+  fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+  await screen.findByRole("button", { name: "重新开始" });
+  disconnected = true;
+  fireEvent.click(screen.getByRole("button", { name: "查询原任务" }));
+  await waitFor(() => expect(queries).toBe(2));
+  await waitFor(() => expect(screen.getByRole("button", { name: "查询原任务" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "重新开始" }));
+  const confirmation = await screen.findByRole("alertdialog");
+  fireEvent.click(within(confirmation).getByRole("button", { name: "重新开始" }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "生成模型" })).toBeEnabled());
+  expect(creations).toBe(1);
+});
+
+it("keeps the previous successful preview when restarting an unknown regeneration", async () => {
+  server.use(http.get(`${base}/candidates/:id`, ({ params }) => HttpResponse.json({
+    ok: true, data: creations === 1 ? ready(String(params.id)) : {
+      candidate_id: String(params.id), model: designModels[0], status: "unknown",
+      failure: { code: "generation_unknown", message: "结果未知", retryable: true },
+    },
+  })));
+  mount();
+  await generate();
+  const previousId = candidateId;
+  fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+  fireEvent.click(await screen.findByRole("button", { name: "重新开始" }));
+  const confirmation = await screen.findByRole("alertdialog");
+  fireEvent.click(within(confirmation).getByRole("button", { name: "重新开始" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "保存到默认" })).toBeEnabled());
+  expect(screen.getByLabelText("生成的试听音频")).toBeInTheDocument();
+  expect(screen.getByText("8.4 秒")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "替换" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ candidate_id: previousId })));
+  expect(creations).toBe(2);
+});
 it("failed regeneration retains the previous successful candidate", async () => {
   mount();
   await generate();
@@ -1096,6 +1198,7 @@ it("isolates a mismatched candidate snapshot and only unlocks after checking the
   await fill();
   fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
   await screen.findByText("服务器响应无效，请稍后查询原任务。");
+  expect(screen.queryByRole("button", { name: "重新开始" })).not.toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "生成模型" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "重新生成" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "保存到默认" })).toBeDisabled();
