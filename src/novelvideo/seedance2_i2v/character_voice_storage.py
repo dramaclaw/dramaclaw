@@ -14,6 +14,8 @@ import hashlib
 import os
 from contextlib import asynccontextmanager
 import json
+import logging
+import uuid
 import re
 import shutil
 import subprocess
@@ -626,6 +628,17 @@ class CharacterVoiceJournal:
             raise ValueError(
                 "Character voice journal does not match its project/character"
             )
+        files = record["files"]
+        names = record["existing_names"]
+        if not isinstance(files, dict) or not isinstance(names, list):
+            raise ValueError("Invalid character voice backup")
+        allowed = {f"voice_{record['slot']}{ext}" for ext in VOICE_SAMPLE_EXTENSIONS}
+        if any(not isinstance(name, str) or Path(name).name != name for name in names):
+            raise ValueError("Invalid character voice backup filename")
+        for name, content in files.items():
+            if name not in allowed or not isinstance(content, str):
+                raise ValueError("Invalid character voice backup file")
+            base64.b64decode(content, validate=True)
         save = record.get("save")
         if save and (
             Path(save["state_dir"]).resolve() != self.state_dir
@@ -729,25 +742,33 @@ async def recover_character_voice_publications(
         async with persistent_voice_lock(path.with_suffix(".lock")):
             if not path.exists():
                 continue
-            name = json.loads(path.read_text())["character_name"]
-            journal = CharacterVoiceJournal(project_dir, name, state_dir=state_dir)
-            if journal.path.resolve() != path.resolve():
-                raise ValueError(
-                    "Character voice journal filename does not match its character"
+            try:
+                record = json.loads(path.read_text())
+                if not isinstance(record, dict) or not isinstance(record.get("character_name"), str):
+                    raise ValueError("Invalid character voice journal")
+                name = record["character_name"]
+                journal = CharacterVoiceJournal(project_dir, name, state_dir=state_dir)
+                if journal.path.resolve() != path.resolve():
+                    raise ValueError("Character voice journal filename does not match its character")
+                journal.read()
+                fields = (
+                    "reference_audio_path",
+                    "reference_audio_sha256",
+                    "reference_audio_updated_at",
+                    "voice_samples_by_age_group_json",
                 )
-            fields = (
-                "reference_audio_path",
-                "reference_audio_sha256",
-                "reference_audio_updated_at",
-                "voice_samples_by_age_group_json",
-            )
-            async with connection.execute(
-                "SELECT " + ",".join(fields) + " FROM characters WHERE name=?",
-                (name,),
-            ) as cursor:
-                row = await cursor.fetchone()
-            if row is None:
-                raise ValueError(
-                    "Character voice journal references a missing character"
+                async with connection.execute(
+                    "SELECT " + ",".join(fields) + " FROM characters WHERE name=?",
+                    (name,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                if row is None:
+                    raise ValueError("Character voice journal references a missing character")
+                journal.recover(NovelCharacter(name=name, **dict(zip(fields, row))))
+            except (ValueError, KeyError, TypeError) as exc:
+                quarantined = path.with_suffix(f".quarantined-{uuid.uuid4().hex}")
+                path.replace(quarantined)
+                logging.getLogger(__name__).warning(
+                    "Quarantined invalid character voice journal %s (%s)",
+                    quarantined.name, type(exc).__name__,
                 )
-            journal.recover(NovelCharacter(name=name, **dict(zip(fields, row))))

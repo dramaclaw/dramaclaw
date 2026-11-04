@@ -48,6 +48,8 @@ import type {
   SaveGeneratedAccountVoice,
   SaveGeneratedCharacterVoice,
   VoiceDesignCandidate,
+  VoiceDesignCreate,
+  VoiceDesignHistory,
   VoiceDesignReady,
   VoiceDesignSurface,
   VoiceDesignModel,
@@ -88,6 +90,7 @@ type Generation =
   | { kind: "settled" };
 type ModelDraft = {
   generation: Generation;
+  pendingRequest: { input: VoiceDesignCreate; model: VoiceDesignModel } | null;
   ready: VoiceDesignReady | null;
   error: string;
   save: SaveOperation;
@@ -96,6 +99,7 @@ type ModelDraft = {
 function newModelDraft(): ModelDraft {
   return {
     generation: { kind: "idle" },
+    pendingRequest: null,
     ready: null,
     error: "",
     save: { kind: "idle" },
@@ -302,6 +306,7 @@ function useVoiceDesignSession({
     }
     patch(
       {
+        ...(result.status !== "generating" ? { pendingRequest: null } : {}),
         generation:
           result.status === "generating"
             ? { kind: "tracking", ...expected }
@@ -326,13 +331,14 @@ function useVoiceDesignSession({
       expected.id,
     );
     if (result.status === "ready") {
-      qc.setQueryData<{ candidates: VoiceDesignReady[] }>(
+      qc.setQueryData<VoiceDesignHistory>(
         queryKeys.voiceDesignHistory(project),
-        (current) => ({
-          candidates: [result, ...(current?.candidates ?? []).filter(
+        (current) => current ? ({
+          ...current,
+          candidates: [result, ...current.candidates.filter(
             (item) => item.candidate_id !== result.candidate_id,
           )].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 5),
-        }),
+        }) : current,
       );
       void qc.invalidateQueries({ queryKey: queryKeys.voiceDesignHistory(project) });
     }
@@ -393,9 +399,9 @@ function useVoiceDesignSession({
     if (!draft.ready) return;
     const candidateId = draft.ready.candidate_id;
     patch({ ready: { ...draft.ready, expires_at: new Date(0).toISOString() } });
-    qc.setQueryData<{ candidates: VoiceDesignReady[] }>(
+    qc.setQueryData<VoiceDesignHistory>(
       queryKeys.voiceDesignHistory(project),
-      (current) => current ? { candidates: current.candidates.filter((item) => item.candidate_id !== candidateId) } : current,
+      (current) => current ? { ...current, candidates: current.candidates.filter((item) => item.candidate_id !== candidateId) } : current,
     );
   };
   const generate = async () => {
@@ -412,37 +418,34 @@ function useVoiceDesignSession({
       quote.isError
     )
       return;
+    await submit({
+      request_id: crypto.randomUUID(),
+      catalog_id: quote.data.model.catalog_id,
+      config_digest: quote.data.model.config_digest,
+      surface,
+      description: session.description.trim(),
+      preview_text: session.previewText.trim(),
+      language: "zh",
+    }, quote.data.model);
+  };
+  const submit = async (input: VoiceDesignCreate, model: VoiceDesignModel) => {
     busy.current = true;
-    const requestId = crypto.randomUUID();
-    const expected = { id: requestId, model: quote.data.model };
-    patch({ generation: { kind: "submitting", ...expected }, error: "" });
+    const requestId = input.request_id;
+    const expected = { id: requestId, model };
+    patch({ generation: { kind: "submitting", ...expected }, pendingRequest: null, error: "" });
     try {
-      const result = await createVoiceDesign(project, {
-        request_id: requestId,
-        catalog_id: expected.model.catalog_id,
-        config_digest: expected.model.config_digest,
-        surface,
-        description: session.description.trim(),
-        preview_text: session.previewText.trim(),
-        language: "zh",
-      });
-      if (result.status === "unknown")
-        patch(
-          {
-            generation: { kind: "tracking", ...expected },
-            error: result.failure.message,
-          },
-          requestId,
-        );
-      else receive(result, expected);
+      const result = await createVoiceDesign(project, input);
+      receive(result, expected);
     } catch (error) {
-      const uncertainResult =
-        !(error instanceof VoiceDesignApiError) || error.status >= 500;
+      const uncertainResult = !(error instanceof VoiceDesignApiError) ||
+        error.code === "invalid_response" ||
+        (error.status >= 500 && error.retryable);
       patch(
         {
           generation: uncertainResult
             ? { kind: "tracking", ...expected }
             : { kind: "idle" },
+          pendingRequest: uncertainResult ? { input, model } : null,
           error: knownMessage(error),
         },
         requestId,
@@ -455,6 +458,13 @@ function useVoiceDesignSession({
     } finally {
       busy.current = false;
     }
+  };
+  const retrySubmission = async () => {
+    const current = qc.getQueryData<Draft>(key);
+    const model = current?.models[catalogId ?? ""];
+    if (busy.current || current?.selectedCatalogId !== catalogId || !model?.pendingRequest ||
+      (model.generation.kind !== "tracking" && model.generation.kind !== "unresolved")) return;
+    await submit(model.pendingRequest.input, model.pendingRequest.model);
   };
   const check = async () => {
     if (!activeId) return;
@@ -553,9 +563,10 @@ function useVoiceDesignSession({
         await target.onSave(attempt.input);
       else return;
       await qc.cancelQueries({ queryKey: queryKeys.voiceDesignHistory(project) });
-      qc.setQueryData<{ candidates: VoiceDesignReady[] }>(
+      qc.setQueryData<VoiceDesignHistory>(
         queryKeys.voiceDesignHistory(project),
         (current) => current ? {
+          ...current,
           candidates: current.candidates.filter((item) => item.candidate_id !== attempt.input.candidate_id),
         } : current,
       );
@@ -636,6 +647,7 @@ function useVoiceDesignSession({
     canSave,
     expirePreview,
     generate,
+    retrySubmission,
     check,
     restart,
     save,
@@ -674,6 +686,7 @@ function VoiceDesignSession(props: Props) {
     canSave,
     expirePreview,
     generate,
+    retrySubmission,
     check,
     restart,
     save,
@@ -888,6 +901,11 @@ function VoiceDesignSession(props: Props) {
             >
               {feedback(draft.error)}
             </p>
+          )}
+          {draft.pendingRequest && (draft.generation.kind === "tracking" || draft.generation.kind === "unresolved") && (
+            <Button variant="outline" onClick={() => void retrySubmission()} disabled={candidate.isFetching}>
+              {t("voiceDesign.retrySubmission")}
+            </Button>
           )}
           {uncertain && (
             <Button

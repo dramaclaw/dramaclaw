@@ -229,7 +229,7 @@ export function AssetLibraryModal({
     }
   }, [categories, activeCategoryKey]);
 
-  // 纯加载已有库：失败不弹红条(缺库文件/后端未就绪都当空处理)，返回加载到的条目。
+  // 只读加载已有库；失败显示错误，避免把加载失败误当成空库。
   const refreshLibrary = useCallback(async (): Promise<LibraryItem[]> => {
     if (!project) return [];
     try {

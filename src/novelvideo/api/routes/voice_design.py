@@ -637,11 +637,13 @@ async def create_candidate(
             scope=storage.task_scope(candidate_id),
             payload={"candidate_id": candidate_id, "billing": config.billing_params()},
         )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        if exc.status_code < 500:
+            raise
+        raise CandidateStorageError("generation_unknown") from None
     except Exception:
-        # An uncertain submission is retried only with the same persistent candidate.
-        raise CandidateStorageError("voice_design_unavailable") from None
+        # Preserve the candidate so an explicit retry uses the same task identity.
+        raise CandidateStorageError("generation_unknown") from None
     storage.mark_queued(candidate_id)
     return JSONResponse(_candidate(record, project), status_code=202)
 

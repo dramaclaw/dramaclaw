@@ -1449,7 +1449,7 @@ async def test_project_connection_closes_when_voice_recovery_fails(
     "field,value",
     [("project_dir", "/other-project"), ("character_name", "other-character")],
 )
-async def test_project_initialization_rejects_foreign_voice_journal(
+async def test_project_initialization_quarantines_foreign_voice_journal(
     generated_api, field, value
 ):
     import json
@@ -1467,8 +1467,38 @@ async def test_project_initialization_rejects_foreign_voice_journal(
     restarted = SQLiteStore(
         "demo", output_dir=str(env.ctx.output_dir), state_dir=str(env.ctx.state_dir)
     )
-    with pytest.raises(ValueError, match="does not match"):
-        await restarted.initialize()
-    assert journal.path.exists()
-    assert restarted._db is None
+    await restarted.initialize()
+    assert not journal.path.exists()
+    assert list(journal.path.parent.glob("*.quarantined-*"))
+    assert restarted._db is not None
     await restarted.close()
+
+
+@pytest.mark.parametrize("failure", ["malformed", "missing_character", "invalid_backup"])
+async def test_project_opens_with_unrecoverable_voice_journal(generated_api, failure):
+    import json
+    from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo.seedance2_i2v.character_voice_storage import CharacterVoiceJournal
+
+    env = generated_api
+    name = "deleted-hero" if failure == "missing_character" else "hero"
+    journal = CharacterVoiceJournal(env.ctx.output_dir, name, state_dir=env.ctx.state_dir)
+    journal.begin("default", {"path": "", "sha256": "", "updated_at": ""})
+    if failure == "malformed":
+        journal.path.write_text("{broken")
+    elif failure == "invalid_backup":
+        record = json.loads(journal.path.read_text())
+        record["files"] = {"voice_default.mp3": "%%%"}
+        journal.path.write_text(json.dumps(record))
+    original = journal.path.read_bytes()
+    restarted = SQLiteStore("demo", output_dir=str(env.ctx.output_dir), state_dir=str(env.ctx.state_dir))
+    try:
+        await restarted.initialize()
+        assert restarted._db is not None
+        assert not journal.path.exists()
+        quarantined = list(journal.path.parent.glob("*.quarantined-*"))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_bytes() == original
+        assert await restarted._db.execute_fetchall("SELECT name FROM characters WHERE name='hero'")
+    finally:
+        await restarted.close()

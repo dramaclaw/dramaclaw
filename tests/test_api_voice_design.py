@@ -593,7 +593,9 @@ def test_real_queue_failure_recovers_same_candidate(production_api):
     s = production_api
     s.queue_error = True
     failed = s.client.post(s.url, json=CREATE)
-    assert failed.status_code == 503
+    assert failed.status_code == 504
+    assert failed.json()["retryable"] is True
+    assert failed.json()["code"] == "generation_unknown"
     assert "secret" not in failed.text
     assert s.store.get(REQUEST_ID)["status"] == "generating"
     s.queue_error = False
@@ -1037,7 +1039,7 @@ def test_source_persists_across_queue_recovery(
     s = production_api
     body = {**CREATE, "surface": surface}
     s.queue_error = True
-    assert s.client.post(s.url, json=body).status_code == 503
+    assert s.client.post(s.url, json=body).status_code == 504
     s.queue_error = False
     assert s.client.post(s.url, json=body).status_code == 202
     assert s.store.get(REQUEST_ID)["surface"] == surface

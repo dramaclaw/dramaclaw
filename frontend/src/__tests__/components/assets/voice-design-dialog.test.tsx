@@ -1554,3 +1554,70 @@ it("S29 does not let a late target refresh reset a different preview's pending s
     releaseSave();
   }
 });
+
+
+it("keeps a definitive 503 rejection visible without polling a nonexistent candidate", async () => {
+  const reads = vi.fn();
+  server.use(
+    http.post(`${base}/candidates`, () => HttpResponse.json({
+      ok: false, code: "voice_design_unavailable", error: "声音设计暂不可用",
+      retryable: false, request_id: "rejected",
+    }, { status: 503 })),
+    http.get(`${base}/candidates/:id`, () => {
+      reads();
+      return HttpResponse.json({ ok: false, code: "candidate_not_found", error: "生成结果不存在", retryable: false, request_id: "missing" }, { status: 404 });
+    }),
+  );
+  mount();
+  await fill();
+  fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+  await screen.findByText("声音设计暂不可用");
+  await waitFor(() => expect(screen.getByLabelText("音色描述")).toBeEnabled());
+  expect(reads).not.toHaveBeenCalled();
+  expect(screen.queryByText("生成结果不存在")).not.toBeInTheDocument();
+});
+
+it("manually retries an uncertain submission with the exact original request", async () => {
+  const bodies: unknown[] = [];
+  server.use(http.post(`${base}/candidates`, async ({ request }) => {
+    const body = await request.json();
+    bodies.push(body);
+    if (bodies.length === 1) return HttpResponse.json({
+      ok: false, code: "generation_unknown", error: "提交结果未知", retryable: true, request_id: "pending",
+    }, { status: 504 });
+    return HttpResponse.json({ ok: true, data: ready(candidateId) });
+  }), http.get(`${base}/candidates/:id`, ({ params }) => {
+    candidateId = String(params.id);
+    return HttpResponse.json({ ok: true, data: { candidate_id: candidateId, status: "generating", model: designModels[0] } });
+  }));
+  mount();
+  await fill();
+  fireEvent.click(screen.getByRole("button", { name: "生成试听" }));
+  const retry = await screen.findByRole("button", { name: "重试原请求" });
+  expect(bodies).toHaveLength(1);
+  await waitFor(() => expect(retry).toBeEnabled());
+  fireEvent.click(retry);
+  await screen.findByLabelText("生成的试听音频");
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1]).toEqual(bodies[0]);
+});
+
+
+it("retains history duration and pagination after saving a candidate", async () => {
+  const item = ready("59152ef5-2466-4056-99e5-2192e18a993b");
+  historyCandidates = [item];
+  server.use(http.get(`${base}/candidates`, () => HttpResponse.json({
+    ok: true, data: { candidates: historyCandidates, retention_seconds: 3600, next_cursor: "older" },
+  })));
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={qc}><I18nextProvider i18n={i18n}>
+    <Harness selected={{ ...target, expectedSlot: { path: "", sha256: "", updated_at: "" } }} />
+  </I18nextProvider></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: `选择试听：${item.description}` }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "保存到默认" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "保存到默认" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(qc.getQueryData(queryKeys.voiceDesignHistory("demo"))).toMatchObject({
+    candidates: [], retention_seconds: 3600, next_cursor: "older",
+  });
+});
