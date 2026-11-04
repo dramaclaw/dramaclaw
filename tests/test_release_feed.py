@@ -105,6 +105,17 @@ def test_built_wheel_contains_parseable_release_notes_artifact(tmp_path: Path) -
     expected_version = pyproject["project"]["version"]
     with zipfile.ZipFile(wheels[0]) as wheel:
         body = wheel.read("novelvideo/release-notes.md").decode("utf-8")
+        skill_root = Path("src/novelvideo/agent_skills/dramaclaw-workflows")
+        resources = [
+            skill_root / "SKILL.md",
+            *sorted((skill_root / "references").glob("*.md")),
+        ]
+        assert len(resources) > 1
+        for resource in resources:
+            assert (
+                wheel.read(resource.relative_to("src").as_posix())
+                == resource.read_bytes()
+            )
 
     validate_version_marker(body, expected_version)
     assert parse(body, f"v{expected_version}", locale="zh", allow_locale_fallback=False).items
@@ -114,7 +125,7 @@ def test_built_wheel_contains_parseable_release_notes_artifact(tmp_path: Path) -
 def test_project_version_is_single_source_of_truth() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
-    assert pyproject["project"]["version"] == "2.1.1"
+    assert pyproject["project"]["version"] == "2.1.3"
     assert importlib.metadata.version("supertale-ce") == pyproject["project"]["version"]
     assert "__version__" not in Path("src/novelvideo/__init__.py").read_text(encoding="utf-8")
 
