@@ -826,6 +826,16 @@ def test_video_catalog_rejects_inverted_reference_duration_range():
         )
 
 
+def test_audio_voice_design_catalog_contract():
+    config = {"request": {"endpoint": "audio/voice-designs"}, "targetModel": "cosy-id"}
+    assert validate_media_model_catalog_config(config, "audio") == config
+    assert validate_media_model_catalog_config({"request": {"endpoint": "audio/speech"}}, "audio")
+    with pytest.raises(MediaModelSchemaError):
+        validate_media_model_catalog_config({"request": {"endpoint": "audio/voice-designs"}}, "audio")
+    with pytest.raises(MediaModelSchemaError):
+        validate_media_model_catalog_config({"request": {"endpoint": "video/generations"}}, "audio")
+
+
 def test_blockout_models_are_chat_models_without_media_capabilities():
     """白模用的视觉 LLM 走 chat/completions，一个图片/视频能力字段都不能带。"""
     from novelvideo.media_model_request_schema import (
@@ -834,7 +844,7 @@ def test_blockout_models_are_chat_models_without_media_capabilities():
         media_model_api_model,
     )
 
-    assert MEDIA_MODEL_CATALOG_TYPES == ("image", "video", "blockout")
+    assert MEDIA_MODEL_CATALOG_TYPES == ("image", "video", "audio", "blockout")
     assert default_media_model_request("blockout") == {
         "endpoint": "chat/completions",
         "parameters": [],
@@ -860,4 +870,4 @@ def test_blockout_models_are_chat_models_without_media_capabilities():
             "blockout",
         )
     with pytest.raises(MediaModelSchemaError, match="media type must be"):
-        validate_media_model_catalog_config({}, "audio")
+        validate_media_model_catalog_config({}, "text")

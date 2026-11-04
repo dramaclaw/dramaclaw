@@ -19,6 +19,7 @@ def test_importing_runners_registers_builtin_project_task_runners():
         "director_control_to_sketch",
         "audio_generation_indextts2",
         "system_voice_setup",
+        "voice_design",
         "build_scenes",
     }:
         assert task_type in names
@@ -61,3 +62,8 @@ def test_every_literal_enqueued_project_task_has_registered_runner():
 
     missing = enqueued - set(registered_project_task_types())
     assert missing == set()
+
+
+def test_voice_design_requires_home_node():
+    from novelvideo.task_backend.registry import project_task_requires_home_node
+    assert project_task_requires_home_node("voice_design")

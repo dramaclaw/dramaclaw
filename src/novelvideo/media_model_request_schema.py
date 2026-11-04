@@ -71,16 +71,16 @@ RESERVED_CATALOG_CONFIG_FIELDS = {
     "label",
 }
 
-# 媒体模型目录里的三种模型：图片、视频，以及预演台白模用的视觉 LLM。音频只在
-# CE 设置的映射里当 mediaType 用（TTS/音乐预设），不进目录。
-MEDIA_MODEL_CATALOG_TYPES: tuple[str, ...] = ("image", "video", "blockout")
+# 目录统一支持图片、视频、音频与预演台白模的视觉 LLM，各自校验请求端点。
+MEDIA_MODEL_CATALOG_TYPES: tuple[str, ...] = ("image", "video", "audio", "blockout")
 MEDIA_MODEL_REQUEST_ENDPOINTS: dict[str, str] = {
     "image": "images/generations",
     "video": "video/generations",
+    "audio": "audio/speech",
     "blockout": "chat/completions",
 }
 _MEDIA_REQUEST_ENDPOINTS = frozenset(
-    {*MEDIA_MODEL_REQUEST_ENDPOINTS.values(), "audio/speech"}
+    {*MEDIA_MODEL_REQUEST_ENDPOINTS.values(), "audio/voice-designs"}
 )
 # 视频/图片条目各自不能带的能力字段；白模条目一个都不能带。
 _IMAGE_INCOMPATIBLE_FIELDS = frozenset(
@@ -503,6 +503,26 @@ def validate_media_model_catalog_config(
     except ValueError as exc:
         raise MediaModelSchemaError(str(exc)) from exc
     request_schema = validate_media_request_schema(config.get("request"))
+    if "voiceDesignMode" in config and (
+        media_type != "audio"
+        or request_schema.get("endpoint") != "audio/speech"
+        or config["voiceDesignMode"] != "prompted_speech"
+    ):
+        raise MediaModelSchemaError(
+            "voiceDesignMode requires prompted_speech on audio/speech"
+        )
+    if media_type == "audio":
+        endpoint = request_schema.get("endpoint")
+        if endpoint not in {"audio/speech", "audio/voice-designs"}:
+            raise MediaModelSchemaError("audio model requires an audio endpoint")
+        target = config.get("targetModel")
+        if endpoint == "audio/voice-designs" and (
+            not isinstance(target, str) or not target.strip()
+        ):
+            raise MediaModelSchemaError("voice design requires targetModel catalog ID")
+        if endpoint == "audio/speech" and target is not None:
+            raise MediaModelSchemaError("speech model cannot declare targetModel")
+        return config
     if request_schema and request_schema.get("endpoint") != expected_endpoint:
         raise MediaModelSchemaError(
             f"{media_type} model request endpoint must be {expected_endpoint}"

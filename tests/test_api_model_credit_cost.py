@@ -1358,3 +1358,15 @@ async def test_generation_credit_cost_route_rejects_unconfigured_fixed_image_mod
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "generation model is not configured"
+
+
+async def test_voice_design_quote_requires_project_context(monkeypatch):
+    from unittest.mock import AsyncMock
+    from novelvideo.api.routes import model_credits
+    quote = AsyncMock()
+    monkeypatch.setattr(model_credits, "get_credit_quote", lambda: SimpleNamespace(generation_credit_quote=quote))
+    with pytest.raises(HTTPException) as error:
+        await model_credits.get_generation_credit_cost(kind="feature", surface="supertale", value="audio.voice_design",
+            params="{}", quantity=1, mode_key="", image_role="", user={"id": "requester"})
+    assert error.value.status_code == 422
+    quote.assert_not_awaited()

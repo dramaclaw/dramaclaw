@@ -14,3 +14,11 @@ class MediaModelCatalogPort(Protocol):
         *,
         user_id: str,
     ) -> list[dict[str, Any]]: ...
+
+    async def list_models_for_project(
+        self,
+        media_type: str,
+        *,
+        user_id: str,
+        project_id: str,
+    ) -> list[dict[str, Any]]: ...

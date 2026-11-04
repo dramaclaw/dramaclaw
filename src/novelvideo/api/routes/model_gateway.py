@@ -425,7 +425,7 @@ def _build_media_model_channel_specs(
                 media_type = "audio"
             else:
                 media_type = "video"
-        if media_type not in {*MEDIA_MODEL_CATALOG_TYPES, "audio"}:
+        if media_type not in MEDIA_MODEL_CATALOG_TYPES:
             raise ValueError(f"invalid mediaType for media model {model}")
         model_config = dict(item.config)
         if media_type in MEDIA_MODEL_CATALOG_TYPES:

@@ -11,6 +11,7 @@ import type {
   FreezoneAssetLibrarySource,
 } from '@/api/ops';
 import type { TFn } from '@/lib/i18n-types';
+import { voiceDesignLibraryAssetSchema } from '@/types/voice-design';
 
 export const ASSET_LIBRARY_CARD_CLASS =
   'overflow-hidden rounded-sm border border-border bg-muted/30 transition-colors';
@@ -81,7 +82,7 @@ export const ASSET_CATEGORIES: AssetCategoryDef[] = [
   {
     key: 'character',
     labelKey: 'canvas.assetLibrary.category.character',
-    media: ['image', 'video'],
+    media: ['image', 'video', 'audio'],
   },
   { key: 'scene', labelKey: 'canvas.assetLibrary.category.scene', media: ['image', 'video'] },
   { key: 'prop', labelKey: 'canvas.assetLibrary.category.prop', media: ['image', 'video'] },
@@ -315,12 +316,19 @@ export function normalizeLibraryList(payload: unknown): LibraryItem[] {
           ? sourceRaw
           : 'upload';
       const category = deriveCategory(it.category, source, media);
+      // 旧设计声线发布为音效；只兼容元数据与正式条目匹配的音频，保存位置不变。
+      const voiceAsset = media === 'audio' && category === 'audio'
+        ? voiceDesignLibraryAssetSchema.safeParse(it.voice_design)
+        : null;
+      const isDesignedVoice = voiceAsset?.success
+        && id === `voice-design:${voiceAsset.data.asset_id}`
+        && it.audio_url === voiceAsset.data.url;
       return {
         id,
         name,
         media,
         source,
-        category,
+        category: isDesignedVoice ? 'character' : category,
         folder: deriveFolder(it.folder, source, category),
         url: itemUrl(media, it),
         raw: it,

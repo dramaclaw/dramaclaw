@@ -1207,6 +1207,7 @@ def _upsert_library_item(
     item_id: str | None,
     category: str | None = None,
     folder: str | None = None,
+    voice_design: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """纯内存 upsert：按 id 就地更新或追加 ``items``，返回写入的条目。
 
@@ -1244,6 +1245,10 @@ def _upsert_library_item(
         "created_at": existing.get("created_at") if existing else now,
         "updated_at": now,
     }
+    if voice_design is not None:
+        item["voice_design"] = voice_design
+    elif existing and "voice_design" in existing:
+        item["voice_design"] = existing["voice_design"]
     if existing_idx is not None:
         items[existing_idx] = item
     else:
@@ -1263,6 +1268,7 @@ def add_video_character_library_item(
     item_id: str | None = None,
     category: str | None = None,
     folder: str | None = None,
+    voice_design: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """把一条素材登记到资产库。
 
@@ -1284,6 +1290,7 @@ def add_video_character_library_item(
             item_id=item_id,
             category=category,
             folder=folder,
+            voice_design=voice_design,
         )
         save_video_character_library(project_dir, items)
     return item
