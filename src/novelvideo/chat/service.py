@@ -1003,6 +1003,7 @@ _FREEZONE_EXACT_NODE_ACTION_RE = re.compile(
 )
 _CODEX_FREEZONE_EXACT_NODE_ACTION_TOOLS = ("freezone_emit_canvas_command",)
 _CODEX_FREEZONE_EXECUTION_TOOLS = (
+    "freezone_confirm_workflow_draft",
     "freezone_get_canvas_ontology",
     "freezone_get_node_action_catalog",
     "freezone_get_node_detail",
