@@ -1182,20 +1182,6 @@ export function AssetLibraryModal({
                     </button>
                   )}
 
-                  {onSelectVoiceAsset && voiceAsset.success && (
-                    <Button
-                      size="sm"
-                      disabled={selectionDisabled}
-                      className="absolute right-2 top-2 z-10"
-                      onClick={event => {
-                        event.stopPropagation();
-                        onSelectVoiceAsset({ ...voiceAsset.data, name: entry.name });
-                      }}
-                    >
-                      {t('voiceDesign.chooseProjectVoice')}
-                    </Button>
-                  )}
-
                   {/* Source badge top-right */}
                   {entry.source !== 'upload' && (
                     <span className="pointer-events-none absolute right-2 top-2 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white/90">
@@ -1203,10 +1189,24 @@ export function AssetLibraryModal({
                     </span>
                   )}
 
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2 text-xs text-white">
-                    <div className="truncate">
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/80 to-transparent px-3 py-2 text-xs text-white">
+                    <div className="min-w-0 flex-1 truncate" title={entry.name}>
                       {entry.name || t('canvas.assetLibrary.unnamed')}
                     </div>
+                    {onSelectVoiceAsset && voiceAsset.success && (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={selectionDisabled}
+                        className="pointer-events-auto rounded-full"
+                        onClick={event => {
+                          event.stopPropagation();
+                          onSelectVoiceAsset({ ...voiceAsset.data, name: entry.name });
+                        }}
+                      >
+                        {t('voiceDesign.chooseProjectVoice')}
+                      </Button>
+                    )}
                   </div>
                 </div>
               );
