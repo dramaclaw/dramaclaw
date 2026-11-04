@@ -231,6 +231,29 @@ describe("useCanvasSync hydrate lifecycle", () => {
     second.unmount();
   });
 
+  it("expires an unmounted hydrate cache after the DOM global has been disposed", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({ nodes: [], edges: [], revision: 1 });
+    const first = renderHook(() => useCanvasSync("project-a", "disposed_dom_user_eric"));
+    await act(async () => { await Promise.resolve(); });
+    expect(first.result.current.status).toBe("ready");
+    first.unmount();
+
+    vi.stubGlobal("window", undefined);
+    try {
+      expect(() => vi.advanceTimersByTime(FREEZONE_HYDRATE_RELEASE_GRACE_MS)).not.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    act(() => { vi.advanceTimersByTime(FREEZONE_HYDRATE_SETTLED_REUSE_MS + 1); });
+    const second = renderHook(() => useCanvasSync("project-a", "disposed_dom_user_eric"));
+    expect(getFreezoneCanvas).toHaveBeenCalledTimes(2);
+    await act(async () => { await Promise.resolve(); });
+    expect(second.result.current.status).toBe("ready");
+    second.unmount();
+  });
+
   it("does not reuse a settled hydrate snapshot after local edits", async () => {
     vi.mocked(getFreezoneCanvas)
       .mockResolvedValueOnce({
