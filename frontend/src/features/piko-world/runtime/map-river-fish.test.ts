@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
+import assert from "node:assert/strict";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Sprite, Texture, TextureSource, type Ticker } from "pixi.js";
 import environment from "../../../../public/piko/world/maps/welcome-courtyard/data/environment.json";
@@ -12,6 +13,7 @@ const regions = environment.effects.filter(effect => effect.id.startsWith("river
 const canalRegions = canalEnvironment.effects.filter(effect => effect.layer === "water").map(effect => ({ id: effect.id, points: effect.region.points }));
 beforeEach(() => { vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })); });
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+// Check every simulated frame without Vitest matcher bookkeeping in the hot loops.
 it.each([17, 42, 123, 2026])("keeps random routes safe and moving (seed %s)", (initialSeed) => {
   let seed = initialSeed;
   const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
@@ -21,12 +23,13 @@ it.each([17, 42, 123, 2026])("keeps random routes safe and moving (seed %s)", (i
     const before = motion.fish.map(fish => ({ ...fish }));
     motion.step(0.05);
     motion.fish.forEach((fish, index) => {
-      expect(regions.some(region => pointInPolygon(fish, region.points))).toBe(true);
+      assert(regions.some(region => pointInPolygon(fish, region.points)), `fish ${index} left water at step ${step}`);
       const distance = Math.hypot(fish.x - before[index].x, fish.y - before[index].y);
-      expect(distance).toBeLessThanOrEqual(1.501);
-      expect(Math.abs(fish.heading - before[index].heading)).toBeLessThanOrEqual(0.121);
+      assert(distance <= 1.501, `fish ${index} moved ${distance} at step ${step}`);
+      assert(Math.abs(fish.heading - before[index].heading) <= 0.121, `fish ${index} turned too far at step ${step}`);
       travel[index] += distance;
-      motion.fish.slice(index + 1).forEach(other => expect(Math.hypot(fish.x - other.x, fish.y - other.y)).toBeGreaterThanOrEqual(27.999));
+      motion.fish.slice(index + 1).forEach((other, offset) =>
+        assert(Math.hypot(fish.x - other.x, fish.y - other.y) >= 27.999, `fish ${index}/${index + offset + 1} overlap at step ${step}`));
     });
   }
   // Fish may rest at a target, but each one must continue to tour the river.
@@ -45,12 +48,12 @@ it.each([42, 2026])("keeps canal fish in their assigned water and moving (seed %
     const before = motion.fish.map(actor => ({ x: actor.x, y: actor.y }));
     motion.step(0.05);
     motion.fish.forEach((actor, index) => {
-      expect(pointInPolygon(actor, canalRegions.find(region => region.id === LANTERN_CANAL_FISH[index].route.surfaceId)!.points)).toBe(true);
+      assert(pointInPolygon(actor, canalRegions.find(region => region.id === LANTERN_CANAL_FISH[index].route.surfaceId)!.points), `canal fish ${index} left its water at step ${step}`);
       const distance = Math.hypot(actor.x - before[index].x, actor.y - before[index].y);
-      expect(distance).toBeLessThanOrEqual(1.501);
+      assert(distance <= 1.501, `fish ${index} moved ${distance} at step ${step}`);
       travel[index] += distance;
-      motion.fish.slice(index + 1).forEach(other =>
-        expect(Math.hypot(actor.x - other.x, actor.y - other.y)).toBeGreaterThanOrEqual(27.999));
+      motion.fish.slice(index + 1).forEach((other, offset) =>
+        assert(Math.hypot(actor.x - other.x, actor.y - other.y) >= 27.999, `canal fish ${index}/${index + offset + 1} overlap at step ${step}`));
     });
   }
   travel.forEach(distance => expect(distance / 240).toBeGreaterThan(4));
