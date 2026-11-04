@@ -1118,12 +1118,15 @@ it("opens a themed model listbox and supports keyboard selection and Escape", as
   expect(
     screen.getAllByRole("option").map((option) => option.textContent),
   ).toEqual(designModels.map((model) => model.label));
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Qwen" })).toHaveFocus(),
+  );
   await user.keyboard("{Escape}");
   await waitFor(() =>
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument(),
   );
   expect(screen.getByRole("dialog")).toBeVisible();
-  expect(trigger).toHaveFocus();
+  await waitFor(() => expect(trigger).toHaveFocus());
   await user.keyboard("{ArrowDown}");
   await waitFor(() =>
     expect(screen.getByRole("option", { name: "Qwen" })).toHaveFocus(),

@@ -4,6 +4,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AssetLibraryUploadDialog } from '@/features/canvas/ui/AssetLibraryUploadDialog';
+import { ASSET_CATEGORIES } from '@/features/canvas/ui/assetLibraryItems';
 
 const FOLDERS = [
   {
@@ -89,5 +90,22 @@ describe('AssetLibraryUploadDialog', () => {
       'other',
       null,
     );
+  });
+
+  it('音频上传可沿用人物标签且保留音频媒体与用户保存位置', () => {
+    const onSubmit = vi.fn();
+    render(<AssetLibraryUploadDialog open folders={FOLDERS}
+      categories={ASSET_CATEGORIES.filter(category => category.media.includes('audio'))}
+      allowedMedia={['audio']} onCreateFolder={vi.fn()} onSubmit={onSubmit} onClose={vi.fn()} />);
+    const input = screen.getByLabelText('选择本地文件');
+    expect(input).toHaveAttribute('accept', 'audio/*');
+    const file = new File(['voice'], 'hero.mp3', { type: 'audio/mpeg' });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: '选择保存位置' }));
+    fireEvent.click(screen.getByRole('button', { name: '待分类资产' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择标签' }));
+    fireEvent.click(screen.getByRole('button', { name: '人物' }));
+    fireEvent.click(screen.getByRole('button', { name: '上传 1 项' }));
+    expect(onSubmit).toHaveBeenCalledWith([{ file, media: 'audio' }], 'other', 'character');
   });
 });

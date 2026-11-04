@@ -39,6 +39,57 @@ vi.mock("@/api/ops", async (importOriginal) => ({
 
 import { AssetLibraryModal } from "@/features/canvas/ui/AssetLibraryModal";
 import { ConfirmDialogHost } from "@/components/confirm-dialog-host";
+import { normalizeLibraryList } from "@/features/canvas/ui/assetLibraryItems";
+
+const VOICE_ASSET_ID = "c9706788-b922-4e83-aa62-31e089530a7a";
+const NEW_VOICE_ASSET_ID = "5509634f-335e-4a2e-a9f2-85b5b2a02f3d";
+const SAVED_VOICE = {
+  id: `voice-design:${VOICE_ASSET_ID}`,
+  name: "旧设计声线",
+  media: "audio",
+  source: "upload",
+  category: "audio",
+  folder: "audio",
+  audio_url: "/static/assets/audio/voice-design/saved.mp3",
+  voice_design: {
+    asset_id: VOICE_ASSET_ID,
+    name: "旧设计声线",
+    url: "/static/assets/audio/voice-design/saved.mp3",
+    sha256: "a".repeat(64),
+    duration_seconds: 4.5,
+    model: null,
+  },
+};
+const VOICE_LIBRARY = [
+  {
+    id: "mainline:character:hero:voice:default",
+    name: "主线角色声线",
+    media: "audio",
+    source: "character",
+    category: "character",
+    folder: "mainline",
+    audio_url: "/static/characters/hero/voice_default.mp3",
+  },
+  {
+    ...SAVED_VOICE,
+    id: `voice-design:${NEW_VOICE_ASSET_ID}`,
+    name: "新设计声线",
+    category: "character",
+    folder: "character",
+    audio_url: "/static/assets/audio/voice-design/new.mp3",
+    voice_design: {
+      ...SAVED_VOICE.voice_design,
+      asset_id: NEW_VOICE_ASSET_ID,
+      name: "新设计声线",
+      url: "/static/assets/audio/voice-design/new.mp3",
+    },
+  },
+  SAVED_VOICE,
+  {
+    id: "sfx", name: "普通音效", media: "audio", source: "upload",
+    category: "audio", folder: "audio", audio_url: "/static/step.mp3",
+  },
+];
 
 const LIBRARY = [
   {
@@ -240,6 +291,54 @@ describe("AssetLibraryModal 类目与文件夹", () => {
     fireEvent.click(screen.getByRole("button", { name: "文件夹 待分类资产" }));
     expect(await screen.findByText("参考图A")).toBeInTheDocument();
     expect(screen.queryByText("脚步声")).toBeNull();
+  });
+
+  it("音频选择器按人物筛出主线和新旧设计声线，按音效只筛出普通音效", async () => {
+    fetchFreezoneVideoCharacterLibrary.mockResolvedValue({ items: VOICE_LIBRARY });
+    const onConfirm = vi.fn();
+    renderModal({ mode: "pick", allowedMedia: ["audio"], onConfirm });
+    await screen.findByText("旧设计声线");
+    fireEvent.click(screen.getByRole("button", { name: "分类 人物" }));
+    for (const name of ["主线角色声线", "新设计声线", "旧设计声线"]) {
+      expect(screen.getByText(name)).toBeInTheDocument();
+      fireEvent.click(screen.getByText(name));
+    }
+    expect(screen.queryByText("普通音效")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "文件夹 主线" }));
+    expect(screen.getByText("主线角色声线")).toBeInTheDocument();
+    expect(screen.queryByText("新设计声线")).toBeNull();
+    expect(screen.queryByText("旧设计声线")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "全部资产" }));
+    fireEvent.click(screen.getByRole("button", { name: "分类 音效" }));
+    expect(screen.getByText("普通音效")).toBeInTheDocument();
+    expect(screen.queryByText("旧设计声线")).toBeNull();
+    expect(screen.queryByText("主线角色声线")).toBeNull();
+    expect(screen.queryByText("新设计声线")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "确定" }));
+    expect(onConfirm).toHaveBeenCalledWith(VOICE_LIBRARY.slice(0, 3).map(entry => ({
+      media: "audio", name: entry.name, url: entry.audio_url,
+    })));
+  });
+
+  it("兼容旧正式设计声线时保留已有和缺省保存位置及原始数据", () => {
+    const legacy = { ...SAVED_VOICE, folder: undefined };
+    const snapshot = structuredClone([SAVED_VOICE, legacy]);
+    const entries = normalizeLibraryList([SAVED_VOICE, legacy]);
+    expect(entries.map(({ category, folder }) => ({ category, folder }))).toEqual([
+      { category: "character", folder: "audio" },
+      { category: "character", folder: "audio" },
+    ]);
+    expect([SAVED_VOICE, legacy]).toEqual(snapshot);
+  });
+
+  it.each([
+    { voice_design: true },
+    { voice_design: { ...SAVED_VOICE.voice_design, sha256: "invalid" } },
+    { voice_design: { ...SAVED_VOICE.voice_design, duration_seconds: 0 } },
+    { id: "ordinary-upload" },
+    { audio_url: "/static/unrelated.mp3" },
+  ])("不把无效或不匹配的设计元数据当成人物 %j", (override) => {
+    expect(normalizeLibraryList([{ ...SAVED_VOICE, ...override }])[0]?.category).toBe("audio");
   });
 
   it("在当前文件夹与分类范围内按名称搜索，并能从空态直接清空", async () => {
