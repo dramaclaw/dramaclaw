@@ -144,6 +144,29 @@ def test_write_sbom_skips_locked_root_package_to_keep_spdx_ids_unique(
     )
 
 
+def test_reuse_toml_keeps_the_catch_all_annotation_first() -> None:
+    """REUSE 3.3:同一文件被多个 [[annotations]] 覆盖时只用**最后**一条匹配的。
+    `path = ["**"]` 若排到末尾,vendor/openfilm、LICENSES/* 和 codex 二进制全被它抢走,
+    台账悄悄把这些第三方许可写成 Elastic-2.0。Inter 字体同理要靠 vendor MIT 之后那条。"""
+    annotations = tomllib.loads(Path("REUSE.toml").read_text(encoding="utf-8"))["annotations"]
+    paths = [tuple(item["path"]) for item in annotations]
+
+    assert paths.index(("**",)) == 0
+    assert all(item["precedence"] == "override" for item in annotations[1:])
+
+    licenses_by_path = {
+        row["path"]: row["license_expression"]
+        for row in csv.DictReader(Path("license-inventory.csv").open(encoding="utf-8"))
+    }
+    inter_fonts = {
+        path: expression
+        for path, expression in licenses_by_path.items()
+        if path.startswith("vendor/openfilm/studio/ui/dist/assets/inter-")
+    }
+
+    assert inter_fonts and set(inter_fonts.values()) == {"OFL-1.1"}
+
+
 def test_license_inventory_covers_current_git_index() -> None:
     inventory_paths = {
         row["path"] for row in csv.DictReader(Path("license-inventory.csv").open(encoding="utf-8"))

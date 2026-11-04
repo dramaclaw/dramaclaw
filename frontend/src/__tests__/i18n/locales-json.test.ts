@@ -107,3 +107,46 @@ describe("locale translation files", () => {
     }
   });
 });
+
+it("translates the missing keyframe recovery hint in Vietnamese", () => {
+  const vi = JSON.parse(readFileSync("public/locales/vi/translation.json", "utf8"));
+  const en = JSON.parse(readFileSync("public/locales/en/translation.json", "utf8"));
+  expect(vi.node.videoNode.generation.missingKeyframe).not.toBe(en.node.videoNode.generation.missingKeyframe);
+  expect(vi.node.videoNode.generation.missingKeyframe).toContain("khung hình");
+});
+
+it("localizes every shot continuity control in Vietnamese", () => {
+  const vi = JSON.parse(readFileSync("public/locales/vi/translation.json", "utf8"));
+  const en = JSON.parse(readFileSync("public/locales/en/translation.json", "utf8"));
+  for (const key of Object.keys(en.canvas.story.continuity)) {
+    expect(vi.canvas.story.continuity[key], key).not.toBe(en.canvas.story.continuity[key]);
+  }
+});
+
+function localeValue(root: unknown, path: string): unknown {
+  let value = root;
+  for (const key of path.split(".")) {
+    if (!value || typeof value !== "object") return undefined;
+    value = (value as Record<string, unknown>)[key];
+  }
+  return value;
+}
+
+it.each(["canvas.story", "storyPublication"])("localizes %s in Vietnamese and preserves interpolation", (namespace) => {
+  const en = loadLocale("en");
+  const vi = loadLocale("vi");
+  const keys = collectKeys(localeValue(en, namespace));
+  const untranslated: string[] = [];
+  for (const key of keys) {
+    const fullKey = `${namespace}.${key}`;
+    const source = localeValue(en, fullKey);
+    const translated = localeValue(vi, fullKey);
+    expect(typeof translated, fullKey).toBe("string");
+    if (source === translated) untranslated.push(fullKey);
+    if (typeof source === "string" && typeof translated === "string") {
+      expect((translated.match(/\{\{.*?\}\}/g) ?? []).sort(), fullKey)
+        .toEqual((source.match(/\{\{.*?\}\}/g) ?? []).sort());
+    }
+  }
+  expect(untranslated).toEqual([]);
+});

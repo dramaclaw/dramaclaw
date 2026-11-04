@@ -138,6 +138,7 @@ export interface VideoKeyframeCandidate {
  */
 export function resolveVideoKeyframeUrls(
   candidates: readonly VideoKeyframeCandidate[],
+  mode?: VideoGenMode,
 ): { firstFrameUrl: string | null; lastFrameUrl: string | null } {
   let firstFrameUrl: string | null = null;
   let lastFrameUrl: string | null = null;
@@ -166,6 +167,12 @@ export function resolveVideoKeyframeUrls(
 
   if (!firstFrameUrl) firstFrameUrl = unassigned.shift() ?? null;
   if (!lastFrameUrl) lastFrameUrl = unassigned.shift() ?? null;
+  // 旧画布可把上一段视频的「尾帧」当下一段的唯一首帧素材。
+  // 没有显式槽位时，首帧模式应按当前视频的用途解释这张图片。
+  if (mode === "firstFrame" && !firstFrameUrl && candidates.length === 1 && !candidates[0].slot) {
+    firstFrameUrl = candidates[0].url;
+    lastFrameUrl = null;
+  }
   return { firstFrameUrl, lastFrameUrl };
 }
 
@@ -377,7 +384,10 @@ export function videoNoUpstreamResetMode(
   mode: VideoGenMode,
   counts: VideoModeInputCounts,
   model?: VideoModelRef,
+  pendingContinuityFrame = false,
 ): VideoGenMode | null {
+  // Automatic continuity attaches its image only when generation starts.
+  if (pendingContinuityFrame) return null;
   if (counts.images > 0 || counts.videos > 0 || counts.audios > 0 || counts.hasOtherReference) return null;
   if (model && !isVideoModeSupportedByModel("textToVideo", model)) return null;
   return mode === "textToVideo" ? null : "textToVideo";

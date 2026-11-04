@@ -20,6 +20,7 @@ import {
   nodeDataPatchAfterCommittedSourceSlot,
   requestFromProjectionMetadata,
   resolveSubmitNodeData,
+  shouldKeepCanvasOverlaysMounted,
   shouldClearProjectionStatuses,
   shouldFetchProjectionStatuses,
   shouldRefreshCommittedTargetNodes,
@@ -38,6 +39,27 @@ import { zhT } from "../../helpers/i18n-fixtures";
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("freezone canvas overlay lifecycle", () => {
+  it.each(["ready", "saving"] as const)(
+    "keeps overlays mounted while the hydrated canvas is %s",
+    (status) => {
+      expect(shouldKeepCanvasOverlaysMounted(status, "canvas-a", "canvas-a")).toBe(true);
+    },
+  );
+
+  it.each(["loading", "error", "conflict"] as const)(
+    "unmounts overlays while canvas sync is %s",
+    (status) => {
+      expect(shouldKeepCanvasOverlaysMounted(status, "canvas-a", "canvas-a")).toBe(false);
+    },
+  );
+
+  it("does not expose overlays from the previously hydrated canvas", () => {
+    expect(shouldKeepCanvasOverlaysMounted("ready", "canvas-a", "canvas-b")).toBe(false);
+    expect(shouldKeepCanvasOverlaysMounted("saving", null, "canvas-b")).toBe(false);
+  });
 });
 
 function canvas(

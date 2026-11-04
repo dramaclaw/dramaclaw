@@ -249,19 +249,11 @@
   color: rgba(255, 255, 255, 0.94);
 }
 
-/* 仅有未读公告时打点；打开公告中心后熄灭，新公告到达时重新出现。
-   外圈描边压在深色顶栏上，滚动到浅色画面时也不会糊掉。 */
+/* 仅有未读公告时打点；打开公告中心后熄灭，新公告到达时重新出现。 */
 .announcementDot {
   position: absolute;
   top: -2px;
   right: -3px;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: #ff4d4f;
-  box-shadow:
-    0 0 0 1.5px rgba(4, 6, 12, 0.72),
-    0 0 8px rgba(255, 77, 79, 0.62);
 }
 
 /* Base UI 的 Dialog 把 Backdrop 和 Popup 渲染成兄弟节点，所以居中得由 Popup 自己

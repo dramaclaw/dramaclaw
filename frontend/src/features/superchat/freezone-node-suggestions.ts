@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import i18next from "i18next";
+
 import type { AssetBoardColumn, AssetBoardData } from "@/features/canvas/domain/assetBoard";
 import { KEY_ELEMENT_CATEGORY_KEYS, type KeyElementCategory } from "@/features/canvas/domain/keyElements";
 
@@ -35,12 +37,18 @@ function keyElementRank(category: KeyElementCategory | null): number {
 }
 
 /**
- * 把故事板四栏拍平成候选列表。默认排序：被标记为关键元素的节点按分类顺序
+ * 把故事板各栏拍平成候选列表。默认排序：被标记为关键元素的节点按分类顺序
  * （人物→场景→物品→其他，对齐 KeyElementsBar）置顶，其余节点保持栏目顺序
- * （文本→图片→视频→音频）。同档内保持稳定顺序。
+ * （文本→预演台→图片→视频→音频）。同档内保持稳定顺序。
  */
 export function buildFreezoneNodeSuggestions(board: AssetBoardData): FreezoneNodeSuggestion[] {
-  const flattened = [...board.text, ...board.image, ...board.video, ...board.audio].map((item) => ({
+  const flattened = [
+    ...board.text,
+    ...board.previz,
+    ...board.image,
+    ...board.video,
+    ...board.audio,
+  ].map((item) => ({
     nodeId: item.nodeId,
     column: item.column,
     title: item.title,
@@ -77,8 +85,8 @@ export function stripFreezoneNodeAtQuery(value: string): string {
   return value.slice(0, tokenStart);
 }
 
-/** 节点 token 语法 `@[节点名](nodeId)`。节点名不含 `]`/换行，nodeId 不含 `)`/空白。前置边界与 @ 检测一致。 */
-const NODE_MENTION_PATTERN = /(?:^|\s)@\[([^\]\n]+)\]\(([^)\s]+)\)/gu;
+/** 完整节点 token 由括号界定，可紧贴正文或其他 chip；输入中的普通 @ 查询仍要求空白边界。 */
+const NODE_MENTION_PATTERN = /@\[([^\]\n]+)\]\(([^)\s]+)\)/gu;
 
 export type FreezoneNodeMention = {
   nodeId: string;
@@ -127,8 +135,7 @@ export function parseFreezoneNodeMentions(value: string): FreezoneNodeMention[] 
     const label = match[1] ?? "";
     const nodeId = match[2]?.trim();
     if (!nodeId) continue;
-    const matched = match[0] ?? "";
-    const start = match.index + (matched.startsWith("@") ? 0 : 1);
+    const start = match.index;
     out.push({ nodeId, label, start, end: start + `@[${label}](${nodeId})`.length });
   }
   return out;
@@ -146,12 +153,9 @@ export function freezoneNodeMentionIds(value: string): string[] {
   return ids;
 }
 
-/** 提交时把 `@[名](id)` 改写为可读的 `[名]`（保留前置空白），作为发给 agent 的正文。 */
+/** 提交时把 `@[名](id)` 改写为可读的 `[名]`，保留周围正文，作为发给 agent 的正文。 */
 export function freezoneNodeMentionText(value: string): string {
-  return value.replace(NODE_MENTION_PATTERN, (matched: string, label: string) => {
-    const lead = matched.startsWith("@") ? "" : matched.slice(0, 1);
-    return `${lead}[${label}]`;
-  });
+  return value.replace(NODE_MENTION_PATTERN, (_matched: string, label: string) => `[${label}]`);
 }
 
 /** 从候选列表建 nodeId → 缩略图/片源/列 查表，供编辑器 chip 渲染缩略图与首帧兜底。 */
@@ -192,6 +196,9 @@ export function appendFreezoneNodeMentions(
 /** 栏目 → 悬浮预览里显示的中文类型标签。 */
 const FREEZONE_NODE_COLUMN_LABEL: Record<AssetBoardColumn, string> = {
   text: "文本",
+  get previz() {
+    return i18next.t("previz.editor.title");
+  },
   image: "图片",
   video: "视频",
   audio: "音频",

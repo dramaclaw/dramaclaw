@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { toast } from 'sonner';
 import { ArrowUp, Loader2, Orbit } from 'lucide-react';
+import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
 
 import {
   uploadFreezoneImage,
@@ -861,7 +862,6 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
     if (lowDetailZoom) video.pause();
     else void video.play().catch(() => {});
   }, [lowDetailZoom]);
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const addPanoCaptureGroup = useCanvasStore((state) => state.addPanoCaptureGroup);
   // Subscribe to ONLY one-hop upstream (not the whole nodes array) so unrelated
@@ -960,10 +960,6 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
     width: resolvedWidth,
     height: resolvedHeight,
   };
-
-  const handleNodeClick = useCallback(() => {
-    setSelectedNode(id);
-  }, [id, setSelectedNode]);
 
   const contexts = useMemo(
     () => validMainlineContexts((data as { mainline_context?: unknown }).mainline_context),
@@ -1438,7 +1434,6 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
         ${selected ? '' : 'border-white/18 hover:border-white/26'}
       `}
       style={containerStyle}
-      onClick={handleNodeClick}
     >
       <NodeHeader
         className={NODE_HEADER_FLOATING_POSITION_CLASS}
@@ -1562,7 +1557,7 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
             }}
             onSourceKindChange={(next) => updateNodeData(id, { plyKind: next })}
             onSubmit={handleSubmit}
-            onFocusUpstream={setSelectedNode}
+            onFocusUpstream={selectNodeExclusively}
             onDetachUpstream={detachUpstream}
           />
           <HistoryPanel

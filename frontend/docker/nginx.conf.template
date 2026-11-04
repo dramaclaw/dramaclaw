@@ -15,6 +15,20 @@ map $http_upgrade $connection_upgrade {
     ""      "";
 }
 
+# The authenticated editor is embedded by the application. Preview HTML is
+# served only from its isolated host and carries a precise CSP frame-ancestors
+# header from the API; X-Frame-Options cannot express that cross-origin rule.
+map $uri $api_frame_options {
+    default DENY;
+    ~^/api/v1/projects/[^/]+/freezone/studio/[^/]+/[^/]+/editor/ SAMEORIGIN;
+    ~^/api/v1/openfilm-preview/ "";
+}
+
+map "${CSP_OPENFILM_PREVIEW_ORIGIN}" $openfilm_autoplay {
+    "" "autoplay=()";
+    default 'autoplay=(self "${CSP_OPENFILM_PREVIEW_ORIGIN}")';
+}
+
 # HTTPS-only hardening, opt-in via the edge scheme. A TLS reverse proxy / ingress
 # sets X-Forwarded-Proto=https and these activate; a direct plain-HTTP self-host
 # (the open-source default — LAN IP or localhost, no proxy) leaves them empty so
@@ -42,7 +56,8 @@ server {
     # Larger upload window for ingest/audio assets posted through /api.
     client_max_body_size 200m;
 
-    # SPA shell + static assets. CSP must mirror worker/index.ts THEME_SCRIPT_HASH.
+    # SPA shell + static assets. Keep the hash aligned with index.html;
+    # theme-bootstrap.test.ts verifies the exact inline script bytes.
     location / {
         try_files $uri $uri/ /index.html;
 
@@ -54,12 +69,12 @@ server {
         # /assets/* 不受影响，仍走下面 1 年 immutable 缓存。
         add_header Cache-Control "no-cache" always;
 
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-LvxLzCeWBZ/DC3ejUm4WcZpQNZXYDUz4p/53gA+dzKk='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com https://nfg-web.oss-cn-chengdu.aliyuncs.com; media-src 'self' blob: https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com; font-src 'self' data:; connect-src 'self' https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com https://nfg-web.cdnfg.com https://dramaclaw-dl.cdnfg.com https://api.github.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' ${CSP_PAYMENT_FORM_ORIGINS}; object-src 'none'${csp_upgrade}" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-JSwUmcl8veJm2cM7kLl5crI2PsYm8NZgFY+2wMazH6M='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com https://nfg-web.oss-cn-chengdu.aliyuncs.com; media-src 'self' blob: https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com; font-src 'self' data:; connect-src 'self' https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com https://nfg-web.cdnfg.com https://dramaclaw-dl.cdnfg.com https://api.github.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' ${CSP_PAYMENT_FORM_ORIGINS}; object-src 'none'${csp_upgrade}" always;
         add_header Strict-Transport-Security $hsts_value always;
         add_header X-Frame-Options "DENY" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        add_header Permissions-Policy "accelerometer=(), autoplay=(), camera=(), clipboard-read=(), clipboard-write=(self), display-capture=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), picture-in-picture=(self), usb=(), xr-spatial-tracking=()" always;
+        add_header Permissions-Policy "accelerometer=(), $openfilm_autoplay, camera=(), clipboard-read=(), clipboard-write=(self), display-capture=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), picture-in-picture=(self), usb=(), xr-spatial-tracking=()" always;
         add_header Cross-Origin-Opener-Policy "same-origin" always;
         add_header Cross-Origin-Resource-Policy "same-origin" always;
     }
@@ -117,7 +132,7 @@ server {
 
         add_header Strict-Transport-Security $hsts_value always;
         add_header X-Content-Type-Options "nosniff" always;
-        add_header X-Frame-Options "DENY" always;
+        add_header X-Frame-Options $api_frame_options always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     }
 

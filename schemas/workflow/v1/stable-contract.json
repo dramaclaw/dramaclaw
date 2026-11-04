@@ -23,6 +23,7 @@
     "scriptNode",
     "pano360ViewerNode",
     "threeDWorldNode",
+    "previzNode",
     "skillNode",
     "htmlArtifactNode"
   ],

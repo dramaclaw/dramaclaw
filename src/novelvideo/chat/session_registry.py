@@ -16,6 +16,11 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any, ContextManager
 
+# Shown to the user when another turn of theirs is still running; the chat route
+# maps every "busy" failure onto this one message (see routes/chat.py).
+CHAT_RUN_BUSY_MESSAGE = "当前用户已有 AI 对话正在处理中，请稍后再试。"
+
+
 _CHAT_RUN_LOCK_KEY = "active_chat_run"
 _CHAT_RUN_LOCK_TTL_SECONDS = 2 * 60
 _CHAT_RUN_LOCK_MAX_SECONDS = 60 * 60
@@ -189,11 +194,11 @@ def acquire_chat_run_lock(
                 read_chat_run_lock_file(path)
             )
             if not existing_lock_id and chat_run_lock_file_is_new(path):
-                raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
+                raise RuntimeError(CHAT_RUN_BUSY_MESSAGE)
             if existing_lock_id and owner_is_active(
                 owner_id, owner_pid, started_at, updated_at
             ):
-                raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
+                raise RuntimeError(CHAT_RUN_BUSY_MESSAGE)
             remove_chat_run_lock_file(path)
             continue
         try:
@@ -207,7 +212,7 @@ def acquire_chat_run_lock(
                 pass
             remove_chat_run_lock_file(path)
             raise
-    raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
+    raise RuntimeError(CHAT_RUN_BUSY_MESSAGE)
 
 
 def release_chat_run_lock(path: Path, lock_id: str) -> None:

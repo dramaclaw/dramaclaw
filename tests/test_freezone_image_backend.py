@@ -3882,9 +3882,11 @@ async def test_freezone_gen_rejects_catalog_and_execution_model_mismatch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("variant_count", [1, 4])
 async def test_freezone_gen_derives_execution_and_billing_model_from_catalog(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    variant_count: int,
 ) -> None:
     _patch_freezone_project(monkeypatch, tmp_path, username="admin", project="58")
     captured: dict[str, object] = {}
@@ -3928,6 +3930,7 @@ async def test_freezone_gen_derives_execution_and_billing_model_from_catalog(
             model_id="catalog-image",
             image_size="2K",
             quality="high",
+            variant_count=variant_count,
         ),
         user={"username": "admin"},
     )
@@ -3944,6 +3947,56 @@ async def test_freezone_gen_derives_execution_and_billing_model_from_catalog(
         "quality": "high",
         "size": "2K",
     }
+    assert payload.get("variant_count", 1) == variant_count
+    assert payload["billing"]["pricing_quantity"] == variant_count
+    assert payload["billing"]["pricing_metrics"]["item_count"] == variant_count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["failure", "cancel"])
+async def test_image_candidate_batch_stops_sibling_generations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stop_reason: str
+) -> None:
+    from novelvideo.task_backend.cancel import TaskCancelled
+    from novelvideo.task_backend.runners import freezone as runner
+
+    ctx = _project_ctx(tmp_path)
+    all_started = asyncio.Event()
+    started = set()
+    stopped = set()
+
+    async def leaf(**kwargs):
+        candidate = kwargs["job_id"]
+        started.add(candidate)
+        if len(started) == 4:
+            all_started.set()
+        try:
+            await all_started.wait()
+            if stop_reason == "failure" and candidate == "batch":
+                raise RuntimeError("candidate failed")
+            await asyncio.Event().wait()
+        finally:
+            stopped.add(candidate)
+
+    async def cancelled(**_kwargs):
+        return stop_reason == "cancel" and all_started.is_set()
+
+    monkeypatch.setattr("novelvideo.freezone.jobs.run_freezone_gen", leaf)
+    monkeypatch.setattr("novelvideo.task_backend.cancel.is_cancel_requested", cancelled)
+    monkeypatch.setattr(runner, "_update", lambda *_a, **_kw: None)
+    error = RuntimeError if stop_reason == "failure" else TaskCancelled
+    with pytest.raises(error):
+        await asyncio.wait_for(
+            runner._run_freezone_gen_async(
+                {"__run_task_id": "batch-task", "payload": {
+                    "job_id": "batch", "prompt": "a scene", "variant_count": 4,
+                }},
+                ctx,
+            ),
+            timeout=5,
+        )
+    assert len(started) == 4
+    assert stopped == started
 
 
 @pytest.mark.asyncio
@@ -3989,9 +4042,11 @@ async def test_freezone_edit_rejects_catalog_and_execution_model_mismatch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("variant_count", [1, 4])
 async def test_freezone_celery_runner_records_node_history(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    variant_count: int,
 ) -> None:
     from novelvideo.freezone.history import read_generation_history
     from novelvideo.task_backend.runners import freezone as freezone_runner
@@ -4001,8 +4056,13 @@ async def test_freezone_celery_runner_records_node_history(
     output = project_dir / "freezone" / "_outputs" / "freezone_gen" / "job_123.png"
     _write_image(output)
 
-    async def fake_run_freezone_gen(**_kwargs):
-        return output
+    calls = []
+
+    async def fake_run_freezone_gen(**kwargs):
+        calls.append(kwargs)
+        path = output.with_name(f"{kwargs['job_id']}.png")
+        _write_image(path)
+        return path
 
     class FakeTaskManager:
         def update_progress_for_project(self, *_args, **_kwargs):
@@ -4017,6 +4077,7 @@ async def test_freezone_celery_runner_records_node_history(
                 "job_id": "job_123",
                 "project_dir": str(project_dir),
                 "prompt": "generate",
+                "variant_count": variant_count,
                 "canvas_id": "canvas_a",
                 "node_id": "node_gen",
             }
@@ -4037,6 +4098,12 @@ async def test_freezone_celery_runner_records_node_history(
     assert output_url.split("?", 1)[0].endswith("/freezone/_outputs/freezone_gen/job_123.png")
     json.dumps(result)
     assert result["generation_history_record"]["result"] is not result
+    assert len(calls) == variant_count
+    assert len({call["job_id"] for call in calls}) == variant_count
+    if variant_count > 1:
+        assert len(set(result["output_urls"])) == variant_count
+        assert result["output_urls"][0] == result["output_url"]
+        assert history[-1]["result"]["output_urls"] == result["output_urls"]
 
 
 @pytest.mark.asyncio

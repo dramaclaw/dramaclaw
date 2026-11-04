@@ -10,6 +10,19 @@ export const NODE_CONTROL_PARAMS_CHIP_CLASS = '!w-auto !justify-start !shrink-0'
 export const NODE_CONTROL_PRIMARY_BUTTON_CLASS =
   '!h-6 !rounded-md !px-2 !text-[11px] !gap-1 border border-transparent';
 
+// Entry actions for nodes that open an editor or workspace. Keep the ready and
+// unavailable states explicit so a usable node does not look disabled beside an
+// empty or locked node.
+export const NODE_PRIMARY_ACTION_BASE_CLASS =
+  'flex h-10 w-full items-center justify-center rounded-[12px] border px-4 text-center text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent-rgb)/0.45)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#282828]';
+
+export const NODE_PRIMARY_ACTION_ENABLED_CLASS =
+  'border-[rgb(var(--accent-rgb)/0.52)] bg-[rgb(var(--accent-rgb)/0.12)] text-[rgb(var(--accent-rgb))] hover:border-[rgb(var(--accent-rgb)/0.72)] hover:bg-[rgb(var(--accent-rgb)/0.18)]';
+
+// 禁用入口按钮不接收指针事件，点击穿透到节点卡片，保证节点仍可选中。
+export const NODE_PRIMARY_ACTION_DISABLED_CLASS =
+  'pointer-events-none border-white/10 bg-white/[0.025] text-text-muted/55';
+
 export const NODE_CONTROL_ICON_CLASS = 'h-3 w-3';
 
 export const NODE_TEXT_CONTROL_TRIGGER_CLASS =
@@ -24,11 +37,14 @@ export const NODE_REFERENCE_MEDIA_CHIP_CLASS =
   'group/refmedia relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-white/10 bg-white/[0.04] transition-colors hover:border-white/30';
 
 export const NODE_REFERENCE_MEDIA_DETACH_CLASS =
-  'nodrag absolute right-1 top-1 z-10 hidden h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white shadow-sm ring-1 ring-white/15 transition-colors hover:bg-red-500 group-hover/refmedia:flex';
+  'nodrag absolute right-1 top-1 z-20 hidden h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white shadow-sm ring-1 ring-white/15 transition-colors hover:bg-red-500 group-hover/refmedia:flex group-focus-within/refmedia:flex';
 
-// 引用缩略图右下角的 @ 按钮。与 DETACH 不同，它常驻显示（不是 hover 才出）：
-// 「能把这条引用 @ 进提示词」是个需要被发现的能力，藏起来等于没有。
+// The full thumbnail inserts a reference; hover/focus reveals a dark overlay and @.
 export const NODE_REFERENCE_MEDIA_MENTION_CLASS =
+  'nodrag absolute inset-0 z-10 flex cursor-pointer items-center justify-center bg-black/50 text-white opacity-0 transition-opacity group-hover/refmedia:opacity-100 group-focus-within/refmedia:opacity-100 focus-visible:outline-2 focus-visible:outline-white';
+
+// Audio chips keep playback on the main surface and a separate mention control.
+export const NODE_REFERENCE_MEDIA_MENTION_BADGE_CLASS =
   'nodrag absolute bottom-1 right-1 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-black/65 text-white/85 shadow-sm ring-1 ring-white/15 transition-colors hover:bg-[rgb(var(--accent-rgb))] hover:text-white';
 
 export const NODE_INLINE_ERROR_MESSAGE_CLASS =

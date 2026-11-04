@@ -31,10 +31,12 @@ from novelvideo.api.auth import (
 from novelvideo.api.deps import list_user_projects
 from novelvideo.api.egress_binding import request_egress_scope
 from novelvideo.chat import service as chat_service
+from novelvideo.chat.backend_sdk import CodexThreadBusyError
 from novelvideo.chat.execution_context import AgentExecutionContext
 from novelvideo.chat.hermes_egress import EgressBoundaryError
 from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
 from novelvideo.chat.director_auto import coordinator as director_auto_coordinator
+from novelvideo.chat.session_registry import CHAT_RUN_BUSY_MESSAGE
 from novelvideo.chat.live_events import (
     register_chat_websocket,
     unregister_chat_websocket,
@@ -44,6 +46,7 @@ from novelvideo.chat.hermes_workspace import (
     sync_freezone_hermes_workflow_skills,
 )
 from novelvideo.chat.store import ChatScope, chat_store
+from novelvideo.chat.turn_images import referenced_image_paths
 from novelvideo.freezone.canvas_command_bridge import (
     BRIDGE_PENDING_TTL_SECONDS,
     bridge_message_exists,
@@ -437,6 +440,7 @@ class ClarificationToolResultIn(BaseModel):
     ok: bool = True
     action: str = "submit"
     answers: dict[str, Any] = Field(default_factory=dict)
+    questions: list[dict[str, Any]] | None = None
     skipped: bool = False
     used_recommended: bool = False
     errors: list[str] = []
@@ -446,6 +450,7 @@ class ClarificationToolResultIn(BaseModel):
 class ChatNotificationIn(BaseModel):
     scope: ChatScopePayload | None = None
     text: str
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class DirectorAutoStartIn(BaseModel):
@@ -578,6 +583,9 @@ async def append_chat_notification(
             _chat_store_scope_for_project_context(scope, project_ctx),
             "assistant",
             text,
+            idempotency_key=(
+                f"chat-notification:{payload.idempotency_key}" if payload.idempotency_key else None
+            ),
         )
     elif scope.kind == "project":
         project_ctx = await _project_context_for_scope(user, scope)
@@ -595,7 +603,10 @@ async def append_chat_notification(
         )
     else:
         message = await chat_store.append_message_async(
-            username, scope, "assistant", text
+            username, scope, "assistant", text,
+            idempotency_key=(
+                f"chat-notification:{payload.idempotency_key}" if payload.idempotency_key else None
+            ),
         )
     return {"ok": True, "data": message}
 
@@ -707,6 +718,22 @@ def _canvas_bridge_dir(
         ),
     )
     return canvas_bridge_dir_for_profile(home, profile)
+
+
+def _chat_turn_busy_message(exc: BaseException) -> str | None:
+    """The user-facing busy message for a failed turn, or None if it was not busy.
+
+    Both the chat run lock and a Codex thread that still has a turn in flight
+    (``CodexThreadBusyError``) mean "your previous turn is still running"; the
+    frontend shows them through the same ``chat.busy`` frame.
+    """
+
+    if isinstance(exc, CodexThreadBusyError):
+        return CHAT_RUN_BUSY_MESSAGE
+    message = str(exc)
+    if "当前用户已有 AI 对话正在处理中" in message:
+        return message
+    return None
 
 
 def _is_freezone_scope(scope: ChatScope) -> bool:
@@ -1104,6 +1131,14 @@ def _resolve_canvas_command_tool_result_payload(
         agent_instruction = (
             "Do not claim the canvas change was applied; ask the user before retrying."
         )
+    elif payload.canvas_apply_status == "unverified":
+        message = payload.user_message or payload.message or "Some workflow results need verification."
+        agent_instruction = (
+            "The workflow has stopped, but some historical receipts cannot be reliably "
+            "matched to actions. Results are unverified, not failed, running, or fully successful. "
+            "Check existing canvas artifacts and workflow records first. Do not rerun generation "
+            "or suggest retrying: this may duplicate successful work and incur extra charges."
+        )
     elif not command_ok:
         message = (
             payload.user_message
@@ -1135,6 +1170,30 @@ def _resolve_canvas_command_tool_result_payload(
             )
         else:
             agent_instruction = "Canvas command applied successfully."
+    requires_canvas_refresh = bool(
+        payload.canvas_id
+        and (
+            payload.applied_count > 0
+            or (
+                not payload.cancelled
+                and (
+                    (payload.applied and not has_open_node_action)
+                    or payload.canvas_apply_status in {
+                        "accepted", "pending", "partially_applied", "unverified"
+                    }
+                )
+            )
+        )
+    )
+    if requires_canvas_refresh:
+        agent_instruction += (
+            " Earlier canvas/story revisions are now stale or may become stale while "
+            "generation finishes. Before the next revision-based write on this canvas, "
+            "read its current persisted state with dramaclaw_get_freezone_canvas (or "
+            "the current story with dramaclaw_get_interactive_story), recheck the intended "
+            "changes, and use that read's revision as base_revision. Do not reuse a "
+            "revision read before this command, guess revision + 1, or replay generation."
+        )
     result = {
         "ok": command_ok,
         "turn_id": payload.turn_id,
@@ -1154,6 +1213,7 @@ def _resolve_canvas_command_tool_result_payload(
         "user_message": payload.user_message,
         "agent_instruction": agent_instruction,
         "agent_hint": payload.agent_hint,
+        "requires_canvas_refresh": requires_canvas_refresh,
     }
     return resolve_canvas_command(
         key,
@@ -1599,30 +1659,74 @@ async def _persist_clarification_result_ui_event(
     user: dict[str, Any],
     username: str,
     payload: ClarificationToolResultIn,
+    resolved: dict[str, Any] | None = None,
 ) -> None:
+    if resolved is not None:
+        if not _clarification_result_accepted(resolved):
+            return
+        payload = payload.model_copy(
+            update={
+                field: resolved.get(field, getattr(payload, field))
+                for field in (
+                    "action",
+                    "clarification_status",
+                    "answers",
+                    "skipped",
+                    "used_recommended",
+                )
+            }
+        )
     turn_id = str(payload.turn_id or "").strip()
     scope = _scope_from_interaction_payload(payload)
     if not turn_id or scope is None:
         return
     project_ctx = await _project_context_for_interaction_result(user, scope)
-    await chat_store.append_ui_event_async(
-        username,
-        _chat_store_scope_for_project_context(scope, project_ctx),
-        turn_id,
-        {
-            "type": "assistant.clarification.request",
-            "bridge_key": payload.bridge_key,
-            "project_id": payload.project_id,
-            "canvas_id": payload.canvas_id,
-            "agent_id": payload.agent_id,
-            "submitted": True,
-            "action": payload.action,
-            "clarification_status": payload.clarification_status,
-            "answers": payload.answers,
-            "skipped": payload.skipped,
-            "used_recommended": payload.used_recommended,
-            "anchor_text_prefix": payload.anchor_text_prefix,
-        },
+    store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
+    turns = {turn_id}
+    for message in await chat_store.list_messages_async(username, store_scope):
+        if message.get("turn_id") and any(
+            event.get("type") == "assistant.clarification.request"
+            and event.get("bridge_key") == payload.bridge_key
+            for event in message.get("ui_events", [])
+            if isinstance(event, dict)
+        ):
+            turns.add(message["turn_id"])
+    for target_turn in turns:
+        await chat_store.append_ui_event_async(
+            username,
+            store_scope,
+            target_turn,
+            {
+                "type": "assistant.clarification.request",
+                "bridge_key": payload.bridge_key,
+                "project_id": payload.project_id,
+                "canvas_id": payload.canvas_id,
+                "agent_id": payload.agent_id,
+                "submitted": True,
+                "action": payload.action,
+                "clarification_status": payload.clarification_status,
+                "answers": payload.answers,
+                **(
+                    {"questions": payload.questions}
+                    if payload.questions is not None
+                    else {}
+                ),
+                "skipped": payload.skipped,
+                "used_recommended": payload.used_recommended,
+                # Each replay belongs to its own position in the conversation.
+                **(
+                    {"anchor_text_prefix": payload.anchor_text_prefix}
+                    if target_turn == turn_id
+                    else {}
+                ),
+            },
+        )
+
+
+def _clarification_result_accepted(resolved: dict[str, Any]) -> bool:
+    return resolved.get("status") == "clarification_frontend_result" and (
+        resolved.get("ok") is True
+        or resolved.get("clarification_status") == "cancelled"
     )
 
 
@@ -1675,7 +1779,16 @@ async def resolve_canvas_command_tool_result(
         )
         project_ctx = await _project_context_for_scope(user, scope)
         store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
-        if payload.canvas_apply_status == "pending":
+        if payload.canvas_apply_status == "unverified":
+            instruction = (
+                "The background canvas workflow has stopped, but some historical results "
+                "cannot be reliably matched to actions and need verification. "
+                "Do not call them failed, still running, or fully successful. "
+                "Check existing canvas artifacts and workflow records first. "
+                "Do not rerun generation or suggest retrying: this may duplicate successful "
+                "work and incur extra charges."
+            )
+        elif payload.canvas_apply_status == "pending":
             instruction = (
                 "The background canvas workflow is still syncing or reconciling its result. "
                 "Do not claim the artifact is ready and do not rerun generation. "
@@ -1697,7 +1810,9 @@ async def resolve_canvas_command_tool_result(
             "agent_notification",
             f"[CANVAS_BACKGROUND_RESULT] {instruction} [/CANVAS_BACKGROUND_RESULT]",
             turn_id=turn_id,
-            idempotency_key=f"canvas-background-result:{payload.bridge_key.strip()}",
+            idempotency_key=(
+                f"canvas-background-result:{payload.bridge_key.strip()}:{payload.canvas_apply_status}"
+            ),
         )
         return {
             "ok": True,
@@ -1825,11 +1940,20 @@ async def resolve_clarification_tool_result(
     )
     try:
         await _persist_clarification_result_ui_event(
-            user=user, username=username, payload=payload
+            user=user, username=username, payload=payload, resolved=resolved
         )
     except Exception:
         logger.exception("failed to persist clarification result ui event")
-    return {"ok": True, "data": resolved}
+    return {
+        "ok": _clarification_result_accepted(resolved),
+        "data": resolved,
+        "message": resolved.get("message")
+        or (
+            "This selection card has expired. Reopen it before submitting."
+            if resolved.get("canvas_apply_status") == "timeout"
+            else None
+        ),
+    }
 
 
 def _is_websocket_disconnected_runtime_error(exc: RuntimeError) -> bool:
@@ -1894,14 +2018,14 @@ async def _receive_bridge_results_during_turn(
 
         if event_type == "assistant.clarification.result":
             payload = ClarificationToolResultIn.model_validate(raw)
-            _resolve_clarification_tool_result_payload(
+            resolved = _resolve_clarification_tool_result_payload(
                 payload,
                 username=username,
                 project_state_dir=await _bridge_project_state_dir(user, payload),
             )
             try:
                 await _persist_clarification_result_ui_event(
-                    user=user, username=username, payload=payload
+                    user=user, username=username, payload=payload, resolved=resolved
                 )
             except Exception:
                 logger.exception("failed to persist clarification result ui event")
@@ -2029,6 +2153,9 @@ def _attachment_context_block(attachments: list[ChatAttachmentIn]) -> str:
     lines = [
         "[CHAT_ATTACHMENTS]",
         "The browser sent these attachment records with the user message.",
+        "You see a referenced image only if it arrives as image input in this turn; "
+        "a file name or URL alone does not show it. The chat box cannot take "
+        "image uploads or pasted screenshots, so never ask the user to attach one.",
     ]
     for index, attachment in enumerate(attachments, 1):
         lines.append("")
@@ -3565,6 +3692,9 @@ async def _stream_project_turn(
                 backend=runtime_backend,
                 execution_context=execution_context,
                 project_context=project_ctx,
+                image_paths=referenced_image_paths(
+                    _attachment_payloads(attachments), project_dir
+                ),
             )
     finally:
         heartbeat_task.cancel()
@@ -4397,14 +4527,14 @@ async def chat_ws(websocket: WebSocket) -> None:
 
             if event_type == "assistant.clarification.result":
                 payload = ClarificationToolResultIn.model_validate(raw)
-                _resolve_clarification_tool_result_payload(
+                resolved = _resolve_clarification_tool_result_payload(
                     payload,
                     username=username,
                     project_state_dir=await _bridge_project_state_dir(user, payload),
                 )
                 try:
                     await _persist_clarification_result_ui_event(
-                        user=user, username=username, payload=payload
+                        user=user, username=username, payload=payload, resolved=resolved
                     )
                 except Exception:
                     logger.exception("failed to persist clarification result ui event")
@@ -4486,14 +4616,15 @@ async def chat_ws(websocket: WebSocket) -> None:
                         },
                     )
             except Exception as exc:  # noqa: BLE001
-                message = str(exc)
+                busy_message = _chat_turn_busy_message(exc)
+                message = busy_message or str(exc)
                 logger.exception(
                     "chat turn failed username=%s turn_id=%s error_type=%s",
                     username,
                     turn_id,
                     type(exc).__name__,
                 )
-                if "当前用户已有 AI 对话正在处理中" in message:
+                if busy_message is not None:
                     await _send_json_best_effort(
                         websocket,
                         {

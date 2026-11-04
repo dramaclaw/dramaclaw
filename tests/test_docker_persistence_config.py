@@ -201,6 +201,13 @@ def test_all_ce_compose_variants_keep_hermes_explicit_fallback_enabled() -> None
         assert api["environment"]["ST_CONTROL_PLANE_DSN"] == ""
 
 
+def test_all_ce_compose_variants_disable_loopback_openfilm_studio() -> None:
+    for relative_path in COMPOSE_FILES:
+        api = _api(relative_path)
+
+        assert api["environment"]["SUPERTALE_OPENFILM_STUDIO_ENABLED"] == "0"
+
+
 def test_env_example_configures_data_root_instead_of_individual_directories() -> None:
     env_example = (REPOSITORY_ROOT / ".env.example").read_text()
 

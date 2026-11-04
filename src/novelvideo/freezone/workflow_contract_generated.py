@@ -1,6 +1,6 @@
 """Generated from schemas/workflow/v1/stable-contract.json; do not edit."""
 
-SOURCE_SHA256 = "1d3add9e7fc736e3ae534db40069e84882b9f00159bcb1bdf22e04a48c5f1666"
+SOURCE_SHA256 = "a29aa8bc8b49f30d6b85fce38ccd9cb29ac223d7c1f10c2ebc17fc32e421dde0"
 WORKFLOW_CONTRACT_SCHEMA_VERSION = "freezone_workflow_contract.v1"
 WORKFLOW_PLAN_SCHEMA_VERSION = "freezone_workflow_plan.v1"
 WORKFLOW_INTENT_SCHEMA_VERSION = "freezone_workflow_intent.v1"
@@ -25,6 +25,7 @@ AGENT_CREATABLE_NODE_TYPES = [
     "scriptNode",
     "pano360ViewerNode",
     "threeDWorldNode",
+    "previzNode",
     "skillNode",
     "htmlArtifactNode",
 ]
