@@ -1,0 +1,47 @@
+/* Fade the artwork first, then collapse its slot so following bubbles glide up. */
+.notification.notification {
+  height: 36px;
+  margin-bottom: 8px;
+  opacity: 1;
+  transition: opacity 400ms ease-out, height 550ms cubic-bezier(0.22, 1, 0.36, 1) 400ms,
+    margin-bottom 550ms cubic-bezier(0.22, 1, 0.36, 1) 400ms,
+    filter var(--duration-fast) var(--ease-out-quint);
+}
+.notification[data-state="closing"] {
+  height: 0;
+  margin-bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .notification.notification { transition: none; }
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  height: min(28rem, calc(100dvh - 7rem));
+  padding: 16px 0 0;
+}
+.messages {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  margin-right: 3px;
+  padding: 4px 14px 4px 20px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(120 83 37 / 25%) transparent;
+}
+.messages > article { flex-shrink: 0; }
+.messages::-webkit-scrollbar { width: 3px; }
+.messages::-webkit-scrollbar-thumb { background: rgb(120 83 37 / 25%); border-radius: 3px; }
+.composer { flex-shrink: 0; padding: 12px 20px; }
+
+/* Chromium's standard scrollbar-width otherwise overrides pixel sizing. */
+@supports selector(::-webkit-scrollbar) {
+  .messages { scrollbar-width: auto; scrollbar-color: auto; }
+}

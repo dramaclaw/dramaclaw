@@ -49,6 +49,12 @@ export default function FreezoneCanvasRoot({
       return typeof canvas === "string" && canvas.length > 0 ? canvas : null;
     },
   });
+  const composeParam = useRouterState({
+    select: (s) => {
+      const compose = (s.location.search as { compose?: unknown }).compose;
+      return typeof compose === "string" && compose.length > 0 ? compose : null;
+    },
+  });
 
   useEffect(() => subscribeOpenGlobalErrorDialog(setGlobalError), []);
 
@@ -121,7 +127,12 @@ export default function FreezoneCanvasRoot({
   return (
     <ReactFlowProvider>
       <div className="h-full w-full bg-bg-dark">
-        <FreezoneShell project={matchedProject} canvasId={canvasId} active={active} />
+        <FreezoneShell
+          project={matchedProject}
+          canvasId={canvasId}
+          active={active}
+          composeNodeId={active ? composeParam : null}
+        />
         <GlobalErrorDialog
           isOpen={Boolean(globalError)}
           title={globalError?.title ?? ""}

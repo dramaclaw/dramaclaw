@@ -791,16 +791,36 @@ async def test_run_timeout_preserves_candidate_and_cannot_install(monkeypatch):
     from novelvideo.freezone import skill_import_quality as module
     from novelvideo.freezone.skill_import_budget import ImportBudget
     from test_freezone_agent_bundle import _bundle_payload
-    monkeypatch.setattr(module, 'ImportBudget', lambda: ImportBudget(timeout_seconds=.04))
+    elapsed = 0.0
+    monkeypatch.setattr(
+        module, 'ImportBudget', lambda: ImportBudget(timeout_seconds=1800, clock=lambda: elapsed)
+    )
     record = record_fixture()
     responses = [design_fixture(), _bundle_payload()]
+    review_cancelled = False
+
+    def progress(_amount, stage):
+        nonlocal elapsed
+        if stage == 'reviewing':
+            # Preparation must not consume the tiny window reserved for the in-flight timeout.
+            elapsed = 1799.99
+
     async def generate(prompt):
+        nonlocal review_cancelled
         if responses:
             return json.dumps(responses.pop(0))
-        await asyncio.sleep(1)
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            review_cancelled = True
+            raise
         return json.dumps(review_fixture())
-    await run_quality_pipeline(record, 'alice', generate, lambda: None, lambda *a: None)
+
+    await run_quality_pipeline(record, 'alice', generate, lambda: None, progress)
     assert record['bundle']
     assert not record['quality_report']['validated']
     assert install_quality_errors(record, record['bundle'])
     assert record['run_budget']['model_calls'] == 3
+    assert review_cancelled
+    assert any('while waiting for reviewing:0' in issue
+               for issue in record['quality_report']['blockers'])

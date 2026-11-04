@@ -18,7 +18,7 @@ import type { CSSProperties } from "react";
 export const FREEZONE_DOCK_WIDTH_VAR = "--freezone-dock-width";
 
 /**
- * 让位动画时长。开合抽屉时是 300ms（与抽屉自身缓动同款），拖宽时抽屉会把它压成
+ * 让位动画时长。打开抽屉时是 300ms（与抽屉自身缓动同款），拖宽时抽屉会把它压成
  * 0ms——否则每帧都排一段 300ms 缓动，顶栏边缘会橡皮筋一样吊在手后面。
  */
 export const FREEZONE_DOCK_TRANSITION_VAR = "--freezone-dock-transition";
@@ -31,13 +31,14 @@ export const FREEZONE_DOCK_OFFSET_STYLE: CSSProperties = {
 /**
  * 让位 + 跟抽屉同款缓动。`transitionProperty` 里额外带上 background-color，是因为
  * 内联样式会整条盖掉宿主 class 上的 `transition-colors`（底部状态条的 hover 变色
- * 靠它）。
+ * 靠它）。关闭时变量被移除，margin 必须立即复位，与面板 max-width 同步，
+ * 否则窄屏面板会先变宽、再向右移动，短暂越过左边界。
  */
 export const FREEZONE_DOCK_OFFSET_ANIMATED_STYLE: CSSProperties = {
   ...FREEZONE_DOCK_OFFSET_STYLE,
   transitionProperty: "margin, background-color",
   transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
-  transitionDuration: `var(${FREEZONE_DOCK_TRANSITION_VAR}, 300ms)`,
+  transitionDuration: `var(${FREEZONE_DOCK_TRANSITION_VAR}, 0ms), 300ms`,
 };
 
 /**

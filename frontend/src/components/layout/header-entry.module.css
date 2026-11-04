@@ -1,0 +1,174 @@
+/* Keep the trigger and SVG compositing stable in WebKit. */
+.trigger.trigger {
+  transition: color var(--duration-fast) var(--ease-out-quint);
+  background-color: transparent;
+  color: #cbd5e1;
+  filter: none;
+}
+.trigger.trigger:hover, .trigger.trigger:focus-visible, .trigger.trigger[aria-expanded="true"] {
+  background-color: transparent;
+  color: #ffffff;
+}
+.trigger.trigger:active { background-color: transparent; color: #e2e8f0; }
+.trigger.trigger svg { display: block; filter: none; }
+.trigger.trigger [data-credit-value],
+.trigger.trigger [data-account-avatar] { color: inherit; }
+.trigger.trigger stop { transition: stop-color var(--duration-fast) var(--ease-out-quint); }
+.trigger.trigger:hover stop:first-child,
+.trigger.trigger:focus-visible stop:first-child,
+.trigger.trigger[aria-expanded="true"] stop:first-child { stop-color: #70f1ff; }
+.trigger.trigger:hover stop:nth-child(2),
+.trigger.trigger:focus-visible stop:nth-child(2),
+.trigger.trigger[aria-expanded="true"] stop:nth-child(2) { stop-color: #7dd3fc; }
+.trigger.trigger:hover stop:last-child,
+.trigger.trigger:focus-visible stop:last-child,
+.trigger.trigger[aria-expanded="true"] stop:last-child { stop-color: #b6a1ff; }
+.panel.panel {
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 14px;
+  background: rgb(24 26 30 / 62%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 36%);
+  color: #f1f5f9;
+}
+
+.menuPanel.menuPanel {
+  width: min(216px, calc(100vw - 24px));
+  padding: 10px;
+}
+.menuPanel > .menuRow + .menuRow { margin-top: 2px; }
+.menuRow.menuRow {
+  display: flex;
+  height: 36px;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border-radius: calc(var(--radius-sm) - 4px);
+  padding: 0 6px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 400;
+  color: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--duration-fast) var(--ease-out-quint);
+}
+.actionHover:hover,
+.actionHover:focus-visible,
+.menuRow.menuRow:hover,
+.menuRow.menuRow[data-highlighted],
+.menuRow.menuRow:focus { background: rgb(255 255 255 / 5%); }
+.menuRow.menuRow svg { width: 14px; height: 14px; }
+
+/* Keep menu primitives from recoloring icons and labels independently. */
+.menuRow.menuRow .menuIcon { color: rgb(241 245 249 / 58%); }
+.menuRow.menuRow .menuIcon svg { color: inherit; }
+.menuRow.menuRow .menuLabel { color: inherit; }
+.menuRow.menuRow .menuChevron { color: rgb(241 245 249 / 88%); }
+.actionHover { transition: background-color var(--duration-fast) var(--ease-out-quint); }
+.separator {
+  width: 1px;
+  height: 12px;
+  flex-shrink: 0;
+  margin-inline: 4px;
+  background: var(--ui-border-strong);
+}
+/* Match the account panel's opacity-only transition for both popup primitives. */
+.panel.panel[data-open] { animation: header-panel-in var(--duration-fast) var(--ease-out-quint) both; }
+.panel.panel[data-closed] { animation: header-panel-out var(--duration-fast) var(--ease-out-quint) both; }
+@keyframes header-panel-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes header-panel-out { from { opacity: 1; } to { opacity: 0; } }
+.pikoCapsule {
+  position: relative;
+  display: block;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.pikoCapsuleIcon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  transition:
+    filter var(--duration-fast) var(--ease-out-quint),
+    transform var(--duration-fast) var(--ease-out-quint);
+}
+/* Restore the original capsule artwork's cyan sparkle and reward bounce.
+   These scene-specific values are documented in DESIGN.md's Piko entry menu. */
+.pikoCapsule::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 2px;
+  height: 2px;
+  opacity: 0;
+  background: rgb(255 255 255 / 0.96);
+  box-shadow:
+    2px 0 0 rgb(103 232 249 / 0.88),
+    -2px 0 0 rgb(255 255 255 / 0.54),
+    0 2px 0 rgb(255 255 255 / 0.62),
+    0 -2px 0 rgb(103 232 249 / 0.72);
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+.pikoTrigger:hover .pikoCapsuleIcon,
+.pikoTrigger:focus-visible .pikoCapsuleIcon {
+  filter: brightness(1.22) saturate(1.12) drop-shadow(0 0 4px rgb(34 211 238 / 0.32));
+  transform: translateY(-1px);
+}
+.pikoTrigger:hover .pikoCapsule::after,
+.pikoTrigger:focus-visible .pikoCapsule::after {
+  animation: piko-capsule-sparkle 620ms steps(3, end) both;
+}
+.pikoTrigger[data-reward-hit="true"] .pikoCapsuleIcon {
+  animation: piko-capsule-reward-hit 520ms cubic-bezier(0.2, 1.24, 0.26, 1) both;
+}
+.pikoTrigger[data-reward-hit="true"] .pikoCapsule::after {
+  animation: piko-capsule-sparkle 520ms steps(3, end) both;
+}
+@keyframes piko-capsule-reward-hit {
+  0%, 100% {
+    filter: brightness(1) saturate(1);
+    transform: translateY(0) scale(1);
+  }
+  42% {
+    filter: brightness(1.32) saturate(1.18) drop-shadow(0 0 7px rgb(34 211 238 / 0.42));
+    transform: translateY(-1px) scale(1.18);
+  }
+  68% { transform: translateY(0) scale(0.94); }
+}
+@keyframes piko-capsule-sparkle {
+  0%, 100% { opacity: 0; transform: translate(0, 0); }
+  34% { opacity: 1; transform: translate(-2px, -1px); }
+  68% { opacity: 0.55; transform: translate(1px, -3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trigger.trigger, .trigger.trigger stop, .menuRow.menuRow, .actionHover { transition: none; }
+  .panel.panel[data-open], .panel.panel[data-closed] { animation: none; }
+  .pikoCapsuleIcon { transition: none; }
+  .pikoTrigger:hover .pikoCapsuleIcon,
+  .pikoTrigger:focus-visible .pikoCapsuleIcon,
+  .pikoTrigger[data-reward-hit="true"] .pikoCapsuleIcon { animation: none; transform: none; }
+  .pikoTrigger:hover .pikoCapsule::after,
+  .pikoTrigger:focus-visible .pikoCapsule::after,
+  .pikoTrigger[data-reward-hit="true"] .pikoCapsule::after { animation: none; }
+}
+
+.pikoLabel { position: relative; display: block; width: 60px; white-space: nowrap; font-weight: 400; }
+.pikoDot { position: absolute; top: -2px; right: -7px; }
+.newBadge {
+  flex-shrink: 0;
+  border: 1px solid var(--feature-new-border);
+  border-radius: var(--ui-radius-pill);
+  padding: 1px 5px;
+  background: var(--feature-new-background);
+  color: var(--feature-new-foreground);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 12px;
+}
+:global(.light) .pikoLabel { color: var(--foreground); }

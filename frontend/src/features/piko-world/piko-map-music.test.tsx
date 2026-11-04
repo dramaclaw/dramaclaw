@@ -1,0 +1,159 @@
+import { renderHook, act } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { PIKO_MAP_MUSIC, PIKO_MUSIC_PLAYLISTS } from "./piko-map-music";
+import { PIKO_MAP_TRANSITIONS } from "./piko-map-transitions";
+import { startPikoMusic, useMapMusic, selectPikoMusic, usePikoPlayback, setPikoMusicMuted } from "./piko-bgm";
+beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+function mockAudio() {
+  const clips: (EventTarget & { src: string; volume: number; loop: boolean; paused: boolean; play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; load: ReturnType<typeof vi.fn>; removeAttribute: ReturnType<typeof vi.fn> })[] = [];
+  vi.stubGlobal("Audio", class extends EventTarget {
+    volume = 0; loop = false; paused = false;
+    play = vi.fn().mockResolvedValue(undefined); pause = vi.fn(); load = vi.fn(); removeAttribute = vi.fn();
+    constructor(public src: string) { super(); clips.push(this); }
+  });
+  return clips;
+}
+it("covers every map explicitly and keeps the supplied shared groups together", () => {
+  expect(Object.keys(PIKO_MAP_MUSIC).sort()).toEqual(Object.keys(PIKO_MAP_TRANSITIONS).sort());
+  for (const ids of [["welcome-courtyard", "artisan-market"], ["lantern-canal-street", "starlight-dock"], ["wind-garden-gate", "whispering-meadow"], ["cloudtop-slope", "frostmoon-tundra"], ["amber-wilds", "crimson-canyon"], ["starfall-tidal-wetland", "startrace-coast", "boundless-sea", "changfeng-sea"]] as const) {
+    for (const id of ids) expect(PIKO_MAP_MUSIC[id]).toBe(PIKO_MAP_MUSIC[ids[0]]);
+  }
+  expect(Object.values(PIKO_MAP_MUSIC).every(tracks => tracks && tracks.length > 0)).toBe(true);
+  const files = Object.values(PIKO_MUSIC_PLAYLISTS).flat();
+  expect(new Set(files).size).toBe(9);
+  expect(PIKO_MAP_MUSIC["welcome-courtyard"]).toEqual([
+    PIKO_MUSIC_PLAYLISTS.courtyard[0], PIKO_MUSIC_PLAYLISTS.courtyardWarm[0],
+  ]);
+  for (const file of files) expect(readFileSync(`public${file}`).length).toBeGreaterThan(1000);
+});
+it("preserves shared playback and crossfades different regions over three seconds", async () => {
+  vi.useFakeTimers(); const clips = mockAudio();
+  const { rerender, unmount } = renderHook(({ id }) => useMapMusic(id), { initialProps: { id: "whispering-meadow" as keyof typeof PIKO_MAP_MUSIC } });
+  await act(async () => {});
+  act(() => vi.advanceTimersByTime(2000));
+  rerender({ id: "wind-garden-gate" }); expect(clips).toHaveLength(1);
+  rerender({ id: "crimson-canyon" }); expect(clips).toHaveLength(2);
+  expect(clips[1].src).toContain("amber-canyon.mp3");
+  expect(clips[0].volume).toBe(1);
+  expect(clips[1].volume).toBe(0);
+  expect(clips[0].pause).not.toHaveBeenCalled();
+  await act(async () => {}); act(() => vi.advanceTimersByTime(1500));
+  expect(clips[0].volume).toBeCloseTo(0.5);
+  expect(clips[1].volume).toBeCloseTo(0.5);
+  expect(clips[0].removeAttribute).not.toHaveBeenCalled();
+  act(() => vi.advanceTimersByTime(1500));
+  expect(clips[0].volume).toBe(0);
+  expect(clips[1].volume).toBe(1);
+  expect(clips[0].removeAttribute).toHaveBeenCalledWith("src");
+  unmount();
+  expect(clips[1].removeAttribute).toHaveBeenCalledWith("src");
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("plays the new courtyard track first and includes the warm version next", async () => {
+  vi.useFakeTimers(); const clips = mockAudio();
+  const stop = startPikoMusic(PIKO_MAP_MUSIC["welcome-courtyard"]!);
+  await Promise.resolve();
+  expect(clips[0].loop).toBe(false);
+  expect(clips[0].src).toBe("/piko/world/audio/bgm/welcome-courtyard-01.mp3");
+  clips[0].dispatchEvent(new Event("ended"));
+  await Promise.resolve();
+  expect(clips[0].src).toBe("/piko/world/audio/bgm/welcome-courtyard-warm.mp3");
+  stop(); vi.advanceTimersByTime(800);
+});
+
+it("uses quiet hall music and restores outdoor gain when following maps", async () => {
+  vi.useFakeTimers(); const clips = mockAudio();
+  selectPikoMusic(null);
+  const { rerender, unmount } = renderHook(({ id }) => useMapMusic(id), {
+    initialProps: { id: "town-hall-interior" as keyof typeof PIKO_MAP_MUSIC },
+  });
+  await act(async () => {}); act(() => vi.advanceTimersByTime(2000));
+  expect(clips[0].src).toContain("welcome-courtyard-warm.mp3");
+  expect(clips[0].volume).toBeCloseTo(0.4);
+  rerender({ id: "welcome-courtyard" });
+  await act(async () => {}); act(() => vi.advanceTimersByTime(3000));
+  expect(clips[1].volume).toBe(1);
+  unmount(); expect(vi.getTimerCount()).toBe(0);
+});
+
+it("manual selection owns one channel across travel and follows the latest map on request", async () => {
+  vi.useFakeTimers(); const clips = mockAudio();
+  const { result, rerender, unmount } = renderHook(({ id }) => {
+    useMapMusic(id); return usePikoPlayback();
+  }, { initialProps: { id: "whispering-meadow" as keyof typeof PIKO_MAP_MUSIC } });
+  await act(async () => {});
+  act(() => selectPikoMusic(PIKO_MUSIC_PLAYLISTS.skyport));
+  await act(async () => {});
+  expect(clips).toHaveLength(2);
+  expect(clips[0].pause).toHaveBeenCalled();
+  expect(result.current.playing).toBe(true);
+  rerender({ id: "crimson-canyon" });
+  expect(clips).toHaveLength(2);
+  act(() => setPikoMusicMuted(true));
+  expect(result.current.playing).toBe(false);
+  act(() => setPikoMusicMuted(false));
+  await act(async () => {});
+  expect(clips).toHaveLength(2);
+  act(() => clips[1].dispatchEvent(new Event("error")));
+  expect(result.current.error).toBe(true);
+  act(() => selectPikoMusic(null));
+  await act(async () => {});
+  expect(clips).toHaveLength(3);
+  expect(clips[2].src).toContain("amber-canyon");
+  act(() => selectPikoMusic(PIKO_MUSIC_PLAYLISTS.skyport));
+  await act(async () => {});
+  act(() => clips[3].dispatchEvent(new Event("ended")));
+  await act(async () => {});
+  expect(clips[4].src).toContain("welcome-courtyard-01");
+  act(() => selectPikoMusic(null));
+  unmount();
+});
+
+it("clears playback metadata on disposal and when restarting the same source", async () => {
+  vi.useFakeTimers(); const clips = mockAudio();
+  const { result, unmount } = renderHook(() => { useMapMusic("whispering-meadow"); return usePikoPlayback(); });
+  await act(async () => {});
+  Object.assign(clips[0], { currentTime: 42, duration: 179 });
+  act(() => clips[0].dispatchEvent(new Event("timeupdate")));
+  expect(result.current.currentTime).toBe(42);
+  unmount();
+  const next = renderHook(() => { useMapMusic("whispering-meadow"); return usePikoPlayback(); });
+  expect(next.result.current.currentTime).toBe(0);
+  expect(next.result.current.duration).toBe(0);
+  next.unmount();
+});
+
+for (const finish of ["mute", "unmount", "leave"] as const) {
+  it(`cleans overlapping fades on rapid travel and ${finish}`, async () => {
+    vi.useFakeTimers(); const clips = mockAudio();
+    const { rerender, unmount } = renderHook(({ id }) => useMapMusic(id), {
+      initialProps: { id: "whispering-meadow" as keyof typeof PIKO_MAP_MUSIC | null },
+    });
+    await act(async () => {});
+    act(() => vi.advanceTimersByTime(2000));
+    rerender({ id: "crimson-canyon" });
+    await act(async () => {});
+    act(() => vi.advanceTimersByTime(500));
+    rerender({ id: "whalesong-skyport" });
+    await act(async () => {});
+    act(() => vi.advanceTimersByTime(500));
+    expect(clips).toHaveLength(3);
+    expect(clips[0].volume).toBe(0);
+    expect(clips[0].removeAttribute).toHaveBeenCalledWith("src");
+    expect(clips[1].volume).toBeGreaterThan(0);
+    expect(clips[2].volume).toBeGreaterThan(0);
+    if (finish === "mute") act(() => setPikoMusicMuted(true));
+    else if (finish === "leave") rerender({ id: null });
+    else unmount();
+    expect(clips.every(clip => clip.volume === 0)).toBe(true);
+    expect(clips[0].removeAttribute).toHaveBeenCalledWith("src");
+    expect(clips[1].removeAttribute).toHaveBeenCalledWith("src");
+    act(() => vi.advanceTimersByTime(3000));
+    expect(clips.every(clip => clip.volume === 0)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    if (finish !== "unmount") unmount();
+    act(() => setPikoMusicMuted(false));
+  });
+}

@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import { useCanvasStore } from '@/stores/canvasStore';
 import type { CanvasNode } from '../domain/canvasNodes';
-import { upstreamNodesInEdgeOrder } from '../nodes/referenceOrdering';
+import { upstreamNodesInEdgeOrder, videoReferenceNodesInEdgeOrder } from '../nodes/referenceOrdering';
 import { extractUpstreamContent } from './graphContentResolver';
 import { extractUpstreamImages } from './graphImageResolver';
 import type { UpstreamContent } from './ports';
@@ -26,6 +26,15 @@ export function useUpstreamNodes(nodeId: string): CanvasNode[] {
   return useCanvasStore(
     useShallow((state) =>
       upstreamNodesInEdgeOrder(state.nodes, state.edges, nodeId),
+    ),
+  );
+}
+
+/** 视频引用订阅与提交共用过滤规则，不影响剧情图和其他节点。 */
+export function useVideoReferenceNodes(nodeId: string): CanvasNode[] {
+  return useCanvasStore(
+    useShallow((state) =>
+      videoReferenceNodesInEdgeOrder(state.nodes, state.edges, nodeId),
     ),
   );
 }

@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 
 import { isImmersiveViewerActive } from '@/features/viewer-kit/useViewerImmersiveBody';
 import { MOD_KEY_LABEL } from '@/lib/platform';
-import { CANVAS_CONTROL_GLASS_CLASS } from './canvasControlStyles';
+import { CANVAS_CONTROL_GLASS_CLASS, CANVAS_CONTROL_ICON_STEP, canvasControlPositionStyle } from './canvasControlStyles';
 import { useEdgeVisibilityStore } from './edgeVisibilityStore';
 
 const ZOOM_STEP = 1.2;
@@ -134,9 +134,8 @@ export function CanvasZoomControl({
   return (
     <div
       ref={rootRef}
-      className={`nopan nowheel pointer-events-auto absolute right-[5.25rem] z-30 ${
-        isTop ? 'top-3' : 'bottom-3'
-      }`}
+      className="nopan nowheel pointer-events-auto absolute z-30"
+      style={canvasControlPositionStyle(placement, CANVAS_CONTROL_ICON_STEP * 2)}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div

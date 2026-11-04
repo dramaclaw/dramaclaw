@@ -29,8 +29,8 @@ import {
 } from "@/api/ops";
 import { awaitTaskCompletion, isTaskPollTimeoutError } from "@/api/tasks";
 import {
-  generationTaskDescriptor,
   releaseGenerationTaskOwnership,
+  sessionOwnedGenerationTaskDescriptor,
 } from './generationTaskDescriptor';
 
 const running = new Map<string, Promise<WorkflowHtmlOutput>>();
@@ -458,7 +458,7 @@ async function generateOrdinaryHtmlText(input: {
   if (!persistedTaskKey) {
     const title = String(input.data.displayName || input.data.title || 'HTML').slice(0, 200);
     useCanvasStore.getState().updateNodeData(input.nodeId, {
-      ...generationTaskDescriptor(ref),
+      ...sessionOwnedGenerationTaskDescriptor(ref),
       htmlGenerationArtifactId:
         typeof input.data.artifactId === 'string' ? input.data.artifactId : null,
       htmlGenerationBaseVersion:

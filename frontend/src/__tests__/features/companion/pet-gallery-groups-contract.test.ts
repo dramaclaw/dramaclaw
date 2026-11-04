@@ -25,7 +25,7 @@ describe("pet gallery grouping contract", () => {
     expect(zh.myBuddy.gallery.officialGroup).toBe("官方搭子");
     expect(zh.myBuddy.gallery.peripheralGroup).toBe("周边搭子");
     expect(source.match(/grid grid-cols-2 gap-3/g)).toHaveLength(2);
-    expect(source).toContain("max-w-[568px]");
+    expect(source).toContain("max-w-[480px]");
     expect(source).not.toContain('className="h-px flex-1 bg-white/[0.07]"');
   });
 });

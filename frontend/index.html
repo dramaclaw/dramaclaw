@@ -26,14 +26,24 @@
       content="A general-purpose AIGC video engine: script to finished film in one pipeline — dramas, ads, product videos, otome games, and more. | 通用 AIGC 视频引擎 —— 从剧本到成片一条流水线，漫剧、广告、电商、乙游皆可"
     />
     <meta name="twitter:image" content="https://dramaclaw.cdnfg.com/brand/dclogo.png" />
+    <style>
+      /* Paint the saved theme before the application stylesheet arrives. */
+      html { background: var(--background, #090909); color-scheme: dark; }
+      html.light { background: var(--background, oklch(0.9605 0.0046 258.3248)); color-scheme: light; }
+      html.preauth-shell { background: #181818; }
+      body { margin: 0; }
+      /* Keep document surfaces opaque during reload and app bootstrap. */
+      html, body, #root { height: 100%; }
+      body, #root { background: inherit; }
+    </style>
     <script>
       (function () {
         try {
           var stored = localStorage.getItem("supertale-app");
-          var theme = "system";
+          var theme = "dark";
           if (stored) {
             var parsed = JSON.parse(stored);
-            if (parsed && parsed.state && parsed.state.theme) {
+            if (parsed && parsed.state && ["dark", "light", "system"].indexOf(parsed.state.theme) !== -1) {
               theme = parsed.state.theme;
             }
           }

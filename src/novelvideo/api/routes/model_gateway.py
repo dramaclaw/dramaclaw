@@ -53,7 +53,11 @@ from novelvideo.service_operation_gate import (
     require_legacy_local_service_operation,
 )
 from novelvideo.shared.runtime_env import is_ce_effective
-from novelvideo.media_model_request_schema import validate_media_model_catalog_config
+from novelvideo.media_model_request_schema import (
+    MEDIA_MODEL_CATALOG_TYPES,
+    default_media_model_request,
+    validate_media_model_catalog_config,
+)
 from novelvideo.newapi_provisioner import (
     build_channel_payload,
     build_provisioner_status,
@@ -421,21 +425,12 @@ def _build_media_model_channel_specs(
                 media_type = "audio"
             else:
                 media_type = "video"
-        if media_type not in {"image", "video", "audio"}:
+        if media_type not in MEDIA_MODEL_CATALOG_TYPES:
             raise ValueError(f"invalid mediaType for media model {model}")
         model_config = dict(item.config)
-        model_config.setdefault(
-            "request",
-            {
-                "endpoint": {
-                    "image": "images/generations",
-                    "video": "video/generations",
-                    "audio": "audio/speech",
-                }[media_type],
-                "parameters": [],
-            },
-        )
-        validate_media_model_catalog_config(model_config, media_type)
+        if media_type in MEDIA_MODEL_CATALOG_TYPES:
+            model_config.setdefault("request", default_media_model_request(media_type))
+            validate_media_model_catalog_config(model_config, media_type)
         grouped.setdefault(provider, {})[model] = upstream_model
         normalized[model] = {
             "provider": provider,

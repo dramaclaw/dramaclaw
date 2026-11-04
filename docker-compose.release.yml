@@ -28,6 +28,10 @@ services:
       DRAMACLAW_CHAT_BACKEND: "${DRAMACLAW_CHAT_BACKEND:-codex}"
       HERMES_CLI_PATH: /usr/local/bin/hermes
       SUPERTALE_ALLOW_UNSANDBOXED: "1"
+      # OpenFilm binds inside the API container's loopback namespace, which the host browser cannot
+      # reach. Keep the original timeline editor in Compose deployments until an authenticated proxy
+      # is available; source-local scripts/start-ce.sh uses the .env.example default instead.
+      SUPERTALE_OPENFILM_STUDIO_ENABLED: "0"
       # 运行时用哪个网关由应用设置（settings.db 的 model_gateway_mode）决定，CE 的网关路由不回退到 env；
       # NEWAPI_BASE_URL 只是兜底，默认官方地址，与桌面版 main.js 一致。
       NEWAPI_BASE_URL: "${NEWAPI_BASE_URL:-https://relayclaw.cdnfg.com/v1}"

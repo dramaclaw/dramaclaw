@@ -1,0 +1,185 @@
+diff --git a/packages/openfilm/studio/server/captions.mjs b/packages/openfilm/studio/server/captions.mjs
+index 3562bca..f0426d0 100644
+--- a/packages/openfilm/studio/server/captions.mjs
++++ b/packages/openfilm/studio/server/captions.mjs
+@@ -329,7 +329,7 @@ function wordsOfLines(lines) {
+   });
+ }
+ 
+-export const CONNECT_TRANSLATOR = 'Connect a service that translates in Studio: Settings (the OpenFilm logo at the top left) → Providers.';
++export const CONNECT_TRANSLATOR = 'Connect a service that translates in Studio: Settings (the gear at the top left) → Providers.';
+ 
+ /**
+  * Translate the film's voices into `language` (one of FILM_SUBTITLE_LANGUAGES): each source heard in the film that has
+@@ -386,7 +386,7 @@ export async function translateFilmSubtitles(root, language, options) {
+  * @typedef {(root: string, src: string, signal: AbortSignal) => Promise<void>} Transcribe
+  */
+ 
+-export const CONNECT_TRANSCRIBER = 'Connect a service that transcribes in Studio: Settings (the OpenFilm logo at the top left) → Providers.';
++export const CONNECT_TRANSCRIBER = 'Connect a service that transcribes in Studio: Settings (the gear at the top left) → Providers.';
+ 
+ /**
+  * The subtitle routes under /api/projects/:id/ (`rest` is the part after it). Returns whether it answered.
+diff --git a/packages/openfilm/studio/server/diagnostics.mjs b/packages/openfilm/studio/server/diagnostics.mjs
+index 28c93dc..239a084 100644
+--- a/packages/openfilm/studio/server/diagnostics.mjs
++++ b/packages/openfilm/studio/server/diagnostics.mjs
+@@ -106,7 +106,7 @@ export async function codexLogAround(dir, times) {
+ /** A name for the file, by the time: `OpenFilm diagnostics 2026-10-18 1013.zip`. @param {Date} now */
+ export function diagnosticsName(now) {
+   const pad = (/** @type {number} */ n) => String(n).padStart(2, '0');
+-  return `OpenFilm diagnostics ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}${pad(now.getMinutes())}.zip`;
++  return `Dramaclaw diagnostics ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}${pad(now.getMinutes())}.zip`;
+ }
+ 
+ /**
+diff --git a/packages/openfilm/studio/server/fetch-github.mjs b/packages/openfilm/studio/server/fetch-github.mjs
+index 3282f41..a0412ea 100644
+--- a/packages/openfilm/studio/server/fetch-github.mjs
++++ b/packages/openfilm/studio/server/fetch-github.mjs
+@@ -49,7 +49,7 @@ const pause = (ms, signal) => new Promise((done) => {
+ async function request(url, { signal, accept }) {
+   for (let tries = 1; ; tries++) {
+     try {
+-      return await fetch(url, { signal, headers: { accept: accept ?? 'application/vnd.github+json', 'user-agent': 'OpenFilm-Studio' } });
++      return await fetch(url, { signal, headers: { accept: accept ?? 'application/vnd.github+json', 'user-agent': 'Dramaclaw-Studio' } });
+     } catch (e) {
+       if (signal?.aborted) throw e;
+       if (tries >= TRIES) throw new FetchError('Could not reach GitHub: check your internet connection.', 502, 'network');
+diff --git a/packages/openfilm/studio/server/fetch-repo.mjs b/packages/openfilm/studio/server/fetch-repo.mjs
+index 26d04d3..1c4fe77 100644
+--- a/packages/openfilm/studio/server/fetch-repo.mjs
++++ b/packages/openfilm/studio/server/fetch-repo.mjs
+@@ -254,7 +254,7 @@ export async function fetchFilm(source, { library, onProgress = () => {}, signal
+   const notThere = (/** @type {string[]} */ folder) => {
+     const place = folder.length ? `“${folder.join('/')}”` : 'that repository';
+     return skill ? new FetchError(`There is no ${SKILL_FILE} in ${place}: it is not a skill.`, 422, 'no-skill')
+-      : new FetchError(`There is no film.html in ${place}: it is not an OpenFilm film.`, 422, 'no-film');
++      : new FetchError(`There is no film.html in ${place}: it is not a Dramaclaw film.`, 422, 'no-film');
+   };
+   const tooBig = () => new FetchError(`It is bigger than ${Math.max(1, Math.round(maxBytes / 1024 / 1024))} MB, so it was stopped.`, 413, 'too-big');
+   /** @type {FetchProgress} */
+diff --git a/packages/openfilm/studio/server/get.mjs b/packages/openfilm/studio/server/get.mjs
+index f6fbac5..3c646cf 100644
+--- a/packages/openfilm/studio/server/get.mjs
++++ b/packages/openfilm/studio/server/get.mjs
+@@ -129,7 +129,7 @@ export const VERBS = /** @type {Record<string, VerbSpec>} */ ({
+ export const WEB_VERBS = ['web-search', 'web-fetch'];
+ 
+ /** Where the person connects a service and picks its models, said the same way everywhere. */
+-export const WHERE_TO_CONNECT = 'In Studio, the OpenFilm logo at the top left opens Settings: connect a service under Providers, '
++export const WHERE_TO_CONNECT = 'In Studio, the gear at the top left opens Settings: connect a service under Providers, '
+   + 'with the person\'s own key, then choose the model for each kind of media under Services.';
+ /** The services that make `verb`, by name: "fal.ai, Google or OpenAI". @param {string} verb */
+ const makers = (verb) => {
+@@ -147,7 +147,7 @@ const nothing = () => 'Nothing is connected for media here: each kind works only
+   + `\`openfilm get <what> --help\` shows what one kind takes (${Object.keys(VERBS).filter((v) => !WEB_VERBS.includes(v) && offered(v)).join(', ')}).`;
+ 
+ /** What `call` says when the person has added no service of their own. */
+-const NO_OWN_SERVICES = 'The person has added no services of their own. In Studio, the OpenFilm logo at the top left opens Settings: '
++const NO_OWN_SERVICES = 'The person has added no services of their own. In Studio, the gear at the top left opens Settings: '
+   + 'they add one under Providers (its address, its key if it takes one, and what it does).';
+ 
+ /** Each kind of media, in words (finding voices is part of voice-over). */
+diff --git a/packages/openfilm/studio/server/history-store.mjs b/packages/openfilm/studio/server/history-store.mjs
+index b0a484d..e9a47d2 100644
+--- a/packages/openfilm/studio/server/history-store.mjs
++++ b/packages/openfilm/studio/server/history-store.mjs
+@@ -63,8 +63,8 @@ const gitEnv = (/** @type {string} */ root, /** @type {string} */ gitDir, /** @t
+   ...process.env,
+   GIT_DIR: gitDir,
+   GIT_WORK_TREE: root,
+-  GIT_AUTHOR_NAME: 'OpenFilm Studio', GIT_AUTHOR_EMAIL: 'studio@openfilm.local',
+-  GIT_COMMITTER_NAME: 'OpenFilm Studio', GIT_COMMITTER_EMAIL: 'studio@openfilm.local',
++  GIT_AUTHOR_NAME: 'Dramaclaw Studio', GIT_AUTHOR_EMAIL: 'studio@dramaclaw.local',
++  GIT_COMMITTER_NAME: 'Dramaclaw Studio', GIT_COMMITTER_EMAIL: 'studio@dramaclaw.local',
+   GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0',
+   ...extra,
+ });
+diff --git a/packages/openfilm/studio/server/main.mjs b/packages/openfilm/studio/server/main.mjs
+index 5292b1a..cc18b6f 100644
+--- a/packages/openfilm/studio/server/main.mjs
++++ b/packages/openfilm/studio/server/main.mjs
+@@ -80,7 +80,7 @@ try {
+   console.error(e);
+   process.exit(1);
+ }
+-console.log(`OpenFilm Studio · ${studio.origin}`);
++console.log(`Dramaclaw Studio · ${studio.origin}`);
+ process.on('SIGINT', stop);
+ process.on('SIGTERM', stop);
+ 
+diff --git a/packages/openfilm/studio/server/providers/common.mjs b/packages/openfilm/studio/server/providers/common.mjs
+index 0b8185c..c4523f0 100644
+--- a/packages/openfilm/studio/server/providers/common.mjs
++++ b/packages/openfilm/studio/server/providers/common.mjs
+@@ -26,7 +26,7 @@ export async function call(service, url, init, ctx) {
+   if (res.ok) return res;
+   const text = await res.text().catch(() => '');
+   if (outOfBalance(res.status, text)) throw noBalance(service);
+-  if (res.status === 401 || res.status === 403) throw new Error(`${service} did not accept your key (${res.status}). Check it in Studio: Settings (the OpenFilm logo at the top left) → Providers.`);
++  if (res.status === 401 || res.status === 403) throw new Error(`${service} did not accept your key (${res.status}). Check it in Studio: Settings (the gear at the top left) → Providers.`);
+   const reason = reasonOf(text).split(ctx.key).join('•••').slice(0, 500);
+   throw new Error(`${service} answered ${res.status}${reason ? `: ${reason}` : ''}`);
+ }
+diff --git a/packages/openfilm/studio/server/providers/index.mjs b/packages/openfilm/studio/server/providers/index.mjs
+index 032ddb4..f8d55cc 100644
+--- a/packages/openfilm/studio/server/providers/index.mjs
++++ b/packages/openfilm/studio/server/providers/index.mjs
+@@ -51,7 +51,7 @@ async function named(id, verb, settings, strict) {
+   const fail = (/** @type {string} */ why) => { if (strict) throw new Error(why); return null; };
+   if (!provider) return fail(`There is no provider "${id}": use ${OWN.map((p) => p.id).join(', ')}.`);
+   if (!provider.verbs.includes(verb)) return fail(`${provider.name} does not do ${verb}.`);
+-  if (!providerKey(provider, settings)) return fail(`There is no ${provider.name} key: add one in Studio (the OpenFilm logo at the top left opens Settings → Providers) or set ${provider.env}.`);
++  if (!providerKey(provider, settings)) return fail(`There is no ${provider.name} key: add one in Studio (the gear at the top left opens Settings → Providers) or set ${provider.env}.`);
+   return provider;
+ }
+ 
+diff --git a/packages/openfilm/studio/server/providers/pixabay.mjs b/packages/openfilm/studio/server/providers/pixabay.mjs
+index 8b8c8bd..19b8119 100644
+--- a/packages/openfilm/studio/server/providers/pixabay.mjs
++++ b/packages/openfilm/studio/server/providers/pixabay.mjs
+@@ -41,7 +41,7 @@ export default {
+     const base = serviceUrl('PIXABAY', 'https://pixabay.com');
+     /* a key it does not take is a 400, said like any refused key */
+     const res = await call(NAME, `${base}/api/?${query}`, {}, ctx).catch((e) => {
+-      throw /Invalid or missing API key/i.test(e.message) ? new Error(`${NAME} did not accept your key. Check it in Studio: Settings (the OpenFilm logo at the top left) → Providers.`) : e;
++      throw /Invalid or missing API key/i.test(e.message) ? new Error(`${NAME} did not accept your key. Check it in Studio: Settings (the gear at the top left) → Providers.`) : e;
+     });
+     const body = /** @type {any} */ (await res.json());
+     const hits = (Array.isArray(body?.hits) ? body.hits : []).flatMap((/** @type {any} */ h) => {
+diff --git a/packages/openfilm/studio/server/providers/web.mjs b/packages/openfilm/studio/server/providers/web.mjs
+index 6d89026..fd1b74b 100644
+--- a/packages/openfilm/studio/server/providers/web.mjs
++++ b/packages/openfilm/studio/server/providers/web.mjs
+@@ -161,7 +161,7 @@ export async function readPage(url, ctx) {
+     let res;
+     try {
+       res = await fetch(at, { redirect: 'manual', signal: ctx.signal, headers: {
+-        accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5', 'user-agent': 'Mozilla/5.0 (compatible; OpenFilm)',
++        accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5', 'user-agent': 'Mozilla/5.0 (compatible; Dramaclaw)',
+       } });
+     } catch (e) {
+       if (ctx.signal.aborted) throw e;
+diff --git a/packages/openfilm/studio/server/server.mjs b/packages/openfilm/studio/server/server.mjs
+index d798d10..5bd1575 100644
+--- a/packages/openfilm/studio/server/server.mjs
++++ b/packages/openfilm/studio/server/server.mjs
+@@ -208,7 +208,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+       if (whenIdle && exports.busy()) return json(res, 409, { error: 'an export is running' });
+       if (whenIdle && making) return json(res, 409, { error: 'media is being made' });
+       /* not busy, but kept (423, not 409: the app asks its own Studio whether it is busy this way) */
+-      if (stays) return json(res, 423, { error: 'it is the OpenFilm app\'s, which keeps it' });
++      if (stays) return json(res, 423, { error: 'it is the Dramaclaw app\'s, which keeps it' });
+       json(res, 200, { pages: editorPages.size });
+       setImmediate(() => (onQuit ?? (() => { void studio.close(); }))());
+       return;
+@@ -1124,7 +1124,7 @@ function sendEditor(/** @type {Res} */ res, /** @type {string} */ dir, /** @type
+   const page = join(root, 'index.html');
+   /* no referrer: the page's address holds the key, and a link it opens must not carry it to another site */
+   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', ...headers });
+-  res.end(existsSync(page) ? readFileSync(page) : '<!doctype html><meta charset="utf-8"><title>OpenFilm Studio</title><p>The editor is not built: run <code>npm run build:ui</code>.</p>');
++  res.end(existsSync(page) ? readFileSync(page) : '<!doctype html><meta charset="utf-8"><title>Dramaclaw Studio</title><p>The editor is not built: run <code>npm run build:ui</code>.</p>');
+ }
+ 
+ /** A file in the system's file manager, selected. */

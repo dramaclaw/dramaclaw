@@ -1,0 +1,119 @@
+{
+  "description": "visit-count",
+  "story": {
+    "schema_version": "story_draft.v2",
+    "story_id": "visit-count",
+    "title": "visit-count",
+    "start_segment_id": "start",
+    "segments": [
+      {
+        "id": "start",
+        "title": "start",
+        "script": "start",
+        "media": {
+          "source": "imported",
+          "url": "start.mp4",
+          "status": "ready"
+        }
+      },
+      {
+        "id": "end",
+        "title": "end",
+        "script": "end",
+        "media": {
+          "source": "imported",
+          "url": "end.mp4",
+          "status": "ready"
+        },
+        "kind": "ending",
+        "ending_label": "END"
+      }
+    ],
+    "choices": [
+      {
+        "id": "again",
+        "source_segment_id": "start",
+        "target_segment_id": "start",
+        "order": 0,
+        "mode": "visible",
+        "text": "again",
+        "condition": {
+          "kind": "visited",
+          "segment_id": "start",
+          "operator": "<",
+          "value": 2
+        }
+      },
+      {
+        "id": "finish",
+        "source_segment_id": "start",
+        "target_segment_id": "end",
+        "order": 1,
+        "mode": "visible",
+        "text": "finish",
+        "condition": {
+          "kind": "visited",
+          "segment_id": "start",
+          "operator": ">=",
+          "value": 2
+        }
+      }
+    ],
+    "variables": [],
+    "flags": []
+  },
+  "expectedIssues": [],
+  "playthroughs": [
+    {
+      "choices": [
+        "again"
+      ],
+      "expectedSegments": [
+        "start",
+        "start"
+      ],
+      "expectedVariables": {},
+      "expectedChoices": [
+        "finish"
+      ]
+    },
+    {
+      "choices": [
+        "again",
+        "finish"
+      ],
+      "expectedSegments": [
+        "start",
+        "start",
+        "end"
+      ],
+      "expectedVariables": {}
+    },
+    {
+      "choices": [
+        "again",
+        "finish"
+      ],
+      "expectedSegments": [
+        "start",
+        "start",
+        "end"
+      ],
+      "expectedVariables": {},
+      "restoreBeforeChoice": 0
+    },
+    {
+      "choices": [
+        "again",
+        "finish"
+      ],
+      "expectedSegments": [
+        "start",
+        "start",
+        "end"
+      ],
+      "expectedVariables": {},
+      "restoreBeforeChoice": 1
+    }
+  ]
+}

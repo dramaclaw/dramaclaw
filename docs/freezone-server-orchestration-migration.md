@@ -1,7 +1,7 @@
 # Freezone 服务端编排迁移决策
 
-状态：Proposed  
-目标分支：staging  
+状态：Proposed
+目标分支：staging
 关联：#557、#558、#559
 
 ## 决策摘要

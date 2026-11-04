@@ -380,7 +380,6 @@ function useScriptStorySubmit(
 export const ScriptNode = memo(({ id, data, selected, width, height }: ScriptNodeProps) => {
   const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   // Subscribe to ONLY one-hop upstream (not the whole nodes array) so unrelated
@@ -618,7 +617,6 @@ export const ScriptNode = memo(({ id, data, selected, width, height }: ScriptNod
     <div
       className="group relative h-full w-full overflow-visible"
       style={{ width: resolvedWidth, height: resolvedHeight }}
-      onClick={() => setSelectedNode(id)}
     >
       <Handle
         type="target"

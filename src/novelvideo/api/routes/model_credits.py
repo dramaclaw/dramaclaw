@@ -533,6 +533,38 @@ def freezone_image_reverse_prompt_task_billing(params: dict) -> dict:
     }
 
 
+def freezone_image_to_blockout_billing_params(params: dict) -> dict:
+    """Resolve model metadata for image-to-blockout quotes and reservations.
+
+    一次任务计一次，与模型重试了几轮无关。
+    """
+    from novelvideo.director_world.blockout.generation_agent import (
+        resolve_blockout_model,
+    )
+
+    resolved = dict(params)
+    if not str(resolved.get("pricing_model") or "").strip():
+        resolved.update(
+            {
+                "pricing_kind": "text",
+                "pricing_model": resolve_blockout_model(resolved.get("model")),
+                "pricing_params": {},
+            }
+        )
+    return {
+        **resolved,
+        "pricing_quantity": 1,
+        "pricing_metrics": {"call_count": 1, "item_count": 1},
+    }
+
+
+def freezone_image_to_blockout_task_billing(params: dict) -> dict:
+    return {
+        "feature_key": "freezone.image_to_blockout",
+        **freezone_image_to_blockout_billing_params(params),
+    }
+
+
 FREEZONE_IMAGE_FEATURE_KEYS = {
     "freezone.image_generate",
     "freezone.image_panorama",
@@ -666,6 +698,8 @@ def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> 
         return freezone_audio_music_billing_params(params)
     if feature_key == "freezone.image_reverse_prompt":
         return freezone_image_reverse_prompt_billing_params(params)
+    if feature_key == "freezone.image_to_blockout":
+        return freezone_image_to_blockout_billing_params(params)
     if feature_key == "mainline.style_analysis":
         if str(params.get("pricing_model") or "").strip():
             return params

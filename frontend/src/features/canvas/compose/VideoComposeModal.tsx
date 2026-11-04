@@ -59,6 +59,7 @@ import {
 import { awaitTaskCompletion, isTaskPollTimeoutError } from "@/api/tasks";
 import { notifyTaskStillRunning } from "@/features/canvas/application/errorDialog";
 import { useViewerImmersiveBody } from "@/features/viewer-kit/useViewerImmersiveBody";
+import { mediaDurationMs } from "@/lib/media-duration";
 import {
   getCachedAudioPeaks,
   loadAudioPeaks,
@@ -188,8 +189,7 @@ function probeMediaDuration(
     el.addEventListener(
       "loadedmetadata",
       () => {
-        const d = el.duration;
-        done(Number.isFinite(d) && d > 0 ? Math.round(d * 1000) : null);
+        done(mediaDurationMs(el.duration));
       },
       { once: true },
     );
@@ -454,6 +454,21 @@ export function reconcileDraftWithUpstream(
   }
   // 视频轨补位，保持无缝。
   return compactVideoTracks({ ...draft, tracks });
+}
+
+/**
+ * 打开合成编辑器时的时间线来源：有草稿用草稿校正上游，没有则从上游新建；
+ * 未知时长在提交前统一探测。入口节点和整页工作区共用这一条路径。
+ */
+export async function resolveComposeTimeline(
+  draft: ComposeTimelineState | null | undefined,
+  seedNodeIds: string[],
+): Promise<ComposeTimelineState> {
+  return resolveUnknownClipDurations(
+    draft?.tracks?.length
+      ? reconcileDraftWithUpstream(draft, seedNodeIds)
+      : buildInitialTimeline(seedNodeIds),
+  );
 }
 
 /**

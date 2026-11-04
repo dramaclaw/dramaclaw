@@ -1,0 +1,8 @@
+# Reviewed false positives: these two historical lines contain delivery consumer labels,
+# not credentials. Keep exemptions specific to the exact commits/files/lines.
+87eb490b625f254e213abe7f9bf0e88c077e1582:scripts/benchmark_canvas_command_health.py:generic-api-key:87
+e3763203d17c04c45b6e068c8060c8f04d264dd1:src/novelvideo/api/routes/chat.py:generic-api-key:3159
+
+# The same reviewed consumer labels reappear in this staging merge diff.
+000671a4da313febce828f0fbc008ef438dc331b:scripts/benchmark_canvas_command_health.py:generic-api-key:87
+000671a4da313febce828f0fbc008ef438dc331b:src/novelvideo/api/routes/chat.py:generic-api-key:3162
