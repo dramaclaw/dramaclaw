@@ -4274,6 +4274,22 @@ def test_freezone_adds_independent_workflow_mcp_without_changing_default():
     }
 
 
+@pytest.mark.parametrize("prompt", [
+    "确认现有草稿 workflow_draft_abc123 revision 2，执行最终版本。",
+    "确认现有工作流草稿并执行最终版本。",
+    "Confirm the existing workflow draft workflow_draft_abc123 revision 2 and execute it.",
+])
+def test_freezone_existing_draft_confirmation_can_reach_confirmation_tool(prompt):
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas", prompt=prompt)
+
+    assert set(servers) == {"dramaclaw"}
+    tools = servers["dramaclaw"]["enabled_tools"]
+    assert "freezone_get_workflow" in tools
+    assert "freezone_confirm_workflow_draft" in tools
+    assert "freezone_prepare_workflow_plan_draft" not in tools
+    assert "freezone_patch_workflow_draft" not in tools
+
+
 def test_freezone_existing_execution_uses_focused_mcp_tools():
     servers = chat_service._dramaclaw_mcp_servers(
         "freezone_canvas",
@@ -4282,6 +4298,7 @@ def test_freezone_existing_execution_uses_focused_mcp_tools():
 
     assert set(servers) == {"dramaclaw"}
     assert servers["dramaclaw"]["enabled_tools"] == [
+        "freezone_confirm_workflow_draft",
         "freezone_get_canvas_ontology",
         "freezone_get_node_action_catalog",
         "freezone_get_node_detail",
@@ -4750,7 +4767,8 @@ def test_codex_mcp_config_renders_enabled_tools():
     overrides = chat_service._codex_mcp_config_overrides(servers)
 
     assert (
-        'mcp_servers.dramaclaw.enabled_tools=["freezone_get_canvas_ontology",'
+        'mcp_servers.dramaclaw.enabled_tools=["freezone_confirm_workflow_draft",'
+        '"freezone_get_canvas_ontology",'
         '"freezone_get_node_action_catalog","freezone_get_node_detail",'
         '"freezone_get_workflow","freezone_observe_workflow_run",'
         '"freezone_request_user_clarification","freezone_run_node_action",'
