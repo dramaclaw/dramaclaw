@@ -13,6 +13,87 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 
+class _TaskMetadataWriter:
+    def update_task_metadata_for_project(self, *args, metadata, expected_task_id, **kwargs):
+        task = self.get_task_for_project(*args, **kwargs)
+        if task is None or task.task_id != expected_task_id:
+            return False
+        task.metadata.update(metadata)
+        return True
+
+
+def _task_batch(ctx, keys, tasks):
+    from novelvideo.task_identity import project_task_state_key
+
+    return {
+        key: task
+        for task in tasks
+        if (
+            key := project_task_state_key(
+                task.task_type,
+                ctx.project_id,
+                task.episode,
+                beat_num=task.beat_num,
+                scope=task.scope,
+            )
+        )
+        in keys
+    }
+
+
+async def test_overlapping_list_requests_authorize_separately_and_share_only_maintenance(
+    monkeypatch, tmp_path
+):
+    import asyncio
+    from novelvideo.api.routes import freezone
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    authorized = []
+    maintained = []
+
+    async def resolve(project, user, **_kwargs):
+        authorized.append(user["id"])
+        if user["id"] == "denied":
+            raise HTTPException(403, "forbidden")
+        return (
+            SimpleNamespace(project_id=project, state_dir=tmp_path),
+            "alice",
+            "demo",
+            tmp_path,
+            str(tmp_path),
+        )
+
+    async def maintain(**_kwargs):
+        maintained.append(True)
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(freezone, "_resolve_freezone_project", resolve)
+    monkeypatch.setattr(freezone, "_maintain_canvas_workflow_runs", maintain)
+    monkeypatch.setattr(
+        freezone, "list_workflow_runs", lambda **kwargs: [{"limit": kwargs["limit"]}]
+    )
+    first = asyncio.create_task(
+        freezone.get_canvas_workflow_runs("project", "default", 1, {"id": "one"})
+    )
+    await entered.wait()
+    second = asyncio.create_task(
+        freezone.get_canvas_workflow_runs("project", "default", 2, {"id": "two"})
+    )
+    await asyncio.sleep(0)
+    with pytest.raises(HTTPException) as caught:
+        await freezone.get_canvas_workflow_runs(
+            "project", "default", 1, {"id": "denied"}
+        )
+    assert caught.value.status_code == 403
+    release.set()
+    responses = await asyncio.gather(first, second)
+    assert responses[0]["data"]["runs"] == [{"limit": 1}]
+    assert responses[1]["data"]["runs"] == [{"limit": 2}]
+    assert authorized == ["one", "two", "denied"]
+    assert len(maintained) == 1
+
+
 def _valid_draft_compiled() -> dict:
     return {
         "ok": True,
@@ -961,6 +1042,9 @@ class _MediaTasks:
             def list_tasks_for_project(self, _ctx):
                 return list(outer.tasks.values())
 
+            def get_tasks_for_project(self, ctx, keys, **_kwargs):
+                return _task_batch(ctx, keys, outer.tasks.values())
+
         class TaskBackend:
             async def enqueue_project_task(self, _ctx, *, scope, **_kwargs):
                 outer.enqueued.append(scope)
@@ -1677,7 +1761,7 @@ async def test_late_recipe_compile_receipt_reconciles_timed_out_task(
             settlements.add((reservation_id, action))
             return {"status": "completed", "action": action}
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -1734,7 +1818,7 @@ async def test_late_recipe_compile_receipt_reconciles_timed_out_task(
     assert len(completions) == 1
     assert completions[0]["metadata"]["settlement_status"] == "reconciled"
     assert attempts == [("original-reservation", "confirm")] * (
-        4 if settlement_fails_once else 2
+        2 if settlement_fails_once else 1
     )
     assert settlements == {("original-reservation", "confirm")}
 
@@ -1796,7 +1880,7 @@ async def test_settlement_failure_preserves_successful_recipe_response(
         ):
             reviews.append((reservation_id, metadata))
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -2364,7 +2448,7 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
             assert metadata["source"] == "agent_product_late_delivery"
             return {"status": settlement_status}
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -2406,7 +2490,7 @@ async def test_failed_workflow_delivery_terminalizes_waiting_task(monkeypatch) -
     )
     failures: list[dict] = []
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -2465,7 +2549,7 @@ async def test_late_agent_product_delivery_waits_for_durable_confirmation(
         async def settle_feature_credit_reservation(self, *_args, **_kwargs):
             return settlement_result
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -2521,7 +2605,7 @@ async def test_late_agent_product_delivery_does_not_claim_failed_task_reconciled
             settlements.append(reservation_id)
             return {"status": "completed"}
 
-    class Manager:
+    class Manager(_TaskMetadataWriter):
         def get_task_for_project(self, *_args, **_kwargs):
             return task
 
@@ -3235,7 +3319,12 @@ def test_workflow_run_list_reconciles_completed_project_task(
     monkeypatch.setattr(
         freezone,
         "get_task_manager",
-        lambda: SimpleNamespace(list_tasks_for_project=lambda _ctx: [task]),
+        lambda: SimpleNamespace(
+            list_tasks_for_project=lambda _ctx: [task],
+            get_tasks_for_project=lambda ctx, keys, **_kwargs: _task_batch(
+                ctx, keys, [task]
+            ),
+        ),
     )
 
     runs = workflow_run_client.get(base).json()["data"]["runs"]
@@ -3361,6 +3450,7 @@ def test_recipe_result_does_not_use_media_task_id_as_model_evidence(
         "get_task_manager",
         lambda: SimpleNamespace(
             list_tasks_for_project=lambda _ctx: [media_task],
+            get_tasks_for_project=lambda ctx, keys, **_kwargs: _task_batch(ctx, keys, [media_task]),
             get_task_for_project=lambda *_args, **_kwargs: None,
         ),
     )
@@ -3467,6 +3557,7 @@ def test_direct_voice_recipe_result_is_delivered_from_completed_audio_task(
         "get_task_manager",
         lambda: SimpleNamespace(
             list_tasks_for_project=lambda _ctx: [media_task],
+            get_tasks_for_project=lambda ctx, keys, **_kwargs: _task_batch(ctx, keys, [media_task]),
             get_task_for_project=lambda *_args, **_kwargs: None,
         ),
     )
@@ -3523,11 +3614,19 @@ def test_direct_voice_recipe_result_is_delivered_from_completed_audio_task(
     assert asyncio.run(_run_freezone_agent_product_async(envelope, ctx)) == result
 
 
+@pytest.mark.parametrize(
+    "overload_stage",
+    [None, "settlement_task_read", "settlement_task_metadata", "settlement_task_complete"],
+)
+@pytest.mark.parametrize("post_settlement_failure", [None, "unavailable", "exception"])
 def test_cancelled_workflow_reconciles_late_recipe_media_result(
     workflow_run_client: TestClient,
     monkeypatch,
+    overload_stage: str | None,
+    post_settlement_failure: str | None,
 ) -> None:
     from novelvideo.api.routes import freezone
+    from novelvideo.api.workflow_reads import WorkflowReadBusy
     from novelvideo.freezone.agent_product_operations import (
         bind_agent_product_model_execution,
         read_agent_product_operation,
@@ -3573,6 +3672,7 @@ def test_cancelled_workflow_reconciles_late_recipe_media_result(
         "get_task_manager",
         lambda: SimpleNamespace(
             list_tasks_for_project=lambda _ctx: [],
+            get_tasks_for_project=lambda _ctx, _keys, **_kwargs: {},
             get_task_for_project=lambda *_args, **_kwargs: None,
         ),
     )
@@ -3592,14 +3692,81 @@ def test_cancelled_workflow_reconciles_late_recipe_media_result(
         result={"image_url": "https://cdn.example.test/late-image.png"},
         error=None,
     )
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+    )
+    product_task = SimpleNamespace(
+        task_id=operation["task_id"],
+        status="failed",
+        metadata={
+            "feature_credit_reservation_id": "original-reservation",
+            "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+        },
+    )
+    settlements = []
+    completions = []
+
+    class Meter:
+        async def settle_feature_credit_reservation(self, reservation_id, *, action, metadata):
+            settlements.append((reservation_id, action))
+            if product_task.status == "completed":
+                if post_settlement_failure == "unavailable":
+                    return {"status": "unavailable"}
+                if post_settlement_failure == "exception":
+                    raise RuntimeError("billing service unavailable")
+            return {"status": "completed", "action": action}
+
+    def complete_task(*_args, **kwargs):
+        assert kwargs["expected_task_id"] == product_task.task_id
+        completions.append(kwargs)
+        product_task.status = "completed"
+        product_task.metadata.update(kwargs["metadata"])
+        return True
+
+    def update_metadata(*_args, metadata, expected_task_id, **_kwargs):
+        assert expected_task_id == product_task.task_id
+        product_task.metadata.update(metadata)
+        return True
+
+    io = freezone.workflow_read_executor()
+    overloaded = overload_stage is not None
+
+    class OverloadedExecutor:
+        async def run(self, stage, function, *args, **kwargs):
+            if overloaded and stage == overload_stage:
+                raise WorkflowReadBusy()
+            return await io.run(stage, function, *args, **kwargs)
+
+    monkeypatch.setattr(freezone, "workflow_read_executor", OverloadedExecutor)
+    monkeypatch.setattr(freezone, "get_usage_meter", Meter)
     monkeypatch.setattr(
         freezone,
         "get_task_manager",
         lambda: SimpleNamespace(
             list_tasks_for_project=lambda _ctx: [media_task],
-            get_task_for_project=lambda *_args, **_kwargs: None,
+            get_tasks_for_project=lambda ctx, keys, **_kwargs: _task_batch(ctx, keys, [media_task]),
+            # Return fresh snapshots, as a persistent task store would. The
+            # next poll must use saved metadata rather than an in-memory flag.
+            get_task_for_project=lambda *_args, **_kwargs: deepcopy(product_task),
+            complete_task_for_project=complete_task,
+            update_task_metadata_for_project=update_metadata,
         ),
     )
+    if overloaded:
+        for _ in range(2):
+            busy = workflow_run_client.get(base)
+            assert busy.status_code == 503
+            assert busy.headers["Retry-After"] == "2"
+            saved = read_agent_product_operation(
+                project_dir=workflow_run_client.state_dir,
+                operation_id=operation_id,
+            )
+            assert saved["status"] == "delivered"
+            assert product_task.status == "failed"
+            assert completions == []
+        overloaded = False
+
     listed = workflow_run_client.get(base)
 
     assert listed.status_code == 200
@@ -3609,6 +3776,14 @@ def test_cancelled_workflow_reconciles_late_recipe_media_result(
     )
     assert operation["status"] == "delivered"
     assert operation["result_ref"]["id"] == "late-image-job"
+    assert workflow_run_client.get(base).status_code == 200
+    assert product_task.status == "completed"
+    assert product_task.metadata["settlement_status"] == "reconciled"
+    assert len(completions) == 1
+    assert settlements == [("original-reservation", "confirm")] * (
+        3 if overload_stage == "settlement_task_metadata" else 1
+    )
+    assert listed.json()["data"]["runs"][0]["status"] == "cancelled"
 
 
 @pytest.mark.parametrize(
@@ -3684,6 +3859,7 @@ def test_cancelled_workflow_recovers_completed_video_without_persisted_task_key(
         "get_task_manager",
         lambda: SimpleNamespace(
             list_tasks_for_project=lambda _ctx: [],
+            get_tasks_for_project=lambda _ctx, _keys, **_kwargs: {},
             get_task_for_project=lambda *_args, **_kwargs: None,
         ),
     )
@@ -3741,6 +3917,7 @@ def test_cancelled_workflow_recovers_completed_video_without_persisted_task_key(
         "get_task_manager",
         lambda: SimpleNamespace(
             list_tasks_for_project=lambda _ctx: tasks,
+            get_tasks_for_project=lambda ctx, keys, **_kwargs: _task_batch(ctx, keys, tasks),
             get_task_for_project=lambda *_args, **_kwargs: None,
         ),
     )

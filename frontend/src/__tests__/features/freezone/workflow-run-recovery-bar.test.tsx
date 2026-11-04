@@ -6,7 +6,10 @@ import {
   updateFreezoneWorkflowRun,
   type FreezoneWorkflowRun,
 } from "@/api/canvas";
-import { applyCanvasChatCommandsAsync } from "@/features/freezone/canvasChatCommands";
+import {
+  applyCanvasChatCommandsAsync,
+  FREEZONE_WORKFLOW_RUN_UPDATED_EVENT,
+} from "@/features/freezone/canvasChatCommands";
 import {
   recoverableWorkflowNodeIds,
   resumableWorkflowNodeIds,
@@ -98,6 +101,19 @@ describe("WorkflowRunRecoveryBar", () => {
       failedRun,
       new Set(["image-1", "video-1", "compose-1"]),
     )).toEqual(["video-1"]);
+  });
+
+  it("keeps recovery information when a refresh is temporarily unavailable", async () => {
+    render(<WorkflowRunRecoveryBar projectId="project-a" canvasId="canvas-a" />);
+    await screen.findByText("发现未完成的工作流");
+    vi.mocked(listFreezoneWorkflowRuns).mockRejectedValueOnce(new Error("busy"));
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(FREEZONE_WORKFLOW_RUN_UPDATED_EVENT, {
+        detail: { projectId: "project-a", canvasId: "canvas-a" },
+      }));
+    });
+    expect(listFreezoneWorkflowRuns).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("发现未完成的工作流")).toBeInTheDocument();
   });
 
   it("does not expose blocked downstream generation as another retry target", () => {
