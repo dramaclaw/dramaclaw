@@ -1506,6 +1506,58 @@ describe("useCanvasSync hydrate lifecycle", () => {
     hook.unmount();
   });
 
+  it("keeps recovered media autosaving when a protected refresh has the same revision", async () => {
+    const canvasId = "recovered_media_same_revision";
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [{
+        id: "image-a",
+        type: CANVAS_NODE_TYPES.upload,
+        position: { x: 0, y: 0 },
+        data: { isGenerating: true },
+      }],
+      edges: [],
+      revision: 3,
+    });
+    vi.mocked(putFreezoneCanvas).mockResolvedValue({ saved: true, revision: 4 });
+    const hook = renderHook(() => useCanvasSync("project-a", canvasId));
+    await waitFor(() => expect(hook.result.current.status).toBe("ready"));
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        useCanvasStore.getState().updateNodeData("image-a", {
+          imageUrl: "/static/recovered.png",
+          isGenerating: false,
+        });
+      });
+      await act(async () => {
+        expect(await refreshRemoteFreezoneCanvas("project-a", canvasId, {
+          protectUnsavedLocalEdits: true,
+        })).toBe(false);
+      });
+      expect(hook.result.current.status).not.toBe("conflict");
+      expect(useCanvasStore.getState().nodes[0].data).toMatchObject({
+        imageUrl: "/static/recovered.png",
+        isGenerating: false,
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(800);
+      });
+      expect(putFreezoneCanvas).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(putFreezoneCanvas).mock.calls[0][2]).toMatchObject({
+        base_revision: 3,
+        nodes: [expect.objectContaining({
+          id: "image-a",
+          data: expect.objectContaining({ imageUrl: "/static/recovered.png", isGenerating: false }),
+        })],
+      });
+      expect(hook.result.current.revision).toBe(4);
+      expect(hook.result.current.status).toBe("ready");
+    } finally {
+      hook.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("adopts consecutive Agent remote refreshes when normalized local state is fully saved", async () => {
     vi.mocked(getFreezoneCanvas).mockResolvedValue({
       nodes: [],
