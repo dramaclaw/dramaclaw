@@ -1011,6 +1011,11 @@ export function useCanvasSync(
           lastPersistedDraftSignatureRef.current == null ||
           localSignature !== lastPersistedDraftSignatureRef.current
         ) {
+          // An unchanged remote snapshot does not compete with local work.
+          // Keep that work and its pending autosave instead of replacing it.
+          if (revisionRef.current != null && remote.revision === revisionRef.current) {
+            return false;
+          }
           if (debounceTimerRef.current != null) {
             window.clearTimeout(debounceTimerRef.current);
             debounceTimerRef.current = null;
