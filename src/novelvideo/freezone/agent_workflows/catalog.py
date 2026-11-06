@@ -348,6 +348,13 @@ _DETERMINISTIC_SKILL_PLANNERS = {
             ["prop_assets", "frames"],
             ["frames", "video"],
         ],
+        # Director planning and detailed shot writing share the shots stage,
+        # but only the latter consumes the generated setting documents.
+        "recipe_input_edges": [
+            ["characters", "drama-shot-group-detail"],
+            ["scenes", "drama-shot-group-detail"],
+            ["props", "drama-shot-group-detail"],
+        ],
     },
 }
 
@@ -600,9 +607,23 @@ def skill_stage_blockers(
                 ),
             }
         )
-    for upstream, downstream in standard_skill_stage_edges(skill_id):
+    feeding_rules = [
+        (upstream, downstream, filled.get(downstream) or [], False)
+        for upstream, downstream in standard_skill_stage_edges(skill_id)
+    ]
+    profile = _DETERMINISTIC_SKILL_PLANNERS.get(skill_id) or {}
+    for upstream, recipe_id in profile.get("recipe_input_edges", []):
+        targets = [
+            _text(node.get("id"))
+            for node in nodes
+            if isinstance(node, dict)
+            and isinstance(node.get("data"), dict)
+            and isinstance(node["data"].get("workflowCatalog"), dict)
+            and node["data"]["workflowCatalog"].get("recipeId") == recipe_id
+        ]
+        feeding_rules.append((upstream, recipe_id, targets, True))
+    for upstream, downstream, targets, recipe_target in feeding_rules:
         sources = filled.get(upstream) or []
-        targets = filled.get(downstream) or []
         if not sources or not targets:
             continue  # a missing stage is reported above; an absent optional one is fine
         reached = _downstream_node_ids(set(sources), edges)
@@ -615,12 +636,16 @@ def skill_stage_blockers(
                 "code": "skill_stage_unused",
                 "message": (
                     f"Skill {skill_id} requires the {upstream} stage to feed the "
-                    f"{downstream} stage; {downstream} node(s) {', '.join(unfed)} do not "
+                    f"{downstream} {'Recipe' if recipe_target else 'stage'}; "
+                    f"{downstream} node(s) {', '.join(unfed)} do not "
                     f"consume any {upstream} node ({', '.join(sources)}) through a "
                     "consuming edge (dependency_for only orders execution)"
                 ),
                 "stage": upstream,
-                "downstream_stage": downstream,
+                "downstream_stage": (
+                    canonical_recipe_stage(skill_id, downstream) if recipe_target else downstream
+                ),
+                **({"recipe_id": downstream} if recipe_target else {}),
                 "node_ids": unfed,
                 "hint": (
                     f"Connect a {upstream} node to each listed {downstream} node (directly "
