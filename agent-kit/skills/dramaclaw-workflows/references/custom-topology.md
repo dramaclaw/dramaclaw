@@ -65,6 +65,8 @@ order) stays an agent-authored draft with the difference recorded in
    which actual upstream outputs/reference assets it must consume. Do not prewrite generated
    scripts, shot-by-shot storyboards, dialogue, or camera/sound details. Preserve user-supplied
    content and constraints; execution-time Recipe compilation produces the executable prompt.
+   If the selected Skill requires a concrete action brief at Draft review, include that brief
+   as a planning constraint now; this does not mean upstream production has already run.
    A confirmed visual style must reach each image/video node in its brief or through a consuming
    text edge; do not assume another node's unconnected brief or the Skill name will be included.
    Author semantic Plan fields only. Do not construct `canvas_chat_commands.v1` yourself: the graph
