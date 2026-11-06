@@ -148,6 +148,16 @@ to choose system voice versus custom voice. A speech node uses an already select
 completion. A plan that requires that speech as voice-over or composition input must not be ready
 until a valid `voiceRef` is bound.
 
+For an exact Plan, put audio settings inside `node.data`. Use the selected voice reference:
+`{"audioKind":"speech","voiceRef":{"scope":"user_custom","voiceId":"<selected ID>"}}`.
+`voice_ref` is also accepted; preparation normalizes the selection consistently with revision.
+Do not invent `voiceAvailable=true` or overwrite an explicit unavailable state. A missing or
+invalid selection must still stop required speech.
+For background music, set `{"audioKind":"music","text":"Instrumental background music"}`
+alongside the selected music Recipe in `data.workflowCatalog`. A music Recipe name alone does
+not set the node type; music needs no `voiceRef`. Read the custom-topology reference before
+submitting an exact Plan, including its node-data examples.
+
 Offer a recommended/default option so the user does not need to understand provider-specific
 fields. In either execution mode, do not draft, commit, approve, or run until the required
 clarification result returns. This is an explicit exception to a host's general rule not to ask about model

@@ -966,3 +966,24 @@ def test_generation_clarification_request_keeps_dotted_node_ids():
     assert request["missing_parameters"] == [
         {"node_id": "scene.1.shot.2", "node_type": "videoNode", "fields": ["durationSec"]},
     ]
+
+
+@pytest.mark.parametrize(('data', 'field'), [
+    ({'audioKind': 'speech'}, 'voiceRef.scope'),
+    ({'audioKind': 'speech', 'voiceAvailable': False,
+      'voiceRef': {'scope': 'user_custom', 'voiceId': 'chosen'}}, 'voiceAvailable'),
+    ({}, 'audioKind'),
+])
+def test_audio_preflight_names_the_missing_selection_or_music_field(data, field):
+    data = {**data, 'workflowCatalog': {'recipeId': 'general-audio',
+                                      'timelineRole': 'voiceover'}}
+    result = evaluate_workflow_preflight(
+        {'plan': {'nodes': [{'id': 'audio', 'node_type': 'audioNode', 'data': data}]}},
+        model_responses={}, limits={'ok': False}, runtime_available=False,
+    )
+    blocker = next(b for b in result['blockers'] if b['code'] == 'audio_voice_required')
+    assert field in blocker['message']
+    if field == 'audioKind':
+        assert 'music' in blocker['message']
+        assert 'does not require a voice' in blocker['message']
+        assert blocker['recovery'] == 'correct_audio_kind'

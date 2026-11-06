@@ -704,3 +704,77 @@ def test_revised_node_mode_confirmation_survives_later_revisions():
     video = again["compiled"]["plan"]["nodes"][1]["data"]
     assert video["genMode"] == "firstLastFrame"
     assert _mode_codes(again["compiled"]) == []
+
+
+def _exact_audio_plan():
+    plan = _exact_media_plan()
+    plan['skill'] = {'id': 'ecommerce-ad', 'version': 1}
+    plan['nodes'] = [{
+        'id': 'speech', 'node_type': 'audioNode',
+        'data': {
+            'text': 'A short narration.',
+            'voiceRef': {'scope': 'user_custom', 'voiceId': 'voice-selected'},
+            'workflowCatalog': {'recipeId': 'general-audio'},
+        },
+    }]
+    plan['edges'] = []
+    plan['expected_node_count'] = 1
+    plan['expected_node_counts'] = {'audioNode': 1}
+    return plan
+
+
+def test_exact_plan_selected_voice_is_ready_without_ui_availability_flag():
+    plan = _exact_audio_plan()
+    prepared = prepare_workflow_source({'plan': plan}, username='tester')
+    data = prepared['compiled']['plan']['nodes'][0]['data']
+    assert data['voiceRef'] == {'scope': 'user_custom', 'voiceId': 'voice-selected'}
+    assert data['voiceAvailable'] is True
+    assert 'voiceAvailable' not in plan['nodes'][0]['data']
+
+
+@pytest.mark.parametrize('voice_key', ['voiceRef', 'voice_ref'])
+def test_exact_plan_preserves_explicit_unavailable_voice(voice_key):
+    plan = _exact_audio_plan()
+    data = plan['nodes'][0]['data']
+    data[voice_key] = data.pop('voiceRef')
+    data['voiceAvailable'] = False
+    data['workflowCatalog']['timelineRole'] = 'voiceover'
+    prepared = prepare_workflow_source({'plan': plan}, username='tester')
+    compiled = prepared['compiled']
+    assert compiled['plan']['nodes'][0]['data']['voiceAvailable'] is False
+    preflight = evaluate_workflow_preflight(
+        compiled, model_responses={}, limits={'ok': False}, runtime_available=False,
+    )
+    assert any(b['code'] == 'audio_voice_required' for b in preflight['blockers'])
+
+
+@pytest.mark.parametrize('voice', [{}, {'scope': 'user_custom'},
+                                 {'scope': 'unknown', 'voiceId': 'voice-selected'}])
+def test_exact_plan_rejects_invalid_voice_reference(voice):
+    plan = _exact_audio_plan()
+    plan['nodes'][0]['data']['voiceRef'] = voice
+    with pytest.raises(WorkflowOperationError, match='voice_ref'):
+        prepare_workflow_source({'plan': plan}, username='tester')
+
+
+def test_exact_plan_rejects_conflicting_voice_aliases():
+    plan = _exact_audio_plan()
+    plan['nodes'][0]['data']['voice_ref'] = {'scope': 'user_custom', 'voiceId': 'other'}
+    with pytest.raises(WorkflowOperationError, match='conflicting voiceRef'):
+        prepare_workflow_source({'plan': plan}, username='tester')
+
+
+@pytest.mark.parametrize('kind', ['speech', 'music'])
+def test_exact_audio_without_selected_voice_does_not_gain_availability(kind):
+    plan = _exact_audio_plan()
+    data = plan['nodes'][0]['data']
+    data.update(audioKind=kind, voiceRef=None)
+    data['workflowCatalog']['timelineRole'] = 'voiceover'
+    prepared = prepare_workflow_source({'plan': plan}, username='tester')
+    compiled = prepared['compiled']
+    assert compiled['plan']['nodes'][0]['data'].get('voiceAvailable') is not True
+    preflight = evaluate_workflow_preflight(
+        compiled, model_responses={}, limits={'ok': False}, runtime_available=False,
+    )
+    audio_errors = [b for b in preflight['blockers'] if b['code'] == 'audio_voice_required']
+    assert bool(audio_errors) == (kind == 'speech')
