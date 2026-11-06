@@ -6902,6 +6902,16 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
         if answers_error is not None:
             return tool_result(answers_error)
         _apply_generation_choices_to_plan(source_plan, choices)
+    from novelvideo.freezone.workflow_transactions import (
+        WorkflowOperationError,
+        normalize_workflow_voice_selections,
+    )
+
+    try:
+        source_plan = normalize_workflow_voice_selections(source_plan)
+    except WorkflowOperationError as exc:
+        delivered = _delivered_workflow_draft_for_operation(args)
+        return tool_result(delivered if delivered is not None else exc.result)
     validated = validate_agent_workflow_plan(source_plan)
     if not validated.get("ok"):
         # One model turn can submit two plan variants concurrently under the

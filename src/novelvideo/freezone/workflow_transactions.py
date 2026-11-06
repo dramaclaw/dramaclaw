@@ -160,6 +160,41 @@ def _normalize_voice_ref(value: Any) -> dict[str, str]:
     return normalized
 
 
+def normalize_workflow_voice_selections(plan: dict) -> dict:
+    """Normalize explicit audio selections before either preparation entry's preflight."""
+    nodes = plan.get("nodes")
+    if not isinstance(nodes, list):
+        return plan
+    updates = {}
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict) or node.get("node_type") != "audioNode":
+            continue
+        data = node.get("data")
+        if not isinstance(data, dict):
+            continue
+        refs = [
+            _normalize_voice_ref(data[key])
+            for key in ("voiceRef", "voice_ref")
+            if key in data and data[key] is not None
+        ]
+        if not refs:
+            continue
+        if any(ref != refs[0] for ref in refs[1:]):
+            raise WorkflowOperationError("conflicting voiceRef and voice_ref")
+        normalized = deepcopy(data)
+        normalized.pop("voice_ref", None)
+        normalized["voiceRef"] = refs[0]
+        # An explicit unavailable state must still stop required speech.
+        normalized.setdefault("voiceAvailable", True)
+        updates[index] = normalized
+    if not updates:
+        return plan
+    result = deepcopy(plan)
+    for index, data in updates.items():
+        result["nodes"][index]["data"] = data
+    return result
+
+
 def bind_workflow_inputs(plan: dict, bindings: Any) -> dict:
     """Bind declared usages; creating a prompt bridge requires actual prompt text."""
     plan = deepcopy(plan)
@@ -341,7 +376,7 @@ def update_workflow_steps(plan: dict, updates: Any) -> dict:
 
 def _normalize_exact_plan_settings(plan: dict) -> dict:
     """Apply the documented step-setting aliases to an exact workflow Plan."""
-    normalized = deepcopy(plan)
+    normalized = deepcopy(normalize_workflow_voice_selections(plan))
     nodes = _node_index(normalized)
     plan_inputs = normalized.get("inputs")
     if not isinstance(plan_inputs, dict):
