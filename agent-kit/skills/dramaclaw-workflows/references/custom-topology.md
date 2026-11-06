@@ -45,6 +45,11 @@ order) stays an agent-authored draft with the difference recorded in
    `standard_planner.edges` lists which stage's output the next stage consumes (for example
    `shots` → `video`): every node of the downstream stage must be reachable from a node of the
    upstream stage through consuming edges (`prompt_for`, `context_for`, `media_input_for`, ...);
+   `standard_planner.recipe_input_edges` further scopes input requirements to a Recipe:
+   each `[source_stage, target_recipe_id]` pair requires every node using that Recipe to
+   consume the source stage's output, directly or through consuming intermediate nodes.
+   These pairs do not apply to other Recipes sharing the same stage. For example, short-drama
+   shot-group detail consumes character, scene, and prop settings; director shot planning does not.
    `dependency_for` only orders execution and does not count. A draft missing a required stage
    is not `ready`: its preflight reports
    `code="skill_stage_missing"` naming the stage; a stage node that nothing downstream consumes

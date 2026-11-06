@@ -5889,3 +5889,78 @@ def test_custom_short_drama_cannot_drop_requested_voiceover(monkeypatch):
     assert compiled["errors"][0]["path"] == "items"
     assert "no speech node" in compiled["error"]
     assert "Do not remove requested voiceover" in compiled["errors"][0]["hint"]
+
+
+def _short_drama_detail_plan(catalog):
+    compiled = catalog.compile_workflow_intent({
+        "skill_id": "short-drama-quick",
+        "user_goal": "Two shots in a photography studio",
+        "inputs": {"visual_style": "realistic"},
+        "planner": {"mode": "standard", "item_count": 2, "include_audio": False},
+    })
+    assert compiled["ok"], compiled
+    return copy.deepcopy(compiled["plan"])
+
+
+@pytest.mark.parametrize("source", ["characters", "scenes", "props"])
+@pytest.mark.parametrize("replacement", [None, "dependency_for"])
+def test_shot_detail_requires_setting_consumption(monkeypatch, source, replacement):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _short_drama_detail_plan(catalog)
+    plan.pop("planner", None)
+    target = "shot_plan_1"
+    original = next(e for e in plan["edges"] if e["source"] == source and e["target"] == target)
+    plan["edges"].remove(original)
+    if replacement:
+        plan["edges"].append({**original, "link_type": replacement})
+
+    result = catalog.validate_agent_workflow_plan(plan)
+    assert result["ok"], result
+    blockers = result["preflight"]["blockers"]
+    assert result["preflight"]["status"] == "blocked"
+    assert len(blockers) == 1, blockers
+    assert blockers[0]["stage"] == source
+    assert blockers[0]["recipe_id"] == "drama-shot-group-detail"
+    assert blockers[0]["node_ids"] == [target]
+
+    plan["edges"] = [e for e in plan["edges"] if not (e["source"] == source and e["target"] == target)]
+    plan["edges"].append(original)
+    assert catalog.validate_agent_workflow_plan(plan)["preflight"]["blockers"] == []
+
+
+def test_shot_detail_contract_preserves_planning_and_consuming_intermediates(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _short_drama_detail_plan(catalog)
+    # The director planning step only needs the outline. It shares the shots stage.
+    plan["nodes"].append({
+        "id": "director", "stage": "shots", "node_type": "textAnnotationNode",
+        "data": {"prompt": "Plan the shot groups", "workflowCatalog": {"recipeId": "drama-shot-planning"}},
+    })
+    plan["edges"].append({"source": "outline", "target": "director", "link_type": "context_for"})
+    plan["edges"].append({"source": "director", "target": "shot_plan_1", "link_type": "context_for"})
+    # Existing reachability semantics allow a consuming text intermediary.
+    plan["nodes"].append({
+        "id": "settings", "node_type": "textAnnotationNode",
+        "data": {"prompt": "Preserve the character settings", "workflowCatalog": {"recipeId": "general-text"}},
+    })
+    plan["edges"] = [e for e in plan["edges"] if not (e["source"] == "characters" and e["target"] == "shot_plan_1")]
+    plan["edges"].extend([
+        {"source": "characters", "target": "settings", "link_type": "context_for"},
+        {"source": "settings", "target": "shot_plan_1", "link_type": "context_for"},
+    ])
+    result = catalog.validate_agent_workflow_plan(plan)
+    assert result["ok"], result
+    assert result["preflight"]["blockers"] == []
+
+
+def test_compact_skill_publishes_shot_detail_input_contract(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    package = catalog.get_workflow_skill({"skill_id": "short-drama-quick", "compact": True})
+    assert package["planning_contract"]["standard_planner"]["recipe_input_edges"] == [
+        ["characters", "drama-shot-group-detail"],
+        ["scenes", "drama-shot-group-detail"],
+        ["props", "drama-shot-group-detail"],
+    ]
