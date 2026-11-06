@@ -969,6 +969,10 @@ async def test_plan_tool_publication_preserves_registry_and_other_tools(monkeypa
         "schema_version", "skill", "nodes", "edges"
     ]
 
+    # Keep the answer format visible even when a client drops nested schema prose.
+    assert 'option_ids' in tools[target].description
+    assert 'not display labels' in tools[target].description
+
     # MCP clients must not be able to alter the server's execution contract.
     tools[target].inputSchema["properties"]["plan"]["required"].clear()
     assert registry[target][0] == original[target]

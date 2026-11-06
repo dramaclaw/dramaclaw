@@ -11419,3 +11419,31 @@ def test_studio_tools_explain_a_missing_film(monkeypatch):
 
     assert result["ok"] is False
     assert "compose workspace" in result["agent_instruction"]
+
+
+@pytest.mark.parametrize('field,value', [
+    ('video_duration_seconds', '5 秒'), ('video_duration_seconds', 5),
+    ('video_variants_per_node', '1 个'), ('video_variants_per_node', 1),
+    ('video_generate_audio', '不生成声音'), ('video_generate_audio', False),
+])
+def test_generation_answer_format_error_explains_recoverable_option_ids(field, value):
+    plugin = _load_plugin_module()
+    answers = {
+        'video_model': {'option_ids': ['video-a']},
+        'video_aspect_ratio': {'option_ids': ['16:9']},
+        'video_resolution': {'option_ids': ['720p']},
+        'video_duration_seconds': {'option_ids': ['5']},
+        'video_generate_audio': {'option_ids': ['false']},
+        'video_variants_per_node': {'option_ids': ['1']},
+    }
+    answers[field] = value
+    choices, error = plugin._generation_choices_from_answers(answers)
+    assert not choices
+    assert error['status'] == 'generation_answers_incomplete'
+    assert 'option_ids' in error['agent_instruction']
+    assert 'display labels' in error['agent_instruction']
+    answers[field] = error['answer_format_example'][field]
+    choices, error = plugin._generation_choices_from_answers(answers)
+    assert error is None
+    assert choices['video_duration_seconds'] == 5
+    assert choices['video_generate_audio'] is False

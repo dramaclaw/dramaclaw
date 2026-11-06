@@ -25,7 +25,9 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   If no compatible mode is available, stop on the catalog/preflight blocker instead of dropping
   the media input or silently changing an explicit user choice.
   Do not invent finished scripts, detailed shot-by-shot storyboards, dialogue, camera choreography,
-  sound cues, or final media prompts before upstream stages execute. Execution-time Recipe
+  sound cues, or final media prompts before upstream stages execute. A concrete action brief explicitly
+  required by the selected Skill for Draft review is a planning constraint: author it now,
+  with enough short sentences to specify the actions; do not defer it as a future instruction. Execution-time Recipe
   compilation uses actual upstream outputs to produce executable prompts.
 
 - Read this Skill and its references only through the exact locator advertised by the current host.

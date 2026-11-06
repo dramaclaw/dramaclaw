@@ -8366,6 +8366,20 @@ def _generation_choices_from_answers(
         return {}, {
             "ok": False, "status": "generation_answers_incomplete",
             "error": str(exc),
+            "agent_instruction": (
+                "generation_answers expects clarification option IDs, not display labels "
+                "or native numbers/booleans. Pass the clarification tool's answers unchanged: "
+                "each answer is {\"option_ids\": [\"selected-id\"]}. "
+                "Examples below illustrate format only; preserve the user's actual choices. "
+                "If the selected option ID is unknown, use freezone_request_user_clarification "
+                "instead of guessing. Do not change the Plan or retry unchanged."
+            ),
+            "answer_format_example": {
+                "image_variants_per_node": {"option_ids": ["1"]},
+                "video_variants_per_node": {"option_ids": ["1"]},
+                "video_duration_seconds": {"option_ids": ["5"]},
+                "video_generate_audio": {"option_ids": ["false"]},
+            },
         }
     return choices, None
 
@@ -13053,7 +13067,13 @@ TOOLS = (
             "preview. Use it when the user requires an exact node count, exact node set, or "
             "exact dependency graph, even when its stages resemble the standard template. "
             "It never writes canvas nodes directly. After the user reviews the "
-            "preview, use freezone_confirm_workflow_draft with its draft_id and revision.",
+            "preview, use freezone_confirm_workflow_draft with its draft_id and revision. "
+            "generation_answers is optional: only pass clarification answers unchanged, with "
+            "each value shaped as {\"option_ids\": [\"selected-id\"]}. Use option IDs, not "
+            "display labels or native numbers/booleans: for example duration uses "
+            "{\"option_ids\": [\"5\"]}, not 5 or \"5 秒\". Examples are format only; "
+            "preserve the user's choices. Without clarification answers, put known parameters "
+            "in the Plan's node data; do not fabricate a clarification receipt.",
             {
                 **_SCOPE_PROPS,
                 "operation_id": {
