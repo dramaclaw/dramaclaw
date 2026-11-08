@@ -196,11 +196,7 @@ class AliyunOSSRelay:
 
 
 class GCSS3Relay:
-    """Upload transient bytes to a GCS bucket (S3-compatible HMAC) and return a public URL.
-
-    Requires the bucket to allow public reads; the returned URL is the plain
-    public object URL, so no signing is needed.
-    """
+    """Upload transient bytes to a GCS bucket using S3-compatible HMAC."""
 
     def __init__(
         self,
@@ -209,6 +205,7 @@ class GCSS3Relay:
         bucket_name: str,
         access_key_id: str,
         access_key_secret: str,
+        signed: bool = False,
     ) -> None:
         missing = [
             name
@@ -232,6 +229,7 @@ class GCSS3Relay:
             endpoint = f"https://{endpoint}"
         self._bucket_name = bucket_name.strip()
         self._public_base = f"https://storage.googleapis.com/{self._bucket_name}"
+        self._signed = signed
         self._client = boto3.client(
             "s3",
             endpoint_url=endpoint,
@@ -257,6 +255,10 @@ class GCSS3Relay:
     ) -> str:
         if not data:
             raise ValueError("cannot relay empty media bytes")
+        if self._signed:
+            ttl_seconds = int(ttl)
+            if ttl_seconds <= 0:
+                raise ValueError("ttl must be positive")
         ext = _normalize_ext(ext)
         key = object_key or (
             f"relay/{datetime.now(timezone.utc):%Y%m%d}/{uuid.uuid4().hex}.{ext}"
@@ -267,6 +269,12 @@ class GCSS3Relay:
         self._client.put_object(
             Bucket=self._bucket_name, Key=key, Body=data, ContentType=content_type
         )
+        if self._signed:
+            return self._client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self._bucket_name, "Key": key},
+                ExpiresIn=ttl_seconds,
+            )
         return f"{self._public_base}/{key}"
 
     def upload_file(self, path: str | Path, *, ttl: int = 1800) -> str:
@@ -411,12 +419,13 @@ def get_media_relay() -> AliyunOSSRelay | CloudinaryRelay | GCSS3Relay | S3Relay
             api_secret=relay_config.cloudinary_api_secret,
             folder=relay_config.cloudinary_folder,
         )
-    if provider in {"gcs", "gcs_s3"}:
+    if provider in {"gcs", "gcs_s3", "gcs_signed"}:
         return GCSS3Relay(
             endpoint=relay_config.endpoint,
             bucket_name=relay_config.bucket,
             access_key_id=relay_config.access_key_id,
             access_key_secret=relay_config.access_key_secret,
+            signed=provider == "gcs_signed",
         )
     if provider != "aliyun_oss":
         raise MediaRelayConfigError(

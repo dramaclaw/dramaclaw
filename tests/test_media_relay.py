@@ -85,12 +85,18 @@ class FakeS3Client:
     def __init__(self) -> None:
         self.puts: list[dict[str, object]] = []
         self.deletes: list[dict[str, object]] = []
+        self.presigns: list[dict[str, object]] = []
 
     def put_object(self, **kwargs) -> None:
         self.puts.append(kwargs)
 
     def delete_object(self, **kwargs) -> None:
         self.deletes.append(kwargs)
+
+    def generate_presigned_url(self, operation_name: str, **kwargs) -> str:
+        self.presigns.append({"operation_name": operation_name, **kwargs})
+        key = kwargs["Params"]["Key"]
+        return f"https://relay-bucket.storage.googleapis.com/{key}?X-Goog-Signature=fake"
 
 
 def test_gcs_s3_relay_requires_credentials() -> None:
@@ -151,10 +157,87 @@ def test_gcs_s3_relay_uploads_original_bytes_and_returns_public_url(
     assert url == "https://storage.googleapis.com/relay-bucket/relay/test/image.png"
 
 
+def test_gcs_s3_relay_signed_upload_returns_presigned_get_with_default_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import boto3
+
+    client = FakeS3Client()
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: client)
+    relay = media_relay.GCSS3Relay(
+        endpoint="storage.googleapis.com",
+        bucket_name="relay-bucket",
+        access_key_id="ak",
+        access_key_secret="sk",
+        signed=True,
+    )
+
+    url = relay.upload_bytes(
+        b"original-image-bytes", ext="PNG", object_key="relay/test/image.png"
+    )
+
+    assert client.puts == [
+        {
+            "Bucket": "relay-bucket",
+            "Key": "relay/test/image.png",
+            "Body": b"original-image-bytes",
+            "ContentType": "image/png",
+        }
+    ]
+    assert client.presigns == [
+        {
+            "operation_name": "get_object",
+            "Params": {"Bucket": "relay-bucket", "Key": "relay/test/image.png"},
+            "ExpiresIn": 1800,
+        }
+    ]
+    assert url == (
+        "https://relay-bucket.storage.googleapis.com/relay/test/image.png"
+        "?X-Goog-Signature=fake"
+    )
+    assert "X-Goog-Signature=" in url
+
+
+@pytest.mark.parametrize("ttl", [0, -1])
+def test_gcs_s3_relay_signed_upload_rejects_nonpositive_ttl_before_upload(
+    ttl: int,
+) -> None:
+    relay = object.__new__(media_relay.GCSS3Relay)
+    relay._bucket_name = "relay-bucket"
+    relay._public_base = "https://storage.googleapis.com/relay-bucket"
+    relay._signed = True
+    relay._client = FakeS3Client()
+
+    with pytest.raises(ValueError, match="ttl must be positive"):
+        relay.upload_bytes(
+            b"image-bytes", object_key="relay/test/image.png", ttl=ttl
+        )
+
+    assert relay._client.puts == []
+    assert relay._client.presigns == []
+
+
+def test_gcs_s3_relay_signed_upload_file_uses_requested_ttl(tmp_path) -> None:
+    path = tmp_path / "canary.txt"
+    path.write_bytes(b"exact-file-bytes")
+    relay = object.__new__(media_relay.GCSS3Relay)
+    relay._bucket_name = "relay-bucket"
+    relay._public_base = "https://storage.googleapis.com/relay-bucket"
+    relay._signed = True
+    relay._client = FakeS3Client()
+
+    url = relay.upload_file(path, ttl=75)
+
+    assert relay._client.puts[0]["Body"] == b"exact-file-bytes"
+    assert relay._client.presigns[0]["ExpiresIn"] == 75
+    assert "X-Goog-Signature=" in url
+
+
 def test_gcs_s3_relay_rejects_unsafe_object_key_before_upload() -> None:
     relay = object.__new__(media_relay.GCSS3Relay)
     relay._bucket_name = "relay-bucket"
     relay._public_base = "https://storage.googleapis.com/relay-bucket"
+    relay._signed = False
     relay._client = FakeS3Client()
 
     with pytest.raises(media_relay.ServiceEgressDenied) as exc_info:
@@ -243,7 +326,7 @@ def test_get_media_relay_uses_saved_runtime_cloudinary_config(monkeypatch, tmp_p
     assert relay._folder == "dramaclaw-relay"
 
 
-@pytest.mark.parametrize("provider", ["gcs", "gcs_s3"])
+@pytest.mark.parametrize("provider", ["gcs", "gcs_s3", "gcs_signed"])
 def test_get_media_relay_uses_saved_runtime_gcs_config(
     monkeypatch, tmp_path, provider
 ) -> None:
@@ -267,6 +350,7 @@ def test_get_media_relay_uses_saved_runtime_gcs_config(
 
     assert isinstance(relay, media_relay.GCSS3Relay)
     assert relay._bucket_name == "db-bucket"
+    assert relay._signed is (provider == "gcs_signed")
 
 
 @pytest.mark.parametrize(

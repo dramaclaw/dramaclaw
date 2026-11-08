@@ -56,6 +56,7 @@ def storage_io(monkeypatch):
         puts=[],
         gets=[],
         deletes=[],
+        inits=[],
         error=None,
         delete_error=None,
         content=preflight._PROBE_PNG,
@@ -70,6 +71,7 @@ def storage_io(monkeypatch):
 
     class Relay:
         def __init__(self, **kwargs):
+            calls.inits.append(kwargs)
             self._bucket = Bucket()
 
         def upload_bytes(self, data, **kwargs):
@@ -109,11 +111,12 @@ def test_probe_checks_real_bytes_and_cleans_only_its_own_object(
     assert storage_io.deletes == [key]
 
 
-@pytest.mark.parametrize("provider", ["gcs", "gcs_s3"])
+@pytest.mark.parametrize("provider", ["gcs", "gcs_s3", "gcs_signed"])
 def test_gcs_probe_checks_original_bytes_and_cleans_up(
     storage_config, storage_io, provider
 ):
     preflight.verify_media_storage(replace(storage_config, provider=provider))
+    assert storage_io.inits[0]["signed"] is (provider == "gcs_signed")
     assert storage_io.puts[0][0] == preflight._PROBE_PNG
     key = storage_io.puts[0][1]["object_key"]
     assert len(storage_io.gets) == 1
@@ -121,7 +124,7 @@ def test_gcs_probe_checks_original_bytes_and_cleans_up(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["gcs", "gcs_s3"])
+@pytest.mark.parametrize("provider", ["gcs", "gcs_s3", "gcs_signed"])
 async def test_gcs_storage_gate_probes_configured_relay(
     monkeypatch, storage_config, storage_io, provider
 ):

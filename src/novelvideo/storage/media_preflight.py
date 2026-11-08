@@ -112,12 +112,13 @@ def verify_media_storage(
                 )
                 bucket = relay._bucket
                 url = relay.upload_bytes(_PROBE_PNG, object_key=key, ttl=60)
-            elif settings.provider in {"gcs", "gcs_s3"}:
+            elif settings.provider in {"gcs", "gcs_s3", "gcs_signed"}:
                 relay = GCSS3Relay(
                     endpoint=settings.endpoint,
                     bucket_name=settings.bucket,
                     access_key_id=settings.access_key_id,
                     access_key_secret=settings.access_key_secret,
+                    signed=settings.provider == "gcs_signed",
                 )
                 bucket = relay
                 url = relay.upload_bytes(_PROBE_PNG, object_key=key, ttl=60)
@@ -175,7 +176,7 @@ async def require_ce_media_storage() -> None:
     if not uses_local_ce_runtime():
         return
     settings = effective_media_storage_config()
-    if settings.provider in {"aliyun_oss", "gcs", "gcs_s3"}:
+    if settings.provider in {"aliyun_oss", "gcs", "gcs_s3", "gcs_signed"}:
         configured = bool(settings.access_key_id or settings.access_key_secret)
     elif settings.provider == "s3":
         configured = bool(

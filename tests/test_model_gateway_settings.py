@@ -4041,7 +4041,7 @@ def test_s3_relay_rejects_excessive_ttl_before_probe(monkeypatch, tmp_path, stor
     assert not storage_probe
 
 
-@pytest.mark.parametrize("provider", ["gcs", "gcs_s3"])
+@pytest.mark.parametrize("provider", ["gcs", "gcs_s3", "gcs_signed"])
 def test_media_relay_config_route_accepts_gcs_provider_aliases(
     monkeypatch, tmp_path, provider, storage_probe
 ):
