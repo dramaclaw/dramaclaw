@@ -36,7 +36,7 @@ def _api_key() -> str:
     key = os.environ.get("BYTEPLUS_MODEL_ARK_API_KEY") or os.environ.get("ARK_API_KEY")
     if not key:
         raise ValueError("BYTEPLUS_MODEL_ARK_API_KEY or ARK_API_KEY is required")
-    return key.strip('"\'')
+    return key.strip(" \t\r\n\"'")
 
 
 def _build(args) -> None:

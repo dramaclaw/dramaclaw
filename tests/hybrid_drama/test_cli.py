@@ -1,6 +1,6 @@
 import json
 
-from novelvideo.hybrid_drama.cli import main
+from novelvideo.hybrid_drama.cli import _api_key, main
 
 
 def test_cli_builds_a_prepared_ce_beat(tmp_path):
@@ -29,3 +29,9 @@ def test_cli_builds_a_prepared_ce_beat(tmp_path):
     assert prepared["beat_key"] == "p:e:1"
     assert prepared["reference_ids"] == ["Mia_mia"]
     assert 'Dialogue (Mia): "Wait."' in prepared["prompt"]
+
+
+def test_api_key_strips_dotenv_whitespace_and_quotes(monkeypatch):
+    monkeypatch.setenv("BYTEPLUS_MODEL_ARK_API_KEY", '  "secret-value  "  ')
+
+    assert _api_key() == "secret-value"
