@@ -78,6 +78,9 @@ def storage_io(monkeypatch):
                 raise calls.error
             return "https://storage.test/probe?signature=private-signature"
 
+        def delete_object(self, key):
+            self._bucket.delete_object(key)
+
     def get(request):
         calls.gets.append(request)
         return httpx.Response(calls.status, content=calls.content)
@@ -86,6 +89,7 @@ def storage_io(monkeypatch):
     original_client = httpx.Client
     monkeypatch.setattr(preflight, "AliyunOSSRelay", Relay)
     monkeypatch.setattr(preflight, "CloudinaryRelay", Relay)
+    monkeypatch.setattr(preflight, "GCSS3Relay", Relay)
     monkeypatch.setattr(
         preflight.httpx,
         "Client",
@@ -103,6 +107,31 @@ def test_probe_checks_real_bytes_and_cleans_only_its_own_object(
     assert key.startswith("relay/") and "/preflight-" in key and key.endswith(".png")
     assert len(storage_io.gets) == 1
     assert storage_io.deletes == [key]
+
+
+@pytest.mark.parametrize("provider", ["gcs", "gcs_s3"])
+def test_gcs_probe_checks_original_bytes_and_cleans_up(
+    storage_config, storage_io, provider
+):
+    preflight.verify_media_storage(replace(storage_config, provider=provider))
+    assert storage_io.puts[0][0] == preflight._PROBE_PNG
+    key = storage_io.puts[0][1]["object_key"]
+    assert len(storage_io.gets) == 1
+    assert storage_io.deletes == [key]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["gcs", "gcs_s3"])
+async def test_gcs_storage_gate_probes_configured_relay(
+    monkeypatch, storage_config, storage_io, provider
+):
+    settings = replace(storage_config, provider=provider)
+    monkeypatch.setattr(preflight, "effective_media_storage_config", lambda: settings)
+
+    await preflight.require_ce_media_storage()
+
+    assert storage_io.puts[0][0] == preflight._PROBE_PNG
+    assert len(storage_io.gets) == 1
 
 
 def test_storage_config_repr_never_exposes_credentials(storage_config):

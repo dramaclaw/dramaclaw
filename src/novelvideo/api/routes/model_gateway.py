@@ -848,7 +848,7 @@ async def save_media_relay_settings(body: MediaRelayConfigBody) -> dict[str, Any
     except PermissionError as exc:
         raise _permission_error(exc) from exc
     provider = body.provider.strip().lower()
-    if provider not in {"aliyun_oss", "cloudinary", "s3"}:
+    if provider not in {"aliyun_oss", "cloudinary", "gcs", "gcs_s3", "s3"}:
         raise HTTPException(status_code=400, detail="unsupported media relay provider")
     if body.ttl_seconds <= 0:
         raise HTTPException(status_code=400, detail="ttlSeconds must be positive")

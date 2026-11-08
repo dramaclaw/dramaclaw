@@ -4041,6 +4041,38 @@ def test_s3_relay_rejects_excessive_ttl_before_probe(monkeypatch, tmp_path, stor
     assert not storage_probe
 
 
+@pytest.mark.parametrize("provider", ["gcs", "gcs_s3"])
+def test_media_relay_config_route_accepts_gcs_provider_aliases(
+    monkeypatch, tmp_path, provider, storage_probe
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    monkeypatch.setattr(model_gateway.app_config, "MEDIA_RELAY_PROVIDER", "")
+    monkeypatch.setattr(model_gateway.app_config, "MEDIA_RELAY_TTL_SECONDS", 1800)
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_ENDPOINT", "")
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_BUCKET", "")
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_AK", "")
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_SK", "")
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+
+    response = TestClient(app).post(
+        "/model-gateway/media-relay/config",
+        json={
+            "provider": provider,
+            "ttlSeconds": 900,
+            "endpoint": "storage.googleapis.com",
+            "bucket": "user-relay",
+            "accessKeyId": "gcs-access-key",
+            "accessKeySecret": "gcs-secret-key",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["provider"] == provider
+    assert storage_probe[-1].provider == provider
+
+
 def test_media_relay_config_route_persists_and_masks_cloudinary_keys(
     monkeypatch, tmp_path, storage_probe
 ):

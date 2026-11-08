@@ -30,6 +30,7 @@ from novelvideo.storage.media_errors import (
 from novelvideo.storage.media_relay import (
     AliyunOSSRelay,
     CloudinaryRelay,
+    GCSS3Relay,
 )
 
 _PROBE_PNG = base64.b64decode(
@@ -78,11 +79,11 @@ def verify_media_storage(
 ) -> None:
     """Upload/read a small image, caching only success for the exact configuration.
 
-    OSS and S3 must preserve the stored bytes. Cloudinary may re-encode delivered
-    images, so verify decoded dimensions and pixels instead of file bytes.
+    OSS, S3 and GCS must preserve the stored bytes. Cloudinary may re-encode
+    delivered images, so verify decoded dimensions and pixels instead of file bytes.
 
-    Probe objects use the normal relay prefix and random names. OSS/S3 cleanup is
-    best effort: a key with PutObject/GetObject but no DeleteObject is valid.
+    Probe objects use the normal relay prefix and random names. OSS/S3/GCS cleanup
+    is best effort: a key with PutObject/GetObject but no DeleteObject is valid.
     Cloudinary probes follow the configured folder's normal retention policy.
     """
     global _verified_config
@@ -110,6 +111,15 @@ def verify_media_storage(
                     connect_timeout=_PROBE_TIMEOUT_SECONDS,
                 )
                 bucket = relay._bucket
+                url = relay.upload_bytes(_PROBE_PNG, object_key=key, ttl=60)
+            elif settings.provider in {"gcs", "gcs_s3"}:
+                relay = GCSS3Relay(
+                    endpoint=settings.endpoint,
+                    bucket_name=settings.bucket,
+                    access_key_id=settings.access_key_id,
+                    access_key_secret=settings.access_key_secret,
+                )
+                bucket = relay
                 url = relay.upload_bytes(_PROBE_PNG, object_key=key, ttl=60)
             elif settings.provider == "cloudinary":
                 relay = CloudinaryRelay(
@@ -165,7 +175,7 @@ async def require_ce_media_storage() -> None:
     if not uses_local_ce_runtime():
         return
     settings = effective_media_storage_config()
-    if settings.provider == "aliyun_oss":
+    if settings.provider in {"aliyun_oss", "gcs", "gcs_s3"}:
         configured = bool(settings.access_key_id or settings.access_key_secret)
     elif settings.provider == "s3":
         configured = bool(

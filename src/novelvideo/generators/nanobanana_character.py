@@ -323,7 +323,7 @@ class NanoBananaCharacterGenerator:
                 client=client,
                 prompt=front_prompt,
                 output_path=portrait_ref_path,
-                image_size="0.5K",
+                image_size="3K",
             )
 
             if portrait_bytes and portrait_ref_path:
@@ -585,7 +585,7 @@ class NanoBananaCharacterGenerator:
 
             # 统一流程：生成 body 到临时文件 → 拼接 portrait → 删 temp
             aspect_ratio = "16:9"  # 4面板: 全脸+正+三分+背面
-            image_size = "1K"
+            image_size = "3K"
             body_label = "4面板 reference sheet"
 
             temp_body_path = output_path.replace(".png", "_body_temp.png")
@@ -799,7 +799,7 @@ MUST AVOID:
                 prompt=prompt,
                 output_path=composite_path,
                 aspect_ratio="16:9",
-                image_size="1K",
+                image_size="3K",
             )
             if not image_bytes:
                 return CharacterReferenceResult(
@@ -1153,7 +1153,7 @@ STRICT REQUIREMENTS (MUST AVOID):
         prompt: str,
         output_path: Optional[str] = None,
         aspect_ratio: str = "3:4",
-        image_size: str = "1K",
+        image_size: str = "3K",
     ) -> Optional[bytes]:
         """生成单张图像（无参考图）。
 
@@ -1360,7 +1360,7 @@ STRICT REQUIREMENTS (MUST AVOID):
         reference_image_bytes: bytes = None,  # OpenRouter 模式需要原始字节
         reference_image_name: str = "",
         aspect_ratio: str = "3:4",
-        image_size: str = "1K",
+        image_size: str = "3K",
         additional_images: list = None,  # 额外参考图 Part 对象列表（Google 模式）
         additional_image_bytes: list = None,  # 额外参考图字节列表（OpenRouter 模式）
         additional_image_names: list[str] = None,

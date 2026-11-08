@@ -81,6 +81,101 @@ def test_aliyun_oss_relay_requires_credentials() -> None:
     assert "OSS_RELAY_AK" in str(exc_info.value)
 
 
+class FakeS3Client:
+    def __init__(self) -> None:
+        self.puts: list[dict[str, object]] = []
+        self.deletes: list[dict[str, object]] = []
+
+    def put_object(self, **kwargs) -> None:
+        self.puts.append(kwargs)
+
+    def delete_object(self, **kwargs) -> None:
+        self.deletes.append(kwargs)
+
+
+def test_gcs_s3_relay_requires_credentials() -> None:
+    with pytest.raises(media_relay.MediaRelayConfigError) as exc_info:
+        media_relay.GCSS3Relay(
+            endpoint="",
+            bucket_name="relay-bucket",
+            access_key_id="ak",
+            access_key_secret="sk",
+        )
+
+    assert "OSS_RELAY_ENDPOINT" in str(exc_info.value)
+
+
+def test_gcs_s3_relay_uploads_original_bytes_and_returns_public_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import boto3
+
+    client = FakeS3Client()
+    captured = {}
+
+    def fake_client(*args, **kwargs):
+        captured["args"] = args
+        captured.update(kwargs)
+        return client
+
+    monkeypatch.setattr(boto3, "client", fake_client)
+    relay = media_relay.GCSS3Relay(
+        endpoint="storage.googleapis.com",
+        bucket_name="relay-bucket",
+        access_key_id="ak",
+        access_key_secret="sk",
+    )
+
+    url = relay.upload_bytes(
+        b"original-image-bytes", ext="PNG", object_key="relay/test/image.png"
+    )
+
+    assert captured["args"] == ("s3",)
+    assert captured["endpoint_url"] == "https://storage.googleapis.com"
+    assert captured["aws_access_key_id"] == "ak"
+    assert captured["aws_secret_access_key"] == "sk"
+    assert captured["region_name"] == "us-east-1"
+    boto_config = captured["config"]
+    assert boto_config.signature_version == "s3v4"
+    assert boto_config.s3 == {"addressing_style": "virtual"}
+    assert boto_config.request_checksum_calculation == "when_required"
+    assert boto_config.response_checksum_validation == "when_required"
+    assert client.puts == [
+        {
+            "Bucket": "relay-bucket",
+            "Key": "relay/test/image.png",
+            "Body": b"original-image-bytes",
+            "ContentType": "image/png",
+        }
+    ]
+    assert url == "https://storage.googleapis.com/relay-bucket/relay/test/image.png"
+
+
+def test_gcs_s3_relay_rejects_unsafe_object_key_before_upload() -> None:
+    relay = object.__new__(media_relay.GCSS3Relay)
+    relay._bucket_name = "relay-bucket"
+    relay._public_base = "https://storage.googleapis.com/relay-bucket"
+    relay._client = FakeS3Client()
+
+    with pytest.raises(media_relay.ServiceEgressDenied) as exc_info:
+        relay.upload_bytes(b"image-bytes", object_key="../escape.png")
+
+    assert exc_info.value.reason == "object-key"
+    assert relay._client.puts == []
+
+
+def test_gcs_s3_relay_deletes_object() -> None:
+    relay = object.__new__(media_relay.GCSS3Relay)
+    relay._bucket_name = "relay-bucket"
+    relay._client = FakeS3Client()
+
+    relay.delete_object("relay/test/image.png")
+
+    assert relay._client.deletes == [
+        {"Bucket": "relay-bucket", "Key": "relay/test/image.png"}
+    ]
+
+
 def test_media_relay_ttl_seconds_applies_floor_without_shortening_config(monkeypatch) -> None:
     monkeypatch.setattr(media_relay, "_default_media_relay_ttl_seconds", lambda: 1800)
     assert media_relay.media_relay_ttl_seconds(minimum=7200) == 7200
@@ -146,6 +241,32 @@ def test_get_media_relay_uses_saved_runtime_cloudinary_config(monkeypatch, tmp_p
     assert relay._api_key == "api-key"
     assert relay._api_secret == "api-secret"
     assert relay._folder == "dramaclaw-relay"
+
+
+@pytest.mark.parametrize("provider", ["gcs", "gcs_s3"])
+def test_get_media_relay_uses_saved_runtime_gcs_config(
+    monkeypatch, tmp_path, provider
+) -> None:
+    monkeypatch.setattr(config, "STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(config, "MEDIA_RELAY_PROVIDER", "aliyun_oss")
+    monkeypatch.setattr(config, "MEDIA_RELAY_TTL_SECONDS", 1800)
+    monkeypatch.setattr(config, "OSS_RELAY_ENDPOINT", "env.endpoint")
+    monkeypatch.setattr(config, "OSS_RELAY_BUCKET", "env-bucket")
+    monkeypatch.setattr(config, "OSS_RELAY_AK", "env-ak")
+    monkeypatch.setattr(config, "OSS_RELAY_SK", "env-sk")
+    save_media_relay_config(
+        provider=provider,
+        ttl_seconds=900,
+        endpoint="storage.googleapis.com",
+        bucket="db-bucket",
+        access_key_id="db-ak",
+        access_key_secret="db-sk",
+    )
+
+    relay = media_relay.get_media_relay()
+
+    assert isinstance(relay, media_relay.GCSS3Relay)
+    assert relay._bucket_name == "db-bucket"
 
 
 @pytest.mark.parametrize(
@@ -311,7 +432,7 @@ def test_upload_image_bytes_defaults_to_raw_upload(monkeypatch: pytest.MonkeyPat
     assert relay.uploaded_bytes == [(b"raw-png-bytes", "png", 60)]
 
 
-def test_upload_image_bytes_can_normalize_ai_reference_jpeg(
+def test_upload_image_bytes_preserves_ai_reference_original_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     relay = CaptureRelay()
@@ -319,23 +440,17 @@ def test_upload_image_bytes_can_normalize_ai_reference_jpeg(
     source = Image.new("RGBA", (32, 16), (255, 0, 0, 255))
     source_buf = io.BytesIO()
     source.save(source_buf, format="PNG")
+    original_bytes = source_buf.getvalue()
 
     url = media_relay.upload_image_bytes(
-        source_buf.getvalue(),
+        original_bytes,
         ext="png",
         ttl=60,
         image_transform=media_relay.IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
     )
 
-    assert url == "https://relay.test/bytes.jpg?ttl=60"
-    assert len(relay.uploaded_bytes) == 1
-    uploaded_bytes, ext, ttl = relay.uploaded_bytes[0]
-    assert ext == "jpg"
-    assert ttl == 60
-    uploaded_image = Image.open(io.BytesIO(uploaded_bytes))
-    assert uploaded_image.format == "JPEG"
-    assert uploaded_image.mode == "RGB"
-    assert uploaded_image.size == (32, 16)
+    assert url == "https://relay.test/bytes.png?ttl=60"
+    assert relay.uploaded_bytes == [(original_bytes, "png", 60)]
 
 
 def test_ensure_image_url_uploads_local_file(

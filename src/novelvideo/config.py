@@ -1381,7 +1381,7 @@ def get_grid_generation_config(
         "openai_image_quality": OPENAI_IMAGE_QUALITY,
         "openai_sketch_image_quality": OPENAI_SKETCH_IMAGE_QUALITY,
         "huimeng_image_quality": os.environ.get("HUIMENG_IMAGE_QUALITY", "medium"),
-        "image_size": image_size_override or "1K",
+        "image_size": image_size_override or "3K",
         "mode": GRID_MODE,
         "rows": GRID_ROWS,
         "cols": GRID_COLS,
@@ -1416,7 +1416,7 @@ def get_sketch_generation_config(
     )
     config["openai_image_quality"] = OPENAI_SKETCH_IMAGE_QUALITY
     config["huimeng_image_quality"] = "low"
-    config["image_size"] = "1K"
+    config["image_size"] = "3K"
     return config
 
 

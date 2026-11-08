@@ -195,6 +195,92 @@ class AliyunOSSRelay:
         )
 
 
+class GCSS3Relay:
+    """Upload transient bytes to a GCS bucket (S3-compatible HMAC) and return a public URL.
+
+    Requires the bucket to allow public reads; the returned URL is the plain
+    public object URL, so no signing is needed.
+    """
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        bucket_name: str,
+        access_key_id: str,
+        access_key_secret: str,
+    ) -> None:
+        missing = [
+            name
+            for name, value in {
+                "OSS_RELAY_ENDPOINT": endpoint,
+                "OSS_RELAY_BUCKET": bucket_name,
+                "OSS_RELAY_AK": access_key_id,
+                "OSS_RELAY_SK": access_key_secret,
+            }.items()
+            if not str(value or "").strip()
+        ]
+        if missing:
+            raise MediaRelayConfigError(
+                "GCS media relay config missing: " + ", ".join(missing)
+            )
+        import boto3
+        from botocore.config import Config as BotoConfig
+
+        endpoint = str(endpoint).strip()
+        if not endpoint.startswith("http"):
+            endpoint = f"https://{endpoint}"
+        self._bucket_name = bucket_name.strip()
+        self._public_base = f"https://storage.googleapis.com/{self._bucket_name}"
+        self._client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key_id.strip(),
+            aws_secret_access_key=access_key_secret.strip(),
+            config=BotoConfig(
+                signature_version="s3v4",
+                s3={"addressing_style": "virtual"},
+                request_checksum_calculation="when_required",
+                response_checksum_validation="when_required",
+            ),
+            region_name="us-east-1",
+        )
+
+    def upload_bytes(
+        self,
+        data: bytes,
+        *,
+        ext: str = "png",
+        ttl: int = 1800,
+        resource_type: str = "image",
+        object_key: str | None = None,
+    ) -> str:
+        if not data:
+            raise ValueError("cannot relay empty media bytes")
+        ext = _normalize_ext(ext)
+        key = object_key or (
+            f"relay/{datetime.now(timezone.utc):%Y%m%d}/{uuid.uuid4().hex}.{ext}"
+        )
+        if not _is_safe_object_key(key):
+            raise ServiceEgressDenied("object-key")
+        content_type = mimetypes.types_map.get(f".{ext}", "application/octet-stream")
+        self._client.put_object(
+            Bucket=self._bucket_name, Key=key, Body=data, ContentType=content_type
+        )
+        return f"{self._public_base}/{key}"
+
+    def upload_file(self, path: str | Path, *, ttl: int = 1800) -> str:
+        file_path = Path(path)
+        return self.upload_bytes(
+            file_path.read_bytes(),
+            ext=file_path.suffix.lstrip(".") or "png",
+            ttl=ttl,
+        )
+
+    def delete_object(self, key: str) -> None:
+        self._client.delete_object(Bucket=self._bucket_name, Key=key)
+
+
 class CloudinaryRelay:
     """Upload transient bytes to Cloudinary and return its secure delivery URL."""
 
@@ -292,7 +378,7 @@ class CloudinaryRelay:
         )
 
 
-def get_media_relay() -> AliyunOSSRelay | CloudinaryRelay | S3Relay:
+def get_media_relay() -> AliyunOSSRelay | CloudinaryRelay | GCSS3Relay | S3Relay:
     """Build the configured media relay.
 
     The relay is intentionally not cached so tests can monkeypatch config and
@@ -324,6 +410,13 @@ def get_media_relay() -> AliyunOSSRelay | CloudinaryRelay | S3Relay:
             api_key=relay_config.cloudinary_api_key,
             api_secret=relay_config.cloudinary_api_secret,
             folder=relay_config.cloudinary_folder,
+        )
+    if provider in {"gcs", "gcs_s3"}:
+        return GCSS3Relay(
+            endpoint=relay_config.endpoint,
+            bucket_name=relay_config.bucket,
+            access_key_id=relay_config.access_key_id,
+            access_key_secret=relay_config.access_key_secret,
         )
     if provider != "aliyun_oss":
         raise MediaRelayConfigError(
@@ -589,6 +682,12 @@ def _apply_image_transform(
     ext: str,
     image_transform: str | None,
 ) -> tuple[bytes, str]:
+    # PATCH(dramaclaw-gcs): pass original bytes through unchanged.
+    # Re-encoding (JPEG normalization) invalidates BytePlus ModelArk
+    # trust verification for same-account Seedream/Seedance outputs,
+    # causing InputImageSensitiveContentDetected.PrivacyInformation on
+    # every reference image. Original bytes pass trust checks.
+    return data, ext
     if not image_transform:
         return data, ext
     if image_transform == IMAGE_TRANSFORM_AI_REFERENCE_JPEG:

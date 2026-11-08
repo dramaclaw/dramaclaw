@@ -164,7 +164,7 @@ def test_newapi_sketch_config_defaults_to_dc_image2_low_quality(monkeypatch):
 
     assert sketch_config["provider"] == "newapi"
     assert sketch_config["model"] == "LingShan-G2"
-    assert sketch_config["image_size"] == "1K"
+    assert sketch_config["image_size"] == "3K"
     assert sketch_config["openai_image_quality"] == "low"
 
     trace = {}
@@ -189,8 +189,8 @@ def test_newapi_sketch_config_defaults_to_dc_image2_low_quality(monkeypatch):
     assert posted["timeout"] == nanobanana_grid.NEWAPI_IMAGE_HTTP_TIMEOUT_SECONDS == 1800.0
     assert posted["json"]["model"] == "LingShan-G2"
     assert posted["json"]["quality"] == "low"
-    assert (posted["json"]["width"], posted["json"]["height"]) == (688, 1024)
-    assert posted["json"]["metadata"] == {"ratio": "2:3", "resolution": "1k"}
+    assert (posted["json"]["width"], posted["json"]["height"]) == (2048, 3072)
+    assert posted["json"]["metadata"] == {"ratio": "2:3", "resolution": "3k"}
     assert "extra_fields" not in posted["json"]
     assert trace == {"request_id": "req-sketch", "response_id": "resp-sketch"}
 
@@ -234,7 +234,7 @@ def test_newapi_sketch_config_can_use_dc_banana2_without_quality(monkeypatch):
 
     assert sketch_config["provider"] == "newapi"
     assert sketch_config["model"] == "LingShan-NB-2"
-    assert sketch_config["image_size"] == "1K"
+    assert sketch_config["image_size"] == "3K"
 
     image_bytes, _text, error = run_async(
         nanobanana_grid._call_newapi_image_api(
@@ -254,9 +254,23 @@ def test_newapi_sketch_config_can_use_dc_banana2_without_quality(monkeypatch):
     assert error == ""
     assert posted["json"]["model"] == "LingShan-NB-2"
     assert "quality" not in posted["json"]
-    assert (posted["json"]["width"], posted["json"]["height"]) == (688, 1024)
-    assert posted["json"]["metadata"] == {"ratio": "2:3", "resolution": "1k"}
+    assert (posted["json"]["width"], posted["json"]["height"]) == (2048, 3072)
+    assert posted["json"]["metadata"] == {"ratio": "2:3", "resolution": "3k"}
     assert "extra_fields" not in posted["json"]
+
+
+def test_grid_generation_defaults_use_3k_without_changing_existing_4k_modes():
+    from novelvideo.generators import nanobanana_grid
+
+    assert nanobanana_grid.REGEN_MODE_CONFIGS["1x1_1-1"]["image_size"] == "3K"
+    assert nanobanana_grid.REGEN_MODE_CONFIGS["2x2_1-1"]["image_size"] == "3K"
+    assert nanobanana_grid.REGEN_MODE_CONFIGS["1x1_1-1_sketch"]["image_size"] == "3K"
+    assert nanobanana_grid.REGEN_MODE_CONFIGS["3x3_1-1"]["image_size"] == "4K"
+    assert all(
+        nanobanana_grid.SHOT_GRID_CONFIGS[count]["image_size"] == "3K"
+        for count in range(1, 5)
+    )
+    assert nanobanana_grid.SHOT_GRID_CONFIGS[5]["image_size"] == "4K"
 
 
 def test_catalog_can_enable_arbitrary_newapi_image_quality(monkeypatch):
@@ -1129,6 +1143,40 @@ def test_newapi_image_http_5xx_does_not_retry_in_app(monkeypatch):
     assert "HTTP 502" in error
     assert "request_id=req-fail" in error
     assert attempts == 1
+
+
+def test_newapi_character_single_image_defaults_to_3k(monkeypatch, tmp_path):
+    from novelvideo.generators import nanobanana_character
+
+    captured = {}
+
+    async def fake_call_newapi_image_api(**kwargs):
+        captured.update(kwargs)
+        return b"character-image", "", ""
+
+    monkeypatch.setattr(
+        nanobanana_character,
+        "_call_newapi_image_api",
+        fake_call_newapi_image_api,
+    )
+    generator = nanobanana_character.NanoBananaCharacterGenerator(
+        config={
+            "provider": "newapi",
+            "api_key": "newapi-token",
+            "model": "LingShan-NB-2",
+            "base_url": "http://newapi.test/v1",
+        }
+    )
+    output_path = tmp_path / "character.png"
+
+    image_bytes = run_async(
+        generator._generate_single_image(
+            client=None, prompt="character prompt", output_path=str(output_path)
+        )
+    )
+
+    assert image_bytes == b"character-image"
+    assert captured["image_config"]["image_size"] == "3K"
 
 
 def test_newapi_identity_image_sends_portrait_then_costume_references(
