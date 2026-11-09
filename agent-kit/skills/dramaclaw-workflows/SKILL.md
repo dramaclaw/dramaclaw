@@ -124,6 +124,14 @@ an incompatible model pass: explain the conflict and let the user choose a compa
 explicitly change the reference plan. Check reference types and counts separately against the
 selected model's current capabilities.
 
+Before a draft is created, `affected_node_ids` returned by WorkflowPlan preflight are
+plan-local IDs, not existing canvas node IDs. For a `compatible_video_model` question,
+pass the exact server-returned question and omit `generation_video_node_ids`; the server
+has already checked the complete plan's reference modes and durations. If clarification
+arguments are rejected before a card is shown, correct those arguments and retry the same
+question. Once a card exists, resume it with its `clarification_id` rather than creating
+another card.
+
 When using `generation_media_types` or `generation_required_choices`, do not include agent-authored
 `questions` in the same call. Generation clarification is one exclusive server-owned mode; ask any
 unrelated business question in a separate turn only when it is actually required.
