@@ -228,6 +228,8 @@ File Compose phát hành chạy các image đa kiến trúc **v2.1.1** đã phá
 | **Docker từ mã nguồn** | Chạy mã đã sửa của riêng bạn | clone [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) cạnh repo này, rồi `docker compose up -d --build` | [Tự lưu trữ](../docs/en/guides/self-hosting.md) |
 | **Phát triển cục bộ** | Phát triển DramaClaw với hot reload | `scripts/start-ce.sh` (API `:8780` + UI `:5173`; cần Python 3.11–3.12, `uv`, Node/pnpm, `ffmpeg`) | [Cài đặt](../docs/en/getting-started/installation.md) |
 
+`scripts/start-ce.sh` tải runtime Agent Codex **0.164.0** đã vá cho macOS hoặc Linux, kiểm tra SHA256 đã ghim và lưu đệm tại `runtime/codex/bin/`. Đặt `CODEX_BIN` trong `.env` để dùng bản vá của riêng bạn; người dùng Windows nên dùng WSL2 hoặc Docker.
+
 Nâng cấp từ một checkout cũ, ghim phiên bản, mở gateway đi kèm ra ngoài, hoặc dùng binary Codex của riêng bạn: xem [Hướng dẫn tự lưu trữ](../docs/en/guides/self-hosting.md) và [Xử lý sự cố](../docs/en/guides/troubleshooting.md).
 
 </details>

@@ -228,6 +228,8 @@ docker compose -f docker-compose.release.yml up -d
 | **Docker จากซอร์ส** | รันโค้ดที่คุณแก้ไขเอง | clone [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) ไว้ข้าง repo นี้ แล้วรัน `docker compose up -d --build` | [คู่มือโฮสต์เอง](../docs/en/guides/self-hosting.md) |
 | **พัฒนาในเครื่อง** | พัฒนา DramaClaw พร้อม hot reload | `scripts/start-ce.sh` (API `:8780` + UI `:5173`; ต้องใช้ Python 3.11–3.12, `uv`, Node/pnpm, `ffmpeg`) | [การติดตั้ง](../docs/en/getting-started/installation.md) |
 
+`scripts/start-ce.sh` จะดาวน์โหลด Codex Agent runtime **0.164.0** ฉบับแพตช์สำหรับ macOS หรือ Linux ตรวจสอบ SHA256 ที่ปักหมุดไว้ และแคชไว้ที่ `runtime/codex/bin/` ตั้งค่า `CODEX_BIN` ใน `.env` หากต้องการใช้บิลด์ที่แพตช์เอง ผู้ใช้ Windows ควรใช้ WSL2 หรือ Docker
+
 อัปเกรดจาก checkout เวอร์ชันเก่า ปักหมุดเวอร์ชัน เปิด gateway ที่มาพร้อมกันให้เข้าถึงจากภายนอก หรือใช้ Codex binary ของคุณเอง: ดู[คู่มือโฮสต์เอง](../docs/en/guides/self-hosting.md) และ[การแก้ไขปัญหา](../docs/en/guides/troubleshooting.md)
 
 </details>

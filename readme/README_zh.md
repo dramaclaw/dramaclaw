@@ -228,6 +228,8 @@ Release Compose 文件运行已发布的 **v2.1.1** 多架构镜像（`DRAMACLAW
 | **源码 Docker** | 运行自己修改过的代码 | 把 [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) clone 到本仓库旁边，然后 `docker compose up -d --build` | [自托管](../docs/zh/guides/self-hosting.md) |
 | **本地开发** | 热重载开发 DramaClaw | `scripts/start-ce.sh`（API `:8780` + 界面 `:5173`；需要 Python 3.11–3.12、`uv`、Node/pnpm、`ffmpeg`） | [安装](../docs/zh/getting-started/installation.md) |
 
+`scripts/start-ce.sh` 会为 macOS 或 Linux 下载打过补丁的 Codex **0.164.0** Agent 运行时，校验固定的 SHA256 后缓存到 `runtime/codex/bin/`。如需使用自己打过补丁的版本，在 `.env` 中设置 `CODEX_BIN`；Windows 用户请使用 WSL2 或 Docker。
+
 从旧版 checkout 升级、固定版本、对外开放内置网关、使用自己的 Codex 二进制：见[自托管手册](../docs/zh/guides/self-hosting.md)和[故障排查](../docs/zh/guides/troubleshooting.md)。
 
 </details>

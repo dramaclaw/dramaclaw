@@ -228,6 +228,8 @@ The release Compose file runs the published **v2.1.1** multi-arch images (`DRAMA
 | **Source Docker** | Run your own modified code | clone [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) next to this repo, then `docker compose up -d --build` | [Self-hosting](docs/en/guides/self-hosting.md) |
 | **Local dev** | Hack on DramaClaw with hot reload | `scripts/start-ce.sh` (API `:8780` + UI `:5173`; needs Python 3.11–3.12, `uv`, Node/pnpm, `ffmpeg`) | [Installation](docs/en/getting-started/installation.md) |
 
+`scripts/start-ce.sh` downloads the patched Codex **0.164.0** Agent runtime for macOS or Linux, verifies its pinned SHA256, and caches it under `runtime/codex/bin/`. Set `CODEX_BIN` in `.env` to use your own patched build instead; Windows users should use WSL2 or Docker.
+
 Upgrading from an older checkout, pinning versions, exposing the bundled gateway, or using your own Codex binary: see the [Self-hosting guide](docs/en/guides/self-hosting.md) and [Troubleshooting](docs/en/guides/troubleshooting.md).
 
 </details>
