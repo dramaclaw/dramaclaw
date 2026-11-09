@@ -165,7 +165,7 @@ Xia Director แปลงบรีฟสร้างสรรค์ด้วย�
 <p align="center"><sub>วางแผน workflow จัดการ node สร้างแอสเซ็ต และรวมวิดีโอจากบรีฟภาษาธรรมชาติ</sub></p>
 
 - **การจัดการ workflow บน canvas** &mdash; วางแผน สร้าง เชื่อมต่อ และจัดวาง node ตามบรีฟสร้างสรรค์ รัน workflow หลังยืนยัน พร้อมติดตามความคืบหน้าและกู้คืนเมื่อขั้นตอนล้มเหลว
-- **แคตตาล็อก workflow และส่วนขยาย skill** &mdash; workflow skill 11 รายการและ recipe 60 รายการสำหรับละครสั้น โฆษณาอีคอมเมิร์ซ ตัวละคร IP และเนื้อหาโซเชียล พร้อมติดตั้ง ส่งออก และแชร์ bundle ของ skill / recipe
+- **แคตตาล็อก workflow และส่วนขยาย skill** &mdash; workflow ที่มีมาให้รองรับละครสั้น โฆษณาอีคอมเมิร์ซและตัวละคร IP เนื้อหาโซเชียล อนิเมะญี่ปุ่น แอนิเมชันสไตล์ LEGO และการต่อสู้บนเวทีกลางแจ้ง สามารถติดตั้ง ส่งออก และแชร์ชุด skill และ recipe ได้
 - **การเชื่อมต่อ agent ภายนอก** &mdash; [Agent Kit](../agent-kit/README.md) เปิด workflow การผลิตเดียวกันให้ Codex, Claude Code, OpenClaw, Hermes, WorkBuddy และ MCP client อื่น ๆ
 - **บริบทโปรเจกต์และการจัดการงาน** &mdash; ตรวจความคืบหน้าโปรเจกต์ ดำเนินงานบทและช็อต ตรวจความครบถ้วนของงานส่งมอบ และแนะนำขั้นตอนการผลิตถัดไป
 
@@ -223,7 +223,7 @@ Xia Director แปลงบรีฟสร้างสรรค์ด้วย�
 - **node 18 ชนิดบน canvas เดียว** &mdash; อัปโหลด, สร้าง / แก้ไขภาพ, สร้างสตอรีบอร์ด, บท, บริบท beat, วิดีโอ, ประกอบวิดีโอ, video story, เสียง, สไตล์, skill, กลุ่ม, คำอธิบายข้อความ, ตัวดูภาพพาโนรามา 360°, โลก 3D, ส่งออก และอื่น ๆ เชื่อมต่อได้อย่างอิสระ ทุก node เก็บประวัติการสร้างของตัวเอง
 - **เครื่องมือภาพ** &mdash; สร้าง, แก้ไข, วาดใหม่, outpaint, จัดแสงใหม่, upscale, หลายมุมมอง, แก้ไขจากเทมเพลต, reverse-prompt, ตรวจจับ mark; **style wall 45 ลุคละครสั้น** สำหรับ image-to-image
 - **เครื่องมือวิดีโอ** &mdash; ข้อความ / ภาพ / keyframe เป็นวิดีโอ, การสร้างแบบ omni-reference ที่ใช้**ไฟล์ ลิงก์เว็บ และภาพอ้างอิงบน canvas** ได้, แก้ไขวิดีโอ, ลบออก, upscale, แยกเสียง, เทมเพลตมุมกล้อง, วิเคราะห์ช็อต; Seedance 2.5 อยู่ในแคตตาล็อกที่แนะนำ
-- **เสียง** &mdash; สังเคราะห์เสียงพูดพร้อมคลังเสียง, เสียงอ้างอิง, สร้างดนตรี
+- **เสียง** &mdash; สังเคราะห์เสียงพูด คลังเสียง เสียงอ้างอิง และสร้างดนตรี เมื่อเปิดใช้การออกแบบเสียง คุณสามารถบรรยายเสียง ฟังตัวอย่าง แล้วบันทึกลงช่องเสียงตัวละครหรือ **My voices** ใน XiaHua
 - **Canvas skills** &mdash; skill แบบคลิกเดียว เช่น sketch-from-context, frame-from-context, set-background, scene-360, ตรวจทานเฟรม และวางแผน beat-graph
 - **สร้างมาเพื่อ canvas ขนาดใหญ่** &mdash; แท็บ canvas, โครงร่างองค์ประกอบ, minimap และบุ๊กมาร์ก viewport, snap-align, การ render แบบ level-of-detail, เลือกหลายรายการและ node แบบกลุ่ม, คีย์ลัด, ประวัติการแก้ไขพร้อมกู้คืน, ล็อกแยกราย canvas
 - **ส่งเข้าซีรีส์** &mdash; ดูตัวอย่างผลกระทบก่อน แล้วส่ง node เดียวหรือทั้งชุดเข้าคลังแอสเซ็ตหรือตอนใดตอนหนึ่ง; ฉายซีรีส์กลับลง canvas จาก preset ได้
@@ -235,6 +235,12 @@ Xia Director แปลงบรีฟสร้างสรรค์ด้วย�
   <img src="../assets/readme/director-world.jpg" width="900" alt="Director World — ฉาก 3D"/>
 </p>
 <p align="center"><sub>ภาพแนะนำฟีเจอร์จากภาพหน้าจอเดิม รายละเอียดอาจแตกต่างจากเวอร์ชันปัจจุบัน</sub></p>
+
+### ออกแบบเสียงจากคำบรรยาย
+
+เปิด **Design from description** จากช่องเสียงตัวละครหรือ **My voices** ใน XiaHua กรอกคำบรรยายเสียงและข้อความตัวอย่าง เลือกโมเดลที่พร้อมใช้ แล้วสร้างเสียงตัวอย่าง ฟังก่อนบันทึก การบันทึกลง **My voices** จะเพิ่มเสียงลงคลังเท่านั้น ต้องเลือกเสียงนั้นก่อนใช้กับ node
+
+ฟังก์ชันนี้ต้องมีโมเดลเสียงที่รองรับและเปิดใช้งานบนเซิร์ฟเวอร์ ใน [`.env`](../.env.example) ให้ตั้ง `VOICE_DESIGN_ENABLED=1` และกำหนด `VOICE_DESIGN_DAILY_LIMIT` กับ `VOICE_DESIGN_CHANNEL_DAILY_LIMIT` เป็นค่าบวก โมเดลที่พร้อมใช้ขึ้นอยู่กับ gateway และแคตตาล็อกโมเดล
 
 ### Series (XiaJi) — สายการผลิต
 
@@ -354,7 +360,7 @@ checkout ทั้งสองเป็น git repo ธรรมดา: แก�
 docker compose -f docker-compose.release.yml up -d
 ```
 
-เปิดแอปที่ <http://localhost:8080>; REST API อยู่ที่ <http://localhost:8780> ใน **Settings → Model Config** เลือกหนึ่งอย่าง:
+เปิดแอปที่ <http://localhost:8080>; REST API อยู่ที่ <http://localhost:8780> ใน **Settings → Models & Channels** เลือกหนึ่งอย่าง:
 
 - **Official** — วาง DC key ของคุณ (รับได้ที่ <https://relayclaw.cdnfg.com>); ไม่ต้อง map model gateway ที่มาพร้อมกันจะอยู่เฉย ๆ
 - **Custom** — คลิกเดียวเพื่อเริ่มต้น gateway `newapi` ที่มาพร้อมกัน; จากนั้นเพิ่ม upstream channel ของคุณเอง
@@ -395,13 +401,15 @@ docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
 
 ## Model และผู้ให้บริการที่รองรับ
 
-DramaClaw เป็นกลางเรื่อง model — model ข้อความ / ภาพ / วิดีโอ / เสียงทั้งหมดเชื่อมต่อผ่าน **gateway ที่เข้ากันได้กับ OpenAI** เลือกโหมดใน **Settings → Model Config**:
+DramaClaw เป็นกลางเรื่อง model — model ข้อความ / ภาพ / วิดีโอ / เสียงทั้งหมดเชื่อมต่อผ่าน **gateway ที่เข้ากันได้กับ OpenAI** เลือกโหมดใน **Settings → Models & Channels**:
 
 - **Official (แนะนำ)** — วาง DC key ของคุณ (รับได้ที่ <https://relayclaw.cdnfg.com>) บันทึก เสร็จ RelayClaw มี model mapping ทุกตัวที่ DramaClaw ต้องการอยู่แล้ว; ไม่ต้องตั้งค่าอะไรเลย
 - **Custom** — คลิกเดียวเพื่อเริ่มต้น `dramaclaw-gateway` ที่มาพร้อมกัน จากนั้นเพิ่ม channel ของผู้ให้บริการของคุณเอง (API key, model ID) ใน admin UI ของมัน ทุก model ที่ DramaClaw เรียกจะผ่าน channel ของคุณ
 - **Local + Official Hybrid** — ใช้ model official สำหรับสายการผลิตหลัก และเพิ่ม channel อื่น (เช่นเวิร์กโฟลว์วิดีโอ ComfyUI ในเครื่อง) ผ่าน gateway ที่มาพร้อมกัน
 
 คำแนะนำฉบับเต็มอยู่ใน [การตั้งค่า Model](../docs/en/getting-started/configuring-models.md)
+
+ใน **Settings → Models & Channels → Agent model** คุณเลือกให้ Xia Director ใช้ช่องทางปัจจุบันหรือ endpoint ของผู้ให้บริการอื่นแยกต่างหากได้ บริการนั้นต้องรองรับ OpenAI Responses API และการเรียกใช้เครื่องมือ การตั้งค่านี้มีผลกับ Agent เท่านั้น การสร้างสื่อยังใช้ช่องทางโมเดลที่เลือกไว้
 
 ### gateway ที่มาพร้อมกัน: dramaclaw-gateway
 

@@ -165,7 +165,7 @@ Xia Director chuyển yêu cầu sáng tạo bằng ngôn ngữ tự nhiên thà
 <p align="center"><sub>Lập kế hoạch workflow, điều phối node, tạo tài sản và ghép video từ yêu cầu bằng ngôn ngữ tự nhiên.</sub></p>
 
 - **Điều phối workflow trên canvas** &mdash; lập kế hoạch, tạo, kết nối và bố trí node theo yêu cầu sáng tạo; thực thi workflow đã xác nhận, theo dõi tiến độ và khôi phục khi thất bại.
-- **Danh mục workflow và mở rộng skill** &mdash; 11 workflow skill và 60 recipe cho phim ngắn, quảng cáo thương mại điện tử, nhân vật IP và nội dung mạng xã hội; cài đặt, xuất và chia sẻ bundle skill / recipe.
+- **Danh mục workflow và mở rộng skill** &mdash; workflow tích hợp hỗ trợ phim ngắn, quảng cáo thương mại điện tử và nhân vật IP, nội dung mạng xã hội, anime Nhật Bản, hoạt hình phong cách LEGO và đối đầu trên sân khấu ngoài trời. Có thể cài đặt, xuất và chia sẻ gói skill và recipe.
 - **Tích hợp agent bên ngoài** &mdash; [Agent Kit](../agent-kit/README.md) cung cấp cùng workflow sản xuất cho Codex, Claude Code, OpenClaw, Hermes, WorkBuddy và các MCP client khác.
 - **Ngữ cảnh dự án và quản lý tác vụ** &mdash; kiểm tra tiến độ dự án, triển khai tác vụ kịch bản và cảnh quay, kiểm tra sản phẩm bàn giao và đề xuất bước sản xuất tiếp theo.
 
@@ -223,7 +223,7 @@ Tạo video tương tác trên cùng một canvas, từ lập kế hoạch cốt
 - **18 loại node trên một canvas** &mdash; upload, tạo / chỉnh sửa ảnh, tạo storyboard, kịch bản, ngữ cảnh beat, video, ghép video, video kể chuyện, âm thanh, phong cách, skill, nhóm, chú thích văn bản, trình xem toàn cảnh 360°, thế giới 3D, xuất và nhiều hơn nữa. Kết nối tự do; mỗi node giữ lịch sử sinh nội dung riêng.
 - **Công cụ ảnh** &mdash; tạo, chỉnh sửa, vẽ lại, mở rộng khung (outpaint), chiếu sáng lại, upscale, đa góc nhìn, chỉnh sửa theo mẫu, suy ngược prompt, phát hiện đánh dấu; một **bức tường phong cách với 45 look phim drama ngắn** cho image-to-image
 - **Công cụ video** &mdash; text / image / keyframe sang video, sinh nội dung tham chiếu toàn diện với **tham chiếu từ file, link web và ngay trên canvas**, chỉnh sửa video, xóa, upscale, tách âm thanh, mẫu chuyển động camera, phân tích cảnh quay; Seedance 2.5 có trong danh mục khuyến nghị
-- **Âm thanh** &mdash; tổng hợp giọng nói với thư viện giọng, giọng tham chiếu, tạo nhạc
+- **Âm thanh** &mdash; tổng hợp giọng nói, thư viện giọng, âm thanh tham chiếu và tạo nhạc. Khi bật thiết kế giọng, bạn có thể mô tả giọng, nghe thử rồi lưu vào giọng nhân vật hoặc **My voices** trong XiaHua.
 - **Skill trên canvas** &mdash; các skill một chạm như phác thảo từ ngữ cảnh, khung hình từ ngữ cảnh, đặt nền, cảnh 360, review khung hình và lập kế hoạch beat-graph
 - **Xây cho canvas lớn** &mdash; tab canvas, dàn ý phần tử, minimap và bookmark vùng nhìn, căn chỉnh bám lưới, render theo mức chi tiết (level-of-detail), chọn nhiều và nhóm node, phím tắt, lịch sử phiên bản có khôi phục, khóa theo từng canvas
 - **Commit vào series** &mdash; xem trước tác động, rồi đưa một node hoặc cả một lô vào thư viện tài sản hoặc một tập; chiếu series ngược lại lên canvas từ các preset
@@ -235,6 +235,12 @@ Tạo video tương tác trên cùng một canvas, từ lập kế hoạch cốt
   <img src="../assets/readme/director-world.jpg" width="900" alt="Director World — trường quay 3D"/>
 </p>
 <p align="center"><sub>Minh họa tính năng dựa trên ảnh chụp có sẵn; giao diện có thể khác phiên bản hiện tại.</sub></p>
+
+### Thiết kế giọng từ mô tả
+
+Mở **Design from description** từ vị trí giọng của nhân vật hoặc **My voices** trong XiaHua. Nhập mô tả giọng và văn bản nghe thử, chọn model khả dụng rồi tạo bản nghe thử. Nghe trước khi lưu. Lưu vào **My voices** chỉ thêm giọng vào thư viện; bạn cần chọn giọng đó để dùng trong node.
+
+Tính năng này cần model âm thanh tương thích và phải được bật trên máy chủ. Trong [`.env`](../.env.example), đặt `VOICE_DESIGN_ENABLED=1` và giá trị dương cho `VOICE_DESIGN_DAILY_LIMIT` và `VOICE_DESIGN_CHANNEL_DAILY_LIMIT`. Model khả dụng phụ thuộc gateway và danh mục model.
 
 ### Series (XiaJi) — pipeline
 
@@ -354,7 +360,7 @@ Cả hai checkout đều là repo git bình thường: sửa, `git pull`, build 
 docker compose -f docker-compose.release.yml up -d
 ```
 
-Mở ứng dụng tại <http://localhost:8080>; REST API ở <http://localhost:8780>. Trong **Settings → Model Config** chọn một trong:
+Mở ứng dụng tại <http://localhost:8080>; REST API ở <http://localhost:8780>. Trong **Settings → Models & Channels** chọn một trong:
 
 - **Official** — dán DC key của bạn (lấy tại <https://relayclaw.cdnfg.com>); không cần ánh xạ model. Gateway đi kèm ở trạng thái chờ.
 - **Custom** — một cú bấm khởi tạo gateway `newapi` đi kèm; sau đó thêm các kênh upstream của riêng bạn.
@@ -395,13 +401,15 @@ hoặc chạy gateway từ mã nguồn trong checkout kế bên (`make dev-api` 
 
 ## Model & nhà cung cấp được hỗ trợ
 
-DramaClaw giữ trung lập về model — mọi model text / ảnh / video / âm thanh đều kết nối qua một **gateway tương thích OpenAI**. Chọn chế độ trong **Settings → Model Config**:
+DramaClaw giữ trung lập về model — mọi model text / ảnh / video / âm thanh đều kết nối qua một **gateway tương thích OpenAI**. Chọn chế độ trong **Settings → Models & Channels**:
 
 - **Official (khuyến nghị)** — dán DC key của bạn (lấy tại <https://relayclaw.cdnfg.com>), lưu, xong. RelayClaw đã có sẵn mọi ánh xạ model mà DramaClaw cần; không phải cấu hình gì.
 - **Custom** — một cú bấm khởi tạo `dramaclaw-gateway` đi kèm, rồi thêm các kênh nhà cung cấp của riêng bạn (API key, model ID) trong giao diện quản trị của nó. Mọi model DramaClaw gọi đều đi qua kênh của bạn.
 - **Local + Official Hybrid** — giữ các model official cho pipeline chính và thêm các kênh bổ sung (ví dụ một workflow video ComfyUI cục bộ) qua gateway đi kèm.
 
 Hướng dẫn đầy đủ trong [Cấu hình model](../docs/en/getting-started/configuring-models.md).
+
+Trong **Settings → Models & Channels → Agent model**, Xia Director có thể dùng kênh hiện tại hoặc một endpoint bên thứ ba riêng. Dịch vụ đó phải hỗ trợ OpenAI Responses API và gọi công cụ. Thiết lập này chỉ ảnh hưởng Agent; việc tạo nội dung đa phương tiện vẫn dùng các kênh model đã chọn.
 
 ### Gateway đi kèm: dramaclaw-gateway
 

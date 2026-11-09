@@ -165,7 +165,7 @@ Xia Director turns natural-language creative briefs into executable canvas workf
 <p align="center"><sub>Workflow planning, node orchestration, asset generation and video composition from a natural-language brief.</sub></p>
 
 - **Canvas workflow orchestration** &mdash; plan, create, connect and arrange nodes from a creative brief; execute confirmed workflows with progress tracking and failure recovery.
-- **Workflow catalog and skill extensions** &mdash; 11 workflow skills and 60 recipes covering short drama, e-commerce ads, IP character ads and social content; install, export and share skill / recipe bundles.
+- **Workflow catalog and skill extensions** &mdash; built-in workflows cover short drama, e-commerce and IP character ads, social content, Japanese anime, LEGO-style animation, and outdoor stage duels. Install, export, and share skill and recipe bundles.
 - **External agent integration** &mdash; [Agent Kit](agent-kit/README.md) exposes the same production workflows to Codex, Claude Code, OpenClaw, WorkBuddy and other MCP clients.
 - **Project context and task management** &mdash; inspect project progress, advance script and shot tasks, check deliverable completeness and identify the next production steps.
 
@@ -223,7 +223,7 @@ Create interactive video stories on a shared canvas, from story planning and bra
 - **18 node types on one canvas** &mdash; upload, image generation / edit, storyboard generation, script, beat context, video, video compose, video story, audio, style, skill, group, text annotation, 360° panorama viewer, 3D world, export and more. Connect them freely; every node keeps its own generation history.
 - **Image tools** &mdash; generate, edit, redraw, outpaint, relight, upscale, multi-view, template edit, reverse-prompt, mark detection; a **style wall of 45 short-drama looks** for image-to-image
 - **Video tools** &mdash; text / image / keyframe to video, omni-reference generation with **file, web-link and on-canvas references**, video edit, erase, upscale, audio separation, camera templates, shot analysis; Seedance 2.5 in the recommended catalog
-- **Audio** &mdash; speech synthesis with a voice library, reference voices, music generation
+- **Audio** &mdash; speech synthesis, a voice library, reference audio, and music generation. With voice design enabled, describe a voice, preview the result, and save it to a character voice slot or **My voices** in XiaHua.
 - **Canvas skills** &mdash; one-click skills such as sketch-from-context, frame-from-context, set-background, scene-360, frame review and beat-graph planning
 - **Built for big canvases** &mdash; canvas tabs, element outline, minimap and viewport bookmarks, snap-align, level-of-detail rendering, multi-select and group nodes, keyboard shortcuts, revision history with restore, per-canvas locking
 - **Commit to the series** &mdash; preview the impact, then promote a single node or a whole batch into the asset library or an episode; project the series back onto a canvas from presets
@@ -235,6 +235,12 @@ Create interactive video stories on a shared canvas, from story planning and bra
   <img src="./assets/readme/director-world.jpg" width="900" alt="Director World"/>
 </p>
 <p align="center"><sub>Screenshot-based feature illustration; interface details may differ from the current release.</sub></p>
+
+### Voice design
+
+In a character voice slot or XiaHua's **My voices**, open **Design from description**. Enter the voice description and preview text, choose an available model, and generate a preview. Listen before saving. Saving to **My voices** adds the voice to the library; select it explicitly to use it in a node.
+
+Voice design requires a configured compatible audio model and server-side enablement. In [`.env`](.env.example), set `VOICE_DESIGN_ENABLED=1` and positive `VOICE_DESIGN_DAILY_LIMIT` and `VOICE_DESIGN_CHANNEL_DAILY_LIMIT` values. Available models depend on your gateway and model catalog.
 
 ### Series (XiaJi) — the pipeline
 
@@ -378,7 +384,7 @@ release clear when upgrading. Do not add `--build` for this mode. The Agent defa
 the bundled credential-safe Codex 0.164.0 runtime; an existing `DRAMACLAW_CHAT_BACKEND`
 value in your shell or `.env` overrides that default.
 
-Open the app at <http://localhost:8080>; the REST API is at <http://localhost:8780>. In **Settings → Model Config** pick one of:
+Open the app at <http://localhost:8080>; the REST API is at <http://localhost:8780>. In **Settings → Models & Channels** pick one of:
 
 - **Official** — paste your DC key (get one at <https://relayclaw.cdnfg.com>); no model mapping needed. The bundled gateway stays idle.
 - **Custom** — one click initializes the bundled `newapi` gateway; then add your own upstream channels.
@@ -429,13 +435,15 @@ or run the gateway from source in the sibling checkout (`make dev-api` / `make d
 
 ## Supported Models & Providers
 
-DramaClaw stays model-neutral — all text / image / video / audio models connect through an **OpenAI-compatible gateway**. Pick the mode in **Settings → Model Config**:
+DramaClaw stays model-neutral — all text / image / video / audio models connect through an **OpenAI-compatible gateway**. Pick the mode in **Settings → Models & Channels**:
 
 - **Official (recommended)** — paste your DC key (get one at <https://relayclaw.cdnfg.com>), save, done. RelayClaw already ships every model mapping DramaClaw needs; nothing to configure.
 - **Custom** — one click initializes the bundled `dramaclaw-gateway`, then add your own provider channels (API keys, model IDs) in its admin UI. Every model DramaClaw calls goes through your channels.
 - **Local + Official Hybrid** — keep the official models for the main pipeline and add extra channels (for example a local ComfyUI video workflow) through the bundled gateway.
 
 Full walkthrough in [Configuring Models](docs/en/getting-started/configuring-models.md).
+
+Under **Settings → Models & Channels → Agent model**, Xia Director can follow the active channel or use a separate third-party endpoint. The endpoint must support the OpenAI Responses API and tool calls. This setting affects the Agent only; media generation continues through the selected model channels.
 
 ### The bundled gateway: dramaclaw-gateway
 
