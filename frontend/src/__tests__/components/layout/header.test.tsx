@@ -191,6 +191,28 @@ describe("Header runtime gating", () => {
     expect(brandingState.enabled).toBe(false);
   });
 
+  it.each([false, true])("hides avatar editing in CE with auth required=%s", async (requiresAuth) => {
+    runtimeState.isCe = true;
+    runtimeState.authRequired = requiresAuth;
+    renderHeader();
+
+    fireEvent.click(screen.getByLabelText("Open account"));
+
+    expect(await screen.findByRole("button", { name: "Announcement Center" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Select language/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change avatar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "header.account.avatarDialog.title" })).not.toBeInTheDocument();
+  });
+
+  it("keeps avatar editing available in EE", async () => {
+    renderHeader();
+
+    fireEvent.click(screen.getByLabelText("Open account"));
+    fireEvent.click(await screen.findByRole("button", { name: "Change avatar" }));
+
+    expect(await screen.findByRole("dialog", { name: "header.account.avatarDialog.title" })).toBeInTheDocument();
+  });
+
   it("keeps the settings entry available in EE runtime", () => {
     runtimeState.isCe = false;
 
