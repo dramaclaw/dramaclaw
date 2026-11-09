@@ -48,7 +48,7 @@ DramaClaw 要做的事很简单：<br/>
 <p align="left">
 
 <strong>对，你可以拿它赚钱。</strong><br/>
-DramaClaw 采用 <a href="../LICENSE">Elastic License 2.0</a>。自己跑、自己改、自己卖，随便 ——<br/>
+DramaClaw 采用 <a href="../LICENSES/Elastic-2.0.txt">Elastic License 2.0</a>。自己跑、自己改、自己卖，随便 ——<br/>
 单机版本可以自由商用，不用申请，不用付费。<br/>
 我们只有一个请求：在界面角落留一行小字「基于 DramaClaw」。<br/>
 唯一还没开的门，是把它包成 SaaS 卖给别人；这条授权暂不开放。<br/>
@@ -58,7 +58,7 @@ DramaClaw 采用 <a href="../LICENSE">Elastic License 2.0</a>。自己跑、自�
 
 <br/>
 
-[![License](https://img.shields.io/badge/License-Elastic_2.0-blue.svg)](../LICENSE)
+[![License](https://img.shields.io/badge/License-Elastic_2.0-blue.svg)](../LICENSES/Elastic-2.0.txt)
 [![GitHub stars](https://img.shields.io/github/stars/dramaclaw/dramaclaw?style=social)](https://github.com/dramaclaw/dramaclaw/stargazers)
 [![Release](https://img.shields.io/github/v/release/dramaclaw/dramaclaw?include_prereleases&sort=semver)](https://github.com/dramaclaw/dramaclaw/releases)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](#quick-start)
@@ -70,27 +70,90 @@ DramaClaw 采用 <a href="../LICENSE">Elastic License 2.0</a>。自己跑、自�
 <br/>
 
 <p align="center">
-  <img src="../assets/hero.png" alt="DramaClaw — 讲故事的人，重新走回镜头前" width="820"/>
+  <img src="../assets/hero.png" alt="DramaClaw —— 让讲故事的人回到镜头前" width="820"/>
 </p>
-
-<!--
-  演示视频 —— 上传完成后，把 user-attachments 链接单独一行粘到下面。
-  上传方式：在 github.com 新建一个 Issue（别提交），把 demo 视频拖进正文，
-  等它上传完会自动生成 https://github.com/user-attachments/assets/...mp4 链接，
-  复制后粘到下面，再把 Issue 取消即可。GitHub 会把独占一行的 URL 渲染成内联播放器。
-
-  https://github.com/user-attachments/assets/REPLACE-AFTER-UPLOAD
--->
 
 <p align="center">
-  <sub>🎬 宣传片：<a href="https://www.bilibili.com/video/BV1iQV26cE4S">Bilibili</a> &nbsp;·&nbsp; <a href="https://www.youtube.com/watch?v=64apa3maxK0">YouTube</a></sub>
+  <sub>🎬 预告片：<a href="https://www.bilibili.com/video/BV1iQV26cE4S">Bilibili</a> &nbsp;·&nbsp; <a href="https://www.youtube.com/watch?v=64apa3maxK0">YouTube</a></sub>
 </p>
+
+<br/>
+
+## DramaClaw 是什么？
+
+DramaClaw 是一条**可自托管的 AI 漫剧生产线**：从原稿到成片剧集，从一句需求到一条短片。智能体与无限画布共用同一个资产库：
+
+- **虾导** —— 内置智能体。说出你想要什么，它规划工作流、在画布上铺好节点，经你确认后运行。
+- **虾画** —— 无限画布。图片、视频、音频、3D 场景、互动剧、剧本都是节点，自由生成、编辑、连线。
+- **虾集** —— 剧集流水线。丢进小说或剧本，DramaClaw 负责结构化故事、生成剧本、绘制分镜、配音并剪出成片。
+
+任意模型都能通过 OpenAI 兼容网关接入；跑在你自己的机器上，素材留在你自己手里。
+
+<p align="center">
+  <a href="#quick-start"><b>🚀 快速开始</b></a> &nbsp;·&nbsp;
+  <a href="#whats-new"><b>🆕 新功能</b></a> &nbsp;·&nbsp;
+  <a href="#made-with-dramaclaw"><b>🎬 作品</b></a> &nbsp;·&nbsp;
+  <a href="#features"><b>✨ 功能</b></a> &nbsp;·&nbsp;
+  <a href="#models"><b>🔌 模型</b></a> &nbsp;·&nbsp;
+  <a href="#documentation"><b>📖 文档</b></a>
+</p>
+
+<br/>
+
+## <a name="whats-new"></a>🆕 新功能
+
+我们自己的制作团队一直在用的三项能力，现已进入 `main`。
+
+### 🤖 虾导 —— 从一句需求到跑起来的工作流
+
+<p align="center">
+  <img src="../assets/readme/freezone-agent.gif" width="900" alt="虾导把自然语言需求变成画布工作流"/>
+</p>
+<p align="center"><sub>一句需求 → 规划工作流 → 画布铺节点 → 生成素材 → 合成视频。</sub></p>
+
+- **规划并运行画布工作流** —— 把创作需求转成节点图、自动布局，经你确认后执行，带进度跟踪与失败恢复。
+- **工作流目录、Skill 与 Recipe** —— 内置短剧、电商与 IP 角色广告、社媒内容、日系动漫、乐高风动画、户外擂台对决等工作流。Skill 包可安装、导出、分享，也能**导入外部 `SKILL.md` / ZIP** 并转换为原生 Skill。
+- **还能做网页** —— 让它做落地页或故事专题页，结果是可编辑的 HTML 节点，带版本历史，可导出自包含 ZIP。
+- **懂你的项目** —— 查看进度、推进剧本与镜头任务、找出缺失的交付物并建议下一步。
+- **大脑由你选** —— 默认使用内置 Codex 运行时；也可以给智能体单独指定任意支持 OpenAI Responses API 和工具调用的第三方模型，不影响媒体生成渠道。
+- **外部智能体也能用** —— [Agent Kit](../agent-kit/README.md) 通过 MCP 把同一套工作流开放给 Codex、Claude Code、OpenClaw、WorkBuddy 及任意 stdio MCP 客户端。
+
+### 🎥 3D 预演台 —— 先排好戏，再去生成 `beta`
+
+<p align="center">
+  <img src="../assets/readme/previz-canvas-node.gif" width="900" alt="3D 预演台：站位、机位与时间线，录制结果回到画布"/>
+</p>
+<p align="center"><sub>参考图 → 3D 白模场景 → 角色、机位与时间线 → 录制预演回到画布。</sub></p>
+
+浏览器内的预演台，以节点形式挂在画布上。先锁定空间、站位和构图，再把结果交给图片与视频生成。
+
+- **场景白模** —— 由参考图生成 3D 场景；拖入道具，松手即落到下方的表面上。
+- **角色与动作** —— 五种体型的人偶，可在俯视图上选位；角色沿移动路径行走时自动播放步行动作，多轨时间线统一编排。
+- **机位与切镜** —— 每台机位可调焦距、画幅与位置；**节目轨**在机位之间切换（数字键实时切），监视器跟随剪辑。
+- **音频轨** —— 从本地文件或上游节点导入音频，显示波形，并混入录制结果。
+- **回到画布** —— 截取画面或录制节目轨，写入相连节点，作为下一次生成的参考。
+
+### 🔀 互动剧 —— 观众的选择决定剧情 `beta`
+
+<p align="center">
+  <img src="../assets/readme/interactive-story.gif" width="900" alt="互动剧：分支编排与播放器"/>
+</p>
+<p align="center"><sub>分支剧情生成、画布编排、互动播放与多结局。</sub></p>
+
+- **AI 剧情规划** —— 一句需求生成大纲和可编辑的分支叙事，含选择点、结局和每条路线的预计时长。
+- **画布上可视化编排分支** —— 排布剧情片段、视频与选项；编辑台词、选项顺序和分支连线。
+- **变量与条件** —— 好感度、分数等变量控制可选项、决定结局；支持限时选择与默认路线。
+- **就地制作素材** —— 角色、场景、分镜参考与分段视频，画布上的素材全部可复用。
+- **先试玩再出片** —— 用占位素材跑通剧情，校验分支连通与条件路径，查看结局达成率与路径覆盖率。
+- **导出播放器** —— 导出独立 HTML 播放器或含视频的离线包，支持分支播放、探索进度与已解锁片段重看。
+
+<sub>标 `beta` 的功能已在 `main` 中可用，界面与数据格式在后续版本中仍可能调整。</sub>
 
 <br/>
 
 <div align="center">
 
-## 🎬 用 DramaClaw 制作
+## <a name="made-with-dramaclaw"></a>🎬 用 DramaClaw 制作
 
 <sub>我们团队用这条流水线亲手制作的真实短剧 &mdash; 点击链接即可播放。</sub>
 
@@ -139,78 +202,57 @@ DramaClaw 采用 <a href="../LICENSE">Elastic License 2.0</a>。自己跑、自�
 
 <br/>
 
-## DramaClaw 是什么？
+## <a name="quick-start"></a>🚀 快速开始
 
-DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且越来越不止于漫剧，任何想用生成模型讲的视觉故事都可以在这里做。它有两张面孔，共用一个资产库和一个智能体：
+只需要 Docker 和 `docker compose`。不需要 GPU、数据库或消息队列 —— 模型跑在网关后面，状态存在本地磁盘。
 
-- **虾画 —— 无限画布。** 节点式创作台，图片、视频、音频、3D 场景、剧本在画布上自由生成、编辑、连线，满意的结果再写回剧集。这是我们自己现在做创作的主战场，也是 DramaClaw 正在全力投入的方向。
-- **虾集 —— 剧集流水线。** 丢进一本原稿或剧本，DramaClaw 接管全部繁重工作：结构化故事、规划剧集、生成剧本、绘制分镜与首帧、合成配音、剪成成片。
+```bash
+git clone https://github.com/dramaclaw/dramaclaw.git
+cd dramaclaw
+cp .env.example .env          # 把 PROMPT_EXPORT_PASSWORD 改成非默认值
 
-内置智能体**虾导**横跨两边：回答关于项目的问题、推进流水线任务，还能替你在画布上搭建并运行节点图。
+docker compose -f docker-compose.release.yml pull
+docker compose -f docker-compose.release.yml up -d
+```
 
-它为创作者、独立工作室以及创意工程师而生 —— 在自己的机器上跑完整个「漫剧智造工厂」，不必拼接十几个割裂的工具，也不必把素材交给一个看不见内部的黑盒云服务。虽然以漫剧为核心，同一套画布和流水线同样能产出短视频广告、电商带货视频等其它视觉内容。
+打开 <http://localhost:8080>，进入**设置 → 模型与渠道**，粘贴 DC key（到 <https://relayclaw.cdnfg.com> 获取）—— 或切到**自定义**接入你自己的供应商。就这样。
 
-<br/>
+Release Compose 文件运行已发布的 **v2.1.1** 多架构镜像（`DRAMACLAW_VERSION=2.1.1`、`DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`）。中国大陆用户可通过 `DRAMACLAW_IMAGE_PREFIX` 切换到阿里云 ACR 镜像。
 
-## 核心能力
-
-### 虾导 —— 智能体
-
-虾导将自然语言创作需求转化为可执行的画布工作流，串联剧本开发、素材生成与视频合成。
-
-<p align="center">
-  <img src="../assets/readme/freezone-agent.gif" width="900" alt="Xia Director — canvas workflow"/>
-</p>
-<p align="center"><sub>自然语言需求驱动的工作流规划、节点编排、素材生成与视频合成。</sub></p>
-
-- **画布工作流编排** &mdash; 根据创作需求规划、创建、连接与布局节点；确认后执行工作流，支持进度追踪与失败恢复
-- **工作流目录与技能扩展** &mdash; 内置工作流覆盖漫剧、电商与 IP 角色广告、社媒内容、日式动画、乐高风格动画和户外舞台对决；支持技能与配方包的安装、导出和分享。
-- **外部智能体集成** &mdash; 通过 [Agent Kit](../agent-kit/README.md)，为 Codex、Claude Code、OpenClaw、Hermes、WorkBuddy 及其它 MCP 客户端提供统一的生产工作流接入
-- **项目上下文与任务管理** &mdash; 查询项目进度、推进剧本与镜头任务、检查交付完整性，并提供后续生产步骤建议
+<details>
+<summary><b>其他运行方式</b></summary>
 
 <br/>
 
-### 3D 导演台（预演台）
+| 方式 | 适用场景 | 命令 | 指南 |
+|---|---|---|---|
+| **发布镜像** | 试用或自托管某个发布版本 | `docker compose -f docker-compose.release.yml up -d` | [快速开始](../docs/zh/getting-started/quickstart.md) |
+| **源码 Docker** | 运行自己修改过的代码 | 把 [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) clone 到本仓库旁边，然后 `docker compose up -d --build` | [自托管](../docs/zh/guides/self-hosting.md) |
+| **本地开发** | 热重载开发 DramaClaw | `scripts/start-ce.sh`（API `:8780` + 界面 `:5173`；需要 Python 3.11–3.12、`uv`、Node/pnpm、`ffmpeg`） | [安装](../docs/zh/getting-started/installation.md) |
 
-**内测中**
+从旧版 checkout 升级、固定版本、对外开放内置网关、使用自己的 Codex 二进制：见[自托管手册](../docs/zh/guides/self-hosting.md)和[故障排查](../docs/zh/guides/troubleshooting.md)。
 
-浏览器内的 3D 镜头预演工具，以画布节点组织场景、角色与相机，支持空间布局、动作调度和镜头设计。
+</details>
 
-<p align="center">
-  <img src="../assets/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
-</p>
-<p align="center"><sub>参考图与关联的预演台节点。</sub></p>
-
-<p align="center">
-  <img src="../assets/readme/previz-canvas-node.gif" width="800" alt="Previz — stage editing and canvas output"/>
-</p>
-
-- **场景构建** &mdash; 从参考图生成 3D 场景，配置道具与空间布局
-- **角色调度与动作预演** &mdash; 在多轨时间线上编排角色动作、运动路径与走位
-- **机位与镜头控制** &mdash; 调整焦距、传感器尺寸与相机位置，预览镜头构图和特写跟踪
-- **画布输出** &mdash; 将截帧与预演录制输出至关联节点，作为后续图像与视频生成的参考
+<details>
+<summary><b>系统要求</b></summary>
 
 <br/>
 
-### 互动剧
+| 项目 | 要求 |
+|---|---|
+| **CPU / 内存** | ≥ 2 vCPU / 4 GB（模型推理在网关侧，不在本机） |
+| **GPU** | 不需要。仅可选的 `world` extra（体素 / 全景转 3D）需要 CUDA |
+| **操作系统** | macOS（Apple Silicon / Intel）、Windows（Docker Desktop + WSL2）、Linux |
+| **端口** | `8080` Web 界面 · `8780` REST API · `3000` 内置网关管理后台（默认仅本机） |
+| **数据存储** | 无需 Postgres、Redis、Celery 或 Ray。SQLite + 文件，存于 `ce-data` 卷 |
+| **网络** | 需能访问 `relayclaw.cdnfg.com` 和/或你配置的模型供应商 |
 
-**内测中**
-
-将剧情策划、分支编排、素材制作与交互播放整合在同一画布中，支持多结局互动视频创作。观众通过选择影响剧情走向，创作者可完成从故事大纲到试玩与导出的制作流程。
-
-<p align="center">
-  <img src="../assets/readme/interactive-story.gif" width="900" alt="Interactive stories — branching workflow and player"/>
-</p>
-<p align="center"><sub>分支剧情生成、画布编排、交互播放与多结局体验。</sub></p>
-
-- **智能剧情规划** — 根据自然语言创作需求生成故事大纲与可编辑的分支剧情，规划选择点、多结局及各条路线的观看时长
-- **可视化分支编排** — 在画布上组织剧情片段、视频素材与互动选项，编辑剧情文案、选项顺序和分支连接
-- **剧情变量与条件控制** — 通过好感度、积分等变量记录观众选择，控制选项开放条件与结局走向；支持限时选择和默认路径
-- **素材制作与画布协同** — 制作角色、场景与分镜参考图，按剧情片段生成视频，并复用画布中的已有素材
-- **交互试玩与路径验证** — 视频生成前即可使用占位素材试玩，检查分支连通性与条件路径；结合选项统计、结局到达率和路径覆盖评估剧情结构
-- **播放器导出** — 导出独立 HTML 播放器或包含视频素材的离线包，支持分支播放、探索进度查看及从已解锁片段重玩
+</details>
 
 <br/>
+
+## <a name="features"></a>✨ 功能
 
 ### 虾画 —— 无限画布
 
@@ -219,236 +261,110 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 </p>
 <p align="center"><sub>对右侧的虾导说一句话，左侧画布上就长出了这张 17 个节点、32 条连线的工作流：需求 → 故事方向 → 角色与场景参考 → 五个镜头首帧 → 五段镜头视频 → 旁白与配乐 → 成片合成。</sub></p>
 
-- **一张画布 18 种节点** &mdash; 上传、图片生成 / 编辑、分镜生成、剧本、节拍上下文、视频、视频合成、视频故事、音频、风格、技能、分组、文字批注、360° 全景查看、3D 世界、导出等。任意连线，每个节点保留自己的生成历史。
-- **图片工具** &mdash; 生成、编辑、重绘、扩图、重打光、放大、多视角、模板编辑、反推提示词、标记检测；图生图**风格墙内置 45 种漫剧风格**
-- **视频工具** &mdash; 文生 / 图生 / 首尾帧生视频，全能参考生成支持**文件、网页链接和画布内素材做参考**，视频编辑、擦除、放大、人声分离、运镜模板、镜头分析；推荐目录已含 Seedance 2.5
-- **音频** &mdash; 语音合成、声线库、参考音频与音乐生成；启用声音设计后，可按描述生成声线，试听后保存到角色声线插槽或虾画的「我的音色」。
-- **画布技能** &mdash; 一键技能：按上下文出线稿、按上下文出首帧、设置背景、场景 360、画面审校、节拍图规划
-- **为大画布而生** &mdash; 画布分页、元素大纲、小地图与视口书签、吸附对齐、分级渲染、多选与分组、快捷键、历史版本回滚、画布级锁
-- **提交回剧集** &mdash; 先预览影响，再把单个节点或整批结果写入资产库或某一集；也能按预设把剧集投影回画布
-- **导演世界 —— 空间一致的片场** &mdash; 图片 → 3D 高斯片场、场景 360 全景，都是画布上的节点：可取景的虚拟片场，锁定空间结构、人物站位与镜头机位，同一场景跨镜头保持一致；在 3D 视图里取好景、截下来，直接作为下一次生成的背景
+- **一张画布，所有媒介** —— 图片、视频、音频、剧本、节拍上下文、分镜、风格、技能、360° 全景、3D 世界、预演台、互动剧、网页与导出节点。任意连线，每个节点保留自己的生成历史。
+- **图片工具** —— 生成、编辑、重绘、扩图、重打光、放大、多视角、模板编辑、反推提示词、标记检测，以及**内置 45 种漫剧风格的风格墙**。
+- **视频工具** —— 文生 / 图生 / 首尾帧生视频，全能参考生成支持文件、网页链接和画布内素材做参考，视频编辑、擦除、放大、人声分离、运镜模板与镜头分析；推荐目录已含 Seedance 2.5。
+- **音频与声音设计** —— 语音合成、声线库、参考音频与音乐生成。**用文字描述一个声音**，试听后保存到角色声线插槽或「我的音色」（需配置兼容的音频模型，并在 [`.env`](../.env.example) 中设置 `VOICE_DESIGN_ENABLED=1` 及每日额度）。
+- **导演世界** —— 把图片变成 3D 高斯片场或场景 360 全景，在查看器里取景，同一场景跨镜头保持一致。
+- **为大画布而生** —— 画布分页、元素大纲、小地图、视口书签、吸附对齐、分级渲染、分组节点、快捷键、历史版本回滚与画布级锁。
+- **提交回剧集** —— 先预览影响，再把单个节点或整批结果写入资产库或某一集；也能把剧集投影回画布。
 
-#### 导演世界 —— 3D 片场
-
-<p align="center">
-  <img src="../assets/readme/director-world.jpg" width="900" alt="导演世界 —— 3D 片场"/>
-</p>
-<p align="center"><sub>基于已有截图重新制作的功能展示图；界面细节可能与当前版本不同。</sub></p>
-
-### 按描述生成声线
-
-在角色声线插槽或虾画的「我的音色」中打开「按描述生成」，填写声音描述与试听文本，选择可用模型后生成试听。满意后再保存；保存到「我的音色」只会加入声线库，需要选中该声线后，节点才会使用它。
-
-声音设计需要配置兼容的音频模型，并在服务端启用。在 [`.env`](../.env.example) 中设置 `VOICE_DESIGN_ENABLED=1`，并为 `VOICE_DESIGN_DAILY_LIMIT` 与 `VOICE_DESIGN_CHANNEL_DAILY_LIMIT` 设置正数额度。实际可用模型以所用网关和模型目录为准。
+<table>
+  <tr>
+    <td width="50%"><img src="../assets/readme/director-world.jpg" alt="导演世界"/><p align="center"><sub>导演世界</sub></p></td>
+    <td width="50%"><img src="../assets/readme/previz-canvas-node-0.jpg" alt="预演台节点与其参考图"/><p align="center"><sub>画布上的预演台节点</sub></p></td>
+  </tr>
+</table>
 
 ### 虾集 —— 剧集流水线
 
 <p align="center">
-  <img src="../assets/pipeline.png" alt="DramaClaw 流水线 —— 摄取、规划、生产、交付" width="760"/>
+  <img src="../assets/pipeline.png" alt="DramaClaw 流水线 —— 导入、规划、生产、交付" width="760"/>
 </p>
 
-每一步都有独立的接口 —— 可以按顺序跑，可以跳过，也可以从任意检查点续跑，甚至接入你自己的编排器。
+每个阶段都是带独立接口的任务 —— 可以按顺序跑、跳步跑、从任意检查点续跑，也能接入你自己的编排器。
 
-- **结构化导入** &mdash; 新项目直接从原稿或剧本（支持 Fountain 格式）构建剧集、角色、场景，不需要知识图谱和向量；Cognee 故事图谱路径保留给老项目
-- **资产库与身份一致性（虾塘）** &mdash; 角色、场景、道具、声线按用途和文件夹管理；多集之间保持稳定身份，生成角色肖像与单集变体
-- **剧集规划与剧本生成** &mdash; 章节切分、节拍规划、多集叙事弧；改编 / 直译 / 分镜稿多种模式，带审校修复循环
-- **分镜与首帧** &mdash; 按节拍风格化生成，网格切分，图像池选优
-- **配音、合成与导出** &mdash; 带情绪的语音合成，组装剧集，导出视频 + 字幕与整套素材包
-- **风格模板（虾格）** &mdash; 上传参考图自动解析风格参数，一键应用到整个项目
-- **任务中心（虾条）** &mdash; 状态、进度、日志、取消 / 重试，长任务断点续跑；入队前先校验前置条件
+- **结构化导入** —— 从原稿或剧本（支持 Fountain）直接生成剧集、角色与场景，无需知识图谱或向量。
+- **资产库（虾塘）** —— 角色、场景、道具与声线按用途组织；跨集稳定的身份、定妆照与分集变体。
+- **剧集规划与剧本** —— 章节切分、节拍规划、多集弧线；自适应 / 忠实原文 / 分阶段三种剧本模式，带审校与修复循环。
+- **分镜与首帧** —— 节拍驱动的风格化生成、宫格拆分、图池挑选。
+- **配音、合成与导出** —— 情绪感知配音、整集合成、视频 + 字幕导出及完整素材包。
+- **视觉风格** —— 上传参考图提取风格参数，应用到整个项目。
+- **任务中心** —— 状态、进度、日志、取消 / 重试，长任务可从检查点续跑。
 
-#### 虾塘 —— 资产库
-
-<p align="center">
-  <img src="../assets/readme/asset-library.jpg" width="900" alt="虾塘 —— 资产库"/>
-</p>
-<p align="center"><sub>基于已有截图重新制作的功能展示图；界面细节可能与当前版本不同。</sub></p>
-
-#### 分镜与首帧
-
-<p align="center">
-  <img src="../assets/readme/storyboards.jpg" width="900" alt="分镜与首帧"/>
-</p>
-<p align="center"><sub>基于已有截图重新制作的功能展示图；界面细节可能与当前版本不同。</sub></p>
+<table>
+  <tr>
+    <td width="50%"><img src="../assets/readme/asset-library.jpg" alt="虾塘资产库"/><p align="center"><sub>虾塘 —— 资产库</sub></p></td>
+    <td width="50%"><img src="../assets/readme/storyboards.jpg" alt="分镜与首帧"/><p align="center"><sub>分镜与首帧</sub></p></td>
+  </tr>
+</table>
 
 <br/>
 
-## 为什么是 DramaClaw？
+## 🤔 为什么是 DramaClaw？
 
-**一张懂剧的画布，加一个在画布上干活的智能体。** 通用节点画布什么都能连，但不知道什么是剧集、角色、镜头；剧集工具懂行，却把你锁在向导里。虾画给你自由画布，节点和技能都懂剧；虾导在你确认后规划、铺图并运行工作流。画布与智能体一起贯穿创作生产过程。
-
-**为小说转短剧而生。** 通用的工作流工具确实可以把节点拼起来，但它们不知道「剧集节拍」是什么，不懂为什么角色的跨场景身份一致性那么重要，也不会在图像 + 配音 + 剪辑里去守护一整章节的情绪弧。DramaClaw 把这些判断全部内建到工具里。
-
-**画布与流水线并行，而不是二选一。** 大多数工具要么给你一张自由的节点画布，要么给你一个死板的向导。DramaClaw 让两者作为双轨跑在同一个资产库上：在画布上探索，把成立的结果提交进剧集，再把剧集投影回画布。智能体在两边都能干活。
-
-**每一步皆可拆解。** 每个阶段都是一个独立的异步任务，各有独立接口。你可以顺序跑、跳步跑、中途续跑，这套工具本身就是产品 —— 里面不藏黑箱。
-
-**可自托管，模型中立。** 你的原稿、你的角色、你的模型、你的服务器。需要最好的效果时用闭源大模型；需要完全可控时切到开放权重模型。DramaClaw 不会把你绑死在任何一家。
+- **懂剧的画布，加一个在画布上干活的智能体。** 通用节点画布什么都能连，却不知道剧集、角色、镜头为何物。DramaClaw 的节点和 Skill 懂，虾导替你规划并运行它们。
+- **画布与流水线并行。** 在画布上自由探索，把成立的结果提交进剧集，再把剧集投影回画布 —— 同一个资产库，同一个智能体。
+- **没有黑箱。** 每个阶段都是可拆解、有独立 API 的任务。跳过、续跑、替换或脚本化任意一步。
+- **可自托管，模型中立。** 你的原稿、你的角色、你的模型、你的服务器。闭源前沿模型或开放权重模型随时切换。
 
 ### DramaClaw 横向对比
 
-差异化不是「更会生成」，而是把整条短剧生产链（剧本 → 资产 → 镜头 → 画布 → 成片）组织成可复用、可协作、可规模化的系统。
+<sub>图例：✅ 完整 · ◐ 部分 · ○ 规划中 · ❌ 无 · — 未核实。竞品名称部分打码；对比依据公开的产品文档与定位。</sub>
 
-<sub>图例：✅ 完整 · ◐ 局部 · ○ 规划中 · ❌ 无 —— 竞品名称已部分打码；对比基于各家公开文档与产品定位。</sub>
-
-| 能力维度 | L\*TV | R\*Hub | T\*Now | S\*ko | U\*dream | O\*II | 即\*/可\* | **DramaClaw** |
+| 能力 | L\*TV | R\*Hub | T\*Now | S\*ko | U\*dream | O\*II | J\*/K\* | **DramaClaw** |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| 内置 Agent（工作流规划、画布编排、执行） | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
-| 工作流技能与配方（复用、安装、导出、分享） | — | — | — | — | — | — | — | ✅ |
-| 3D 导演台（走位、动作、时间线、录制） | — | — | — | — | — | — | — | 内测中 |
-| 互动影游（多剧集、分支叙事、IP 连续） | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | 内测中 |
-| 分镜预览（脚本拆分镜、分镜图、故事板） | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
-| 资产库（角色/场景/道具/声线复用） | ◐ | ❌ | ◐ | ✅ | ◐ | ○ | ❌ | ✅ |
-| 场景一致性（变体、背面图、360、多状态） | ✅ | ◐ | ❌ | ❌ | ○ | ❌ | ❌ | ✅ |
-| 导演世界（360/3D 片场、机位、构图） | ✅ | ◐ | ❌ | ❌ | ◐ | ❌ | ❌ | ✅ |
-| 成片交付（多镜头合成、字幕/SRT、素材包） | ✅ | ○ | ○ | ✅ | ✅ | ❌ | ❌ | ✅ |
-| 团队生产（共享、权限、任务中心、成本追踪） | ✅ | ✅ | ○ | ✅ | ○ | ○ | ○ | ✅ |
-| 无限画布（节点创作、多素材编排、自由探索） | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
-| 双线模式（主线生产 + 自由画布探索） | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| 自定义风格（风格模板、提示词、避免指令） | ✅ | ◐ | ○ | ✅ | ◐ | ○ | ◐ | ✅ |
-| 创作搭子（陪伴形象、任务气泡、创作反馈） | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| 开放源代码（可私有化二开与深度定制） | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| 内置智能体（工作流规划、画布编排、执行） | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
+| 工作流 Skill 与 Recipe（复用、导入、导出、分享） | — | — | — | — | — | — | — | ✅ |
+| 3D 预演台（站位、动作、机位、时间线、录制） | — | — | — | — | — | — | — | ✅ beta |
+| 互动剧（分支、变量、多结局） | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ beta |
+| 无限画布（节点式、自由探索） | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
+| 双轨（主流水线 + 画布探索） | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| 分镜预览（剧本 → 镜头、分镜板） | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
+| 资产库（角色 / 场景 / 道具 / 声线） | ◐ | ❌ | ◐ | ✅ | ◐ | ○ | ❌ | ✅ |
+| 场景一致性（变体、360°、多状态） | ✅ | ◐ | ❌ | ❌ | ○ | ❌ | ❌ | ✅ |
+| 导演世界（360° / 3D 片场、机位、取景） | ✅ | ◐ | ❌ | ❌ | ◐ | ❌ | ❌ | ✅ |
+| 成片交付（多镜头、字幕 / SRT、素材包） | ✅ | ○ | ○ | ✅ | ✅ | ❌ | ❌ | ✅ |
+| 团队协作（共享、角色、任务、成本） | ✅ | ✅ | ○ | ✅ | ○ | ○ | ○ | ✅ |
+| 自定义风格（模板、提示词、负面词） | ✅ | ◐ | ○ | ✅ | ◐ | ○ | ◐ | ✅ |
+| 创作伙伴（人设、提醒、反馈） | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| 源码可见（自托管、可 fork、可定制） | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
-<sub>DramaClaw 列中，✅ 表示 main 源码已支持；内测中的功能尚未正式开放。新增行的 — 表示竞品能力未核实。</sub>
+<sub>DramaClaw 的 ✅ 指 `main` 分支；`beta` 功能已可用，但仍可能调整。</sub>
 
 <br/>
 
-## 系统要求
+## <a name="models"></a>🔌 模型与供应商
 
-DramaClaw 的所有模型推理都走 **OpenAI 兼容网关** —— 要么是官方 RelayClaw 服务，要么是内置的 [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) 转发到你自己配置的模型供应商。本机不跑模型，所以本地占用很低，一台普通笔记本或小 VPS 就够用。
+所有文本、图片、视频、音频模型都通过 **OpenAI 兼容网关**接入。在**设置 → 模型与渠道**中选择模式：
 
-| 项目 | 要求 |
+| 模式 | 你需要做的 | 适合 |
+|---|---|---|
+| **官方**（推荐） | 粘贴从 [RelayClaw](https://relayclaw.cdnfg.com) 获取的 DC key，所有模型映射已预置。 | 快速上手 |
+| **自定义** | 一键初始化内置的 [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway)，添加你自己的供应商渠道。 | 完全掌控供应商与成本 |
+| **本地 + 官方混合** | 主流水线走官方模型，另加你自己的渠道（如本地 ComfyUI 工作流）。 | 混用本地或小众模型 |
+
+内置网关是 DramaClaw 基于 [New API](https://github.com/QuantumNous/new-api) 的分支，使用 DC-Media 协议，已内置以下适配器：**ComfyUI · MiniMax / 海螺 · 火山引擎豆包 / Seedance · fal.ai · 阿里云 · 可灵 · 即梦 · Vertex AI · Gemini · OpenAI / Sora · Suno**（[支持矩阵](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/docs/providers/en/README.md)、[新增供应商](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/CONTRIBUTING.md)）。
+
+智能体模型在**模型与渠道 → Agent 模型**中单独配置，可以跟随当前渠道，也可以使用任意支持 OpenAI Responses API 与工具调用的接口。详见[配置模型](../docs/zh/getting-started/configuring-models.md)。
+
+<br/>
+
+## <a name="documentation"></a>📖 文档
+
+| | |
 |---|---|
-| **CPU / 内存** | 建议 ≥ 2 vCPU / 4 GB（不含模型推理，推理在网关侧） |
-| **GPU** | 标准流程**无需 GPU**。仅可选的 `world` 扩展（体素 / 全景转 3D）才需要 GPU + CUDA 镜像 |
-| **磁盘** | 预留几 GB 放镜像及 `ce-data` 卷中的生成媒体/状态（无硬性下限） |
-| **操作系统** | macOS（Apple Silicon / Intel）、Windows（Docker Desktop + WSL2 后端）、Linux（Docker Engine + compose 插件） |
-| **Docker** | Docker + `docker compose` |
-| **端口** | `8080` 网页 · `8780` REST API · `3000` 内置网关管理页（默认仅本机，可放开） |
-| **数据库** | 全部不需要 —— 无 Postgres、Redis、Celery、Ray。任务进程内内联执行，状态存本地文件系统（SQLite + 文件） |
-| **网络** | 需能出网访问官方网关 `relayclaw.cdnfg.com`，和/或你在内置网关里配置的模型供应商 |
-
-> 本地开发（非 Docker）还需 Python 3.11–3.12 + [`uv`](https://docs.astral.sh/uv/) + `ffmpeg`。完整前置条件见[自托管指南](../docs/zh/guides/self-hosting.md)。
+| **上手** | [快速开始](../docs/zh/getting-started/quickstart.md) · [安装](../docs/zh/getting-started/installation.md) · [配置模型](../docs/zh/getting-started/configuring-models.md) |
+| **了解** | [功能总览](../docs/zh/concepts/features.md) · [架构](../docs/zh/concepts/architecture.md) · [产品使用手册（飞书）](https://neo-flying.feishu.cn/docx/JGNTdsjJuo748TxJkxecoYs2nth) |
+| **运维** | [自托管](../docs/zh/guides/self-hosting.md) · [故障排查](../docs/zh/guides/troubleshooting.md) · [本地 Agent 接入（MCP）](../docs/zh/guides/local-agent-mcp.md) |
+| **更多** | [全部文档 &rarr;](../docs/zh/README.md) |
 
 <br/>
 
-## <a name="quick-start"></a>快速开始
+## 🤝 社区与贡献
 
-### Docker（推荐）
-
-每次 GitHub Release 都会发布 amd64/arm64 多架构镜像到 Docker Hub。
-
-**源码构建（默认）** —— 把 DramaClaw 和内置的 [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) 并排 clone，`docker compose up -d --build` 用这两个 checkout 构建全部三个服务。
-
-```bash
-git clone https://github.com/dramaclaw/dramaclaw.git
-git clone https://github.com/dramaclaw/dramaclaw-gateway.git   # 内置网关，从 ../dramaclaw-gateway 构建
-cd dramaclaw
-
-cp .env.example .env
-# 编辑 .env —— 把 PROMPT_EXPORT_PASSWORD 改成非默认值。
-
-docker compose up -d --build   # 构建并起三个服务：api / newapi（内置网关）/ web
-```
-
-两个 checkout 都是普通 git 仓库：改代码、`git pull`、重建。只改了 DramaClaw 代码：`docker compose up -d --build api web`；只改了网关：`docker compose up -d --build newapi`。网关 clone 放在别处，或者想让 Docker 直接从 git 拉？在 `.env` 里把 `DRAMACLAW_GATEWAY_SRC` 设成那个路径或 `https://github.com/dramaclaw/dramaclaw-gateway.git#main`。
-
-**免构建** —— 改拉已发布镜像（不需要 clone 网关）：
-
-```bash
-docker compose -f docker-compose.release.yml up -d
-```
-
-浏览器打开 <http://localhost:8080>；REST API 在 <http://localhost:8780>。到**设置 → 模型与渠道**三选一：
-
-- **官方** —— 粘贴 DC key（到 <https://relayclaw.cdnfg.com> 获取），无需映射模型，内置网关闲置待命。
-- **自定义** —— 一键初始化内置 `newapi` 网关，再自行配上游渠道。
-- **本地 + 官方混合** —— 主链路走官方，额外渠道走内置网关。
-
-完整步骤见 [快速开始](../docs/zh/getting-started/quickstart.md)。
-
-版本与镜像源在 `.env` 里钉：`DRAMACLAW_VERSION`、`DRAMACLAW_GATEWAY_VERSION`、`DRAMACLAW_IMAGE_PREFIX`——仅镜像模式（`docker-compose.release.yml`）生效。国内拉取慢：设 `DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw` 并同时钉两个版本（ACR 镜像只有钉 tag，没有 latest）。
-
-> 从旧版本升级？源码构建的先 `git clone https://github.com/dramaclaw/dramaclaw-gateway.git ../dramaclaw-gateway`（网关现在从这个并排 checkout 构建，没有它会报 `unable to prepare context`）。`docker-compose.selfhosted.yml`、`docker-compose.selfhosted.release.yml` 已移除——改用 `docker-compose.yml`（源码构建）/ `docker-compose.release.yml`（镜像）。服务名与 `ce-data` / `newapi-data` 数据卷不变，已有数据原样复用。内置网关端口默认只绑 `127.0.0.1`，需要远程访问时在 `.env` 设 `ST_NEWAPI_BIND=0.0.0.0`。
-
-### 本地开发（uv + Python 3.11+）
-
-```bash
-git clone https://github.com/dramaclaw/dramaclaw.git
-cd dramaclaw
-
-uv sync
-cp .env.example .env && $EDITOR .env
-
-uv run novelvideo api --port 8780   # 启动 REST API（CE 默认 inline 任务，无需 Ray/Redis）
-```
-
-另开一个终端起前端：`cd frontend && pnpm install && pnpm dev`。
-
-**网关。** **官方**模式什么都不用再跑。**自定义**或**本地 + 官方混合**模式下，API 需要一个跑在 `127.0.0.1:3000` 的网关，且它的 SQLite 文件在 `./state/newapi/one-api.db`（设置页的「初始化」写的就是这个文件；`.env` 里的 `NEWAPI_ADMIN_BASE_URL` 默认已指向这个地址）。要么用发布镜像并把这个目录挂进去：
-
-```bash
-mkdir -p state/newapi
-docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
-  -v "$PWD/state/newapi:/data" \
-  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.1
-```
-
-要么在旁边的 checkout 里从源码跑网关（[dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/README.zh_CN.md#开发) 的 `make dev-api` / `make dev-web`，或者 `go build` 后用 `SQLITE_PATH=<路径>/dramaclaw/state/newapi/one-api.db` 启动二进制）。
-
-<br/>
-
-## 支持的模型与服务商
-
-DramaClaw 对模型侧保持中立 —— 所有文本 / 图片 / 视频 / 音频模型都经一个 **OpenAI 兼容网关**接入。到**设置 → 模型与渠道**三选一：
-
-- **官方（推荐）** —— 粘贴 DC key（到 <https://relayclaw.cdnfg.com> 获取）保存即用。RelayClaw 已经配好 DramaClaw 需要的全部模型映射，什么都不用调。
-- **自定义** —— 一键初始化内置的 `dramaclaw-gateway`，然后在它的管理页里添加你自己的供应商渠道（API key、模型 ID）。DramaClaw 调用的每一个模型都走你的渠道。
-- **本地 + 官方混合** —— 主链路继续用官方模型，额外渠道（比如本地 ComfyUI 视频工作流）走内置网关。
-
-完整步骤见 [配置模型供应商](../docs/zh/getting-started/configuring-models.md)。
-
-在「设置 → 模型与渠道 → Agent 模型」中，虾导可以跟随当前渠道，也可以单独使用第三方接口。第三方服务须兼容 OpenAI Responses API 和工具调用；这项设置只影响虾导，媒体生成仍使用所选模型渠道。
-
-### 内置网关：dramaclaw-gateway
-
-`docker-compose.yml` 里的 `newapi` 服务就是 [**dramaclaw-gateway**](https://github.com/dramaclaw/dramaclaw-gateway)，DramaClaw 自己维护的 [New API](https://github.com/QuantumNous/new-api) 分支。它实现了 DramaClaw 图片 / 视频 / 音频所用的 **DC-Media** 协议（媒体角色、参考图、首尾帧），并把每个请求转换成各供应商的原生接口。镜像在 Docker Hub：[`claymorelab/dramaclaw-gateway`](https://hub.docker.com/r/claymorelab/dramaclaw-gateway)，版本由 `.env` 里的 `DRAMACLAW_GATEWAY_VERSION` 钉住。官方模式下它只是常驻待命，切到**自定义**或**本地 + 官方混合**后才会被使用。
-
-网关目前自带的供应商适配器（验证状态见 [渠道支持矩阵](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/docs/providers/README.md)）：ComfyUI · MiniMax / 海螺 · 火山引擎豆包 / Seedance · fal.ai · 阿里 · 可灵 · 即梦 · Vertex AI · Gemini · OpenAI / Sora · Suno。想接别的供应商？网关提供了[适配器脚手架和贡献指南](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/CONTRIBUTING.zh_CN.md)。
-
-| 环节              | 官方模式（RelayClaw）                          | 自定义 / 混合模式（内置网关）                            |
-|-------------------|------------------------------------------------|----------------------------------------------------------|
-| **文本 / 大模型** | `DC-*-LLM` 系列，无需映射                       | 任意 OpenAI 兼容对话渠道                                  |
-| **图像**          | gpt-image · nano-banana                        | 网关里注册的任意图片渠道                                  |
-| **视频**          | Seedance 1.0 / 1.5 / 2.0 系列 · happyhorse     | 任意 DC-Media 视频适配器（Seedance、海螺、可灵、ComfyUI 等） |
-| **配音**          | IndexTTS2                                      | 网关里注册的任意音频渠道                                  |
-| **故事图谱**      | Cognee（`DC-cognee-embedding`）                | 任意 embedding 渠道                                       |
-| **任务运行时**    | 进程内 inline（无需 Ray / Redis / Celery）      | 同左                                                      |
-| **存储**          | 本地文件系统                                   | 同左                                                      |
-
-<br/>
-
-## <a name="documentation"></a>文档
-
-- [**产品使用手册**](https://neo-flying.feishu.cn/docx/JGNTdsjJuo748TxJkxecoYs2nth) —— 全功能 UI 操作手册（飞书）
-- [功能总览](../docs/zh/concepts/features.md)
-- [架构](../docs/zh/concepts/architecture.md)
-- [快速开始](../docs/zh/getting-started/quickstart.md)
-- [自托管手册](../docs/zh/guides/self-hosting.md)
-- [配置模型供应商](../docs/zh/getting-started/configuring-models.md)
-- [更多文档 &rarr;](../docs/zh/README.md)
-
-<br/>
-
-## 加入社区 / 一起贡献
-
-- [提交 Bug](https://github.com/dramaclaw/dramaclaw/issues/new?template=bug_report.yml)
-- [提功能建议](https://github.com/dramaclaw/dramaclaw/issues/new?template=feature_request.yml)
-- [参与讨论](https://github.com/dramaclaw/dramaclaw/discussions)
-- [贡献指南](../CONTRIBUTING.md)
-- [安全策略](../SECURITY.md)
-
-我们会持续整理并标记 [`good first issue`](https://github.com/dramaclaw/dramaclaw/labels/good%20first%20issue) —— 欢迎从这里起手。
+- 🐛 [报告 Bug](https://github.com/dramaclaw/dramaclaw/issues/new?template=bug_report.yml) · 💡 [功能建议](https://github.com/dramaclaw/dramaclaw/issues/new?template=feature_request.yml) · 💬 [讨论区](https://github.com/dramaclaw/dramaclaw/discussions)
+- 阅读[贡献指南](../CONTRIBUTING.md)与[安全策略](../SECURITY.md)；从 [`good first issue`](https://github.com/dramaclaw/dramaclaw/labels/good%20first%20issue) 开始。
 
 <br/>
 
@@ -457,17 +373,17 @@ DramaClaw 对模型侧保持中立 —— 所有文本 / 图片 / 视频 / 音�
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../assets/partners/neoflying-lab-dark.png">
-    <img src="../assets/partners/neoflying-lab.png" alt="新飞翔人工智能研究院 Neo Flying AI Laboratory" height="48">
+    <img src="../assets/partners/neoflying-lab.png" alt="Neo Flying AI Laboratory" height="48">
   </picture>
 </p>
 
-<p align="center"><sub>logo 为其所有者的商标，经授权用于展示。</sub></p>
+<p align="center"><sub>Logo 为其所有者的商标，经许可展示。</sub></p>
 
 <br/>
 
 ## 许可证
 
-[Elastic License 2.0](../LICENSE)。源码可得（source available），允许自用、修改、再分发、拿它做的东西拿去卖；请在界面里保留一行小字「基于 DramaClaw」。唯一限制是不得把本软件本身作为托管服务提供给他人。详见 [许可证说明](../docs/zh/license.md) 和 [授权说明](https://github.com/dramaclaw/dramaclaw/issues/475)。
+[Elastic License 2.0](../LICENSES/Elastic-2.0.txt)。可以免费使用、修改、再分发，并出售你用它做出的作品；请在界面中保留一个小小的「Powered by DramaClaw」。唯一的限制是不得把软件本身作为托管服务提供给他人。详见[许可证说明](../docs/zh/license.md)、[授权声明](https://github.com/dramaclaw/dramaclaw/issues/475)，以及 `NOTICE` 中要求保留的品牌与第三方声明。
 
 <br/>
 
@@ -484,9 +400,5 @@ DramaClaw 对模型侧保持中立 —— 所有文本 / 图片 / 视频 / 音�
 <br/><br/>
 
 <div align="center">
-  <sub>为讲故事的人而建。源码，向所有人开放。</sub>
+  <sub>为讲故事的人而生。源码可见，向所有人开放。</sub>
 </div>
-
-## Notices
-
-See `NOTICE` for required branding and third-party attribution notices.

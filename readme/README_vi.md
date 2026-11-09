@@ -73,25 +73,87 @@ Lý do và các câu hỏi thường gặp: <a href="https://github.com/dramacla
   <img src="../assets/hero.png" alt="DramaClaw — người kể chuyện, trở lại trước ống kính" width="820"/>
 </p>
 
-<!--
-  Video demo — sau khi upload, dán link user-attachments vào một dòng riêng bên dưới.
-  Cách upload: mở một Issue mới trên github.com (đừng gửi), kéo video demo vào
-  phần nội dung, đợi upload xong và tự sinh link
-  https://github.com/user-attachments/assets/...mp4, copy vào đây, rồi
-  hủy Issue đó. GitHub sẽ render URL đứng riêng một dòng thành trình phát inline.
-
-  https://github.com/user-attachments/assets/REPLACE-AFTER-UPLOAD
--->
-
 <p align="center">
   <sub>🎬 Trailer: <a href="https://www.bilibili.com/video/BV1iQV26cE4S">Bilibili</a> &nbsp;·&nbsp; <a href="https://www.youtube.com/watch?v=64apa3maxK0">YouTube</a></sub>
 </p>
 
 <br/>
 
+## DramaClaw là gì?
+
+DramaClaw là một **dây chuyền sản xuất phim drama AI có thể tự lưu trữ**: từ bản thảo đến các tập phim hoàn chỉnh, từ một dòng yêu cầu đến một bộ phim ngắn. Một agent và một bảng vẽ vô hạn dùng chung một thư viện tài sản:
+
+- **Xia Director** — agent tích hợp sẵn. Mô tả điều bạn muốn; nó lập kế hoạch workflow, bố trí các node và chạy chúng sau khi bạn xác nhận.
+- **XiaHua** — bảng vẽ vô hạn (infinite canvas). Tạo, chỉnh sửa và kết nối hình ảnh, video, âm thanh, bối cảnh 3D, truyện tương tác và kịch bản dưới dạng node.
+- **Series (XiaJi)** — pipeline. Thả vào một tiểu thuyết hoặc kịch bản; DramaClaw cấu trúc hóa câu chuyện, viết kịch bản, vẽ storyboard, lồng tiếng lời thoại và dựng thành phim.
+
+Dùng bất kỳ model nào qua một gateway tương thích OpenAI, chạy trên chính máy của bạn, và giữ tư liệu trong tay bạn.
+
+<p align="center">
+  <a href="#quick-start"><b>🚀 Bắt đầu nhanh</b></a> &nbsp;·&nbsp;
+  <a href="#whats-new"><b>🆕 Có gì mới</b></a> &nbsp;·&nbsp;
+  <a href="#made-with-dramaclaw"><b>🎬 Tác phẩm</b></a> &nbsp;·&nbsp;
+  <a href="#features"><b>✨ Tính năng</b></a> &nbsp;·&nbsp;
+  <a href="#models"><b>🔌 Model</b></a> &nbsp;·&nbsp;
+  <a href="#documentation"><b>📖 Tài liệu</b></a>
+</p>
+
+<br/>
+
+## <a name="whats-new"></a>🆕 Có gì mới
+
+Ba thứ chúng tôi đã xây cùng đội ngũ sản xuất của chính mình, nay đã có trên `main`.
+
+### 🤖 Xia Director — từ một yêu cầu đến một workflow đang chạy
+
+<p align="center">
+  <img src="../assets/readme/freezone-agent.gif" width="900" alt="Xia Director chuyển một yêu cầu bằng ngôn ngữ tự nhiên thành workflow trên canvas"/>
+</p>
+<p align="center"><sub>Một yêu cầu → workflow được lập kế hoạch → các node trên canvas → tài sản được tạo → video được ghép.</sub></p>
+
+- **Lập kế hoạch và chạy workflow trên canvas** — chuyển một yêu cầu sáng tạo thành đồ thị node, bố trí nó, và thực thi sau khi bạn xác nhận, kèm theo dõi tiến độ và khôi phục khi thất bại.
+- **Danh mục workflow, Skill và Recipe** — workflow tích hợp cho phim drama ngắn, quảng cáo thương mại điện tử và nhân vật IP, nội dung mạng xã hội, anime Nhật Bản, hoạt hình phong cách LEGO và đối đầu trên sân khấu ngoài trời. Cài đặt, xuất và chia sẻ gói Skill, hoặc **nhập một `SKILL.md` / ZIP bên ngoài** và chuyển nó thành Skill gốc.
+- **Dựng cả trang web** — yêu cầu một landing page hoặc microsite cho câu chuyện; nó trở thành một node HTML có thể chỉnh sửa, có lịch sử phiên bản và xuất ZIP độc lập.
+- **Hiểu dự án của bạn** — kiểm tra tiến độ, triển khai tác vụ kịch bản và cảnh quay, tìm sản phẩm bàn giao còn thiếu và đề xuất bước tiếp theo.
+- **Tùy chọn "bộ não"** — mặc định đi kèm runtime Codex; trỏ Agent tới bất kỳ model bên thứ ba nào hỗ trợ OpenAI Responses API và gọi công cụ, độc lập với các kênh media của bạn.
+- **Làm việc từ các agent khác** — [Agent Kit](../agent-kit/README.md) cung cấp cùng các workflow qua MCP cho Codex, Claude Code, OpenClaw, WorkBuddy và bất kỳ MCP client stdio nào.
+
+### 🎥 Sân khấu đạo diễn 3D (Previz) — dàn cảnh trước khi tạo `beta`
+
+<p align="center">
+  <img src="../assets/readme/previz-canvas-node.gif" width="900" alt="Sân khấu Previz 3D: dàn cảnh, camera và timeline, ghi hình trở lại canvas"/>
+</p>
+<p align="center"><sub>Ảnh tham chiếu → blockout 3D → nhân vật, camera và timeline → bản xem trước được ghi hình trở lại canvas.</sub></p>
+
+Một sân khấu previz trong trình duyệt, nằm trên canvas dưới dạng node. Chốt không gian, dàn cảnh và khung hình trước, rồi đưa kết quả vào khâu tạo ảnh và video.
+
+- **Dựng bối cảnh blockout** — tạo bối cảnh 3D từ ảnh tham chiếu; thả đạo cụ và chúng sẽ đặt lên bất kỳ bề mặt nào bên dưới.
+- **Nhân vật và chuyển động** — ma-nơ-canh với năm dáng người, đặt từ bản đồ nhìn từ trên xuống; chu kỳ bước đi theo đường di chuyển trên timeline đa track.
+- **Camera và cắt cảnh** — tiêu cự, kích thước cảm biến và vị trí cho từng camera; một **program track** để cắt giữa các camera (phím số cắt trực tiếp) với màn hình giám sát theo bản dựng.
+- **Track âm thanh** — nhập âm thanh từ file cục bộ hoặc node phía trước, xem dạng sóng và trộn vào bản ghi hình.
+- **Trở lại canvas** — chụp khung hình hoặc ghi hình bản cắt program vào các node được kết nối để làm tham chiếu cho lần tạo tiếp theo.
+
+### 🔀 Truyện tương tác — lựa chọn của khán giả định hình câu chuyện `beta`
+
+<p align="center">
+  <img src="../assets/readme/interactive-story.gif" width="900" alt="Truyện tương tác: biên tập phân nhánh và trình phát"/>
+</p>
+<p align="center"><sub>Tạo truyện phân nhánh, biên tập trên canvas, phát tương tác và nhiều kết thúc.</sub></p>
+
+- **Lập kế hoạch truyện với AI** — một yêu cầu trở thành đề cương và cốt truyện phân nhánh có thể chỉnh sửa, với điểm lựa chọn, kết thúc và thời lượng dự kiến cho từng tuyến.
+- **Phân nhánh trực quan trên canvas** — sắp xếp các đoạn truyện, video và lựa chọn; chỉnh sửa lời thoại, thứ tự lựa chọn và liên kết giữa các nhánh.
+- **Biến và điều kiện** — mức độ thiện cảm, điểm số và các biến khác kiểm soát lựa chọn và quyết định kết thúc; có cả lựa chọn giới hạn thời gian và tuyến mặc định.
+- **Sản xuất tư liệu tại chỗ** — tham chiếu nhân vật, cảnh và storyboard cùng video cho từng đoạn, tái sử dụng mọi tài sản trên canvas.
+- **Chơi thử trước khi render** — chạy câu chuyện với tư liệu tạm, kiểm tra kết nối nhánh và tuyến có điều kiện, xem tỷ lệ đạt kết thúc và độ phủ tuyến truyện.
+- **Xuất trình phát** — xuất trình phát HTML độc lập hoặc gói ngoại tuyến kèm video, phát theo nhánh, tiến độ và chơi lại.
+
+<sub>Các tính năng `beta` đã có trên `main` và dùng được ngay hôm nay; giao diện và định dạng dữ liệu của chúng vẫn có thể thay đổi giữa các bản phát hành.</sub>
+
+<br/>
+
 <div align="center">
 
-## 🎬 Làm bằng DramaClaw
+## <a name="made-with-dramaclaw"></a>🎬 Làm bằng DramaClaw
 
 <sub>Những bộ phim drama ngắn thật do đội ngũ chúng tôi sản xuất trên chính dây chuyền này &mdash; bấm vào link để xem.</sub>
 
@@ -140,107 +202,79 @@ Lý do và các câu hỏi thường gặp: <a href="https://github.com/dramacla
 
 <br/>
 
-## DramaClaw là gì?
+## <a name="quick-start"></a>🚀 Bắt đầu nhanh
 
-DramaClaw là một **dây chuyền sản xuất phim drama AI với mã nguồn công khai (source available)** — và ngày càng mở rộng cho bất kỳ câu chuyện hình ảnh nào bạn muốn kể bằng các model sinh nội dung. Nó có hai gương mặt, dùng chung một thư viện tài sản và một agent:
+Bạn cần Docker với `docker compose`. Không cần GPU, cơ sở dữ liệu hay hàng đợi — model chạy phía sau gateway, trạng thái nằm trên ổ đĩa cục bộ.
 
-- **XiaHua — bảng vẽ vô hạn (infinite canvas).** Một bàn làm việc dạng node, nơi bạn tự do tạo, chỉnh sửa và kết nối hình ảnh, video, âm thanh, bối cảnh 3D và kịch bản, rồi đưa những gì ưng ý trở lại series. Đây là nơi phần lớn công việc sáng tạo của chính chúng tôi diễn ra hôm nay, và cũng là hướng DramaClaw đang tiến tới.
-- **Series (XiaJi) — pipeline.** Thả vào một bản thảo hoặc kịch bản, DramaClaw sẽ gánh phần việc nặng: cấu trúc hóa câu chuyện, lên kế hoạch từng tập, viết kịch bản, vẽ storyboard và khung hình đầu, tổng hợp lồng tiếng, và dựng thành phim hoàn chỉnh.
+```bash
+git clone https://github.com/dramaclaw/dramaclaw.git
+cd dramaclaw
+cp .env.example .env          # set PROMPT_EXPORT_PASSWORD to a non-default value
 
-**Xia Director**, agent tích hợp sẵn, đứng giữa cả hai: trả lời câu hỏi về dự án của bạn, điều khiển các tác vụ pipeline, và có thể dựng rồi chạy các đồ thị node trên canvas thay bạn.
+docker compose -f docker-compose.release.yml pull
+docker compose -f docker-compose.release.yml up -d
+```
 
-Nó được xây cho người sáng tạo, studio độc lập và kỹ sư sáng tạo — chạy trọn "nhà máy phim drama" trên chính máy của bạn, không cần chắp vá hàng chục công cụ rời rạc hay giao tài liệu của mình cho một dịch vụ đám mây hộp đen. Dù được xây quanh phim drama, cùng một canvas và pipeline này vẫn áp dụng cho quảng cáo ngắn, video sản phẩm thương mại điện tử và các định dạng hình ảnh khác.
+Mở <http://localhost:8080>, vào **Settings → Models & Channels**, và dán DC key của bạn (lấy tại <https://relayclaw.cdnfg.com>) — hoặc chuyển sang **Custom** để dùng các nhà cung cấp của riêng bạn. Vậy là xong.
 
-<br/>
+File Compose phát hành chạy các image đa kiến trúc **v2.1.1** đã phát hành (`DRAMACLAW_VERSION=2.1.1`, `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`). Người dùng ở Trung Quốc đại lục có thể chuyển sang mirror ACR bằng `DRAMACLAW_IMAGE_PREFIX`.
 
-## Năng lực cốt lõi
-
-### Xia Director — agent
-
-Xia Director chuyển yêu cầu sáng tạo bằng ngôn ngữ tự nhiên thành workflow thực thi trên canvas, kết nối phát triển kịch bản, tạo tài sản và ghép video.
-
-<p align="center">
-  <img src="../assets/readme/freezone-agent.gif" width="900" alt="Xia Director — canvas workflow"/>
-</p>
-<p align="center"><sub>Lập kế hoạch workflow, điều phối node, tạo tài sản và ghép video từ yêu cầu bằng ngôn ngữ tự nhiên.</sub></p>
-
-- **Điều phối workflow trên canvas** &mdash; lập kế hoạch, tạo, kết nối và bố trí node theo yêu cầu sáng tạo; thực thi workflow đã xác nhận, theo dõi tiến độ và khôi phục khi thất bại.
-- **Danh mục workflow và mở rộng skill** &mdash; workflow tích hợp hỗ trợ phim ngắn, quảng cáo thương mại điện tử và nhân vật IP, nội dung mạng xã hội, anime Nhật Bản, hoạt hình phong cách LEGO và đối đầu trên sân khấu ngoài trời. Có thể cài đặt, xuất và chia sẻ gói skill và recipe.
-- **Tích hợp agent bên ngoài** &mdash; [Agent Kit](../agent-kit/README.md) cung cấp cùng workflow sản xuất cho Codex, Claude Code, OpenClaw, Hermes, WorkBuddy và các MCP client khác.
-- **Ngữ cảnh dự án và quản lý tác vụ** &mdash; kiểm tra tiến độ dự án, triển khai tác vụ kịch bản và cảnh quay, kiểm tra sản phẩm bàn giao và đề xuất bước sản xuất tiếp theo.
+<details>
+<summary><b>Các cách chạy khác</b></summary>
 
 <br/>
 
-### Sân khấu đạo diễn 3D (Previz)
+| Cách | Khi nào dùng | Lệnh | Hướng dẫn |
+|---|---|---|---|
+| **Image đã phát hành** | Dùng thử hoặc tự lưu trữ một bản phát hành | `docker compose -f docker-compose.release.yml up -d` | [Bắt đầu nhanh](../docs/en/getting-started/quickstart.md) |
+| **Docker từ mã nguồn** | Chạy mã đã sửa của riêng bạn | clone [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) cạnh repo này, rồi `docker compose up -d --build` | [Tự lưu trữ](../docs/en/guides/self-hosting.md) |
+| **Phát triển cục bộ** | Phát triển DramaClaw với hot reload | `scripts/start-ce.sh` (API `:8780` + UI `:5173`; cần Python 3.11–3.12, `uv`, Node/pnpm, `ffmpeg`) | [Cài đặt](../docs/en/getting-started/installation.md) |
 
-**Đang thử nghiệm kín**
+Nâng cấp từ một checkout cũ, ghim phiên bản, mở gateway đi kèm ra ngoài, hoặc dùng binary Codex của riêng bạn: xem [Hướng dẫn tự lưu trữ](../docs/en/guides/self-hosting.md) và [Xử lý sự cố](../docs/en/guides/troubleshooting.md).
 
-Công cụ previz 3D trong trình duyệt để bố trí bối cảnh, dàn cảnh nhân vật và thiết kế camera, tích hợp vào canvas dưới dạng node có thể tái sử dụng.
+</details>
 
-<p align="center">
-  <img src="../assets/readme/previz-canvas-node-0.jpg" width="900" alt="Previz — reference image and canvas node"/>
-</p>
-<p align="center"><sub>Ảnh tham chiếu và node Previz được kết nối.</sub></p>
-
-<p align="center">
-  <img src="../assets/readme/previz-canvas-node.gif" width="800" alt="Previz — stage editing and canvas output"/>
-</p>
-
-- **Dựng bối cảnh blockout** &mdash; tạo bối cảnh 3D từ ảnh tham chiếu và bố trí đạo cụ để xác định cấu trúc không gian.
-- **Dàn cảnh và chuyển động nhân vật** &mdash; phối hợp nhân vật, clip chuyển động và đường đi trên timeline đa track.
-- **Điều khiển camera và ống kính** &mdash; điều chỉnh tiêu cự, kích thước cảm biến và vị trí camera để xem trước khung hình và theo dõi cận cảnh.
-- **Đầu ra canvas** &mdash; chụp khung hình hoặc ghi hình vào các node được kết nối để tham chiếu khi tạo ảnh và video tiếp theo.
+<details>
+<summary><b>Yêu cầu hệ thống</b></summary>
 
 <br/>
 
-### Truyện tương tác
+| Hạng mục | Yêu cầu |
+|---|---|
+| **CPU / RAM** | ≥ 2 vCPU / 4 GB (suy luận model chạy trên gateway, không chạy cục bộ) |
+| **GPU** | Không bắt buộc. Chỉ phần mở rộng tùy chọn `world` (voxel / toàn cảnh sang 3D) mới cần CUDA |
+| **Hệ điều hành** | macOS (Apple Silicon / Intel), Windows (Docker Desktop + WSL2), Linux |
+| **Cổng** | `8080` giao diện web · `8780` REST API · `3000` quản trị gateway đi kèm (mặc định chỉ localhost) |
+| **Kho dữ liệu** | Không cần — không Postgres, Redis, Celery hay Ray. SQLite + file trên volume `ce-data` |
+| **Mạng** | Truy cập ra ngoài tới `relayclaw.cdnfg.com` và/hoặc các nhà cung cấp bạn cấu hình |
 
-**Đang thử nghiệm kín**
-
-Tạo video tương tác trên cùng một canvas, từ lập kế hoạch cốt truyện và biên tập nhánh đến sản xuất tư liệu, chơi thử và nhiều kết thúc. Lựa chọn của khán giả quyết định diễn biến câu chuyện.
-
-<p align="center">
-  <img src="../assets/readme/interactive-story.gif" width="900" alt="Interactive stories — branching workflow and player"/>
-</p>
-<p align="center"><sub>Tạo truyện phân nhánh, biên tập trên canvas, phát tương tác và trải nghiệm nhiều kết thúc.</sub></p>
-
-- **Lập kế hoạch truyện với AI** — Chuyển yêu cầu bằng ngôn ngữ tự nhiên thành đề cương và cốt truyện phân nhánh có thể chỉnh sửa, với điểm lựa chọn, kết thúc và thời lượng xem dự kiến cho từng tuyến
-- **Biên tập nhánh trực quan** — Sắp xếp các đoạn truyện, video và lựa chọn trên canvas; chỉnh sửa lời thoại, thứ tự lựa chọn và liên kết giữa các nhánh
-- **Biến truyện và điều kiện** — Dùng mức độ thiện cảm, điểm số và các biến khác để ghi nhận quyết định của khán giả, kiểm soát lựa chọn và kết thúc; hỗ trợ lựa chọn có giới hạn thời gian và tuyến mặc định
-- **Sản xuất tư liệu tích hợp** — Tạo hình tham chiếu cho nhân vật, cảnh và storyboard, tạo video cho từng đoạn truyện và tái sử dụng tư liệu trên canvas
-- **Chơi thử và kiểm tra tuyến truyện** — Chơi thử bằng tư liệu tạm trước khi video hoàn tất; kiểm tra kết nối nhánh và tuyến có điều kiện, rồi xem thống kê lựa chọn, tỷ lệ đạt kết thúc và độ phủ tuyến truyện
-- **Xuất trình phát** — Xuất trình phát HTML độc lập hoặc gói ngoại tuyến kèm video, hỗ trợ phát theo nhánh, theo dõi tiến độ khám phá và chơi lại từ các đoạn đã mở khóa
+</details>
 
 <br/>
+
+## <a name="features"></a>✨ Tính năng
 
 ### XiaHua — bảng vẽ vô hạn
 
 <p align="center">
   <img src="../assets/xiahua-canvas.jpg" width="900" alt="Canvas XiaHua: quy trình phim ngắn 17 node mà Xia Director đã bố trí và chạy chỉ từ một prompt"/>
 </p>
-<p align="center"><sub>Một prompt gửi cho Xia Director (bên phải) đã trở thành quy trình 17 node, 32 cạnh này trên canvas (bên trái): brief → định hướng câu chuyện → tham chiếu nhân vật và bối cảnh → khung hình đầu của năm cảnh quay → video năm cảnh quay → lồng tiếng và nhạc nền → bản dựng cuối.</sub></p>
+<p align="center"><sub>Một prompt gửi cho Xia Director (bên phải) đã trở thành workflow 17 node, 32 cạnh này (bên trái): brief → định hướng câu chuyện → tham chiếu nhân vật và bối cảnh → năm khung hình đầu → năm video cảnh quay → lồng tiếng và nhạc nền → bản dựng cuối.</sub></p>
 
-- **18 loại node trên một canvas** &mdash; upload, tạo / chỉnh sửa ảnh, tạo storyboard, kịch bản, ngữ cảnh beat, video, ghép video, video kể chuyện, âm thanh, phong cách, skill, nhóm, chú thích văn bản, trình xem toàn cảnh 360°, thế giới 3D, xuất và nhiều hơn nữa. Kết nối tự do; mỗi node giữ lịch sử sinh nội dung riêng.
-- **Công cụ ảnh** &mdash; tạo, chỉnh sửa, vẽ lại, mở rộng khung (outpaint), chiếu sáng lại, upscale, đa góc nhìn, chỉnh sửa theo mẫu, suy ngược prompt, phát hiện đánh dấu; một **bức tường phong cách với 45 look phim drama ngắn** cho image-to-image
-- **Công cụ video** &mdash; text / image / keyframe sang video, sinh nội dung tham chiếu toàn diện với **tham chiếu từ file, link web và ngay trên canvas**, chỉnh sửa video, xóa, upscale, tách âm thanh, mẫu chuyển động camera, phân tích cảnh quay; Seedance 2.5 có trong danh mục khuyến nghị
-- **Âm thanh** &mdash; tổng hợp giọng nói, thư viện giọng, âm thanh tham chiếu và tạo nhạc. Khi bật thiết kế giọng, bạn có thể mô tả giọng, nghe thử rồi lưu vào giọng nhân vật hoặc **My voices** trong XiaHua.
-- **Skill trên canvas** &mdash; các skill một chạm như phác thảo từ ngữ cảnh, khung hình từ ngữ cảnh, đặt nền, cảnh 360, review khung hình và lập kế hoạch beat-graph
-- **Xây cho canvas lớn** &mdash; tab canvas, dàn ý phần tử, minimap và bookmark vùng nhìn, căn chỉnh bám lưới, render theo mức chi tiết (level-of-detail), chọn nhiều và nhóm node, phím tắt, lịch sử phiên bản có khôi phục, khóa theo từng canvas
-- **Commit vào series** &mdash; xem trước tác động, rồi đưa một node hoặc cả một lô vào thư viện tài sản hoặc một tập; chiếu series ngược lại lên canvas từ các preset
-- **Director World — bối cảnh nhất quán về không gian** &mdash; ảnh → bối cảnh 3D Gaussian Splat và toàn cảnh scene-360 dưới dạng node trên canvas: một phim trường ảo có thể lấy khung hình, khóa cấu trúc không gian, vị trí nhân vật và vị trí đặt camera, để cùng một địa điểm giữ nhất quán qua các cảnh quay; lấy khung trong trình xem 3D, chụp lại, rồi dùng làm nền cho lần sinh nội dung tiếp theo
+- **Một canvas, mọi loại media** — node ảnh, video, âm thanh, kịch bản, ngữ cảnh beat, storyboard, phong cách, skill, toàn cảnh 360°, thế giới 3D, Previz, truyện tương tác, trang web và xuất. Kết nối tự do; mỗi node giữ lịch sử sinh nội dung riêng.
+- **Công cụ ảnh** — tạo, chỉnh sửa, vẽ lại, mở rộng khung (outpaint), chiếu sáng lại, upscale, đa góc nhìn, chỉnh sửa theo mẫu, suy ngược prompt, phát hiện đánh dấu, và một **bức tường phong cách với 45 look phim drama ngắn**.
+- **Công cụ video** — text / image / keyframe sang video, sinh nội dung tham chiếu toàn diện với tham chiếu từ file, link web và ngay trên canvas, chỉnh sửa video, xóa, upscale, tách âm thanh, mẫu chuyển động camera và phân tích cảnh quay; Seedance 2.5 có trong danh mục khuyến nghị.
+- **Âm thanh và thiết kế giọng** — tổng hợp giọng nói, thư viện giọng, âm thanh tham chiếu và nhạc. **Mô tả giọng bằng lời**, nghe thử, rồi lưu vào vị trí giọng của nhân vật hoặc **My voices** (cần model âm thanh tương thích và `VOICE_DESIGN_ENABLED=1` cùng giới hạn hằng ngày trong [`.env`](../.env.example)).
+- **Director World** — biến một ảnh thành bối cảnh 3D Gaussian Splat hoặc toàn cảnh scene-360, lấy khung hình trong trình xem, và tái sử dụng cùng một địa điểm nhất quán qua các cảnh quay.
+- **Xây cho canvas lớn** — tab, dàn ý, minimap, bookmark vùng nhìn, căn chỉnh bám lưới, render theo mức chi tiết (level-of-detail), node nhóm, phím tắt, lịch sử phiên bản có khôi phục và khóa theo từng canvas.
+- **Commit vào series** — xem trước tác động, rồi đưa một node hoặc cả một lô vào thư viện tài sản hoặc một tập; chiếu series ngược lại lên canvas.
 
-#### Director World — trường quay 3D
-
-<p align="center">
-  <img src="../assets/readme/director-world.jpg" width="900" alt="Director World — trường quay 3D"/>
-</p>
-<p align="center"><sub>Minh họa tính năng dựa trên ảnh chụp có sẵn; giao diện có thể khác phiên bản hiện tại.</sub></p>
-
-### Thiết kế giọng từ mô tả
-
-Mở **Design from description** từ vị trí giọng của nhân vật hoặc **My voices** trong XiaHua. Nhập mô tả giọng và văn bản nghe thử, chọn model khả dụng rồi tạo bản nghe thử. Nghe trước khi lưu. Lưu vào **My voices** chỉ thêm giọng vào thư viện; bạn cần chọn giọng đó để dùng trong node.
-
-Tính năng này cần model âm thanh tương thích và phải được bật trên máy chủ. Trong [`.env`](../.env.example), đặt `VOICE_DESIGN_ENABLED=1` và giá trị dương cho `VOICE_DESIGN_DAILY_LIMIT` và `VOICE_DESIGN_CHANNEL_DAILY_LIMIT`. Model khả dụng phụ thuộc gateway và danh mục model.
+<table>
+  <tr>
+    <td width="50%"><img src="../assets/readme/director-world.jpg" alt="Director World"/><p align="center"><sub>Director World</sub></p></td>
+    <td width="50%"><img src="../assets/readme/previz-canvas-node-0.jpg" alt="Node Previz được kết nối với ảnh tham chiếu"/><p align="center"><sub>Node Previz trên canvas</sub></p></td>
+  </tr>
+</table>
 
 ### Series (XiaJi) — pipeline
 
@@ -248,208 +282,89 @@ Tính năng này cần model âm thanh tương thích và phải được bật 
   <img src="../assets/pipeline.png" alt="Pipeline DramaClaw — Nạp vào, Lên kế hoạch, Sản xuất, Bàn giao" width="760"/>
 </p>
 
-Mỗi bước có giao diện riêng — chạy theo thứ tự, bỏ qua bước, tiếp tục từ bất kỳ checkpoint nào, hoặc thậm chí cắm orchestrator của riêng bạn vào.
+Mỗi giai đoạn là một tác vụ độc lập với giao diện riêng — chạy theo thứ tự, bỏ qua bước, tiếp tục từ bất kỳ checkpoint nào, hoặc điều khiển chúng từ orchestrator của riêng bạn.
 
-- **Nạp vào có cấu trúc** &mdash; dự án mới dựng thẳng các tập, nhân vật và bối cảnh từ bản thảo hoặc kịch bản (hỗ trợ Fountain), không cần knowledge graph hay embedding; đường story-graph bằng Cognee vẫn giữ cho các dự án cũ
-- **Thư viện tài sản & nhất quán danh tính** &mdash; nhân vật, bối cảnh, đạo cụ và giọng nói được sắp xếp theo mục đích và thư mục; danh tính ổn định xuyên suốt các tập, chân dung nhân vật và biến thể theo từng tập
-- **Lên kế hoạch tập & sinh kịch bản** &mdash; phân đoạn chương, lập kế hoạch beat, cung truyện đa tập; các chế độ kịch bản chuyển thể / bám sát / dàn dựng với vòng lặp review-và-sửa
-- **Storyboard & khung hình đầu** &mdash; sinh nội dung cách điệu theo beat, chia lưới, chọn từ kho ảnh
-- **Lồng tiếng, ghép video & xuất** &mdash; giọng nói nhận biết cảm xúc, lắp ráp tập, xuất video + phụ đề và trọn bộ gói tài sản
-- **Phong cách hình ảnh** &mdash; upload một ảnh tham chiếu để trích xuất tham số phong cách và áp dụng cho toàn bộ dự án
-- **Trung tâm tác vụ** &mdash; trạng thái, tiến độ, log, hủy / thử lại, tiếp tục từ checkpoint cho các lần chạy dài; điều kiện tiên quyết được kiểm tra trước khi tác vụ vào hàng đợi
+- **Nạp vào có cấu trúc** — các tập, nhân vật và bối cảnh lấy thẳng từ bản thảo hoặc kịch bản (hỗ trợ Fountain); không cần knowledge graph hay embedding.
+- **Thư viện tài sản (XiaTang)** — nhân vật, bối cảnh, đạo cụ và giọng nói được sắp xếp theo mục đích; danh tính ổn định xuyên suốt các tập, chân dung và biến thể theo từng tập.
+- **Lên kế hoạch tập và kịch bản** — phân đoạn chương, lập kế hoạch beat, cung truyện đa tập; các chế độ kịch bản chuyển thể / bám sát / dàn dựng với vòng lặp review-và-sửa.
+- **Storyboard và khung hình đầu** — sinh nội dung cách điệu theo beat, chia lưới, chọn từ kho ảnh.
+- **Lồng tiếng, ghép video và xuất** — giọng nói nhận biết cảm xúc, lắp ráp tập, xuất video + phụ đề và trọn bộ gói tài sản.
+- **Phong cách hình ảnh** — trích xuất tham số phong cách từ một ảnh tham chiếu và áp dụng cho toàn bộ dự án.
+- **Trung tâm tác vụ** — trạng thái, tiến độ, log, hủy / thử lại và tiếp tục từ checkpoint cho các lần chạy dài.
 
-#### XiaTang — thư viện tài sản
-
-<p align="center">
-  <img src="../assets/readme/asset-library.jpg" width="900" alt="XiaTang — thư viện tài sản"/>
-</p>
-<p align="center"><sub>Minh họa tính năng dựa trên ảnh chụp có sẵn; giao diện có thể khác phiên bản hiện tại.</sub></p>
-
-#### Storyboard & khung hình đầu
-
-<p align="center">
-  <img src="../assets/readme/storyboards.jpg" width="900" alt="Storyboard & khung hình đầu"/>
-</p>
-<p align="center"><sub>Minh họa tính năng dựa trên ảnh chụp có sẵn; giao diện có thể khác phiên bản hiện tại.</sub></p>
+<table>
+  <tr>
+    <td width="50%"><img src="../assets/readme/asset-library.jpg" alt="XiaTang — thư viện tài sản"/><p align="center"><sub>XiaTang — thư viện tài sản</sub></p></td>
+    <td width="50%"><img src="../assets/readme/storyboards.jpg" alt="Storyboard và khung hình đầu"/><p align="center"><sub>Storyboard và khung hình đầu</sub></p></td>
+  </tr>
+</table>
 
 <br/>
 
-## Tại sao chọn DramaClaw?
+## 🤔 Tại sao chọn DramaClaw?
 
-**Một canvas hiểu phim drama, và một agent làm việc trên đó.** Các canvas node đa dụng nối được mọi thứ nhưng chẳng biết gì về tập, nhân vật hay cảnh quay; các công cụ series hiểu nghề nhưng nhốt bạn trong một wizard. XiaHua cho bạn canvas tự do với các node và skill hiểu phim drama, còn Xia Director lập kế hoạch, bố trí và chạy những đồ thị đó sau khi bạn xác nhận. Canvas và agent cùng hoạt động xuyên suốt workflow sản xuất.
-
-**Xây cho việc chuyển tiểu thuyết thành phim drama ngắn.** Các công cụ workflow chung có thể nối node với nhau, nhưng chúng không biết "beat của tập" là gì, không hiểu vì sao sự nhất quán danh tính nhân vật xuyên cảnh lại quan trọng, và sẽ không bảo vệ cung cảm xúc của một chương xuyên suốt ảnh + giọng nói + dựng phim. DramaClaw đưa toàn bộ những phán đoán đó vào công cụ.
-
-**Canvas và pipeline, không phải canvas hoặc pipeline.** Hầu hết công cụ cho bạn hoặc một canvas node tự do, hoặc một wizard cứng nhắc. DramaClaw chạy cả hai như hai đường ray song song trên cùng một thư viện tài sản: khám phá trên canvas, commit thứ hiệu quả vào series, chiếu series ngược lại lên canvas. Agent làm việc trên cả hai.
-
-**Mọi bước đều có thể tách rời.** Mỗi giai đoạn là một tác vụ bất đồng bộ độc lập với giao diện riêng. Chạy tuần tự, bỏ qua bước, tiếp tục giữa chừng — chính chuỗi công cụ là sản phẩm, không có hộp đen nào ẩn giấu.
-
-**Tự lưu trữ được, trung lập về model.** Bản thảo của bạn, nhân vật của bạn, model của bạn, máy chủ của bạn. Dùng các model tiên tiến đóng khi bạn muốn kết quả tốt nhất; chuyển sang các model open-weight khi bạn muốn toàn quyền kiểm soát. DramaClaw sẽ không trói bạn vào bất kỳ nhà cung cấp nào.
+- **Một canvas hiểu phim drama, và một agent làm việc trên đó.** Các canvas node đa dụng nối được mọi thứ nhưng chẳng biết gì về tập, nhân vật hay cảnh quay. Các node và Skill của DramaClaw thì hiểu, và Xia Director lập kế hoạch rồi chạy chúng thay bạn.
+- **Canvas *và* pipeline.** Khám phá tự do trên canvas, commit thứ hiệu quả vào series, chiếu series ngược lại lên canvas — một thư viện tài sản, một agent.
+- **Không có hộp đen.** Mỗi giai đoạn là một tác vụ có thể tách rời với API riêng. Bỏ qua, tiếp tục, thay thế hoặc viết script cho bất kỳ bước nào.
+- **Tự lưu trữ được, trung lập về model.** Bản thảo của bạn, nhân vật của bạn, model của bạn, máy chủ của bạn. Dùng các model đóng tiên tiến hoặc model open-weight; chuyển đổi bất cứ lúc nào.
 
 ### DramaClaw so với các sản phẩm khác
 
-Lợi thế không phải là "sinh nội dung nhiều hơn" — mà là tổ chức toàn bộ vòng sản xuất phim drama ngắn (kịch bản → tài sản → cảnh quay → canvas → bản dựng cuối) thành thứ có thể tái sử dụng, cộng tác và mở rộng quy mô.
-
-<sub>Chú giải: ✅ Đầy đủ · ◐ Một phần · ○ Dự kiến · ❌ Không có — tên đối thủ được che một phần; so sánh dựa trên tài liệu sản phẩm và định vị công khai.</sub>
+<sub>Chú giải: ✅ Đầy đủ · ◐ Một phần · ○ Dự kiến · ❌ Không có · — Chưa xác minh. Tên đối thủ được che một phần; dựa trên tài liệu sản phẩm và định vị công khai.</sub>
 
 | Năng lực | L\*TV | R\*Hub | T\*Now | S\*ko | U\*dream | O\*II | J\*/K\* | **DramaClaw** |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Agent tích hợp (lập kế hoạch workflow, điều phối canvas, thực thi) | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
-| Workflow skill và recipe (tái sử dụng, cài đặt, xuất, chia sẻ) | — | — | — | — | — | — | — | ✅ |
-| Sân khấu đạo diễn 3D (dàn cảnh, chuyển động, timeline, ghi hình) | — | — | — | — | — | — | — | Đang thử nghiệm kín |
-| Series tương tác (đa tập, phân nhánh, IP) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | Đang thử nghiệm kín |
-| Xem trước storyboard (kịch bản→cảnh quay, bảng phân cảnh) | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
-| Thư viện tài sản (nhân vật/bối cảnh/đạo cụ/giọng nói) | ◐ | ❌ | ◐ | ✅ | ◐ | ○ | ❌ | ✅ |
-| Nhất quán bối cảnh (biến thể, 360°, đa trạng thái) | ✅ | ◐ | ❌ | ❌ | ○ | ❌ | ❌ | ✅ |
-| Thế giới đạo diễn (bối cảnh 360°/3D, camera, khung hình) | ✅ | ◐ | ❌ | ❌ | ◐ | ❌ | ❌ | ✅ |
-| Bàn giao cuối (đa cảnh quay, phụ đề/SRT, gói tài sản) | ✅ | ○ | ○ | ✅ | ✅ | ❌ | ❌ | ✅ |
-| Sản xuất theo nhóm (chia sẻ, vai trò, tác vụ, chi phí) | ✅ | ✅ | ○ | ✅ | ○ | ○ | ○ | ✅ |
+| Workflow Skill và Recipe (tái sử dụng, nhập, xuất, chia sẻ) | — | — | — | — | — | — | — | ✅ |
+| Sân khấu đạo diễn 3D (dàn cảnh, chuyển động, camera, timeline, ghi hình) | — | — | — | — | — | — | — | ✅ beta |
+| Series tương tác (phân nhánh, biến, nhiều kết thúc) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ beta |
 | Bảng vẽ vô hạn (dạng node, khám phá tự do) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
 | Hai đường ray (pipeline chính + khám phá trên canvas) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Xem trước storyboard (kịch bản → cảnh quay, bảng phân cảnh) | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
+| Thư viện tài sản (nhân vật / bối cảnh / đạo cụ / giọng nói) | ◐ | ❌ | ◐ | ✅ | ◐ | ○ | ❌ | ✅ |
+| Nhất quán bối cảnh (biến thể, 360°, đa trạng thái) | ✅ | ◐ | ❌ | ❌ | ○ | ❌ | ❌ | ✅ |
+| Thế giới đạo diễn (bối cảnh 360° / 3D, camera, khung hình) | ✅ | ◐ | ❌ | ❌ | ◐ | ❌ | ❌ | ✅ |
+| Bàn giao cuối (đa cảnh quay, phụ đề / SRT, gói tài sản) | ✅ | ○ | ○ | ✅ | ✅ | ❌ | ❌ | ✅ |
+| Sản xuất theo nhóm (chia sẻ, vai trò, tác vụ, chi phí) | ✅ | ✅ | ○ | ✅ | ○ | ○ | ○ | ✅ |
 | Phong cách tùy chỉnh (mẫu, prompt, negative prompt) | ✅ | ◐ | ○ | ✅ | ◐ | ○ | ◐ | ✅ |
 | Bạn đồng hành sáng tạo (nhân cách, nhắc nhở, phản hồi) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Mã nguồn công khai (tự lưu trữ, fork, tùy biến) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
-<sub>Trong cột DramaClaw, ✅ chỉ tính năng đã có trên nhánh mã nguồn main; tính năng đang thử nghiệm kín chưa được mở rộng rãi. — nghĩa là chưa xác minh tính năng của đối thủ ở các hàng mới.</sub>
+<sub>✅ của DramaClaw chỉ nhánh `main`; các tính năng `beta` dùng được nhưng vẫn có thể thay đổi.</sub>
 
 <br/>
 
-## Yêu cầu hệ thống
+## <a name="models"></a>🔌 Model & nhà cung cấp
 
-DramaClaw chạy toàn bộ suy luận qua một **gateway tương thích OpenAI** — hoặc dịch vụ RelayClaw chính thức, hoặc [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) đi kèm để định tuyến tới các nhà cung cấp bạn cấu hình. Không có model nào chạy trên máy của bạn, nên tài nguyên cục bộ cần rất ít. Một chiếc laptop bình thường hoặc một VPS nhỏ là đủ.
+Mọi model text, ảnh, video và âm thanh đều kết nối qua một **gateway tương thích OpenAI**. Chọn chế độ trong **Settings → Models & Channels**:
 
-| Hạng mục | Yêu cầu |
+| Chế độ | Bạn làm gì | Phù hợp cho |
+|---|---|---|
+| **Official** (khuyến nghị) | Dán DC key của bạn từ [RelayClaw](https://relayclaw.cdnfg.com). Mọi ánh xạ model đã được cấu hình sẵn. | Bắt đầu nhanh |
+| **Custom** | Một cú bấm khởi tạo [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) đi kèm; thêm các kênh nhà cung cấp của riêng bạn. | Toàn quyền kiểm soát nhà cung cấp và chi phí |
+| **Local + Official Hybrid** | Model official cho pipeline, cộng các kênh của riêng bạn (ví dụ một workflow ComfyUI cục bộ). | Kết hợp model cục bộ hoặc model chuyên biệt |
+
+Gateway đi kèm là fork riêng của DramaClaw từ [New API](https://github.com/QuantumNous/new-api). Nó hiểu giao thức DC-Media và có sẵn adapter cho **ComfyUI · MiniMax / Hailuo · VolcEngine Doubao / Seedance · fal.ai · Alibaba · Kling · Jimeng · Vertex AI · Gemini · OpenAI / Sora · Suno** ([ma trận hỗ trợ](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/docs/providers/en/README.md), [thêm nhà cung cấp](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/CONTRIBUTING.md)).
+
+Model của Agent được cấu hình riêng trong **Models & Channels → Agent model** và có thể theo kênh hiện tại hoặc dùng bất kỳ endpoint nào hỗ trợ OpenAI Responses API với gọi công cụ. Chi tiết: [Cấu hình model](../docs/en/getting-started/configuring-models.md).
+
+<br/>
+
+## <a name="documentation"></a>📖 Tài liệu
+
+| | |
 |---|---|
-| **CPU / RAM** | Khuyến nghị ≥ 2 vCPU / 4 GB (không tính suy luận model — phần đó chạy trên gateway) |
-| **GPU** | Không bắt buộc với pipeline tiêu chuẩn. Chỉ phần mở rộng tùy chọn `world` (voxel / toàn cảnh sang 3D) mới cần GPU + image CUDA |
-| **Ổ đĩa** | Vài GB cho image cộng với media/trạng thái sinh ra trong volume `ce-data` (không có mức tối thiểu cứng) |
-| **Hệ điều hành** | macOS (Apple Silicon / Intel), Windows (Docker Desktop + backend WSL2), Linux (Docker Engine + plugin compose) |
-| **Docker** | Docker + `docker compose` |
-| **Cổng** | `8080` giao diện web · `8780` REST API · `3000` giao diện quản trị gateway đi kèm (mặc định chỉ host, có thể mở rộng) |
-| **Kho dữ liệu** | Không cần gì — không Postgres, Redis, Celery hay Ray. Tác vụ chạy trong tiến trình; trạng thái nằm trên hệ thống file cục bộ (SQLite + file) |
-| **Mạng** | Truy cập ra ngoài tới gateway chính thức `relayclaw.cdnfg.com`, và/hoặc tới các nhà cung cấp model bạn cấu hình trong gateway đi kèm |
-
-> Phát triển cục bộ (không Docker) cần thêm Python 3.11–3.12 + [`uv`](https://docs.astral.sh/uv/) + `ffmpeg`. Điều kiện tiên quyết đầy đủ trong [Hướng dẫn tự lưu trữ](../docs/en/guides/self-hosting.md).
+| **Bắt đầu** | [Bắt đầu nhanh](../docs/en/getting-started/quickstart.md) · [Cài đặt](../docs/en/getting-started/installation.md) · [Cấu hình model](../docs/en/getting-started/configuring-models.md) |
+| **Tìm hiểu** | [Tổng quan tính năng](../docs/en/concepts/features.md) · [Kiến trúc](../docs/en/concepts/architecture.md) · [Sổ tay sản phẩm (Feishu)](https://neo-flying.feishu.cn/docx/JGNTdsjJuo748TxJkxecoYs2nth) |
+| **Vận hành** | [Tự lưu trữ](../docs/en/guides/self-hosting.md) · [Xử lý sự cố](../docs/en/guides/troubleshooting.md) · [Dùng từ Claude Code (MCP)](../docs/en/guides/mcp-claude-code.md) |
+| **Thêm** | [Tất cả tài liệu &rarr;](../docs/en/README.md) |
 
 <br/>
 
-## <a name="quick-start"></a>Bắt đầu nhanh
+## 🤝 Cộng đồng & Đóng góp
 
-### Docker (khuyến nghị)
-
-Mỗi GitHub Release đều phát hành image đa kiến trúc (amd64/arm64) lên Docker Hub.
-
-**Build từ mã nguồn (mặc định)** — clone DramaClaw và [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway) đi kèm cạnh nhau; `docker compose up -d --build` sẽ build cả ba dịch vụ từ hai checkout đó.
-
-```bash
-git clone https://github.com/dramaclaw/dramaclaw.git
-git clone https://github.com/dramaclaw/dramaclaw-gateway.git   # gateway đi kèm, build từ ../dramaclaw-gateway
-cd dramaclaw
-
-cp .env.example .env
-# Sửa .env — đặt PROMPT_EXPORT_PASSWORD thành giá trị khác mặc định.
-
-docker compose up -d --build   # build và khởi động ba dịch vụ: api / newapi (gateway đi kèm) / web
-```
-
-Cả hai checkout đều là repo git bình thường: sửa, `git pull`, build lại. Chỉ mã DramaClaw thay đổi? `docker compose up -d --build api web`. Chỉ gateway? `docker compose up -d --build newapi`. Clone gateway ở nơi khác, hoặc muốn Docker tự lấy từ git? Đặt `DRAMACLAW_GATEWAY_SRC` trong `.env` thành đường dẫn đó hoặc `https://github.com/dramaclaw/dramaclaw-gateway.git#main`.
-
-**Không build** — kéo image đã phát hành thay thế (không cần clone gateway):
-
-```bash
-docker compose -f docker-compose.release.yml up -d
-```
-
-Mở ứng dụng tại <http://localhost:8080>; REST API ở <http://localhost:8780>. Trong **Settings → Models & Channels** chọn một trong:
-
-- **Official** — dán DC key của bạn (lấy tại <https://relayclaw.cdnfg.com>); không cần ánh xạ model. Gateway đi kèm ở trạng thái chờ.
-- **Custom** — một cú bấm khởi tạo gateway `newapi` đi kèm; sau đó thêm các kênh upstream của riêng bạn.
-- **Local + Official Hybrid** — official cho pipeline chính, gateway đi kèm cho các kênh bổ sung.
-
-Các bước đầy đủ trong [Bắt đầu nhanh](../docs/en/getting-started/quickstart.md).
-
-Ghim phiên bản hoặc đổi registry trong `.env` (`DRAMACLAW_VERSION`, `DRAMACLAW_GATEWAY_VERSION`, `DRAMACLAW_IMAGE_PREFIX`) — các giá trị này chỉ áp dụng cho chế độ image (`docker-compose.release.yml`). Trung Quốc đại lục: đặt `DRAMACLAW_IMAGE_PREFIX=claymore-registry.cn-chengdu.cr.aliyuncs.com/dramaclaw` và ghim cả hai phiên bản (mirror ACR chỉ có các tag đã ghim).
-
-> Di chuyển từ một checkout cũ? Với build từ mã nguồn, trước tiên `git clone https://github.com/dramaclaw/dramaclaw-gateway.git ../dramaclaw-gateway` (gateway giờ được build từ checkout kế bên đó; thiếu nó, build sẽ dừng với `unable to prepare context`). `docker-compose.selfhosted.yml` / `docker-compose.selfhosted.release.yml` đã bị gỡ — dùng `docker-compose.yml` (build từ mã nguồn) / `docker-compose.release.yml` (image). Tên dịch vụ và các volume `ce-data` / `newapi-data` không đổi; dữ liệu hiện có được dùng lại nguyên trạng. Cổng của gateway đi kèm giờ mặc định chỉ bind vào `127.0.0.1`; đặt `ST_NEWAPI_BIND=0.0.0.0` trong `.env` nếu bạn cần truy cập từ xa.
-
-### Phát triển cục bộ (uv + Python 3.11+)
-
-```bash
-git clone https://github.com/dramaclaw/dramaclaw.git
-cd dramaclaw
-
-uv sync
-cp .env.example .env && $EDITOR .env
-
-uv run novelvideo api --port 8780   # khởi động REST API (CE mặc định chạy tác vụ inline, không Ray/Redis)
-```
-
-Frontend ở một terminal thứ hai: `cd frontend && pnpm install && pnpm dev`.
-
-**Gateway.** Ở chế độ **Official** bạn không cần gì thêm. Với **Custom** hoặc **Local + Official Hybrid**, API cần một gateway ở `127.0.0.1:3000` với file SQLite là `./state/newapi/one-api.db` (đó là nơi nút "Initialize" trong Settings ghi vào; `NEWAPI_ADMIN_BASE_URL` trong `.env` đã trỏ sẵn tới đó). Hoặc chạy image đã phát hành với thư mục đó được mount:
-
-```bash
-mkdir -p state/newapi
-docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
-  -v "$PWD/state/newapi:/data" \
-  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.1
-```
-
-hoặc chạy gateway từ mã nguồn trong checkout kế bên (`make dev-api` / `make dev-web` trong [dramaclaw-gateway](https://github.com/dramaclaw/dramaclaw-gateway#develop), hoặc `go build` rồi khởi động binary với `SQLITE_PATH=<đường dẫn tới>/dramaclaw/state/newapi/one-api.db`).
-
-<br/>
-
-## Model & nhà cung cấp được hỗ trợ
-
-DramaClaw giữ trung lập về model — mọi model text / ảnh / video / âm thanh đều kết nối qua một **gateway tương thích OpenAI**. Chọn chế độ trong **Settings → Models & Channels**:
-
-- **Official (khuyến nghị)** — dán DC key của bạn (lấy tại <https://relayclaw.cdnfg.com>), lưu, xong. RelayClaw đã có sẵn mọi ánh xạ model mà DramaClaw cần; không phải cấu hình gì.
-- **Custom** — một cú bấm khởi tạo `dramaclaw-gateway` đi kèm, rồi thêm các kênh nhà cung cấp của riêng bạn (API key, model ID) trong giao diện quản trị của nó. Mọi model DramaClaw gọi đều đi qua kênh của bạn.
-- **Local + Official Hybrid** — giữ các model official cho pipeline chính và thêm các kênh bổ sung (ví dụ một workflow video ComfyUI cục bộ) qua gateway đi kèm.
-
-Hướng dẫn đầy đủ trong [Cấu hình model](../docs/en/getting-started/configuring-models.md).
-
-Trong **Settings → Models & Channels → Agent model**, Xia Director có thể dùng kênh hiện tại hoặc một endpoint bên thứ ba riêng. Dịch vụ đó phải hỗ trợ OpenAI Responses API và gọi công cụ. Thiết lập này chỉ ảnh hưởng Agent; việc tạo nội dung đa phương tiện vẫn dùng các kênh model đã chọn.
-
-### Gateway đi kèm: dramaclaw-gateway
-
-Dịch vụ `newapi` trong `docker-compose.yml` là [**dramaclaw-gateway**](https://github.com/dramaclaw/dramaclaw-gateway), fork riêng của DramaClaw từ [New API](https://github.com/QuantumNous/new-api). Nó hiểu giao thức **DC-Media** mà DramaClaw dùng cho ảnh / video / âm thanh (vai trò media, tham chiếu, khung hình đầu / cuối) và chuyển đổi mỗi yêu cầu sang API gốc của nhà cung cấp. Image: [`claymorelab/dramaclaw-gateway`](https://hub.docker.com/r/claymorelab/dramaclaw-gateway) trên Docker Hub, ghim bởi `DRAMACLAW_GATEWAY_VERSION` trong `.env`. Nó ở trạng thái chờ trong chế độ Official và chỉ được dùng khi bạn chuyển sang **Custom** hoặc **Local + Official Hybrid**.
-
-Các adapter nhà cung cấp có sẵn trong gateway hiện nay (xem [ma trận hỗ trợ kênh](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/docs/providers/en/README.md) để biết trạng thái xác minh): ComfyUI · MiniMax / Hailuo · VolcEngine Doubao / Seedance · fal.ai · Alibaba · Kling · Jimeng · Vertex AI · Gemini · OpenAI / Sora · Suno. Muốn thêm nhà cung cấp khác? Gateway có [trình tạo scaffold và hướng dẫn đóng góp](https://github.com/dramaclaw/dramaclaw-gateway/blob/main/CONTRIBUTING.md).
-
-| Giai đoạn            | Chế độ Official (RelayClaw)                        | Chế độ Custom / Hybrid (gateway đi kèm)                   |
-|----------------------|----------------------------------------------------|-----------------------------------------------------------|
-| **Text / LLM**       | các model `DC-*-LLM`, không cần ánh xạ             | bất kỳ kênh chat tương thích OpenAI nào                   |
-| **Ảnh**              | gpt-image · nano-banana                            | bất kỳ kênh ảnh nào đăng ký trong gateway                 |
-| **Video**            | dòng Seedance 1.0 / 1.5 / 2.0 · happyhorse         | bất kỳ adapter video DC-Media nào (Seedance, Hailuo, Kling, ComfyUI, …) |
-| **Lồng tiếng**       | IndexTTS2                                          | bất kỳ kênh âm thanh nào đăng ký trong gateway            |
-| **Story graph**      | Cognee (`DC-cognee-embedding`)                     | bất kỳ kênh embedding nào                                 |
-| **Runtime tác vụ**   | inline trong tiến trình (không Ray / Redis / Celery) | như trên                                                |
-| **Lưu trữ**          | hệ thống file cục bộ                               | như trên                                                  |
-
-<br/>
-
-## <a name="documentation"></a>Tài liệu
-
-- [**Sổ tay người dùng sản phẩm**](https://neo-flying.feishu.cn/docx/JGNTdsjJuo748TxJkxecoYs2nth) — hướng dẫn đầy đủ giao diện (Feishu)
-- [Tổng quan tính năng](../docs/en/concepts/features.md)
-- [Kiến trúc](../docs/en/concepts/architecture.md)
-- [Bắt đầu nhanh](../docs/en/getting-started/quickstart.md)
-- [Hướng dẫn tự lưu trữ](../docs/en/guides/self-hosting.md)
-- [Cấu hình nhà cung cấp model](../docs/en/getting-started/configuring-models.md)
-- [Thêm tài liệu &rarr;](../docs/en/README.md)
-
-<br/>
-
-## Tham gia cộng đồng / Đóng góp
-
-- [Báo lỗi](https://github.com/dramaclaw/dramaclaw/issues/new?template=bug_report.yml)
-- [Đề xuất tính năng](https://github.com/dramaclaw/dramaclaw/issues/new?template=feature_request.yml)
-- [Tham gia thảo luận](https://github.com/dramaclaw/dramaclaw/discussions)
-- [Hướng dẫn đóng góp](../CONTRIBUTING.md)
-- [Chính sách bảo mật](../SECURITY.md)
-
-Chúng tôi liên tục chọn lọc và gắn nhãn [`good first issue`](https://github.com/dramaclaw/dramaclaw/labels/good%20first%20issue) — một nơi tuyệt vời để bắt đầu.
+- 🐛 [Báo lỗi](https://github.com/dramaclaw/dramaclaw/issues/new?template=bug_report.yml) · 💡 [Đề xuất tính năng](https://github.com/dramaclaw/dramaclaw/issues/new?template=feature_request.yml) · 💬 [Thảo luận](https://github.com/dramaclaw/dramaclaw/discussions)
+- Đọc [Hướng dẫn đóng góp](../CONTRIBUTING.md) và [Chính sách bảo mật](../SECURITY.md); bắt đầu với một [`good first issue`](https://github.com/dramaclaw/dramaclaw/labels/good%20first%20issue).
 
 <br/>
 
@@ -468,7 +383,7 @@ Chúng tôi liên tục chọn lọc và gắn nhãn [`good first issue`](https:
 
 ## Giấy phép
 
-[Elastic License 2.0](../LICENSES/Elastic-2.0.txt). Tự do sử dụng, sửa đổi, phân phối lại và bán những gì bạn xây bằng nó; giữ một dòng nhỏ "Powered by DramaClaw" trong giao diện của bạn. Hạn chế duy nhất là bạn không được cung cấp chính phần mềm này như một dịch vụ lưu trữ cho người khác. Xem [giải thích giấy phép](../docs/en/license.md) và [tuyên bố cấp phép](https://github.com/dramaclaw/dramaclaw/issues/475).
+[Elastic License 2.0](../LICENSES/Elastic-2.0.txt). Tự do sử dụng, sửa đổi, phân phối lại và bán những gì bạn xây bằng nó; giữ một dòng nhỏ "Powered by DramaClaw" trong giao diện của bạn. Hạn chế duy nhất là bạn không được cung cấp chính phần mềm này như một dịch vụ lưu trữ cho người khác. Xem [giải thích giấy phép](../docs/en/license.md), [tuyên bố cấp phép](https://github.com/dramaclaw/dramaclaw/issues/475), và `NOTICE` về yêu cầu thương hiệu và ghi nhận bên thứ ba.
 
 <br/>
 
@@ -487,7 +402,3 @@ Chúng tôi liên tục chọn lọc và gắn nhãn [`good first issue`](https:
 <div align="center">
   <sub>Xây dựng cho người kể chuyện. Mã nguồn công khai cho tất cả.</sub>
 </div>
-
-## Notices
-
-See `NOTICE` for required branding and third-party attribution notices.
