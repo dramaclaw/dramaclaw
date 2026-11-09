@@ -87,3 +87,14 @@ def test_assembly_requires_adoption_for_every_candidate_and_runs_final_qc(tmp_pa
     video = next(stream for stream in probe["streams"] if stream["codec_type"] == "video")
     assert (video["width"], video["height"]) == (720, 1280)
     assert any(stream["codec_type"] == "audio" for stream in probe["streams"])
+
+
+def test_assembly_rejects_a_run_with_no_submitted_beats(tmp_path):
+    (tmp_path / "state.json").write_text(
+        json.dumps({"version": 1, "tasks": [], "reviews": []})
+    )
+
+    with pytest.raises(ValueError, match="submitted beat"):
+        assemble_episode(tmp_path, tmp_path / "episode.mp4")
+
+    assert not (tmp_path / "episode.mp4").exists()

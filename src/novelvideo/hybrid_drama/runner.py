@@ -381,6 +381,8 @@ def assemble_episode(run_dir: str | Path, output_path: str | Path) -> dict:
         output_path = run_dir / output_path
     state = load_state(run_dir)
     beat_keys = list(dict.fromkeys(task["beat_key"] for task in state["tasks"]))
+    if not beat_keys:
+        raise ValueError("at least one submitted beat is required before assembly")
     selected = []
     for beat_key in beat_keys:
         adopted = []
