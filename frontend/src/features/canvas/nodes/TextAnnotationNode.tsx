@@ -127,9 +127,6 @@ const TEXT_TO_MUSIC_DEFAULT_CONTENT =
 
 const SPAWN_UPLOAD_WIDTH = 320;
 
-/** 反推提示词通常十几秒返回，用它给 loading 覆盖层估算进度推进。 */
-const REVERSE_PROMPT_DURATION_MS = 15000;
-
 /**
  * 解析上游图片节点「眼下展示的那张图」的 URL。和 graphContentResolver 的图片分支
  * 保持同一套回退顺序：生成结果 imageUrl → previewImageUrl → referenceImageUrl，
@@ -750,7 +747,7 @@ export const TextAnnotationNode = memo(({
             {isGenerating && (
               <NodeGenerationOverlay
                 startedAt={data.generationStartedAt}
-                durationMs={REVERSE_PROMPT_DURATION_MS}
+                mode="waiting"
                 hasBackground={hasUserContent}
               />
             )}
@@ -910,7 +907,7 @@ export const TextAnnotationNode = memo(({
           {isGenerating && (
             <NodeGenerationOverlay
               startedAt={data.generationStartedAt ?? null}
-              durationMs={REVERSE_PROMPT_DURATION_MS}
+              mode="waiting"
               hasBackground={hasUserContent}
             />
           )}

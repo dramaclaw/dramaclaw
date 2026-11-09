@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { LoaderCircle } from 'lucide-react';
 import { useEstimatedProgress } from './useEstimatedProgress';
 
 type NodeGenerationOverlayProps = {
+  mode?: 'progress' | 'waiting';
   /** 生成开始时间戳,用于模拟进度。为空时从挂载时刻开始计时。 */
   startedAt?: number | null;
   /** 预估生成总时长(毫秒),用于模拟进度推进。 */
@@ -21,9 +25,10 @@ const DEFAULT_DURATION_MS = 60000;
 
 /**
  * 节点生成中的统一 loading 覆盖层:
- * - 中央直接显示百分比,不再额外叠加遮罩、图标或状态文案
+ * - 媒体保留百分比；文本在没有真实进度时显示等待时间。
  */
 export function NodeGenerationOverlay({
+  mode = 'progress',
   startedAt = null,
   durationMs = DEFAULT_DURATION_MS,
   percent: actualPercent,
@@ -35,8 +40,11 @@ export function NodeGenerationOverlay({
   const estimatedPercent = useEstimatedProgress(
     startedAt,
     durationMs,
-    actualPercent !== undefined,
+    mode === 'waiting' || actualPercent !== undefined,
   );
+  if (mode === 'waiting') {
+    return <WaitingTextGeneration startedAt={startedAt} rounded={rounded} />;
+  }
   const percent =
     actualPercent === undefined
       ? estimatedPercent
@@ -57,6 +65,27 @@ export function NodeGenerationOverlay({
           </span>
           <span className="ml-1 text-[15px] font-medium text-white/70">%</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function WaitingTextGeneration({ startedAt, rounded }: { startedAt: number | null; rounded: string }) {
+  const { t } = useTranslation();
+  const [mountedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.floor((now - (startedAt ?? mountedAt)) / 1000));
+  const elapsed = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  return (
+    <div className={`pointer-events-none absolute inset-0 flex items-center justify-center ${rounded}`}>
+      <div role="status" className="flex flex-col items-center gap-2 rounded-lg bg-surface-panel px-3 py-2 text-sm text-text">
+        <LoaderCircle aria-hidden="true" className="size-5 animate-spin motion-reduce:animate-none" />
+        <span>{t('canvas.textGenerationWaiting')}</span>
+        <span aria-live="off" className="tabular-nums">{t('canvas.generationElapsed', { elapsed })}</span>
       </div>
     </div>
   );

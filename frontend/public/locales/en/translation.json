@@ -4918,6 +4918,8 @@
     "addImage": "Add Image",
     "splitStoryboard": "Extract Grid Cells",
     "generate": "Generate",
+    "textGenerationWaiting": "Generating text",
+    "generationElapsed": "Waiting {{elapsed}}",
     "generationProgress": "Generating {{percent}}%",
     "analysisProgress": "Analyzing {{percent}}%",
     "generating": "Generating",
