@@ -518,6 +518,8 @@ def video_model_reselection_clarification(
         "agent_instruction": (
             "This is a successful pre-draft clarification outcome, not a failed draft. "
             "Call freezone_request_user_clarification exactly once with the returned question. "
+            "Omit generation_video_node_ids: affected_node_ids identify planned nodes, not "
+            "existing canvas nodes; preflight has already verified their requirements. "
             "Do not select a replacement without the user's answer. After the answer, replace "
             "plan.inputs.video_model and data.model on every affected_node_id with the chosen "
             "option id, and retry the same complete plan exactly once with the same operation_id. "

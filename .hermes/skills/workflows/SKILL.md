@@ -22,6 +22,8 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 
 调用生成参数澄清卡时，将用户本轮明确给出的画幅、视频节点分辨率和是否需要镜头内声音写入 `generation_preferences`；例如有对白的镜头传 `video_generate_audio=true`。`无 BGM` 仅表示不创建背景音乐，不代表视频静音。用户逐镜头指定时长时传 `video_shot_durations_seconds`，并在每个视频 Plan 节点填写对应 `data.durationSec`；此时澄清卡不再问一个全局时长。`delivery_resolution` 是最终交付规格，只有用户明确要求视频生成节点的分辨率时才传 `video_resolution`。对白或需要可听声音的视频 Intent item 写 `requires_generated_audio=true`；完整 WorkflowPlan 的对应视频节点写 `data.workflowCatalog.requiresGeneratedAudio=true`。用户明确要求静音的镜头保留 `false`，逐镜头判断。卡片若提示当前模型无法满足这些要求，改为逐项选择兼容模型和参数，不自行沿用冲突的目录缺省值。
 
+字段位置以公开 Schema 为准：Intent 的推荐模型写在 `inputs.image_model` / `inputs.video_model`，完整 Plan 写在 `nodes[].data.model`。不要把模型字段复制进 Intent 的 `items[]`；`recommended` 仅表示模型推荐，不是质量或分辨率值。工具说明与本 Skill 共享同一参数契约，已明确的用户要求始终保留。
+
 ## 工具调用方式
 
 `freezone_*` 工具不在工具列表里，统一用 `tool_call(name="<工具名>", arguments={...})` 调用；JSON 里先写 `name` 再写 `arguments`（arguments 很大时后写的 `name` 容易被漏掉，缺 `name` 会直接报错）；`arguments` 必须传 JSON 对象——不要传转义后的 JSON 字符串，大型嵌套 intent 会因转义损坏而反复失败。**不要先跑 `tool_search` 或 `tool_describe`**——`tool_call` 不依赖它们。**普通流程：读规划包 → 生成结构化 intent → 编译草稿 → 用户确认 → 创建**；已有故事图片批次按 `interactive-story` 参考图契约提交完整 Plan。`deliverable`、Recipe、字段枚举都来自规划包，跳过它自造字段会被校验反复打回。所需参数如下：

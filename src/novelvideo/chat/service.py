@@ -5919,6 +5919,13 @@ async def _stream_assistant_reply_codex(
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft
+                    elif _codex_freezone_tool_name(event) in (
+                        _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS
+                        | {"freezone_patch_workflow_draft"}
+                    ):
+                        # A later failed revision must not inherit an earlier
+                        # draft's pending-approval outcome in the same turn.
+                        ready_workflow_draft = None
                 if _codex_freezone_is_write_event(event):
                     is_stage_confirmation = (
                         _codex_freezone_tool_name(event)
@@ -6267,6 +6274,8 @@ async def _stream_assistant_reply_codex(
                 "",
             ),
             draft_ready=ready_workflow_draft is not None,
+            draft_updated=(ready_workflow_draft or {}).get("status")
+            == "workflow_draft_updated",
             write_requested=canvas_write_requested,
         )
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"

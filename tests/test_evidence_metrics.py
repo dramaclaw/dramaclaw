@@ -7,6 +7,7 @@ the same thing: fewer attested captures than expected, with nothing to say why.
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
@@ -98,6 +99,40 @@ def test_counters_are_shared_outside_process_memory(monkeypatch, tmp_path):
     evidence_metrics._counts.clear()
 
     assert evidence_metrics.agent_product_counts()["agent_product_reconciled"] == 1
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_optional_batch_counts_share_the_existing_store(monkeypatch, tmp_path, persistent):
+    monkeypatch.delenv("NOVELVIDEO_STATE_DIR", raising=False)
+    monkeypatch.delenv("DRAMACLAW_EVIDENCE_METRICS_DB", raising=False)
+    if persistent:
+        monkeypatch.setenv("DRAMACLAW_EVIDENCE_METRICS_DB", str(tmp_path / "metrics.sqlite3"))
+    evidence_metrics.observe_batch(["draft.calls", "draft.calls", "draft.success"])
+    assert evidence_metrics.counters() == {"draft.calls": 2, "draft.success": 1}
+
+
+def test_optional_batch_does_not_wait_for_a_busy_metrics_lock():
+    evidence_metrics._lock.acquire()
+    try:
+        with pytest.raises(TimeoutError):
+            evidence_metrics.observe_batch(["draft.calls"], timeout=0)
+    finally:
+        evidence_metrics._lock.release()
+
+
+def test_optional_batch_drops_no_partial_counts_when_database_is_busy(monkeypatch, tmp_path):
+    path = tmp_path / "metrics.sqlite3"
+    monkeypatch.setenv("DRAMACLAW_EVIDENCE_METRICS_DB", str(path))
+    evidence_metrics.observe_batch(["existing"])
+    blocker = sqlite3.connect(path)
+    try:
+        blocker.execute("BEGIN IMMEDIATE")
+        with pytest.raises(sqlite3.OperationalError):
+            evidence_metrics.observe_batch(["new.calls", "new.success"], timeout=0)
+    finally:
+        blocker.rollback()
+        blocker.close()
+    assert evidence_metrics.counters() == {"existing": 1}
 
 
 @pytest.mark.asyncio
