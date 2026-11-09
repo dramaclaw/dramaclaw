@@ -213,8 +213,8 @@ class _FakeThread:
 def harness(monkeypatch, tmp_path):
     """A real `create_app()` WS client wired to a fake hermes worker.
 
-    Only the two ends are faked: who the caller is (auth) and what the hermes
-    subprocess is. Everything between — route, egress binding, chat service,
+    The retired adapter is explicitly selected only in this fixture. Auth and
+    the subprocess are faked. Everything between — route, egress binding, chat service,
     hermes pool, child-env construction — runs for real, because that middle is
     exactly what OI-63 is about.
     """
@@ -226,7 +226,9 @@ def harness(monkeypatch, tmp_path):
     monkeypatch.setenv("ST_EDITION", "ce")
     monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "")
     monkeypatch.setenv("REDIS_URL", "")
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Retain legacy adapter boundary coverage; production rejects this selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
+    monkeypatch.setattr(chat_service, "_reject_hermes_backend", lambda _backend: None)
     # home 态的会话持久化落在 `chat/store.py` 的 `_state_root()`，缺省是仓内
     # `state/`。指到 tmp 让本文件不写仓库工作树。
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "chat-state"))

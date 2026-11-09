@@ -161,8 +161,6 @@ def test_source_file_extends_release_and_builds_all_three() -> None:
         "dockerfile": "Dockerfile",
         "args": {
             "INSTALL_WORLD": "${INSTALL_WORLD:-0}",
-            "HERMES_REPO": "${HERMES_REPO:-https://github.com/dramaclaw/hermes-agent.git}",
-            "HERMES_REF": "${HERMES_REF:-brainclaw/evidence-plane}",
         },
     }
     assert services["newapi"]["build"] == {
@@ -188,16 +186,16 @@ def test_compose_runtime_matches_the_selected_image() -> None:
     source = _api(SOURCE_FILE)["environment"]
     release = _api(RELEASE_FILE)["environment"]
     assert source["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-codex}"
-    assert source["HERMES_CLI_PATH"] == "/usr/local/bin/hermes"
+    assert "HERMES_CLI_PATH" not in source
     assert release["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-codex}"
-    assert release["HERMES_CLI_PATH"] == "/usr/local/bin/hermes"
+    assert "HERMES_CLI_PATH" not in release
 
 
-def test_all_ce_compose_variants_keep_hermes_explicit_fallback_enabled() -> None:
+def test_all_ce_compose_variants_do_not_enable_retired_hermes_fallback() -> None:
     for relative_path in COMPOSE_FILES:
         api = _api(relative_path)
 
-        assert api["environment"]["SUPERTALE_ALLOW_UNSANDBOXED"] == "1"
+        assert "SUPERTALE_ALLOW_UNSANDBOXED" not in api["environment"]
         assert api["environment"]["ST_CONTROL_PLANE_DSN"] == ""
 
 
@@ -338,3 +336,33 @@ def test_env_example_documents_image_variables() -> None:
         "DRAMACLAW_GATEWAY_VERSION",
     ):
         assert re.search(rf"^# {key}=", env_example, re.MULTILINE), key
+
+
+def test_release_image_does_not_install_the_retired_hermes_runtime() -> None:
+    dockerfile = (REPOSITORY_ROOT / "Dockerfile").read_text()
+    assert "DRAMACLAW_CHAT_BACKEND=codex" in dockerfile
+    for obsolete in (
+        "ARG HERMES_",
+        "HERMES_CLI_PATH=",
+        "uv pip install --system -e",
+        "hermes --version",
+        "deploy/verify_hermes_fork.py",
+    ):
+        assert obsolete not in dockerfile
+    assert "RUN ! command -v hermes" in dockerfile
+    # MCP and Freezone still load shared tool definitions from this legacy path.
+    assert "COPY .hermes ./.hermes" in dockerfile
+    assert "bubblewrap" in dockerfile
+    assert "codex-linux-sandbox --help" in dockerfile
+
+
+def test_evidence_compose_uses_codex_and_the_image_api_port() -> None:
+    evidence = yaml.safe_load(
+        (REPOSITORY_ROOT / "docker-compose.brainclaw-evidence.yml").read_text()
+    )
+    service = evidence["services"]["dramaclaw"]
+    assert "args" not in service["build"]
+    assert "DRAMACLAW_CHAT_BACKEND=codex" in service["environment"]
+    assert service["ports"] == [
+        "${DRAMACLAW_BIND_ADDRESS:-127.0.0.1}:${DRAMACLAW_PORT:-8000}:8780"
+    ]

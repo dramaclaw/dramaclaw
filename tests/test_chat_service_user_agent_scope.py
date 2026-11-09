@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -3288,6 +3289,90 @@ def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
     assert not (project_workspace / ".codex").exists()
 
 
+@pytest.mark.parametrize("layout", ["src", "env"])
+@pytest.mark.parametrize("upgrade", [False, True])
+def test_builtin_skill_sync_supports_source_and_installed_layouts(
+    monkeypatch, tmp_path, layout, upgrade
+):
+    source = Path(chat_service.__file__).resolve().parents[1] / "agent_skills"
+    root = tmp_path / "runtime"
+    package = root / layout / "novelvideo"
+    shutil.copytree(source, package / "agent_skills")
+    monkeypatch.setattr(chat_service, "__file__", str(package / "chat/service.py"))
+    monkeypatch.delenv("CLAUDE_DRAMACLAW_SKILL_PATH", raising=False)
+    monkeypatch.delenv("CLAUDE_SUPERTALE_SKILL_PATH", raising=False)
+    if layout == "env":
+        assert not (root / "src").exists()
+    # Builtins retain precedence over optional source/deployment overlays.
+    overlay = root / ".codex/skills/dramaclaw-workflows"
+    overlay.mkdir(parents=True)
+    (overlay / "SKILL.md").write_text("# Overlay must not replace builtin\n")
+    workspace = tmp_path / "existing-user-workspace"
+    skills = workspace / ".agents/skills"
+    skills.mkdir(parents=True)
+    manifest = skills / ".dramaclaw-managed-skills.json"
+    if upgrade:
+        manifest.write_text('{"schema_version":1,"skills":{}}')
+    user_skill = skills / "my-private-skill"
+    user_skill.mkdir()
+    (user_skill / "SKILL.md").write_text("# User data\n")
+
+    chat_service._sync_project_skills(skills, agent_profile="freezone:main")
+
+    actual = skills / "dramaclaw-workflows"
+    expected = source / "dramaclaw-workflows"
+    assert (actual / "SKILL.md").read_bytes() == (expected / "SKILL.md").read_bytes()
+    references = list((expected / "references").glob("*.md"))
+    assert references
+    for reference in references:
+        assert (
+            actual / "references" / reference.name
+        ).read_bytes() == reference.read_bytes()
+    assert "dramaclaw-workflows" in json.loads(manifest.read_text())["skills"]
+    assert (user_skill / "SKILL.md").read_text() == "# User data\n"
+    assert actual.as_uri() in chat_service._codex_agent_skill_locator_instructions(
+        workspace
+    )
+
+
+@pytest.mark.parametrize("failure", ["missing", "unreadable", "empty"])
+def test_missing_builtin_skill_does_not_clean_existing_managed_resources(
+    monkeypatch, tmp_path, failure
+):
+    from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+    package = tmp_path / "runtime/env/novelvideo"
+    required = package / "agent_skills/dramaclaw-workflows/SKILL.md"
+    required.parent.mkdir(parents=True)
+    if failure != "missing":
+        required.write_text("# Builtin\n" if failure == "unreadable" else "")
+    monkeypatch.setattr(chat_service, "__file__", str(package / "chat/service.py"))
+    if failure == "unreadable":
+        read = Path.read_text
+
+        def fail_required(path, *args, **kwargs):
+            if path == required:
+                raise PermissionError("resource is unreadable")
+            return read(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", fail_required)
+    skills = tmp_path / "workspace/.agents/skills"
+    existing = skills / "dramaclaw-workflows/SKILL.md"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("# Keep existing managed resource\n")
+    manifest = skills / ".dramaclaw-managed-skills.json"
+    previous = '{"schema_version":1,"skills":{"dramaclaw-workflows":"old"}}'
+    manifest.write_text(previous)
+
+    with pytest.raises(
+        CodexRuntimeError, match="Bundled Agent Skill resource is missing or unreadable"
+    ):
+        chat_service._sync_project_skills(skills, agent_profile="freezone:main")
+
+    assert existing.read_text() == "# Keep existing managed resource\n"
+    assert manifest.read_text() == previous
+
+
 def test_freezone_skill_sync_refreshes_managed_skills_and_preserves_user_skills(
     monkeypatch, tmp_path
 ):
@@ -4169,6 +4254,7 @@ def test_codex_gateway_rejects_invalid_reasoning_effort(monkeypatch):
 def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     monkeypatch, tmp_path
 ):
+    monkeypatch.delenv("DRAMACLAW_ROOT", raising=False)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv(
         "DRAMACLAW_CODEX_HOME", str(tmp_path / "state" / ".codex-app-server")
@@ -4192,6 +4278,7 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     )
 
     assert env["NOVELVIDEO_OUTPUT_DIR"] == str(tmp_path / "authoritative-output")
+    assert env["DRAMACLAW_ROOT"] == str(chat_service._repo_root())
     for server in chat_service._dramaclaw_mcp_servers("freezone_canvas").values():
         assert "NOVELVIDEO_OUTPUT_DIR" in server["env_vars"]
     assert env["CODEX_HOME"] == str(tmp_path / "state" / ".codex-app-server")
@@ -4211,6 +4298,7 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     assert "OPENAI_API_KEY" not in env
     assert env["DRAMACLAW_CODEX_GATEWAY_BASE_URL"] == ("https://gateway.example/v1")
 
+    monkeypatch.setenv("DRAMACLAW_ROOT", str(tmp_path / "reviewed-resource-root"))
     freezone_env = chat_service._build_codex_env(
         "admin",
         "project-a",
@@ -4221,6 +4309,7 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
         project_state_dir=project_state,
     )
     assert freezone_env["DRAMACLAW_TOOL_MODE"] == "freezone_canvas"
+    assert freezone_env["DRAMACLAW_ROOT"] == str(tmp_path / "reviewed-resource-root")
     assert freezone_env["DRAMACLAW_CANVAS_ID"] == "canvas-a"
     assert freezone_env["DRAMACLAW_AGENT_PROFILE"] == "freezone:agent-2"
     assert Path(freezone_env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"]).is_relative_to(project_state)
@@ -4406,6 +4495,58 @@ def test_ee_codex_model_uses_environment(monkeypatch):
     monkeypatch.setenv("CODEX_MODEL", "DC-ee-codex-LLM")
 
     assert chat_service._codex_model() == "DC-ee-codex-LLM"
+
+
+@pytest.mark.parametrize(
+    "setting", ["DRAMACLAW_CHAT_BACKEND", "SUPERTALE_CHAT_BACKEND"]
+)
+def test_retired_hermes_is_rejected_without_probing_or_installing(monkeypatch, setting):
+    from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+    monkeypatch.delenv("DRAMACLAW_CHAT_BACKEND", raising=False)
+    monkeypatch.delenv("SUPERTALE_CHAT_BACKEND", raising=False)
+    monkeypatch.setenv(setting, "hermes")
+    monkeypatch.setattr(
+        chat_service,
+        "is_hermes_backend_available",
+        lambda: pytest.fail("A retired runtime must not be probed"),
+    )
+    with pytest.raises(CodexRuntimeError, match="Hermes runtime has been retired"):
+        chat_service._chat_backend()
+    assert chat_service.is_chat_backend_available() is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["hermes", " Hermes "])
+async def test_explicit_turn_override_cannot_revive_hermes(monkeypatch, backend):
+    from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+    monkeypatch.setattr(
+        chat_service,
+        "_stream_assistant_reply_hermes",
+        lambda *args, **kwargs: pytest.fail("Retired adapter must not start"),
+    )
+    with pytest.raises(CodexRuntimeError, match="Hermes runtime has been retired"):
+        await chat_service.stream_assistant_reply(
+            "admin", "project-a", "hello", None, backend=backend
+        )
+
+
+@pytest.mark.asyncio
+async def test_home_chat_does_not_fall_back_to_hermes_for_another_backend(monkeypatch):
+    from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "claude")
+    with pytest.raises(CodexRuntimeError, match="Home chat requires"):
+        await chat_routes._stream_home_turn(
+            websocket=None,
+            user={},
+            username="admin",
+            scope=ChatScope(kind="home"),
+            text="hello",
+            attachments=[],
+            turn_id="turn-a",
+        )
 
 
 def test_explicit_codex_does_not_fallback_when_unavailable(monkeypatch):
@@ -6061,7 +6202,8 @@ def test_freezone_canvas_agent_summaries_tie_break_same_millisecond(
 async def test_freezone_hermes_assistant_message_keeps_turn_id(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6123,7 +6265,8 @@ async def test_freezone_hermes_turn_cancels_undelivered_agent_product_admission(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
     state_dir = tmp_path / "project-state"
     operation_id = "agent_product_pending"
     scope = ChatScope(
@@ -6201,7 +6344,8 @@ async def test_freezone_hermes_retries_once_when_cached_session_is_unavailable(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6275,7 +6419,8 @@ async def test_freezone_hermes_retries_once_when_prompt_completion_reports_stale
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6348,7 +6493,8 @@ async def test_freezone_hermes_retries_once_when_stream_ends_before_completion(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6419,7 +6565,8 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6503,7 +6650,8 @@ async def test_freezone_hermes_does_not_replay_failed_workflow_draft_operation(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -6563,7 +6711,8 @@ async def test_freezone_hermes_does_not_replay_failed_workflow_draft_operation(
 async def test_freezone_hermes_drops_mainline_media_ui_specs(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
+    # Exercise the retained adapter internals, not the retired production selector.
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: "hermes")
 
     scope = ChatScope(
         kind="project",
