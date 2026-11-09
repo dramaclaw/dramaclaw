@@ -145,6 +145,7 @@ FREEZONE_TERMINAL_WRITE_TOOLS: frozenset[str] = frozenset(
 
 FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS: frozenset[str] = frozenset(
     {
+        "freezone_prepare_workflow",
         "freezone_prepare_workflow_draft",
         "freezone_prepare_workflow_plan_draft",
     }

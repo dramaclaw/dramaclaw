@@ -524,7 +524,7 @@ def test_freezone_plugin_registers_canvas_command_tools():
             prepare_props["run_after_create"]["description"]
         ), prepare_name
     prepare_draft_schema = schemas["freezone_prepare_workflow_draft"]["parameters"]
-    assert prepare_draft_schema["required"] == ["operation_id"]
+    assert prepare_draft_schema["required"] == ["operation_id", "intent"]
     intent_inputs = prepare_draft_schema["properties"]["intent"]["properties"]["inputs"]
     assert intent_inputs["additionalProperties"] is True
     assert intent_inputs["properties"]["image_variants_per_node"] == {
@@ -11447,3 +11447,221 @@ def test_generation_answer_format_error_explains_recoverable_option_ids(field, v
     assert error is None
     assert choices['video_duration_seconds'] == 5
     assert choices['video_generate_audio'] is False
+
+
+@pytest.fixture
+def preflight_model_card(monkeypatch):
+    plugin = _load_plugin_module()
+    messages = {}
+    monkeypatch.setattr(plugin, "_default_project_id", lambda: "project-a")
+    monkeypatch.setattr(plugin, "_default_canvas_id", lambda: "canvas-a")
+    monkeypatch.setattr(plugin, "_bound_scope_mismatch", lambda *_: None)
+    monkeypatch.setattr(
+        plugin,
+        "clarification_bridge_key",
+        lambda **kw: json.dumps(
+            [kw["project_id"], kw["canvas_id"], kw["event"]["clarification_id"]]
+        ),
+    )
+
+    def save(**kw):
+        messages[kw["key"]] = {"key": kw["key"], "event": kw["event"]}
+
+    monkeypatch.setattr(plugin, "put_pending_clarification_event", save)
+    monkeypatch.setattr(
+        plugin,
+        "find_clarification_bridge_message",
+        lambda **kw: (
+            messages.get(json.dumps([kw["project_id"], kw["canvas_id"], kw["clarification_id"]]))
+        ),
+    )
+    monkeypatch.setattr(plugin, "wait_clarification_result", lambda *_a, **_kw: None)
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", lambda *_: ({}, [], None))
+    result = {
+        "affected_node_ids": ["vid1", "vid2"],
+        "question": {
+            "id": "compatible_video_model",
+            "title": "确认兼容模型",
+            "prompt": "请选择服务端验证过的模型。",
+            "mode": "single",
+            "options": [{"id": "verified", "label": "Verified Model"}],
+        },
+    }
+    plugin._remember_server_video_model_clarification("project-a", "canvas-a", result)
+    args = {"questions": [result["question"]], "clarification_id": "model-card"}
+    return plugin, args, messages
+
+
+def test_preflight_plan_targets_are_not_looked_up_on_canvas(preflight_model_card, monkeypatch):
+    plugin, args, messages = preflight_model_card
+
+    def unexpected_canvas_read(*_):
+        pytest.fail("Verified pre-draft targets are not existing canvas nodes")
+
+    monkeypatch.setattr(plugin, "_canvas_generation_preflight_state", unexpected_canvas_read)
+    result = plugin._handle_request_user_clarification(
+        {
+            **args,
+            "generation_video_node_ids": ["vid1", "vid2"],
+        }
+    )
+    assert result["clarification_status"] == "pending_user_input"
+    assert len(messages) == 1
+    assert not plugin._PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS
+
+
+@pytest.mark.parametrize("targets", [["unknown"], ["vid1"], ["vid1", "unknown"], []])
+def test_unmatched_plan_targets_still_require_canvas_validation(preflight_model_card, targets):
+    plugin, args, messages = preflight_model_card
+    result = plugin._handle_request_user_clarification(
+        {
+            **args,
+            "generation_video_node_ids": targets,
+        }
+    )
+    assert result["status"] == "generation_clarification_args_invalid"
+    assert messages == {}
+    assert (
+        plugin._peek_server_video_model_clarification(
+            "project-a", "canvas-a", "compatible_video_model"
+        )
+        is not None
+    )
+    # Correcting the arguments must not require another prepare/preflight call.
+    retry = plugin._handle_request_user_clarification(args)
+    assert retry["clarification_status"] == "pending_user_input"
+    assert len(messages) == 1
+
+
+def test_invalid_preferences_do_not_consume_preflight_proof(preflight_model_card):
+    plugin, args, messages = preflight_model_card
+    result = plugin._handle_request_user_clarification(
+        {
+            **args,
+            "generation_preferences": {"video_generate_audio": "false"},
+        }
+    )
+    assert result["status"] == "generation_clarification_args_invalid"
+    assert messages == {}
+    retry = plugin._handle_request_user_clarification(args)
+    assert retry["clarification_status"] == "pending_user_input"
+
+
+def test_bridge_save_failure_does_not_consume_preflight_proof(preflight_model_card, monkeypatch):
+    plugin, args, messages = preflight_model_card
+    original = plugin.put_pending_clarification_event
+
+    def fail_save(**_kw):
+        raise OSError("bridge unavailable")
+
+    monkeypatch.setattr(plugin, "put_pending_clarification_event", fail_save)
+    with pytest.raises(OSError, match="bridge unavailable"):
+        plugin._handle_request_user_clarification(args)
+    assert messages == {}
+    monkeypatch.setattr(plugin, "put_pending_clarification_event", original)
+    assert (
+        plugin._handle_request_user_clarification(args)["clarification_status"]
+        == "pending_user_input"
+    )
+
+
+def test_durable_card_can_resume_after_proof_is_consumed(preflight_model_card):
+    plugin, args, messages = preflight_model_card
+    first = plugin._handle_request_user_clarification(args)
+    assert not plugin._PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS
+    resumed = plugin._handle_request_user_clarification(args)
+    assert resumed["bridge_key"] == first["bridge_key"]
+    assert len(messages) == 1
+    # A different card cannot reuse consumed proof.
+    result = plugin._handle_request_user_clarification({**args, "clarification_id": "another-card"})
+    assert result["status"] == "unverified_video_model_clarification_rejected"
+    assert len(messages) == 1
+
+
+@pytest.mark.parametrize("change", ["project", "canvas", "expired"])
+def test_preflight_proof_remains_scoped_and_expires(preflight_model_card, change):
+    plugin, args, messages = preflight_model_card
+    if change == "expired":
+        plugin._PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS[("project-a", "canvas-a")][
+            "expires_at"
+        ] = 0
+    else:
+        args = {**args, f"{change}_id": f"another-{change}"}
+    result = plugin._handle_request_user_clarification(args)
+    assert result["status"] == "unverified_video_model_clarification_rejected"
+    assert messages == {}
+
+
+def test_plan_targets_do_not_exempt_general_parameter_cards(preflight_model_card):
+    plugin, args, messages = preflight_model_card
+    result = plugin._handle_request_user_clarification(
+        {
+            **args,
+            "generation_media_types": ["video"],
+            "generation_video_node_ids": ["vid1", "vid2"],
+        }
+    )
+    assert result["status"] == "generation_clarification_args_invalid"
+    assert messages == {}
+
+
+def test_parallel_model_cards_cannot_reuse_one_preflight_proof(preflight_model_card, monkeypatch):
+    plugin, args, messages = preflight_model_card
+    emit = plugin._emit_clarification_event
+    barrier = threading.Barrier(2)
+
+    def synchronized_emit(*values):
+        barrier.wait(timeout=5)
+        return emit(*values)
+
+    monkeypatch.setattr(plugin, "_emit_clarification_event", synchronized_emit)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                plugin._handle_request_user_clarification,
+                [{**args, "clarification_id": f"card-{i}"} for i in range(2)],
+            )
+        )
+    assert len(messages) == 1
+    assert sum(r.get("clarification_status") == "pending_user_input" for r in results) == 1
+    assert (
+        sum(r.get("status") == "unverified_video_model_clarification_rejected" for r in results)
+        == 1
+    )
+
+
+def test_proof_expiring_before_card_save_cannot_create_card(preflight_model_card, monkeypatch):
+    plugin, args, messages = preflight_model_card
+    emit = plugin._emit_clarification_event
+
+    def expire_then_emit(*values):
+        plugin._PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS[("project-a", "canvas-a")][
+            "expires_at"
+        ] = 0
+        return emit(*values)
+
+    monkeypatch.setattr(plugin, "_emit_clarification_event", expire_then_emit)
+    result = plugin._handle_request_user_clarification(args)
+    assert result["status"] == "unverified_video_model_clarification_rejected"
+    assert messages == {}
+
+
+def test_expired_existing_card_does_not_consume_new_preflight_proof(preflight_model_card, monkeypatch):
+    plugin, args, messages = preflight_model_card
+    save = plugin.put_pending_clarification_event
+    monkeypatch.setattr(
+        plugin,
+        "put_pending_clarification_event",
+        lambda **_kw: {"ok": False, "canvas_apply_status": "timeout"},
+    )
+    result = plugin._handle_request_user_clarification(args)
+    assert result["status"] == "clarification_expired"
+    assert messages == {}
+    assert plugin._peek_server_video_model_clarification(
+        "project-a", "canvas-a", "compatible_video_model"
+    ) is not None
+    monkeypatch.setattr(plugin, "put_pending_clarification_event", save)
+    result = plugin._handle_request_user_clarification({**args, "clarification_id": "fresh-card"})
+    assert result["clarification_status"] == "pending_user_input"
+    assert len(messages) == 1
+    assert not plugin._PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS
