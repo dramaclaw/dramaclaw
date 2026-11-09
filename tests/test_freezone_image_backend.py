@@ -191,7 +191,7 @@ async def test_mainline_canvas_enqueue_carries_effective_feature_price(
         if "frame" in entry
         else "director_control_to_sketch" if entry == "director" else "sketch_regen"
     )
-    params = {"size": "1K"}
+    params = {"size": "3K"}
     if selection == "newapi_gpt_image2":
         params["quality"] = quality
     assert captured["payload"]["billing"] == {
@@ -236,7 +236,7 @@ def test_director_canvas_billing_uses_projection_and_director_override(monkeypat
         billing["pricing_model"]
         == freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_nanobanana2"]["model"]
     )
-    assert billing["pricing_params"] == {"size": "1K"}
+    assert billing["pricing_params"] == {"size": "3K"}
     monkeypatch.setenv("DIRECTOR_CONTROL_SKETCH_IMAGE_SELECTION", "newapi_gpt_image2")
     monkeypatch.setenv("DIRECTOR_CONTROL_SKETCH_IMAGE_QUALITY", "high")
     billing = freezone_routes._director_sketch_task_billing(**args)
@@ -244,7 +244,7 @@ def test_director_canvas_billing_uses_projection_and_director_override(monkeypat
         billing["pricing_model"]
         == freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"]
     )
-    assert billing["pricing_params"] == {"size": "1K", "quality": "high"}
+    assert billing["pricing_params"] == {"size": "3K", "quality": "high"}
 
 
 def _project_ctx(tmp_path: Path) -> ProjectContext:
@@ -5826,7 +5826,7 @@ async def test_skill_run_frame_accepts_plain_canvas_image_as_sketch_input(
         "feature_key": "mainline.render_regen",
         "pricing_kind": "image",
         "pricing_model": freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"],
-        "pricing_params": {"size": "1K", "quality": "medium"},
+        "pricing_params": {"size": "3K", "quality": "medium"},
     }
     assert captured["payload"]["config"]["canvas_sketch_paths"]["8"].endswith(
         "/freezone/plain_sketch.png"
@@ -5975,7 +5975,7 @@ async def test_skill_run_normalizes_project_media_url_before_dispatch(
         "feature_key": "mainline.sketch_regen",
         "pricing_kind": "image",
         "pricing_model": freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"],
-        "pricing_params": {"size": "1K", "quality": "low"},
+        "pricing_params": {"size": "3K", "quality": "low"},
     }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8
@@ -7224,7 +7224,7 @@ async def test_skill_run_sketch_accepts_director_combined_background(
         "feature_key": "mainline.director_control_to_sketch",
         "pricing_kind": "image",
         "pricing_model": freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"],
-        "pricing_params": {"size": "1K", "quality": "low"},
+        "pricing_params": {"size": "3K", "quality": "low"},
     }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8
@@ -7314,7 +7314,7 @@ async def test_skill_run_sketch_prefers_director_combined_over_background(
         "feature_key": "mainline.director_control_to_sketch",
         "pricing_kind": "image",
         "pricing_model": freezone_routes.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"],
-        "pricing_params": {"size": "1K", "quality": "low"},
+        "pricing_params": {"size": "3K", "quality": "low"},
     }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8

@@ -874,7 +874,7 @@ async def test_generation_credit_cost_route_adds_image_mode_params(monkeypatch):
         model_credits,
         expected_kind="image",
         expected_model="gpt-image-2",
-        expected_params={"size": "2K", "quality": "medium"},
+        expected_params={"size": "3K", "quality": "medium"},
         expected_quantity=1,
         cost=11,
     )
