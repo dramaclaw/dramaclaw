@@ -118,7 +118,7 @@ Three things we have been building with our own production team, now in `main`.
 - **Your choice of brain** — ships with a bundled Codex runtime by default; point the Agent at any third-party model that supports the OpenAI Responses API and tool calls, independent of your media channels.
 - **Works from other agents** — [Agent Kit](agent-kit/README.md) exposes the same workflows over MCP to Codex, Claude Code, OpenClaw, WorkBuddy and any stdio MCP client.
 
-### 🎥 3D Previz Stage — block the scene before you generate it `beta`
+### 🎥 3D Previz Stage — block the scene before you generate it
 
 <p align="center">
   <img src="./assets/readme/previz-canvas-node.gif" width="900" alt="3D Previz stage: blocking, camera and timeline, recorded back into the canvas"/>
@@ -133,7 +133,7 @@ An in-browser previs stage that lives on the canvas as a node. Lock down space, 
 - **Audio track** — import audio from a local file or an upstream node, see waveforms, and mix it into recordings.
 - **Back to the canvas** — capture frames or record the program cut into connected nodes as references for the next generation.
 
-### 🔀 Interactive Stories — audience choices shape the story `beta`
+### 🔀 Interactive Stories — audience choices shape the story
 
 <p align="center">
   <img src="./assets/readme/interactive-story.gif" width="900" alt="Interactive stories: branching authoring and player"/>
@@ -146,8 +146,6 @@ An in-browser previs stage that lives on the canvas as a node. Lock down space, 
 - **Produce media in place** — character, scene and storyboard references and per-segment videos, reusing every canvas asset.
 - **Playtest before rendering** — run the story with placeholder media, validate branch connectivity and conditional paths, inspect ending reach rates and path coverage.
 - **Ship a player** — export a standalone HTML player or an offline package with video, branching playback, progress and replay.
-
-<sub>`beta` features are in `main` and usable today; their UI and data format may still change between releases.</sub>
 
 <br/>
 
@@ -316,8 +314,8 @@ Every stage is an independent task with its own interface — run them in order,
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Built-in agent (workflow planning, canvas orchestration, execution) | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
 | Workflow Skills and Recipes (reuse, import, export, share) | — | — | — | — | — | — | — | ✅ |
-| 3D previz stage (blocking, motion, cameras, timeline, recording) | — | — | — | — | — | — | — | ✅ beta |
-| Interactive series (branching, variables, multiple endings) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ beta |
+| 3D previz stage (blocking, motion, cameras, timeline, recording) | — | — | — | — | — | — | — | ✅ |
+| Interactive series (branching, variables, multiple endings) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
 | Infinite canvas (node-based, free exploration) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
 | Dual-track (main pipeline + canvas exploration) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Storyboard preview (script → shots, boards) | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
@@ -329,8 +327,6 @@ Every stage is an independent task with its own interface — run them in order,
 | Custom style (templates, prompts, negatives) | ✅ | ◐ | ○ | ✅ | ◐ | ○ | ◐ | ✅ |
 | Creative companion (persona, nudges, feedback) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Source-available (self-host, fork, customize) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-
-<sub>DramaClaw ✅ refers to the `main` branch; `beta` features are usable but may still change.</sub>
 
 <br/>
 

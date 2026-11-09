@@ -118,7 +118,7 @@ Ba thứ chúng tôi đã xây cùng đội ngũ sản xuất của chính mình
 - **Tùy chọn "bộ não"** — mặc định đi kèm runtime Codex; trỏ Agent tới bất kỳ model bên thứ ba nào hỗ trợ OpenAI Responses API và gọi công cụ, độc lập với các kênh media của bạn.
 - **Làm việc từ các agent khác** — [Agent Kit](../agent-kit/README.md) cung cấp cùng các workflow qua MCP cho Codex, Claude Code, OpenClaw, WorkBuddy và bất kỳ MCP client stdio nào.
 
-### 🎥 Sân khấu đạo diễn 3D (Previz) — dàn cảnh trước khi tạo `beta`
+### 🎥 Sân khấu đạo diễn 3D (Previz) — dàn cảnh trước khi tạo
 
 <p align="center">
   <img src="../assets/readme/previz-canvas-node.gif" width="900" alt="Sân khấu Previz 3D: dàn cảnh, camera và timeline, ghi hình trở lại canvas"/>
@@ -133,7 +133,7 @@ Một sân khấu previz trong trình duyệt, nằm trên canvas dưới dạng
 - **Track âm thanh** — nhập âm thanh từ file cục bộ hoặc node phía trước, xem dạng sóng và trộn vào bản ghi hình.
 - **Trở lại canvas** — chụp khung hình hoặc ghi hình bản cắt program vào các node được kết nối để làm tham chiếu cho lần tạo tiếp theo.
 
-### 🔀 Truyện tương tác — lựa chọn của khán giả định hình câu chuyện `beta`
+### 🔀 Truyện tương tác — lựa chọn của khán giả định hình câu chuyện
 
 <p align="center">
   <img src="../assets/readme/interactive-story.gif" width="900" alt="Truyện tương tác: biên tập phân nhánh và trình phát"/>
@@ -146,8 +146,6 @@ Một sân khấu previz trong trình duyệt, nằm trên canvas dưới dạng
 - **Sản xuất tư liệu tại chỗ** — tham chiếu nhân vật, cảnh và storyboard cùng video cho từng đoạn, tái sử dụng mọi tài sản trên canvas.
 - **Chơi thử trước khi render** — chạy câu chuyện với tư liệu tạm, kiểm tra kết nối nhánh và tuyến có điều kiện, xem tỷ lệ đạt kết thúc và độ phủ tuyến truyện.
 - **Xuất trình phát** — xuất trình phát HTML độc lập hoặc gói ngoại tuyến kèm video, phát theo nhánh, tiến độ và chơi lại.
-
-<sub>Các tính năng `beta` đã có trên `main` và dùng được ngay hôm nay; giao diện và định dạng dữ liệu của chúng vẫn có thể thay đổi giữa các bản phát hành.</sub>
 
 <br/>
 
@@ -316,8 +314,8 @@ Mỗi giai đoạn là một tác vụ độc lập với giao diện riêng —
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Agent tích hợp (lập kế hoạch workflow, điều phối canvas, thực thi) | ✅ | ✅ | ✅ | ○ | ✅ | ○ | ✅ | ✅ |
 | Workflow Skill và Recipe (tái sử dụng, nhập, xuất, chia sẻ) | — | — | — | — | — | — | — | ✅ |
-| Sân khấu đạo diễn 3D (dàn cảnh, chuyển động, camera, timeline, ghi hình) | — | — | — | — | — | — | — | ✅ beta |
-| Series tương tác (phân nhánh, biến, nhiều kết thúc) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ beta |
+| Sân khấu đạo diễn 3D (dàn cảnh, chuyển động, camera, timeline, ghi hình) | — | — | — | — | — | — | — | ✅ |
+| Series tương tác (phân nhánh, biến, nhiều kết thúc) | ◐ | ◐ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
 | Bảng vẽ vô hạn (dạng node, khám phá tự do) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
 | Hai đường ray (pipeline chính + khám phá trên canvas) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Xem trước storyboard (kịch bản → cảnh quay, bảng phân cảnh) | ◐ | ✅ | ◐ | ✅ | ◐ | ❌ | ❌ | ✅ |
@@ -329,8 +327,6 @@ Mỗi giai đoạn là một tác vụ độc lập với giao diện riêng —
 | Phong cách tùy chỉnh (mẫu, prompt, negative prompt) | ✅ | ◐ | ○ | ✅ | ◐ | ○ | ◐ | ✅ |
 | Bạn đồng hành sáng tạo (nhân cách, nhắc nhở, phản hồi) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Mã nguồn công khai (tự lưu trữ, fork, tùy biến) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-
-<sub>✅ của DramaClaw chỉ nhánh `main`; các tính năng `beta` dùng được nhưng vẫn có thể thay đổi.</sub>
 
 <br/>
 
