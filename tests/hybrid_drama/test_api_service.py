@@ -8,6 +8,16 @@ import pytest
 from novelvideo.models import CharacterIdentity, NovelCharacter, NovelEpisode
 
 
+def test_run_directory_reports_duplicate_and_missing_runs_as_value_errors(tmp_path):
+    from novelvideo.hybrid_drama.api_service import run_directory
+
+    run_directory(tmp_path, "run-1", create=True)
+    with pytest.raises(ValueError, match="run-1.*already exists"):
+        run_directory(tmp_path, "run-1", create=True)
+    with pytest.raises(ValueError, match="missing.*not found"):
+        run_directory(tmp_path, "missing")
+
+
 class _Store:
     def __init__(self, episode, beat, characters):
         self._episode = episode
@@ -48,6 +58,23 @@ def _project(tmp_path, beat):
         state_dir=str(state),
     )
     return resolved, store
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["not-a-decimal", "NaN", "sNaN", "Infinity", "-Infinity"])
+async def test_prepare_rejects_malformed_and_non_finite_budgets(tmp_path, value):
+    from novelvideo.hybrid_drama.api_service import prepare_run
+
+    resolved, store = _project(tmp_path, {})
+    with pytest.raises(ValueError, match="max_cost_usd must be a finite decimal"):
+        await prepare_run(
+            resolved,
+            store,
+            episode_number=2,
+            beat_number=3,
+            max_cost_usd=value,
+            run_id="run-1",
+        )
 
 
 @pytest.mark.asyncio
@@ -161,6 +188,7 @@ async def test_submit_uses_persisted_budget_and_sanitizes_provider_urls(tmp_path
     result = await submit_prepared_run(
         resolved,
         "run-1",
+        max_attempts=2,
         api_key="test-key",
         relay=Relay(),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
@@ -168,7 +196,7 @@ async def test_submit_uses_persisted_budget_and_sanitizes_provider_urls(tmp_path
 
     assert result["run_id"] == "run-1"
     assert result["max_cost_usd"] == "10"
-    assert result["max_attempts"] == 1
+    assert result["max_attempts"] == 2
     assert len(result["tasks"]) == 1
     task = result["tasks"][0]
     assert task["task_id"] == "cgt-123"
@@ -277,7 +305,7 @@ async def test_poll_downloads_exact_candidate_and_returns_sanitized_status(tmp_p
 
 @pytest.mark.asyncio
 async def test_review_selects_registered_candidate_by_exact_hash(tmp_path):
-    from novelvideo.hybrid_drama.api_service import review_run_candidate
+    from novelvideo.hybrid_drama.api_service import get_run_status, review_run_candidate
 
     resolved, _store = _project(tmp_path, {})
     media = b"exact-candidate-bytes"
@@ -321,11 +349,91 @@ async def test_review_selects_registered_candidate_by_exact_hash(tmp_path):
     assert result["decision"] == "adopt"
     assert "evidence" not in result
     assert "path" not in result
+    status = get_run_status(resolved, "run-1")
+    assert status["reviews"] == [
+        {"candidate_sha256": digest, "decision": "adopt"}
+    ]
+    assert "evidence" not in json.dumps(status)
     state = json.loads((run_dir / "state.json").read_text())
     review_path = state["reviews"][0]["path"]
     persisted = json.loads((run_dir / review_path).read_text())
     assert persisted["evidence"] == evidence
     assert persisted["candidate_sha256"] == digest
+
+
+def test_concurrent_reviews_do_not_lose_state_updates(tmp_path, monkeypatch):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    import novelvideo.hybrid_drama.api_service as api_service
+    import novelvideo.hybrid_drama.runner as runner
+
+    resolved, _store = _project(tmp_path, {})
+    tasks = []
+    digests = []
+    for beat_number, media in enumerate((b"first-candidate", b"second-candidate"), 1):
+        digest = hashlib.sha256(media).hexdigest()
+        digests.append(digest)
+        tasks.append(
+            {
+                "beat_key": f"project-1:2:{beat_number}",
+                "beat_number": beat_number,
+                "request_sha256": f"request-{beat_number}",
+                "candidate": {
+                    "path": f"candidates/candidate-{beat_number}.mp4",
+                    "sha256": digest,
+                    "request_sha256": f"request-{beat_number}",
+                },
+            }
+        )
+    run_dir = _write_run(resolved, "run-1", tasks)
+    for index, media in enumerate((b"first-candidate", b"second-candidate"), 1):
+        candidate = run_dir / "candidates" / f"candidate-{index}.mp4"
+        candidate.parent.mkdir(exist_ok=True)
+        candidate.write_bytes(media)
+
+    original_load_state = runner.load_state
+    original_save_state = runner._save_state
+    both_states_loaded = threading.Barrier(2)
+    save_lock = threading.Lock()
+
+    def synchronized_load_state(path):
+        state = original_load_state(path)
+        try:
+            both_states_loaded.wait(timeout=1)
+        except threading.BrokenBarrierError:
+            pass
+        return state
+
+    def serialized_save_state(path, state):
+        with save_lock:
+            original_save_state(path, state)
+
+    monkeypatch.setattr(runner, "load_state", synchronized_load_state)
+    monkeypatch.setattr(runner, "_save_state", serialized_save_state)
+    evidence = {
+        "contact_sheet": "every frame inspected",
+        "motion_strip": "full motion inspected",
+        "audio": "full audio inspected",
+    }
+
+    def review(index):
+        return asyncio.run(
+            api_service.review_run_candidate(
+                resolved,
+                "run-1",
+                candidate_sha256=digests[index],
+                decision="adopt",
+                evidence=evidence,
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(review, range(2)))
+
+    state = json.loads((run_dir / "state.json").read_text())
+    assert {entry["candidate_sha256"] for entry in state["reviews"]} == set(digests)
 
 
 def _clip(path):

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
 import asyncio
+from contextlib import asynccontextmanager
+from decimal import Decimal, InvalidOperation
+import fcntl
 import json
 from pathlib import Path
 import re
@@ -61,7 +63,12 @@ def run_directory(output_dir: str | Path, run_id: str, *, create: bool = False) 
         raise ValueError("hybrid run root escapes the project output directory") from exc
     candidate = runs_root / run_id
     if create:
-        candidate.mkdir(exist_ok=False)
+        try:
+            candidate.mkdir(exist_ok=False)
+        except FileExistsError as exc:
+            raise ValueError(f"hybrid run {run_id} already exists") from exc
+    elif not candidate.is_dir():
+        raise ValueError(f"hybrid run {run_id} not found")
     resolved = candidate.resolve()
     try:
         resolved.relative_to(runs_root)
@@ -87,7 +94,12 @@ async def prepare_run(
     max_cost_usd: Decimal | str,
     run_id: str,
 ) -> dict[str, Any]:
-    max_cost = Decimal(str(max_cost_usd))
+    try:
+        max_cost = Decimal(str(max_cost_usd))
+    except InvalidOperation as exc:
+        raise ValueError("max_cost_usd must be a finite decimal") from exc
+    if not max_cost.is_finite():
+        raise ValueError("max_cost_usd must be a finite decimal")
     estimated = estimate_cost(DEFAULT_ESTIMATED_TOKENS, has_video_input=False)
     if max_cost <= 0 or estimated > max_cost:
         raise ValueError("max_cost_usd must cover the pre-submit estimate")
@@ -198,6 +210,20 @@ def _load_run_state(resolved: Any, run_id: str) -> tuple[Path, dict[str, Any]]:
     return run_dir, state
 
 
+@asynccontextmanager
+async def _run_lock(resolved: Any, run_id: str):
+    run_dir = run_directory(resolved.output_dir, run_id)
+    lock = (run_dir / ".state.lock").open("a+")
+    try:
+        await asyncio.to_thread(fcntl.flock, lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield run_dir
+        finally:
+            await asyncio.to_thread(fcntl.flock, lock.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock.close()
+
+
 def _task_status(task: dict[str, Any]) -> dict[str, Any]:
     result = {
         key: task[key]
@@ -246,7 +272,12 @@ def get_run_status(resolved: Any, run_id: str) -> dict[str, Any]:
         "max_attempts": int(state.get("max_attempts") or 1),
         "tasks": [_task_status(task) for task in state.get("tasks", [])],
         "reviews": [
-            {"candidate_sha256": entry["candidate_sha256"]}
+            {
+                "candidate_sha256": entry["candidate_sha256"],
+                "decision": json.loads(
+                    _contained_run_path(run_dir, entry["path"]).read_text()
+                )["decision"],
+            }
             for entry in state.get("reviews", [])
             if entry.get("candidate_sha256")
         ],
@@ -295,27 +326,29 @@ async def submit_prepared_run(
 ) -> dict[str, Any]:
     if max_attempts < 1:
         raise ValueError("max_attempts must be positive")
-    run_dir, state = _load_run_state(resolved, run_id)
-    prepared = json.loads((run_dir / "prepared.json").read_text())
-    reference_paths = _reference_paths(resolved, run_dir)
-    await asyncio.to_thread(
-        submit_task,
-        run_dir,
-        prepared,
-        reference_paths,
-        max_cost_usd=state["max_cost_usd"],
-        max_attempts=max_attempts,
-        manual_retry=manual_retry,
-        api_key=api_key,
-        relay=relay,
-        http_client=http_client,
-    )
-    if int(state.get("max_attempts") or 1) != max_attempts:
-        state["max_attempts"] = max_attempts
-        temporary = run_dir / "state.json.tmp"
-        temporary.write_bytes(_json_bytes(state))
-        temporary.replace(run_dir / "state.json")
-    return get_run_status(resolved, run_id)
+    async with _run_lock(resolved, run_id):
+        run_dir, state = _load_run_state(resolved, run_id)
+        prepared = json.loads((run_dir / "prepared.json").read_text())
+        reference_paths = _reference_paths(resolved, run_dir)
+        await asyncio.to_thread(
+            submit_task,
+            run_dir,
+            prepared,
+            reference_paths,
+            max_cost_usd=state["max_cost_usd"],
+            max_attempts=max_attempts,
+            manual_retry=manual_retry,
+            api_key=api_key,
+            relay=relay,
+            http_client=http_client,
+        )
+        state = load_state(run_dir)
+        if int(state.get("max_attempts") or 1) != max_attempts:
+            state["max_attempts"] = max_attempts
+            temporary = run_dir / "state.json.tmp"
+            temporary.write_bytes(_json_bytes(state))
+            temporary.replace(run_dir / "state.json")
+        return get_run_status(resolved, run_id)
 
 
 async def poll_run(
@@ -326,15 +359,16 @@ async def poll_run(
     http_client: Any = None,
     media_inspector: Any = None,
 ) -> dict[str, Any]:
-    run_dir, _state = _load_run_state(resolved, run_id)
-    await asyncio.to_thread(
-        poll_tasks,
-        run_dir,
-        api_key=api_key,
-        http_client=http_client,
-        media_inspector=media_inspector,
-    )
-    return get_run_status(resolved, run_id)
+    async with _run_lock(resolved, run_id):
+        run_dir, _state = _load_run_state(resolved, run_id)
+        await asyncio.to_thread(
+            poll_tasks,
+            run_dir,
+            api_key=api_key,
+            http_client=http_client,
+            media_inspector=media_inspector,
+        )
+        return get_run_status(resolved, run_id)
 
 
 def _contained_run_path(run_dir: Path, value: str | Path) -> Path:
@@ -359,48 +393,50 @@ async def review_run_candidate(
 ) -> dict[str, Any]:
     if not _SHA256.fullmatch(candidate_sha256):
         raise ValueError("candidate_sha256 must be a lowercase SHA-256 digest")
-    run_dir, state = _load_run_state(resolved, run_id)
-    matching = [
-        task
-        for task in state.get("tasks", [])
-        if task.get("candidate", {}).get("sha256") == candidate_sha256
-    ]
-    if len(matching) != 1:
-        raise ValueError("exactly one registered candidate must match candidate_sha256")
-    candidate = _contained_run_path(run_dir, matching[0]["candidate"]["path"])
-    review = await asyncio.to_thread(
-        review_candidate,
-        run_dir,
-        candidate,
-        decision=decision,
-        evidence=evidence,
-    )
-    return {
-        key: review[key]
-        for key in (
-            "candidate_sha256",
-            "beat_key",
-            "request_sha256",
-            "decision",
-            "created_at",
+    async with _run_lock(resolved, run_id):
+        run_dir, state = _load_run_state(resolved, run_id)
+        matching = [
+            task
+            for task in state.get("tasks", [])
+            if task.get("candidate", {}).get("sha256") == candidate_sha256
+        ]
+        if len(matching) != 1:
+            raise ValueError("exactly one registered candidate must match candidate_sha256")
+        candidate = _contained_run_path(run_dir, matching[0]["candidate"]["path"])
+        review = await asyncio.to_thread(
+            review_candidate,
+            run_dir,
+            candidate,
+            decision=decision,
+            evidence=evidence,
         )
-    }
+        return {
+            key: review[key]
+            for key in (
+                "candidate_sha256",
+                "beat_key",
+                "request_sha256",
+                "decision",
+                "created_at",
+            )
+        }
 
 
 async def assemble_run(resolved: Any, run_id: str) -> dict[str, Any]:
-    run_dir, _state = _load_run_state(resolved, run_id)
-    output = _contained_run_path(run_dir, "assembled/episode.mp4")
-    assembly = await asyncio.to_thread(assemble_episode, run_dir, output)
-    return {
-        key: assembly[key]
-        for key in (
-            "media_sha256",
-            "candidate_sha256",
-            "request_sha256",
-            "review_sha256",
-            "created_at",
-        )
-    }
+    async with _run_lock(resolved, run_id):
+        run_dir, _state = _load_run_state(resolved, run_id)
+        output = _contained_run_path(run_dir, "assembled/episode.mp4")
+        assembly = await asyncio.to_thread(assemble_episode, run_dir, output)
+        return {
+            key: assembly[key]
+            for key in (
+                "media_sha256",
+                "candidate_sha256",
+                "request_sha256",
+                "review_sha256",
+                "created_at",
+            )
+        }
 
 
 async def finalize_run(
@@ -412,26 +448,27 @@ async def finalize_run(
 ) -> dict[str, Any]:
     if not _SHA256.fullmatch(media_sha256):
         raise ValueError("media_sha256 must be a lowercase SHA-256 digest")
-    run_dir, state = _load_run_state(resolved, run_id)
-    entries = [
-        entry
-        for entry in state.get("assemblies", [])
-        if entry.get("media_sha256") == media_sha256
-    ]
-    if not entries:
-        raise ValueError("media_sha256 does not match an assembled output")
-    assembly_path = _contained_run_path(run_dir, entries[-1]["path"])
-    assembly = json.loads(assembly_path.read_text())
-    if assembly.get("media_sha256") != media_sha256:
-        raise ValueError("assembly metadata does not match media_sha256")
-    output = Path(assembly.get("output_path") or "").resolve()
-    expected_output = _contained_run_path(run_dir, "assembled/episode.mp4")
-    if output != expected_output:
-        raise ValueError("assembled output must use the server-owned run path")
-    delivery = await asyncio.to_thread(
-        finalize_delivery,
-        run_dir,
-        output,
-        review,
-    )
-    return {"status": delivery["status"], "media_sha256": delivery["media_sha256"]}
+    async with _run_lock(resolved, run_id):
+        run_dir, state = _load_run_state(resolved, run_id)
+        entries = [
+            entry
+            for entry in state.get("assemblies", [])
+            if entry.get("media_sha256") == media_sha256
+        ]
+        if not entries:
+            raise ValueError("media_sha256 does not match an assembled output")
+        assembly_path = _contained_run_path(run_dir, entries[-1]["path"])
+        assembly = json.loads(assembly_path.read_text())
+        if assembly.get("media_sha256") != media_sha256:
+            raise ValueError("assembly metadata does not match media_sha256")
+        output = Path(assembly.get("output_path") or "").resolve()
+        expected_output = _contained_run_path(run_dir, "assembled/episode.mp4")
+        if output != expected_output:
+            raise ValueError("assembled output must use the server-owned run path")
+        delivery = await asyncio.to_thread(
+            finalize_delivery,
+            run_dir,
+            output,
+            review,
+        )
+        return {"status": delivery["status"], "media_sha256": delivery["media_sha256"]}

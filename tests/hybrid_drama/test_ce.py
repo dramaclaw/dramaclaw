@@ -99,7 +99,7 @@ def test_ce_client_fetches_real_beat_and_identity_records():
         return httpx.Response(200, json=payloads[request.url.path])
 
     client = CEClient(
-        "http://ce.test",
+        "http://localhost",
         token="agent-token",
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
@@ -114,3 +114,40 @@ def test_ce_client_fetches_real_beat_and_identity_records():
     assert prepared["reference_ids"] == ["Mia_mia"]
     assert 'Dialogue (Mia): "Wait."' in prepared["prompt"]
     assert all(request.headers["Authorization"] == "Bearer agent-token" for request in requests)
+
+
+def test_ce_client_rejects_non_loopback_urls_and_credentials_before_requests():
+    import httpx
+    import pytest
+
+    from novelvideo.hybrid_drama.ce import CEClient
+
+    requests = []
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: requests.append(request))
+    )
+    for base_url in (
+        "https://ce.test",
+        "http://localhost.evil.test",
+        "http://user:password@localhost",
+        "http://user@127.0.0.1",
+        "file:///tmp/ce.json",
+    ):
+        with pytest.raises(ValueError, match="CE base URL"):
+            CEClient(base_url, http_client=http_client)
+
+    assert requests == []
+
+
+def test_ce_client_accepts_loopback_http_and_https_urls():
+    import httpx
+
+    from novelvideo.hybrid_drama.ce import CEClient
+
+    http_client = httpx.Client(transport=httpx.MockTransport(lambda request: None))
+    for base_url in (
+        "http://localhost:8000",
+        "https://127.0.0.1:8443",
+        "http://[::1]:8000",
+    ):
+        CEClient(base_url, http_client=http_client)

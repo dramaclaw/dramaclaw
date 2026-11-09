@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -19,9 +19,16 @@ class CEClient:
         token: str | None = None,
         http_client: httpx.Client | None = None,
     ) -> None:
-        self._base_url = base_url.rstrip("/")
-        if not self._base_url.startswith(("http://", "https://")):
+        parsed = urlsplit(base_url)
+        if parsed.scheme not in {"http", "https"}:
             raise ValueError("CE base URL must use http or https")
+        if (
+            parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError("CE base URL must use a loopback host without credentials")
+        self._base_url = base_url.rstrip("/")
         self._client = http_client or httpx.Client(timeout=30.0)
         self._headers = {"Authorization": f"Bearer {token}"} if token else {}
 

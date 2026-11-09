@@ -1,6 +1,17 @@
 import json
+from pathlib import Path
 
 from novelvideo.hybrid_drama.cli import _api_key, main
+
+
+def test_env_example_documents_modelark_key_precedence():
+    lines = (Path(__file__).parents[2] / ".env.example").read_text().splitlines()
+    comment = next(line for line in lines if "私有 hybrid drama runner" in line)
+
+    assert "BYTEPLUS_MODEL_ARK_API_KEY" in comment
+    assert "优先" in comment
+    assert "ARK_API_KEY" in comment
+    assert "回退" in comment
 
 
 def test_cli_builds_a_prepared_ce_beat(tmp_path):
@@ -67,7 +78,7 @@ def test_cli_builds_a_prompt_directly_from_ce_api(monkeypatch, tmp_path):
         [
             "build-prompt",
             "--ce-base-url",
-            "http://ce.test",
+            "http://localhost:8000",
             "--project",
             "p",
             "--episode",
@@ -79,5 +90,5 @@ def test_cli_builds_a_prompt_directly_from_ce_api(monkeypatch, tmp_path):
         ]
     ) == 0
 
-    assert calls == [("http://ce.test", "agent-token"), ("p", 2, 3)]
+    assert calls == [("http://localhost:8000", "agent-token"), ("p", 2, 3)]
     assert json.loads(output.read_text())["prompt"] == "Fetched from CE"
