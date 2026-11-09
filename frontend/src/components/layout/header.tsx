@@ -450,7 +450,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               avatarUrl={avatarUrl}
               displayName={displayName}
               hasUnreadNotification={hasUnreadNotification}
-              onChangeAvatar={openAvatarDialog}
+              onChangeAvatar={ceRuntime ? undefined : openAvatarDialog}
               onChangePassword={showLogout ? openPasswordDialog : undefined}
               onBindPhone={canBindPhone ? () => {
                 closeAccountPanelNow();
@@ -484,12 +484,12 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         onUpgradeStateChange={handleUpgradeStateChange}
         announcements={announcements}
       />
-      <AvatarUploadDialog
+      {!ceRuntime ? <AvatarUploadDialog
         avatarInitial={avatarInitial}
         displayName={displayName}
         open={avatarDialogOpen}
         onOpenChange={setAvatarDialogOpen}
-      />
+      /> : null}
       <PasswordChangeDialog
         open={passwordDialogOpen}
         onOpenChange={setPasswordDialogOpen}
@@ -611,7 +611,7 @@ function AccountPanel({
   avatarUrl: string | null;
   displayName: string;
   hasUnreadNotification: boolean;
-  onChangeAvatar: () => void;
+  onChangeAvatar?: () => void;
   onChangePassword?: () => void;
   onBindPhone?: () => void;
   onLanguageChange: (lang: Supported) => void;
@@ -665,11 +665,11 @@ function AccountPanel({
             unread={hasUnreadNotification}
             onClick={onNotifications}
           />
-          <AccountMenuRow
+          {onChangeAvatar ? <AccountMenuRow
             icon={<Camera className="size-3.5" />}
             label={t("header.account.changeAvatar")}
             onClick={onChangeAvatar}
-          />
+          /> : null}
           {onChangePassword ? (
             <AccountMenuRow
               icon={<KeyRound className="size-3.5" />}
