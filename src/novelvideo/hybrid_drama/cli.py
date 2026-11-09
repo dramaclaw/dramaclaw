@@ -10,7 +10,7 @@ import sys
 
 import httpx
 
-from novelvideo.hybrid_drama.ce import build_beat_prompt
+from novelvideo.hybrid_drama.ce import CEClient, build_beat_prompt
 from novelvideo.hybrid_drama.runner import (
     assemble_episode,
     finalize_delivery,
@@ -40,16 +40,33 @@ def _api_key() -> str:
 
 
 def _build(args) -> None:
-    ce = _load(args.ce)
-    beat = next(
-        (item for item in ce.get("beats", []) if int(item.get("beat_number") or 0) == args.beat_number),
-        ce.get("beat"),
-    )
-    if not beat or int(beat.get("beat_number") or 0) != args.beat_number:
-        raise ValueError(f"beat_number {args.beat_number} not found in CE input")
-    prepared = build_beat_prompt(
-        ce["project"], ce["episode"], beat, ce.get("identities") or ce.get("cast") or {}
-    )
+    if args.ce_base_url:
+        if not args.project or args.episode is None:
+            raise ValueError("--project and --episode are required with --ce-base-url")
+        token = os.environ.get("DRAMACLAW_AGENT_TOKEN") or os.environ.get(
+            "SUPERTALE_AGENT_TOKEN"
+        )
+        prepared = CEClient(args.ce_base_url, token=token).fetch_beat_prompt(
+            args.project, args.episode, args.beat_number
+        )
+    else:
+        ce = _load(args.ce)
+        beat = next(
+            (
+                item
+                for item in ce.get("beats", [])
+                if int(item.get("beat_number") or 0) == args.beat_number
+            ),
+            ce.get("beat"),
+        )
+        if not beat or int(beat.get("beat_number") or 0) != args.beat_number:
+            raise ValueError(f"beat_number {args.beat_number} not found in CE input")
+        prepared = build_beat_prompt(
+            ce["project"],
+            ce["episode"],
+            beat,
+            ce.get("identities") or ce.get("cast") or {},
+        )
     _write_new(args.out, prepared)
     print(args.out)
 
@@ -116,7 +133,11 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     build = commands.add_parser("build-prompt")
-    build.add_argument("--ce", required=True)
+    source = build.add_mutually_exclusive_group(required=True)
+    source.add_argument("--ce")
+    source.add_argument("--ce-base-url")
+    build.add_argument("--project")
+    build.add_argument("--episode", type=int)
     build.add_argument("--beat-number", type=int, required=True)
     build.add_argument("--out", required=True)
     build.set_defaults(action=_build)

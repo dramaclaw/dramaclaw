@@ -54,6 +54,7 @@ from novelvideo.api.routes import (  # noqa: E402
     skill_imports,
     html_artifacts,
     generation,
+    hybrid_drama,
     ingest,
     interactive_stories,
     story_publications,
@@ -126,6 +127,7 @@ api_router.include_router(episodes.router, tags=["episodes"])
 api_router.include_router(scripts.router, tags=["scripts"])
 api_router.include_router(content.router, tags=["content"])
 api_router.include_router(generation.router, tags=["generation"])
+api_router.include_router(hybrid_drama.router, tags=["hybrid-drama"])
 api_router.include_router(tasks.router, tags=["tasks"])
 api_router.include_router(voice_design.router, tags=["voice-design"])
 api_router.include_router(files.router, tags=["files"])
