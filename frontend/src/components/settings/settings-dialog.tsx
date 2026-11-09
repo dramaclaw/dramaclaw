@@ -180,7 +180,9 @@ export function SettingsDialog({ open, onOpenChange, initialPage, account }: Set
   }, [initialPage, open]);
 
   useEffect(() => {
-    if (!ceRuntime && (page === "models" || page === "storage")) {
+    if (ceRuntime && page === "avatar") {
+      setPage("models");
+    } else if (!ceRuntime && (page === "models" || page === "storage")) {
       setPage("freezone-skills");
     }
   }, [ceRuntime, page]);
@@ -190,7 +192,7 @@ export function SettingsDialog({ open, onOpenChange, initialPage, account }: Set
   };
   const navigationPages = [
     ...(account ? [
-      { page: "avatar" as const, icon: Camera, label: "header.account.changeAvatar" },
+      ...(!ceRuntime ? [{ page: "avatar" as const, icon: Camera, label: "header.account.changeAvatar" }] : []),
       ...(account.onPasswordChanged ? [{
         page: "password" as const, icon: KeyRound,
         label: account.passwordConfigured ? "header.account.changePassword" : "header.account.setPassword",
@@ -266,7 +268,7 @@ export function SettingsDialog({ open, onOpenChange, initialPage, account }: Set
             ))}
           </nav>
 
-          {account && (page === "avatar" || page === "password") ? (
+          {account && ((!ceRuntime && page === "avatar") || page === "password") ? (
             <ScrollArea className="min-w-0 flex-1">
               <div className="mx-auto max-w-[480px] py-3">
                 {page === "avatar" ? <AvatarUploadForm

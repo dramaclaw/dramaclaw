@@ -631,6 +631,7 @@ describe("SettingsDialog pages", () => {
   });
 
   it("integrates account forms and language beside Skills in one dialog", () => {
+    runtimeState.isCeRuntime = false;
     renderSettingsDialog({ avatarInitial: "A", displayName: "Admin", passwordConfigured: true, onPasswordChanged: vi.fn() });
     expect(screen.getByRole("dialog")).toHaveAccessibleName("功能设置");
     fireEvent.click(screen.getByRole("button", { name: "更换头像" }));
@@ -653,8 +654,32 @@ describe("SettingsDialog pages", () => {
   it("keeps local settings available without offering an account password action", () => {
     renderSettingsDialog({ avatarInitial: "L", displayName: "Local", passwordConfigured: true });
     expect(screen.queryByRole("button", { name: "修改密码" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "更换头像" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "更换头像" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "选择语言" })).toBeInTheDocument();
+  });
+
+  it("does not expose the avatar upload form through a direct CE settings page", () => {
+    renderSettingsDialog(
+      { avatarInitial: "L", displayName: "Local", passwordConfigured: true },
+      vi.fn(),
+      "avatar",
+    );
+    expect(screen.queryByRole("button", { name: "更换头像" })).not.toBeInTheDocument();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
+    expect(screen.getByRole("button", { name: /模型配置/ })).toHaveAttribute("aria-current", "page");
+    fireEvent.click(screen.getByRole("button", { name: "选择语言" }));
+    expect(screen.getByRole("button", { name: "Português" })).toBeInTheDocument();
+  });
+
+  it("keeps direct avatar settings available in EE", () => {
+    runtimeState.isCeRuntime = false;
+    renderSettingsDialog(
+      { avatarInitial: "A", displayName: "Admin", passwordConfigured: true },
+      vi.fn(),
+      "avatar",
+    );
+    expect(screen.getByRole("button", { name: "更换头像" })).toHaveAttribute("aria-current", "page");
+    expect(document.querySelector('input[type="file"]')).not.toBeNull();
   });
 
   it("locks navigation while saving a password and clears secrets when leaving the form", async () => {
