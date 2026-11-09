@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -37,6 +39,18 @@ def _api_key() -> str:
     if not key:
         raise ValueError("BYTEPLUS_MODEL_ARK_API_KEY or ARK_API_KEY is required")
     return key.strip(" \t\r\n\"'")
+
+
+@contextmanager
+def _state_lock(run_dir: str | Path):
+    run_dir = Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    with (run_dir / ".state.lock").open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def _build(args) -> None:
@@ -79,20 +93,22 @@ def _references(path: str | None) -> dict[str, Path]:
 
 
 def _submit(args) -> None:
-    task = submit_task(
-        args.run_dir,
-        _load(args.prepared),
-        _references(args.references),
-        max_cost_usd=args.max_cost_usd,
-        max_attempts=args.max_attempts,
-        manual_retry=args.manual_retry,
-        api_key=_api_key(),
-    )
+    with _state_lock(args.run_dir):
+        task = submit_task(
+            args.run_dir,
+            _load(args.prepared),
+            _references(args.references),
+            max_cost_usd=args.max_cost_usd,
+            max_attempts=args.max_attempts,
+            manual_retry=args.manual_retry,
+            api_key=_api_key(),
+        )
     print(json.dumps({key: task[key] for key in ("beat_key", "task_id", "status", "request_sha256", "estimated_cost_usd")}))
 
 
 def _poll(args) -> None:
-    tasks = poll_tasks(args.run_dir, api_key=_api_key())
+    with _state_lock(args.run_dir):
+        tasks = poll_tasks(args.run_dir, api_key=_api_key())
     print(
         json.dumps(
             [
@@ -109,22 +125,25 @@ def _poll(args) -> None:
 
 
 def _review(args) -> None:
-    review = review_candidate(
-        args.run_dir,
-        args.candidate,
-        decision=args.decision,
-        evidence=_load(args.evidence),
-    )
+    with _state_lock(args.run_dir):
+        review = review_candidate(
+            args.run_dir,
+            args.candidate,
+            decision=args.decision,
+            evidence=_load(args.evidence),
+        )
     print(json.dumps({"candidate_sha256": review["candidate_sha256"], "decision": review["decision"]}))
 
 
 def _assemble(args) -> None:
-    assembly = assemble_episode(args.run_dir, args.output)
+    with _state_lock(args.run_dir):
+        assembly = assemble_episode(args.run_dir, args.output)
     print(json.dumps({"media_sha256": assembly["media_sha256"], "qc": assembly["qc"]}))
 
 
 def _finalize(args) -> None:
-    delivery = finalize_delivery(args.run_dir, args.output, _load(args.review))
+    with _state_lock(args.run_dir):
+        delivery = finalize_delivery(args.run_dir, args.output, _load(args.review))
     print(json.dumps({"status": delivery["status"], "media_sha256": delivery["media_sha256"]}))
 
 

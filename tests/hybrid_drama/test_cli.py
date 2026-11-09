@@ -92,3 +92,18 @@ def test_cli_builds_a_prompt_directly_from_ce_api(monkeypatch, tmp_path):
 
     assert calls == [("http://localhost:8000", "agent-token"), ("p", 2, 3)]
     assert json.loads(output.read_text())["prompt"] == "Fetched from CE"
+
+
+def test_cli_poll_uses_the_api_shared_state_lock(monkeypatch, tmp_path):
+    import fcntl
+    import novelvideo.hybrid_drama.cli as cli
+
+    calls = []
+    monkeypatch.setattr(cli.fcntl, "flock", lambda _fd, operation: calls.append(operation))
+    monkeypatch.setattr(cli, "poll_tasks", lambda *_args, **_kwargs: [])
+    monkeypatch.setenv("ARK_API_KEY", "provider-key")
+
+    assert main(["poll", "--run-dir", str(tmp_path)]) == 0
+
+    assert calls == [fcntl.LOCK_EX, fcntl.LOCK_UN]
+    assert (tmp_path / ".state.lock").exists()
