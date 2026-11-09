@@ -7489,7 +7489,11 @@
       "threeDWorldNode": "Mundo 3D",
       "skillNode": "Competência",
       "styleNode": "Estilo",
-      "htmlArtifactNode": "Página Web"
+      "htmlArtifactNode": "Página Web",
+      "previzNode": "Previz Stage",
+      "videoBreakdownNode": "Fotograma a fotograma",
+      "vectorSvgNode": "Imagem vetorial · SVG",
+      "animatedGifNode": "Imagem animada · GIF"
     },
     "exportResult": {
       "generic": "Imagem resultante",

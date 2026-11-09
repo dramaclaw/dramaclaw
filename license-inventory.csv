@@ -1928,6 +1928,7 @@ frontend/src/features/canvas/domain/mainlineNodeTypes.ts,Elastic-2.0,2026 SuperT
 frontend/src/features/canvas/domain/mediaModelOptions.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/mediaViewerState.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/nodeDisplay.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/domain/nodeDisplayLocales.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/nodeRegistry.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/promptReferences.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/skillConnectionEdges.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
