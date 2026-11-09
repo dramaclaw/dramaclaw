@@ -1253,6 +1253,7 @@ describe("canvas chat commands", () => {
   });
 
   it("waits for slow image task submission after the node accepts generation", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "requestAnimationFrame", "cancelAnimationFrame"] });
     const imageNodeId = useCanvasStore.getState().addNode(
       CANVAS_NODE_TYPES.imageGen,
       { x: 0, y: 0 },
@@ -1293,7 +1294,7 @@ describe("canvas chat commands", () => {
     );
 
     try {
-      const result = await applyCanvasChatCommandsAsync(
+      const pending = applyCanvasChatCommandsAsync(
         [
           {
             schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
@@ -1308,6 +1309,8 @@ describe("canvas chat commands", () => {
         ],
         { actionTimeoutMs: 5000 },
       );
+      await vi.advanceTimersByTimeAsync(3200);
+      const result = await pending;
 
       expect(result.errors).toEqual([]);
       expect(result.commandResults).toEqual([
@@ -1322,6 +1325,7 @@ describe("canvas chat commands", () => {
         }),
       ]);
     } finally {
+      vi.useRealTimers();
       unsubscribe();
     }
   });
@@ -1551,6 +1555,7 @@ describe("canvas chat commands", () => {
   });
 
   it("treats generation actions that open a user-required UI as handed off instead of missing output", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "requestAnimationFrame", "cancelAnimationFrame"] });
     const audioId = useCanvasStore.getState().addNode(
       CANVAS_NODE_TYPES.audio,
       { x: 0, y: 0 },
@@ -1586,7 +1591,7 @@ describe("canvas chat commands", () => {
     );
 
     try {
-      const result = await applyCanvasChatCommandsAsync([
+      const pending = applyCanvasChatCommandsAsync([
         {
           schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
           commands: [
@@ -1598,6 +1603,11 @@ describe("canvas chat commands", () => {
           ],
         },
       ]);
+      const settled = vi.fn();
+      void pending.then(settled);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toHaveBeenCalledTimes(1);
+      const result = await pending;
 
       expect(result.errors).toEqual([]);
       expect(result.openedUiActions).toBe(1);
@@ -1621,11 +1631,13 @@ describe("canvas chat commands", () => {
         }),
       ]);
     } finally {
+      vi.useRealTimers();
       unsubscribe();
     }
   });
 
   it("treats missing custom voice as an intentional workflow skip", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "requestAnimationFrame", "cancelAnimationFrame"] });
     const audioId = useCanvasStore.getState().addNode(
       CANVAS_NODE_TYPES.audio,
       { x: 0, y: 0 },
@@ -1651,7 +1663,7 @@ describe("canvas chat commands", () => {
     );
 
     try {
-      const result = await applyCanvasChatCommandsAsync([{
+      const pending = applyCanvasChatCommandsAsync([{
         schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
         commands: [{
           type: "run_node_action",
@@ -1659,6 +1671,11 @@ describe("canvas chat commands", () => {
           action: "generate_audio",
         }],
       }]);
+      const settled = vi.fn();
+      void pending.then(settled);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toHaveBeenCalledTimes(1);
+      const result = await pending;
 
       expect(result.errors).toEqual([]);
       expect(result.commandResults).toEqual([
@@ -1669,6 +1686,7 @@ describe("canvas chat commands", () => {
         }),
       ]);
     } finally {
+      vi.useRealTimers();
       unsubscribe();
     }
   });
