@@ -519,6 +519,71 @@ async def test_ce_ignores_advertised_archive_and_downloads_result_url(
     assert calls == {"poll": 1, "download": 1}
 
 
+@pytest.mark.asyncio
+async def test_freezone_upscale_download_uses_the_submitting_gateway(monkeypatch, tmp_path):
+    from novelvideo.generators import video_generator as module
+    from novelvideo.ports.video_delivery import VideoDeliveryReceipt
+    from novelvideo.utils import media_download
+
+    generator = module.NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://gateway.example/v1",
+        model="video-upscale-fast",
+        resolution="1080p",
+    )
+    reference = "https://relay.example/input.mp4"
+    task_id = "task_upscale"
+    downloaded = []
+
+    async def submit(url, payload):
+        assert url == "https://gateway.example/v1/video/generations"
+        assert payload["metadata"]["reference_videos"] == [reference]
+        assert payload["metadata"]["resolution"] == "1080p"
+        return {"task_id": task_id}
+
+    async def poll(*args, **kwargs):
+        return {
+            "data": {
+                "status": "SUCCESS",
+                "task_id": task_id,
+                "result_url": f"https://unexpected.example/v1/videos/{task_id}/content",
+            }
+        }
+
+    async def download(url, output_path, *, headers):
+        downloaded.append(url)
+        assert headers["Authorization"] == "Bearer test-key"
+        Path(output_path).write_bytes(b"upscale-result")
+        return VideoDeliveryReceipt(method="download", size=14, sha256="fixture")
+
+    async def billing(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(generator, "_post_json", submit)
+    monkeypatch.setattr(generator, "_get_json", poll)
+    monkeypatch.setattr(module, "get_video_result_delivery", lambda: None)
+    monkeypatch.setattr(module, "_reserve_video_model_call", billing)
+    monkeypatch.setattr(module, "_confirm_video_model_call", billing)
+    monkeypatch.setattr(media_download, "download_to_path", download)
+
+    output = tmp_path / "video.mp4"
+    result = await generator.generate(
+        image_path=None,
+        prompt="",
+        output_path=str(output),
+        aspect_ratio="auto",
+        duration=3,
+        references=[module.ShotReference("video", reference, "源视频")],
+        gen_mode="video_upscale",
+        poll_interval=0,
+        max_polls=1,
+    )
+
+    assert result.status is module.VideoGenStatus.DONE
+    assert downloaded == [f"https://gateway.example/v1/videos/{task_id}/content"]
+    assert output.read_bytes() == b"upscale-result"
+
+
 class _Content:
     def __init__(self, chunks: list[bytes]) -> None:
         self._chunks = chunks

@@ -3685,6 +3685,29 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                 source=archived_source,
                                 output_path=output_path,
                             )
+                        elif (
+                            self.model == "video-upscale-fast"
+                            and requested_mode == "video_upscale"
+                        ):
+                            from novelvideo.utils.media_download import download_to_path
+
+                            # Credentials go only to the gateway that accepted this job.
+                            path = urllib.parse.urlsplit(video_url).path
+                            if (
+                                re.fullmatch(
+                                    r"task_[A-Za-z0-9_-]{1,123}", task_id or ""
+                                )
+                                is None
+                                or path != f"/v1/videos/{task_id}/content"
+                            ):
+                                raise VideoDeliveryError(
+                                    "VIDEO_GATEWAY_RESULT_INVALID", retryable=False
+                                )
+                            delivery = await download_to_path(
+                                f"{request_base_url}/videos/{task_id}/content",
+                                output_path,
+                                headers=request_headers or self.headers,
+                            )
                         else:
                             log(
                                 lmsg(
