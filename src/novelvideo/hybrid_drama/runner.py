@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from decimal import Decimal
-import fcntl
 import hashlib
 import json
 import os
@@ -13,6 +12,7 @@ import subprocess
 from typing import Any
 
 import httpx
+import portalocker
 
 BASE_URL = "https://ark.ap-southeast.bytepluses.com"
 # Canary-verified 4s 720p Seedance usage; see devops/dramaclaw-ops direct-seedance runbook.
@@ -221,7 +221,7 @@ def submit_task(
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     with (run_dir / ".submit.lock").open("a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        portalocker.lock(lock, portalocker.LOCK_EX)
         try:
             return _submit_task(
                 run_dir,
@@ -235,7 +235,7 @@ def submit_task(
                 http_client=http_client,
             )
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            portalocker.unlock(lock)
 
 
 def poll_tasks(

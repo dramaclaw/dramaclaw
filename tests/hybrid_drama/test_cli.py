@@ -95,15 +95,16 @@ def test_cli_builds_a_prompt_directly_from_ce_api(monkeypatch, tmp_path):
 
 
 def test_cli_poll_uses_the_api_shared_state_lock(monkeypatch, tmp_path):
-    import fcntl
+    import portalocker
     import novelvideo.hybrid_drama.cli as cli
 
     calls = []
-    monkeypatch.setattr(cli.fcntl, "flock", lambda _fd, operation: calls.append(operation))
+    monkeypatch.setattr(cli.portalocker, "lock", lambda _fd, operation: calls.append(("lock", operation)))
+    monkeypatch.setattr(cli.portalocker, "unlock", lambda _fd: calls.append(("unlock", None)))
     monkeypatch.setattr(cli, "poll_tasks", lambda *_args, **_kwargs: [])
     monkeypatch.setenv("ARK_API_KEY", "provider-key")
 
     assert main(["poll", "--run-dir", str(tmp_path)]) == 0
 
-    assert calls == [fcntl.LOCK_EX, fcntl.LOCK_UN]
+    assert calls == [("lock", portalocker.LOCK_EX), ("unlock", None)]
     assert (tmp_path / ".state.lock").exists()

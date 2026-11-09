@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-import fcntl
 import json
 import os
 from pathlib import Path
 import sys
 
 import httpx
+import portalocker
 
 from novelvideo.hybrid_drama.ce import CEClient, build_beat_prompt
 from novelvideo.hybrid_drama.runner import (
@@ -46,11 +46,11 @@ def _state_lock(run_dir: str | Path):
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     with (run_dir / ".state.lock").open("a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        portalocker.lock(lock, portalocker.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            portalocker.unlock(lock)
 
 
 def _build(args) -> None:

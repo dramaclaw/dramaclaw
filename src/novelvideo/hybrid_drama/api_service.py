@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from decimal import Decimal, InvalidOperation
-import fcntl
 import json
 from pathlib import Path
 import re
 from typing import Any
+
+import portalocker
 
 from novelvideo.hybrid_drama.ce import build_beat_prompt
 from novelvideo.hybrid_drama.runner import (
@@ -215,11 +216,11 @@ async def _run_lock(resolved: Any, run_id: str):
     run_dir = run_directory(resolved.output_dir, run_id)
     lock = (run_dir / ".state.lock").open("a+")
     try:
-        await asyncio.to_thread(fcntl.flock, lock.fileno(), fcntl.LOCK_EX)
+        await asyncio.to_thread(portalocker.lock, lock, portalocker.LOCK_EX)
         try:
             yield run_dir
         finally:
-            await asyncio.to_thread(fcntl.flock, lock.fileno(), fcntl.LOCK_UN)
+            await asyncio.to_thread(portalocker.unlock, lock)
     finally:
         lock.close()
 
