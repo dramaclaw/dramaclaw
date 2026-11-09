@@ -71,15 +71,18 @@ async def test_model_video_enhancement_runs_upscale_slowdown_and_frame_rate(
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source")
     calls: list[tuple[str, str, dict[str, object]]] = []
+    progress: list[float] = []
 
     async def fake_probe(_source_path: str, **_kwargs):
         return {"width": 854, "height": 480, "fps": source_fps, "duration": 10.0}
 
     async def fake_model(**kwargs):
+        kwargs["on_progress"](0.2)
         output = Path(kwargs["output_path"])
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"model")
         calls.append((kwargs["mode"], kwargs["backend"], kwargs["processing_metadata"]))
+        kwargs["on_progress"](1.0)
 
     async def fake_slow(source_path: Path, output_path: Path, *, factor: int, **_kwargs):
         assert source_path.exists()
@@ -102,6 +105,7 @@ async def test_model_video_enhancement_runs_upscale_slowdown_and_frame_rate(
         face_enhance=True,
         upscale_backend="newapi_video-super-resolution",
         frame_rate_backend="newapi_video-frame-rate",
+        on_progress=progress.append,
     )
 
     assert output.exists()
@@ -125,6 +129,7 @@ async def test_model_video_enhancement_runs_upscale_slowdown_and_frame_rate(
     ]
     assert metadata["target_fps"] == (target_fps or source_fps)
     assert metadata["stages"] == 3
+    assert progress == pytest.approx([0.20, 0.60, 0.70, 0.75, 0.95])
 
 
 @pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])

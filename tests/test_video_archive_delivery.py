@@ -534,6 +534,8 @@ async def test_freezone_upscale_download_uses_the_submitting_gateway(monkeypatch
     reference = "https://relay.example/input.mp4"
     task_id = "task_upscale"
     downloaded = []
+    progress = []
+    task_states = iter([("QUEUED", "20%"), ("IN_PROGRESS", "30%"), ("SUCCESS", "100%")])
 
     async def submit(url, payload):
         assert url == "https://gateway.example/v1/video/generations"
@@ -542,9 +544,11 @@ async def test_freezone_upscale_download_uses_the_submitting_gateway(monkeypatch
         return {"task_id": task_id}
 
     async def poll(*args, **kwargs):
+        status, percent = next(task_states)
         return {
             "data": {
-                "status": "SUCCESS",
+                "status": status,
+                "progress": percent,
                 "task_id": task_id,
                 "result_url": f"https://unexpected.example/v1/videos/{task_id}/content",
             }
@@ -576,10 +580,12 @@ async def test_freezone_upscale_download_uses_the_submitting_gateway(monkeypatch
         references=[module.ShotReference("video", reference, "源视频")],
         gen_mode="video_upscale",
         poll_interval=0,
-        max_polls=1,
+        max_polls=3,
+        on_progress=progress.append,
     )
 
     assert result.status is module.VideoGenStatus.DONE
+    assert progress == [0.1, 0.2, 0.2, 0.3, 0.9, 1.0]
     assert downloaded == [f"https://gateway.example/v1/videos/{task_id}/content"]
     assert output.read_bytes() == b"upscale-result"
 

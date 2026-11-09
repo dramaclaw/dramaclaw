@@ -3534,7 +3534,12 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     )
                 task = self._task_response_data(polled)
                 status = str(task.get("status") or "").lower()
-                progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
+                if self.model == "video-upscale-fast" and requested_mode == "video_upscale":
+                    match = re.fullmatch(r"(\d{1,3})%", str(task.get("progress") or ""))
+                    if match and int(match[1]) < 100:
+                        progress(max(0.2, int(match[1]) / 100))
+                else:
+                    progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
 
                 if status in {"completed", "succeeded", "success", "done"}:
                     await update_current_model_call_log(
