@@ -2,6 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { mediaDurationMs } from '@/lib/media-duration';
+
 type AudioWaveformPlayerProps = {
   src: string;
   /** 已知时长(毫秒),用于在波形解码完成前先渲染滑块范围。 */
@@ -318,9 +320,10 @@ export function AudioWaveformPlayer({
         className="hidden"
         onLoadedMetadata={(event) => {
           const el = event.currentTarget;
-          if (Number.isFinite(el.duration) && el.duration > 0) {
+          const ms = mediaDurationMs(el.duration);
+          if (ms !== null) {
             setDuration(el.duration);
-            onLoadedDuration?.(Math.round(el.duration * 1000));
+            onLoadedDuration?.(ms);
           }
         }}
         onEnded={() => setIsPlaying(false)}

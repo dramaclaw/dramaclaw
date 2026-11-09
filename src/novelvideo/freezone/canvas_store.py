@@ -97,6 +97,11 @@ class CanvasStoreError(RuntimeError):
     """Base class for canvas storage errors."""
 
 
+class CanvasStoryGroupLimit(CanvasStoreError):
+    def __init__(self):
+        super().__init__("only one interactive story group is allowed per canvas")
+
+
 class CanvasCorruptError(CanvasStoreError):
     def __init__(self, message: str):
         super().__init__(message)
@@ -694,6 +699,17 @@ def latest_preset_canvas(project_dir: Path, preset_key: str) -> str | None:
     return None
 
 
+def _check_story_group_limit(payload: dict) -> None:
+    story_groups = [
+        node for node in payload.get("nodes", [])
+        if isinstance(node, dict) and node.get("type") == "groupNode"
+        and isinstance(node.get("data"), dict)
+        and node["data"].get("storyGroup") is True
+    ]
+    if len(story_groups) > 1:
+        raise CanvasStoryGroupLimit()
+
+
 def save_canvas(
     project_dir: Path,
     canvas_id: str,
@@ -744,6 +760,7 @@ def save_canvas(
         if enforce_revision:
             _check_revision(existing, base_revision)
         payload = build_payload(existing)
+        _check_story_group_limit(payload)
         # Strip reserved (`__`-prefixed) metadata keys before persisting.
         # Clients must not be able to shadow / forge system fields by
         # injecting metadata like ``__save_log`` or ``__system``.
@@ -818,6 +835,7 @@ def restore_canvas_version(
         history_file = resolve_canvas_history_file(project_dir, canvas_id, history_id)
         history_payload = load_canvas_json(history_file) or {"nodes": [], "edges": []}
         payload = build_payload(existing, history_payload)
+        _check_story_group_limit(payload)
         backup_path = backup_canvas_snapshot(path, existing)
         atomic_write_json(path, payload, fence=guard.reassert)
         prune_canvas_history(project_dir, canvas_id)

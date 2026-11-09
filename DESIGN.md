@@ -303,6 +303,8 @@ DramaClaw（虾导）是一个专业 AIGC 视频工作台：节点画布、故�
   另见 Do's and Don'ts。
 - 静止表面上彩度必须低。shadcn 的 `secondary` / `accent` 是带青调的灰
   （暗色 #0e333c、亮色 #def6fa），正是为了让下拉和 Tab 的 hover 态足够安静。
+- 分组默认填充使用 `--group-node-bg`：暗色 `rgba(255,255,255,0.1)`，亮色
+  `rgba(15,23,42,0.09)`，让未设置配色的组也有可见边界。
 - 亮色模式把 `background` 翻成纯白、`text` 翻成纯黑，强调色换 `light-accent` #3b82f6；
   `card` 变纯白，衬在 #f0f2f5 的页面底上。
 - `chart-1` … `chart-5` 是唯一批准的数据序列色，走「青 → 蓝绿 → 天蓝 → 湖蓝 → 绿」，
@@ -357,6 +359,10 @@ DramaClaw（虾导）是一个专业 AIGC 视频工作台：节点画布、故�
 - **Level 3 — 弹窗 / popover：** 产品工作台里的决策弹窗使用中性
   `surface-modal` #1b1c23 配 `ui-border`；通用 shadcn popover 继续使用 `card`。
   模态不模糊——它是要你做决定的。
+- **项目卡（首页网格）** 是上面三层的一个刻意例外：填充与描边都用直给 alpha
+  （`bg-white/[0.04]` → hover `[0.08]`、`border-white/10`），hover **不加阴影**——卡里的文件夹封面
+  自带投影，再叠一层阴影会让反馈变成"变亮 + 浮起"两件事。代价是亮色主题下这两条白色叠加几乎
+  不吃色，卡片轮廓只剩圆角；亮色要可见边就用 `dark:` 分档，不要改暗色值。
 - **焦点与选中用发光，不用阴影：** hover-primary 用 `--ui-glow-accent` =
   `0 0 24px rgb(var(--accent-rgb) / 0.25)`；聚焦输入框用
   `0 0 0 3px rgb(var(--accent-rgb) / 0.12)` 的 ring。

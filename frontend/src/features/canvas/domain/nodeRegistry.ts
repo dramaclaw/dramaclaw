@@ -15,6 +15,7 @@ import {
   type ImageEditNodeData,
   type ImageGenNodeData,
   type Pano360ViewerNodeData,
+  type PrevizNodeData,
   type ScriptNodeData,
   type SkillNodeData,
   type StoryboardSplitNodeData,
@@ -37,7 +38,7 @@ import {
 } from '../ui/ProviderModelPicker';
 import { readLastVideoModel } from './lastVideoModel';
 
-export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text' | 'video' | 'audio' | 'script' | 'pano360' | 'threeDWorld' | 'videoCompose' | 'videoBreakdown';
+export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text' | 'video' | 'audio' | 'script' | 'pano360' | 'threeDWorld' | 'videoCompose' | 'previz' | 'videoBreakdown';
 
 export interface CanvasNodeCapabilities {
   toolbar: boolean;
@@ -631,6 +632,31 @@ const threeDWorldNodeDefinition: CanvasNodeDefinition<ThreeDWorldNodeData> = {
   }),
 };
 
+const previzNodeDefinition: CanvasNodeDefinition<PrevizNodeData> = {
+  type: CANVAS_NODE_TYPES.previz,
+  menuLabelKey: 'node.menu.previz',
+  menuIcon: 'previz',
+  visibleInMenu: true,
+  capabilities: {
+    toolbar: false,
+    promptInput: false,
+  },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: {
+      fromSource: true,
+      fromTarget: true,
+    },
+  },
+  createDefaultData: () => ({
+    displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.previz],
+    scene: null,
+    summary: null,
+    previewImageUrl: null,
+  }),
+};
+
 const skillNodeDefinition: CanvasNodeDefinition<SkillNodeData> = {
   type: CANVAS_NODE_TYPES.skill,
   menuLabelKey: 'node.menu.skill',
@@ -716,6 +742,7 @@ export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition>
   [CANVAS_NODE_TYPES.script]: scriptNodeDefinition,
   [CANVAS_NODE_TYPES.pano360Viewer]: pano360ViewerNodeDefinition,
   [CANVAS_NODE_TYPES.threeDWorld]: threeDWorldNodeDefinition,
+  [CANVAS_NODE_TYPES.previz]: previzNodeDefinition,
   [CANVAS_NODE_TYPES.skill]: skillNodeDefinition,
   [CANVAS_NODE_TYPES.style]: styleNodeDefinition,
 };
@@ -885,6 +912,14 @@ export const DOWNSTREAM_SPAWN_WHITELIST: Partial<
     CANVAS_NODE_TYPES.exportImage,
     CANVAS_NODE_TYPES.upload,
   ],
+  // 预演台：产物是截图与录制，下游只接图片与视频类节点。
+  [CANVAS_NODE_TYPES.previz]: [
+    CANVAS_NODE_TYPES.imageGen,
+    CANVAS_NODE_TYPES.imageEdit,
+    CANVAS_NODE_TYPES.exportImage,
+    CANVAS_NODE_TYPES.upload,
+    CANVAS_NODE_TYPES.video,
+  ],
   [CANVAS_NODE_TYPES.upload]: IMAGE_DOWNSTREAM_SPAWN_TYPES,
   [CANVAS_NODE_TYPES.imageEdit]: IMAGE_DOWNSTREAM_SPAWN_TYPES,
   [CANVAS_NODE_TYPES.imageGen]: IMAGE_DOWNSTREAM_SPAWN_TYPES,
@@ -934,6 +969,11 @@ export const UPSTREAM_SPAWN_WHITELIST: Partial<
     CANVAS_NODE_TYPES.imageGen,
     CANVAS_NODE_TYPES.audio,
   ],
+  // 预演台：P0 不读任何上游，场景全部在编辑器里手工搭建。缺条目会回落到 connectMenu
+  // 默认列表（skill / threeDWorld / 以及预演台自己），全是「骗人的线」。空数组让
+  // Canvas.tsx 的 `allowedTypes.length === 0` 分支直接不弹菜单——左侧「+」用的是
+  // NodeSpawnPlusOverlay 自己那份视频专用列表，不会因此出现空面板。
+  [CANVAS_NODE_TYPES.previz]: [],
 };
 
 // 给定目标节点类型，返回「从左侧 target handle 出发能创建的上游节点类型集」。

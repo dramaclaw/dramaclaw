@@ -25,6 +25,16 @@ describe("freezone url params", () => {
     expect(window.location.search).toBe("?canvas=canvas-2");
   });
 
+  it("writes and clears the compose node without dropping the canvas", () => {
+    window.history.pushState(null, "", "/projects/proj-a/freezone?canvas=c1");
+
+    writeUrl({ compose: "node-9" }, { notify: false });
+    expect(window.location.search).toBe("?canvas=c1&compose=node-9");
+
+    writeUrl({ compose: null }, { replace: true, notify: false });
+    expect(window.location.search).toBe("?canvas=c1");
+  });
+
   it("can replace canvas params without notifying route listeners", () => {
     window.history.pushState(null, "", "/projects/proj-a/freezone");
     let popstateCount = 0;
@@ -84,6 +94,25 @@ describe("freezone url params — routes through tanstack when a router is regis
     } finally {
       window.removeEventListener("popstate", listener);
     }
+  });
+
+  it("carries the compose node through router search and clears only that param", () => {
+    window.history.pushState(null, "", "/projects/proj-a/freezone");
+    const navigate = mockRouter("/projects/proj-a/freezone", { canvas: "c1" });
+
+    writeUrl({ compose: "node-9" });
+
+    expect(navigate).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        search: { canvas: "c1", compose: "node-9" },
+      }),
+    );
+
+    writeUrl({ compose: null }, { replace: true });
+
+    expect(navigate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ search: { canvas: "c1" } }),
+    );
   });
 
   it("targets the ingest route when the project is cleared", () => {

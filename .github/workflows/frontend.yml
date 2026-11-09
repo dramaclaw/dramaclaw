@@ -8,11 +8,13 @@ on:
   push:
     paths:
       - "frontend/**"
+      - "tests/fixtures/interactive_story/**"
       - "scripts/check_frontend_i18n.py"
       - ".github/workflows/frontend.yml"
   pull_request:
     paths:
       - "frontend/**"
+      - "tests/fixtures/interactive_story/**"
       - "scripts/check_frontend_i18n.py"
       - ".github/workflows/frontend.yml"
 

@@ -53,7 +53,21 @@ git commit -s -m "fix: ……"
 # 自动生成：Signed-off-by: Your Name <you@example.com>
 ```
 
-补签历史 commit：`git rebase --signoff <base>`。CI（`.github/workflows/dco.yml` 调 `scripts/check_dco.py`）会校验 PR 内每个 commit，缺签署会标红。
+尚未发布的 commit 可用 `git rebase --signoff <base>` 补签。已发布的共享历史使用普通后继提交补签，保留原 SHA：
+
+```text
+chore: certify historical contributions under DCO 1.1
+
+I certify my right to submit the changes in the listed commits
+under the Developer Certificate of Origin 1.1.
+
+DCO-Remediation: <完整的40位历史commit SHA>
+Signed-off-by: Your Name <you@example.com>
+```
+
+每个被补签的 commit 单独列一行 `DCO-Remediation`，且必须是补签提交的祖先。补签提交必须带有与其作者姓名和邮箱一致的 `Signed-off-by` trailer。补签者以自己的身份声明有权提交这些贡献，不代替原作者签名。该记录只覆盖列明的 SHA，其他未签署提交仍会失败。
+
+CI（`.github/workflows/dco.yml` 调 `scripts/check_dco.py`）会校验 PR 内每个普通 commit 的原始签署或上述补签记录。补签记录格式错误、身份不一致或引用非祖先提交都会标红。
 
 ## 获取帮助
 

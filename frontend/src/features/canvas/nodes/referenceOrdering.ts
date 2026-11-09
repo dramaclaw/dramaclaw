@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { STORY_CHOICE_EDGE_TYPE } from "../story/storyTypes";
+
 /**
  * 把上游节点按用户在「引用资源」行里手动拖出来的顺序（`referenceOrder`）排序。
  * 在 `referenceOrder` 里出现的节点按其下标排前面；没出现的（新连进来的）按「连接
@@ -19,6 +21,7 @@
  * (`dependency_for`) 只控制先后，不属于可消费的上游参考。
  */
 type UpstreamEdge = {
+  type?: string;
   source: string;
   target: string;
   data?: unknown;
@@ -44,6 +47,19 @@ export function upstreamNodesInEdgeOrder<T extends { id: string }>(
     .filter((edge) => edge.target === targetId && !isExecutionDependencyEdge(edge))
     .map((edge) => byId.get(edge.source))
     .filter((node): node is T => node !== undefined);
+}
+
+/** 视频生成只消费素材连线；剧情选择线仍由通用图遍历保留。 */
+export function videoReferenceNodesInEdgeOrder<T extends { id: string }>(
+  nodes: T[],
+  edges: ReadonlyArray<UpstreamEdge>,
+  targetId: string,
+): T[] {
+  return upstreamNodesInEdgeOrder(
+    nodes,
+    edges.filter((edge) => edge.type !== STORY_CHOICE_EDGE_TYPE),
+    targetId,
+  );
 }
 
 /**

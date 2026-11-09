@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "mapId": "whalesong-skyport",
+  "walkableAreas": [
+    {
+      "id": "map-preview-bounds",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 0
+        },
+        {
+          "x": 2048,
+          "y": 1152
+        },
+        {
+          "x": 0,
+          "y": 1152
+        }
+      ]
+    }
+  ],
+  "colliders": [],
+  "spawnPoints": [
+    {
+      "id": "cloudtop-slope-arrival",
+      "position": {
+        "x": 475,
+        "y": 735
+      },
+      "facing": "east"
+    }
+  ],
+  "exits": [
+    {
+      "id": "to-cloudtop-slope",
+      "trigger": {
+        "id": "to-cloudtop-slope-trigger",
+        "points": [
+          {
+            "x": 245,
+            "y": 763
+          },
+          {
+            "x": 305,
+            "y": 763
+          },
+          {
+            "x": 305,
+            "y": 807
+          },
+          {
+            "x": 245,
+            "y": 807
+          }
+        ]
+      },
+      "targetMapId": "cloudtop-slope",
+      "targetSpawnId": "whalesong-skyport-arrival"
+    }
+  ]
+}

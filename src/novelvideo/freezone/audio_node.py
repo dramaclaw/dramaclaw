@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import tempfile
+import time
+from contextlib import contextmanager
 import re
 import subprocess
 import uuid
@@ -11,6 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import portalocker
 
 from novelvideo.config import INDEXTTS2_RECORD_MODEL, OUTPUT_DIR
 from novelvideo.media_archive_copy import copy_archived_result
@@ -170,30 +176,98 @@ def _safe_extension(filename: str | None) -> str:
     return suffix
 
 
-def _load_user_voice_records(username: str) -> list[dict]:
+def _load_user_voice_records(username: str, *, strict: bool = False) -> list[dict]:
     path = user_audio_voices_index_path(username)
     if not path.exists():
         return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
+        if strict:
+            raise ValueError("invalid user voice index") from None
         return []
     if isinstance(data, dict):
-        records = data.get("voices", [])
+        records = data.get("voices")
     else:
         records = data
-    if not isinstance(records, list):
+    if not isinstance(records, list) or any(
+        not isinstance(item, dict) for item in records
+    ):
+        if strict:
+            raise ValueError("invalid user voice index")
         return []
-    return [item for item in records if isinstance(item, dict)]
+    return records
+
+
+_USER_AUDIO_VOICE_LOCK_TIMEOUT_SECONDS = 30.0
+
+
+@contextmanager
+def _user_audio_voice_lock(username: str):
+    directory = user_audio_voices_dir(username)
+    directory.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + _USER_AUDIO_VOICE_LOCK_TIMEOUT_SECONDS
+    with (directory / ".voices.lock").open("a+b") as stream:
+        try:
+            while True:
+                try:
+                    portalocker.lock(stream, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                    break
+                except portalocker.exceptions.AlreadyLocked:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.01)
+            try:
+                yield
+            finally:
+                portalocker.unlock(stream)
+        except portalocker.exceptions.LockException as exc:
+            raise OSError("account voice storage lock failed") from exc
+
+
+def _atomic_voice_write(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".voice-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def _write_user_voice_records(username: str, records: list[dict]) -> None:
-    path = user_audio_voices_index_path(username)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"voices": records}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    _atomic_voice_write(
+        user_audio_voices_index_path(username),
+        json.dumps({"voices": records}, ensure_ascii=False, indent=2).encode(),
     )
+
+
+def recover_user_audio_voice_save(
+    username: str, identity: dict[str, str]
+) -> dict | None:
+    """The atomically published index is recovery evidence if a receipt was interrupted."""
+    with _user_audio_voice_lock(username):
+        for record in _load_user_voice_records(username, strict=True):
+            previous = record.get("generated_save")
+            if previous and previous["key"] == identity["key"]:
+                if previous != identity:
+                    from novelvideo.audio.voice_design_storage import (
+                        CandidateStorageError,
+                    )
+
+                    raise CandidateStorageError("idempotency_conflict")
+                if not is_readable_audio_file(_user_voice_abs_path(username, record)):
+                    raise OSError("saved user voice file is missing")
+                return public_user_voice_payload(username, record)
+    return None
 
 
 def _user_voice_abs_path(username: str, record: dict) -> Path:
@@ -249,32 +323,34 @@ def create_user_audio_voice(
     filename: str | None,
     content: bytes,
     mime_type: str = "",
+    save_identity: dict[str, str] | None = None,
 ) -> dict:
     if not content:
         raise ValueError("voice audio file is empty")
     extension = _safe_extension(filename)
-    voice_id = f"fv_{uuid.uuid4().hex[:16]}"
-    rel_path = f"_account/freezone/audio/voices/{voice_id}/reference{extension}"
-    abs_path = Path(OUTPUT_DIR) / username / rel_path
-    abs_path.parent.mkdir(parents=True, exist_ok=True)
-    abs_path.write_bytes(content)
-
-    now = _utc_now()
-    record = {
-        "voice_id": voice_id,
-        "name": _safe_voice_name(name),
-        "path": rel_path,
-        "sha256": file_sha256(abs_path),
-        "duration_ms": _duration_ms(abs_path),
-        "mime_type": mime_type or "application/octet-stream",
-        "source_filename": Path(str(filename or "reference")).name,
-        "created_at": now,
-        "updated_at": now,
-    }
-    records = _load_user_voice_records(username)
-    records.append(record)
-    _write_user_voice_records(username, records)
-    return public_user_voice_payload(username, record)
+    with _user_audio_voice_lock(username):
+        records = _load_user_voice_records(username, strict=True)
+        voice_id = f"fv_{uuid.uuid4().hex[:16]}"
+        rel_path = f"_account/freezone/audio/voices/{voice_id}/reference{extension}"
+        abs_path = Path(OUTPUT_DIR) / username / rel_path
+        _atomic_voice_write(abs_path, content)
+        now = _utc_now()
+        record = {
+            "voice_id": voice_id,
+            "name": _safe_voice_name(name),
+            "path": rel_path,
+            "sha256": file_sha256(abs_path),
+            "duration_ms": _duration_ms(abs_path),
+            "mime_type": mime_type or "application/octet-stream",
+            "source_filename": Path(str(filename or "reference")).name,
+            "created_at": now,
+            "updated_at": now,
+        }
+        if save_identity is not None:
+            record["generated_save"] = save_identity
+        records.append(record)
+        _write_user_voice_records(username, records)
+        return public_user_voice_payload(username, record)
 
 
 def resolve_user_audio_voice(

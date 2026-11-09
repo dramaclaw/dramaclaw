@@ -83,9 +83,10 @@ export function ReferenceTextChip({
         <FileText className="h-4 w-4 text-white" />
       </button>
       <ReferenceDetachButton
+        as="button"
         nodeId={nodeId}
         onDetach={onDetach}
-        className="nodrag absolute right-0 top-0 z-10 hidden h-4 w-4 items-center justify-center rounded-bl-md rounded-tr-md bg-black/75 text-white transition-colors hover:bg-red-500 group-hover/reftext:flex"
+        className="nodrag absolute right-0 top-0 z-10 hidden h-4 w-4 items-center justify-center rounded-bl-md rounded-tr-md bg-black/75 text-white transition-colors hover:bg-red-500 group-hover/reftext:flex group-focus-within/reftext:flex"
       />
       {previewAnchor &&
         typeof document !== 'undefined' &&

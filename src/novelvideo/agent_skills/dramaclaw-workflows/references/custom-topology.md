@@ -30,13 +30,26 @@ order) stays an agent-authored draft with the difference recorded in
    identities from the loaded production Workflow Skill and keep them identical to the admitted
    operation. `generation_answers` supplements this complete Plan; it never replaces the Plan or
    either required identity field.
-   When the Skill has a standard planner, `planning_contract.standard_planner.stages` lists its
+   Existing-story image batches are a supported exception: with `text-to-image-video`, a real
+   `source_context.story_id`, and every image mapped exactly once across `asset_targets` and
+   `targets`, the saved story supplies planning and video destinations. Include only new images
+   and optional recipe-less input briefs; keep video nodes outside the Plan. For character,
+   product or scene references, read the `interactive-story` Skill's
+   `references/reference-images.md` for a complete example and live-asset checks. If this image
+   batch reports `skill_stage_missing`, repair its mapping or extraneous executable nodes;
+   never add planning/video stages to satisfy that error.
+   For other workflows, when the Skill has a standard planner, `planning_contract.standard_planner.stages` lists its
    stages; every stage marked `required` must appear in a custom plan too (for example the
    shot-planning stage of a short drama). A node fills a stage when it has that stage's
    `node_type` and either sets `stage` to the stage id or uses one of the stage's `recipes`.
    `standard_planner.edges` lists which stage's output the next stage consumes (for example
    `shots` → `video`): every node of the downstream stage must be reachable from a node of the
    upstream stage through consuming edges (`prompt_for`, `context_for`, `media_input_for`, ...);
+   `standard_planner.recipe_input_edges` further scopes input requirements to a Recipe:
+   each `[source_stage, target_recipe_id]` pair requires every node using that Recipe to
+   consume the source stage's output, directly or through consuming intermediate nodes.
+   These pairs do not apply to other Recipes sharing the same stage. For example, short-drama
+   shot-group detail consumes character, scene, and prop settings; director shot planning does not.
    `dependency_for` only orders execution and does not count. A draft missing a required stage
    is not `ready`: its preflight reports
    `code="skill_stage_missing"` naming the stage; a stage node that nothing downstream consumes
@@ -52,6 +65,8 @@ order) stays an agent-authored draft with the difference recorded in
    which actual upstream outputs/reference assets it must consume. Do not prewrite generated
    scripts, shot-by-shot storyboards, dialogue, or camera/sound details. Preserve user-supplied
    content and constraints; execution-time Recipe compilation produces the executable prompt.
+   If the selected Skill requires a concrete action brief at Draft review, include that brief
+   as a planning constraint now; this does not mean upstream production has already run.
    A confirmed visual style must reach each image/video node in its brief or through a consuming
    text edge; do not assume another node's unconnected brief or the Skill name will be included.
    Author semantic Plan fields only. Do not construct `canvas_chat_commands.v1` yourself: the graph
@@ -87,8 +102,12 @@ order) stays an agent-authored draft with the difference recorded in
    or `respectSectionsDurations`; if supported by the live node schema, put them under `data`.
 4. Put all new nodes and semantic edges in the same plan. To consume an existing canvas image,
    declare `external_inputs: [{"id":"source_image","node_id":"<existing canvas node id>","media_kind":"image"}]`
-   and use `source_image` as the source of a `media_input_for` edge. The server verifies the real
-   node and its media at prepare and confirmation. Do not copy the source into `nodes`, put its URL
+   and use `source_image` as the source of a `media_input_for` edge. An existing video (a
+   `videoNode`, or an upload holding a video) uses `"media_kind":"video"` and may only feed a
+   `videoNode` in a reference-capable mode such as `allReference`. The server verifies the real
+   node and its media at prepare and confirmation. If it rejects an external input, fix the
+   declaration as the error says; never drop a source the user named and still claim it was used.
+   When it cannot be used, say so in the reply. Do not copy the source into `nodes`, put its URL
    in the target data, or include it in `run_workflow` selection. Other references use logical plan
    IDs; the compiler turns new nodes into same-batch `client_id` values.
    Before choosing an edge `link_type`, use the injected compatibility information or call
@@ -134,13 +153,15 @@ order) stays an agent-authored draft with the difference recorded in
    edges, and never insert a generated anchor for a stage already fulfilled by external media. Add
    any genuinely missing required Skill stage to the same Plan once, or report that it conflicts
    with the user's exact topology.
-7. Call `freezone_prepare_workflow(plan=...)` once. It strictly validates the complete Plan,
+7. Choose `run_after_create=true` for an approved create-and-run request or `false` for create-only.
+   Story-bound plans must pass this choice; ordinary plans may omit it and default to `false`.
+   Call `freezone_prepare_workflow(operation_id=..., plan=..., run_after_create=...)` once. It strictly validates the complete Plan,
    obtains an operation-bound planning quote and server receipt, then persists an exact preview
    without writing canvas nodes. After the user reviews that preview, call
    `freezone_confirm_workflow_draft` with its exact `draft_id` and `revision`. Do not call
    `workflow_graph_compile` as a routine preflight before preparing the first draft. Use the read-only compiler
    only to diagnose and correct a validation failure. After a recovery compile succeeds, immediately
-   prepare that exact corrected Plan with `freezone_prepare_workflow(plan=...)`; do not stop after
+   prepare that exact corrected Plan with `freezone_prepare_workflow(operation_id=..., plan=..., run_after_create=...)`; do not stop after
    reporting that compilation passed.
 
 The user's imperative does not replace an exact billing confirmation receipt. Follow the quote

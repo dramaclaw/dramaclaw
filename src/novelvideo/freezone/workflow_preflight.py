@@ -41,6 +41,7 @@ _VIDEO_CATALOG_MODES = {
     "imageReference": "image_reference",
     "allReference": "all_reference",
     "videoEdit": "video_edit",
+    "videoExtend": "video_extend",
 }
 
 
@@ -327,26 +328,42 @@ def _audio_voice_blockers(node: dict[str, Any], *, required: bool) -> list[dict[
     voice_ref = data.get("voiceRef")
     scope = str(voice_ref.get("scope") or "").strip() if isinstance(voice_ref, dict) else ""
     required_fields = _AUDIO_VOICE_REF_REQUIRED_FIELDS.get(scope)
-    usable = (
-        data.get("voiceAvailable") is True
-        and required_fields is not None
+    reference_valid = (
+        required_fields is not None
         and all(
             isinstance(voice_ref.get(field), str) and voice_ref[field].strip()
             for field in required_fields
         )
     )
-    if usable:
+    if reference_valid and data.get("voiceAvailable") is True:
         return []
     node_id = str(node.get("id") or "audio").strip()
+    recovery = "select_custom_voice"
+    if not data.get("audioKind") and not voice_ref:
+        recovery = "correct_audio_kind"
+        message = (
+            "audioKind is missing: set data.audioKind=music for background music, "
+            "which does not require a voice; for speech, bind an explicitly selected "
+            "voiceRef before confirming the draft"
+        )
+    elif not reference_valid:
+        message = (
+            "required speech needs a valid voiceRef.scope and its identity fields "
+            "(user_custom requires voiceId); bind the user's selected voice, "
+            "not the first available voice"
+        )
+    else:
+        message = (
+            "voiceRef is present but voiceAvailable is not true; rebind the selected "
+            "voice through workflow preparation or revision. Do not override an "
+            "explicit unavailable state or ask the user to guess internal fields"
+        )
     return [
         {
             "path": f"runtime.audio.{node_id}.voiceRef",
             "code": "audio_voice_required",
-            "message": (
-                "required speech has no usable custom/reference voice and would be skipped; "
-                "bind a valid voiceRef before confirming the draft"
-            ),
-            "recovery": "select_custom_voice",
+            "message": message,
+            "recovery": recovery,
         }
     ]
 

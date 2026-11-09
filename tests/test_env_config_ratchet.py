@@ -5,6 +5,8 @@ import os
 import sys
 from pathlib import Path
 
+from dotenv import dotenv_values
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "check_env_config.py"
 
@@ -21,6 +23,12 @@ def _load_module():
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def test_local_ce_example_enables_openfilm_studio() -> None:
+    values = dotenv_values(REPO_ROOT / ".env.example")
+
+    assert values["SUPERTALE_OPENFILM_STUDIO_ENABLED"] == "1"
 
 
 def test_three_state_matrix_and_edition_boundary(tmp_path: Path) -> None:

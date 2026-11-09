@@ -85,6 +85,9 @@ def test_public_exact_plan_patch_revision_and_confirmation(exact_draft_tool, mon
     {"step_updates": [{"node_id": "brief", "prompt": "changed"}], "schema_version": "freezone_workflow_intent.v1"},
     {"bindings": [{"source": "brief", "target": "brief", "usage": "prompt"}]},
     {"user_goal": "must not recompile an exact plan as compact intent"},
+    {"step_updates": [{"node_id": "brief", "prompt": "changed"}], "summary": "   "},
+    {"summary": ["not", "text"]},
+    {"step_updates": [{"node_id": "brief", "prompt": "changed"}], "analysis": "not an object"},
 ])
 def test_public_exact_plan_invalid_patch_preserves_draft(exact_draft_tool, changes):
     plugin, client, requests, prepared = exact_draft_tool
@@ -98,6 +101,46 @@ def test_public_exact_plan_invalid_patch_preserves_draft(exact_draft_tool, chang
     assert stored["plan_digest"] == prepared["plan_digest"]
     assert stored["status"] == "ready"
     assert client.enqueued_tasks == []
+
+
+def test_public_exact_plan_patch_revises_summary_and_preview_title(exact_draft_tool):
+    plugin, client, requests, prepared = exact_draft_tool
+    changes = {
+        "step_updates": [{"node_id": "brief", "prompt": "绿色背景广告"}],
+        "summary": "绿色背景商品广告",
+    }
+    args = {"draft_id": prepared["draft_id"], "expected_revision": 1, "changes": changes}
+    schemas = {name: schema for name, schema, handler in plugin.TOOLS}
+    Draft202012Validator(schemas["freezone_patch_workflow_draft"]["parameters"]).validate(args)
+    revised = plugin._handle_patch_workflow_draft(args)
+    assert revised["ok"] is True, revised
+    assert revised["revision"] == 2
+    target = f"/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts/{prepared['draft_id']}"
+    stored = client.get(target).json()["data"]
+    assert stored["compiled"]["plan"]["summary"] == "绿色背景商品广告"
+    assert stored["intent"]["plan"]["summary"] == "绿色背景商品广告"
+    assert stored["preview"]["title"] == "绿色背景商品广告"
+    assert stored["compiled"]["plan"]["nodes"][0]["data"]["content"] == "绿色背景广告"
+    assert stored["last_changes"]["summary"] == "绿色背景商品广告"
+
+    analysis_only = plugin._handle_patch_workflow_draft({
+        "draft_id": prepared["draft_id"], "expected_revision": 2,
+        "changes": {"analysis": {"brief": "绿色背景商品广告分析"}},
+    })
+    assert analysis_only["ok"] is True, analysis_only
+    stored = client.get(target).json()["data"]
+    assert stored["compiled"]["plan"]["analysis"] == {"brief": "绿色背景商品广告分析"}
+    assert stored["intent"]["plan"]["analysis"] == {"brief": "绿色背景商品广告分析"}
+    assert stored["last_changes"]["analysis"] == {"brief": "绿色背景商品广告分析"}
+
+    summary_only = plugin._handle_patch_workflow_draft({
+        "draft_id": prepared["draft_id"], "expected_revision": 3,
+        "changes": {"summary": "仅改摘要"},
+    })
+    assert summary_only["ok"] is True, summary_only
+    stored = client.get(target).json()["data"]
+    assert stored["revision"] == 4
+    assert stored["preview"]["title"] == "仅改摘要"
 
 
 def test_public_exact_plan_patch_freezes_updated_execution_policy(exact_draft_tool):
@@ -125,3 +168,54 @@ def test_public_exact_plan_patch_freezes_updated_execution_policy(exact_draft_to
     assert stored["revision"] == 2
     assert stored["plan_digest"] == revised["plan_digest"]
     assert stored["run_after_create"] is True
+
+
+@pytest.mark.parametrize("voice_key", ["voiceRef", "voice_ref"])
+def test_exact_audio_draft_binds_selected_voice_before_native_preflight(
+    monkeypatch, workflow_run_client, voice_key,
+):
+    from test_workflow_transactions import _exact_audio_plan
+
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "proj_demo")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas_demo")
+    from novelvideo.freezone.agent_workflows import catalog
+
+    original_items = catalog.list_user_agent_config_items
+
+    def catalog_items(username, kind):
+        items = copy.deepcopy(original_items(username, kind))
+        if kind == "skills":
+            for item in items:
+                if item.get("id") == "video-ad":
+                    item["allowed_recipe_ids"] = ["general-audio"]
+                    item["triggers"] = {"node_scopes": ["audioGeneration"]}
+        return items
+
+    monkeypatch.setattr(catalog, "list_user_agent_config_items", catalog_items)
+    plan = _exact_audio_plan()
+    plan["skill"] = {"id": "video-ad", "version": "1.0.0"}
+    data = plan["nodes"][0]["data"]
+    data[voice_key] = data.pop("voiceRef")
+    data["workflowCatalog"]["timelineRole"] = "voiceover"
+
+    def request(method, path, *, body=None, **kwargs):
+        response = workflow_run_client.request(method, "/api/v1" + path, json=body)
+        result = response.json()
+        if response.status_code >= 400:
+            detail = result.get("detail")
+            return detail if isinstance(detail, dict) else {"ok": False, "error": detail}
+        return result
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_prepare_workflow_plan_draft({"plan": plan})
+    assert result["ok"] is True, result
+    target = ("/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/"
+              "workflow-drafts/" + result["draft_id"])
+    stored = workflow_run_client.get(target).json()["data"]
+    assert stored["status"] == "ready"
+    audio = stored["compiled"]["plan"]["nodes"][0]["data"]
+    assert audio["voiceRef"] == {"scope": "user_custom", "voiceId": "voice-selected"}
+    assert audio["voiceAvailable"] is True
+    assert "voiceAvailable" not in data
+    assert workflow_run_client.enqueued_tasks == []

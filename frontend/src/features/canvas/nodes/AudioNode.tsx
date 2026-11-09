@@ -101,7 +101,6 @@ const getCachedAudioReferences = createInFlightRequestCache(
 export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeProps) => {
   const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
-  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const isBoxSelecting = useIsBoxSelecting();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const { isGenerating, task } = useNodeGenerationTaskState(data);
@@ -367,7 +366,6 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
     <div
       className="group relative h-full w-full overflow-visible"
       style={{ width: resolvedWidth, height: resolvedHeight }}
-      onClick={() => setSelectedNode(id)}
     >
       <Handle
         type="target"

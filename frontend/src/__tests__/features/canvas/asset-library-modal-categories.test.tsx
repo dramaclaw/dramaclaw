@@ -2,8 +2,14 @@
 // Copyright (c) 2026 ClaymoreLab
 //
 // 资产库弹窗：左侧文件夹控制存放范围，右侧类目只筛选当前范围内的资产。
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterAll } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
+
+// Budget for complete component flows; per-step waits and request deadlines stay unchanged.
+vi.setConfig({ testTimeout: 15_000 });
+afterAll(() => vi.resetConfig());
 
 const fetchFreezoneVideoCharacterLibrary = vi.fn();
 const syncFreezoneAssetLibraryFromMainline = vi.fn();
@@ -33,6 +39,57 @@ vi.mock("@/api/ops", async (importOriginal) => ({
 
 import { AssetLibraryModal } from "@/features/canvas/ui/AssetLibraryModal";
 import { ConfirmDialogHost } from "@/components/confirm-dialog-host";
+import { normalizeLibraryList } from "@/features/canvas/ui/assetLibraryItems";
+
+const VOICE_ASSET_ID = "c9706788-b922-4e83-aa62-31e089530a7a";
+const NEW_VOICE_ASSET_ID = "5509634f-335e-4a2e-a9f2-85b5b2a02f3d";
+const SAVED_VOICE = {
+  id: `voice-design:${VOICE_ASSET_ID}`,
+  name: "旧设计声线",
+  media: "audio",
+  source: "upload",
+  category: "audio",
+  folder: "audio",
+  audio_url: "/static/assets/audio/voice-design/saved.mp3",
+  voice_design: {
+    asset_id: VOICE_ASSET_ID,
+    name: "旧设计声线",
+    url: "/static/assets/audio/voice-design/saved.mp3",
+    sha256: "a".repeat(64),
+    duration_seconds: 4.5,
+    model: null,
+  },
+};
+const VOICE_LIBRARY = [
+  {
+    id: "mainline:character:hero:voice:default",
+    name: "主线角色声线",
+    media: "audio",
+    source: "character",
+    category: "character",
+    folder: "mainline",
+    audio_url: "/static/characters/hero/voice_default.mp3",
+  },
+  {
+    ...SAVED_VOICE,
+    id: `voice-design:${NEW_VOICE_ASSET_ID}`,
+    name: "新设计声线",
+    category: "character",
+    folder: "character",
+    audio_url: "/static/assets/audio/voice-design/new.mp3",
+    voice_design: {
+      ...SAVED_VOICE.voice_design,
+      asset_id: NEW_VOICE_ASSET_ID,
+      name: "新设计声线",
+      url: "/static/assets/audio/voice-design/new.mp3",
+    },
+  },
+  SAVED_VOICE,
+  {
+    id: "sfx", name: "普通音效", media: "audio", source: "upload",
+    category: "audio", folder: "audio", audio_url: "/static/step.mp3",
+  },
+];
 
 const LIBRARY = [
   {
@@ -118,6 +175,77 @@ describe("AssetLibraryModal 类目与文件夹", () => {
     expect(screen.getByRole("button", { name: "上传资产" })).toBeInTheDocument();
   });
 
+  it("打开资产库只读，只有明确同步才写入主线素材", async () => {
+    renderModal();
+    await screen.findByText("参考图A");
+    expect(syncFreezoneAssetLibraryFromMainline).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "同步主线" }));
+    await waitFor(() => expect(syncFreezoneAssetLibraryFromMainline).toHaveBeenCalledTimes(1));
+  });
+
+  it("moves focus into the library, traps both Tab directions and restores its opener", async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return <><button onClick={() => setOpen(true)}>打开项目库</button><button>背景按钮</button><AssetLibraryModal mode="manage" project="demo" open={open} onClose={() => setOpen(false)} /></>;
+    }
+    const user = userEvent.setup();
+    render(<Harness />);
+    const opener = screen.getByRole("button", { name: "打开项目库" });
+    await user.click(opener);
+    const dialog = await screen.findByRole("dialog", { name: "资产库" });
+    await screen.findByText("参考图A");
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    const controls = [...dialog.querySelectorAll<HTMLButtonElement>("button")].filter(button => !button.disabled && button.tabIndex >= 0);
+    const first = controls[0]; const last = controls[controls.length - 1];
+    if (!first || !last) throw new Error("Expected library controls");
+    last.focus(); await user.tab();
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    first.focus(); await user.tab({ shift: true });
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    await user.click(within(dialog).getByRole("button", { name: "关闭" }));
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it("keeps nested upload and folder controls focused and closes only the top layer", async () => {
+    const user = userEvent.setup();
+    renderModal();
+    await screen.findByText("参考图A");
+    const uploadOpener = screen.getByRole("button", { name: "上传资产" });
+    await user.click(uploadOpener);
+    const upload = await screen.findByRole("dialog", { name: "上传资产" });
+    await waitFor(() => expect(upload.contains(document.activeElement)).toBe(true));
+    await user.click(within(upload).getByRole("button", { name: "选择保存位置" }));
+    await user.click(within(upload).getByRole("button", { name: "新建文件夹" }));
+    const folder = await screen.findByRole("dialog", { name: "新建文件夹" });
+    const input = within(folder).getByPlaceholderText("请输入文件夹名称");
+    await waitFor(() => expect(input).toHaveFocus());
+    await user.type(input, "键");
+    expect(input).toHaveValue("键");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(upload.contains(document.activeElement)).toBe(true));
+    expect(screen.getByRole("dialog", { name: "上传资产" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "上传资产" })).toBeInTheDocument();
+    expect(within(upload).queryByRole("button", { name: "新建文件夹" })).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(uploadOpener).toHaveFocus());
+    expect(screen.getByRole("dialog", { name: "资产库" })).toBeInTheDocument();
+  });
+
+  it("focuses preview controls and returns to the selected card after Escape", async () => {
+    const user = userEvent.setup();
+    renderModal();
+    await screen.findByText("参考图A");
+    const detailsOpener = screen.getByRole("button", { name: "查看 参考图A 详情" });
+    await user.click(detailsOpener);
+    const preview = await screen.findByRole("dialog", { name: "资产详情" });
+    await waitFor(() => expect(preview.contains(document.activeElement)).toBe(true));
+    expect(within(preview).getByRole("button", { name: "下载" })).toBeEnabled();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(detailsOpener).toHaveFocus());
+    expect(screen.getByRole("dialog", { name: "资产库" })).toBeInTheDocument();
+  });
+
   it("文件夹只改变资产范围，全部资产入口能恢复全量视图", async () => {
     renderModal();
 
@@ -163,6 +291,78 @@ describe("AssetLibraryModal 类目与文件夹", () => {
     fireEvent.click(screen.getByRole("button", { name: "文件夹 待分类资产" }));
     expect(await screen.findByText("参考图A")).toBeInTheDocument();
     expect(screen.queryByText("脚步声")).toBeNull();
+  });
+
+  it("音频选择器按人物筛出主线和新旧设计声线，按音效只筛出普通音效", async () => {
+    fetchFreezoneVideoCharacterLibrary.mockResolvedValue({ items: VOICE_LIBRARY });
+    const onConfirm = vi.fn();
+    renderModal({ mode: "pick", allowedMedia: ["audio"], onConfirm });
+    await screen.findByText("旧设计声线");
+    fireEvent.click(screen.getByRole("button", { name: "分类 人物" }));
+    for (const name of ["主线角色声线", "新设计声线", "旧设计声线"]) {
+      expect(screen.getByText(name)).toBeInTheDocument();
+      fireEvent.click(screen.getByText(name));
+    }
+    expect(screen.queryByText("普通音效")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "文件夹 主线" }));
+    expect(screen.getByText("主线角色声线")).toBeInTheDocument();
+    expect(screen.queryByText("新设计声线")).toBeNull();
+    expect(screen.queryByText("旧设计声线")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "全部资产" }));
+    fireEvent.click(screen.getByRole("button", { name: "分类 音效" }));
+    expect(screen.getByText("普通音效")).toBeInTheDocument();
+    expect(screen.queryByText("旧设计声线")).toBeNull();
+    expect(screen.queryByText("主线角色声线")).toBeNull();
+    expect(screen.queryByText("新设计声线")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "确定" }));
+    expect(onConfirm).toHaveBeenCalledWith(VOICE_LIBRARY.slice(0, 3).map(entry => ({
+      media: "audio", name: entry.name, url: entry.audio_url,
+    })));
+  });
+
+  it.each(["pick", "manage"] as const)("%s模式点击音频背景可选材或打开详情，播放与进度不触发卡片", async (mode) => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    fetchFreezoneVideoCharacterLibrary.mockResolvedValue({ items: [SAVED_VOICE] });
+    const onConfirm = vi.fn();
+    const { container } = renderModal({ mode, allowedMedia: ["audio"], onConfirm });
+    await screen.findByText(SAVED_VOICE.name);
+    const player = container.ownerDocument.querySelector("audio")?.parentElement;
+    expect(player).not.toBeNull();
+    if (!player) return;
+    const play = within(player).getByRole("button");
+    fireEvent.click(play);
+    fireEvent.click(within(player).getByRole("slider"));
+    expect(screen.queryByRole("dialog", { name: "资产详情" })).not.toBeInTheDocument();
+    if (mode === "pick") expect(screen.getByRole("button", { name: "确定" })).toBeDisabled();
+    fireEvent.click(player);
+    if (mode === "pick") {
+      expect(screen.getByRole("button", { name: "确定" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "确定" }));
+      expect(onConfirm).toHaveBeenCalledWith([{ media: "audio", name: SAVED_VOICE.name, url: SAVED_VOICE.audio_url }]);
+    } else {
+      expect(await screen.findByRole("dialog", { name: "资产详情" })).toBeInTheDocument();
+    }
+  });
+
+  it("兼容旧正式设计声线时保留已有和缺省保存位置及原始数据", () => {
+    const legacy = { ...SAVED_VOICE, folder: undefined };
+    const snapshot = structuredClone([SAVED_VOICE, legacy]);
+    const entries = normalizeLibraryList([SAVED_VOICE, legacy]);
+    expect(entries.map(({ category, folder }) => ({ category, folder }))).toEqual([
+      { category: "character", folder: "audio" },
+      { category: "character", folder: "audio" },
+    ]);
+    expect([SAVED_VOICE, legacy]).toEqual(snapshot);
+  });
+
+  it.each([
+    { voice_design: true },
+    { voice_design: { ...SAVED_VOICE.voice_design, sha256: "invalid" } },
+    { voice_design: { ...SAVED_VOICE.voice_design, duration_seconds: 0 } },
+    { id: "ordinary-upload" },
+    { audio_url: "/static/unrelated.mp3" },
+  ])("不把无效或不匹配的设计元数据当成人物 %j", (override) => {
+    expect(normalizeLibraryList([{ ...SAVED_VOICE, ...override }])[0]?.category).toBe("audio");
   });
 
   it("在当前文件夹与分类范围内按名称搜索，并能从空态直接清空", async () => {
@@ -332,6 +532,64 @@ describe("AssetLibraryModal 文件夹操作", () => {
     fetchFreezoneAssetLibraryFolders.mockResolvedValue([CUSTOM]);
     updateFreezoneAssetLibraryFolder.mockResolvedValue(CUSTOM);
     deleteFreezoneAssetLibraryFolder.mockResolvedValue({ deleted_items: 1 });
+  });
+
+  it.each([
+    { action: "修改封面", close: "Escape" },
+    { action: "修改封面", close: "保存" },
+    { action: "重命名", close: "Escape" },
+    { action: "重命名", close: "保存" },
+  ])("returns focus inside the library after $action / $close", async ({ action, close }) => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return <><button onClick={() => setOpen(true)}>打开项目库</button><button>背景按钮</button><AssetLibraryModal mode="manage" project="demo" open={open} onClose={() => setOpen(false)} /></>;
+    }
+    if (action === "重命名" && close === "保存") {
+      fetchFreezoneAssetLibraryFolders.mockResolvedValueOnce([CUSTOM])
+        .mockResolvedValue([{ ...CUSTOM, name: "第一集" }]);
+    }
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "打开项目库" }));
+    const library = await screen.findByRole("dialog", { name: "资产库" });
+    const more = await screen.findByRole("button", { name: "第一集素材 更多操作" });
+    await user.click(more);
+    await user.click(screen.getByRole("button", { name: action }));
+    const child = await screen.findByRole("dialog", { name: action });
+    await waitFor(() => expect(child.contains(document.activeElement)).toBe(true));
+    if (close === "Escape") {
+      await user.keyboard("{Escape}");
+      expect(updateFreezoneAssetLibraryFolder).not.toHaveBeenCalled();
+    } else {
+      if (action === "重命名") {
+        const input = within(child).getByPlaceholderText("请输入文件夹名称");
+        await user.clear(input);
+        await user.type(input, "第一集");
+      } else {
+        await user.click(within(child).getByRole("button", { name: "选择封面 女主定妆" }));
+      }
+      await user.click(within(child).getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(updateFreezoneAssetLibraryFolder).toHaveBeenCalledWith(
+        "demo", "fld-1", action === "重命名" ? { name: "第一集" } : { cover: "/static/c.png" },
+      ));
+      if (action === "重命名")
+        await screen.findByRole("button", { name: "第一集 更多操作" });
+    }
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: action })).toBeNull());
+    expect(screen.getByRole("dialog", { name: "资产库" })).toBe(library);
+    await waitFor(() => expect(more).toHaveFocus());
+    await user.tab();
+    expect(library.contains(document.activeElement)).toBe(true);
+    await user.tab({ shift: true });
+    expect(library.contains(document.activeElement)).toBe(true);
+    const controls = [...library.querySelectorAll<HTMLButtonElement>("button")].filter(button => !button.disabled && button.tabIndex >= 0);
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (!first || !last) throw new Error("Expected library controls");
+    last.focus(); await user.tab();
+    await waitFor(() => expect(library.contains(document.activeElement)).toBe(true));
+    first.focus(); await user.tab({ shift: true });
+    await waitFor(() => expect(library.contains(document.activeElement)).toBe(true));
   });
 
   it("只有自建文件夹带「…」菜单，系统文件夹没有", async () => {

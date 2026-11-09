@@ -1,0 +1,22 @@
+diff --git a/packages/openfilm/src/host.mjs b/packages/openfilm/src/host.mjs
+index 050772d..503a2fb 100644
+--- a/packages/openfilm/src/host.mjs
++++ b/packages/openfilm/src/host.mjs
+@@ -224,7 +224,16 @@ export function injectFirst(html, tag) {
+ export async function launch({ headed = false, channel = headed ? 'chromium' : null, args: extra = [], env } = {}) {
+   /* CanvasDrawElement: HTML-in-Canvas (drawElementImage, texElementImage2D), so a page can draw its own DOM into 2D or WebGL */
+   const args = ['--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--autoplay-policy=no-user-gesture-required', '--hide-scrollbars', '--enable-blink-features=CanvasDrawElement', ...extra];
+-  const open = (/** @type {string[]} */ angle) => chromium.launch({ ...(channel ? { channel } : {}), headless: !headed, args: [...args, ...angle], ...(env ? { env } : {}) });
++  const open = async (/** @type {string[]} */ angle) => {
++    try {
++      return await chromium.launch({ ...(channel ? { channel } : {}), headless: !headed, args: [...args, ...angle], ...(env ? { env } : {}) });
++    } catch (e) {
++      /* The host may have a Chrome but no Playwright build (a desktop app, a dev machine): use it rather than lose
++         thumbnails and exports. A deployment that needs the pinned pixels installs Playwright's browser. */
++      if (channel || !/Executable doesn't exist|browserType\.launch/i.test(String(e?.message ?? e))) throw e;
++      return chromium.launch({ channel: process.env.OPENFILM_CHROME_CHANNEL || 'chrome', headless: !headed, args: [...args, ...angle], ...(env ? { env } : {}) });
++    }
++  };
+   const browser = extra.some((a) => a.startsWith('--use-angle')) ? await open([])
+     : process.platform === 'darwin' ? await open(['--use-angle=metal'])
+     : process.platform === 'win32' ? await onWindows(open)

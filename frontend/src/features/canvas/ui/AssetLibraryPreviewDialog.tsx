@@ -4,6 +4,7 @@ import { Download, Music, Send, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { SOURCE_LABEL_KEYS, type LibraryItem } from './assetLibraryItems';
 
@@ -28,18 +29,17 @@ export function AssetLibraryPreviewDialog({
   const mediaLabel = t(`canvas.assetLibrary.media.${entry.media}`);
 
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center p-6">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/65 backdrop-blur-sm"
-        aria-label={t('canvas.assetLibrary.preview.closeAria')}
-        onClick={onClose}
-      />
-      <section
-        role="dialog"
-        aria-modal="true"
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <DialogContent
+        showCloseButton={false}
         aria-label={t('canvas.assetLibrary.preview.dialogAria')}
-        className="relative flex w-[min(760px,86vw)] flex-col overflow-hidden rounded-xl border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.98)] shadow-[0_22px_64px_rgba(0,0,0,0.55)]"
+        overlayClassName="z-[310] bg-black/65 backdrop-blur-sm"
+        className="z-[310] flex w-[min(760px,86vw)] max-w-none sm:max-w-none flex-col overflow-hidden rounded-xl border border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.98)] p-0 gap-0 ring-0 shadow-[0_22px_64px_rgba(0,0,0,0.55)]"
       >
         <header className="flex items-center gap-3 border-b border-[var(--ui-border-soft)] px-5 py-4">
           <div className="min-w-0 flex-1">
@@ -113,7 +113,7 @@ export function AssetLibraryPreviewDialog({
             </Button>
           )}
         </footer>
-      </section>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -1,0 +1,799 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import { useState } from "react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+
+import { createPrevizObject, type PrevizObjectPatch } from "@/features/previz/domain/objects";
+import type {
+  PrevizObject,
+  PrevizObjectKind,
+  PrevizTransform,
+} from "@/features/previz/domain/scene";
+import { PrevizInspector } from "@/features/previz/ui/PrevizInspector";
+import { optionLabels, optionValues, pickOption } from "./previzSelect";
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
+
+/**
+ * 面板的输入框全是受控的，所以测试必须把补丁真的应用回去：父级不更新 state 时，React
+ * 每次 change 后都会把 DOM 的值还原成 prop，键入的字符会一个个丢掉（清空「物件 1」再
+ * 打「椅子」，回调收到的是「物件 1子」）。这个壳子就是 Task 16 编辑器那一层的最小替身。
+ */
+function Harness({
+  initial,
+  spy,
+}: {
+  initial: PrevizObject | null;
+  spy: (patch: PrevizObjectPatch) => void;
+}) {
+  const [object, setObject] = useState(initial);
+  return (
+    <PrevizInspector
+      object={object}
+      onChange={(patch) => {
+        spy(patch);
+        setObject((prev) => (prev ? ({ ...prev, ...patch } as PrevizObject) : prev));
+      }}
+    />
+  );
+}
+
+function renderInspector(initial: PrevizObject | null) {
+  const onChange = vi.fn();
+  render(<Harness initial={initial} spy={onChange} />);
+  return onChange;
+}
+
+/** 数字框与滑杆用 fireEvent 整值写入：受控框逐键输入会和区间夹取纠缠在一起，
+ *  而这些用例要锁的是「一个完整的值进来会得到什么」。 */
+function setValue(element: HTMLElement, value: string) {
+  fireEvent.change(element, { target: { value } });
+}
+
+/**
+ * 回读方向（对象字段 → 输入框显示值）的夹具**不能**让同族字段取同一个值。工厂给的
+ * 默认变换是 position / rotation 全零、scale 全一，于是「三个通道的 value 全读 rotation」
+ * 这种串线一条断言都碰不到——position 与 rotation 本来就相等，而 scale 从 1 变成 0
+ * 也没人看。下面九个分量两两不同（含正负与小数），三个通道之间、每个通道的三根轴
+ * 之间，任意一处读串了都至少有一条断言变红。
+ *
+ * 每次调用返回新对象：数组是可变的，共用一份会让某个用例的 patch 泄到下一个用例。
+ */
+function distinctTransform(): PrevizTransform {
+  return { position: [1, -2, 3], rotation: [10, 20, -30], scale: [0.5, 2, 1.5] };
+}
+
+/**
+ * 同理，默认 poseAdjust 是 `{pitch: 0, turn: 0, lean: 0}`，三根滑杆全读 pitch 也照样绿。
+ * 三个值两两不同、正负都有，且各自落在本轴的区间内（pitch -30..45 / turn -60..60 /
+ * lean -35..35，都是 step=1 的整数格点）——超界的话滑杆自己会把值夹回去，夹具就白设了。
+ * 三个值也刻意避开 `distinctTransform()` 的九个分量，免得跨族串读（滑杆读到位置分量）
+ * 蒙混过关。
+ */
+function distinctPoseAdjust(): { pitch: number; turn: number; lean: number } {
+  return { pitch: 5, turn: -12, lean: 7 };
+}
+
+/**
+ * 期望值一律写字面量，不从被测模块（或它 import 的 domain 常量）取——跟着实现一起
+ * 变的断言等于没有断言。区间、默认值、换算结果都在下面逐个写死。
+ */
+describe("PrevizInspector", () => {
+  it("prompts to pick something when nothing is selected", () => {
+    renderInspector(null);
+    expect(screen.getByText("previz.inspector.empty")).toBeInTheDocument();
+  });
+
+  it("edits the name", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("prop", []));
+
+    const input = screen.getByLabelText("previz.inspector.name");
+    await user.clear(input);
+    await user.type(input, "椅子");
+
+    expect(onChange).toHaveBeenLastCalledWith({ name: "椅子" });
+  });
+
+  it("edits one transform axis without touching the others", () => {
+    const onChange = renderInspector(
+      createPrevizObject("prop", [], { transform: distinctTransform() }),
+    );
+
+    setValue(screen.getByLabelText("previz.inspector.position.y"), "7");
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      transform: { position: [1, 7, 3], rotation: [10, 20, -30], scale: [0.5, 2, 1.5] },
+    });
+  });
+
+  // 三个通道（位移 / 旋转 / 缩放）各三轴共用一个 patch 函数，串了线不会有任何编译期
+  // 症状，只会让用户拖旋转时物体在挪位置。逐通道各锁一轴。
+  it("routes the rotation axes to the rotation channel", () => {
+    const onChange = renderInspector(
+      createPrevizObject("prop", [], { transform: distinctTransform() }),
+    );
+
+    setValue(screen.getByLabelText("previz.inspector.rotation.z"), "5");
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      transform: { position: [1, -2, 3], rotation: [10, 20, 5], scale: [0.5, 2, 1.5] },
+    });
+  });
+
+  it("routes the scale axes to the scale channel", () => {
+    const onChange = renderInspector(
+      createPrevizObject("prop", [], { transform: distinctTransform() }),
+    );
+
+    setValue(screen.getByLabelText("previz.inspector.scale.x"), "4");
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      transform: { position: [1, -2, 3], rotation: [10, 20, -30], scale: [4, 2, 1.5] },
+    });
+  });
+
+  // 写入方向（改哪个框 → 发什么 patch）在上面三条里锁住了，但**显示**方向是另一件事：
+  // 每个框的 `value` 各自从 `transform[channel][index]` 取数，三个通道九根轴任意一处
+  // 读串了，写入照样正常、什么都不报错，只有读数是错的——「旋转框显示的是位置的值」
+  // 这类故障接上真 store 之后极难查。九个分量两两不同，逐个钉住。
+  it("shows every transform channel and axis on its own input", () => {
+    renderInspector(createPrevizObject("prop", [], { transform: distinctTransform() }));
+
+    expect(screen.getByLabelText("previz.inspector.position.x")).toHaveValue(1);
+    expect(screen.getByLabelText("previz.inspector.position.y")).toHaveValue(-2);
+    expect(screen.getByLabelText("previz.inspector.position.z")).toHaveValue(3);
+    expect(screen.getByLabelText("previz.inspector.rotation.x")).toHaveValue(10);
+    expect(screen.getByLabelText("previz.inspector.rotation.y")).toHaveValue(20);
+    expect(screen.getByLabelText("previz.inspector.rotation.z")).toHaveValue(-30);
+    expect(screen.getByLabelText("previz.inspector.scale.x")).toHaveValue(0.5);
+    expect(screen.getByLabelText("previz.inspector.scale.y")).toHaveValue(2);
+    expect(screen.getByLabelText("previz.inspector.scale.z")).toHaveValue(1.5);
+  });
+
+  // 编辑一根轴之后，其余八个读数必须原地不动。上一条锁的是初始渲染，这条锁的是
+  // 「改完之后重新渲染时还是各读各的」——受控框每次 change 都会整块重算。
+  it("keeps the other transform readouts put after one axis is edited", () => {
+    renderInspector(createPrevizObject("prop", [], { transform: distinctTransform() }));
+
+    setValue(screen.getByLabelText("previz.inspector.rotation.y"), "44");
+
+    expect(screen.getByLabelText("previz.inspector.rotation.y")).toHaveValue(44);
+    expect(screen.getByLabelText("previz.inspector.position.x")).toHaveValue(1);
+    expect(screen.getByLabelText("previz.inspector.position.y")).toHaveValue(-2);
+    expect(screen.getByLabelText("previz.inspector.position.z")).toHaveValue(3);
+    expect(screen.getByLabelText("previz.inspector.rotation.x")).toHaveValue(10);
+    expect(screen.getByLabelText("previz.inspector.rotation.z")).toHaveValue(-30);
+    expect(screen.getByLabelText("previz.inspector.scale.x")).toHaveValue(0.5);
+    expect(screen.getByLabelText("previz.inspector.scale.y")).toHaveValue(2);
+    expect(screen.getByLabelText("previz.inspector.scale.z")).toHaveValue(1.5);
+  });
+
+  // 输入框里删到空是编辑中间态，不是「把 y 设成 NaN」。放行 NaN 会让整个投影矩阵中毒。
+  it("ignores a non-numeric transform entry", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("prop", []));
+
+    await user.clear(screen.getByLabelText("previz.inspector.position.x"));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  // 溢出成 Infinity 的输入不能进变换矩阵——整条投影链会算出 NaN，画面全黑，而病因离
+  // 故障点很远。实测 jsdom（以及 HTML 的 value sanitization）会把 `1e999` 直接清成空串，
+  // 所以在这个环境里拦住它的是空串那条分支；`Number.isFinite` 那条是留给「哪天有人把某个
+  // 字段改成 type=\"text\"」的兜底，走不到 DOM 这一层来验。
+  it("ignores an overflowing transform entry", () => {
+    const onChange = renderInspector(createPrevizObject("prop", []));
+
+    setValue(screen.getByLabelText("previz.inspector.position.z"), "1e999");
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("recolours a character's marker", () => {
+    const onChange = renderInspector(createPrevizObject("character", []));
+
+    fireEvent.change(screen.getByLabelText("previz.inspector.markerColor"), {
+      target: { value: "#ff00aa" },
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith({ color: "#ff00aa" });
+  });
+
+  /**
+   * 移动辅助两个开关，与创建对话框里那一节是同一对。建完之后改主意的人只会来属性
+   * 面板找它——只在创建对话框里给，勾错了就再也改不回来。
+   */
+  it("toggles a character's movement assist switches", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("character", []));
+
+    const avoid = screen.getByRole("checkbox", { name: "previz.inspector.avoidCollision" });
+    expect(avoid).not.toBeChecked();
+
+    await user.click(avoid);
+    expect(onChange).toHaveBeenLastCalledWith({ avoidCollision: true });
+
+    await user.click(screen.getByRole("checkbox", { name: "previz.inspector.stayInBounds" }));
+    expect(onChange).toHaveBeenLastCalledWith({ stayInBounds: true });
+
+    // 勾上之后回读得到：受控框接的若是常量 false，点一下的补丁照样发得出去，
+    // 但那个勾会立刻弹回来。
+    expect(screen.getByRole("checkbox", { name: "previz.inspector.avoidCollision" }))
+      .toBeChecked();
+  });
+
+  it("shows only the character fields for a character", () => {
+    renderInspector(createPrevizObject("character", []));
+
+    expect(screen.getByLabelText("previz.inspector.markerColor")).toBeInTheDocument();
+    expect(screen.getByLabelText("previz.inspector.heightCm")).toBeInTheDocument();
+    expect(screen.getByLabelText("previz.inspector.bodyType")).toBeInTheDocument();
+    expect(screen.getByLabelText("previz.inspector.basePose")).toBeInTheDocument();
+    expect(screen.getByLabelText("previz.inspector.poseAdjust.pitch")).toBeInTheDocument();
+    expect(screen.getByText("previz.inspector.poseAdjust.label")).toBeInTheDocument();
+    expect(screen.queryByLabelText("previz.inspector.focalMm")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.lightType")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.assetFile")).toBeNull();
+  });
+
+  it("shows only the camera fields for a camera", () => {
+    renderInspector(createPrevizObject("camera", []));
+
+    expect(screen.getByLabelText("previz.inspector.focalMm")).toBeInTheDocument();
+    expect(screen.getByLabelText("previz.inspector.aperture")).toBeInTheDocument();
+    expect(screen.getByLabelText("previz.inspector.sensor")).toBeInTheDocument();
+    expect(screen.queryByLabelText("previz.inspector.heightCm")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.lightType")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.assetFile")).toBeNull();
+  });
+
+  it("shows only the light fields for a light", () => {
+    renderInspector(createPrevizObject("light", []));
+
+    expect(screen.getByLabelText("previz.inspector.lightType")).toBeInTheDocument();
+    expect(screen.getByLabelText("previz.inspector.color")).toBeInTheDocument();
+    expect(screen.getByLabelText("previz.inspector.intensity")).toBeInTheDocument();
+    expect(screen.queryByLabelText("previz.inspector.heightCm")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.focalMm")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.assetFile")).toBeNull();
+  });
+
+  it("shows only the prop fields for a prop", () => {
+    renderInspector(createPrevizObject("prop", []));
+
+    expect(screen.getByLabelText("previz.inspector.assetFile")).toBeInTheDocument();
+    expect(screen.queryByLabelText("previz.inspector.heightCm")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.focalMm")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.lightType")).toBeNull();
+  });
+
+  it("keeps the name and transform fields on every kind", () => {
+    const kinds: readonly PrevizObjectKind[] = ["character", "camera", "light", "prop"];
+    for (const kind of kinds) {
+      const { unmount } = render(
+        <PrevizInspector object={createPrevizObject(kind, [])} onChange={vi.fn()} />,
+      );
+      expect(screen.getByLabelText("previz.inspector.name")).toBeInTheDocument();
+      for (const channel of ["position", "rotation", "scale"] as const) {
+        expect(screen.getByText(`previz.inspector.${channel}.label`)).toBeInTheDocument();
+      }
+      const positionX = screen.getByLabelText("previz.inspector.position.x");
+      expect(positionX).toHaveAttribute("type", "number");
+      // 位移与缩放按 0.1 步进，旋转按整度：拖着微调箭头时这个差别很显眼。
+      expect(positionX).toHaveAttribute("step", "0.1");
+      expect(screen.getByLabelText("previz.inspector.rotation.y")).toHaveAttribute("step", "1");
+      expect(screen.getByLabelText("previz.inspector.scale.z")).toHaveAttribute("step", "0.1");
+      unmount();
+    }
+  });
+
+  it("shows the character defaults and edits the pose", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("character", []));
+
+    expect(screen.getByLabelText("previz.inspector.heightCm")).toHaveValue(175);
+    await pickOption(user, screen.getByLabelText("previz.inspector.basePose"), "sitting");
+
+    expect(onChange).toHaveBeenLastCalledWith({ basePoseId: "sitting" });
+  });
+
+  // 下拉框是这 15 个姿势在界面上唯一的入口：`PREVIZ_POSES` 被切一刀（`.slice(0, 5)`
+  // 之类）或者被过滤掉几个，选中的对象照样能存、能渲染，只是用户再也选不到那几个姿势，
+  // 一条断言都碰不到。选项值逐个写死在这里，不从 `PREVIZ_POSES` 取——跟着实现一起变的
+  // 列表等于没有列表。
+  it("offers every pose in the dropdown", async () => {
+    const user = userEvent.setup();
+    renderInspector(createPrevizObject("character", []));
+
+    const options = await optionValues(user, screen.getByLabelText("previz.inspector.basePose"));
+    expect(options).toEqual([
+      "standing",
+      "talking",
+      "arms_crossed",
+      "sitting",
+      "eating",
+      "crouching",
+      "kneeling",
+      "lying",
+      "walking",
+      "running",
+      "pointing",
+      "holding",
+      "interacting",
+      "fighting",
+      "sword",
+    ]);
+  });
+
+  // 姿势标签走 i18n，且刻意复用 viewer-kit 的 `viewer.threeD.poses.*` 而不是另起一套
+  // `previz.*` key——同一个姿势在预演台和 3D 导演里必须叫同一个名字，两张 key 表由
+  // poses.test.ts 的棘轮盯着。这里钉住的是 key，免得有人顺手改成 previz 自己的命名空间：
+  // 那样词条还在、界面也不报错，只有另一个文件里的棘轮会红，症状离改动很远。
+  it("labels the poses with the shared viewer-kit pose keys", async () => {
+    const user = userEvent.setup();
+    renderInspector(createPrevizObject("character", []));
+
+    const labels = await optionLabels(user, screen.getByLabelText("previz.inspector.basePose"));
+    expect(labels[0]).toBe("viewer.threeD.poses.standing");
+    expect(labels[3]).toBe("viewer.threeD.poses.sitting");
+    expect(labels[14]).toBe("viewer.threeD.poses.sword");
+  });
+
+  // 五个值逐个写死，不从 `BodyType` 取：漏掉一档下拉框里就没有那一项，用户永远选不到，
+  // 而落盘的场景里那一档照样合法——存进去是「高挑」，界面上显示成空选中，没有任何报错。
+  it("offers every build in the dropdown", async () => {
+    const user = userEvent.setup();
+    renderInspector(createPrevizObject("character", []));
+
+    const options = await optionValues(user, screen.getByLabelText("previz.inspector.bodyType"));
+    expect(options).toEqual([
+      "capsule",
+      "slim",
+      "average",
+      "heavy",
+      "tall",
+    ]);
+  });
+
+  it("edits the body type", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("character", []));
+
+    await pickOption(user, screen.getByLabelText("previz.inspector.bodyType"), "heavy");
+
+    expect(onChange).toHaveBeenLastCalledWith({ bodyType: "heavy" });
+  });
+
+  // 三档逐个写死，理由同上面那张体型表。少一档的表现同样是「存得进去、选不出来」。
+  it("offers every height policy in the dropdown", async () => {
+    const user = userEvent.setup();
+    renderInspector(createPrevizObject("character", []));
+
+    const options = await optionValues(
+      user,
+      screen.getByLabelText("previz.inspector.heightPolicy"),
+    );
+    expect(options).toEqual(["follow", "ground", "plane"]);
+  });
+
+  it("edits the height policy", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("character", []));
+
+    await pickOption(user, screen.getByLabelText("previz.inspector.heightPolicy"), "ground");
+
+    expect(onChange).toHaveBeenLastCalledWith({ heightPolicy: "ground" });
+  });
+
+  /**
+   * 切到「锁定平面」要把 `planeY` 锁在他现在站的那一层，而不是留在工厂给的 0：
+   * 站在二楼的人一改策略就会掉到地面上，用户看到的是「选了个策略人就掉下去了」。
+   *
+   * 夹具的 y 必须非零——用 0 的话「读了当前高度」与「压根没读、留在 0」两种实现
+   * 都绿，是一条空跑的断言。
+   */
+  it("locks the plane height to where the character already stands", async () => {
+    const user = userEvent.setup();
+    const character = createPrevizObject("character", []);
+    const onChange = renderInspector({
+      ...character,
+      transform: { ...character.transform, position: [1, 3.5, -2] },
+    });
+
+    await pickOption(user, screen.getByLabelText("previz.inspector.heightPolicy"), "plane");
+
+    expect(onChange).toHaveBeenLastCalledWith({ heightPolicy: "plane", planeY: 3.5 });
+  });
+
+  it("edits the plane height once the policy locks it", () => {
+    const character = createPrevizObject("character", []);
+    const onChange = renderInspector({ ...character, heightPolicy: "plane", planeY: 3.5 });
+
+    const input = screen.getByLabelText("previz.inspector.planeY");
+    expect(input).toHaveValue(3.5);
+
+    setValue(input, "-2.25");
+    expect(onChange).toHaveBeenLastCalledWith({ planeY: -2.25 });
+  });
+
+  // 只有「锁定平面」那一档读得到这个数，其余两档摆一个改不出效果的输入框在那里，
+  // 用户会以为自己改的高度没生效。
+  it("hides the plane height under the other policies", () => {
+    renderInspector(createPrevizObject("character", []));
+
+    expect(screen.queryByLabelText("previz.inspector.planeY")).toBeNull();
+  });
+
+  /**
+   * 非有限值不算一次修改。放行的话 store 的 `normalizeObject`（走 `parseObject` 的
+   * `num(source.planeY, 0)`）会把它**静默洗成 0**——人物瞬间掉到地面，而输入框里
+   * 用户敲的东西还在，没有任何地方说这次编辑被改写了。理由与 `readNumber` 同源。
+   */
+  it("ignores a non-finite plane height", () => {
+    const character = createPrevizObject("character", []);
+    const onChange = renderInspector({ ...character, heightPolicy: "plane", planeY: 3.5 });
+
+    const input = screen.getByLabelText("previz.inspector.planeY");
+    setValue(input, "");
+    setValue(input, "NaN");
+    setValue(input, "Infinity");
+    setValue(input, "-Infinity");
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 「贴合地面」的 y 是渲染器每帧打射线算出来的（`PrevizRenderer.standGroundCharacters`
+   * 直接写 `node.position.y`），「锁定平面」的 y 由求值层压成 `planeY`
+   * （`evaluate.ts` 的 `applyHeightPolicies`）。两档下 Y 输入框改了都不会有任何反应，
+   * 不置灰就是一个看起来坏了的控件；那条 note 是唯一说明「为什么改不动」的地方。
+   */
+  it("disables the Y entry while the height is computed", async () => {
+    const user = userEvent.setup();
+    const character = createPrevizObject("character", []);
+    renderInspector(character);
+
+    const y = screen.getByLabelText("previz.inspector.position.y");
+    expect(y).toBeEnabled();
+    expect(screen.queryByTestId("previz-inspector-height-note")).toBeNull();
+
+    await pickOption(user, screen.getByLabelText("previz.inspector.heightPolicy"), "ground");
+
+    expect(screen.getByLabelText("previz.inspector.position.y")).toBeDisabled();
+    expect(screen.getByTestId("previz-inspector-height-note")).toHaveTextContent(
+      "previz.inspector.heightNote.ground",
+    );
+
+    await pickOption(user, screen.getByLabelText("previz.inspector.heightPolicy"), "plane");
+
+    expect(screen.getByLabelText("previz.inspector.position.y")).toBeDisabled();
+    expect(screen.getByTestId("previz-inspector-height-note")).toHaveTextContent(
+      "previz.inspector.heightNote.plane",
+    );
+  });
+
+  // 置灰的只有 Y：X 与 Z 归走位管，任何一档策略都碰不到它们。
+  it("leaves X and Z editable under every height policy", () => {
+    const character = createPrevizObject("character", []);
+    renderInspector({ ...character, heightPolicy: "ground" });
+
+    expect(screen.getByLabelText("previz.inspector.position.x")).toBeEnabled();
+    expect(screen.getByLabelText("previz.inspector.position.z")).toBeEnabled();
+  });
+
+  it("clamps the height into the supported range", () => {
+    const onChange = renderInspector(createPrevizObject("character", []));
+
+    const input = screen.getByLabelText("previz.inspector.heightCm");
+    expect(input).toHaveAttribute("min", "120");
+    expect(input).toHaveAttribute("max", "220");
+
+    setValue(input, "999");
+    expect(onChange).toHaveBeenLastCalledWith({ heightCm: 220 });
+
+    setValue(input, "5");
+    expect(onChange).toHaveBeenLastCalledWith({ heightCm: 120 });
+
+    setValue(input, "168");
+    expect(onChange).toHaveBeenLastCalledWith({ heightCm: 168 });
+  });
+
+  // 清空身高框和清空位置框是同一种编辑中间态：Number("") 是 0，不拦就会当场把人物
+  // 压到最矮的 120，用户连第二个数字都还没敲。
+  it("ignores an emptied height entry", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("character", []));
+
+    await user.clear(screen.getByLabelText("previz.inspector.heightCm"));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  // 三根微调滑杆共用一个 poseAdjust 对象，回调里漏展开就会把另外两轴清成 undefined。
+  it("edits one pose-adjust axis without dropping the others", () => {
+    const onChange = renderInspector(
+      createPrevizObject("character", [], { poseAdjust: distinctPoseAdjust() }),
+    );
+
+    // range 输入用 fireEvent：userEvent 对滑杆的拖动模拟在 jsdom 里不产生 change。
+    setValue(screen.getByLabelText("previz.inspector.poseAdjust.turn"), "15");
+
+    // 另外两轴要带着**它们原本的值**过来。夹具全零的话，一份 `{pitch: 0, lean: 0, …}`
+    // 的硬编码回调也能绿。
+    expect(onChange).toHaveBeenLastCalledWith({
+      poseAdjust: { pitch: 5, turn: 15, lean: 7 },
+    });
+  });
+
+  it("edits the remaining pose-adjust axes on their own keys", () => {
+    const onChange = renderInspector(
+      createPrevizObject("character", [], { poseAdjust: distinctPoseAdjust() }),
+    );
+
+    setValue(screen.getByLabelText("previz.inspector.poseAdjust.pitch"), "20");
+    expect(onChange).toHaveBeenLastCalledWith({ poseAdjust: { pitch: 20, turn: -12, lean: 7 } });
+
+    setValue(screen.getByLabelText("previz.inspector.poseAdjust.lean"), "-10");
+    expect(onChange).toHaveBeenLastCalledWith({ poseAdjust: { pitch: 20, turn: -12, lean: -10 } });
+  });
+
+  // 三根滑杆是同一段 map 出来的，`value` 写死成某一轴（比如三根都读 pitch）在默认夹具
+  // 下毫无症状——三轴都是 0。这条盯的就是「每根滑杆读自己那一轴」。
+  // range 输入的 `toHaveValue` 给的是字符串（jest-dom 只对 type="number" 转数字）。
+  it("shows each pose-adjust axis on its own slider", () => {
+    renderInspector(createPrevizObject("character", [], { poseAdjust: distinctPoseAdjust() }));
+
+    expect(screen.getByLabelText("previz.inspector.poseAdjust.pitch")).toHaveValue("5");
+    expect(screen.getByLabelText("previz.inspector.poseAdjust.turn")).toHaveValue("-12");
+    expect(screen.getByLabelText("previz.inspector.poseAdjust.lean")).toHaveValue("7");
+  });
+
+  // 拖了一根之后其余两根不许跟着跳。
+  it("keeps the other pose-adjust sliders put after one axis is dragged", () => {
+    renderInspector(createPrevizObject("character", [], { poseAdjust: distinctPoseAdjust() }));
+
+    setValue(screen.getByLabelText("previz.inspector.poseAdjust.turn"), "30");
+
+    expect(screen.getByLabelText("previz.inspector.poseAdjust.turn")).toHaveValue("30");
+    expect(screen.getByLabelText("previz.inspector.poseAdjust.pitch")).toHaveValue("5");
+    expect(screen.getByLabelText("previz.inspector.poseAdjust.lean")).toHaveValue("7");
+  });
+
+  // 身高 / 体型 / 基础姿势三个框各读各的字段。三个值都取成非默认值：读到默认值上去
+  // （`value={175}` 之类）在默认夹具下同样看不出来。
+  it("shows the character's own height, body type and base pose", () => {
+    renderInspector(
+      createPrevizObject("character", [], {
+        heightCm: 163,
+        bodyType: "heavy",
+        basePoseId: "sitting",
+      }),
+    );
+
+    expect(screen.getByLabelText("previz.inspector.heightCm")).toHaveValue(163);
+    expect(screen.getByLabelText("previz.inspector.bodyType")).toHaveAttribute("data-value", "heavy");
+    expect(screen.getByLabelText("previz.inspector.basePose")).toHaveAttribute("data-value", "sitting");
+  });
+
+  // 三轴的区间各不相同（人向前屈得比向后仰得多），一根滑杆一根滑杆地锁住，
+  // 免得有人图省事把三根都写成同一对 ±30。
+  it("gives each pose-adjust slider its own range", () => {
+    renderInspector(createPrevizObject("character", []));
+
+    const bounds = [
+      { axis: "pitch", min: "-30", max: "45" },
+      { axis: "turn", min: "-60", max: "60" },
+      { axis: "lean", min: "-35", max: "35" },
+    ] as const;
+    for (const { axis, min, max } of bounds) {
+      const slider = screen.getByLabelText(`previz.inspector.poseAdjust.${axis}`);
+      expect(slider).toHaveAttribute("type", "range");
+      expect(slider).toHaveAttribute("min", min);
+      expect(slider).toHaveAttribute("max", max);
+      // 步长也一起钉：三轴都是整度，粗一格的滑杆就调不出 -12° 这种值了。
+      expect(slider).toHaveAttribute("step", "1");
+    }
+  });
+
+  it("shows camera fields and reports the derived angle of view", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("camera", []));
+
+    // 全画幅 50 mm 的镜头视角是 27.0°，直接显示出来省得用户自己心算。
+    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^27\.0°$/);
+
+    await pickOption(user, screen.getByLabelText("previz.inspector.sensor"), "s35");
+    expect(onChange).toHaveBeenLastCalledWith({ sensor: "s35" });
+    // 换机身要真的换掉换算里的成像面尺寸：Super 35 的 50 mm 是 21.1°，不是 27.0°。
+    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^21\.1°$/);
+  });
+
+  // 两个选项的 value 就是 store 里存的机身 id。把 "ff" 打错（或两个 option 写成
+  // 同一个 value）之后，默认的全画幅机位在下拉框里选不中、也换不回来，而 `sensor: "s35"`
+  // 的机位照样一切正常——上面那条用例只走 s35，看不出来。
+  it("offers both sensor options", async () => {
+    const user = userEvent.setup();
+    renderInspector(createPrevizObject("camera", []));
+
+    const select = screen.getByLabelText("previz.inspector.sensor");
+    expect(await optionValues(user, select)).toEqual(["ff", "s35"]);
+    // 默认机位是全画幅：选不中 "ff" 时框里就显示不出当前机身。
+    expect(select).toHaveAttribute("data-value", "ff");
+    expect(select).toHaveTextContent("previz.inspector.sensors.ff");
+  });
+
+  it("recomputes the angle of view when the focal length changes", () => {
+    renderInspector(createPrevizObject("camera", []));
+
+    // 全画幅 24 mm 是 53.1°。
+    setValue(screen.getByLabelText("previz.inspector.focalMm"), "24");
+    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^53\.1°$/);
+  });
+
+  it("clamps focal length into the supported range", () => {
+    const onChange = renderInspector(createPrevizObject("camera", []));
+
+    const input = screen.getByLabelText("previz.inspector.focalMm");
+    expect(input).toHaveAttribute("min", "12");
+    expect(input).toHaveAttribute("max", "200");
+
+    setValue(input, "900");
+    expect(onChange).toHaveBeenLastCalledWith({ focalMm: 200 });
+
+    setValue(input, "5");
+    expect(onChange).toHaveBeenLastCalledWith({ focalMm: 12 });
+
+    setValue(input, "85");
+    expect(onChange).toHaveBeenLastCalledWith({ focalMm: 85 });
+  });
+
+  // 焦距、光圈、机身三个框各读各的字段。默认机位是 50 mm / f2.8 / ff——光圈框显示焦距
+  // 之类的串读在**没有任何回读断言**时完全无症状，所以这里三个值全取非默认，逐个钉。
+  it("shows the camera's own focal length, aperture and sensor", () => {
+    renderInspector(
+      createPrevizObject("camera", [], { focalMm: 85, aperture: 5.6, sensor: "s35" }),
+    );
+
+    expect(screen.getByLabelText("previz.inspector.focalMm")).toHaveValue(85);
+    expect(screen.getByLabelText("previz.inspector.aperture")).toHaveValue(5.6);
+    expect(screen.getByLabelText("previz.inspector.sensor")).toHaveAttribute("data-value", "s35");
+    // Super 35 的 85 mm 是 12.5°：读数要同时跟着焦距与机身走，把 aperture 当焦距喂进
+    // 换算（5.6 mm 在 s35 上是 118.6°）也会在这里现形。
+    expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^12\.5°$/);
+  });
+
+  it("clamps the aperture into the supported range", () => {
+    const onChange = renderInspector(createPrevizObject("camera", []));
+
+    const input = screen.getByLabelText("previz.inspector.aperture");
+    expect(input).toHaveAttribute("min", "1.2");
+    expect(input).toHaveAttribute("max", "22");
+
+    setValue(input, "99");
+    expect(onChange).toHaveBeenLastCalledWith({ aperture: 22 });
+
+    setValue(input, "0");
+    expect(onChange).toHaveBeenLastCalledWith({ aperture: 1.2 });
+
+    setValue(input, "4");
+    expect(onChange).toHaveBeenLastCalledWith({ aperture: 4 });
+  });
+
+  // 清空焦距框同样是中间态：夹取对非有限值会回落到默认 50 mm，逐键放行的话
+  // 用户一删就跳回 50，再也打不出 120。
+  it("ignores an emptied camera entry", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("camera", []));
+
+    await user.clear(screen.getByLabelText("previz.inspector.focalMm"));
+    await user.clear(screen.getByLabelText("previz.inspector.aperture"));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("shows light fields", async () => {
+    const user = userEvent.setup();
+    const onChange = renderInspector(createPrevizObject("light", []));
+
+    await pickOption(user, screen.getByLabelText("previz.inspector.lightType"), "spot");
+
+    expect(onChange).toHaveBeenLastCalledWith({ lightType: "spot" });
+  });
+
+  it("edits the light colour", () => {
+    const onChange = renderInspector(createPrevizObject("light", []));
+
+    const input = screen.getByLabelText("previz.inspector.color");
+    expect(input).toHaveAttribute("type", "color");
+    setValue(input, "#ff8800");
+
+    expect(onChange).toHaveBeenLastCalledWith({ color: "#ff8800" });
+  });
+
+  it("edits the light intensity over the full slider travel", () => {
+    const onChange = renderInspector(createPrevizObject("light", []));
+
+    const slider = screen.getByLabelText("previz.inspector.intensity");
+    expect(slider).toHaveAttribute("type", "range");
+    expect(slider).toHaveAttribute("min", "0");
+    expect(slider).toHaveAttribute("max", "10");
+    // 步长和变换框一样是拖拽手感的一部分：整数步的强度滑杆调不出 3.5。
+    expect(slider).toHaveAttribute("step", "0.1");
+
+    setValue(slider, "7.5");
+
+    expect(onChange).toHaveBeenLastCalledWith({ intensity: 7.5 });
+  });
+
+  // 灯光的三个框同理。强度默认是 1，而默认 scale 也是 [1, 1, 1]——滑杆读到 scale.x 上去
+  // 在默认夹具下一模一样。取 3.5（滑杆区间 0..10、step 0.1 的合法格点）把它们分开。
+  it("shows the light's own type, colour and intensity", () => {
+    renderInspector(
+      createPrevizObject("light", [], {
+        lightType: "spot",
+        color: "#3366cc",
+        intensity: 3.5,
+      }),
+    );
+
+    expect(screen.getByLabelText("previz.inspector.lightType")).toHaveAttribute("data-value", "spot");
+    expect(screen.getByLabelText("previz.inspector.color")).toHaveValue("#3366cc");
+    expect(screen.getByLabelText("previz.inspector.intensity")).toHaveValue("3.5");
+  });
+
+  it("shows the prop asset url read-only", () => {
+    renderInspector(
+      createPrevizObject("prop", [], { name: "红椅子", assetUrl: "/static/chair.glb" }),
+    );
+
+    // 名字框也是回读方向的一员：它显示的必须是 name，不是 id、也不是资产路径。
+    expect(screen.getByLabelText("previz.inspector.name")).toHaveValue("红椅子");
+    const input = screen.getByLabelText("previz.inspector.assetFile");
+    // 只显示文件名；完整地址留在悬停提示里。
+    expect(input).toHaveValue("chair.glb");
+    expect(input).toHaveAttribute("title", "/static/chair.glb");
+    // 手打 URL 只会打错；换模型走模型库。
+    expect(input).toHaveAttribute("readonly");
+  });
+
+  // 模型库的模型显示库里的名字，不把 CDN 地址摊给用户看；换过根的旧物件也认得出来。
+  it("names a library model instead of showing its CDN url", () => {
+    renderInspector(
+      createPrevizObject("prop", [], {
+        assetUrl: "/previz/models/v1/vehicle/sedan.glb",
+        assetFormat: "glb",
+      }),
+    );
+
+    const input = screen.getByLabelText("previz.inspector.libraryModel");
+    expect(input).toHaveValue("previz.library.model.vehicle-sedan");
+    expect(screen.queryByLabelText("previz.inspector.assetFile")).toBeNull();
+  });
+
+  // 几何体的 assetUrl 是形状名，把「cube」当地址显示给用户没有意义。
+  it("names a primitive prop's shape instead of showing it as a URL", () => {
+    renderInspector(
+      createPrevizObject("prop", [], { assetUrl: "cube", assetFormat: "primitive" }),
+    );
+
+    const input = screen.getByLabelText("previz.inspector.primitive");
+    expect(input).toHaveValue("previz.library.primitive.cube");
+    expect(input).toHaveAttribute("readonly");
+    expect(screen.queryByLabelText("previz.inspector.assetFile")).toBeNull();
+  });
+
+  // 更新的版本写入的新形状：认不出就原样显示，别显示一个不存在的 i18n key。
+  it("shows an unknown primitive shape name as written", () => {
+    renderInspector(
+      createPrevizObject("prop", [], { assetUrl: "dodecahedron", assetFormat: "primitive" }),
+    );
+
+    expect(screen.getByLabelText("previz.inspector.primitive")).toHaveValue("dodecahedron");
+  });
+});
