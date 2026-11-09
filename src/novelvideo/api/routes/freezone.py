@@ -5915,6 +5915,8 @@ async def generate_freezone_recipe_text(
     """Compile and execute one catalog-backed text node."""
     username = str(user.get("username") or "")
     await _require_recipe_compile_product_admission(body=body, user=user)
+    started_at = time.monotonic()
+    phase = "text_generation"
     try:
         content = await generate_recipe_text(
             username=username,
@@ -5930,6 +5932,8 @@ async def generate_freezone_recipe_text(
             upstream_text=body.upstream_text,
             reference_media=[item.model_dump() for item in body.reference_media],
         )
+        phase = "text_delivery"
+        started_at = time.monotonic()
         await _record_recipe_compile_product_evidence(
             body=body,
             compiled=RecipeCompileResult(
@@ -5948,15 +5952,26 @@ async def generate_freezone_recipe_text(
     except HTTPException:
         raise
     except Exception as exc:
+        elapsed_ms = max(0, int((time.monotonic() - started_at) * 1000))
         await _fail_recipe_product_operation(body=body, user=user)
         if _is_recipe_text_generation_timeout(exc):
-            logger.warning("freezone Recipe text generation timed out")
+            logger.warning(
+                "freezone Recipe text request timed out phase=%s elapsed_ms=%s recipe_id=%s",
+                phase,
+                elapsed_ms,
+                body.recipe_id,
+                extra={"phase": phase, "elapsed_ms": elapsed_ms, "recipe_id": body.recipe_id},
+            )
+            elapsed_seconds = math.ceil(elapsed_ms / 1000)
+            detail = (
+                f"Recipe 文本生成超时：等待文本生成结果已耗时 {elapsed_seconds} 秒。"
+                "本轮未继续执行下游节点。"
+                if phase == "text_generation"
+                else f"Recipe 文本交付确认超时：已耗时 {elapsed_seconds} 秒，请检查任务状态。"
+            )
             raise HTTPException(
                 status_code=504,
-                detail=(
-                    "Recipe 文本生成超时：模型在规定时间内未返回结果，请稍后重试。"
-                    "本轮未继续执行下游节点。"
-                ),
+                detail=detail,
             ) from exc
         logger.exception("freezone Recipe text generation failed")
         raise HTTPException(

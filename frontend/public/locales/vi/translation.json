@@ -4801,6 +4801,8 @@
     "addImage": "Thêm ảnh",
     "splitStoryboard": "Tách ô lưới",
     "generate": "Tạo",
+    "textGenerationWaiting": "Đang tạo văn bản",
+    "generationElapsed": "Đã chờ {{elapsed}}",
     "generationProgress": "Đang tạo {{percent}}%",
     "analysisProgress": "Đang phân tích {{percent}}%",
     "generating": "Đang tạo",
