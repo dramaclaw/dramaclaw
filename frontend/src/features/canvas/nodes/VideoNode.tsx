@@ -4,6 +4,7 @@ import { useVideoContinuityMode } from "@/features/canvas/nodes/shared/useVideoC
 import { ensureVideoContinuity, videoContinuitySources } from "@/features/canvas/application/videoContinuity";
 import { selectVideoModel } from "@/features/canvas/domain/catalogVideoModels";
 import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
+import { runManualVideoRecipe, type VideoExecutionSource } from "@/features/canvas/application/manualVideoRecipe";
 import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import {
   memo,
@@ -2505,8 +2506,32 @@ export const VideoNode = memo(
       (videoModeRequiresPrompt(genMode) && !hasPromptText) ||
       (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode && !canPrepareContinuity);
 
-    const handleSubmit = useCallback(async () => {
+    const handleSubmit = useCallback(async (
+      options: { executionSource?: VideoExecutionSource } = {},
+    ) => {
+      const executionSource = options.executionSource ?? 'manual';
       if (submitDisabled) return;
+      const location = readUrl();
+      if (location.project) {
+        const admittedRun = runManualVideoRecipe({
+          nodeId: id, nodeData: data, projectId: location.project,
+          canvasId: location.canvas ?? 'default', executionSource,
+        });
+        if (admittedRun) {
+          updateNodeData(id, {
+            generationError: null, generationErrorDetails: null, generationErrorRequestId: null,
+          });
+          try {
+            await admittedRun;
+          } catch (error) {
+            updateNodeData(id, {
+              isGenerating: false, generationStartedAt: null,
+              generationError: backendErrorToastMessage(error, t),
+            });
+          }
+          return;
+        }
+      }
       // 在途守卫（与 ImageGenNode 一致）：第 1 条完成就会清 isGenerating，
       // submitDisabled 拦不住「旧批次 N-1 个任务还在跑时重新提交」——旧闭包
       // 会用过期的 completedUrls 覆写新批次的 generationBatch。
@@ -2568,6 +2593,7 @@ export const VideoNode = memo(
         }
         const composedPrompt = await compileWorkflowNodePrompt({
           nodeId: id,
+          executionSource,
           nodeData: data,
           nodeKind: "video",
           nodePrompt: trimmedPrompt,
@@ -3275,7 +3301,7 @@ export const VideoNode = memo(
       cameraMovementId,
       cameraMovementPreset,
       count,
-      data.modelParams,
+      data,
       data.referenceFileName,
       data.referenceFileUrl,
       data.referenceLink,
@@ -3341,7 +3367,7 @@ export const VideoNode = memo(
             .catch((error) => publishNodeActionError(requestId, id, action, error));
           return;
         }
-        void handleSubmit()
+        void handleSubmit({ executionSource: 'workflow' })
           .then(() => {
             const finished = useCanvasStore.getState().nodes.find((node) => node.id === id);
             const generationError =

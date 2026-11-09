@@ -33,6 +33,7 @@ import {
   joinUpstreamText,
 } from "@/features/canvas/application/graphContentResolver";
 import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
+import { runManualVideoRecipe, type VideoExecutionSource } from "@/features/canvas/application/manualVideoRecipe";
 import { useVideoReferenceNodes } from "@/features/canvas/application/useUpstreamGraph";
 import {
   sortUpstreamByReferenceOrder,
@@ -1213,7 +1214,10 @@ export function useVideoGenerationForm(
     (videoModeRequiresPrompt(genMode) && !hasPromptText) ||
     (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode && !canPrepareContinuity);
 
-  const handleSubmit = useCallback(async (): Promise<{ videoUrl?: string }> => {
+  const handleSubmit = useCallback(async (
+    options: { executionSource?: VideoExecutionSource } = {},
+  ): Promise<{ videoUrl?: string }> => {
+    const executionSource = options.executionSource ?? 'manual';
     if (billingRuleMissingSubmitMessage) {
       updateNodeData(id, {
         isGenerating: false,
@@ -1225,6 +1229,27 @@ export function useVideoGenerationForm(
       return {};
     }
     if (submitDisabled) return {};
+    const location = readUrl();
+    if (location.project) {
+      const admittedRun = runManualVideoRecipe({
+        nodeId: id, nodeData: data, projectId: location.project,
+        canvasId: location.canvas ?? 'default', executionSource,
+      });
+      if (admittedRun) {
+        updateNodeData(id, {
+          generationError: null, generationErrorDetails: null, generationErrorRequestId: null,
+        });
+        try {
+          await admittedRun;
+        } catch (error) {
+          updateNodeData(id, {
+            ...CLEARED_GENERATION_TASK_FIELDS,
+            generationError: backendErrorToastMessage(error, t),
+          });
+        }
+        return {};
+      }
+    }
     // 在途守卫（与 ImageGenNode 一致）：第 1 条完成就会清 isGenerating，
     // submitDisabled 拦不住「旧批次 N-1 个任务还在跑时重新提交」——旧闭包
     // 会用过期的 completedUrls 覆写新批次的 generationBatch。
@@ -1280,6 +1305,7 @@ export function useVideoGenerationForm(
       }
       const composedPrompt = await compileWorkflowNodePrompt({
         nodeId: id,
+        executionSource,
         nodeData: data,
         nodeKind: "video",
         nodePrompt: trimmedPrompt,
