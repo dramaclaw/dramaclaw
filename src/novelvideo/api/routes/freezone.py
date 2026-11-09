@@ -5956,7 +5956,10 @@ async def generate_freezone_recipe_text(
         await _fail_recipe_product_operation(body=body, user=user)
         if _is_recipe_text_generation_timeout(exc):
             logger.warning(
-                "freezone Recipe text request timed out",
+                "freezone Recipe text request timed out phase=%s elapsed_ms=%s recipe_id=%s",
+                phase,
+                elapsed_ms,
+                body.recipe_id,
                 extra={"phase": phase, "elapsed_ms": elapsed_ms, "recipe_id": body.recipe_id},
             )
             elapsed_seconds = math.ceil(elapsed_ms / 1000)

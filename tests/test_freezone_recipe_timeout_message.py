@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 import time
+import logging
+from logging.handlers import RotatingFileHandler
 
 import pytest
 from fastapi import HTTPException
@@ -52,11 +54,17 @@ async def test_recipe_text_timeout_returns_explicit_chat_safe_detail(monkeypatch
     record = next(r for r in caplog.records if getattr(r, "phase", None) == "text_generation")
     assert record.elapsed_ms == 301250
     assert record.recipe_id == "general-text"
+    handler = next(h for h in logging.getLogger("novelvideo.api").handlers
+                   if isinstance(h, RotatingFileHandler))
+    rendered = handler.format(record)
+    assert "phase=text_generation" in rendered
+    assert "elapsed_ms=301250" in rendered
+    assert "recipe_id=general-text" in rendered
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("delivery_timeout", [False, True])
-async def test_recipe_text_late_success_and_delivery_timeout(monkeypatch, delivery_timeout):
+async def test_recipe_text_late_success_and_delivery_timeout(monkeypatch, delivery_timeout, caplog):
     clock = SimpleNamespace(now=100.0)
     monkeypatch.setattr(
         freezone, "time", SimpleNamespace(monotonic=lambda: clock.now, time=time.time)
@@ -86,6 +94,14 @@ async def test_recipe_text_late_success_and_delivery_timeout(monkeypatch, delive
         assert exc_info.value.status_code == 504
         assert exc_info.value.detail == "Recipe 文本交付确认超时：已耗时 3 秒，请检查任务状态。"
         assert failures == [True]
+        record = next(r for r in caplog.records if getattr(r, "phase", None) == "text_delivery")
+        handler = next(h for h in logging.getLogger("novelvideo.api").handlers
+                       if isinstance(h, RotatingFileHandler))
+        rendered = handler.format(record)
+        assert "phase=text_delivery" in rendered
+        assert f"elapsed_ms={record.elapsed_ms}" in rendered
+        assert "recipe_id=general-text" in rendered
+        assert "internal provider address" not in rendered
     else:
         result = await freezone.generate_freezone_recipe_text(body, user={"username": "local"})
         assert result == {"ok": True, "data": {"content": "完成的文本"}}
