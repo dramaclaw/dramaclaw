@@ -7348,7 +7348,11 @@
       "threeDWorldNode": "3D 世界",
       "skillNode": "技能",
       "styleNode": "风格",
-      "htmlArtifactNode": "网页"
+      "htmlArtifactNode": "网页",
+      "previzNode": "预演台",
+      "videoBreakdownNode": "逐帧拉片",
+      "vectorSvgNode": "矢量图 · SVG",
+      "animatedGifNode": "动态图 · GIF"
     },
     "exportResult": {
       "generic": "结果图片",
