@@ -2165,6 +2165,7 @@ frontend/src/features/canvas/ui/MultiSelectionConnectButton.tsx,Elastic-2.0,2026
 frontend/src/features/canvas/ui/MultiSelectionToolbar.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/NodeActionToolbar.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/NodeGenerationHistory.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/ui/NodeGenerationOverlay.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/NodeGenerationOverlay.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/NodeHeader.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/NodeHistoryRail.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

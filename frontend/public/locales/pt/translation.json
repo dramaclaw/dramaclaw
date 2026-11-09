@@ -4918,6 +4918,8 @@
     "addImage": "Adicionar imagem",
     "splitStoryboard": "Extrair células da grelha",
     "generate": "Gerar",
+    "textGenerationWaiting": "A gerar texto",
+    "generationElapsed": "A aguardar {{elapsed}}",
     "generationProgress": "A gerar {{percent}}%",
     "analysisProgress": "A analisar {{percent}}%",
     "generating": "A gerar",

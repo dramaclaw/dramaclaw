@@ -4918,6 +4918,8 @@
     "addImage": "添加图片",
     "splitStoryboard": "分格抽取",
     "generate": "生成",
+    "textGenerationWaiting": "正在生成文本",
+    "generationElapsed": "已等待 {{elapsed}}",
     "generationProgress": "生成中 {{percent}}%",
     "analysisProgress": "解析中 {{percent}}%",
     "generating": "生成中",
