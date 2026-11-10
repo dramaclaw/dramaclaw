@@ -58,6 +58,20 @@ def executor(monkeypatch, tmp_path):
     pool.close()
 
 
+async def test_real_bundle_rejects_inline_media_without_saving(executor):
+    _, apply, saved_bodies, root = executor
+    before = canvas_store.read_canvas(root, "default")
+    with pytest.raises(agent_canvas.CanvasInlineMediaError) as exc:
+        await apply([
+            {"type": "create_node", "node_type": "imageGenNode",
+             "data": {"imageUrl": "data:image/png;base64,AAAA"}},
+        ])
+    assert len(exc.value.fields) == 1
+    assert exc.value.fields[0]["field"] == "imageUrl"
+    assert saved_bodies == []
+    assert canvas_store.read_canvas(root, "default")["revision"] == before["revision"]
+
+
 async def test_real_bundle_saves_structural_batch_and_reads_host_context(executor):
     pool, apply, saved_bodies, root = executor
     result = await apply([

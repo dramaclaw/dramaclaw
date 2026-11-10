@@ -46,6 +46,8 @@ async function applyCommandsSerial(canvas: SavedCanvas, envelopes: CanvasChatCom
   return withCanvasModelCatalogsAsync(catalogs, async () => {
     const store = createCanvasStore(createNodeCanvasEnvironment({ translate, ids: env.ids, now: env.now, videoModels: catalogs.video }));
     const input = structuredClone(canvas);
+    // Clean historical inline media; leave command output for Python validation.
+    input.nodes = sanitizePreviewImageUrls(input.nodes) as CanvasNode[];
     store.getState().setCanvasData(input.nodes, input.edges);
     // Shared hydration only knows registered types. Keep saved extension nodes
     // and their edges available to structural commands in the worker.
@@ -58,8 +60,7 @@ async function applyCommandsSerial(canvas: SavedCanvas, envelopes: CanvasChatCom
       }));
     }
     const initialState = store.getState();
-    // The sanitizer only rewrites preview URLs and preserves the node shape.
-    const before = { nodes: sanitizePreviewImageUrls(initialState.nodes) as CanvasNode[], edges: initialState.edges };
+    const before = { nodes: initialState.nodes, edges: initialState.edges };
     const normalized = normalizeCanvasChatCommandEnvelopesForValidation(envelopes, store.getState().nodes.map(node => node.id));
     const host_command_types = [...new Set(normalized.flatMap(envelope => envelope.commands.map(command => command.type).filter(type => HOST_COMMANDS.has(type))))];
     const validation = validateCanvasChatCommandEnvelopes(normalized, store.getState().nodes, store.getState().edges, defaultNodeDataDefaults);
@@ -83,7 +84,7 @@ async function applyCommandsSerial(canvas: SavedCanvas, envelopes: CanvasChatCom
       result = await applyCanvasCommandsAsync(store, commandEnv, normalized);
     }
     const state = store.getState();
-    const after = status === 'applied' ? { nodes: sanitizePreviewImageUrls(state.nodes) as CanvasNode[], edges: state.edges } : before;
+    const after = status === 'applied' ? { nodes: state.nodes, edges: state.edges } : before;
     const oldNodes = new Map(before.nodes.map(node => [node.id, node]));
     const newNodes = new Map(after.nodes.map(node => [node.id, node]));
     const oldEdges = new Set(before.edges.map(edge => edge.id));
