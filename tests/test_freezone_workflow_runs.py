@@ -1184,3 +1184,262 @@ def test_workflow_run_rejects_unknown_action_update(tmp_path: Path) -> None:
                 {"node_id": "other", "action": "generate_image", "status": "completed"}
             ],
         )
+
+
+RUN_CLOCK = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _create_owned_run(project_dir, *, canvas_id="default", **kwargs):
+    return create_workflow_run(
+        project_dir=project_dir,
+        project_id="project-a",
+        canvas_id=canvas_id,
+        actions=[{"node_id": "text-1", "action": "generate_text"}],
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize("owner_kind", ["server", "browser_legacy"])
+def test_run_owner_is_fixed_at_creation(tmp_path, owner_kind):
+    run = _create_owned_run(
+        tmp_path, owner_kind=owner_kind,
+        metadata={"owner_kind": "browser_legacy" if owner_kind == "server" else "server"},
+    )
+    assert run["owner_kind"] == owner_kind
+    assert run["metadata"]["owner_kind"] == owner_kind
+    assert read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+    )["owner_kind"] == owner_kind
+
+
+def test_run_owner_defaults_to_browser_and_legacy_rows_read_as_browser(tmp_path):
+    run = _create_owned_run(tmp_path, metadata={"owner_kind": "server"})
+    assert run["owner_kind"] == "browser_legacy"
+    assert run["metadata"]["owner_kind"] == "browser_legacy"
+    with sqlite3.connect(workflow_runs_db_path(tmp_path)) as conn:
+        conn.execute("UPDATE workflow_runs SET metadata_json = '{}' WHERE run_id = ?",
+                     (run["run_id"],))
+    legacy = read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+    )
+    assert legacy["owner_kind"] == "browser_legacy"
+    assert legacy["metadata"] == {}
+
+
+def test_run_owner_rejects_invalid_kind(tmp_path):
+    with pytest.raises(ValueError, match="owner_kind"):
+        _create_owned_run(tmp_path, owner_kind="unknown")
+
+
+@pytest.mark.parametrize("runner_id", ["", "old-runner"])
+def test_running_server_run_blocks_creation_even_without_live_lease(tmp_path, runner_id):
+    run = _create_owned_run(
+        tmp_path, owner_kind="server", runner_id=runner_id, now=RUN_CLOCK,
+        idempotency_key="server-request",
+    )
+    replay = _create_owned_run(
+        tmp_path, idempotency_key="server-request", now=RUN_CLOCK + timedelta(days=1),
+    )
+    assert replay["run_id"] == run["run_id"]
+    assert replay["owner_kind"] == "server"
+    with pytest.raises(
+        WorkflowRunLeaseConflict, match="^another workflow runner is active on this canvas$"
+    ):
+        _create_owned_run(tmp_path, now=RUN_CLOCK + timedelta(days=1))
+    persisted = read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+    )
+    assert persisted == replay
+    assert persisted["status"] == "running"
+
+
+def test_server_run_acquisition_renewal_and_repeated_takeover(tmp_path):
+    from novelvideo.freezone.workflow_runs import acquire_server_workflow_run
+
+    run = _create_owned_run(tmp_path, owner_kind="server", now=RUN_CLOCK)
+    assert run["metadata"]["takeover_count"] == 0
+    args = {"project_dir": tmp_path, "canvas_id": "default", "run_id": run["run_id"]}
+    first = acquire_server_workflow_run(**args, runner_id="one", now=RUN_CLOCK)
+    assert first["acquired"] is True
+    assert first["took_over"] is False
+    assert first["run"]["runner_id"] == "one"
+    assert first["run"]["lease_expires_at"] == "2026-01-01T00:03:00Z"
+    assert first["run"]["metadata"]["takeover_count"] == 0
+    renewed = acquire_server_workflow_run(
+        **args, runner_id="one", now=RUN_CLOCK + timedelta(seconds=60),
+    )
+    assert renewed["acquired"] is True
+    assert renewed["took_over"] is False
+    assert renewed["run"]["lease_expires_at"] == "2026-01-01T00:04:00Z"
+    with pytest.raises(WorkflowRunLeaseConflict):
+        acquire_server_workflow_run(
+            **args, runner_id="two", now=RUN_CLOCK + timedelta(seconds=239),
+        )
+    second = acquire_server_workflow_run(
+        **args, runner_id="two", now=RUN_CLOCK + timedelta(seconds=240),
+    )
+    assert second["acquired"] is True
+    assert second["took_over"] is True
+    assert second["run"]["runner_id"] == "two"
+    assert second["run"]["lease_expires_at"] == "2026-01-01T00:07:00Z"
+    assert second["run"]["metadata"]["takeover_count"] == 1
+    assert second["run"]["metadata"]["last_takeover_at"] == "2026-01-01T00:04:00Z"
+    third = acquire_server_workflow_run(
+        **args, runner_id="three", now=RUN_CLOCK + timedelta(seconds=421), lease_seconds=60,
+    )
+    assert third["acquired"] is True
+    assert third["took_over"] is True
+    assert third["run"]["runner_id"] == "three"
+    assert third["run"]["lease_expires_at"] == "2026-01-01T00:08:01Z"
+    assert third["run"]["metadata"]["takeover_count"] == 2
+    assert third["run"]["metadata"]["last_takeover_at"] == "2026-01-01T00:07:01Z"
+    assert read_workflow_run(**args) == third["run"]
+
+
+def test_server_acquisition_missing_browser_and_terminal_runs(tmp_path):
+    from novelvideo.freezone.workflow_runs import (
+        WorkflowRunOwnerConflict,
+        acquire_server_workflow_run,
+    )
+
+    args = {"project_dir": tmp_path, "canvas_id": "default", "runner_id": "one",
+            "now": RUN_CLOCK}
+    assert acquire_server_workflow_run(**args, run_id="missing") is None
+    browser = _create_owned_run(tmp_path)
+    with pytest.raises(WorkflowRunOwnerConflict):
+        acquire_server_workflow_run(**args, run_id=browser["run_id"])
+    server = create_workflow_run(
+        project_dir=tmp_path, project_id="project-a", canvas_id="terminal",
+        actions=[{"node_id": "one", "action": "save"}], owner_kind="server", now=RUN_CLOCK,
+    )
+    completed = update_workflow_run(
+        project_dir=tmp_path, canvas_id="terminal", run_id=server["run_id"],
+        owner_kind="server", status="completed", now=RUN_CLOCK,
+        action_updates=[{"node_id": "one", "action": "save", "status": "completed"}],
+    )
+    assert completed["status"] == "completed"
+    result = acquire_server_workflow_run(
+        **{**args, "canvas_id": "terminal"}, run_id=server["run_id"],
+    )
+    assert result == {"run": completed, "acquired": False, "took_over": False}
+
+
+@pytest.mark.parametrize("owner_kind", ["server", "browser_legacy"])
+def test_run_updates_reject_other_executor_except_cancellation(tmp_path, owner_kind):
+    from novelvideo.freezone.workflow_runs import WorkflowRunOwnerConflict
+
+    run = _create_owned_run(tmp_path, owner_kind=owner_kind)
+    caller = {} if owner_kind == "server" else {"owner_kind": "server"}
+    args = {"project_dir": tmp_path, "canvas_id": "default", "run_id": run["run_id"], **caller}
+    updates = [{"node_id": "text-1", "action": "generate_text", "status": "running"}]
+    with pytest.raises(
+        WorkflowRunOwnerConflict, match="^workflow run is driven by another executor$"
+    ):
+        update_workflow_run(**args, action_updates=updates)
+    with pytest.raises(WorkflowRunOwnerConflict):
+        update_workflow_run(**args, status="cancelled", action_updates=updates)
+    cancelled = update_workflow_run(**args, status="cancelled", now=RUN_CLOCK)
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["owner_kind"] == owner_kind
+    assert cancelled["metadata"]["owner_kind"] == owner_kind
+    assert cancelled["actions"][0]["status"] == "skipped"
+
+
+@pytest.mark.parametrize("owner_kind", ["server", "browser_legacy"])
+def test_matching_runner_renews_with_injected_clock(tmp_path, owner_kind):
+    run = _create_owned_run(tmp_path, owner_kind=owner_kind, runner_id="one", now=RUN_CLOCK)
+    args = {"project_dir": tmp_path, "canvas_id": "default", "run_id": run["run_id"],
+            "owner_kind": owner_kind, "runner_id": "one"}
+    renewed = update_workflow_run(**args, now=RUN_CLOCK + timedelta(seconds=60))
+    assert renewed["lease_expires_at"] == "2026-01-01T00:04:00Z"
+    assert renewed["updated_at"] == "2026-01-01T00:01:00Z"
+    with pytest.raises(WorkflowRunLeaseConflict):
+        update_workflow_run(**args, now=RUN_CLOCK + timedelta(seconds=240))
+
+
+def test_stale_cleanup_preserves_expired_server_runs(tmp_path):
+    server = _create_owned_run(
+        tmp_path, owner_kind="server", runner_id="old", now=RUN_CLOCK,
+    )
+    browser = _create_owned_run(
+        tmp_path, canvas_id="browser", runner_id="old", now=RUN_CLOCK,
+    )
+    server = read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=server["run_id"]
+    )
+    future = RUN_CLOCK + timedelta(days=30)
+    assert interrupt_stale_workflow_runs(
+        project_dir=tmp_path, canvas_id="default", stale_after_seconds=60, now=future,
+    ) == []
+    assert interrupt_stale_workflow_runs(
+        project_dir=tmp_path, canvas_id="browser", stale_after_seconds=60, now=future,
+    ) == [browser["run_id"]]
+    assert read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=server["run_id"]
+    ) == server
+    assert read_workflow_run(
+        project_dir=tmp_path, canvas_id="browser", run_id=browser["run_id"]
+    )["status"] == "interrupted"
+
+
+@pytest.mark.parametrize("reconciler", ["nodes", "results", "tasks"])
+@pytest.mark.parametrize("owner_kind", ["server", "browser_legacy"])
+def test_reconcilers_only_modify_browser_runs(tmp_path, reconciler, owner_kind):
+    run = _create_owned_run(tmp_path, owner_kind=owner_kind, now=RUN_CLOCK)
+    args = {"project_dir": tmp_path, "canvas_id": "default"}
+    run = read_workflow_run(**args, run_id=run["run_id"])
+    if reconciler == "nodes":
+        changed = reconcile_workflow_runs_with_canvas_nodes(**args, existing_node_ids=set())
+        expected_status = "cancelled"
+    elif reconciler == "results":
+        changed = reconcile_workflow_runs_with_canvas_results(
+            **args, canvas_nodes=[{"id": "text-1", "data": {
+                "content": "Durable text", "workflowTextGenerated": True,
+            }}],
+        )
+        expected_status = "completed"
+    else:
+        run = update_workflow_run(
+            **args, run_id=run["run_id"], owner_kind=owner_kind, now=RUN_CLOCK,
+            action_updates=[{"node_id": "text-1", "action": "generate_text",
+                             "status": "running", "task_key": "task-one"}],
+        )
+        changed = reconcile_workflow_runs_with_tasks(
+            **args, tasks_by_key={"task-one": {"status": "failed", "error": "invalid request"}},
+        )
+        expected_status = "failed"
+    persisted = read_workflow_run(**args, run_id=run["run_id"])
+    if owner_kind == "server":
+        assert changed == []
+        assert persisted == run
+        assert persisted["status"] == "running"
+    else:
+        assert changed == [run["run_id"]]
+        assert persisted["status"] == expected_status
+
+
+def test_list_server_runs_needing_driver_filters_owner_status_and_lease(tmp_path):
+    from novelvideo.freezone.workflow_runs import list_server_workflow_runs_needing_driver
+
+    unowned = _create_owned_run(tmp_path, owner_kind="server", now=RUN_CLOCK)
+    expired = _create_owned_run(
+        tmp_path, canvas_id="expired", owner_kind="server", runner_id="old", now=RUN_CLOCK,
+    )
+    _create_owned_run(
+        tmp_path, canvas_id="live", owner_kind="server", runner_id="live",
+        now=RUN_CLOCK + timedelta(seconds=60),
+    )
+    _create_owned_run(tmp_path, canvas_id="browser", now=RUN_CLOCK)
+    terminal = _create_owned_run(
+        tmp_path, canvas_id="terminal", owner_kind="server", now=RUN_CLOCK,
+    )
+    update_workflow_run(
+        project_dir=tmp_path, canvas_id="terminal", run_id=terminal["run_id"],
+        owner_kind="server", status="cancelled", now=RUN_CLOCK,
+    )
+    listed = list_server_workflow_runs_needing_driver(
+        project_dir=tmp_path, now=RUN_CLOCK + timedelta(seconds=180),
+    )
+    assert sorted(run["canvas_id"] for run in listed) == ["default", "expired"]
+    assert {run["run_id"] for run in listed} == {unowned["run_id"], expired["run_id"]}
+    assert [run["status"] for run in listed] == ["running", "running"]

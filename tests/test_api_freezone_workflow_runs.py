@@ -5634,3 +5634,42 @@ def test_failed_workflow_read_closes_recipe_tasks_and_refunds_once(
         existing_outcome or "failed", "running" if downstream_submission else "cancelled",
     ]
     assert sorted(refunds) == (["credit-image"] if downstream_submission else ["credit-image", "credit-video"])
+
+
+def test_browser_workflow_api_cannot_drive_server_run_but_can_cancel(workflow_run_client):
+    from novelvideo.freezone.workflow_runs import create_workflow_run, read_workflow_run
+
+    run = create_workflow_run(
+        project_dir=workflow_run_client.state_dir, project_id="proj_demo", canvas_id="default",
+        actions=[{"node_id": "text-1", "action": "generate_text"}], owner_kind="server",
+    )
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    response = workflow_run_client.patch(f"{base}/{run['run_id']}", json={
+        "owner_kind": "server",
+        "action_updates": [{"node_id": "text-1", "action": "generate_text", "status": "running"}],
+    })
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "workflow_run_owner_mismatch"
+    conflict = workflow_run_client.post(base, json={
+        "actions": [{"node_id": "another", "action": "generate_image"}],
+    })
+    assert conflict.status_code == 409
+    assert conflict.json() == {"detail": "another workflow runner is active on this canvas"}
+    assert read_workflow_run(
+        project_dir=workflow_run_client.state_dir, canvas_id="default", run_id=run["run_id"],
+    )["status"] == "running"
+    cancelled = workflow_run_client.patch(f"{base}/{run['run_id']}", json={"status": "cancelled"})
+    assert cancelled.status_code == 200
+    assert cancelled.json()["data"]["status"] == "cancelled"
+    assert cancelled.json()["data"]["owner_kind"] == "server"
+
+
+def test_http_create_always_uses_browser_owner(workflow_run_client):
+    response = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs",
+        json={"actions": [{"node_id": "text-1", "action": "generate_text"}],
+              "owner_kind": "server", "metadata": {"owner_kind": "server"}},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["owner_kind"] == "browser_legacy"
+    assert response.json()["data"]["metadata"]["owner_kind"] == "browser_legacy"

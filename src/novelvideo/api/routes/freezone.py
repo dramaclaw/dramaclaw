@@ -260,6 +260,7 @@ from novelvideo.freezone.workflow_runs import (
     _validate_action_artifact,
     WorkflowRunIdempotencyConflict,
     WorkflowRunLeaseConflict,
+    WorkflowRunOwnerConflict,
     bind_workflow_action_product_operation,
     bind_workflow_media_task,
     claim_workflow_media_action,
@@ -17028,6 +17029,7 @@ async def create_canvas_workflow_run(
             canvas_id=canvas_id,
             actions=actions,
             actor_id=_canvas_actor_id(user),
+            owner_kind="browser_legacy",
             metadata=(
                 body.get("metadata") if isinstance(body.get("metadata"), dict) else None
             ),
@@ -17551,6 +17553,7 @@ async def patch_canvas_workflow_run(
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             run_id=run_id,
+            owner_kind="browser_legacy",
             status=body.get("status") if isinstance(body.get("status"), str) else None,
             action_updates=(
                 body.get("action_updates")
@@ -17561,6 +17564,11 @@ async def patch_canvas_workflow_run(
                 body.get("runner_id") if isinstance(body.get("runner_id"), str) else ""
             ),
         )
+    except WorkflowRunOwnerConflict as exc:
+        raise HTTPException(
+            409,
+            detail={"code": "workflow_run_owner_mismatch", "message": str(exc)},
+        ) from exc
     except WorkflowRunLeaseConflict as exc:
         raise HTTPException(409, str(exc)) from exc
     except (ValueError, CanvasLockBusy) as exc:
