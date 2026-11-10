@@ -163,6 +163,7 @@ except Exception:
 _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR: Exception | None = None
 try:
     from novelvideo.freezone.canvas_command_bridge import (
+        browser_presence_fresh,
         canvas_command_bridge_key,
         canvas_command_idempotency_key,
         canvas_context_bridge_key,
@@ -183,6 +184,7 @@ try:
     )
 except Exception as exc:
     _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR = exc
+    browser_presence_fresh = None
     canvas_command_bridge_key = None
     canvas_command_idempotency_key = None
     canvas_context_bridge_key = None
@@ -4336,15 +4338,6 @@ def _validate_write_commands_shape(
     return None
 
 
-def _mcp_direct_canvas_apply_enabled() -> bool:
-    return os.environ.get("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
 def _external_mcp_agent_enabled() -> bool:
     return os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip().lower() in {
         "1",
@@ -5510,7 +5503,7 @@ def _mcp_canvas_approval_enabled() -> bool:
     value = os.environ.get("DRAMACLAW_MCP_CANVAS_APPROVAL", "").strip().lower()
     if value in {"0", "false", "no", "off"}:
         return False
-    return _external_mcp_agent_enabled() or _mcp_direct_canvas_apply_enabled()
+    return True
 
 
 def _approval_dir() -> Path:
@@ -6028,20 +6021,15 @@ def _handle_confirm_canvas_action(args: dict[str, Any], **_: Any) -> str:
                 "error": "approval payload is missing project_id, canvas_id, or commands",
             }
         )
-    if not _mcp_direct_canvas_apply_enabled() or _requires_frontend_canvas_executor(
-        commands
-    ):
-        return _dispatch_mcp_approved_frontend_commands(
-            project=project,
-            canvas=canvas,
-            commands=commands,
-            slim_result=bool(payload.get("slim_result", True)),
-        )
-    return _direct_apply_canvas_commands(
-        project,
-        canvas,
-        commands,
-        slim_result=bool(payload.get("slim_result", True)),
+    slim_result = bool(payload.get("slim_result", True))
+    if _agent_canvas_executor() == "server":
+        if _requires_frontend_canvas_executor(commands):
+            return _dispatch_server_host_commands(
+                project=project, canvas=canvas, commands=commands, slim_result=slim_result,
+            )
+        return _server_apply_canvas_commands(project, canvas, commands, slim_result=slim_result)
+    return _dispatch_mcp_approved_frontend_commands(
+        project=project, canvas=canvas, commands=commands, slim_result=slim_result,
     )
 
 
@@ -6080,25 +6068,6 @@ def _clone_json(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False))
 
 
-def _node_size(node_type: str) -> tuple[int, int]:
-    if node_type in {"imageGenNode", "videoNode"}:
-        return 480, 520
-    if node_type == "audioNode":
-        return 360, 190
-    if node_type == "videoComposeNode":
-        return 420, 240
-    return 380, 240
-
-
-def _resolve_command_node_ref(value: Any, id_map: dict[str, str]) -> str:
-    text = str(value or "").strip()
-    return id_map.get(text, text)
-
-
-def _edge_id(source: str, target: str, link_type: str) -> str:
-    return f"e-{source}-{target}-{link_type}"
-
-
 def _default_link_type(source_type: str, target_type: str) -> str:
     if target_type in {"imageGenNode", "audioNode"}:
         return (
@@ -6117,442 +6086,115 @@ def _default_link_type(source_type: str, target_type: str) -> str:
     return "context_for"
 
 
-def _apply_layout(
-    nodes_by_id: dict[str, dict[str, Any]], node_ids: list[str], mode: str
-) -> None:
-    targets = [nodes_by_id[node_id] for node_id in node_ids if node_id in nodes_by_id]
-    if len(targets) < 2:
-        return
-    min_x = min(float((node.get("position") or {}).get("x") or 0) for node in targets)
-    min_y = min(float((node.get("position") or {}).get("y") or 0) for node in targets)
-    if mode == "vertical":
-        for index, node in enumerate(targets):
-            node["position"] = {"x": min_x, "y": min_y + index * 320}
-    elif mode == "grid":
-        cols = max(1, int(len(targets) ** 0.5 + 0.999))
-        for index, node in enumerate(targets):
-            node["position"] = {
-                "x": min_x + (index % cols) * 520,
-                "y": min_y + (index // cols) * 360,
-            }
-    else:
-        for index, node in enumerate(targets):
-            node["position"] = {"x": min_x + index * 520, "y": min_y}
+_AGENT_CANVAS_EXECUTOR_CACHE: tuple[float, str] | None = None
 
 
-def _create_group_node(
-    *,
-    nodes: list[dict[str, Any]],
-    nodes_by_id: dict[str, dict[str, Any]],
-    node_ids: list[str],
-    label: str,
-) -> str | None:
-    members = [nodes_by_id[node_id] for node_id in node_ids if node_id in nodes_by_id]
-    if len(members) < 2:
-        return None
-    min_x = min(float((node.get("position") or {}).get("x") or 0) for node in members)
-    min_y = min(float((node.get("position") or {}).get("y") or 0) for node in members)
-    max_x = max(
-        float((node.get("position") or {}).get("x") or 0)
-        + float(node.get("width") or (node.get("measured") or {}).get("width") or 380)
-        for node in members
-    )
-    max_y = max(
-        float((node.get("position") or {}).get("y") or 0)
-        + float(node.get("height") or (node.get("measured") or {}).get("height") or 240)
-        for node in members
-    )
-    group_x = min_x - 60
-    group_y = min_y - 80
-    width = int(max_x - min_x + 120)
-    height = int(max_y - min_y + 160)
-    group_id = str(uuid.uuid4())
-    for node in members:
-        position = (
-            node.get("position") if isinstance(node.get("position"), dict) else {}
-        )
-        node["parentId"] = group_id
-        node["position"] = {
-            "x": float(position.get("x") or 0) - group_x,
-            "y": float(position.get("y") or 0) - group_y,
+def _agent_canvas_executor() -> str:
+    global _AGENT_CANVAS_EXECUTOR_CACHE
+    now = time.monotonic()
+    if _AGENT_CANVAS_EXECUTOR_CACHE is not None:
+        cached_at, executor = _AGENT_CANVAS_EXECUTOR_CACHE
+        if now - cached_at < 30:
+            return executor
+    executor = "browser"
+    try:
+        response = _request("GET", "/api/v1/config")
+        if response.get("ok") and response.get("data", {}).get("agent_canvas_executor") == "server":
+            executor = "server"
+    except Exception:
+        pass
+    _AGENT_CANVAS_EXECUTOR_CACHE = (now, executor)
+    return executor
+
+
+def _canvas_browser_required_error(project: str, canvas: str) -> dict[str, Any] | None:
+    if browser_presence_fresh is None or not browser_presence_fresh(canvas):
+        return {
+            "ok": False,
+            "code": "canvas_browser_required",
+            "tool_call_status": "failed",
+            "canvas_apply_status": "browser_required",
+            "applied": False,
+            "project_id": project,
+            "canvas_id": canvas,
+            "errors": ["需要打开画布才能运行"],
+            "message": "需要打开画布才能运行",
+            "agent_instruction": (
+                "Ask the user to open this canvas and retry. Do not retry on your own."
+            ),
         }
-    group = {
-        "id": group_id,
-        "type": "groupNode",
-        "position": {"x": group_x, "y": group_y},
-        "data": {"displayName": label or "工作流", "label": label or "工作流"},
-        "width": width,
-        "height": height,
-        "style": {"width": width, "height": height},
-        "selected": False,
-        "measured": {"width": width, "height": height},
-    }
-    nodes.append(group)
-    nodes_by_id[group_id] = group
-    return group_id
+    return None
 
 
-def _direct_apply_canvas_commands(
-    project: str,
-    canvas: str,
-    commands: list[Any],
-    *,
-    slim_result: bool,
+def _dispatch_server_host_commands(
+    *, project: str, canvas: str, commands: list[Any], slim_result: bool,
 ) -> str:
+    error = _canvas_browser_required_error(project, canvas)
+    if error is not None:
+        return tool_result(error)
+    dispatch = (
+        _dispatch_mcp_approved_frontend_commands
+        if _external_mcp_agent_enabled() else _dispatch_frontend_canvas_commands
+    )
+    return dispatch(project=project, canvas=canvas, commands=commands, slim_result=slim_result)
+
+
+def _canvas_executor_failure(response: dict[str, Any], *, context: bool = False) -> dict[str, Any]:
+    message = response.get("message") or response.get("error") or "Canvas API request failed"
+    return {
+        "ok": False,
+        "tool_call_status": "failed",
+        **({"canvas_context_status": "failed"} if context else {
+            "canvas_apply_status": "failed", "applied": False,
+        }),
+        "errors": [message],
+        "message": message,
+        **{key: response[key] for key in ("code", "current_revision") if key in response},
+    }
+
+
+def _server_apply_canvas_commands(
+    project: str, canvas: str, commands: list[Any], *, slim_result: bool,
+) -> str:
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
     response = _request(
-        "GET",
-        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}",
+        "POST",
+        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}/agent-commands",
+        body={
+            "envelopes": [{
+                "schema_version": "canvas_chat_commands.v1", "project_id": project,
+                "canvas_id": canvas, "commands": commands,
+            }],
+            "locale": None,
+        },
     )
-    if not response.get("ok", True):
-        return tool_result(
-            {
-                "ok": False,
-                "tool_call_status": "failed",
-                "canvas_apply_status": "read_failed",
-                "project_id": project,
-                "canvas_id": canvas,
-                "errors": [response.get("error") or "failed to read canvas"],
-            }
+    if not response.get("ok"):
+        return tool_result(_canvas_executor_failure(response))
+    data = response["data"]
+    if data["status"] == "host_required":
+        return _dispatch_server_host_commands(
+            project=project, canvas=canvas, commands=commands, slim_result=slim_result,
         )
-    current = response.get("data") if isinstance(response.get("data"), dict) else {}
-    nodes = _clone_json(
-        current.get("nodes") if isinstance(current.get("nodes"), list) else []
-    )
-    edges = _clone_json(
-        current.get("edges") if isinstance(current.get("edges"), list) else []
-    )
-    nodes_by_id = {
-        str(node.get("id")): node
-        for node in nodes
-        if isinstance(node, dict) and str(node.get("id") or "").strip()
-    }
-    id_map: dict[str, str] = {}
-    created_node_ids: list[str] = []
-    command_results: list[dict[str, Any]] = []
-    errors: list[str] = []
-
-    for index, raw_command in enumerate(commands):
-        command = raw_command if isinstance(raw_command, dict) else {}
-        command_type = str(command.get("type") or "").strip()
-        try:
-            if command_type == "create_node":
-                node_type = str(command.get("node_type") or "").strip()
-                node_id = str(uuid.uuid4())
-                client_id = str(command.get("client_id") or "").strip()
-                if client_id:
-                    id_map[client_id] = node_id
-                width, height = _node_size(node_type)
-                position = (
-                    command.get("position")
-                    if isinstance(command.get("position"), dict)
-                    else {}
-                )
-                node = {
-                    "id": node_id,
-                    "type": node_type,
-                    "position": {
-                        "x": float(position.get("x") or 0),
-                        "y": float(position.get("y") or 0),
-                    },
-                    "data": _clone_json(command.get("data") or {}),
-                    "selected": False,
-                    "measured": {"width": width, "height": height},
-                }
-                if node_type in {"imageGenNode", "videoNode"}:
-                    node["width"] = width
-                    node["height"] = height
-                    node["style"] = {"width": width, "height": height}
-                nodes.append(node)
-                nodes_by_id[node_id] = node
-                created_node_ids.append(node_id)
-                command_results.append(
-                    {
-                        "commandIndex": index,
-                        "type": command_type,
-                        "status": "applied",
-                        "nodeId": node_id,
-                    }
-                )
-            elif command_type == "add_next_node":
-                source = _resolve_command_node_ref(
-                    command.get("source_node_id"), id_map
-                )
-                source_node = nodes_by_id.get(source)
-                if source_node is None:
-                    raise ValueError(f"source node not found: {source}")
-                node_type = str(command.get("node_type") or "").strip()
-                node_id = str(uuid.uuid4())
-                client_id = str(command.get("client_id") or "").strip()
-                if client_id:
-                    id_map[client_id] = node_id
-                width, height = _node_size(node_type)
-                source_position = (
-                    source_node.get("position")
-                    if isinstance(source_node.get("position"), dict)
-                    else {}
-                )
-                node = {
-                    "id": node_id,
-                    "type": node_type,
-                    "position": {
-                        "x": float(source_position.get("x") or 0) + 520,
-                        "y": float(source_position.get("y") or 0),
-                    },
-                    "data": _clone_json(command.get("data") or {}),
-                    "selected": False,
-                    "measured": {"width": width, "height": height},
-                }
-                if node_type in {"imageGenNode", "videoNode"}:
-                    node["width"] = width
-                    node["height"] = height
-                    node["style"] = {"width": width, "height": height}
-                nodes.append(node)
-                nodes_by_id[node_id] = node
-                created_node_ids.append(node_id)
-                if command.get("connect", True):
-                    link_type = _default_link_type(
-                        str(source_node.get("type") or ""), node_type
-                    )
-                    edges.append(
-                        {
-                            "id": _edge_id(source, node_id, link_type),
-                            "source": source,
-                            "target": node_id,
-                            "sourceHandle": "source",
-                            "targetHandle": "target",
-                            "type": "disconnectableEdge",
-                            "data": {"link_type": link_type},
-                        }
-                    )
-                command_results.append(
-                    {
-                        "commandIndex": index,
-                        "type": command_type,
-                        "status": "applied",
-                        "nodeId": node_id,
-                    }
-                )
-            elif command_type == "create_edge":
-                source = _resolve_command_node_ref(command.get("source"), id_map)
-                target = _resolve_command_node_ref(command.get("target"), id_map)
-                link_type = str(command.get("link_type") or "context_for").strip()
-                if source not in nodes_by_id or target not in nodes_by_id:
-                    raise ValueError(
-                        f"edge source/target not found: {source} -> {target}"
-                    )
-                edge = {
-                    "id": _edge_id(source, target, link_type),
-                    "source": source,
-                    "target": target,
-                    "sourceHandle": "source",
-                    "targetHandle": "target",
-                    "type": "disconnectableEdge",
-                    "data": {"link_type": link_type},
-                }
-                edges = [item for item in edges if item.get("id") != edge["id"]]
-                edges.append(edge)
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            elif command_type == "group_nodes":
-                node_ids = [
-                    _resolve_command_node_ref(item, id_map)
-                    for item in command.get("node_ids", [])
-                    if str(item or "").strip()
-                ]
-                group_id = _create_group_node(
-                    nodes=nodes,
-                    nodes_by_id=nodes_by_id,
-                    node_ids=node_ids,
-                    label=str(command.get("label") or "工作流"),
-                )
-                command_results.append(
-                    {
-                        "commandIndex": index,
-                        "type": command_type,
-                        "status": "applied" if group_id else "skipped",
-                        "nodeId": group_id,
-                    }
-                )
-            elif command_type == "layout_nodes":
-                node_ids = [
-                    _resolve_command_node_ref(item, id_map)
-                    for item in command.get("node_ids", [])
-                    if str(item or "").strip()
-                ]
-                _apply_layout(
-                    nodes_by_id, node_ids, str(command.get("mode") or "horizontal")
-                )
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            elif command_type == "select_nodes":
-                selected_ids = {
-                    _resolve_command_node_ref(item, id_map)
-                    for item in command.get("node_ids", [])
-                    if str(item or "").strip()
-                }
-                for node in nodes:
-                    if isinstance(node, dict):
-                        node["selected"] = str(node.get("id") or "") in selected_ids
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            elif command_type == "update_node_data":
-                node_id = _resolve_command_node_ref(command.get("node_id"), id_map)
-                node = nodes_by_id.get(node_id)
-                if node is None:
-                    raise ValueError(f"node not found: {node_id}")
-                data = node.get("data") if isinstance(node.get("data"), dict) else {}
-                data.update(_clone_json(command.get("data") or {}))
-                node["data"] = data
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            elif command_type == "delete_nodes":
-                delete_ids = {
-                    _resolve_command_node_ref(item, id_map)
-                    for item in command.get("node_ids", [])
-                    if str(item or "").strip()
-                }
-                if delete_ids:
-                    nodes = [
-                        node
-                        for node in nodes
-                        if str(node.get("id") or "") not in delete_ids
-                    ]
-                    edges = [
-                        edge
-                        for edge in edges
-                        if edge.get("source") not in delete_ids
-                        and edge.get("target") not in delete_ids
-                    ]
-                    nodes_by_id = {
-                        str(node.get("id")): node
-                        for node in nodes
-                        if isinstance(node, dict) and str(node.get("id") or "").strip()
-                    }
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            elif command_type == "delete_edges":
-                source = _resolve_command_node_ref(command.get("source"), id_map)
-                target = _resolve_command_node_ref(command.get("target"), id_map)
-                if source and target:
-                    edges = [
-                        edge
-                        for edge in edges
-                        if not (
-                            edge.get("source") == source
-                            and edge.get("target") == target
-                        )
-                    ]
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            else:
-                raise ValueError(
-                    f"{command_type} is not supported by direct MCP canvas apply"
-                )
-        except Exception as exc:
-            errors.append(f"commands[{index}]: {exc}")
-            command_results.append(
-                {
-                    "commandIndex": index,
-                    "type": command_type or "unknown",
-                    "status": "error",
-                    "error": str(exc),
-                }
-            )
-            break
-
-    if errors:
-        for outcome in command_results:
-            if outcome.get("status") == "applied":
-                outcome["status"] = "not_applied"
-        return tool_result(
-            {
-                "ok": False,
-                "tool_call_status": "failed",
-                "canvas_apply_status": "direct_apply_failed",
-                "applied": False,
-                "cancelled": False,
-                "project_id": project,
-                "canvas_id": canvas,
-                "errors": errors,
-                "command_results": command_results,
-            }
-        )
-
-    payload = {
-        "schema_version": 2,
-        "canvas_id": canvas,
-        "project_id": project,
-        "canvas_scope": current.get("canvas_scope") or "default",
-        "nodes": nodes,
-        "edges": edges,
-        "viewport": current.get("viewport"),
-        "metadata": current.get("metadata"),
-        "base_revision": current.get("revision"),
-        "client_save_id": f"mcp-direct-canvas-apply:{int(time.time() * 1000)}",
-        "save_source": "manual_clear" if not nodes else "manual_save",
-        "allow_empty_overwrite": not nodes,
-    }
-    saved = _request(
-        "PUT",
-        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}",
-        body=payload,
-    )
-    if not saved.get("ok", True):
-        for outcome in command_results:
-            if outcome.get("status") == "applied":
-                outcome["status"] = "not_applied"
-        return tool_result(
-            {
-                "ok": False,
-                "tool_call_status": "failed",
-                "canvas_apply_status": "save_failed",
-                "applied": False,
-                "cancelled": False,
-                "project_id": project,
-                "canvas_id": canvas,
-                "errors": [saved.get("error") or "failed to save canvas"],
-                "command_results": command_results,
-                **({"code": saved["code"]}
-                   if saved.get("code") in {"revision_conflict", "canvas_revision_conflict"}
-                   else {}),
-                **({"current_revision": saved["current_revision"]}
-                   if type(saved.get("current_revision")) is int else {}),
-            }
-        )
+    receipt = data["receipt"]
     resolved = {
-        "ok": True,
-        "tool_call_status": "completed",
-        "canvas_apply_status": "direct_applied",
-        "applied": True,
-        "cancelled": False,
+        **receipt,
+        "ok": (
+            receipt["tool_call_status"] == "completed"
+            and receipt["canvas_apply_status"] == "applied"
+            and bool(receipt["applied"])
+            and not receipt.get("cancelled")
+            and not receipt.get("errors")
+        ),
         "project_id": project,
         "canvas_id": canvas,
-        "applied_count": len(command_results),
-        "opened_ui_actions": 0,
-        "created_node_ids": created_node_ids,
-        "command_results": command_results,
-        "revision": (
-            (saved.get("data") or {}).get("revision")
-            if isinstance(saved.get("data"), dict)
-            else None
-        ),
-        "message": "Canvas commands were applied directly by the local MCP server.",
-        "agent_instruction": "The canvas change has already been applied. Report success briefly.",
+        "revision": data["revision"],
+        "receipt": data["receipt"],
     }
     if slim_result:
-        summarized = _summarize_canvas_command_result(
-            resolved,
-            bridge_key="mcp-direct",
-            commands=commands,
-        )
-        summarized["canvas_apply_status"] = "direct_applied"
-        summarized["revision"] = resolved.get("revision")
+        summarized = _summarize_canvas_command_result(resolved, bridge_key="", commands=commands)
+        summarized["revision"] = data["revision"]
         return tool_result(summarized)
     return tool_result(resolved)
 
@@ -6621,6 +6263,11 @@ def _emit_canvas_commands(
     )
     if shape_error:
         return shape_error
+    executor = _agent_canvas_executor()
+    if executor == "server" and _requires_frontend_canvas_executor(commands):
+        browser_error = _canvas_browser_required_error(project, canvas)
+        if browser_error is not None:
+            return tool_result(browser_error)
     recommendation_error = _resolve_canvas_generation_recommendations(project, canvas, commands)
     if recommendation_error is not None:
         return tool_result(recommendation_error)
@@ -6631,9 +6278,13 @@ def _emit_canvas_commands(
     )
     if generation_preflight is not None:
         return tool_result(generation_preflight)
-    if _mcp_direct_canvas_apply_enabled() and not require_canvas_receipt:
+    if executor == "server":
+        if _requires_frontend_canvas_executor(commands):
+            return _dispatch_server_host_commands(
+                project=project, canvas=canvas, commands=commands, slim_result=slim_result,
+            )
         needs_approval, approval_reasons = _approval_required_for_commands(commands)
-        if _mcp_canvas_approval_enabled() and needs_approval:
+        if not require_canvas_receipt and _mcp_canvas_approval_enabled() and needs_approval:
             return _create_mcp_canvas_approval(
                 project=project,
                 canvas=canvas,
@@ -6641,14 +6292,7 @@ def _emit_canvas_commands(
                 slim_result=slim_result,
                 reasons=approval_reasons,
             )
-        if _requires_frontend_canvas_executor(commands):
-            return _dispatch_mcp_approved_frontend_commands(project=project, canvas=canvas, commands=commands, slim_result=slim_result)
-        return _direct_apply_canvas_commands(
-            project,
-            canvas,
-            commands,
-            slim_result=slim_result,
-        )
+        return _server_apply_canvas_commands(project, canvas, commands, slim_result=slim_result)
     if _external_mcp_agent_enabled():
         # Codex/Claude/OpenClaw external MCP uses the same browser bridge as
         # Hermes. Do not return a second tool-level approval_id here: that
@@ -9577,6 +9221,23 @@ def _request_canvas_context_from_frontend(
     canvas: str | None,
     requests: list[Any],
 ) -> str:
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
+    if _agent_canvas_executor() == "server":
+        project = project or _default_project_id()
+        canvas = canvas or _default_canvas_id()
+        if not project or not canvas:
+            return tool_result(_canvas_executor_failure({
+                "code": "canvas_scope_required",
+                "message": "Cannot resolve project_id and canvas_id for canvas context.",
+            }, context=True))
+        response = _request(
+            "POST",
+            f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}/agent-context",
+            body={"requests": requests, "locale": None},
+        )
+        return tool_result(response["data"] if response.get("ok") else _canvas_executor_failure(response, context=True))
     envelope = {
         "schema_version": "canvas_context_request.v1",
         **({"canvas_id": canvas} if canvas else {}),
@@ -9587,9 +9248,6 @@ def _request_canvas_context_from_frontend(
         and put_pending_canvas_context is not None
         and wait_canvas_context_result is not None
     ):
-        mismatch = _bound_scope_mismatch(project, canvas)
-        if mismatch is not None:
-            return tool_result(mismatch)
         key = canvas_context_bridge_key(
             project_id=project, canvas_id=canvas, requests=requests
         )
@@ -10361,7 +10019,7 @@ def _canvas_application_receipt_contract(
                 "required": ["revision"],
                 "properties": {
                     "revision": {"type": "integer", "minimum": 0},
-                    "canvas_apply_status": {"const": "direct_applied"},
+                    "canvas_apply_status": {"const": "applied"},
                 },
             },
         ],
@@ -10427,8 +10085,7 @@ def _success_contract(name: str) -> dict[str, Any]:
                 "if": {"anyOf": [
                     {"required": ["bridge_key"]},
                     {
-                        "required": ["canvas_apply_status"],
-                        "properties": {"canvas_apply_status": {"const": "direct_applied"}},
+                        "required": ["revision"],
                     },
                 ]},
                 "then": receipt,

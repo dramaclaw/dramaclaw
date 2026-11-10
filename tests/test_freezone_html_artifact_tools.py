@@ -26,14 +26,14 @@ def test_html_node_actions_keep_correct_read_write_classification():
         )
 
 
-def test_direct_mcp_mode_routes_html_through_frontend(monkeypatch):
+def test_server_executor_routes_html_through_frontend(monkeypatch):
     plugin = _load_plugin_module()
     monkeypatch.setattr(plugin, '_resolve_canvas_scope_for_write', lambda p,c: (p,c,None))
     monkeypatch.setattr(plugin, '_external_generation_parameter_preflight', lambda *a: None)
     monkeypatch.setattr(plugin, '_external_mcp_agent_enabled', lambda: True)
-    monkeypatch.setattr(plugin, '_mcp_direct_canvas_apply_enabled', lambda: True)
+    monkeypatch.setattr(plugin, '_agent_canvas_executor', lambda: 'server')
+    monkeypatch.setattr(plugin, 'browser_presence_fresh', lambda _: True)
     monkeypatch.setattr(plugin, '_mcp_canvas_approval_enabled', lambda: False)
-    monkeypatch.setattr(plugin, '_direct_apply_canvas_commands', lambda *a,**k: (_ for _ in ()).throw(AssertionError('HTML must never use server direct apply')))
     dispatched = []
     monkeypatch.setattr(plugin, '_dispatch_mcp_approved_frontend_commands', lambda **k: dispatched.append(k) or {'ok':True})
     plugin._emit_canvas_commands('p','c',[{'type':'html_artifact','action':'create','title':'Hello','html':'hello'}])
@@ -130,7 +130,6 @@ def test_compiled_workflow_prepare_is_gated_from_public_html_writes(monkeypatch)
     monkeypatch.setattr(plugin, '_resolve_canvas_scope_for_write', lambda p, c: (p, c, None))
     monkeypatch.setattr(plugin, '_external_generation_parameter_preflight', lambda *a: None)
     monkeypatch.setattr(plugin, '_external_mcp_agent_enabled', lambda: False)
-    monkeypatch.setattr(plugin, '_mcp_direct_canvas_apply_enabled', lambda: False)
     dispatched = []
     monkeypatch.setattr(plugin, '_dispatch_frontend_canvas_commands', lambda **kwargs: dispatched.append(kwargs) or {'ok': True})
     assert plugin._emit_canvas_commands('p', 'c', [command])['status'] == 'invalid_command_schema'

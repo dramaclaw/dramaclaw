@@ -612,7 +612,6 @@ async def test_canvas_revision_refresh_survives_browser_receipt_to_mcp_result(
     monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_a, **_k: None)
     monkeypatch.setattr(plugin, "_resolve_canvas_generation_recommendations", lambda *_a: None)
     monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *_a: None)
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
     monkeypatch.setattr(chat_route, "_bridge_dir_for_pending_key", lambda *_a, **_k: tmp_path)
     monkeypatch.setattr(chat_route, "resolve_canvas_command", lambda _key, result, **_k: result)
     receipts = []

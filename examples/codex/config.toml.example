@@ -13,7 +13,6 @@ cwd = "/path/to/dramaclaw-ce"
 DRAMACLAW_API_URL = "http://127.0.0.1:8780"
 DRAMACLAW_LOCAL_AGENT_TRUST = "1"
 DRAMACLAW_EXTERNAL_MCP = "1"
-DRAMACLAW_MCP_DIRECT_CANVAS_APPLY = "0"
 DRAMACLAW_USER = "local"
 
 # Optional Freezone context. Prefer passing project_id/canvas_id in tool calls
@@ -22,9 +21,9 @@ DRAMACLAW_USER = "local"
 # DRAMACLAW_PROJECT_ID = "your-project-id"
 # DRAMACLAW_CANVAS_ID = "your-canvas-id"
 
-# Headless fallback only. Set this to "1" if you intentionally want MCP to
-# write canvas payloads directly without the Freezone frontend bridge.
-# DRAMACLAW_MCP_DIRECT_CANVAS_APPLY = "1"
+# On the API server, DRAMACLAW_AGENT_CANVAS_EXECUTOR=server handles structural
+# writes and context reads; host commands still need an open canvas.
+# Server execution requires DRAMACLAW_CANVAS_PATCH_PUSH=1 on the API server.
 
 [mcp_servers.dramaclaw_workflows]
 command = "/path/to/dramaclaw-ce/.venv/bin/python"

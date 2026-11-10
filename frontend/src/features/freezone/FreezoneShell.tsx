@@ -65,7 +65,7 @@ import {
   SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT,
 } from "@/features/superchat/use-superchat";
 import {
-  mcpDirectCanvasApplyEnabled,
+  agentCanvasExecutorIsServer,
   openFilmStudioEnabled,
 } from "@/lib/runtime-config";
 import { SuperChatPanel } from "@/features/superchat/superchat-panel";
@@ -1295,7 +1295,7 @@ export function FreezoneShell({
   }, [canvasId, projectId, sync.hydratedCanvasId, sync.hydratedProject, sync.status]);
 
   useEffect(() => {
-    if (!mcpDirectCanvasApplyEnabled()) return;
+    if (!agentCanvasExecutorIsServer()) return;
     // 在虾集时不轮询：保活期间画布没人看，没必要为它占着请求配额。
     // `active` 在依赖里，切回虾画会重跑本 effect —— 末尾那次立即调用就顺带
     // 补上了「离开这段时间里画布有没有被别处改过」的新鲜度检查。以前靠整体

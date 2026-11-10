@@ -48,6 +48,7 @@ from novelvideo.chat.hermes_workspace import (
 from novelvideo.chat.store import ChatScope, ChatUiEventRejected, chat_store
 from novelvideo.chat.turn_images import referenced_image_paths
 from novelvideo.freezone.canvas_command_bridge import (
+    touch_browser_presence,
     BRIDGE_PENDING_TTL_SECONDS,
     bridge_message_exists,
     claim_legacy_bridge_message,
@@ -2579,6 +2580,8 @@ def _collect_pending_canvas_commands(
                 continue
             seen_bridge_dirs.add(marker)
             bridge_targets.append((agent_id, bridge_dir))
+    for _agent_id, bridge_dir in bridge_targets:
+        touch_browser_presence(canvas_id, bridge_dir=bridge_dir)
     for agent_id, bridge_dir in bridge_targets:
         try:
             if hub is None:
@@ -2753,15 +2756,24 @@ async def stream_canvas_commands(
     targets = await hub.run(directories)
     consumer = f"sse:{username}:{uuid.uuid4().hex}"
 
+    def touch_presence():
+        for directory in targets:
+            touch_browser_presence(canvas_id, bridge_dir=directory)
+
     async def events():
         hub.metrics["sse_connections"] = hub.metrics.get("sse_connections", 0) + 1
         try:
             async with hub.subscribe(targets) as wake:
+                await hub.run(touch_presence)
                 # Flush an initial body chunk through development/reverse proxies
                 # so an idle stream opens before the first 25-second heartbeat.
                 yield {"comment": "connected"}
                 while True:
-                    await wake.wait()
+                    try:
+                        await asyncio.wait_for(wake.wait(), timeout=20)
+                    except TimeoutError:
+                        await hub.run(touch_presence)
+                        continue
                     wake.clear()
                     result = await hub.run(
                         _collect_pending_canvas_commands,

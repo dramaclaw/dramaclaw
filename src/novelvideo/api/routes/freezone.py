@@ -18001,7 +18001,7 @@ async def agent_canvas_context(
                     list_freezone_assets, project, user=user,
                 ),
                 "characters": lambda _: _agent_canvas_host_value(
-                    characters.list_characters, project, summary=True, names=None, user=user,
+                    characters.list_characters, project, summary=False, names=None, user=user,
                 ),
                 "html_artifact": lambda need: _agent_canvas_host_value(
                     html_artifacts.get, project, need["artifact_id"],

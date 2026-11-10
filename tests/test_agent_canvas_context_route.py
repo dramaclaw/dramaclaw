@@ -191,7 +191,7 @@ async def test_fetches_unique_host_needs_and_unwraps_handler_data(setup, monkeyp
 
     async def character(project, summary, names, user):
         assert project == "proj" and user is USER
-        assert summary is True and names is None
+        assert summary is False and names is None
         calls["characters"] += 1
         return {"ok": True, "data": ["character"]}
 
