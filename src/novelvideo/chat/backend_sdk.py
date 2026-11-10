@@ -1175,6 +1175,10 @@ class CodexThreadBusyError(RuntimeError):
     """The persisted thread still has a turn in flight on the App Server."""
 
 
+class CodexThreadHistoryModeError(RuntimeError):
+    """The started thread cannot support chat history clearing."""
+
+
 def _loaded_codex_thread_status(client: Any, thread_id: str) -> str | None:
     """Return the App Server runtime status type for ``thread_id`` or ``None``."""
 
@@ -1253,6 +1257,27 @@ def _refresh_loaded_codex_thread_runtime(codex: Any, thread_id: str) -> bool:
     return True
 
 
+def _start_paginated_codex_thread(codex: Any, thread_options: dict[str, Any]) -> Any:
+    from novelvideo.chat.codex_protocol import CodexThreadResponse
+
+    thread = codex.thread_start(**thread_options)
+    request = getattr(getattr(codex, "_client", None), "request", None)
+    mode = "unknown (low-level request unavailable)"
+    if callable(request):
+        response = request(
+            "thread/read",
+            {"threadId": thread.id, "includeTurns": False},
+            response_model=CodexThreadResponse,
+        )
+        mode = response.thread.history_mode
+    if mode != "paginated":
+        raise CodexThreadHistoryModeError(
+            f"Codex thread {thread.id} has history mode {mode}; "
+            "chat needs a Codex runtime that starts paginated threads (0.162 or newer)"
+        )
+    return thread
+
+
 def _start_or_resume_codex_thread(
     codex: Any,
     thread_id: str | None,
@@ -1266,7 +1291,7 @@ def _start_or_resume_codex_thread(
     """
 
     if not thread_id:
-        return codex.thread_start(**thread_options)
+        return _start_paginated_codex_thread(codex, thread_options)
 
     from openai_codex.errors import InvalidRequestError
 
@@ -1292,7 +1317,7 @@ def _start_or_resume_codex_thread(
             return codex.thread_resume(thread_id, **thread_options)
         if not _is_missing_codex_thread_error(exc):
             raise
-        return codex.thread_start(**thread_options)
+        return _start_paginated_codex_thread(codex, thread_options)
 
 
 def _start_codex_turn(

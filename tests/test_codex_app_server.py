@@ -1,6 +1,5 @@
 from pathlib import Path
 from contextlib import contextmanager
-from importlib.metadata import distribution
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import gzip
 import json
@@ -28,8 +27,9 @@ def _integration_codex_binary() -> Path:
         binary = Path(configured)
         assert binary.is_file(), "CODEX_BIN must point to the compiled runtime"
         return binary
-    return Path(
-        distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
+    pytest.skip(
+        "chat needs a Codex runtime that starts paginated threads; "
+        "the SDK-bundled binary starts legacy ones (set CODEX_BIN)"
     )
 
 
@@ -251,12 +251,96 @@ def test_runtime_signature_digest_does_not_embed_gateway_secret():
     assert "super-secret-key" not in digest
 
 
+def _recorded_thread_start(filename: str) -> dict:
+    path = Path(__file__).parent / "fixtures" / "codex-0.162" / filename
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    start = next(record for record in records if record["msg"].get("method") == "thread/start")
+    return next(
+        record["msg"]["result"]
+        for record in records
+        if record["conn"] == start["conn"]
+        and record["dir"] == "recv"
+        and record["msg"].get("id") == start["msg"]["id"]
+    )
+
+
+class _StartedThreadClient:
+    def __init__(self, result):
+        self.result = result
+        self.requests = []
+
+    def request(self, method, params, *, response_model):
+        self.requests.append((method, params))
+        return response_model.model_validate(self.result)
+
+
+def test_started_paginated_thread_is_returned_unchanged():
+    recorded = _recorded_thread_start("02-thread-start-ce.jsonl")
+    started = SimpleNamespace(id=recorded["thread"]["id"])
+    client = _StartedThreadClient(recorded)
+    codex = SimpleNamespace(_client=client, thread_start=lambda **options: started)
+
+    assert _start_or_resume_codex_thread(codex, None, {}) is started
+    assert client.requests == [
+        (
+            "thread/read",
+            {"threadId": "01a1c513-4902-7a92-81fa-3d7461d47839", "includeTurns": False},
+        )
+    ]
+
+
+@pytest.mark.parametrize("thread_id", [None, "stale-thread"])
+def test_started_legacy_thread_is_refused(thread_id):
+    from openai_codex.errors import InvalidRequestError
+    from novelvideo.chat.backend_sdk import CodexThreadHistoryModeError
+
+    recorded = _recorded_thread_start("11-legacy-history-thread.jsonl")
+    started = SimpleNamespace(id=recorded["thread"]["id"])
+
+    def thread_resume(thread_id, **options):
+        raise InvalidRequestError(-32600, f"no rollout found for thread id {thread_id}")
+
+    codex = SimpleNamespace(
+        _client=_StartedThreadClient(recorded),
+        thread_start=lambda **options: started,
+        thread_resume=thread_resume,
+    )
+
+    with pytest.raises(CodexThreadHistoryModeError) as exc:
+        _start_or_resume_codex_thread(codex, thread_id, {})
+
+    assert str(exc.value) == (
+        "Codex thread 01a1c514-0bb5-7850-8835-edda34372703 has history mode legacy; "
+        "chat needs a Codex runtime that starts paginated threads (0.162 or newer)"
+    )
+
+
+@pytest.mark.parametrize("client", [None, SimpleNamespace(), SimpleNamespace(request=None)])
+def test_start_without_a_callable_low_level_request_is_refused(client):
+    from novelvideo.chat.backend_sdk import CodexThreadHistoryModeError
+
+    codex = SimpleNamespace(thread_start=lambda **options: SimpleNamespace(id="thread-1"))
+    if client is not None:
+        codex._client = client
+
+    with pytest.raises(CodexThreadHistoryModeError) as exc:
+        _start_or_resume_codex_thread(codex, None, {})
+
+    assert str(exc.value) == (
+        "Codex thread thread-1 has history mode unknown (low-level request unavailable); "
+        "chat needs a Codex runtime that starts paginated threads (0.162 or newer)"
+    )
+
+
 def test_missing_rollout_starts_a_replacement_thread():
     from openai_codex.errors import InvalidRequestError
 
-    replacement = object()
+    recorded = _recorded_thread_start("02-thread-start-ce.jsonl")
+    replacement = SimpleNamespace(id=recorded["thread"]["id"])
 
     class FakeCodex:
+        _client = _StartedThreadClient(recorded)
+
         def thread_resume(self, thread_id, **options):
             raise InvalidRequestError(
                 -32600,
@@ -663,18 +747,15 @@ def test_contract_runtime_selection_preserves_both_overrides(
 ):
     test_binary = tmp_path / "test-codex"
     configured_binary = tmp_path / "configured-codex"
-    bundled_binary = tmp_path / "sdk-codex"
-    for binary in (test_binary, configured_binary, bundled_binary):
+    for binary in (test_binary, configured_binary):
         binary.touch()
     monkeypatch.delenv("DRAMACLAW_TEST_CODEX_BIN", raising=False)
     monkeypatch.delenv("CODEX_BIN", raising=False)
-    monkeypatch.setattr(
-        sys.modules[__name__],
-        "distribution",
-        lambda _name: SimpleNamespace(locate_file=lambda _path: bundled_binary),
-    )
-    if selection != "sdk":
-        monkeypatch.setenv("CODEX_BIN", str(configured_binary))
+    if selection == "sdk":
+        with pytest.raises(pytest.skip.Exception, match="paginated.*legacy"):
+            _contract_codex_bin()
+        return
+    monkeypatch.setenv("CODEX_BIN", str(configured_binary))
     if selection == "test_override":
         monkeypatch.setenv("DRAMACLAW_TEST_CODEX_BIN", str(test_binary))
     assert (
@@ -682,7 +763,6 @@ def test_contract_runtime_selection_preserves_both_overrides(
         == {
             "test_override": test_binary,
             "configured": configured_binary,
-            "sdk": bundled_binary,
         }[selection]
     )
 
