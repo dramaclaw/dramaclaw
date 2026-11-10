@@ -9,6 +9,13 @@ import { extractCanvasChatCommandEnvelopes } from '../serverEntry';
 import { isRecord } from '@/features/freezone/canvasCommandEnvelope';
 import { InvalidRequest, invalidRequest, parseCanvasPayload } from './requestPayload';
 import { serveImageGenerationRequest, serveImageGenerationPatch } from './imageGeneration';
+import { serveVideoGenerationRequest, serveVideoGenerationPatch } from './videoGeneration';
+import { serveAudioGenerationRequest, serveAudioGenerationPatch } from './audioGeneration';
+import { serveTextGenerationRequest, serveTextGenerationPatch } from './textGeneration';
+import { serveImageToolRequest, serveImageToolPatch } from './imageTool';
+import { serveAudioTranslateRequest, serveAudioTranslatePatch } from './audioTranslate';
+import { serveWorldGenerationRequest, serveWorldGenerationPatch, serveWorldGenerationUpstream } from './worldGeneration';
+import { serveGenerationErrorDescribe } from './generationError';
 
 console = new Console({ stdout: process.stderr, stderr: process.stderr });
 
@@ -66,6 +73,12 @@ function parseContextPayload(payload: unknown) {
   return { ...input, envelopes, environment };
 }
 
+const operations = ['ping', 'apply_commands', 'answer_context', 'image_generation_request', 'image_generation_patch',
+  'video_generation_request', 'video_generation_patch', 'audio_generation_request', 'audio_generation_patch',
+  'text_generation_request', 'text_generation_patch', 'generation_error_describe',
+  'image_tool_request', 'image_tool_patch', 'audio_translate_request', 'audio_translate_patch',
+  'world_generation_request', 'world_generation_patch', 'world_generation_upstream'];
+
 for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
   let id: string | null = null;
   let parsed: unknown;
@@ -77,7 +90,7 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
   }
   try {
     if (isRecord(parsed) && typeof parsed.id === 'string') id = parsed.id;
-    if (!isRecord(parsed) || id === null || (parsed.op !== 'ping' && parsed.op !== 'apply_commands' && parsed.op !== 'answer_context' && parsed.op !== 'image_generation_request' && parsed.op !== 'image_generation_patch')) invalidRequest('Expected a string id and ping, apply_commands, answer_context, image_generation_request or image_generation_patch op');
+    if (!isRecord(parsed) || id === null || typeof parsed.op !== 'string' || !operations.includes(parsed.op)) invalidRequest(`Expected a string id and one of these ops: ${operations.join(', ')}`);
     let result: unknown = { pong: true };
     if (parsed.op === 'apply_commands') {
       const payload = parsePayload(parsed.payload);
@@ -89,6 +102,34 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
       result = await serveImageGenerationRequest(parsed.payload);
     } else if (parsed.op === 'image_generation_patch') {
       result = await serveImageGenerationPatch(parsed.payload);
+    } else if (parsed.op === 'video_generation_request') {
+      result = await serveVideoGenerationRequest(parsed.payload);
+    } else if (parsed.op === 'video_generation_patch') {
+      result = await serveVideoGenerationPatch(parsed.payload);
+    } else if (parsed.op === 'audio_generation_request') {
+      result = await serveAudioGenerationRequest(parsed.payload);
+    } else if (parsed.op === 'audio_generation_patch') {
+      result = await serveAudioGenerationPatch(parsed.payload);
+    } else if (parsed.op === 'text_generation_request') {
+      result = await serveTextGenerationRequest(parsed.payload);
+    } else if (parsed.op === 'text_generation_patch') {
+      result = await serveTextGenerationPatch(parsed.payload);
+    } else if (parsed.op === 'image_tool_request') {
+      result = await serveImageToolRequest(parsed.payload);
+    } else if (parsed.op === 'image_tool_patch') {
+      result = await serveImageToolPatch(parsed.payload);
+    } else if (parsed.op === 'audio_translate_request') {
+      result = await serveAudioTranslateRequest(parsed.payload);
+    } else if (parsed.op === 'audio_translate_patch') {
+      result = await serveAudioTranslatePatch(parsed.payload);
+    } else if (parsed.op === 'world_generation_request') {
+      result = await serveWorldGenerationRequest(parsed.payload);
+    } else if (parsed.op === 'world_generation_patch') {
+      result = await serveWorldGenerationPatch(parsed.payload);
+    } else if (parsed.op === 'world_generation_upstream') {
+      result = await serveWorldGenerationUpstream(parsed.payload);
+    } else if (parsed.op === 'generation_error_describe') {
+      result = await serveGenerationErrorDescribe(parsed.payload);
     }
     process.stdout.write(JSON.stringify({ id, ok: true, result }) + '\n');
   } catch (error) {

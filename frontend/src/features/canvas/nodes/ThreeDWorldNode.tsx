@@ -16,6 +16,7 @@ import {
   useUpdateNodeInternals,
   type NodeProps,
 } from '@xyflow/react';
+import { imageTo3gsKindForSource as resolveImageTo3gsKindForSource, type DirectorImageSourceKind } from '@/features/canvas/application/generationRequests/worldGenerationRequest';
 import { isLowDetailZoom } from '@/features/canvas/application/canvasLod';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -27,7 +28,6 @@ import { selectNodeExclusively } from '@/features/canvas/application/nodeSelecti
 import {
   uploadFreezoneImage,
   submitFreezoneImageTo3GS,
-  type FreezoneImageTo3GSKind,
   type FreezoneGenerationHistoryRecord,
 } from '@/api/ops';
 import { awaitTaskCompletion, isTaskPollTimeoutError, type TaskState } from '@/api/tasks';
@@ -245,7 +245,6 @@ function resolveNodeDimension(value: number | undefined, fallback: number): numb
 }
 
 type LocalDirectorManifestSource = DirectorStageManifest['source'];
-type DirectorImageSourceKind = 'master' | 'pano';
 
 const DIRECTOR_IMAGE_SOURCE_OPTIONS: Array<{ value: DirectorImageSourceKind; labelKey: string }> = [
   { value: 'master', labelKey: 'nodeToolbar.normalImage' },
@@ -537,19 +536,9 @@ function imageSize(dataUrl: string): Promise<{ width: number; height: number }> 
   });
 }
 
-function imageTo3gsKindForSource(
-  sourceNode: CanvasNode | null,
-  visibleSourceKind: DirectorImageSourceKind,
-): FreezoneImageTo3GSKind {
-  if (visibleSourceKind === 'pano') return 'pano';
-  const source = sourceNode?.data as { output_role?: unknown; __freezone_source?: unknown } | undefined;
-  const outputRole = typeof source?.output_role === 'string' ? source.output_role : '';
-  const sourceRole = typeof (source?.__freezone_source as { role?: unknown } | undefined)?.role === 'string'
-    ? (source?.__freezone_source as { role?: string }).role
-    : '';
-  return outputRole === 'scene_reverse_master' || sourceRole === 'scene_reverse_master'
-    ? 'reverse'
-    : 'master';
+// Preserve this component entry point for the source contract; the decision is shared.
+function imageTo3gsKindForSource(...args: Parameters<typeof resolveImageTo3gsKindForSource>) {
+  return resolveImageTo3gsKindForSource(...args);
 }
 
 function ReferenceImageThumb({

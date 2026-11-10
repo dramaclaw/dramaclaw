@@ -7,21 +7,13 @@ import ky, { HTTPError, type KyInstance, type Options } from "ky";
 import { errorFromBackendBody } from "@/lib/api-errors";
 import { handleSessionExpired } from "@/lib/api";
 
+import { ApiError } from '@/features/canvas/domain/backendErrors';
+export { ApiError } from '@/features/canvas/domain/backendErrors';
+
 export interface ApiEnvelope<T> {
   ok: boolean;
   data?: T;
   error?: string;
-}
-
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number,
-    public readonly body?: unknown,
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
 }
 
 const baseClient: KyInstance = ky.create({

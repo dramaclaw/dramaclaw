@@ -5,33 +5,14 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useCanvasStore } from "@/stores/canvasStore";
 import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
 import { MapPin } from "lucide-react";
-import { formatAudioDurationSeconds, type AudioDurationRejection } from "./videoModelCapabilities";
+
+import type { ReferenceIssue } from '../../domain/referenceIssues';
 
 const FIRST_FRAME_ROLES = new Set(["首帧", "first_frame"]); // i18n-exempt: backend role values
 const LAST_FRAME_ROLES = new Set(["尾帧", "last_frame"]); // i18n-exempt: backend role values
 
-export interface ReferenceIssue {
-  media: string;
-  index: number;
-  name: string;
-  reference_key: string;
-  code: string;
-  actual?: unknown;
-  expected?: unknown;
-  nodeId?: string;
-  label?: string;
-  role?: string;
-}
-
-export function referenceIssues(error: unknown): ReferenceIssue[] {
-  const body = (error as { body?: { detail?: { code?: string; errors?: unknown } } })?.body;
-  const detail = body?.detail;
-  if (detail?.code !== "REFERENCE_MEDIA_INVALID" || !Array.isArray(detail.errors)) return [];
-  return detail.errors.filter((item): item is ReferenceIssue =>
-    item && typeof item.code === "string" && typeof item.reference_key === "string"
-    && typeof item.media === "string" && typeof item.index === "number",
-  );
-}
+export { referenceIssues } from '../../domain/referenceIssues';
+export type { ReferenceIssue } from '../../domain/referenceIssues';
 
 export function matchesReference(url: string, key: string): boolean {
   if (!key) return false;
@@ -46,28 +27,7 @@ export function referenceIssueName(issue: ReferenceIssue, sourceFileName?: unkno
     : issue.name;
 }
 
-export function referenceDurationIssues(
-  media: "audio" | "video",
-  rejection: AudioDurationRejection,
-  limits: { minMs?: number; maxMs?: number },
-): ReferenceIssue[] {
-  const total = rejection.kind === "totalTooShort" || rejection.kind === "totalTooLong";
-  const code = rejection.kind === "tooShort" ? "minDuration"
-    : rejection.kind === "tooLong" ? "maxDuration"
-      : rejection.kind === "totalTooShort" ? "totalMinDuration" : "totalMaxDuration";
-  const expectedMs = total ? rejection.limitMs
-    : rejection.kind === "tooShort" ? limits.minMs : limits.maxMs;
-  return rejection.clips.map((clip, position) => ({
-    media,
-    index: clip.index ?? position + 1,
-    name: clip.label,
-    reference_key: clip.url ?? "",
-    code,
-    actual: formatAudioDurationSeconds(total ? rejection.totalMs : clip.durationMs),
-    expected: formatAudioDurationSeconds(expectedMs ?? 0),
-    nodeId: clip.nodeId,
-  }));
-}
+export { referenceDurationIssues } from '../../domain/referenceDurationIssues';
 
 export function ReferenceValidationDialog({ issues, open, onClose }: {
   issues: ReferenceIssue[]; open: boolean; onClose: () => void;
