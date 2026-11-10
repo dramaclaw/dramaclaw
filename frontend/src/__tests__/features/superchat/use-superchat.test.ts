@@ -7653,3 +7653,63 @@ it("rechecks busy recovery until the old connection has finished cancelling", as
     vi.unstubAllGlobals();
   }
 });
+
+it("keeps a turn that is still streaming on this connection busy across recovery syncs", async () => {
+  const sockets: TestSocket[] = [];
+  const sent: string[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose = null;
+    constructor() { sockets.push(this); }
+    send(frame: string) { sent.push(frame); }
+    close() {}
+  }
+  vi.stubGlobal("WebSocket", TestSocket);
+  const hook = renderHook(({ canvas }) => useSuperChat({
+    project: "recovery-live", surface: "freezone", freezoneCanvasId: canvas,
+    freezoneAgentId: "main", displayName: "Tester",
+  }), { initialProps: { canvas: "first" } });
+  try {
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    const scope = (canvas: string) => ({ kind: "project", id: "recovery-live", surface: "freezone", canvasId: canvas, agentId: "main" });
+    const frame = async (payload: Record<string, unknown>) => {
+      await act(async () => { sockets[0].onmessage?.({ data: JSON.stringify(payload) } as MessageEvent); });
+    };
+    const sync = (canvas: string, busy: boolean, history: unknown[] = []) =>
+      frame({ type: "scope.changed", scope: scope(canvas), history, busy });
+    await act(async () => { sockets[0].onopen?.(); });
+    await sync("first", false);
+    act(() => { hook.result.current.send("keep running"); });
+    const turnId = hook.result.current.activeTurnId;
+    expect(turnId).toBeTruthy();
+    hook.rerender({ canvas: "second" });
+    await sync("second", false);
+    hook.rerender({ canvas: "first" });
+    const history = [{ id: "user-live", role: "user", turn_id: turnId, content: "keep running",
+      created_at: new Date().toISOString() }];
+    await sync("first", true, history);
+    await frame({ type: "assistant.delta", scope: scope("first"), turn_id: turnId, text: "partial reply" });
+    await frame({ type: "assistant.clarification.event", scope: scope("first"), turn_id: turnId,
+      bridge_key: "live-clarify", event: { type: "assistant.clarification.request",
+        bridge_key: "live-clarify", clarification_id: "live", questions: [] } });
+    expect(hook.result.current.busy).toBe(true);
+    // Live frames on this connection stop recovery polling.
+    const before = sent.length;
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)); });
+    expect(sent.slice(before).map(raw => JSON.parse(raw).type)).not.toContain("scope.set");
+    // A busy=true sync already in flight must not end the live turn.
+    await sync("first", true, history);
+    expect(hook.result.current.busy).toBe(true);
+    expect(hook.result.current.activeTurnId).toBe(turnId);
+    // The server stays authoritative once it reports idle.
+    await sync("first", false, history);
+    expect(hook.result.current.busy).toBe(false);
+  } finally {
+    hook.unmount();
+    vi.unstubAllGlobals();
+  }
+});
