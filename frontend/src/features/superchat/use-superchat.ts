@@ -2026,6 +2026,15 @@ export function useSuperChat({
     sendFrame({ type: "scope.set", scope: desiredScopeRef.current });
   }, [sendFrame]);
 
+  const [recoveringBusyScope, setRecoveringBusyScope] = useState(false);
+  useEffect(() => {
+    if (!recoveringBusyScope || !connected || !busy) return;
+    // A previous socket can still be cancelling its turn when the new socket
+    // receives scope.changed. Its terminal frame will go to the old socket.
+    const timer = window.setInterval(requestHistory, 2000);
+    return () => window.clearInterval(timer);
+  }, [recoveringBusyScope, connected, busy, scopeKey, requestHistory]);
+
   const markTurnActive = useCallback((turnId: string | null) => {
     if (!turnId) return;
     activeTurnIdRef.current = turnId;
@@ -2320,6 +2329,7 @@ export function useSuperChat({
         setError(null);
         const frameScope = isChatScope(frame.scope) ? frame.scope : undefined;
         if (!scopeMatches(frameScope, desiredScopeRef.current)) break;
+        setRecoveringBusyScope(frame.busy === true);
         setHistoryReady(true);
         const history = mergeHistory(
           Array.isArray(frame.history) ? frame.history : [],

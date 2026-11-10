@@ -7610,3 +7610,46 @@ describe("story approval continuity translations", () => {
     }
   });
 });
+
+it("rechecks busy recovery until the old connection has finished cancelling", async () => {
+  const sockets: TestSocket[] = [];
+  const sent: string[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose = null;
+    constructor() { sockets.push(this); }
+    send(frame: string) { sent.push(frame); }
+    close() {}
+  }
+  vi.stubGlobal("WebSocket", TestSocket);
+  const hook = renderHook(() => useSuperChat({ project: "recovery-race", displayName: "Tester" }));
+  try {
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    const scope = { kind: "project", id: "recovery-race", surface: "director" };
+    const sync = async (busy: boolean) => {
+      await act(async () => {
+        sockets[0].onmessage?.({ data: JSON.stringify({ type: "scope.changed", scope, history: [], busy }) } as MessageEvent);
+      });
+    };
+    await act(async () => { sockets[0].onopen?.(); });
+    await sync(false);
+    act(() => { hook.result.current.send("test recovery"); });
+    await sync(true);
+    expect(hook.result.current.busy).toBe(true);
+    const before = sent.length;
+    await waitFor(() => expect(sent.length).toBeGreaterThan(before), { timeout: 3500 });
+    expect(JSON.parse(sent[sent.length - 1]).type).toBe("scope.set");
+    await sync(false);
+    expect(hook.result.current.busy).toBe(false);
+    const after = sent.length;
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)); });
+    expect(sent).toHaveLength(after);
+  } finally {
+    hook.unmount();
+    vi.unstubAllGlobals();
+  }
+});
