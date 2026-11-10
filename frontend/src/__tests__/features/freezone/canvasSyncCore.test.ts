@@ -282,11 +282,9 @@ describe("buildSavePayload", () => {
     warn.mockRestore();
   });
 
-  it("falls back to null when both imageUrl and previewImageUrl are data URLs", () => {
-    // Worst-case historical canvas: BOTH fields are base64. We can't recover
-    // a static URL, so the safest thing is to drop the preview entirely (the
-    // node's render code falls back to imageUrl, and the next genuine edit
-    // will write a real URL through the upload path).
+  it("drops every inline data media field the save endpoint would reject", () => {
+    // The backend rejects data: in imageUrl/videoUrl/audioUrl/previewImageUrl,
+    // so the save payload carries null there instead of the base64 payload.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const sanitized = sanitizePreviewImageUrls([
       {
@@ -294,14 +292,48 @@ describe("buildSavePayload", () => {
         data: {
           imageUrl: "data:image/png;base64,AAA",
           previewImageUrl: "data:image/png;base64,BBB",
+          videoUrl: " DATA:video/mp4;base64,CCC",
+          audioUrl: "data:audio/mpeg;base64,DDD",
+          label: "data: kept in text",
         },
       },
-    ]) as Array<{ data: Record<string, unknown> }>;
-    expect(sanitized[0].data.previewImageUrl).toBeNull();
-    // imageUrl stays as-is — we don't have a better URL to substitute, and
-    // the upload-on-edit path will replace it the next time the user edits.
-    expect(sanitized[0].data.imageUrl).toBe("data:image/png;base64,AAA");
-    expect(warn).toHaveBeenCalled();
+      {
+        id: "split-bad",
+        data: {
+          frames: [
+            { id: "f0", imageUrl: "data:image/png;base64,EEE", previewImageUrl: "/static/f0.png" },
+          ],
+        },
+      },
+    ]);
+    expect(sanitized).toEqual([
+      {
+        id: "export-bad",
+        data: {
+          imageUrl: null,
+          previewImageUrl: null,
+          videoUrl: null,
+          audioUrl: null,
+          label: "data: kept in text",
+        },
+      },
+      {
+        id: "split-bad",
+        data: { frames: [{ id: "f0", imageUrl: null, previewImageUrl: "/static/f0.png" }] },
+      },
+    ]);
+    expect(warn.mock.calls).toEqual([
+      [
+        "[canvasSync] stripped inline data URLs from 5 field(s) before PUT",
+        [
+          { nodeId: "export-bad", scope: "node", field: "previewImageUrl", replacedWith: "null" },
+          { nodeId: "export-bad", scope: "node", field: "imageUrl", replacedWith: "null" },
+          { nodeId: "export-bad", scope: "node", field: "videoUrl", replacedWith: "null" },
+          { nodeId: "export-bad", scope: "node", field: "audioUrl", replacedWith: "null" },
+          { nodeId: "split-bad", scope: "frame[0]", field: "imageUrl", replacedWith: "null" },
+        ],
+      ],
+    ]);
     warn.mockRestore();
   });
 

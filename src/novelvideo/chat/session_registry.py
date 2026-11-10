@@ -261,15 +261,17 @@ def chat_run_lock_is_active(
     return False
 
 
+# Fixed, never bumped; protocol changes reach a live thread through turn context.
+CODEX_SESSION_KEY_MARKER = "session"
+
+
 def codex_scope_key(
     project: str,
     *,
     agent_profile: str = "main",
     canvas_id: str | None = None,
-    main_protocol: str,
-    freezone_protocol: str,
 ) -> str:
-    """Keep thread identity tied to its tool protocol and conversation scope."""
+    """Keep thread identity tied to conversation scope with a fixed session marker."""
     normalized_project = str(project or "").strip()
     profile = str(agent_profile or "main").strip() or "main"
     if profile == "main":
@@ -277,7 +279,7 @@ def codex_scope_key(
             profile,
             "project" if normalized_project else "home",
             normalized_project or None,
-            main_protocol,
+            CODEX_SESSION_KEY_MARKER,
         )
         return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
     scoped_canvas = str(canvas_id or "").strip() or None
@@ -288,7 +290,7 @@ def codex_scope_key(
         "project" if normalized_project else "home",
         normalized_project or None,
         scoped_canvas,
-        freezone_protocol,
+        CODEX_SESSION_KEY_MARKER,
     )
     return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
 
@@ -383,27 +385,6 @@ def set_codex_thread_id(
         payload = load_codex_session_state(path)
         payload[scope_key] = normalized
         save_codex_session_state(path, payload, write_json_atomic=write_json_atomic)
-
-
-def reset_codex_scope_thread(
-    path: Path,
-    scope_key: str,
-    *,
-    index_file_lock: Callable[[Path], ContextManager[Any]],
-    write_json_atomic: Callable[[Path, dict[str, str]], None],
-) -> None:
-    """Drop one scope's thread binding from the session index.
-
-    This only touches the thread index. The matching active-turn record lives
-    in a separate file, and clearing it stays with the caller (the
-    ``chat.service`` wrapper does so) because the registry does not know the
-    per-user active-turn path.
-    """
-    with index_file_lock(path):
-        payload = load_codex_session_state(path)
-        if scope_key in payload:
-            payload.pop(scope_key)
-            save_codex_session_state(path, payload, write_json_atomic=write_json_atomic)
 
 
 def load_active_codex_turns(path: Path) -> dict[str, dict[str, str]]:

@@ -56,7 +56,7 @@ it('bundles a standalone React-free worker and serves sequential NDJSON requests
     expect(lines[2]).toMatchObject({ id: 'apply', ok: true, result: { status: 'applied', canvas: { nodes: expect.any(Array) }, receipt: { canvas_apply_status: 'applied' } } });
     expect(lines[2].result.canvas.nodes).toHaveLength(3);
     expect(lines[3]).toMatchObject({ id: 'preview', ok: true });
-    expect(stderr).toContain('stripped base64 previewImageUrl');
+    expect(stderr).toContain('stripped inline data URLs from 1 field(s)');
     expect(lines[4].result.canvas.nodes).toEqual([]);
     expect(lines[5]).toMatchObject({ id: 'bad-op', ok: false, error: { code: 'invalid_request' } });
     expect(lines[6]).toMatchObject({ id: 'bad-payload', ok: false, error: { code: 'invalid_request' } });

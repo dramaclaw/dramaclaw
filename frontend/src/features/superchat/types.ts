@@ -187,9 +187,10 @@ export type ServerFrame =
   | {
       type: "assistant.delta";
       scope?: ChatScope;
-      text?: string;
       turn_id?: string;
-      accumulated?: boolean;
+      /** Keep this many UTF-16 units of the reply received so far, then append `text`. */
+      offset: number;
+      text: string;
     }
   | {
       type: "assistant.message";

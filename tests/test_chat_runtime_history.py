@@ -66,6 +66,27 @@ def test_user_history_unwraps_native_sdk_input_variants() -> None:
     ]
 
 
+def test_user_history_drops_inline_image_data_and_logs_it(caplog) -> None:
+    item = UserMessageThreadItem.model_validate(
+        {
+            "id": "user-3",
+            "type": "userMessage",
+            "content": [
+                {"type": "text", "text": "看这张"},
+                {"type": "image", "url": "data:image/jpeg;base64,/9j/AAAA"},
+                {"type": "image", "url": "DATA:image/png;base64,iVBOR"},
+            ],
+        }
+    )
+
+    with caplog.at_level("WARNING"):
+        records = parse_codex_history_item(item, 2, 5)
+
+    assert records == [{"id": 2005, "role": "user", "content": "看这张"}]
+    assert "dropped inline image data" in caplog.text
+    assert "base64" not in caplog.text
+
+
 def test_assistant_history_trims_text_and_skips_empty_message() -> None:
     item = AgentMessageThreadItem.model_validate(
         {"id": "assistant-1", "type": "agentMessage", "text": "  finished  "}

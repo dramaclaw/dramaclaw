@@ -97,6 +97,15 @@ describe('server applyCommands', () => {
     expect(result.changes.created_node_ids).toEqual([]);
   });
 
+  it('preserves Agent-introduced inline media for Python validation', async () => {
+    const result = await applyCommands(initialCanvas(), envelope([
+      { type: 'create_node', node_type: 'imageGenNode', data: { imageUrl: 'data:image/png;base64,AAAA' } },
+    ]), env());
+    expect(result.status).toBe('applied');
+    expect(result.changes.created_node_ids).toHaveLength(1);
+    expect(result.canvas.nodes.find(node => node.id === result.changes.created_node_ids[0])?.data.imageUrl).toBe('data:image/png;base64,AAAA');
+  });
+
   it('uses private bundled translations and normalizes locales', async () => {
     const zh = await createServerTranslate('zh');
     const unknown = await createServerTranslate('unknown');

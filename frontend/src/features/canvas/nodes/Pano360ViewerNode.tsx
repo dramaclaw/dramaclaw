@@ -954,7 +954,7 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
         viewer.rotate(savedPos);
         applyFov(savedFov);
         // Upload every frame so each child node's imageUrl is a real backend URL;
-        // per-frame best-effort, dataUrl stays as the preview.
+        // any upload failure is reported in the capture status.
         setStatus(t('node.pano360.status.uploadingCount', { count: captures.length }));
         await Promise.all(
           captures.map(async (capture, index) => {

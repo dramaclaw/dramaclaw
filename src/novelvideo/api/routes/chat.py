@@ -15,10 +15,19 @@ import logging
 import time
 import uuid
 from dataclasses import replace
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import AliasChoices, BaseModel, Field
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import FileResponse
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from novelvideo.api.auth import (
     AGENT_WRITE_SCOPES,
@@ -41,12 +50,14 @@ from novelvideo.chat.live_events import (
     register_chat_websocket,
     unregister_chat_websocket,
 )
+from novelvideo.chat.home_uploads import resolve_home_upload, save_home_upload
 from novelvideo.chat.hermes_workspace import (
     ensure_user_hermes_workspace,
     sync_freezone_hermes_workflow_skills,
 )
 from novelvideo.chat.store import ChatScope, ChatUiEventRejected, chat_store
-from novelvideo.chat.turn_images import referenced_image_paths
+from novelvideo.chat.stream_delta import AssistantDeltaEncoder
+from novelvideo.chat.turn_images import CANVAS_NODE_REFERENCE_TYPE, referenced_image_paths
 from novelvideo.freezone.canvas_command_bridge import (
     touch_browser_presence,
     BRIDGE_PENDING_TTL_SECONDS,
@@ -84,6 +95,7 @@ from novelvideo.shared.billing_errors import (
     insufficient_credits_payload,
 )
 from novelvideo.utils.error_redaction import safe_exception_message
+from novelvideo.utils.upload_safety import UploadTooLargeError
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -226,7 +238,7 @@ async def clear_chat_scope(
     body: ClearChatRequest,
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
-    """Clear one conversation and start a fresh Codex context for that scope."""
+    """Clear one conversation and empty its Codex thread history; the thread id stays."""
     try:
         scope = ChatScope.from_payload(body.scope)
     except ValueError as exc:
@@ -263,7 +275,7 @@ async def clear_chat_scope(
             if project_ctx is not None
             else None
         )
-        archived_threads = await chat_service.archive_codex_scope_thread(
+        reverted_threads = await chat_service.clear_codex_scope_thread(
             username,
             project,
             agent_profile=(
@@ -285,7 +297,7 @@ async def clear_chat_scope(
         chat_service._release_chat_run_lock(username, lock_project, lock_id)
     logger.info(
         "chat scope cleared user=%s kind=%s project=%s surface=%s canvas=%s agent=%s "
-        "messages=%d archived_threads=%d",
+        "messages=%d reverted_threads=%d",
         username,
         scope.kind,
         project or "<home>",
@@ -293,13 +305,13 @@ async def clear_chat_scope(
         scope.canvas_id or "-",
         scope.agent_id or "-",
         cleared,
-        archived_threads,
+        reverted_threads,
     )
     return {
         "ok": True,
         "data": {
             "cleared_messages": cleared,
-            "archived_threads": archived_threads,
+            "reverted_threads": reverted_threads,
         },
     }
 
@@ -315,6 +327,16 @@ class ChatAttachmentIn(BaseModel):
     url: str | None = None
     path: str | None = None
     label: str | None = None
+
+    @field_validator("url", "path")
+    @classmethod
+    def _address_only(cls, value: str | None) -> str | None:
+        # An inline data: URL is content, not an address; it would reach the
+        # Codex thread through the attachment context block and the history.
+        if value is not None and value.lstrip()[:5].lower() == "data:":
+            logger.warning("dropped inline data from a chat attachment address")
+            return None
+        return value
 
 
 class ChatMessageIn(BaseModel):
@@ -638,6 +660,38 @@ async def append_chat_ui_event(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "data": event}
+
+
+@router.post("/chat/uploads")
+async def upload_home_chat_file(
+    file: Annotated[UploadFile, File()],
+    user: dict = Depends(get_api_user),
+) -> dict[str, Any]:
+    """Store a home chat attachment for this user and return its address."""
+    _enforce_agent_chat_scope(user, ChatScope(kind="home"), require_write=True)
+    try:
+        record = await asyncio.to_thread(
+            save_home_upload, str(user["username"]), file.file, file.filename
+        )
+    except UploadTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    return {"ok": True, "data": record}
+
+
+@router.get("/chat/uploads/{name}")
+async def read_home_chat_file(name: str, user: dict = Depends(get_api_user)) -> FileResponse:
+    """Serve one of this user's home chat attachments; other users' files are not found."""
+    _enforce_agent_chat_scope(user, ChatScope(kind="home"), require_write=False)
+    path = resolve_home_upload(str(user["username"]), name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="upload not found")
+    inline = path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    return FileResponse(
+        path,
+        filename=None if inline else path.name,
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.post("/chat/permission-result")
@@ -1734,6 +1788,22 @@ def _clarification_result_accepted(resolved: dict[str, Any]) -> bool:
     )
 
 
+def _canvas_context_response_refs(responses: Any) -> list[dict[str, str]]:
+    """Name what the agent read; the node details stay in the agent's session."""
+    refs: list[dict[str, str]] = []
+    for response in responses if isinstance(responses, list) else []:
+        if not isinstance(response, dict):
+            continue
+        ref = {
+            field: response[field]
+            for field in ("type", "node_id")
+            if isinstance(response.get(field), str)
+        }
+        if ref:
+            refs.append(ref)
+    return refs
+
+
 def _canvas_context_ui_event(
     payload: CanvasContextToolResultIn,
     resolved: dict[str, Any],
@@ -1747,7 +1817,7 @@ def _canvas_context_ui_event(
             "ok": resolved.get("ok"),
             "tool_call_status": resolved.get("tool_call_status"),
             "canvas_context_status": resolved.get("canvas_context_status"),
-            "responses": resolved.get("responses") or [],
+            "responses": _canvas_context_response_refs(resolved.get("responses")),
             "errors": resolved.get("errors") or [],
             "message": resolved.get("message"),
         },
@@ -2185,13 +2255,70 @@ def _text_with_attachment_context(
     return f"{text}\n\n{block}" if block else text
 
 
+# What history keeps of a referenced canvas node: identity and media addresses.
+_STORED_CANVAS_NODE_FIELDS = (
+    "node_id",
+    "node_type",
+    "label",
+    "media_type",
+    "source_url",
+    "preview_url",
+)
+
+
+def _stored_canvas_reference(content: str | None) -> str | None:
+    try:
+        payload = json.loads(content or "")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    record = {
+        key: payload[key] for key in ("schema_version", "project", "canvas_id") if key in payload
+    }
+    for key in ("display_nodes", "nodes"):
+        nodes = payload.get(key)
+        if isinstance(nodes, list):
+            record[key] = [
+                {field: node.get(field) for field in _STORED_CANVAS_NODE_FIELDS}
+                for node in nodes
+                if isinstance(node, dict)
+            ]
+    return json.dumps(record, ensure_ascii=False)
+
+
 def _attachment_payloads(attachments: list[ChatAttachmentIn]) -> list[dict[str, Any]]:
+    """Attachment records as chat history stores them: addresses, never file content."""
+
     payloads: list[dict[str, Any]] = []
     for attachment in attachments:
-        payload = attachment.model_dump(exclude_none=True)
+        payload = attachment.model_dump(exclude_none=True, exclude={"content"})
+        if CANVAS_NODE_REFERENCE_TYPE in {attachment.type, attachment.kind}:
+            reference = _stored_canvas_reference(attachment.content)
+            if reference is not None:
+                payload["content"] = reference
         if payload:
             payloads.append(payload)
     return payloads
+
+
+async def _send_assistant_delta(
+    websocket: WebSocket,
+    encoder: AssistantDeltaEncoder,
+    scope: ChatScope,
+    turn_id: str,
+    text: str,
+    send_lock: asyncio.Lock,
+) -> None:
+    """Send the `{offset, text}` patch that brings the client to ``text``."""
+    patch = encoder.encode(text)
+    if patch is None:
+        return
+    await _send_json_best_effort(
+        websocket,
+        {"type": "assistant.delta", "scope": scope.to_dict(), "turn_id": turn_id, **patch},
+        send_lock,
+    )
 
 
 def _should_emit_final_text(final_text: str, last_sent_text: str) -> bool:
@@ -3485,6 +3612,7 @@ async def _stream_project_turn(
         await _send_json_best_effort(websocket, skill_studio_status, send_lock)
     done_sent = False
     assistant_sent_text = ""
+    delta_encoder = AssistantDeltaEncoder()
 
     async def on_event(event: dict[str, Any]) -> None:
         nonlocal assistant_sent_text, done_sent
@@ -3522,16 +3650,8 @@ async def _stream_project_turn(
             )
         elif event_type == "assistant_delta":
             assistant_sent_text = str(event.get("text") or "")
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.delta",
-                    "scope": scope.to_dict(),
-                    "text": assistant_sent_text,
-                    "turn_id": turn_id,
-                    "accumulated": True,
-                },
-                send_lock,
+            await _send_assistant_delta(
+                websocket, delta_encoder, scope, turn_id, assistant_sent_text, send_lock
             )
         elif event_type == "thought_delta":
             await _send_json_best_effort(
@@ -3652,16 +3772,8 @@ async def _stream_project_turn(
             final_text = _message_content(final_message)
             if _should_emit_final_text(final_text, assistant_sent_text):
                 assistant_sent_text = final_text
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.delta",
-                        "scope": scope.to_dict(),
-                        "text": final_text,
-                        "turn_id": turn_id,
-                        "accumulated": True,
-                    },
-                    send_lock,
+                await _send_assistant_delta(
+                    websocket, delta_encoder, scope, turn_id, final_text, send_lock
                 )
             done_sent = await _send_json_best_effort(
                 websocket,
@@ -3789,6 +3901,7 @@ async def _stream_home_turn_codex(
     )
     done_sent = False
     assistant_sent_text = ""
+    delta_encoder = AssistantDeltaEncoder()
 
     async def on_event(event: dict[str, Any]) -> None:
         nonlocal assistant_sent_text, done_sent
@@ -3826,16 +3939,8 @@ async def _stream_home_turn_codex(
             )
         elif event_type == "assistant_delta":
             assistant_sent_text = str(event.get("text") or "")
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.delta",
-                    "scope": scope.to_dict(),
-                    "text": assistant_sent_text,
-                    "turn_id": turn_id,
-                    "accumulated": True,
-                },
-                send_lock,
+            await _send_assistant_delta(
+                websocket, delta_encoder, scope, turn_id, assistant_sent_text, send_lock
             )
         elif event_type in {"thought_delta", "plan_update", "usage_update"}:
             payload = {
@@ -3889,16 +3994,8 @@ async def _stream_home_turn_codex(
             final_text = _message_content(message)
             if _should_emit_final_text(final_text, assistant_sent_text):
                 assistant_sent_text = final_text
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.delta",
-                        "scope": scope.to_dict(),
-                        "text": final_text,
-                        "turn_id": turn_id,
-                        "accumulated": True,
-                    },
-                    send_lock,
+                await _send_assistant_delta(
+                    websocket, delta_encoder, scope, turn_id, final_text, send_lock
                 )
             if isinstance(message, dict):
                 await _send_json_best_effort(
@@ -4058,6 +4155,7 @@ async def _stream_home_turn(
 
     assistant_text = ""
     assistant_sent_text = ""
+    delta_encoder = AssistantDeltaEncoder()
     tool_text = ""
     tool_name = ""
     persisted = False
@@ -4232,16 +4330,8 @@ async def _stream_home_turn(
                     ),
                 )
                 assistant_sent_text = display_text
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.delta",
-                        "scope": scope.to_dict(),
-                        "text": display_text,
-                        "turn_id": turn_id,
-                        "accumulated": True,
-                    },
-                    send_lock,
+                await _send_assistant_delta(
+                    websocket, delta_encoder, scope, turn_id, display_text, send_lock
                 )
             elif event.type == "thought_delta":
                 await _send_json_best_effort(
@@ -4356,16 +4446,8 @@ async def _stream_home_turn(
         assistant_sent_text = _message_content(message)
         if _should_emit_final_text(assistant_text, assistant_sent_text):
             assistant_sent_text = assistant_text
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.delta",
-                    "scope": scope.to_dict(),
-                    "text": assistant_text,
-                    "turn_id": turn_id,
-                    "accumulated": True,
-                },
-                send_lock,
+            await _send_assistant_delta(
+                websocket, delta_encoder, scope, turn_id, assistant_text, send_lock
             )
 
         after_projects = set(list_user_projects(username))

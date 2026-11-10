@@ -14,7 +14,9 @@
  * the request body cap.
  *
  * This sanitizer rewrites any `previewImageUrl` that still looks like a data
- * URL to the node's `imageUrl` (or `null` if `imageUrl` itself is unusable).
+ * URL to the node's `imageUrl` (or `null` if `imageUrl` itself is unusable),
+ * and sets `imageUrl` / `videoUrl` / `audioUrl` holding a data URL to `null`:
+ * the save endpoint rejects inline data in all four media fields.
  * It runs at the single serialization chokepoint so we also clean up
  * already-polluted historical canvases the next time the user saves them.
  *
@@ -23,18 +25,47 @@
  * save if anything was rewritten — that surfaces any new leak path without
  * spamming console for the steady-state historical-cleanup case.
  */
+const INLINE_DATA_RE = /^\s*data:/i;
+const INLINE_MEDIA_FIELDS = ["imageUrl", "videoUrl", "audioUrl"] as const;
+
 function isDataUrl(value: unknown): value is string {
-  return typeof value === "string" && value.startsWith("data:");
+  return typeof value === "string" && INLINE_DATA_RE.test(value);
 }
 
 function pickUsableUrl(url: unknown): string | null {
-  return typeof url === "string" && url && !url.startsWith("data:") ? url : null;
+  return typeof url === "string" && url && !isDataUrl(url) ? url : null;
 }
 
 interface SanitizedNodeRecord {
   nodeId: string;
   scope: "node" | `frame[${number}]`;
+  field: "previewImageUrl" | (typeof INLINE_MEDIA_FIELDS)[number];
   replacedWith: "imageUrl" | "null";
+}
+
+function stripInlineMedia(
+  record: Record<string, unknown>,
+  nodeId: string,
+  scope: SanitizedNodeRecord["scope"],
+  rewrites: SanitizedNodeRecord[],
+): Record<string, unknown> | null {
+  let next: Record<string, unknown> | null = null;
+  if (isDataUrl(record.previewImageUrl)) {
+    const fallback = pickUsableUrl(record.imageUrl);
+    next = { ...record, previewImageUrl: fallback };
+    rewrites.push({
+      nodeId,
+      scope,
+      field: "previewImageUrl",
+      replacedWith: fallback ? "imageUrl" : "null",
+    });
+  }
+  for (const field of INLINE_MEDIA_FIELDS) {
+    if (!isDataUrl(record[field])) continue;
+    next = { ...(next ?? record), [field]: null };
+    rewrites.push({ nodeId, scope, field, replacedWith: "null" });
+  }
+  return next;
 }
 
 export function sanitizePreviewImageUrls(nodes: unknown[]): unknown[] {
@@ -52,17 +83,7 @@ export function sanitizePreviewImageUrls(nodes: unknown[]): unknown[] {
     const dataRecord = data as Record<string, unknown>;
     const nodeId = typeof node.id === "string" ? node.id : "<unknown>";
 
-    let nextData: Record<string, unknown> | null = null;
-
-    if (isDataUrl(dataRecord.previewImageUrl)) {
-      const fallback = pickUsableUrl(dataRecord.imageUrl);
-      nextData = { ...dataRecord, previewImageUrl: fallback };
-      rewrites.push({
-        nodeId,
-        scope: "node",
-        replacedWith: fallback ? "imageUrl" : "null",
-      });
-    }
+    let nextData = stripInlineMedia(dataRecord, nodeId, "node", rewrites);
 
     const frames = dataRecord.frames;
     if (Array.isArray(frames)) {
@@ -71,18 +92,17 @@ export function sanitizePreviewImageUrls(nodes: unknown[]): unknown[] {
         if (!frame || typeof frame !== "object") {
           return frame;
         }
-        const frameRecord = frame as Record<string, unknown>;
-        if (!isDataUrl(frameRecord.previewImageUrl)) {
+        const cleaned = stripInlineMedia(
+          frame as Record<string, unknown>,
+          nodeId,
+          `frame[${index}]`,
+          rewrites,
+        );
+        if (!cleaned) {
           return frame;
         }
-        const fallback = pickUsableUrl(frameRecord.imageUrl);
         framesChanged = true;
-        rewrites.push({
-          nodeId,
-          scope: `frame[${index}]`,
-          replacedWith: fallback ? "imageUrl" : "null",
-        });
-        return { ...frameRecord, previewImageUrl: fallback };
+        return cleaned;
       });
       if (framesChanged) {
         nextData = { ...(nextData ?? dataRecord), frames: nextFrames };
@@ -94,7 +114,7 @@ export function sanitizePreviewImageUrls(nodes: unknown[]): unknown[] {
 
   if (rewrites.length > 0) {
     console.warn(
-      `[canvasSync] stripped base64 previewImageUrl from ${rewrites.length} field(s) before PUT`,
+      `[canvasSync] stripped inline data URLs from ${rewrites.length} field(s) before PUT`,
       rewrites,
     );
   }

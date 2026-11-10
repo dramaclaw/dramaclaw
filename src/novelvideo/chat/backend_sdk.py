@@ -5,9 +5,10 @@ import json
 import logging
 import os
 import threading
+import time
 import tomllib
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal, Sequence
+from typing import Any, AsyncIterator, Literal, Mapping, Sequence
 
 from novelvideo.chat.runtime_port import (
     AgentRuntimeThreadPort,
@@ -126,6 +127,23 @@ def _is_archived_codex_thread_error(exc: Exception) -> bool:
     return "is archived" in message
 
 
+def _codex_runtime_config(
+    *,
+    codex_bin: Path,
+    cwd: Path,
+    env: dict[str, str],
+    config_overrides: tuple[str, ...],
+) -> Any:
+    from openai_codex import CodexConfig
+
+    return CodexConfig(
+        codex_bin=str(codex_bin),
+        cwd=str(cwd),
+        env=env,
+        config_overrides=config_overrides,
+    )
+
+
 def control_codex_runtime(
     *,
     codex_bin: Path,
@@ -142,12 +160,11 @@ def control_codex_runtime(
     request lands on a different Gunicorn worker from the streaming request.
     """
 
-    from openai_codex import CodexConfig
     from novelvideo.chat.codex_app_server import shared_codex
 
-    config = CodexConfig(
-        codex_bin=str(codex_bin),
-        cwd=str(cwd),
+    config = _codex_runtime_config(
+        codex_bin=codex_bin,
+        cwd=cwd,
         env=env,
         config_overrides=config_overrides,
     )
@@ -1175,6 +1192,106 @@ class CodexThreadBusyError(RuntimeError):
     """The persisted thread still has a turn in flight on the App Server."""
 
 
+class CodexThreadHistoryModeError(RuntimeError):
+    """The started thread cannot support chat history clearing."""
+
+
+_CODEX_CLEAR_IDLE_POLLS = 50
+_CODEX_CLEAR_IDLE_POLL_SECONDS = 0.1
+
+
+def revert_codex_thread_history(
+    client: Any, thread_id: str
+) -> Literal["reverted", "empty", "missing"]:
+    """Keep the same thread id with empty history, interrupting active turns first.
+    The revert response does not list turns, so read history again to verify it is empty.
+    """
+    from openai_codex.errors import InvalidRequestError
+    from novelvideo.chat.codex_protocol import (
+        THREAD_REVERT,
+        THREAD_TURNS_LIST,
+        CodexThreadResponse,
+        ThreadRevertResponse,
+        ThreadTurnIdsPage,
+        oldest_turn_params,
+        thread_revert_params,
+    )
+
+    resume_params = {"threadId": thread_id, "excludeTurns": True}
+    try:
+        response = client.request(
+            "thread/resume", resume_params, response_model=CodexThreadResponse
+        )
+    except InvalidRequestError as exc:
+        if _is_missing_codex_thread_error(exc):
+            return "missing"
+        if not _is_archived_codex_thread_error(exc):
+            raise
+        client.thread_unarchive(thread_id)
+        response = client.request(
+            "thread/resume", resume_params, response_model=CodexThreadResponse
+        )
+    mode = response.thread.history_mode
+    if mode != "paginated":
+        raise CodexThreadHistoryModeError(
+            f"Codex thread {thread_id} has history mode {mode}; cannot clear history"
+        )
+    newest_params = {"threadId": thread_id, "limit": 1, "itemsView": "notLoaded"}
+    if response.thread.status.type == "active":
+        newest = client.request(
+            THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnIdsPage
+        )
+        if newest.data and newest.data[0].status == "inProgress":
+            client.turn_interrupt(thread_id, newest.data[0].id)
+        for poll in range(_CODEX_CLEAR_IDLE_POLLS):
+            if poll:
+                time.sleep(_CODEX_CLEAR_IDLE_POLL_SECONDS)
+            response = client.request(
+                "thread/read",
+                {"threadId": thread_id, "includeTurns": False},
+                response_model=CodexThreadResponse,
+            )
+            if response.thread.status.type != "active":
+                break
+        else:
+            raise CodexThreadBusyError(
+                f"Codex thread {thread_id} still has a turn in flight; cannot clear history"
+            )
+    oldest = client.request(
+        THREAD_TURNS_LIST, oldest_turn_params(thread_id), response_model=ThreadTurnIdsPage
+    )
+    if not oldest.data:
+        return "empty"
+    client.request(
+        THREAD_REVERT,
+        thread_revert_params(thread_id, oldest.data[0].id),
+        response_model=ThreadRevertResponse,
+    )
+    remaining = client.request(
+        THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnIdsPage
+    )
+    if remaining.data:
+        raise RuntimeError(f"Codex thread {thread_id} still has turns after clearing history")
+    return "reverted"
+
+
+def clear_codex_thread_history(
+    *,
+    codex_bin: Path,
+    cwd: Path,
+    env: dict[str, str],
+    config_overrides: tuple[str, ...],
+    thread_id: str,
+) -> Literal["reverted", "empty", "missing"]:
+    from novelvideo.chat.codex_app_server import shared_codex
+
+    config = _codex_runtime_config(
+        codex_bin=codex_bin, cwd=cwd, env=env, config_overrides=config_overrides
+    )
+    with shared_codex(config) as codex:
+        return revert_codex_thread_history(codex._client, thread_id)
+
+
 def _loaded_codex_thread_status(client: Any, thread_id: str) -> str | None:
     """Return the App Server runtime status type for ``thread_id`` or ``None``."""
 
@@ -1253,6 +1370,27 @@ def _refresh_loaded_codex_thread_runtime(codex: Any, thread_id: str) -> bool:
     return True
 
 
+def _start_paginated_codex_thread(codex: Any, thread_options: dict[str, Any]) -> Any:
+    from novelvideo.chat.codex_protocol import CodexThreadResponse
+
+    thread = codex.thread_start(**thread_options)
+    request = getattr(getattr(codex, "_client", None), "request", None)
+    mode = "unknown (low-level request unavailable)"
+    if callable(request):
+        response = request(
+            "thread/read",
+            {"threadId": thread.id, "includeTurns": False},
+            response_model=CodexThreadResponse,
+        )
+        mode = response.thread.history_mode
+    if mode != "paginated":
+        raise CodexThreadHistoryModeError(
+            f"Codex thread {thread.id} has history mode {mode}; "
+            "chat needs a Codex runtime that starts paginated threads (0.162 or newer)"
+        )
+    return thread
+
+
 def _start_or_resume_codex_thread(
     codex: Any,
     thread_id: str | None,
@@ -1266,7 +1404,7 @@ def _start_or_resume_codex_thread(
     """
 
     if not thread_id:
-        return codex.thread_start(**thread_options)
+        return _start_paginated_codex_thread(codex, thread_options)
 
     from openai_codex.errors import InvalidRequestError
 
@@ -1292,7 +1430,7 @@ def _start_or_resume_codex_thread(
             return codex.thread_resume(thread_id, **thread_options)
         if not _is_missing_codex_thread_error(exc):
             raise
-        return codex.thread_start(**thread_options)
+        return _start_paginated_codex_thread(codex, thread_options)
 
 
 def _start_codex_turn(
@@ -1300,22 +1438,31 @@ def _start_codex_turn(
     prompt: str,
     turn_metadata: dict[str, str],
     output_schema: dict[str, Any] | None = None,
-    images: Sequence[str] = (),
+    image_paths: Sequence[Path] = (),
+    *,
+    additional_context: Mapping[str, Mapping[str, str]] | None = None,
+    client_user_message_id: str | None = None,
 ) -> Any:
     """Start a turn with metadata omitted by the 0.147 generated facade.
 
     App Server 0.147 already accepts ``responsesapiClientMetadata``; only the
     generated Python convenience method lagged behind the protocol. Sending a
     raw params mapping keeps the credential scoped to the turn context instead
-    of the long-lived thread configuration. ``images`` are data URLs sent as
-    image input after the prompt text.
+    of the long-lived thread configuration. ``image_paths`` are local files sent
+    as ``localImage`` input after the prompt text, so the thread stores paths.
     """
 
-    from openai_codex._inputs import ImageInput, TextInput, _to_wire_input
+    from openai_codex._inputs import LocalImageInput, TextInput, _to_wire_input
 
-    if not turn_metadata and output_schema is None:
+    images = [LocalImageInput(str(path)) for path in image_paths]
+    if (
+        not turn_metadata
+        and output_schema is None
+        and not additional_context
+        and not client_user_message_id
+    ):
         if images:
-            return thread.turn([TextInput(prompt), *map(ImageInput, images)])
+            return thread.turn([TextInput(prompt), *images])
         return thread.turn(TextInput(prompt))
 
     from openai_codex.api import TurnHandle
@@ -1327,12 +1474,18 @@ def _start_codex_turn(
             "\n\nYour final response must be exactly one JSON object matching the supplied schema."
             "\nFinal response JSON schema: " + json.dumps(output_schema, ensure_ascii=False)
         )
-    wire_input = _to_wire_input([TextInput(prompt), *map(ImageInput, images)])
+    wire_input = _to_wire_input([TextInput(prompt), *images])
     params: dict[str, Any] = {}
     if turn_metadata:
         params["responsesapiClientMetadata"] = dict(turn_metadata)
     if output_schema is not None:
         params["outputSchema"] = output_schema
+    if additional_context:
+        params["additionalContext"] = {
+            name: dict(entry) for name, entry in additional_context.items()
+        }
+    if client_user_message_id:
+        params["clientUserMessageId"] = client_user_message_id
     started = thread._client.turn_start(
         thread.id,
         wire_input,
@@ -1355,6 +1508,8 @@ class CodexClient:
         thread_config_overrides: tuple[str, ...] | None = None,
         turn_metadata: dict[str, str] | None = None,
         output_schema: dict[str, Any] | None = None,
+        additional_context: Mapping[str, Mapping[str, str]] | None = None,
+        client_user_message_id: str | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -1371,6 +1526,11 @@ class CodexClient:
         self._thread_config = _codex_thread_config(effective_thread_overrides, env)
         self._turn_metadata = dict(turn_metadata or {})
         self._output_schema = output_schema
+        self._additional_context = (
+            {name: dict(entry) for name, entry in additional_context.items()}
+            if additional_context is not None else None
+        )
+        self._client_user_message_id = client_user_message_id
 
     def thread_start(self) -> "CodexThread":
         return CodexThread(
@@ -1384,6 +1544,8 @@ class CodexClient:
             thread_config=self._thread_config,
             turn_metadata=self._turn_metadata,
             output_schema=self._output_schema,
+            additional_context=self._additional_context,
+            client_user_message_id=self._client_user_message_id,
             thread_id=None,
         )
 
@@ -1399,6 +1561,8 @@ class CodexClient:
             thread_config=self._thread_config,
             turn_metadata=self._turn_metadata,
             output_schema=self._output_schema,
+            additional_context=self._additional_context,
+            client_user_message_id=self._client_user_message_id,
             thread_id=thread_id,
         )
 
@@ -1418,6 +1582,8 @@ class CodexThread:
         turn_metadata: dict[str, str],
         thread_id: str | None,
         output_schema: dict[str, Any] | None = None,
+        additional_context: Mapping[str, Mapping[str, str]] | None = None,
+        client_user_message_id: str | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -1429,10 +1595,15 @@ class CodexThread:
         self._thread_config = dict(thread_config)
         self._turn_metadata = dict(turn_metadata)
         self._output_schema = output_schema
+        self._additional_context = (
+            {name: dict(entry) for name, entry in additional_context.items()}
+            if additional_context is not None else None
+        )
+        self._client_user_message_id = client_user_message_id
         self.id = thread_id
 
     async def stream(
-        self, prompt: str, *, images: Sequence[str] = ()
+        self, prompt: str, *, image_paths: Sequence[Path] = ()
     ) -> AsyncIterator[ChatBackendEvent]:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
@@ -1512,7 +1683,9 @@ class CodexThread:
                     prompt,
                     self._turn_metadata,
                     self._output_schema,
-                    images=images,
+                    image_paths=image_paths,
+                    additional_context=self._additional_context,
+                    client_user_message_id=self._client_user_message_id,
                 )
                 nonlocal current_turn_id
                 current_turn_id = turn.id

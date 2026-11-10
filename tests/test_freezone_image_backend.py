@@ -2772,10 +2772,10 @@ async def test_put_canvas_saves_oversized_payload_with_warning(
             nodes=[
                 {
                     "id": "big",
-                    "type": "exportImageNode",
+                    "type": "textNode",
                     "data": {
-                        "imageUrl": "data:image/png;base64," + ("a" * 1024),
-                        "previewImageUrl": "data:image/png;base64," + ("b" * 256),
+                        "content": "a" * 1024,
+                        "note": "b" * 256,
                     },
                 }
             ],
@@ -2791,7 +2791,7 @@ async def test_put_canvas_saves_oversized_payload_with_warning(
     assert warning["code"] == "canvas_payload_large"
     assert warning["limit_kb"] == 1
     assert warning["actual_kb"] >= 1
-    assert any(row["path"] == "nodes[0].data.imageUrl" for row in warning["top_fields"])
+    assert any(row["path"] == "nodes[0].data.content" for row in warning["top_fields"])
     saved = json.loads(canvas_file.read_text(encoding="utf-8"))
     assert saved["revision"] == 4
     assert saved["nodes"][0]["id"] == "big"
