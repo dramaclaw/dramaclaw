@@ -340,7 +340,10 @@ async def test_websocket_follows_persisted_turn(runtime, monkeypatch, tmp_path, 
         monkeypatch.setattr(routes, "_bridge_project_state_dir", AsyncMock(return_value=tmp_path))
         bridge.put_pending_canvas_command(
             key="command-1", project_id="project-1", canvas_id="canvas-1",
-            commands=[], envelope={"canvas_id": "canvas-1", "commands": []}, bridge_dir=directory,
+            commands=[{"type": "select_nodes", "node_ids": []}],
+            envelope={"canvas_id": "canvas-1",
+                      "commands": [{"type": "select_nodes", "node_ids": []}]},
+            bridge_dir=directory,
         )
         bridge.put_pending_clarification_event(
             key="clarify-1", project_id="project-1", canvas_id="canvas-1", bridge_dir=directory,

@@ -1093,6 +1093,8 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
         for member in tool.get("tools") or []
     }
     expected_execution_tools = {
+        "freezone_cancel_canvas_action",
+        "freezone_confirm_canvas_action",
         "freezone_confirm_workflow_draft",
         "freezone_get_canvas_ontology",
         "freezone_get_node_action_catalog",

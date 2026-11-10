@@ -30,8 +30,9 @@ def publish(directory, key, external):
         key=key,
         project_id="project",
         canvas_id="canvas",
-        commands=[],
-        envelope={"external_mcp_command": external, "canvas_id": "canvas"},
+        commands=[{"type": "select_nodes", "node_ids": []}],
+        envelope={"external_mcp_command": external, "canvas_id": "canvas",
+                  "commands": [{"type": "select_nodes", "node_ids": []}]},
         bridge_dir=directory,
     )
 
