@@ -47,4 +47,51 @@ describe("createCanvasStore", () => {
 
     expect(recorder.events).toEqual(["deleted d-1", "canvas replaced", "canvas replaced"]);
   });
+
+  it("starts video nodes from the environment's last video model when created or loaded", () => {
+    const store = createCanvasStore(
+      recordingEnvironment("v", { lastVideoModel: "remembered-video-model" }).environment,
+    );
+
+    const created = store.getState().addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 });
+    store.getState().setCanvasData(
+      [
+        ...store.getState().nodes,
+        { id: "loaded", type: CANVAS_NODE_TYPES.video, position: { x: 400, y: 0 }, data: {} },
+      ],
+      [],
+    );
+
+    expect(store.getState().nodes.map((node) => [node.id, node.data.model])).toEqual([
+      [created, "remembered-video-model"],
+      ["loaded", "remembered-video-model"],
+    ]);
+  });
+
+  it("falls back to the default video model when the environment remembers none", () => {
+    const store = createCanvasStore(recordingEnvironment("v").environment);
+
+    const created = store.getState().addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 });
+
+    expect(store.getState().nodes.find((node) => node.id === created)?.data.model)
+      .toBe("newapi_seedance-2.0");
+  });
+
+  it("limits video references with the envelope the environment resolves", () => {
+    const recorder = recordingEnvironment("r", {
+      videoReferenceEnvelope: { image: 1, video: 0, audio: 0, total: 1 },
+    });
+    const store = createCanvasStore(recorder.environment);
+    const video = store.getState().addNode(CANVAS_NODE_TYPES.video, { x: 600, y: 0 });
+    const first = store.getState().addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 0 });
+    const second = store.getState().addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 300 });
+
+    const accepted = store.getState().addEdge(first, video);
+    const rejected = store.getState().addEdge(second, video);
+
+    expect(accepted).toBe(`e-${first}-${video}`);
+    expect(rejected).toBeNull();
+    expect(store.getState().edges.map((edge) => edge.id)).toEqual([`e-${first}-${video}`]);
+    expect(recorder.events).toContain("envelope for r-1");
+  });
 });

@@ -10,6 +10,7 @@ import {
   VIDEO_UPSCALE_RESOLUTIONS,
 } from "@/features/canvas/application/videoUpscale";
 import { getDownstreamSpawnTypes, getNodeDefinition, nodeHasSourceHandle } from "@/features/canvas/domain/nodeRegistry";
+import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import { isAgentExecutableNodeAction } from "@/features/freezone/canvasNodeActionCatalog";
 import { planNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
@@ -81,7 +82,7 @@ function makeVirtualNode(command: {
     id: command.client_id,
     type: command.node_type,
     position: { x: 0, y: 0 },
-    data: { ...getNodeDefinition(command.node_type).createDefaultData(), ...command.data },
+    data: { ...getNodeDefinition(command.node_type).createDefaultData(browserNodeDataDefaults), ...command.data },
   } as CanvasNode;
 }
 
@@ -241,7 +242,7 @@ export function validateCanvasChatCommandEnvelopes(
               id: `__validate__:${command.node_type}`,
               type: command.node_type,
               position: { x: 0, y: 0 },
-              data: { ...getNodeDefinition(command.node_type).createDefaultData(), ...data },
+              data: { ...getNodeDefinition(command.node_type).createDefaultData(browserNodeDataDefaults), ...data },
             } as CanvasNode),
             data,
           );
@@ -293,7 +294,7 @@ export function validateCanvasChatCommandEnvelopes(
                 id: command.client_id ?? `__validate__:${nodeType}`,
                 type: nodeType,
                 position: { x: 0, y: 0 },
-                data: { ...getNodeDefinition(nodeType).createDefaultData(), ...data },
+                data: { ...getNodeDefinition(nodeType).createDefaultData(browserNodeDataDefaults), ...data },
               } as CanvasNode,
               data,
             );

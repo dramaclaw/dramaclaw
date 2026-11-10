@@ -2,9 +2,21 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { CanvasCommandEnvironment } from "@/features/canvas/core/commands/executor";
 import type { CanvasEnvironment } from "@/features/canvas/core/environment";
+import {
+  VIDEO_REFERENCE_ENVELOPE,
+  type VideoReferenceEnvelope,
+} from "@/features/canvas/domain/videoReferenceLimits";
 
-/** Deterministic environment that numbers ids and records lifecycle notifications. */
-export function recordingEnvironment(idPrefix: string): {
+type RecordingOptions = {
+  lastVideoModel?: string | null;
+  videoReferenceEnvelope?: VideoReferenceEnvelope;
+};
+
+/** Deterministic environment that numbers ids and records what the store asked of it. */
+export function recordingEnvironment(
+  idPrefix: string,
+  options: RecordingOptions = {},
+): {
   environment: CanvasEnvironment;
   events: string[];
 } {
@@ -12,9 +24,15 @@ export function recordingEnvironment(idPrefix: string): {
   let counter = 0;
   const environment: CanvasEnvironment = {
     ids: { next: () => `${idPrefix}-${(counter += 1)}` },
-    translate: (key, options) => (options ? `${key} ${JSON.stringify(options)}` : key),
+    translate: (key, translateOptions) =>
+      translateOptions ? `${key} ${JSON.stringify(translateOptions)}` : key,
     onCanvasReplaced: () => events.push("canvas replaced"),
     onNodeDeleted: (nodeId) => events.push(`deleted ${nodeId}`),
+    videoReferenceEnvelope: (videoNode) => {
+      events.push(`envelope for ${videoNode.id}`);
+      return options.videoReferenceEnvelope ?? { ...VIDEO_REFERENCE_ENVELOPE };
+    },
+    lastVideoModel: () => options.lastVideoModel ?? null,
   };
   return { environment, events };
 }

@@ -6,8 +6,10 @@
 import i18n from 'i18next';
 
 import { resetStyleNodeSyncStates } from '../application/styleNodeSync';
+import { videoReferenceEnvelopeForNode } from '../application/videoReferenceEnvelope';
 import { cancelVideoCrop } from '../application/videoCrop/videoCropInFlight';
 import type { CanvasEnvironment } from '../core/environment';
+import { browserNodeDataDefaults } from './browserNodeDataDefaults';
 import { uuidGenerator } from './idGenerator';
 
 export const browserCanvasEnvironment: CanvasEnvironment = {
@@ -15,4 +17,8 @@ export const browserCanvasEnvironment: CanvasEnvironment = {
   translate: (key, options) => i18n.t(key, options),
   onCanvasReplaced: resetStyleNodeSyncStates,
   onNodeDeleted: cancelVideoCrop,
+  // Both read browser state at call time: the video model catalog the app fetched,
+  // and the video model the user picked last.
+  videoReferenceEnvelope: (videoNode) => videoReferenceEnvelopeForNode(videoNode),
+  lastVideoModel: () => browserNodeDataDefaults.lastVideoModel(),
 };

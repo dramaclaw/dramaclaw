@@ -52,6 +52,7 @@ import {
   nodeHasSourceHandle,
   nodeHasTargetHandle,
   isUpstreamConnectionAllowed,
+  type NodeDataDefaults,
 } from '@/features/canvas/domain/nodeRegistry';
 import {
   EXPORT_RESULT_DISPLAY_NAME,
@@ -76,7 +77,6 @@ import {
   overflowingVideoReferenceEdgeIds,
   videoReferenceConnectionRejection,
 } from '@/features/canvas/domain/videoReferenceLimits';
-import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
 import {
   planVideoBreakdownGroups,
   type PlanVideoBreakdownGroupsOptions,
@@ -1091,7 +1091,7 @@ function normalizeStoryClipLayouts(nodes: CanvasNode[]): CanvasNode[] {
   });
 }
 
-function normalizeNodes(rawNodes: CanvasNode[]): CanvasNode[] {
+function normalizeNodes(rawNodes: CanvasNode[], defaults: NodeDataDefaults): CanvasNode[] {
   const normalizedNodes = rawNodes
     .map((node) => {
       if (!Object.values(CANVAS_NODE_TYPES).includes(node.type as CanvasNodeType)) {
@@ -1100,7 +1100,7 @@ function normalizeNodes(rawNodes: CanvasNode[]): CanvasNode[] {
 
       const definition = nodeCatalog.getDefinition(node.type as CanvasNodeType);
       const mergedData = {
-        ...definition.createDefaultData(),
+        ...definition.createDefaultData(defaults),
         ...(node.data as Partial<CanvasNodeData>),
       } as CanvasNodeData;
 
@@ -1297,9 +1297,10 @@ function sortParentNodesBeforeChildren(nodes: CanvasNode[]): CanvasNode[] {
 function normalizeCanvasData(
   rawNodes: CanvasNode[],
   rawEdges: CanvasEdge[],
+  defaults: NodeDataDefaults,
 ): CanvasHistorySnapshot {
   const scoped = scopeProjectionGraphIds(rawNodes, rawEdges);
-  const normalizedNodes = normalizeNodes(scoped.nodes);
+  const normalizedNodes = normalizeNodes(scoped.nodes, defaults);
   return {
     nodes: normalizedNodes,
     edges: normalizeEdgesWithNodes(scoped.edges, normalizedNodes),
@@ -1325,13 +1326,16 @@ function clearTransientEdgeSelection(canvas: CanvasHistorySnapshot): CanvasHisto
   };
 }
 
-function normalizeHistory(history?: CanvasHistoryState): CanvasHistoryState {
+function normalizeHistory(
+  history: CanvasHistoryState | undefined,
+  defaults: NodeDataDefaults,
+): CanvasHistoryState {
   if (!history) {
     return { past: [], future: [] };
   }
 
   const normalizeSnapshot = (snapshot: CanvasHistorySnapshot): CanvasHistorySnapshot => {
-    return normalizeCanvasData(snapshot.nodes, snapshot.edges);
+    return normalizeCanvasData(snapshot.nodes, snapshot.edges, defaults);
   };
 
   return {
@@ -2054,7 +2058,7 @@ const canvasStateCreator = (
           state.nodes,
           state.edges,
           connection,
-          videoReferenceEnvelopeForNode,
+          (videoNode) => env.videoReferenceEnvelope(videoNode),
         ) != null
       ) {
         return {};
@@ -2096,14 +2100,14 @@ const canvasStateCreator = (
     // 换画布/清空后，上一份画布留下的风格对账记账必须作废，否则重新 hydrate
     // 出来的图片节点会被当成「同一个节点接着算」，该补建的判成用户删了节点。
     env.onCanvasReplaced();
-    const normalizedCanvas = clearTransientEdgeSelection(normalizeCanvasData(nodes, edges));
+    const normalizedCanvas = clearTransientEdgeSelection(normalizeCanvasData(nodes, edges, env));
 
     set({
       nodes: placeGroupsOutsideStory(normalizedCanvas.nodes),
       edges: normalizedCanvas.edges,
       selectedNodeId: null,
       activeToolDialog: null,
-      history: normalizeHistory(history),
+      history: normalizeHistory(history, env),
       dragHistorySnapshot: null,
       // Hydrate / canvas switch — treat the store as freshly loaded so the
       // dangerous-empty guard does not misfire on the first signature pass.
@@ -2114,7 +2118,7 @@ const canvasStateCreator = (
   },
 
   applyCanvasDataEdit: (nodes, edges) => {
-    const normalizedCanvas = normalizeCanvasData(nodes, edges);
+    const normalizedCanvas = normalizeCanvasData(nodes, edges, env);
 
     set((state) => {
       const editSource: CanvasMutationSource = isDeleteToEmpty(
@@ -2142,14 +2146,16 @@ const canvasStateCreator = (
     // 换画布/清空后，上一份画布留下的风格对账记账必须作废，否则重新 hydrate
     // 出来的图片节点会被当成「同一个节点接着算」，该补建的判成用户删了节点。
     env.onCanvasReplaced();
-    const normalizedCanvas = clearHydratedSelection(normalizeCanvasData(draft.nodes, draft.edges));
+    const normalizedCanvas = clearHydratedSelection(
+      normalizeCanvasData(draft.nodes, draft.edges, env),
+    );
 
     set({
       nodes: placeGroupsOutsideStory(normalizedCanvas.nodes),
       edges: normalizedCanvas.edges,
       selectedNodeId: null,
       activeToolDialog: null,
-      history: normalizeHistory(draft.history ?? undefined),
+      history: normalizeHistory(draft.history ?? undefined, env),
       dragHistorySnapshot: null,
       userEditsSinceHydrate: draft.mutation.userEditsSinceHydrate,
       lastMutationSource: draft.mutation.lastMutationSource,
@@ -2789,7 +2795,7 @@ const canvasStateCreator = (
         state.nodes,
         state.edges,
         { source, target },
-        videoReferenceEnvelopeForNode,
+        (videoNode) => env.videoReferenceEnvelope(videoNode),
       ) != null
     ) {
       return null;
@@ -2840,7 +2846,7 @@ const canvasStateCreator = (
         state.nodes,
         state.edges,
         { source, target },
-        videoReferenceEnvelopeForNode,
+        (videoNode) => env.videoReferenceEnvelope(videoNode),
       ) != null
     ) {
       return null;
@@ -3276,7 +3282,7 @@ const canvasStateCreator = (
     }
     const definition = nodeCatalog.getDefinition(newType);
     const mergedData = {
-      ...definition.createDefaultData(),
+      ...definition.createDefaultData(env),
       ...dataOverrides,
       ...(newType === CANVAS_NODE_TYPES.audio ? { voicePolicyConfirmed: true } : {}),
     } as CanvasNodeData;
@@ -3326,7 +3332,7 @@ const canvasStateCreator = (
         nextNodes,
         nextEdges,
         videoTargetId,
-        videoReferenceEnvelopeForNode,
+        (videoNode) => env.videoReferenceEnvelope(videoNode),
       )) {
         overflowEdgeIds.add(edgeId);
       }
@@ -5331,7 +5337,7 @@ const canvasStateCreator = (
   },
 
   restoreHistory: (history) => {
-    set({ history: normalizeHistory(history) });
+    set({ history: normalizeHistory(history, env) });
   },
 
   clearCanvas: () => {
@@ -5372,6 +5378,6 @@ export type CanvasStoreApi = StoreApi<CanvasState>;
  */
 export function createCanvasStore(env: CanvasEnvironment): CanvasStoreApi {
   return createStore<CanvasState>()(
-    canvasStateCreator(env, new CanvasNodeFactory(env.ids, nodeCatalog)),
+    canvasStateCreator(env, new CanvasNodeFactory(env.ids, nodeCatalog, env)),
   );
 }

@@ -90,6 +90,30 @@ export function videoReferenceEnvelopeForModel(
   };
 }
 
+/** A media catalog entry, as far as reference limits go. */
+export interface VideoReferenceCatalogModel extends VideoReferenceLimitModel {
+  id: string;
+}
+
+/**
+ * Envelope of the model a video node has selected, looked up in `models`. A node
+ * with no persisted model, or one the catalog no longer lists, uses the first
+ * catalog entry: the model the video form shows and submits in that case.
+ */
+export function videoReferenceEnvelopeInCatalog(
+  videoNode: CanvasNode,
+  models: readonly VideoReferenceCatalogModel[],
+): VideoReferenceEnvelope {
+  const persisted =
+    typeof videoNode.data?.model === 'string' && videoNode.data.model.length > 0
+      ? videoNode.data.model
+      : null;
+  const model =
+    (persisted ? models.find((entry) => entry.id === persisted) : undefined) ??
+    models[0];
+  return videoReferenceEnvelopeForModel(model);
+}
+
 /**
  * 建边校验拿不到 React 上下文，模型只能由调用方解析后喂进来。默认值保持 9/3/3/12：
  * 传不进模型时（测试、还没加载出目录）行为与改动之前一致。
