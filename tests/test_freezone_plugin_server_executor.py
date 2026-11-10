@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from test_freezone_plugin import _load_plugin_module
+from test_freezone_plugin import _assert_real_mcp_output, _load_plugin_module
 from test_freezone_plugin import _restore_tools_registry_modules as _restore_tools_registry_modules
 
 
@@ -15,12 +15,12 @@ def agent(monkeypatch, tmp_path):
     monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", str(tmp_path))
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "p")
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "c")
-    monkeypatch.setenv("DRAMACLAW_MCP_CANVAS_APPROVAL", "0")
     monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP", raising=False)
     monkeypatch.delenv("DRAMACLAW_AGENT_PROFILE", raising=False)
     monkeypatch.delenv("DRAMACLAW_TURN_ID", raising=False)
     monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *_: None)
     monkeypatch.setattr(plugin, "wait_canvas_command_result", lambda *_, **__: pytest.fail("unexpected browser write"))
+    monkeypatch.setattr(plugin, "tool_error", lambda value: {"ok": False, "error": str(value)})
     calls = []
     receipt = {
         "tool_call_status": "completed", "canvas_apply_status": "applied",
@@ -40,6 +40,18 @@ def agent(monkeypatch, tmp_path):
         assert method == "POST"
         if path.endswith("agent-context"):
             return {"ok": True, "data": context}
+        if path.endswith("/confirmations"):
+            return {"ok": True, "data": CONFIRMATION}
+        if path.endswith("/decision"):
+            if kwargs["body"]["decision"] == "refused":
+                return {"ok": True, "data": {
+                    "confirmation_id": CONFIRMATION_ID, "status": "refused", "applied": False,
+                }}
+            return {"ok": True, "data": {
+                "confirmation_id": CONFIRMATION_ID, "status": "executed",
+                "result": {"status": "applied", "revision": 7, "receipt": receipt,
+                           "changes": {"created_node_ids": ["new-node"]}, "recompute_count": 1},
+            }}
         assert path.endswith("agent-commands")
         return {"ok": True, "data": {"status": "applied", "revision": 7, "receipt": receipt,
                                       "changes": {"created_node_ids": ["new-node"]}}}
@@ -94,44 +106,10 @@ def test_external_mcp_commands_post_marked_envelope(agent, monkeypatch, profile,
     assert not list(directory.iterdir())
 
 
-@pytest.mark.parametrize("external", [False, True])
-def test_confirmation_posts_only_after_confirm(agent, monkeypatch, external):
-    plugin, calls, _, directory = agent
-    if external:
-        monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
-        monkeypatch.setenv("DRAMACLAW_TURN_ID", "t1")
-    monkeypatch.delenv("DRAMACLAW_MCP_CANVAS_APPROVAL")
-    approval = plugin._emit_canvas_commands("p", "c", CREATE)
-    assert approval["status"] == "approval_required"
-    assert not [call for call in calls if call[0] == "POST"]
-    assert not list(directory.glob("*.pending.json"))
-    result = plugin._handle_confirm_canvas_action({"approval_id": approval["approval_id"]})
-    assert result["ok"] is True
-    assert result["canvas_apply_status"] == "applied"
-    envelope = {
-        "schema_version": "canvas_chat_commands.v1", "project_id": "p", "canvas_id": "c",
-        "commands": CREATE,
-    }
-    if external:
-        envelope.update(external_mcp_command=True, agent_id="main", turn_id="t1")
-    assert [call for call in calls if call[0] == "POST"] == [
-        ("POST", "/api/v1/projects/p/freezone/canvases/c/agent-commands",
-         {"envelopes": [envelope]})]
-
-
-def test_confirmed_workflow_draft_skips_second_confirmation(agent, monkeypatch):
-    plugin, calls, _, _ = agent
-    monkeypatch.delenv("DRAMACLAW_MCP_CANVAS_APPROVAL")
-    result = plugin._emit_canvas_commands("p", "c", CREATE, require_canvas_receipt=True)
-    assert result["applied"] is True
-    assert len([call for call in calls if call[0] == "POST"]) == 1
-
-
 @pytest.mark.parametrize("kind", ["run_node_action", "run_workflow"])
 def test_host_commands_without_browser_fail_immediately(agent, monkeypatch, kind):
     plugin, calls, _, directory = agent
     monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_: None)
-    monkeypatch.delenv("DRAMACLAW_MCP_CANVAS_APPROVAL")
     monkeypatch.setattr(plugin, "_resolve_canvas_generation_recommendations", lambda *_: pytest.fail("browser required before preflight"))
     started = time.monotonic()
     result = plugin._emit_canvas_commands("p", "c", [{"type": kind, "node_id": "n"}])
@@ -160,7 +138,10 @@ def test_host_commands_with_presence_use_existing_browser_dispatch(agent, monkey
     monkeypatch.setattr(plugin, "_external_mcp_agent_enabled", lambda: external)
     monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_: None)
     monkeypatch.setattr(plugin, "wait_canvas_command_result", lambda *_, **__: {"ok": True})
-    assert plugin._emit_canvas_commands("p", "c", [{"type": "run_node_action", "node_id": "n"}])["ok"]
+    result = plugin._emit_canvas_commands(
+        "p", "c", [{"type": "run_node_action", "node_id": "n", "action": "open"}],
+    )
+    assert result["ok"]
     frames = list(directory.glob("*.pending.json"))
     assert len(frames) == 1
     assert not [call for call in calls if call[0] == "POST"]
@@ -286,17 +267,6 @@ def test_executor_config_failure_uses_browser(agent, monkeypatch, response):
     assert plugin._agent_canvas_executor() == "browser"
 
 
-def test_confirmation_host_branch_requires_presence(agent):
-    plugin, calls, _, _ = agent
-    approval = plugin._create_mcp_canvas_approval(
-        project="p", canvas="c", commands=[{"type": "run_workflow", "scope": "canvas"}],
-        slim_result=False, reasons=["Run workflow"],
-    )
-    result = plugin._handle_confirm_canvas_action({"approval_id": approval["approval_id"]})
-    assert result["code"] == "canvas_browser_required"
-    assert not [call for call in calls if call[0] == "POST"]
-
-
 @pytest.mark.parametrize("read", [False, True])
 @pytest.mark.parametrize("status,detail", [
     (409, {"code": "canvas_revision_conflict", "message": "Conflict", "current_revision": 8}),
@@ -387,3 +357,340 @@ def test_presence_request_quotes_project_and_canvas(agent, monkeypatch):
     monkeypatch.setattr(plugin, "_request", request)
     assert plugin._canvas_browser_required_error("p /?", "c /?") is None
     assert calls == [("GET", "/api/v1/projects/p%20%2F%3F/freezone/canvases/c%20%2F%3F/presence")]
+
+
+CONFIRMATION_ID = "cc_" + "a" * 32
+CONFIRMATION = {
+    "confirmation_id": CONFIRMATION_ID,
+    "kinds": ["delete_nodes"],
+    "targets": [{"node_id": "n1", "title": "Sketch", "node_type": "imageGenNode",
+                 "action": "delete_nodes"}],
+    "expires_at": 1900001800.0,
+    "browser_open": True,
+}
+DELETE = [{"type": "delete_nodes", "node_ids": ["n1"]}]
+CONFIRMATION_PATH = "/api/v1/projects/p/freezone/canvases/c/confirmations"
+CARD_INSTRUCTION = (
+    "A confirmation card is now shown in the user's DramaClaw chat. Tell the user briefly "
+    "what will happen, naming each target node by title and type. Then end your turn. "
+    "Do not call freezone_confirm_canvas_action in this turn and never confirm on the user's "
+    "behalf. The outcome arrives later as a canvas background result. If the user answers "
+    "in the conversation instead, call freezone_confirm_canvas_action or "
+    "freezone_cancel_canvas_action with this confirmation_id in that later turn. "
+    "The confirmation expires in 30 minutes."
+)
+CONVERSATION_INSTRUCTION = (
+    "Tell the user what will happen, naming each target node by title and type, and ask "
+    "them to confirm. Only after the user explicitly confirms in a later message, call "
+    "freezone_confirm_canvas_action with this confirmation_id; if they decline, call "
+    "freezone_cancel_canvas_action. Never confirm on your own or in this same turn. "
+    "The confirmation expires in 30 minutes; after that, ask again."
+)
+
+
+def _respond(agent, monkeypatch, suffix, response):
+    plugin, calls, _, _ = agent
+    original_request = plugin._request
+
+    def request(method, path, **kwargs):
+        if path.endswith(suffix):
+            calls.append((method, path, kwargs.get("body")))
+            return response
+        return original_request(method, path, **kwargs)
+
+    monkeypatch.setattr(plugin, "_request", request)
+
+
+def _tool(plugin, name, args):
+    handler = next(handler for tool, _schema, handler in plugin.TOOLS if tool == name)
+    result = handler(args)
+    structured = _assert_real_mcp_output(plugin, name, result)
+    for key in ("confirmation_id", "kinds", "targets", "expires_at", "confirmation_via"):
+        if key in result:
+            assert structured[key] == result[key]
+    return result
+
+
+def _confirmation_result(data, via, instruction):
+    return {
+        "ok": False, "status": "confirmation_required", "code": "canvas_confirmation_required",
+        "tool_call_status": "completed", "canvas_apply_status": "awaiting_confirmation",
+        "applied": False, "project_id": "p", "canvas_id": "c",
+        "confirmation_id": CONFIRMATION_ID, "kinds": data["kinds"], "targets": data["targets"],
+        "expires_at": 1900001800.0, "confirmation_via": via,
+        "message": "需要用户确认后才会执行", "agent_instruction": instruction,
+    }
+
+
+@pytest.mark.parametrize("browser_open,turn,via,instruction", [
+    (True, "t1", "card", CARD_INSTRUCTION),
+    (False, "t1", "conversation", CONVERSATION_INSTRUCTION),
+    (True, None, "conversation", CONVERSATION_INSTRUCTION),
+])
+def test_delete_creates_confirmation_without_dispatch(
+    agent, monkeypatch, browser_open, turn, via, instruction,
+):
+    plugin, calls, _, directory = agent
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.setenv("DRAMACLAW_AGENT_PROFILE", "freezone:main")
+    if turn:
+        monkeypatch.setenv("DRAMACLAW_TURN_ID", turn)
+    data = {**CONFIRMATION, "browser_open": browser_open}
+    _respond(agent, monkeypatch, "/confirmations", {"ok": True, "data": data})
+    result = _tool(plugin, "freezone_emit_canvas_command", {"commands": DELETE})
+    assert result == _confirmation_result(data, via, instruction)
+    assert [call for call in calls if call[0] == "POST"] == [
+        ("POST", CONFIRMATION_PATH, {"agent_id": "main", "turn_id": turn, "commands": DELETE}),
+    ]
+    assert list(directory.iterdir()) == []
+
+
+def test_browser_delete_creates_confirmation_without_bridge(agent, monkeypatch):
+    plugin, calls, _, directory = agent
+    _respond(agent, monkeypatch, "/api/v1/config", {"ok": True, "data": {}})
+    result = _tool(plugin, "freezone_emit_canvas_command", {"commands": DELETE})
+    assert result == _confirmation_result(CONFIRMATION, "conversation", CONVERSATION_INSTRUCTION)
+    assert [call for call in calls if call[0] == "POST"] == [
+        ("POST", CONFIRMATION_PATH, {"agent_id": "main", "turn_id": None, "commands": DELETE}),
+    ]
+    assert list(directory.iterdir()) == []
+
+
+@pytest.mark.parametrize("commands,kinds", [
+    ([{"type": "clear_canvas"}], ["clear_canvas"]),
+    ([{"type": "run_node_action", "node_id": "n1", "action": "generate_image"}],
+     ["paid_generation"]),
+])
+def test_clear_and_paid_commands_create_confirmation(agent, monkeypatch, commands, kinds):
+    plugin, calls, _, directory = agent
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "t1")
+    _respond(agent, monkeypatch, "/presence", {"ok": True, "data": {"browser_open": True}})
+    data = {**CONFIRMATION, "kinds": kinds}
+    _respond(agent, monkeypatch, "/confirmations", {"ok": True, "data": data})
+    instruction = CARD_INSTRUCTION
+    if kinds == ["paid_generation"]:
+        instruction = instruction.replace(
+            "type. Then", "type. Say that it will consume credits; do not give any estimate. Then",
+        )
+    result = _tool(plugin, "freezone_emit_canvas_command", {"commands": commands})
+    assert result == _confirmation_result(data, "card", instruction)
+    assert [call for call in calls if call[0] == "POST"] == [
+        ("POST", CONFIRMATION_PATH, {"agent_id": "main", "turn_id": "t1", "commands": commands}),
+    ]
+    assert list(directory.iterdir()) == []
+
+
+def test_paid_conversation_mentions_credits_without_estimate(agent, monkeypatch):
+    plugin, _, _, _ = agent
+    _respond(agent, monkeypatch, "/presence", {"ok": True, "data": {"browser_open": True}})
+    data = {**CONFIRMATION, "kinds": ["paid_generation"]}
+    _respond(agent, monkeypatch, "/confirmations", {"ok": True, "data": data})
+    result = _tool(plugin, "freezone_run_node_action", {
+        "node_id": "n1", "action": "generate_image",
+    })
+    assert result == _confirmation_result(data, "conversation", CONVERSATION_INSTRUCTION.replace(
+        "type, and", "type, say that it will consume credits without giving any estimate, and",
+    ))
+
+
+def test_paid_command_without_browser_does_not_create_confirmation(agent):
+    plugin, calls, _, directory = agent
+    result = _tool(plugin, "freezone_emit_canvas_command", {"commands": [
+        {"type": "run_node_action", "node_id": "n1", "action": "generate_image"},
+    ]})
+    assert result["code"] == "canvas_browser_required"
+    assert [call for call in calls if call[0] == "POST"] == []
+    assert list(directory.iterdir()) == []
+
+
+@pytest.mark.parametrize("command", [
+    {"type": "delete_edges", "edge_ids": ["e1"]},
+    {"type": "update_node_data", "node_id": "n1", "data": {"title": "Updated"}},
+    {"type": "move_nodes", "positions": {"n1": {"x": 10, "y": 20}}},
+    CREATE[0],
+])
+def test_other_structural_changes_apply_directly(agent, command):
+    plugin, calls, _, directory = agent
+    result = _tool(plugin, "freezone_emit_canvas_command", {"commands": [command]})
+    assert result["ok"] is True
+    assert [call for call in calls if call[0] == "POST"] == [
+        ("POST", "/api/v1/projects/p/freezone/canvases/c/agent-commands", {
+            "envelopes": [{"schema_version": "canvas_chat_commands.v1", "project_id": "p",
+                           "canvas_id": "c", "commands": [command]}],
+        }),
+    ]
+    assert list(directory.iterdir()) == []
+
+
+def test_confirm_executes_via_decision_route(agent, monkeypatch):
+    plugin, calls, _, directory = agent
+    monkeypatch.setenv("DRAMACLAW_AGENT_PROFILE", "freezone:main")
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "t2")
+    result = _tool(plugin, "freezone_confirm_canvas_action", {"confirmation_id": CONFIRMATION_ID})
+    assert result["ok"] is True
+    assert result["canvas_apply_status"] == "applied"
+    assert result["confirmation_id"] == CONFIRMATION_ID
+    assert result["revision"] == 7
+    assert result["created_node_ids"] == ["new-node"]
+    assert result["command_count"] == 0
+    assert calls == [("POST", f"{CONFIRMATION_PATH}/{CONFIRMATION_ID}/decision", {
+        "decision": "confirmed", "via": "conversation", "agent_id": "main", "turn_id": "t2",
+    })]
+    assert list(directory.iterdir()) == []
+
+
+def test_confirm_submitted_result(agent, monkeypatch):
+    plugin, calls, _, _ = agent
+    _respond(agent, monkeypatch, "/decision", {"ok": True, "data": {
+        "confirmation_id": CONFIRMATION_ID, "status": "submitted", "bridge_key": "bridge-1",
+    }})
+    result = _tool(plugin, "freezone_confirm_canvas_action", {"confirmation_id": CONFIRMATION_ID})
+    assert result == {
+        "ok": True, "status": "submitted", "tool_call_status": "completed",
+        "canvas_apply_status": "submitted", "applied": False,
+        "confirmation_id": CONFIRMATION_ID, "bridge_key": "bridge-1",
+        "project_id": "p", "canvas_id": "c", "agent_instruction": (
+            "The confirmed command was handed to the open canvas. Do not call it again. "
+            "Read the canvas or wait for the canvas background result before reporting any outcome."
+        ),
+    }
+    assert calls == [("POST", f"{CONFIRMATION_PATH}/{CONFIRMATION_ID}/decision", {
+        "decision": "confirmed", "via": "conversation", "agent_id": "main", "turn_id": None,
+    })]
+
+
+def test_confirmation_targets_changed_http_error_is_readable(agent, monkeypatch):
+    import json
+
+    plugin, _, _, _ = agent
+    _http_error_result = plugin._SHARED_API_ERRORS._http_error_result
+    _respond(agent, monkeypatch, "/decision", _http_error_result(
+        409, json.dumps({"detail": {"code": "targets_changed", "node_ids": ["n1"]}}),
+        "Conflict",
+    ))
+    result = _tool(plugin, "freezone_confirm_canvas_action", {"confirmation_id": CONFIRMATION_ID})
+    assert result["status"] == "confirmation_failed"
+    assert result["code"] == "targets_changed"
+    assert result["applied"] is False
+    assert result["agent_instruction"] == (
+        "The target nodes changed, so the confirmation was voided and nothing "
+        "was executed. Read the canvas again and ask the user again if it is still wanted."
+    )
+
+
+def test_confirmation_connection_failure_is_readable(agent, monkeypatch):
+    plugin, _, _, _ = agent
+    _respond(agent, monkeypatch, "/decision", {
+        "ok": False, "status": "failed", "error": "connection refused",
+    })
+    result = _tool(plugin, "freezone_confirm_canvas_action", {"confirmation_id": CONFIRMATION_ID})
+    assert result["code"] == "confirmation_failed"
+    assert result["message"] == "connection refused"
+
+
+def test_cancel_refuses_via_decision_route(agent, monkeypatch):
+    plugin, calls, _, _ = agent
+    monkeypatch.setenv("DRAMACLAW_AGENT_PROFILE", "freezone:main")
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "t2")
+    result = _tool(plugin, "freezone_cancel_canvas_action", {"confirmation_id": CONFIRMATION_ID})
+    assert result == {
+        "ok": True, "status": "refused", "tool_call_status": "completed",
+        "canvas_apply_status": "not_applied", "applied": False,
+        "confirmation_id": CONFIRMATION_ID, "project_id": "p", "canvas_id": "c",
+        "message": "已取消，未执行任何操作",
+    }
+    assert calls == [("POST", f"{CONFIRMATION_PATH}/{CONFIRMATION_ID}/decision", {
+        "decision": "refused", "via": "conversation", "agent_id": "main", "turn_id": "t2",
+    })]
+
+
+@pytest.mark.parametrize("tool", [
+    "freezone_confirm_canvas_action", "freezone_cancel_canvas_action",
+])
+@pytest.mark.parametrize("code,instruction", [
+    ("expired", "The confirmation expired after 30 minutes and nothing was executed. "
+     "Ask the user again only if it is still wanted; that creates a new confirmation."),
+    ("user_reply_required", "The user has not answered yet. Wait for the user's next message; "
+     "never confirm in the turn that requested the confirmation."),
+    ("targets_changed", "The target nodes changed, so the confirmation was voided and nothing "
+     "was executed. Read the canvas again and ask the user again if it is still wanted."),
+    ("already_handled", "This confirmation was already decided. Do not retry."),
+    ("canvas_browser_required", "Ask the user to open this canvas, then call "
+     "freezone_confirm_canvas_action again with the same confirmation_id within 30 minutes. "
+     "Do not retry on your own."),
+    *[(code, "This confirmation cannot be used here and nothing was executed. Do not retry.")
+      for code in ("turn_mismatch", "agent_mismatch", "not_found", "conversation_requires_agent",
+                   "unknown_code")],
+])
+def test_confirmation_errors_preserve_code_and_instruction(
+    agent, monkeypatch, tool, code, instruction,
+):
+    plugin, calls, _, _ = agent
+    _respond(agent, monkeypatch, "/decision", {
+        "ok": False, "status_code": 409, "code": code, "message": "Decision failed",
+    })
+    result = _tool(plugin, tool, {"confirmation_id": CONFIRMATION_ID})
+    assert result == {
+        "ok": False, "status": "confirmation_failed", "code": code,
+        "tool_call_status": "failed", "canvas_apply_status": "not_applied", "applied": False,
+        "confirmation_id": CONFIRMATION_ID, "project_id": "p", "canvas_id": "c",
+        "errors": ["Decision failed"], "message": "Decision failed",
+        "agent_instruction": instruction,
+    }
+    assert calls == [("POST", f"{CONFIRMATION_PATH}/{CONFIRMATION_ID}/decision", {
+        "decision": "confirmed" if tool == "freezone_confirm_canvas_action" else "refused",
+        "via": "conversation", "agent_id": "main", "turn_id": None,
+    })]
+
+
+@pytest.mark.parametrize("tool", [
+    "freezone_confirm_canvas_action", "freezone_cancel_canvas_action",
+])
+@pytest.mark.parametrize("args", [{}, {"confirmation_id": ""}, {"confirmation_id": "  "}])
+def test_confirmation_id_required_without_request(agent, tool, args):
+    plugin, calls, _, _ = agent
+    result = _tool(plugin, tool, args)
+    assert result == {
+        "ok": False, "status": "confirmation_id_required", "error": "confirmation_id is required",
+    }
+    assert calls == []
+
+
+@pytest.mark.parametrize("tool", [
+    "freezone_confirm_canvas_action", "freezone_cancel_canvas_action",
+])
+def test_decision_bound_scope_mismatch_without_request(agent, tool):
+    plugin, calls, _, _ = agent
+    result = _tool(plugin, tool, {"confirmation_id": CONFIRMATION_ID, "canvas_id": "other"})
+    assert result["code"] == "scope_mismatch"
+    assert calls == []
+
+
+@pytest.mark.parametrize("code", [
+    "canvas_confirmation_not_needed", "invalid_agent_canvas_request", "targets_missing",
+    "not_found",
+])
+def test_confirmation_create_failure_preserves_server_error(agent, monkeypatch, code):
+    plugin, calls, _, directory = agent
+    _respond(agent, monkeypatch, "/confirmations", {
+        "ok": False, "status_code": 422, "code": code, "message": "Create failed",
+    })
+    result = _tool(plugin, "freezone_emit_canvas_command", {"commands": DELETE})
+    assert result == {
+        "ok": False, "tool_call_status": "failed", "canvas_apply_status": "failed",
+        "applied": False, "errors": ["Create failed"], "message": "Create failed", "code": code,
+    }
+    assert [call for call in calls if call[0] == "POST"] == [
+        ("POST", CONFIRMATION_PATH, {"agent_id": "main", "turn_id": None, "commands": DELETE}),
+    ]
+    assert list(directory.iterdir()) == []
+
+
+def test_confirmation_policy_unavailable_fails_without_dispatch(agent, monkeypatch):
+    plugin, calls, _, directory = agent
+    monkeypatch.setattr(plugin, "confirmation_kinds", None, raising=False)
+    result = _tool(plugin, "freezone_emit_canvas_command", {"commands": CREATE})
+    assert result["ok"] is False
+    assert "Canvas command bridge is unavailable" in result["error"]
+    assert [call for call in calls if call[0] == "POST"] == []
+    assert list(directory.iterdir()) == []

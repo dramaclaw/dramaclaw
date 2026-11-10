@@ -998,6 +998,19 @@
         "vocalsAllowed": "Vozes permitidas",
         "continue": "Continuar com a voz selecionada"
       },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "Eliminar nós",
+          "clear_canvas": "Limpar a área de trabalho",
+          "paid_generation": "Executar geração"
+        },
+        "separator": ", ",
+        "credits": "A confirmação irá consumir créditos.",
+        "expiresIn": "Válido por {{minutes}} min",
+        "confirm": "Confirmar",
+        "refuse": "Cancelar",
+        "failed": "A ação falhou. Tente novamente."
+      },
       "canvasExecuting": "A executar...",
       "canvasConfirmedExecuting": "Parâmetros confirmados. A execução está em curso; não é necessária nova confirmação.",
       "canvasConfirmExecution": "Confirmar execução",

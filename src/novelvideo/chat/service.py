@@ -953,6 +953,8 @@ _FREEZONE_EXACT_NODE_ACTION_RE = re.compile(
 )
 _CODEX_FREEZONE_EXACT_NODE_ACTION_TOOLS = ("freezone_emit_canvas_command",)
 _CODEX_FREEZONE_EXECUTION_TOOLS = (
+    "freezone_cancel_canvas_action",
+    "freezone_confirm_canvas_action",
     "freezone_confirm_workflow_draft",
     "freezone_get_canvas_ontology",
     "freezone_get_node_action_catalog",
@@ -1093,7 +1095,7 @@ def _exact_audio_action_node_data(
     }
 
 
-async def _dispatch_exact_audio_node_action(
+async def _request_exact_audio_confirmation(
     *,
     username: str,
     project: str,
@@ -1105,14 +1107,12 @@ async def _dispatch_exact_audio_node_action(
     action: str,
     node_data: dict[str, Any],
 ) -> dict[str, Any]:
-    """Submit one planned audio update-and-run through the protected browser bridge."""
+    """Request confirmation for one planned audio update-and-run batch."""
 
-    from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
-    from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
-    from novelvideo.freezone.canvas_command_bridge import (
-        canvas_command_bridge_key,
-        put_pending_canvas_command,
-        wait_canvas_command_result,
+    from novelvideo.freezone.agent_canvas_metrics import count
+    from novelvideo.freezone.canvas_confirmations import (
+        CanvasConfirmationError,
+        request_confirmation,
     )
 
     commands = [
@@ -1121,59 +1121,31 @@ async def _dispatch_exact_audio_node_action(
     ]
     profile = str(agent_profile or "freezone:main").strip() or "freezone:main"
     agent_id = profile.removeprefix("freezone:").strip() or "main"
-    envelope = {
-        "schema_version": "canvas_chat_commands.v1",
-        "project_id": project,
-        "canvas_id": canvas_id,
-        "commands": commands,
-        "agent_id": agent_id,
-        "external_mcp_command": True,
-        "turn_id": turn_id,
+    if project_state_dir is None:
+        return {
+            "ok": False,
+            "message": "音频节点执行需要项目画布，未提交画布操作。",  # i18n-exempt
+        }
+    try:
+        record = await asyncio.to_thread(
+            request_confirmation, username=username, agent_id=agent_id,
+            project_id=project, canvas_id=canvas_id, project_state_dir=project_state_dir,
+            turn_id=turn_id, commands=commands, now=time.time(),
+        )
+    except CanvasConfirmationError as exc:
+        return {
+            "ok": False,
+            "message": f"音频节点无法进入确认（{exc.code}），未提交画布操作。",  # i18n-exempt
+        }
+    count("canvas_confirmation.created")
+    logger.info(
+        "canvas_confirmation result=created id=%s kinds=%s source=exact_audio",
+        record["id"], ",".join(record["kinds"]),
+    )
+    return {
+        "ok": True, "status": "confirmation_required",
+        "confirmation_id": record["id"], "kinds": record["kinds"],
     }
-    hermes_home = ensure_user_hermes_workspace(
-        username,
-        profile="freezone",
-        project_state_dir=project_state_dir,
-    )
-    bridge_dir = canvas_bridge_dir_for_profile(hermes_home, profile)
-    bridge_key = canvas_command_bridge_key(
-        project_id=project,
-        canvas_id=canvas_id,
-        commands=commands,
-    )
-    immediate = await asyncio.to_thread(
-        put_pending_canvas_command,
-        key=bridge_key,
-        project_id=project,
-        canvas_id=canvas_id,
-        commands=commands,
-        envelope=envelope,
-        bridge_dir=bridge_dir,
-    )
-    if immediate is not None:
-        return immediate
-    timeout_seconds = canvas_command_result_timeout_seconds()
-    timeout_result = {
-        "ok": False,
-        "tool_call_status": "failed",
-        "canvas_apply_status": "timeout",
-        "applied": False,
-        "cancelled": True,
-        "errors": ["Timed out waiting for frontend node action result."],
-        "bridge_key": bridge_key,
-        "project_id": project,
-        "canvas_id": canvas_id,
-        "message": "Frontend canvas command timed out before reporting a result.",
-        "user_message": "画布操作等待超时，前端没有回写执行结果。",  # i18n-exempt
-    }
-    resolved = await asyncio.to_thread(
-        wait_canvas_command_result,
-        bridge_key,
-        timeout_seconds,
-        bridge_dir=bridge_dir,
-        timeout_result=timeout_result,
-    )
-    return resolved or timeout_result
 
 
 def _interactive_story_stage_confirmation_requested(prompt: str | None) -> bool:
@@ -5913,7 +5885,7 @@ async def _stream_assistant_reply_codex(
                 audio_notice = "音频执行参数无效，未提交画布操作。"
             else:
                 try:
-                    dispatch_result = await _dispatch_exact_audio_node_action(
+                    dispatch_result = await _request_exact_audio_confirmation(
                         username=username,
                         project=project,
                         canvas_id=str(canvas_id or ""),
@@ -5926,7 +5898,7 @@ async def _stream_assistant_reply_codex(
                     )
                 except Exception:
                     logger.exception(
-                        "exact audio node action dispatch failed project=%s canvas=%s node=%s",
+                        "exact audio confirmation failed project=%s canvas=%s node=%s",
                         project,
                         canvas_id,
                         node_id,
@@ -5936,16 +5908,16 @@ async def _stream_assistant_reply_codex(
                         "applied": False,
                         "message": "音频节点执行入口失败，未提交画布操作。",  # i18n-exempt
                     }
-                bridge_key = str(dispatch_result.get("bridge_key") or "").strip()
-                applied = (
+                if (
                     dispatch_result.get("ok") is True
-                    and dispatch_result.get("applied") is True
-                    and str(dispatch_result.get("canvas_apply_status") or "")
-                    in {"accepted", "applied"}
-                    and bool(bridge_key)
-                )
-                if applied:
-                    audio_notice = "已更新现有音频节点，并提交 generate_audio。"  # i18n-exempt
+                    and dispatch_result.get("status") == "confirmation_required"
+                ):
+                    confirmation_id = dispatch_result["confirmation_id"]
+                    audio_notice = (  # i18n-exempt
+                        "音频生成需要你确认后才会提交 generate_audio，确认后会消耗积分。"
+                        "请在确认卡片上确认，或在对话里回复确认"
+                        f"（确认编号 {confirmation_id}）。"
+                    )
                 else:
                     errors = dispatch_result.get("errors")
                     failure = str(

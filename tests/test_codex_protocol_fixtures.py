@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from novelvideo.chat.codex_app_server import _deny_unexpected_approval
+from novelvideo.chat.codex_app_server import _refuse_server_request
 from novelvideo.chat.codex_protocol import (
     THREAD_ITEMS_LIST,
     THREAD_REVERT,
@@ -279,7 +279,7 @@ def test_command_approval_decline_matches_recorded_reply():
     reply = _reply(records, approval)["result"]
 
     assert reply == {"decision": "decline"}
-    assert _deny_unexpected_approval(request["method"], request["params"]) == reply
+    assert _refuse_server_request(request["method"], request["params"]) == reply
 
     completed = next(
         record["msg"]["params"]

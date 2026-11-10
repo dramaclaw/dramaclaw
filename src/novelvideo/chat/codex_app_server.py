@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -21,6 +22,30 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
+
+from novelvideo.freezone.agent_canvas_metrics import count
+
+logger = logging.getLogger(__name__)
+
+_SERVER_REQUEST_REFUSALS = {
+    "item/commandExecution/requestApproval": {"decision": "decline"},
+    "item/fileChange/requestApproval": {"decision": "decline"},
+    "item/permissions/requestApproval": {"permissions": {}, "scope": "turn"},
+    "mcpServer/elicitation/request": {"action": "decline", "content": None, "_meta": None},
+    "item/tool/requestUserInput": {"answers": {}},
+    "item/tool/call": {
+        "contentItems": [
+            {"type": "inputText", "text": "DramaClaw does not run client-side dynamic tools."}
+        ],
+        "success": False,
+    },
+    "execCommandApproval": {
+        "decision": {"denied": {"rejection": "DramaClaw does not use Codex approvals."}}
+    },
+    "applyPatchApproval": {
+        "decision": {"denied": {"rejection": "DramaClaw does not use Codex approvals."}}
+    },
+}
 
 _CONNECT_TIMEOUT_SECONDS = 10.0
 # The first Intel launch under Rosetta may take over 20 seconds. Coordination
@@ -114,19 +139,17 @@ def _connect_local_websocket(socket_path: Path, **options):
         raise
 
 
-def _deny_unexpected_approval(method: str, _params: dict | None) -> dict:
-    """Fail closed if the runtime asks for authority outside approved MCP tools.
-
-    Canvas mutations use DramaClaw's business approval bridge. Native command
-    and file approvals are deliberately not a second way around that contract.
-    """
-
-    if method in {
-        "item/commandExecution/requestApproval",
-        "item/fileChange/requestApproval",
-    }:
-        return {"decision": "decline"}
-    return {}
+def _refuse_server_request(method: str, params: dict | None) -> dict:
+    """Refuse native authority and user input outside DramaClaw's MCP boundary."""
+    listed = method in _SERVER_REQUEST_REFUSALS
+    logger.warning(
+        "codex_server_request_refused method=%s listed=%s",
+        method,
+        "true" if listed else "false",
+    )
+    name = method if listed else "unlisted"
+    count(f"codex_server_request_refused.{name}")
+    return _SERVER_REQUEST_REFUSALS.get(method, {})
 
 
 def _control_dir() -> Path:
@@ -742,7 +765,7 @@ class _UnixSocketCodexClient:
                 # approvals. Always override it, even though current threads
                 # also run with approval_mode=deny_all and a read-only sandbox.
                 super().__init__(
-                    config=config, approval_handler=_deny_unexpected_approval
+                    config=config, approval_handler=_refuse_server_request
                 )
                 self._socket_path = socket_path
                 self._websocket = None

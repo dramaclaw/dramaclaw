@@ -3786,6 +3786,8 @@ def test_freezone_existing_execution_uses_focused_mcp_tools():
 
     assert set(servers) == {"dramaclaw"}
     assert servers["dramaclaw"]["enabled_tools"] == [
+        "freezone_cancel_canvas_action",
+        "freezone_confirm_canvas_action",
         "freezone_confirm_workflow_draft",
         "freezone_get_canvas_ontology",
         "freezone_get_node_action_catalog",
@@ -3902,7 +3904,7 @@ def test_exact_audio_action_restores_target_subject_omitted_by_planner():
 
 
 @pytest.mark.anyio
-async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
+async def test_codex_exact_audio_plan_requests_confirmation(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
@@ -3966,13 +3968,8 @@ async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
     async def fake_dispatch(**kwargs):
         dispatched.append(kwargs)
         return {
-            "ok": True,
-            "tool_call_status": "completed",
-            "canvas_apply_status": "accepted",
-            "applied": True,
-            "bridge_key": "bridge-audio",
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
+            "ok": True, "status": "confirmation_required",
+            "confirmation_id": "cc_" + "0" * 32, "kinds": ["paid_generation"],
         }
 
     def fake_build_thread(*_args, **kwargs):
@@ -3985,7 +3982,7 @@ async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
     )
     monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
     monkeypatch.setattr(
-        chat_service, "_dispatch_exact_audio_node_action", fake_dispatch
+        chat_service, "_request_exact_audio_confirmation", fake_dispatch, raising=False
     )
     monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
     monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
@@ -4067,103 +4064,79 @@ async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
     with chat_store.connect("admin", scope) as conn:
         rows = conn.execute("SELECT role, content, turn_id FROM chat_messages").fetchall()
     assert [tuple(row) for row in rows] == [
-        ("system", "已更新现有音频节点，并提交 generate_audio。", "business-turn"),
+        ("system", "音频生成需要你确认后才会提交 generate_audio，确认后会消耗积分。"
+         "请在确认卡片上确认，或在对话里回复确认（确认编号 cc_00000000000000000000000000000000）。",
+         "business-turn"),
     ]
     assert [e for e in events if e["type"] in {"item", "item_delta", "assistant_delta"}] == []
 
 
 @pytest.mark.anyio
-async def test_exact_audio_dispatch_publishes_once_and_waits_for_same_receipt(
-    monkeypatch, tmp_path
-):
-    from novelvideo.chat import hermes_pool, hermes_workspace
-    from novelvideo.freezone import canvas_command_bridge
-
-    published = []
-    waited = []
-    bridge_dir = tmp_path / "bridge"
+@pytest.mark.parametrize("node_id", ["rcp05-music-result", "missing"])
+async def test_exact_audio_requests_confirmation_without_bridge(monkeypatch, tmp_path, node_id):
+    from novelvideo.chat import hermes_workspace
+    from novelvideo.freezone import canvas_store
+    from novelvideo.freezone.canvas_confirmations import confirmations_dir, read_confirmation
+    from novelvideo.freezone.canvas_command_bridge import list_pending_bridge_messages
 
     monkeypatch.setattr(
-        hermes_workspace,
-        "ensure_user_hermes_workspace",
+        hermes_workspace, "ensure_user_hermes_workspace",
         lambda *_args, **_kwargs: tmp_path / "hermes-home",
     )
-    monkeypatch.setattr(
-        hermes_pool,
-        "canvas_bridge_dir_for_profile",
-        lambda _home, _profile: bridge_dir,
+    state_dir = tmp_path / "state"
+    canvas_store.save_canvas(state_dir, "canvas-a", base_revision=None, build_payload=lambda _: {
+        "project_id": "project-a", "revision": 1, "edges": [], "nodes": [{
+            "id": "rcp05-music-result", "type": "audioNode",
+            "data": {"label": "红杯展示背景音乐"}, "position": {"x": 0, "y": 0},
+        }],
+    })
+    result = await chat_service._request_exact_audio_confirmation(
+        username="admin", project="project-a", canvas_id="canvas-a",
+        agent_profile="freezone:main", turn_id="turn-a", project_state_dir=state_dir,
+        node_id=node_id, action="generate_audio",
+        node_data={"text": "红杯展示，木琴和轻柔鼓点，纯器乐。", "audioKind": "music",
+                   "forceInstrumental": True},
     )
-    monkeypatch.setattr(
-        canvas_command_bridge,
-        "canvas_command_bridge_key",
-        lambda **_kwargs: "bridge-audio",
-    )
-
-    def fake_put(**kwargs):
-        published.append(kwargs)
-        return None
-
-    def fake_wait(key, timeout_seconds, **kwargs):
-        waited.append((key, timeout_seconds, kwargs))
-        return {
-            "ok": True,
-            "tool_call_status": "completed",
-            "canvas_apply_status": "accepted",
-            "applied": True,
-            "bridge_key": key,
+    directory = confirmations_dir("admin", "main", state_dir)
+    if node_id == "missing":
+        assert result == {
+            "ok": False, "message": "音频节点无法进入确认（targets_missing），未提交画布操作。",
         }
-
-    monkeypatch.setattr(canvas_command_bridge, "put_pending_canvas_command", fake_put)
-    monkeypatch.setattr(canvas_command_bridge, "wait_canvas_command_result", fake_wait)
-
-    result = await chat_service._dispatch_exact_audio_node_action(
-        username="admin",
-        project="project-a",
-        canvas_id="canvas-a",
-        agent_profile="freezone:main",
-        turn_id="turn-a",
-        project_state_dir=tmp_path / "state",
-        node_id="rcp05-music-result",
-        action="generate_audio",
-        node_data={
-            "text": "红杯展示，木琴和轻柔鼓点，纯器乐。",
-            "audioKind": "music",
-            "forceInstrumental": True,
-        },
-    )
-
-    commands = [
-        {
-            "type": "update_node_data",
-            "node_id": "rcp05-music-result",
-            "data": {
-                "text": "红杯展示，木琴和轻柔鼓点，纯器乐。",
-                "audioKind": "music",
+        assert list(directory.glob("cc_*.json")) == []
+    else:
+        assert result == {
+            "ok": True, "status": "confirmation_required",
+            "confirmation_id": result["confirmation_id"], "kinds": ["paid_generation"],
+        }
+        stored = read_confirmation(directory, result["confirmation_id"])
+        assert stored["status"] == "pending"
+        assert stored["turn_id"] == "turn-a"
+        assert stored["commands"] == [
+            {"type": "update_node_data", "node_id": "rcp05-music-result", "data": {
+                "text": "红杯展示，木琴和轻柔鼓点，纯器乐。", "audioKind": "music",
                 "forceInstrumental": True,
-            },
-        },
-        {
-            "type": "run_node_action",
-            "node_id": "rcp05-music-result",
-            "action": "generate_audio",
-        },
-    ]
-    assert len(published) == 1
-    assert published[0]["commands"] == commands
-    assert published[0]["envelope"] == {
-        "schema_version": "canvas_chat_commands.v1",
-        "project_id": "project-a",
-        "canvas_id": "canvas-a",
-        "commands": commands,
-        "agent_id": "main",
-        "external_mcp_command": True,
-        "turn_id": "turn-a",
-    }
-    assert published[0]["bridge_dir"] == bridge_dir
-    assert len(waited) == 1
-    assert waited[0][0] == "bridge-audio"
-    assert waited[0][2]["bridge_dir"] == bridge_dir
-    assert result["bridge_key"] == "bridge-audio"
+            }},
+            {"type": "run_node_action", "node_id": "rcp05-music-result",
+             "action": "generate_audio"},
+        ]
+        assert stored["targets"] == [{
+            "node_id": "rcp05-music-result", "title": "红杯展示背景音乐",
+            "node_type": "audioNode", "action": "generate_audio",
+        }]
+    assert list_pending_bridge_messages(
+        project_id="project-a", canvas_id="canvas-a", kinds={"canvas_command"},
+        bridge_dir=directory.parent,
+    ) == []
+    assert list(directory.parent.glob("*.pending.json")) == []
+
+
+@pytest.mark.anyio
+async def test_exact_audio_confirmation_requires_project_canvas():
+    assert await chat_service._request_exact_audio_confirmation(
+        username="admin", project="project-a", canvas_id="canvas-a",
+        agent_profile="freezone:main", turn_id="turn-a", project_state_dir=None,
+        node_id="rcp05-music-result", action="generate_audio", node_data={},
+    ) == {"ok": False, "message": "音频节点执行需要项目画布，未提交画布操作。"}
 
 
 def test_freezone_non_execution_request_keeps_full_mcp_servers():
@@ -4261,7 +4234,7 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path, monkeypatch):
     assert thread._model_provider == "dramaclaw_gateway"
 
 
-def test_codex_mcp_config_renders_enabled_tools():
+def test_codex_mcp_config_renders_focused_mcp_tools():
     servers = chat_service._dramaclaw_mcp_servers(
         "freezone_canvas",
         prompt="执行这个现有节点。",
@@ -4270,7 +4243,8 @@ def test_codex_mcp_config_renders_enabled_tools():
     overrides = chat_service._codex_mcp_config_overrides(servers)
 
     assert (
-        'mcp_servers.dramaclaw.enabled_tools=["freezone_confirm_workflow_draft",'
+        'mcp_servers.dramaclaw.enabled_tools=["freezone_cancel_canvas_action",'
+        '"freezone_confirm_canvas_action","freezone_confirm_workflow_draft",'
         '"freezone_get_canvas_ontology",'
         '"freezone_get_node_action_catalog","freezone_get_node_detail",'
         '"freezone_get_workflow","freezone_observe_workflow_run",'

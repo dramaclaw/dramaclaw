@@ -2192,6 +2192,20 @@ class AgentCanvasCommandsRequest(BaseModel):
     locale: Optional[Literal["zh", "en", "vi", "pt"]] = None
 
 
+class CanvasConfirmationRequest(BaseModel):
+    agent_id: str = "main"
+    turn_id: str | None = None
+    commands: list[dict] = Field(min_length=1)
+
+
+class CanvasConfirmationDecisionRequest(BaseModel):
+    decision: Literal["confirmed", "refused"]
+    via: Literal["card", "conversation"]
+    agent_id: str = "main"
+    turn_id: str | None = None
+    command_hash: str | None = None
+
+
 class AgentCanvasContextRequest(BaseModel):
     requests: list[dict] = Field(min_length=1, max_length=20)
     locale: str | None = None

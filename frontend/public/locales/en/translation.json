@@ -973,6 +973,19 @@
         "vocalsAllowed": "Vocals allowed",
         "continue": "Continue with selected voice"
       },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "Delete nodes",
+          "clear_canvas": "Clear the canvas",
+          "paid_generation": "Run generation"
+        },
+        "separator": ", ",
+        "credits": "Confirming will consume credits.",
+        "expiresIn": "Valid for {{minutes}} min",
+        "confirm": "Confirm",
+        "refuse": "Cancel",
+        "failed": "Action failed. Please try again."
+      },
       "canvasExecuting": "Executing...",
       "currentSelection": "Current selection",
       "usedThisTurn": "Used this turn",

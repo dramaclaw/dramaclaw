@@ -69,6 +69,7 @@ from novelvideo.freezone.canvas_changes import canvas_changes_dir, read_canvas_c
 from novelvideo.freezone.canvas_command_bridge import (
     BRIDGE_PENDING_TTL_SECONDS,
     bridge_message_exists,
+    canvas_command_idempotency_key,
     claim_legacy_bridge_message,
     expire_bridge_messages,
     list_pending_bridge_messages,
@@ -79,6 +80,16 @@ from novelvideo.freezone.canvas_command_bridge import (
     resolve_canvas_command,
     resolve_canvas_context,
     resolve_skill_studio_result,
+)
+from novelvideo.freezone.agent_canvas_metrics import count as count_canvas_metric
+from novelvideo.freezone.canvas_confirmations import (
+    CONFIRMATIONS_DIRNAME,
+    CanvasConfirmationError,
+    command_hash,
+    confirmation_kinds,
+    finish_confirmation,
+    verify_confirmed,
+    void_confirmation,
 )
 from novelvideo.freezone.canvas_command_watch import bridge_watch_hub
 from novelvideo.freezone.canvas_presence import remove_canvas_presence, touch_canvas_presence
@@ -1813,6 +1824,58 @@ def _canvas_context_ui_event(
     }
 
 
+async def append_canvas_confirmation_notice(
+    user: dict, record: dict, status: str, detail: str = "",
+) -> None:
+    if record["turn_id"] is None:
+        return
+    scope = ChatScope(
+        kind="project", id=record["project_id"], surface="freezone",
+        canvas_id=record["canvas_id"], agent_id=record["agent_id"],
+    )
+    project_ctx = await _project_context_for_scope(user, scope)
+    store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
+    confirmation_id = record["id"]
+    kinds = ",".join(record["kinds"])
+    texts = {
+        "refused": (
+            f"The user refused canvas confirmation {confirmation_id} ({kinds}). "
+            "Nothing was executed. Do not retry unless the user asks again."
+        ),
+        "expired": (
+            f"Canvas confirmation {confirmation_id} ({kinds}) expired after 30 minutes "
+            "without a decision. Nothing was executed. "
+            "Ask the user again only if it is still wanted."
+        ),
+        "voided": (
+            f"Canvas confirmation {confirmation_id} ({kinds}) was voided because its "
+            f"target nodes changed ({detail}). Nothing was executed. "
+            "Read the canvas again before asking."
+        ),
+        "reported": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}); "
+            f"the open canvas ran it and reported status {detail}. "
+            "Check the canvas or the run status before reporting the outcome."
+        ),
+        "executed": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}) "
+            f"and the server applied it with status {detail}. "
+            "Check the current canvas before reporting."
+        ),
+        "failed": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}), "
+            f"but the server could not apply it ({detail}). The confirmation is void. "
+            "Read the canvas before reporting the outcome or asking again."
+        ),
+    }
+    await chat_store.append_message_async(
+        str(user["username"]), store_scope, "agent_notification",
+        f"[CANVAS_BACKGROUND_RESULT] {texts[status]} [/CANVAS_BACKGROUND_RESULT]",
+        turn_id=record["turn_id"],
+        idempotency_key=f"canvas-confirmation:{confirmation_id}:{status}",
+    )
+
+
 @router.post("/chat/canvas-command-tool-result")
 async def resolve_canvas_command_tool_result(
     payload: CanvasCommandToolResultIn,
@@ -1883,9 +1946,41 @@ async def resolve_canvas_command_tool_result(
     workflow_draft_receipt = _pending_workflow_draft_receipt(
         username, payload, project_state_dir=project_state_dir
     )
+    key = payload.bridge_key.strip()
+    bridge_dir = _bridge_dir_for_pending_key(
+        username, payload, project_state_dir=project_state_dir
+    )
+    pending = _load_pending_canvas_command(bridge_dir / f"{key}.pending.json")
+    if pending is None:
+        pending = read_bridge_message(key, bridge_dir=bridge_dir)
+    envelope = pending.get("envelope", {}) if isinstance(pending, dict) else {}
+    confirmation_id = str(envelope.get("confirmation_id") or "")
+    if key != canvas_command_idempotency_key(
+        project_id=str(envelope.get("project_id") or ""),
+        canvas_id=str(envelope.get("canvas_id") or ""),
+        commands=[{"canvas_confirmation": confirmation_id}],
+    ):
+        confirmation_id = ""
     resolved = _resolve_canvas_command_tool_result_payload(
         payload, username=username, project_state_dir=project_state_dir
     )
+    if confirmation_id:
+        status = str(
+            payload.canvas_apply_status or resolved.get("canvas_apply_status") or "unknown"
+        )
+        try:
+            record = finish_confirmation(
+                Path(bridge_dir) / CONFIRMATIONS_DIRNAME, confirmation_id,
+                outcome={"status": status, "bridge_key": key}, now=time.time(),
+            )
+        except CanvasConfirmationError:
+            pass
+        else:
+            count_canvas_metric("canvas_confirmation.reported")
+            logger.info(
+                "canvas_confirmation result=reported id=%s status=%s", confirmation_id, status,
+            )
+            await append_canvas_confirmation_notice(user, record, "reported", status)
     await _record_workflow_draft_canvas_result(
         user=user,
         payload=payload,
@@ -2670,6 +2765,97 @@ async def list_pending_canvas_commands(
     )
 
 
+def _admit_canvas_command_frame(*, key: str, envelope: dict, bridge_dir) -> bool:
+    project_id = str(envelope.get("project_id") or "")
+    canvas_id = str(envelope.get("canvas_id") or "")
+    commands = envelope.get("commands")
+    turn_id = envelope.get("turn_id")
+    kinds = []
+    try:
+        if not isinstance(commands, list) or not commands:
+            raise ValueError("Canvas commands must be a non-empty list")
+        kinds = confirmation_kinds(commands)
+    except (ValueError, KeyError, TypeError):
+        reason = "invalid_canvas_command"
+    else:
+        if not kinds:
+            return True
+        confirmation_id = str(envelope.get("confirmation_id") or "")
+        if not confirmation_id or key != canvas_command_idempotency_key(
+            project_id=project_id, canvas_id=canvas_id,
+            commands=[{"canvas_confirmation": confirmation_id}],
+        ):
+            reason = "missing_confirmation"
+        else:
+            try:
+                record = verify_confirmed(
+                    Path(bridge_dir) / CONFIRMATIONS_DIRNAME, confirmation_id,
+                    command_hash=command_hash(project_id, canvas_id, commands), turn_id=turn_id,
+                )
+            except CanvasConfirmationError as exc:
+                reason = exc.code
+            else:
+                if time.time() >= float(record["expires_at"]):
+                    try:
+                        void_confirmation(
+                            Path(bridge_dir) / CONFIRMATIONS_DIRNAME, confirmation_id,
+                            reason="delivery_expired", now=time.time(),
+                        )
+                    except CanvasConfirmationError:
+                        pass
+                    reason = "expired"
+                else:
+                    return True
+    invalid = reason == "invalid_canvas_command"
+    expired = reason == "expired"
+    if expired:
+        code = "canvas_confirmation_expired"
+        message = "Canvas command was not executed because its confirmation expired."
+    else:
+        code = "invalid_canvas_command" if invalid else "canvas_confirmation_required"
+        message = (
+            "Canvas command type is not allowed." if invalid
+            else "Canvas command was not executed because it needs a user confirmation."
+        )
+    resolve_canvas_command(key, {
+        "ok": False,
+        "turn_id": str(turn_id or "") or f"external-agent:{key}",
+        "tool_call_status": "failed",
+        "canvas_apply_status": "not_applied",
+        "applied": False,
+        "cancelled": True,
+        "code": code,
+        "errors": [message],
+        "applied_count": 0,
+        "opened_ui_actions": [],
+        "created_node_ids": [],
+        "command_results": [],
+        "project_id": project_id,
+        "canvas_id": canvas_id,
+        "message": message,
+        "user_message": (
+            "确认已过期，画布操作未执行。" if expired  # i18n-exempt
+            else "画布命令无效，未执行。" if invalid  # i18n-exempt
+            else "该画布操作需要用户确认，未执行。"  # i18n-exempt
+        ),
+        "agent_instruction": (
+            "Do not claim success. The user confirmed this canvas command, but no canvas page "
+            "received it before the confirmation expired, so nothing was executed. "
+            "Ask the user again before retrying."
+            if expired else
+            "Do not claim success. Deleting nodes, clearing the canvas and paid generation run "
+            "only after the user confirms. Call the canvas tool again so DramaClaw creates a "
+            "confirmation, then follow the instruction it returns."
+        ),
+    }, bridge_dir=bridge_dir)
+    count_canvas_metric("canvas_confirmation.frame_refused")
+    logger.warning(
+        "canvas_confirmation result=frame_refused bridge_key=%s reason=%s kinds=%s",
+        key, reason, ",".join(kinds),
+    )
+    return False
+
+
 def _collect_pending_canvas_commands(
     payload, username, project_state_dir, consumer_id=None, hub=None
 ):
@@ -2735,6 +2921,10 @@ def _collect_pending_canvas_commands(
                 continue
             if not _pending_canvas_command_allows_external_poll(envelope):
                 continue
+            if not _admit_canvas_command_frame(
+                key=key, envelope=envelope, bridge_dir=bridge_dir,
+            ):
+                continue
             if not mark_bridge_message_delivered(
                 key,
                 consumer_id=consumer_id or f"poll:{username}:{agent_id}",
@@ -2745,6 +2935,7 @@ def _collect_pending_canvas_commands(
             frames.append(
                 {
                     "type": "canvas.command",
+                    "server_approved": True,
                     "turn_id": str(envelope.get("turn_id") or "").strip()
                     or f"external-agent:{key}",
                     "canvas_id": envelope.get("canvas_id") or canvas_id,
@@ -2804,6 +2995,10 @@ def _collect_pending_canvas_commands(
                 scope=legacy_scope, turn_id=str(envelope.get("turn_id") or f"external-agent:{key}"),
             ):
                 continue
+            if not _admit_canvas_command_frame(
+                key=key, envelope=envelope, bridge_dir=bridge_dir,
+            ):
+                continue
             if not claim_legacy_bridge_message(
                 key, {**pending, "project_id": project_id, "canvas_id": canvas_id},
                 kind="canvas_command", consumer_id=consumer_id or f"poll:{username}:{agent_id}",
@@ -2813,6 +3008,7 @@ def _collect_pending_canvas_commands(
             frames.append(
                 {
                     "type": "canvas.command",
+                    "server_approved": True,
                     "turn_id": str(envelope.get("turn_id") or "").strip()
                     or f"external-agent:{key}",
                     "canvas_id": envelope.get("canvas_id") or canvas_id,
@@ -3233,6 +3429,10 @@ def _collect_session_canvas_commands(
             if not key or not isinstance(envelope, dict):
                 continue
             # Durable leases, rather than historical keys, govern redelivery.
+            if not _admit_canvas_command_frame(
+                key=key, envelope=envelope, bridge_dir=bridge_dir,
+            ):
+                continue
             if not mark_bridge_message_delivered(
                 key,
                 consumer_id=f"websocket:{username}:{turn_id}",
@@ -3243,6 +3443,7 @@ def _collect_session_canvas_commands(
             frames.append(
                 {
                     "type": "canvas.command",
+                    "server_approved": True,
                     "turn_id": turn_id,
                     "canvas_id": envelope.get("canvas_id"),
                     "agent_id": scope.agent_id or "main",
@@ -3294,6 +3495,10 @@ def _collect_session_canvas_commands(
             continue
         if key in emitted_bridge_keys:
             continue
+        if not _admit_canvas_command_frame(
+            key=key, envelope=pending["envelope"], bridge_dir=bridge_dir,
+        ):
+            continue
         if not claim_legacy_bridge_message(
             key, {**pending, "project_id": scope.id, "canvas_id": scope.canvas_id},
             kind="canvas_command", consumer_id=f"websocket:{username}:{turn_id}", bridge_dir=bridge_dir,
@@ -3303,6 +3508,7 @@ def _collect_session_canvas_commands(
         frames.append(
             {
                 "type": "canvas.command",
+                "server_approved": True,
                 "turn_id": turn_id,
                 "canvas_id": pending["envelope"].get("canvas_id"),
                 "agent_id": scope.agent_id or "main",

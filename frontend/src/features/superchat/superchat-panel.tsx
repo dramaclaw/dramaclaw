@@ -226,9 +226,12 @@ import {
   shouldIncludeCanvasSummary,
 } from "@/features/freezone/chatNodeReferences";
 import {
+  canvasApprovalAppliesWithoutClick,
+  canvasApprovalIsExpired,
   visibleStructuredBlocksForMessage,
   type CanvasCommandExecutionMode,
 } from "@/features/superchat/canvas-command-display";
+import { CanvasConfirmationStack } from "@/features/superchat/canvas-confirmation-card";
 import { looksLikeCanvasExecutionNarration } from "@/features/superchat/canvas-execution-narration";
 import {
   filterFreezoneSkillSuggestions,
@@ -11209,6 +11212,7 @@ const CANVAS_APPROVAL_VIDEO_DURATION_MIN = 5;
 const CANVAS_APPROVAL_VIDEO_DURATION_MAX = 15;
 
 type PendingCanvasCommandApproval = {
+  serverApproved?: boolean;
   id: string;
   key: string;
   messageId: string;
@@ -12376,6 +12380,7 @@ function canvasCommandApprovalDetailsFromUiEvents(events: unknown[] | undefined)
         ? value.receivedAt
         : canvasSurfaceEventOrder(value, approvals.length);
     approvals.push({
+      restoredFromHistory: true,
       canvasId,
       turnId,
       anchorMessageId: typeof value.anchorMessageId === "string" ? value.anchorMessageId : null,
@@ -13562,13 +13567,15 @@ export function SuperChatPanel({
     const commandCount = detail.envelopes.reduce((sum, envelope) => sum + envelope.commands.length, 0);
     const receivedAt = detail.receivedAt ?? Date.now();
     const receivedAtLooksLikeEpochMs = receivedAt > 1_000_000_000_000;
-    const expiresAt = detail.autoExpires
-      ? (
-          receivedAtLooksLikeEpochMs
-            ? receivedAt + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
-            : Date.now() + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
-        )
-      : undefined;
+    const expiresAt = detail.restoredFromHistory
+      ? Date.now()
+      : detail.autoExpires
+        ? (
+            receivedAtLooksLikeEpochMs
+              ? receivedAt + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
+              : Date.now() + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
+          )
+        : undefined;
     return {
       id: key,
       key,
@@ -13585,6 +13592,7 @@ export function SuperChatPanel({
       commandCount,
       plans: canvasCommandPlansFromEnvelopes(detail.envelopes),
       externalMcpCommand: detail.externalMcpCommand === true,
+      serverApproved: detail.restoredFromHistory ? false : detail.serverApproved,
       requiresUserChoice: detail.requiresUserChoice === true,
     };
   }, [activeMessages, effectiveFreezoneCanvasId, freezoneAgentMatches, latestAssistantMessageId, variant]);
@@ -14023,6 +14031,7 @@ export function SuperChatPanel({
   ]);
 
   const handleApplyCanvasCommandApproval = useCallback((approval: PendingCanvasCommandApproval) => {
+    if (canvasApprovalIsExpired(approval.expiresAt, Date.now())) return;
     if (executingCanvasCommandApprovalIdsRef.current.has(approval.id)) return;
     resolvedCanvasCommandApprovalKeysRef.current.add(approval.key);
     resolvedCanvasCommandApprovalKeysRef.current.add(canvasCommandApprovalApplyKey(approval));
@@ -14373,8 +14382,9 @@ export function SuperChatPanel({
   }, [chat, t]);
 
   useEffect(() => {
-    if (canvasCommandExecutionMode !== "auto_execute") return;
     for (const approval of pendingCanvasCommandApprovals) {
+      if (canvasApprovalIsExpired(approval.expiresAt, Date.now())) continue;
+      if (!canvasApprovalAppliesWithoutClick(canvasCommandExecutionMode, approval.serverApproved)) continue;
       if (approval.requiresUserChoice) continue;
       // manual_ui 动作必须由用户主动确认。自动模式不能把“重试生成”擅自
       // 解释成“打开声线选择并改用自定义声线”。
@@ -16351,6 +16361,13 @@ export function SuperChatPanel({
               scope={isFreezoneLayout ? "canvas" : "project"}
             />
           ) : null}
+          {isFreezoneLayout && params.project && effectiveFreezoneCanvasId && effectiveFreezoneAgentId && (
+            <CanvasConfirmationStack
+              projectId={params.project}
+              canvasId={effectiveFreezoneCanvasId}
+              agentIds={[effectiveFreezoneAgentId]}
+            />
+          )}
           <div
             ref={composerShellRef}
             className={cn(

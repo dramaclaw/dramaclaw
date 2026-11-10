@@ -952,6 +952,19 @@
         "vocalsAllowed": "Cho phép có giọng hát",
         "continue": "Tiếp tục với giọng đã chọn"
       },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "Xóa các nút",
+          "clear_canvas": "Xóa toàn bộ canvas",
+          "paid_generation": "Chạy quá trình tạo"
+        },
+        "separator": ", ",
+        "credits": "Việc xác nhận sẽ tiêu tốn điểm.",
+        "expiresIn": "Có hiệu lực trong {{minutes}} phút",
+        "confirm": "Xác nhận",
+        "refuse": "Hủy",
+        "failed": "Thao tác thất bại. Vui lòng thử lại."
+      },
       "canvasExecuting": "Đang thực hiện...",
       "currentSelection": "Đang chọn",
       "usedThisTurn": "Dùng trong lượt này",

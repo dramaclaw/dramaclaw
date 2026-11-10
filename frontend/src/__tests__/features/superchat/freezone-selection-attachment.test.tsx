@@ -11,6 +11,7 @@ import {
   isCanvasNodeReferenceAttachment,
 } from "@/features/freezone/chatNodeReferences";
 import type { ChatAttachment, ChatMessage } from "@/features/superchat/types";
+import * as canvasChatCommands from "@/features/freezone/canvasChatCommands";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { enT } from "@/__tests__/helpers/i18n-fixtures";
 
@@ -1487,7 +1488,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     });
   });
 
-  it("does not restore a persisted canvas command approval after it was confirmed", async () => {
+  it("does not revive a persisted canvas command approval when an assistant message arrives", async () => {
     superChatMocks.messages = [
       {
         id: "user-a",
@@ -1539,10 +1540,9 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
       />,
     );
 
-    expect(await screen.findByText("待确认的画布操作")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
-
-    await waitFor(() => expect(screen.queryByText("待确认的画布操作")).not.toBeInTheDocument());
+    fireEvent.click(await screen.findByRole("button", { name: "画布操作已取消" }));
+    expect(screen.getByText("画布操作等待超时，已自动取消。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
 
     superChatMocks.messages = [
       superChatMocks.messages[0],
@@ -1706,7 +1706,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     });
   });
 
-  it("restores a persisted canvas command approval when no assistant message exists yet", async () => {
+  it("expires a persisted canvas command approval when no assistant message exists yet", async () => {
     superChatMocks.messages = [
       {
         id: "user-a",
@@ -1758,8 +1758,64 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
       />,
     );
 
-    expect(await screen.findByText("待确认的画布操作")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "确认执行" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "画布操作已取消" }));
+    expect(screen.getByText("画布操作等待超时，已自动取消。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
+  });
+
+  it("never applies a history delete approval without received_at in automatic mode", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(1_800_000_000_000);
+    window.localStorage.setItem("freezone.canvasCommandExecutionMode", "auto_execute");
+    const apply = vi.spyOn(canvasChatCommands, "applyCanvasChatCommandsAsync");
+    const node: CanvasNode = {
+      id: "video-a",
+      type: "videoNode",
+      position: { x: 0, y: 0 },
+      data: { title: "保留的视频" },
+    };
+    useCanvasStore.getState().setCanvasData([node], []);
+    superChatMocks.messages = [{
+      id: "assistant-a",
+      role: "assistant",
+      text: "准备删除视频节点",
+      timestamp: Date.now(),
+      turnId: "turn-a",
+      attachments: [],
+      raw: {
+        ui_events: [{
+          id: 1,
+          type: "canvas_command_approval",
+          turn_id: "turn-a",
+          schema_version: "canvas_command_approval.v1",
+          canvas_id: "canvas-a",
+          bridge_key: "bridge-a",
+          envelopes: [{
+            schema_version: "canvas_chat_commands.v1",
+            canvas_id: "canvas-a",
+            commands: [{ type: "delete_nodes", node_ids: ["video-a"] }],
+          }],
+        }],
+      },
+    }];
+
+    try {
+      render(<SuperChatPanel variant="freezone" canvasId="canvas-a"
+        currentCanvasSelection={[]}
+        currentCanvasOntologyContext={buildCanvasOntologyContext([node], [], {
+          canvasId: "canvas-a", selectedNodeIds: [],
+        })}
+        pendingAttachments={[]}
+      />);
+
+      expect(apply).not.toHaveBeenCalled();
+      fireEvent.click(await screen.findByRole("button", { name: "画布操作已取消" }));
+      expect(screen.getByText("画布操作等待超时，已自动取消。")).toBeInTheDocument();
+      expect(apply).not.toHaveBeenCalled();
+      expect(useCanvasStore.getState().nodes.map((item) => item.id)).toEqual(["video-a"]);
+    } finally {
+      apply.mockRestore();
+    }
   });
 
   it("automatically cancels an expired persisted canvas command approval", async () => {

@@ -3,6 +3,17 @@ import { extractCanvasChatCommandEnvelopes } from "@/features/freezone/canvasCom
 
 export type CanvasCommandExecutionMode = "manual_confirm" | "auto_execute";
 
+export function canvasApprovalIsExpired(expiresAt: number | undefined, nowMs: number): boolean {
+  return typeof expiresAt === "number" && expiresAt <= nowMs;
+}
+
+export function canvasApprovalAppliesWithoutClick(
+  executionMode: CanvasCommandExecutionMode,
+  serverApproved?: boolean,
+): boolean {
+  return executionMode === "auto_execute" || serverApproved === true;
+}
+
 export function isCanvasChatCommandStructuredBlock(block: StructuredBlock): boolean {
   return extractCanvasChatCommandEnvelopes([block.value]).length > 0;
 }

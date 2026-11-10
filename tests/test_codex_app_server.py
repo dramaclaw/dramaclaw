@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import gzip
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -20,6 +21,7 @@ from novelvideo.chat.backend_sdk import (
     _start_or_resume_codex_thread,
     control_codex_runtime,
 )
+from novelvideo.freezone.agent_canvas_metrics import metrics_snapshot
 
 
 def _integration_codex_binary() -> Path:
@@ -1091,6 +1093,8 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
         for member in tool.get("tools") or []
     }
     expected_execution_tools = {
+        "freezone_cancel_canvas_action",
+        "freezone_confirm_canvas_action",
         "freezone_confirm_workflow_draft",
         "freezone_get_canvas_ontology",
         "freezone_get_node_action_catalog",
@@ -1617,14 +1621,57 @@ async def test_real_gateway_app_server_native_tool_search_calls_concrete_mcp(
     )
 
 
-def test_codex_native_approval_handler_fails_closed():
-    assert codex_app_server._deny_unexpected_approval(
-        "item/commandExecution/requestApproval", {"command": "echo unsafe"}
-    ) == {"decision": "decline"}
-    assert codex_app_server._deny_unexpected_approval(
-        "item/fileChange/requestApproval", {"changes": []}
-    ) == {"decision": "decline"}
-    assert codex_app_server._deny_unexpected_approval("unknown/request", {}) == {}
+@pytest.mark.parametrize("params", [None, {"input": "do-not-log"}])
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    [
+        ("item/permissions/requestApproval", {"permissions": {}, "scope": "turn"}),
+        (
+            "mcpServer/elicitation/request",
+            {"action": "decline", "content": None, "_meta": None},
+        ),
+        ("item/tool/requestUserInput", {"answers": {}}),
+        (
+            "item/tool/call",
+            {
+                "contentItems": [
+                    {
+                        "type": "inputText",
+                        "text": "DramaClaw does not run client-side dynamic tools.",
+                    }
+                ],
+                "success": False,
+            },
+        ),
+        ("unknown/request", {}),
+    ],
+)
+def test_codex_native_approval_handler_fails_closed(method, params, expected):
+    assert codex_app_server._refuse_server_request(method, params) == expected
+
+
+def test_codex_server_request_refusals_are_logged_and_counted(caplog):
+    before = metrics_snapshot()
+    with caplog.at_level(logging.WARNING, logger=codex_app_server.__name__):
+        codex_app_server._refuse_server_request(
+            "item/permissions/requestApproval", {"input": "do-not-log"}
+        )
+        codex_app_server._refuse_server_request("vendor/secret", {"input": "do-not-log"})
+    after = metrics_snapshot()
+
+    listed_key = "codex_server_request_refused.item/permissions/requestApproval"
+    unlisted_key = "codex_server_request_refused.unlisted"
+    assert after.get(listed_key, 0) - before.get(listed_key, 0) == 1
+    assert after.get(unlisted_key, 0) - before.get(unlisted_key, 0) == 1
+    secret_key = "codex_server_request_refused.vendor/secret"
+    assert after.get(secret_key, 0) - before.get(secret_key, 0) == 0
+    records = [record for record in caplog.records if record.name == codex_app_server.__name__]
+    assert [record.getMessage() for record in records] == [
+        "codex_server_request_refused method=item/permissions/requestApproval listed=true",
+        "codex_server_request_refused method=vendor/secret listed=false",
+    ]
+    assert all(record.levelno == logging.WARNING for record in records)
+    assert all("do-not-log" not in str(record.__dict__) for record in caplog.records)
 
 
 def test_shared_codex_private_sdk_bridge_is_compatible(monkeypatch, tmp_path):

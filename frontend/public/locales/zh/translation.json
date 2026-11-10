@@ -973,6 +973,19 @@
         "vocalsAllowed": "允许人声",
         "continue": "使用所选声线继续"
       },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "删除节点",
+          "clear_canvas": "清空画布",
+          "paid_generation": "运行生成"
+        },
+        "separator": "、",
+        "credits": "确认后会消耗积分。",
+        "expiresIn": "{{minutes}} 分钟内有效",
+        "confirm": "确认执行",
+        "refuse": "取消",
+        "failed": "操作失败，请重试。"
+      },
       "canvasExecuting": "执行中...",
       "currentSelection": "当前选中",
       "usedThisTurn": "本轮会使用",
