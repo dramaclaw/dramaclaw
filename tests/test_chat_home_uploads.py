@@ -64,6 +64,36 @@ def test_another_user_cannot_read_a_home_upload(api):
     assert response.status_code == 404
 
 
+def test_project_bound_agent_session_cannot_use_home_uploads(api):
+    client, viewer, state = api
+    assert _upload(client, "notes.md", NOTES).status_code == 200
+
+    viewer.update(
+        credential_kind="agent_session",
+        current_scope_kind="project",
+        current_project_id="p1",
+        scopes=["projects:write"],
+    )
+
+    assert client.get(f"/api/v1/chat/uploads/{NOTES_NAME}").status_code == 403
+    assert _upload(client, "other.md", b"other").status_code == 403
+    assert sorted(p.name for p in (state / "alice" / "_uploads").iterdir()) == [NOTES_NAME]
+
+
+def test_home_bound_agent_session_can_use_home_uploads(api):
+    client, viewer, _state = api
+    viewer.update(
+        credential_kind="agent_session",
+        current_scope_kind="home",
+        scopes=["projects:write"],
+    )
+
+    assert _upload(client, "notes.md", NOTES).status_code == 200
+    read = client.get(f"/api/v1/chat/uploads/{NOTES_NAME}")
+    assert read.status_code == 200
+    assert read.content == NOTES
+
+
 @pytest.mark.parametrize(
     "name",
     ["..%2Falice%2F_uploads%2F" + NOTES_NAME, ".upload-x.tmp", "notes.md"],

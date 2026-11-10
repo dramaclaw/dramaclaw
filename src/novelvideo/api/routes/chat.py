@@ -667,6 +667,7 @@ async def upload_home_chat_file(
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
     """Store a home chat attachment for this user and return its address."""
+    _enforce_agent_chat_scope(user, ChatScope(kind="home"), require_write=True)
     try:
         record = await asyncio.to_thread(
             save_home_upload, str(user["username"]), file.file, file.filename
@@ -679,6 +680,7 @@ async def upload_home_chat_file(
 @router.get("/chat/uploads/{name}")
 async def read_home_chat_file(name: str, user: dict = Depends(get_api_user)) -> FileResponse:
     """Serve one of this user's home chat attachments; other users' files are not found."""
+    _enforce_agent_chat_scope(user, ChatScope(kind="home"), require_write=False)
     path = resolve_home_upload(str(user["username"]), name)
     if path is None:
         raise HTTPException(status_code=404, detail="upload not found")
