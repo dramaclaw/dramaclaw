@@ -5386,6 +5386,7 @@ async def _stream_assistant_reply_codex(
 
     assistant_text = ""
     audio_notice: str | None = None
+    timeout_notice: str | None = None
     tool_text = ""
     structured_canvas_reply = str(tool_mode or "").strip() == "freezone_canvas"
     exact_audio_action_target = (
@@ -5667,6 +5668,8 @@ async def _stream_assistant_reply_codex(
                     tool_text += str(event.text or "")
                     continue
                 if event.type == "complete":
+                    if getattr(event, "disposition", None) == "timeout":
+                        timeout_notice = event.text
                     codex_thread_id = str(event.thread_id or "").strip() or None
                     if codex_thread_id and exact_audio_action_target is None:
                         _set_codex_thread_id(
@@ -5784,6 +5787,8 @@ async def _stream_assistant_reply_codex(
         if turn_operation is not None:
             await turn_operation.finish(turn_disposition)
 
+    if timeout_notice is not None:
+        await _write_turn_notice(username, store_scope, business_turn_id, "timeout", timeout_notice)
     if structured_canvas_reply and turn_disposition == "cancelled":
         if store_scope is not None:
             try:

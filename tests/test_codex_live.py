@@ -601,6 +601,79 @@ async def test_freezone_forwards_reply_without_storing_it(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("scope, tool_mode", [
+    (ChatScope(kind="home"), "default"),
+    (
+        ChatScope(
+            kind="project", id="project-local", surface="freezone", canvas_id="canvas-local",
+        ),
+        "freezone_canvas",
+    ),
+])
+async def test_codex_timeout_notice_is_idempotent_and_stored_before_done(
+    service_runtime, monkeypatch, tmp_path, scope, tool_mode,
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    timeout_message = "Codex App Server 响应超时，请重试。"
+    timeout_error = {"message": timeout_message, "kind": "idle", "elapsed_ms": 1000}
+
+    class Thread:
+        async def stream(self, prompt):
+            yield ChatBackendEvent(
+                type="thread_started", thread_id="thread-1", turn_id="turn-1",
+            )
+            yield ChatBackendEvent(
+                type="item_started", item={"type": "reasoning", "id": "r-1", "summary": []},
+                started_at_ms=1,
+            )
+            yield ChatBackendEvent(
+                type="item_delta", item_id="r-1", name="reasoning",
+                text="Checking projects", summary_index=0,
+            )
+            yield ChatBackendEvent(
+                type="turn_completed", thread_id="thread-1", turn_id="turn-1",
+                status="timeout", disposition="timeout", error=timeout_error,
+            )
+            yield ChatBackendEvent(
+                type="egress_disposition", thread_id="thread-1", turn_id="turn-1",
+                disposition="timeout",
+            )
+            yield ChatBackendEvent(
+                type="complete", thread_id="thread-1", turn_id="turn-1",
+                disposition="timeout", text=timeout_message, error=timeout_error,
+            )
+
+    monkeypatch.setattr(service, "_build_codex_thread", lambda *a, **kw: Thread())
+    events = []
+
+    async def collect(event):
+        events.append(event)
+        if event["type"] == "done":
+            with chat_store.connect("test-user", scope) as conn:
+                rows = conn.execute(
+                    "SELECT role, content, turn_id FROM chat_messages WHERE role != 'user'"
+                ).fetchall()
+            assert [tuple(row) for row in rows] == [
+                ("system", "Codex App Server 响应超时，请重试。", "business-1"),
+            ]
+
+    for _ in range(2):
+        await service._stream_assistant_reply_codex(
+            "test-user", scope.id or "", "hello", collect,
+            project_dir=tmp_path / "project", project_state_dir=tmp_path / "project-state",
+            tool_mode=tool_mode, store_scope=scope, turn_id="business-1",
+        )
+        with chat_store.connect("test-user", scope) as conn:
+            rows = conn.execute(
+                "SELECT role, content, turn_id FROM chat_messages WHERE role != 'user'"
+            ).fetchall()
+        assert [tuple(row) for row in rows] == [
+            ("system", "Codex App Server 响应超时，请重试。", "business-1"),
+        ]
+        assert events[-1] == {"type": "done", "message": None}
+
+
+@pytest.mark.asyncio
 async def test_freezone_cancel_notice_is_idempotent_and_settles_old_clarification(
     service_runtime, monkeypatch, tmp_path,
 ):
