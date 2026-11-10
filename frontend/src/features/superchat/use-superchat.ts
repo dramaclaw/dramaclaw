@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { localSnapshot, markLocalMessageChanges } from "./message-parts-origin";
+import { createMessagePartsQueue } from "./message-parts-queue";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import i18next from "i18next";
 import type {
@@ -1968,7 +1970,13 @@ export function useSuperChat({
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>(() => initialScopeSnapshot.cachedMessages);
+  const [messages, setHistoryMessages] = useState<ChatMessage[]>(() => initialScopeSnapshot.cachedMessages);
+  // Only live updates and user edits create a persistence intent. Hydration bypasses this.
+  const setMessages = useCallback((update: ChatMessage[] | ((current: ChatMessage[]) => ChatMessage[])) => {
+    setHistoryMessages(current => markLocalMessageChanges(
+      current, typeof update === "function" ? update(current) : update, desiredScope, scopeKey,
+    ));
+  }, [desiredScope, scopeKey]);
   const [historyReady, setHistoryReady] = useState(false);
   const [streamText, setStreamText] = useState("");
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
@@ -2085,24 +2093,35 @@ export function useSuperChat({
     });
   }, []);
 
-  const persistAssistantMessageParts = useCallback((
-    turnId: string,
-    parts: ChatMessagePart[] | undefined,
-    text?: string,
-  ) => {
-    const persistableParts = assistantPartsForPersistence(parts, text);
-    if (!persistableParts?.some((part) => part.type !== "text")) return;
-    void api.post("api/v1/chat/ui-events", {
-      json: {
-        scope: desiredScopeRef.current,
-        turn_id: turnId,
-      event: {
-        type: "assistant.message_parts",
-        parts: persistableParts,
-      },
-      },
-    }).catch(() => undefined);
-  }, []);
+  // Observe committed state only: React may replay state updater functions.
+  const persistenceQueue = useMemo(() => createMessagePartsQueue(async (body) => {
+    try {
+      await api.post("api/v1/chat/ui-events", { json: body });
+    } catch (error) {
+      setError("聊天记录保存失败，请稍后重试；当前消息仍保留在本地。");
+      throw error;
+    }
+  }), []);
+  const submittedSnapshots = useRef(new WeakSet<object>());
+  useEffect(() => {
+    for (const message of messages) {
+      const snapshot = localSnapshot(message);
+      if (!snapshot || submittedSnapshots.current.has(snapshot)) continue;
+      if ((message.raw as Record<string, unknown> | undefined)?.parts_incomplete) continue;
+      const parts = assistantPartsForPersistence(snapshot.parts, snapshot.text);
+      if (!parts?.some((part) => part.type !== "text")) continue;
+      submittedSnapshots.current.add(snapshot);
+      persistenceQueue.enqueue(`${snapshot.scopeKey}:${snapshot.turnId}`, {
+        scope: snapshot.scope,
+        turn_id: snapshot.turnId,
+        event: { type: "assistant.message_parts", parts },
+      });
+    }
+    if (!busy) void persistenceQueue.flush();
+  }, [messages, busy, persistenceQueue]);
+  useEffect(() => () => {
+    void persistenceQueue.flush();
+  }, [scopeKey, persistenceQueue]);
 
   const upsertAssistantMessagePart = useCallback((
     target: { messageId?: string | null; turnId?: string | null },
@@ -2117,27 +2136,19 @@ export function useSuperChat({
         ),
       );
       if (existingIndex >= 0) {
-        let persistedTurnId: string | undefined;
+
         const next = sortMessages(current.map((message, index) => {
           if (index !== existingIndex) return message;
           const parts = assistantPartsWithPart(message.parts, part);
-          persistedTurnId = message.turnId;
+
           return { ...message, parts, text: message.text || "", timestamp: Date.now() };
         }));
-        if (persistedTurnId) {
-          const persistedMessage = next.find((message) => message.role === "assistant" && message.turnId === persistedTurnId);
-          persistAssistantMessageParts(
-            persistedTurnId,
-            persistedMessage?.parts,
-            persistedMessage?.text,
-          );
-        }
         saveCachedMessages(scopeKey, next);
         return next;
       }
       if (!target.turnId) return current;
       const parts = assistantPartsWithPart(undefined, part);
-      persistAssistantMessageParts(target.turnId, parts);
+
       const next = sortMessages([
         ...current,
         {
@@ -2152,14 +2163,14 @@ export function useSuperChat({
       saveCachedMessages(scopeKey, next);
       return next;
     });
-  }, [persistAssistantMessageParts, scopeKey]);
+  }, [scopeKey]);
 
   const removeAssistantMessagePart = useCallback((
     target: { messageId?: string | null; turnId?: string | null },
     partId: string,
   ) => {
     setMessages((current) => {
-      let persistedTurnId: string | undefined;
+
       const next = current.map((message) => {
         if (
           message.role !== "assistant"
@@ -2171,21 +2182,13 @@ export function useSuperChat({
           return message;
         }
         const parts = assistantPartsWithoutPart(message.parts, partId);
-        persistedTurnId = message.turnId;
+
         return { ...message, ...(parts ? { parts } : { parts: undefined }) };
       });
-      if (persistedTurnId) {
-        const persistedMessage = next.find((message) => message.role === "assistant" && message.turnId === persistedTurnId);
-        persistAssistantMessageParts(
-          persistedTurnId,
-          persistedMessage?.parts,
-          persistedMessage?.text,
-        );
-      }
       saveCachedMessages(scopeKey, next);
       return next;
     });
-  }, [persistAssistantMessageParts, scopeKey]);
+  }, [scopeKey]);
 
   const replaceAssistantMessagePart = useCallback((
     target: { messageId?: string | null; turnId?: string | null },
@@ -2203,7 +2206,7 @@ export function useSuperChat({
       if (existingIndex < 0) {
         if (!target.turnId) return current;
         const parts = assistantPartsWithPart(undefined, replacement);
-        persistAssistantMessageParts(target.turnId, parts);
+
         const next = sortMessages([
           ...current,
           {
@@ -2219,28 +2222,17 @@ export function useSuperChat({
         return next;
       }
 
-      let persistedTurnId: string | undefined;
       const next = sortMessages(current.map((message, index) => {
         if (index !== existingIndex) return message;
         const withoutPrevious = assistantPartsWithoutPart(message.parts, partId);
         const parts = assistantPartsWithPart(withoutPrevious, replacement);
-        persistedTurnId = message.turnId;
+
         return { ...message, parts, text: message.text || "", timestamp: Date.now() };
       }));
-      if (persistedTurnId) {
-        const persistedMessage = next.find(
-          (message) => message.role === "assistant" && message.turnId === persistedTurnId,
-        );
-        persistAssistantMessageParts(
-          persistedTurnId,
-          persistedMessage?.parts,
-          persistedMessage?.text,
-        );
-      }
       saveCachedMessages(scopeKey, next);
       return next;
     });
-  }, [persistAssistantMessageParts, scopeKey]);
+  }, [scopeKey]);
 
   const finalizeStream = useCallback(() => {
     const turnId = activeTurnIdRef.current ?? `turn-${Date.now()}`;
@@ -2251,18 +2243,13 @@ export function useSuperChat({
     setMessages((current) => {
       if (!streamTextRef.current.trim()) return current;
       const next = upsertAssistantMessage(current, turnId, streamTextRef.current);
-      const persistedMessage = next.find((message) => message.role === "assistant" && message.turnId === turnId);
-      persistAssistantMessageParts(
-        turnId,
-        persistedMessage?.parts,
-        persistedMessage?.text,
-      );
+
       return next;
     });
     markTurnInactive(turnId);
     // Post-done history refresh is intentionally disabled; final assistant
     // messages are now pushed through assistant.message.
-  }, [markTurnInactive, persistAssistantMessageParts]);
+  }, [markTurnInactive]);
 
   const clearAbortGrace = useCallback(() => {
     if (abortGraceRef.current !== null) {
@@ -2325,9 +2312,12 @@ export function useSuperChat({
           Array.isArray(frame.history) ? frame.history : [],
           frameScope ?? desiredScopeRef.current,
         );
+        if (history.some(message => (message.raw as Record<string, unknown> | undefined)?.parts_incomplete)) {
+          setError("此对话的部分历史内容过大，已限制加载；正文仍可查看，请联系管理员整理历史记录。");
+        }
         const currentMessages = messagesRef.current;
         const protectedTurnId = activeTurnIdRef.current ?? recentlyCompletedTurnIdRef.current;
-        setMessages((current) => {
+        setHistoryMessages((current) => {
           const preserveRemoteBusy = frame.busy === true && currentTurnIsLive(protectedTurnId, current);
           const merged = mergeHistorySnapshot(current, history, protectedTurnId, preserveRemoteBusy);
           saveCachedMessages(scopeKey, merged);
@@ -2486,17 +2476,6 @@ export function useSuperChat({
             turnId,
             messageScope,
           );
-          const persistedTurnId =
-            turnId
-            ?? normalizeMessageForScope(frame.message, "assistant", messageScope)?.turnId;
-          if (persistedTurnId && messageScope.surface === "freezone") {
-            const persistedMessage = next.find((message) => message.role === "assistant" && message.turnId === persistedTurnId);
-            persistAssistantMessageParts(
-              persistedTurnId,
-              persistedMessage?.parts,
-              persistedMessage?.text,
-            );
-          }
           return next;
         });
         break;
@@ -2717,12 +2696,7 @@ export function useSuperChat({
           : frame.event;
         setMessages((current) => {
           const next = upsertAssistantUiEvent(current, turnId, event);
-          const persistedMessage = next.find((message) => message.role === "assistant" && message.turnId === turnId);
-          persistAssistantMessageParts(
-            turnId,
-            persistedMessage?.parts,
-            persistedMessage?.text,
-          );
+
           return next;
         });
         break;
@@ -2750,12 +2724,7 @@ export function useSuperChat({
           : frame.event;
         setMessages((current) => {
           const next = upsertAssistantUiEvent(current, turnId, event);
-          const persistedMessage = next.find((message) => message.role === "assistant" && message.turnId === turnId);
-          persistAssistantMessageParts(
-            turnId,
-            persistedMessage?.parts,
-            persistedMessage?.text,
-          );
+
           return next;
         });
         break;
@@ -2829,14 +2798,7 @@ export function useSuperChat({
               completedTurnId,
               pendingSkillStudioDraftChunksRef.current,
             );
-            const persistedMessage = next.find((message) =>
-              message.role === "assistant" && message.turnId === completedTurnId,
-            );
-            persistAssistantMessageParts(
-              completedTurnId,
-              persistedMessage?.parts,
-              persistedMessage?.text,
-            );
+
             return next;
           });
         }
@@ -2890,7 +2852,6 @@ export function useSuperChat({
     finalizeStream,
     markTurnActive,
     markTurnInactive,
-    persistAssistantMessageParts,
     requestHistory,
     scopeKey,
     settings.showToolEvents,
@@ -3007,7 +2968,7 @@ export function useSuperChat({
     recentlyCompletedTurnIdRef.current = null;
     setStreamText("");
     const cachedMessages = loadCachedMessages(scopeKey);
-    setMessages(cachedMessages);
+    setHistoryMessages(cachedMessages);
     messagesRef.current = cachedMessages;
     const activeTurn = loadPendingActiveTurn(scopeKey, cachedMessages);
     activeTurnIdRef.current = activeTurn?.turnId ?? null;
@@ -3198,14 +3159,7 @@ export function useSuperChat({
       if (pendingClarifications.length > 0) {
         setMessages((current) => {
           const next = cancelAssistantClarificationsForTurn(current, turnId);
-          const persistedMessage = next.find(
-            (message) => message.role === "assistant" && message.turnId === turnId,
-          );
-          persistAssistantMessageParts(
-            turnId,
-            persistedMessage?.parts,
-            persistedMessage?.text,
-          );
+
           return next;
         });
         const cancelledMessage = i18next.t("freezone.chat.clarification.cancelledRequest", {
@@ -3258,7 +3212,7 @@ export function useSuperChat({
         current.close(4000, "client abort");
       }
     }, ABORT_TERMINAL_GRACE_MS);
-  }, [clearAbortGrace, markTurnInactive, persistAssistantMessageParts]);
+  }, [clearAbortGrace, markTurnInactive]);
 
   const resolveApproval = useCallback((approval: ApprovalRequest, decision: ApprovalDecision) => {
     if (approval.kind !== "agent" || approval.requestId === undefined) {
@@ -3327,16 +3281,9 @@ export function useSuperChat({
   ) => {
     setMessages((current) => {
       const next = updateAssistantUiEvents(current, turnId, shouldUpdate, updateEvent);
-      if (next !== current) {
-        for (const [index, message] of next.entries()) {
-          if (message !== current[index] && message.role === "assistant" && message.turnId) {
-            persistAssistantMessageParts(message.turnId, message.parts, message.text);
-          }
-        }
-      }
       return next;
     });
-  }, [persistAssistantMessageParts]);
+  }, []);
 
   const persistMessageSet = useCallback((kind: "pinned" | "deleted", next: Set<string>) => {
     safeLocalStorageSet(`superchat:${kind}:${scopeKey}`, JSON.stringify([...next]));

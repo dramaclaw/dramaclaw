@@ -28,6 +28,13 @@ from novelvideo.sqlite_pragmas import (
 )
 
 
+# Bound encoded payload bytes before SQLite transfers TEXT into Python.
+UI_EVENT_MAX_BYTES = 2 * 1024 * 1024
+UI_HISTORY_MAX_BYTES = 8 * 1024 * 1024
+UI_TURN_MAX_BYTES = 4 * 1024 * 1024
+UI_TURN_MAX_ROWS = 256
+
+
 def _assistant_prefix_candidates(previous_assistant: object) -> list[str]:
     if isinstance(previous_assistant, (list, tuple)):
         items = [str(item or "").strip() for item in previous_assistant if str(item or "").strip()]
@@ -814,20 +821,94 @@ class ChatStore:
         turn_id = str(turn_id or "").strip()
         if not turn_id:
             raise ValueError("turn_id is required")
-        event_type = str(event.get("type") or event.get("event_type") or "ui_event").strip()
+        event_type = str(
+            event.get("type") or event.get("event_type") or "ui_event"
+        ).strip()
+        encoded = json.dumps(event, ensure_ascii=False)
+        if len(encoded.encode("utf-8")) > UI_EVENT_MAX_BYTES:
+            raise ValueError("chat UI event exceeds payload byte budget")
         created_at = datetime.now(timezone.utc).isoformat()
         conn = self.connect(username, scope)
         try:
-            cursor = conn.execute(
-                """
-                INSERT INTO chat_ui_events(turn_id, event_type, payload_json, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (turn_id, event_type, json.dumps(event, ensure_ascii=False), created_at),
-            )
+            # Serialize the read/merge/write across API processes, not just tasks.
+            conn.execute("BEGIN IMMEDIATE")
+            previous_id = None
+            if event_type == "assistant.message_parts":
+                if not isinstance(event.get("parts"), list):
+                    raise ValueError("message parts must be an array")
+                rows = conn.execute(
+                    "SELECT id, CASE WHEN length(CAST(payload_json AS BLOB)) <= ? "
+                    "THEN payload_json END AS payload_json FROM chat_ui_events "
+                    "WHERE turn_id=? AND event_type=? ORDER BY id LIMIT ?",
+                    (UI_EVENT_MAX_BYTES, turn_id, event_type, UI_TURN_MAX_ROWS + 1),
+                )
+                merged = []
+                consumed = 0
+                revision = event.get("snapshot_revision")
+                if revision is not None and (type(revision) is not int or revision < 0):
+                    raise ValueError("invalid snapshot revision")
+                count = 0
+                for row in rows:
+                    count += 1
+                    raw = row["payload_json"]
+                    consumed += (
+                        len(raw.encode("utf-8"))
+                        if raw is not None
+                        else UI_TURN_MAX_BYTES + 1
+                    )
+                    if count > UI_TURN_MAX_ROWS or consumed > UI_TURN_MAX_BYTES:
+                        raise ValueError(
+                            "chat history requires offline compaction before writing"
+                        )
+                    previous = json.loads(raw)
+                    old_revision = previous.get("snapshot_revision")
+                    if (
+                        isinstance(old_revision, int)
+                        and revision is not None
+                        and revision <= old_revision
+                    ):
+                        return {
+                            "id": row["id"],
+                            "turn_id": turn_id,
+                            "type": event_type,
+                            "payload": previous,
+                            "created_at": created_at,
+                            "stale": True,
+                        }
+                    if revision is None and isinstance(old_revision, int):
+                        event = {**event, "snapshot_revision": old_revision}
+                    previous_id = row["id"]
+                    merged = self._merge_message_parts_snapshots(
+                        [merged, previous.get("parts", [])]
+                    )
+                event = {
+                    **event,
+                    "parts": self._merge_message_parts_snapshots(
+                        [merged, event["parts"]]
+                    ),
+                }
+                encoded = json.dumps(event, ensure_ascii=False)
+                if len(encoded.encode("utf-8")) > UI_EVENT_MAX_BYTES:
+                    raise ValueError("merged chat UI event exceeds payload byte budget")
+            if previous_id is not None:
+                conn.execute(
+                    "UPDATE chat_ui_events SET payload_json=?,created_at=? WHERE id=?",
+                    (encoded, created_at, previous_id),
+                )
+                conn.execute(
+                    "DELETE FROM chat_ui_events WHERE turn_id=? AND event_type=? AND id<>?",
+                    (turn_id, event_type, previous_id),
+                )
+                event_id = previous_id
+            else:
+                cursor = conn.execute(
+                    "INSERT INTO chat_ui_events(turn_id,event_type,payload_json,created_at) VALUES (?,?,?,?)",
+                    (turn_id, event_type, encoded, created_at),
+                )
+                event_id = cursor.lastrowid
             conn.commit()
             return {
-                "id": int(cursor.lastrowid),
+                "id": int(event_id),
                 "turn_id": turn_id,
                 "type": event_type,
                 "payload": event,
@@ -843,92 +924,90 @@ class ChatStore:
         turn_id: str,
         event: dict[str, Any],
     ) -> dict[str, Any]:
-        turn_id = str(turn_id or "").strip()
-        if not turn_id:
-            raise ValueError("turn_id is required")
-        event_type = str(event.get("type") or event.get("event_type") or "ui_event").strip()
-        created_at = datetime.now(timezone.utc).isoformat()
-        db = await self.connect_async(username, scope)
+        return await asyncio.to_thread(
+            self.append_ui_event, username, scope, turn_id, event
+        )
+
+    @staticmethod
+    def _ui_event_query() -> str:
+        return """SELECT id, turn_id, event_type, created_at,
+                    length(CAST(payload_json AS BLOB)) AS size,
+                    CASE WHEN length(CAST(payload_json AS BLOB)) <= ?
+                         THEN payload_json END AS payload_json
+                  FROM chat_ui_events WHERE turn_id=? ORDER BY id DESC LIMIT ?"""
+
+    @staticmethod
+    def _bounded_event(row, remaining: int):
+        if row["payload_json"] is None or row["size"] > remaining:
+            return None
         try:
-            cursor = await db.execute(
-                """
-                INSERT INTO chat_ui_events(turn_id, event_type, payload_json, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (turn_id, event_type, json.dumps(event, ensure_ascii=False), created_at),
-            )
-            await db.commit()
-            return {
-                "id": int(cursor.lastrowid),
-                "turn_id": turn_id,
-                "type": event_type,
-                "payload": event,
-                "created_at": created_at,
-            }
-        finally:
-            await db.close()
+            payload = json.loads(row["payload_json"])
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(payload, dict):
+            payload = {"value": payload}
+        return {
+            **payload,
+            "id": row["id"],
+            "turn_id": row["turn_id"],
+            "type": row["event_type"],
+            "created_at": row["created_at"],
+        }
+
+    @staticmethod
+    def _finish_ui_events(events, incomplete):
+        events.reverse()
+        if incomplete:
+            events.append({"type": "chat.history_incomplete"})
+        return events
 
     async def _load_ui_events_async(
-        self,
-        db: aiosqlite.Connection,
+        self, db, turn_ids
     ) -> dict[str, list[dict[str, Any]]]:
-        cursor = await db.execute(
-            """
-            SELECT id, turn_id, event_type, payload_json, created_at
-              FROM chat_ui_events
-             ORDER BY id ASC
-            """
-        )
-        rows = await cursor.fetchall()
-        events_by_turn: dict[str, list[dict[str, Any]]] = {}
-        for row in rows:
-            turn_id = str(row["turn_id"] or "").strip()
-            if not turn_id:
-                continue
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except json.JSONDecodeError:
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {"value": payload}
-            payload = {
-                "id": int(row["id"]),
-                "type": str(row["event_type"] or payload.get("type") or "ui_event"),
-                "turn_id": turn_id,
-                "created_at": str(row["created_at"]),
-                **payload,
-            }
-            events_by_turn.setdefault(turn_id, []).append(payload)
-        return events_by_turn
+        result = {}
+        total = UI_HISTORY_MAX_BYTES
+        for turn_id in dict.fromkeys(turn_ids):
+            budget = min(total, UI_TURN_MAX_BYTES)
+            events, incomplete = [], False
+            async with db.execute(
+                self._ui_event_query(),
+                (min(UI_EVENT_MAX_BYTES, budget), turn_id, UI_TURN_MAX_ROWS + 1),
+            ) as cursor:
+                # fetchone avoids aiosqlite's multi-row prefetch of large TEXT.
+                while (row := await cursor.fetchone()) is not None:
+                    event = self._bounded_event(row, budget)
+                    if event is None or len(events) >= UI_TURN_MAX_ROWS:
+                        incomplete = True
+                        break
+                    events.append(event)
+                    budget -= row["size"]
+                    total -= row["size"]
+            result[turn_id] = self._finish_ui_events(events, incomplete)
+        return result
 
-    def _load_ui_events(self, conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
-        rows = conn.execute(
-            """
-            SELECT id, turn_id, event_type, payload_json, created_at
-              FROM chat_ui_events
-             ORDER BY id ASC
-            """
-        ).fetchall()
-        events_by_turn: dict[str, list[dict[str, Any]]] = {}
-        for row in rows:
-            turn_id = str(row["turn_id"] or "").strip()
-            if not turn_id:
-                continue
+    def _load_ui_events(self, conn, turn_ids) -> dict[str, list[dict[str, Any]]]:
+        result = {}
+        total = UI_HISTORY_MAX_BYTES
+        for turn_id in dict.fromkeys(turn_ids):
+            budget = min(total, UI_TURN_MAX_BYTES)
+            events, incomplete = [], False
+            cursor = conn.execute(
+                self._ui_event_query(),
+                (min(UI_EVENT_MAX_BYTES, budget), turn_id, UI_TURN_MAX_ROWS + 1),
+            )
             try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except json.JSONDecodeError:
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {"value": payload}
-            payload = {
-                "id": int(row["id"]),
-                "type": str(row["event_type"] or payload.get("type") or "ui_event"),
-                "turn_id": turn_id,
-                "created_at": str(row["created_at"]),
-                **payload,
-            }
-            events_by_turn.setdefault(turn_id, []).append(payload)
-        return events_by_turn
+                for row in cursor:
+                    event = self._bounded_event(row, budget)
+                    if event is None or len(events) >= UI_TURN_MAX_ROWS:
+                        incomplete = True
+                        break
+                    events.append(event)
+                    budget -= row["size"]
+                    total -= row["size"]
+            finally:
+                cursor.close()
+            result[turn_id] = self._finish_ui_events(events, incomplete)
+        return result
 
     @staticmethod
     def _message_part_key(part: Any) -> str | None:
@@ -1047,6 +1126,8 @@ class ChatStore:
                     }
                 )
                 target_index = len(messages) - 1
+            if any(event.get("type") == "chat.history_incomplete" for event in events):
+                messages[target_index]["parts_incomplete"] = True
             parts_events = [
                 event
                 for event in events
@@ -1090,7 +1171,7 @@ class ChatStore:
                 """,
                 (limit,),
             ).fetchall()
-            events_by_turn = self._load_ui_events(conn)
+            events_by_turn = self._load_ui_events(conn, [row["turn_id"] for row in rows if row["turn_id"]])
         finally:
             conn.close()
         messages: list[dict[str, Any]] = []
@@ -1165,7 +1246,7 @@ class ChatStore:
                 (limit,),
             )
             rows = await cursor.fetchall()
-            events_by_turn = await self._load_ui_events_async(db)
+            events_by_turn = await self._load_ui_events_async(db, [row["turn_id"] for row in rows if row["turn_id"]])
         finally:
             await db.close()
         messages: list[dict[str, Any]] = []
