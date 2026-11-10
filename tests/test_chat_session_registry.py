@@ -1,6 +1,7 @@
 """Lock identity and expiry remain stable outside the chat application."""
 
 import ast
+import inspect
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,7 +21,6 @@ from novelvideo.chat.session_registry import (
     load_active_codex_turns,
     load_codex_session_state,
     release_chat_run_lock,
-    reset_codex_scope_thread,
     set_active_codex_turn,
     set_codex_thread_id,
 )
@@ -82,27 +82,28 @@ def test_lock_file_rejects_foreign_heartbeat_and_release(tmp_path: Path) -> None
     assert not path.exists()
 
 
-def test_codex_scope_key_separates_project_canvas_and_protocol() -> None:
-    options = {"main_protocol": "main-v1", "freezone_protocol": "canvas-v2"}
-    assert codex_scope_key("", **options) == '["main","home",null,"main-v1"]'
-    assert codex_scope_key("project-a", **options) == (
-        '["main","project","project-a","main-v1"]'
+def test_codex_scope_key_separates_project_and_canvas() -> None:
+    assert codex_scope_key("") == '["main","home",null,"session"]'
+    assert codex_scope_key("project-a") == (
+        '["main","project","project-a","session"]'
     )
     assert (
         codex_scope_key(
             "project-a",
             agent_profile="freezone:agent-a",
             canvas_id="canvas-a",
-            **options,
         )
-        == '["freezone:agent-a","project","project-a","canvas-a","canvas-v2"]'
+        == '["freezone:agent-a","project","project-a","canvas-a","session"]'
     )
     assert (
         codex_scope_key(
-            "project-a", agent_profile="other", canvas_id="ignored", **options
+            "project-a", agent_profile="other", canvas_id="ignored"
         )
-        == '["other","project","project-a",null,"canvas-v2"]'
+        == '["other","project","project-a",null,"session"]'
     )
+    parameters = inspect.signature(codex_scope_key).parameters
+    assert "main_protocol" not in parameters
+    assert "freezone_protocol" not in parameters
 
 
 def test_codex_thread_state_preserves_other_scopes_and_ignores_bad_json(
@@ -119,9 +120,8 @@ def test_codex_thread_state_preserves_other_scopes_and_ignores_bad_json(
     set_codex_thread_id(path, "scope-a", " thread-a ", **options)
     set_codex_thread_id(path, "scope-b", "thread-b", **options)
     set_codex_thread_id(path, "scope-a", "  ", **options)
+    assert load_codex_session_state(path) == {"scope-a": "thread-a", "scope-b": "thread-b"}
     assert get_codex_thread_id(path, "scope-a") == "thread-a"
-    reset_codex_scope_thread(path, "scope-a", **options)
-    assert load_codex_session_state(path) == {"scope-b": "thread-b"}
 
 
 def test_active_codex_turn_state_retains_business_turn_and_other_scope(

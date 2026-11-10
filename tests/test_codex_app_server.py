@@ -1,6 +1,5 @@
 from pathlib import Path
 from contextlib import contextmanager
-from importlib.metadata import distribution
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import gzip
 import json
@@ -28,8 +27,9 @@ def _integration_codex_binary() -> Path:
         binary = Path(configured)
         assert binary.is_file(), "CODEX_BIN must point to the compiled runtime"
         return binary
-    return Path(
-        distribution("openai-codex-cli-bin").locate_file("codex_cli_bin/bin/codex")
+    pytest.skip(
+        "chat needs a Codex runtime that starts paginated threads; "
+        "the SDK-bundled binary starts legacy ones (set CODEX_BIN)"
     )
 
 
@@ -251,12 +251,96 @@ def test_runtime_signature_digest_does_not_embed_gateway_secret():
     assert "super-secret-key" not in digest
 
 
+def _recorded_thread_start(filename: str) -> dict:
+    path = Path(__file__).parent / "fixtures" / "codex-0.162" / filename
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    start = next(record for record in records if record["msg"].get("method") == "thread/start")
+    return next(
+        record["msg"]["result"]
+        for record in records
+        if record["conn"] == start["conn"]
+        and record["dir"] == "recv"
+        and record["msg"].get("id") == start["msg"]["id"]
+    )
+
+
+class _StartedThreadClient:
+    def __init__(self, result):
+        self.result = result
+        self.requests = []
+
+    def request(self, method, params, *, response_model):
+        self.requests.append((method, params))
+        return response_model.model_validate(self.result)
+
+
+def test_started_paginated_thread_is_returned_unchanged():
+    recorded = _recorded_thread_start("02-thread-start-ce.jsonl")
+    started = SimpleNamespace(id=recorded["thread"]["id"])
+    client = _StartedThreadClient(recorded)
+    codex = SimpleNamespace(_client=client, thread_start=lambda **options: started)
+
+    assert _start_or_resume_codex_thread(codex, None, {}) is started
+    assert client.requests == [
+        (
+            "thread/read",
+            {"threadId": "01a1c513-4902-7a92-81fa-3d7461d47839", "includeTurns": False},
+        )
+    ]
+
+
+@pytest.mark.parametrize("thread_id", [None, "stale-thread"])
+def test_started_legacy_thread_is_refused(thread_id):
+    from openai_codex.errors import InvalidRequestError
+    from novelvideo.chat.backend_sdk import CodexThreadHistoryModeError
+
+    recorded = _recorded_thread_start("11-legacy-history-thread.jsonl")
+    started = SimpleNamespace(id=recorded["thread"]["id"])
+
+    def thread_resume(thread_id, **options):
+        raise InvalidRequestError(-32600, f"no rollout found for thread id {thread_id}")
+
+    codex = SimpleNamespace(
+        _client=_StartedThreadClient(recorded),
+        thread_start=lambda **options: started,
+        thread_resume=thread_resume,
+    )
+
+    with pytest.raises(CodexThreadHistoryModeError) as exc:
+        _start_or_resume_codex_thread(codex, thread_id, {})
+
+    assert str(exc.value) == (
+        "Codex thread 01a1c514-0bb5-7850-8835-edda34372703 has history mode legacy; "
+        "chat needs a Codex runtime that starts paginated threads (0.162 or newer)"
+    )
+
+
+@pytest.mark.parametrize("client", [None, SimpleNamespace(), SimpleNamespace(request=None)])
+def test_start_without_a_callable_low_level_request_is_refused(client):
+    from novelvideo.chat.backend_sdk import CodexThreadHistoryModeError
+
+    codex = SimpleNamespace(thread_start=lambda **options: SimpleNamespace(id="thread-1"))
+    if client is not None:
+        codex._client = client
+
+    with pytest.raises(CodexThreadHistoryModeError) as exc:
+        _start_or_resume_codex_thread(codex, None, {})
+
+    assert str(exc.value) == (
+        "Codex thread thread-1 has history mode unknown (low-level request unavailable); "
+        "chat needs a Codex runtime that starts paginated threads (0.162 or newer)"
+    )
+
+
 def test_missing_rollout_starts_a_replacement_thread():
     from openai_codex.errors import InvalidRequestError
 
-    replacement = object()
+    recorded = _recorded_thread_start("02-thread-start-ce.jsonl")
+    replacement = SimpleNamespace(id=recorded["thread"]["id"])
 
     class FakeCodex:
+        _client = _StartedThreadClient(recorded)
+
         def thread_resume(self, thread_id, **options):
             raise InvalidRequestError(
                 -32600,
@@ -663,18 +747,15 @@ def test_contract_runtime_selection_preserves_both_overrides(
 ):
     test_binary = tmp_path / "test-codex"
     configured_binary = tmp_path / "configured-codex"
-    bundled_binary = tmp_path / "sdk-codex"
-    for binary in (test_binary, configured_binary, bundled_binary):
+    for binary in (test_binary, configured_binary):
         binary.touch()
     monkeypatch.delenv("DRAMACLAW_TEST_CODEX_BIN", raising=False)
     monkeypatch.delenv("CODEX_BIN", raising=False)
-    monkeypatch.setattr(
-        sys.modules[__name__],
-        "distribution",
-        lambda _name: SimpleNamespace(locate_file=lambda _path: bundled_binary),
-    )
-    if selection != "sdk":
-        monkeypatch.setenv("CODEX_BIN", str(configured_binary))
+    if selection == "sdk":
+        with pytest.raises(pytest.skip.Exception, match="paginated.*legacy"):
+            _contract_codex_bin()
+        return
+    monkeypatch.setenv("CODEX_BIN", str(configured_binary))
     if selection == "test_override":
         monkeypatch.setenv("DRAMACLAW_TEST_CODEX_BIN", str(test_binary))
     assert (
@@ -682,7 +763,6 @@ def test_contract_runtime_selection_preserves_both_overrides(
         == {
             "test_override": test_binary,
             "configured": configured_binary,
-            "sdk": bundled_binary,
         }[selection]
     )
 
@@ -1194,6 +1274,168 @@ async def test_public_patched_runtime_keeps_turn_key_out_of_metadata_and_disk(
             assert (
                 secret.encode() not in path.read_bytes()
             ), f"Turn key persisted in {path.name}"
+
+
+@pytest.mark.asyncio
+async def test_public_patched_runtime_sends_context_separately_from_user_message(
+    monkeypatch, tmp_path
+):
+    codex_bin = _contract_codex_bin()
+    from novelvideo.chat.codex_protocol import context_entries
+
+    scripted = _responses_sse(
+        _response_created("context-turn"),
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "id": "context-message",
+                "content": [{"type": "output_text", "text": "OK"}],
+            },
+        },
+        _response_completed("context-turn"),
+    )
+    additional_context = {
+        **context_entries("dramaclaw-protocol", "PROTOCOL-MARKER-A", kind="application"),
+        **context_entries("dramaclaw-execution-context", "EXECUTION-MARKER-B", kind="untrusted"),
+    }
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    with _recording_responses_gateway([scripted]) as (gateway_url, requests):
+        client = backend_sdk.CodexClient(
+            codex_bin=codex_bin,
+            cwd=tmp_path,
+            env={
+                **os.environ,
+                "CODEX_HOME": str(tmp_path / "codex-home"),
+                "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+            },
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions="Reply briefly without tools.",
+            config_overrides=service._codex_gateway_config_overrides(gateway_url),
+            turn_metadata={"dramaclaw_gateway_api_key": "synthetic-context-test-key"},
+            additional_context=additional_context,
+            client_user_message_id="client-turn-1",
+        )
+        try:
+            events = [event async for event in client.thread_start().stream("Say OK")]
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+    assert any(event.type == "complete" and event.text == "OK" for event in events)
+    assert len(requests) == 1
+    messages = requests[0]["body"]["input"]
+    text_parts = [
+        (message.get("role"), part["text"])
+        for message in messages
+        for part in message.get("content", [])
+        if "text" in part
+    ]
+    protocol = "<dramaclaw-protocol>PROTOCOL-MARKER-A</dramaclaw-protocol>"
+    execution = (
+        "<external_dramaclaw-execution-context>"
+        "EXECUTION-MARKER-B</external_dramaclaw-execution-context>"
+    )
+    assert ("developer", protocol) in text_parts, text_parts
+    assert ("user", execution) in text_parts, text_parts
+    last_user = [message for message in messages if message.get("role") == "user"][-1]
+    assert [part["text"] for part in last_user["content"] if "text" in part] == ["Say OK"]
+    assert sorted(
+        (role, text) for role, text in text_parts
+        if "PROTOCOL-MARKER-A" in text or "EXECUTION-MARKER-B" in text
+    ) == [("developer", protocol), ("user", execution)], text_parts
+
+
+@pytest.mark.asyncio
+async def test_public_patched_runtime_clear_keeps_thread_without_prior_history(
+    monkeypatch, tmp_path
+):
+    from openai_codex import CodexConfig
+    from novelvideo.chat.codex_protocol import ThreadTurnIdsPage
+
+    codex_bin = _contract_codex_bin()
+    scripted = [
+        _responses_sse(
+            _response_created(f"clear-turn-{index}"),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "id": f"clear-message-{index}",
+                    "content": [{"type": "output_text", "text": reply}],
+                },
+            },
+            _response_completed(f"clear-turn-{index}"),
+        )
+        for index, reply in enumerate(["ONE-MARKER", "TWO-MARKER", "THREE"], 1)
+    ]
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    with _recording_responses_gateway(scripted) as (gateway_url, requests):
+        env = {
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+        }
+        overrides = service._codex_gateway_config_overrides(gateway_url)
+        client = backend_sdk.CodexClient(
+            codex_bin=codex_bin,
+            cwd=tmp_path,
+            env=env,
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions="Reply briefly without tools.",
+            config_overrides=overrides,
+            turn_metadata={"dramaclaw_gateway_api_key": "synthetic-clear-test-key"},
+        )
+        config = CodexConfig(
+            codex_bin=str(codex_bin), cwd=str(tmp_path), env=env, config_overrides=overrides
+        )
+        try:
+            first = [event async for event in client.thread_start().stream("Say ONE-MARKER")]
+            thread_id = next(event.thread_id for event in first if event.type == "thread_started")
+            assert any(event.type == "complete" and event.text == "ONE-MARKER" for event in first)
+            second = [
+                event async for event in client.thread_resume(thread_id).stream("Say TWO-MARKER")
+            ]
+            assert any(event.type == "complete" and event.text == "TWO-MARKER" for event in second)
+            assert backend_sdk.clear_codex_thread_history(
+                codex_bin=codex_bin, cwd=tmp_path, env=env,
+                config_overrides=overrides, thread_id=thread_id,
+            ) == "reverted"
+            with codex_app_server.shared_codex(config) as codex:
+                page = codex._client.request(
+                    "thread/turns/list", {"threadId": thread_id}, response_model=ThreadTurnIdsPage
+                )
+            assert page.data == []
+            third = [
+                event async for event in client.thread_resume(thread_id).stream("Say THREE")
+            ]
+            assert any(
+                event.type == "complete" and event.text == "THREE" and event.thread_id == thread_id
+                for event in third
+            )
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+    assert len(requests) == 3
+    body = requests[2]["body"]
+
+    def text_parts(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key == "text" and isinstance(item, str):
+                    yield item
+                else:
+                    yield from text_parts(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from text_parts(item)
+
+    assert all(
+        "ONE-MARKER" not in text and "TWO-MARKER" not in text for text in text_parts(body)
+    )
+    last_user = [message for message in body["input"] if message.get("role") == "user"][-1]
+    assert [part["text"] for part in last_user["content"] if "text" in part] == ["Say THREE"]
 
 
 @pytest.mark.asyncio

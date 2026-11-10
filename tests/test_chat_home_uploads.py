@@ -54,6 +54,53 @@ def test_home_upload_is_written_under_the_user_state_dir_and_returns_its_address
     assert read.content == NOTES
 
 
+@pytest.mark.parametrize(
+    "name, body, mime_type, disposition",
+    [
+        (
+            "script.html",
+            b"<script>alert(1)</script>",
+            "text/html",
+            'attachment; filename="5c140d35dcb46a62-script.html"',
+        ),
+        (
+            "script.svg",
+            b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+            "image/svg+xml",
+            'attachment; filename="3f67c8be987aa1db-script.svg"',
+        ),
+    ],
+)
+def test_active_home_upload_is_downloaded_with_nosniff(api, name, body, mime_type, disposition):
+    client, _viewer, _state = api
+    upload = client.post("/api/v1/chat/uploads", files={"file": (name, body, mime_type)})
+    assert upload.status_code == 200
+
+    read = client.get(upload.json()["data"]["url"])
+
+    assert read.status_code == 200
+    assert read.content == body
+    assert read.headers.get("content-disposition", "").startswith("attachment")
+    assert read.headers["content-disposition"] == disposition
+    assert read.headers.get("x-content-type-options") == "nosniff"
+
+
+def test_png_home_upload_is_served_inline_with_nosniff(api):
+    client, _viewer, _state = api
+    upload = client.post(
+        "/api/v1/chat/uploads", files={"file": ("image.png", b"small image", "image/png")}
+    )
+    assert upload.status_code == 200
+
+    read = client.get(upload.json()["data"]["url"])
+
+    assert read.status_code == 200
+    assert read.content == b"small image"
+    assert read.headers["content-type"] == "image/png"
+    assert read.headers.get("content-disposition", "inline") == "inline"
+    assert read.headers.get("x-content-type-options") == "nosniff"
+
+
 def test_another_user_cannot_read_a_home_upload(api):
     client, viewer, _state = api
     assert _upload(client, "notes.md", NOTES).status_code == 200

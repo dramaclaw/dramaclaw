@@ -237,7 +237,7 @@ async def clear_chat_scope(
     body: ClearChatRequest,
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
-    """Clear one conversation and start a fresh Codex context for that scope."""
+    """Clear one conversation and empty its Codex thread history; the thread id stays."""
     try:
         scope = ChatScope.from_payload(body.scope)
     except ValueError as exc:
@@ -274,7 +274,7 @@ async def clear_chat_scope(
             if project_ctx is not None
             else None
         )
-        archived_threads = await chat_service.archive_codex_scope_thread(
+        reverted_threads = await chat_service.clear_codex_scope_thread(
             username,
             project,
             agent_profile=(
@@ -296,7 +296,7 @@ async def clear_chat_scope(
         chat_service._release_chat_run_lock(username, lock_project, lock_id)
     logger.info(
         "chat scope cleared user=%s kind=%s project=%s surface=%s canvas=%s agent=%s "
-        "messages=%d archived_threads=%d",
+        "messages=%d reverted_threads=%d",
         username,
         scope.kind,
         project or "<home>",
@@ -304,13 +304,13 @@ async def clear_chat_scope(
         scope.canvas_id or "-",
         scope.agent_id or "-",
         cleared,
-        archived_threads,
+        reverted_threads,
     )
     return {
         "ok": True,
         "data": {
             "cleared_messages": cleared,
-            "archived_threads": archived_threads,
+            "reverted_threads": reverted_threads,
         },
     }
 
@@ -684,7 +684,13 @@ async def read_home_chat_file(name: str, user: dict = Depends(get_api_user)) -> 
     path = resolve_home_upload(str(user["username"]), name)
     if path is None:
         raise HTTPException(status_code=404, detail="upload not found")
-    return FileResponse(path)
+    inline = path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    return FileResponse(
+        path,
+        filename=None if inline else path.name,
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.post("/chat/permission-result")

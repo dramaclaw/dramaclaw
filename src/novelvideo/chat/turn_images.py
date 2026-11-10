@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -90,8 +91,15 @@ async def turn_image_files(paths: Sequence[Path], project_dir: Path) -> list[Pat
         target = target_dir / f"{hashlib.sha256(image.data).hexdigest()[:32]}.jpg"
         if not target.is_file():
             target_dir.mkdir(parents=True, exist_ok=True)
-            partial = target.with_suffix(".part")
-            partial.write_bytes(image.data)
-            partial.replace(target)
+            fd, partial_name = tempfile.mkstemp(
+                dir=target_dir, prefix=target.name + ".", suffix=".part"
+            )
+            partial = Path(partial_name)
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(image.data)
+                partial.replace(target)
+            finally:
+                partial.unlink(missing_ok=True)
         files.append(target)
     return files

@@ -1,4 +1,8 @@
+import asyncio
 import json
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -92,6 +96,45 @@ async def test_turn_image_files_writes_compacted_copies_under_output(tmp_path):
         assert max(image.size) == 1280
     # The same image compacts to the same file, so repeat turns reuse it.
     assert await turn_image_files([good], tmp_path) == files
+
+
+def test_turn_image_files_concurrent_writers_share_compacted_image(monkeypatch, tmp_path):
+    source = _png(tmp_path / "freezone" / "_uploads" / "same.png")
+    barrier = threading.Barrier(2, timeout=5)
+    real_replace = os.replace
+
+    def synchronized_replace(src, dst, *args, **kwargs):
+        try:
+            barrier.wait()
+        except threading.BrokenBarrierError:
+            pass
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", synchronized_replace)
+
+    def write_image():
+        return asyncio.run(turn_image_files([source], tmp_path))
+
+    results = []
+    errors = []
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(write_image) for _ in range(2)]
+        for future in futures:
+            try:
+                results.append(future.result())
+            except Exception as error:
+                errors.append(error)
+
+    assert errors == []
+    assert len(results) == 2
+    assert results[0] == results[1]
+    assert len(results[0]) == 1
+    target = results[0][0]
+    assert target.is_file()
+    with Image.open(target) as image:
+        assert image.format == "JPEG"
+        image.load()
+    assert list((tmp_path / TURN_IMAGE_DIRNAME).glob("*.part")) == []
 
 
 def test_attachment_context_tells_agent_chat_cannot_take_images():
