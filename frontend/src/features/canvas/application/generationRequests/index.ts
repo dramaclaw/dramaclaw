@@ -6,3 +6,4 @@ export * from './videoGenerationRequest';
 export * from './generationSubmitError';
 export * from './videoGenerationResult';
 export * from './audioGenerationRequest';
+export * from './audioGenerationResult';

@@ -60,6 +60,7 @@ import {
 import { fetchFreezoneAudioReferences, uploadFreezoneImage } from '@/api/ops';
 import { readUrl } from '@/lib/url-params';
 import { VoiceSelectionModal } from './VoiceSelectionModal';
+import { isVoicePrerequisiteError } from './audioVoicePrerequisite';
 
 type AudioNodeProps = NodeProps & {
   id: string;
@@ -86,11 +87,6 @@ function isAudioFile(file: File): boolean {
   if (file.type.startsWith('audio/')) return true;
   const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
   return AUDIO_UPLOAD_EXTENSIONS.has(ext);
-}
-
-function isVoicePrerequisiteError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /(?:声线未配置|缺少.*声线|请先配置或选择声线|上传或录制.*音频)/u.test(message); // i18n-exempt -- backend errors
 }
 
 // 只合并同时发生的请求；settled 后立即失效，避免空结果在上传声线后仍被复用。
