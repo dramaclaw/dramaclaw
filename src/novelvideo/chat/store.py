@@ -1314,6 +1314,91 @@ class ChatStore:
         )
         return messages
 
+    async def history_rows_async(
+        self,
+        username: str,
+        scope: ChatScope,
+        *,
+        lower_id: int | None,
+        upper_id: int | None,
+        limit: int,
+    ) -> list[dict]:
+        clauses = ["role NOT IN ('trace', 'agent_notification')"]
+        params: list[Any] = []
+        if lower_id is not None:
+            clauses.append("id >= ?")
+            params.append(lower_id)
+        if upper_id is not None:
+            clauses.append("id < ?")
+            params.append(upper_id)
+        db = await self.connect_async(username, scope, db_path=self.read_db_for(username, scope))
+        try:
+            async with db.execute(
+                "SELECT id, role, content, media_json, turn_id, metadata_json, "
+                "idempotency_key, created_at FROM chat_messages WHERE "
+                + " AND ".join(clauses) + " ORDER BY id DESC LIMIT ?",
+                [*params, limit],
+            ) as cursor:
+                rows = await cursor.fetchall()
+        finally:
+            await db.close()
+        messages = []
+        for row in reversed(rows):
+            message = self._message_from_row(row)
+            message.update(message.pop("metadata", {}))
+            message["idempotency_key"] = row["idempotency_key"]
+            messages.append(message)
+        return messages
+
+    async def history_anchor_id_async(
+        self, username: str, scope: ChatScope, *, turn_id: str, created_at: str
+    ) -> int | None:
+        db = await self.connect_async(username, scope, db_path=self.read_db_for(username, scope))
+        try:
+            async with db.execute(
+                "SELECT COALESCE("
+                "(SELECT MIN(id) FROM chat_messages WHERE role='user' AND turn_id=?), "
+                "(SELECT MIN(id) FROM chat_messages WHERE created_at >= ?))",
+                (turn_id, created_at),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row[0]
+        finally:
+            await db.close()
+
+    async def turn_ui_events_async(
+        self, username: str, scope: ChatScope, turn_ids
+    ) -> dict[str, list[dict]]:
+        db = await self.connect_async(username, scope, db_path=self.read_db_for(username, scope))
+        try:
+            result = {}
+            total = UI_HISTORY_MAX_BYTES
+            for turn_id in dict.fromkeys(turn_ids):
+                budget = min(total, UI_TURN_MAX_BYTES)
+                events, incomplete, counts = [], False, {True: 0, False: 0}
+                async with db.execute(
+                    """SELECT id, turn_id, event_type, created_at,
+                              length(CAST(payload_json AS BLOB)) AS size,
+                              CASE WHEN length(CAST(payload_json AS BLOB)) <= ?
+                                   THEN payload_json END AS payload_json
+                         FROM chat_ui_events
+                        WHERE turn_id=? AND event_type != 'assistant.message_parts'
+                        ORDER BY id DESC LIMIT ?""",
+                    (min(UI_EVENT_MAX_BYTES, budget), turn_id, self._ui_event_row_limit()),
+                ) as cursor:
+                    while (row := await cursor.fetchone()) is not None:
+                        event = self._bounded_event(row, budget)
+                        if event is None or self._row_cap_reached(row, counts):
+                            incomplete = True
+                            break
+                        events.append(event)
+                        budget -= row["size"]
+                        total -= row["size"]
+                result[turn_id] = self._finish_ui_events(events, incomplete)
+            return result
+        finally:
+            await db.close()
+
     async def history_contents_async(
         self,
         username: str,
