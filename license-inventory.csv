@@ -172,6 +172,7 @@ docs/changes/2026-08-26.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml ag
 docs/changes/2026-08-27.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/changes/2026-08-28.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/chat-presentation-boundary.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/chat-refresh-recovery.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/compliance/copyleft-deps.csv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/compliance/npm-dependency-licenses.csv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/compliance/python-dependency-licenses.csv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
