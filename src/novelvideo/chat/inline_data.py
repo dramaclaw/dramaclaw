@@ -14,10 +14,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# ``data:[<mediatype>][;param]*,<payload>``. The scheme must start a token, so
-# prose like "metadata: a,b" or "data: is a scheme" is left alone.
+# ``data:[<mediatype>][;param]*,<payload>``. Only ASCII letters and digits protect
+# identifiers such as "metadata:"; CJK text, "_" and "-" before "data:" do not.
+# Prose like "data: is a scheme" is left alone.
 _INLINE_DATA_URL = re.compile(
-    r"(?<![\w-])data:(?:[\w.+-]+/[\w.+-]+)?(?:;[\w.+=-]+)*,[^\s\"'<>)\]]*",
+    r"(?<![A-Za-z0-9])data:(?:[\w.+-]+/[\w.+-]+)?(?:;[\w.+=-]+)*,[^\s\"'<>)\]]*",
     re.IGNORECASE,
 )
 _DROPPED = object()

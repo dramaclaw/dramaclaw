@@ -154,6 +154,23 @@ def test_prose_that_mentions_data_colon_is_kept(chat):
     ]
 
 
+def test_data_url_right_after_cjk_text_or_an_underscore_is_cut(chat):
+    store, scope = chat
+
+    store.append_message(
+        "alice",
+        scope,
+        "assistant",
+        "ok",
+        [{"type": "note", "label": f"见图片{PNG_DATA_URL}"}],
+        metadata={"ref": f"node_{JPEG_DATA_URL}"},
+    )
+
+    media_json, metadata_json = _stored_message(store, scope)
+    assert json.loads(media_json) == [{"type": "note", "label": "见图片"}]
+    assert json.loads(metadata_json) == {"ref": "node_"}
+
+
 def test_legacy_project_message_database_keeps_addresses_only(tmp_path):
     conn = message_repository.connect(tmp_path / "chat.db")
     try:
