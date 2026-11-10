@@ -78,6 +78,34 @@ async def test_idle_sse_flushes_before_any_command_or_heartbeat(scoped_bridge):
     assert chat.bridge_watch_hub().metrics["sse_connections"] == 0
 
 
+@pytest.mark.parametrize("patch_push", ["0", "1"])
+async def test_sse_records_ui_locale_before_stream_starts(scoped_bridge, monkeypatch, patch_push):
+    monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", patch_push)
+    response = await chat.stream_canvas_commands(
+        "project", "canvas", user={"username": "viewer"}, locale="en",
+    )
+    iterator = response.body_iterator
+    try:
+        path = scoped_bridge / "freezone" / "ui_locale.json"
+        assert json.loads(path.read_text()) == {"locale": "en"}
+        assert await asyncio.wait_for(anext(iterator), 1) == {"comment": "connected"}
+    finally:
+        await iterator.aclose()
+
+
+async def test_sse_ignores_invalid_ui_locale(scoped_bridge, caplog):
+    response = await chat.stream_canvas_commands(
+        "project", "canvas", user={"username": "viewer"}, locale="../x",
+    )
+    iterator = response.body_iterator
+    try:
+        assert not (scoped_bridge / "freezone" / "ui_locale.json").exists()
+        assert await asyncio.wait_for(anext(iterator), 1) == {"comment": "connected"}
+    finally:
+        await iterator.aclose()
+    assert not caplog.records
+
+
 @pytest.mark.parametrize(
     "project,canvas,agents",
     [("", "c", "main"), ("p", "", "main"), ("p", "c", "../other"), ("p", "c", "")],

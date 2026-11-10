@@ -1534,6 +1534,8 @@
       "assetNamePlaceholder": "Enter an asset name"
     },
     "canvasSync": {
+      "remoteDeletedLocalKept": "A node you changed was deleted elsewhere. Your version was kept.",
+      "localDeletedRemoteChanged": "A node you deleted was just changed elsewhere (for example by the Agent). It stays deleted.",
       "backupFailed": "Cloud backup failed. Please try again later.",
       "backupPending": "Saved locally; the cloud backup will retry.",
       "bodyOverLimit": "Canvas data is {{actual}} KB, over the {{limit}} KB limit. Saving is paused.",
@@ -5949,8 +5951,6 @@
         "conditionalBranch": "Conditional branch (else/automatic)",
         "unknownInitialValues": "Initial variable values are unknown; defaulting to 0 (no global decl).",
         "invalidDefaultChoice": "{{name}}: # default {{index}} exceeds the number of choices and was ignored.",
-        "agentRefreshConflict": "The agent updated the canvas, but you have unsaved local changes. Save a copy or refresh to continue.",
-        "refreshConflict": "The canvas was updated in the background, but you have unsaved local changes. Save a copy or refresh to continue.",
         "storyGroup": "Interactive story",
         "segmentTitle": "Segment {{index}}",
         "firstFrame": "first frame",

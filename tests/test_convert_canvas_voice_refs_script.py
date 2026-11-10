@@ -215,6 +215,127 @@ def test_dry_run_reports_without_writing(tmp_path: Path) -> None:
     assert path.read_bytes() == before
 
 
+def test_applied_conversion_bumps_revision_and_publishes_change(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", "1")
+    path = _write_canvas(
+        tmp_path,
+        "default",
+        _canvas_payload([_audio_node("n1", {"scope": "project_narrator"})]),
+    )
+
+    result = converter.convert_project_canvases(
+        tmp_path, resolve_account_voice_id=_stub_resolver([]), apply=True
+    )
+
+    assert result.canvases_written == 1
+    assert result.nodes_converted == 1
+    assert result.errors == ()
+    assert json.loads(path.read_text())["revision"] == 8
+    log_dir = tmp_path / "freezone" / "canvas_changes" / "default"
+    assert [entry.name for entry in log_dir.glob("*.json")] == ["000000000008.json"]
+    entry = json.loads((log_dir / "000000000008.json").read_text())
+    assert entry["base_revision"] == 7
+    assert entry["revision"] == 8
+    assert entry["save_source"] == "voice_ref_conversion"
+    assert entry["nodes"][0]["data"]["voiceRef"] == {
+        "scope": "user_custom", "voiceId": "fv_stub_1"
+    }
+
+
+def test_applied_conversion_uses_fresh_canvas_and_preserves_history(tmp_path, monkeypatch):
+    from novelvideo.freezone import canvas_store
+
+    path = _write_canvas(
+        tmp_path,
+        "default",
+        _canvas_payload([_audio_node("n1", {"scope": "project_narrator"})]),
+    )
+    original_save = canvas_store.save_canvas
+
+    def save_after_concurrent_edit(*args, **kwargs):
+        fresh = json.loads(path.read_text())
+        fresh["revision"] = 9
+        fresh["nodes"].append({"id": "concurrent-node", "data": {"label": "Fresh"}})
+        path.write_text(json.dumps(fresh))
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(canvas_store, "save_canvas", save_after_concurrent_edit)
+    result = converter.convert_project_canvases(
+        tmp_path, resolve_account_voice_id=_stub_resolver([]), apply=True
+    )
+
+    assert result.canvases_written == 1
+    assert result.nodes_converted == 1
+    saved = json.loads(path.read_text())
+    assert saved["revision"] == 10
+    assert saved["nodes"][1] == {"id": "concurrent-node", "data": {"label": "Fresh"}}
+    [history] = (path.parent / "_history").glob("*.json")
+    old = json.loads(history.read_text())
+    assert old["revision"] == 9
+    assert old["nodes"][0]["data"]["voiceRef"] == {"scope": "project_narrator"}
+
+
+@pytest.mark.parametrize("fresh_state", ["converted", "missing", "corrupt"])
+def test_conversion_handles_canvas_changed_after_scan(tmp_path, monkeypatch, fresh_state):
+    from novelvideo.freezone import canvas_store
+
+    path = _write_canvas(
+        tmp_path,
+        "default",
+        _canvas_payload([_audio_node("n1", {"scope": "project_narrator"})]),
+    )
+    original_save = canvas_store.save_canvas
+
+    def save_after_concurrent_edit(*args, **kwargs):
+        if fresh_state == "missing":
+            path.unlink()
+        elif fresh_state == "corrupt":
+            path.write_text("not json")
+        else:
+            payload = _canvas_payload([
+                _audio_node("n1", {"scope": "user_custom", "voiceId": "existing"})
+            ])
+            path.write_text(json.dumps(payload))
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(canvas_store, "save_canvas", save_after_concurrent_edit)
+    seen = []
+    result = converter.convert_project_canvases(
+        tmp_path, resolve_account_voice_id=_stub_resolver(seen), apply=True
+    )
+    assert result.canvases_written == 0
+    assert result.nodes_converted == 0
+    assert seen == []
+    assert len(result.errors) == (0 if fresh_state == "converted" else 1)
+
+
+def test_conversion_reports_unreadable_canvas(tmp_path):
+    path = _write_canvas(tmp_path, "default", {})
+    path.write_text("not json")
+    result = converter.convert_project_canvases(
+        tmp_path, resolve_account_voice_id=_stub_resolver([]), apply=True
+    )
+    assert result.canvases_scanned == 1
+    assert result.canvases_written == 0
+    assert result.nodes_converted == 0
+    assert result.errors == (f"{path}: unreadable canvas JSON",)
+
+
+async def test_project_entry_point_dry_run_scans_without_writing(tmp_path, monkeypatch):
+    monkeypatch.setattr(converter, "OUTPUT_DIR", str(tmp_path))
+    path = _write_canvas(
+        tmp_path / "alice" / "demo",
+        "default",
+        _canvas_payload([_audio_node("n1", {"scope": "project_narrator"})]),
+    )
+    before = path.read_bytes()
+    result = await converter.convert_project("alice", "demo", apply=False)
+    assert result.canvases_scanned == 1
+    assert result.nodes_converted == 1
+    assert result.canvases_written == 0
+    assert path.read_bytes() == before
+
+
 def test_scan_skips_deleted_tombstones_and_history(tmp_path: Path) -> None:
     project_dir = tmp_path / "output" / "alice" / "demo"
     canvases = canvas_path(project_dir, "default").parent

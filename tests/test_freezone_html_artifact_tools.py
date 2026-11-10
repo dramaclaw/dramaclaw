@@ -31,7 +31,9 @@ def test_server_executor_routes_html_through_frontend(monkeypatch):
     monkeypatch.setattr(plugin, '_external_generation_parameter_preflight', lambda *a: None)
     monkeypatch.setattr(plugin, '_external_mcp_agent_enabled', lambda: True)
     monkeypatch.setattr(plugin, '_agent_canvas_executor', lambda: 'server')
-    monkeypatch.setattr(plugin, 'browser_presence_fresh', lambda _: True)
+    monkeypatch.setattr(plugin, '_request', lambda method, path: {
+        'ok': True, 'data': {'browser_open': True},
+    })
     monkeypatch.setattr(plugin, '_mcp_canvas_approval_enabled', lambda: False)
     dispatched = []
     monkeypatch.setattr(plugin, '_dispatch_mcp_approved_frontend_commands', lambda **k: dispatched.append(k) or {'ok':True})

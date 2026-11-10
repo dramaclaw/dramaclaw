@@ -120,11 +120,6 @@ describe("interactive story canvas refresh", () => {
     expect(canvasRuntime.refreshRemoteFreezoneCanvas).toHaveBeenCalledWith(
       "project-a",
       "canvas-a",
-      {
-        protectUnsavedLocalEdits: true,
-        conflictMessage:
-          "Agent 已更新画布，但你还有未保存的本地修改。请保留副本或刷新后继续。",
-      },
     );
   });
 
@@ -140,7 +135,7 @@ describe("interactive story canvas refresh", () => {
     expect(canvasRuntime.refreshRemoteFreezoneCanvas).not.toHaveBeenCalled();
   });
 
-  it("reports a protected refresh that was blocked by genuine local edits", async () => {
+  it("reports when the canvas runtime cannot apply a refresh", async () => {
     canvasRuntime.refreshRemoteFreezoneCanvas.mockResolvedValue(false);
 
     await expect(

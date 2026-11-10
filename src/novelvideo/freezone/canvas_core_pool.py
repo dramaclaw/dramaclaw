@@ -33,6 +33,11 @@ class _WorkerError(CanvasCoreError):
     """A valid worker response; the process remains usable."""
 
 
+def _log_failure(op: str, error: CanvasCoreError) -> None:
+    level = logging.WARNING if error.code == "invalid_request" else logging.ERROR
+    logger.log(level, "canvas_core op=%s failed: %s: %s", op, error.code, error)
+
+
 class _Child:
     def __init__(self, process: subprocess.Popen):
         self.process = process
@@ -55,7 +60,9 @@ def _drain_stderr(process: subprocess.Popen) -> None:
     assert process.stderr is not None
     with process.stderr:
         while line := process.stderr.readline(2048):
-            logger.debug("canvas_core stderr: %s", line.decode("utf-8", errors="replace").rstrip())
+            logger.warning(
+                "canvas_core stderr: %s", line.decode("utf-8", errors="replace").rstrip()
+            )
             while line and not line.endswith(b"\n"):
                 line = process.stderr.readline(2048)
 
@@ -119,8 +126,8 @@ class CanvasCorePool:
         threading.Thread(target=_drain_stderr, args=(process,), daemon=True).start()
         return _Child(process)
 
-    def _acquire(self) -> _Child:
-        deadline = time.monotonic() + self.call_timeout_seconds
+    def _acquire(self, timeout_seconds: float) -> _Child:
+        deadline = time.monotonic() + timeout_seconds
         with self._condition:
             while True:
                 if self._closed:
@@ -167,12 +174,12 @@ class CanvasCorePool:
             self._total -= 1
             self._condition.notify_all()
 
-    def _exchange(self, child: _Child, op: str, payload: dict) -> dict:
+    def _exchange(self, child: _Child, op: str, payload: dict, timeout_seconds: float) -> dict:
         process = child.process
         assert process.stdin is not None and process.stdout is not None
         request_id = str(uuid.uuid4())
         request = (json.dumps({"id": request_id, "op": op, "payload": payload}) + "\n").encode()
-        deadline = time.monotonic() + self.call_timeout_seconds
+        deadline = time.monotonic() + timeout_seconds
         write_fd, read_fd = process.stdin.fileno(), process.stdout.fileno()
         os.set_blocking(write_fd, False)
         os.set_blocking(read_fd, False)
@@ -215,11 +222,13 @@ class CanvasCorePool:
         raise _WorkerError(error["code"], error["message"])
 
     def call(self, op: str, payload: dict) -> dict:
-        child = self._acquire()
+        timeout_seconds = self.call_timeout_seconds
+        child = None
         discard = True
         try:
+            child = self._acquire(timeout_seconds)
             try:
-                result = self._exchange(child, op, payload)
+                result = self._exchange(child, op, payload, timeout_seconds)
             except _WorkerError:
                 child.calls += 1
                 discard = child.calls >= self.max_calls_per_child
@@ -229,21 +238,27 @@ class CanvasCorePool:
             child.calls += 1
             discard = child.calls >= self.max_calls_per_child
             return result
+        except CanvasCoreError as exc:
+            _log_failure(op, exc)
+            raise
         finally:
-            self._release(child, discard=discard)
+            if child is not None:
+                self._release(child, discard=discard)
 
     def warm(self) -> None:
         children = []
         try:
             for _ in range(self.size):
-                child = self._acquire()
+                child = self._acquire(self.call_timeout_seconds)
                 children.append(child)
                 try:
-                    self._exchange(child, "ping", {})
+                    self._exchange(child, "ping", {}, self.call_timeout_seconds)
                 except (OSError, ValueError) as exc:
                     raise CanvasCoreError("canvas_core_crashed", "Canvas core pipe closed") from exc
                 child.calls += 1
-        except BaseException:
+        except BaseException as exc:
+            if isinstance(exc, CanvasCoreError):
+                _log_failure("ping", exc)
             for child in children:
                 self._release(child, discard=True)
             raise

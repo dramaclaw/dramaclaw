@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import i18next from 'i18next';
 import { refreshRemoteFreezoneCanvas } from "@/features/freezone/canvasSyncRuntime";
 import type { ServerFrame } from "@/features/superchat/types";
 
@@ -56,9 +55,5 @@ export async function refreshInteractiveStoryCanvasFromToolFrame(
 ): Promise<boolean> {
   const target = interactiveStoryRefreshTarget(frame);
   if (!target) return false;
-  return await refreshRemoteFreezoneCanvas(target.project, target.canvasId, {
-    protectUnsavedLocalEdits: true,
-    conflictMessage:
-      i18next.t('canvas.story.messages.agentRefreshConflict'),
-  });
+  return await refreshRemoteFreezoneCanvas(target.project, target.canvasId);
 }

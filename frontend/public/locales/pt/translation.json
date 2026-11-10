@@ -1534,6 +1534,8 @@
       "assetNamePlaceholder": "Introduza um nome para o recurso"
     },
     "canvasSync": {
+      "remoteDeletedLocalKept": "Um nó que alterou foi eliminado noutro sítio. A sua versão foi mantida.",
+      "localDeletedRemoteChanged": "Um nó que eliminou acabou de ser alterado noutro sítio (por exemplo, pelo Agent). Continua eliminado.",
       "backupFailed": "Falha na cópia de segurança na nuvem. Tente novamente mais tarde.",
       "backupPending": "Guardado localmente; será feita uma nova tentativa da cópia de segurança na nuvem.",
       "bodyOverLimit": "Os dados da área de trabalho ocupam {{actual}} KB, acima do limite de {{limit}} KB. A ação de guardar está em pausa.",
@@ -5949,8 +5951,6 @@
         "conditionalBranch": "Conditional branch (else/automatic)",
         "unknownInitialValues": "Initial variable values are unknown; defaulting to 0 (no global decl).",
         "invalidDefaultChoice": "{{name}}: # default {{index}} exceeds the number of choices and was ignored.",
-        "agentRefreshConflict": "The agent updated the canvas, but you have unsaved local changes. Save a copy or refresh to continue.",
-        "refreshConflict": "The canvas was updated in the background, but you have unsaved local changes. Save a copy or refresh to continue.",
         "storyGroup": "Interactive story",
         "segmentTitle": "Segment {{index}}",
         "firstFrame": "first frame",

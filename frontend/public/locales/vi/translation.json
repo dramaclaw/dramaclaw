@@ -1501,6 +1501,8 @@
       "assetNamePlaceholder": "Nhập tên asset"
     },
     "canvasSync": {
+      "remoteDeletedLocalKept": "Một nút bạn đã thay đổi đã bị xóa ở nơi khác. Phiên bản của bạn được giữ lại.",
+      "localDeletedRemoteChanged": "Một nút bạn đã xóa vừa được thay đổi ở nơi khác (ví dụ bởi Agent). Nút vẫn bị xóa.",
       "backupFailed": "Sao lưu lên đám mây thất bại. Vui lòng thử lại sau.",
       "backupPending": "Đã lưu trên máy; bản sao lưu đám mây sẽ thử lại.",
       "bodyOverLimit": "Dữ liệu canvas nặng {{actual}} KB, vượt giới hạn {{limit}} KB. Đã tạm dừng lưu.",
@@ -5832,8 +5834,6 @@
         "conditionalBranch": "Nhánh điều kiện (else/tự động)",
         "unknownInitialValues": "Không rõ giá trị ban đầu của biến; mặc định là 0 (không có global decl).",
         "invalidDefaultChoice": "{{name}}: # default {{index}} vượt quá số lựa chọn nên đã bị bỏ qua.",
-        "agentRefreshConflict": "Agent đã cập nhật canvas nhưng bạn còn thay đổi cục bộ chưa lưu. Hãy lưu bản sao hoặc làm mới để tiếp tục.",
-        "refreshConflict": "Canvas đã được cập nhật trong nền nhưng bạn còn thay đổi cục bộ chưa lưu. Hãy lưu bản sao hoặc làm mới để tiếp tục.",
         "storyGroup": "Câu chuyện tương tác",
         "segmentTitle": "Đoạn {{index}}",
         "firstFrame": "khung hình đầu",

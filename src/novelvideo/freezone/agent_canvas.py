@@ -29,6 +29,21 @@ class CanvasInlineMediaError(RuntimeError):
         self.fields = fields
 
 
+def _preserve_view_state(items: list[dict], stored_items: list[dict]) -> list[dict]:
+    stored_by_id = {item["id"]: item for item in stored_items if "id" in item}
+    result = []
+    for item in items:
+        item = item.copy()
+        stored = stored_by_id.get(item.get("id"), {})
+        for key in ("selected", "dragging", "resizing"):
+            if key in stored:
+                item[key] = stored[key]
+            else:
+                item.pop(key, None)
+        result.append(item)
+    return result
+
+
 def _agent_canvas_body(canvas: dict, output: object) -> CanvasPayload:
     if (
         not isinstance(output, dict)
@@ -41,8 +56,8 @@ def _agent_canvas_body(canvas: dict, output: object) -> CanvasPayload:
         raise CanvasInlineMediaError(fields)
     known = {key: value for key, value in canvas.items() if key in CanvasPayload.model_fields}
     known.update(
-        nodes=output["nodes"],
-        edges=output["edges"],
+        nodes=_preserve_view_state(output["nodes"], canvas.get("nodes", [])),
+        edges=_preserve_view_state(output["edges"], canvas.get("edges", [])),
         base_revision=canvas.get("revision"),
         save_source="agent_patch",
         client_save_id=str(uuid.uuid4()),

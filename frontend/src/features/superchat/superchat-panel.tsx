@@ -13958,11 +13958,9 @@ export function SuperChatPanel({
             if (run.status === "running") continue;
 
             // Recover server-side media outputs as well as the chat receipt.
-            // The runtime refuses this replacement while local edits are dirty.
+            // Merge the new server content with any local work still being saved.
             try {
-              await refreshRemoteFreezoneCanvas(projectId, canvasIdForRequest, {
-                protectUnsavedLocalEdits: true,
-              });
+              await refreshRemoteFreezoneCanvas(projectId, canvasIdForRequest);
             } catch {
               // Run completion remains authoritative during a canvas fetch outage.
             }

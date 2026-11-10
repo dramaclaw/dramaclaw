@@ -98,6 +98,31 @@ async def dispatch():
     )
 
 
+@pytest.mark.parametrize(
+    "recorded,body_locale,expected", [("en", None, "en"), ("en", "vi", "vi"), (None, None, "zh")],
+)
+async def test_commands_locale_precedence(setup, monkeypatch, recorded, body_locale, expected):
+    root, _, _ = setup
+    state_dir = root / "state"
+    if recorded is not None:
+        path = state_dir / "freezone" / "ui_locale.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"locale": recorded}))
+    monkeypatch.setattr(routes, "_canvas_state_project_dir", lambda *_: state_dir)
+    captured = []
+
+    async def dispatch_core(**kwargs):
+        captured.append(kwargs["env"])
+        return {}
+
+    monkeypatch.setattr(routes, "dispatch_agent_canvas", dispatch_core)
+    await routes.agent_canvas_commands(
+        "proj", "default",
+        routes.AgentCanvasCommandsRequest(envelopes=ENVELOPES, locale=body_locale), USER,
+    )
+    assert captured[0]["locale"] == expected
+
+
 async def test_applied_save_and_metrics(setup, caplog):
     from novelvideo.freezone.agent_canvas_metrics import metrics_snapshot
 
@@ -128,6 +153,60 @@ async def test_applied_save_and_metrics(setup, caplog):
         caplog.text
     )
     assert metrics_snapshot()["agent_canvas_write.applied"] == before + 1
+
+
+async def test_applied_preserves_stored_view_state(setup, monkeypatch):
+    from novelvideo.freezone.canvas_changes import read_canvas_changes
+
+    root, pool, _ = setup
+    previous = canvas_store.save_canvas(
+        root,
+        "default",
+        base_revision=1,
+        build_payload=lambda existing: {
+            **existing,
+            "revision": 2,
+            "nodes": [{"id": "original", "selected": True}, {"id": "other"}],
+            "edges": [{"id": "e1", "source": "original", "target": "other"}],
+        },
+    ).payload
+    output = {
+        "nodes": [
+            {"id": "original", "selected": False, "dragging": True},
+            {"id": "other", "selected": True},
+            {"id": "agent", "selected": True, "resizing": True},
+        ],
+        "edges": [{"id": "e1", "source": "original", "target": "other", "selected": True}],
+    }
+    original_output = deepcopy(output)
+    compute = pool.call
+
+    def apply_with_view_state(op, payload):
+        result = compute(op, payload)
+        result["canvas"] = output
+        return result
+
+    monkeypatch.setattr(pool, "call", apply_with_view_state)
+    response = await dispatch()
+    assert response["data"]["status"] == "applied"
+    assert response["data"]["revision"] == previous["revision"] + 1
+    saved = canvas_store.read_canvas(root, "default")
+    assert saved["nodes"] == [
+        {"id": "original", "selected": True},
+        {"id": "other"},
+        {"id": "agent"},
+    ]
+    assert saved["edges"] == previous["edges"]
+    replay = read_canvas_changes(root, "default", previous["revision"])
+    assert replay.reset_revision is None
+    assert len(replay.entries) == 1
+    frame = replay.entries[0]
+    assert frame["revision"] == saved["revision"]
+    assert frame["nodes"] == [{"id": "agent"}]
+    assert frame["edges"] == []
+    assert frame["deleted_node_ids"] == []
+    assert frame["deleted_edge_ids"] == []
+    assert output == original_output
 
 
 async def test_node_computes_without_canvas_lock_and_recomputes(setup):
