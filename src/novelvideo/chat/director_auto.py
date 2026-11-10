@@ -800,7 +800,7 @@ class DirectorAutoCoordinator:
         # A user-driven turn and a durable continuation share the same project
         # lock. Wait instead of treating ordinary chat activity as auto failure.
         for _ in range(120):
-            if not chat_service.chat_run_lock_is_active(run.username, run.project_id):
+            if not await chat_service.active_chat_turn(run.username, run.project_id):
                 break
             latest = await asyncio.to_thread(self.store.get, run.username, run.project_id)
             if latest is None or latest.status != "running":
@@ -1060,7 +1060,7 @@ class DirectorAutoCoordinator:
 
             activated_age = max(0.0, datetime.now(timezone.utc).timestamp() - _timestamp(run.activated_at))
             if not pending_new and activated_age >= INITIAL_GRACE_SECONDS:
-                if chat_service.chat_run_lock_is_active(username, project_id):
+                if await chat_service.active_chat_turn(username, project_id):
                     await asyncio.sleep(POLL_SECONDS)
                     continue
                 if taskless_continuations >= 3:

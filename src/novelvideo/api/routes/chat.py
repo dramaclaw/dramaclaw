@@ -179,7 +179,6 @@ async def cancel_chat_turn(
     """
     username = str(user["username"])
     backend_name: str | None = None
-    safe_to_recover_home_lock = False
     try:
         backend_name = chat_service.get_chat_backend_name()
     except Exception:
@@ -219,21 +218,8 @@ async def cancel_chat_turn(
             from novelvideo.chat.hermes_pool import pool as hermes_pool
 
             cancelled = await hermes_pool.close_user(username)
-        safe_to_recover_home_lock = backend_name == "hermes" and not bool(cancelled)
     except Exception:
         cancelled = False
-        # Preserve staging's Hermes recovery behavior when close_user itself
-        # fails. Codex interrupt failures leave the active-turn state unknown,
-        # so releasing its lock here could race a turn that is still settling.
-        safe_to_recover_home_lock = backend_name == "hermes"
-    if safe_to_recover_home_lock:
-        try:
-            # No backend turn remains to own the lock. Preserve staging's
-            # explicit recovery path for a stranded Home lock without racing
-            # an interrupt that is still settling in its stream finally block.
-            chat_service.force_release_chat_run_lock(username, "")
-        except Exception:
-            pass
     return {"ok": True, "data": {"cancelled": cancelled}}
 
 
@@ -273,10 +259,9 @@ async def clear_chat_scope(
             409, "当前对话仍在进行，请等待完成或先停止后再清空"
         ) from exc
 
-    heartbeat_task = asyncio.create_task(
-        chat_service._chat_run_lock_heartbeat_loop(username, lock_project, lock_id)
-    )
     try:
+        if await chat_service.active_chat_turn(username, lock_project, start_lock=lock_id):
+            raise HTTPException(409, "当前对话仍在进行，请等待完成或先停止后再清空")
         project_state_dir = project_ctx.state_dir if project_ctx is not None else None
         execution_context = (
             AgentExecutionContext.from_project_scope(scope=scope, project=project_ctx)
@@ -292,16 +277,11 @@ async def clear_chat_scope(
             canvas_id=execution_context.canvas_id if execution_context else None,
             project_state_dir=project_state_dir,
         )
-        if not chat_service._heartbeat_chat_run_lock(username, lock_project, lock_id):
-            raise HTTPException(409, "清空操作已失去对话锁，请刷新后重试")
         storage_scope = _chat_store_scope_for_project_context(scope, project_ctx)
         if project_ctx is not None and not _is_freezone_scope(scope):
             storage_scope = replace(storage_scope, state_dir=str(project_state_dir))
         cleared = await chat_store.clear_messages_async(username, storage_scope)
     finally:
-        heartbeat_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat_task
         chat_service._release_chat_run_lock(username, lock_project, lock_id)
     logger.info(
         "chat scope cleared user=%s kind=%s project=%s surface=%s canvas=%s agent=%s "
@@ -795,7 +775,7 @@ def _chat_turn_busy_message(exc: BaseException) -> str | None:
     frontend shows them through the same ``chat.busy`` frame.
     """
 
-    if isinstance(exc, CodexThreadBusyError):
+    if isinstance(exc, (CodexThreadBusyError, chat_service.ChatTurnBusyError)):
         return CHAT_RUN_BUSY_MESSAGE
     message = str(exc)
     if "当前用户已有 AI 对话正在处理中" in message:
@@ -2512,6 +2492,9 @@ async def _send_scope_changed(
             {"type": "error", "message": "项目不存在或已删除，已切回首页聊天。"},
         ):
             return None
+    active_turn = await chat_service.active_chat_turn(
+        username, _chat_run_lock_project_for_scope(scope)
+    )
     page = await _history(username, scope, project_ctx=project_ctx)
     if not await _send_json_best_effort(
         websocket,
@@ -2521,9 +2504,8 @@ async def _send_scope_changed(
             "history": page.history,
             "before": page.before,
             "has_more": page.has_more,
-            "busy": chat_service.chat_run_lock_is_active(
-                username, _chat_run_lock_project_for_scope(scope)
-            ),
+            "busy": active_turn is not None,
+            "turn_id": active_turn.turn_id if active_turn else None,
         },
     ):
         return None
@@ -4775,6 +4757,10 @@ async def chat_ws(websocket: WebSocket) -> None:
                         {
                             "type": "chat.busy",
                             "turn_id": turn_id,
+                            "active_turn_id": (
+                                exc.turn_id if isinstance(exc, chat_service.ChatTurnBusyError)
+                                else None
+                            ),
                             "scope": scope.to_dict(),
                             "message": message,
                         },

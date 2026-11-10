@@ -788,6 +788,24 @@ class _UnixSocketCodexClient:
         return Client()
 
 
+def read_existing_codex_thread(
+    codex_home: Path, thread_id: str, *, include_turns: bool = False
+):
+    """Read a running node directly; probing must never start or lease a server."""
+    socket_path, _lock_path, _signature_path = _control_paths(codex_home)
+    if not _SharedCodexRuntime._socket_accepting(socket_path):
+        return None
+    from openai_codex import CodexConfig
+
+    client = _UnixSocketCodexClient.create(CodexConfig(), socket_path)
+    try:
+        client.start()
+        client.initialize()
+        return client.thread_read(thread_id, include_turns=include_turns).thread
+    finally:
+        client.close()
+
+
 @contextmanager
 def shared_codex(config) -> Iterator[object]:
     """Open a lightweight client connection to the home-node App Server."""

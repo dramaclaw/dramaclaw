@@ -1,5 +1,7 @@
 """Merged history through the chat socket and the shared Codex runtime."""
 
+from unittest.mock import AsyncMock
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager, contextmanager
@@ -34,7 +36,7 @@ class RecordingWebSocket:
 def store(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-    monkeypatch.setattr(service, "chat_run_lock_is_active", lambda *_: False)
+    monkeypatch.setattr(service, "active_chat_turn", AsyncMock(return_value=None), raising=False)
     return ChatStore()
 
 
@@ -68,7 +70,7 @@ async def test_home_first_screen(store, monkeypatch):
 
     assert len(websocket.frames) == 1
     frame = websocket.frames[0]
-    assert set(frame) == {"type", "scope", "history", "before", "has_more", "busy"}
+    assert set(frame) == {"type", "scope", "history", "before", "has_more", "busy", "turn_id"}
     assert frame["type"] == "scope.changed"
     assert frame["scope"] == {"kind": "home", "id": None}
     assert [(m["id"], m["role"]) for m in frame["history"]] == [
@@ -79,6 +81,7 @@ async def test_home_first_screen(store, monkeypatch):
     assert frame["before"] is None
     assert frame["has_more"] is False
     assert frame["busy"] is False
+    assert frame["turn_id"] is None
     assert calls == [("alice", "", {
         "agent_profile": "main", "canvas_id": None, "project_state_dir": None, "before": None,
     })]
@@ -477,3 +480,35 @@ async def test_project_codex_item_frames(store, monkeypatch, tmp_path):
             "item_id": "m-1", "kind": "text", "offset": 0, "text": "hello",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_changed_carries_running_business_turn(store, monkeypatch):
+    install_reader(monkeypatch, 0)
+    monkeypatch.setattr(service, "active_chat_turn", AsyncMock(
+        return_value=SimpleNamespace(turn_id="running-business")
+    ), raising=False)
+    socket = RecordingWebSocket()
+    await routes._send_scope_changed(socket, {"username": "alice"}, "alice", ChatScope(kind="home"))
+    assert socket.frames[0]["busy"] is True
+    assert socket.frames[0]["turn_id"] == "running-business"
+
+
+def test_chat_busy_carries_active_turn_id(store, monkeypatch):
+    install_reader(monkeypatch, 0)
+    app, _ = websocket_app(monkeypatch)
+
+    async def busy(*args, **kwargs):
+        raise service.ChatTurnBusyError(turn_id="running-business")
+
+    monkeypatch.setattr(routes, "_stream_home_turn", busy)
+    monkeypatch.setattr(routes, "_require_ai_assistant_access", AsyncMock())
+    with TestClient(app).websocket_connect("/api/v1/chat/ws") as socket:
+        assert socket.receive_json()["type"] == "scope.changed"
+        socket.send_json({"type": "chat.message", "text": "hello", "turn_id": "rejected-business"})
+        frame = socket.receive_json()
+        assert frame == {
+            "type": "chat.busy", "turn_id": "rejected-business",
+            "active_turn_id": "running-business", "scope": {"kind": "home", "id": None},
+            "message": "当前用户已有 AI 对话正在处理中，请稍后再试。",
+        }

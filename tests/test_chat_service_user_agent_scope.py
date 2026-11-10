@@ -1,11 +1,10 @@
 import asyncio
 import hashlib
 import json
-import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -3347,6 +3346,7 @@ async def test_codex_turn_credentials_follow_turn_lifetime(monkeypatch, tmp_path
     from novelvideo.chat.backend_sdk import ChatBackendEvent
 
     state_root = tmp_path / "state"
+    monkeypatch.setattr(chat_service, "time", SimpleNamespace(time=lambda: 1234.5))
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_root))
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
     started = asyncio.Event()
@@ -3419,12 +3419,15 @@ async def test_codex_turn_credentials_follow_turn_lifetime(monkeypatch, tmp_path
     active_path = state_root / "test-user" / "active_codex_turns.json"
     active = json.loads(active_path.read_text()) if active_path.exists() else {}
     if exit_kind == "cancel_after_start":
-        assert active == {
-            '["main","project","project-a","session"]': {
-                "thread_id": "thread-lifetime",
-                "turn_id": "turn-lifetime",
-                "business_turn_id": "business-lifetime",
-            }
+        entry = active['["main","project","project-a","session"]']
+        assert entry == {
+            "thread_id": "thread-lifetime", "turn_id": "turn-lifetime",
+            "business_turn_id": "business-lifetime", "lock_key": "active_chat_run",
+            "started_at": 1234.5, "token_file": str(token_files[0]),
+            "store_scope": {"kind": "project", "id": "project-a"},
+            "store_state_dir": None,
+            "project_state_dir": str(state_root / "test-user" / "project-a"),
+            "agent_profile": "main", "structured_canvas_reply": False,
         }
         assert token_files[0].read_text() == "agent-token"
         assert revoked == []
@@ -4822,100 +4825,52 @@ def test_codex_backend_validates_explicit_binary(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cancel_interrupts_only_the_users_active_codex_turns(monkeypatch):
+async def test_cancel_interrupts_only_the_users_active_codex_turns(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
     calls = []
-    monkeypatch.setattr(
-        chat_service,
-        "interrupt_live_codex_turn",
-        lambda thread_id, turn_id: calls.append((thread_id, turn_id)) or True,
-    )
-    with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-        chat_service._ACTIVE_CODEX_TURNS.clear()
-        chat_service._ACTIVE_CODEX_TURNS.update(
-            {
-                ("alice", "project-a"): ("thread-a", "turn-a"),
-                ("alice", "project-b"): ("thread-b", "turn-b"),
-                ("bob", "project-c"): ("thread-c", "turn-c"),
-            }
-        )
-    try:
-        assert await chat_service.interrupt_active_codex_turns("alice") is True
-        assert sorted(calls) == [("thread-a", "turn-a"), ("thread-b", "turn-b")]
-    finally:
-        with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-            chat_service._ACTIVE_CODEX_TURNS.clear()
+    monkeypatch.setattr(chat_service, "interrupt_live_codex_turn",
+                        lambda thread, turn: calls.append((thread, turn)) or True)
+    for user, scope, thread, turn in [("alice", "a", "thread-a", "turn-a"),
+                                       ("alice", "b", "thread-b", "turn-b"),
+                                       ("bob", "c", "thread-c", "turn-c")]:
+        chat_service._set_active_codex_turn(user, scope, {"thread_id": thread, "turn_id": turn})
+    assert await chat_service.interrupt_active_codex_turns("alice") is True
+    assert sorted(calls) == [("thread-a", "turn-a"), ("thread-b", "turn-b")]
 
 
 @pytest.mark.asyncio
 async def test_cancel_interrupts_only_the_exact_codex_scope_and_business_turn(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope_a = chat_service._codex_scope_key(
-        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
-    )
-    scope_b = chat_service._codex_scope_key(
-        "project-a", agent_profile="freezone:main", canvas_id="canvas-b"
-    )
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
     calls = []
-    monkeypatch.setattr(
-        chat_service,
-        "interrupt_live_codex_turn",
-        lambda thread_id, turn_id: calls.append((thread_id, turn_id)) or True,
-    )
-    with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-        chat_service._ACTIVE_CODEX_TURNS.clear()
-        chat_service._ACTIVE_CODEX_TURNS.update(
-            {
-                ("alice", scope_a): ("thread-a", "runtime-a", "business-a"),
-                ("alice", scope_b): ("thread-b", "runtime-b", "business-b"),
-            }
-        )
-    try:
-        assert (
-            await chat_service.interrupt_active_codex_turn(
-                "alice", scope_a, "business-a"
-            )
-            is True
-        )
-        assert calls == [("thread-a", "runtime-a")]
-    finally:
-        with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-            chat_service._ACTIVE_CODEX_TURNS.clear()
+    monkeypatch.setattr(chat_service, "interrupt_live_codex_turn",
+                        lambda thread, turn: calls.append((thread, turn)) or True)
+    for scope in ("a", "b"):
+        chat_service._set_active_codex_turn("alice", scope, {
+            "thread_id": f"thread-{scope}", "turn_id": f"runtime-{scope}",
+            "business_turn_id": f"business-{scope}",
+        })
+    assert await chat_service.interrupt_active_codex_turn("alice", "a", "business-a") is True
+    assert calls == [("thread-a", "runtime-a")]
 
 
 @pytest.mark.asyncio
 async def test_exact_cancel_rejects_a_stale_business_turn_without_interrupting_new_turn(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope = chat_service._codex_scope_key(
-        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
-    )
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
+    chat_service._set_active_codex_turn("alice", "scope-a", {
+        "thread_id": "thread-new", "turn_id": "runtime-new",
+        "business_turn_id": "business-new",
+    })
     calls = []
-    monkeypatch.setattr(
-        chat_service,
-        "interrupt_live_codex_turn",
-        lambda *ids: calls.append(ids) or True,
-    )
-    with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-        chat_service._ACTIVE_CODEX_TURNS.clear()
-        chat_service._ACTIVE_CODEX_TURNS[("alice", scope)] = (
-            "thread-new",
-            "runtime-new",
-            "business-new",
-        )
-    try:
-        assert (
-            await chat_service.interrupt_active_codex_turn(
-                "alice", scope, "business-old"
-            )
-            is False
-        )
-        assert calls == []
-    finally:
-        with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-            chat_service._ACTIVE_CODEX_TURNS.clear()
+    monkeypatch.setattr(chat_service, "interrupt_live_codex_turn",
+                        lambda *ids: calls.append(ids) or True)
+    assert await chat_service.interrupt_active_codex_turn(
+        "alice", "scope-a", "business-old"
+    ) is False
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -4927,7 +4882,9 @@ async def test_exact_cancel_reads_matching_business_turn_from_other_worker(
         "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
     )
     chat_service._set_active_codex_turn(
-        "alice", scope, ("thread-a", "runtime-a", "business-a")
+        "alice", scope, {
+            "thread_id": "thread-a", "turn_id": "runtime-a", "business_turn_id": "business-a"
+        }
     )
     calls = []
     monkeypatch.setattr(chat_service, "interrupt_live_codex_turn", lambda *_: False)
@@ -4953,7 +4910,7 @@ async def test_exact_cancel_reads_matching_business_turn_from_other_worker(
 async def test_cancel_reads_active_codex_turns_from_other_worker(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     chat_service._set_active_codex_turn(
-        "alice", "project:project-a", ("thread-a", "turn-a")
+        "alice", "project:project-a", {"thread_id": "thread-a", "turn_id": "turn-a"}
     )
     calls = []
     monkeypatch.setattr(chat_service, "interrupt_live_codex_turn", lambda *_: False)
@@ -4982,10 +4939,10 @@ def test_active_codex_turn_registry_keeps_mainline_and_freezone_scopes_separate(
     )
 
     chat_service._set_active_codex_turn(
-        "alice", mainline, ("thread-mainline", "turn-mainline")
+        "alice", mainline, {"thread_id": "thread-mainline", "turn_id": "turn-mainline"}
     )
     chat_service._set_active_codex_turn(
-        "alice", freezone, ("thread-freezone", "turn-freezone")
+        "alice", freezone, {"thread_id": "thread-freezone", "turn_id": "turn-freezone"}
     )
     chat_service._set_active_codex_turn("alice", freezone, None)
 
@@ -5094,195 +5051,6 @@ def test_chat_run_lock_uses_named_agent_locks_dir(monkeypatch, tmp_path):
 
     assert lock_path.parent == tmp_path / "state" / "admin" / "chat_agent_locks"
     assert lock_path.name.endswith(".lock")
-
-
-def test_chat_run_lock_file_expires_after_two_minutes(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    assert chat_service._CHAT_RUN_LOCK_TTL_SECONDS == 2 * 60
-
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    stale_started_at = datetime.now(timezone.utc) - timedelta(
-        seconds=chat_service._CHAT_RUN_LOCK_TTL_SECONDS + 1
-    )
-    lock_path.write_text(
-        json.dumps(
-            {
-                "lock_id": "stale-lock",
-                "owner_pid": os.getpid(),
-                "started_at": stale_started_at.isoformat(),
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    lock_id = chat_service._acquire_chat_run_lock("admin", "project-a")
-    try:
-        assert lock_id != "stale-lock"
-        assert lock_path.exists()
-    finally:
-        chat_service._release_chat_run_lock("admin", "project-a", lock_id)
-
-
-def test_chat_run_lock_uses_updated_at_for_idle_timeout(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    old_started_at = datetime.now(timezone.utc) - timedelta(seconds=10 * 60 + 1)
-    fresh_updated_at = datetime.now(timezone.utc)
-    lock_path.write_text(
-        json.dumps(
-            {
-                "lock_id": "active-long-run",
-                "owner_pid": os.getpid(),
-                "started_at": old_started_at.isoformat(),
-                "updated_at": fresh_updated_at.isoformat(),
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert chat_service.chat_run_lock_is_active("admin", "project-a") is True
-    with pytest.raises(RuntimeError, match="当前用户已有 AI 对话"):
-        chat_service._acquire_chat_run_lock("admin", "project-a")
-
-
-def test_chat_run_lock_trusts_fresh_heartbeat_from_another_pod(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setattr(chat_service.socket, "gethostname", lambda: "new-pod")
-    monkeypatch.setattr(chat_service, "_pid_is_alive", lambda pid: False)
-
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    now = datetime.now(timezone.utc).isoformat()
-    lock_path.write_text(
-        json.dumps(
-            {
-                "lock_id": "old-pod-lock",
-                "owner_id": "old-pod:3912",
-                "owner_pid": 3912,
-                "started_at": now,
-                "updated_at": now,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert chat_service.chat_run_lock_is_active("admin", "project-a") is True
-    with pytest.raises(RuntimeError, match="当前用户已有 AI 对话"):
-        chat_service._acquire_chat_run_lock("admin", "project-a")
-    assert (
-        json.loads(lock_path.read_text(encoding="utf-8"))["lock_id"] == "old-pod-lock"
-    )
-
-
-def test_chat_run_lock_still_has_max_runtime(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    too_old_started_at = datetime.now(timezone.utc) - timedelta(
-        seconds=chat_service._CHAT_RUN_LOCK_MAX_SECONDS + 1
-    )
-    lock_path.write_text(
-        json.dumps(
-            {
-                "lock_id": "too-old-lock",
-                "owner_pid": os.getpid(),
-                "started_at": too_old_started_at.isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    lock_id = chat_service._acquire_chat_run_lock("admin", "project-a")
-    try:
-        assert lock_id != "too-old-lock"
-    finally:
-        chat_service._release_chat_run_lock("admin", "project-a", lock_id)
-
-
-def test_chat_run_lock_heartbeat_refreshes_updated_at(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    atomic_writes = []
-    original_atomic_write = chat_service._atomic_write_chat_run_lock_file
-
-    def spy_atomic_write(path, payload):
-        atomic_writes.append((path, payload))
-        original_atomic_write(path, payload)
-
-    monkeypatch.setattr(
-        chat_service, "_atomic_write_chat_run_lock_file", spy_atomic_write
-    )
-
-    lock_id = chat_service._acquire_chat_run_lock("admin", "project-a")
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    try:
-        _current_lock_id, _owner_id, _owner_pid, started_at, updated_at = (
-            chat_service._read_chat_run_lock_file(lock_path)
-        )
-        assert started_at is not None
-        assert updated_at is not None
-        old_updated_at = started_at - timedelta(seconds=30)
-        lock_path.write_text(
-            json.dumps(
-                {
-                    "lock_id": lock_id,
-                    "owner_pid": os.getpid(),
-                    "started_at": started_at.isoformat(),
-                    "updated_at": old_updated_at.isoformat(),
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        assert (
-            chat_service._heartbeat_chat_run_lock("admin", "project-a", lock_id) is True
-        )
-        assert len(atomic_writes) == 1
-        assert atomic_writes[0][0] == lock_path
-        assert json.loads(atomic_writes[0][1])["lock_id"] == lock_id
-        (
-            refreshed_lock_id,
-            _owner_id,
-            _owner_pid,
-            refreshed_started_at,
-            refreshed_updated_at,
-        ) = chat_service._read_chat_run_lock_file(lock_path)
-        assert refreshed_lock_id == lock_id
-        assert refreshed_started_at == started_at
-        assert refreshed_updated_at is not None
-        assert refreshed_updated_at > old_updated_at
-    finally:
-        chat_service._release_chat_run_lock("admin", "project-a", lock_id)
-
-
-def test_chat_run_lock_treats_new_empty_lock_as_active(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    lock_path.write_text("", encoding="utf-8")
-
-    with pytest.raises(RuntimeError, match="当前用户已有 AI 对话"):
-        chat_service._acquire_chat_run_lock("admin", "project-a")
-
-    assert lock_path.exists()
-
-
-def test_chat_run_lock_removes_old_invalid_lock(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    lock_path.write_text("", encoding="utf-8")
-    old_mtime = (
-        datetime.now(timezone.utc).timestamp()
-        - chat_service._CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS
-        - 1
-    )
-    os.utime(lock_path, (old_mtime, old_mtime))
-
-    lock_id = chat_service._acquire_chat_run_lock("admin", "project-a")
-    try:
-        assert lock_path.exists()
-        assert chat_service._read_chat_run_lock_file(lock_path)[0] == lock_id
-    finally:
-        chat_service._release_chat_run_lock("admin", "project-a", lock_id)
 
 
 @pytest.mark.anyio
@@ -8592,3 +8360,222 @@ def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypat
         surface_context={"freezone_compose_node_id": "compose-1"},
     )
     assert "[FREEZONE_COMPOSE_WORKSPACE]" not in mainline
+
+
+@pytest.fixture
+def codex_turn_runtime(monkeypatch, tmp_path):
+    from novelvideo.chat.backend_sdk import ChatBackendEvent
+
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    started, finish = asyncio.Event(), asyncio.Event()
+    revoked, prompts = [], []
+
+    class Auth:
+        async def revoke_agent_session(self, token):
+            revoked.append(token)
+
+    async def authorize(**kwargs):
+        return SimpleNamespace()
+
+    async def token(*args, **kwargs):
+        return "new-token"
+
+    class Thread:
+        async def stream(self, prompt):
+            prompts.append(prompt)
+            yield ChatBackendEvent(
+                type="thread_started", thread_id="new-thread", turn_id="new-runtime"
+            )
+            started.set()
+            await finish.wait()
+            yield ChatBackendEvent(type="complete", text="Done")
+
+    def snapshot(thread_id, *, include_turns=False):
+        return SimpleNamespace(status=SimpleNamespace(type="active"), turns=[])
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", authorize)
+    monkeypatch.setattr(chat_service, "_turn_operation_finalizer", lambda _: None)
+    monkeypatch.setattr(chat_service, "_create_page_agent_session_token", token)
+    monkeypatch.setattr(chat_service, "_build_codex_thread", lambda *args, **kwargs: Thread())
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: Auth())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **kwargs: None)
+    monkeypatch.setattr(chat_service, "_codex_thread_snapshot", snapshot, raising=False)
+    return SimpleNamespace(started=started, finish=finish, revoked=revoked, prompts=prompts)
+
+
+async def _ignore_turn_event(event):
+    pass
+
+
+def _persist_test_turn(tmp_path, *, scope=None, lock_project="project-a"):
+    scope = scope or ChatScope(kind="home")
+    token_file = tmp_path / "old.token"
+    token_file.write_text("old-token")
+    chat_service._set_active_codex_turn("test-user", "old-scope", {
+        "thread_id": "old-thread", "turn_id": "old-runtime",
+        "business_turn_id": "old-business", "started_at": 123.5,
+        "lock_key": chat_service._chat_run_lock_key(lock_project),
+        "token_file": str(token_file), "store_scope": scope.to_dict(),
+        "store_state_dir": scope.state_dir,
+        "project_state_dir": str(tmp_path), "agent_profile": "freezone:main",
+        "structured_canvas_reply": scope.surface == "freezone",
+    })
+    return token_file, scope
+
+
+@pytest.mark.asyncio
+async def test_concurrent_codex_starts_create_one_turn(codex_turn_runtime):
+    runtime = codex_turn_runtime
+    first = asyncio.create_task(chat_service.stream_assistant_reply(
+        "test-user", "project-a", "hello", _ignore_turn_event,
+        backend="codex", turn_id="first-business",
+    ))
+    try:
+        await asyncio.wait_for(runtime.started.wait(), 2)
+        with pytest.raises(chat_service.ChatTurnBusyError) as error:
+            await chat_service.stream_assistant_reply(
+                "test-user", "project-b", "hello", _ignore_turn_event,
+                backend="codex", turn_id="second-business",
+            )
+        assert str(error.value) == "当前用户已有 AI 对话正在处理中，请稍后再试。"
+        assert error.value.turn_id == "first-business"
+        assert len(runtime.prompts) == 1
+    finally:
+        runtime.finish.set()
+        await first
+
+
+@pytest.mark.asyncio
+async def test_start_lock_blocks_start_before_codex_registration(codex_turn_runtime, monkeypatch):
+    runtime = codex_turn_runtime
+    entered = asyncio.Event()
+
+    async def delayed_token(*args, **kwargs):
+        entered.set()
+        await runtime.finish.wait()
+        return "new-token"
+
+    monkeypatch.setattr(chat_service, "_create_page_agent_session_token", delayed_token)
+    first = asyncio.create_task(chat_service.stream_assistant_reply(
+        "test-user", "project-a", "hello", _ignore_turn_event,
+        backend="codex", turn_id="first-business",
+    ))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        with pytest.raises(chat_service.ChatTurnBusyError) as error:
+            await chat_service.stream_assistant_reply(
+                "test-user", "", "hello", _ignore_turn_event,
+                backend="codex", turn_id="second-business",
+            )
+        assert error.value.turn_id == "first-business"
+    finally:
+        runtime.finish.set()
+        await first
+    assert len(runtime.prompts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("check_error", [False, True])
+async def test_persisted_running_turn_blocks_new_start(
+    codex_turn_runtime, monkeypatch, tmp_path, check_error
+):
+    token_file, _ = _persist_test_turn(tmp_path)
+    if check_error:
+        def snapshot(*args, **kwargs):
+            raise RuntimeError("read unavailable")
+        monkeypatch.setattr(chat_service, "_codex_thread_snapshot", snapshot)
+    with pytest.raises(chat_service.ChatTurnBusyError) as error:
+        await chat_service.stream_assistant_reply(
+            "test-user", "project-b", "hello", _ignore_turn_event,
+            backend="codex", turn_id="new-business",
+        )
+    assert error.value.turn_id == "old-business"
+    assert token_file.read_text() == "old-token"
+    assert codex_turn_runtime.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_stale_turn_is_finalized_before_next_start(codex_turn_runtime, monkeypatch, tmp_path):
+    token_file, scope = _persist_test_turn(tmp_path)
+    monkeypatch.setattr(chat_service, "_codex_thread_snapshot", lambda *args, **kwargs: None)
+    codex_turn_runtime.finish.set()
+    await chat_service.stream_assistant_reply(
+        "test-user", "project-b", "hello", _ignore_turn_event,
+        backend="codex", turn_id="new-business",
+    )
+    assert codex_turn_runtime.revoked == ["old-token", "new-token"]
+    assert token_file.exists() is False
+    assert chat_service._load_active_codex_turns("test-user") == {}
+    assert [m["content"] for m in chat_store.list_messages("test-user", scope)] == [
+        "本轮请求已中断。"
+    ]
+    assert len(codex_turn_runtime.prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_finalizer_claim_is_conditional_and_idempotent(codex_turn_runtime, tmp_path):
+    scope = ChatScope(kind="project", id="project-a", surface="freezone",
+                      canvas_id="canvas-a", agent_id="main", state_dir=str(tmp_path))
+    token_file, _ = _persist_test_turn(tmp_path, scope=scope)
+    assert await chat_service.finalize_codex_turn(
+        "test-user", "old-scope", "wrong-turn", "cancelled"
+    ) is False
+    assert token_file.read_text() == "old-token"
+    assert await chat_service.finalize_codex_turn(
+        "test-user", "old-scope", "old-runtime", "cancelled"
+    ) is True
+    assert await chat_service.finalize_codex_turn(
+        "test-user", "old-scope", "old-runtime", "cancelled"
+    ) is False
+    assert codex_turn_runtime.revoked == ["old-token"]
+    assert token_file.exists() is False
+    assert chat_service._load_active_codex_turns("test-user") == {}
+    assert [(m["role"], m["content"]) for m in chat_store.list_messages("test-user", scope)] == [
+        ("system", "已取消本轮请求。")
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status, notice", [
+    ("completed", []), ("interrupted", ["已取消本轮请求。"]),
+    ("failed", []), (None, ["本轮请求已中断。"]),
+    ("missing", ["本轮请求已中断。"]),
+])
+async def test_stale_turn_disposition_from_codex(
+    codex_turn_runtime, monkeypatch, tmp_path, status, notice
+):
+    scope = ChatScope(kind="project", id="project-a", surface="freezone",
+                      canvas_id="canvas-a", agent_id="main", state_dir=str(tmp_path))
+    token_file, _ = _persist_test_turn(tmp_path, scope=scope)
+
+    def snapshot(thread_id, *, include_turns=False):
+        if status is None:
+            return None
+        turns = [] if status == "missing" else [SimpleNamespace(id="old-runtime", status=status)]
+        return SimpleNamespace(status=SimpleNamespace(type="idle"), turns=turns)
+
+    monkeypatch.setattr(chat_service, "_codex_thread_snapshot", snapshot)
+    assert await chat_service.active_chat_turn("test-user", "project-a") is None
+    assert token_file.exists() is False
+    assert codex_turn_runtime.revoked == ["old-token"]
+    assert chat_service._load_active_codex_turns("test-user") == {}
+    assert [m["content"] for m in chat_store.list_messages("test-user", scope)] == notice
+
+
+@pytest.mark.asyncio
+async def test_codex_registration_failure_releases_credential(
+    codex_turn_runtime, monkeypatch, tmp_path
+):
+    def fail_registration(*args):
+        raise OSError("turn index unavailable")
+
+    monkeypatch.setattr(chat_service, "_set_active_codex_turn", fail_registration)
+    with pytest.raises(OSError, match="turn index unavailable"):
+        await chat_service.stream_assistant_reply(
+            "test-user", "project-a", "hello", _ignore_turn_event,
+            backend="codex", turn_id="new-business",
+        )
+    assert codex_turn_runtime.revoked == ["new-token"]
+    assert list((tmp_path / "runtime" / "codex" / "turn_tokens").glob("*.token")) == []
+    assert await chat_service.active_chat_turn("test-user", "project-a") is None

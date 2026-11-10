@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import asyncio
 import time
 from dataclasses import replace
@@ -211,8 +213,8 @@ async def test_agent_continuation_is_pinned_to_the_auto_run_episode(
     monkeypatch.setattr(director_auto, "resolve_project_context", fake_resolve_project_context)
     monkeypatch.setattr(
         director_auto.chat_service,
-        "chat_run_lock_is_active",
-        lambda *_args, **_kwargs: False,
+        "active_chat_turn",
+        AsyncMock(return_value=None), raising=False,
     )
     monkeypatch.setattr(
         director_auto.chat_service,
@@ -265,7 +267,7 @@ async def test_agent_continuation_broadcasts_live_items_and_done(
     monkeypatch.setattr(director_auto, "resolve_project_context", resolve_context)
     monkeypatch.setattr(director_auto, "broadcast_project_chat_event", broadcast)
     monkeypatch.setattr(
-        director_auto.chat_service, "chat_run_lock_is_active", lambda *_args, **_kwargs: False
+        director_auto.chat_service, "active_chat_turn", AsyncMock(return_value=None), raising=False
     )
     monkeypatch.setattr(director_auto.chat_service, "stream_assistant_reply", stream_reply)
     store = DirectorAutoStore(tmp_path / "director-auto.db")

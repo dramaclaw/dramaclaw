@@ -10,16 +10,15 @@ import logging
 import os
 import re
 import shutil
-import socket as socket
 import sqlite3
 import stat
 import sys
-import threading
+import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import Any, Callable, Literal, Sequence
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
@@ -128,18 +127,11 @@ from novelvideo.chat.media_presentation import (
 )
 from novelvideo.chat.runtime_port import AgentRuntimeThreadPort
 from novelvideo.chat.session_registry import (
-    atomic_write_chat_run_lock_file as _atomic_write_chat_run_lock_file,
-    remove_chat_run_lock_file as _remove_chat_run_lock_file,
-    _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS as _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS,
-    _CHAT_RUN_LOCK_HEARTBEAT_SECONDS as _CHAT_RUN_LOCK_HEARTBEAT_SECONDS,
-    _CHAT_RUN_LOCK_KEY as _CHAT_RUN_LOCK_KEY,
-    _CHAT_RUN_LOCK_MAX_SECONDS as _CHAT_RUN_LOCK_MAX_SECONDS,
-    _CHAT_RUN_LOCK_TTL_SECONDS as _CHAT_RUN_LOCK_TTL_SECONDS,
-    _chat_run_lock_is_stale as _chat_run_lock_is_stale,
+    ActiveChatTurn as ActiveChatTurn,
+    ChatStartLock,
+    ChatTurnBusyError as ChatTurnBusyError,
     _chat_run_lock_key as _chat_run_lock_key,
     _chat_run_lock_project_for_turn as _chat_run_lock_project_for_turn,
-    _parse_chat_run_lock as _parse_chat_run_lock,
-    _parse_iso_datetime as _parse_iso_datetime,
 )
 from novelvideo.chat.runtime_event_evidence import (
     _codex_freezone_is_write_event,
@@ -165,9 +157,6 @@ from novelvideo.utils.error_redaction import redact_secrets
 
 logger = logging.getLogger("novelvideo.chat.service")
 
-# Legacy import path used by route and lock compatibility tests.
-_read_chat_run_lock_file = session_registry.read_chat_run_lock_file
-
 # Compatibility exports for callers migrating to the presentation boundary.
 _ui_spec_json = presentation.ui_spec_json
 _wrap_ui_spec_json = presentation.wrap_ui_spec_json
@@ -185,8 +174,6 @@ _CODEX_GATEWAY_BASE_URL_ENV = "DRAMACLAW_CODEX_GATEWAY_BASE_URL"
 _CODEX_PER_TURN_CREDENTIAL_PLACEHOLDER = "dramaclaw-codex-per-turn-placeholder"
 _CODEX_GATEWAY_KEY_METADATA = "dramaclaw_gateway_api_key"
 _CODEX_CONTROL_CAPABILITY_METADATA = "dramaclaw_control_context_capability"
-_ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str] | tuple[str, str, str]] = {}
-_ACTIVE_CODEX_TURNS_LOCK = threading.Lock()
 _MAINLINE_ASSISTANT_SCOPE_INSTRUCTIONS = (
     "This conversation is the DramaClaw mainline assistant (虾导). When asked who you are, "
     "answer briefly: 我是虾导. Describe current capabilities from the available mainline "
@@ -2446,73 +2433,79 @@ def _set_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
     message_repository.set_setting(conn, key, value, now_iso=_now_iso)
 
 
-def _pid_is_alive(pid: int | None) -> bool:
-    if pid is None or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
 def _chat_run_lock_path(username: str, project: str) -> Path:
     return session_registry.chat_run_lock_path(
         _user_chat_agent_locks_dir(username), project
     )
 
 
-def _chat_run_lock_payload(lock_id: str, *, started_at: str | None = None) -> str:
-    return session_registry.chat_run_lock_payload(lock_id, started_at=started_at)
-
-
-def _chat_run_lock_file_is_new(path: Path) -> bool:
-    return session_registry.chat_run_lock_file_is_new(path)
-
-
-def _chat_run_lock_owner_is_active(
-    owner_id: str | None,
-    owner_pid: int | None,
-    started_at: datetime | None,
-    updated_at: datetime | None,
-) -> bool:
-    return session_registry.chat_run_lock_owner_is_active(
-        owner_id, owner_pid, started_at, updated_at, pid_is_alive=_pid_is_alive
-    )
-
-
-def _acquire_chat_run_lock(username: str, project: str) -> str:
+def _acquire_chat_run_lock(
+    username: str, project: str, turn_id: str | None = None
+) -> ChatStartLock:
     return session_registry.acquire_chat_run_lock(
-        _chat_run_lock_path(username, project),
-        owner_is_active=_chat_run_lock_owner_is_active,
+        _chat_run_lock_path(username, project), turn_id=turn_id
     )
 
 
-def _release_chat_run_lock(username: str, project: str, lock_id: str) -> None:
-    session_registry.release_chat_run_lock(
-        _chat_run_lock_path(username, project), lock_id
+def _release_chat_run_lock(username: str, project: str, lock: ChatStartLock) -> None:
+    session_registry.release_chat_run_lock(lock)
+
+
+def _codex_thread_snapshot(thread_id: str, *, include_turns: bool = False) -> Any | None:
+    from novelvideo.chat.codex_app_server import read_existing_codex_thread
+
+    return read_existing_codex_thread(
+        _codex_node_home(), thread_id, include_turns=include_turns
     )
 
 
-def _heartbeat_chat_run_lock(username: str, project: str, lock_id: str) -> bool:
-    return session_registry.heartbeat_chat_run_lock(
-        _chat_run_lock_path(username, project),
-        lock_id,
-        atomic_write=_atomic_write_chat_run_lock_file,
-    )
+async def _active_persisted_codex_turn(
+    username: str, lock_project: str
+) -> ActiveChatTurn | None:
+    lock_key = _chat_run_lock_key(lock_project)
+    for scope_key, entry in _load_active_codex_turns(username).items():
+        if entry.get("lock_key") != lock_key:
+            continue
+        active = ActiveChatTurn(entry.get("business_turn_id") or None)
+        try:
+            thread = await asyncio.to_thread(_codex_thread_snapshot, entry["thread_id"])
+            status = getattr(thread, "status", None)
+            status = getattr(status, "root", status)
+            if getattr(status, "type", None) == "active":
+                return active
+        except Exception:
+            return active
+        disposition = "interrupted"
+        try:
+            thread = await asyncio.to_thread(
+                _codex_thread_snapshot, entry["thread_id"], include_turns=True
+            )
+            for turn in getattr(thread, "turns", None) or []:
+                if turn.id == entry["turn_id"]:
+                    disposition = {
+                        "completed": "completed", "interrupted": "cancelled", "failed": "failed",
+                    }.get(turn.status, "interrupted")
+                    break
+        except Exception:
+            pass
+        await finalize_codex_turn(username, scope_key, entry["turn_id"], disposition)
+    return None
 
 
-def chat_run_lock_is_active(username: str, project: str = "") -> bool:
-    return session_registry.chat_run_lock_is_active(
-        _chat_run_lock_path(username, project),
-        owner_is_active=_chat_run_lock_owner_is_active,
-    )
+async def active_chat_turn(
+    username: str, lock_project: str = "", *, start_lock: ChatStartLock | None = None
+) -> ActiveChatTurn | None:
+    """Probe starts and persisted runtime turns without starting a Codex server.
 
-
-def force_release_chat_run_lock(username: str, project: str) -> None:
-    _remove_chat_run_lock_file(_chat_run_lock_path(username, project))
+    A caller already holding the start lock passes it to check only runtime turns.
+    """
+    if start_lock is None:
+        starting = session_registry.probe_chat_start_lock(
+            _chat_run_lock_path(username, lock_project)
+        )
+        if starting is not None:
+            return starting
+    return await _active_persisted_codex_turn(username, lock_project)
 
 
 #: A turn that ends without ever reaching a terminal event failed; it did not
@@ -2576,15 +2569,6 @@ def _evidence_identity(
         else f"conversation:{project_id}:{agent_profile}"
     )
     return {"trajectory_id": trajectory_id, "project_id": project_id}
-
-
-async def _chat_run_lock_heartbeat_loop(
-    username: str, project: str, lock_id: str
-) -> None:
-    while True:
-        await asyncio.sleep(_CHAT_RUN_LOCK_HEARTBEAT_SECONDS)
-        if not _heartbeat_chat_run_lock(username, project, lock_id):
-            return
 
 
 def _append_message(
@@ -3024,11 +3008,6 @@ async def clear_codex_scope_thread(
                 _save_codex_session_state(
                     username, project, latest, project_state_dir=project_state_dir
                 )
-    active_turn_key = (username, scope_key)
-    with _ACTIVE_CODEX_TURNS_LOCK:
-        active_turn = _ACTIVE_CODEX_TURNS.get(active_turn_key)
-        if active_turn is not None and active_turn[0] == thread_id:
-            _ACTIVE_CODEX_TURNS.pop(active_turn_key, None)
     session_registry.clear_active_codex_turn_if_thread(
         _active_codex_turns_path(username),
         scope_key,
@@ -3043,7 +3022,7 @@ def _active_codex_turns_path(username: str) -> Path:
     return _user_state_dir(username) / "active_codex_turns.json"
 
 
-def _load_active_codex_turns(username: str) -> dict[str, dict[str, str]]:
+def _load_active_codex_turns(username: str) -> dict[str, dict[str, Any]]:
     return session_registry.load_active_codex_turns(
         _active_codex_turns_path(username)
     )
@@ -3052,7 +3031,7 @@ def _load_active_codex_turns(username: str) -> dict[str, dict[str, str]]:
 def _set_active_codex_turn(
     username: str,
     scope_key: str,
-    value: tuple[str, str] | tuple[str, str, str] | None,
+    value: dict[str, Any] | None,
 ) -> None:
     from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
 
@@ -3063,6 +3042,59 @@ def _set_active_codex_turn(
         index_file_lock=index_file_lock,
         write_json_atomic=write_json_atomic,
     )
+
+
+async def _cleanup_codex_turn_token(token_file: Path | None, token: str | None = None) -> None:
+    if token_file is not None:
+        try:
+            token = token_file.read_text(encoding="utf-8").strip() or token
+        except FileNotFoundError:
+            pass
+    try:
+        if token:
+            await get_auth_session_port().revoke_agent_session(token)
+    except Exception:
+        logger.warning("failed to revoke Codex turn token", exc_info=True)
+    finally:
+        if token_file is not None:
+            token_file.unlink(missing_ok=True)
+
+
+async def finalize_codex_turn(
+    username: str, scope_key: str, codex_turn_id: str, disposition: str
+) -> bool:
+    from novelvideo.chat.store import ChatScope
+    from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
+
+    entry = session_registry.claim_active_codex_turn(
+        _active_codex_turns_path(username), scope_key, codex_turn_id,
+        index_file_lock=index_file_lock, write_json_atomic=write_json_atomic,
+    )
+    if entry is None:
+        return False
+    token_file = entry.get("token_file")
+    await _cleanup_codex_turn_token(Path(token_file) if token_file else None)
+    scope_data = entry.get("store_scope")
+    store_scope = ChatScope.from_payload(scope_data) if scope_data is not None else None
+    project_state_dir = entry.get("project_state_dir")
+    if store_scope is not None:
+        store_scope = replace(store_scope, state_dir=entry.get("store_state_dir"))
+    structured = entry.get("structured_canvas_reply") is True
+    if disposition == "interrupted" or (structured and disposition == "cancelled"):
+        if structured and store_scope is not None:
+            try:
+                await _cancel_pending_clarifications_for_turn(
+                    username=username, store_scope=store_scope,
+                    turn_id=entry["business_turn_id"], project_state_dir=project_state_dir,
+                    agent_profile=entry["agent_profile"],
+                )
+            except Exception:
+                logger.exception("failed to settle clarification cards for finalized turn")
+        await _write_turn_notice(
+            username, store_scope, entry["business_turn_id"], disposition,
+            "已取消本轮请求。" if disposition == "cancelled" else "本轮请求已中断。",
+        )
+    return True
 
 
 def _write_codex_turn_token(
@@ -4053,16 +4085,10 @@ async def interrupt_active_codex_turns(username: str) -> bool:
     normalized = str(username or "").strip()
     if not normalized:
         return False
-    with _ACTIVE_CODEX_TURNS_LOCK:
-        turns = [
-            (value[0], value[1])
-            for (turn_username, _project), value in _ACTIVE_CODEX_TURNS.items()
-            if turn_username == normalized and len(value) >= 2
-        ]
-    turns.extend(
+    turns = [
         (entry.get("thread_id", ""), entry.get("turn_id", ""))
         for entry in _load_active_codex_turns(normalized).values()
-    )
+    ]
     turns = list({turn for turn in turns if turn[0] and turn[1]})
 
     async def interrupt_pair(thread_id: str, turn_id: str) -> bool:
@@ -4093,22 +4119,14 @@ async def interrupt_active_codex_turn(
     if not normalized_user or not normalized_scope or not normalized_business_turn:
         return False
 
-    with _ACTIVE_CODEX_TURNS_LOCK:
-        local = _ACTIVE_CODEX_TURNS.get((normalized_user, normalized_scope))
-    if local is not None:
-        if len(local) < 3 or str(local[2]).strip() != normalized_business_turn:
-            return False
-        thread_id, runtime_turn_id = str(local[0]).strip(), str(local[1]).strip()
-    else:
-        persisted = _load_active_codex_turns(normalized_user).get(normalized_scope)
-        if (
-            not persisted
-            or str(persisted.get("business_turn_id") or "").strip()
-            != normalized_business_turn
-        ):
-            return False
-        thread_id = str(persisted.get("thread_id") or "").strip()
-        runtime_turn_id = str(persisted.get("turn_id") or "").strip()
+    persisted = _load_active_codex_turns(normalized_user).get(normalized_scope)
+    if (
+        not persisted
+        or persisted.get("business_turn_id") != normalized_business_turn
+    ):
+        return False
+    thread_id = str(persisted.get("thread_id") or "").strip()
+    runtime_turn_id = str(persisted.get("turn_id") or "").strip()
     if not thread_id or not runtime_turn_id:
         return False
     interrupted = await asyncio.to_thread(
@@ -4167,10 +4185,8 @@ async def stream_assistant_reply(
         tool_mode=tool_mode,
         store_scope=store_scope,
     )
-    run_lock_id = _acquire_chat_run_lock(username, lock_project)
-    heartbeat_task = asyncio.create_task(
-        _chat_run_lock_heartbeat_loop(username, lock_project, run_lock_id)
-    )
+    turn_id = str(turn_id or "").strip() or uuid.uuid4().hex
+    run_lock_id = _acquire_chat_run_lock(username, lock_project, turn_id)
     try:
         deterministic = _frontend_context_reply(prompt)
         if deterministic is not None:
@@ -4182,16 +4198,23 @@ async def stream_assistant_reply(
                 project_dir=project_dir,
                 project_state_dir=project_state_dir,
             )
+        backend = str(backend or "").strip() or _chat_backend()
+        if backend == "codex":
+            active = await _active_persisted_codex_turn(username, lock_project)
+            if active is not None:
+                raise ChatTurnBusyError(turn_id=active.turn_id)
         model_prompt = (
             _script_creation_model_reply_prompt(prompt, tool_mode=tool_mode) or prompt
         )
-        backend = str(backend or "").strip() or _chat_backend()
         if backend == "codex":
             return await _stream_assistant_reply_codex(
                 username,
                 project,
                 prompt,
                 on_event,
+                on_thread_registered=lambda: _release_chat_run_lock(
+                    username, lock_project, run_lock_id
+                ),
                 script_upload_guidance=_script_creation_guidance_applies(
                     prompt, tool_mode=tool_mode
                 ),
@@ -4257,11 +4280,6 @@ async def stream_assistant_reply(
             egress_context=egress_context,
         )
     finally:
-        heartbeat_task.cancel()
-        try:
-            await heartbeat_task
-        except asyncio.CancelledError:
-            pass
         _release_chat_run_lock(username, lock_project, run_lock_id)
 
 
@@ -5381,6 +5399,7 @@ async def _stream_assistant_reply_codex(
     project_context: ProjectContext | None = None,
     image_paths: Sequence[Path] = (),
     script_upload_guidance: bool = False,
+    on_thread_registered: Callable[[], None] | None = None,
 ) -> None:
     from novelvideo.chat.codex_live import LiveTurnProjector
 
@@ -5433,8 +5452,7 @@ async def _stream_assistant_reply_codex(
         agent_profile=agent_profile,
         canvas_id=canvas_id,
     )
-    active_turn_key = (username, codex_scope_key)
-    active_turn_value: tuple[str, str, str] | None = None
+    active_turn_value: dict[str, Any] | None = None
     detached = False
     agent_token: str | None = None
     token_file: Path | None = None
@@ -5596,14 +5614,30 @@ async def _stream_assistant_reply_codex(
                             project_state_dir=project_state_dir,
                         )
                     if codex_thread_id and codex_turn_id:
-                        active_turn_value = (
-                            codex_thread_id,
-                            codex_turn_id,
-                            business_turn_id,
-                        )
-                        with _ACTIVE_CODEX_TURNS_LOCK:
-                            _ACTIVE_CODEX_TURNS[active_turn_key] = active_turn_value
-                        _set_active_codex_turn(username, codex_scope_key, active_turn_value)
+                        entry = {
+                            "thread_id": codex_thread_id, "turn_id": codex_turn_id,
+                            "business_turn_id": business_turn_id,
+                            "lock_key": _chat_run_lock_key(_chat_run_lock_project_for_turn(
+                                project, tool_mode=tool_mode, store_scope=store_scope,
+                            )),
+                            "started_at": time.time(),
+                            "token_file": str(token_file) if token_file else None,
+                            "store_scope": (
+                                store_scope.to_dict() if store_scope is not None
+                                else {"kind": "project", "id": project} if project
+                                else {"kind": "home", "id": None}
+                            ),
+                            "store_state_dir": getattr(store_scope, "state_dir", None),
+                            "project_state_dir": (
+                                str(project_state_dir) if project_state_dir is not None else None
+                            ),
+                            "agent_profile": agent_profile,
+                            "structured_canvas_reply": structured_canvas_reply,
+                        }
+                        _set_active_codex_turn(username, codex_scope_key, entry)
+                        active_turn_value = entry
+                        if on_thread_registered is not None:
+                            on_thread_registered()
                     await on_event(
                         runtime_event_mapper.lifecycle_event(event)
                     )
@@ -5765,26 +5799,11 @@ async def _stream_assistant_reply_codex(
         )
         if not detached:
             if active_turn_value is not None:
-                with _ACTIVE_CODEX_TURNS_LOCK:
-                    if _ACTIVE_CODEX_TURNS.get(active_turn_key) == active_turn_value:
-                        _ACTIVE_CODEX_TURNS.pop(active_turn_key, None)
-                try:
-                    _set_active_codex_turn(username, codex_scope_key, None)
-                except OSError:
-                    logger.warning(
-                        "failed to remove persisted active Codex turn",
-                        exc_info=True,
-                    )
-            if token_file is not None:
-                try:
-                    token_file.unlink(missing_ok=True)
-                except OSError:
-                    logger.warning("failed to remove Codex turn token file", exc_info=True)
-            if agent_token:
-                try:
-                    await get_auth_session_port().revoke_agent_session(agent_token)
-                except Exception:
-                    logger.warning("failed to revoke Codex turn token", exc_info=True)
+                await finalize_codex_turn(
+                    username, codex_scope_key, active_turn_value["turn_id"], turn_disposition
+                )
+            else:
+                await _cleanup_codex_turn_token(token_file, agent_token)
             if project_context is not None:
                 await _cancel_turn_agent_product_operations(
                     turn_agent_product_operations.cancellation_ids(),
@@ -5796,25 +5815,7 @@ async def _stream_assistant_reply_codex(
 
     if timeout_notice is not None:
         await _write_turn_notice(username, store_scope, business_turn_id, "timeout", timeout_notice)
-    if structured_canvas_reply and turn_disposition == "cancelled":
-        if store_scope is not None:
-            try:
-                await _cancel_pending_clarifications_for_turn(
-                    username=username,
-                    store_scope=store_scope,
-                    turn_id=business_turn_id,
-                    project_state_dir=project_state_dir,
-                    agent_profile=agent_profile,
-                )
-            except Exception:
-                logger.exception(
-                    "failed to settle clarification cards for cancelled turn %s",
-                    business_turn_id,
-                )
-        await _write_turn_notice(
-            username, store_scope, business_turn_id, "cancelled", "已取消本轮请求。"
-        )
-    elif (
+    if (
         structured_canvas_reply
         and turn_disposition not in {"timeout", "cancelled"}
         and stage_confirmation_expected
