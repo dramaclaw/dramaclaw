@@ -41,10 +41,11 @@ def executor(monkeypatch, tmp_path):
         saved_bodies.append(body)
         assert saved.payload["save_source"] == "agent_patch"
 
-    async def apply(commands):
+    async def apply(commands, *, envelope_fields=None):
         return await agent_canvas.dispatch_agent_canvas(
             project="project", canvas_id="default", project_dir=tmp_path,
-            envelopes=[{"schema_version": "canvas_chat_commands.v1", "commands": commands}],
+            envelopes=[{"schema_version": "canvas_chat_commands.v1", "commands": commands,
+                        **(envelope_fields or {})}],
             env={"locale": "en", "catalogs": {}},
             build_payload=partial(
                 routes._canvas_payload_builder, project="project", canvas_id="default",
@@ -111,6 +112,34 @@ async def test_real_bundle_saves_structural_batch_and_reads_host_context(executo
     # Same as the browser: a missing node answers with empty data.
     assert answer["responses"][2]["data"] is None
     assert answer["responses"][3]["data"]["options"]
+
+
+@pytest.mark.parametrize("envelope_fields,spacing", [
+    ({"external_mcp_command": True}, 520),
+    ({}, 368),
+], ids=["external-mcp", "unmarked"])
+async def test_real_bundle_horizontal_layout_preserves_external_mcp_geometry(
+    executor, envelope_fields, spacing,
+):
+    _, apply, _, root = executor
+    created = await apply([
+        {"type": "create_node", "node_type": "textAnnotationNode",
+         "data": {"title": f"Text {index}", "content": f"Text {index}"}}
+        for index in range(3)
+    ])
+    assert created["status"] == "applied", created
+    before = canvas_store.read_canvas(root, "default")
+    node_ids = [node["id"] for node in before["nodes"] if node["type"] == "textAnnotationNode"]
+    assert len(node_ids) == 3
+    result = await apply([
+        {"type": "layout_nodes", "node_ids": node_ids, "mode": "horizontal"},
+    ], envelope_fields=envelope_fields)
+    assert result["status"] == "applied", result
+    saved = canvas_store.read_canvas(root, "default")
+    positions = [node["position"] for node in saved["nodes"] if node["id"] in node_ids]
+    xs = sorted(position["x"] for position in positions)
+    assert xs == [xs[0] + index * spacing for index in range(3)]
+    assert len({position["y"] for position in positions}) == 1
 
 
 async def test_real_bundle_defers_host_batch_without_saving(executor):

@@ -17,6 +17,9 @@ def agent(monkeypatch, tmp_path):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "p")
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "c")
     monkeypatch.setenv("DRAMACLAW_MCP_CANVAS_APPROVAL", "0")
+    monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP", raising=False)
+    monkeypatch.delenv("DRAMACLAW_AGENT_PROFILE", raising=False)
+    monkeypatch.delenv("DRAMACLAW_TURN_ID", raising=False)
     monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *_: None)
     monkeypatch.setattr(plugin, "wait_canvas_command_result", lambda *_, **__: pytest.fail("unexpected browser write"))
     calls = []
@@ -63,8 +66,38 @@ def test_structural_commands_post_once_without_bridge(agent, slim):
     assert not list(directory.iterdir())
 
 
-def test_confirmation_posts_only_after_confirm(agent, monkeypatch):
+@pytest.mark.parametrize("profile,turn_id,agent_id", [
+    (None, "t1", "main"),
+    ("freezone:agent-2", None, "agent-2"),
+    ("freezone: ", " ", "main"),
+])
+def test_external_mcp_commands_post_marked_envelope(agent, monkeypatch, profile, turn_id, agent_id):
     plugin, calls, _, directory = agent
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    if profile is not None:
+        monkeypatch.setenv("DRAMACLAW_AGENT_PROFILE", profile)
+    if turn_id is not None:
+        monkeypatch.setenv("DRAMACLAW_TURN_ID", turn_id)
+    result = plugin._emit_canvas_commands("p", "c", CREATE)
+    assert result["ok"] is True
+    envelope = {
+        "schema_version": "canvas_chat_commands.v1", "project_id": "p", "canvas_id": "c",
+        "commands": CREATE, "external_mcp_command": True, "agent_id": agent_id,
+    }
+    if turn_id and turn_id.strip():
+        envelope["turn_id"] = turn_id
+    assert [call for call in calls if call[0] == "POST"] == [
+        ("POST", "/api/v1/projects/p/freezone/canvases/c/agent-commands",
+         {"envelopes": [envelope], "locale": None})]
+    assert not list(directory.iterdir())
+
+
+@pytest.mark.parametrize("external", [False, True])
+def test_confirmation_posts_only_after_confirm(agent, monkeypatch, external):
+    plugin, calls, _, directory = agent
+    if external:
+        monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+        monkeypatch.setenv("DRAMACLAW_TURN_ID", "t1")
     monkeypatch.delenv("DRAMACLAW_MCP_CANVAS_APPROVAL")
     approval = plugin._emit_canvas_commands("p", "c", CREATE)
     assert approval["status"] == "approval_required"
@@ -73,7 +106,15 @@ def test_confirmation_posts_only_after_confirm(agent, monkeypatch):
     result = plugin._handle_confirm_canvas_action({"approval_id": approval["approval_id"]})
     assert result["ok"] is True
     assert result["canvas_apply_status"] == "applied"
-    assert len([call for call in calls if call[0] == "POST"]) == 1
+    envelope = {
+        "schema_version": "canvas_chat_commands.v1", "project_id": "p", "canvas_id": "c",
+        "commands": CREATE,
+    }
+    if external:
+        envelope.update(external_mcp_command=True, agent_id="main", turn_id="t1")
+    assert [call for call in calls if call[0] == "POST"] == [
+        ("POST", "/api/v1/projects/p/freezone/canvases/c/agent-commands",
+         {"envelopes": [envelope], "locale": None})]
 
 
 def test_confirmed_workflow_draft_skips_second_confirmation(agent, monkeypatch):

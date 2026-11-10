@@ -5722,6 +5722,33 @@ def _put_frontend_canvas_command(
     return key, put_pending_canvas_command(**arguments)
 
 
+def _canvas_command_envelope(
+    project: str, canvas: str, commands: list[Any],
+) -> dict[str, Any]:
+    external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
+    profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
+    agent_id = (
+        profile.removeprefix("freezone:").strip()
+        if profile.startswith("freezone:")
+        else "main"
+    )
+    envelope = {
+        "schema_version": "canvas_chat_commands.v1",
+        "project_id": project,
+        "canvas_id": canvas,
+        "commands": commands,
+    }
+    # External MCP commands use reconnect polling and legacy canvas geometry.
+    # Hermes keeps its original envelope shape.
+    if external_mcp:
+        envelope["agent_id"] = agent_id or "main"
+        envelope["external_mcp_command"] = True
+        turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+        if turn_id:
+            envelope["turn_id"] = turn_id
+    return envelope
+
+
 def _dispatch_mcp_approved_frontend_commands(
     *,
     project: str,
@@ -5742,27 +5769,7 @@ def _dispatch_mcp_approved_frontend_commands(
     mismatch = _bound_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
-    external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
-    profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
-    agent_id = (
-        profile.removeprefix("freezone:").strip()
-        if profile.startswith("freezone:")
-        else "main"
-    )
-    envelope = {
-        "schema_version": "canvas_chat_commands.v1",
-        "project_id": project,
-        "canvas_id": canvas,
-        "commands": commands,
-    }
-    # Only Codex/external MCP commands need the reconnect polling fallback.
-    # Hermes keeps its original websocket-only delivery path and envelope shape.
-    if external_mcp:
-        envelope["agent_id"] = agent_id or "main"
-        envelope["external_mcp_command"] = True
-        turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
-        if turn_id:
-            envelope["turn_id"] = turn_id
+    envelope = _canvas_command_envelope(project, canvas, commands)
     # Dynamic workflow commands carry a stable workflowInstanceId on every
     # create_node. Reuse one bridge key for identical retries so a lost MCP
     # response cannot create a second approval or duplicate the graph.
@@ -6163,10 +6170,7 @@ def _server_apply_canvas_commands(
         "POST",
         f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}/agent-commands",
         body={
-            "envelopes": [{
-                "schema_version": "canvas_chat_commands.v1", "project_id": project,
-                "canvas_id": canvas, "commands": commands,
-            }],
+            "envelopes": [_canvas_command_envelope(project, canvas, commands)],
             "locale": None,
         },
     )
