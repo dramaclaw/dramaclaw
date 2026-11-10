@@ -770,6 +770,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "Đang nén ngữ cảnh…",
+    "contextCompacted": "Đã nén ngữ cảnh để cuộc trò chuyện tiếp tục",
     "clearChat": {
       "title": "Xóa cuộc trò chuyện này?",
       "description": "Lịch sử trò chuyện này sẽ bị xóa. Tin nhắn tiếp theo sẽ bắt đầu ngữ cảnh Agent mới. Canvas, dự án và các cuộc trò chuyện khác không bị ảnh hưởng. Tác vụ tạo đang chạy sẽ tiếp tục.",

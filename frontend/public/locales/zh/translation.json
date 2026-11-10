@@ -791,6 +791,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "正在压缩上下文…",
+    "contextCompacted": "已压缩上下文，对话可以继续",
     "clearChat": {
       "title": "清空当前聊天？",
       "description": "当前聊天记录将被删除，下一条消息会开启新的 Agent 上下文。画布、项目和其他聊天不会受影响；进行中的生成任务不会被取消。",

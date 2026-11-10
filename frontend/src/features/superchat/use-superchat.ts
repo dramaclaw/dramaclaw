@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import type { CanvasCommandToolResultPayload } from "@/features/freezone/canvasCommandReceipt";
+import { applyLiveItemFrame, applyLiveItemDeltaFrame } from "./live-items";
 import { localSnapshot, markLocalMessageChanges } from "./message-parts-origin";
 import { createMessagePartsQueue, SnapshotRejectedError } from "./message-parts-queue";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -64,9 +65,9 @@ const EXECUTABLE_HIDDEN_TOOL_NAMES = FREEZONE_CANVAS_WRITE_TOOL_NAME_SET;
 const LIVE_TURN_FRAME_TYPES = new Set<string>([
   "agent.turn.started",
   "thread.started",
-  "assistant.delta",
+  "chat.item",
+  "chat.item.delta",
   "assistant.message",
-  "agent.thought.delta",
   "agent.plan.update",
   "agent.usage.update",
   "agent.permission.requested",
@@ -81,47 +82,6 @@ const LIVE_TURN_FRAME_TYPES = new Set<string>([
   "skill_studio.status",
 ]);
 
-const INTERNAL_HIDDEN_TOOL_STATUS_NAMES = new Set<string>([
-  "freezone_get_audio_voice_options",
-  "freezone_get_canvas_action_catalog",
-  "freezone_get_canvas_command_catalog",
-  "freezone_get_canvas_ontology",
-  "freezone_get_link_type_catalog",
-  "freezone_get_mainline_projection_assets",
-  "freezone_begin_agent_catalog_draft",
-  "freezone_finish_agent_catalog_draft",
-  "freezone_get_neighbor_graph",
-  "freezone_get_node_action_catalog",
-  "freezone_get_node_create_schema",
-  "freezone_get_node_detail",
-  "freezone_get_selection",
-  "freezone_get_slot_candidates",
-  "freezone_put_agent_catalog_recipe",
-  "freezone_put_agent_catalog_skill",
-  "freezone_request_user_clarification",
-  "freezone_summarize_canvas",
-  "freezone_validate_canvas_commands",
-  "tool_describe",
-  "tool describe",
-  "tool-describe",
-  "Tool Describe",
-  "ToolDescribe",
-  "tool_search",
-  "tool search",
-  "tool-search",
-  "Tool Search",
-  "ToolSearch",
-]);
-
-function normalizeToolStatusName(name: string): string {
-  return name.trim().replace(/[\s_-]+/gu, " ").toLowerCase();
-}
-
-function isInternalHiddenToolStatusName(name: string): boolean {
-  if (INTERNAL_HIDDEN_TOOL_STATUS_NAMES.has(name)) return true;
-  const normalized = normalizeToolStatusName(name);
-  return normalized === "tool search" || normalized === "tool describe";
-}
 export const SUPERCHAT_CANVAS_COMMAND_EVENT = "superchat/canvas-command";
 export const SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT = "superchat/canvas-context-request";
 const MESSAGE_CACHE_PREFIX = SUPERCHAT_MESSAGE_CACHE_PREFIX;
@@ -1090,24 +1050,6 @@ export function mergeHistorySnapshot(
   );
 }
 
-type AssistantDeltaFrame = Extract<ServerFrame, { type: "assistant.delta" }>;
-
-function isAssistantDeltaPatch(frame: ServerFrame): frame is AssistantDeltaFrame {
-  const { offset, text } = frame as Partial<AssistantDeltaFrame>;
-  return (
-    frame.type === "assistant.delta"
-    && typeof offset === "number"
-    && Number.isInteger(offset)
-    && offset >= 0
-    && typeof text === "string"
-  );
-}
-
-/** Replace the reply from `offset` (UTF-16 units, i.e. JS string indices) with `text`. */
-function applyAssistantDelta(previous: string, frame: AssistantDeltaFrame): string {
-  return `${previous.slice(0, frame.offset)}${frame.text}`;
-}
-
 function upsertAssistantMessage(
   messages: ChatMessage[],
   turnId: string,
@@ -1183,7 +1125,8 @@ function upsertAssistantUiEvent(
     }
   }
   const id = `assistant-${turnId}`;
-  const existingIndex = messages.findIndex((message) => message.id === id);
+  const existingIndex = messages.findIndex((message) =>
+    message.id === id || (message.role === "assistant" && message.turnId === turnId));
   if (existingIndex >= 0) {
     return sortMessages(
       messages.map((message, index) => {
@@ -1620,36 +1563,6 @@ export function shouldPreserveToolMessage(payload: ServerFrame): boolean {
   );
 }
 
-export function shouldRenderToolStatusPart(payload: ServerFrame): boolean {
-  if (!shouldPreserveToolMessage(payload)) return false;
-  if (payload.type === "tool.call") {
-    return false;
-  }
-  if ("name" in payload && typeof payload.name === "string" && EXECUTABLE_HIDDEN_TOOL_NAMES.has(payload.name)) {
-    return false;
-  }
-  const text =
-    payload.type === "tool.result" && typeof payload.result === "string"
-      ? payload.result
-      : payload.type === "tool.result" &&
-          payload.result &&
-          typeof payload.result === "object" &&
-          typeof (payload.result as Record<string, unknown>).text === "string"
-        ? String((payload.result as Record<string, unknown>).text)
-        : "";
-  return !(
-    text.includes("canvas_chat_commands.v1") ||
-    text.includes("canvas_command_emitted")
-  );
-}
-
-export function shouldRenderAgentToolStatusPart(payload: ServerFrame): boolean {
-  if (!("name" in payload) || typeof payload.name !== "string") return true;
-  if (EXECUTABLE_HIDDEN_TOOL_NAMES.has(payload.name)) return false;
-  if (isInternalHiddenToolStatusName(payload.name)) return false;
-  return true;
-}
-
 function upsertToolMessage(messages: ChatMessage[], kind: string, payload: unknown): ChatMessage[] {
   const nextMessage = buildToolMessage(kind, payload);
   if (!nextMessage.turnId) return sortMessages([...messages, nextMessage]);
@@ -1676,35 +1589,10 @@ function upsertToolMessage(messages: ChatMessage[], kind: string, payload: unkno
   );
 }
 
-function toolStatusPartId(kind: string, payload: ServerFrame, turnId: string): string {
-  const callId = "call_id" in payload && typeof payload.call_id === "string"
-    ? payload.call_id.trim()
-    : "";
-  if (callId) return `tool_status:${turnId}:${callId}`;
-  const name = "name" in payload && typeof payload.name === "string" ? payload.name : kind;
-  return `tool_status:${turnId}:${kind}:${name}`;
-}
-
-function toolStatusPart(kind: string, payload: ServerFrame, turnId: string): ChatMessagePart {
-  return {
-    id: toolStatusPartId(kind, payload, turnId),
-    type: "tool_status",
-    event: buildToolMessage(kind, payload),
-  };
-}
-
 function agentPlanPart(payload: ServerFrame, turnId: string): ChatMessagePart {
   return {
     id: `agent_plan:${turnId}`,
     type: "agent_plan",
-    event: payload,
-  };
-}
-
-function agentThoughtPart(payload: Record<string, unknown>, turnId: string, partId?: string): ChatMessagePart {
-  return {
-    id: partId ?? `agent_thought:${turnId}`,
-    type: "agent_thought",
     event: payload,
   };
 }
@@ -1749,7 +1637,6 @@ function upsertRuntimePartInMessages(
   ]);
 }
 
-export const toolStatusPartForTest = toolStatusPart;
 export const upsertRuntimePartInMessagesForTest = upsertRuntimePartInMessages;
 
 function approvalOptionId(
@@ -1813,11 +1700,6 @@ function canvasContextToolResultFrame(detail: CanvasContextToolResultPayload): C
 }
 
 export const canvasContextToolResultFrameForTest = canvasContextToolResultFrame;
-
-function shouldCloseThoughtForSkillStudioEvent(event: unknown): boolean {
-  if (!event || typeof event !== "object" || Array.isArray(event)) return true;
-  return (event as Record<string, unknown>).type !== "skill_studio.status";
-}
 
 const FREEZONE_CANVAS_CONTEXT_TOOL_REQUEST_TYPES: Record<string, string> = {
   freezone_get_canvas_ontology: "canvas_ontology",
@@ -2000,14 +1882,14 @@ export function useSuperChat({
     [freezoneAgentId, normalizedFreezoneCanvasId, project, surface],
   );
   const scopeKey = useMemo(() => scopeSessionKey(desiredScope), [desiredScope]);
-  const initialScopeSnapshot = useMemo(() => {
+  const [initialScopeSnapshot] = useState(() => {
     const cachedMessages = loadCachedMessages(scopeKey);
     const activeTurn = loadPendingActiveTurn(scopeKey, cachedMessages);
     return {
       cachedMessages,
       activeTurnId: activeTurn?.turnId ?? null,
     };
-  }, [scopeKey]);
+  });
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2025,7 +1907,6 @@ export function useSuperChat({
     });
   }, []);
   const [historyReady, setHistoryReady] = useState(false);
-  const [streamText, setStreamText] = useState("");
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [relayInstances, setRelayInstances] = useState<RelayInstanceInfo[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>("");
@@ -2037,11 +1918,6 @@ export function useSuperChat({
   const [settings, setSettingsState] = useState<SuperChatSettings>(() => loadSettings());
   const [busy, setBusy] = useState(() => Boolean(initialScopeSnapshot.activeTurnId));
   const [activeTurnId, setActiveTurnId] = useState<string | null>(initialScopeSnapshot.activeTurnId);
-  const streamTextRef = useRef("");
-  const replyStreamTextRef = useRef(new Map<string, string>());
-  const activeThoughtPartByTurnRef = useRef<Map<string, string>>(new Map());
-  const thoughtTextByPartRef = useRef<Map<string, string>>(new Map());
-  const thoughtSegmentCountByTurnRef = useRef<Map<string, number>>(new Map());
   const messagesRef = useRef<ChatMessage[]>(initialScopeSnapshot.cachedMessages);
   const activeTurnIdRef = useRef<string | null>(initialScopeSnapshot.activeTurnId);
   const pendingClientTurnIdRef = useRef<string | null>(null);
@@ -2103,14 +1979,10 @@ export function useSuperChat({
 
   const markTurnInactive = useCallback((turnId?: string | null) => {
     clearActiveTurn(scopeKey, turnId);
-    const streamTurnId = turnId ?? activeTurnIdRef.current ?? pendingClientTurnIdRef.current;
-    if (streamTurnId) replyStreamTextRef.current.delete(`${scopeKey}\u0000${streamTurnId}`);
-    streamTextRef.current = "";
     activeTurnIdRef.current = null;
     setActiveTurnId(null);
     pendingClientTurnIdRef.current = null;
     recentlyCompletedTurnIdRef.current = turnId ?? null;
-    setStreamText("");
     setBusy(false);
   }, [scopeKey]);
 
@@ -2299,20 +2171,7 @@ export function useSuperChat({
   }, [scopeKey]);
 
   const finalizeStream = useCallback(() => {
-    const turnId = activeTurnIdRef.current ?? `turn-${Date.now()}`;
-    if (cancelledTurnIdsRef.current.has(turnId)) {
-      markTurnInactive(turnId);
-      return;
-    }
-    setMessages((current) => {
-      if (!streamTextRef.current.trim()) return current;
-      const next = upsertAssistantMessage(current, turnId, streamTextRef.current);
-
-      return next;
-    });
-    markTurnInactive(turnId);
-    // Post-done history refresh is intentionally disabled; final assistant
-    // messages are now pushed through assistant.message.
+    markTurnInactive(activeTurnIdRef.current);
   }, [markTurnInactive]);
 
   const clearAbortGrace = useCallback(() => {
@@ -2344,24 +2203,11 @@ export function useSuperChat({
       markTurnActive(turnId);
       upsertAssistantMessagePart({ turnId }, orderedPart);
     };
-    const thoughtTurnKey = (turnId: string) => `${frameScopeSessionKey(frame) ?? scopeKey}:${turnId}`;
-    const closeActiveThoughtPart = (turnId: string) => {
-      const turnKey = thoughtTurnKey(turnId);
-      const partId = activeThoughtPartByTurnRef.current.get(turnKey);
-      if (!partId) return;
-      const text = thoughtTextByPartRef.current.get(partId) ?? "";
-      activeThoughtPartByTurnRef.current.delete(turnKey);
-      if (!text.trim()) return;
-      placeRuntimePart(
-        turnId,
-        agentThoughtPart({
-          type: "agent.thought.delta",
-          scope: frameScope(frame) ?? desiredScopeRef.current,
-          turn_id: turnId,
-          text,
-          status: "completed",
-        }, turnId, partId),
-      );
+    const assistantTextForTurn = (turnId: unknown) => {
+      if (typeof turnId !== "string") return undefined;
+      const text = messagesRef.current.find(message =>
+        message.role === "assistant" && message.turnId === turnId)?.text;
+      return text?.trim() ? text : undefined;
     };
 
     switch (frame.type) {
@@ -2405,9 +2251,7 @@ export function useSuperChat({
           // activeTurn instead of reviving a permanently busy composer.
           markTurnInactive(activeTurnId);
         } else if (!activeTurnIdRef.current) {
-          streamTextRef.current = "";
           recentlyCompletedTurnIdRef.current = null;
-          setStreamText("");
           setBusy(false);
         }
         break;
@@ -2483,66 +2327,44 @@ export function useSuperChat({
         // The terminal `done` frame still owns transcript finalization and busy
         // state. This lifecycle frame carries runtime status for observability.
         break;
-      case "assistant.delta": {
-        if (!isAssistantDeltaPatch(frame)) break;
-        const matchesCurrentScope = frameMatchesCurrentScope(frame, desiredScopeRef.current);
-        if (
-          matchesCurrentScope
-          && typeof frame.turn_id === "string"
-          && cancelledTurnIdsRef.current.has(frame.turn_id)
-        ) {
-          break;
+      case "chat.item":
+      case "chat.item.delta": {
+        if (typeof frame.turn_id !== "string" || typeof frame.message_id !== "string"
+          || typeof frame.item_id !== "string") break;
+        if (cancelledTurnIdsRef.current.has(frame.turn_id)) return;
+        const target = { turn_id: frame.turn_id, message_id: frame.message_id, item_id: frame.item_id };
+        let apply: (messages: ChatMessage[]) => ChatMessage[];
+        if (frame.type === "chat.item") {
+          const itemFrame = { type: "chat.item" as const, ...target, card: frame.card };
+          apply = current => applyLiveItemFrame(current, itemFrame);
+        } else {
+          if (!("kind" in frame) || !("offset" in frame) || !("text" in frame)) break;
+          if ((frame.kind !== "text" && frame.kind !== "reasoning")
+            || typeof frame.offset !== "number" || typeof frame.text !== "string") break;
+          const deltaFrame = { type: "chat.item.delta" as const, ...target,
+            kind: frame.kind, offset: frame.offset, text: frame.text
+          } satisfies Extract<ServerFrame, { type: "chat.item.delta" }>;
+          apply = current => applyLiveItemDeltaFrame(current, deltaFrame);
         }
-        const frameScopeKey = frameScopeSessionKey(frame);
-        const frameTurnId = typeof frame.turn_id === "string" && frame.turn_id.trim() ? frame.turn_id : null;
-        const streamKey = frameScopeKey && frameTurnId ? `${frameScopeKey}\u0000${frameTurnId}` : null;
-        const next = applyAssistantDelta(
-          streamKey ? replyStreamTextRef.current.get(streamKey) ?? "" : streamTextRef.current,
-          frame,
-        );
-        if (streamKey) replyStreamTextRef.current.set(streamKey, next);
-        if (!matchesCurrentScope) {
-          if (!frameScopeKey || !frameTurnId) break;
-          if (next.trim()) {
-            closeActiveThoughtPart(frameTurnId);
-            updateCachedMessagesForScope(frameScopeKey, (current) =>
-              upsertAssistantMessage(current, frameTurnId, next),
-            );
-            saveActiveTurn(frameScopeKey, frameTurnId);
+        if (frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
+          setMessages(apply);
+          markTurnActive(frame.turn_id);
+        } else {
+          const remoteScopeKey = frameScopeSessionKey(frame);
+          if (remoteScopeKey) {
+            updateCachedMessagesForScope(remoteScopeKey, apply);
+            saveActiveTurn(remoteScopeKey, frame.turn_id);
+            liveTurnIdsRef.current.add(frame.turn_id);
           }
-          break;
         }
-        setBusy(true);
-        streamTextRef.current = next;
-        const turnId =
-          pendingClientTurnIdRef.current
-          ?? activeTurnIdRef.current
-          ?? (typeof frame.turn_id === "string" && frame.turn_id.trim() ? frame.turn_id : null);
-        if (turnId && streamTextRef.current.trim()) {
-          closeActiveThoughtPart(turnId);
-          markTurnActive(turnId);
-          setMessages((current) => {
-            const displayText = streamTextRef.current;
-            if (!displayText.trim()) return current;
-            return upsertAssistantMessage(current, turnId, displayText);
-          });
-        }
-        setStreamText("");
         break;
       }
       case "assistant.message": {
         const messageScope = frameScope(frame) ?? desiredScopeRef.current;
-        if (typeof frame.turn_id === "string" && frame.turn_id.trim()) {
-          const messageScopeKey = frameScopeSessionKey(frame) ?? scopeKey;
-          replyStreamTextRef.current.delete(`${messageScopeKey}\u0000${frame.turn_id}`);
-        }
         if (!frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
           const remoteScopeKey = frameScopeSessionKey(frame);
           const turnId = typeof frame.turn_id === "string" ? frame.turn_id : undefined;
           if (remoteScopeKey) {
-            if (turnId) {
-              closeActiveThoughtPart(turnId);
-            }
             updateCachedMessagesForScope(remoteScopeKey, (current) =>
               upsertServerAssistantMessage(current, frame.message, turnId, messageScope),
             );
@@ -2551,7 +2373,6 @@ export function useSuperChat({
           break;
         }
         const incomingTurnId = typeof frame.turn_id === "string" ? frame.turn_id : undefined;
-        if (incomingTurnId) closeActiveThoughtPart(incomingTurnId);
         setMessages((current) => {
           const turnId = incomingTurnId;
           const next = upsertServerAssistantMessage(
@@ -2578,34 +2399,11 @@ export function useSuperChat({
         }));
         break;
       }
-      case "agent.thought.delta": {
-        const turnId = typeof frame.turn_id === "string" && frame.turn_id.trim()
-          ? frame.turn_id
-          : activeTurnIdRef.current;
-        const next = typeof frame.text === "string" ? frame.text : "";
-        if (!turnId || !next) break;
-        const turnKey = thoughtTurnKey(turnId);
-        let partId = activeThoughtPartByTurnRef.current.get(turnKey);
-        if (!partId) {
-          const segmentIndex = (thoughtSegmentCountByTurnRef.current.get(turnKey) ?? 0) + 1;
-          thoughtSegmentCountByTurnRef.current.set(turnKey, segmentIndex);
-          partId = `agent_thought:${turnId}:${segmentIndex}`;
-          activeThoughtPartByTurnRef.current.set(turnKey, partId);
-        }
-        const accumulated = `${thoughtTextByPartRef.current.get(partId) ?? ""}${next}`;
-        thoughtTextByPartRef.current.set(partId, accumulated);
-        placeRuntimePart(
-          turnId,
-          agentThoughtPart({ ...frame, text: accumulated, status: "running" }, turnId, partId),
-        );
-        break;
-      }
       case "agent.plan.update": {
         const turnId = typeof frame.turn_id === "string" && frame.turn_id.trim()
           ? frame.turn_id
           : activeTurnIdRef.current;
         if (!turnId) break;
-        closeActiveThoughtPart(turnId);
         placeRuntimePart(turnId, agentPlanPart(frame, turnId));
         break;
       }
@@ -2614,7 +2412,6 @@ export function useSuperChat({
           ? frame.turn_id
           : activeTurnIdRef.current;
         if (!turnId) break;
-        closeActiveThoughtPart(turnId);
         placeRuntimePart(turnId, agentUsagePart(frame, turnId));
         break;
       }
@@ -2689,9 +2486,11 @@ export function useSuperChat({
             }
           }
         }
-        if (shouldRenderAgentToolStatusPart(frame)) {
-          closeActiveThoughtPart(turnId);
-          placeRuntimePart(turnId, toolStatusPart(frame.type, frame, turnId));
+        if (frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
+          markTurnActive(turnId);
+        } else {
+          const remoteScopeKey = frameScopeSessionKey(frame);
+          if (remoteScopeKey) saveActiveTurn(remoteScopeKey, turnId);
         }
         break;
       }
@@ -2702,13 +2501,10 @@ export function useSuperChat({
         ) {
           break;
         }
+        if (typeof frame.turn_id === "string" && frame.turn_id.trim()) markTurnActive(frame.turn_id);
         dispatchCanvasContextRequestFrame(frame);
         if (settings.showToolEvents || shouldPreserveToolMessage(frame)) {
           setMessages((current) => upsertToolMessage(current, frame.type, frame));
-        }
-        if (shouldRenderToolStatusPart(frame) && typeof frame.turn_id === "string" && frame.turn_id.trim()) {
-          closeActiveThoughtPart(frame.turn_id);
-          placeRuntimePart(frame.turn_id, toolStatusPart(frame.type, frame, frame.turn_id));
         }
         break;
       case "tool.result":
@@ -2738,21 +2534,11 @@ export function useSuperChat({
         if (settings.showToolEvents || shouldPreserveToolMessage(frame)) {
           setMessages((current) => upsertToolMessage(current, frame.type, frame));
         }
-        if (shouldRenderToolStatusPart(frame) && typeof frame.turn_id === "string" && frame.turn_id.trim()) {
-          closeActiveThoughtPart(frame.turn_id);
-          placeRuntimePart(frame.turn_id, toolStatusPart(frame.type, frame, frame.turn_id));
-        }
         break;
       case "canvas.command":
-        if (typeof frame.turn_id === "string" && frame.turn_id.trim()) {
-          closeActiveThoughtPart(frame.turn_id);
-        }
-        dispatchCanvasCommandFrame(frame, streamTextRef.current.trim() ? streamTextRef.current : null);
+        dispatchCanvasCommandFrame(frame, assistantTextForTurn(frame.turn_id) ?? null);
         break;
       case "canvas.context.request":
-        if (typeof frame.turn_id === "string" && frame.turn_id.trim()) {
-          closeActiveThoughtPart(frame.turn_id);
-        }
         dispatchCanvasContextRequestFrame(frame);
         break;
       case "skill_studio.event": {
@@ -2763,9 +2549,6 @@ export function useSuperChat({
           activeTurnIdRef.current,
         );
         if (!turnId || frame.event == null) break;
-        if (shouldCloseThoughtForSkillStudioEvent(frame.event)) {
-          closeActiveThoughtPart(turnId);
-        }
         markTurnActive(turnId);
         const event = frame.event && typeof frame.event === "object" && !Array.isArray(frame.event)
           ? {
@@ -2774,7 +2557,7 @@ export function useSuperChat({
               project_id: typeof frame.project_id === "string" ? frame.project_id : undefined,
               canvas_id: typeof frame.canvas_id === "string" ? frame.canvas_id : undefined,
               agent_id: typeof frame.agent_id === "string" ? frame.agent_id : undefined,
-              anchor_text_prefix: streamTextRef.current.trim() ? streamTextRef.current : undefined,
+              anchor_text_prefix: assistantTextForTurn(turnId),
               turn_id: turnId,
             }
           : frame.event;
@@ -2793,7 +2576,6 @@ export function useSuperChat({
           activeTurnIdRef.current,
         );
         if (!turnId || frame.event == null) break;
-        closeActiveThoughtPart(turnId);
         markTurnActive(turnId);
         const event = frame.event && typeof frame.event === "object" && !Array.isArray(frame.event)
           ? {
@@ -2802,7 +2584,7 @@ export function useSuperChat({
               project_id: typeof frame.project_id === "string" ? frame.project_id : undefined,
               canvas_id: typeof frame.canvas_id === "string" ? frame.canvas_id : undefined,
               agent_id: typeof frame.agent_id === "string" ? frame.agent_id : undefined,
-              anchor_text_prefix: streamTextRef.current.trim() ? streamTextRef.current : undefined,
+              anchor_text_prefix: assistantTextForTurn(turnId),
               turn_id: turnId,
             }
           : frame.event;
@@ -2842,7 +2624,6 @@ export function useSuperChat({
           const remoteScopeKey = frameScopeSessionKey(frame);
           const turnId = typeof frame.turn_id === "string" ? frame.turn_id : null;
           if (remoteScopeKey) {
-            if (turnId) replyStreamTextRef.current.delete(`${remoteScopeKey}\u0000${turnId}`);
             clearActiveTurn(remoteScopeKey, turnId);
           }
           break;
@@ -2854,17 +2635,8 @@ export function useSuperChat({
           cancelledTurnIdsRef.current.delete(frame.turn_id);
           clearAbortGrace();
           markTurnInactive(frame.turn_id);
+          requestHistory();
           break;
-        }
-        if (completedTurnId) {
-          const eventScopeKey = frameScopeSessionKey(frame) ?? scopeKey;
-          closeActiveThoughtPart(completedTurnId);
-          thoughtSegmentCountByTurnRef.current.delete(`${eventScopeKey}:${completedTurnId}`);
-          for (const partId of [...thoughtTextByPartRef.current.keys()]) {
-            if (partId.startsWith(`agent_thought:${completedTurnId}:`)) {
-              thoughtTextByPartRef.current.delete(partId);
-            }
-          }
         }
         finalizeStream();
         if (frame.message != null) {
@@ -3048,7 +2820,6 @@ export function useSuperChat({
 
   useEffect(() => {
     desiredScopeRef.current = desiredScope;
-    liveTurnIdsRef.current = new Set();
     if (cacheScopeKeyRef.current !== scopeKey) {
       cacheScopeKeyRef.current = scopeKey;
       skipNextCacheSaveRef.current = true;
@@ -3061,14 +2832,13 @@ export function useSuperChat({
     setHistoryReady(false);
     pendingClientTurnIdRef.current = null;
     recentlyCompletedTurnIdRef.current = null;
-    setStreamText("");
     const cachedMessages = loadCachedMessages(scopeKey);
     setHistoryMessages(cachedMessages);
     messagesRef.current = cachedMessages;
-    const activeTurn = loadPendingActiveTurn(scopeKey, cachedMessages);
-    streamTextRef.current = activeTurn
-      ? replyStreamTextRef.current.get(`${scopeKey}\u0000${activeTurn.turnId}`) ?? ""
-      : "";
+    const cachedActiveTurn = loadActiveTurn(scopeKey);
+    const activeTurn = cachedActiveTurn && liveTurnIdsRef.current.has(cachedActiveTurn.turnId)
+      ? cachedActiveTurn
+      : loadPendingActiveTurn(scopeKey, cachedMessages);
     activeTurnIdRef.current = activeTurn?.turnId ?? null;
     setActiveTurnId(activeTurn?.turnId ?? null);
     setBusy(Boolean(activeTurn));
@@ -3099,9 +2869,9 @@ export function useSuperChat({
 
   useEffect(() => {
     const activeTurnId = activeTurnIdRef.current;
-    if (!activeTurnId || busy || activeTurnIsPending(messages, activeTurnId)) return;
+    if (!activeTurnId || busy || liveTurnIdsRef.current.has(activeTurnId)
+      || activeTurnIsPending(messages, activeTurnId)) return;
     clearActiveTurn(scopeKey, activeTurnId);
-    replyStreamTextRef.current.delete(`${scopeKey}\u0000${activeTurnId}`);
     activeTurnIdRef.current = null;
     setActiveTurnId(null);
     pendingClientTurnIdRef.current = null;
@@ -3140,8 +2910,6 @@ export function useSuperChat({
     pendingClientTurnIdRef.current = turnId;
     markTurnActive(turnId);
     setMessages((current) => [...current, buildLocalUserMessage(trimmed, turnId, displayName, attachments)]);
-    streamTextRef.current = "";
-    setStreamText("");
     sendFrame({
       type: "chat.message",
       scope: desiredScope,
@@ -3210,15 +2978,12 @@ export function useSuperChat({
     const activeTurn = activeTurnIdRef.current;
     if (activeTurn) {
       clearActiveTurn(scopeKey, activeTurn);
-      replyStreamTextRef.current.delete(`${scopeKey}\u0000${activeTurn}`);
     }
     activeTurnIdRef.current = null;
     pendingClientTurnIdRef.current = null;
     setActiveTurnId(null);
     setMessages([]);
     messagesRef.current = [];
-    setStreamText("");
-    streamTextRef.current = "";
     setApprovals([]);
     setPinnedIds(new Set());
     setDeletedIds(new Set());
@@ -3460,7 +3225,6 @@ export function useSuperChat({
     removeAssistantMessagePart,
     replaceAssistantMessagePart,
     pinnedIds,
-    streamText,
     switchModel,
     togglePin,
     updateUiEvent,

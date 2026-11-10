@@ -791,6 +791,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "Compactando o contexto…",
+    "contextCompacted": "Contexto compactado para a conversa continuar",
     "directorRunMode": {
       "manualLabel": "Modo manual",
       "manualDescription": "Confirmar cada etapa de geração antes da execução",

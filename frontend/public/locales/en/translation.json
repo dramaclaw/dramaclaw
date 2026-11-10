@@ -791,6 +791,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "Compacting context…",
+    "contextCompacted": "Context compacted so the conversation can continue",
     "clearChat": {
       "title": "Clear this chat?",
       "description": "This chat history will be deleted. Your next message will start a new Agent context. The canvas, project, and other chats will stay unchanged. Running generation tasks will continue.",

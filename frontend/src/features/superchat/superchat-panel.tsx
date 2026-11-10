@@ -1861,7 +1861,8 @@ function isAgentRuntimePart(part: ChatMessagePart): boolean {
   return part.type === "tool_status"
     || part.type === "agent_plan"
     || part.type === "agent_thought"
-    || part.type === "agent_usage";
+    || part.type === "agent_usage"
+    || part.type === "context_compaction";
 }
 
 function messageHasAgentRuntimeActivity(message: ChatMessage): boolean {
@@ -1871,7 +1872,8 @@ function messageHasAgentRuntimeActivity(message: ChatMessage): boolean {
 function isVisibleAgentProgressPart(part: ChatMessagePart): boolean {
   return part.type === "tool_status"
     || part.type === "agent_plan"
-    || part.type === "agent_thought";
+    || part.type === "agent_thought"
+    || part.type === "context_compaction";
 }
 
 function messageHasVisibleAgentProgressActivity(message: ChatMessage): boolean {
@@ -2332,6 +2334,15 @@ function AgentRuntimeTimeline({
                 {statusText}{repeatText}
               </span>
               {detail && <span className="min-w-0 flex-1 break-words text-[11px] text-red-200/80">{detail}</span>}
+            </div>
+          );
+        }
+        if (part.type === "context_compaction") {
+          const running = part.event && typeof part.event === "object"
+            && "status" in part.event && part.event.status === "running";
+          return (
+            <div key={part.id} className="py-0.5 text-muted-foreground">
+              {t(running ? "aiAssistant.contextCompacting" : "aiAssistant.contextCompacted")}
             </div>
           );
         }
@@ -13818,11 +13829,7 @@ export function SuperChatPanel({
       const anchorTextPrefix =
         typeof detail.anchorTextPrefix === "string"
           ? detail.anchorTextPrefix
-          : assistantAnchorText
-            ? assistantAnchorText
-            : turnId && turnId === chat.activeTurnId && chat.streamText
-              ? chat.streamText
-              : null;
+          : assistantAnchorText || null;
       const surfaceOrder = Date.now();
       if (turnId) {
         const activity: CanvasContextActivity = {
@@ -13857,7 +13864,6 @@ export function SuperChatPanel({
   }, [
     activeMessages,
     chat.activeTurnId,
-    chat.streamText,
     chat,
     effectiveFreezoneCanvasId,
     freezoneAgentMatches,
@@ -14711,11 +14717,6 @@ export function SuperChatPanel({
   const lastActiveMessageId = activeMessages[activeMessages.length - 1]?.id ?? "";
   const deferStructuredRender =
     chat.busy && !chat.settings.showStructuredSourceWhileStreaming;
-  const streamTextAlreadyRendered =
-    Boolean(chat.streamText)
-    && visibleMessages.some(
-      (message) => message.role === "assistant" && message.text === chat.streamText,
-    );
   const lastConversationalMessage = [...activeMessages]
     .reverse()
     .find((message) => message.role === "user" || message.role === "assistant");
@@ -14773,7 +14774,7 @@ export function SuperChatPanel({
     );
   const thinkingCanvasContextActivity = useMemo(() => {
     if (hasActiveComposerPrompt) return null;
-    if (variant !== "freezone" || !chat.busy || !chat.activeTurnId || chat.streamText.trim()) return null;
+    if (variant !== "freezone" || !chat.busy || !chat.activeTurnId) return null;
     const turnId = chat.activeTurnId;
     const hasAssistantText = activeMessages.some(
       (message) =>
@@ -14809,7 +14810,6 @@ export function SuperChatPanel({
     canvasContextActivitiesByMessageId,
     chat.activeTurnId,
     chat.busy,
-    chat.streamText,
     hasActiveComposerPrompt,
     pendingCanvasCommandApprovals,
     persistedCanvasCommandFeedbackByMessageId,
@@ -14824,7 +14824,6 @@ export function SuperChatPanel({
   );
   const showWaitingIndicator =
     chat.busy
-    && !chat.streamText.trim()
     && !hasActiveComposerPrompt
     && !thinkingCanvasContextActivity
     && (
@@ -14917,7 +14916,7 @@ export function SuperChatPanel({
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [chat.busy, chat.messages, chat.streamText, showWaitingIndicator, scrollToChatBottom]);
+  }, [chat.busy, chat.messages, showWaitingIndicator, scrollToChatBottom]);
 
   useEffect(() => {
     const list = messageListRef.current;
@@ -16382,7 +16381,7 @@ export function SuperChatPanel({
                   <div className="text-xs leading-5">{t("aiAssistant.syncingHistoryDescription")}</div>
                 </div>
               </div>
-            ) : chat.messages.length === 0 && !chat.streamText && !showWaitingIndicator && orphanCanvasCommandSurfaces.length === 0 ? (
+            ) : chat.messages.length === 0 && !showWaitingIndicator && orphanCanvasCommandSurfaces.length === 0 ? (
               <div className={cn("mx-auto flex h-full w-full max-w-[760px] items-center justify-center text-center", isFreezoneLayout && "max-w-none")}>
                 <div className="max-w-64 text-sm text-muted-foreground">
                   <div className="mb-2 font-medium text-foreground">{t("aiAssistant.emptyTitle")}</div>
@@ -16447,32 +16446,6 @@ export function SuperChatPanel({
                     />
                   </div>
                 ))}
-                {chat.streamText && !streamTextAlreadyRendered && (
-                  <MessageBubble
-                    message={{
-                      id: "streaming",
-                      role: "assistant",
-                      text: chat.streamText,
-                      timestamp: Date.now(),
-                    }}
-                    variant={variant}
-                    onOpenDetail={setDetailMessage}
-                    onOpenMedia={setMediaDetail}
-                    pinned={false}
-                    onDelete={() => undefined}
-                    onTogglePin={() => undefined}
-                    deferStructuredRender={deferStructuredRender}
-                    streaming={chat.busy}
-                    onSubmitSkillStudioQuestionResponse={submitSkillStudioQuestionResponse}
-                    onSubmitSkillStudioDraftResponse={submitSkillStudioDraftResponse}
-                    onStartSkillStudioDraftRevision={startSkillStudioDraftRevision}
-                    onSkillStudioDraftChange={handleSkillStudioDraftChange}
-                    onCancelSkillStudioDraft={handleCancelSkillStudioDraft}
-                    onPreserveScrollAnchor={preserveScrollAnchor}
-                    freezoneSkillSuggestions={freezoneSkillSuggestions}
-                    freezoneRecipeCatalog={freezoneRecipeCatalog}
-                  />
-                )}
                 {orphanCanvasCommandSurfaces.map((surface) => (
                   <MessageBubble
                     key={`orphan-canvas-surface:${surface.id}`}
