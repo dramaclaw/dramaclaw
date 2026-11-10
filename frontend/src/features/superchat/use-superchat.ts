@@ -1907,6 +1907,12 @@ export function useSuperChat({
     });
   }, []);
   const [historyReady, setHistoryReady] = useState(false);
+  const [hasOlderHistory, setHasOlderHistory] = useState(false);
+  const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
+  const historyBeforeRef = useRef<string | null>(null);
+  const olderHistoryRef = useRef<ChatMessage[]>([]);
+  const lastSnapshotRef = useRef<ChatMessage[]>([]);
+  const loadingOlderRef = useRef(false);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [relayInstances, setRelayInstances] = useState<RelayInstanceInfo[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>("");
@@ -1958,6 +1964,17 @@ export function useSuperChat({
   const requestHistory = useCallback(() => {
     sendFrame({ type: "scope.set", scope: desiredScopeRef.current });
   }, [sendFrame]);
+
+  const loadOlderHistory = useCallback(() => {
+    const cursor = historyBeforeRef.current;
+    if (!hasOlderHistory || loadingOlderRef.current || !cursor) return;
+    loadingOlderRef.current = true;
+    setLoadingOlderHistory(true);
+    if (!sendFrame({ type: "scope.set", scope: desiredScopeRef.current, history_before: cursor })) {
+      loadingOlderRef.current = false;
+      setLoadingOlderHistory(false);
+    }
+  }, [hasOlderHistory, sendFrame]);
 
   const [recoveringBusyScope, setRecoveringBusyScope] = useState(false);
   useEffect(() => {
@@ -2228,12 +2245,25 @@ export function useSuperChat({
         if (history.some(message => (message.raw as Record<string, unknown> | undefined)?.parts_incomplete)) {
           setError(i18next.t("chatSnapshot.historyIncomplete"));
         }
+        if (frame.has_more !== true) {
+          olderHistoryRef.current = [];
+          historyBeforeRef.current = null;
+          setHasOlderHistory(false);
+        } else if (olderHistoryRef.current.length === 0) {
+          historyBeforeRef.current = typeof frame.before === "string" ? frame.before : null;
+          setHasOlderHistory(Boolean(historyBeforeRef.current));
+        } else {
+          const historyIds = new Set(history.map(message => message.id));
+          olderHistoryRef.current.push(...lastSnapshotRef.current.filter(message => !historyIds.has(message.id)));
+        }
+        lastSnapshotRef.current = history;
+        const combinedHistory = sortMessages(dedupeMessagesById([...olderHistoryRef.current, ...history]));
         const currentMessages = messagesRef.current;
         const protectedTurnId = activeTurnIdRef.current ?? recentlyCompletedTurnIdRef.current;
         setHistoryMessages((current) => {
           const preserveRemoteBusy = frame.busy === true
             && (currentTurnIsLive(protectedTurnId, current) || liveOnConnection(protectedTurnId));
-          const merged = mergeHistorySnapshot(current, history, protectedTurnId, preserveRemoteBusy);
+          const merged = mergeHistorySnapshot(current, combinedHistory, protectedTurnId, preserveRemoteBusy);
           saveCachedMessages(scopeKey, merged);
           return merged;
         });
@@ -2254,6 +2284,21 @@ export function useSuperChat({
           recentlyCompletedTurnIdRef.current = null;
           setBusy(false);
         }
+        break;
+      }
+      case "history.page": {
+        const frameScope = isChatScope(frame.scope) ? frame.scope : undefined;
+        if (!scopeMatches(frameScope, desiredScopeRef.current) || !loadingOlderRef.current) break;
+        const page = mergeHistory(
+          Array.isArray(frame.history) ? frame.history : [],
+          frameScope ?? desiredScopeRef.current,
+        );
+        olderHistoryRef.current = sortMessages(dedupeMessagesById([...page, ...olderHistoryRef.current]));
+        setHistoryMessages(current => sortMessages(dedupeMessagesById([...page, ...current])));
+        historyBeforeRef.current = typeof frame.before === "string" ? frame.before : null;
+        setHasOlderHistory(frame.has_more === true && Boolean(historyBeforeRef.current));
+        loadingOlderRef.current = false;
+        setLoadingOlderHistory(false);
         break;
       }
       case "chat.busy": {
@@ -2783,6 +2828,8 @@ export function useSuperChat({
       superchatDebug("close", { code: event.code, reason: event.reason });
       wsRef.current = null;
       setConnected(false);
+      loadingOlderRef.current = false;
+      setLoadingOlderHistory(false);
       const hasActiveTurn = Boolean(activeTurnIdRef.current ?? pendingClientTurnIdRef.current);
       setConnecting(hasActiveTurn);
       if (hasActiveTurn) {
@@ -2830,6 +2877,12 @@ export function useSuperChat({
     setActiveModel(null);
     setModelsLoading(false);
     setHistoryReady(false);
+    historyBeforeRef.current = null;
+    olderHistoryRef.current = [];
+    lastSnapshotRef.current = [];
+    loadingOlderRef.current = false;
+    setHasOlderHistory(false);
+    setLoadingOlderHistory(false);
     pendingClientTurnIdRef.current = null;
     recentlyCompletedTurnIdRef.current = null;
     const cachedMessages = loadCachedMessages(scopeKey);
@@ -3205,6 +3258,9 @@ export function useSuperChat({
     deleteMessage,
     deletedIds,
     historyReady,
+    hasOlderHistory,
+    loadingOlderHistory,
+    loadOlderHistory,
     messages,
     models,
     modelsLoading,

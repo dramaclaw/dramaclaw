@@ -7413,6 +7413,156 @@ describe("story approval continuity translations", () => {
   });
 });
 
+describe("older chat history pages", () => {
+  const scope = { kind: "project", id: "history-pages", surface: "director", canvasId: null };
+  const turn = (number: number) => ["user", "assistant"].map((role, index) => ({
+    id: `turn-${number}-${role}`,
+    role,
+    content: `Turn ${number} ${role}`,
+    turn_id: `turn-${number}`,
+    created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, number * 2 + index)).toISOString(),
+    parts: [],
+  }));
+  const allIds = [
+    "turn-1-user", "turn-1-assistant", "turn-2-user", "turn-2-assistant",
+    "turn-3-user", "turn-3-assistant", "turn-4-user", "turn-4-assistant",
+  ];
+  const sockets: TestSocket[] = [];
+  const sent: unknown[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose: ((event: CloseEvent) => void) | null = null;
+    constructor() { sockets.push(this); }
+    send(frame: string) { sent.push(JSON.parse(frame)); }
+    close() {}
+  }
+  const frame = async (payload: Record<string, unknown>) => {
+    await act(async () => {
+      sockets[0].onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+    });
+  };
+  const snapshot = (history = turn(3), before: string | null = "c3", hasMore = true) =>
+    frame({ type: "scope.changed", scope, history, before, has_more: hasMore, busy: false });
+  const page = (history = [...turn(1), ...turn(2)], before: string | null = "c1", hasMore = true) =>
+    frame({ type: "history.page", scope, history, before, has_more: hasMore });
+  const setup = async () => {
+    const hook = renderHook(({ project }) => useSuperChat({ project, displayName: "Tester" }), {
+      initialProps: { project: "history-pages" },
+    });
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => { sockets[0].onopen?.(); });
+    await snapshot();
+    sent.length = 0;
+    return hook;
+  };
+  const loadFirstPage = async (hook: Awaited<ReturnType<typeof setup>>) => {
+    expect(hook.result.current.hasOlderHistory).toBe(true);
+    act(() => { hook.result.current.loadOlderHistory(); });
+    await page();
+    expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds.slice(0, 6));
+    sent.length = 0;
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    sockets.length = 0;
+    sent.length = 0;
+    vi.stubGlobal("WebSocket", TestSocket);
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("P1 loads older pages once per request and stops at an empty final page", async () => {
+    const hook = await setup();
+    try {
+      expect(hook.result.current.hasOlderHistory).toBe(true);
+      expect(hook.result.current.loadingOlderHistory).toBe(false);
+      act(() => {
+        hook.result.current.loadOlderHistory();
+        hook.result.current.loadOlderHistory();
+      });
+      expect(sent).toEqual([{ type: "scope.set", scope, history_before: "c3" }]);
+      expect(hook.result.current.loadingOlderHistory).toBe(true);
+      // Repeated page entries must not create repeated messages.
+      await page([...turn(1), ...turn(2), ...turn(2)]);
+      expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds.slice(0, 6));
+      expect(hook.result.current.loadingOlderHistory).toBe(false);
+      act(() => { hook.result.current.loadOlderHistory(); });
+      expect(sent).toEqual([
+        { type: "scope.set", scope, history_before: "c3" },
+        { type: "scope.set", scope, history_before: "c1" },
+      ]);
+      await page([], null, false);
+      expect(hook.result.current.hasOlderHistory).toBe(false);
+      expect(hook.result.current.loadingOlderHistory).toBe(false);
+      expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds.slice(0, 6));
+      sent.length = 0;
+      act(() => { hook.result.current.loadOlderHistory(); });
+      expect(sent).toEqual([]);
+    } finally { hook.unmount(); }
+  });
+
+  it("P2 keeps loaded pages, turns displaced by snapshots, and the older cursor", async () => {
+    const hook = await setup();
+    try {
+      await loadFirstPage(hook);
+      await snapshot(turn(4), "c4");
+      expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds);
+      act(() => { hook.result.current.loadOlderHistory(); });
+      expect(sent).toEqual([{ type: "scope.set", scope, history_before: "c1" }]);
+    } finally { hook.unmount(); }
+  });
+
+  it("P3 replaces loaded pages with a complete authoritative snapshot", async () => {
+    const hook = await setup();
+    try {
+      await loadFirstPage(hook);
+      const history = [...turn(1), ...turn(2), ...turn(3), ...turn(4)]
+        .map(message => ({ ...message, content: `Snapshot ${message.id}` }));
+      await snapshot(history, null, false);
+      expect(hook.result.current.messages.map(message => [message.id, message.text])).toEqual([
+        ["turn-1-user", "Snapshot turn-1-user"],
+        ["turn-1-assistant", "Snapshot turn-1-assistant"],
+        ["turn-2-user", "Snapshot turn-2-user"],
+        ["turn-2-assistant", "Snapshot turn-2-assistant"],
+        ["turn-3-user", "Snapshot turn-3-user"],
+        ["turn-3-assistant", "Snapshot turn-3-assistant"],
+        ["turn-4-user", "Snapshot turn-4-user"],
+        ["turn-4-assistant", "Snapshot turn-4-assistant"],
+      ]);
+      expect(hook.result.current.hasOlderHistory).toBe(false);
+      act(() => { hook.result.current.loadOlderHistory(); });
+      expect(sent).toEqual([]);
+    } finally { hook.unmount(); }
+  });
+
+  it("P4 ignores unsolicited pages and other scopes while a request is pending", async () => {
+    const hook = await setup();
+    try {
+      await page();
+      expect(hook.result.current.messages.map(message => message.id)).toEqual([
+        "turn-3-user", "turn-3-assistant",
+      ]);
+      expect(hook.result.current.hasOlderHistory).toBe(true);
+      act(() => { hook.result.current.loadOlderHistory(); });
+      await frame({ type: "history.page", scope: { ...scope, id: "other-project" },
+        history: turn(1), before: null, has_more: false });
+      expect(hook.result.current.messages.map(message => message.id)).toEqual([
+        "turn-3-user", "turn-3-assistant",
+      ]);
+      expect(hook.result.current.loadingOlderHistory).toBe(true);
+      await page();
+      expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds.slice(0, 6));
+      await page(turn(4), null, false);
+      expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds.slice(0, 6));
+      expect(hook.result.current.hasOlderHistory).toBe(true);
+    } finally { hook.unmount(); }
+  });
+});
+
 it("does not write replayed history but saves live edits after reconnect", async () => {
   apiPostMock.mockClear();
   const sockets: TestSocket[] = [];

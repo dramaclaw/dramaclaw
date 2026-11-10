@@ -823,6 +823,8 @@
     "emptyTitle": "Bắt đầu trò chuyện",
     "emptyDescription": "Hỏi về tiến độ dự án, các tác vụ thất bại, hoặc nhờ trợ lý sắp xếp kế hoạch sáng tác của bạn.",
     "syncingHistoryTitle": "Đang khởi tạo cuộc trò chuyện",
+    "loadEarlierMessages": "Tải tin nhắn cũ hơn",
+    "loadingEarlierMessages": "Đang tải tin nhắn cũ hơn…",
     "syncingHistoryDescription": "Đang kết nối tới Xia Director và đồng bộ lịch sử chat. Vui lòng đợi.",
     "disclaimer": "Xia Director có thể mắc lỗi. Hãy kiểm tra lại các chi tiết quan trọng về cốt truyện, nhân vật và asset.",
     "placeholder": "Sau khi tải kịch bản lên, hãy nhờ Xia Director đẩy tiến độ tập phim, hình ảnh, âm thanh hoặc video hoàn chỉnh",

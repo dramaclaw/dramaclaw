@@ -844,6 +844,8 @@
     "emptyTitle": "开始对话",
     "emptyDescription": "可以询问项目进度、任务失败原因，或让助手帮你整理创作思路。",
     "syncingHistoryTitle": "正在初始化会话",
+    "loadEarlierMessages": "加载更早的消息",
+    "loadingEarlierMessages": "正在加载更早的消息…",
     "syncingHistoryDescription": "正在连接虾导并同步历史对话，请稍候。",
     "disclaimer": "虾导可能会出错，请核对关键剧情、角色与资产信息。",
     "placeholder": "上传剧本后，说出要推进的分集、画面、配音或成片任务",

@@ -24,6 +24,9 @@ const superChatMocks = vi.hoisted(() => ({
   activeTurnId: null as string | null,
   showToolEvents: false,
   replaceAssistantMessagePart: vi.fn(),
+  hasOlderHistory: false,
+  loadingOlderHistory: false,
+  loadOlderHistory: vi.fn(),
 }));
 
 const eventBusMocks = vi.hoisted(() => ({
@@ -222,10 +225,10 @@ vi.mock("@/features/superchat/use-superchat", () => ({
     clearPinned: vi.fn(),
     deleteMessage: vi.fn(),
     deletedIds: new Set<string>(),
-    historyHasMore: false,
-    historyLoadingOlder: false,
+    hasOlderHistory: superChatMocks.hasOlderHistory,
+    loadingOlderHistory: superChatMocks.loadingOlderHistory,
     historyReady: true,
-    loadOlderHistory: vi.fn(),
+    loadOlderHistory: superChatMocks.loadOlderHistory,
     messages: superChatMocks.messages,
     models: [],
     modelsLoading: false,
@@ -281,10 +284,39 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     superChatMocks.busy = false;
     superChatMocks.activeTurnId = null;
     superChatMocks.showToolEvents = false;
+    superChatMocks.hasOlderHistory = false;
+    superChatMocks.loadingOlderHistory = false;
+    superChatMocks.loadOlderHistory.mockClear();
     eventBusMocks.on.mockClear();
     apiMocks.post.mockClear();
     useCanvasStore.getState().setCanvasData([], []);
     useCanvasStore.getState().setSelectedNode(null);
+  });
+
+  it("loads earlier messages with an English button and disables it while loading", () => {
+    localeState.language = "en";
+    superChatMocks.hasOlderHistory = true;
+    superChatMocks.messages = [{
+      id: "turn-3-user", role: "user", text: "Recent message", timestamp: 6,
+    }];
+    const view = render(<SuperChatPanel variant="freezone" canvasId="canvas-a"
+      workflowStatusEnabled={false} />);
+    const button = screen.getByRole("button", { name: "Load earlier messages" });
+    expect(button).toBeEnabled();
+    superChatMocks.loadOlderHistory.mockClear();
+    fireEvent.click(button);
+    expect(superChatMocks.loadOlderHistory).toHaveBeenCalled();
+
+    superChatMocks.loadingOlderHistory = true;
+    view.rerender(<SuperChatPanel variant="freezone" canvasId="canvas-a"
+      workflowStatusEnabled={false} />);
+    expect(screen.getByRole("button", { name: "Loading earlier messages…" })).toBeDisabled();
+
+    superChatMocks.hasOlderHistory = false;
+    superChatMocks.loadingOlderHistory = false;
+    view.rerender(<SuperChatPanel variant="freezone" canvasId="canvas-a"
+      workflowStatusEnabled={false} />);
+    expect(screen.queryByRole("button", { name: "Load earlier messages" })).not.toBeInTheDocument();
   });
 
   it("localizes selection, execution mode and Skill controls without changing reference data", async () => {

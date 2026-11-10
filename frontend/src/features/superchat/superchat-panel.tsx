@@ -12916,6 +12916,8 @@ export function SuperChatPanel({
   }, [agentBillingReference, isFreezoneLayout]);
   const shouldStickToBottomRef = useRef(true);
   const suppressAutoScrollUntilRef = useRef(0);
+  const restoreFromBottomRef = useRef<number | null>(null);
+  const firstMessageBeforeOlderRef = useRef<string | null>(null);
   const historyScrollKeyRef = useRef<string | null>(null);
   const composerShellRef = useRef<HTMLDivElement | null>(null);
   const composerBeamRef = useRef<BorderBeamController | null>(null);
@@ -14713,7 +14715,6 @@ export function SuperChatPanel({
     persistedCanvasCommandFeedbackByMessageId,
     visibleMessages,
   ]);
-  const activeMessageCount = activeMessages.length;
   const lastActiveMessageId = activeMessages[activeMessages.length - 1]?.id ?? "";
   const deferStructuredRender =
     chat.busy && !chat.settings.showStructuredSourceWhileStreaming;
@@ -14896,6 +14897,38 @@ export function SuperChatPanel({
     });
   }, []);
 
+  const firstRenderedMessageId = visibleMessages[0]?.id ?? "";
+  const loadOlderHistory = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || !chat.hasOlderHistory || chat.loadingOlderHistory) return;
+    restoreFromBottomRef.current = el.scrollHeight - el.scrollTop;
+    firstMessageBeforeOlderRef.current = firstRenderedMessageId;
+    shouldStickToBottomRef.current = false;
+    suppressAutoScrollUntilRef.current = Date.now() + 1500;
+    chat.loadOlderHistory();
+  }, [chat.hasOlderHistory, chat.loadingOlderHistory, chat.loadOlderHistory, firstRenderedMessageId]);
+  const olderHistoryStateRef = useRef({
+    hasOlderHistory: chat.hasOlderHistory,
+    loadingOlderHistory: chat.loadingOlderHistory,
+    loadOlderHistory,
+  });
+  olderHistoryStateRef.current = {
+    hasOlderHistory: chat.hasOlderHistory,
+    loadingOlderHistory: chat.loadingOlderHistory,
+    loadOlderHistory,
+  };
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || restoreFromBottomRef.current === null) return;
+    if (firstRenderedMessageId !== firstMessageBeforeOlderRef.current) {
+      el.scrollTop = el.scrollHeight - restoreFromBottomRef.current;
+      restoreFromBottomRef.current = null;
+    } else if (!chat.loadingOlderHistory) {
+      restoreFromBottomRef.current = null;
+    }
+  }, [chat.messages, chat.loadingOlderHistory, firstRenderedMessageId]);
+
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -14903,6 +14936,10 @@ export function SuperChatPanel({
       const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
       shouldStickToBottomRef.current = distanceToBottom < 96;
       setShowScrollToBottom(distanceToBottom > 180);
+      const olderHistory = olderHistoryStateRef.current;
+      if (el.scrollTop < 120 && olderHistory.hasOlderHistory && !olderHistory.loadingOlderHistory) {
+        olderHistory.loadOlderHistory();
+      }
     };
     updateStickiness();
     el.addEventListener("scroll", updateStickiness, { passive: true });
@@ -14949,7 +14986,7 @@ export function SuperChatPanel({
 
   useEffect(() => {
     if (!chat.historyReady) return;
-    const scrollKey = `${params.project ?? ""}:${activeMessageCount}:${lastActiveMessageId}`;
+    const scrollKey = `${params.project ?? ""}:${lastActiveMessageId}`;
     if (historyScrollKeyRef.current === scrollKey) return;
     historyScrollKeyRef.current = scrollKey;
     shouldStickToBottomRef.current = true;
@@ -14968,7 +15005,7 @@ export function SuperChatPanel({
       window.clearTimeout(secondTimeout);
       window.clearTimeout(thirdTimeout);
     };
-  }, [activeMessageCount, chat.historyReady, lastActiveMessageId, params.project, scrollToChatBottom]);
+  }, [chat.historyReady, lastActiveMessageId, params.project, scrollToChatBottom]);
 
   useEffect(() => {
     setQueuedMessages([]);
@@ -16390,6 +16427,20 @@ export function SuperChatPanel({
               </div>
             ) : (
               <div ref={messageListRef} className={cn("mx-auto w-full max-w-[760px] space-y-5", isFreezoneLayout && "max-w-none space-y-4")}>
+                {chat.hasOlderHistory && (
+                  <div className="flex justify-center">
+                    <button
+                      type="button"
+                      className="tap-button text-xs text-muted-foreground"
+                      onClick={loadOlderHistory}
+                      disabled={chat.loadingOlderHistory}
+                    >
+                      {chat.loadingOlderHistory
+                        ? t("aiAssistant.loadingEarlierMessages")
+                        : t("aiAssistant.loadEarlierMessages")}
+                    </button>
+                  </div>
+                )}
                 {visibleMessages.map((message) => (
                   <div
                     key={message.id}

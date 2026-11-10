@@ -844,6 +844,8 @@
     "emptyTitle": "Start a conversation",
     "emptyDescription": "Ask about project progress, failed tasks, or have the assistant organize your creative plan.",
     "syncingHistoryTitle": "Initializing conversation",
+    "loadEarlierMessages": "Load earlier messages",
+    "loadingEarlierMessages": "Loading earlier messages…",
     "syncingHistoryDescription": "Connecting to Xia Director and syncing chat history. Please wait.",
     "disclaimer": "Xia Director can make mistakes. Check key story, character, and asset details.",
     "placeholder": "After uploading a script, ask Xia Director to advance episodes, visuals, audio, or final video",
