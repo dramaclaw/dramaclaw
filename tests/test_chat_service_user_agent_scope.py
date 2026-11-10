@@ -6746,191 +6746,59 @@ def test_director_history_path_ignores_agent_id(monkeypatch, tmp_path):
     assert not (state_root / "admin" / "project-a" / "_chat").exists()
 
 
-def test_chat_ui_events_attach_to_user_message_when_turn_has_no_assistant(
-    monkeypatch, tmp_path
-):
+@pytest.mark.parametrize("async_read", [False, True], ids=["sync", "async"])
+def test_list_messages_returns_stored_rows_only(monkeypatch, tmp_path, async_read):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     scope = ChatScope(
         kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
     )
-
-    chat_store.append_message("admin", scope, "user", "加个视频节点", turn_id="turn-a")
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {
-            "type": "canvas_command_approval",
-            "schema_version": "canvas_command_approval.v1",
-            "canvas_id": "canvas-a",
-            "bridge_key": "bridge-a",
-            "envelopes": [],
-        },
-    )
-
-    messages = chat_store.list_messages("admin", scope)
-
-    assert messages[0]["role"] == "user"
-    assert messages[0]["ui_events"][0]["type"] == "canvas_command_approval"
-
-
-def test_chat_message_parts_keep_canvas_feedback_after_stale_snapshot(
-    monkeypatch, tmp_path
-):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope = ChatScope(
-        kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
-    )
-
     chat_store.append_message("admin", scope, "user", "生成下分镜", turn_id="turn-a")
-    chat_store.append_message("admin", scope, "assistant", "", turn_id="turn-a")
-    context_part = {
-        "id": "canvas_context:context:bridge-a:validation",
-        "type": "canvas_context",
-        "event": {
-            "key": "context:bridge-a:validation",
-            "bridgeKey": "bridge-a:validation",
-            "status": "done",
-            "errors": [],
-        },
-    }
-    approval_part = {
-        "id": "canvas_approval:bridge:bridge-a:turn:turn-a",
-        "type": "canvas_approval",
-        "event": {
-            "key": "bridge:bridge-a:turn:turn-a",
-            "bridgeKey": "bridge-a",
-        },
-    }
-    feedback_part = {
-        "id": "canvas_feedback:bridge:bridge-a:turn:turn-a",
-        "type": "canvas_feedback",
-        "event": {
-            "key": "bridge:bridge-a:turn:turn-a",
-            "errors": ["节点动作完成但未产出 imageUrl。"],
-        },
-    }
+    chat_store.append_message("admin", scope, "assistant", "好的", turn_id="turn-a")
+    chat_store.append_ui_event("admin", scope, "turn-a", {
+        "type": "assistant.message_parts",
+        "parts": [{"id": "text-1", "type": "text", "text": "旧快照"}],
+    })
+    chat_store.append_ui_event("admin", scope, "turn-a", {
+        "type": "assistant.clarification.request", "clarification_id": "c1", "question": "继续?",
+    })
 
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {"type": "assistant.message_parts", "parts": [context_part, approval_part]},
+    messages = (
+        asyncio.run(chat_store.list_messages_async("admin", scope))
+        if async_read else chat_store.list_messages("admin", scope)
     )
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {"type": "assistant.message_parts", "parts": [context_part, feedback_part]},
-    )
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {"type": "assistant.message_parts", "parts": [context_part]},
-    )
-
-    messages = chat_store.list_messages("admin", scope)
-    assistant = next(message for message in messages if message["role"] == "assistant")
-    part_types = [part["type"] for part in assistant["parts"]]
-    feedback = next(
-        part for part in assistant["parts"] if part["type"] == "canvas_feedback"
-    )
-
-    assert "canvas_feedback" in part_types
-    assert "canvas_approval" not in part_types
-    assert feedback["event"]["errors"] == ["节点动作完成但未产出 imageUrl。"]
+    assert [(m["role"], m["content"], m.get("parts"), m.get("ui_events")) for m in messages] == [
+        ("user", "生成下分镜", None, None), ("assistant", "好的", None, None),
+    ]
 
 
-def test_chat_message_parts_drop_stale_skill_studio_status_snapshot(
-    monkeypatch, tmp_path
-):
+def test_append_ui_event_stores_each_server_event(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     scope = ChatScope(
         kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
     )
+    chat_store.append_ui_event("admin", scope, "turn-a", {
+        "type": "assistant.message_parts",
+        "parts": [{"id": "a", "type": "text", "text": "1"}],
+    })
+    chat_store.append_ui_event("admin", scope, "turn-a", {
+        "type": "assistant.message_parts",
+        "parts": [{"id": "b", "type": "text", "text": "2"}],
+    })
 
-    chat_store.append_message(
-        "admin", scope, "user", "做一个公益短片 skill", turn_id="turn-a"
-    )
-    chat_store.append_message(
-        "admin", scope, "assistant", "草稿已生成。", turn_id="turn-a"
-    )
-    question_part = {
-        "id": "skill_studio.questions:question-key",
-        "type": "skill_studio",
-        "event": {
-            "type": "skill_studio.questions",
-            "bridge_key": "question-key",
-            "submitted": True,
-            "questions": [],
-        },
-    }
-    status_part = {
-        "id": "skill_studio.status:skill_studio.status",
-        "type": "skill_studio",
-        "event": {
-            "type": "skill_studio.status",
-            "status": "draft_patch_applied",
-            "message": "已更新 Recipe: public-welfare-storyboard-images",
-        },
-    }
-    text_part = {"id": "text-3", "type": "text", "text": "草稿已生成。"}
-
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {"type": "assistant.message_parts", "parts": [status_part, question_part]},
-    )
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {"type": "assistant.message_parts", "parts": [question_part, text_part]},
-    )
-
-    messages = chat_store.list_messages("admin", scope)
-    assistant = next(message for message in messages if message["role"] == "assistant")
-
-    assert [part["type"] for part in assistant["parts"]] == ["skill_studio", "text"]
-    assert [
-        part.get("event", {}).get("type")
-        for part in assistant["parts"]
-        if part["type"] == "skill_studio"
-    ] == ["skill_studio.questions"]
-
-
-def test_chat_history_does_not_restore_orphan_parts_outside_message_limit(
-    monkeypatch, tmp_path
-):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope = ChatScope(
-        kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
-    )
-
-    chat_store.append_message("admin", scope, "user", "旧请求", turn_id="turn-old")
-    chat_store.append_message(
-        "admin", scope, "assistant", "完整旧回复", turn_id="turn-old"
-    )
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-old",
-        {
+    with chat_store.connect("admin", scope) as conn:
+        rows = conn.execute(
+            "SELECT event_type, payload_json FROM chat_ui_events ORDER BY id"
+        ).fetchall()
+    assert [(row["event_type"], json.loads(row["payload_json"])) for row in rows] == [
+        ("assistant.message_parts", {
             "type": "assistant.message_parts",
-            "parts": [{"id": "text-old", "type": "text", "text": "残缺旧回复"}],
-        },
-    )
-    chat_store.append_message("admin", scope, "user", "新请求", turn_id="turn-new")
-    chat_store.append_message(
-        "admin", scope, "assistant", "完整新回复", turn_id="turn-new"
-    )
-
-    messages = chat_store.list_messages("admin", scope, limit=2)
-
-    assert [message["content"] for message in messages] == ["新请求", "完整新回复"]
-    assert all(message.get("turn_id") != "turn-old" for message in messages)
+            "parts": [{"id": "a", "type": "text", "text": "1"}],
+        }),
+        ("assistant.message_parts", {
+            "type": "assistant.message_parts",
+            "parts": [{"id": "b", "type": "text", "text": "2"}],
+        }),
+    ]
 
 
 def test_chat_scope_round_trips_freezone_canvas_payload() -> None:

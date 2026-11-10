@@ -171,7 +171,6 @@ docs/canvas-reply-outcome-contract.md,Elastic-2.0,2026 SuperTale contributors,RE
 docs/changes/2026-08-26.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/changes/2026-08-27.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/changes/2026-08-28.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-docs/chat-history-oom-recovery.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/chat-presentation-boundary.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/chat-refresh-recovery.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/compliance/copyleft-deps.csv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -321,7 +320,6 @@ frontend/docker/19-payment-form-csp.envsh,Elastic-2.0,2026 SuperTale contributor
 frontend/docker/20-openfilm-preview.envsh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/docker/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/docker/nginx.conf.template,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/e2e/chat-oom.html,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/e2e/playwright.config.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/e2e/previz-record.e2e.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/e2e/previz.html,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2882,7 +2880,6 @@ frontend/src/features/superchat/canvas-execution-narration.ts,Elastic-2.0,2026 S
 frontend/src/features/superchat/chat-attachment-files.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/superchat/chat-task-status-bar.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/superchat/composer-waiting-status.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/src/features/superchat/dev/oom-harness.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/superchat/director-run-mode.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/superchat/director-run-mode.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/superchat/freezone-node-suggestions.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3322,7 +3319,6 @@ scripts/backend_i18n_allowlist.json,Elastic-2.0,2026 SuperTale contributors,REUS
 scripts/backfill_thumbnails.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/benchmark_canvas_command_health.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/benchmark_canvas_command_watch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-scripts/benchmark_chat_history_bounds.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/benchmarks/skill_import_search.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/build_piko_audio.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/build_piko_female_motion.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3345,7 +3341,6 @@ scripts/check_env_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml a
 scripts/check_frontend_i18n.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/check_workflow_agent_contracts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/cleanup_html_artifact_exports.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-scripts/compact_chat_ui_events.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/compliance/generate_p0b_artifacts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/convert_canvas_voice_refs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/fetch_browser_models.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4239,7 +4234,6 @@ tests/test_chat_runtime_event_mapper.py,Elastic-2.0,2026 SuperTale contributors,
 tests/test_chat_runtime_history.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_service_user_agent_scope.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_session_registry.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-tests/test_chat_snapshot_bounds.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_timeout_diagnostics.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_turn_images.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_ws_dropped_frame_log.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
