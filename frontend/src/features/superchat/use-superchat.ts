@@ -1090,21 +1090,21 @@ export function mergeHistorySnapshot(
   );
 }
 
-function isAssistantDeltaPatch(
-  frame: Extract<ServerFrame, { type: "assistant.delta" }>,
-): boolean {
+type AssistantDeltaFrame = Extract<ServerFrame, { type: "assistant.delta" }>;
+
+function isAssistantDeltaPatch(frame: ServerFrame): frame is AssistantDeltaFrame {
+  const { offset, text } = frame as Partial<AssistantDeltaFrame>;
   return (
-    Number.isInteger(frame.offset)
-    && frame.offset >= 0
-    && typeof frame.text === "string"
+    frame.type === "assistant.delta"
+    && typeof offset === "number"
+    && Number.isInteger(offset)
+    && offset >= 0
+    && typeof text === "string"
   );
 }
 
 /** Replace the reply from `offset` (UTF-16 units, i.e. JS string indices) with `text`. */
-function applyAssistantDelta(
-  previous: string,
-  frame: Extract<ServerFrame, { type: "assistant.delta" }>,
-): string {
+function applyAssistantDelta(previous: string, frame: AssistantDeltaFrame): string {
   return `${previous.slice(0, frame.offset)}${frame.text}`;
 }
 
