@@ -6,7 +6,7 @@ from copy import deepcopy
 import logging
 from types import SimpleNamespace
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 import pytest
 
@@ -286,7 +286,10 @@ def test_changed_targets_voids_without_execution(setup):
                              })
     response = decide(setup, created)
     assert response.status_code == 409, response.text
-    assert response.json()["detail"] == {"code": "targets_changed", "node_ids": ["n1"]}
+    assert response.json()["detail"] == {
+        "code": "targets_changed", "node_ids": ["n1"],
+        "message": "目标节点已删除或已变化（n1），确认已作废，未执行。",
+    }
     assert record(setup, created)["status"] == "voided"
     assert "target nodes changed (n1)" in notices(setup)[0]["content"]
     assert canvas_store.read_canvas(setup.root, "default")["revision"] == 2
@@ -298,7 +301,10 @@ def test_card_requires_browser_credential(setup, credential):
     setup.user[0] = {**AGENT, "credential_kind": credential}
     response = decide(setup, created)
     assert response.status_code == 403, response.text
-    assert response.json()["detail"] == {"code": "card_requires_browser"}
+    assert response.json()["detail"] == {
+        "code": "card_requires_browser",
+        "message": "确认卡片只能由浏览器里的用户点击，未执行。",
+    }
     assert record(setup, created)["status"] == "pending"
 
 
@@ -306,7 +312,9 @@ def test_conversation_requires_agent_credential(setup):
     created = create(setup)
     response = decide(setup, created, via="conversation", turn_id="t2")
     assert response.status_code == 403
-    assert response.json()["detail"] == {"code": "conversation_requires_agent"}
+    assert response.json()["detail"] == {
+        "code": "conversation_requires_agent", "message": "对话确认只能由 Agent 调用，未执行。",
+    }
 
 
 def test_conversation_requires_later_turn_then_executes_without_card_notice(setup):
@@ -350,6 +358,32 @@ def test_paid_confirm_requires_presence_then_submits_exact_bridge_envelope(setup
     }
     assert nodes(setup) == ["n1", "n2", "n3"]
     assert record(setup, created)["status"] == "confirmed"
+
+
+def test_unknown_confirmation_returns_readable_error(setup):
+    response = setup.client.post(
+        BASE + "/confirmations/cc_unknown/decision",
+        json={"decision": "refused", "via": "card"},
+    )
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == {
+        "code": "not_found", "message": "找不到这条确认记录，未执行。",
+    }
+
+
+def test_execution_error_without_code_preserves_http_error(setup, monkeypatch, caplog):
+    created = create(setup)
+
+    async def fail_execution(**kwargs):
+        raise HTTPException(422, {"message": "Command rejected"})
+
+    monkeypatch.setattr(routes, "execute_agent_canvas_envelopes", fail_execution)
+    with caplog.at_level(logging.INFO):
+        response = decide(setup, created)
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == {"message": "Command rejected"}
+    assert record(setup, created)["status"] == "voided"
+    assert "execution_failed" in caplog.text
 
 
 def test_other_canvas_cannot_decide_record(setup):

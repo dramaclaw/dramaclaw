@@ -18111,6 +18111,17 @@ async def decide_canvas_confirmation(
 
     def reject(status: int, code: str, **detail) -> HTTPException:
         _log_canvas_confirmation_decision(record, code, body.via, now)
+        messages = {
+            "invalid_canvas_id": "画布 ID 无效，未执行。",
+            "card_requires_browser": "确认卡片只能由浏览器里的用户点击，未执行。",
+            "conversation_requires_agent": "对话确认只能由 Agent 调用，未执行。",
+            "not_found": "找不到这条确认记录，未执行。",
+            "targets_changed": (
+                f"目标节点已删除或已变化（{', '.join(detail.get('node_ids', []))}），"
+                "确认已作废，未执行。"
+            ),
+        }
+        detail.setdefault("message", messages.get(code, "画布确认未通过，未执行。"))
         return HTTPException(status, {"code": code, **detail})
 
     if not CANVAS_ID_RE.match(canvas_id):
@@ -18190,7 +18201,9 @@ async def decide_canvas_confirmation(
             )
             _log_canvas_confirmation_decision(record, "voided", body.via, now)
             if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
-                _log_canvas_confirmation_decision(record, exc.detail["code"], body.via, now)
+                _log_canvas_confirmation_decision(
+                    record, exc.detail.get("code") or "execution_failed", body.via, now,
+                )
             raise
         await asyncio.to_thread(
             canvas_confirmations.finish_confirmation, directory, confirmation_id,

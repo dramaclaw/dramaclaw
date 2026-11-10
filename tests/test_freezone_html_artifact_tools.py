@@ -34,7 +34,6 @@ def test_server_executor_routes_html_through_frontend(monkeypatch):
     monkeypatch.setattr(plugin, '_request', lambda method, path: {
         'ok': True, 'data': {'browser_open': True},
     })
-    monkeypatch.setattr(plugin, '_mcp_canvas_approval_enabled', lambda: False)
     dispatched = []
     monkeypatch.setattr(plugin, '_dispatch_mcp_approved_frontend_commands', lambda **k: dispatched.append(k) or {'ok':True})
     plugin._emit_canvas_commands('p','c',[{'type':'html_artifact','action':'create','title':'Hello','html':'hello'}])

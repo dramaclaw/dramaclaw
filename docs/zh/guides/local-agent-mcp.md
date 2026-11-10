@@ -125,23 +125,11 @@ Authorization: Bearer xxx
 
 ## 画布操作说明
 
-外部 Agent 默认不直接修改后端画布 payload。Freezone 写操作复用内置 Hermes 的画布 bridge：
-
-```text
-MCP freezone 工具
-  -> 外部聊天中请求确认
-  -> 用户在 Codex / Claude / OpenClaw 中确认
-  -> 写 pending canvas command
-  -> 浏览器前端自动执行节点/连线/工作流操作
-  -> 回写 result
-  -> MCP 工具返回结果
-```
-
-因此，使用 Codex/Claude 操作虾画时，需要浏览器中打开对应 Freezone 页面。这样可以让 React Flow 状态、选中状态、节点尺寸、autosave 和进度显示保持即时同步。
+删除节点、清空画布、会消耗积分的生成需要确认（30 分钟有效，过期需重新确认）；其它结构改动直接执行。外部 Agent 在自己的对话里得到用户明确同意后调用 `freezone_confirm_canvas_action`，取消用 `freezone_cancel_canvas_action`。运行节点和工作流仍需要浏览器打开画布。
 
 互动故事四个工具是例外：Create/Patch 调用 CE API，由 `InteractiveStoryService` 在后端写入完整故事投影，不写 pending canvas command。产品内 Agent 会根据成功工具帧自动刷新当前画布并保护未保存本地编辑；外部 MCP 客户端当前没有通用的浏览器刷新广播，写入后需要宿主适配刷新或手动刷新/重新打开画布。
 
-`DRAMACLAW_EXTERNAL_MCP=1` 只用于外部 Agent 入口。内置 Hermes 不设置该变量，因此仍使用虾画聊天内的审批卡；外部 Agent 则在 Codex / Claude / OpenClaw 自己的聊天中确认，确认后前端自动执行命令，不弹出虾画聊天审批。
+`DRAMACLAW_EXTERNAL_MCP=1` 只用于外部 Agent 入口。需要确认的操作在有当前对话轮次且画布打开时显示虾画聊天确认卡，否则在对话中请求确认。
 
 当外部 Agent 真正运行图片或视频节点时，授权 MCP 会在审批和画布写入前执行参数预检。
 如果模型、比例、分辨率/质量、时长、声音开关或数量仍有缺项，会返回
