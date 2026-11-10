@@ -1212,7 +1212,8 @@ def revert_codex_thread_history(
         THREAD_TURNS_LIST,
         CodexThreadResponse,
         ThreadRevertResponse,
-        ThreadTurnIdsPage,
+        ThreadTurnsPage,
+        newest_turns_params,
         oldest_turn_params,
         thread_revert_params,
     )
@@ -1236,10 +1237,10 @@ def revert_codex_thread_history(
         raise CodexThreadHistoryModeError(
             f"Codex thread {thread_id} has history mode {mode}; cannot clear history"
         )
-    newest_params = {"threadId": thread_id, "limit": 1, "itemsView": "notLoaded"}
+    newest_params = newest_turns_params(thread_id, limit=1)
     if response.thread.status.type == "active":
         newest = client.request(
-            THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnIdsPage
+            THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnsPage
         )
         if newest.data and newest.data[0].status == "inProgress":
             client.turn_interrupt(thread_id, newest.data[0].id)
@@ -1258,7 +1259,7 @@ def revert_codex_thread_history(
                 f"Codex thread {thread_id} still has a turn in flight; cannot clear history"
             )
     oldest = client.request(
-        THREAD_TURNS_LIST, oldest_turn_params(thread_id), response_model=ThreadTurnIdsPage
+        THREAD_TURNS_LIST, oldest_turn_params(thread_id), response_model=ThreadTurnsPage
     )
     if not oldest.data:
         return "empty"
@@ -1268,7 +1269,7 @@ def revert_codex_thread_history(
         response_model=ThreadRevertResponse,
     )
     remaining = client.request(
-        THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnIdsPage
+        THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnsPage
     )
     if remaining.data:
         raise RuntimeError(f"Codex thread {thread_id} still has turns after clearing history")

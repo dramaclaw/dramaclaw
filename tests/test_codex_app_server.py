@@ -1351,7 +1351,7 @@ async def test_public_patched_runtime_clear_keeps_thread_without_prior_history(
     monkeypatch, tmp_path
 ):
     from openai_codex import CodexConfig
-    from novelvideo.chat.codex_protocol import ThreadTurnIdsPage
+    from novelvideo.chat.codex_protocol import ThreadTurnsPage
 
     codex_bin = _contract_codex_bin()
     scripted = [
@@ -1405,7 +1405,7 @@ async def test_public_patched_runtime_clear_keeps_thread_without_prior_history(
             ) == "reverted"
             with codex_app_server.shared_codex(config) as codex:
                 page = codex._client.request(
-                    "thread/turns/list", {"threadId": thread_id}, response_model=ThreadTurnIdsPage
+                    "thread/turns/list", {"threadId": thread_id}, response_model=ThreadTurnsPage
                 )
             assert page.data == []
             third = [
