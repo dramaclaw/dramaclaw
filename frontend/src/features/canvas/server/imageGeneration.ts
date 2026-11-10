@@ -4,7 +4,8 @@ import {
   buildImageGenerationRequest, imagePromptCompileInput, imagePromptCompileMetadataPatch,
   imageGenerationStartPatch, imageGenerationSubmitPatch, imageGenerationAcceptedPatch, imageGenerationOutcomePatch,
   type ImageGenerationOutcome, type ImageGenerationOutcomeInput, type ImageGenerationRequestContext,
-  type ImageGenerationTaskRef,
+  type ImageGenerationTaskRef, type ImageGenerationSettledRun, type ImageGenerationSettleOutcome,
+  imageGenerationRunAccepted, imageGenerationBackgroundFailurePatch, imageGenerationSettleOutcome, imageGenerationActionResult,
 } from '../application/generationRequests';
 import { imageModelOptionsFromPayload } from '../domain/modelCatalogPayload';
 import { SHARED_MODELS } from '../domain/modelOptions';
@@ -12,6 +13,8 @@ import { isRecord, isFiniteNumber } from '@/features/freezone/canvasCommandEnvel
 import { createServerTranslate } from './i18n';
 import { runServerRequest } from './requestScope';
 import { invalidRequest, parseCanvasPayload } from './requestPayload';
+import { parseGenerationErrorInfo } from './generationError';
+import * as p from './generationPayload';
 
 function parseProductOperation(value: unknown): ImageGenerationRequestContext['productOperation'] {
   if (value === undefined || value === null) return null;
@@ -65,6 +68,9 @@ function parseOutcome(value: unknown): ImageGenerationOutcome {
   }
   if ((value.kind !== 'failed' && value.kind !== 'cancelled' && value.kind !== 'reference_invalid' && value.kind !== 'compile_failed') ||
     typeof value.message !== 'string') invalidRequest('Invalid image generation outcome kind or message');
+  if (value.kind === 'failed' && value.error !== undefined) {
+    return { kind: 'failed', message: value.message, error: parseGenerationErrorInfo(value.error) };
+  }
   return { kind: value.kind, message: value.message };
 }
 
@@ -115,6 +121,9 @@ function parsePatch(payload: unknown): ImageGenerationPatch {
 }
 
 export async function serveImageGenerationPatch(payload: unknown) {
+  if (isRecord(payload) && typeof payload.phase === 'string' && ['settle', 'run_accepted', 'background_failure', 'action_result'].includes(payload.phase)) {
+    return serveImageGenerationAddition(payload);
+  }
   const input = parsePatch(payload);
   const locale = input.phase === 'outcome' ? input.locale : undefined;
   return runServerRequest(locale, async () => {
@@ -130,4 +139,58 @@ export async function serveImageGenerationPatch(payload: unknown) {
       }
     }
   });
+}
+
+function settledRun(value: unknown): ImageGenerationSettledRun {
+  const input = p.record(value);
+  if (input.status === 'fulfilled') {
+    p.fields(input, ['status', 'value']);
+    return { status: 'fulfilled', value: p.choice(input.value, ['completed', 'submitted', 'ignored', 'handled']) };
+  }
+  if (input.status !== 'rejected') invalidRequest('Unknown settled run status');
+  p.fields(input, ['status', 'message']);
+  return { status: 'rejected', message: p.string(input.message) };
+}
+function settleOutcome(value: unknown): ImageGenerationSettleOutcome {
+  const input = p.record(value);
+  switch (input.kind) {
+    case 'output': p.fields(input, ['kind', 'output']); return { kind: 'output', output: p.record(input.output) };
+    case 'rethrow': p.fields(input, ['kind', 'runIndex']); return { kind: 'rethrow', runIndex: p.number(input.runIndex) };
+    case 'undefined': p.fields(input, ['kind']); return { kind: 'undefined' };
+    case 'no_result': {
+      p.fields(input, ['kind', 'patch', 'error']);
+      const error = p.fields(input.error, ['message']);
+      return { kind: 'no_result', patch: p.record(input.patch), error: { message: p.string(error.message) } };
+    }
+    default: return invalidRequest('Unknown image settle outcome');
+  }
+}
+async function serveImageGenerationAddition(payload: unknown) {
+  const { input, phase, locale } = p.patch(payload);
+  switch (phase) {
+    case 'run_accepted': {
+      const accepted = { runIndex: p.number(input.run_index), acceptedRefs: p.array(input.accepted_refs, p.task), task: p.task(input.task) };
+      return runServerRequest(locale, async () => imageGenerationRunAccepted(accepted));
+    }
+    case 'background_failure': {
+      const failure = { runIndex: p.number(input.run_index), message: p.string(input.message), error: p.optional(input.error, parseGenerationErrorInfo) };
+      return runServerRequest(locale, async () => imageGenerationBackgroundFailurePatch({ ...failure, translate: await createServerTranslate(locale) }));
+    }
+    case 'settle': {
+      const settle = { settled: p.array(input.settled, settledRun), completedUrls: p.array(input.completed_urls, p.string),
+        acceptedRefs: p.array(input.accepted_refs, p.task), completionMode: p.choice(input.completion_mode, ['completed', 'submitted']) };
+      return runServerRequest(locale, async () => imageGenerationSettleOutcome({ ...settle, translate: await createServerTranslate(locale) }));
+    }
+    case 'action_result': {
+      if (p.hasField(input, 'error_message')) {
+        if (p.hasField(input, 'settle_outcome') || p.hasField(input, 'settled')) invalidRequest('Ambiguous image action input');
+        const errorMessage = p.string(input.error_message);
+        return runServerRequest(locale, async () => imageGenerationActionResult({ errorMessage }));
+      }
+      const action = { settleOutcome: settleOutcome(input.settle_outcome), settled: p.array(input.settled, settledRun) };
+      if (action.settleOutcome.kind === 'rethrow' && action.settled[action.settleOutcome.runIndex]?.status !== 'rejected') invalidRequest('Expected the original rejected run');
+      return runServerRequest(locale, async () => imageGenerationActionResult(action));
+    }
+    default: return invalidRequest('Unknown image generation patch phase');
+  }
 }

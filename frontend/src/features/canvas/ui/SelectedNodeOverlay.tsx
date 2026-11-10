@@ -18,7 +18,6 @@ import {
   submitFreezoneTemplateEdit,
   submitFreezoneUpscale,
   type FreezoneOutpaintAspectRatio,
-  type FreezoneTemplateEditMode,
 } from '@/api/ops';
 import { awaitTaskCompletion } from '@/api/tasks';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
@@ -70,7 +69,7 @@ import { DEFAULT_UPSCALE_MODEL_ID, SHARED_MODELS } from '@/features/canvas/domai
 import { OutpaintEditorOverlay } from './OutpaintEditorOverlay';
 import { RotateEditorOverlay } from './RotateEditorOverlay';
 import { ImageResizeOverlay } from './ImageResizeOverlay';
-import type { GridActionKey } from '@/features/canvas/application/gridTemplateAction';
+import { GRID_RUN_ACTIONS } from '@/features/canvas/application/generationRequests/imageToolRequest';
 import type { GridActionRequest } from './NodeActionToolbar';
 import { spawnAssetBoardImageOpNode } from '@/features/canvas/application/assetBoardImageOps';
 import { readUrl } from '@/lib/url-params';
@@ -166,63 +165,6 @@ const NODE_ID_BADGE_OFFSET_WITH_ACTIONS =
 const NODE_ID_BADGE_OFFSET = NODE_TOOLBAR_OFFSET;
 const DEFAULT_OUTPAINT_ASPECT_RATIO: FreezoneOutpaintAspectRatio = 'original';
 const DEFAULT_OUTPAINT_IMAGE_SIZE = '2K';
-
-const GRID_RUN_ACTIONS: Record<string, {
-  key: GridActionKey;
-  i18nKey: string;
-  mode: FreezoneTemplateEditMode;
-}> = {
-  run_grid_multi_camera: {
-    key: 'multiCameraGrid',
-    i18nKey: 'nodeToolbar.gridMenu.multiCameraGrid',
-    mode: 'multi_camera_nine_grid',
-  },
-  run_grid_plot_four: {
-    key: 'plotFourGrid',
-    i18nKey: 'nodeToolbar.gridMenu.plotFourGrid',
-    mode: 'story_pitch_four_grid',
-  },
-  run_grid_face_three_view: {
-    key: 'faceThreeView',
-    i18nKey: 'nodeToolbar.gridMenu.faceThreeView',
-    mode: 'character_face_three_view',
-  },
-  run_grid_product_three_view: {
-    key: 'productThreeView',
-    i18nKey: 'nodeToolbar.gridMenu.productThreeView',
-    mode: 'product_three_view',
-  },
-  run_grid_serial_storyboard_25: {
-    key: 'serialStoryboard25',
-    i18nKey: 'nodeToolbar.gridMenu.serialStoryboard25',
-    mode: 'storyboard_25_grid',
-  },
-  run_grid_cinematic_light_correction: {
-    key: 'cinematicLightCorrection',
-    i18nKey: 'nodeToolbar.gridMenu.cinematicLightCorrection',
-    mode: 'cinematic_light_correction',
-  },
-  run_grid_character_three_view: {
-    key: 'characterThreeView',
-    i18nKey: 'nodeToolbar.gridMenu.characterThreeView',
-    mode: 'character_three_view_generation',
-  },
-  run_grid_scene_setting_sheet: {
-    key: 'sceneSettingSheet',
-    i18nKey: 'nodeToolbar.gridMenu.sceneSettingSheet',
-    mode: 'scene_setting_sheet',
-  },
-  run_grid_frame_projection_3s_later: {
-    key: 'frameProjection3sLater',
-    i18nKey: 'nodeToolbar.gridMenu.frameProjection3sLater',
-    mode: 'image_projection_after_3s',
-  },
-  run_grid_frame_projection_5s_earlier: {
-    key: 'frameProjection5sEarlier',
-    i18nKey: 'nodeToolbar.gridMenu.frameProjection5sEarlier',
-    mode: 'image_projection_before_5s',
-  },
-};
 
 const NODE_TOOL_DIALOG_ACTIONS: Record<string, NodeToolType> = {
   open_crop_tool: NODE_TOOL_TYPES.crop,

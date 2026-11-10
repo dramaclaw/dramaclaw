@@ -6,6 +6,20 @@ import path from "path";
 
 // These tests use Node APIs only; keep browser fixtures out of their workers.
 const nodeTests = [
+  "src/__tests__/features/canvas-core/server-world-upstream.test.ts",
+  "src/__tests__/features/canvas-core/canvas-server-world-upstream-bundle.test.ts",
+  "src/__tests__/features/canvas-core/server-image-tool.test.ts",
+  "src/__tests__/features/canvas-core/server-audio-translate.test.ts",
+  "src/__tests__/features/canvas-core/server-world-generation.test.ts",
+  "src/__tests__/features/canvas-core/canvas-server-tool-bundle.test.ts",
+
+  "src/__tests__/features/canvas-core/server-video-generation.test.ts",
+  "src/__tests__/features/canvas-core/server-audio-generation.test.ts",
+  "src/__tests__/features/canvas-core/server-text-generation.test.ts",
+  "src/__tests__/features/canvas-core/server-generation-error.test.ts",
+  "src/__tests__/features/canvas-core/server-image-generation-additions.test.ts",
+  "src/__tests__/features/canvas-core/canvas-server-generation-bundle.test.ts",
+
   "src/__tests__/features/canvas-core/server-image-generation.test.ts",
   "src/__tests__/features/canvas-core/canvas-server-image-generation-bundle.test.ts",
   "src/__tests__/features/canvas-core/server-context-i18n.test.ts",

@@ -8,12 +8,10 @@ import {
   submitFreezoneAudioMusic,
   submitFreezoneAudioSpeech,
 } from '@/api/ops';
+import { deriveAudioText, normalizeMusicPrompt } from './audioGenerationText';
 import { requiresCustomVoiceSelection, usesLegacySpeechVoice } from './audioVoicePolicy';
 import { awaitTaskCompletion } from '@/api/tasks';
-import {
-  type AudioNodeData,
-  type AudioTextSegment,
-} from '@/features/canvas/domain/canvasNodes';
+import type { AudioNodeData } from '@/features/canvas/domain/canvasNodes';
 import { joinUpstreamText } from '@/features/canvas/application/graphContentResolver';
 import {
   CLEARED_GENERATION_TASK_FIELDS,
@@ -37,28 +35,11 @@ import { useModelTaskAccess } from '@/lib/model-task-access';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 
-const MAX_MUSIC_PROMPT_CHARS = 4_100;
-
-function normalizeMusicPrompt(prompt: string): string {
-  const trimmed = prompt.trim();
-  if (trimmed.length <= MAX_MUSIC_PROMPT_CHARS) return trimmed;
-  const tailLength = 200;
-  return `${trimmed.slice(0, MAX_MUSIC_PROMPT_CHARS - tailLength)}\n${trimmed.slice(-tailLength)}`;
-}
-
 /**
  * 老节点数据可能还带着 segments（旧版分段编辑器留下的）。新版直接读 `text`，
  * 没的话回退去拼 segments — 这样老节点打开后用户就能继续编辑。
  */
-export function deriveAudioText(data: AudioNodeData): string {
-  if (typeof data.text === 'string') return data.text;
-  if (Array.isArray(data.segments)) {
-    return data.segments
-      .map((seg: AudioTextSegment) => (seg.type === 'text' ? seg.value : ''))
-      .join('');
-  }
-  return '';
-}
+export { deriveAudioText } from './audioGenerationText';
 
 /**
  * 音频节点的生成逻辑——提交按钮（面板）和失败重试（节点本体）共用。
