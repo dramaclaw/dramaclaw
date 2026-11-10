@@ -1963,15 +1963,6 @@ export function useSuperChat({
     }
   }, [hasOlderHistory, sendFrame]);
 
-  const [recoveringBusyScope, setRecoveringBusyScope] = useState(false);
-  useEffect(() => {
-    if (!recoveringBusyScope || !connected || !busy) return;
-    // A previous socket can still be cancelling its turn when the new socket
-    // receives scope.changed. Its terminal frame will go to the old socket.
-    const timer = window.setInterval(requestHistory, 2000);
-    return () => window.clearInterval(timer);
-  }, [recoveringBusyScope, connected, busy, scopeKey, requestHistory]);
-
   const markTurnActive = useCallback((turnId: string | null) => {
     if (!turnId) return;
     activeTurnIdRef.current = turnId;
@@ -2189,7 +2180,6 @@ export function useSuperChat({
         if (!scopeMatches(frameScope, desiredScopeRef.current)) break;
         const liveOnConnection = (turnId: string | null | undefined) =>
           Boolean(turnId && liveTurnIdsRef.current.has(turnId));
-        setRecoveringBusyScope(frame.busy === true && !liveOnConnection(activeTurnIdRef.current));
         setHistoryReady(true);
         const history = mergeHistory(
           Array.isArray(frame.history) ? frame.history : [],
@@ -2223,7 +2213,9 @@ export function useSuperChat({
         const activeTurnId = activeTurnIdRef.current;
         // A partial reply makes the turn look settled to currentTurnIsLive; a turn still
         // streaming on this connection stays active while the server reports busy.
-        if (
+        if (frame.busy === true && typeof frame.turn_id === "string") {
+          markTurnActive(frame.turn_id);
+        } else if (
           shouldKeepActiveTurnAfterScopeSync(frame.busy, activeTurnId, currentMessages)
           || (frame.busy === true && liveOnConnection(activeTurnId))
         ) {
@@ -2233,9 +2225,10 @@ export function useSuperChat({
           // the server no longer owns a live turn, clear any cached local
           // activeTurn instead of reviving a permanently busy composer.
           markTurnInactive(activeTurnId);
+          setBusy(frame.busy === true);
         } else if (!activeTurnIdRef.current) {
           recentlyCompletedTurnIdRef.current = null;
-          setBusy(false);
+          setBusy(frame.busy === true);
         }
         break;
       }
@@ -2615,6 +2608,9 @@ export function useSuperChat({
       case "chat.done": {
         const completedTurnId =
           typeof frame.turn_id === "string" && frame.turn_id.trim() ? frame.turn_id : null;
+        const completesOtherTurn = typeof frame.turn_id === "string"
+          && activeTurnIdRef.current !== null
+          && frame.turn_id !== activeTurnIdRef.current;
         if (completedTurnId) {
           setApprovals((current) => current.filter((approval) => approval.turnId !== completedTurnId));
         }
@@ -2632,11 +2628,13 @@ export function useSuperChat({
         ) {
           cancelledTurnIdsRef.current.delete(frame.turn_id);
           clearAbortGrace();
-          markTurnInactive(frame.turn_id);
-          requestHistory();
-          break;
+          if (!completesOtherTurn) {
+            markTurnInactive(frame.turn_id);
+            requestHistory();
+            break;
+          }
         }
-        finalizeStream();
+        if (!completesOtherTurn) finalizeStream();
         if (frame.message != null) {
           const messageScope = frameScope(frame) ?? desiredScopeRef.current;
           setMessages((current) =>
@@ -2709,7 +2707,6 @@ export function useSuperChat({
       for (const turnId of turnIds) {
         if (typeof turnId === "string" && turnId.trim()) liveTurnIdsRef.current.add(turnId);
       }
-      setRecoveringBusyScope(false);
     }
   }, [
     clearAbortGrace,

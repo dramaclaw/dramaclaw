@@ -1,20 +1,16 @@
-"""Project-scoped chat lock identity, ownership, and file lifecycle.
-
-The application supplies the lock directory and process liveness callback;
-this module does not depend on chat transport, Agent runtimes, or databases.
-"""
+"""Chat start locks and persisted Codex session and turn ownership."""
 
 from __future__ import annotations
 
 import json
 import hashlib
 import os
-import socket
-import uuid
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Callable
-from typing import Any, ContextManager
+from typing import Any, ContextManager, TextIO
+
+import portalocker
 
 # Shown to the user when another turn of theirs is still running; the chat route
 # maps every "busy" failure onto this one message (see routes/chat.py).
@@ -22,62 +18,22 @@ CHAT_RUN_BUSY_MESSAGE = "当前用户已有 AI 对话正在处理中，请稍后
 
 
 _CHAT_RUN_LOCK_KEY = "active_chat_run"
-_CHAT_RUN_LOCK_TTL_SECONDS = 2 * 60
-_CHAT_RUN_LOCK_MAX_SECONDS = 60 * 60
-_CHAT_RUN_LOCK_HEARTBEAT_SECONDS = 30.0
-_CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS = 5.0
 
 
-def _parse_iso_datetime(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
+@dataclass(frozen=True)
+class ActiveChatTurn:
+    turn_id: str | None
 
 
-def _parse_chat_run_lock(
-    value: str | None,
-) -> tuple[str | None, str | None, int | None, datetime | None, datetime | None]:
-    if not value:
-        return None, None, None, None, None
-    try:
-        payload = json.loads(value)
-    except json.JSONDecodeError:
-        return value, None, None, None, None
-    if not isinstance(payload, dict):
-        return None, None, None, None, None
-    lock_id = payload.get("lock_id")
-    owner_id = payload.get("owner_id")
-    owner_pid = payload.get("owner_pid")
-    started_at = payload.get("started_at")
-    updated_at = payload.get("updated_at") or started_at
-    return (
-        str(lock_id).strip() or None if lock_id is not None else None,
-        str(owner_id).strip() or None if owner_id is not None else None,
-        int(owner_pid) if isinstance(owner_pid, int) else None,
-        _parse_iso_datetime(str(started_at)) if started_at is not None else None,
-        _parse_iso_datetime(str(updated_at)) if updated_at is not None else None,
-    )
+class ChatTurnBusyError(RuntimeError):
+    def __init__(self, turn_id: str | None = None) -> None:
+        super().__init__(CHAT_RUN_BUSY_MESSAGE)
+        self.turn_id: str | None = turn_id
 
 
-def _chat_run_lock_is_stale(
-    started_at: datetime | None,
-    updated_at: datetime | None = None,
-) -> bool:
-    now = datetime.now(timezone.utc)
-    if started_at is not None:
-        if started_at.tzinfo is None:
-            started_at = started_at.replace(tzinfo=timezone.utc)
-        if (now - started_at).total_seconds() > _CHAT_RUN_LOCK_MAX_SECONDS:
-            return True
-    heartbeat_at = updated_at or started_at
-    if heartbeat_at is None:
-        return False
-    if heartbeat_at.tzinfo is None:
-        heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
-    return (now - heartbeat_at).total_seconds() > _CHAT_RUN_LOCK_TTL_SECONDS
+@dataclass
+class ChatStartLock:
+    file: TextIO | None
 
 
 def _chat_run_lock_key(project: str) -> str:
@@ -106,159 +62,54 @@ def chat_run_lock_path(directory: Path, project: str) -> Path:
     return directory / f"{digest}.lock"
 
 
-def read_chat_run_lock_file(
-    path: Path,
-) -> tuple[str | None, str | None, int | None, datetime | None, datetime | None]:
+def _chat_start_lock_holder(lock_file: TextIO) -> str | None:
     try:
-        value = path.read_text(encoding="utf-8")
-    except OSError:
-        return None, None, None, None, None
-    return _parse_chat_run_lock(value)
+        lock_file.seek(0)
+        return lock_file.read(4096).strip() or None
+    except (OSError, UnicodeError, ValueError):
+        return None
 
 
-def remove_chat_run_lock_file(path: Path) -> None:
+def acquire_chat_run_lock(path: Path, *, turn_id: str | None = None) -> ChatStartLock:
+    lock_file = os.fdopen(os.open(path, os.O_CREAT | os.O_RDWR, 0o600), "r+", encoding="utf-8")
     try:
-        path.unlink()
+        try:
+            portalocker.lock(lock_file, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        except portalocker.exceptions.LockException:
+            raise ChatTurnBusyError(turn_id=_chat_start_lock_holder(lock_file)) from None
+        lock_file.seek(0)
+        lock_file.truncate(0)
+        lock_file.write(turn_id or "")
+        lock_file.flush()
+        return ChatStartLock(lock_file)
+    except BaseException:
+        lock_file.close()
+        raise
+
+
+def release_chat_run_lock(lock: ChatStartLock) -> None:
+    lock_file, lock.file = lock.file, None
+    if lock_file is not None:
+        try:
+            portalocker.unlock(lock_file)
+        finally:
+            lock_file.close()
+
+
+def probe_chat_start_lock(path: Path) -> ActiveChatTurn | None:
+    try:
+        lock_file = path.open("r+", encoding="utf-8")
     except FileNotFoundError:
-        pass
-
-
-def atomic_write_chat_run_lock_file(path: Path, payload: str) -> None:
-    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        return None
     try:
-        tmp_path.write_text(payload, encoding="utf-8")
-        tmp_path.replace(path)
+        try:
+            portalocker.lock(lock_file, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        except portalocker.exceptions.LockException:
+            return ActiveChatTurn(_chat_start_lock_holder(lock_file))
+        portalocker.unlock(lock_file)
+        return None
     finally:
-        tmp_path.unlink(missing_ok=True)
-
-
-def chat_run_lock_payload(lock_id: str, *, started_at: str | None = None) -> str:
-    now = datetime.now(timezone.utc).isoformat()
-    return json.dumps(
-        {
-            "lock_id": lock_id,
-            "owner_id": f"{socket.gethostname()}:{os.getpid()}",
-            "owner_pid": os.getpid(),
-            "started_at": started_at or now,
-            "updated_at": now,
-        },
-        ensure_ascii=False,
-    )
-
-
-def chat_run_lock_file_is_new(path: Path) -> bool:
-    try:
-        mtime = path.stat().st_mtime
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return True
-    return (
-        datetime.now(timezone.utc).timestamp() - mtime
-        < _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS
-    )
-
-
-def chat_run_lock_owner_is_active(
-    owner_id: str | None,
-    owner_pid: int | None,
-    started_at: datetime | None,
-    updated_at: datetime | None,
-    *,
-    pid_is_alive: Callable[[int | None], bool],
-) -> bool:
-    if started_at is None and updated_at is None:
-        return False
-    if _chat_run_lock_is_stale(started_at, updated_at):
-        return False
-    owner_host, separator, _owner_process = (owner_id or "").rpartition(":")
-    if separator and owner_host == socket.gethostname():
-        return pid_is_alive(owner_pid)
-    return True
-
-
-def acquire_chat_run_lock(
-    path: Path,
-    *,
-    owner_is_active: Callable[
-        [str | None, int | None, datetime | None, datetime | None], bool
-    ],
-) -> str:
-    lock_id = uuid.uuid4().hex
-    payload_bytes = chat_run_lock_payload(lock_id).encode("utf-8")
-    for _attempt in range(3):
-        try:
-            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            existing_lock_id, owner_id, owner_pid, started_at, updated_at = (
-                read_chat_run_lock_file(path)
-            )
-            if not existing_lock_id and chat_run_lock_file_is_new(path):
-                raise RuntimeError(CHAT_RUN_BUSY_MESSAGE)
-            if existing_lock_id and owner_is_active(
-                owner_id, owner_pid, started_at, updated_at
-            ):
-                raise RuntimeError(CHAT_RUN_BUSY_MESSAGE)
-            remove_chat_run_lock_file(path)
-            continue
-        try:
-            with os.fdopen(fd, "wb") as file:
-                file.write(payload_bytes)
-            return lock_id
-        except Exception:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-            remove_chat_run_lock_file(path)
-            raise
-    raise RuntimeError(CHAT_RUN_BUSY_MESSAGE)
-
-
-def release_chat_run_lock(path: Path, lock_id: str) -> None:
-    current_lock_id, *_ = read_chat_run_lock_file(path)
-    if current_lock_id == lock_id:
-        remove_chat_run_lock_file(path)
-
-
-def heartbeat_chat_run_lock(
-    path: Path,
-    lock_id: str,
-    *,
-    atomic_write: Callable[[Path, str], None] = atomic_write_chat_run_lock_file,
-) -> bool:
-    current_lock_id, _owner_id, _owner_pid, started_at, _updated_at = (
-        read_chat_run_lock_file(path)
-    )
-    if current_lock_id != lock_id:
-        return False
-    payload = chat_run_lock_payload(
-        lock_id,
-        started_at=started_at.isoformat() if started_at else None,
-    )
-    try:
-        atomic_write(path, payload)
-    except OSError:
-        return False
-    return True
-
-
-def chat_run_lock_is_active(
-    path: Path,
-    *,
-    owner_is_active: Callable[
-        [str | None, int | None, datetime | None, datetime | None], bool
-    ],
-) -> bool:
-    existing_lock_id, owner_id, owner_pid, started_at, updated_at = (
-        read_chat_run_lock_file(path)
-    )
-    if existing_lock_id and owner_is_active(
-        owner_id, owner_pid, started_at, updated_at
-    ):
-        return True
-    remove_chat_run_lock_file(path)
-    return False
+        lock_file.close()
 
 
 # Fixed, never bumped; protocol changes reach a live thread through turn context.
@@ -387,7 +238,7 @@ def set_codex_thread_id(
         save_codex_session_state(path, payload, write_json_atomic=write_json_atomic)
 
 
-def load_active_codex_turns(path: Path) -> dict[str, dict[str, str]]:
+def load_active_codex_turns(path: Path) -> dict[str, dict[str, Any]]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -395,7 +246,7 @@ def load_active_codex_turns(path: Path) -> dict[str, dict[str, str]]:
     if not isinstance(payload, dict):
         return {}
     return {
-        str(key): {str(k): str(v) for k, v in value.items()}
+        str(key): value
         for key, value in payload.items()
         if isinstance(value, dict)
     }
@@ -404,20 +255,18 @@ def load_active_codex_turns(path: Path) -> dict[str, dict[str, str]]:
 def set_active_codex_turn(
     path: Path,
     scope_key: str,
-    value: tuple[str, str] | tuple[str, str, str] | None,
+    value: dict[str, Any] | None,
     *,
-    load_state: Callable[[Path], dict[str, dict[str, str]]] = load_active_codex_turns,
+    load_state: Callable[[Path], dict[str, dict[str, Any]]] = load_active_codex_turns,
     index_file_lock: Callable[[Path], ContextManager[Any]],
-    write_json_atomic: Callable[[Path, dict[str, dict[str, str]]], None],
+    write_json_atomic: Callable[[Path, dict[str, dict[str, Any]]], None],
 ) -> None:
     with index_file_lock(path):
         payload = load_state(path)
         if value is None:
             payload.pop(scope_key, None)
         else:
-            payload[scope_key] = {"thread_id": value[0], "turn_id": value[1]}
-            if len(value) >= 3 and str(value[2]).strip():
-                payload[scope_key]["business_turn_id"] = str(value[2]).strip()
+            payload[scope_key] = value
         write_json_atomic(path, payload)
 
 
@@ -426,9 +275,9 @@ def clear_active_codex_turn_if_thread(
     scope_key: str,
     thread_id: str,
     *,
-    load_state: Callable[[Path], dict[str, dict[str, str]]] = load_active_codex_turns,
+    load_state: Callable[[Path], dict[str, dict[str, Any]]] = load_active_codex_turns,
     index_file_lock: Callable[[Path], ContextManager[Any]],
-    write_json_atomic: Callable[[Path, dict[str, dict[str, str]]], None],
+    write_json_atomic: Callable[[Path, dict[str, dict[str, Any]]], None],
 ) -> bool:
     """Remove an active turn only when it still belongs to ``thread_id``."""
 
@@ -440,3 +289,41 @@ def clear_active_codex_turn_if_thread(
         payload.pop(scope_key, None)
         write_json_atomic(path, payload)
         return True
+
+
+def mark_codex_turn_timeout(
+    path: Path,
+    scope_key: str,
+    turn_id: str,
+    *,
+    index_file_lock: Callable[[Path], ContextManager[Any]],
+    write_json_atomic: Callable[[Path, dict[str, Any]], None],
+) -> bool:
+    """Mark only the turn whose duration was checked, before interrupting it."""
+    with index_file_lock(path):
+        payload = load_active_codex_turns(path)
+        entry = payload.get(scope_key)
+        if entry is None or entry.get("turn_id") != turn_id:
+            return False
+        entry["timeout_reason"] = "max_duration"
+        write_json_atomic(path, payload)
+        return True
+
+
+def claim_active_codex_turn(
+    path: Path,
+    scope_key: str,
+    turn_id: str,
+    *,
+    index_file_lock: Callable[[Path], ContextManager[Any]],
+    write_json_atomic: Callable[[Path, dict[str, Any]], None],
+) -> dict[str, Any] | None:
+    """Remove and return only the turn claimed by this finalizer."""
+    with index_file_lock(path):
+        payload = load_active_codex_turns(path)
+        entry = payload.get(scope_key)
+        if entry is None or entry.get("turn_id") != turn_id:
+            return None
+        del payload[scope_key]
+        write_json_atomic(path, payload)
+        return entry

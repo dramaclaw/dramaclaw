@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import asyncio
 import time
 from dataclasses import replace
@@ -211,8 +213,8 @@ async def test_agent_continuation_is_pinned_to_the_auto_run_episode(
     monkeypatch.setattr(director_auto, "resolve_project_context", fake_resolve_project_context)
     monkeypatch.setattr(
         director_auto.chat_service,
-        "chat_run_lock_is_active",
-        lambda *_args, **_kwargs: False,
+        "active_chat_turn",
+        AsyncMock(return_value=None), raising=False,
     )
     monkeypatch.setattr(
         director_auto.chat_service,
@@ -265,7 +267,7 @@ async def test_agent_continuation_broadcasts_live_items_and_done(
     monkeypatch.setattr(director_auto, "resolve_project_context", resolve_context)
     monkeypatch.setattr(director_auto, "broadcast_project_chat_event", broadcast)
     monkeypatch.setattr(
-        director_auto.chat_service, "chat_run_lock_is_active", lambda *_args, **_kwargs: False
+        director_auto.chat_service, "active_chat_turn", AsyncMock(return_value=None), raising=False
     )
     monkeypatch.setattr(director_auto.chat_service, "stream_assistant_reply", stream_reply)
     store = DirectorAutoStore(tmp_path / "director-auto.db")
@@ -633,3 +635,43 @@ async def test_hard_paused_auto_run_cannot_be_resumed_as_declined_change(tmp_pat
 
     with pytest.raises(ValueError, match="只有等待修改确认"):
         await coordinator.resume_suspended(username="alice", project_id="project-1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("busy", [True, False])
+async def test_agent_continuation_done_only_when_turn_was_not_busy(monkeypatch, tmp_path, busy):
+    broadcasts = []
+    run = run_record(tmp_path)
+
+    async def broadcast(*, username, project_id, payload):
+        broadcasts.append(payload)
+
+    async def stream_reply(*_args, **_kwargs):
+        if busy:
+            raise director_auto.chat_service.ChatTurnBusyError(turn_id="running-turn")
+
+    monkeypatch.setattr(
+        director_auto, "resolve_project_context", AsyncMock(return_value=run.context)
+    )
+    monkeypatch.setattr(director_auto, "broadcast_project_chat_event", broadcast)
+    monkeypatch.setattr(
+        director_auto.chat_service, "active_chat_turn", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(director_auto.chat_service, "stream_assistant_reply", stream_reply)
+    store = DirectorAutoStore(tmp_path / "director-auto.db")
+    store.upsert(run)
+    coordinator = DirectorAutoCoordinator(store)
+    assert store.claim_lease(run.run_id, coordinator.owner_token)
+
+    assert await coordinator._agent_continue(run) is False
+
+    done_frames = [frame for frame in broadcasts if frame["type"] == "chat.done"]
+    if busy:
+        assert done_frames == []
+    else:
+        assert done_frames == [{
+            "type": "chat.done",
+            "scope": {"kind": "project", "id": "project-1", "surface": "director"},
+            "turn_id": done_frames[0]["turn_id"], "message": None,
+        }]
+        assert done_frames[0]["turn_id"].startswith("director-auto-run-1-")

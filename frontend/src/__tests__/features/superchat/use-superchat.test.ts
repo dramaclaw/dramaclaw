@@ -7498,6 +7498,27 @@ describe("older chat history pages", () => {
     } finally { hook.unmount(); }
   });
 
+  it("guards repeated short-page loads while pending and after has_more is false", async () => {
+    const hook = await setup();
+    try {
+      act(() => {
+        hook.result.current.loadOlderHistory();
+        hook.result.current.loadOlderHistory();
+      });
+      // Also retry after React has rendered the loading state.
+      act(() => { hook.result.current.loadOlderHistory(); });
+      expect(sent).toEqual([{ type: "scope.set", scope, history_before: "c3" }]);
+      // Keep a cursor to prove has_more alone stops further requests.
+      await page(turn(2), "c2", false);
+      expect(hook.result.current.hasOlderHistory).toBe(false);
+      act(() => {
+        hook.result.current.loadOlderHistory();
+        hook.result.current.loadOlderHistory();
+      });
+      expect(sent).toEqual([{ type: "scope.set", scope, history_before: "c3" }]);
+    } finally { hook.unmount(); }
+  });
+
   it("P2 keeps loaded pages, turns displaced by snapshots, and the older cursor", async () => {
     const hook = await setup();
     try {
@@ -7556,9 +7577,10 @@ describe("older chat history pages", () => {
   });
 });
 
-it("rechecks busy recovery until the old connection has finished cancelling", async () => {
+describe("server-owned running turns", () => {
   const sockets: TestSocket[] = [];
-  const sent: string[] = [];
+  const sent: Record<string, unknown>[] = [];
+  const scope = { kind: "project", id: "running-turn", surface: "director", canvasId: null };
   class TestSocket {
     static OPEN = 1;
     readyState = 1;
@@ -7567,36 +7589,136 @@ it("rechecks busy recovery until the old connection has finished cancelling", as
     onerror = null;
     onclose = null;
     constructor() { sockets.push(this); }
-    send(frame: string) { sent.push(frame); }
+    send(frame: string) { sent.push(JSON.parse(frame)); }
     close() {}
   }
-  vi.stubGlobal("WebSocket", TestSocket);
-  const hook = renderHook(() => useSuperChat({ project: "recovery-race", displayName: "Tester" }));
-  try {
+  const frame = async (payload: Record<string, unknown>) => {
+    await act(async () => {
+      sockets[0].onmessage?.({ data: JSON.stringify({ scope, ...payload }) } as MessageEvent);
+    });
+  };
+  const setup = async () => {
+    const hook = renderHook(() => useSuperChat({ project: "running-turn", displayName: "Tester" }));
     await waitFor(() => expect(sockets).toHaveLength(1));
-    const scope = { kind: "project", id: "recovery-race", surface: "director" };
-    const sync = async (busy: boolean) => {
-      await act(async () => {
-        sockets[0].onmessage?.({ data: JSON.stringify({ type: "scope.changed", scope, history: [], busy }) } as MessageEvent);
-      });
-    };
     await act(async () => { sockets[0].onopen?.(); });
-    await sync(false);
-    act(() => { hook.result.current.send("test recovery"); });
-    await sync(true);
-    expect(hook.result.current.busy).toBe(true);
-    const before = sent.length;
-    await waitFor(() => expect(sent.length).toBeGreaterThan(before), { timeout: 3500 });
-    expect(JSON.parse(sent[sent.length - 1]).type).toBe("scope.set");
-    await sync(false);
-    expect(hook.result.current.busy).toBe(false);
-    const after = sent.length;
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)); });
-    expect(sent).toHaveLength(after);
-  } finally {
-    hook.unmount();
+    sent.length = 0;
+    return hook;
+  };
+  beforeEach(() => {
+    localStorage.clear();
+    apiPostMock.mockClear();
+    sockets.length = 0;
+    sent.length = 0;
+    vi.stubGlobal("WebSocket", TestSocket);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
-  }
+  });
+
+  it("does not poll history after a busy scope sync", async () => {
+    const hook = await setup();
+    try {
+      await frame({ type: "scope.changed", history: [], busy: false });
+      act(() => { expect(hook.result.current.send("Continue")).toBe(true); });
+      const localTurnId = hook.result.current.activeTurnId;
+      sent.length = 0;
+      vi.useFakeTimers();
+      await frame({ type: "scope.changed", history: [], busy: true });
+      expect(hook.result.current.busy).toBe(true);
+      expect(hook.result.current.activeTurnId).toBe(localTurnId);
+      await act(async () => { vi.advanceTimersByTime(6000); });
+      expect(sent.filter(message => message.type === "scope.set")).toEqual([]);
+    } finally { hook.unmount(); }
+  });
+
+  it("stays busy without a turn id until the server reports idle", async () => {
+    const hook = await setup();
+    try {
+      await frame({ type: "scope.changed", history: [], busy: true });
+      expect(hook.result.current.busy).toBe(true);
+      expect(hook.result.current.activeTurnId).toBeNull();
+      await frame({ type: "scope.changed", history: [], busy: false });
+      expect(hook.result.current.busy).toBe(false);
+    } finally { hook.unmount(); }
+  });
+
+  it("follows a reconnected turn into one assistant message until its done frame", async () => {
+    const hook = await setup();
+    try {
+      await frame({ type: "scope.changed", history: [], busy: true, turn_id: "t-remote" });
+      expect(hook.result.current.busy).toBe(true);
+      expect(hook.result.current.activeTurnId).toBe("t-remote");
+      const target = { turn_id: "t-remote", message_id: "assistant:remote" };
+      await frame({ type: "chat.item", ...target, item_id: "msg-1",
+        card: { id: "msg-1", type: "text", text: "Hello" } });
+      await frame({ type: "chat.item.delta", ...target, item_id: "msg-1",
+        kind: "text", offset: 5, text: " world" });
+      await frame({ type: "chat.item", ...target, item_id: "msg-2",
+        card: { id: "msg-2", type: "text", text: "Still here" } });
+      expect(hook.result.current.messages.filter(message => message.role === "assistant")
+        .map(message => ({ id: message.id, turnId: message.turnId, text: message.text })))
+        .toEqual([{ id: "assistant:remote", turnId: "t-remote", text: "Hello world\n\nStill here" }]);
+      expect(hook.result.current.busy).toBe(true);
+      await frame({ type: "chat.done", turn_id: "t-remote" });
+      expect(hook.result.current.busy).toBe(false);
+      expect(hook.result.current.activeTurnId).toBeNull();
+    } finally { hook.unmount(); }
+  });
+
+  it.each([false, true])("keeps t-active running when another turn finishes (cancelled=%s)",
+    async (cancelled) => {
+      const hook = await setup();
+      try {
+        await frame({ type: "chat.busy", turn_id: "t-other" });
+        if (cancelled) act(() => { hook.result.current.abort(); });
+        await frame({ type: "chat.item", turn_id: "t-active", message_id: "assistant:active",
+          item_id: "msg-active", card: { id: "msg-active", type: "text", text: "Working" } });
+        for (const turnId of ["t-other", "t-active"]) {
+          await frame({ type: "agent.permission.requested", turn_id: turnId,
+            request_id: turnId, text: "Read file", options: [] });
+        }
+        expect(hook.result.current.approvals.map(approval => approval.turnId))
+          .toEqual(["t-other", "t-active"]);
+        await frame({ type: "chat.done", turn_id: "t-other", message: {
+          id: "assistant:other", role: "assistant", content: "Other reply", turn_id: "t-other",
+        } });
+        expect(hook.result.current.busy).toBe(true);
+        expect(hook.result.current.activeTurnId).toBe("t-active");
+        expect(hook.result.current.approvals.map(approval => approval.turnId)).toEqual(["t-active"]);
+        expect(hook.result.current.messages.filter(message => message.role === "assistant")
+          .map(message => ({ turnId: message.turnId, text: message.text })))
+          .toEqual([
+            { turnId: "t-active", text: "Working" },
+            { turnId: "t-other", text: "Other reply" },
+          ]);
+      } finally { hook.unmount(); }
+    });
+
+  it("cancels the server turn after reconnect", async () => {
+    const hook = await setup();
+    try {
+      await frame({ type: "scope.changed", history: [], busy: true, turn_id: "t-remote" });
+      act(() => { hook.result.current.abort(); });
+      expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/cancel", {
+        json: { scope, turn_id: "t-remote" },
+      });
+    } finally { hook.unmount(); }
+  });
+
+  it("keeps its own active turn when chat.busy names a different turn", async () => {
+    const hook = await setup();
+    try {
+      await frame({ type: "chat.busy", turn_id: "t-active" });
+      expect(hook.result.current.activeTurnId).toBe("t-active");
+      await frame({ type: "chat.busy", turn_id: "t-other" });
+      expect(hook.result.current.activeTurnId).toBe("t-active");
+      expect(hook.result.current.busy).toBe(true);
+      await frame({ type: "chat.done" });
+      expect(hook.result.current.activeTurnId).toBeNull();
+      expect(hook.result.current.busy).toBe(false);
+    } finally { hook.unmount(); }
+  });
 });
 
 it("updates server items for a reply that keeps streaming while the user switches canvas", async () => {
@@ -7652,7 +7774,6 @@ it("updates server items for a reply that keeps streaming while the user switche
 
 it("keeps a turn that is still streaming on this connection busy across recovery syncs", async () => {
   const sockets: TestSocket[] = [];
-  const sent: string[] = [];
   class TestSocket {
     static OPEN = 1;
     readyState = 1;
@@ -7661,7 +7782,7 @@ it("keeps a turn that is still streaming on this connection busy across recovery
     onerror = null;
     onclose = null;
     constructor() { sockets.push(this); }
-    send(frame: string) { sent.push(frame); }
+    send() {}
     close() {}
   }
   vi.stubGlobal("WebSocket", TestSocket);
@@ -7695,10 +7816,6 @@ it("keeps a turn that is still streaming on this connection busy across recovery
       bridge_key: "live-clarify", event: { type: "assistant.clarification.request",
         bridge_key: "live-clarify", clarification_id: "live", questions: [] } });
     expect(hook.result.current.busy).toBe(true);
-    // Live frames on this connection stop recovery polling.
-    const before = sent.length;
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)); });
-    expect(sent.slice(before).map(raw => JSON.parse(raw).type)).not.toContain("scope.set");
     // A busy=true sync already in flight must not end the live turn.
     await sync("first", true, history);
     expect(hook.result.current.busy).toBe(true);

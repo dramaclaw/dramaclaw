@@ -15,6 +15,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Coroutine
 from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, Any
@@ -30,6 +31,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 from pydantic import AliasChoices, BaseModel, Field, field_validator
+from sse_starlette.sse import AppStatus
 
 from novelvideo.api.auth import (
     AGENT_WRITE_SCOPES,
@@ -110,6 +112,7 @@ logger = logging.getLogger(__name__)
 
 AI_ASSISTANT_CHAT_FEATURE_KEY = "assistant.chat"
 EMPTY_AGENT_REPLY_MESSAGE = "这轮操作没有收到虾导的有效回复，请稍后重试。"
+_SHUTDOWN_POLL_INTERVAL_SECONDS = 0.5
 
 # 出网台账里这条链路的 capability 口径。取自
 # `chat/hermes_egress.py:131` 的 `capability="agent.hermes.text"`，与 EG-07 对齐；
@@ -179,7 +182,6 @@ async def cancel_chat_turn(
     """
     username = str(user["username"])
     backend_name: str | None = None
-    safe_to_recover_home_lock = False
     try:
         backend_name = chat_service.get_chat_backend_name()
     except Exception:
@@ -219,21 +221,8 @@ async def cancel_chat_turn(
             from novelvideo.chat.hermes_pool import pool as hermes_pool
 
             cancelled = await hermes_pool.close_user(username)
-        safe_to_recover_home_lock = backend_name == "hermes" and not bool(cancelled)
     except Exception:
         cancelled = False
-        # Preserve staging's Hermes recovery behavior when close_user itself
-        # fails. Codex interrupt failures leave the active-turn state unknown,
-        # so releasing its lock here could race a turn that is still settling.
-        safe_to_recover_home_lock = backend_name == "hermes"
-    if safe_to_recover_home_lock:
-        try:
-            # No backend turn remains to own the lock. Preserve staging's
-            # explicit recovery path for a stranded Home lock without racing
-            # an interrupt that is still settling in its stream finally block.
-            chat_service.force_release_chat_run_lock(username, "")
-        except Exception:
-            pass
     return {"ok": True, "data": {"cancelled": cancelled}}
 
 
@@ -273,10 +262,9 @@ async def clear_chat_scope(
             409, "当前对话仍在进行，请等待完成或先停止后再清空"
         ) from exc
 
-    heartbeat_task = asyncio.create_task(
-        chat_service._chat_run_lock_heartbeat_loop(username, lock_project, lock_id)
-    )
     try:
+        if await chat_service.active_chat_turn(username, lock_project, start_lock=lock_id):
+            raise HTTPException(409, "当前对话仍在进行，请等待完成或先停止后再清空")
         project_state_dir = project_ctx.state_dir if project_ctx is not None else None
         execution_context = (
             AgentExecutionContext.from_project_scope(scope=scope, project=project_ctx)
@@ -292,16 +280,11 @@ async def clear_chat_scope(
             canvas_id=execution_context.canvas_id if execution_context else None,
             project_state_dir=project_state_dir,
         )
-        if not chat_service._heartbeat_chat_run_lock(username, lock_project, lock_id):
-            raise HTTPException(409, "清空操作已失去对话锁，请刷新后重试")
         storage_scope = _chat_store_scope_for_project_context(scope, project_ctx)
         if project_ctx is not None and not _is_freezone_scope(scope):
             storage_scope = replace(storage_scope, state_dir=str(project_state_dir))
         cleared = await chat_store.clear_messages_async(username, storage_scope)
     finally:
-        heartbeat_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat_task
         chat_service._release_chat_run_lock(username, lock_project, lock_id)
     logger.info(
         "chat scope cleared user=%s kind=%s project=%s surface=%s canvas=%s agent=%s "
@@ -795,7 +778,7 @@ def _chat_turn_busy_message(exc: BaseException) -> str | None:
     frontend shows them through the same ``chat.busy`` frame.
     """
 
-    if isinstance(exc, CodexThreadBusyError):
+    if isinstance(exc, (CodexThreadBusyError, chat_service.ChatTurnBusyError)):
         return CHAT_RUN_BUSY_MESSAGE
     message = str(exc)
     if "当前用户已有 AI 对话正在处理中" in message:
@@ -2499,6 +2482,7 @@ async def _send_scope_changed(
     user: dict[str, Any],
     username: str,
     scope: ChatScope,
+    send_lock: asyncio.Lock | None = None,
 ) -> ChatScope | None:
     try:
         project_ctx = await _project_context_for_scope(user, scope)
@@ -2510,8 +2494,12 @@ async def _send_scope_changed(
         if not await _send_json_best_effort(
             websocket,
             {"type": "error", "message": "项目不存在或已删除，已切回首页聊天。"},
+            send_lock,
         ):
             return None
+    active_turn = await chat_service.active_chat_turn(
+        username, _chat_run_lock_project_for_scope(scope)
+    )
     page = await _history(username, scope, project_ctx=project_ctx)
     if not await _send_json_best_effort(
         websocket,
@@ -2521,10 +2509,10 @@ async def _send_scope_changed(
             "history": page.history,
             "before": page.before,
             "has_more": page.has_more,
-            "busy": chat_service.chat_run_lock_is_active(
-                username, _chat_run_lock_project_for_scope(scope)
-            ),
+            "busy": active_turn is not None,
+            "turn_id": active_turn.turn_id if active_turn else None,
         },
+        send_lock,
     ):
         return None
     return scope
@@ -2536,6 +2524,7 @@ async def _send_history_page(
     username: str,
     scope: ChatScope,
     history_before: str,
+    send_lock: asyncio.Lock | None = None,
 ) -> bool:
     page = HistoryPage([], None, False)
     try:
@@ -2558,7 +2547,7 @@ async def _send_history_page(
         "history": page.history,
         "before": page.before,
         "has_more": page.has_more,
-    })
+    }, send_lock)
 
 
 async def _send_json_best_effort(
@@ -2593,7 +2582,6 @@ async def _chat_heartbeat(
     scope: ChatScope,
     turn_id: str,
     send_lock: asyncio.Lock,
-    disconnected: asyncio.Event | None = None,
     interval_seconds: float = 10.0,
 ) -> None:
     while True:
@@ -2604,51 +2592,7 @@ async def _chat_heartbeat(
             send_lock,
         )
         if not sent:
-            if disconnected is not None:
-                disconnected.set()
             return
-
-
-async def _interrupt_agent_on_disconnect(
-    disconnected: asyncio.Event,
-    *,
-    runtime_backend: str,
-    username: str,
-    project: str,
-    agent_profile: str,
-    runtime_ids: dict[str, str | None],
-) -> None:
-    await disconnected.wait()
-    # A socket can disappear while the runtime is still starting. Give the
-    # matching turn a short window to publish its IDs, but never fall back to
-    # a username-wide shutdown.
-    for _attempt in range(100):
-        thread_id = str(runtime_ids.get("thread_id") or "").strip()
-        turn_id = str(runtime_ids.get("turn_id") or "").strip()
-        if thread_id and (runtime_backend == "hermes" or turn_id):
-            break
-        await asyncio.sleep(0.05)
-    else:
-        return
-    try:
-        if runtime_backend == "hermes":
-            from novelvideo.chat.hermes_pool import pool as hermes_pool
-
-            await hermes_pool.close_user_thread(
-                username,
-                agent_profile,
-                thread_id,
-            )
-        else:
-            await chat_service.interrupt_chat_turn(
-                username,
-                project,
-                thread_id,
-                turn_id,
-                backend=runtime_backend,
-            )
-    except Exception:
-        logger.warning("failed to interrupt disconnected chat turn", exc_info=True)
 
 
 async def _sync_running_agent_scope(username: str, scope: ChatScope) -> None:
@@ -3592,6 +3536,266 @@ def _skill_studio_status_frame(
     }
 
 
+def _start_turn_watchers(
+    *, websocket, username, scope, turn_id, send_lock, started_at, store_scope=None,
+) -> list[asyncio.Task]:
+    shared = {
+        "websocket": websocket, "username": username, "scope": scope,
+        "turn_id": turn_id, "send_lock": send_lock,
+        "emitted_bridge_keys": set(), "started_at": started_at,
+    }
+    return [
+        asyncio.create_task(_chat_heartbeat(
+            websocket, scope=scope, turn_id=turn_id, send_lock=send_lock,
+        )),
+        asyncio.create_task(_watch_pending_canvas_commands(**shared)),
+        asyncio.create_task(_watch_pending_canvas_context_requests(**shared)),
+        asyncio.create_task(_watch_pending_skill_studio_events(**shared, store_scope=store_scope)),
+        asyncio.create_task(_watch_pending_clarification_events(**shared, store_scope=store_scope)),
+    ]
+
+
+async def _stop_turn_tasks(tasks) -> None:
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _follow_scope_turn(*, websocket, user, username, scope, send_lock) -> None:
+    entry = chat_service.active_codex_turn_for_scope(username, scope)
+    if entry is None:
+        return
+    project_ctx = await _project_context_for_scope(user, scope)
+    if project_ctx is not None:
+        scope = replace(scope, state_dir=str(project_ctx.state_dir))
+    turn_id = entry["business_turn_id"]
+    on_event = _ChatFrameSender(websocket, scope, turn_id, send_lock)
+    tasks = _start_turn_watchers(
+        websocket=websocket, username=username, scope=scope, turn_id=turn_id,
+        send_lock=send_lock, started_at=entry["started_at"],
+        store_scope=_history_store_scope(scope, project_ctx),
+    )
+    try:
+        await chat_service.follow_active_codex_turn(username, scope, on_event)
+    except Exception:
+        logger.exception("failed to follow Codex turn")
+        await _send_json_best_effort(
+            websocket, {"type": "error", "turn_id": turn_id,
+                        "message": "无法跟随当前对话，请重新连接。"}, send_lock,
+        )
+    finally:
+        await _stop_turn_tasks(tasks)
+
+
+class _ChatFrameSender:
+    """One event-to-WebSocket mapping for starters and reconnecting followers."""
+
+    def __init__(self, websocket, scope, turn_id, send_lock):
+        self.websocket = websocket
+        self.scope = scope
+        self.turn_id = turn_id
+        self.send_lock = send_lock
+        self.done_sent = False
+        self.assistant_sent_text = ""
+        self.delta_encoder = AssistantDeltaEncoder()
+
+    async def __call__(self, event: dict[str, Any]) -> None:
+        event_type = event.get("type")
+        if event_type == "thread_started":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "thread.started",
+                    "scope": self.scope.to_dict(),
+                    "thread_id": event.get("thread_id"),
+                    "turn_id": event.get("turn_id") or self.turn_id,
+                },
+                self.send_lock,
+            )
+        elif event_type in {"turn_started", "turn_completed"}:
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": (
+                        "agent.turn.started"
+                        if event_type == "turn_started"
+                        else "agent.turn.completed"
+                    ),
+                    "scope": self.scope.to_dict(),
+                    "thread_id": event.get("thread_id"),
+                    "turn_id": event.get("turn_id") or self.turn_id,
+                    "status": event.get("status"),
+                    "disposition": event.get("disposition"),
+                    "error": event.get("error"),
+                },
+                self.send_lock,
+            )
+        elif event_type in {"item", "item_delta"}:
+            fields = (
+                ("message_id", "item_id", "card")
+                if event_type == "item"
+                else ("message_id", "item_id", "kind", "offset", "text")
+            )
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "chat.item" if event_type == "item" else "chat.item.delta",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": self.turn_id,
+                    **{key: event[key] for key in fields},
+                },
+                self.send_lock,
+            )
+        elif event_type == "assistant_delta":
+            self.assistant_sent_text = str(event.get("text") or "")
+            await _send_assistant_delta(
+                self.websocket, self.delta_encoder, self.scope, self.turn_id,
+                self.assistant_sent_text, self.send_lock
+            )
+        elif event_type == "thought_delta":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "agent.thought.delta",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": self.turn_id,
+                    "text": str(event.get("text") or ""),
+                    "source": event.get("source"),
+                },
+                self.send_lock,
+            )
+        elif event_type == "plan_update":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "agent.plan.update",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": self.turn_id,
+                    "text": str(event.get("text") or ""),
+                    "entries": event.get("entries") or [],
+                },
+                self.send_lock,
+            )
+        elif event_type == "usage_update":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "agent.usage.update",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": self.turn_id,
+                    "usage": event.get("usage") or {},
+                },
+                self.send_lock,
+            )
+        elif event_type == "permission_requested":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "agent.permission.requested",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": self.turn_id,
+                    "request_id": event.get("request_id"),
+                    "text": str(event.get("text") or "需要操作授权"),
+                    "options": event.get("options") or [],
+                    "tool_call": event.get("tool_call") or {},
+                },
+                self.send_lock,
+            )
+        elif event_type in {"tool_started", "tool_updated", "tool_update"}:
+            tool_name, tool_body = _tool_display_payload(
+                event.get("text"), event.get("name")
+            )
+            status = str(
+                event.get("status")
+                or ("pending" if event_type == "tool_started" else "completed")
+            )
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": (
+                        "agent.tool.started"
+                        if event_type == "tool_started"
+                        else "agent.tool.updated"
+                    ),
+                    "scope": self.scope.to_dict(),
+                    "turn_id": self.turn_id,
+                    "call_id": event.get("call_id"),
+                    "name": tool_name,
+                    "status": status,
+                    "text": tool_body,
+                    "input": event.get("input"),
+                    "output": event.get("output"),
+                    "error": event.get("error"),
+                    "result_json": event.get("result_json"),
+                },
+                self.send_lock,
+            )
+        elif event_type == "skill_studio.event":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "skill_studio.event",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": event.get("turn_id") or self.turn_id,
+                    "event": event.get("event"),
+                },
+                self.send_lock,
+            )
+        elif event_type == "assistant.clarification.event":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "assistant.clarification.event",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": event.get("turn_id") or self.turn_id,
+                    "event": event.get("event"),
+                },
+                self.send_lock,
+            )
+        elif event_type == "assistant_message":
+            message = event.get("message")
+            if isinstance(message, dict):
+                self.assistant_sent_text = _message_content(message)
+                await _send_json_best_effort(
+                    self.websocket,
+                    {
+                        "type": "assistant.message",
+                        "scope": self.scope.to_dict(),
+                        "turn_id": self.turn_id,
+                        "message": message,
+                    },
+                    self.send_lock,
+                )
+        elif event_type == "done":
+            final_message = event.get("message")
+            final_text = _message_content(final_message)
+            if _should_emit_final_text(final_text, self.assistant_sent_text):
+                self.assistant_sent_text = final_text
+                await _send_assistant_delta(
+                    self.websocket, self.delta_encoder, self.scope, self.turn_id,
+                    final_text, self.send_lock
+                )
+            if self.scope.kind == "home" and isinstance(final_message, dict):
+                await _send_json_best_effort(
+                    self.websocket,
+                    {"type": "assistant.message", "scope": self.scope.to_dict(),
+                     "turn_id": self.turn_id, "message": final_message},
+                    self.send_lock,
+                )
+            self.done_sent = await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "chat.done",
+                    "turn_id": self.turn_id,
+                    "scope": self.scope.to_dict(),
+                    "message": (
+                        final_message if isinstance(final_message, dict) else None
+                    ),
+                },
+                self.send_lock,
+            )
+
+
 async def _stream_project_turn(
     *,
     websocket: WebSocket,
@@ -3605,6 +3809,7 @@ async def _stream_project_turn(
     surface: str | None = None,
     surface_context: dict[str, Any] | None = None,
     store_scope: ChatScope | None = None,
+    send_lock: asyncio.Lock | None = None,
 ) -> None:
     project = str(scope.id)
     project_ctx = await _project_context_for_scope(user, scope)
@@ -3636,82 +3841,15 @@ async def _stream_project_turn(
         media=_attachment_payloads(attachments),
         turn_id=turn_id,
     )
-    send_lock = asyncio.Lock()
-    disconnected = asyncio.Event()
+    send_lock = send_lock or asyncio.Lock()
     runtime_backend = chat_service.get_chat_backend_name()
-    runtime_ids: dict[str, str | None] = {"thread_id": None, "turn_id": None}
-    agent_profile = execution_context.agent_profile
-    heartbeat_task = asyncio.create_task(
-        _chat_heartbeat(
-            websocket,
-            scope=scope,
-            turn_id=turn_id,
-            send_lock=send_lock,
-            disconnected=disconnected,
-        )
+    tasks = _start_turn_watchers(
+        websocket=websocket, username=username, scope=scope, turn_id=turn_id,
+        send_lock=send_lock, started_at=time.time(), store_scope=storage_scope,
     )
-    disconnect_task = asyncio.create_task(
-        _interrupt_agent_on_disconnect(
-            disconnected,
-            runtime_backend=runtime_backend,
-            username=username,
-            project=project,
-            agent_profile=agent_profile,
-            runtime_ids=runtime_ids,
-        )
-    )
-    bridge_result_receive_task = asyncio.create_task(
-        _receive_bridge_results_during_turn(
-            websocket=websocket, user=user, username=username
-        )
-    )
-    emitted_bridge_keys: set[str] = set()
-    pending_canvas_task = asyncio.create_task(
-        _watch_pending_canvas_commands(
-            websocket=websocket,
-            username=username,
-            scope=scope,
-            turn_id=turn_id,
-            send_lock=send_lock,
-            emitted_bridge_keys=emitted_bridge_keys,
-            started_at=time.time(),
-        )
-    )
-    pending_canvas_context_task = asyncio.create_task(
-        _watch_pending_canvas_context_requests(
-            websocket=websocket,
-            username=username,
-            scope=scope,
-            turn_id=turn_id,
-            send_lock=send_lock,
-            emitted_bridge_keys=emitted_bridge_keys,
-            started_at=time.time(),
-        )
-    )
-    pending_skill_studio_task = asyncio.create_task(
-        _watch_pending_skill_studio_events(
-            websocket=websocket,
-            username=username,
-            scope=scope,
-            store_scope=storage_scope,
-            turn_id=turn_id,
-            send_lock=send_lock,
-            emitted_bridge_keys=emitted_bridge_keys,
-            started_at=time.time(),
-        )
-    )
-    pending_clarification_task = asyncio.create_task(
-        _watch_pending_clarification_events(
-            websocket=websocket,
-            username=username,
-            scope=scope,
-            store_scope=storage_scope,
-            turn_id=turn_id,
-            send_lock=send_lock,
-            emitted_bridge_keys=emitted_bridge_keys,
-            started_at=time.time(),
-        )
-    )
+    tasks.append(asyncio.create_task(_receive_bridge_results_during_turn(
+        websocket=websocket, user=user, username=username,
+    )))
     skill_studio_status = _skill_studio_status_frame(
         scope=scope,
         turn_id=turn_id,
@@ -3720,199 +3858,7 @@ async def _stream_project_turn(
     )
     if skill_studio_status is not None:
         await _send_json_best_effort(websocket, skill_studio_status, send_lock)
-    done_sent = False
-    assistant_sent_text = ""
-    delta_encoder = AssistantDeltaEncoder()
-
-    async def on_event(event: dict[str, Any]) -> None:
-        nonlocal assistant_sent_text, done_sent
-        event_type = event.get("type")
-        if event_type == "thread_started":
-            runtime_ids["thread_id"] = str(event.get("thread_id") or "").strip() or None
-            runtime_ids["turn_id"] = str(event.get("turn_id") or "").strip() or None
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "thread.started",
-                    "scope": scope.to_dict(),
-                    "thread_id": event.get("thread_id"),
-                    "turn_id": event.get("turn_id") or turn_id,
-                },
-                send_lock,
-            )
-        elif event_type in {"turn_started", "turn_completed"}:
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": (
-                        "agent.turn.started"
-                        if event_type == "turn_started"
-                        else "agent.turn.completed"
-                    ),
-                    "scope": scope.to_dict(),
-                    "thread_id": event.get("thread_id"),
-                    "turn_id": event.get("turn_id") or turn_id,
-                    "status": event.get("status"),
-                    "disposition": event.get("disposition"),
-                    "error": event.get("error"),
-                },
-                send_lock,
-            )
-        elif event_type in {"item", "item_delta"}:
-            fields = (
-                ("message_id", "item_id", "card")
-                if event_type == "item"
-                else ("message_id", "item_id", "kind", "offset", "text")
-            )
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "chat.item" if event_type == "item" else "chat.item.delta",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    **{key: event[key] for key in fields},
-                },
-                send_lock,
-            )
-        elif event_type == "assistant_delta":
-            assistant_sent_text = str(event.get("text") or "")
-            await _send_assistant_delta(
-                websocket, delta_encoder, scope, turn_id, assistant_sent_text, send_lock
-            )
-        elif event_type == "thought_delta":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "agent.thought.delta",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "text": str(event.get("text") or ""),
-                    "source": event.get("source"),
-                },
-                send_lock,
-            )
-        elif event_type == "plan_update":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "agent.plan.update",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "text": str(event.get("text") or ""),
-                    "entries": event.get("entries") or [],
-                },
-                send_lock,
-            )
-        elif event_type == "usage_update":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "agent.usage.update",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "usage": event.get("usage") or {},
-                },
-                send_lock,
-            )
-        elif event_type == "permission_requested":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "agent.permission.requested",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "request_id": event.get("request_id"),
-                    "text": str(event.get("text") or "需要操作授权"),
-                    "options": event.get("options") or [],
-                    "tool_call": event.get("tool_call") or {},
-                },
-                send_lock,
-            )
-        elif event_type in {"tool_started", "tool_updated", "tool_update"}:
-            tool_name, tool_body = _tool_display_payload(
-                event.get("text"), event.get("name")
-            )
-            status = str(
-                event.get("status")
-                or ("pending" if event_type == "tool_started" else "completed")
-            )
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": (
-                        "agent.tool.started"
-                        if event_type == "tool_started"
-                        else "agent.tool.updated"
-                    ),
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "call_id": event.get("call_id"),
-                    "name": tool_name,
-                    "status": status,
-                    "text": tool_body,
-                    "input": event.get("input"),
-                    "output": event.get("output"),
-                    "error": event.get("error"),
-                    "result_json": event.get("result_json"),
-                },
-                send_lock,
-            )
-        elif event_type == "skill_studio.event":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "skill_studio.event",
-                    "scope": scope.to_dict(),
-                    "turn_id": event.get("turn_id") or turn_id,
-                    "event": event.get("event"),
-                },
-                send_lock,
-            )
-        elif event_type == "assistant.clarification.event":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.clarification.event",
-                    "scope": scope.to_dict(),
-                    "turn_id": event.get("turn_id") or turn_id,
-                    "event": event.get("event"),
-                },
-                send_lock,
-            )
-        elif event_type == "assistant_message":
-            message = event.get("message")
-            if isinstance(message, dict):
-                assistant_sent_text = _message_content(message)
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.message",
-                        "scope": scope.to_dict(),
-                        "turn_id": turn_id,
-                        "message": message,
-                    },
-                    send_lock,
-                )
-        elif event_type == "done":
-            final_message = event.get("message")
-            final_text = _message_content(final_message)
-            if _should_emit_final_text(final_text, assistant_sent_text):
-                assistant_sent_text = final_text
-                await _send_assistant_delta(
-                    websocket, delta_encoder, scope, turn_id, final_text, send_lock
-                )
-            done_sent = await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "chat.done",
-                    "turn_id": turn_id,
-                    "scope": scope.to_dict(),
-                    "message": (
-                        final_message if isinstance(final_message, dict) else None
-                    ),
-                },
-                send_lock,
-            )
+    on_event = _ChatFrameSender(websocket, scope, turn_id, send_lock)
 
     try:
         # 请求路径上唯一的出网身份绑定点。放在这里而不是分发块，是为了复用
@@ -3950,28 +3896,9 @@ async def _stream_project_turn(
                 ),
             )
     finally:
-        heartbeat_task.cancel()
-        disconnect_task.cancel()
-        bridge_result_receive_task.cancel()
-        pending_canvas_task.cancel()
-        pending_canvas_context_task.cancel()
-        pending_skill_studio_task.cancel()
-        pending_clarification_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await disconnect_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await bridge_result_receive_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await pending_canvas_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await pending_canvas_context_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await pending_skill_studio_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await pending_clarification_task
-        if not done_sent:
+        await _stop_turn_tasks(tasks)
+        current_task = asyncio.current_task()
+        if not on_event.done_sent and not (current_task is not None and current_task.cancelling()):
             await _send_json_best_effort(
                 websocket,
                 {"type": "chat.done", "turn_id": turn_id, "scope": scope.to_dict()},
@@ -3988,6 +3915,7 @@ async def _stream_home_turn_codex(
     text: str,
     attachments: list[ChatAttachmentIn],
     turn_id: str,
+    send_lock: asyncio.Lock | None = None,
 ) -> None:
     """Run home chat through the same backend-neutral service as projects."""
 
@@ -4003,163 +3931,16 @@ async def _stream_home_turn_codex(
         media=_attachment_payloads(attachments),
         turn_id=turn_id,
     )
-    send_lock = asyncio.Lock()
-    disconnected = asyncio.Event()
-    runtime_ids: dict[str, str | None] = {"thread_id": None, "turn_id": None}
+    send_lock = send_lock or asyncio.Lock()
     heartbeat_task = asyncio.create_task(
         _chat_heartbeat(
             websocket,
             scope=scope,
             turn_id=turn_id,
             send_lock=send_lock,
-            disconnected=disconnected,
         )
     )
-    disconnect_task = asyncio.create_task(
-        _interrupt_agent_on_disconnect(
-            disconnected,
-            runtime_backend="codex",
-            username=username,
-            project="",
-            agent_profile="main",
-            runtime_ids=runtime_ids,
-        )
-    )
-    done_sent = False
-    assistant_sent_text = ""
-    delta_encoder = AssistantDeltaEncoder()
-
-    async def on_event(event: dict[str, Any]) -> None:
-        nonlocal assistant_sent_text, done_sent
-        event_type = str(event.get("type") or "")
-        if event_type == "thread_started":
-            runtime_ids["thread_id"] = str(event.get("thread_id") or "").strip() or None
-            runtime_ids["turn_id"] = str(event.get("turn_id") or "").strip() or None
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "thread.started",
-                    "scope": scope.to_dict(),
-                    "thread_id": event.get("thread_id"),
-                    "turn_id": event.get("turn_id") or turn_id,
-                },
-                send_lock,
-            )
-        elif event_type in {"turn_started", "turn_completed"}:
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": (
-                        "agent.turn.started"
-                        if event_type == "turn_started"
-                        else "agent.turn.completed"
-                    ),
-                    "scope": scope.to_dict(),
-                    "thread_id": event.get("thread_id"),
-                    "turn_id": event.get("turn_id") or turn_id,
-                    "status": event.get("status"),
-                    "disposition": event.get("disposition"),
-                    "error": event.get("error"),
-                },
-                send_lock,
-            )
-        elif event_type in {"item", "item_delta"}:
-            fields = (
-                ("message_id", "item_id", "card")
-                if event_type == "item"
-                else ("message_id", "item_id", "kind", "offset", "text")
-            )
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "chat.item" if event_type == "item" else "chat.item.delta",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    **{key: event[key] for key in fields},
-                },
-                send_lock,
-            )
-        elif event_type == "assistant_delta":
-            assistant_sent_text = str(event.get("text") or "")
-            await _send_assistant_delta(
-                websocket, delta_encoder, scope, turn_id, assistant_sent_text, send_lock
-            )
-        elif event_type in {"thought_delta", "plan_update", "usage_update"}:
-            payload = {
-                "thought_delta": {
-                    "type": "agent.thought.delta",
-                    "text": str(event.get("text") or ""),
-                    "source": event.get("source"),
-                },
-                "plan_update": {
-                    "type": "agent.plan.update",
-                    "text": str(event.get("text") or ""),
-                    "entries": event.get("entries") or [],
-                },
-                "usage_update": {
-                    "type": "agent.usage.update",
-                    "usage": event.get("usage") or {},
-                },
-            }[event_type]
-            await _send_json_best_effort(
-                websocket,
-                {**payload, "scope": scope.to_dict(), "turn_id": turn_id},
-                send_lock,
-            )
-        elif event_type in {"tool_started", "tool_updated", "tool_update"}:
-            tool_name, tool_body = _tool_display_payload(
-                event.get("text"), event.get("name")
-            )
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": (
-                        "agent.tool.started"
-                        if event_type == "tool_started"
-                        else "agent.tool.updated"
-                    ),
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "call_id": event.get("call_id"),
-                    "name": tool_name,
-                    "status": event.get("status") or "completed",
-                    "text": tool_body,
-                    "input": event.get("input"),
-                    "output": event.get("output"),
-                    "error": event.get("error"),
-                    "result_json": event.get("result_json"),
-                },
-                send_lock,
-            )
-        elif event_type == "done":
-            message = event.get("message")
-            final_text = _message_content(message)
-            if _should_emit_final_text(final_text, assistant_sent_text):
-                assistant_sent_text = final_text
-                await _send_assistant_delta(
-                    websocket, delta_encoder, scope, turn_id, final_text, send_lock
-                )
-            if isinstance(message, dict):
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.message",
-                        "scope": scope.to_dict(),
-                        "turn_id": turn_id,
-                        "message": message,
-                    },
-                    send_lock,
-                )
-            done_sent = await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "chat.done",
-                    "turn_id": turn_id,
-                    "scope": scope.to_dict(),
-                    "message": message if isinstance(message, dict) else None,
-                },
-                send_lock,
-            )
+    on_event = _ChatFrameSender(websocket, scope, turn_id, send_lock)
 
     try:
         requester_user_id = await _requester_user_id_for_chat(user, scope)
@@ -4196,12 +3977,10 @@ async def _stream_home_turn_codex(
             )
     finally:
         heartbeat_task.cancel()
-        disconnect_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await disconnect_task
-        if not done_sent:
+        current_task = asyncio.current_task()
+        if not on_event.done_sent and not (current_task is not None and current_task.cancelling()):
             await _send_json_best_effort(
                 websocket,
                 {"type": "chat.done", "turn_id": turn_id, "scope": scope.to_dict()},
@@ -4218,6 +3997,7 @@ async def _stream_home_turn(
     text: str,
     attachments: list[ChatAttachmentIn],
     turn_id: str,
+    send_lock: asyncio.Lock | None = None,
 ) -> None:
     if chat_service.get_chat_backend_name() == "codex":
         await _stream_home_turn_codex(
@@ -4228,6 +4008,7 @@ async def _stream_home_turn(
             text=text,
             attachments=attachments,
             turn_id=turn_id,
+            send_lock=send_lock,
         )
         return
 
@@ -4301,29 +4082,13 @@ async def _stream_home_turn(
     tool_text = ""
     tool_name = ""
     persisted = False
-    send_lock = asyncio.Lock()
-    disconnected = asyncio.Event()
-    runtime_ids: dict[str, str | None] = {
-        "thread_id": str(getattr(thread, "id", "") or "").strip() or None,
-        "turn_id": None,
-    }
+    send_lock = send_lock or asyncio.Lock()
     heartbeat_task = asyncio.create_task(
         _chat_heartbeat(
             websocket,
             scope=scope,
             turn_id=turn_id,
             send_lock=send_lock,
-            disconnected=disconnected,
-        )
-    )
-    disconnect_task = asyncio.create_task(
-        _interrupt_agent_on_disconnect(
-            disconnected,
-            runtime_backend="hermes",
-            username=username,
-            project="",
-            agent_profile="main",
-            runtime_ids=runtime_ids,
         )
     )
     done_sent = False
@@ -4425,8 +4190,6 @@ async def _stream_home_turn(
     try:
         async for event in hermes_events_with_session_retry():
             if event.type == "thread_started":
-                runtime_ids["thread_id"] = str(event.thread_id or "").strip() or None
-                runtime_ids["turn_id"] = str(event.turn_id or "").strip() or None
                 await _send_json_best_effort(
                     websocket,
                     {
@@ -4619,18 +4382,34 @@ async def _stream_home_turn(
         )
     finally:
         heartbeat_task.cancel()
-        disconnect_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await disconnect_task
         await persist_partial_reply()
-        if not done_sent:
+        current_task = asyncio.current_task()
+        if not done_sent and not (current_task is not None and current_task.cancelling()):
             await _send_json_best_effort(
                 websocket,
                 {"type": "chat.done", "turn_id": turn_id, "scope": scope.to_dict()},
                 send_lock,
             )
+
+
+async def _run_turn_until_shutdown(turn: Coroutine[Any, Any, Any]) -> tuple[bool, Any]:
+    """Return (server_exiting, result), waiting for cancellation to detach the turn."""
+    task = asyncio.create_task(turn)
+    try:
+        while not task.done():
+            if AppStatus.should_exit:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                return True, None
+            await asyncio.wait({task}, timeout=_SHUTDOWN_POLL_INTERVAL_SECONDS)
+        return False, task.result()
+    except asyncio.CancelledError:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
 
 
 @router.websocket("/chat/ws")
@@ -4646,12 +4425,13 @@ async def chat_ws(websocket: WebSocket) -> None:
         await _close_ws_unauthorized(websocket)
         return
 
+    send_lock = asyncio.Lock()
     username = str(user["username"])
     try:
         current_scope = _scope_for_authenticated_user(user)
         _enforce_agent_chat_scope(user, current_scope, require_write=False)
         current_scope = await _send_scope_changed(
-            websocket, user, username, current_scope
+            websocket, user, username, current_scope, send_lock
         )
     except Exception:
         await _close_ws_unauthorized(websocket)
@@ -4675,6 +4455,9 @@ async def chat_ws(websocket: WebSocket) -> None:
             scope=current_scope,
         )
 
+    follower = asyncio.create_task(_follow_scope_turn(
+        websocket=websocket, user=user, username=username, scope=current_scope, send_lock=send_lock,
+    ))
     try:
         while True:
             try:
@@ -4702,15 +4485,20 @@ async def chat_ws(websocket: WebSocket) -> None:
                     return
                 if msg.history_before is not None:
                     if not await _send_history_page(
-                        websocket, user, username, requested_scope, msg.history_before
+                        websocket, user, username, requested_scope, msg.history_before, send_lock
                     ):
                         return
                     continue
+                await _stop_turn_tasks([follower])
                 current_scope = await _send_scope_changed(
-                    websocket, user, username, requested_scope
+                    websocket, user, username, requested_scope, send_lock
                 )
                 if current_scope is None:
                     return
+                follower = asyncio.create_task(_follow_scope_turn(
+                    websocket=websocket, user=user, username=username, scope=current_scope,
+                    send_lock=send_lock,
+                ))
                 await register_chat_websocket(
                     websocket,
                     username=username,
@@ -4788,7 +4576,7 @@ async def chat_ws(websocket: WebSocket) -> None:
             if event_type != "chat.message":
                 await _send_json_best_effort(
                     websocket,
-                    {"type": "error", "message": f"unsupported event: {event_type}"},
+                    {"type": "error", "message": f"unsupported event: {event_type}"}, send_lock,
                 )
                 continue
 
@@ -4808,7 +4596,7 @@ async def chat_ws(websocket: WebSocket) -> None:
             if not text:
                 await _send_json_best_effort(
                     websocket,
-                    {"type": "error", "turn_id": turn_id, "message": "empty message"},
+                    {"type": "error", "turn_id": turn_id, "message": "empty message"}, send_lock,
                 )
                 continue
 
@@ -4824,9 +4612,14 @@ async def chat_ws(websocket: WebSocket) -> None:
                 return
 
             try:
+                active_codex_turn = chat_service.active_codex_turn_for_scope(username, scope)
+                if active_codex_turn is not None:
+                    raise chat_service.ChatTurnBusyError(
+                        turn_id=active_codex_turn["business_turn_id"],
+                    )
                 await _require_ai_assistant_access(user=user, scope=scope)
                 if scope.kind in {"project", "freezone"}:
-                    await _stream_project_turn(
+                    turn = _stream_project_turn(
                         websocket=websocket,
                         user=user,
                         username=username,
@@ -4834,6 +4627,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                         text=text,
                         attachments=msg.attachments,
                         turn_id=turn_id,
+                        send_lock=send_lock,
                         user_text=user_text,
                         surface=("freezone" if _is_freezone_scope(scope) else None),
                         surface_context=(
@@ -4842,7 +4636,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                         store_scope=scope if _is_freezone_scope(scope) else None,
                     )
                 elif scope.kind == "home":
-                    await _stream_home_turn(
+                    turn = _stream_home_turn(
                         websocket=websocket,
                         user=user,
                         username=username,
@@ -4850,6 +4644,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                         text=text,
                         attachments=msg.attachments,
                         turn_id=turn_id,
+                        send_lock=send_lock,
                     )
                 else:
                     await _send_json_best_effort(
@@ -4858,8 +4653,12 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "type": "error",
                             "turn_id": turn_id,
                             "message": f"scope not implemented: {scope.kind}",
-                        },
+                        }, send_lock,
                     )
+                    continue
+                server_exiting, _ = await _run_turn_until_shutdown(turn)
+                if server_exiting:
+                    return
             except Exception as exc:  # noqa: BLE001
                 busy_message = _chat_turn_busy_message(exc)
                 message = busy_message or str(exc)
@@ -4875,9 +4674,13 @@ async def chat_ws(websocket: WebSocket) -> None:
                         {
                             "type": "chat.busy",
                             "turn_id": turn_id,
+                            "active_turn_id": (
+                                exc.turn_id if isinstance(exc, chat_service.ChatTurnBusyError)
+                                else None
+                            ),
                             "scope": scope.to_dict(),
                             "message": message,
-                        },
+                        }, send_lock,
                     )
                     continue
                 billing_rule_error = find_billing_rule_not_configured_error(exc)
@@ -4891,7 +4694,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "data": billing_rule_not_configured_payload(
                                 billing_rule_error
                             ),
-                        },
+                        }, send_lock,
                     )
                     continue
                 insufficient_error = find_insufficient_credits_error(exc)
@@ -4903,7 +4706,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "turn_id": turn_id,
                             "message": INSUFFICIENT_CREDITS_MESSAGE,
                             "data": insufficient_credits_payload(insufficient_error),
-                        },
+                        }, send_lock,
                     )
                     continue
                 billing_error = find_billing_error(exc)
@@ -4915,7 +4718,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "turn_id": turn_id,
                             "message": billing_error.user_message,
                             "data": billing_error_payload(billing_error),
-                        },
+                        }, send_lock,
                     )
                     continue
                 logger.error(
@@ -4946,14 +4749,15 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "scope": scope.to_dict(),
                             "turn_id": turn_id,
                             "message": persisted_error,
-                        },
+                        }, send_lock,
                     )
                 await _send_json_best_effort(
                     websocket,
-                    {"type": "error", "turn_id": turn_id, "message": user_message},
+                    {"type": "error", "turn_id": turn_id, "message": user_message}, send_lock,
                 )
     except WebSocketDisconnect:
         logger.info("chat websocket disconnected username=%s", username)
         pass
     finally:
+        await _stop_turn_tasks([follower])
         await unregister_chat_websocket(websocket)

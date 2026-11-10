@@ -24,6 +24,10 @@ import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from novelvideo.freezone.canvas_command_bridge import (
+    CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS,
+    canvas_command_result_timeout_seconds,
+)
 from novelvideo.security import SandboxSpec, wrap_command
 from novelvideo.chat import hermes_events
 from novelvideo.chat.runtime_port import ChatBackendEvent
@@ -34,13 +38,6 @@ from novelvideo.chat.tool_policy import (
 )
 
 _log = logging.getLogger(__name__)
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -60,7 +57,7 @@ SESSION_NEW_TIMEOUT = 90.0
 # Per-line stdout read timeout while streaming a prompt. Freezone canvas write
 # tools can legitimately block while the browser validates/applies commands, so
 # keep this longer than the canvas bridge wait to avoid premature "(hermes timed out)".
-CANVAS_COMMAND_RESULT_TIMEOUT = _env_float("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", 600.0)
+CANVAS_COMMAND_RESULT_TIMEOUT = canvas_command_result_timeout_seconds()
 HERMES_STDIO_LINE_LIMIT_BYTES = max(
     65536,
     _env_int("DRAMACLAW_HERMES_STDIO_LINE_LIMIT_BYTES", 4 * 1024 * 1024),
@@ -1711,7 +1708,9 @@ class HermesSdkThread:
                         if _is_freezone_canvas_write_tool(tool_name):
                             idle_deadline = min(
                                 total_deadline,
-                                loop.time() + CANVAS_COMMAND_RESULT_TIMEOUT + 30.0,
+                                loop.time()
+                                + CANVAS_COMMAND_RESULT_TIMEOUT
+                                + CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS,
                             )
                         if _should_stop_after_write_tool(first_write_tool, tool_name):
                             if story_write_continuation.consume(ev):

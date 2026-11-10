@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -84,6 +85,7 @@ def test_control_rpc_uses_shared_app_server_for_lifecycle(monkeypatch, tmp_path)
         yield SimpleNamespace(_client=FakeClient())
 
     monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(codex_app_server, "attach_shared_codex", fake_shared_codex, raising=False)
     common = {
         "codex_bin": tmp_path / "codex",
         "cwd": tmp_path,
@@ -1901,6 +1903,77 @@ async def test_codex_stream_maps_structured_runtime_events(monkeypatch, tmp_path
 
 
 @pytest.mark.asyncio
+async def test_codex_stream_cancellation_detaches_without_interrupt(monkeypatch, tmp_path):
+    from openai_codex import TurnHandle
+
+    requests = []
+    closed = threading.Event()
+    streaming = asyncio.Event()
+
+    class FakeClient:
+        def register_turn_notifications(self, turn_id):
+            pass
+
+        def unregister_turn_notifications(self, turn_id):
+            pass
+
+        def next_turn_notification(self, turn_id):
+            closed.wait(timeout=0.25)
+            raise RuntimeError("app-server closed stdout")
+
+        def turn_interrupt(self, thread_id, turn_id):
+            requests.append(("turn/interrupt", {"threadId": thread_id, "turnId": turn_id}))
+
+        def close(self):
+            closed.set()
+
+    client = FakeClient()
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield SimpleNamespace(_client=client)
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_or_resume_codex_thread",
+        lambda *args, **kwargs: SimpleNamespace(id="thread-detach"),
+    )
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_codex_turn",
+        lambda *args, **kwargs: TurnHandle(client, "thread-detach", "turn-detach"),
+    )
+    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
+    thread = CodexThread(
+        codex_bin=None,
+        cwd=tmp_path,
+        env={},
+        model="fake-model",
+        model_provider="fake-provider",
+        developer_instructions="",
+        config_overrides=(),
+        thread_config={},
+        turn_metadata={},
+        thread_id=None,
+    )
+
+    async def consume():
+        async for event in thread.stream("hello"):
+            if event.type == "thread_started":
+                streaming.set()
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(streaming.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=0.5)
+
+    assert requests == []
+    assert closed.is_set() is True
+
+
+@pytest.mark.asyncio
 async def test_codex_stream_times_out_before_first_runtime_progress(
     monkeypatch, tmp_path
 ):
@@ -1950,7 +2023,6 @@ async def test_codex_stream_times_out_before_first_runtime_progress(
     )
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 0.05)
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 1.0)
     monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
 
     thread = CodexThread(
@@ -2067,7 +2139,6 @@ async def test_codex_stream_times_out_after_runtime_becomes_idle(monkeypatch, tm
     )
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.05)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 1.0)
     monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
 
     thread = CodexThread(
@@ -2093,8 +2164,20 @@ async def test_codex_stream_times_out_after_runtime_becomes_idle(monkeypatch, tm
 
 
 @pytest.mark.asyncio
-async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize(
+    ("tool_name", "tool_delay", "expected_disposition", "progress_delay"),
+    [
+        ("freezone_finish_agent_catalog_draft", 0.4, "completed", None),
+        ("freezone_create_node", 0.12, "completed", None),
+        ("freezone_create_node", 0.55, "timeout", None),
+        pytest.param(
+            "freezone_create_node", 0.14, "completed", 0.12,
+            id="canvas-deadline-must-not-shorten-later-idle-window",
+        ),
+    ],
+)
+async def test_codex_stream_tool_wait_deadlines(
+    monkeypatch, tmp_path, tool_name, tool_delay, expected_disposition, progress_delay
 ):
     from openai_codex.generated import v2_all as v2
     from openai_codex.models import Notification
@@ -2105,7 +2188,7 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
         "type": "mcpToolCall",
         "id": "call-confirm",
         "server": "dramaclaw",
-        "tool": "freezone_finish_agent_catalog_draft",
+        "tool": tool_name,
         "arguments": {"skill_studio_session_id": "studio-1"},
         "status": "inProgress",
     }
@@ -2149,7 +2232,17 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
                     }
                 ),
             )
-            delay.wait(timeout=0.1)
+            if progress_delay is not None:
+                delay.wait(timeout=progress_delay)
+                yield Notification(
+                    method="item/reasoning/summaryTextDelta",
+                    payload=v2.ReasoningSummaryTextDeltaNotification.model_validate({
+                        "threadId": "thread-confirm", "turnId": self.id,
+                        "itemId": "reasoning-confirm", "delta": "Still working",
+                        "summaryIndex": 0,
+                    }),
+                )
+            delay.wait(timeout=tool_delay)
             yield Notification(
                 method="item/completed",
                 payload=v2.ItemCompletedNotification.model_validate(
@@ -2207,8 +2300,18 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
         backend_sdk, "_start_codex_turn", lambda *_args, **_kwargs: FakeTurn()
     )
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.03)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 0.5)
+    monkeypatch.setattr(
+        backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.18 if progress_delay is not None else 0.03
+    )
+
+    monkeypatch.setattr(
+        backend_sdk, "canvas_command_result_timeout_seconds",
+        lambda: 0.15 if progress_delay is not None else 0.2, raising=False,
+    )
+    monkeypatch.setattr(
+        backend_sdk, "CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS",
+        0.05 if progress_delay is not None else 0.1, raising=False,
+    )
 
     thread = CodexThread(
         codex_bin=None,
@@ -2224,85 +2327,13 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
     )
     events = [event async for event in thread.stream("Create a skill")]
 
-    assert interrupt_calls == []
     assert events[-1].type == "complete"
-    assert events[-1].text == "已确认"
-    assert events[-2].type == "egress_disposition"
-    assert events[-2].disposition == "completed"
-
-
-@pytest.mark.asyncio
-async def test_codex_stream_enforces_total_deadline_despite_continuous_progress(
-    monkeypatch, tmp_path
-):
-    from openai_codex.generated import v2_all as v2
-    from openai_codex.models import Notification
-
-    released = threading.Event()
-    interrupt_calls = []
-    progress = Notification(
-        method="item/agentMessage/delta",
-        payload=v2.AgentMessageDeltaNotification.model_validate(
-            {
-                "threadId": "thread-total",
-                "turnId": "turn-total",
-                "itemId": "message-total",
-                "delta": ".",
-            }
-        ),
-    )
-
-    class FakeTurn:
-        id = "turn-total"
-
-        def stream(self):
-            while not released.wait(timeout=0.005):
-                yield progress
-
-        def interrupt(self):
-            interrupt_calls.append(self.id)
-            released.set()
-
-    class FakeThread:
-        id = "thread-total"
-
-    @contextmanager
-    def fake_shared_codex(_config):
-        yield object()
-
-    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
-    monkeypatch.setattr(
-        backend_sdk,
-        "_start_or_resume_codex_thread",
-        lambda *_args, **_kwargs: FakeThread(),
-    )
-    monkeypatch.setattr(
-        backend_sdk,
-        "_start_codex_turn",
-        lambda *_args, **_kwargs: FakeTurn(),
-    )
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 0.05)
-    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
-
-    thread = CodexThread(
-        codex_bin=None,
-        cwd=tmp_path,
-        env={},
-        model="DC-codex-agent-LLM",
-        model_provider="dramaclaw_gateway",
-        developer_instructions="Use DramaClaw MCP only.",
-        config_overrides=(),
-        thread_config={},
-        turn_metadata={},
-        thread_id=None,
-    )
-    events = [event async for event in thread.stream("Create workflow")]
-
-    assert interrupt_calls == ["turn-total"]
-    assert sum(event.type == "assistant_delta" for event in events) > 1
-    assert events[-3].error["kind"] == "total"
-    assert events[-2].disposition == "timeout"
-    assert events[-1].type == "complete"
-    assert events[-1].disposition == "timeout"
+    assert events[-2].disposition == expected_disposition
+    if expected_disposition == "completed":
+        assert events[-1].text == "已确认"
+        assert interrupt_calls == []
+    else:
+        assert events[-1].disposition == "timeout"
+        assert events[-3].error["kind"] == "idle"
+        assert events[-3].error["elapsed_ms"] >= 250
+        assert interrupt_calls == ["turn-confirm"]

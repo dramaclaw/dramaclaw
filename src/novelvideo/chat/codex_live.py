@@ -22,6 +22,7 @@ class LiveTurnProjector:
         self.turn_id = turn_id
         self.message_id: str | None = None
         self._open: dict[str, _OpenItem] = {}
+        self._seen: set[str] = set()
         self._item_ids: dict[str, None] = {}
 
     def bind(self, codex_turn_id: str) -> None:
@@ -43,6 +44,7 @@ class LiveTurnProjector:
     ) -> dict[str, Any] | None:
         if self.message_id is None:
             return None
+        self._seen.add(item["id"])
         card = project_item(
             item, turn_id=self.turn_id, started_at_ms=started_at_ms, completed=False
         )
@@ -81,7 +83,14 @@ class LiveTurnProjector:
     def delta(
         self, item_id: str, kind: str, text: str, summary_index: int | None = None
     ) -> dict[str, Any] | None:
-        if self.message_id is None or item_id not in self._open:
+        if self.message_id is None:
+            return None
+        frame = None
+        if item_id not in self._seen and kind in {"text", "reasoning"}:
+            frame = self.started({
+                "id": item_id, "type": "agentMessage" if kind == "text" else "reasoning",
+            }, None)
+        if item_id not in self._open:
             return None
         state = self._open[item_id]
         if kind == "reasoning":
@@ -96,8 +105,17 @@ class LiveTurnProjector:
             state.text += text
         view = _redact_local_filesystem_paths(state.text)
         if kind == "reasoning":
+            truncated = len(view.encode("utf-8")) > REASONING_TEXT_MAX_BYTES
             view = _truncate(view, REASONING_TEXT_MAX_BYTES)
         patch = state.encoder.encode(view)
+        if frame is not None:
+            if kind == "reasoning":
+                frame["card"]["event"].update(
+                    text=view, truncated=truncated,
+                )
+            else:
+                frame["card"]["text"] = view
+            return frame
         if patch is None:
             return None
         return {
@@ -108,6 +126,7 @@ class LiveTurnProjector:
     def completed(self, item: dict[str, Any]) -> dict[str, Any] | None:
         if self.message_id is None:
             return None
+        self._seen.add(item["id"])
         state = self._open.pop(item["id"], None)
         card = project_item(
             item, turn_id=self.turn_id,

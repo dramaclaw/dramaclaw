@@ -13,6 +13,11 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Literal, Mapping, Sequence
 if TYPE_CHECKING:
     from novelvideo.chat.codex_history import CodexHistoryPage
 
+from novelvideo.chat.hermes_sdk import _is_freezone_canvas_write_tool
+from novelvideo.freezone.canvas_command_bridge import (
+    CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS,
+    canvas_command_result_timeout_seconds,
+)
 from novelvideo.chat.runtime_port import (
     AgentRuntimeThreadPort,
     ChatBackendEvent,
@@ -31,11 +36,7 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 
-# Codex App Server may keep a turn open indefinitely when its upstream model
-# request never produces a notification. Hermes already has idle and total
-# stream deadlines; keep the same lifecycle guarantee here, with a tighter
-# first-progress deadline so an upstream request that never emits its first
-# model/tool event cannot leave the UI spinning indefinitely. Large canvas
+# Bound stalled streams before and after their first runtime progress. Large canvas
 # workflows can legitimately spend more than two minutes planning before the
 # runtime emits its first reasoning/tool notification, so keep the default in
 # line with the active-stream idle deadline. Operators may tune it without a
@@ -55,7 +56,6 @@ CODEX_STREAM_FIRST_PROGRESS_TIMEOUT = _positive_timeout_from_env(
     "DRAMACLAW_CODEX_FIRST_PROGRESS_TIMEOUT_SECONDS", 300.0
 )
 CODEX_STREAM_IDLE_TIMEOUT = 300.0
-CODEX_STREAM_TOTAL_TIMEOUT = max(1800.0, CODEX_STREAM_IDLE_TIMEOUT)
 CODEX_INTERRUPT_GRACE_TIMEOUT = 5.0
 
 _CODEX_LIFECYCLE_ONLY_EVENTS = {
@@ -102,6 +102,14 @@ def unregister_live_codex_turn(thread_id: str, turn_id: str) -> None:
         _LIVE_CODEX_TURNS.pop(key, None)
 
 
+def detach_live_codex_turn(thread_id: str, turn_id: str) -> None:
+    key = (str(thread_id or "").strip(), str(turn_id or "").strip())
+    with _LIVE_CODEX_TURNS_LOCK:
+        turn_handle = _LIVE_CODEX_TURNS.pop(key, None)
+    if turn_handle is not None:
+        turn_handle._client.close()
+
+
 def interrupt_live_codex_turn(thread_id: str, turn_id: str) -> bool:
     key = (str(thread_id or "").strip(), str(turn_id or "").strip())
     if not key[0] or not key[1]:
@@ -132,7 +140,7 @@ def _is_archived_codex_thread_error(exc: Exception) -> bool:
 
 def _codex_runtime_config(
     *,
-    codex_bin: Path,
+    codex_bin: Path | None,
     cwd: Path,
     env: dict[str, str],
     config_overrides: tuple[str, ...],
@@ -140,7 +148,7 @@ def _codex_runtime_config(
     from openai_codex import CodexConfig
 
     return CodexConfig(
-        codex_bin=str(codex_bin),
+        codex_bin=str(codex_bin) if codex_bin is not None else None,
         cwd=str(cwd),
         env=env,
         config_overrides=config_overrides,
@@ -149,7 +157,7 @@ def _codex_runtime_config(
 
 def control_codex_runtime(
     *,
-    codex_bin: Path,
+    codex_bin: Path | None,
     cwd: Path,
     env: dict[str, str],
     config_overrides: tuple[str, ...],
@@ -163,7 +171,9 @@ def control_codex_runtime(
     request lands on a different Gunicorn worker from the streaming request.
     """
 
-    from novelvideo.chat.codex_app_server import shared_codex
+    from novelvideo.chat.codex_app_server import (
+        CodexAppServerNotRunning, attach_shared_codex, shared_codex,
+    )
 
     config = _codex_runtime_config(
         codex_bin=codex_bin,
@@ -171,13 +181,18 @@ def control_codex_runtime(
         env=env,
         config_overrides=config_overrides,
     )
+    if operation == "interrupt":
+        if not turn_id:
+            return False
+        try:
+            with attach_shared_codex(config) as codex:
+                codex._client.turn_interrupt(thread_id, turn_id)
+        except CodexAppServerNotRunning:
+            return False
+        return True
     with shared_codex(config) as codex:
         client = codex._client
-        if operation == "interrupt":
-            if not turn_id:
-                return False
-            client.turn_interrupt(thread_id, turn_id)
-        elif operation == "archive":
+        if operation == "archive":
             client.thread_archive(thread_id)
         else:
             from openai_codex.errors import InvalidRequestError
@@ -1295,13 +1310,21 @@ def read_codex_thread_history(
     thread_id: str,
     before: str | None,
 ) -> CodexHistoryPage:
-    from novelvideo.chat.codex_app_server import shared_codex
+    from contextlib import ExitStack
+
+    from novelvideo.chat.codex_app_server import (
+        CodexAppServerNotRunning, attach_shared_codex, shared_codex,
+    )
     from novelvideo.chat.codex_history import HISTORY_CACHE
 
     config = _codex_runtime_config(
         codex_bin=codex_bin, cwd=cwd, env=env, config_overrides=config_overrides
     )
-    with shared_codex(config) as codex:
+    with ExitStack() as stack:
+        try:
+            codex = stack.enter_context(attach_shared_codex(config))
+        except CodexAppServerNotRunning:
+            codex = stack.enter_context(shared_codex(config))
         return HISTORY_CACHE.read_page(codex._client, thread_id, before=before)
 
 
@@ -1597,6 +1620,523 @@ class CodexClient:
         )
 
 
+class _CodexNotificationMapper:
+    """The worker and reconnecting browsers consume the same notification contract."""
+
+    def __init__(self, thread_id: str, turn_id: str) -> None:
+        self.thread_id = thread_id
+        self.turn_id = turn_id
+        self.items: list[Any] = []
+        self.tool_calls: dict[str, ChatBackendEvent] = {}
+        self.assistant_parts: list[str] = []
+
+    def map(self, event: Any) -> list[ChatBackendEvent]:
+        from openai_codex.generated.v2_all import (
+            AgentMessageDeltaNotification,
+            ConfigWarningNotification,
+            CommandExecutionOutputDeltaNotification,
+            ContextCompactedNotification,
+            ErrorNotification,
+            ItemGuardianApprovalReviewCompletedNotification,
+            ItemGuardianApprovalReviewStartedNotification,
+            ItemCompletedNotification,
+            McpToolCallProgressNotification,
+            ModelReroutedNotification,
+            PlanDeltaNotification,
+            ReasoningSummaryTextDeltaNotification,
+            ItemStartedNotification,
+            TerminalInteractionNotification,
+            ThreadTokenUsageUpdatedNotification,
+            TurnDiffUpdatedNotification,
+            TurnCompletedNotification,
+            TurnPlanUpdatedNotification,
+            TurnStartedNotification,
+        )
+
+        events: list[ChatBackendEvent] = []
+        payload = event.payload
+        raw = _codex_raw_notification(event)
+        if (
+            isinstance(payload, TurnStartedNotification)
+            and payload.turn.id == self.turn_id
+        ):
+            events.append(
+                ChatBackendEvent(
+                    type="turn_started",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    status=str(payload.turn.status.value),
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, AgentMessageDeltaNotification)
+            and payload.turn_id == self.turn_id
+        ):
+            events.append(
+                ChatBackendEvent(
+                    type="item_delta",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    item_id=payload.item_id,
+                    text=payload.delta,
+                    name="text",
+                ),
+            )
+            self.assistant_parts.append(payload.delta)
+            events.append(
+                ChatBackendEvent(
+                    type="assistant_delta",
+                    thread_id=self.thread_id,
+                    text="".join(self.assistant_parts),
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, PlanDeltaNotification)
+            and payload.turn_id == self.turn_id
+            and payload.delta
+        ):
+            events.append(
+                ChatBackendEvent(
+                    type="plan_update",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    text=payload.delta,
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, TurnPlanUpdatedNotification)
+            and payload.turn_id == self.turn_id
+        ):
+            events.append(
+                ChatBackendEvent(
+                    type="plan_update",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    text=payload.explanation,
+                    entries=[
+                        _codex_jsonable(step) for step in payload.plan
+                    ],
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, ReasoningSummaryTextDeltaNotification)
+            and payload.turn_id == self.turn_id
+        ):
+            events.append(
+                ChatBackendEvent(
+                    type="item_delta",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    item_id=payload.item_id,
+                    text=payload.delta,
+                    name="reasoning",
+                    summary_index=payload.summary_index,
+                ),
+            )
+            if not payload.delta:
+                return events
+            events.append(
+                ChatBackendEvent(
+                    type="thought_delta",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    text=payload.delta,
+                    name="reasoning_summary",
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, ItemStartedNotification)
+            and payload.turn_id == self.turn_id
+        ):
+            events.append(
+                ChatBackendEvent(
+                    type="item_started",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    item=_codex_wire_item(payload.item),
+                    item_id=_codex_unwrap_item(payload.item).id,
+                    started_at_ms=payload.started_at_ms,
+                ),
+            )
+            tool_event = _codex_tool_event(
+                payload.item,
+                phase="started",
+                thread_id=self.thread_id,
+                turn_id=self.turn_id,
+                raw=raw,
+            )
+            if tool_event is not None:
+                if tool_event.call_id:
+                    self.tool_calls[tool_event.call_id] = tool_event
+                events.append(tool_event)
+            return events
+        if (
+            isinstance(payload, McpToolCallProgressNotification)
+            and payload.turn_id == self.turn_id
+            and payload.message
+        ):
+            prior = self.tool_calls.get(payload.item_id)
+            events.append(
+                ChatBackendEvent(
+                    type="tool_updated",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    text=f"\x1b[90m[mcp]\x1b[0m {payload.message}\n",
+                    name=prior.name if prior is not None else None,
+                    call_id=payload.item_id,
+                    status="running",
+                    input=prior.input if prior is not None else None,
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, TerminalInteractionNotification)
+            and payload.turn_id == self.turn_id
+            and payload.stdin
+        ):
+            events.append(
+                ChatBackendEvent(
+                    type="tool_update",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    text=f"\x1b[90m[stdin]\x1b[0m {payload.stdin}\n",
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, CommandExecutionOutputDeltaNotification)
+            and payload.turn_id == self.turn_id
+            and payload.delta
+        ):
+            events.append(
+                ChatBackendEvent(
+                    type="tool_update",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    text=str(payload.delta),
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, TurnDiffUpdatedNotification)
+            and payload.turn_id == self.turn_id
+            and payload.diff
+        ):
+            colored_diff = _colorize_unified_diff(payload.diff)
+            events.append(
+                ChatBackendEvent(
+                    type="tool_update",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    text=f"\x1b[95m[diff]\x1b[0m\n{colored_diff}\n",
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, ItemCompletedNotification)
+            and payload.turn_id == self.turn_id
+        ):
+            events.append(
+                ChatBackendEvent(
+                    type="item_completed",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    item=_codex_wire_item(payload.item),
+                    item_id=_codex_unwrap_item(payload.item).id,
+                ),
+            )
+            self.items.append(payload.item)
+            tool_event = _codex_tool_event(
+                payload.item,
+                phase="completed",
+                thread_id=self.thread_id,
+                turn_id=self.turn_id,
+                raw=raw,
+            )
+            if tool_event is not None:
+                if tool_event.call_id:
+                    self.tool_calls.pop(tool_event.call_id, None)
+                events.append(tool_event)
+            return events
+        if (
+            isinstance(payload, ThreadTokenUsageUpdatedNotification)
+            and payload.turn_id == self.turn_id
+        ):
+            events.append(
+                ChatBackendEvent(
+                    type="usage_update",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    usage=_codex_jsonable(payload.token_usage),
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, ModelReroutedNotification)
+            and payload.turn_id == self.turn_id
+        ):
+            reason = getattr(
+                getattr(payload, "reason", None),
+                "value",
+                str(getattr(payload, "reason", "") or ""),
+            ).strip()
+            text = f"\x1b[93m[model]\x1b[0m {payload.from_model} → {payload.to_model}"
+            if reason:
+                text += f" ({reason})"
+            events.append(
+                ChatBackendEvent(
+                    type="tool_update",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    text=text + "\n",
+                    raw=raw,
+                ),
+            )
+            return events
+        if isinstance(payload, ConfigWarningNotification):
+            text = f"\x1b[91m[config]\x1b[0m {payload.summary}"
+            if payload.path:
+                text += f" [{payload.path}]"
+            if payload.details:
+                text += f"\n{payload.details}"
+            events.append(
+                ChatBackendEvent(
+                    type="tool_update",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    text=text + "\n",
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, ContextCompactedNotification)
+            and payload.turn_id == self.turn_id
+        ):
+            events.append(
+                ChatBackendEvent(
+                    type="tool_update",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    text="\x1b[90m[context]\x1b[0m compacted\n",
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(payload, ErrorNotification)
+            and payload.turn_id == self.turn_id
+        ):
+            message = str(
+                getattr(payload.error, "message", "") or ""
+            ).strip()
+            extra = str(
+                getattr(payload.error, "additional_details", "") or ""
+            ).strip()
+            retry = " retrying" if payload.will_retry else ""
+            text = f"\x1b[91m[error{retry}]\x1b[0m {message}".rstrip()
+            if extra:
+                text += f"\n{extra}"
+            events.append(
+                ChatBackendEvent(
+                    type="tool_update",
+                    thread_id=self.thread_id,
+                    turn_id=self.turn_id,
+                    text=text + "\n",
+                    error=_codex_jsonable(payload.error),
+                    status=(
+                        "retrying" if payload.will_retry else "failed"
+                    ),
+                    raw=raw,
+                ),
+            )
+            return events
+        if (
+            isinstance(
+                payload, ItemGuardianApprovalReviewStartedNotification
+            )
+            and payload.turn_id == self.turn_id
+        ):
+            trace = _codex_guardian_review_trace(
+                "guardian:start", payload.review
+            )
+            if trace:
+                events.append(
+                    ChatBackendEvent(
+                        type="tool_update",
+                        thread_id=self.thread_id,
+                        turn_id=self.turn_id,
+                        text=trace,
+                        raw=raw,
+                    ),
+                )
+            return events
+        if (
+            isinstance(
+                payload, ItemGuardianApprovalReviewCompletedNotification
+            )
+            and payload.turn_id == self.turn_id
+        ):
+            trace = _codex_guardian_review_trace(
+                "guardian:done", payload.review
+            )
+            if trace:
+                events.append(
+                    ChatBackendEvent(
+                        type="tool_update",
+                        thread_id=self.thread_id,
+                        turn_id=self.turn_id,
+                        text=trace,
+                        raw=raw,
+                    ),
+                )
+            return events
+
+        if isinstance(payload, TurnCompletedNotification) and payload.turn.id == self.turn_id:
+            events.append(_codex_turn_completed_event(
+                self.thread_id, self.turn_id, str(payload.turn.status.value),
+                _codex_jsonable(payload.turn.error), raw,
+            ))
+        return events
+
+
+def _codex_turn_completed_event(
+    thread_id: str, turn_id: str, status: str, error: Any = None, raw: Any = None,
+) -> ChatBackendEvent:
+    return ChatBackendEvent(
+        type="turn_completed", thread_id=thread_id, turn_id=turn_id,
+        status=status, error=error, raw=raw,
+        disposition="cancelled" if status == "interrupted" else status,
+    )
+
+
+async def follow_codex_turn(
+    *,
+    codex_bin: Path | None,
+    cwd: Path,
+    env: dict[str, str],
+    config_overrides: tuple[str, ...],
+    thread_id: str,
+    turn_id: str,
+) -> AsyncIterator[ChatBackendEvent]:
+    """Observe an existing turn; closing this connection never interrupts it."""
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[ChatBackendEvent | Exception | None] = asyncio.Queue()
+    stopped = threading.Event()
+    connection: list[Any] = []
+
+    def emit(value: ChatBackendEvent | Exception | None) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, value)
+
+    def worker() -> None:
+        try:
+            from openai_codex.generated.v2_all import (
+                ItemCompletedNotification, ThreadResumeResponse,
+            )
+            from openai_codex.models import Notification
+            from novelvideo.chat.codex_app_server import attach_shared_codex
+            from novelvideo.chat.codex_protocol import ThreadItemsPage, ThreadTurnsPage
+
+            config = _codex_runtime_config(
+                codex_bin=codex_bin, cwd=cwd, env=env, config_overrides=config_overrides,
+            )
+            mapper = _CodexNotificationMapper(thread_id, turn_id)
+            with attach_shared_codex(config) as codex:
+                client = codex._client
+                connection.append(client)
+                if stopped.is_set():
+                    return
+                client.register_turn_notifications(turn_id)
+                try:
+                    client.request(
+                        "thread/resume", {"threadId": thread_id, "excludeTurns": True},
+                        response_model=ThreadResumeResponse,
+                    )
+                    params = {"threadId": thread_id}
+                    while True:
+                        page = client.request(
+                            "thread/turns/list", params, response_model=ThreadTurnsPage,
+                        )
+                        turn = next((t for t in page.data if t.id == turn_id), None)
+                        if turn is not None:
+                            break
+                        if page.next_cursor is None:
+                            raise RuntimeError("Codex turn not found in thread")
+                        params = {"threadId": thread_id, "cursor": page.next_cursor}
+                    if turn.status != "inProgress":
+                        emit(_codex_turn_completed_event(
+                            thread_id, turn_id, turn.status, turn.error,
+                        ))
+                        return
+                    emit(ChatBackendEvent(
+                        type="turn_started", thread_id=thread_id, turn_id=turn_id,
+                        status=turn.status,
+                    ))
+                    params = {"threadId": thread_id, "turnId": turn_id}
+                    while not stopped.is_set():
+                        page = client.request(
+                            "thread/items/list", params, response_model=ThreadItemsPage,
+                        )
+                        for record in page.data:
+                            notification = Notification(
+                                method="item/completed",
+                                payload=ItemCompletedNotification.model_validate({
+                                    "threadId": thread_id, "turnId": turn_id, "item": record.item,
+                                    "completedAtMs": record.completed_at_ms,
+                                }),
+                            )
+                            for event in mapper.map(notification):
+                                emit(event)
+                        if page.next_cursor is None:
+                            break
+                        params = {
+                            "threadId": thread_id, "turnId": turn_id, "cursor": page.next_cursor,
+                        }
+                    while not stopped.is_set():
+                        notification = client.next_turn_notification(turn_id)
+                        for event in mapper.map(notification):
+                            emit(event)
+                            if event.type == "turn_completed":
+                                return
+                finally:
+                    client.unregister_turn_notifications(turn_id)
+        except Exception as exc:
+            if not stopped.is_set():
+                emit(exc)
+        finally:
+            emit(None)
+
+    task = asyncio.create_task(asyncio.to_thread(worker))
+    try:
+        while True:
+            event = await queue.get()
+            if event is None:
+                return
+            if isinstance(event, Exception):
+                raise event
+            yield event
+    finally:
+        stopped.set()
+        if connection:
+            await asyncio.to_thread(connection[0].close)
+        await asyncio.shield(task)
+
+
 class CodexThread:
     def __init__(
         self,
@@ -1649,28 +2189,7 @@ class CodexThread:
                 Sandbox,
             )
             from novelvideo.chat.codex_app_server import shared_codex
-            from openai_codex.generated.v2_all import (
-                AgentMessageDeltaNotification,
-                ConfigWarningNotification,
-                CommandExecutionOutputDeltaNotification,
-                ContextCompactedNotification,
-                ErrorNotification,
-                ItemGuardianApprovalReviewCompletedNotification,
-                ItemGuardianApprovalReviewStartedNotification,
-                ItemCompletedNotification,
-                McpToolCallProgressNotification,
-                ModelReroutedNotification,
-                PlanDeltaNotification,
-                ReasoningSummaryTextDeltaNotification,
-                ItemStartedNotification,
-                TerminalInteractionNotification,
-                ThreadTokenUsageUpdatedNotification,
-                TurnDiffUpdatedNotification,
-                TurnCompletedNotification,
-                TurnPlanUpdatedNotification,
-                TurnStartedNotification,
-                TurnStatus,
-            )
+            from openai_codex.generated.v2_all import TurnCompletedNotification, TurnStatus
 
             if self._codex_bin is not None and not self._codex_bin.exists():
                 raise RuntimeError(f"Codex binary not found: {self._codex_bin}")
@@ -1682,9 +2201,6 @@ class CodexThread:
                 config_overrides=self._config_overrides,
             )
 
-            items: list[Any] = []
-            tool_calls: dict[str, ChatBackendEvent] = {}
-            assistant_parts: list[str] = []
             final_response: str | None = None
             final_disposition: str | None = None
 
@@ -1719,6 +2235,7 @@ class CodexThread:
                 )
                 nonlocal current_turn_id
                 current_turn_id = turn.id
+                mapper = _CodexNotificationMapper(self.id, turn.id)
                 register_live_codex_turn(self.id, turn.id, turn)
                 emit(
                     "event",
@@ -1735,398 +2252,12 @@ class CodexThread:
                 try:
                     for event in turn.stream():
                         payload = event.payload
-                        raw = _codex_raw_notification(event)
-                        if (
-                            isinstance(payload, TurnStartedNotification)
-                            and payload.turn.id == turn.id
-                        ):
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="turn_started",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    status=str(payload.turn.status.value),
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, AgentMessageDeltaNotification)
-                            and payload.turn_id == turn.id
-                        ):
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="item_delta",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    item_id=payload.item_id,
-                                    text=payload.delta,
-                                    name="text",
-                                ),
-                            )
-                            assistant_parts.append(payload.delta)
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="assistant_delta",
-                                    thread_id=self.id,
-                                    text="".join(assistant_parts),
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, PlanDeltaNotification)
-                            and payload.turn_id == turn.id
-                            and payload.delta
-                        ):
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="plan_update",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text=payload.delta,
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, TurnPlanUpdatedNotification)
-                            and payload.turn_id == turn.id
-                        ):
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="plan_update",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text=payload.explanation,
-                                    entries=[
-                                        _codex_jsonable(step) for step in payload.plan
-                                    ],
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, ReasoningSummaryTextDeltaNotification)
-                            and payload.turn_id == turn.id
-                        ):
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="item_delta",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    item_id=payload.item_id,
-                                    text=payload.delta,
-                                    name="reasoning",
-                                    summary_index=payload.summary_index,
-                                ),
-                            )
-                            if not payload.delta:
-                                continue
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="thought_delta",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text=payload.delta,
-                                    name="reasoning_summary",
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, ItemStartedNotification)
-                            and payload.turn_id == turn.id
-                        ):
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="item_started",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    item=_codex_wire_item(payload.item),
-                                    item_id=_codex_unwrap_item(payload.item).id,
-                                    started_at_ms=payload.started_at_ms,
-                                ),
-                            )
-                            tool_event = _codex_tool_event(
-                                payload.item,
-                                phase="started",
-                                thread_id=self.id,
-                                turn_id=turn.id,
-                                raw=raw,
-                            )
-                            if tool_event is not None:
-                                if tool_event.call_id:
-                                    tool_calls[tool_event.call_id] = tool_event
-                                emit("event", tool_event)
-                            continue
-                        if (
-                            isinstance(payload, McpToolCallProgressNotification)
-                            and payload.turn_id == turn.id
-                            and payload.message
-                        ):
-                            prior = tool_calls.get(payload.item_id)
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="tool_updated",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text=f"\x1b[90m[mcp]\x1b[0m {payload.message}\n",
-                                    name=prior.name if prior is not None else None,
-                                    call_id=payload.item_id,
-                                    status="running",
-                                    input=prior.input if prior is not None else None,
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, TerminalInteractionNotification)
-                            and payload.turn_id == turn.id
-                            and payload.stdin
-                        ):
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="tool_update",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text=f"\x1b[90m[stdin]\x1b[0m {payload.stdin}\n",
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, CommandExecutionOutputDeltaNotification)
-                            and payload.turn_id == turn.id
-                            and payload.delta
-                        ):
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="tool_update",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text=str(payload.delta),
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, TurnDiffUpdatedNotification)
-                            and payload.turn_id == turn.id
-                            and payload.diff
-                        ):
-                            colored_diff = _colorize_unified_diff(payload.diff)
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="tool_update",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text=f"\x1b[95m[diff]\x1b[0m\n{colored_diff}\n",
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, ItemCompletedNotification)
-                            and payload.turn_id == turn.id
-                        ):
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="item_completed",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    item=_codex_wire_item(payload.item),
-                                    item_id=_codex_unwrap_item(payload.item).id,
-                                ),
-                            )
-                            items.append(payload.item)
-                            tool_event = _codex_tool_event(
-                                payload.item,
-                                phase="completed",
-                                thread_id=self.id,
-                                turn_id=turn.id,
-                                raw=raw,
-                            )
-                            if tool_event is not None:
-                                if tool_event.call_id:
-                                    tool_calls.pop(tool_event.call_id, None)
-                                emit("event", tool_event)
-                            continue
-                        if (
-                            isinstance(payload, ThreadTokenUsageUpdatedNotification)
-                            and payload.turn_id == turn.id
-                        ):
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="usage_update",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    usage=_codex_jsonable(payload.token_usage),
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, ModelReroutedNotification)
-                            and payload.turn_id == turn.id
-                        ):
-                            reason = getattr(
-                                getattr(payload, "reason", None),
-                                "value",
-                                str(getattr(payload, "reason", "") or ""),
-                            ).strip()
-                            text = f"\x1b[93m[model]\x1b[0m {payload.from_model} → {payload.to_model}"
-                            if reason:
-                                text += f" ({reason})"
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="tool_update",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text=text + "\n",
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if isinstance(payload, ConfigWarningNotification):
-                            text = f"\x1b[91m[config]\x1b[0m {payload.summary}"
-                            if payload.path:
-                                text += f" [{payload.path}]"
-                            if payload.details:
-                                text += f"\n{payload.details}"
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="tool_update",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text=text + "\n",
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, ContextCompactedNotification)
-                            and payload.turn_id == turn.id
-                        ):
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="tool_update",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text="\x1b[90m[context]\x1b[0m compacted\n",
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(payload, ErrorNotification)
-                            and payload.turn_id == turn.id
-                        ):
-                            message = str(
-                                getattr(payload.error, "message", "") or ""
-                            ).strip()
-                            extra = str(
-                                getattr(payload.error, "additional_details", "") or ""
-                            ).strip()
-                            retry = " retrying" if payload.will_retry else ""
-                            text = f"\x1b[91m[error{retry}]\x1b[0m {message}".rstrip()
-                            if extra:
-                                text += f"\n{extra}"
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="tool_update",
-                                    thread_id=self.id,
-                                    turn_id=turn.id,
-                                    text=text + "\n",
-                                    error=_codex_jsonable(payload.error),
-                                    status=(
-                                        "retrying" if payload.will_retry else "failed"
-                                    ),
-                                    raw=raw,
-                                ),
-                            )
-                            continue
-                        if (
-                            isinstance(
-                                payload, ItemGuardianApprovalReviewStartedNotification
-                            )
-                            and payload.turn_id == turn.id
-                        ):
-                            trace = _codex_guardian_review_trace(
-                                "guardian:start", payload.review
-                            )
-                            if trace:
-                                emit(
-                                    "event",
-                                    ChatBackendEvent(
-                                        type="tool_update",
-                                        thread_id=self.id,
-                                        turn_id=turn.id,
-                                        text=trace,
-                                        raw=raw,
-                                    ),
-                                )
-                            continue
-                        if (
-                            isinstance(
-                                payload, ItemGuardianApprovalReviewCompletedNotification
-                            )
-                            and payload.turn_id == turn.id
-                        ):
-                            trace = _codex_guardian_review_trace(
-                                "guardian:done", payload.review
-                            )
-                            if trace:
-                                emit(
-                                    "event",
-                                    ChatBackendEvent(
-                                        type="tool_update",
-                                        thread_id=self.id,
-                                        turn_id=turn.id,
-                                        text=trace,
-                                        raw=raw,
-                                    ),
-                                )
-                            continue
+                        for mapped in mapper.map(event):
+                            emit("event", mapped)
                     if (
                         isinstance(payload, TurnCompletedNotification)
                         and payload.turn.id == turn.id
                     ):
-                        turn_status = str(payload.turn.status.value)
-                        emit(
-                            "event",
-                            ChatBackendEvent(
-                                type="turn_completed",
-                                thread_id=self.id,
-                                turn_id=turn.id,
-                                status=turn_status,
-                                error=_codex_jsonable(payload.turn.error),
-                                disposition=(
-                                    "cancelled"
-                                    if payload.turn.status == TurnStatus.interrupted
-                                    else turn_status
-                                ),
-                                raw=raw,
-                            ),
-                        )
                         if payload.turn.status == TurnStatus.failed:
                             message = None
                             if payload.turn.error is not None:
@@ -2137,13 +2268,13 @@ class CodexThread:
                             )
                         if payload.turn.status == TurnStatus.interrupted:
                             final_response = (
-                                "".join(assistant_parts).strip() or "已中断。"
+                                "".join(mapper.assistant_parts).strip() or "已中断。"
                             )
                             final_disposition = "cancelled"
                         else:
                             final_response = (
-                                _codex_final_response_from_items(items)
-                                or "".join(assistant_parts).strip()
+                                _codex_final_response_from_items(mapper.items)
+                                or "".join(mapper.assistant_parts).strip()
                                 or "已执行，但没有返回正文。"
                             )
                             final_disposition = "completed"
@@ -2202,39 +2333,29 @@ class CodexThread:
         started_at = loop.time()
         first_progress_deadline = started_at + CODEX_STREAM_FIRST_PROGRESS_TIMEOUT
         idle_deadline = started_at + CODEX_STREAM_IDLE_TIMEOUT
-        total_deadline = started_at + CODEX_STREAM_TOTAL_TIMEOUT
         saw_runtime_progress = False
         user_input_calls: set[str] = set()
+        canvas_tool_deadlines: dict[str, float] = {}
         timed_out = False
 
         try:
             while True:
-                if user_input_calls:
-                    deadline = total_deadline
-                else:
-                    deadline = min(
-                        total_deadline,
-                        (
-                            idle_deadline
-                            if saw_runtime_progress
-                            else first_progress_deadline
-                        ),
-                    )
-                remaining = deadline - loop.time()
                 try:
-                    if remaining <= 0:
-                        raise asyncio.TimeoutError
-                    kind, payload = await asyncio.wait_for(
-                        queue.get(), timeout=remaining
-                    )
+                    if user_input_calls:
+                        kind, payload = await queue.get()
+                    else:
+                        deadline = (
+                            idle_deadline if saw_runtime_progress else first_progress_deadline
+                        )
+                        deadline = max((deadline, *canvas_tool_deadlines.values()))
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            raise asyncio.TimeoutError
+                        kind, payload = await asyncio.wait_for(queue.get(), timeout=remaining)
                 except asyncio.TimeoutError:
                     timed_out = True
                     now = loop.time()
-                    if user_input_calls:
-                        timeout_kind = "user-input"
-                    elif now >= total_deadline:
-                        timeout_kind = "total"
-                    elif saw_runtime_progress:
+                    if saw_runtime_progress:
                         timeout_kind = "idle"
                     else:
                         timeout_kind = "first-progress"
@@ -2262,11 +2383,7 @@ class CodexThread:
                                 exc_info=True,
                             )
 
-                    timeout_message = (
-                        "等待用户确认超时，请重新提交确认卡。"
-                        if timeout_kind == "user-input"
-                        else "Codex App Server 响应超时，请重试。"
-                    )
+                    timeout_message = "Codex App Server 响应超时，请重试。"
                     timeout_error = {
                         "message": timeout_message,
                         "kind": timeout_kind,
@@ -2303,38 +2420,37 @@ class CodexThread:
                 event = payload
                 if event.type not in _CODEX_LIFECYCLE_ONLY_EVENTS:
                     saw_runtime_progress = True
-                    idle_deadline = min(
-                        total_deadline,
-                        loop.time() + CODEX_STREAM_IDLE_TIMEOUT,
-                    )
-                if event.type == "tool_started" and _codex_tool_waits_for_user_input(
-                    event.name
-                ):
-                    user_input_calls.add(event.call_id or str(event.name))
+                    idle_deadline = loop.time() + CODEX_STREAM_IDLE_TIMEOUT
+                call_key = event.call_id or str(event.name)
+                if event.type == "tool_started":
+                    if _codex_tool_waits_for_user_input(event.name):
+                        user_input_calls.add(call_key)
+                    elif _is_freezone_canvas_write_tool(event.name):
+                        canvas_tool_deadlines[call_key] = (
+                            loop.time() + canvas_command_result_timeout_seconds()
+                            + CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS
+                        )
                 elif event.type == "tool_updated":
-                    call_key = event.call_id or str(event.name)
                     status = str(event.status or "").strip().lower()
-                    if call_key in user_input_calls and status not in {
-                        "inprogress",
-                        "pending",
-                        "running",
-                    }:
+                    if status not in {"inprogress", "pending", "running"}:
                         user_input_calls.discard(call_key)
+                        canvas_tool_deadlines.pop(call_key, None)
                 yield event
                 if event.type == "complete":
                     break
         finally:
             current_task = asyncio.current_task()
-            if (
+            detached = (
                 current_task is not None
                 and current_task.cancelling()
                 and self.id
                 and current_turn_id
-            ):
+            )
+            if detached:
                 await asyncio.to_thread(
-                    interrupt_live_codex_turn, self.id, current_turn_id
+                    detach_live_codex_turn, self.id, current_turn_id
                 )
-            if timed_out:
+            if timed_out or detached:
                 try:
                     await asyncio.wait_for(
                         asyncio.shield(worker_task),
@@ -2343,10 +2459,12 @@ class CodexThread:
                 except asyncio.TimeoutError:
                     # Cancelling a to_thread wrapper cannot stop the underlying
                     # thread, but it prevents this request from waiting forever.
-                    # The App Server interrupt above owns terminating the turn.
                     worker_task.cancel()
+                except Exception:
+                    if not detached:
+                        raise
                 finally:
-                    if self.id and current_turn_id:
+                    if timed_out and self.id and current_turn_id:
                         consume_interrupted_codex_turn(self.id, current_turn_id)
             else:
                 await worker_task

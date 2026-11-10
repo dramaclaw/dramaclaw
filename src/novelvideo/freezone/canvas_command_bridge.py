@@ -23,6 +23,8 @@ import portalocker
 
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
+CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS = 30
+
 BRIDGE_RESULT_TTL_SECONDS = 24 * 60 * 60
 BRIDGE_DELIVERY_LEASE_SECONDS = 15
 BRIDGE_PENDING_TTL_SECONDS = {
@@ -1159,6 +1161,14 @@ def resolve_clarification_result(
     bridge_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     return resolve_canvas_command(key, result, bridge_dir=bridge_dir)
+
+
+def canvas_command_result_timeout_seconds() -> int:
+    """Return the frontend command wait budget, clamped to at least one second."""
+    try:
+        return max(1, int(os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "600")))
+    except ValueError:
+        return 600
 
 
 def wait_canvas_command_result(

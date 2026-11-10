@@ -300,7 +300,7 @@ def test_chat_websocket_surfaces_foreign_billing_error_verbatim(monkeypatch) -> 
     async def authenticate(_websocket):
         return {"username": "local"}
 
-    async def send_scope_changed(_websocket, _user, _username, _scope):
+    async def send_scope_changed(_websocket, _user, _username, _scope, _send_lock=None):
         return scope
 
     async def reauthenticate(_websocket, *, original_user, **_kwargs):

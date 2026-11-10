@@ -74,7 +74,6 @@ def test_ce_agent_key_routes_are_not_mounted() -> None:
 
 def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None:
     from novelvideo.api.app import create_app
-    from novelvideo.chat import service as chat_service
     from novelvideo.ports import registry
 
     monkeypatch.setenv("ST_EDITION", "ce")
@@ -83,9 +82,6 @@ def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None
     _set_task_signing_env(monkeypatch)
     monkeypatch.setattr(registry, "_PORTS", {})
     monkeypatch.setattr(registry, "_BOOTSTRAPPED", False)
-    monkeypatch.setattr(
-        chat_service, "force_release_chat_run_lock", lambda *_args: None
-    )
 
     app = create_app()
     with TestClient(app) as client:
@@ -131,7 +127,7 @@ def test_director_auto_database_failure_does_not_block_api_startup(monkeypatch) 
     assert "unreadable" in app.state.director_auto_startup_error
 
 
-def test_ce_chat_ws_accepts_missing_cookie_via_local_auth(monkeypatch) -> None:
+def test_ce_chat_ws_accepts_missing_cookie_via_local_auth(monkeypatch, tmp_path) -> None:
     from novelvideo.api.app import create_app
     from novelvideo.chat import service as chat_service
     from novelvideo.ports import registry
@@ -139,6 +135,8 @@ def test_ce_chat_ws_accepts_missing_cookie_via_local_auth(monkeypatch) -> None:
     async def _no_prewarm(*_args, **_kwargs) -> None:
         return None
 
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "codex")
     monkeypatch.setenv("ST_EDITION", "ce")
     monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "")
     monkeypatch.setenv("REDIS_URL", "")
