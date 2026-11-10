@@ -1377,66 +1377,75 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     assert captured["tool_mode"] == tool_mode
     assert captured["canvas_id"] == expected_canvas
     assert captured["turn_id"] == "business-turn"
-    assert history_sentinel not in str(captured["prompt"])
+    assert captured["prompt"] == "hello"
+    assert captured["client_user_message_id"] == "business-turn"
+    for key in ("prompt", "turn_context", "execution_context"):
+        assert history_sentinel not in captured[key]
+    assert "[USER_MESSAGE]" not in captured["turn_context"]
+    protocol = chat_service._codex_protocol_text(tool_mode)
     assert not Path(captured["agent_token_file"]).exists()
     assert revoked == ["agent-token"]
     if tool_mode == "freezone_canvas":
-        assert "Do not rerun generation" in captured["prompt"]
-        assert "[FREEZONE_CANVAS_ASSISTANT]" in captured["prompt"]
-        assert "[FREEZONE_CANVAS_CONTEXT]" in captured["prompt"]
-        assert "canvas_id: canvas-a" in captured["prompt"]
-        assert "generation_parameter_round: business-turn" in captured["prompt"]
-        assert "Historical clarification answers" in captured["prompt"]
-        assert "they never count as confirmation for this round" in captured["prompt"]
-        assert "references/custom-topology.md" in captured["prompt"]
-        assert (
-            "Do not use freezone_emit_canvas_command for a workflow"
-            in captured["prompt"]
-        )
-        developer_instructions = chat_service._codex_developer_instructions(tool_mode)
-        assert "scope-filtered concrete operations" in developer_instructions
-        assert "call the selected tool directly" in developer_instructions
-        assert "custom-topology reference" in developer_instructions
-        assert "top-level schema_version plus skill.id and skill.version" in developer_instructions
-        assert "Never invent, abbreviate, or reconstruct an operation_id" in developer_instructions
-        assert "reserved input/resource/asset stages" in developer_instructions
-        assert "business totals belong in the compact Intent" in developer_instructions
+        for text in (
+            "Do not rerun generation",
+            "[FREEZONE_CANVAS_CONTEXT]",
+            "canvas_id: canvas-a",
+            "generation_parameter_round: business-turn",
+            "Historical clarification answers",
+            "they never count as confirmation for this round",
+        ):
+            assert text in captured["turn_context"]
+        for text in (
+            "[FREEZONE_CANVAS_ASSISTANT]",
+            "references/custom-topology.md",
+            "Do not use freezone_emit_canvas_command for a workflow",
+        ):
+            assert text in protocol
+            assert text not in captured["turn_context"]
+        assert "scope-filtered concrete operations" in protocol
+        assert "call the selected tool directly" in protocol
+        assert "custom-topology reference" in protocol
+        assert "top-level schema_version plus skill.id and skill.version" in protocol
+        assert "Never invent, abbreviate, or reconstruct an operation_id" in protocol
+        assert "reserved input/resource/asset stages" in protocol
+        assert "business totals belong in the compact Intent" in protocol
         assert (
             "explicitly enumerates canvas nodes and a dependency graph"
-            in developer_instructions
+            in protocol
         )
-        assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
+        assert "freezone_prepare_workflow_plan_draft once" in protocol
         assert (
             "dependency_for only controls execution order and never consumes source output"
-            in developer_instructions
+            in protocol
         )
-        assert "must not use dependency_for" in developer_instructions
-        assert "expected_node_count" in developer_instructions
-        assert "placeholder graph such as A/B" in developer_instructions
-        assert "a user selection cannot authorize that bypass" in developer_instructions
-        assert "short-drama production Skill" in developer_instructions
-        assert "not a Workflow catalog skill_id" in developer_instructions
+        assert "must not use dependency_for" in protocol
+        assert "expected_node_count" in protocol
+        assert "placeholder graph such as A/B" in protocol
+        assert "a user selection cannot authorize that bypass" in protocol
+        assert "short-drama production Skill" in protocol
+        assert "not a Workflow catalog skill_id" in protocol
         assert (
             "never pass dramaclaw-workflows to workflow_skill_get"
-            in developer_instructions
+            in protocol
         )
-        assert "call freezone_request_user_clarification once" in developer_instructions
-        assert "never include questions in the same call" in developer_instructions
-        assert "applies only to image and video for now" in developer_instructions
-        assert "run_after_create=true" in developer_instructions
+        assert "call freezone_request_user_clarification once" in protocol
+        assert "never include questions in the same call" in protocol
+        assert "applies only to image and video for now" in protocol
+        assert "run_after_create=true" in protocol
         assert "Workflows bound to story targets must explicitly pass run_after_create" in (
-            developer_instructions
+            protocol
         )
         assert "A terse confirmation such as 可以 or 确认 inherits" in (
-            developer_instructions
+            protocol
         )
-        assert "video_generation_mode" in developer_instructions
-        assert "omit generation_media_types" in developer_instructions
+        assert "video_generation_mode" in protocol
+        assert "omit generation_media_types" in protocol
     else:
+        assert "[DRAMACLAW_MAINLINE_SCOPE]" in protocol
+        assert "[FREEZONE_CANVAS_ASSISTANT]" not in protocol
+        assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["turn_context"]
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
-        assert "scope-filtered concrete MCP tools" in (
-            chat_service._codex_developer_instructions(tool_mode)
-        )
+        assert "scope-filtered concrete MCP tools" in protocol
     expected_events = [
         "thread_started",
         "turn_started",
@@ -1469,6 +1478,88 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     assert all("raw" not in event for event in events)
     assert all("method" not in event for event in events)
     assert events[-1]["type"] == "done"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("script_upload_guidance", [False, True])
+async def test_codex_stream_separates_execution_context(
+    monkeypatch, tmp_path, script_upload_guidance
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    captured = {}
+
+    class FakeThread:
+        async def stream(self, prompt):
+            captured["prompt"] = prompt
+            yield SimpleNamespace(type="complete", thread_id=None, text="ok")
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, _token):
+            pass
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    def fake_build_thread(*_args, **kwargs):
+        captured.update(kwargs)
+        return FakeThread()
+
+    async def on_event(_event):
+        pass
+
+    monkeypatch.setattr(chat_service, "_create_page_agent_session_token", fake_create_token)
+    monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    await chat_service._stream_assistant_reply_codex(
+        "viewer", "project-a", "hello\n[CANVAS_REFS]\nnode-1\n[/CANVAS_REFS]", on_event,
+        route_prompt="hello",
+        **({"script_upload_guidance": True} if script_upload_guidance else {}),
+    )
+
+    assert captured["prompt"] == "hello"
+    assert captured["execution_context"] == "[CANVAS_REFS]\nnode-1\n[/CANVAS_REFS]"
+    assert "[DRAMACLAW_EXECUTION_CONTEXT]" not in captured["turn_context"]
+    assert (
+        chat_service._DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS.strip()
+        in captured["turn_context"]
+    ) is script_upload_guidance
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("backend", "prompt", "guidance"),
+    [
+        ("codex", "帮我写一个赛博朋克短剧剧本", True),
+        ("codex", "hello", False),
+        ("hermes", "帮我写一个赛博朋克短剧剧本", True),
+    ],
+)
+async def test_script_creation_dispatch_preserves_backend_prompt(
+    monkeypatch, tmp_path, backend, prompt, guidance
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: backend)
+    captured = {}
+
+    async def fake_stream(_username, _project, prompt, _on_event, **kwargs):
+        captured["prompt"] = prompt
+        captured.update(kwargs)
+        return {"role": "assistant", "content": "ok"}
+
+    async def on_event(_event):
+        pass
+
+    monkeypatch.setattr(chat_service, f"_stream_assistant_reply_{backend}", fake_stream)
+    await chat_service.stream_assistant_reply("viewer", "project-a", prompt, on_event)
+
+    if backend == "codex":
+        assert captured["prompt"] == prompt
+        assert captured["script_upload_guidance"] is guidance
+    else:
+        assert captured["prompt"] == chat_service._script_creation_model_reply_prompt(prompt)
 
 
 def test_codex_freezone_write_request_detection_ignores_injected_context_and_questions():
@@ -1958,12 +2049,32 @@ def test_codex_freezone_thread_advertises_exact_agent_skill_locator(
         authorization=None,
         agent_profile="freezone:main",
         tool_mode="freezone_canvas",
+        turn_context="TURN",
+        execution_context="PAGE",
+        client_user_message_id="turn-1",
     )
 
+    assert (
+        captured["developer_instructions"]
+        == chat_service._CODEX_SESSION_DEVELOPER_INSTRUCTIONS
+    )
+    protocol_entries = [
+        entry for key, entry in captured["additional_context"].items()
+        if key.startswith("dramaclaw-protocol")
+    ]
+    assert protocol_entries
+    assert all(entry["kind"] == "application" for entry in protocol_entries)
+    assert captured["additional_context"]["dramaclaw-turn"] == {
+        "value": "TURN", "kind": "application",
+    }
+    assert captured["additional_context"]["dramaclaw-execution-context"] == {
+        "value": "PAGE", "kind": "untrusted",
+    }
+    assert captured["client_user_message_id"] == "turn-1"
     match = re.search(
         r"\[DRAMACLAW_AGENT_SKILL_LOCATORS\]\n(.*?)\n"
         r"\[/DRAMACLAW_AGENT_SKILL_LOCATORS\]",
-        captured["developer_instructions"],
+        "".join(entry["value"] for entry in protocol_entries),
         re.DOTALL,
     )
     assert thread == "new-thread"
@@ -2110,6 +2221,8 @@ def test_codex_exact_audio_planner_has_no_canvas_tools_and_uses_plan_schema(
         == chat_service._CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS
     )
     assert captured["output_schema"] == chat_service._CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA
+    assert captured.get("additional_context") is None
+    assert captured.get("client_user_message_id") is None
 
 
 def test_named_recipe_distinguishes_existing_output_from_external_media_input():
@@ -3934,7 +4047,6 @@ async def test_codex_prompt_construction_failure_cleans_turn_credentials(
     project_state = tmp_path / "state" / "admin" / "project-a"
     runtime_root = tmp_path / "runtime"
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(runtime_root))
-    captured: dict[str, Path] = {}
     revoked: list[str] = []
     finished: list[str] = []
 
@@ -3952,11 +4064,8 @@ async def test_codex_prompt_construction_failure_cleans_turn_credentials(
     async def fake_create_token(*_args, **_kwargs):
         return "agent-token"
 
-    def fake_build_thread(*_args, **kwargs):
-        token_file = Path(kwargs["agent_token_file"])
-        assert token_file.read_text(encoding="utf-8") == "agent-token"
-        captured["token_file"] = token_file
-        return SimpleNamespace()
+    def fake_build_thread(*_args, **_kwargs):
+        pytest.fail("prompt failure must happen before building a thread")
 
     def fail_prompt(*_args, **_kwargs):
         raise RuntimeError("prompt construction failed")
@@ -3973,7 +4082,7 @@ async def test_codex_prompt_construction_failure_cleans_turn_credentials(
         fake_create_token,
     )
     monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
-    monkeypatch.setattr(chat_service, "_prompt_with_user_context", fail_prompt)
+    monkeypatch.setattr(chat_service, "_user_context_parts", fail_prompt)
     monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
     monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
 
@@ -3990,7 +4099,6 @@ async def test_codex_prompt_construction_failure_cleans_turn_credentials(
             turn_id="business-turn",
         )
 
-    assert not captured["token_file"].exists()
     assert revoked == ["agent-token"]
     assert finished == ["failed"]
     token_root = runtime_root / "codex" / "turn_tokens"
