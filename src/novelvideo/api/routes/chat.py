@@ -1862,6 +1862,11 @@ async def append_canvas_confirmation_notice(
             f"and the server applied it with status {detail}. "
             "Check the current canvas before reporting."
         ),
+        "failed": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}), "
+            f"but the server could not apply it ({detail}). The confirmation is void. "
+            "Read the canvas before reporting the outcome or asking again."
+        ),
     }
     await chat_store.append_message_async(
         str(user["username"]), store_scope, "agent_notification",

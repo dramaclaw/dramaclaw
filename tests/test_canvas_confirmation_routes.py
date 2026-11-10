@@ -237,6 +237,22 @@ def test_card_confirm_executes_once(setup):
     assert len(notices(setup)) == 1
 
 
+def test_card_confirm_can_empty_the_canvas(setup):
+    created = create(setup, commands=[{
+        "type": "delete_nodes", "node_ids": ["n1", "n2", "n3"],
+    }])
+    response = decide(setup, created)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "executed"
+    assert response.json()["data"]["result"]["status"] == "applied"
+    assert response.json()["data"]["result"]["revision"] == 2
+    assert nodes(setup) == []
+    assert record(setup, created)["status"] == "executed"
+    saved = notices(setup)
+    assert len(saved) == 1
+    assert "applied it with status applied" in saved[0]["content"]
+
+
 @pytest.mark.parametrize("overrides,code", [
     ({"command_hash": "wrong"}, "command_mismatch"),
     ({"turn_id": "wrong"}, "turn_mismatch"),
@@ -384,6 +400,54 @@ def test_execution_error_without_code_preserves_http_error(setup, monkeypatch, c
     assert response.json()["detail"] == {"message": "Command rejected"}
     assert record(setup, created)["status"] == "voided"
     assert "execution_failed" in caplog.text
+    saved = notices(setup)
+    assert len(saved) == 1
+    assert saved[0]["content"] == (
+        "[CANVAS_BACKGROUND_RESULT] The user confirmed canvas confirmation "
+        + created["confirmation_id"]
+        + " (delete_nodes), but the server could not apply it (execution_failed). "
+        "The confirmation is void. Read the canvas before reporting the outcome or asking again. "
+        "[/CANVAS_BACKGROUND_RESULT]"
+    )
+    assert saved[0]["turn_id"] == "t1"
+
+
+def test_card_execution_error_code_reaches_agent(setup, monkeypatch):
+    created = create(setup)
+
+    async def fail_execution(**kwargs):
+        raise HTTPException(400, {
+            "code": "dangerous_empty_canvas_overwrite", "old_nodes": 1, "new_nodes": 0,
+            "save_source": "agent_patch",
+        })
+
+    monkeypatch.setattr(routes, "execute_agent_canvas_envelopes", fail_execution)
+    response = decide(setup, created)
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == {
+        "code": "dangerous_empty_canvas_overwrite", "old_nodes": 1, "new_nodes": 0,
+        "save_source": "agent_patch",
+    }
+    assert record(setup, created)["status"] == "voided"
+    saved = notices(setup)
+    assert len(saved) == 1
+    assert "could not apply it (dangerous_empty_canvas_overwrite)" in saved[0]["content"]
+
+
+def test_conversation_execution_error_has_no_notice(setup, monkeypatch):
+    created = create(setup)
+
+    async def fail_execution(**kwargs):
+        raise HTTPException(400, {
+            "code": "dangerous_empty_canvas_overwrite", "old_nodes": 1, "new_nodes": 0,
+            "save_source": "agent_patch",
+        })
+
+    monkeypatch.setattr(routes, "execute_agent_canvas_envelopes", fail_execution)
+    setup.user[0] = AGENT
+    response = decide(setup, created, via="conversation", turn_id="t2")
+    assert response.status_code == 400, response.text
+    assert notices(setup) == []
 
 
 def test_other_canvas_cannot_decide_record(setup):

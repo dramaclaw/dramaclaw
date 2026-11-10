@@ -17951,6 +17951,7 @@ async def agent_canvas_commands(
 async def execute_agent_canvas_envelopes(
     *, project: str, canvas_id: str, user: dict, ctx: ProjectContext,
     canvas_project_dir: Path, envelopes: list[dict], locale: str | None,
+    user_confirmed: bool = False,
 ) -> dict:
     image, video = await asyncio.gather(
         _freezone_image_models_data(ctx.requester_user_id),
@@ -17961,6 +17962,7 @@ async def execute_agent_canvas_envelopes(
         data = await dispatch_agent_canvas(
             project=project, canvas_id=canvas_id, project_dir=canvas_project_dir,
             envelopes=envelopes,
+            user_confirmed=user_confirmed,
             env={"locale": locale, "catalogs": {"image": image, "video": video}},
             build_payload=partial(
                 _canvas_payload_builder, project=project, canvas_id=canvas_id, user=user, ctx=ctx,
@@ -18193,17 +18195,22 @@ async def decide_canvas_confirmation(
             data = await execute_agent_canvas_envelopes(
                 project=project, canvas_id=canvas_id, user=user, ctx=ctx,
                 canvas_project_dir=state_dir, envelopes=[envelope], locale=None,
+                user_confirmed=True,
             )
         except Exception as exc:
+            code = (
+                exc.detail.get("code") or "execution_failed"
+                if isinstance(exc, HTTPException) and isinstance(exc.detail, dict)
+                else "execution_failed"
+            )
             await asyncio.to_thread(
                 canvas_confirmations.void_confirmation, directory, confirmation_id,
                 reason="execution_failed", now=now,
             )
             _log_canvas_confirmation_decision(record, "voided", body.via, now)
-            if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
-                _log_canvas_confirmation_decision(
-                    record, exc.detail.get("code") or "execution_failed", body.via, now,
-                )
+            _log_canvas_confirmation_decision(record, code, body.via, now)
+            if body.via == "card":
+                await append_canvas_confirmation_notice(user, record, "failed", code)
             raise
         await asyncio.to_thread(
             canvas_confirmations.finish_confirmation, directory, confirmation_id,
