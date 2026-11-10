@@ -45,7 +45,7 @@ from novelvideo.chat.hermes_workspace import (
     ensure_user_hermes_workspace,
     sync_freezone_hermes_workflow_skills,
 )
-from novelvideo.chat.store import ChatScope, chat_store
+from novelvideo.chat.store import ChatScope, ChatUiEventRejected, chat_store
 from novelvideo.chat.turn_images import referenced_image_paths
 from novelvideo.freezone.canvas_command_bridge import (
     BRIDGE_PENDING_TTL_SECONDS,
@@ -631,6 +631,9 @@ async def append_chat_ui_event(
             turn_id,
             payload.event,
         )
+    except ChatUiEventRejected as exc:
+        # Permanent for this turn: the client should stop retrying, not report on every flush.
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "data": event}

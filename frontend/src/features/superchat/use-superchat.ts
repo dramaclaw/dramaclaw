@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { localSnapshot, markLocalMessageChanges } from "./message-parts-origin";
-import { createMessagePartsQueue } from "./message-parts-queue";
+import { createMessagePartsQueue, SnapshotRejectedError } from "./message-parts-queue";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import i18next from "i18next";
 import type {
@@ -2104,6 +2104,10 @@ export function useSuperChat({
       await api.post("api/v1/chat/ui-events", { json: body });
     } catch (error) {
       setError(i18next.t("chatSnapshot.saveFailed"));
+      // 413: this turn's snapshot can never be stored; stop retrying (reported once).
+      if ((error as { response?: Response })?.response?.status === 413) {
+        throw new SnapshotRejectedError(String(error));
+      }
       throw error;
     }
   }), []);
