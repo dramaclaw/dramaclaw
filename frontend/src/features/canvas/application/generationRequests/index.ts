@@ -7,3 +7,5 @@ export * from './generationSubmitError';
 export * from './videoGenerationResult';
 export * from './audioGenerationRequest';
 export * from './audioGenerationResult';
+export * from './textGenerationRequest';
+export * from './textGenerationResult';
