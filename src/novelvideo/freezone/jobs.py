@@ -771,6 +771,10 @@ async def _run_model_video_enhancement(
             egress_context=egress_context,
             on_progress=lambda value: report(0.10 + value * (upscale_end - 0.10)),
         )
+        if combined:
+            actual = await probe_video_stream(str(current), cwd=project_dir, egress_context=egress_context)
+            if (actual["width"], actual["height"], actual["fps"]) != (1920, 1080, 60):
+                raise RuntimeError("local video enhancement returned an output other than 1920×1080 at 60 fps")
 
         if factor > 1:
             slowed = work_dir / "02_slowed.mp4"

@@ -1430,7 +1430,7 @@ async def _run_freezone_video_upscale_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     task_type = "freezone_video_upscale"
-    _update(ctx, task_type, job_id, 0.1, "开始视频高清处理...")
+    _update(ctx, task_type, job_id, 0.1, lmsg("tasks.progress.videoUpscale.start", "开始视频高清处理..."))
     last_percent = 10
 
     def on_progress(value: float) -> None:
@@ -1439,7 +1439,7 @@ async def _run_freezone_video_upscale_async(
         if percent > last_percent:
             get_task_manager().update_progress_for_project(
                 ctx, task_type, 0, scope=job_id, progress=percent / 100,
-                current_task="正在处理高清视频...",
+                current_task=lmsg("tasks.progress.videoUpscale.processing", "正在处理高清视频..."),
             )
             last_percent = percent
 

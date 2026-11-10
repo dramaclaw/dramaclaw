@@ -34,6 +34,11 @@ from dotenv import load_dotenv
 
 from novelvideo.egress_context import ambient_egress_context
 from novelvideo.authz_retry import retry_authz_read
+from novelvideo.freezone.local_video_upscale import (
+    LOCAL_VIDEO_UPSCALE_CLIENT_HEADER,
+    LOCAL_VIDEO_UPSCALE_MODEL,
+    local_video_upscale_client_key,
+)
 from novelvideo.i18n_message import lmsg
 from novelvideo.ports import (
     get_usage_meter,
@@ -2061,9 +2066,14 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         *,
         headers: dict[str, str] | None = None,
     ) -> dict:
+        options = (
+            {"allow_redirects": False}
+            if headers and LOCAL_VIDEO_UPSCALE_CLIENT_HEADER in headers
+            else {}
+        )
         async with aiohttp.ClientSession(timeout=self._client_timeout()) as session:
             async with session.post(
-                url, json=payload, headers=headers or self.headers
+                url, json=payload, headers=headers or self.headers, **options
             ) as resp:
                 text = await resp.text()
                 if resp.status < 200 or resp.status >= 300:
@@ -3136,6 +3146,18 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             )
             return VideoGenResult(status=VideoGenStatus.FAILED, error=safe_error)
 
+        submit_url = f"{request_base_url}/video/generations"
+        submit_headers = request_headers if organization_request else None
+        if self.model == LOCAL_VIDEO_UPSCALE_MODEL:
+            try:
+                client_key = local_video_upscale_client_key(submit_url)
+            except ValueError as exc:
+                return await fail_before_submit(str(exc))
+            submit_headers = {
+                **(request_headers or self.headers),
+                LOCAL_VIDEO_UPSCALE_CLIENT_HEADER: client_key,
+            }
+
         if requested_mode:
             try:
                 await self._apply_huimeng_protocol_media_inputs(
@@ -3436,16 +3458,14 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 request_payload=payload,
             )
             submit_attempted = True
-            if organization_request:
+            if submit_headers is not None:
                 submitted = await self._post_json(
-                    f"{request_base_url}/video/generations",
+                    submit_url,
                     payload,
-                    headers=request_headers,
+                    headers=submit_headers,
                 )
             else:
-                submitted = await self._post_json(
-                    f"{request_base_url}/video/generations", payload
-                )
+                submitted = await self._post_json(submit_url, payload)
             await update_current_model_call_log(
                 response_payload=submitted,
             )

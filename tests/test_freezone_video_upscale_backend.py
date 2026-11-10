@@ -150,7 +150,9 @@ async def test_local_1080p60_uses_one_gateway_request_and_publishes_output(
     calls = []
     progress = []
 
-    async def probe(*_args, **_kwargs):
+    async def probe(path, **_kwargs):
+        if Path(path) != source:
+            return {"width": 1920, "height": 1080, "fps": 60, "duration": duration}
         return {"width": width, "height": height, "fps": fps, "duration": duration}
 
     async def model(mode: str, *, requester_user_id: str):
@@ -204,6 +206,33 @@ async def test_local_1080p60_uses_one_gateway_request_and_publishes_output(
             body=body, project_dir=tmp_path, requester_user_id="member-1",
         )
     assert rejected.value.status_code == 400
+
+
+@pytest.mark.parametrize("output", [(1920, 1080, 30), (1280, 720, 60)])
+@pytest.mark.asyncio
+async def test_local_1080p60_does_not_publish_mismatched_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: tuple[int, int, int],
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.touch()
+
+    async def probe(path, **_kwargs):
+        width, height, fps = (1280, 720, 30) if Path(path) == source else output
+        return {"width": width, "height": height, "fps": fps, "duration": 1.0}
+
+    async def process(**kwargs):
+        kwargs["output_path"].write_bytes(b"gateway-result")
+
+    monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_ENABLED", "true")
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
+    monkeypatch.setattr(freezone_jobs, "_run_video_processing_model", process)
+    with pytest.raises(RuntimeError, match="1920×1080 at 60 fps"):
+        await freezone_jobs.run_freezone_video_upscale(
+            project_dir=tmp_path, job_id="wrong-profile", source_path=str(source),
+            upscale_backend="video-upscale-fast", frame_rate_backend="video-upscale-fast",
+            target_fps=60,
+        )
+    assert not list(freezone_jobs.outputs_dir(tmp_path, "freezone_video_upscale").iterdir())
 
 
 @pytest.mark.parametrize("backend", ["video-upscale-fast", "newapi_video-upscale-fast"])

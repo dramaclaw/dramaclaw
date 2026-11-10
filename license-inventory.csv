@@ -3525,6 +3525,7 @@ src/novelvideo/freezone/html_artifacts.py,Elastic-2.0,2026 SuperTale contributor
 src/novelvideo/freezone/image_node.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/image_outputs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/jobs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/local_video_upscale.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/mark_node.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/paths.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/presets.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

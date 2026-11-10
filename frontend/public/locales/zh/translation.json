@@ -3391,6 +3391,10 @@
       "pipeline": {
         "normalizingScenes": "AI 规范化剧本场景块..."
       },
+      "videoUpscale": {
+        "start": "开始视频高清处理...",
+        "processing": "正在处理高清视频..."
+      },
       "script": {
         "start": "开始生成脚本...",
         "beatVideoPromptStart": "开始生成 Beat {{beatNum}} 视频提示词",
