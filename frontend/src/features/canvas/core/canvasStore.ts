@@ -190,6 +190,9 @@ export interface CanvasState {
    */
   pendingClearIntent: boolean;
   selectedNodeId: string | null;
+  editingNodeFields: ReadonlyArray<{ nodeId: string; field: string }>;
+  beginNodeFieldEdit: (nodeId: string, field: string) => void;
+  endNodeFieldEdit: (nodeId: string, field: string) => void;
   /**
    * 当前进入「编辑态」的故事片段(故事组内视频节点)id。临时 UI 态,不持久化、不进 undo。
    * null = 全部故事片段为播放器形态。切换选中节点(setSelectedNode 到别的 id)时自动清空。
@@ -234,6 +237,14 @@ export interface CanvasState {
   replaceEdges: (edges: CanvasEdge[]) => void;
 
   setCanvasData: (nodes: CanvasNode[], edges: CanvasEdge[], history?: CanvasHistoryState) => void;
+  applyRemoteCanvasChange: (
+    nodes: CanvasNode[],
+    edges: CanvasEdge[],
+    replaySnapshot: (snapshot: CanvasHistorySnapshot) => {
+      nodes: readonly CanvasNode[];
+      edges: readonly CanvasEdge[];
+    } | null,
+  ) => void;
   applyCanvasDataEdit: (nodes: CanvasNode[], edges: CanvasEdge[]) => void;
   hydrateCanvasDraft: (draft: {
     nodes: CanvasNode[];
@@ -1766,6 +1777,21 @@ function pushSnapshot(
   return next;
 }
 
+function replayHistorySnapshots(
+  snapshots: CanvasHistorySnapshot[],
+  replaySnapshot: (snapshot: CanvasHistorySnapshot) => CanvasHistorySnapshot | null,
+): CanvasHistorySnapshot[] {
+  const replayed: CanvasHistorySnapshot[] = [];
+  // Both stacks consume their last entry first. Stop before a conflicting
+  // snapshot so no undo/redo can cross the gap it leaves in history.
+  for (let index = snapshots.length - 1; index >= 0; index--) {
+    const snapshot = replaySnapshot(snapshots[index]);
+    if (snapshot === null) break;
+    replayed.push(snapshot);
+  }
+  return replayed.reverse();
+}
+
 function getDerivedNodePosition(nodes: CanvasNode[], sourceNodeId: string): { x: number; y: number } {
   const sourceNode = nodes.find((node) => node.id === sourceNodeId);
   if (!sourceNode) {
@@ -1824,6 +1850,7 @@ const canvasStateCreator = (
   lastMutationSource: null,
   pendingClearIntent: false,
   selectedNodeId: null,
+  editingNodeFields: [],
   storyEditNodeId: null,
   activeOverlayNodeId: null,
   activeLightEditorNodeId: null,
@@ -2102,11 +2129,34 @@ const canvasStateCreator = (
       activeToolDialog: null,
       history: normalizeHistory(history, env),
       dragHistorySnapshot: null,
+      editingNodeFields: [],
       // Hydrate / canvas switch — treat the store as freshly loaded so the
       // dangerous-empty guard does not misfire on the first signature pass.
       userEditsSinceHydrate: 0,
       lastMutationSource: null,
       pendingClearIntent: false,
+    });
+  },
+
+  applyRemoteCanvasChange: (nodes, edges, replaySnapshot) => {
+    const replay = (snapshot: CanvasHistorySnapshot): CanvasHistorySnapshot | null => {
+      const replayed = replaySnapshot(snapshot);
+      return replayed ? createSnapshot([...replayed.nodes], [...replayed.edges]) : null;
+    };
+    set((state) => {
+      const nodeIds = new Set(nodes.map((node) => node.id));
+      return {
+        nodes,
+        edges,
+        selectedNodeId: resolveSelectedNodeId(state.selectedNodeId, nodes),
+        activeToolDialog: resolveActiveToolDialog(state.activeToolDialog, nodes),
+        editingNodeFields: state.editingNodeFields.filter((edit) => nodeIds.has(edit.nodeId)),
+        history: {
+          past: replayHistorySnapshots(state.history.past, replay),
+          future: replayHistorySnapshots(state.history.future, replay),
+        },
+        dragHistorySnapshot: state.dragHistorySnapshot ? replay(state.dragHistorySnapshot) : null,
+      };
     });
   },
 
@@ -5209,6 +5259,18 @@ const canvasStateCreator = (
         ...trackEdit(state),
       };
     });
+  },
+
+  beginNodeFieldEdit: (nodeId, field) => {
+    set((state) => state.editingNodeFields.some((edit) => edit.nodeId === nodeId && edit.field === field)
+      ? state
+      : { editingNodeFields: [...state.editingNodeFields, { nodeId, field }] });
+  },
+
+  endNodeFieldEdit: (nodeId, field) => {
+    set((state) => ({
+      editingNodeFields: state.editingNodeFields.filter((edit) => edit.nodeId !== nodeId || edit.field !== field),
+    }));
   },
 
   setSelectedNode: (nodeId) => {
