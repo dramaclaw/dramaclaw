@@ -9,7 +9,7 @@ import { createBrowserCanvasContextPorts } from "./browserCanvasContextPorts";
 import { canvasContextFailureErrors } from "./context/canvasContextResult";
 import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import { startCanvasCommandStream } from "./canvasCommandStream";
-import { canvasPushReloadRevision } from "./canvasPushFrames";
+import { useCanvasTextEditTracking } from "./canvasTextEditTracking";
 import { canvasCreationActions } from "@/features/canvas/application/nodeCatalog";
 import { uuidGenerator } from "@/features/canvas/infrastructure/idGenerator";
 import { htmlArtifactNodePatches } from '@/features/html-artifacts/nodeMetadata';
@@ -44,7 +44,6 @@ import {
 import {
   buildProjectionFromPreset,
   getProjectionStatuses,
-  isOwnClientSaveId,
   type FreezonePresetCanvasRequest,
 } from "@/api/canvas";
 import { Button } from "@/components/ui/button";
@@ -67,10 +66,7 @@ import {
   SUPERCHAT_CANVAS_COMMAND_EVENT,
   SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT,
 } from "@/features/superchat/use-superchat";
-import {
-  agentCanvasExecutorIsServer,
-  openFilmStudioEnabled,
-} from "@/lib/runtime-config";
+import { openFilmStudioEnabled } from "@/lib/runtime-config";
 import { SuperChatPanel } from "@/features/superchat/superchat-panel";
 import type { ChatAttachment } from "@/features/superchat/types";
 import { CommitDialog } from "./commit/CommitDialog";
@@ -268,7 +264,6 @@ const FREEZONE_CHAT_FLOAT_MARGIN = 12;
 const FREEZONE_CHAT_FLOAT_MIN_TOP = APP_HEADER_HEIGHT + 8;
 const FREEZONE_CHAT_FLOAT_BOTTOM_RESERVE = TASK_STATUS_BAR_HEIGHT + 8;
 const FREEZONE_CHAT_FLOAT_DEFAULT_POS = { right: 24, top: FREEZONE_CHAT_FLOAT_MIN_TOP + 8 };
-const EXTERNAL_CANVAS_REVISION_POLL_MS = 2_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -1128,6 +1123,7 @@ export function FreezoneShell({
     }
   }, [projectId, queryClient]);
   const sync = useCanvasSync(projectId, canvasId);
+  useCanvasTextEditTracking();
   // fmv marker：画布 metadata 里出现待确认大纲时才挂方案卡（阶段B）。
   const pendingOutline = useMemo(
     () => parsePendingStoryOutline(sync.metadata),
@@ -1136,25 +1132,14 @@ export function FreezoneShell({
   const canvasNodes = useCanvasStore((state) => state.nodes);
   const canvasEdges = useCanvasStore((state) => state.edges);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
-  const syncRetryRef = useRef(sync.retry);
+  const applyPushFrameRef = useRef(sync.applyPushFrame);
   const syncRevisionRef = useRef(sync.revision);
-  const requestedReloadRevisionRef = useRef<number | null>(null);
-  useEffect(() => {
-    syncRetryRef.current = sync.retry;
-  }, [sync.retry]);
+  useLayoutEffect(() => {
+    applyPushFrameRef.current = sync.applyPushFrame;
+  }, [sync.applyPushFrame]);
   useEffect(() => {
     syncRevisionRef.current = sync.revision;
-    if (
-      sync.revision != null &&
-      requestedReloadRevisionRef.current != null &&
-      sync.revision >= requestedReloadRevisionRef.current
-    ) {
-      requestedReloadRevisionRef.current = null;
-    }
   }, [sync.revision]);
-  useEffect(() => {
-    requestedReloadRevisionRef.current = null;
-  }, [canvasId, projectId]);
   const visibleSelectedCanvasNodes = useMemo(() => {
     const selectedNodes = canvasNodes.filter((node) => node.selected);
     return selectedNodes.length > 0
@@ -1311,71 +1296,6 @@ export function FreezoneShell({
       setRenderedCanvasKey(lastRenderedCanvasKey);
     }
   }, [canvasId, projectId, sync.hydratedCanvasId, sync.hydratedProject, sync.status]);
-
-  useEffect(() => {
-    if (!agentCanvasExecutorIsServer()) return;
-    // 在虾集时不轮询：保活期间画布没人看，没必要为它占着请求配额。
-    // `active` 在依赖里，切回虾画会重跑本 effect —— 末尾那次立即调用就顺带
-    // 补上了「离开这段时间里画布有没有被别处改过」的新鲜度检查。以前靠整体
-    // 重新挂载触发 hydrate 来保证这件事，保活之后这里是唯一的补偿点。
-    if (!active) return;
-    if (
-      sync.status !== "ready" ||
-      sync.hydratedCanvasId !== canvasId ||
-      sync.revision == null
-    ) {
-      return;
-    }
-    let cancelled = false;
-    let inFlight = false;
-    const pollRemoteRevision = async () => {
-      if (cancelled || inFlight || document.visibilityState === "hidden") return;
-      inFlight = true;
-      try {
-        const response = await api
-          .get(
-            `api/v1/projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}/revision`,
-          )
-          .json<{ data?: { revision?: number } }>();
-        const remoteRevision = response.data?.revision;
-        if (
-          !cancelled &&
-          typeof remoteRevision === "number" &&
-          sync.revision != null &&
-          remoteRevision > sync.revision
-        ) {
-          syncRetryRef.current();
-        }
-      } catch {
-        // Best effort: missing a poll is fine; the next tick or page refresh catches up.
-      } finally {
-        inFlight = false;
-      }
-    };
-    const timer = window.setInterval(pollRemoteRevision, EXTERNAL_CANVAS_REVISION_POLL_MS);
-    const handleFocus = () => {
-      void pollRemoteRevision();
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") void pollRemoteRevision();
-    };
-    window.addEventListener("focus", handleFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    void pollRemoteRevision();
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-      window.removeEventListener("focus", handleFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [
-    active,
-    canvasId,
-    projectId,
-    sync.hydratedCanvasId,
-    sync.revision,
-    sync.status,
-  ]);
 
   const projectionKeys = useMemo(
     () => projectionKeysFromMetadata(sync.metadata),
@@ -2035,17 +1955,7 @@ export function FreezoneShell({
       ).slice(-200),
     }),
     onFrame: (frame) => {
-      const reloadRevision = canvasPushReloadRevision(frame, {
-        canvasId,
-        currentRevision: syncRevisionRef.current,
-        requestedRevision: requestedReloadRevisionRef.current,
-        isOwnSave: isOwnClientSaveId,
-      });
-      if (reloadRevision !== null) {
-        requestedReloadRevisionRef.current = reloadRevision;
-        syncRetryRef.current();
-        return;
-      }
+      if (applyPushFrameRef.current(frame)) return;
       const frameRecord = frame as Record<string, unknown>;
       const bridgeKey =
         typeof frameRecord.bridge_key === "string"

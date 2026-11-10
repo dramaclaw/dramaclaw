@@ -1531,6 +1531,8 @@
       "assetNamePlaceholder": "请输入资产名称"
     },
     "canvasSync": {
+      "remoteDeletedLocalKept": "你改过的节点已在别处被删除，已保留你的版本。",
+      "localDeletedRemoteChanged": "你删除的节点刚被别处（例如 Agent）修改过，已保持删除。",
       "backupFailed": "云端备份失败，请稍后再试",
       "backupPending": "本地已保存，云端备份待重试",
       "bodyOverLimit": "画布数据 {{actual}} KB 超出 {{limit}} KB 上限，已暂停保存。",
@@ -5946,8 +5948,6 @@
         "conditionalBranch": "条件分支(else/自动)",
         "unknownInitialValues": "变量初值未知,默认 0(无 global decl)",
         "invalidDefaultChoice": "{{name}}: # default {{index}} 超出选项数,已忽略",
-        "agentRefreshConflict": "Agent 已更新画布，但你还有未保存的本地修改。请保留副本或刷新后继续。",
-        "refreshConflict": "画布已在后台更新，但当前还有未保存的本地修改。请保留副本或刷新后继续。",
         "storyGroup": "互动影游",
         "segmentTitle": "片段 {{index}}",
         "firstFrame": "首帧",

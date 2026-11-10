@@ -166,10 +166,10 @@ def test_busy_and_close(pool, caplog):
     started = threading.Event()
     exchange = pool._exchange
 
-    def observed_exchange(child, op, payload):
+    def observed_exchange(child, op, payload, timeout_seconds):
         if op == "sleep":
             started.set()
-        return exchange(child, op, payload)
+        return exchange(child, op, payload, timeout_seconds)
 
     pool._exchange = observed_exchange
 
@@ -180,6 +180,7 @@ def test_busy_and_close(pool, caplog):
             errors.append(error.code)
 
     # Occupy the sole child before testing acquisition with a shorter deadline.
+    pool.call_timeout_seconds = 3
     pool.call("ping", {})
     thread = threading.Thread(target=work)
     thread.start()
@@ -227,7 +228,10 @@ def test_warm_and_parallel_calls(caplog):
 def test_warm_failure_is_logged(pool, caplog, monkeypatch, op, code, level):
     caplog.set_level(logging.DEBUG, logger=LOGGER)
     exchange = pool._exchange
-    monkeypatch.setattr(pool, "_exchange", lambda child, _op, payload: exchange(child, op, payload))
+    monkeypatch.setattr(
+        pool, "_exchange",
+        lambda child, _op, payload, timeout_seconds: exchange(child, op, payload, timeout_seconds),
+    )
     with pytest.raises(CanvasCoreError) as error:
         pool.warm()
     assert error.value.code == code

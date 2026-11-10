@@ -424,6 +424,7 @@ describe("buildSavePayload", () => {
 describe("classifySaveError", () => {
   it("maps 409 to conflict with the canonical message", () => {
     expect(classifySaveError(409, {}, "fallback", zhT)).toMatchObject({
+      code: null,
       kind: "conflict",
       message: "画布已被其他窗口或用户修改",
     });
@@ -438,7 +439,7 @@ describe("classifySaveError", () => {
       "fallback",
       zhT,
     );
-    expect(outcome).toMatchObject({ kind: "conflict" });
+    expect(outcome).toMatchObject({ kind: "conflict", code: "canvas_idempotency_conflict" });
     expect((outcome as { message: string }).message).not.toBe(
       "画布已被其他窗口或用户修改",
     );
@@ -454,6 +455,7 @@ describe("classifySaveError", () => {
       ),
     ).toMatchObject({
       kind: "conflict",
+      code: "canvas_revision_conflict",
       message: "画布已被其他窗口或用户修改",
     });
   });
