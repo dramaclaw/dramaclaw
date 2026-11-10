@@ -1779,6 +1779,22 @@ def _clarification_result_accepted(resolved: dict[str, Any]) -> bool:
     )
 
 
+def _canvas_context_response_refs(responses: Any) -> list[dict[str, str]]:
+    """Name what the agent read; the node details stay in the agent's session."""
+    refs: list[dict[str, str]] = []
+    for response in responses if isinstance(responses, list) else []:
+        if not isinstance(response, dict):
+            continue
+        ref = {
+            field: response[field]
+            for field in ("type", "node_id")
+            if isinstance(response.get(field), str)
+        }
+        if ref:
+            refs.append(ref)
+    return refs
+
+
 def _canvas_context_ui_event(
     payload: CanvasContextToolResultIn,
     resolved: dict[str, Any],
@@ -1792,7 +1808,7 @@ def _canvas_context_ui_event(
             "ok": resolved.get("ok"),
             "tool_call_status": resolved.get("tool_call_status"),
             "canvas_context_status": resolved.get("canvas_context_status"),
-            "responses": resolved.get("responses") or [],
+            "responses": _canvas_context_response_refs(resolved.get("responses")),
             "errors": resolved.get("errors") or [],
             "message": resolved.get("message"),
         },
