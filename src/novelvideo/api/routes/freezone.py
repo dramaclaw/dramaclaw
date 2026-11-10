@@ -191,6 +191,7 @@ from novelvideo.freezone.audio_node import (
     resolve_speech_voice,
     resolve_user_audio_voice,
 )
+from novelvideo.freezone.canvas_inline_media import inline_media_fields
 from novelvideo.freezone.canvas_lock import CanvasLockBusy
 from novelvideo.freezone.canvas_media_scope import (
     CanvasMediaScopeError,
@@ -17811,6 +17812,9 @@ async def put_canvas(
         )
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
+    inline_media = inline_media_fields(body.nodes)
+    if inline_media:
+        raise HTTPException(422, {"code": "canvas_inline_media", "fields": inline_media})
 
     def build_payload(existing: dict | None) -> dict:
         prepared = _prepare_canvas_payload_for_write(
