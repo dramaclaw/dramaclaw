@@ -80,6 +80,7 @@ from novelvideo.freezone.canvas_command_bridge import (
 from novelvideo.freezone.canvas_command_watch import bridge_watch_hub
 from novelvideo.freezone.canvas_presence import remove_canvas_presence, touch_canvas_presence
 from novelvideo.freezone.canvas_store import read_canvas
+from novelvideo.freezone.canvas_ui_locale import record_ui_locale
 from novelvideo.freezone.agent_config_store import save_user_agent_config_item
 from novelvideo.freezone.agent_product_operations import AGENT_PRODUCT_PRICE_REFERENCE
 from novelvideo.ports import get_product_surface_access, get_usage_meter
@@ -2860,6 +2861,7 @@ async def stream_canvas_commands(
     agent_ids: str = "main",
     user: dict = Depends(get_api_user),
     last_revision: int | None = None,
+    locale: str | None = None,
 ):
     from sse_starlette.sse import EventSourceResponse
 
@@ -2886,6 +2888,8 @@ async def stream_canvas_commands(
         project_id=project_id, canvas_id=canvas_id, agent_ids=agents
     )
     state_dir = await _bridge_project_state_dir(user, payload)
+    if state_dir is not None:
+        await asyncio.to_thread(record_ui_locale, state_dir, locale)
     hub = bridge_watch_hub()
     change_hub = (
         canvas_change_watch_hub()

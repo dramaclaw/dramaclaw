@@ -4,6 +4,7 @@ from collections import Counter
 import asyncio
 from copy import deepcopy
 import logging
+import json
 import threading
 from types import SimpleNamespace
 
@@ -81,6 +82,28 @@ async def dispatch(canvas_id="default", locale="en"):
         routes.AgentCanvasContextRequest(requests=REQUESTS, locale=locale),
         USER,
     )
+
+
+@pytest.mark.parametrize(
+    "recorded,body_locale,expected", [("en", None, "en"), ("en", "vi", "vi"), (None, None, "zh")],
+)
+async def test_context_locale_precedence(setup, monkeypatch, recorded, body_locale, expected):
+    root, _ = setup
+    state_dir = root / "state"
+    if recorded is not None:
+        path = state_dir / "freezone" / "ui_locale.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"locale": recorded}))
+    monkeypatch.setattr(routes, "_canvas_state_project_dir", lambda *_: state_dir)
+    captured = []
+
+    async def answer_core(**kwargs):
+        captured.append(kwargs["env"])
+        return RESULT
+
+    monkeypatch.setattr(routes, "answer_agent_canvas_context", answer_core)
+    await dispatch(locale=body_locale)
+    assert captured[0]["locale"] == expected
 
 
 def client_for(user=USER):

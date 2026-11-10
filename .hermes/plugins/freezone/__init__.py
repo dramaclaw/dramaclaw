@@ -6177,7 +6177,6 @@ def _server_apply_canvas_commands(
         f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}/agent-commands",
         body={
             "envelopes": [_canvas_command_envelope(project, canvas, commands)],
-            "locale": None,
         },
     )
     if not response.get("ok"):
@@ -9245,7 +9244,7 @@ def _request_canvas_context_from_frontend(
         response = _request(
             "POST",
             f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}/agent-context",
-            body={"requests": requests, "locale": None},
+            body={"requests": requests},
         )
         return tool_result(response["data"] if response.get("ok") else _canvas_executor_failure(response, context=True))
     envelope = {

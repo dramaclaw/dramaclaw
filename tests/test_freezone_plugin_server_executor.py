@@ -61,7 +61,7 @@ def test_structural_commands_post_once_without_bridge(agent, slim):
     posts = [call for call in calls if call[0] == "POST"]
     assert posts == [("POST", "/api/v1/projects/p/freezone/canvases/c/agent-commands", {
         "envelopes": [{"schema_version": "canvas_chat_commands.v1", "project_id": "p",
-                       "canvas_id": "c", "commands": CREATE}], "locale": None,
+                       "canvas_id": "c", "commands": CREATE}],
     })]
     if not slim:
         assert result["revision"] == 7 and result["receipt"]["applied"] is True
@@ -90,7 +90,7 @@ def test_external_mcp_commands_post_marked_envelope(agent, monkeypatch, profile,
         envelope["turn_id"] = turn_id
     assert [call for call in calls if call[0] == "POST"] == [
         ("POST", "/api/v1/projects/p/freezone/canvases/c/agent-commands",
-         {"envelopes": [envelope], "locale": None})]
+         {"envelopes": [envelope]})]
     assert not list(directory.iterdir())
 
 
@@ -116,7 +116,7 @@ def test_confirmation_posts_only_after_confirm(agent, monkeypatch, external):
         envelope.update(external_mcp_command=True, agent_id="main", turn_id="t1")
     assert [call for call in calls if call[0] == "POST"] == [
         ("POST", "/api/v1/projects/p/freezone/canvases/c/agent-commands",
-         {"envelopes": [envelope], "locale": None})]
+         {"envelopes": [envelope]})]
 
 
 def test_confirmed_workflow_draft_skips_second_confirmation(agent, monkeypatch):
@@ -172,7 +172,7 @@ def test_read_posts_context_and_returns_data(agent):
     assert result == context
     assert [call for call in calls if call[0] == "POST"] == [
         ("POST", "/api/v1/projects/p/freezone/canvases/c/agent-context",
-         {"requests": [{"type": "node_detail", "node_id": "n"}], "locale": None})]
+         {"requests": [{"type": "node_detail", "node_id": "n"}]})]
     assert not list(directory.iterdir())
 
 

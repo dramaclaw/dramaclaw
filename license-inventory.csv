@@ -3619,6 +3619,7 @@ src/novelvideo/freezone/canvas_media_scope.py,Elastic-2.0,2026 SuperTale contrib
 src/novelvideo/freezone/canvas_presence.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_static_urls.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_store.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/canvas_ui_locale.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/clarifications.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/history.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/html_artifacts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4115,6 +4116,7 @@ tests/test_canvas_outcome.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml 
 tests/test_canvas_presence.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_push_evidence_collection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_scene_refs_override.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_canvas_ui_locale.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_write_receipt_compatibility.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_allowlist.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_imports_lint.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

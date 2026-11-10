@@ -164,6 +164,7 @@ from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
 from novelvideo.freezone.agent_canvas_metrics import count as count_canvas_metric
 from novelvideo.freezone.canvas_core_pool import CanvasCoreError
 from novelvideo.freezone.canvas_presence import canvas_browser_open
+from novelvideo.freezone.canvas_ui_locale import recorded_ui_locale
 from novelvideo.freezone.agent_bundle_store import (
     export_agent_bundle,
     install_agent_bundle,
@@ -17923,11 +17924,12 @@ async def agent_canvas_commands(
         _freezone_image_models_data(ctx.requester_user_id),
         _freezone_video_models_data(ctx.requester_user_id),
     )
+    locale = body.locale or await asyncio.to_thread(recorded_ui_locale, canvas_project_dir) or "zh"
     try:
         data = await dispatch_agent_canvas(
             project=project, canvas_id=canvas_id, project_dir=canvas_project_dir,
             envelopes=body.envelopes,
-            env={"locale": body.locale or "zh", "catalogs": {"image": image, "video": video}},
+            env={"locale": locale, "catalogs": {"image": image, "video": video}},
             build_payload=partial(
                 _canvas_payload_builder, project=project, canvas_id=canvas_id, user=user, ctx=ctx,
             ),
@@ -18003,6 +18005,9 @@ async def agent_canvas_context(
             ctx=ctx, username=username, project_name=project_name, project_dir=project_dir,
             canvas_id=canvas_id, user=user,
         )
+        locale = body.locale or await asyncio.to_thread(
+            recorded_ui_locale, _canvas_state_project_dir(ctx, project_dir),
+        ) or "zh"
         image, video = await asyncio.gather(
             _freezone_image_models_data(ctx.requester_user_id),
             _freezone_video_models_data(ctx.requester_user_id),
@@ -18014,7 +18019,7 @@ async def agent_canvas_context(
                 "requests": body.requests,
             }],
             env={
-                "locale": body.locale or "zh", "project": project, "canvasId": canvas_id,
+                "locale": locale, "project": project, "canvasId": canvas_id,
                 "username": user["username"], "selectedNodeIds": [],
                 "catalogs": {"image": image, "video": video},
             },
