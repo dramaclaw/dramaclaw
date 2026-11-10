@@ -9,3 +9,5 @@ export * from './audioGenerationRequest';
 export * from './audioGenerationResult';
 export * from './textGenerationRequest';
 export * from './textGenerationResult';
+export * from './imageToolRequest';
+export * from './imageToolResult';
