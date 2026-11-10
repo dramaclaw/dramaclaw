@@ -163,6 +163,12 @@ const KIND_LIMIT_KEYS: Record<VideoReferenceMediaKind, string> = {
   audio: 'canvas.videoReference.limitAudio',
 };
 
+/** The limit a connection would break: one media kind's, or the total. */
+export interface VideoReferenceOverflow {
+  kind: VideoReferenceMediaKind | 'total';
+  limit: number;
+}
+
 /**
  * 这条连线会不会把视频节点的素材撑过能力包络？返回非空理由则应拒绝建边。
  *
@@ -178,6 +184,24 @@ export function videoReferenceConnectionRejection(
   connection: { source?: string | null; target?: string | null },
   resolveEnvelope: VideoReferenceEnvelopeResolver = DEFAULT_ENVELOPE_RESOLVER,
 ): string | null {
+  const overflow = videoReferenceConnectionOverflow(nodes, edges, connection, resolveEnvelope);
+  if (!overflow) return null;
+  const key =
+    overflow.kind === 'total' ? 'canvas.videoReference.limitTotal' : KIND_LIMIT_KEYS[overflow.kind];
+  return i18n.t(key, { limit: overflow.limit });
+}
+
+/**
+ * The limit this connection would break, or null when it fits. Same rules as
+ * `videoReferenceConnectionRejection`, without the message, so the decision does
+ * not depend on a loaded locale.
+ */
+export function videoReferenceConnectionOverflow(
+  nodes: readonly CanvasNode[],
+  edges: readonly { source: string; target: string }[],
+  connection: { source?: string | null; target?: string | null },
+  resolveEnvelope: VideoReferenceEnvelopeResolver = DEFAULT_ENVELOPE_RESOLVER,
+): VideoReferenceOverflow | null {
   const { source, target } = connection;
   if (!source || !target) return null;
   const targetNode = nodes.find((node) => node.id === target);
@@ -203,11 +227,11 @@ export function videoReferenceConnectionRejection(
   }
 
   if (counts[incoming] + 1 > envelope[incoming]) {
-    return i18n.t(KIND_LIMIT_KEYS[incoming], { limit: envelope[incoming] });
+    return { kind: incoming, limit: envelope[incoming] };
   }
   const total = counts.image + counts.video + counts.audio;
   if (total + 1 > envelope.total) {
-    return i18n.t('canvas.videoReference.limitTotal', { limit: envelope.total });
+    return { kind: 'total', limit: envelope.total };
   }
   return null;
 }

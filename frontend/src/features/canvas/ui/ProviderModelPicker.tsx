@@ -130,7 +130,6 @@ export const SHARED_MODELS: ModelOption[] = [
   },
 ];
 
-export const DEFAULT_SHARED_MODEL_ID = 'newapi_gpt_image2';
 export const DEFAULT_UPSCALE_MODEL_ID = 'newapi_gpt_image2';
 
 // Video generation models. `id` is the raw backend model id sent to
@@ -206,12 +205,6 @@ export const VIDEO_MODELS: ModelOption[] = [
     maxDuration: 12,
   },
 ];
-
-// Matches the backend `FreezoneVideoGenRequest.model` default. The picker
-// hydrates the live list via /freezone/video/models, but this id is what the
-// canvas store uses on first node creation before that fetch resolves (and
-// when no previously-picked model has been remembered).
-export const DEFAULT_VIDEO_MODEL_ID = 'newapi_seedance-2.0';
 
 export type ProviderModelDomain = 'image' | 'video';
 

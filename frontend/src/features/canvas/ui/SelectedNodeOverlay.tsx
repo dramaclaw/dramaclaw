@@ -65,8 +65,8 @@ import { Scene360Overlay } from './Scene360Overlay';
 import { UpscaleEditorOverlay } from './UpscaleEditorOverlay';
 import { VideoUpscaleEditorOverlay } from './VideoUpscaleEditorOverlay';
 import { getFreezoneImageModelsSnapshot } from '@/features/canvas/hooks/useFreezoneImageModels';
+import { DEFAULT_SHARED_MODEL_ID } from '@/features/canvas/domain/defaultModelIds';
 import {
-  DEFAULT_SHARED_MODEL_ID,
   DEFAULT_UPSCALE_MODEL_ID,
   SHARED_MODELS,
 } from '@/features/canvas/ui/ProviderModelPicker';

@@ -22,8 +22,8 @@ import {
 } from '@/features/canvas/application/imageUpscale';
 import { type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import { DEFAULT_SHARED_MODEL_ID } from '@/features/canvas/domain/defaultModelIds';
 import {
-  DEFAULT_SHARED_MODEL_ID,
   ProviderModelPicker,
   SHARED_MODELS,
 } from '@/features/canvas/ui/ProviderModelPicker';

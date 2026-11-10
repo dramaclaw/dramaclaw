@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import type { ImageQuality, ImageSize } from '@/features/canvas/domain/canvasNodes';
-import {
-  parseAspectRatio,
-  pickClosestAspectRatio,
-} from '@/features/canvas/application/imageData';
+import { parseAspectRatio } from '@/features/canvas/domain/aspectRatio';
+import { pickClosestAspectRatio } from '@/features/canvas/application/imageData';
 
 /**
  * 图片生成的比例/分辨率/画质的**内置兜底选项**。

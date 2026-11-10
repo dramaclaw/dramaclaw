@@ -3,15 +3,8 @@
 import { canAddStoryGroups, isStoryGroup } from '@/features/canvas/domain/storyGroupLimit';
 import { closedImageViewer, closedVideoViewer, mediaViewerUrls, type ImageViewerState, type VideoViewerState } from "@/features/canvas/domain/mediaViewerState";
 import { createStore, type StateCreator, type StoreApi } from 'zustand/vanilla';
-import {
-  type Viewport,
-  addEdge,
-  applyEdgeChanges,
-  applyNodeChanges,
-  type Connection,
-  type EdgeChange,
-  type NodeChange,
-} from '@xyflow/react';
+import type { Connection, EdgeChange, NodeChange, Viewport } from '@xyflow/react';
+import { addEdge, applyEdgeChanges, applyNodeChanges } from './graphChanges';
 
 import {
   CANVAS_NODE_TYPES,
@@ -75,7 +68,7 @@ function withAutoTitleIndexForClone(
 }
 import {
   overflowingVideoReferenceEdgeIds,
-  videoReferenceConnectionRejection,
+  videoReferenceConnectionOverflow,
 } from '@/features/canvas/domain/videoReferenceLimits';
 import {
   planVideoBreakdownGroups,
@@ -2054,7 +2047,7 @@ const canvasStateCreator = (
       // 总数 12）时拒绝新连接。手动拖线在 isValidConnection 就变灰了，这里兜住
       // 拖到空白生成节点等其它建边路径。
       if (
-        videoReferenceConnectionRejection(
+        videoReferenceConnectionOverflow(
           state.nodes,
           state.edges,
           connection,
@@ -2791,7 +2784,7 @@ const canvasStateCreator = (
     // （spawnExternalAssetNodes）都是往一个**已存在**的视频节点上接素材，走的正是
     // addEdge。只在 onConnect 拦等于这条上限只在手动拖线时成立。
     if (
-      videoReferenceConnectionRejection(
+      videoReferenceConnectionOverflow(
         state.nodes,
         state.edges,
         { source, target },
@@ -2842,7 +2835,7 @@ const canvasStateCreator = (
     // 背景候选），够不到上限；放在这里是为了「所有公开建边入口口径一致」，将来谁把
     // 带数据的边接到已有视频节点上也不会漏。
     if (
-      videoReferenceConnectionRejection(
+      videoReferenceConnectionOverflow(
         state.nodes,
         state.edges,
         { source, target },

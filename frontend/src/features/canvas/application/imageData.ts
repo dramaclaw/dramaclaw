@@ -9,15 +9,7 @@ import {
   pickMediaVariant,
   withMediaVariant,
 } from '@/lib/media-url';
-
-export function parseAspectRatio(value: string): number {
-  const [width, height] = value.split(':').map((item) => Number(item));
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    return 1;
-  }
-
-  return width / height;
-}
+import { parseAspectRatio } from '@/features/canvas/domain/aspectRatio';
 
 // 从一组候选比例（"w:h" 字符串）里挑数值上最接近 targetRatio 的那个。用比值的
 // 对数距离，横/竖比例对称（2.33 与其倒数 0.43 到 1 的距离一致）。候选为空时回退 '1:1'。

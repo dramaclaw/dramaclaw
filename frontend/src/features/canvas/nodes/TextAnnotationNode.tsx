@@ -63,10 +63,8 @@ import { awaitTaskCompletion } from '@/api/tasks';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import { readUrl } from '@/lib/url-params';
-import {
-  DEFAULT_SHARED_MODEL_ID,
-  ProviderModelPicker,
-} from '@/features/canvas/ui/ProviderModelPicker';
+import { DEFAULT_SHARED_MODEL_ID } from '@/features/canvas/domain/defaultModelIds';
+import { ProviderModelPicker } from '@/features/canvas/ui/ProviderModelPicker';
 import {
   NODE_GENERATE_BUTTON_BASE_CLASS,
   NODE_GENERATE_BUTTON_DISABLED_CLASS,
