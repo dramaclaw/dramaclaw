@@ -1,5 +1,3 @@
-import base64
-import io
 import json
 from types import SimpleNamespace
 
@@ -11,8 +9,9 @@ from novelvideo.chat import service as chat_service
 from novelvideo.chat.turn_images import (
     CODEX_IMAGE_INPUT_ENV,
     MAX_TURN_IMAGES,
-    image_data_urls,
+    TURN_IMAGE_DIRNAME,
     referenced_image_paths,
+    turn_image_files,
 )
 
 
@@ -79,18 +78,20 @@ def test_referenced_image_paths_caps_images_per_turn(tmp_path):
     assert [path.name for path in paths] == names[:MAX_TURN_IMAGES]
 
 
-async def test_image_data_urls_compacts_and_skips_unreadable(tmp_path):
-    good = _png(tmp_path / "good.png", size=(4000, 1000))
-    broken = tmp_path / "broken.png"
+async def test_turn_image_files_writes_compacted_copies_under_output(tmp_path):
+    good = _png(tmp_path / "freezone" / "_uploads" / "good.png", size=(4000, 1000))
+    broken = tmp_path / "freezone" / "_uploads" / "broken.png"
     broken.write_bytes(b"not a png")
 
-    urls = await image_data_urls([broken, good])
+    files = await turn_image_files([broken, good], tmp_path)
 
-    assert len(urls) == 1
-    prefix = "data:image/jpeg;base64,"
-    assert urls[0].startswith(prefix)
-    with Image.open(io.BytesIO(base64.b64decode(urls[0][len(prefix) :]))) as image:
+    assert len(files) == 1
+    assert files[0].parent == tmp_path / TURN_IMAGE_DIRNAME
+    assert files[0].suffix == ".jpg"
+    with Image.open(files[0]) as image:
         assert max(image.size) == 1280
+    # The same image compacts to the same file, so repeat turns reuse it.
+    assert await turn_image_files([good], tmp_path) == files
 
 
 def test_attachment_context_tells_agent_chat_cannot_take_images():
@@ -145,6 +146,7 @@ async def test_codex_turn_sends_referenced_images_only_when_enabled(
         "project-a",
         "按这张图搭白膜",
         collect,
+        project_dir=tmp_path,
         project_state_dir=tmp_path / "state" / "admin" / "project-a",
         turn_id="business-turn",
         route_prompt="按这张图搭白膜",
@@ -154,6 +156,7 @@ async def test_codex_turn_sends_referenced_images_only_when_enabled(
     if flag is None:
         assert calls == [{}]
     else:
-        (images,) = [call["images"] for call in calls]
-        assert len(images) == 1
-        assert images[0].startswith("data:image/jpeg;base64,")
+        (paths,) = [call["image_paths"] for call in calls]
+        assert len(paths) == 1
+        assert paths[0].parent == tmp_path / TURN_IMAGE_DIRNAME
+        assert paths[0].is_file()

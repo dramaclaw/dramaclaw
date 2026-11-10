@@ -72,6 +72,8 @@ async def _resume_director_auto_best_effort(application: FastAPI) -> None:
 
 def _request_body_limit(request: Request) -> int:
     content_type = request.headers.get("content-type", "").lower()
+    if request.url.path == "/api/v1/chat/uploads" and "multipart/form-data" in content_type:
+        return MAX_UPLOAD_REQUEST_BODY_BYTES
     if (
         request.url.path.startswith("/api/v1/projects/")
         and (

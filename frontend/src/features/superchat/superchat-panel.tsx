@@ -154,6 +154,13 @@ import {
 } from "@/features/superchat/spec-extract";
 import type { ChatMessage, ChatMessagePart } from "@/features/superchat/types";
 import type { ApprovalDecision, ApprovalRequest, ChatAttachment } from "@/features/superchat/types";
+import {
+  composerFileAttachment,
+  composerFileOf,
+  forgetComposerFiles,
+  uploadHomeAttachments,
+  type ComposerFiles,
+} from "@/features/superchat/chat-attachment-files";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import type { FormatCheck, UploadResult } from "@/lib/queries/ingest";
 import type {
@@ -334,11 +341,6 @@ function resolveSpecMediaUrl(src: string): Promise<string> {
   if (src.startsWith("st-unresolved:")) return Promise.resolve(src);
   return Promise.resolve(resolveMediaUrl(src) ?? src);
 }
-
-type AttachmentBlob = {
-  blob: Blob;
-  filename: string;
-};
 
 type QueuedSendItem = {
   id: string;
@@ -10051,53 +10053,12 @@ function buildReingestCancelledContext(pending: ReingestConfirmation): string {
   ].join("\n");
 }
 
-function dataUrlToAttachmentBlob(attachment: ChatAttachment): AttachmentBlob | null {
-  const content = attachment.content;
-  if (!content?.startsWith("data:")) return null;
-  const comma = content.indexOf(",");
-  if (comma < 0) return null;
-  const meta = content.slice(0, comma);
-  const base64 = content.slice(comma + 1);
-  const mime = attachment.mimeType || /data:([^;]+)/.exec(meta)?.[1] || "application/octet-stream";
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return {
-    blob: new Blob([bytes], { type: mime }),
-    filename: attachment.fileName || "novel.txt",
-  };
-}
-
-function dataUrlToText(attachment: ChatAttachment): string | null {
-  const content = attachment.content;
-  if (!content?.startsWith("data:")) return null;
-  const comma = content.indexOf(",");
-  if (comma < 0) return null;
-  const meta = content.slice(0, comma);
-  const payload = content.slice(comma + 1);
-  try {
-    if (!/;base64/i.test(meta)) {
-      return decodeURIComponent(payload);
-    }
-    const binary = atob(payload);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  } catch {
-    return null;
-  }
-}
-
 async function uploadNovelForIngest(
   project: string,
-  file: AttachmentBlob,
+  file: File,
 ): Promise<IngestUploadResult> {
   const formData = new FormData();
-  formData.append("file", file.blob, file.filename);
+  formData.append("file", file, file.name);
   const response = await jsonWithBackendError<OkResponse<IngestUploadResult> | ErrorResponse>(
     uploadApi.post(p`api/v1/projects/${project}/ingest/upload`, { body: formData }),
   );
@@ -10132,14 +10093,13 @@ function surfaceFormatCheckWarnings(
 async function uploadAttachmentsForIngest(
   project: string,
   attachments: ChatAttachment[],
+  files: ComposerFiles,
   t: TFunction,
 ): Promise<PreparedIngestAttachment[]> {
   const prepared: PreparedIngestAttachment[] = [];
 
   for (const attachment of attachments) {
-    const file = isNovelAttachment(attachment)
-      ? dataUrlToAttachmentBlob(attachment)
-      : null;
+    const file = isNovelAttachment(attachment) ? composerFileOf(attachment, files) : undefined;
 
     if (!file) {
       prepared.push({ attachment, original: attachment });
@@ -10147,25 +10107,22 @@ async function uploadAttachmentsForIngest(
     }
 
     try {
-      toast.info(t("aiAssistant.attachmentAnalysisUploading", { filename: file.filename }));
+      toast.info(t("aiAssistant.attachmentAnalysisUploading", { filename: file.name }));
       const upload = await uploadNovelForIngest(project, file);
-      const { content: _content, path: _path, url: _url, ...attachmentMetadata } = attachment;
       prepared.push({
         upload,
         original: attachment,
         attachment: {
-          ...attachmentMetadata,
+          ...attachment,
           fileName: upload.filename,
           fileSize: upload.size,
         },
       });
     } catch (error) {
-      const message = backendErrorToastMessage(error, t);
-      const { content: _content, ...attachmentMetadata } = attachment;
       prepared.push({
         original: attachment,
-        attachment: attachmentMetadata,
-        error: message,
+        attachment,
+        error: backendErrorToastMessage(error, t),
       });
     }
   }
@@ -10208,6 +10165,7 @@ async function projectHasIngestedContent(project: string): Promise<boolean> {
 async function buildAttachmentAnalysisContext(
   project: string | undefined,
   preparedAttachments: PreparedIngestAttachment[],
+  files: ComposerFiles,
 ): Promise<string> {
   const lines = [
     "[DRAMACLAW_ATTACHMENT_CONTEXT]",
@@ -10240,10 +10198,13 @@ async function buildAttachmentAnalysisContext(
       } else if (prepared.error) {
         lines.push(`dramaclaw_upload_error: ${prepared.error}`);
       }
+    } else if (prepared.error) {
+      lines.push(`upload_error: ${prepared.error}`);
     }
 
     if (isInlineTextAttachment(originalAttachment)) {
-      const text = dataUrlToText(originalAttachment);
+      const file = composerFileOf(originalAttachment, files);
+      const text = file ? await file.text() : null;
       if (text) {
         const truncated = text.length > INLINE_TEXT_ATTACHMENT_LIMIT;
         lines.push(`text_content${truncated ? "_truncated" : ""}:`);
@@ -12928,6 +12889,8 @@ export function SuperChatPanel({
   const freezoneSkillSuggestionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const freezoneSkillMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Picked files by attachment id. Attachments themselves only ever carry an address.
+  const composerFilesRef = useRef(new Map<string, File>());
   const draftInputRef = useRef<HTMLElement | null>(null);
   const restoreDraftFocusRef = useRef(false);
   const dragDepthRef = useRef(0);
@@ -13299,6 +13262,7 @@ export function SuperChatPanel({
   }, [deselectFreezoneNodeReferences, selectedFreezoneNodes]);
   const removeAttachment = useCallback((attachment: ChatAttachment) => {
     const removedCanvasNodeIds = new Set(canvasNodeReferenceAttachmentNodeIds(attachment));
+    if (attachment.id) composerFilesRef.current.delete(attachment.id);
     setAttachments((current) => current.filter((item) => item.id !== attachment.id));
     deselectFreezoneNodeReferences(removedCanvasNodeIds);
   }, [deselectFreezoneNodeReferences]);
@@ -15248,7 +15212,12 @@ export function SuperChatPanel({
 
         setPreparingSend(true);
         try {
-          const prepared = await uploadAttachmentsForIngest(project, ordinaryAttachments, t);
+          const prepared = await uploadAttachmentsForIngest(
+            project,
+            ordinaryAttachments,
+            composerFilesRef.current,
+            t,
+          );
           surfaceFormatCheckWarnings(prepared, t, (formatCheck, filename) =>
             setFormatCheckDetails({ formatCheck, filename }),
           );
@@ -15331,18 +15300,16 @@ export function SuperChatPanel({
       } else if (ordinaryAttachments.length > 0) {
         setPreparingSend(true);
         try {
-          const prepared = project
-            ? await uploadAttachmentsForIngest(project, ordinaryAttachments, t)
-            : ordinaryAttachments.map((attachment) => ({ attachment, original: attachment }));
+          const files = composerFilesRef.current;
+          const prepared: PreparedIngestAttachment[] = project
+            ? await uploadAttachmentsForIngest(project, ordinaryAttachments, files, t)
+            : await uploadHomeAttachments(ordinaryAttachments, files);
           surfaceFormatCheckWarnings(prepared, t, (formatCheck, filename) =>
             setFormatCheckDetails({ formatCheck, filename }),
           );
           transportAttachments = [...prepared.map((item) => item.attachment), ...canvasReferenceAttachments];
           contextUploadedFiles = recordUploadedFiles(project, prepared);
-          const context = await buildAttachmentAnalysisContext(
-            project,
-            prepared,
-          );
+          const context = await buildAttachmentAnalysisContext(project, prepared, files);
           nextText = appendAttachmentAnalysisContext(text, context);
         } finally {
           setPreparingSend(false);
@@ -15473,6 +15440,7 @@ export function SuperChatPanel({
     const remainingMessages = queuedMessages.filter((_, index) => index !== nextIndex);
     void sendWithIngestAutomation(nextMessage.text, nextMessage.attachments).then((sent) => {
       if (!sent) return;
+      forgetComposerFiles(composerFilesRef.current, nextMessage.attachments);
       setQueuedMessages(remainingMessages);
       setSelectedQueuedMessageId(remainingMessages[0]?.id ?? null);
     });
@@ -15567,6 +15535,7 @@ export function SuperChatPanel({
     }
     void sendWithIngestAutomation(text, queuedAttachments).then((sent) => {
       if (!sent) return;
+      forgetComposerFiles(composerFilesRef.current, queuedAttachments);
       setDraft("");
       setAttachments([]);
       deselectFreezoneNodeReferences(sentCanvasNodeIds);
@@ -15589,6 +15558,7 @@ export function SuperChatPanel({
       setDraft("");
       setAttachments([]);
       setQueuedMessages([]);
+      composerFilesRef.current.clear();
       setSelectedHistoryMessageIndex(null);
       setPendingCanvasCommandApprovals([]);
       setClearDialogOpen(false);
@@ -16199,25 +16169,14 @@ export function SuperChatPanel({
 
   const addFiles = (files: FileList | null) => {
     if (!files) return;
-    Array.from(files).forEach((file) => {
-      if (!isAllowedScriptUpload(file)) return;
-      const reader = new FileReader();
-      reader.addEventListener("load", () => {
-        const dataUrl = String(reader.result || "");
-        setAttachments((current) => [
-          ...current,
-          {
-            id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            type: file.type.startsWith("image/") ? "image" : "file",
-            mimeType: file.type || "application/octet-stream",
-            fileName: file.name,
-            fileSize: file.size,
-            content: dataUrl,
-          },
-        ]);
+    const picked = Array.from(files)
+      .filter(isAllowedScriptUpload)
+      .map((file) => {
+        const id = `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        composerFilesRef.current.set(id, file);
+        return composerFileAttachment(file, id);
       });
-      reader.readAsDataURL(file);
-    });
+    if (picked.length > 0) setAttachments((current) => [...current, ...picked]);
     if (fileInputRef.current) fileInputRef.current.value = "";
     window.requestAnimationFrame(() => {
       draftInputRef.current?.focus({ preventScroll: true });

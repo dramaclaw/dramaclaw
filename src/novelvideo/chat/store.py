@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 import aiosqlite
 
+from novelvideo.chat.inline_data import drop_inline_data
 from novelvideo.sqlite_pragmas import (
     configure_sqlite_connection,
     configure_sqlite_connection_async,
@@ -688,8 +689,8 @@ class ChatStore:
         metadata: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        media = media or []
-        metadata = metadata or {}
+        media = drop_inline_data(media or [])
+        metadata = drop_inline_data(metadata or {})
         created_at = datetime.now(timezone.utc).isoformat()
         conn = self.connect(username, scope)
         try:
@@ -777,8 +778,8 @@ class ChatStore:
         metadata: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        media = media or []
-        metadata = metadata or {}
+        media = drop_inline_data(media or [])
+        metadata = drop_inline_data(metadata or {})
         created_at = datetime.now(timezone.utc).isoformat()
         db = await self.connect_async(username, scope)
         try:
@@ -835,6 +836,7 @@ class ChatStore:
         turn_id = str(turn_id or "").strip()
         if not turn_id:
             raise ValueError("turn_id is required")
+        event = drop_inline_data(event)
         event_type = str(
             event.get("type") or event.get("event_type") or "ui_event"
         ).strip()

@@ -538,7 +538,7 @@ def test_output_schema_is_sent_even_without_turn_metadata():
 
 
 @pytest.mark.parametrize("output_schema", [None, {"type": "object"}])
-def test_turn_images_follow_the_prompt_as_image_input(output_schema):
+def test_turn_images_follow_the_prompt_as_local_image_paths(output_schema, tmp_path):
     turns = []
     raw_starts = []
 
@@ -555,31 +555,39 @@ def test_turn_images_follow_the_prompt_as_image_input(output_schema):
             turns.append(items)
             return SimpleNamespace(id="turn-facade")
 
+    first = tmp_path / "a.jpg"
+    second = tmp_path / "b.jpg"
     _start_codex_turn(
         FakeThread(),
         "hello",
         {},
         output_schema,
-        images=["data:image/jpeg;base64,AAA", "data:image/jpeg;base64,BBB"],
+        image_paths=[first, second],
     )
 
     if output_schema is None:
-        from openai_codex._inputs import ImageInput, TextInput
+        from openai_codex._inputs import LocalImageInput, TextInput
 
         assert turns == [
             [
                 TextInput("hello"),
-                ImageInput("data:image/jpeg;base64,AAA"),
-                ImageInput("data:image/jpeg;base64,BBB"),
+                LocalImageInput(str(first)),
+                LocalImageInput(str(second)),
             ]
         ]
     else:
         (items,) = raw_starts
         assert items[0]["type"] == "text"
         assert items[1:] == [
-            {"type": "image", "url": "data:image/jpeg;base64,AAA"},
-            {"type": "image", "url": "data:image/jpeg;base64,BBB"},
+            {"type": "localImage", "path": str(first)},
+            {"type": "localImage", "path": str(second)},
         ]
+
+
+def test_gateway_config_disables_codex_native_image_generation():
+    overrides = service._codex_gateway_config_overrides("https://gateway.invalid/v1")
+
+    assert "features.image_generation=false" in overrides
 
 
 def test_codex_149_sdk_exposes_required_runtime_notifications():
@@ -1186,6 +1194,91 @@ async def test_public_patched_runtime_keeps_turn_key_out_of_metadata_and_disk(
             assert (
                 secret.encode() not in path.read_bytes()
             ), f"Turn key persisted in {path.name}"
+
+
+@pytest.mark.asyncio
+async def test_app_server_keeps_turn_images_as_file_paths_in_thread_history(
+    monkeypatch, tmp_path
+):
+    from openai_codex import CodexConfig
+    from PIL import Image
+
+    from novelvideo.chat.turn_images import turn_image_files
+
+    source = tmp_path / "output" / "projects" / "demo" / "shot.png"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (2000, 1000), (40, 90, 160)).save(source)
+    (turn_image,) = await turn_image_files([source], tmp_path / "output")
+    scripted = _responses_sse(
+        _response_created("image-turn"),
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "id": "image-message",
+                "content": [{"type": "output_text", "text": "看到了。"}],
+            },
+        },
+        _response_completed("image-turn"),
+    )
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    with _recording_responses_gateway([scripted]) as (gateway_url, requests):
+        codex_bin = _contract_codex_bin()
+        env = {
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+        }
+        overrides = service._codex_gateway_config_overrides(gateway_url)
+        client = backend_sdk.CodexClient(
+            codex_bin=codex_bin,
+            cwd=tmp_path,
+            env=env,
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions="Reply briefly without tools.",
+            config_overrides=overrides,
+            turn_metadata={"dramaclaw_gateway_api_key": "image-turn-key"},
+        )
+        thread = client.thread_start()
+        try:
+            events = [
+                event async for event in thread.stream("看这张", image_paths=[turn_image])
+            ]
+            config = CodexConfig(
+                codex_bin=str(codex_bin),
+                cwd=str(tmp_path),
+                env=env,
+                config_overrides=overrides,
+            )
+            with codex_app_server.shared_codex(config) as codex:
+                stored = codex._client.thread_read(thread.id, include_turns=True)
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+
+    assert any(event.type == "complete" and event.text == "看到了。" for event in events)
+    # Codex encodes the file for the model request; that is transport only.
+    (request,) = requests
+    request_images = [
+        part
+        for item in request["body"]["input"]
+        if item.get("role") == "user"
+        for part in item.get("content", [])
+        if part.get("type") == "input_image"
+    ]
+    assert len(request_images) == 1
+    assert request_images[0]["image_url"].startswith("data:image/jpeg;base64,")
+    # The thread history keeps the file path and never the encoded image.
+    turns = stored.thread.model_dump(mode="json", by_alias=True)["turns"]
+    user_items = [item for turn in turns for item in turn["items"] if item["type"] == "userMessage"]
+    assert [item["content"] for item in user_items] == [
+        [
+            {"type": "text", "text": "看这张", "text_elements": []},
+            {"type": "localImage", "path": str(turn_image), "detail": None},
+        ]
+    ]
+    assert "data:" not in json.dumps(turns)
 
 
 @pytest.mark.e2e

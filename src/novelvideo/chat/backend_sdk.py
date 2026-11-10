@@ -1300,22 +1300,23 @@ def _start_codex_turn(
     prompt: str,
     turn_metadata: dict[str, str],
     output_schema: dict[str, Any] | None = None,
-    images: Sequence[str] = (),
+    image_paths: Sequence[Path] = (),
 ) -> Any:
     """Start a turn with metadata omitted by the 0.147 generated facade.
 
     App Server 0.147 already accepts ``responsesapiClientMetadata``; only the
     generated Python convenience method lagged behind the protocol. Sending a
     raw params mapping keeps the credential scoped to the turn context instead
-    of the long-lived thread configuration. ``images`` are data URLs sent as
-    image input after the prompt text.
+    of the long-lived thread configuration. ``image_paths`` are local files sent
+    as ``localImage`` input after the prompt text, so the thread stores paths.
     """
 
-    from openai_codex._inputs import ImageInput, TextInput, _to_wire_input
+    from openai_codex._inputs import LocalImageInput, TextInput, _to_wire_input
 
+    images = [LocalImageInput(str(path)) for path in image_paths]
     if not turn_metadata and output_schema is None:
         if images:
-            return thread.turn([TextInput(prompt), *map(ImageInput, images)])
+            return thread.turn([TextInput(prompt), *images])
         return thread.turn(TextInput(prompt))
 
     from openai_codex.api import TurnHandle
@@ -1327,7 +1328,7 @@ def _start_codex_turn(
             "\n\nYour final response must be exactly one JSON object matching the supplied schema."
             "\nFinal response JSON schema: " + json.dumps(output_schema, ensure_ascii=False)
         )
-    wire_input = _to_wire_input([TextInput(prompt), *map(ImageInput, images)])
+    wire_input = _to_wire_input([TextInput(prompt), *images])
     params: dict[str, Any] = {}
     if turn_metadata:
         params["responsesapiClientMetadata"] = dict(turn_metadata)
@@ -1432,7 +1433,7 @@ class CodexThread:
         self.id = thread_id
 
     async def stream(
-        self, prompt: str, *, images: Sequence[str] = ()
+        self, prompt: str, *, image_paths: Sequence[Path] = ()
     ) -> AsyncIterator[ChatBackendEvent]:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
@@ -1512,7 +1513,7 @@ class CodexThread:
                     prompt,
                     self._turn_metadata,
                     self._output_schema,
-                    images=images,
+                    image_paths=image_paths,
                 )
                 nonlocal current_turn_id
                 current_turn_id = turn.id
