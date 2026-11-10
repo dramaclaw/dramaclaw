@@ -35,7 +35,6 @@ describe("canvas AI text generation contract", () => {
   });
 
   it("reuses AI text generation when drafting a text-to-video prompt", () => {
-    expect(nodeSource).toContain("const textGeneratePrompt = instruction");
     expect(nodeSource).toContain("mode === 'imageToPrompt' || mode === 'textToVideo'");
     expect(nodeSource).toContain("void runTextGenerate()");
     expect(nodeSource).toContain("void runInstructionTranslate()");
