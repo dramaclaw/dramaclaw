@@ -1123,6 +1123,7 @@ frontend/src/__tests__/features/canvas/task-detach-node-state.test.ts,Elastic-2.
 frontend/src/__tests__/features/canvas/task-still-running-dialog.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/text-clone-audio-content.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/text-generate-credit-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/text-generate-upstream.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/text-ops-application.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/text-to-video-live-content.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/three-d-world-node-source-scope.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
