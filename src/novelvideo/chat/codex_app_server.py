@@ -20,7 +20,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 _CONNECT_TIMEOUT_SECONDS = 10.0
 # The first Intel launch under Rosetta may take over 20 seconds. Coordination
@@ -69,6 +69,28 @@ _ESCAPED_JSON_METADATA_RE = re.compile(
 
 class CodexRuntimeError(RuntimeError):
     """The local App Server could not start or initialize its transport."""
+
+
+class CodexAppServerNotRunning(CodexRuntimeError):
+    """There is no accepting node socket to attach to."""
+
+
+def _active_turn_probe() -> bool:
+    return False
+
+
+def set_active_turn_probe(fn: Callable[[], bool]) -> None:
+    global _active_turn_probe
+    _active_turn_probe = fn
+
+
+def _node_busy(leases_dir: Path) -> bool:
+    if _remove_stale_client_leases(leases_dir):
+        return True
+    try:
+        return _active_turn_probe()
+    except Exception:
+        return True
 
 
 def _connect_local_websocket(socket_path: Path, **options):
@@ -342,9 +364,8 @@ class _SharedCodexRuntime:
         signature_digest = _signature_digest(signature)
         with self._lock:
             with Lock(str(lock_path), mode="a", timeout=_START_TIMEOUT_SECONDS):
-                active_leases = _remove_stale_client_leases(leases_dir)
                 if drain_path.exists():
-                    if active_leases:
+                    if _node_busy(leases_dir):
                         raise RuntimeError(
                             "Codex App Server is applying new Agent configuration; retry shortly"
                         )
@@ -520,7 +541,7 @@ class _SharedCodexRuntime:
             else:
                 return socket_path, lease_path
 
-    def release(self, codex_home: Path, lease_path: Path) -> None:
+    def release(self, codex_home: Path, lease_path: Path | None = None) -> None:
         """Release a cross-worker lease and finish a pending node drain."""
         from portalocker import Lock
 
@@ -528,9 +549,9 @@ class _SharedCodexRuntime:
             socket_path, lock_path, signature_path = _control_paths(codex_home)
             owner_path, drain_path, leases_dir = _coordination_paths(codex_home)
             with Lock(str(lock_path), mode="a", timeout=_START_TIMEOUT_SECONDS):
-                lease_path.unlink(missing_ok=True)
-                active_leases = _remove_stale_client_leases(leases_dir)
-                if drain_path.exists() and not active_leases:
+                if lease_path is not None:
+                    lease_path.unlink(missing_ok=True)
+                if drain_path.exists() and not _node_busy(leases_dir):
                     if self._stop_node_runtime_locked(
                         socket_path=socket_path,
                         signature_path=signature_path,
@@ -548,7 +569,7 @@ class _SharedCodexRuntime:
             with Lock(str(lock_path), mode="a", timeout=_START_TIMEOUT_SECONDS):
                 drain_path.touch(mode=0o600, exist_ok=True)
                 drain_path.chmod(0o600)
-                if _remove_stale_client_leases(leases_dir):
+                if _node_busy(leases_dir):
                     return "draining"
                 if self._stop_node_runtime_locked(
                     socket_path=socket_path,
@@ -672,9 +693,7 @@ def stop_shared_codex_runtime() -> None:
     _RUNTIME.stop()
 
 
-def restart_shared_codex_runtime_when_idle(codex_home: Path | None = None) -> str:
-    """Apply new node-level configuration without interrupting active turns."""
-
+def _resolve_codex_home(codex_home: Path | None) -> Path:
     if codex_home is None:
         from novelvideo import config as app_config
 
@@ -684,7 +703,17 @@ def restart_shared_codex_runtime_when_idle(codex_home: Path | None = None) -> st
             if configured
             else Path(app_config.STATE_DIR) / ".codex-app-server"
         )
-    return _RUNTIME.request_restart(codex_home)
+    return codex_home
+
+
+def restart_shared_codex_runtime_when_idle(codex_home: Path | None = None) -> str:
+    """Apply new node-level configuration without interrupting active turns."""
+    return _RUNTIME.request_restart(_resolve_codex_home(codex_home))
+
+
+def complete_pending_drain(codex_home: Path | None = None) -> None:
+    """Stop a drained node once its leases and running turns are gone."""
+    _RUNTIME.release(_resolve_codex_home(codex_home))
 
 
 def _resolve_codex_bin(config) -> Path:
@@ -788,20 +817,29 @@ class _UnixSocketCodexClient:
         return Client()
 
 
-def read_existing_codex_thread(
-    codex_home: Path, thread_id: str, *, include_turns: bool = False
-):
-    """Read a running node directly; probing must never start or lease a server."""
+@contextmanager
+def attach_shared_codex(config_or_codex_home) -> Iterator[object]:
+    """Attach to a running node without leasing it or waiting for its drain."""
+    from openai_codex import Codex, CodexConfig
+    from openai_codex._initialize_metadata import validate_initialize_metadata
+
+    if isinstance(config_or_codex_home, (str, Path)):
+        codex_home = Path(config_or_codex_home)
+        config = CodexConfig(env={"CODEX_HOME": str(codex_home)})
+    else:
+        config = config_or_codex_home
+        home_raw = str((config.env or {}).get("CODEX_HOME", "") or "").strip()
+        codex_home = _resolve_codex_home(Path(home_raw).expanduser() if home_raw else None)
     socket_path, _lock_path, _signature_path = _control_paths(codex_home)
     if not _SharedCodexRuntime._socket_accepting(socket_path):
-        return None
-    from openai_codex import CodexConfig
-
-    client = _UnixSocketCodexClient.create(CodexConfig(), socket_path)
+        raise CodexAppServerNotRunning("Codex app-server is not running")
+    client = _UnixSocketCodexClient.create(config, socket_path)
     try:
         client.start()
-        client.initialize()
-        return client.thread_read(thread_id, include_turns=include_turns).thread
+        codex = object.__new__(Codex)
+        codex._client = client
+        codex._init = validate_initialize_metadata(client.initialize())
+        yield codex
     finally:
         client.close()
 

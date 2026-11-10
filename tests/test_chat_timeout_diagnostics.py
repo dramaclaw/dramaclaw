@@ -20,8 +20,6 @@ from novelvideo.chat.store import ChatScope
         ("first-progress", 300625, False),
         ("first-progress", 300625, True),
         ("idle", 301875, False),
-        ("total", 1800625, False),
-        ("user-input", 1800625, False),
     ],
 )
 async def test_timeout_elapsed_reaches_public_terminal_event(
@@ -51,7 +49,7 @@ async def test_timeout_elapsed_reaches_public_terminal_event(
             ),
         )
     ]
-    if phase in {"idle", "total"}:
+    if phase == "idle":
         notifications.append(
             Notification(
                 method="item/agentMessage/delta",
@@ -61,27 +59,6 @@ async def test_timeout_elapsed_reaches_public_terminal_event(
                         "turnId": "turn-timeout",
                         "itemId": "message-timeout",
                         "delta": "working",
-                    }
-                ),
-            )
-        )
-    elif phase == "user-input":
-        notifications.append(
-            Notification(
-                method="item/started",
-                payload=v2.ItemStartedNotification.model_validate(
-                    {
-                        "threadId": "thread-timeout",
-                        "turnId": "turn-timeout",
-                        "startedAtMs": 1,
-                        "item": {
-                            "type": "mcpToolCall",
-                            "id": "call-confirm",
-                            "server": "dramaclaw",
-                            "tool": "freezone_request_user_clarification",
-                            "arguments": {},
-                            "status": "inProgress",
-                        },
                     }
                 ),
             )

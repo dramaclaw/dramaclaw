@@ -8520,14 +8520,15 @@ async def test_finalizer_claim_is_conditional_and_idempotent(codex_turn_runtime,
     token_file, _ = _persist_test_turn(tmp_path, scope=scope)
     assert await chat_service.finalize_codex_turn(
         "test-user", "old-scope", "wrong-turn", "cancelled"
-    ) is False
+    ) is None
     assert token_file.read_text() == "old-token"
+    claimed = await chat_service.finalize_codex_turn(
+        "test-user", "old-scope", "old-runtime", "cancelled"
+    )
+    assert claimed["turn_id"] == "old-runtime"
     assert await chat_service.finalize_codex_turn(
         "test-user", "old-scope", "old-runtime", "cancelled"
-    ) is True
-    assert await chat_service.finalize_codex_turn(
-        "test-user", "old-scope", "old-runtime", "cancelled"
-    ) is False
+    ) is None
     assert codex_turn_runtime.revoked == ["old-token"]
     assert token_file.exists() is False
     assert chat_service._load_active_codex_turns("test-user") == {}
@@ -8579,3 +8580,34 @@ async def test_codex_registration_failure_releases_credential(
     assert codex_turn_runtime.revoked == ["new-token"]
     assert list((tmp_path / "runtime" / "codex" / "turn_tokens").glob("*.token")) == []
     assert await chat_service.active_chat_turn("test-user", "project-a") is None
+
+
+@pytest.mark.asyncio
+async def test_codex_starter_reports_sweeper_timeout(codex_turn_runtime, monkeypatch):
+    runtime = codex_turn_runtime
+    dispositions = []
+
+    class Operation:
+        async def finish(self, disposition):
+            dispositions.append(disposition)
+
+    monkeypatch.setattr(chat_service, "_turn_operation_finalizer", lambda _: Operation())
+    monkeypatch.setenv("DRAMACLAW_CODEX_TURN_MAX_SECONDS", "60")
+    monkeypatch.setattr(chat_service, "_control_codex_thread", lambda *_: True)
+    scope = ChatScope(kind="home")
+    task = asyncio.create_task(chat_service.stream_assistant_reply(
+        "test-user", "project-a", "hello", _ignore_turn_event,
+        backend="codex", turn_id="business", store_scope=scope,
+    ))
+    try:
+        await asyncio.wait_for(runtime.started.wait(), 2)
+        entries = chat_service._load_active_codex_turns("test-user")
+        entry = next(iter(entries.values()))
+        await chat_service.sweep_codex_turns(now=entry["started_at"] + 61)
+    finally:
+        runtime.finish.set()
+        await task
+    assert dispositions == ["timeout"]
+    assert [m["content"] for m in chat_store.list_messages("test-user", scope)] == [
+        "本轮请求超过最长 1 分钟，已停止。"
+    ]

@@ -85,6 +85,7 @@ def test_control_rpc_uses_shared_app_server_for_lifecycle(monkeypatch, tmp_path)
         yield SimpleNamespace(_client=FakeClient())
 
     monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(codex_app_server, "attach_shared_codex", fake_shared_codex, raising=False)
     common = {
         "codex_bin": tmp_path / "codex",
         "cwd": tmp_path,
@@ -2022,7 +2023,6 @@ async def test_codex_stream_times_out_before_first_runtime_progress(
     )
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 0.05)
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 1.0)
     monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
 
     thread = CodexThread(
@@ -2139,7 +2139,6 @@ async def test_codex_stream_times_out_after_runtime_becomes_idle(monkeypatch, tm
     )
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.05)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 1.0)
     monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
 
     thread = CodexThread(
@@ -2280,7 +2279,6 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
     )
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.03)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 0.5)
 
     thread = CodexThread(
         codex_bin=None,
@@ -2301,80 +2299,3 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
     assert events[-1].text == "已确认"
     assert events[-2].type == "egress_disposition"
     assert events[-2].disposition == "completed"
-
-
-@pytest.mark.asyncio
-async def test_codex_stream_enforces_total_deadline_despite_continuous_progress(
-    monkeypatch, tmp_path
-):
-    from openai_codex.generated import v2_all as v2
-    from openai_codex.models import Notification
-
-    released = threading.Event()
-    interrupt_calls = []
-    progress = Notification(
-        method="item/agentMessage/delta",
-        payload=v2.AgentMessageDeltaNotification.model_validate(
-            {
-                "threadId": "thread-total",
-                "turnId": "turn-total",
-                "itemId": "message-total",
-                "delta": ".",
-            }
-        ),
-    )
-
-    class FakeTurn:
-        id = "turn-total"
-
-        def stream(self):
-            while not released.wait(timeout=0.005):
-                yield progress
-
-        def interrupt(self):
-            interrupt_calls.append(self.id)
-            released.set()
-
-    class FakeThread:
-        id = "thread-total"
-
-    @contextmanager
-    def fake_shared_codex(_config):
-        yield object()
-
-    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
-    monkeypatch.setattr(
-        backend_sdk,
-        "_start_or_resume_codex_thread",
-        lambda *_args, **_kwargs: FakeThread(),
-    )
-    monkeypatch.setattr(
-        backend_sdk,
-        "_start_codex_turn",
-        lambda *_args, **_kwargs: FakeTurn(),
-    )
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 0.05)
-    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
-
-    thread = CodexThread(
-        codex_bin=None,
-        cwd=tmp_path,
-        env={},
-        model="DC-codex-agent-LLM",
-        model_provider="dramaclaw_gateway",
-        developer_instructions="Use DramaClaw MCP only.",
-        config_overrides=(),
-        thread_config={},
-        turn_metadata={},
-        thread_id=None,
-    )
-    events = [event async for event in thread.stream("Create workflow")]
-
-    assert interrupt_calls == ["turn-total"]
-    assert sum(event.type == "assistant_delta" for event in events) > 1
-    assert events[-3].error["kind"] == "total"
-    assert events[-2].disposition == "timeout"
-    assert events[-1].type == "complete"
-    assert events[-1].disposition == "timeout"

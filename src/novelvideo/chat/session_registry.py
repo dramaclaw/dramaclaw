@@ -281,6 +281,25 @@ def clear_active_codex_turn_if_thread(
         return True
 
 
+def mark_codex_turn_timeout(
+    path: Path,
+    scope_key: str,
+    turn_id: str,
+    *,
+    index_file_lock: Callable[[Path], ContextManager[Any]],
+    write_json_atomic: Callable[[Path, dict[str, Any]], None],
+) -> bool:
+    """Mark only the turn whose duration was checked, before interrupting it."""
+    with index_file_lock(path):
+        payload = load_active_codex_turns(path)
+        entry = payload.get(scope_key)
+        if entry is None or entry.get("turn_id") != turn_id:
+            return False
+        entry["timeout_reason"] = "max_duration"
+        write_json_atomic(path, payload)
+        return True
+
+
 def claim_active_codex_turn(
     path: Path,
     scope_key: str,

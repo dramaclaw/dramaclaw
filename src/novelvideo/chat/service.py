@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -28,11 +29,18 @@ from novelvideo.chat import display_fallback, media_presentation, message_reposi
 from novelvideo.chat.backend_sdk import (
     ClaudeSdkClient,
     CodexClient,
+    _positive_timeout_from_env,
     clear_codex_thread_history,
     control_codex_runtime,
     interrupt_live_claude_client,
     interrupt_live_codex_turn,
     read_codex_thread_history,
+)
+from novelvideo.chat.codex_app_server import (
+    CodexAppServerNotRunning,
+    attach_shared_codex,
+    complete_pending_drain,
+    set_active_turn_probe,
 )
 from novelvideo.chat.codex_history import HISTORY_CACHE, CodexHistoryPage, CodexHistoryUnavailable
 from novelvideo.chat.codex_protocol import context_entries
@@ -1990,12 +1998,16 @@ def _pipeline_continuation_instructions(prompt: str, *, tool_mode: str) -> str:
     return f"{_DRAMACLAW_CONTINUATION_INSTRUCTIONS}\n\n"
 
 
-def _chat_backend() -> str:
-    preferred = (
+def _configured_chat_backend() -> str:
+    return (
         os.environ.get("DRAMACLAW_CHAT_BACKEND")
         or os.environ.get("SUPERTALE_CHAT_BACKEND")
         or "codex"
     ).strip().lower() or "codex"
+
+
+def _chat_backend() -> str:
+    preferred = _configured_chat_backend()
     if preferred == "hermes":
         # Explicit "hermes" must succeed — do NOT silently fall back to
         # claude/codex. A missing hermes binary is a config error to surface.
@@ -2452,11 +2464,50 @@ def _release_chat_run_lock(username: str, project: str, lock: ChatStartLock) -> 
 
 
 def _codex_thread_snapshot(thread_id: str, *, include_turns: bool = False) -> Any | None:
-    from novelvideo.chat.codex_app_server import read_existing_codex_thread
+    try:
+        with attach_shared_codex(_codex_node_home()) as codex:
+            return codex._client.thread_read(thread_id, include_turns=include_turns).thread
+    except CodexAppServerNotRunning:
+        return None
 
-    return read_existing_codex_thread(
-        _codex_node_home(), thread_id, include_turns=include_turns
-    )
+
+def _codex_thread_is_active(thread: Any) -> bool:
+    status = getattr(thread, "status", None)
+    status = getattr(status, "root", status)
+    return getattr(status, "type", None) == "active"
+
+
+def _has_active_codex_turns() -> bool:
+    """Read only: uncertain runtime or index state must keep a drain waiting."""
+    try:
+        for path in _state_root().glob("*/active_codex_turns.json"):
+            entries = json.loads(path.read_text(encoding="utf-8"))
+            for entry in entries.values():
+                if _codex_thread_is_active(_codex_thread_snapshot(entry["thread_id"])):
+                    return True
+    except Exception:
+        return True
+    return False
+
+
+set_active_turn_probe(_has_active_codex_turns)
+
+
+async def _finalize_stale_codex_turn(username: str, scope_key: str, entry: dict) -> None:
+    disposition = "interrupted"
+    try:
+        thread = await asyncio.to_thread(
+            _codex_thread_snapshot, entry["thread_id"], include_turns=True
+        )
+        for turn in getattr(thread, "turns", None) or []:
+            if turn.id == entry["turn_id"]:
+                disposition = {
+                    "completed": "completed", "interrupted": "cancelled", "failed": "failed",
+                }.get(turn.status, "interrupted")
+                break
+    except Exception:
+        pass
+    await finalize_codex_turn(username, scope_key, entry["turn_id"], disposition)
 
 
 async def _active_persisted_codex_turn(
@@ -2469,27 +2520,52 @@ async def _active_persisted_codex_turn(
         active = ActiveChatTurn(entry.get("business_turn_id") or None)
         try:
             thread = await asyncio.to_thread(_codex_thread_snapshot, entry["thread_id"])
-            status = getattr(thread, "status", None)
-            status = getattr(status, "root", status)
-            if getattr(status, "type", None) == "active":
+            if _codex_thread_is_active(thread):
                 return active
         except Exception:
             return active
-        disposition = "interrupted"
-        try:
-            thread = await asyncio.to_thread(
-                _codex_thread_snapshot, entry["thread_id"], include_turns=True
-            )
-            for turn in getattr(thread, "turns", None) or []:
-                if turn.id == entry["turn_id"]:
-                    disposition = {
-                        "completed": "completed", "interrupted": "cancelled", "failed": "failed",
-                    }.get(turn.status, "interrupted")
-                    break
-        except Exception:
-            pass
-        await finalize_codex_turn(username, scope_key, entry["turn_id"], disposition)
+        await _finalize_stale_codex_turn(username, scope_key, entry)
     return None
+
+
+async def sweep_codex_turns(now: float | None = None) -> None:
+    from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
+
+    now = time.time() if now is None else now
+    max_seconds = _positive_timeout_from_env("DRAMACLAW_CODEX_TURN_MAX_SECONDS", 3600.0)
+    for path in _state_root().glob("*/active_codex_turns.json"):
+        username = path.parent.name
+        for scope_key, entry in session_registry.load_active_codex_turns(path).items():
+            try:
+                thread = await asyncio.to_thread(_codex_thread_snapshot, entry["thread_id"])
+                if not _codex_thread_is_active(thread):
+                    await _finalize_stale_codex_turn(username, scope_key, entry)
+                elif now - entry["started_at"] > max_seconds:
+                    marked = session_registry.mark_codex_turn_timeout(
+                        path, scope_key, entry["turn_id"],
+                        index_file_lock=index_file_lock, write_json_atomic=write_json_atomic,
+                    )
+                    if marked:
+                        await asyncio.to_thread(
+                            _control_codex_thread, "interrupt", entry["thread_id"], entry["turn_id"]
+                        )
+            except Exception:
+                logger.exception("failed to sweep Codex turn scope=%s", scope_key)
+
+
+async def run_codex_turn_sweeper() -> None:
+    while True:
+        try:
+            await sweep_codex_turns()
+        except Exception:
+            logger.exception("Codex turn sweep failed")
+        try:
+            await asyncio.to_thread(complete_pending_drain, _codex_node_home())
+        except Exception:
+            logger.exception("failed to complete Codex runtime drain")
+        await asyncio.sleep(
+            _positive_timeout_from_env("DRAMACLAW_CODEX_TURN_SWEEP_SECONDS", 30.0)
+        )
 
 
 async def active_chat_turn(
@@ -3062,7 +3138,7 @@ async def _cleanup_codex_turn_token(token_file: Path | None, token: str | None =
 
 async def finalize_codex_turn(
     username: str, scope_key: str, codex_turn_id: str, disposition: str
-) -> bool:
+) -> dict[str, Any] | None:
     from novelvideo.chat.store import ChatScope
     from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
 
@@ -3071,7 +3147,7 @@ async def finalize_codex_turn(
         index_file_lock=index_file_lock, write_json_atomic=write_json_atomic,
     )
     if entry is None:
-        return False
+        return None
     token_file = entry.get("token_file")
     await _cleanup_codex_turn_token(Path(token_file) if token_file else None)
     scope_data = entry.get("store_scope")
@@ -3080,7 +3156,8 @@ async def finalize_codex_turn(
     if store_scope is not None:
         store_scope = replace(store_scope, state_dir=entry.get("store_state_dir"))
     structured = entry.get("structured_canvas_reply") is True
-    if disposition == "interrupted" or (structured and disposition == "cancelled"):
+    timed_out = bool(entry.get("timeout_reason"))
+    if timed_out or disposition == "interrupted" or (structured and disposition == "cancelled"):
         if structured and store_scope is not None:
             try:
                 await _cancel_pending_clarifications_for_turn(
@@ -3090,11 +3167,24 @@ async def finalize_codex_turn(
                 )
             except Exception:
                 logger.exception("failed to settle clarification cards for finalized turn")
-        await _write_turn_notice(
-            username, store_scope, entry["business_turn_id"], disposition,
-            "已取消本轮请求。" if disposition == "cancelled" else "本轮请求已中断。",
-        )
-    return True
+        if timed_out:
+            minutes = math.ceil(
+                _positive_timeout_from_env("DRAMACLAW_CODEX_TURN_MAX_SECONDS", 3600.0) / 60
+            )
+            await _write_turn_notice(
+                username, store_scope, entry["business_turn_id"], "timeout",
+                f"本轮请求超过最长 {minutes} 分钟，已停止。",
+            )
+        else:
+            await _write_turn_notice(
+                username, store_scope, entry["business_turn_id"], disposition,
+                "已取消本轮请求。" if disposition == "cancelled" else "本轮请求已中断。",
+            )
+    try:
+        await asyncio.to_thread(complete_pending_drain, _codex_node_home())
+    except Exception:
+        logger.exception("failed to complete Codex runtime drain after turn finalization")
+    return entry
 
 
 def _write_codex_turn_token(
@@ -3158,6 +3248,12 @@ def _control_codex_thread(
     thread_id: str,
     turn_id: str | None = None,
 ) -> bool:
+    if operation == "interrupt":
+        home = _codex_node_home()
+        return control_codex_runtime(
+            codex_bin=None, cwd=home, env={"CODEX_HOME": str(home)}, config_overrides=(),
+            operation=operation, thread_id=thread_id, turn_id=turn_id,
+        )
     options = _codex_thread_runtime_options()
     if options is None:
         return False
@@ -5799,9 +5895,12 @@ async def _stream_assistant_reply_codex(
         )
         if not detached:
             if active_turn_value is not None:
-                await finalize_codex_turn(
+                claimed = await finalize_codex_turn(
                     username, codex_scope_key, active_turn_value["turn_id"], turn_disposition
                 )
+                if claimed is not None and claimed.get("timeout_reason"):
+                    turn_disposition = "timeout"
+                    timeout_notice = None
             else:
                 await _cleanup_codex_turn_token(token_file, agent_token)
             if project_context is not None:

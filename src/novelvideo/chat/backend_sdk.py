@@ -31,11 +31,7 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 
-# Codex App Server may keep a turn open indefinitely when its upstream model
-# request never produces a notification. Hermes already has idle and total
-# stream deadlines; keep the same lifecycle guarantee here, with a tighter
-# first-progress deadline so an upstream request that never emits its first
-# model/tool event cannot leave the UI spinning indefinitely. Large canvas
+# Bound stalled streams before and after their first runtime progress. Large canvas
 # workflows can legitimately spend more than two minutes planning before the
 # runtime emits its first reasoning/tool notification, so keep the default in
 # line with the active-stream idle deadline. Operators may tune it without a
@@ -55,7 +51,6 @@ CODEX_STREAM_FIRST_PROGRESS_TIMEOUT = _positive_timeout_from_env(
     "DRAMACLAW_CODEX_FIRST_PROGRESS_TIMEOUT_SECONDS", 300.0
 )
 CODEX_STREAM_IDLE_TIMEOUT = 300.0
-CODEX_STREAM_TOTAL_TIMEOUT = max(1800.0, CODEX_STREAM_IDLE_TIMEOUT)
 CODEX_INTERRUPT_GRACE_TIMEOUT = 5.0
 
 _CODEX_LIFECYCLE_ONLY_EVENTS = {
@@ -140,7 +135,7 @@ def _is_archived_codex_thread_error(exc: Exception) -> bool:
 
 def _codex_runtime_config(
     *,
-    codex_bin: Path,
+    codex_bin: Path | None,
     cwd: Path,
     env: dict[str, str],
     config_overrides: tuple[str, ...],
@@ -148,7 +143,7 @@ def _codex_runtime_config(
     from openai_codex import CodexConfig
 
     return CodexConfig(
-        codex_bin=str(codex_bin),
+        codex_bin=str(codex_bin) if codex_bin is not None else None,
         cwd=str(cwd),
         env=env,
         config_overrides=config_overrides,
@@ -157,7 +152,7 @@ def _codex_runtime_config(
 
 def control_codex_runtime(
     *,
-    codex_bin: Path,
+    codex_bin: Path | None,
     cwd: Path,
     env: dict[str, str],
     config_overrides: tuple[str, ...],
@@ -171,7 +166,9 @@ def control_codex_runtime(
     request lands on a different Gunicorn worker from the streaming request.
     """
 
-    from novelvideo.chat.codex_app_server import shared_codex
+    from novelvideo.chat.codex_app_server import (
+        CodexAppServerNotRunning, attach_shared_codex, shared_codex,
+    )
 
     config = _codex_runtime_config(
         codex_bin=codex_bin,
@@ -179,13 +176,18 @@ def control_codex_runtime(
         env=env,
         config_overrides=config_overrides,
     )
+    if operation == "interrupt":
+        if not turn_id:
+            return False
+        try:
+            with attach_shared_codex(config) as codex:
+                codex._client.turn_interrupt(thread_id, turn_id)
+        except CodexAppServerNotRunning:
+            return False
+        return True
     with shared_codex(config) as codex:
         client = codex._client
-        if operation == "interrupt":
-            if not turn_id:
-                return False
-            client.turn_interrupt(thread_id, turn_id)
-        elif operation == "archive":
+        if operation == "archive":
             client.thread_archive(thread_id)
         else:
             from openai_codex.errors import InvalidRequestError
@@ -1303,13 +1305,21 @@ def read_codex_thread_history(
     thread_id: str,
     before: str | None,
 ) -> CodexHistoryPage:
-    from novelvideo.chat.codex_app_server import shared_codex
+    from contextlib import ExitStack
+
+    from novelvideo.chat.codex_app_server import (
+        CodexAppServerNotRunning, attach_shared_codex, shared_codex,
+    )
     from novelvideo.chat.codex_history import HISTORY_CACHE
 
     config = _codex_runtime_config(
         codex_bin=codex_bin, cwd=cwd, env=env, config_overrides=config_overrides
     )
-    with shared_codex(config) as codex:
+    with ExitStack() as stack:
+        try:
+            codex = stack.enter_context(attach_shared_codex(config))
+        except CodexAppServerNotRunning:
+            codex = stack.enter_context(shared_codex(config))
         return HISTORY_CACHE.read_page(codex._client, thread_id, before=before)
 
 
@@ -2210,39 +2220,27 @@ class CodexThread:
         started_at = loop.time()
         first_progress_deadline = started_at + CODEX_STREAM_FIRST_PROGRESS_TIMEOUT
         idle_deadline = started_at + CODEX_STREAM_IDLE_TIMEOUT
-        total_deadline = started_at + CODEX_STREAM_TOTAL_TIMEOUT
         saw_runtime_progress = False
         user_input_calls: set[str] = set()
         timed_out = False
 
         try:
             while True:
-                if user_input_calls:
-                    deadline = total_deadline
-                else:
-                    deadline = min(
-                        total_deadline,
-                        (
-                            idle_deadline
-                            if saw_runtime_progress
-                            else first_progress_deadline
-                        ),
-                    )
-                remaining = deadline - loop.time()
                 try:
-                    if remaining <= 0:
-                        raise asyncio.TimeoutError
-                    kind, payload = await asyncio.wait_for(
-                        queue.get(), timeout=remaining
-                    )
+                    if user_input_calls:
+                        kind, payload = await queue.get()
+                    else:
+                        deadline = (
+                            idle_deadline if saw_runtime_progress else first_progress_deadline
+                        )
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            raise asyncio.TimeoutError
+                        kind, payload = await asyncio.wait_for(queue.get(), timeout=remaining)
                 except asyncio.TimeoutError:
                     timed_out = True
                     now = loop.time()
-                    if user_input_calls:
-                        timeout_kind = "user-input"
-                    elif now >= total_deadline:
-                        timeout_kind = "total"
-                    elif saw_runtime_progress:
+                    if saw_runtime_progress:
                         timeout_kind = "idle"
                     else:
                         timeout_kind = "first-progress"
@@ -2270,11 +2268,7 @@ class CodexThread:
                                 exc_info=True,
                             )
 
-                    timeout_message = (
-                        "等待用户确认超时，请重新提交确认卡。"
-                        if timeout_kind == "user-input"
-                        else "Codex App Server 响应超时，请重试。"
-                    )
+                    timeout_message = "Codex App Server 响应超时，请重试。"
                     timeout_error = {
                         "message": timeout_message,
                         "kind": timeout_kind,
@@ -2311,10 +2305,7 @@ class CodexThread:
                 event = payload
                 if event.type not in _CODEX_LIFECYCLE_ONLY_EVENTS:
                     saw_runtime_progress = True
-                    idle_deadline = min(
-                        total_deadline,
-                        loop.time() + CODEX_STREAM_IDLE_TIMEOUT,
-                    )
+                    idle_deadline = loop.time() + CODEX_STREAM_IDLE_TIMEOUT
                 if event.type == "tool_started" and _codex_tool_waits_for_user_input(
                     event.name
                 ):
