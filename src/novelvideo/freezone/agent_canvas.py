@@ -142,6 +142,9 @@ async def dispatch_agent_canvas(
     except CanvasMediaScopeError:
         outcome = "canvas_media_scope_mismatch"
         raise
+    except CanvasCoreError as exc:
+        outcome = "invalid_agent_canvas_request" if exc.code == "invalid_request" else exc.code
+        raise
     except Exception as exc:
         detail = getattr(exc, "detail", None)
         outcome = getattr(exc, "code", None) or (
@@ -253,7 +256,7 @@ async def answer_agent_canvas_context(
             raise CanvasCoreError("canvas_core_protocol", "Invalid canvas core context result")
         raise AssertionError("unreachable")
     except CanvasCoreError as exc:
-        outcome = exc.code
+        outcome = "invalid_agent_canvas_request" if exc.code == "invalid_request" else exc.code
         raise
     finally:
         count(f"agent_canvas_read.{outcome}")

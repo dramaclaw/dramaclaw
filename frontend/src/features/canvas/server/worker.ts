@@ -10,8 +10,25 @@ import { isRecord, isFiniteNumber } from '@/features/freezone/canvasCommandEnvel
 
 console = new Console({ stdout: process.stderr, stderr: process.stderr });
 
+class InvalidRequest extends Error {}
+
 function invalidRequest(message: string): never {
-  throw new Error(message);
+  throw new InvalidRequest(message);
+}
+
+function invalidEnvelope(envelopes: unknown[], field: 'commands' | 'requests', parses: (item: unknown) => boolean): never {
+  for (const envelope of envelopes) {
+    if (!isRecord(envelope)) continue;
+    const items = envelope[field];
+    if (!Array.isArray(items)) continue;
+    for (const [index, item] of items.entries()) {
+      if (parses(item)) continue;
+      const type = isRecord(item) && typeof item.type === 'string' ? ` (${item.type})` : '';
+      const kind = field === 'commands' ? 'command' : 'context request';
+      invalidRequest(`${field}[${index}]${type} is not a valid canvas ${kind}`);
+    }
+  }
+  invalidRequest(field === 'commands' ? 'Invalid command envelope' : 'Invalid context envelope');
 }
 
 function parseCanvasPayload(payload: unknown) {
@@ -30,7 +47,9 @@ function parseCanvasPayload(payload: unknown) {
 function parsePayload(payload: unknown) {
   const input = parseCanvasPayload(payload);
   const envelopes = extractCanvasChatCommandEnvelopes(input.envelopes);
-  if (envelopes.length !== input.envelopes.length || input.envelopes.some((raw, index) => !isRecord(raw) || !Array.isArray(raw.commands) || raw.commands.length !== envelopes[index].commands.length)) invalidRequest('Invalid command envelope');
+  if (envelopes.length !== input.envelopes.length || input.envelopes.some((raw, index) => !isRecord(raw) || !Array.isArray(raw.commands) || raw.commands.length !== envelopes[index].commands.length)) {
+    invalidEnvelope(input.envelopes, 'commands', command => extractCanvasChatCommandEnvelopes([{ schema_version: 'canvas_chat_commands.v1', commands: [command] }]).length === 1);
+  }
   const env = input.env ?? { catalogs: {} };
   if (!isRecord(env) || (env.locale !== undefined && typeof env.locale !== 'string') || !isRecord(env.catalogs)) invalidRequest('Invalid command environment');
   // JSON callers cannot inject executable ids or clocks.
@@ -41,7 +60,9 @@ function parsePayload(payload: unknown) {
 function parseContextPayload(payload: unknown) {
   const input = parseCanvasPayload(payload);
   const envelopes = extractCanvasContextRequestEnvelopes(input.envelopes);
-  if (envelopes.length !== input.envelopes.length || input.envelopes.some((raw, index) => !isRecord(raw) || !Array.isArray(raw.requests) || raw.requests.length !== envelopes[index].requests.length)) invalidRequest('Invalid context envelope');
+  if (envelopes.length !== input.envelopes.length || input.envelopes.some((raw, index) => !isRecord(raw) || !Array.isArray(raw.requests) || raw.requests.length !== envelopes[index].requests.length)) {
+    invalidEnvelope(input.envelopes, 'requests', request => extractCanvasContextRequestEnvelopes([{ schema_version: 'canvas_context_request.v1', requests: [request] }]).length === 1);
+  }
   const env = input.env ?? {};
   if (!isRecord(env) || (env.locale !== undefined && typeof env.locale !== 'string') ||
     (env.project !== undefined && typeof env.project !== 'string') ||
@@ -84,6 +105,8 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     }
     process.stdout.write(JSON.stringify({ id, ok: true, result }) + '\n');
   } catch (error) {
-    process.stdout.write(JSON.stringify({ id, ok: false, error: { code: 'invalid_request', message: error instanceof Error ? error.message : String(error) } }) + '\n');
+    const code = error instanceof InvalidRequest ? 'invalid_request' : 'canvas_core_failed';
+    if (code === 'canvas_core_failed') console.error(error);
+    process.stdout.write(JSON.stringify({ id, ok: false, error: { code, message: error instanceof Error ? error.message : String(error) } }) + '\n');
   }
 }

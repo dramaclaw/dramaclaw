@@ -38,13 +38,19 @@ it('bundles a standalone React-free worker and serves sequential NDJSON requests
       JSON.stringify({ id: 'unknown-node', op: 'apply_commands', payload: { canvas: { nodes: [knownNode, unknownNode], edges: [unknownEdge] }, envelopes: envelope([{ type: 'create_node', node_type: 'textAnnotationNode', data: { content: 'New' } }]), env: { locale: 'en', catalogs: {} } } }),
       JSON.stringify({ id: 'context-needs', op: 'answer_context', payload: { canvas: contextCanvas, envelopes: contextEnvelopes(), env: {} } }),
       JSON.stringify({ id: 'context-answered', op: 'answer_context', payload: { canvas: contextCanvas, envelopes: contextEnvelopes(), env: { hostData: contextHostData } } }),
-      JSON.stringify({ id: 'context-invalid', op: 'answer_context', payload: { canvas: contextCanvas, envelopes: [{ schema_version: 'canvas_context_request.v1', requests: [{ type: 'unknown' }] }] } }),
+      JSON.stringify({ id: 'context-invalid', op: 'answer_context', payload: { canvas: contextCanvas, envelopes: [{ schema_version: 'canvas_context_request.v1', requests: [{ type: 'unknown_type' }] }] } }),
       JSON.stringify({ id: 'context-failed', op: 'answer_context', payload: { canvas: contextCanvas, envelopes: contextEnvelopes([{ type: 'node_action_read', node_id: 'missing', action: 'history' }]), env: {} } }),
+      JSON.stringify({ id: 'command-invalid', op: 'apply_commands', payload: { canvas: initialCanvas(), envelopes: [{ schema_version: 'canvas_chat_commands.v1', commands: [
+        { type: 'select_nodes', node_ids: ['source'] },
+        { type: 'create_edge', source: 'source', target: 'generated', link_type: 'unknown_type' },
+        { type: 'unknown_command' },
+      ] }] } }),
+      JSON.stringify({ id: 'core-failed', op: 'apply_commands', payload: { canvas: { nodes: [{ id: 'broken', type: 'storyboardNode', data: { frames: {} }, position: { x: 0, y: 0 } }], edges: [] }, envelopes: [] } }),
     ].join('\n') + '\n');
     const timer = setTimeout(() => child.kill(), 20000);
     try { expect(await exit, stderr).toBe(0); } finally { clearTimeout(timer); }
     const lines = stdout.trim().split('\n').map(line => JSON.parse(line));
-    expect(lines).toHaveLength(13);
+    expect(lines).toHaveLength(15);
     expect(lines[0]).toEqual({ id: 'ping', ok: true, result: { pong: true } });
     expect(lines[1]).toMatchObject({ id: null, ok: false, error: { code: 'invalid_json', message: expect.any(String) } });
     expect(lines[2]).toMatchObject({ id: 'apply', ok: true, result: { status: 'applied', canvas: { nodes: expect.any(Array) }, receipt: { canvas_apply_status: 'applied' } } });
@@ -64,7 +70,9 @@ it('bundles a standalone React-free worker and serves sequential NDJSON requests
     expect(lines[10]).toMatchObject({ id: 'context-answered', ok: true, result: { status: 'answered', result: { ok: true, canvas_id: 'context-canvas' } } });
     expect(lines[10].result.result.responses).toHaveLength(18);
     expect(JSON.stringify(lines[10].result.result.responses)).toContain('文生视频');
-    expect(lines[11]).toMatchObject({ id: 'context-invalid', ok: false, error: { code: 'invalid_request' } });
+    expect(lines[11]).toMatchObject({ id: 'context-invalid', ok: false, error: { code: 'invalid_request', message: 'requests[0] (unknown_type) is not a valid canvas context request' } });
     expect(lines[12]).toMatchObject({ id: 'context-failed', ok: true, result: { status: 'answered', result: { ok: false, responses: [], errors: [expect.stringContaining('node not found: missing')] } } });
+    expect(lines[13]).toMatchObject({ id: 'command-invalid', ok: false, error: { code: 'invalid_request', message: 'commands[1] (create_edge) is not a valid canvas command' } });
+    expect(lines[14]).toMatchObject({ id: 'core-failed', ok: false, error: { code: 'canvas_core_failed', message: expect.any(String) } });
   } finally { await fs.rm(outDir, { recursive: true, force: true }); }
 }, 30000);

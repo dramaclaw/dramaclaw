@@ -241,12 +241,14 @@ def test_confirmation_host_branch_requires_presence(agent):
     assert not [call for call in calls if call[0] == "POST"]
 
 
+@pytest.mark.parametrize("read", [False, True])
 @pytest.mark.parametrize("status,detail", [
     (409, {"code": "canvas_revision_conflict", "message": "Conflict", "current_revision": 8}),
     (422, {"code": "canvas_media_scope_mismatch", "message": "Invalid media"}),
+    (422, {"code": "invalid_agent_canvas_request", "message": "commands[1] (create_edge) is not a valid canvas command"}),
     (503, {"code": "canvas_core_timeout", "message": "Worker timed out"}),
 ])
-def test_actual_http_errors_reach_canvas_tools(agent, monkeypatch, status, detail):
+def test_actual_http_errors_reach_canvas_tools(agent, monkeypatch, read, status, detail):
     import io
     import json
     from urllib.error import HTTPError
@@ -260,7 +262,14 @@ def test_actual_http_errors_reach_canvas_tools(agent, monkeypatch, status, detai
     monkeypatch.setenv("DRAMACLAW_API_URL", "http://127.0.0.1:8780")
     monkeypatch.setenv("DRAMACLAW_LOCAL_AGENT_TRUST", "1")
     monkeypatch.setattr(plugin, "urlopen", failed)
-    result = plugin._server_apply_canvas_commands("p", "c", CREATE, slim_result=False)
+    monkeypatch.setattr(plugin, "_agent_canvas_executor", lambda: "server")
+    result = (plugin._request_canvas_context_from_frontend(project="p", canvas="c", requests=[])
+              if read else plugin._server_apply_canvas_commands("p", "c", CREATE, slim_result=False))
+    assert not result["ok"] and result["tool_call_status"] == "failed"
+    assert result["message"] == detail["message"]
+    if status == 422:
+        assert not result.get("retryable")
+        assert "retry" not in result.get("agent_instruction", "").lower()
     assert result["code"] == detail["code"]
     assert result["errors"] == [detail["message"]]
 

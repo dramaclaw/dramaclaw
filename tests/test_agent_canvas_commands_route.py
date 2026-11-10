@@ -398,3 +398,38 @@ async def test_invalid_worker_result_is_protocol_error(setup, monkeypatch):
     assert error.value.detail["code"] == "canvas_core_protocol"
     assert canvas_store.read_canvas(root, "default")["revision"] == 1
     assert not events
+
+
+@pytest.mark.parametrize(
+    "code,message,status,detail,outcome",
+    [
+        (
+            "invalid_request",
+            "commands[1] (create_edge) is not a valid canvas command",
+            422,
+            {
+                "code": "invalid_agent_canvas_request",
+                "message": "commands[1] (create_edge) is not a valid canvas command",
+            },
+            "invalid_agent_canvas_request",
+        ),
+        ("canvas_core_failed", "private", 503, {"code": "canvas_core_failed"}, "canvas_core_failed"),
+    ],
+)
+async def test_worker_error_status_message_and_outcome(setup, caplog, code, message, status, detail, outcome):
+    from novelvideo.freezone.agent_canvas_metrics import metrics_snapshot
+    from novelvideo.freezone.canvas_core_pool import CanvasCoreError
+
+    root, pool, events = setup
+    stored = canvas_store.read_canvas(root, "default")
+    pool.error = CanvasCoreError(code, message)
+    metric = f"agent_canvas_write.{outcome}"
+    before = metrics_snapshot().get(metric, 0)
+    with caplog.at_level(logging.INFO), pytest.raises(HTTPException) as error:
+        await dispatch()
+    assert error.value.status_code == status
+    assert error.value.detail == detail
+    assert metrics_snapshot()[metric] == before + 1
+    assert f"result={outcome}" in caplog.text
+    assert canvas_store.read_canvas(root, "default") == stored
+    assert not events

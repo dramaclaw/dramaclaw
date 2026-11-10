@@ -17935,6 +17935,10 @@ async def agent_canvas_commands(
             ),
         )
     except CanvasCoreError as exc:
+        if exc.code == "invalid_request":
+            raise HTTPException(422, {
+                "code": "invalid_agent_canvas_request", "message": str(exc),
+            }) from exc
         raise HTTPException(503, {"code": exc.code}) from exc
     except CanvasInlineMediaError as exc:
         raise HTTPException(422, {"code": exc.code, "fields": exc.fields}) from exc
@@ -18013,6 +18017,10 @@ async def agent_canvas_context(
             },
         )
     except CanvasCoreError as exc:
+        if exc.code == "invalid_request":
+            raise HTTPException(422, {
+                "code": "invalid_agent_canvas_request", "message": str(exc),
+            }) from exc
         raise HTTPException(503, {"code": exc.code}) from exc
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
