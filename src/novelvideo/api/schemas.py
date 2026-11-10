@@ -2187,6 +2187,11 @@ class FreezoneStageAssetAcceptedResponse(BaseModel):
     data: FreezoneStageAssetAcceptedData
 
 
+class AgentCanvasCommandsRequest(BaseModel):
+    envelopes: list[dict] = Field(min_length=1, max_length=20)
+    locale: Optional[Literal["zh", "en", "vi", "pt"]] = None
+
+
 class CanvasPayload(BaseModel):
     schema_version: Optional[Literal[2]] = None
     canvas_id: Optional[str] = None

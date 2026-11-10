@@ -20,6 +20,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from copy import deepcopy
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, Awaitable, Callable, Literal, Optional
 from urllib.parse import quote, unquote, urlencode, urlsplit
@@ -52,7 +53,7 @@ from novelvideo.seedance2_i2v.character_voice_storage import (
     run_voice_media_operation,
 )
 from novelvideo.freezone.audio_node import recover_user_audio_voice_save
-from novelvideo.api.auth import get_api_user
+from novelvideo.api.auth import get_api_user, require_project_scope
 from novelvideo.api.workflow_reads import (
     WorkflowReadBusy,
     workflow_read_executor,
@@ -73,6 +74,7 @@ from novelvideo.api.schemas import (
     FreezoneImageVectorizeRequest,
     FreezoneImageAnimateGifRequest,
     CanvasPayload,
+    AgentCanvasCommandsRequest,
     CreateIdentityAssetRequest,
     FreezoneAnalyzeShotsRequest,
     FreezoneAnalyzeVideoStoryRequest,
@@ -152,6 +154,10 @@ from novelvideo.director_world import DirectorWorldService
 from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
 from novelvideo.generators.render_identity_guard import render_ai_detection_error
 from novelvideo.freezone import canvas_store
+from novelvideo.freezone.agent_canvas import CanvasInlineMediaError, dispatch_agent_canvas
+from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
+from novelvideo.freezone.agent_canvas_metrics import count as count_canvas_metric
+from novelvideo.freezone.canvas_core_pool import CanvasCoreError
 from novelvideo.freezone.agent_bundle_store import (
     export_agent_bundle,
     install_agent_bundle,
@@ -10041,20 +10047,20 @@ async def freezone_video_models(
     ctx, _username, _project_name, _project_dir, _output_dir = (
         await _resolve_freezone_project(project, user, required_role="viewer")
     )
+    return {"ok": True, "data": await _freezone_video_models_data(ctx.requester_user_id)}
+
+
+async def _freezone_video_models_data(requester_user_id: str):
     catalog = await _scoped_media_model_catalog(
-        "video",
-        requester_user_id=ctx.requester_user_id,
+        "video", requester_user_id=requester_user_id,
     )
-    return {
-        "ok": True,
-        "data": (
-            get_freezone_video_model_options()
-            if catalog is None
-            else _public_media_model_catalog(
-                [item for item in catalog if not _is_processing_only_video_model(item)]
-            )
-        ),
-    }
+    return (
+        get_freezone_video_model_options()
+        if catalog is None
+        else _public_media_model_catalog(
+            [item for item in catalog if not _is_processing_only_video_model(item)]
+        )
+    )
 
 
 @router.get("/projects/{project}/freezone/image/models", tags=[TAG_FREEZONE_IMAGE])
@@ -10066,12 +10072,16 @@ async def freezone_image_models(
     ctx, _username, _project_name, _project_dir, _output_dir = (
         await _resolve_freezone_project(project, user, required_role="viewer")
     )
+    return {"ok": True, "data": await _freezone_image_models_data(ctx.requester_user_id)}
+
+
+async def _freezone_image_models_data(requester_user_id: str):
     catalog = await _scoped_media_model_catalog(
         "image",
-        requester_user_id=ctx.requester_user_id,
+        requester_user_id=requester_user_id,
     )
     if catalog is not None:
-        return {"ok": True, "data": _public_media_model_catalog(catalog)}
+        return _public_media_model_catalog(catalog)
     options = image_generation_selection_options()
     data = []
     for key, label in options.items():
@@ -10086,7 +10096,7 @@ async def freezone_image_models(
                 "label": label,
             }
         )
-    return {"ok": True, "data": data}
+    return data
 
 
 @router.get("/projects/{project}/freezone/blockout/models", tags=[TAG_FREEZONE_IMAGE])
@@ -17792,26 +17802,9 @@ async def get_canvas_generation_history(
     return {"ok": True, "data": {"records": records}}
 
 
-@router.put(
-    "/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS]
-)
-async def put_canvas(
-    project: str,
-    canvas_id: str,
-    body: CanvasPayload,
-    user: dict = Depends(get_api_user),
-):
-    if not CANVAS_ID_RE.match(canvas_id):
-        raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = (
-        await _resolve_freezone_project(
-            project,
-            user,
-            require_home_node=False,
-        )
-    )
-    canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
-
+def _canvas_payload_builder(
+    body: CanvasPayload, *, project: str, canvas_id: str, user: dict, ctx: ProjectContext,
+) -> Callable[[dict | None], dict]:
     def build_payload(existing: dict | None) -> dict:
         prepared = _prepare_canvas_payload_for_write(
             project_id=project,
@@ -17828,34 +17821,18 @@ async def put_canvas(
         reject_new_foreign_media_refs(prepared, existing=existing, project_id=ctx.project_id)
         return prepared
 
-    try:
-        saved_canvas = await canvas_store.save_canvas_async(
-            canvas_project_dir,
-            canvas_id,
-            base_revision=body.base_revision,
-            build_payload=build_payload,
-            client_save_id=body.client_save_id,
-            request_hash=canvas_store.canvas_request_hash(
-                body.model_dump(
-                    exclude={"client_save_id"},
-                    exclude_none=True,
-                )
-            ),
-            save_source=body.save_source,
-            allow_empty_overwrite=body.allow_empty_overwrite,
-        )
-    except CanvasMediaScopeError as exc:
-        # 前端据此调 assets/copy 把素材拷进本项目,改写节点后重试保存(自愈)。
-        raise HTTPException(
-            422,
-            {
-                "code": "canvas_media_scope_mismatch",
-                "project_id": ctx.project_id,
-                "refs": [ref.as_dict() for ref in exc.refs],
-            },
-        ) from exc
-    except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
-        _raise_canvas_store_http(exc)
+    return build_payload
+
+
+async def _after_canvas_save(
+    body: CanvasPayload,
+    saved_canvas: canvas_store.CanvasSaveResult,
+    *,
+    project: str,
+    canvas_id: str,
+    canvas_project_dir: Path,
+    user: dict,
+) -> None:
     payload = saved_canvas.payload
     try:
         await asyncio.to_thread(
@@ -17890,6 +17867,120 @@ async def put_canvas(
                 ),
             },
         )
+
+
+def _raise_canvas_media_scope_http(exc: CanvasMediaScopeError, project_id: str) -> None:
+    # 前端据此调 assets/copy 把素材拷进本项目,改写节点后重试保存(自愈)。
+    raise HTTPException(
+        422,
+        {
+            "code": "canvas_media_scope_mismatch",
+            "project_id": project_id,
+            "refs": [ref.as_dict() for ref in exc.refs],
+        },
+    ) from exc
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/agent-commands",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def agent_canvas_commands(
+    project: str,
+    canvas_id: str,
+    body: AgentCanvasCommandsRequest,
+    user: dict = Depends(require_project_scope("projects:write")),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, require_home_node=False)
+    )
+    if agent_canvas_executor() != "server":
+        raise HTTPException(409, {"code": "agent_canvas_executor_browser"})
+    canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
+    image, video = await asyncio.gather(
+        _freezone_image_models_data(ctx.requester_user_id),
+        _freezone_video_models_data(ctx.requester_user_id),
+    )
+    try:
+        data = await dispatch_agent_canvas(
+            project=project, canvas_id=canvas_id, project_dir=canvas_project_dir,
+            envelopes=body.envelopes,
+            env={"locale": body.locale or "zh", "catalogs": {"image": image, "video": video}},
+            build_payload=partial(
+                _canvas_payload_builder, project=project, canvas_id=canvas_id, user=user, ctx=ctx,
+            ),
+            after_save=partial(
+                _after_canvas_save, project=project, canvas_id=canvas_id,
+                canvas_project_dir=canvas_project_dir, user=user,
+            ),
+        )
+    except CanvasCoreError as exc:
+        raise HTTPException(503, {"code": exc.code}) from exc
+    except CanvasInlineMediaError as exc:
+        raise HTTPException(422, {"code": exc.code, "fields": exc.fields}) from exc
+    except CanvasMediaScopeError as exc:
+        _raise_canvas_media_scope_http(exc, ctx.project_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "canvas not found") from exc
+    except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
+        _raise_canvas_store_http(exc)
+    return {"ok": True, "data": data}
+
+
+@router.put(
+    "/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS]
+)
+async def put_canvas(
+    project: str,
+    canvas_id: str,
+    body: CanvasPayload,
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            require_home_node=False,
+        )
+    )
+    canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
+
+    build_payload = _canvas_payload_builder(
+        project=project, canvas_id=canvas_id, body=body, user=user, ctx=ctx,
+    )
+
+    try:
+        saved_canvas = await canvas_store.save_canvas_async(
+            canvas_project_dir,
+            canvas_id,
+            base_revision=body.base_revision,
+            build_payload=build_payload,
+            client_save_id=body.client_save_id,
+            request_hash=canvas_store.canvas_request_hash(
+                body.model_dump(
+                    exclude={"client_save_id"},
+                    exclude_none=True,
+                )
+            ),
+            save_source=body.save_source,
+            allow_empty_overwrite=body.allow_empty_overwrite,
+        )
+    except CanvasMediaScopeError as exc:
+        _raise_canvas_media_scope_http(exc, ctx.project_id)
+    except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
+        if isinstance(exc, CanvasLockBusy) and body.save_source == "autosave":
+            logger.warning("canvas_autosave_lock_busy project=%s canvas=%s", project, canvas_id)
+            count_canvas_metric("canvas_autosave_lock_busy")
+        _raise_canvas_store_http(exc)
+    await _after_canvas_save(
+        project=project, canvas_id=canvas_id, canvas_project_dir=canvas_project_dir,
+        body=body, user=user, saved_canvas=saved_canvas,
+    )
+    payload = saved_canvas.payload
     response_data = saved_canvas.response_cache or {
         "saved": True,
         "revision": payload.get("revision"),

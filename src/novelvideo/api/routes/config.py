@@ -13,6 +13,7 @@ from ulid import ULID
 
 from novelvideo.shared import runtime_env
 from novelvideo.freezone.studio import openfilm_studio_enabled
+from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ async def get_runtime_config():
             "ok": True,
             "data": {
                 "edition": edition,
+                "agent_canvas_executor": agent_canvas_executor(),
                 "auth_required": edition == "ee",
                 "instance_id": _INSTANCE_ID,
                 "mcp_direct_canvas_apply": _mcp_direct_canvas_apply_enabled(),

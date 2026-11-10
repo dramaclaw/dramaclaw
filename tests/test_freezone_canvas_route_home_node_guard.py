@@ -244,6 +244,7 @@ PLACEMENT_FREE_CANVAS_ROUTES = {
     "get_canvas_generation_history",
     "delete_node_generation_history_record",
     "put_canvas",
+    "agent_canvas_commands",
     "delete_canvas",
 }
 
@@ -293,8 +294,8 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
     # staging 的两个白模路由与 main 的逐帧拉片路由均保留。
     # OpenFilm 剪辑工作区再加 5 条非画布路由（TAG_FREEZONE_VIDEO）：打开 Studio 会话，
     # 以及 agent 的 film 读取 / 编辑 / 导入素材 / 导出；它们都走默认的 home-node 守卫。
-    assert router_decorators == 121
-    assert len(canvas_routes) == 31
+    assert router_decorators == 122
+    assert len(canvas_routes) == 32
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES
     assert "cancel_canvas_workflow_draft" in canvas_routes
