@@ -4175,6 +4175,8 @@ tests/test_codex_protocol_fixtures.py,Elastic-2.0,2026 SuperTale contributors,RE
 tests/test_codex_resume_refreshes_tool_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_codex_thread_clear.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_codex_turn_context.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_codex_turn_follower.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_codex_turn_sweeper.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_episode_update_merge.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_ingest_failure_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
