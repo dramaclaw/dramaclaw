@@ -16,12 +16,18 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     case 'ping': result = { pid: process.pid, count }; break;
     case 'env': result = { keys: Object.keys(process.env) }; break;
     case 'argv': result = { argv: process.execArgv }; break;
+    case 'stderr_line': console.error('worker diagnostic'); result = {}; break;
     case 'sleep': await new Promise(() => {}); break;
     case 'crash': process.exit(1); break;
     case 'garbage': console.log('not-json'); continue;
     case 'wrong_id': console.log(JSON.stringify({ id: 'wrong', ok: true, result: {} })); continue;
     case 'fail':
-      console.log(JSON.stringify({ id, ok: false, error: { code: 'bad_input', message: 'bad input' } }));
+      console.log(JSON.stringify({ id, ok: false,
+        error: { code: 'bad_input', message: 'bad input' } }));
+      continue;
+    case 'invalid_request':
+      console.log(JSON.stringify({ id, ok: false,
+        error: { code: 'invalid_request', message: 'invalid request' } }));
       continue;
     case 'readfile':
       try { fs.readFileSync(payload.path); result = { code: 'allowed' }; }
@@ -30,7 +36,8 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     case 'apply_commands':
       result = {
         status: 'applied',
-        canvas: { nodes: [...payload.canvas.nodes, { id: 'n-' + count }], edges: payload.canvas.edges },
+        canvas: { nodes: [...payload.canvas.nodes, { id: 'n-' + count }],
+          edges: payload.canvas.edges },
         changes: { created_node_ids: ['n-' + count], updated_node_ids: [], deleted_node_ids: [],
           created_edge_ids: [], deleted_edge_ids: [] },
         receipt: { canvas_apply_status: 'applied' },
