@@ -43,7 +43,7 @@ class FakePool:
             "canvas": {"nodes": payload["canvas"]["nodes"] + [self.node], "edges": []},
             "changes": {"created_node_ids": ["agent"]},
             "receipt": {"canvas_apply_status": self.status},
-            "host_commands": ["generate_image"] if self.status == "host_required" else [],
+            "host_command_types": ["generate_image"] if self.status == "host_required" else [],
         }
 
 
@@ -205,6 +205,8 @@ async def test_no_write_results(setup, status):
     response = await dispatch()
     assert response["data"]["status"] == status
     assert response["data"]["revision"] == 1
+    if status == "host_required":
+        assert response["data"]["host_command_types"] == ["generate_image"]
     assert response["data"]["receipt"]["canvas_apply_status"] == status
     assert not events
     assert canvas_store.read_canvas(root, "default")["revision"] == 1

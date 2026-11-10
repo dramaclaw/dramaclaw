@@ -2192,6 +2192,11 @@ class AgentCanvasCommandsRequest(BaseModel):
     locale: Optional[Literal["zh", "en", "vi", "pt"]] = None
 
 
+class AgentCanvasContextRequest(BaseModel):
+    requests: list[dict] = Field(min_length=1, max_length=20)
+    locale: str | None = None
+
+
 class CanvasPayload(BaseModel):
     schema_version: Optional[Literal[2]] = None
     canvas_id: Optional[str] = None

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Elastic-2.0
 # Copyright (c) 2026 ClaymoreLab
-"""Compute Agent canvas changes outside the store's write mutex."""
+"""Compute Agent canvas reads and changes outside the store's write mutex."""
 
 from __future__ import annotations
 
@@ -124,13 +124,16 @@ async def dispatch_agent_canvas(
                 revision = saved.payload.get("revision")
                 await after_save(body, saved)
             outcome = status
-            return {
+            data = {
                 "status": status,
                 "revision": revision,
                 "changes": result["changes"],
                 "receipt": result["receipt"],
                 "recompute_count": recompute,
             }
+            if status == "host_required":
+                data["host_command_types"] = result["host_command_types"]
+            return data
         raise AssertionError("unreachable")
     except canvas_store.CanvasRevisionConflict as exc:
         outcome = "conflict"
@@ -158,4 +161,110 @@ async def dispatch_agent_canvas(
             int(node_seconds * 1000),
             recompute,
             revision,
+        )
+
+
+def _context_need_key(need: object) -> tuple[str, str | None, int | None]:
+    if not isinstance(need, dict):
+        raise CanvasCoreError("canvas_core_protocol", "Invalid canvas core host need")
+    kind = need.get("kind")
+    if kind in ("audio_references", "project_assets", "characters"):
+        return kind, None, None
+    if kind in ("html_artifact", "html_versions"):
+        artifact_id = need.get("artifact_id")
+        version = need.get("version") if kind == "html_artifact" else None
+        if (
+            isinstance(artifact_id, str)
+            and artifact_id
+            and (version is None or (type(version) is int and version >= 1))
+        ):
+            return kind, artifact_id, version
+    raise CanvasCoreError("canvas_core_protocol", "Invalid canvas core host need")
+
+
+async def _fetch_context_host_data(
+    needs: list,
+    fetchers: dict[str, Callable[[dict], Awaitable[object]]],
+) -> dict:
+    unique = {_context_need_key(need): need for need in needs}
+
+    async def fetch(key, need):
+        try:
+            return await fetchers[key[0]](need)
+        except (LookupError, ValueError) as exc:
+            return {"error": {"message": str(exc)}}
+
+    values = await asyncio.gather(*(fetch(key, need) for key, need in unique.items()))
+    host_data = {}
+    for (kind, artifact_id, version), value in zip(unique, values):
+        if kind == "html_artifact":
+            key = f"{artifact_id}@{version or 'latest'}"
+            host_data.setdefault("html_artifacts", {})[key] = value
+        elif kind == "html_versions":
+            host_data.setdefault("html_versions", {})[artifact_id] = value
+        else:
+            host_data[kind] = value
+    return host_data
+
+
+async def answer_agent_canvas_context(
+    *,
+    project: str,
+    canvas_id: str,
+    canvas: dict,
+    envelopes: list[dict],
+    env: dict,
+    fetchers: dict[str, Callable[[dict], Awaitable[object]]],
+) -> object:
+    started = time.monotonic()
+    node_seconds = 0.0
+    passes = 0
+    outcome = "error"
+    requests = ",".join(
+        request["type"]
+        for envelope in envelopes
+        for request in envelope["requests"]
+        if isinstance(request.get("type"), str)
+    )
+    payload = {"canvas": canvas, "envelopes": envelopes, "env": dict(env)}
+    try:
+        for _ in range(2):
+            passes += 1
+            node_started = time.monotonic()
+            try:
+                response = await asyncio.to_thread(
+                    get_canvas_core_pool().call, "answer_context", payload,
+                )
+            finally:
+                node_seconds += time.monotonic() - node_started
+            if isinstance(response, dict):
+                if response.get("status") == "answered" and "result" in response:
+                    outcome = "answered"
+                    return response["result"]
+                if (
+                    response.get("status") == "needs_host_data"
+                    and passes == 1
+                    and isinstance(response.get("needs"), list)
+                ):
+                    payload["env"]["hostData"] = await _fetch_context_host_data(
+                        response["needs"], fetchers,
+                    )
+                    continue
+            raise CanvasCoreError("canvas_core_protocol", "Invalid canvas core context result")
+        raise AssertionError("unreachable")
+    except CanvasCoreError as exc:
+        outcome = exc.code
+        raise
+    finally:
+        count(f"agent_canvas_read.{outcome}")
+        logger.info(
+            "agent_canvas_read project=%s canvas=%s requests=%s result=%s duration_ms=%d "
+            "node_ms=%d passes=%d",
+            project,
+            canvas_id,
+            requests,
+            outcome,
+            int((time.monotonic() - started) * 1000),
+            int(node_seconds * 1000),
+            passes,
         )

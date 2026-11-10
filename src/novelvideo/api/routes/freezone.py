@@ -75,6 +75,7 @@ from novelvideo.api.schemas import (
     FreezoneImageAnimateGifRequest,
     CanvasPayload,
     AgentCanvasCommandsRequest,
+    AgentCanvasContextRequest,
     CreateIdentityAssetRequest,
     FreezoneAnalyzeShotsRequest,
     FreezoneAnalyzeVideoStoryRequest,
@@ -154,7 +155,11 @@ from novelvideo.director_world import DirectorWorldService
 from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
 from novelvideo.generators.render_identity_guard import render_ai_detection_error
 from novelvideo.freezone import canvas_store
-from novelvideo.freezone.agent_canvas import CanvasInlineMediaError, dispatch_agent_canvas
+from novelvideo.freezone.agent_canvas import (
+    CanvasInlineMediaError,
+    answer_agent_canvas_context,
+    dispatch_agent_canvas,
+)
 from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
 from novelvideo.freezone.agent_canvas_metrics import count as count_canvas_metric
 from novelvideo.freezone.canvas_core_pool import CanvasCoreError
@@ -15451,20 +15456,15 @@ async def get_canvas_revision(
     }
 
 
-@router.get(
-    "/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS]
-)
-async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_user)):
-    if not CANVAS_ID_RE.match(canvas_id):
-        raise HTTPException(400, "invalid canvas_id")
-    ctx, username, project_name, project_dir, _output_dir = (
-        await _resolve_freezone_project(
-            project,
-            user,
-            required_role="viewer",
-            require_home_node=False,
-        )
-    )
+async def _read_canvas_payload(
+    *,
+    ctx: ProjectContext,
+    username: str,
+    project_name: str,
+    project_dir: Path,
+    canvas_id: str,
+    user: dict,
+) -> dict:
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     try:
         if canvas_id == "default":
@@ -15477,10 +15477,7 @@ async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
     if payload is None:
-        return {
-            "ok": True,
-            "data": {"nodes": [], "edges": [], "viewport": None},
-        }
+        return {"nodes": [], "edges": [], "viewport": None}
     refreshed_payload = await _refresh_preset_canvas_payload_on_read(
         ctx=ctx,
         username=username,
@@ -15495,7 +15492,28 @@ async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_
         project_name=ctx.project_name,
         project_dir=project_dir,
     )
-    response = {"ok": True, "data": migrated_payload or {"nodes": [], "edges": []}}
+    return migrated_payload or {"nodes": [], "edges": []}
+
+
+@router.get(
+    "/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS]
+)
+async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_user)):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            required_role="viewer",
+            require_home_node=False,
+        )
+    )
+    payload = await _read_canvas_payload(
+        ctx=ctx, username=username, project_name=project_name, project_dir=project_dir,
+        canvas_id=canvas_id, user=user,
+    )
+    response = {"ok": True, "data": payload}
     # B2 §3.9 O2:最近有别人写过就带一句提示,零额外往返——判断只用刚读出来的
     # 那份载荷。字段挂在 `data` 之外,画布契约(`CanvasPayload`)一个字节不变(B2-6)。
     editing_by = canvas_store.canvas_editing_hint(
@@ -17924,6 +17942,78 @@ async def agent_canvas_commands(
         _raise_canvas_media_scope_http(exc, ctx.project_id)
     except FileNotFoundError as exc:
         raise HTTPException(404, "canvas not found") from exc
+    except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
+        _raise_canvas_store_http(exc)
+    return {"ok": True, "data": data}
+
+
+async def _agent_canvas_host_value(handler, *args, **kwargs):
+    try:
+        return (await handler(*args, **kwargs))["data"]
+    except HTTPException as exc:
+        return {"error": {"message": str(exc.detail)}}
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/agent-context",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def agent_canvas_context(
+    project: str,
+    canvas_id: str,
+    body: AgentCanvasContextRequest,
+    user: dict = Depends(require_project_scope("projects:write")),
+):
+    from novelvideo.api.routes import characters, html_artifacts
+
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="viewer", require_home_node=False,
+    )
+    if agent_canvas_executor() != "server":
+        raise HTTPException(409, {"code": "agent_canvas_executor_browser"})
+    try:
+        canvas = await _read_canvas_payload(
+            ctx=ctx, username=username, project_name=project_name, project_dir=project_dir,
+            canvas_id=canvas_id, user=user,
+        )
+        image, video = await asyncio.gather(
+            _freezone_image_models_data(ctx.requester_user_id),
+            _freezone_video_models_data(ctx.requester_user_id),
+        )
+        data = await answer_agent_canvas_context(
+            project=project, canvas_id=canvas_id, canvas=canvas,
+            envelopes=[{
+                "schema_version": "canvas_context_request.v1", "canvas_id": canvas_id,
+                "requests": body.requests,
+            }],
+            env={
+                "locale": body.locale or "zh", "project": project, "canvasId": canvas_id,
+                "username": user["username"], "selectedNodeIds": [],
+                "catalogs": {"image": image, "video": video},
+            },
+            fetchers={
+                "audio_references": lambda _: _agent_canvas_host_value(
+                    freezone_audio_references, project, user=user,
+                ),
+                "project_assets": lambda _: _agent_canvas_host_value(
+                    list_freezone_assets, project, user=user,
+                ),
+                "characters": lambda _: _agent_canvas_host_value(
+                    characters.list_characters, project, summary=True, names=None, user=user,
+                ),
+                "html_artifact": lambda need: _agent_canvas_host_value(
+                    html_artifacts.get, project, need["artifact_id"],
+                    version=need.get("version"), user=user,
+                ),
+                "html_versions": lambda need: _agent_canvas_host_value(
+                    html_artifacts.versions, project, need["artifact_id"], user=user,
+                ),
+            },
+        )
+    except CanvasCoreError as exc:
+        raise HTTPException(503, {"code": exc.code}) from exc
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
     return {"ok": True, "data": data}
