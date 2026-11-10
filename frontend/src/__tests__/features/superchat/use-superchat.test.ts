@@ -7818,6 +7818,53 @@ it("rechecks busy recovery until the old connection has finished cancelling", as
   }
 });
 
+it("assembles offset patches for a reply that keeps streaming while the user switches canvas", async () => {
+  const sockets: TestSocket[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose = null;
+    constructor() { sockets.push(this); }
+    send() {}
+    close() {}
+  }
+  vi.stubGlobal("WebSocket", TestSocket);
+  const hook = renderHook(({ canvas }) => useSuperChat({
+    project: "switch-live", surface: "freezone", freezoneCanvasId: canvas,
+    freezoneAgentId: "main", displayName: "Tester",
+  }), { initialProps: { canvas: "first" } });
+  try {
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    const scope = (canvas: string) => ({ kind: "project", id: "switch-live", surface: "freezone", canvasId: canvas, agentId: "main" });
+    const frame = async (payload: Record<string, unknown>) => {
+      await act(async () => { sockets[0].onmessage?.({ data: JSON.stringify(payload) } as MessageEvent); });
+    };
+    const sync = (canvas: string, busy: boolean, history: unknown[] = []) =>
+      frame({ type: "scope.changed", scope: scope(canvas), history, busy });
+    await act(async () => { sockets[0].onopen?.(); });
+    await sync("first", false);
+    act(() => { hook.result.current.send("go"); });
+    const turnId = hook.result.current.activeTurnId;
+    const reply = () => hook.result.current.messages.find((m) => m.role === "assistant")?.text;
+    await frame({ type: "assistant.delta", scope: scope("first"), turn_id: turnId, offset: 0, text: "Hello wor" });
+    expect(reply()).toBe("Hello wor");
+    hook.rerender({ canvas: "second" });
+    await sync("second", false);
+    await frame({ type: "assistant.delta", scope: scope("first"), turn_id: turnId, offset: 9, text: "ld, how are" });
+    hook.rerender({ canvas: "first" });
+    const history = [{ id: "user-live", role: "user", turn_id: turnId, content: "go", created_at: new Date().toISOString() }];
+    await sync("first", true, history);
+    await frame({ type: "assistant.delta", scope: scope("first"), turn_id: turnId, offset: 20, text: " you" });
+    expect(reply()).toBe("Hello world, how are you");
+  } finally {
+    hook.unmount();
+    vi.unstubAllGlobals();
+  }
+});
+
 it("keeps a turn that is still streaming on this connection busy across recovery syncs", async () => {
   const sockets: TestSocket[] = [];
   const sent: string[] = [];
