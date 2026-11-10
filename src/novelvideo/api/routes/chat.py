@@ -89,6 +89,7 @@ from novelvideo.freezone.canvas_confirmations import (
     confirmation_kinds,
     finish_confirmation,
     verify_confirmed,
+    void_confirmation,
 )
 from novelvideo.freezone.canvas_command_watch import bridge_watch_hub
 from novelvideo.freezone.canvas_presence import remove_canvas_presence, touch_canvas_presence
@@ -2782,20 +2783,35 @@ def _admit_canvas_command_frame(*, key: str, envelope: dict, bridge_dir) -> bool
             reason = "missing_confirmation"
         else:
             try:
-                verify_confirmed(
+                record = verify_confirmed(
                     Path(bridge_dir) / CONFIRMATIONS_DIRNAME, confirmation_id,
                     command_hash=command_hash(project_id, canvas_id, commands), turn_id=turn_id,
                 )
             except CanvasConfirmationError as exc:
                 reason = exc.code
             else:
-                return True
+                if time.time() >= float(record["expires_at"]):
+                    try:
+                        void_confirmation(
+                            Path(bridge_dir) / CONFIRMATIONS_DIRNAME, confirmation_id,
+                            reason="delivery_expired", now=time.time(),
+                        )
+                    except CanvasConfirmationError:
+                        pass
+                    reason = "expired"
+                else:
+                    return True
     invalid = reason == "invalid_canvas_command"
-    code = "invalid_canvas_command" if invalid else "canvas_confirmation_required"
-    message = (
-        "Canvas command type is not allowed." if invalid
-        else "Canvas command was not executed because it needs a user confirmation."
-    )
+    expired = reason == "expired"
+    if expired:
+        code = "canvas_confirmation_expired"
+        message = "Canvas command was not executed because its confirmation expired."
+    else:
+        code = "invalid_canvas_command" if invalid else "canvas_confirmation_required"
+        message = (
+            "Canvas command type is not allowed." if invalid
+            else "Canvas command was not executed because it needs a user confirmation."
+        )
     resolve_canvas_command(key, {
         "ok": False,
         "turn_id": str(turn_id or "") or f"external-agent:{key}",
@@ -2813,10 +2829,15 @@ def _admit_canvas_command_frame(*, key: str, envelope: dict, bridge_dir) -> bool
         "canvas_id": canvas_id,
         "message": message,
         "user_message": (
-            "画布命令无效，未执行。" if invalid  # i18n-exempt
+            "确认已过期，画布操作未执行。" if expired  # i18n-exempt
+            else "画布命令无效，未执行。" if invalid  # i18n-exempt
             else "该画布操作需要用户确认，未执行。"  # i18n-exempt
         ),
         "agent_instruction": (
+            "Do not claim success. The user confirmed this canvas command, but no canvas page "
+            "received it before the confirmation expired, so nothing was executed. "
+            "Ask the user again before retrying."
+            if expired else
             "Do not claim success. Deleting nodes, clearing the canvas and paid generation run "
             "only after the user confirms. Call the canvas tool again so DramaClaw creates a "
             "confirmation, then follow the instruction it returns."

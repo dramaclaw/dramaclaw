@@ -246,6 +246,49 @@ def test_paid_card_browser_result_finishes_once(setup):
     assert record(setup, created) == stored
 
 
+@pytest.mark.parametrize("now,admitted", [(2799, True), (2800, False)])
+def test_confirmed_frame_delivery_expiry(setup, caplog, monkeypatch, now, admitted):
+    # Keep transport expiry from masking the confirmation's delivery deadline.
+    monkeypatch.setitem(chat.BRIDGE_PENDING_TTL_SECONDS, "canvas_command", 3600)
+    created = confirmed(setup)
+    assert record(setup, created)["expires_at"] == 2800
+    key = list_pending_bridge_messages(
+        project_id="proj", canvas_id="default", bridge_dir=directory(setup).parent,
+    )[0]["key"]
+    setup.clock[0] = now
+    with caplog.at_level(logging.WARNING):
+        frames = collect(setup)
+    if admitted:
+        assert len(frames) == 1
+        assert frames[0]["server_approved"] is True
+        assert record(setup, created)["status"] == "confirmed"
+    else:
+        assert frames == []
+        stored = result(setup, key)
+        assert stored["code"] == "canvas_confirmation_expired"
+        assert stored["applied"] is False
+        assert stored["canvas_apply_status"] == "not_applied"
+        assert stored["message"] == (
+            "Canvas command was not executed because its confirmation expired."
+        )
+        assert stored["errors"] == [
+            "Canvas command was not executed because its confirmation expired."
+        ]
+        assert stored["user_message"] == "确认已过期，画布操作未执行。"  # i18n-exempt
+        assert stored["agent_instruction"] == (
+            "Do not claim success. The user confirmed this canvas command, but no canvas page "
+            "received it before the confirmation expired, so nothing was executed. "
+            "Ask the user again before retrying."
+        )
+        stored_record = record(setup, created)
+        assert stored_record["status"] == "voided"
+        assert stored_record["outcome"] == {"reason": "delivery_expired"}
+        assert any(
+            "canvas_confirmation result=frame_refused" in line and "reason=expired" in line
+            for line in caplog.text.splitlines()
+        )
+
+
 @pytest.mark.parametrize("change,reason", [
     ("turn", "turn_mismatch"), ("commands", "command_mismatch"),
     ("key", "missing_confirmation"),
