@@ -236,6 +236,7 @@ export interface CanvasState {
   onConnect: (connection: Connection) => void;
   replaceEdges: (edges: CanvasEdge[]) => void;
 
+  normalizeCanvasForMerge: (nodes: CanvasNode[], edges: CanvasEdge[]) => CanvasHistorySnapshot;
   setCanvasData: (nodes: CanvasNode[], edges: CanvasEdge[], history?: CanvasHistoryState) => void;
   applyRemoteCanvasChange: (
     nodes: CanvasNode[],
@@ -2116,14 +2117,19 @@ const canvasStateCreator = (
     });
   },
 
+  normalizeCanvasForMerge: (nodes, edges) => {
+    const normalized = clearTransientEdgeSelection(normalizeCanvasData(nodes, edges, env));
+    return { nodes: placeGroupsOutsideStory(normalized.nodes), edges: normalized.edges };
+  },
+
   setCanvasData: (nodes, edges, history) => {
     // 换画布/清空后，上一份画布留下的风格对账记账必须作废，否则重新 hydrate
     // 出来的图片节点会被当成「同一个节点接着算」，该补建的判成用户删了节点。
     env.onCanvasReplaced();
-    const normalizedCanvas = clearTransientEdgeSelection(normalizeCanvasData(nodes, edges, env));
+    const normalizedCanvas = get().normalizeCanvasForMerge(nodes, edges);
 
     set({
-      nodes: placeGroupsOutsideStory(normalizedCanvas.nodes),
+      nodes: normalizedCanvas.nodes,
       edges: normalizedCanvas.edges,
       selectedNodeId: null,
       activeToolDialog: null,

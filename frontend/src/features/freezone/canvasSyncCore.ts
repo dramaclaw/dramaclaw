@@ -259,7 +259,7 @@ export type SaveResponseOutcome =
       backupStatus: "pending";
       message: string;
     }
-  | { kind: "conflict"; message: string }
+  | { kind: "conflict"; code: string | null; message: string }
   | { kind: "dangerous_empty"; message: string }
   | { kind: "retry"; afterMs: number; code: "canvas_lock_busy" }
   | { kind: "fatal"; code: string; message: string }
@@ -298,11 +298,13 @@ export function classifySaveError(
     if (code === "canvas_idempotency_conflict") {
       return {
         kind: "conflict",
+        code,
         message: t("freezone.canvasSync.idempotencyConflict"),
       };
     }
     return {
       kind: "conflict",
+      code,
       message: t("freezone.canvasSync.revisionConflict"),
     };
   }

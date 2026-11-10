@@ -32,6 +32,21 @@ describe('canvas store remote changes', () => {
     state().setCanvasData([node('A'), node('B'), node('C')], []);
   });
 
+  it('normalizes remote nodes parents-first without changing state or calling hooks', () => {
+    const onCanvasReplaced = vi.fn();
+    const store = createCanvasStore({
+      ...createNodeCanvasEnvironment({ translate: (key) => key }), onCanvasReplaced,
+    });
+    const before = store.getState();
+    const result = before.normalizeCanvasForMerge([
+      { ...node('child'), parentId: 'parent' },
+      { ...node('parent'), type: CANVAS_NODE_TYPES.group },
+    ], []);
+    expect(result.nodes.map(item => item.id)).toEqual(['parent', 'child']);
+    expect(store.getState()).toBe(before);
+    expect(onCanvasReplaced).not.toHaveBeenCalled();
+  });
+
   it('tracks text fields once per pair without recording a user edit or undo step', () => {
     expect(state().editingNodeFields).toEqual([]);
     state().beginNodeFieldEdit('A', 'data.content');

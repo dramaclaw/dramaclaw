@@ -6,6 +6,7 @@ import {
   applyCanvasPatch,
   localCanvasChanges,
   mergeCanvas,
+  mergeCanvasMetadata,
   prepareRemoteCanvasChange,
   replayRemoteChangeOnSnapshot,
   type Canvas,
@@ -283,6 +284,13 @@ describe('parents and order', () => {
 });
 
 describe('edges', () => {
+  it.each([true, false])('strips selected from remote-new edges (%s)', selected => {
+    const base = canvas([node(), node('n2')]);
+    const result = mergeCanvas(base, prepareRemoteCanvasChange(base,
+      canvas([...base.nodes], [edge('new', { selected })])));
+    expect(result.edges).toEqual([{ id: 'new', source: 'n1', target: 'n2' }]);
+  });
+
   it.each([
     { name: 'local creation', base: [], local: [edge()], remote: [], ids: ['e1'], changed: false },
     { name: 'local deletion', base: [edge()], local: [], remote: [edge()], ids: [], changed: false },
@@ -429,5 +437,33 @@ describe('replayRemoteChangeOnSnapshot', () => {
     expect(result?.nodes.map(n => n.position)).toEqual(expected.positions);
     expect(result?.edges.map(e => e.id)).toEqual(expected.edges);
     expect(result).not.toHaveProperty('notices');
+  });
+});
+
+describe('mergeCanvasMetadata', () => {
+  it.each([
+    { name: 'remote-only key', base: { a: 1 }, local: { a: 1 }, remote: { a: 2 },
+      metadata: { a: 2 }, taken: ['a'], kept: [] },
+    { name: 'local-only key', base: { a: 1 }, local: { a: 2 }, remote: { a: 1 },
+      metadata: { a: 2 }, taken: [], kept: ['a'] },
+    { name: 'both changed keeps local', base: { a: 1 }, local: { a: 2 }, remote: { a: 3 },
+      metadata: { a: 2 }, taken: [], kept: ['a'] },
+    { name: 'remote removes key', base: { a: 1 }, local: { a: 1 }, remote: {},
+      metadata: {}, taken: ['a'], kept: [] },
+    { name: 'local removes key', base: { a: 1 }, local: {}, remote: { a: 2 },
+      metadata: {}, taken: [], kept: ['a'] },
+    { name: 'null stays null', base: null, local: null, remote: null,
+      metadata: null, taken: [], kept: [] },
+    { name: 'null accepts addition', base: null, local: null, remote: { a: 1 },
+      metadata: { a: 1 }, taken: ['a'], kept: [] },
+    { name: 'key order and undefined are ignored', base: { a: { x: 1, y: 2 } },
+      local: { a: { y: 2, x: 1, z: undefined } }, remote: { a: { x: 3 } },
+      metadata: { a: { x: 3 } }, taken: ['a'], kept: [] },
+    { name: 'same changes need no save', base: { a: 1 }, local: { a: 2 }, remote: { a: 2 },
+      metadata: { a: 2 }, taken: [], kept: [] },
+  ])('$name', ({ base, local, remote, metadata, taken, kept }) => {
+    expect(mergeCanvasMetadata(freeze(base), freeze(local), freeze(remote))).toEqual({
+      metadata, takenFromRemote: taken, localKeptKeys: kept,
+    });
   });
 });

@@ -117,6 +117,35 @@ function equal(a: unknown, b: unknown): boolean {
     Object.prototype.hasOwnProperty.call(b, key) && equal(Reflect.get(a, key), Reflect.get(b, key)));
 }
 
+export function mergeCanvasMetadata(
+  base: Record<string, unknown> | null,
+  local: Record<string, unknown> | null,
+  remote: Record<string, unknown> | null,
+): { metadata: Record<string, unknown> | null; takenFromRemote: string[]; localKeptKeys: string[] } {
+  const keys = new Set([...Object.keys(base ?? {}), ...Object.keys(local ?? {}), ...Object.keys(remote ?? {})]);
+  const metadata: Record<string, unknown> = {};
+  const takenFromRemote: string[] = [];
+  const localKeptKeys: string[] = [];
+  for (const key of keys) {
+    const read = (value: Record<string, unknown> | null) =>
+      value && Object.prototype.hasOwnProperty.call(value, key) ? value[key] : undefined;
+    const original = read(base);
+    const ours = read(local);
+    const theirs = read(remote);
+    const takeRemote = !equal(original, theirs) && equal(original, ours);
+    const value = takeRemote ? theirs : ours;
+    if (takeRemote) takenFromRemote.push(key);
+    if (!equal(value, theirs)) localKeptKeys.push(key);
+    if (value !== undefined) {
+      Object.defineProperty(metadata, key, { value, enumerable: true, writable: true, configurable: true });
+    }
+  }
+  return {
+    metadata: local === null && remote === null && Object.keys(metadata).length === 0 ? null : metadata,
+    takenFromRemote, localKeptKeys,
+  };
+}
+
 function membershipChanges<T extends { id: string }>(
   base: readonly T[], local: readonly T[],
 ): LocalElementChanges {
@@ -298,7 +327,11 @@ function reconcile(
     }
   }
   for (const edge of prepared.remote.edges) {
-    if (prepared.edges.added.has(edge.id) && !localEdgeIds.has(edge.id)) edges.push(edge);
+    if (prepared.edges.added.has(edge.id) && !localEdgeIds.has(edge.id)) {
+      const added = { ...edge };
+      delete added.selected;
+      edges.push(added);
+    }
   }
   const connectedEdges = edges.filter(edge => nodeIds.has(edge.source) && nodeIds.has(edge.target));
   return {
