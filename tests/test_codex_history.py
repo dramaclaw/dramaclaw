@@ -71,14 +71,14 @@ def test_thousand_large_turns_within_caps_and_memory(history):
             page = history.read_codex_history_page(client, THREAD, before=before)
             if first:
                 # Measured once: 205298 bytes/message (text in content and parts).
-                # 20 * 205298 = 4105960 <= 4194304; 21 * 205298 = 4311258 > 4194304.
-                assert len(page.messages) == 20
+                # 15 * 205298 = 3079470 <= 3145728; 16 * 205298 = 3284768 > 3145728.
+                assert len(page.messages) == 15
                 assert _message_ids(page) == [
-                    f"assistant:turn-{index:04d}" for index in range(981, 1001)
+                    f"assistant:turn-{index:04d}" for index in range(986, 1001)
                 ]
                 assert page.stats["capped"] == "bytes"
                 first = False
-            assert page.byte_size <= 4 * MIB
+            assert page.byte_size <= history.HISTORY_PAGE_MAX_BYTES
             requests = client.requests[start:]
             assert sum(method == TURNS for method, _ in requests) <= (
                 math.ceil(len(page.messages) / 20) + 1
@@ -137,7 +137,7 @@ def test_single_oversized_turn_is_whole(history):
     assert len(page.messages[0]["content"]) == 5 * MIB
     assert page.messages[0]["content"] == "x" * (5 * MIB)
     assert page.messages[0]["parts"][-1]["text"] == "x" * (5 * MIB)
-    assert page.byte_size > 4 * MIB
+    assert page.byte_size > history.HISTORY_PAGE_MAX_BYTES
     assert page.before is None
 
 

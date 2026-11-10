@@ -27,8 +27,8 @@ def history_page():
     return importlib.import_module("novelvideo.chat.history_page")
 
 
-def codex_reader(count):
-    cache, client = CodexHistoryCache(), HistoryClient(count)
+def codex_reader(count, *, text_size=None):
+    cache, client = CodexHistoryCache(), HistoryClient(count, text_size=text_size)
 
     async def read(before):
         return cache.read_page(client, THREAD, before=before)
@@ -272,13 +272,19 @@ async def test_history_rows_bounds_and_shape(chat):
     append(chat, "trace", "hidden")
     append(chat, "agent_notification", "hidden")
     append(chat, "user", "last", turn_id="business-0001")
-    rows = await store.history_rows_async(USER, scope, lower_id=2, upper_id=5, limit=10)
+    rows, overflow = await store.history_rows_async(
+        USER, scope, lower_id=2, upper_id=5, limit=10, max_bytes=512 * 1024,
+    )
+    assert overflow is False
     assert rows == [{
         "id": 2, "role": "assistant", "content": "prefix suffix", "media": [],
         "attachments": [], "created_at": rows[0]["created_at"], "chat_error": True,
         "idempotency_key": "error:1",
     }]
-    rows = await store.history_rows_async(USER, scope, lower_id=None, upper_id=None, limit=2)
+    rows, overflow = await store.history_rows_async(
+        USER, scope, lower_id=None, upper_id=None, limit=2, max_bytes=512 * 1024,
+    )
+    assert overflow is True
     assert [r["id"] for r in rows] == [2, 5]
     assert rows[1]["idempotency_key"] is None
     assert rows[1]["turn_id"] == "business-0001"
@@ -319,7 +325,97 @@ async def test_turn_events_reuse_bounds(chat, monkeypatch, cap, expected):
     for seq in range(2):
         store.append_ui_event(USER, scope, "business-0001", {"type": "notice", "seq": seq})
     monkeypatch.setattr(store_module, cap, 1)
-    events = await store.turn_ui_events_async(USER, scope, ["business-0001"])
+    events = await store.turn_ui_events_async(
+        USER, scope, ["business-0001"], max_bytes=store_module.UI_HISTORY_MAX_BYTES,
+    )
     assert [e["type"] for e in events["business-0001"]] == expected
     if cap == "UI_TURN_MAX_OTHER_ROWS":
         assert events["business-0001"][0]["seq"] == 1
+
+
+@pytest.mark.asyncio
+async def test_store_byte_overflow_keeps_all_rows_and_codex_messages(history_page, chat):
+    row_ids = [append(
+        chat, "user", "x" * (200 * 1024), turn_id=f"business-{index:04d}",
+    )["id"] for index in range(1, 6)]
+    pages = await collect_pages(history_page, chat, codex_reader(5))
+    assert [sum(isinstance(m["id"], int) for m in p.history) for p in pages] == [2, 2, 1]
+    assert [m["id"] for m in pages[0].history if isinstance(m["id"], int)] == [4, 5]
+    assert [m["id"] for p in reversed(pages) for m in p.history
+            if isinstance(m["id"], int)] == row_ids
+    assert [m["id"] for p in reversed(pages) for m in p.history
+            if isinstance(m["id"], str)] == [
+        "assistant:turn-0001", "assistant:turn-0002", "assistant:turn-0003",
+        "assistant:turn-0004", "assistant:turn-0005",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_single_oversized_store_row_is_whole_on_its_own_page(history_page, chat):
+    append(chat, "user", "older")
+    append(chat, "user", "x" * (1024 * 1024))
+    append(chat, "user", "newer")
+    pages = await collect_pages(history_page, chat, no_codex)
+    assert [[m["id"] for m in p.history] for p in pages] == [[3], [2], [1]]
+    assert pages[1].history[0]["content"] == "x" * (1024 * 1024)
+
+
+@pytest.mark.asyncio
+async def test_store_byte_cut_formats_only_kept_rows(history_page, chat, monkeypatch):
+    for index in range(1, 6):
+        append(chat, "user", "x" * (200 * 1024), turn_id=f"business-{index:04d}")
+    formatted = []
+    original = ChatStore._message_from_row
+
+    def record(row):
+        formatted.append(row["id"])
+        return original(row)
+
+    monkeypatch.setattr(ChatStore, "_message_from_row", staticmethod(record))
+    page = await read_page(history_page, chat, codex_reader(5))
+    assert formatted == [4, 5]
+    assert [m["id"] for m in page.history if isinstance(m["id"], int)] == [4, 5]
+
+
+@pytest.mark.asyncio
+async def test_ui_events_page_budget_favors_recent_turns(history_page, chat):
+    store, scope = chat
+    append_turns(chat, 3)
+    for index in range(1, 4):
+        store.append_ui_event(USER, scope, f"business-{index:04d}", {
+            "type": "notice", "text": "x" * (300 * 1024),
+        })
+    page = await read_page(history_page, chat, codex_reader(3))
+    messages = {m["id"]: m for m in page.history}
+    newest = messages["assistant:turn-0003"]["ui_events"]
+    assert [e["type"] for e in newest] == ["notice"]
+    assert newest[0]["text"] == "x" * (300 * 1024)
+    assert messages["assistant:turn-0002"]["ui_events"] == [
+        {"type": "chat.history_incomplete"},
+    ]
+    assert messages["assistant:turn-0001"]["ui_events"] == [
+        {"type": "chat.history_incomplete"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_whole_browser_page_byte_bound_and_complete_ids(history_page, chat):
+    store, scope = chat
+    row_ids = []
+    for index in range(1, 101):
+        turn_id = f"business-{index:04d}"
+        row_ids.append(append(chat, "user", "x" * (100 * 1024), turn_id=turn_id)["id"])
+        store.append_ui_event(USER, scope, turn_id, {
+            "type": "notice", "text": "x" * (100 * 1024),
+        })
+    pages = await collect_pages(history_page, chat, codex_reader(100, text_size=100 * 1024))
+    for page in pages:
+        assert len(json.dumps(page.history, ensure_ascii=False).encode()) <= (
+            4 * 1024 * 1024 + 64 * 1024
+        )
+    assert [m["id"] for p in reversed(pages) for m in p.history
+            if isinstance(m["id"], int)] == row_ids
+    assert [m["id"] for p in reversed(pages) for m in p.history
+            if isinstance(m["id"], str)] == [
+        f"assistant:turn-{index:04d}" for index in range(1, 101)
+    ]

@@ -10,6 +10,10 @@ from novelvideo.chat.codex_history import CodexHistoryPage, CodexHistoryUnavaila
 from novelvideo.chat.store import ChatScope, ChatStore, chat_store
 
 STORE_ROWS_PAGE_MAX = 500
+# Codex (3 MiB) + rows + events = 4 MiB; a single oversized row or turn stays whole.
+BROWSER_PAGE_MAX_BYTES = 4 * 1024 * 1024
+STORE_ROWS_PAGE_MAX_BYTES = 512 * 1024
+UI_EVENTS_PAGE_MAX_BYTES = 512 * 1024
 
 logger = logging.getLogger(__name__)
 
@@ -87,15 +91,12 @@ async def read_history_page(
             username, store_scope, turn_id=messages[0]["turn_id"],
             created_at=messages[0]["created_at"],
         )
-    rows = []
+    rows, overflow = [], False
     if not codex_more or lower_id is not None:
-        rows = await store.history_rows_async(
+        rows, overflow = await store.history_rows_async(
             username, store_scope, lower_id=lower_id, upper_id=upper_id,
-            limit=STORE_ROWS_PAGE_MAX + 1,
+            limit=STORE_ROWS_PAGE_MAX, max_bytes=STORE_ROWS_PAGE_MAX_BYTES,
         )
-    overflow = len(rows) > STORE_ROWS_PAGE_MAX
-    if overflow:
-        rows = rows[-STORE_ROWS_PAGE_MAX:]
     next_before = None
     if overflow or codex_more:
         next_before = json.dumps({
@@ -115,7 +116,8 @@ async def read_history_page(
         kept_rows.append(row)
     history = _merge_messages(kept_rows, messages)
     events = await store.turn_ui_events_async(
-        username, store_scope, [m["turn_id"] for m in history if m.get("turn_id")]
+        username, store_scope, [m["turn_id"] for m in reversed(history) if m.get("turn_id")],
+        max_bytes=UI_EVENTS_PAGE_MAX_BYTES,
     )
     ChatStore._attach_ui_events_to_messages(history, events)
     result = HistoryPage(history, next_before, next_before is not None)
