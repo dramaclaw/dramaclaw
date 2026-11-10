@@ -1,6 +1,5 @@
 {
   "chatSnapshot": {
-    "saveFailed": "Không thể lưu lịch sử trò chuyện. Vui lòng thử lại sau; tin nhắn hiện tại vẫn được giữ trên máy.",
     "historyIncomplete": "Một phần lịch sử của cuộc trò chuyện này quá lớn để tải đầy đủ. Nội dung tin nhắn vẫn có thể xem. Vui lòng liên hệ quản trị viên để thu gọn lịch sử."
   },
   "referenceValidation": {

@@ -48,7 +48,6 @@ import {
   CanvasCommandApprovalCardForTest,
   buildAssistantClarificationResponseForTest,
   activeAssistantClarificationIsSkillStudioRevisionForTest,
-  buildPersistedAssistantClarificationEventForTest,
   buildAssistantClarificationToolResultForTest,
   buildAssistantInteractionFlowItemsForTest,
   collapseRepeatedCanvasStatusFlowItemsForTest,
@@ -120,7 +119,81 @@ import type { ChatMessage, ChatMessagePart, ChatRole } from "@/features/supercha
 
 const MESSAGE_CACHE_PREFIX = "superchat:messages:v2:";
 const DAY_MS = 24 * 60 * 60 * 1000;
-const apiPostMock = vi.hoisted(() => vi.fn(() => Promise.resolve({})));
+const apiPostMock = vi.hoisted(() => vi.fn((_url: string, _options?: unknown) => Promise.resolve({})));
+
+it("does not POST chat history during a full live turn or its history snapshot", async () => {
+  apiPostMock.mockClear();
+  localStorage.clear();
+  const sockets: TestSocket[] = [];
+  const sent: Record<string, unknown>[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose = null;
+    constructor() { sockets.push(this); }
+    send(frame: string) { sent.push(JSON.parse(frame)); }
+    close() {}
+  }
+  vi.stubGlobal("WebSocket", TestSocket);
+  const hook = renderHook(() => useSuperChat({ project: "live-history", displayName: "Tester" }));
+  const scope = { kind: "project", id: "live-history", surface: "director" };
+  const frame = async (payload: Record<string, unknown>) => {
+    await act(async () => {
+      sockets[0].onmessage?.({ data: JSON.stringify({ scope, ...payload }) } as MessageEvent);
+    });
+  };
+  try {
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => { sockets[0].onopen?.(); });
+    await frame({ type: "scope.changed", history: [], busy: false });
+    act(() => { expect(hook.result.current.send("Read the file")).toBe(true); });
+    const turnId = sent.find(message => message.type === "chat.message")?.turn_id;
+    const target = { turn_id: turnId, message_id: "assistant:live-history" };
+    const reasoning = {
+      id: "reason-1", seq: 5, type: "agent_thought",
+      event: { type: "agent.thought", turn_id: turnId, text: "Check", status: "running",
+        truncated: false },
+    };
+    const tool = (status: string) => ({
+      id: "tool-1", seq: 7, type: "tool_status", event: {
+        id: "agent-tool-tool-1", role: "tool", text: "read_file", turnId, timestamp: 7,
+        raw: { type: "agent.tool.updated", turn_id: turnId, call_id: "tool-1", name: "read_file",
+          status, input: null, text: "", error: null, result_json: null, duration_ms: null },
+      },
+    });
+    const text = { id: "msg-1", seq: 10, type: "text", text: "Hello" };
+    await frame({ type: "chat.item", ...target, item_id: "reason-1", card: reasoning });
+    await frame({ type: "chat.item.delta", ...target, item_id: "reason-1",
+      kind: "reasoning", offset: 5, text: "ed" });
+    await frame({ type: "chat.item", ...target, item_id: "tool-1", card: tool("in_progress") });
+    await frame({ type: "chat.item", ...target, item_id: "msg-1", card: { ...text, text: "" } });
+    await frame({ type: "chat.item.delta", ...target, item_id: "msg-1",
+      kind: "text", offset: 0, text: "Hel" });
+    await frame({ type: "chat.item.delta", ...target, item_id: "msg-1",
+      kind: "text", offset: 3, text: "lo" });
+    const completedReasoning = { ...reasoning,
+      event: { ...reasoning.event, text: "Checked", status: "completed" } };
+    await frame({ type: "chat.item", ...target, item_id: "reason-1", card: completedReasoning });
+    await frame({ type: "chat.item", ...target, item_id: "tool-1", card: tool("completed") });
+    expect(hook.result.current.messages.find(message => message.role === "assistant")?.text)
+      .toBe("Hello");
+    await frame({ type: "chat.done", ...target, message: null });
+    await frame({ type: "scope.changed", busy: false, history: [{
+      id: "assistant:live-history", role: "assistant", turn_id: turnId, content: "Hello",
+      parts: [completedReasoning, tool("completed"), text],
+    }] });
+    expect(hook.result.current.busy).toBe(false);
+    expect(hook.result.current.messages.find(message => message.role === "assistant")?.parts)
+      .toEqual([completedReasoning, tool("completed"), text]);
+    expect(apiPostMock.mock.calls.map(([url]) => url)).not.toContain("api/v1/chat/ui-events");
+  } finally {
+    hook.unmount();
+    vi.unstubAllGlobals();
+  }
+});
 
 describe("scope sync active turn recovery", () => {
   const pendingMessages: ChatMessage[] = [
@@ -2057,50 +2130,6 @@ describe("Skill Studio question response", () => {
     expect(text).toContain("偏好的视觉风格是？：现代简约/信息图风");
     expect(text).toContain("用户已完成选择，请结合当前上下文继续。");
     expect(text).not.toContain("继续生成 Skill / Recipe 草稿");
-  });
-
-  it("builds a persisted submitted assistant clarification event", () => {
-    const event = {
-      type: "assistant.clarification.request" as const,
-      bridge_key: "clarify-key-1",
-      project_id: "project-a",
-      canvas_id: "canvas-a",
-      agent_id: "agent-1",
-      turn_id: "turn-a",
-      anchor_text_prefix: "先确认方向",
-      clarification_id: "home-culture-poster-skill-setup",
-      title: "家乡文化海报 Skill 设置",
-      description: "选完后生成草稿",
-      questions: [
-        {
-          id: "poster_count",
-          title: "海报数量",
-          options: [{ id: "single", label: "单张主视觉海报" }],
-        },
-      ],
-      allow_skip: true,
-    };
-
-    expect(buildPersistedAssistantClarificationEventForTest(event, {
-      action: "submit",
-      answers: { poster_count: "single" },
-      clarificationStatus: "answered",
-      skipped: false,
-      usedRecommended: false,
-      receivedAt: 123,
-    })).toMatchObject({
-      type: "assistant.clarification.request",
-      bridge_key: "clarify-key-1",
-      clarification_id: "home-culture-poster-skill-setup",
-      received_at: 123,
-      submitted: true,
-      action: "submit",
-      clarification_status: "answered",
-      answers: { poster_count: "single" },
-      skipped: false,
-      used_recommended: false,
-      questions: event.questions,
-    });
   });
 
   it("keeps unanswered questions visible when partially submitted", () => {
@@ -6028,7 +6057,7 @@ describe("useSuperChat websocket lifecycle", () => {
     ).toHaveLength(2);
   });
 
-  it("persists merged assistant parts after the final assistant message arrives", async () => {
+  it("keeps merged assistant parts after the final assistant message arrives", async () => {
     apiPostMock.mockClear();
     class TestWebSocket {
       static OPEN = 1;
@@ -6099,21 +6128,6 @@ describe("useSuperChat websocket lifecycle", () => {
       )).toBe(true);
     });
 
-    await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-        json: expect.objectContaining({
-          turn_id: "turn-1",
-          event: expect.objectContaining({
-            type: "assistant.message_parts",
-            parts: expect.arrayContaining([
-              expect.objectContaining({ type: "clarification" }),
-            ]),
-          }),
-        }),
-      })),
-    );
-    apiPostMock.mockClear();
-
     await act(async () => {
       socket.onmessage?.({
         data: JSON.stringify({
@@ -6143,21 +6157,12 @@ describe("useSuperChat websocket lifecycle", () => {
       } as MessageEvent);
     });
 
-    await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-        json: expect.objectContaining({
-          turn_id: "turn-1",
-          event: expect.objectContaining({
-            type: "assistant.message_parts",
-            parts: expect.arrayContaining([
-              expect.objectContaining({ type: "clarification" }),
-              expect.objectContaining({ type: "skill_studio" }),
-              expect.objectContaining({ type: "text", text: "草稿已生成。" }),
-            ]),
-          }),
-        }),
-      })),
-    );
+    expect(hook.result.current.messages.find(message => message.turnId === "turn-1")?.parts)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "clarification" }),
+        expect.objectContaining({ type: "skill_studio" }),
+        expect.objectContaining({ type: "text", text: "草稿已生成。" }),
+      ]));
   });
 
   it("keeps an active thought running across hidden catalog draft tools", async () => {
@@ -6241,7 +6246,7 @@ describe("useSuperChat websocket lifecycle", () => {
     });
   });
 
-  it("persists updated draft part state after confirming a Skill Studio draft", async () => {
+  it("updates local draft part state after confirming a Skill Studio draft", async () => {
     apiPostMock.mockClear();
     class TestWebSocket {
       static OPEN = 1;
@@ -6368,29 +6373,17 @@ describe("useSuperChat websocket lifecycle", () => {
       expect(draft?.type).toBe("skill_studio.draft");
     });
 
-    await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-        json: expect.objectContaining({
-          turn_id: "turn-1",
-          event: expect.objectContaining({
-            type: "assistant.message_parts",
-            parts: expect.arrayContaining([
-              expect.objectContaining({
-                type: "skill_studio",
-                event: expect.objectContaining({
-                  type: "skill_studio.draft",
-                  submitted: true,
-                  saved_to_catalog: true,
-                  saved_skill_ids: ["saved-skill"],
-                  saved_recipe_ids: ["saved-recipe"],
-                }),
-              }),
-              expect.objectContaining({ type: "text", text: "草稿已生成。" }),
-            ]),
-          }),
-        }),
-      })),
-    );
+    expect(hook.result.current.messages.find(message => message.turnId === "turn-1")?.parts)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "skill_studio", event: expect.objectContaining({
+          type: "skill_studio.draft",
+          submitted: true,
+          saved_to_catalog: true,
+          saved_skill_ids: ["saved-skill"],
+          saved_recipe_ids: ["saved-recipe"],
+        }) }),
+        expect.objectContaining({ type: "text", text: "草稿已生成。" }),
+      ]));
   });
 });
 
@@ -7561,109 +7554,6 @@ describe("older chat history pages", () => {
       expect(hook.result.current.hasOlderHistory).toBe(true);
     } finally { hook.unmount(); }
   });
-});
-
-it("does not write replayed history but saves live edits after reconnect", async () => {
-  apiPostMock.mockClear();
-  const sockets: TestSocket[] = [];
-  class TestSocket {
-    static OPEN = 1;
-    readyState = 1;
-    onopen: (() => void) | null = null;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onerror = null;
-    onclose = null;
-    constructor() { sockets.push(this); }
-    send() {}
-    close() {}
-  }
-  vi.stubGlobal("WebSocket", TestSocket);
-  const hook = renderHook(({ canvas }) => useSuperChat({
-    project: "origin-test", surface: "freezone", freezoneCanvasId: canvas,
-    freezoneAgentId: "main", displayName: "Tester",
-  }), { initialProps: { canvas: "first" } });
-  await waitFor(() => expect(sockets.length).toBe(1));
-  const scope = (canvas: string) => ({ kind: "project", id: "origin-test", surface: "freezone", canvasId: canvas, agentId: "main" });
-  const history = [{ id: "assistant-origin", role: "assistant", turn_id: "origin-turn", content: "saved", parts: [
-    { id: "thought-origin", type: "agent_thought", event: { type: "agent.thought", text: "historical thought" } },
-  ] }];
-  const replay = async (canvas: string) => {
-    await act(async () => {
-      sockets[0].onopen?.();
-      sockets[0].onmessage?.({ data: JSON.stringify({ type: "scope.changed", scope: scope(canvas), history, busy: false }) } as MessageEvent);
-    });
-  };
-  const writes = () => (apiPostMock.mock.calls as unknown[][]).filter(call => call[0] === "api/v1/chat/ui-events");
-  await replay("first");
-  await replay("first");
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 550)); });
-  expect(writes()).toHaveLength(0);
-  await act(async () => {
-    hook.result.current.upsertAssistantMessagePart({ turnId: "origin-turn" }, {
-      id: "thought-origin", type: "agent_thought", event: { type: "agent.thought", text: "live after reconnect" },
-    });
-  });
-  await waitFor(() => expect(writes()).toHaveLength(1));
-  expect(writes()[0]).toEqual(["api/v1/chat/ui-events", expect.objectContaining({
-    json: expect.objectContaining({ scope: scope("first"), turn_id: "origin-turn" }),
-  })]);
-  await replay("first");
-  hook.rerender({ canvas: "second" });
-  await replay("second");
-  hook.rerender({ canvas: "first" });
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 550)); });
-  expect(writes()).toHaveLength(1);
-  hook.unmount();
-  vi.unstubAllGlobals();
-});
-
-it("tags snapshots from callbacks memoized before a scope switch with the current scope", async () => {
-  apiPostMock.mockClear();
-  const sockets: TestSocket[] = [];
-  class TestSocket {
-    static OPEN = 1;
-    readyState = 1;
-    onopen: (() => void) | null = null;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onerror = null;
-    onclose = null;
-    constructor() { sockets.push(this); }
-    send() {}
-    close() {}
-  }
-  vi.stubGlobal("WebSocket", TestSocket);
-  const hook = renderHook(({ canvas }) => useSuperChat({
-    project: "scope-switch-test", surface: "freezone", freezoneCanvasId: canvas,
-    freezoneAgentId: "main", displayName: "Tester",
-  }), { initialProps: { canvas: "first" } });
-  await waitFor(() => expect(sockets.length).toBe(1));
-  const scope = (canvas: string) => ({ kind: "project", id: "scope-switch-test", surface: "freezone", canvasId: canvas, agentId: "main" });
-  const history = [{ id: "assistant-switch", role: "assistant", turn_id: "switch-turn", content: "saved", parts: [
-    { id: "thought-switch", type: "agent_thought", event: { type: "agent.thought", text: "before" } },
-  ] }];
-  const replay = async (canvas: string) => {
-    await act(async () => {
-      sockets[0].onopen?.();
-      sockets[0].onmessage?.({ data: JSON.stringify({ type: "scope.changed", scope: scope(canvas), history, busy: false }) } as MessageEvent);
-    });
-  };
-  const writes = () => (apiPostMock.mock.calls as unknown[][]).filter(call => call[0] === "api/v1/chat/ui-events");
-  await replay("first");
-  hook.rerender({ canvas: "second" });
-  await replay("second");
-  await act(async () => {
-    hook.result.current.updateUiEvent(
-      "switch-turn",
-      event => (event as { type?: string } | undefined)?.type === "agent.thought",
-      event => ({ ...(event as object), text: "after switch" }),
-    );
-  });
-  await waitFor(() => expect(writes()).toHaveLength(1));
-  expect(writes()[0]).toEqual(["api/v1/chat/ui-events", expect.objectContaining({
-    json: expect.objectContaining({ scope: scope("second"), turn_id: "switch-turn" }),
-  })]);
-  hook.unmount();
-  vi.unstubAllGlobals();
 });
 
 it("rechecks busy recovery until the old connection has finished cancelling", async () => {

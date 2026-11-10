@@ -2,8 +2,6 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { CanvasCommandToolResultPayload } from "@/features/freezone/canvasCommandReceipt";
 import { applyLiveItemFrame, applyLiveItemDeltaFrame } from "./live-items";
-import { localSnapshot, markLocalMessageChanges } from "./message-parts-origin";
-import { createMessagePartsQueue, SnapshotRejectedError } from "./message-parts-queue";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import i18next from "i18next";
 import type {
@@ -768,7 +766,7 @@ function assistantPartsWithText(
   return [{ id: "text-1", type: "text", text: nextText }];
 }
 
-function assistantPartsForPersistence(
+function assistantPartsWithMissingText(
   parts: ChatMessagePart[] | undefined,
   text: string | undefined,
 ): ChatMessagePart[] | undefined {
@@ -1275,7 +1273,7 @@ function upsertServerAssistantMessage(
   const dedupedUiEvents = removeTransientSkillStudioStatusUiEvents(
     mergeUiEventLists(transientUiEvents, nextMessage.uiEvents),
   );
-  const mergedParts = assistantPartsForPersistence(
+  const mergedParts = assistantPartsWithMissingText(
     mergeAssistantMessageParts(transientParts, nextMessage.parts, nextMessage.text),
     nextMessage.text,
   );
@@ -1893,19 +1891,8 @@ export function useSuperChat({
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [messages, setHistoryMessages] = useState<ChatMessage[]>(() => initialScopeSnapshot.cachedMessages);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => initialScopeSnapshot.cachedMessages);
   const desiredScopeRef = useRef(desiredScope);
-  // Only live updates and user edits create a persistence intent. Hydration bypasses this.
-  // Read the scope from the ref so callbacks memoized before a scope switch tag snapshots
-  // with the current scope instead of a stale closure.
-  const setMessages = useCallback((update: ChatMessage[] | ((current: ChatMessage[]) => ChatMessage[])) => {
-    setHistoryMessages(current => {
-      const scope = desiredScopeRef.current;
-      return markLocalMessageChanges(
-        current, typeof update === "function" ? update(current) : update, scope, scopeSessionKey(scope),
-      );
-    });
-  }, []);
   const [historyReady, setHistoryReady] = useState(false);
   const [hasOlderHistory, setHasOlderHistory] = useState(false);
   const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
@@ -2041,40 +2028,6 @@ export function useSuperChat({
       return next;
     });
   }, []);
-
-  // Observe committed state only: React may replay state updater functions.
-  const persistenceQueue = useMemo(() => createMessagePartsQueue(async (body) => {
-    try {
-      await api.post("api/v1/chat/ui-events", { json: body });
-    } catch (error) {
-      setError(i18next.t("chatSnapshot.saveFailed"));
-      // 413: this turn's snapshot can never be stored; stop retrying (reported once).
-      if ((error as { response?: Response })?.response?.status === 413) {
-        throw new SnapshotRejectedError(String(error));
-      }
-      throw error;
-    }
-  }), []);
-  const submittedSnapshots = useRef(new WeakSet<object>());
-  useEffect(() => {
-    for (const message of messages) {
-      const snapshot = localSnapshot(message);
-      if (!snapshot || submittedSnapshots.current.has(snapshot)) continue;
-      if ((message.raw as Record<string, unknown> | undefined)?.parts_incomplete) continue;
-      const parts = assistantPartsForPersistence(snapshot.parts, snapshot.text);
-      if (!parts?.some((part) => part.type !== "text")) continue;
-      submittedSnapshots.current.add(snapshot);
-      persistenceQueue.enqueue(`${snapshot.scopeKey}:${snapshot.turnId}`, {
-        scope: snapshot.scope,
-        turn_id: snapshot.turnId,
-        event: { type: "assistant.message_parts", parts },
-      });
-    }
-    if (!busy) void persistenceQueue.flush();
-  }, [messages, busy, persistenceQueue]);
-  useEffect(() => () => {
-    void persistenceQueue.flush();
-  }, [scopeKey, persistenceQueue]);
 
   const upsertAssistantMessagePart = useCallback((
     target: { messageId?: string | null; turnId?: string | null },
@@ -2260,7 +2213,7 @@ export function useSuperChat({
         const combinedHistory = sortMessages(dedupeMessagesById([...olderHistoryRef.current, ...history]));
         const currentMessages = messagesRef.current;
         const protectedTurnId = activeTurnIdRef.current ?? recentlyCompletedTurnIdRef.current;
-        setHistoryMessages((current) => {
+        setMessages((current) => {
           const preserveRemoteBusy = frame.busy === true
             && (currentTurnIsLive(protectedTurnId, current) || liveOnConnection(protectedTurnId));
           const merged = mergeHistorySnapshot(current, combinedHistory, protectedTurnId, preserveRemoteBusy);
@@ -2294,7 +2247,7 @@ export function useSuperChat({
           frameScope ?? desiredScopeRef.current,
         );
         olderHistoryRef.current = sortMessages(dedupeMessagesById([...page, ...olderHistoryRef.current]));
-        setHistoryMessages(current => sortMessages(dedupeMessagesById([...page, ...current])));
+        setMessages(current => sortMessages(dedupeMessagesById([...page, ...current])));
         historyBeforeRef.current = typeof frame.before === "string" ? frame.before : null;
         setHasOlderHistory(frame.has_more === true && Boolean(historyBeforeRef.current));
         loadingOlderRef.current = false;
@@ -2886,7 +2839,7 @@ export function useSuperChat({
     pendingClientTurnIdRef.current = null;
     recentlyCompletedTurnIdRef.current = null;
     const cachedMessages = loadCachedMessages(scopeKey);
-    setHistoryMessages(cachedMessages);
+    setMessages(cachedMessages);
     messagesRef.current = cachedMessages;
     const cachedActiveTurn = loadActiveTurn(scopeKey);
     const activeTurn = cachedActiveTurn && liveTurnIdsRef.current.has(cachedActiveTurn.turnId)

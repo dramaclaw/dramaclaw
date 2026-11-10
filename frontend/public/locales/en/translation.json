@@ -1,6 +1,5 @@
 {
   "chatSnapshot": {
-    "saveFailed": "Chat history could not be saved. Please try again later; the current message is still available locally.",
     "historyIncomplete": "Some history in this conversation is too large to load fully. Message text is still available. Please ask an administrator to compact the history."
   },
   "workflowDraftContinuation": {
