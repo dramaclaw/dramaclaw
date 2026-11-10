@@ -292,7 +292,20 @@ export function normalizeMessage(message: unknown, fallbackRole: ChatRole = "ass
   return { id, role, text, turnId, displayName, attachments, parts, uiEvents, timestamp, raw: message };
 }
 
+const INLINE_DATA_RE = /^\s*data:/i;
+
+/**
+ * History attachments carry addresses only. A stored `data:` value is dropped
+ * here, and only the count is logged, never the payload.
+ */
 function extractAttachments(value: Record<string, unknown>): ChatAttachment[] {
+  let droppedInlineData = 0;
+  const addressOrUndefined = (candidate: unknown): string | undefined => {
+    if (typeof candidate !== "string") return undefined;
+    if (!INLINE_DATA_RE.test(candidate)) return candidate;
+    droppedInlineData += 1;
+    return undefined;
+  };
   const contentAttachments = Array.isArray(value.content)
     ? value.content
     .filter((block) => block && typeof block === "object")
@@ -308,13 +321,11 @@ function extractAttachments(value: Record<string, unknown>): ChatAttachment[] {
           : typeof source.media_type === "string"
             ? source.media_type
             : undefined;
-      const data = typeof source.data === "string" ? source.data : undefined;
       return {
         id: typeof block.id === "string" ? block.id : undefined,
         type: typeof block.type === "string" ? block.type : undefined,
         mimeType,
         fileName: typeof block.fileName === "string" ? block.fileName : undefined,
-        content: data,
       };
     })
     : [];
@@ -324,8 +335,8 @@ function extractAttachments(value: Record<string, unknown>): ChatAttachment[] {
         .filter((item) => item && typeof item === "object")
         .map((item) => item as Record<string, unknown>)
         .map((item): ChatAttachment => {
-          const url = typeof item.url === "string" ? item.url : undefined;
-          const path = typeof item.path === "string" ? item.path : undefined;
+          const url = addressOrUndefined(item.url);
+          const path = addressOrUndefined(item.path);
           const label = typeof item.label === "string" ? item.label : undefined;
           const kind = mediaKindToType(item.kind) ?? "file";
           return {
@@ -341,6 +352,9 @@ function extractAttachments(value: Record<string, unknown>): ChatAttachment[] {
         })
     : [];
 
+  if (droppedInlineData > 0) {
+    console.warn("[superchat] dropped %d inline data value(s) from chat history", droppedInlineData);
+  }
   return [...contentAttachments, ...mediaAttachments];
 }
 
