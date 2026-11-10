@@ -1347,6 +1347,98 @@ async def test_public_patched_runtime_sends_context_separately_from_user_message
 
 
 @pytest.mark.asyncio
+async def test_public_patched_runtime_clear_keeps_thread_without_prior_history(
+    monkeypatch, tmp_path
+):
+    from openai_codex import CodexConfig
+    from novelvideo.chat.codex_protocol import ThreadTurnIdsPage
+
+    codex_bin = _contract_codex_bin()
+    scripted = [
+        _responses_sse(
+            _response_created(f"clear-turn-{index}"),
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "id": f"clear-message-{index}",
+                    "content": [{"type": "output_text", "text": reply}],
+                },
+            },
+            _response_completed(f"clear-turn-{index}"),
+        )
+        for index, reply in enumerate(["ONE-MARKER", "TWO-MARKER", "THREE"], 1)
+    ]
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    with _recording_responses_gateway(scripted) as (gateway_url, requests):
+        env = {
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+        }
+        overrides = service._codex_gateway_config_overrides(gateway_url)
+        client = backend_sdk.CodexClient(
+            codex_bin=codex_bin,
+            cwd=tmp_path,
+            env=env,
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions="Reply briefly without tools.",
+            config_overrides=overrides,
+            turn_metadata={"dramaclaw_gateway_api_key": "synthetic-clear-test-key"},
+        )
+        config = CodexConfig(
+            codex_bin=str(codex_bin), cwd=str(tmp_path), env=env, config_overrides=overrides
+        )
+        try:
+            first = [event async for event in client.thread_start().stream("Say ONE-MARKER")]
+            thread_id = next(event.thread_id for event in first if event.type == "thread_started")
+            assert any(event.type == "complete" and event.text == "ONE-MARKER" for event in first)
+            second = [
+                event async for event in client.thread_resume(thread_id).stream("Say TWO-MARKER")
+            ]
+            assert any(event.type == "complete" and event.text == "TWO-MARKER" for event in second)
+            assert backend_sdk.clear_codex_thread_history(
+                codex_bin=codex_bin, cwd=tmp_path, env=env,
+                config_overrides=overrides, thread_id=thread_id,
+            ) == "reverted"
+            with codex_app_server.shared_codex(config) as codex:
+                page = codex._client.request(
+                    "thread/turns/list", {"threadId": thread_id}, response_model=ThreadTurnIdsPage
+                )
+            assert page.data == []
+            third = [
+                event async for event in client.thread_resume(thread_id).stream("Say THREE")
+            ]
+            assert any(
+                event.type == "complete" and event.text == "THREE" and event.thread_id == thread_id
+                for event in third
+            )
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+    assert len(requests) == 3
+    body = requests[2]["body"]
+
+    def text_parts(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key == "text" and isinstance(item, str):
+                    yield item
+                else:
+                    yield from text_parts(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from text_parts(item)
+
+    assert all(
+        "ONE-MARKER" not in text and "TWO-MARKER" not in text for text in text_parts(body)
+    )
+    last_user = [message for message in body["input"] if message.get("role") == "user"][-1]
+    assert [part["text"] for part in last_user["content"] if "text" in part] == ["Say THREE"]
+
+
+@pytest.mark.asyncio
 async def test_app_server_keeps_turn_images_as_file_paths_in_thread_history(
     monkeypatch, tmp_path
 ):

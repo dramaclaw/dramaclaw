@@ -29,6 +29,7 @@ from novelvideo.chat import display_fallback, media_presentation, message_reposi
 from novelvideo.chat.backend_sdk import (
     ClaudeSdkClient,
     CodexClient,
+    clear_codex_thread_history,
     control_codex_runtime,
     interrupt_live_claude_client,
     interrupt_live_codex_turn,
@@ -3411,7 +3412,7 @@ def reset_codex_scope_thread(
     _set_active_codex_turn(username, scope_key, None)
 
 
-async def archive_codex_scope_thread(
+async def clear_codex_scope_thread(
     username: str,
     project: str,
     *,
@@ -3419,13 +3420,7 @@ async def archive_codex_scope_thread(
     canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
 ) -> int:
-    """Archive one scope's thread before forgetting its local binding.
-
-    A plain index reset leaves the App Server free to retain thread-owned MCP
-    processes and tool state for the same project workspace.  Archiving first
-    gives the runtime an explicit lifecycle boundary while preserving managed
-    Skills and other durable workspace files.
-    """
+    """Empty one scope's history while retaining its live thread binding."""
 
     from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
 
@@ -3436,34 +3431,32 @@ async def archive_codex_scope_thread(
         username, project, project_state_dir=project_state_dir
     )
     thread_id = session_registry.get_codex_thread_id(state_path, scope_key)
-    if thread_id:
-        archived = await asyncio.to_thread(_control_codex_thread, "archive", thread_id)
-        if not archived:
-            raise RuntimeError(f"Codex thread could not be archived: {thread_id}")
-
-    with index_file_lock(state_path):
-        latest = _load_codex_session_state(
-            username, project, project_state_dir=project_state_dir
-        )
-        if thread_id is None or latest.get(scope_key) == thread_id:
-            latest.pop(scope_key, None)
-            _save_codex_session_state(
-                username, project, latest, project_state_dir=project_state_dir
+    if thread_id is None:
+        return 0
+    result = await asyncio.to_thread(_clear_codex_thread_history, thread_id)
+    if result == "missing":
+        with index_file_lock(state_path):
+            latest = _load_codex_session_state(
+                username, project, project_state_dir=project_state_dir
             )
-    if thread_id is not None:
-        active_turn_key = (username, scope_key)
-        with _ACTIVE_CODEX_TURNS_LOCK:
-            active_turn = _ACTIVE_CODEX_TURNS.get(active_turn_key)
-            if active_turn is not None and active_turn[0] == thread_id:
-                _ACTIVE_CODEX_TURNS.pop(active_turn_key, None)
-        session_registry.clear_active_codex_turn_if_thread(
-            _active_codex_turns_path(username),
-            scope_key,
-            thread_id,
-            index_file_lock=index_file_lock,
-            write_json_atomic=write_json_atomic,
-        )
-    return int(thread_id is not None)
+            if latest.get(scope_key) == thread_id:
+                latest.pop(scope_key, None)
+                _save_codex_session_state(
+                    username, project, latest, project_state_dir=project_state_dir
+                )
+    active_turn_key = (username, scope_key)
+    with _ACTIVE_CODEX_TURNS_LOCK:
+        active_turn = _ACTIVE_CODEX_TURNS.get(active_turn_key)
+        if active_turn is not None and active_turn[0] == thread_id:
+            _ACTIVE_CODEX_TURNS.pop(active_turn_key, None)
+    session_registry.clear_active_codex_turn_if_thread(
+        _active_codex_turns_path(username),
+        scope_key,
+        thread_id,
+        index_file_lock=index_file_lock,
+        write_json_atomic=write_json_atomic,
+    )
+    return int(result == "reverted")
 
 
 def _active_codex_turns_path(username: str) -> Path:
@@ -3526,33 +3519,46 @@ def _write_codex_turn_token(
     return token_file
 
 
-def _control_codex_thread(
-    operation: Literal["interrupt", "archive", "delete"],
-    thread_id: str,
-    turn_id: str | None = None,
-) -> bool:
+def _codex_thread_runtime_options() -> dict[str, Any] | None:
     codex_bin = _codex_bin_path()
     if codex_bin is None:
-        return False
+        return None
     from novelvideo.chat.hermes_workspace import effective_gateway_credentials
 
     _key, base_url = effective_gateway_credentials()
     normalized_base_url = str(base_url or "").strip().rstrip("/")
     if not normalized_base_url:
-        return False
+        return None
     codex_home = _codex_node_home()
     env = os.environ.copy()
     env["CODEX_HOME"] = str(codex_home)
     env[_CODEX_GATEWAY_BASE_URL_ENV] = normalized_base_url
+    return {
+        "codex_bin": codex_bin,
+        "cwd": codex_home,
+        "env": env,
+        "config_overrides": _codex_gateway_config_overrides(normalized_base_url),
+    }
+
+
+def _control_codex_thread(
+    operation: Literal["interrupt", "archive", "delete"],
+    thread_id: str,
+    turn_id: str | None = None,
+) -> bool:
+    options = _codex_thread_runtime_options()
+    if options is None:
+        return False
     return control_codex_runtime(
-        codex_bin=codex_bin,
-        cwd=codex_home,
-        env=env,
-        config_overrides=_codex_gateway_config_overrides(normalized_base_url),
-        operation=operation,
-        thread_id=thread_id,
-        turn_id=turn_id,
+        **options, operation=operation, thread_id=thread_id, turn_id=turn_id
     )
+
+
+def _clear_codex_thread_history(thread_id: str) -> Literal["reverted", "empty", "missing"]:
+    options = _codex_thread_runtime_options()
+    if options is None:
+        raise RuntimeError("Codex runtime is not configured; chat history was not cleared")
+    return clear_codex_thread_history(**options, thread_id=thread_id)
 
 
 async def archive_codex_canvas_threads(

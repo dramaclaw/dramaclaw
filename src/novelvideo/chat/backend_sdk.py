@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import threading
+import time
 import tomllib
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal, Mapping, Sequence
@@ -126,6 +127,23 @@ def _is_archived_codex_thread_error(exc: Exception) -> bool:
     return "is archived" in message
 
 
+def _codex_runtime_config(
+    *,
+    codex_bin: Path,
+    cwd: Path,
+    env: dict[str, str],
+    config_overrides: tuple[str, ...],
+) -> Any:
+    from openai_codex import CodexConfig
+
+    return CodexConfig(
+        codex_bin=str(codex_bin),
+        cwd=str(cwd),
+        env=env,
+        config_overrides=config_overrides,
+    )
+
+
 def control_codex_runtime(
     *,
     codex_bin: Path,
@@ -142,12 +160,11 @@ def control_codex_runtime(
     request lands on a different Gunicorn worker from the streaming request.
     """
 
-    from openai_codex import CodexConfig
     from novelvideo.chat.codex_app_server import shared_codex
 
-    config = CodexConfig(
-        codex_bin=str(codex_bin),
-        cwd=str(cwd),
+    config = _codex_runtime_config(
+        codex_bin=codex_bin,
+        cwd=cwd,
         env=env,
         config_overrides=config_overrides,
     )
@@ -1177,6 +1194,102 @@ class CodexThreadBusyError(RuntimeError):
 
 class CodexThreadHistoryModeError(RuntimeError):
     """The started thread cannot support chat history clearing."""
+
+
+_CODEX_CLEAR_IDLE_POLLS = 50
+_CODEX_CLEAR_IDLE_POLL_SECONDS = 0.1
+
+
+def revert_codex_thread_history(
+    client: Any, thread_id: str
+) -> Literal["reverted", "empty", "missing"]:
+    """Keep the same thread id with empty history, interrupting active turns first.
+    The revert response does not list turns, so read history again to verify it is empty.
+    """
+    from openai_codex.errors import InvalidRequestError
+    from novelvideo.chat.codex_protocol import (
+        THREAD_REVERT,
+        THREAD_TURNS_LIST,
+        CodexThreadResponse,
+        ThreadRevertResponse,
+        ThreadTurnIdsPage,
+        oldest_turn_params,
+        thread_revert_params,
+    )
+
+    resume_params = {"threadId": thread_id, "excludeTurns": True}
+    try:
+        response = client.request(
+            "thread/resume", resume_params, response_model=CodexThreadResponse
+        )
+    except InvalidRequestError as exc:
+        if _is_missing_codex_thread_error(exc):
+            return "missing"
+        if not _is_archived_codex_thread_error(exc):
+            raise
+        client.thread_unarchive(thread_id)
+        response = client.request(
+            "thread/resume", resume_params, response_model=CodexThreadResponse
+        )
+    mode = response.thread.history_mode
+    if mode != "paginated":
+        raise CodexThreadHistoryModeError(
+            f"Codex thread {thread_id} has history mode {mode}; cannot clear history"
+        )
+    newest_params = {"threadId": thread_id, "limit": 1, "itemsView": "notLoaded"}
+    if response.thread.status.type == "active":
+        newest = client.request(
+            THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnIdsPage
+        )
+        if newest.data and newest.data[0].status == "inProgress":
+            client.turn_interrupt(thread_id, newest.data[0].id)
+        for poll in range(_CODEX_CLEAR_IDLE_POLLS):
+            if poll:
+                time.sleep(_CODEX_CLEAR_IDLE_POLL_SECONDS)
+            response = client.request(
+                "thread/read",
+                {"threadId": thread_id, "includeTurns": False},
+                response_model=CodexThreadResponse,
+            )
+            if response.thread.status.type != "active":
+                break
+        else:
+            raise CodexThreadBusyError(
+                f"Codex thread {thread_id} still has a turn in flight; cannot clear history"
+            )
+    oldest = client.request(
+        THREAD_TURNS_LIST, oldest_turn_params(thread_id), response_model=ThreadTurnIdsPage
+    )
+    if not oldest.data:
+        return "empty"
+    client.request(
+        THREAD_REVERT,
+        thread_revert_params(thread_id, oldest.data[0].id),
+        response_model=ThreadRevertResponse,
+    )
+    remaining = client.request(
+        THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnIdsPage
+    )
+    if remaining.data:
+        raise RuntimeError(f"Codex thread {thread_id} still has turns after clearing history")
+    return "reverted"
+
+
+def clear_codex_thread_history(
+    *,
+    codex_bin: Path,
+    cwd: Path,
+    env: dict[str, str],
+    config_overrides: tuple[str, ...],
+    thread_id: str,
+) -> Literal["reverted", "empty", "missing"]:
+    from novelvideo.chat.codex_app_server import shared_codex
+
+    config = _codex_runtime_config(
+        codex_bin=codex_bin, cwd=cwd, env=env, config_overrides=config_overrides
+    )
+    with shared_codex(config) as codex:
+        return revert_codex_thread_history(codex._client, thread_id)
 
 
 def _loaded_codex_thread_status(client: Any, thread_id: str) -> str | None:
