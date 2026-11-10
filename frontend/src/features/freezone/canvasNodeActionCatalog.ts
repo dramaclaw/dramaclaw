@@ -9,6 +9,7 @@ import {
   type CanvasNodeType,
 } from "@/features/canvas/domain/canvasNodes";
 import { getDownstreamSpawnTypes, getNodeDefinition } from "@/features/canvas/domain/nodeRegistry";
+import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import {
   isPresetManagedNode,
   isSystemManagedNodeData,
@@ -675,7 +676,8 @@ function videoDurationSchema(node: CanvasNode): CanvasEditableFieldSchema {
 function videoGenModeSchema(node: CanvasNode): CanvasEditableFieldSchema {
   const snapshot = getFreezoneVideoModelsSnapshot();
   const modelId = (node.data as { model?: unknown }).model
-    ?? (getNodeDefinition(CANVAS_NODE_TYPES.video).createDefaultData() as { model?: unknown }).model;
+    ?? (getNodeDefinition(CANVAS_NODE_TYPES.video)
+      .createDefaultData(browserNodeDataDefaults) as { model?: unknown }).model;
   // Match the generation form when a remembered/persisted model is unavailable.
   // Explicit invalid model fields are still rejected by model schema validation.
   const model = (typeof modelId === "string" && modelId

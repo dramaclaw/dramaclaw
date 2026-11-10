@@ -1,5 +1,5 @@
 import {htmlArtifactCommandError} from '@/features/html-artifacts/commands';
-import { extractUpstreamContent } from "@/features/canvas/application/graphContentResolver";
+import { workflowExternalSourceMismatch } from "@/features/canvas/core/commands/workflowExternalSource";
 import type { CanvasEdge, CanvasNode, VideoGenMode } from "@/features/canvas/domain/canvasNodes";
 import { CANVAS_NODE_TYPES, type CanvasNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
@@ -10,6 +10,7 @@ import {
   VIDEO_UPSCALE_RESOLUTIONS,
 } from "@/features/canvas/application/videoUpscale";
 import { getDownstreamSpawnTypes, getNodeDefinition, nodeHasSourceHandle } from "@/features/canvas/domain/nodeRegistry";
+import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import { isAgentExecutableNodeAction } from "@/features/freezone/canvasNodeActionCatalog";
 import { planNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
@@ -56,24 +57,6 @@ const RESERVED_DATA_KEYS = new Set([
 const AUDIO_DOWNLOAD_FORMATS = new Set(["source", "mp3", "m4a", "wav"]);
 const VIDEO_UPSCALE_RESOLUTION_VALUES = new Set<string>(VIDEO_UPSCALE_RESOLUTIONS);
 
-/** Error when a workflow external input no longer holds the media its draft verified. */
-export function workflowExternalSourceMismatch(
-  source: CanvasNode | undefined,
-  sourceId: string,
-  expected: { imageUrl?: unknown; videoUrl?: unknown },
-): string | null {
-  const content = source ? extractUpstreamContent(source) : undefined;
-  if (typeof expected.videoUrl === "string" && expected.videoUrl.trim() &&
-    content?.videoUrl !== expected.videoUrl) {
-    return `workflow source video changed: ${sourceId}`;
-  }
-  if (typeof expected.imageUrl === "string" && expected.imageUrl.trim() &&
-    content?.imageUrl !== expected.imageUrl) {
-    return `workflow source image changed: ${sourceId}`;
-  }
-  return null;
-}
-
 function hasReservedKeys(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   return Object.keys(value as Partial<CanvasNodeData>).filter(
@@ -99,7 +82,7 @@ function makeVirtualNode(command: {
     id: command.client_id,
     type: command.node_type,
     position: { x: 0, y: 0 },
-    data: { ...getNodeDefinition(command.node_type).createDefaultData(), ...command.data },
+    data: { ...getNodeDefinition(command.node_type).createDefaultData(browserNodeDataDefaults), ...command.data },
   } as CanvasNode;
 }
 
@@ -259,7 +242,7 @@ export function validateCanvasChatCommandEnvelopes(
               id: `__validate__:${command.node_type}`,
               type: command.node_type,
               position: { x: 0, y: 0 },
-              data: { ...getNodeDefinition(command.node_type).createDefaultData(), ...data },
+              data: { ...getNodeDefinition(command.node_type).createDefaultData(browserNodeDataDefaults), ...data },
             } as CanvasNode),
             data,
           );
@@ -311,7 +294,7 @@ export function validateCanvasChatCommandEnvelopes(
                 id: command.client_id ?? `__validate__:${nodeType}`,
                 type: nodeType,
                 position: { x: 0, y: 0 },
-                data: { ...getNodeDefinition(nodeType).createDefaultData(), ...data },
+                data: { ...getNodeDefinition(nodeType).createDefaultData(browserNodeDataDefaults), ...data },
               } as CanvasNode,
               data,
             );

@@ -51,9 +51,9 @@ import {
 } from '@/features/canvas/application/useUpstreamGraph';
 import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { backendErrorToastMessage } from '@/lib/api-errors';
+import { parseAspectRatio } from '@/features/canvas/domain/aspectRatio';
 import {
   detectAspectRatio,
-  parseAspectRatio,
   pickClosestAspectRatio,
   resolveImageDisplayUrl,
 } from '@/features/canvas/application/imageData';

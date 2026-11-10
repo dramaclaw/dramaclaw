@@ -16,10 +16,8 @@ import { createUpscaleResultNode } from '@/features/canvas/application/imageUpsc
 import { nodeMainlineFlags } from '@/features/canvas/domain/mainlineNodeFlags';
 import { type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
-import {
-  DEFAULT_SHARED_MODEL_ID,
-  SHARED_MODELS,
-} from '@/features/canvas/ui/ProviderModelPicker';
+import { DEFAULT_SHARED_MODEL_ID } from '@/features/canvas/domain/defaultModelIds';
+import { SHARED_MODELS } from '@/features/canvas/ui/ProviderModelPicker';
 import { useCanvasStore } from '@/stores/canvasStore';
 
 import { ImageResizeDialog } from '../ImageResizeDialog';
