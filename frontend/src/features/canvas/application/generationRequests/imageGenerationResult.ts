@@ -130,7 +130,7 @@ export function imageGenerationOutcomePatch(input: ImageGenerationOutcomeInput):
       }, { output: batchOutput(input, completedUrls) }, effects);
     }
     if (runIndex === 0 && completedUrls.length === 0) missingUrlPatch = resetLoading;
-    message = '图片生成完成但未返回图片地址';
+    message = '图片生成完成但未返回图片地址'; // i18n-exempt -- must equal the browser hook's error text
   } else message = outcome.message;
 
   // Catch order matters: a successful sibling wins over reference errors and cancellation.
