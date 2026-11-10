@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from novelvideo.freezone.canvas_changes import clear_canvas_changes, publish_canvas_change
 from novelvideo.freezone.paths import canvas_path, canvases_dir
 from novelvideo.ports import get_canvas_write_mutex
 from novelvideo.utils.async_ops import call_blocking
@@ -233,6 +234,9 @@ def ensure_default_canvas(
             return CanvasEnsureResult(payload=deleted, created=False)
         payload = default_canvas_payload(project_id=project_id, actor_id=actor_id)
         atomic_write_json(path, payload, fence=guard.reassert)
+        publish_canvas_change(
+            project_dir, "default", None, payload, save_source="system_default"
+        )
         return CanvasEnsureResult(payload=payload, created=True)
 
 
@@ -780,6 +784,14 @@ def save_canvas(
         backup_path = backup_canvas_snapshot(path, existing)
         atomic_write_json(path, payload, fence=guard.reassert)
         prune_canvas_history(project_dir, canvas_id)
+        publish_canvas_change(
+            project_dir,
+            canvas_id,
+            existing,
+            payload,
+            save_source=save_source,
+            client_save_id=normalized_client_save_id or None,
+        )
         response_cache = {
             "saved": True,
             "revision": payload.get("revision"),
@@ -839,6 +851,13 @@ def restore_canvas_version(
         backup_path = backup_canvas_snapshot(path, existing)
         atomic_write_json(path, payload, fence=guard.reassert)
         prune_canvas_history(project_dir, canvas_id)
+        publish_canvas_change(
+            project_dir,
+            canvas_id,
+            existing,
+            payload,
+            save_source=str(payload.get("save_source") or "restore"),
+        )
         return CanvasRestoreResult(
             payload=payload,
             existing=existing,
@@ -892,6 +911,7 @@ def soft_delete_canvas(
                 idem_path.unlink()
             except FileNotFoundError:
                 pass
+        clear_canvas_changes(project_dir, canvas_id)
         return CanvasDeleteResult(existing=existing, deleted_path=target)
 
 
