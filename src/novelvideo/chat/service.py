@@ -19,9 +19,14 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Sequence
 from urllib.parse import urlparse
 from urllib.request import urlopen
+
+if TYPE_CHECKING:
+    from novelvideo.chat.codex_live import LiveTurnProjector
+    from novelvideo.chat.runtime_port import ChatBackendEvent
+    from novelvideo.chat.store import ChatScope
 
 import portalocker
 
@@ -32,6 +37,7 @@ from novelvideo.chat.backend_sdk import (
     _positive_timeout_from_env,
     clear_codex_thread_history,
     control_codex_runtime,
+    follow_codex_turn,
     interrupt_live_claude_client,
     interrupt_live_codex_turn,
     read_codex_thread_history,
@@ -5474,6 +5480,80 @@ async def _write_turn_notice(username, store_scope, turn_id, kind, text) -> None
     )
 
 
+def active_codex_turn_for_scope(username: str, scope: ChatScope) -> dict[str, Any] | None:
+    """Look up this conversation's entry, even when other scopes share its lock."""
+    return _load_active_codex_turns(username).get(_codex_scope_key_for_scope(scope))
+
+
+def _codex_scope_key_for_scope(scope: ChatScope) -> str:
+    freezone = scope.kind == "freezone" or getattr(scope, "surface", None) == "freezone"
+    return _codex_scope_key(
+        str(scope.id or ""),
+        agent_profile=f"freezone:{scope.agent_id or 'main'}" if freezone else "main",
+        canvas_id=scope.canvas_id,
+    )
+
+
+def _codex_event_frame(
+    event: ChatBackendEvent, live: LiveTurnProjector,
+) -> dict[str, Any] | None:
+    """Project runtime events without taking over the starter's side effects."""
+    if event.type == "item_started":
+        return live.started(event.item, event.started_at_ms)
+    if event.type == "item_completed":
+        return live.completed(event.item)
+    if event.type == "item_delta":
+        return live.delta(event.item_id, event.name, event.text, event.summary_index)
+    if event.type in {"thread_started", "turn_started", "turn_completed"}:
+        return runtime_event_mapper.lifecycle_event(event)
+    if event.type in {"plan_update", "usage_update"}:
+        return runtime_event_mapper.progress_event(event)
+    if event.type in {"tool_started", "tool_updated"}:
+        return runtime_event_mapper.sdk_tool_event(event, text=str(event.text or ""))
+    return None
+
+
+async def follow_active_codex_turn(
+    username: str, scope: ChatScope, on_event: Callable[[dict[str, Any]], Awaitable[None]],
+) -> bool:
+    from novelvideo.chat.codex_live import LiveTurnProjector
+
+    entry = active_codex_turn_for_scope(username, scope)
+    if entry is None:
+        return False
+    scope_key = _codex_scope_key_for_scope(scope)
+    business_turn_id = entry["business_turn_id"]
+    live = LiveTurnProjector(turn_id=business_turn_id)
+    live.bind(entry["turn_id"])
+    disposition = "interrupted"
+    options = _codex_thread_runtime_options()
+    try:
+        if options is None:
+            raise CodexAppServerNotRunning("Codex app-server is not running")
+        # Explicitly close the iterator on cancellation so its worker releases the connection.
+        from contextlib import aclosing
+
+        async with aclosing(follow_codex_turn(
+            **options, thread_id=entry["thread_id"], turn_id=entry["turn_id"],
+        )) as stream:
+            async for event in stream:
+                frame = _codex_event_frame(event, live)
+                if frame is not None:
+                    await on_event(frame)
+                if event.type == "turn_completed":
+                    disposition = str(event.disposition or event.status or "interrupted")
+    except CodexAppServerNotRunning:
+        disposition = "interrupted"
+    except asyncio.CancelledError:
+        live.finish()
+        raise
+    for frame in live.finish():
+        await on_event(frame)
+    await finalize_codex_turn(username, scope_key, entry["turn_id"], disposition)
+    await on_event({"type": "done", "turn_id": business_turn_id, "message": None})
+    return True
+
+
 async def _stream_assistant_reply_codex(
     username: str,
     project: str,
@@ -5677,14 +5757,7 @@ async def _stream_assistant_reply_codex(
                     str(getattr(event, "turn_id", "") or "") or "-",
                 )
                 if event.type in {"item_started", "item_completed", "item_delta"}:
-                    if event.type == "item_started":
-                        frame = live.started(event.item, event.started_at_ms)
-                    elif event.type == "item_completed":
-                        frame = live.completed(event.item)
-                    else:
-                        frame = live.delta(
-                            event.item_id, event.name, event.text, event.summary_index
-                        )
+                    frame = _codex_event_frame(event, live)
                     if frame is not None and exact_audio_action_target is None:
                         await on_event(frame)
                     continue
@@ -5735,12 +5808,12 @@ async def _stream_assistant_reply_codex(
                         if on_thread_registered is not None:
                             on_thread_registered()
                     await on_event(
-                        runtime_event_mapper.lifecycle_event(event)
+                        _codex_event_frame(event, live)
                     )
                     continue
                 if event.type == "turn_started":
                     await on_event(
-                        runtime_event_mapper.lifecycle_event(event)
+                        _codex_event_frame(event, live)
                     )
                     continue
                 if event.type == "turn_completed":
@@ -5748,7 +5821,7 @@ async def _stream_assistant_reply_codex(
                         event.disposition or event.status or turn_disposition
                     )
                     await on_event(
-                        runtime_event_mapper.lifecycle_event(event)
+                        _codex_event_frame(event, live)
                     )
                     continue
                 if event.type == "assistant_delta":
@@ -5758,11 +5831,11 @@ async def _stream_assistant_reply_codex(
                     continue
                 if event.type == "plan_update":
                     await on_event(
-                        runtime_event_mapper.progress_event(event)
+                        _codex_event_frame(event, live)
                     )
                     continue
                 if event.type == "usage_update":
-                    await on_event(runtime_event_mapper.progress_event(event))
+                    await on_event(_codex_event_frame(event, live))
                     continue
                 if event.type in {"tool_started", "tool_updated"}:
                     await _bind_server_observed_agent_product_execution(
@@ -5792,7 +5865,7 @@ async def _stream_assistant_reply_codex(
                     if event_tool_text:
                         tool_text += event_tool_text
                     await on_event(
-                        runtime_event_mapper.sdk_tool_event(event, text=event_tool_text)
+                        _codex_event_frame(event, live)
                     )
                     continue
                 if event.type == "tool_update":
