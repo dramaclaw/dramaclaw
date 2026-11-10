@@ -5,3 +5,4 @@ export * from './imageGenerationResult';
 export * from './videoGenerationRequest';
 export * from './generationSubmitError';
 export * from './videoGenerationResult';
+export * from './audioGenerationRequest';
