@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import hashlib
 import os
-import fcntl
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Callable
-from typing import Any, ContextManager
+from typing import Any, ContextManager, TextIO
+
+import portalocker
 
 # Shown to the user when another turn of theirs is still running; the chat route
 # maps every "busy" failure onto this one message (see routes/chat.py).
@@ -32,7 +33,7 @@ class ChatTurnBusyError(RuntimeError):
 
 @dataclass
 class ChatStartLock:
-    fd: int | None
+    file: TextIO | None
 
 
 def _chat_run_lock_key(project: str) -> str:
@@ -61,45 +62,54 @@ def chat_run_lock_path(directory: Path, project: str) -> Path:
     return directory / f"{digest}.lock"
 
 
+def _chat_start_lock_holder(lock_file: TextIO) -> str | None:
+    try:
+        lock_file.seek(0)
+        return lock_file.read(4096).strip() or None
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+
 def acquire_chat_run_lock(path: Path, *, turn_id: str | None = None) -> ChatStartLock:
-    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    lock_file = os.fdopen(os.open(path, os.O_CREAT | os.O_RDWR, 0o600), "r+", encoding="utf-8")
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            holder = os.pread(fd, 4096, 0).decode("utf-8").strip() or None
-            raise ChatTurnBusyError(turn_id=holder) from None
-        os.ftruncate(fd, 0)
-        os.write(fd, (turn_id or "").encode("utf-8"))
-        return ChatStartLock(fd)
+            portalocker.lock(lock_file, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        except portalocker.exceptions.LockException:
+            raise ChatTurnBusyError(turn_id=_chat_start_lock_holder(lock_file)) from None
+        lock_file.seek(0)
+        lock_file.truncate(0)
+        lock_file.write(turn_id or "")
+        lock_file.flush()
+        return ChatStartLock(lock_file)
     except BaseException:
-        os.close(fd)
+        lock_file.close()
         raise
 
 
 def release_chat_run_lock(lock: ChatStartLock) -> None:
-    fd, lock.fd = lock.fd, None
-    if fd is not None:
+    lock_file, lock.file = lock.file, None
+    if lock_file is not None:
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            portalocker.unlock(lock_file)
         finally:
-            os.close(fd)
+            lock_file.close()
 
 
 def probe_chat_start_lock(path: Path) -> ActiveChatTurn | None:
     try:
-        fd = os.open(path, os.O_RDWR)
+        lock_file = path.open("r+", encoding="utf-8")
     except FileNotFoundError:
         return None
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return ActiveChatTurn(os.pread(fd, 4096, 0).decode("utf-8").strip() or None)
-        fcntl.flock(fd, fcntl.LOCK_UN)
+            portalocker.lock(lock_file, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        except portalocker.exceptions.LockException:
+            return ActiveChatTurn(_chat_start_lock_holder(lock_file))
+        portalocker.unlock(lock_file)
         return None
     finally:
-        os.close(fd)
+        lock_file.close()
 
 
 # Fixed, never bumped; protocol changes reach a live thread through turn context.

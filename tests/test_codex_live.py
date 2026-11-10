@@ -125,6 +125,67 @@ def test_recorded_turn_replay():
     assert live.finish() == []
 
 
+def test_unstarted_text_deltas_open_a_card_and_then_patch_it():
+    live = projector()
+    cards = {}
+    first = live.delta("m-joined", "text", "Hello")
+    assert first == {
+        "type": "item", "message_id": "assistant:turn-1", "item_id": "m-joined",
+        "card": {"id": "m-joined", "type": "text", "text": "Hello"},
+    }
+    apply(cards, first)
+    second = live.delta("m-joined", "text", " world")
+    assert second == {
+        "type": "item_delta", "message_id": "assistant:turn-1", "item_id": "m-joined",
+        "kind": "text", "offset": 5, "text": " world",
+    }
+    apply(cards, second)
+    assert cards["m-joined"] == {"id": "m-joined", "type": "text", "text": "Hello world"}
+    apply(cards, live.completed({
+        "id": "m-joined", "type": "agentMessage", "text": "Hello world!",
+    }))
+    assert cards["m-joined"] == {"id": "m-joined", "type": "text", "text": "Hello world!"}
+    assert live.item_ids == ["m-joined"]
+    assert live.delta("m-joined", "text", "ignored") is None
+
+
+def test_unstarted_reasoning_deltas_open_a_card_and_then_patch_it():
+    live = projector()
+    cards = {}
+    first = live.delta("r-joined", "reasoning", "Checking", 1)
+    assert first == {
+        "type": "item", "message_id": "assistant:turn-1", "item_id": "r-joined",
+        "card": {
+            "id": "r-joined", "type": "agent_thought",
+            "event": {
+                "type": "agent.thought", "turn_id": "business-1", "text": "Checking",
+                "status": "running", "truncated": False,
+            },
+        },
+    }
+    apply(cards, first)
+    second = live.delta("r-joined", "reasoning", " results", 1)
+    assert second == {
+        "type": "item_delta", "message_id": "assistant:turn-1", "item_id": "r-joined",
+        "kind": "reasoning", "offset": 8, "text": " results",
+    }
+    apply(cards, second)
+    assert cards["r-joined"]["type"] == "agent_thought"
+    assert cards["r-joined"]["event"]["text"] == "Checking results"
+    apply(cards, live.completed({
+        "id": "r-joined", "type": "reasoning", "summary": ["Checking results!"],
+    }))
+    assert cards["r-joined"] == {
+        "id": "r-joined", "type": "agent_thought",
+        "event": {
+            "type": "agent.thought", "turn_id": "business-1", "text": "Checking results!",
+            "status": "completed", "truncated": False,
+        },
+    }
+    assert live.item_ids == ["r-joined"]
+    assert live.delta("r-joined", "reasoning", "ignored", 1) is None
+
+
 def test_reasoning_incident_is_capped_and_bounded():
     live = projector()
     item = {"type": "reasoning", "id": "r-1", "summary": [], "content": []}
