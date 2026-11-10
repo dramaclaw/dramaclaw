@@ -1,4 +1,5 @@
-import * as videoModels from "@/features/canvas/hooks/useFreezoneVideoModels";
+import * as videoModels from "@/features/canvas/domain/canvasModelCatalogs";
+import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import * as lastVideoModel from "@/features/canvas/domain/lastVideoModel";
 import i18next from "i18next";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/canvasNodeActionCatalog";
@@ -7,7 +8,11 @@ import compiledHtmlPlan from "@/features/html-artifacts/compiledHtmlPlan.fixture
 
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
-import { CANVAS_CHAT_COMMANDS_SCHEMA_VERSION, extractCanvasChatCommandEnvelopes, type CanvasChatCommandEnvelope } from "@/features/freezone/canvasChatCommands";
+import { extractCanvasChatCommandEnvelopes } from "@/features/freezone/canvasCommandEnvelope";
+import {
+  CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+  type CanvasChatCommandEnvelope,
+} from "@/features/freezone/canvasChatCommands";
 import { canvasLinkTypeCatalogJson, canvasLinkTypeCatalogText, canvasNodeTypeLinkObjectType, allowedCanvasLinkTypesForNodes } from "@/features/freezone/canvasEdgeSemantics";
 
 function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["type"] }): CanvasNode {
@@ -898,7 +903,7 @@ describe("node-specific mode command validation", () => {
   afterEach(() => vi.restoreAllMocks());
 
   function catalog() {
-    vi.spyOn(videoModels, "getFreezoneVideoModelsSnapshot").mockReturnValue({
+    vi.spyOn(videoModels, "getCanvasVideoModelCatalog").mockReturnValue({
       models: [
         { id: "text-only", apiModel: "text-only", label: "Text only", providerId: "newapi", supportedModes: ["text_to_video"] },
         { id: "first-only", apiModel: "first-only", label: "First frame", providerId: "newapi", supportedModes: ["text_to_video", "first_frame"] },
@@ -910,7 +915,7 @@ describe("node-specific mode command validation", () => {
   it("only advertises modes supported by the selected node model", () => {
     catalog();
     const target = node({ id: "v", type: CANVAS_NODE_TYPES.video, data: { model: "first-only" } });
-    expect(buildCanvasNodeActionCatalog(target).editable_schema.genMode.options)
+    expect(buildCanvasNodeActionCatalog(target, { nodeDataDefaults: browserNodeDataDefaults }).editable_schema.genMode.options)
       .toEqual(["textToVideo", "firstFrame"]);
   });
 
@@ -918,7 +923,7 @@ describe("node-specific mode command validation", () => {
     catalog();
     vi.spyOn(lastVideoModel, "readLastVideoModel").mockReturnValue("first-only");
     const target = node({ id: "v", type: CANVAS_NODE_TYPES.video, data: {} });
-    expect(buildCanvasNodeActionCatalog(target).editable_schema.genMode.options)
+    expect(buildCanvasNodeActionCatalog(target, { nodeDataDefaults: browserNodeDataDefaults }).editable_schema.genMode.options)
       .toEqual(["textToVideo", "firstFrame"]);
   });
 
@@ -926,13 +931,13 @@ describe("node-specific mode command validation", () => {
     catalog();
     vi.spyOn(lastVideoModel, "readLastVideoModel").mockReturnValue(remembered);
     const target = node({ id: "v", type: CANVAS_NODE_TYPES.video, data: {} });
-    expect(buildCanvasNodeActionCatalog(target).editable_schema.genMode.options)
+    expect(buildCanvasNodeActionCatalog(target, { nodeDataDefaults: browserNodeDataDefaults }).editable_schema.genMode.options)
       .toEqual(["textToVideo"]);
     const result = validateCanvasChatCommandEnvelopes([{
       schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
       commands: [{ type: "create_node", node_type: CANVAS_NODE_TYPES.video,
         client_id: "v", data: { genMode: "textToVideo" } }],
-    }], [], []);
+    }], [], [], browserNodeDataDefaults);
     expect(result).toEqual({ ok: true, issues: [] });
   });
 
@@ -980,7 +985,7 @@ describe("node-specific mode command validation", () => {
       schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
       commands: [{ type: "create_node", node_type: CANVAS_NODE_TYPES.video,
         client_id, data: { genMode: "firstFrame" } }],
-    }], [], []);
+    }], [], [], browserNodeDataDefaults);
     expect(result).toEqual({ ok: true, issues: [] });
   });
 
@@ -992,7 +997,7 @@ describe("node-specific mode command validation", () => {
       schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
       commands: [{ type: "add_next_node", source_node_id: "source", node_type: CANVAS_NODE_TYPES.video,
         client_id, data: { genMode: "firstFrame" } }],
-    }], [source], []);
+    }], [source], [], browserNodeDataDefaults);
     expect(result).toEqual({ ok: true, issues: [] });
   });
 
@@ -1005,7 +1010,7 @@ describe("node-specific mode command validation", () => {
         { type: "create_node", node_type: CANVAS_NODE_TYPES.video, client_id: "v" },
         { type: "update_node_data", node_id: "v", data: { genMode: "firstFrame" } },
       ],
-    }], [], []);
+    }], [], [], browserNodeDataDefaults);
     expect(result).toEqual({ ok: true, issues: [] });
   });
 
@@ -1028,7 +1033,7 @@ describe("node-specific mode command validation", () => {
       schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
       commands: [{ type: "create_node", node_type: CANVAS_NODE_TYPES.video,
         client_id: "v", data: { model: "text-only", genMode: "imageToVideo" } }],
-    }], [], []);
+    }], [], [], browserNodeDataDefaults);
     expect(result.ok).toBe(false);
     expect(result.issues[0].message).toContain("field genMode");
     expect(result.issues[0].message).toContain('Allowed values: "textToVideo"');

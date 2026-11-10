@@ -2,7 +2,7 @@ import { SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { MediaModelParameterDefinition } from "@/api/ops";
+import type { MediaModelParameterDefinition } from '@/features/canvas/domain/modelCatalogPayload';
 import { GEN_MODE_TO_CATALOG_MODE } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import { NODE_TEXT_CONTROL_TRIGGER_CLASS } from "@/features/canvas/ui/nodeControlStyles";
 

@@ -525,7 +525,7 @@ describe("freezone viewer contracts", () => {
 
   it("keeps viewer purpose and capture metadata as explicit shared contracts", () => {
     const purpose = read("src/features/viewer-kit/viewerPurpose.ts");
-    const store = read("src/stores/canvasStore.ts");
+    const store = read("src/features/canvas/core/canvasStore.ts");
 
     expect(purpose).toContain('ViewerPurpose = "mainline" | "freezone" | "asset" | "beat"');
     expect(store).toContain("captureMetadata");

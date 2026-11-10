@@ -1,23 +1,16 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { setCanvasModelCatalogProvider, type CanvasModelCatalog } from "../domain/canvasModelCatalogs";
 import { useEffect, useSyncExternalStore } from "react";
 
 import {
   fetchFreezoneVideoModels,
-  type FreezoneVideoModelInfo,
 } from "@/api/ops";
+import { toModelOptions } from '@/features/canvas/domain/modelCatalogPayload';
 import { readUrl } from "@/lib/url-params";
-import {
-  VIDEO_MODELS,
-  type ModelOption,
-} from "@/features/canvas/ui/ProviderModelPicker";
+import { VIDEO_MODELS, type ModelOption } from "@/features/canvas/domain/modelOptions";
 
-export interface UseFreezoneVideoModelsResult {
-  models: ModelOption[];
-  isLoading: boolean;
-  isFallback: boolean;
-  error: Error | null;
-}
+export type UseFreezoneVideoModelsResult = CanvasModelCatalog;
 
 // Module-level shared store, mirrors useFreezoneImageModels but keyed under
 // a separate namespace so image and video fetches don't collide. One fetch
@@ -27,8 +20,6 @@ const listeners = new Map<string, Set<() => void>>();
 const inFlightProjects = new Set<string>();
 const pendingRefreshProjects = new Set<string>();
 
-// Lazy singleton — circular import with `ProviderModelPicker.tsx` means we
-// can't touch `VIDEO_MODELS` at module top level (TDZ).
 let noProjectStateMemo: UseFreezoneVideoModelsResult | null = null;
 function getNoProjectState(): UseFreezoneVideoModelsResult {
   if (!noProjectStateMemo) {
@@ -49,10 +40,6 @@ function emit(project: string) {
 function writeState(project: string, next: UseFreezoneVideoModelsResult) {
   states.set(project, next);
   emit(project);
-}
-
-function toModelOptions(models: FreezoneVideoModelInfo[]): ModelOption[] {
-  return models;
 }
 
 function ensureLoaded(project: string, force = false) {
@@ -200,3 +187,5 @@ export function useFreezoneVideoModels(
     () => getNoProjectState(),
   );
 }
+
+setCanvasModelCatalogProvider("video", getFreezoneVideoModelsSnapshot);

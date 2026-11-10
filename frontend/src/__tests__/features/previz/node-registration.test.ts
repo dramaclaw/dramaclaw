@@ -24,7 +24,8 @@ import {
   type CanvasChatCommandEnvelope,
 } from "@/features/freezone/canvasChatCommands";
 import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
-import { landNodeAgentSceneEdit, nodeAgentSceneDigest } from "@/features/previz/agentSceneEdit";
+import { nodeAgentSceneDigest } from "@/features/previz/agentScenePlanning";
+import { landNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
 import { createDefaultScene } from "@/features/previz/domain/scene";
 import { loadNodeScene } from "@/features/previz/nodeScene";
 import { usePrevizStore } from "@/features/previz/store";

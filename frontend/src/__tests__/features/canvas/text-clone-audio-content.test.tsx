@@ -37,7 +37,6 @@ vi.mock("@/features/canvas/ui/NodeResizeHandle", () => ({
 }));
 
 vi.mock("@/features/canvas/ui/ProviderModelPicker", () => ({
-  DEFAULT_SHARED_MODEL_ID: "test-model",
   ProviderModelPicker: () => <div />,
 }));
 

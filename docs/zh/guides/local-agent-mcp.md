@@ -56,7 +56,6 @@ python agent-kit/scripts/launch_mcp.py workflows
 - `DRAMACLAW_API_URL=http://127.0.0.1:8780`
 - `DRAMACLAW_LOCAL_AGENT_TRUST=1`
 - `DRAMACLAW_EXTERNAL_MCP=1`
-- `DRAMACLAW_MCP_DIRECT_CANVAS_APPLY=0`
 - `DRAMACLAW_USER=local`
 - `DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR=state/<user>/.hermes-freezone/tmp/supertale_canvas_command_bridge`
 
@@ -77,7 +76,6 @@ python agent-kit/scripts/launch_mcp.py workflows
         "DRAMACLAW_API_URL": "http://127.0.0.1:8780",
         "DRAMACLAW_LOCAL_AGENT_TRUST": "1",
         "DRAMACLAW_EXTERNAL_MCP": "1",
-        "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY": "0",
         "DRAMACLAW_USER": "local"
       }
     },
@@ -141,7 +139,7 @@ MCP freezone 工具
 
 因此，使用 Codex/Claude 操作虾画时，需要浏览器中打开对应 Freezone 页面。这样可以让 React Flow 状态、选中状态、节点尺寸、autosave 和进度显示保持即时同步。
 
-互动故事四个工具是例外：Create/Patch 调用 CE API，由 `InteractiveStoryService` 在后端写入完整故事投影，不写 pending canvas command，也不受 `DRAMACLAW_MCP_DIRECT_CANVAS_APPLY` 控制。产品内 Agent 会根据成功工具帧自动刷新当前画布并保护未保存本地编辑；外部 MCP 客户端当前没有通用的浏览器刷新广播，写入后需要宿主适配刷新或手动刷新/重新打开画布。
+互动故事四个工具是例外：Create/Patch 调用 CE API，由 `InteractiveStoryService` 在后端写入完整故事投影，不写 pending canvas command。产品内 Agent 会根据成功工具帧自动刷新当前画布并保护未保存本地编辑；外部 MCP 客户端当前没有通用的浏览器刷新广播，写入后需要宿主适配刷新或手动刷新/重新打开画布。
 
 `DRAMACLAW_EXTERNAL_MCP=1` 只用于外部 Agent 入口。内置 Hermes 不设置该变量，因此仍使用虾画聊天内的审批卡；外部 Agent 则在 Codex / Claude / OpenClaw 自己的聊天中确认，确认后前端自动执行命令，不弹出虾画聊天审批。
 
@@ -155,10 +153,4 @@ MCP freezone 工具
 具体模型 ID。授权 MCP 会在提交画布前移除该符号值，由本地画布使用当前实际可用的默认模型；
 因此也不需要为了替换推荐项而重新生成整份工作流图。
 
-只有在无浏览器的 headless/测试场景，才建议显式开启：
-
-```bash
-DRAMACLAW_MCP_DIRECT_CANVAS_APPLY=1
-```
-
-开启后，MCP 会绕过前端直接写后端画布 payload，前端需要靠 revision 刷新感知变化。
+在 API 服务端设置 `DRAMACLAW_AGENT_CANVAS_EXECUTOR=server`（默认 `browser`），Agent 的结构修改和上下文读取会由服务端画布执行器处理；运行节点、工作流等 host 命令仍需打开对应画布。`server` 要求同时启用 `DRAMACLAW_CANVAS_PATCH_PUSH=1`。

@@ -107,6 +107,17 @@ def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, An
     if len(text) > 65536:
         return result
     data = _maybe_json(text)
+    if status_code == 503 and isinstance(data, dict) and isinstance(data.get("detail"), dict):
+        detail = data["detail"]
+        code = _safe_error_string(detail.get("code"), 80)
+        if re.fullmatch(r"canvas_core_[A-Za-z0-9_]+", code):
+            result["code"] = code
+            result["error"] = (
+                _safe_error_string(detail.get("message"), 300)
+                or _safe_error_string(detail.get("error"), 300)
+                or result["error"]
+            )
+            return result
     if 500 <= status_code < 600:
         if isinstance(data, dict):
             for field in ("error", "message", "detail"):

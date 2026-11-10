@@ -32,11 +32,7 @@ import {
 import { DEFAULT_NODE_DISPLAY_NAME } from './nodeDisplay';
 import { SKILL_SCHEMA_VERSION } from '@/features/freezone/context/skillRoles';
 import { DEFAULT_IMAGE_MODEL_ID } from '../models';
-import {
-  DEFAULT_SHARED_MODEL_ID,
-  DEFAULT_VIDEO_MODEL_ID,
-} from '../ui/ProviderModelPicker';
-import { readLastVideoModel } from './lastVideoModel';
+import { DEFAULT_SHARED_MODEL_ID, DEFAULT_VIDEO_MODEL_ID } from './defaultModelIds';
 
 export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text' | 'video' | 'audio' | 'script' | 'pano360' | 'threeDWorld' | 'videoCompose' | 'previz' | 'videoBreakdown';
 
@@ -61,8 +57,16 @@ export interface CanvasNodeDefinition<TData extends CanvasNodeData = CanvasNodeD
   visibleInMenu: boolean;
   capabilities: CanvasNodeCapabilities;
   connectivity: CanvasNodeConnectivity;
-  createDefaultData: () => TData;
+  createDefaultData: (defaults: NodeDataDefaults) => TData;
 }
+
+/** Host state that new node data starts from. */
+export interface NodeDataDefaults {
+  /** The video model the user picked last, or null when the host remembers none. */
+  lastVideoModel(): string | null;
+}
+
+export const defaultNodeDataDefaults: NodeDataDefaults = { lastVideoModel: () => null };
 
 const uploadNodeDefinition: CanvasNodeDefinition<UploadImageNodeData> = {
   type: CANVAS_NODE_TYPES.upload,
@@ -383,7 +387,7 @@ const videoNodeDefinition: CanvasNodeDefinition<VideoNodeData> = {
       fromTarget: false,
     },
   },
-  createDefaultData: () => ({
+  createDefaultData: (defaults) => ({
     displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.video],
     videoUrl: null,
     previewImageUrl: null,
@@ -401,7 +405,7 @@ const videoNodeDefinition: CanvasNodeDefinition<VideoNodeData> = {
     prompt: '',
     genMode: 'textToVideo',
     // 继承用户上次为视频节点选的模型；无记录时回落到默认模型。
-    model: readLastVideoModel() ?? DEFAULT_VIDEO_MODEL_ID,
+    model: defaults.lastVideoModel() ?? DEFAULT_VIDEO_MODEL_ID,
     quality: '720P',
     durationSec: 5,
     count: 1,

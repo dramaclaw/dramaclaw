@@ -95,7 +95,6 @@ def _configure_tools_env(env: dict[str, str], ce_root: Path) -> None:
     env.setdefault("DRAMACLAW_USER", username)
     env.setdefault("ST_LOCAL_USERNAME", username)
     env.setdefault("DRAMACLAW_EXTERNAL_MCP", "1")
-    env.setdefault("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", "0")
     env.setdefault("DRAMACLAW_CHAT_SURFACE", "freezone")
     env.setdefault("DRAMACLAW_TOOL_MODE", "freezone_canvas")
     env.setdefault("DRAMACLAW_AGENT_PROFILE", "freezone:main")

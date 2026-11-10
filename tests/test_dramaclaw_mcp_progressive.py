@@ -120,17 +120,17 @@ def _confirmed_canvas_receipt():
     }
 
 
-@pytest.mark.parametrize("direct", [False, True])
-def test_workflow_confirmation_receipt_survives_mcp_and_chat_postcondition(monkeypatch, direct):
+@pytest.mark.parametrize("server", [False, True])
+def test_workflow_confirmation_receipt_survives_mcp_and_chat_postcondition(monkeypatch, server):
     from types import SimpleNamespace
     from novelvideo.chat.service import _codex_freezone_write_result_succeeded
 
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
     payload = _confirmed_canvas_receipt()
-    if direct:
+    if server:
         payload.pop("bridge_key")
-        payload.update(canvas_apply_status="direct_applied", revision=3)
+        payload["revision"] = 3
     result = dramaclaw_mcp._structured_tool_result(
         "freezone_confirm_workflow_draft", json.dumps(payload)
     )
@@ -147,7 +147,7 @@ def test_workflow_confirmation_receipt_survives_mcp_and_chat_postcondition(monke
     {"bridge_key": ""}, {"project_id": ""}, {"canvas_id": ""},
     {"applied": False}, {"cancelled": True}, {"errors": ["write failed"]},
     {"canvas_apply_status": "pending"},
-    {"canvas_apply_status": "direct_applied", "revision": True},
+    {"bridge_key": "", "revision": True},
 ])
 def test_confirmation_rejects_incomplete_or_contradictory_receipts(monkeypatch, change):
     from jsonschema.exceptions import ValidationError

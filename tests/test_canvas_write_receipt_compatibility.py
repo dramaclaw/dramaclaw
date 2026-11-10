@@ -155,7 +155,7 @@ def test_story_outline_revision_conflict_identifies_a_rebased_retry():
         },
         {
             "ok": True,
-            "canvas_apply_status": "direct_applied",
+            "canvas_apply_status": "applied",
             "applied": True,
             "project_id": "project-a",
             "canvas_id": "canvas-a",
@@ -165,6 +165,19 @@ def test_story_outline_revision_conflict_identifies_a_rebased_retry():
 )
 def test_accepts_supported_success_receipts(payload):
     assert _codex_freezone_write_result_succeeded(_event(payload)) is True
+
+
+def test_server_receipt_reference_uses_saved_revision():
+    payload = {
+        "ok": True,
+        "canvas_apply_status": "applied",
+        "applied": True,
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "revision": 7,
+    }
+
+    assert receipt_reference(payload) == ("", 7)
 
 
 @pytest.mark.parametrize(
@@ -181,10 +194,26 @@ def test_accepts_supported_success_receipts(payload):
         {"ok": True, "canvas_apply_status": "applied", "applied": True},
         {
             "ok": True,
-            "canvas_apply_status": "direct_applied",
+            "canvas_apply_status": "applied",
             "applied": True,
             "project_id": "project-a",
             "canvas_id": "canvas-a",
+        },
+        {
+            "ok": True,
+            "canvas_apply_status": "applied",
+            "applied": True,
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "revision": True,
+        },
+        {
+            "ok": True,
+            "canvas_apply_status": "applied",
+            "applied": True,
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "revision": -1,
         },
     ],
 )

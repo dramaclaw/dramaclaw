@@ -6,12 +6,17 @@ import { DefaultGraphImageResolver } from './graphImageResolver';
 import { nodeCatalog } from './nodeCatalog';
 import { CanvasNodeFactory } from './nodeFactory';
 import { CanvasToolProcessor } from './toolProcessor';
+import { browserNodeDataDefaults } from '../infrastructure/browserNodeDataDefaults';
 import { uuidGenerator } from '../infrastructure/idGenerator';
 import { freezoneAiGateway } from '../infrastructure/freezoneAiGateway';
 import { webImageSplitGateway } from '../infrastructure/webImageSplitGateway';
 
 export const canvasEventBus = new InMemoryCanvasEventBus();
-export const canvasNodeFactory = new CanvasNodeFactory(uuidGenerator, nodeCatalog);
+export const canvasNodeFactory = new CanvasNodeFactory(
+  uuidGenerator,
+  nodeCatalog,
+  browserNodeDataDefaults,
+);
 export const graphImageResolver = new DefaultGraphImageResolver();
 export const graphContentResolver = new DefaultGraphContentResolver();
 export const canvasToolProcessor = new CanvasToolProcessor(webImageSplitGateway, uuidGenerator);

@@ -62,7 +62,7 @@ _MINIMAL_ECOMMERCE_RECIPES = [
 ]
 
 
-def _load_plugin_module():
+def _load_plugin_module(*, api_executor=False):
     tools_module = types.ModuleType("tools")
     registry_module = types.ModuleType("tools.registry")
     registry_module.tool_error = lambda value: value
@@ -82,6 +82,8 @@ def _load_plugin_module():
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    if not api_executor:
+        module._agent_canvas_executor = lambda: "browser"
     return module
 
 
@@ -1356,7 +1358,6 @@ def test_external_canvas_write_resolves_recommended_model_from_live_catalog(
         "_external_generation_parameter_preflight",
         lambda *_args: None,
     )
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
     monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
         "ok": True, "data": [{
             "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
@@ -1416,7 +1417,6 @@ def test_existing_media_node_update_resolves_recommendations_before_dispatch(mon
         }]},
     )
     monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *_args: None)
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
     monkeypatch.setattr(
         plugin, "_dispatch_mcp_approved_frontend_commands",
         lambda **kwargs: captured.update(kwargs) or "dispatched",
@@ -1513,7 +1513,6 @@ def test_recommended_model_switch_replaces_stale_options_before_generation(monke
         lambda project, canvas: (project, canvas, None),
     )
     monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
 
     def request(_method, path, **_kwargs):
         if "/canvases/" in path:
@@ -1633,7 +1632,6 @@ def test_hermes_canvas_write_resolves_recommended_model(monkeypatch):
         "_external_generation_parameter_preflight",
         lambda *_args: None,
     )
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
     monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
         "ok": True, "data": [{
             "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
@@ -3326,7 +3324,6 @@ def test_canvas_write_rejects_canvas_outside_bound_session(monkeypatch):
     plugin = _load_plugin_module()
     _bind_session(monkeypatch, plugin)
     monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
     monkeypatch.setattr(
         plugin, "_dispatch_mcp_approved_frontend_commands",
         lambda **_kw: pytest.fail("mismatched scope must not dispatch"),
@@ -3369,7 +3366,6 @@ def test_public_create_node_handler_rejects_scope_mismatch_on_external_mcp(monke
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
     monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args, **_kw: None)
     monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *_args: None)
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
     monkeypatch.setattr(
         plugin, "_request", lambda *_a, **_kw: pytest.fail("no API call is needed to reject scope"),
     )
@@ -9506,7 +9502,7 @@ def test_freezone_run_workflow_output_schema_accepts_background_bridge_receipt()
     assert structured["canvas_apply_status"] == "accepted"
 
 
-def test_freezone_run_workflow_output_schema_accepts_direct_apply_receipt():
+def test_freezone_run_workflow_output_schema_accepts_server_receipt():
     plugin = _load_plugin_module()
     structured = _assert_real_mcp_output(
         plugin,
@@ -9517,7 +9513,7 @@ def test_freezone_run_workflow_output_schema_accepts_direct_apply_receipt():
             "project_id": "project-a",
             "canvas_id": "canvas-a",
             "tool_call_status": "completed",
-            "canvas_apply_status": "direct_applied",
+            "canvas_apply_status": "applied",
             "applied": True,
             "cancelled": False,
             "errors": [],
@@ -10147,7 +10143,6 @@ def test_freezone_mcp_default_create_node_uses_frontend_bridge(monkeypatch):
     )
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
     monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-create-node")
-    monkeypatch.delenv("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", raising=False)
 
     def fake_bridge_key(*, project_id, canvas_id, commands):
         assert project_id == "project-a"
@@ -10204,7 +10199,6 @@ def test_freezone_hermes_bridge_does_not_auto_apply_mcp_marker(monkeypatch):
     pending_commands = []
 
     monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP", raising=False)
-    monkeypatch.delenv("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", raising=False)
 
     def fake_bridge_key(*, project_id, canvas_id, commands):
         assert project_id == "project-a"
@@ -10511,112 +10505,6 @@ def test_confirm_draft_revision_conflict_requires_fresh_user_confirmation(monkey
         if name == "freezone_confirm_workflow_draft"
     )
     Draft202012Validator(schema["output_schema"]).validate(result)
-
-
-def test_workflow_requires_browser_receipt_even_in_direct_apply_mode(monkeypatch):
-    plugin = _load_plugin_module()
-    monkeypatch.setattr(
-        plugin, "_resolve_canvas_scope_for_write", lambda *_: ("p", "c", None)
-    )
-    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_: None)
-    monkeypatch.setattr(
-        plugin, "_external_generation_parameter_preflight", lambda *_: None
-    )
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: True)
-    monkeypatch.setattr(plugin, "_external_mcp_agent_enabled", lambda: True)
-    monkeypatch.setattr(
-        plugin, "_dispatch_mcp_approved_frontend_commands", lambda **_: "browser"
-    )
-    monkeypatch.setattr(
-        plugin,
-        "_direct_apply_canvas_commands",
-        lambda *_, **__: pytest.fail("direct write"),
-    )
-    result = plugin._emit_canvas_commands(
-        "p",
-        "c",
-        [{"type": "create_node"}],
-        require_canvas_receipt=True,
-    )
-    assert result == "browser"
-
-
-def test_direct_apply_resolves_add_next_client_alias_for_later_commands(monkeypatch):
-    plugin = _load_plugin_module()
-    saved = []
-
-    def request(method, _path, **kwargs):
-        if method == "GET":
-            return {
-                "ok": True,
-                "data": {
-                    "revision": 4,
-                    "nodes": [
-                        {
-                            "id": "selected-image",
-                            "type": "uploadNode",
-                            "position": {"x": 0, "y": 0},
-                            "data": {"imageUrl": "/static/source.png"},
-                        }
-                    ],
-                    "edges": [],
-                },
-            }
-        saved.append(kwargs["body"])
-        return {"ok": True, "data": {"revision": 5}}
-
-    monkeypatch.setattr(plugin, "_request", request)
-    result = plugin._direct_apply_canvas_commands(
-        "project-a",
-        "canvas-a",
-        [
-            {
-                "type": "add_next_node",
-                "source_node_id": "selected-image",
-                "client_id": "watercolor-result",
-                "node_type": "imageGenNode",
-                "data": {"prompt": "水彩"},
-            },
-            {
-                "type": "update_node_data",
-                "node_id": "watercolor-result",
-                "data": {"count": 1},
-            },
-        ],
-        slim_result=False,
-    )
-
-    assert result["ok"] is True
-    assert len(saved) == 1
-    created = next(
-        node for node in saved[0]["nodes"] if node["type"] == "imageGenNode"
-    )
-    assert created["data"] == {"prompt": "水彩", "count": 1}
-
-
-def test_direct_apply_conflict_reports_no_persisted_commands(monkeypatch):
-    plugin = _load_plugin_module()
-    calls = []
-
-    def request(method, _path, **_kwargs):
-        calls.append(method)
-        if method == "GET":
-            return {"ok": True, "data": {"revision": 4, "nodes": [], "edges": []}}
-        return {"ok": False, "code": "canvas_revision_conflict",
-                "current_revision": 5, "error": "Conflict"}
-
-    monkeypatch.setattr(plugin, "_request", request)
-    result = plugin._direct_apply_canvas_commands(
-        "project-a", "canvas-a",
-        [{"type": "create_node", "client_id": "image-a",
-          "node_type": "imageGenNode", "data": {"prompt": "开场"}}],
-        slim_result=False,
-    )
-    assert calls == ["GET", "PUT"]
-    assert result["code"] == "canvas_revision_conflict"
-    assert result["current_revision"] == 5
-    assert result["command_results"][0]["status"] == "not_applied"
-    assert result.get("created_node_ids") is None
 
 
 def test_canvas_http_revision_conflict_preserves_current_revision():

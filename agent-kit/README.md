@@ -120,7 +120,7 @@ python3 /path/to/dramaclaw-agent-kit/scripts/launch_mcp.py tools
 | `DRAMACLAW_AGENT_PROFILE` | 默认 `freezone:main` |
 | `DRAMACLAW_AGENT_TOKEN_FILE` | 可选短期 Token 文件，优先于免 Token 模式 |
 
-不要开启 `DRAMACLAW_MCP_DIRECT_CANVAS_APPLY=1` 作为普通 Freezone 命令的常规集成方式。默认值 `0` 保留前端审批、React Flow 状态同步、autosave 和执行回执；该开关不改变互动故事 Create/Patch 的服务端原子写入路径。
+在 API 服务端设置 `DRAMACLAW_AGENT_CANVAS_EXECUTOR=server`（默认 `browser`），Agent 的结构修改和上下文读取会由服务端画布执行器处理；运行节点、工作流等 host 命令仍需打开对应画布。`server` 要求同时启用 `DRAMACLAW_CANVAS_PATCH_PUSH=1`。
 
 ## 发布前
 

@@ -5,12 +5,15 @@ import type { XYPosition } from '@xyflow/react';
 import {
   CANVAS_NODE_TYPES, type CanvasNode, type CanvasNodeData, type CanvasNodeType,
 } from '../domain/canvasNodes';
+import type { NodeDataDefaults } from '../domain/nodeRegistry';
 import type { IdGenerator, NodeCatalog, NodeFactory } from './ports';
 
 export class CanvasNodeFactory implements NodeFactory {
   constructor(
     private readonly idGenerator: IdGenerator,
-    private readonly nodeCatalog: NodeCatalog
+    private readonly nodeCatalog: NodeCatalog,
+    private readonly defaults: NodeDataDefaults,
+    private readonly now: () => number = () => Date.now(),
   ) {}
 
   createNode(
@@ -24,10 +27,10 @@ export class CanvasNodeFactory implements NodeFactory {
     // 恰好就是大纲要靠时刻区分的那个场景。工厂只在真正新建节点时被调用（加载画布
     // 是直接 set(nodes)，撤销走快照），所以这里覆盖不到从服务端读回来的节点。
     const nodeData = {
-      ...definition.createDefaultData(),
+      ...definition.createDefaultData(this.defaults),
       ...data,
       ...(type === CANVAS_NODE_TYPES.audio ? { voicePolicyConfirmed: true } : {}),
-      createdAt: Date.now(),
+      createdAt: this.now(),
     } as CanvasNodeData;
 
     return {

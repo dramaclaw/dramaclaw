@@ -13,6 +13,7 @@ from ulid import ULID
 
 from novelvideo.shared import runtime_env
 from novelvideo.freezone.studio import openfilm_studio_enabled
+from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +25,6 @@ _INSTANCE_ID = str(ULID())
 
 def _runtime_edition() -> RuntimeEdition:
     return "ce" if runtime_env.is_ce_effective() else "ee"
-
-
-def _mcp_direct_canvas_apply_enabled() -> bool:
-    return os.environ.get("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 
 
 def _browser_model_url(env_name: str) -> str | None:
@@ -67,9 +59,9 @@ async def get_runtime_config():
             "ok": True,
             "data": {
                 "edition": edition,
+                "agent_canvas_executor": agent_canvas_executor(),
                 "auth_required": edition == "ee",
                 "instance_id": _INSTANCE_ID,
-                "mcp_direct_canvas_apply": _mcp_direct_canvas_apply_enabled(),
                 "openfilm_studio_enabled": openfilm_studio_enabled(),
                 "browser_model_asset_base": _browser_model_url(
                     "BROWSER_MODEL_ASSET_BASE"

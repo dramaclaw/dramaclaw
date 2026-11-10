@@ -7,7 +7,7 @@ import {
   STANDARD_TIME_OF_DAY_OPTIONS,
   timeOfDayLabel,
   timeOfDayOptions,
-} from "@/lib/time-of-day";
+} from "@/features/canvas/domain/timeOfDay";
 
 describe("time-of-day helpers", () => {
   it("exposes the closed standard list without the none value", () => {

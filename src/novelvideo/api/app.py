@@ -117,7 +117,19 @@ def _record_resource_request(resource_key: str) -> tuple[int, int]:
         return _RESOURCE_REQUEST_TOTAL, _RESOURCE_REQUEST_COUNTS[resource_key]
 
 
+async def _warm_canvas_core(pool) -> None:
+    from novelvideo.freezone.canvas_core_pool import CanvasCoreError
+
+    try:
+        await asyncio.to_thread(pool.warm)
+    except CanvasCoreError as exc:
+        logger.warning("canvas_core warm failed code=%s", exc.code)
+
+
 def create_app() -> FastAPI:
+    from novelvideo.freezone.agent_canvas_config import validate_agent_canvas_config
+
+    validate_agent_canvas_config()
     register_verification_routes()
 
     application = FastAPI(title="NovelVideo API", openapi_tags=OPENAPI_TAGS)
@@ -395,6 +407,13 @@ def create_app() -> FastAPI:
 
     @application.on_event("startup")
     async def startup() -> None:
+        from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
+        from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
+
+        if agent_canvas_executor() == "server":
+            pool = get_canvas_core_pool()
+            application.state.canvas_core_pool = pool
+            application.state.canvas_core_warm_task = asyncio.create_task(_warm_canvas_core(pool))
         try:
             from novelvideo.ports.registry import ensure_bootstrap, get_port
 
@@ -440,6 +459,11 @@ def create_app() -> FastAPI:
     @application.on_event("shutdown")
     async def shutdown() -> None:
         from novelvideo.ports.registry import PortNotRegistered, get_port
+
+        pool = getattr(application.state, "canvas_core_pool", None)
+        if pool is not None:
+            await asyncio.to_thread(pool.close)
+            await application.state.canvas_core_warm_task
 
         observer = getattr(application.state, "workflow_event_loop_observer", None)
         if observer is not None:

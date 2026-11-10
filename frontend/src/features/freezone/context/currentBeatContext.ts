@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { NO_CHARACTER_MARKER, NO_PROP_MARKER } from "@/lib/beat-markers";
+import { NO_CHARACTER_MARKER, NO_PROP_MARKER } from "@/features/canvas/domain/beatMarkers";
 import {
   extractMainlineContextsFromNode,
   type MainlineContext,

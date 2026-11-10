@@ -3878,7 +3878,6 @@ def _build_codex_env(
             canvas_bridge_dir_for_profile(hermes_home, profile)
         )
         env["DRAMACLAW_EXTERNAL_MCP"] = "1"
-        env["DRAMACLAW_MCP_DIRECT_CANVAS_APPLY"] = "0"
         env["DRAMACLAW_CHAT_SURFACE"] = "freezone"
     normalized_canvas_id = str(canvas_id or "").strip()
     if normalized_canvas_id:
@@ -3987,7 +3986,6 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS",
                 "DRAMACLAW_CHAT_SURFACE",
                 "DRAMACLAW_EXTERNAL_MCP",
-                "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
                 "DRAMACLAW_AGENT_PROFILE",
                 "DRAMACLAW_PROJECT_ID",
                 "DRAMACLAW_ROOT",
@@ -6282,7 +6280,7 @@ async def _stream_assistant_reply_codex(
                     dispatch_result.get("ok") is True
                     and dispatch_result.get("applied") is True
                     and str(dispatch_result.get("canvas_apply_status") or "")
-                    in {"accepted", "applied", "direct_applied"}
+                    in {"accepted", "applied"}
                     and bool(bridge_key)
                 )
                 if applied:

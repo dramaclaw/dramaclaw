@@ -1,7 +1,7 @@
+import type { CanvasCommandToolResultPayload } from "@/features/freezone/canvasCommandReceipt";
 import type { ServerFrame } from "@/features/superchat/types";
 import {
   readCanvasCommandReceipt,
-  type CanvasCommandToolResultPayload,
 } from "@/features/freezone/canvasCommandToolResult";
 
 type ExternalCanvasCommandClaim = {

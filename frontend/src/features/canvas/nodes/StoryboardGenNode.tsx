@@ -35,9 +35,9 @@ import { useUpstreamImages } from '@/features/canvas/application/useUpstreamGrap
 import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { backendErrorToastMessage } from '@/lib/api-errors';
 import { useModelTaskAccess } from '@/lib/model-task-access';
+import { parseAspectRatio } from '@/features/canvas/domain/aspectRatio';
 import {
   detectAspectRatio,
-  parseAspectRatio,
   pickClosestAspectRatio,
   resolveImageDisplayUrl,
 } from '@/features/canvas/application/imageData';
