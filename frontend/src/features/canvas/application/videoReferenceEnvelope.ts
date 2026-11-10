@@ -6,7 +6,7 @@ import {
   type VideoReferenceEnvelope,
 } from '@/features/canvas/domain/videoReferenceLimits';
 import { readFreezoneVideoModels } from '@/features/canvas/hooks/useFreezoneVideoModels';
-import type { ModelOption } from '@/features/canvas/ui/ProviderModelPicker';
+import type { ModelOption } from '@/features/canvas/domain/modelOptions';
 
 /**
  * 把一个视频节点解析成它**当前所选模型**的引用上限包络。

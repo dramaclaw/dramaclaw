@@ -23,6 +23,7 @@ const nodeTests = [
   "src/__tests__/features/canvas-core/node-canvas-environment.test.ts",
   "src/__tests__/features/canvas-core/node-canvas-core.test.ts",
   "src/__tests__/features/canvas-core/node-entry-imports.test.ts",
+  "src/__tests__/features/canvas-core/server-entry.test.ts",
   "src/__tests__/features/companion/pet-gallery-groups-contract.test.ts",
   "src/__tests__/features/freezone/canvas-agent-single-session-contract.test.ts",
   "src/__tests__/features/freezone/chat-launcher-contract.test.ts",

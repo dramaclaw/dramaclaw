@@ -8,57 +8,15 @@
  * store 里——直接写 `node.data.scene` 会被下一次自动保存原样盖回去，所以要走 store，
  * 顺带得到一步撤销。其余情形从节点数据读、改、写回。
  */
-import {
-  agentSceneDigest,
-  applyAgentSceneEdit,
-  type PrevizAgentEditResult,
-  type PrevizAgentSceneDigest,
-} from './domain/agentEdit';
-import { createDefaultScene, type PrevizScene } from './domain/scene';
+import { planNodeAgentSceneEdit, setNodeAgentSceneReader } from './agentScenePlanning';
+import { buildNodeScenePatch, type NodeScenePatch } from './nodeScene';
 import { clipById } from './domain/timeline';
-import { buildNodeScenePatch, loadNodeScene, type NodeScenePatch } from './nodeScene';
 import { usePrevizStore } from './store';
 
-type SceneRead = { ok: true; scene: PrevizScene } | { ok: false; error: string };
-
-function readCurrentScene(nodeId: string, nodeData: Record<string, unknown>): SceneRead {
+setNodeAgentSceneReader((nodeId) => {
   const store = usePrevizStore.getState();
-  if (store.editingNodeId === nodeId) return { ok: true, scene: store.scene };
-  if (nodeData.scene == null) return { ok: true, scene: createDefaultScene() };
-  const loaded = loadNodeScene(nodeData.scene);
-  if (!loaded.ok) return { ok: false, error: 'scene was saved by a newer version and cannot be edited here' };
-  return { ok: true, scene: loaded.scene };
-}
-
-/** 给 Agent 读的当前场景；读不了（版本过新）时为 null。 */
-export function nodeAgentSceneDigest(
-  nodeId: string,
-  nodeData: Record<string, unknown>,
-): PrevizAgentSceneDigest | null {
-  const current = readCurrentScene(nodeId, nodeData);
-  return current.ok ? agentSceneDigest(current.scene) : null;
-}
-
-/**
- * 只算不写：命令校验用它在用户确认之前就把错误报回给 Agent。
- *
- * `planned` 是同一批命令里前一条对这个节点算出来的场景：执行时命令是一条接一条落地的，
- * 校验也得接着上一条的结果往下算，否则两条都删同一个对象会双双通过、执行到第二条才失败。
- */
-export function planNodeAgentSceneEdit(
-  nodeId: string,
-  nodeData: Record<string, unknown>,
-  edit: unknown,
-  planned?: PrevizScene,
-): PrevizAgentEditResult {
-  const current: SceneRead = planned ? { ok: true, scene: planned } : readCurrentScene(nodeId, nodeData);
-  if (!current.ok) return current;
-  const result = applyAgentSceneEdit(current.scene, edit);
-  if (result.ok && !buildNodeScenePatch(result.scene).ok) {
-    return { ok: false, error: 'scene would become too large to save' };
-  }
-  return result;
-}
+  return store.editingNodeId === nodeId ? store.scene : undefined;
+});
 
 /** 执行编辑并返回要写回节点的补丁；不能执行时抛错，由命令执行器记成这条命令失败。 */
 export function landNodeAgentSceneEdit(

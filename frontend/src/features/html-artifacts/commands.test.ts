@@ -1,9 +1,12 @@
 import {registerFreezoneCanvasRuntime} from '@/features/freezone/canvasSyncRuntime';
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 import {useCanvasStore} from '@/stores/canvasStore';
-import {applyCanvasChatCommandsAsync,extractCanvasChatCommandEnvelopes} from '@/features/freezone/canvasChatCommands';
+import { extractCanvasChatCommandEnvelopes } from '@/features/freezone/canvasCommandEnvelope';
+import {
+  applyCanvasChatCommandsAsync,
+} from '@/features/freezone/canvasChatCommands';
 import * as api from './api';
-import {parseHtmlArtifactCommand} from './commands';
+import { parseHtmlArtifactCommand } from './commandSchema';
 import {subscribeNodeAction,publishNodeActionAccepted,publishNodeActionSuccess} from '@/features/canvas/application/nodeActionResult';
 import {executeWorkflowHtmlNode} from '@/features/canvas/application/workflowHtmlRuntime';
 vi.mock('@/features/canvas/application/workflowHtmlRuntime',()=>({executeWorkflowHtmlNode:vi.fn()}));

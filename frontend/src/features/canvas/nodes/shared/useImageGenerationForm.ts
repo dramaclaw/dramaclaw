@@ -40,7 +40,7 @@ import {
   backendErrorToastMessage,
 } from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
-import { SHARED_MODELS } from '@/features/canvas/ui/ProviderModelPicker';
+import { SHARED_MODELS } from '@/features/canvas/domain/modelOptions';
 import { extractRequestId } from '@/features/canvas/application/generationErrorReport';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { describeCameraSelection } from '@/features/canvas/nodes/CameraPickerPopover';

@@ -10,7 +10,8 @@ import {
 } from "@/features/freezone/canvasChatCommands";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { normalizeMessage } from "@/features/superchat/message";
-import { buildCanvasCommandToolResultPayloadForTest } from "@/features/freezone/canvasCommandToolResult";
+import { buildCanvasCommandToolResultPayload as buildCanvasCommandToolResultPayloadForTest } from "@/features/freezone/canvasCommandReceipt";
+import i18next from "i18next";
 import {
   SUPERCHAT_CANVAS_COMMAND_EVENT,
   abortTerminalGraceMsForTest,
@@ -2349,6 +2350,7 @@ describe("Skill Studio question response", () => {
 
   it("summarizes canvas command failures without exposing protocol details to users", () => {
     const payload = buildCanvasCommandToolResultPayloadForTest({
+      translate: (key, options) => i18next.t(key, options),
       bridgeKey: "bridge-a",
       projectId: "project-a",
       canvasId: "canvas-a",
@@ -2385,6 +2387,7 @@ describe("Skill Studio question response", () => {
   it("marks a workflow persistence failure as failed even after parameter updates applied", () => {
     const persistenceError = "无法创建持久化工作流记录，未启动节点动作：database unavailable";
     const payload = buildCanvasCommandToolResultPayloadForTest({
+      translate: (key, options) => i18next.t(key, options),
       bridgeKey: "bridge-workflow-persistence",
       projectId: "project-a",
       canvasId: "canvas-a",
@@ -2422,6 +2425,7 @@ describe("Skill Studio question response", () => {
 
   it("keeps non-workflow partial command batches distinguishable from terminal workflow failure", () => {
     const payload = buildCanvasCommandToolResultPayloadForTest({
+      translate: (key, options) => i18next.t(key, options),
       bridgeKey: "bridge-partial-edit",
       result: {
         applied: 1,

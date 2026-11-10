@@ -15,6 +15,7 @@ import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import { subscribeNodeAction } from "@/features/canvas/application/nodeActionResult";
 import { buildCanvasOntologyContext } from "@/features/canvas/ontology/canvasOntology";
+import { extractCanvasChatCommandEnvelopes } from "@/features/freezone/canvasCommandEnvelope";
 import {
   applyCanvasChatCommands,
   applyCanvasChatCommandsAsync,
@@ -25,7 +26,6 @@ import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
   type CanvasChatCommandEnvelope,
   emitCanvasCommandApproval,
-  extractCanvasChatCommandEnvelopes,
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
   subscribeCanvasCommandApprovals,
   waitForImmediateCanvasCommandResult,

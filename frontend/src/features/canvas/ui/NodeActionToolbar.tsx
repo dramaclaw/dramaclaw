@@ -121,11 +121,8 @@ import { useCanvasProjectionStatus } from "@/features/freezone/projectionStatusS
 import { preloadMatteWorker } from "@/features/canvas/application/matteClient";
 import { matteImage } from "@/features/canvas/application/matteImage";
 import { downloadAudioAs } from "@/features/canvas/application/audioDownload";
-import {
-  createVideoUpscaleResultNode,
-  VIDEO_UPSCALE_RESOLUTIONS,
-  VIDEO_UPSCALE_RESOLUTION_LABEL,
-} from "@/features/canvas/application/videoUpscale";
+import { VIDEO_UPSCALE_RESOLUTIONS, VIDEO_UPSCALE_RESOLUTION_LABEL } from "@/features/canvas/domain/videoUpscaleResolutions";
+import { createVideoUpscaleResultNode } from "@/features/canvas/application/videoUpscale";
 import type { FreezoneVideoUpscaleResolution } from "@/api/ops";
 import { getNodeToolPlugins } from "@/features/canvas/tools";
 import type { ToolIconKey } from "@/features/canvas/tools";

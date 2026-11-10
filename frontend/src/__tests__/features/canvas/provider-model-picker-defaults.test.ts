@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SHARED_MODEL_ID } from "@/features/canvas/domain/defaultModelIds";
-import { SHARED_MODELS } from "@/features/canvas/ui/ProviderModelPicker";
+import { SHARED_MODELS } from "@/features/canvas/domain/modelOptions";
 
 describe("ProviderModelPicker image model defaults", () => {
   it("uses the current NewAPI image model as the static fallback default", () => {

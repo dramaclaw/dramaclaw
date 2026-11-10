@@ -1,11 +1,12 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import { startCanvasCommandStream } from "./canvasCommandStream";
 import { canvasCreationActions } from "@/features/canvas/application/nodeCatalog";
 import { uuidGenerator } from "@/features/canvas/infrastructure/idGenerator";
 import { htmlArtifactNodePatches } from '@/features/html-artifacts/nodeMetadata';
 import { HtmlArtifactEditor } from '@/features/html-artifacts/HtmlArtifactEditor';
 import { HTML_ARTIFACT_OPEN_EVENT, HTML_ARTIFACT_REFERENCE_EVENT, HTML_ARTIFACT_UPDATED_EVENT, type HtmlArtifactTarget } from '@/features/html-artifacts/api';
-// SPDX-License-Identifier: Elastic-2.0
-// Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -134,11 +135,11 @@ import {
 } from "@/components/ui/tooltip";
 import type { CanvasEdge, CanvasNode } from "@/stores/canvasStore";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
+import { extractCanvasChatCommandEnvelopes } from "@/features/freezone/canvasCommandEnvelope";
 import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
   canvasCommandEnvelopeMatchesCanvas,
   emitCanvasCommandApproval,
-  extractCanvasChatCommandEnvelopes,
   FREEZONE_CANVAS_COMMAND_RESULT_EVENT,
   normalizeCanvasChatCommandEnvelopesForValidation,
   type CanvasChatCommandApplyResult,
@@ -1898,6 +1899,7 @@ export function FreezoneShell({
         normalizedEnvelopes,
         currentState.nodes,
         currentState.edges,
+        browserNodeDataDefaults,
       );
       if (!validation.ok) {
         const errors = [

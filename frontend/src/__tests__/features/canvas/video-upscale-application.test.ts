@@ -24,10 +24,7 @@ vi.mock('@/lib/url-params', async (importOriginal) => ({
   readUrl,
 }));
 
-import {
-  createVideoUpscaleResultNode,
-  submitVideoUpscale,
-} from '@/features/canvas/application/videoUpscale';
+import { createVideoUpscaleResultNode, submitVideoUpscale } from '@/features/canvas/application/videoUpscale';
 
 const JOB_REF = { task_key: 'tk-up', task_type: 'freezone_video_upscale', job_id: 'job-up' };
 

@@ -25,7 +25,7 @@ import {
   isAuthoritativeEmptyCatalog,
   useFreezoneImageModels,
 } from '@/features/canvas/hooks/useFreezoneImageModels';
-import { SHARED_MODELS } from '@/features/canvas/ui/ProviderModelPicker';
+import { SHARED_MODELS } from '@/features/canvas/domain/modelOptions';
 import {
   formatResolutionLabel,
   resolveModelAspectOptions,

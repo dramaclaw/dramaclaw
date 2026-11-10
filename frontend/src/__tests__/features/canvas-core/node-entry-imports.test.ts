@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { collectImportGraph, importChain, type ImportGraph } from "./importGraph";
 
 const srcRoot = path.resolve(__dirname, "../../..");
-const nodeEntry = path.join(srcRoot, "features/canvas/nodeEntry.ts");
+const entries = ["nodeEntry.ts", "serverEntry.ts"];
 
 /** Packages the Node entry may load. Anything new has to be checked for browser needs first. */
 const ALLOWED_PACKAGES = ["i18next", "uuid", "zustand/vanilla"];
@@ -155,16 +155,16 @@ function unguardedBrowserGlobalsIn(file: string): string[] {
   return unguardedBrowserGlobals(relative(file), fs.readFileSync(file, "utf8"));
 }
 
-describe("Node canvas entry imports", () => {
-  it("reaches no React, view, network or browser store module", () => {
-    const graph = collectImportGraph([nodeEntry], srcRoot);
+describe("Node and server canvas entry imports", () => {
+  it.each(entries)("reaches no React, view, network or browser store module: %s", (entry) => {
+    const graph = collectImportGraph([path.join(srcRoot, "features/canvas", entry)], srcRoot);
 
     expect(browserDependencies(graph)).toEqual([]);
     expect([...graph.packages.keys()].sort()).toEqual(ALLOWED_PACKAGES);
   });
 
-  it("reads no browser global without checking that it exists", () => {
-    const graph = collectImportGraph([nodeEntry], srcRoot);
+  it.each(entries)("reads no browser global without checking that it exists: %s", (entry) => {
+    const graph = collectImportGraph([path.join(srcRoot, "features/canvas", entry)], srcRoot);
 
     expect([...graph.files].sort().flatMap(unguardedBrowserGlobalsIn)).toEqual([]);
   });

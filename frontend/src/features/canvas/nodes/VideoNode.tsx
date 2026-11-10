@@ -222,10 +222,8 @@ import {
   type ExtendClipRange,
 } from "@/features/canvas/application/videoExtendClip";
 import { trimAndUploadExtendClip } from "@/features/canvas/application/videoExtendTrim";
-import {
-  submitVideoUpscale,
-  VIDEO_UPSCALE_RESOLUTIONS,
-} from "@/features/canvas/application/videoUpscale";
+import { VIDEO_UPSCALE_RESOLUTIONS } from "@/features/canvas/domain/videoUpscaleResolutions";
+import { submitVideoUpscale } from "@/features/canvas/application/videoUpscale";
 import {
   CAMERA_MOVEMENT_PRESETS,
   findCameraMovementPreset,
@@ -269,7 +267,7 @@ import {
 import type { FreezoneGenerationHistoryRecord } from "@/api/ops";
 import { readUrl } from "@/lib/url-params";
 import { mediaDurationMs } from "@/lib/media-duration";
-import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
+import type { ModelOption } from "@/features/canvas/domain/modelOptions";
 import { CreditCostPill } from "@/components/credits/credit-visual";
 import { NodeHistoryRail } from "@/features/canvas/ui/NodeHistoryRail";
 import { VideoOperationsPanel } from "@/features/canvas/nodes/VideoOperationsPanel";

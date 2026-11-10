@@ -3,7 +3,7 @@
 import type { FreezonePresetCanvasRequest } from "@/api/canvas";
 import type { CanvasNodeData, CanvasNodeType } from "@/features/canvas/domain/canvasNodes";
 import type { CanvasEdgeSemanticKind } from "@/features/freezone/canvasEdgeSemantics";
-import type { HtmlArtifactCommand } from "@/features/html-artifacts/commands";
+import type { HtmlArtifactCommand } from "@/features/html-artifacts/commandSchema";
 
 export const CANVAS_CHAT_COMMANDS_SCHEMA_VERSION = "canvas_chat_commands.v1";
 

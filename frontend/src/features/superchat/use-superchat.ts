@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { CanvasCommandToolResultPayload } from "@/features/freezone/canvasCommandReceipt";
 import { localSnapshot, markLocalMessageChanges } from "./message-parts-origin";
 import { createMessagePartsQueue, SnapshotRejectedError } from "./message-parts-queue";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -35,7 +36,6 @@ import { hasStructuredContent } from "@/features/superchat/spec-extract";
 import {
   FREEZONE_CANVAS_COMMAND_TOOL_RESULT_EVENT,
   replayPendingCanvasCommandFollowups,
-  type CanvasCommandToolResultPayload,
 } from "@/features/freezone/canvasCommandToolResult";
 import {
   FREEZONE_CANVAS_CONTEXT_TOOL_RESULT_EVENT,

@@ -13,17 +13,6 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import { generationTaskDescriptor } from './resumeGeneration';
 import { notifyTaskStillRunning } from './errorDialog';
 
-export const VIDEO_UPSCALE_RESOLUTIONS: FreezoneVideoUpscaleResolution[] = [
-  '1080p',
-  '2k',
-  '4k',
-];
-export const VIDEO_UPSCALE_RESOLUTION_LABEL: Record<FreezoneVideoUpscaleResolution, string> = {
-  '1080p': '1080P',
-  '2k': '2K',
-  '4k': '4K',
-};
-
 /**
  * 在源视频下游建「高清」结果节点（payload 与 NodeActionToolbar.handleVideoUpscale
  * 一致：复用 video 节点的播放器/角标/尺寸，打 isUpscaleNode 标记）。不切换选中态——

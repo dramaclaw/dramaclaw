@@ -116,7 +116,7 @@ import {
 } from "@/features/canvas/application/resumeGeneration";
 import { translateNodeText } from "@/features/canvas/application/translateText";
 import { readUrl } from "@/lib/url-params";
-import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
+import type { ModelOption } from "@/features/canvas/domain/modelOptions";
 import { writeLastVideoModel } from "@/features/canvas/domain/lastVideoModel";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { setCanvasModelCatalogProvider, type CanvasModelCatalog } from "../domain/canvasModelCatalogs";
 import { useEffect, useSyncExternalStore } from "react";
 
 import {
@@ -7,17 +8,9 @@ import {
   type FreezoneImageModelInfo,
 } from "@/api/ops";
 import { readUrl } from "@/lib/url-params";
-import {
-  SHARED_MODELS,
-  type ModelOption,
-} from "@/features/canvas/ui/ProviderModelPicker";
+import { SHARED_MODELS, type ModelOption } from "@/features/canvas/domain/modelOptions";
 
-export interface UseFreezoneImageModelsResult {
-  models: ModelOption[];
-  isLoading: boolean;
-  isFallback: boolean;
-  error: Error | null;
-}
+export type UseFreezoneImageModelsResult = CanvasModelCatalog;
 
 // Module-level shared store. One state snapshot per project, one fetch per
 // project per tab lifetime. Every consumer reads the same reference via
@@ -28,11 +21,6 @@ const listeners = new Map<string, Set<() => void>>();
 const inFlightProjects = new Set<string>();
 const pendingRefreshProjects = new Set<string>();
 
-// Lazy singleton — must NOT touch `SHARED_MODELS` at module top level
-// because we have a circular import with `ProviderModelPicker.tsx` (the
-// picker imports this hook). Reading SHARED_MODELS during this module's
-// top-level evaluation would hit a TDZ. Reading it lazily inside a
-// function dodges that.
 let noProjectStateMemo: UseFreezoneImageModelsResult | null = null;
 function getNoProjectState(): UseFreezoneImageModelsResult {
   if (!noProjectStateMemo) {
@@ -214,3 +202,5 @@ export function isAuthoritativeEmptyCatalog(
 ): boolean {
   return !result.isLoading && !result.isFallback && result.models.length === 0;
 }
+
+setCanvasModelCatalogProvider("image", getFreezoneImageModelsSnapshot);

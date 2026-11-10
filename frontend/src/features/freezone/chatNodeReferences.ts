@@ -1,3 +1,4 @@
+import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import type { ChatAttachment } from "@/features/superchat/types";
 import {
   CANVAS_NODE_TYPES,
@@ -12,8 +13,8 @@ import {
   type CanvasOntologyContext,
 } from "@/features/canvas/ontology/canvasOntology";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
-import { getFreezoneImageModelsSnapshot } from "@/features/canvas/hooks/useFreezoneImageModels";
-import { getFreezoneVideoModelsSnapshot } from "@/features/canvas/hooks/useFreezoneVideoModels";
+import { getCanvasImageModelCatalog } from "@/features/canvas/domain/canvasModelCatalogs";
+import { getCanvasVideoModelCatalog } from "@/features/canvas/domain/canvasModelCatalogs";
 import {
   sortUpstreamByReferenceOrder,
   upstreamNodesInEdgeOrder,
@@ -34,9 +35,9 @@ import {
   BASE_CANVAS_ACTION_CAPABILITIES,
 } from "@/features/freezone/context/canvasActionCatalog";
 import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
+import { isCanvasChatRunNodeAction } from "@/features/freezone/canvasCommandEnvelope";
 import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
-  isCanvasChatRunNodeAction,
   normalizeCanvasChatCommandEnvelopesForValidation,
   type CanvasChatCommandEnvelope,
 } from "@/features/freezone/canvasChatCommands";
@@ -236,7 +237,7 @@ function buildAgentCanvasNodeActionCatalog(
   node: CanvasNode,
   context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[] },
 ): CanvasNodeActionCatalog & Record<string, unknown> {
-  const catalog = buildCanvasNodeActionCatalog(node, context);
+  const catalog = buildCanvasNodeActionCatalog(node, { ...context, nodeDataDefaults: browserNodeDataDefaults });
   const executableActions = catalog.actions.filter((action) =>
     isAgentExecutableNodeAction(action.action));
   if (node.type !== CANVAS_NODE_TYPES.beatContext) {
@@ -345,7 +346,7 @@ function buildAgentCanvasActionCatalog(
   nodes: readonly CanvasNode[],
   edges: readonly CanvasEdge[],
 ): ReturnType<typeof buildCanvasActionCatalog> {
-  const catalog = buildCanvasActionCatalog([...nodes], [...edges]);
+  const catalog = buildCanvasActionCatalog([...nodes], [...edges], browserNodeDataDefaults);
   return {
     ...catalog,
     frontend_command_catalog: catalog.frontend_command_catalog.filter((capability) => {
@@ -1374,8 +1375,8 @@ function buildNodeCreateSchema(
   if (!isAgentCreatableCanvasNodeType(schemaNodeType)) return null;
   if (modelId && (schemaNodeType === CANVAS_NODE_TYPES.imageGen || schemaNodeType === CANVAS_NODE_TYPES.video)) {
     const snapshot = schemaNodeType === CANVAS_NODE_TYPES.video
-      ? getFreezoneVideoModelsSnapshot()
-      : getFreezoneImageModelsSnapshot();
+      ? getCanvasVideoModelCatalog()
+      : getCanvasImageModelCatalog();
     if (snapshot.isLoading || snapshot.isFallback) {
       return {
         node_type: schemaNodeType,
@@ -1407,7 +1408,7 @@ function buildNodeCreateSchema(
     position: { x: 0, y: 0 },
     data: (modelId ? { model: modelId } : {}) as CanvasNodeData,
   };
-  const catalog = buildCanvasNodeActionCatalog(node);
+  const catalog = buildCanvasNodeActionCatalog(node, { nodeDataDefaults: browserNodeDataDefaults });
   return {
     node_type: schemaNodeType,
     ...(modelId ? { model_id: modelId } : {}),
@@ -1982,6 +1983,7 @@ export async function buildCanvasContextRequestResponses(params: {
             normalizedEnvelopes,
             params.nodes,
             params.edges,
+            browserNodeDataDefaults,
           );
           response.push({
             type: "validate_canvas_commands",
@@ -2064,6 +2066,7 @@ export async function buildCanvasContextRequestResponses(params: {
           if (!node) throw new Error(`node not found: ${request.node_id ?? ""}`);
           if (!request.action) throw new Error("unsupported HTML read action");
           const actionDefinition = buildCanvasNodeActionCatalog(node, {
+            nodeDataDefaults: browserNodeDataDefaults,
             nodes: params.nodes,
             edges: params.edges,
           }).actions.find((item) => item.action === request.action);

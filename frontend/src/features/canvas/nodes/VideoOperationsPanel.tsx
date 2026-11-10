@@ -121,10 +121,8 @@ import {
 import { awaitTaskCompletion } from "@/api/tasks";
 import { useModelTaskAccess } from "@/lib/model-task-access";
 import { readUrl } from "@/lib/url-params";
-import {
-  ProviderModelPicker,
-  type ModelOption,
-} from "@/features/canvas/ui/ProviderModelPicker";
+import { ProviderModelPicker } from "@/features/canvas/ui/ProviderModelPicker";
+import { type ModelOption } from "@/features/canvas/domain/modelOptions";
 import { writeLastVideoModel } from "@/features/canvas/domain/lastVideoModel";
 import { CreditCostPill } from "@/components/credits/credit-visual";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
