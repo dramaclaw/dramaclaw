@@ -55,7 +55,6 @@ python scripts/compact_chat_ui_events.py /path/to/chat.db --apply
 
 ## 浏览器网络链路复现（2026-11-10）
 
-使用 `scripts/acceptance/chat_oom_replay.py` 提供仅监听 127.0.0.1:18791 的临时服务，Vite 在 5198 代理到该服务，浏览器打开 `/e2e/chat-oom.html`。
 
 复用实际 `useSuperChat` hook、HTTP 客户端、快照队列、`append_chat_ui_event`、`_send_scope_changed`、`_history` 及 SQLite 存储。测试页面显示 hook 的状态，不挂载完整聊天面板；WebSocket 接收分发由测试服务提供，登录与项目解析使用固定测试上下文，模型调用替换成确定性的思考增量。因而这是浏览器网络链路集成复现，不是生产部署或真实模型验收。
 

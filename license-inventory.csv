@@ -3311,7 +3311,6 @@ sbom.spdx.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate anno
 schemas/workflow/v1/stable-contract.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/acceptance/Dockerfile.canvas-command-push,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/acceptance/api_coverage_report.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-scripts/acceptance/chat_oom_replay.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/acceptance/checks/m05.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/acceptance/collect_canvas_push_evidence.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/acceptance/foss_only_e2e.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

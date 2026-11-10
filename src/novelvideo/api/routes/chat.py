@@ -60,7 +60,7 @@ from novelvideo.chat.hermes_workspace import (
     ensure_user_hermes_workspace,
     sync_freezone_hermes_workflow_skills,
 )
-from novelvideo.chat.store import ChatScope, ChatUiEventRejected, chat_store
+from novelvideo.chat.store import ChatScope, chat_store
 from novelvideo.chat.stream_delta import AssistantDeltaEncoder
 from novelvideo.chat.turn_images import CANVAS_NODE_REFERENCE_TYPE, referenced_image_paths
 from novelvideo.freezone.agent_canvas_config import canvas_patch_push_enabled
@@ -358,12 +358,6 @@ class ScopeSetIn(BaseModel):
     history_before: str | None = None
 
 
-class ChatUiEventIn(BaseModel):
-    scope: ChatScopePayload
-    turn_id: str
-    event: dict[str, Any]
-
-
 class AgentPermissionResultIn(BaseModel):
     scope: ChatScopePayload | None = None
     request_id: str | int
@@ -635,34 +629,6 @@ async def append_chat_notification(
             ),
         )
     return {"ok": True, "data": message}
-
-
-@router.post("/chat/ui-events")
-async def append_chat_ui_event(
-    payload: ChatUiEventIn,
-    user: dict = Depends(get_api_user),
-) -> dict[str, Any]:
-    username = str(user["username"])
-    scope = _scope_from_model(payload.scope)
-    project_ctx = None
-    if scope.kind == "project":
-        project_ctx = await _project_context_for_scope(user, scope)
-    turn_id = payload.turn_id.strip()
-    if not turn_id:
-        raise HTTPException(status_code=400, detail="turn_id is required")
-    try:
-        event = await chat_store.append_ui_event_async(
-            username,
-            _chat_store_scope_for_project_context(scope, project_ctx),
-            turn_id,
-            payload.event,
-        )
-    except ChatUiEventRejected as exc:
-        # Permanent for this turn: the client should stop retrying, not report on every flush.
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, "data": event}
 
 
 @router.post("/chat/uploads")

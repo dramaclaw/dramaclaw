@@ -7,6 +7,7 @@ import sys
 
 import pytest
 from fastapi import HTTPException
+from fastapi.routing import iter_route_contexts
 from fastapi.testclient import TestClient
 
 from novelvideo.ports.auth_contract import AuthError
@@ -97,8 +98,10 @@ def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None
 
     assert cancel.status_code == 200
     assert cancel.json()["ok"] is True
-    assert ui_event.status_code == 200
-    assert ui_event.json()["ok"] is True
+    assert ui_event.status_code == 404
+    assert "/api/v1/chat/ui-events" not in {
+        route.path for route in iter_route_contexts(app.routes)
+    }
 
 
 def test_director_auto_database_failure_does_not_block_api_startup(monkeypatch) -> None:
