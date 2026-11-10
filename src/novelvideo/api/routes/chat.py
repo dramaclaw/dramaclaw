@@ -3687,6 +3687,22 @@ async def _stream_project_turn(
                 },
                 send_lock,
             )
+        elif event_type in {"item", "item_delta"}:
+            fields = (
+                ("message_id", "item_id", "card")
+                if event_type == "item"
+                else ("message_id", "item_id", "kind", "offset", "text")
+            )
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "chat.item" if event_type == "item" else "chat.item.delta",
+                    "scope": scope.to_dict(),
+                    "turn_id": turn_id,
+                    **{key: event[key] for key in fields},
+                },
+                send_lock,
+            )
         elif event_type == "assistant_delta":
             assistant_sent_text = str(event.get("text") or "")
             await _send_assistant_delta(
@@ -3973,6 +3989,22 @@ async def _stream_home_turn_codex(
                     "status": event.get("status"),
                     "disposition": event.get("disposition"),
                     "error": event.get("error"),
+                },
+                send_lock,
+            )
+        elif event_type in {"item", "item_delta"}:
+            fields = (
+                ("message_id", "item_id", "card")
+                if event_type == "item"
+                else ("message_id", "item_id", "kind", "offset", "text")
+            )
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "chat.item" if event_type == "item" else "chat.item.delta",
+                    "scope": scope.to_dict(),
+                    "turn_id": turn_id,
+                    **{key: event[key] for key in fields},
                 },
                 send_lock,
             )

@@ -113,7 +113,10 @@ async def test_timeout_elapsed_reaches_public_terminal_event(
     )
     monkeypatch.setattr(backend_sdk, "_start_codex_turn", lambda *a, **kw: FakeTurn())
     reads = 0
-    event_count = 2 + len(notifications)  # thread_started + egress_submitted
+    event_count = 2 + sum(  # thread_started + egress_submitted + notification events
+        2 if notification.method in {"item/started", "item/agentMessage/delta"} else 1
+        for notification in notifications
+    )
 
     async def controlled_wait_for(awaitable, *, timeout):
         nonlocal reads

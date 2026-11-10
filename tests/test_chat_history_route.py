@@ -330,3 +330,64 @@ async def test_clear_invalidates_cached_items_with_unchanged_probe(store, monkey
         assert HISTORY_CACHE.read_page(client, thread_id).messages[0]["content"] == "xxx"
     finally:
         HISTORY_CACHE.invalidate(thread_id)
+
+
+@pytest.mark.asyncio
+async def test_project_codex_item_frames(store, monkeypatch, tmp_path):
+    scope = ChatScope(kind="project", id="project-id", surface="director")
+    project = SimpleNamespace(
+        project_name="project-name", state_dir=tmp_path / "project-state",
+        output_dir=tmp_path / "output", project_id="project-id",
+        requester_user_id="test-user", requester_username="test-user", requester_principals=(),
+    )
+
+    async def context(*args):
+        return project
+
+    @asynccontextmanager
+    async def egress(**kwargs):
+        yield None
+
+    async def never(*args, **kwargs):
+        await asyncio.Future()
+
+    card = {"id": "m-1", "seq": 7, "type": "text", "text": ""}
+
+    async def stream(username, project, text, on_event, **kwargs):
+        await on_event({
+            "type": "item", "message_id": "assistant:turn-1", "item_id": "m-1", "card": card,
+        })
+        await on_event({
+            "type": "item_delta", "message_id": "assistant:turn-1", "item_id": "m-1",
+            "kind": "text", "offset": 0, "text": "hello",
+        })
+
+    monkeypatch.setattr(routes, "_project_context_for_scope", context)
+    monkeypatch.setattr(routes, "request_egress_scope", egress)
+    monkeypatch.setattr(service, "get_chat_backend_name", lambda: "codex")
+    monkeypatch.setattr(service, "stream_assistant_reply", stream)
+    for name in (
+        "_chat_heartbeat", "_interrupt_agent_on_disconnect", "_receive_bridge_results_during_turn",
+        "_watch_pending_canvas_commands", "_watch_pending_canvas_context_requests",
+        "_watch_pending_skill_studio_events", "_watch_pending_clarification_events",
+    ):
+        monkeypatch.setattr(routes, name, never)
+    websocket = RecordingWebSocket()
+    await routes._stream_project_turn(
+        websocket=websocket, user={"username": "test-user"}, username="test-user",
+        scope=scope, text="hello", attachments=[], turn_id="business-1",
+    )
+    assert [f for f in websocket.frames if f["type"] in {"chat.item", "chat.item.delta"}] == [
+        {
+            "type": "chat.item",
+            "scope": {"kind": "project", "id": "project-id", "surface": "director"},
+            "turn_id": "business-1", "message_id": "assistant:turn-1",
+            "item_id": "m-1", "card": card,
+        },
+        {
+            "type": "chat.item.delta",
+            "scope": {"kind": "project", "id": "project-id", "surface": "director"},
+            "turn_id": "business-1", "message_id": "assistant:turn-1",
+            "item_id": "m-1", "kind": "text", "offset": 0, "text": "hello",
+        },
+    ]

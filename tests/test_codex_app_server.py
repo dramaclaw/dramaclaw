@@ -1860,16 +1860,27 @@ async def test_codex_stream_maps_structured_runtime_events(monkeypatch, tmp_path
         "egress_submitted",
         "turn_started",
         "plan_update",
+        "item_delta",
         "thought_delta",
+        "item_started",
         "tool_started",
         "tool_updated",
         "usage_update",
+        "item_completed",
         "tool_updated",
+        "item_delta",
         "assistant_delta",
         "turn_completed",
         "egress_disposition",
         "complete",
     ]
+    assert [
+        (event.item_id, event.name, event.summary_index)
+        for event in events
+        if event.type == "item_delta"
+    ] == [("reasoning-1", "reasoning", 0), ("message-1", "text", None)]
+    assert [event.item_id for event in events if event.type == "item_started"] == ["call-1"]
+    assert [event.item_id for event in events if event.type == "item_completed"] == ["call-1"]
     plan = next(event for event in events if event.type == "plan_update")
     assert plan.entries == [{"status": "inProgress", "step": "List projects"}]
     thought = next(event for event in events if event.type == "thought_delta")

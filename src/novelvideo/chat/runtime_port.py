@@ -11,6 +11,9 @@ class ChatBackendEvent:
     """One normalized event emitted by any Agent runtime adapter."""
 
     type: Literal[
+        "item_started",
+        "item_completed",
+        "item_delta",
         "thread_started",
         "turn_started",
         "turn_completed",
@@ -26,6 +29,10 @@ class ChatBackendEvent:
         "egress_submitted",
         "egress_disposition",
     ]
+    item: dict[str, Any] | None = None
+    item_id: str | None = None
+    started_at_ms: int | None = None
+    summary_index: int | None = None
     thread_id: str | None = None
     turn_id: str | None = None
     disposition: str | None = None

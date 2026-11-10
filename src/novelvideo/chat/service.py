@@ -5662,6 +5662,8 @@ async def _stream_assistant_reply_codex(
     image_paths: Sequence[Path] = (),
     script_upload_guidance: bool = False,
 ) -> dict[str, Any]:
+    from novelvideo.chat.codex_live import LiveTurnProjector
+
     assistant_text = ""
     tool_text = ""
     structured_canvas_reply = str(tool_mode or "").strip() == "freezone_canvas"
@@ -5711,6 +5713,7 @@ async def _stream_assistant_reply_codex(
         or None
     )
     business_turn_id = str(turn_id or "").strip() or uuid.uuid4().hex
+    live = LiveTurnProjector(turn_id=business_turn_id)
     evidence_identity = _evidence_identity(project, store_scope, agent_profile)
     from novelvideo.chat.hermes_sdk import _issue_turn_capability
 
@@ -5841,298 +5844,316 @@ async def _stream_assistant_reply_codex(
         # adapters implement the plain ``stream(prompt)`` port.
         stream_kwargs = {"image_paths": turn_images} if turn_images else {}
 
-        async for event in thread.stream(agent_prompt, **stream_kwargs):
-            logger.debug(
-                "codex event user=%s project=%s profile=%s type=%s thread=%s turn=%s",
-                username,
-                project or "<home>",
-                agent_profile,
-                event.type,
-                str(getattr(event, "thread_id", "") or "") or "-",
-                str(getattr(event, "turn_id", "") or "") or "-",
-            )
-            if event.type == "egress_submitted":
-                if turn_operation is not None:
-                    await turn_operation.submitted_to_agent()
-                continue
-            if event.type == "egress_disposition":
-                turn_disposition = str(event.disposition or _DEFAULT_TURN_DISPOSITION)
-                continue
-            if event.type == "thread_started":
-                codex_thread_id = str(event.thread_id or "").strip() or None
-                codex_turn_id = str(event.turn_id or "").strip() or None
-                if codex_thread_id and exact_audio_action_target is None:
-                    _set_codex_thread_id(
-                        username,
-                        project,
-                        codex_thread_id,
-                        agent_profile=agent_profile,
-                        canvas_id=canvas_id,
+        try:
+            async for event in thread.stream(agent_prompt, **stream_kwargs):
+                logger.debug(
+                    "codex event user=%s project=%s profile=%s type=%s thread=%s turn=%s",
+                    username,
+                    project or "<home>",
+                    agent_profile,
+                    event.type,
+                    str(getattr(event, "thread_id", "") or "") or "-",
+                    str(getattr(event, "turn_id", "") or "") or "-",
+                )
+                if event.type in {"item_started", "item_completed", "item_delta"}:
+                    if event.type == "item_started":
+                        frame = live.started(event.item, event.started_at_ms)
+                    elif event.type == "item_completed":
+                        frame = live.completed(event.item)
+                    else:
+                        frame = live.delta(
+                            event.item_id, event.name, event.text, event.summary_index
+                        )
+                    if frame is not None:
+                        await on_event(frame)
+                    continue
+                if event.type == "egress_submitted":
+                    if turn_operation is not None:
+                        await turn_operation.submitted_to_agent()
+                    continue
+                if event.type == "egress_disposition":
+                    turn_disposition = str(event.disposition or _DEFAULT_TURN_DISPOSITION)
+                    continue
+                if event.type == "thread_started":
+                    codex_thread_id = str(event.thread_id or "").strip() or None
+                    codex_turn_id = str(event.turn_id or "").strip() or None
+                    if codex_turn_id:
+                        live.bind(codex_turn_id)
+                    if codex_thread_id and exact_audio_action_target is None:
+                        _set_codex_thread_id(
+                            username,
+                            project,
+                            codex_thread_id,
+                            agent_profile=agent_profile,
+                            canvas_id=canvas_id,
+                            project_state_dir=project_state_dir,
+                        )
+                    if codex_thread_id and codex_turn_id:
+                        active_turn_value = (
+                            codex_thread_id,
+                            codex_turn_id,
+                            business_turn_id,
+                        )
+                        with _ACTIVE_CODEX_TURNS_LOCK:
+                            _ACTIVE_CODEX_TURNS[active_turn_key] = active_turn_value
+                        _set_active_codex_turn(username, codex_scope_key, active_turn_value)
+                    await on_event(
+                        runtime_event_mapper.lifecycle_event(event)
+                    )
+                    continue
+                if event.type == "turn_started":
+                    await on_event(
+                        runtime_event_mapper.lifecycle_event(event)
+                    )
+                    continue
+                if event.type == "turn_completed":
+                    turn_disposition = str(
+                        event.disposition or event.status or turn_disposition
+                    )
+                    await on_event(
+                        runtime_event_mapper.lifecycle_event(event)
+                    )
+                    continue
+                if event.type == "assistant_delta":
+                    assistant_text = _merge_stream_text(assistant_text, event.text)
+                    if not structured_canvas_reply:
+                        streamed_text = _redact_local_filesystem_paths(assistant_text)
+                        await on_event(
+                            {
+                                "type": "assistant_delta",
+                                "text": streamed_text,
+                            }
+                        )
+                    continue
+                if event.type == "thought_delta":
+                    await on_event(
+                        runtime_event_mapper.progress_event(event)
+                    )
+                    continue
+                if event.type == "plan_update":
+                    await on_event(
+                        runtime_event_mapper.progress_event(event)
+                    )
+                    continue
+                if event.type == "usage_update":
+                    await on_event(runtime_event_mapper.progress_event(event))
+                    continue
+                if event.type in {"tool_started", "tool_updated"}:
+                    await _bind_server_observed_agent_product_execution(
+                        event,
+                        project_dir=project_dir,
                         project_state_dir=project_state_dir,
                     )
-                if codex_thread_id and codex_turn_id:
-                    active_turn_value = (
-                        codex_thread_id,
-                        codex_turn_id,
-                        business_turn_id,
-                    )
-                    with _ACTIVE_CODEX_TURNS_LOCK:
-                        _ACTIVE_CODEX_TURNS[active_turn_key] = active_turn_value
-                    _set_active_codex_turn(username, codex_scope_key, active_turn_value)
-                await on_event(
-                    runtime_event_mapper.lifecycle_event(event)
-                )
-                continue
-            if event.type == "turn_started":
-                await on_event(
-                    runtime_event_mapper.lifecycle_event(event)
-                )
-                continue
-            if event.type == "turn_completed":
-                turn_disposition = str(
-                    event.disposition or event.status or turn_disposition
-                )
-                await on_event(
-                    runtime_event_mapper.lifecycle_event(event)
-                )
-                continue
-            if event.type == "assistant_delta":
-                assistant_text = _merge_stream_text(assistant_text, event.text)
-                if not structured_canvas_reply:
-                    streamed_text = _redact_local_filesystem_paths(assistant_text)
-                    await on_event(
-                        {
-                            "type": "assistant_delta",
-                            "text": streamed_text,
-                        }
-                    )
-                continue
-            if event.type == "thought_delta":
-                await on_event(
-                    runtime_event_mapper.progress_event(event)
-                )
-                continue
-            if event.type == "plan_update":
-                await on_event(
-                    runtime_event_mapper.progress_event(event)
-                )
-                continue
-            if event.type == "usage_update":
-                await on_event(runtime_event_mapper.progress_event(event))
-                continue
-            if event.type in {"tool_started", "tool_updated"}:
-                await _bind_server_observed_agent_product_execution(
-                    event,
-                    project_dir=project_dir,
-                    project_state_dir=project_state_dir,
-                )
-                if event.type == "tool_updated":
-                    turn_agent_product_operations.observe(event)
-                    prepared_draft = _codex_freezone_ready_workflow_draft(event)
-                    if prepared_draft is not None:
-                        ready_workflow_draft = prepared_draft
-                    elif _codex_freezone_tool_name(event) in (
-                        _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS
-                        | {"freezone_patch_workflow_draft"}
-                    ):
-                        # A later failed revision must not inherit an earlier
-                        # draft's pending-approval outcome in the same turn.
-                        ready_workflow_draft = None
-                if _codex_freezone_is_write_event(event):
-                    is_stage_confirmation = (
-                        _codex_freezone_tool_name(event)
-                        == "dramaclaw_confirm_interactive_story_stages"
-                    )
-                    if is_stage_confirmation:
-                        stage_confirmation_attempted = True
-                    call_id = str(getattr(event, "call_id", "") or "")
-                    identifiable_call = bool(call_id)
-                    # An unidentified write cannot be associated with a final
-                    # claim. Keep it failed rather than merging unrelated calls.
-                    call_id = call_id or f"unidentified:{len(canvas_write_attempts)}"
-                    canvas_write_attempts.setdefault(call_id, "in_progress")
                     if event.type == "tool_updated":
-                        preflight_target = _codex_story_preflight_rejection(event)
-                        if preflight_target is not None and identifiable_call:
-                            # No API write was attempted. A corrected call to
-                            # the same story may satisfy this rejected input.
-                            canvas_write_attempts.pop(call_id, None)
-                            preflight_rejections[call_id] = preflight_target
-                            failure = _codex_freezone_write_result_error(event)
-                            if failure:
-                                canvas_write_failures[call_id] = failure
-                        else:
-                            receipt = _codex_freezone_write_receipt(
-                                event, expected_project=project, expected_canvas=canvas_id
-                            )
-                            retry_key = _codex_freezone_generation_retry_key(event)
-                            if receipt is not None and identifiable_call:
-                                intent = _codex_story_write_intent(
-                                    event, project=project, canvas_id=canvas_id or "default"
+                        turn_agent_product_operations.observe(event)
+                        prepared_draft = _codex_freezone_ready_workflow_draft(event)
+                        if prepared_draft is not None:
+                            ready_workflow_draft = prepared_draft
+                        elif _codex_freezone_tool_name(event) in (
+                            _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS
+                            | {"freezone_patch_workflow_draft"}
+                        ):
+                            # A later failed revision must not inherit an earlier
+                            # draft's pending-approval outcome in the same turn.
+                            ready_workflow_draft = None
+                    if _codex_freezone_is_write_event(event):
+                        is_stage_confirmation = (
+                            _codex_freezone_tool_name(event)
+                            == "dramaclaw_confirm_interactive_story_stages"
+                        )
+                        if is_stage_confirmation:
+                            stage_confirmation_attempted = True
+                        call_id = str(getattr(event, "call_id", "") or "")
+                        identifiable_call = bool(call_id)
+                        # An unidentified write cannot be associated with a final
+                        # claim. Keep it failed rather than merging unrelated calls.
+                        call_id = call_id or f"unidentified:{len(canvas_write_attempts)}"
+                        canvas_write_attempts.setdefault(call_id, "in_progress")
+                        if event.type == "tool_updated":
+                            preflight_target = _codex_story_preflight_rejection(event)
+                            if preflight_target is not None and identifiable_call:
+                                # No API write was attempted. A corrected call to
+                                # the same story may satisfy this rejected input.
+                                canvas_write_attempts.pop(call_id, None)
+                                preflight_rejections[call_id] = preflight_target
+                                failure = _codex_freezone_write_result_error(event)
+                                if failure:
+                                    canvas_write_failures[call_id] = failure
+                            else:
+                                receipt = _codex_freezone_write_receipt(
+                                    event, expected_project=project, expected_canvas=canvas_id
                                 )
-                                receipt_identity = receipt.get(
-                                    "outline_id"
-                                    if _codex_freezone_tool_name(event) in {
-                                        "dramaclaw_save_interactive_story_outline",
-                                        "dramaclaw_confirm_interactive_story_outline",
-                                    }
-                                    else "story_id"
-                                )
-                                if intent is not None and receipt_identity == intent[1]:
-                                    retry_args = _codex_freezone_tool_arguments(event)
-                                    for rejected_call, (rejected_name, rejected_args, rejection) in list(
-                                        preflight_rejections.items()
-                                    ):
-                                        if (
-                                            rejected_call == call_id
-                                            or rejected_name != intent[0]
-                                            or retry_args is None
-                                            or rejected_args.get("project_id", project) != project
-                                            or rejected_args.get("canvas_id", canvas_id or "default") != (canvas_id or "default")
+                                retry_key = _codex_freezone_generation_retry_key(event)
+                                if receipt is not None and identifiable_call:
+                                    intent = _codex_story_write_intent(
+                                        event, project=project, canvas_id=canvas_id or "default"
+                                    )
+                                    receipt_identity = receipt.get(
+                                        "outline_id"
+                                        if _codex_freezone_tool_name(event) in {
+                                            "dramaclaw_save_interactive_story_outline",
+                                            "dramaclaw_confirm_interactive_story_outline",
+                                        }
+                                        else "story_id"
+                                    )
+                                    if intent is not None and receipt_identity == intent[1]:
+                                        retry_args = _codex_freezone_tool_arguments(event)
+                                        for rejected_call, (rejected_name, rejected_args, rejection) in list(
+                                            preflight_rejections.items()
                                         ):
-                                            continue
-                                        # Omitted scope and explicitly supplied bound scope
-                                        # are equivalent; never permit another scope.
-                                        before = {**rejected_args, "project_id": project,
-                                                  "canvas_id": canvas_id or "default"}
-                                        after = {**retry_args, "project_id": project,
-                                                 "canvas_id": canvas_id or "default"}
-                                        if story_argument_retry_matches(
-                                            before, after, rejection, tool_name=intent[0]
+                                            if (
+                                                rejected_call == call_id
+                                                or rejected_name != intent[0]
+                                                or retry_args is None
+                                                or rejected_args.get("project_id", project) != project
+                                                or rejected_args.get("canvas_id", canvas_id or "default") != (canvas_id or "default")
+                                            ):
+                                                continue
+                                            # Omitted scope and explicitly supplied bound scope
+                                            # are equivalent; never permit another scope.
+                                            before = {**rejected_args, "project_id": project,
+                                                      "canvas_id": canvas_id or "default"}
+                                            after = {**retry_args, "project_id": project,
+                                                     "canvas_id": canvas_id or "default"}
+                                            if story_argument_retry_matches(
+                                                before, after, rejection, tool_name=intent[0]
+                                            ):
+                                                canvas_write_failures.pop(rejected_call, None)
+                                                del preflight_rejections[rejected_call]
+                                        # A server 409 rejected this exact story write
+                                        # before saving. Only its verified rebased
+                                        # successor can settle that failed attempt.
+                                        signature = _codex_story_write_payload_signature(event)
+                                        for rejected_call, (conflict, rejected_signature) in list(
+                                            story_conflicts.items()
                                         ):
-                                            canvas_write_failures.pop(rejected_call, None)
-                                            del preflight_rejections[rejected_call]
-                                    # A server 409 rejected this exact story write
-                                    # before saving. Only its verified rebased
-                                    # successor can settle that failed attempt.
+                                            if (
+                                                intent[:2] == conflict[:2]
+                                                and signature is not None
+                                                and signature == rejected_signature
+                                                and intent[2] >= conflict[2]
+                                            ):
+                                                canvas_write_attempts.pop(rejected_call, None)
+                                                canvas_write_failures.pop(rejected_call, None)
+                                                del story_conflicts[rejected_call]
+                                else:
+                                    conflict = _codex_story_revision_conflict(
+                                        event, project=project, canvas_id=canvas_id or "default"
+                                    )
                                     signature = _codex_story_write_payload_signature(event)
-                                    for rejected_call, (conflict, rejected_signature) in list(
-                                        story_conflicts.items()
-                                    ):
-                                        if (
-                                            intent[:2] == conflict[:2]
-                                            and signature is not None
-                                            and signature == rejected_signature
-                                            and intent[2] >= conflict[2]
+                                    if conflict is not None and signature is not None:
+                                        story_conflicts[call_id] = conflict, signature
+                                canvas_write_attempts[call_id] = (
+                                    "succeeded"
+                                    if receipt is not None and identifiable_call
+                                    else _codex_freezone_write_result_state(event)
+                                )
+                                if receipt is not None and identifiable_call:
+                                    if is_stage_confirmation:
+                                        stage_confirmation_succeeded = True
+                                    reference = receipt_reference(receipt)
+                                    canvas_receipts.add(reference)
+                                    if retry_key is not None:
+                                        confirmed_policy = (
+                                            _codex_freezone_confirmed_execution_policy(event)
+                                        )
+                                        for rejected_call, rejected_key in list(
+                                            canvas_generation_preflights.items()
                                         ):
+                                            if rejected_key != retry_key or rejected_call == call_id:
+                                                continue
+                                            required_policy = canvas_policy_requirements.get(
+                                                rejected_call
+                                            )
+                                            # A policy-guard rejection is resolved only by a
+                                            # confirmation whose receipt verifiably applied
+                                            # the requested run_after_create. An unverified
+                                            # or downgraded confirmation keeps it on record.
+                                            if (
+                                                required_policy is not None
+                                                and confirmed_policy != required_policy
+                                            ):
+                                                continue
                                             canvas_write_attempts.pop(rejected_call, None)
                                             canvas_write_failures.pop(rejected_call, None)
-                                            del story_conflicts[rejected_call]
-                            else:
-                                conflict = _codex_story_revision_conflict(
-                                    event, project=project, canvas_id=canvas_id or "default"
-                                )
-                                signature = _codex_story_write_payload_signature(event)
-                                if conflict is not None and signature is not None:
-                                    story_conflicts[call_id] = conflict, signature
-                            canvas_write_attempts[call_id] = (
-                                "succeeded"
-                                if receipt is not None and identifiable_call
-                                else _codex_freezone_write_result_state(event)
-                            )
-                            if receipt is not None and identifiable_call:
-                                if is_stage_confirmation:
-                                    stage_confirmation_succeeded = True
-                                reference = receipt_reference(receipt)
-                                canvas_receipts.add(reference)
-                                if retry_key is not None:
-                                    confirmed_policy = (
-                                        _codex_freezone_confirmed_execution_policy(event)
-                                    )
-                                    for rejected_call, rejected_key in list(
-                                        canvas_generation_preflights.items()
+                                            canvas_generation_preflights.pop(rejected_call, None)
+                                            canvas_policy_requirements.pop(rejected_call, None)
+                                    signature = _codex_freezone_argument_retry_signature(event)
+                                    for rejected_call, expected in list(
+                                        canvas_argument_rejections.items()
                                     ):
-                                        if rejected_key != retry_key or rejected_call == call_id:
-                                            continue
-                                        required_policy = canvas_policy_requirements.get(
-                                            rejected_call
-                                        )
-                                        # A policy-guard rejection is resolved only by a
-                                        # confirmation whose receipt verifiably applied
-                                        # the requested run_after_create. An unverified
-                                        # or downgraded confirmation keeps it on record.
                                         if (
-                                            required_policy is not None
-                                            and confirmed_policy != required_policy
+                                            signature is None
+                                            or rejected_call == call_id
+                                            or expected != signature
                                         ):
                                             continue
                                         canvas_write_attempts.pop(rejected_call, None)
                                         canvas_write_failures.pop(rejected_call, None)
-                                        canvas_generation_preflights.pop(rejected_call, None)
-                                        canvas_policy_requirements.pop(rejected_call, None)
-                                signature = _codex_freezone_argument_retry_signature(event)
-                                for rejected_call, expected in list(
-                                    canvas_argument_rejections.items()
+                                        canvas_argument_rejections.pop(rejected_call, None)
+                                elif (
+                                    canvas_write_attempts[call_id] == "failed"
+                                    and retry_key is not None
+                                    and _codex_freezone_is_generation_preflight_rejection(event)
                                 ):
-                                    if (
-                                        signature is None
-                                        or rejected_call == call_id
-                                        or expected != signature
-                                    ):
-                                        continue
-                                    canvas_write_attempts.pop(rejected_call, None)
-                                    canvas_write_failures.pop(rejected_call, None)
-                                    canvas_argument_rejections.pop(rejected_call, None)
-                            elif (
-                                canvas_write_attempts[call_id] == "failed"
-                                and retry_key is not None
-                                and _codex_freezone_is_generation_preflight_rejection(event)
-                            ):
-                                if _codex_freezone_is_execution_policy_rejection(event):
-                                    required_policy = (
-                                        _codex_freezone_execution_policy_requirement(event)
-                                    )
-                                    # A non-boolean request cannot be matched to a
-                                    # receipt, so that rejection is never superseded.
-                                    if required_policy is not None:
+                                    if _codex_freezone_is_execution_policy_rejection(event):
+                                        required_policy = (
+                                            _codex_freezone_execution_policy_requirement(event)
+                                        )
+                                        # A non-boolean request cannot be matched to a
+                                        # receipt, so that rejection is never superseded.
+                                        if required_policy is not None:
+                                            canvas_generation_preflights[call_id] = retry_key
+                                            canvas_policy_requirements[call_id] = required_policy
+                                    else:
                                         canvas_generation_preflights[call_id] = retry_key
-                                        canvas_policy_requirements[call_id] = required_policy
-                                else:
-                                    canvas_generation_preflights[call_id] = retry_key
-                            elif canvas_write_attempts[call_id] == "failed" and identifiable_call:
-                                # Rejected before the handler ran, so nothing was
-                                # written; only the provably corrected call may
-                                # supersede it.
-                                expected = _codex_freezone_argument_retry_expectation(event)
-                                if expected is not None:
-                                    canvas_argument_rejections[call_id] = expected
-                            failure = _codex_freezone_write_result_error(event)
-                            if failure:
-                                canvas_write_failures[call_id] = failure
-                event_tool_text = str(event.text or "")
-                if event_tool_text:
-                    tool_text += event_tool_text
-                await on_event(
-                    runtime_event_mapper.sdk_tool_event(event, text=event_tool_text)
-                )
-                continue
-            if event.type == "tool_update":
-                tool_text += str(event.text or "")
-                await on_event({"type": "tool_update", "text": tool_text})
-                continue
-            if event.type == "complete":
-                codex_thread_id = str(event.thread_id or "").strip() or None
-                if codex_thread_id and exact_audio_action_target is None:
-                    _set_codex_thread_id(
-                        username,
-                        project,
-                        codex_thread_id,
-                        agent_profile=agent_profile,
-                        canvas_id=canvas_id,
-                        project_state_dir=project_state_dir,
+                                elif canvas_write_attempts[call_id] == "failed" and identifiable_call:
+                                    # Rejected before the handler ran, so nothing was
+                                    # written; only the provably corrected call may
+                                    # supersede it.
+                                    expected = _codex_freezone_argument_retry_expectation(event)
+                                    if expected is not None:
+                                        canvas_argument_rejections[call_id] = expected
+                                failure = _codex_freezone_write_result_error(event)
+                                if failure:
+                                    canvas_write_failures[call_id] = failure
+                    event_tool_text = str(event.text or "")
+                    if event_tool_text:
+                        tool_text += event_tool_text
+                    await on_event(
+                        runtime_event_mapper.sdk_tool_event(event, text=event_tool_text)
                     )
-                assistant_text = _completion_text_or_existing(
-                    event.text, assistant_text
-                )
-                if turn_disposition == _DEFAULT_TURN_DISPOSITION:
-                    turn_disposition = "completed"
-                if not str(event.text or assistant_text or "").strip():
-                    logger.warning(
-                        "codex completed without assistant text user=%s project=%s profile=%s",
-                        username,
-                        project or "<home>",
-                        agent_profile,
+                    continue
+                if event.type == "tool_update":
+                    tool_text += str(event.text or "")
+                    await on_event({"type": "tool_update", "text": tool_text})
+                    continue
+                if event.type == "complete":
+                    codex_thread_id = str(event.thread_id or "").strip() or None
+                    if codex_thread_id and exact_audio_action_target is None:
+                        _set_codex_thread_id(
+                            username,
+                            project,
+                            codex_thread_id,
+                            agent_profile=agent_profile,
+                            canvas_id=canvas_id,
+                            project_state_dir=project_state_dir,
+                        )
+                    assistant_text = _completion_text_or_existing(
+                        event.text, assistant_text
                     )
+                    if turn_disposition == _DEFAULT_TURN_DISPOSITION:
+                        turn_disposition = "completed"
+                    if not str(event.text or assistant_text or "").strip():
+                        logger.warning(
+                            "codex completed without assistant text user=%s project=%s profile=%s",
+                            username,
+                            project or "<home>",
+                            agent_profile,
+                        )
+        finally:
+            for frame in live.finish():
+                await _emit_chat_event_best_effort(on_event, frame)
         if exact_audio_action_target is not None and turn_disposition == "completed":
             node_id, action, required_subject = exact_audio_action_target
             node_data = _exact_audio_action_node_data(

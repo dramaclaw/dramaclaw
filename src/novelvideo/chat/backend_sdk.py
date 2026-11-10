@@ -324,6 +324,13 @@ def _codex_unwrap_item(item: Any) -> Any:
     return item.root if hasattr(item, "root") else item
 
 
+def _codex_wire_item(item: Any) -> dict[str, Any]:
+    """Serialize the SDK item using the recorded wire field names."""
+    return _codex_unwrap_item(item).model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
+
+
 def _codex_jsonable(value: Any) -> Any:
     """Return a JSON-safe SDK payload without leaking SDK model types outward."""
 
@@ -1748,6 +1755,17 @@ class CodexThread:
                             isinstance(payload, AgentMessageDeltaNotification)
                             and payload.turn_id == turn.id
                         ):
+                            emit(
+                                "event",
+                                ChatBackendEvent(
+                                    type="item_delta",
+                                    thread_id=self.id,
+                                    turn_id=turn.id,
+                                    item_id=payload.item_id,
+                                    text=payload.delta,
+                                    name="text",
+                                ),
+                            )
                             assistant_parts.append(payload.delta)
                             emit(
                                 "event",
@@ -1796,8 +1814,21 @@ class CodexThread:
                         if (
                             isinstance(payload, ReasoningSummaryTextDeltaNotification)
                             and payload.turn_id == turn.id
-                            and payload.delta
                         ):
+                            emit(
+                                "event",
+                                ChatBackendEvent(
+                                    type="item_delta",
+                                    thread_id=self.id,
+                                    turn_id=turn.id,
+                                    item_id=payload.item_id,
+                                    text=payload.delta,
+                                    name="reasoning",
+                                    summary_index=payload.summary_index,
+                                ),
+                            )
+                            if not payload.delta:
+                                continue
                             emit(
                                 "event",
                                 ChatBackendEvent(
@@ -1814,6 +1845,17 @@ class CodexThread:
                             isinstance(payload, ItemStartedNotification)
                             and payload.turn_id == turn.id
                         ):
+                            emit(
+                                "event",
+                                ChatBackendEvent(
+                                    type="item_started",
+                                    thread_id=self.id,
+                                    turn_id=turn.id,
+                                    item=_codex_wire_item(payload.item),
+                                    item_id=_codex_unwrap_item(payload.item).id,
+                                    started_at_ms=payload.started_at_ms,
+                                ),
+                            )
                             tool_event = _codex_tool_event(
                                 payload.item,
                                 phase="started",
@@ -1900,6 +1942,16 @@ class CodexThread:
                             isinstance(payload, ItemCompletedNotification)
                             and payload.turn_id == turn.id
                         ):
+                            emit(
+                                "event",
+                                ChatBackendEvent(
+                                    type="item_completed",
+                                    thread_id=self.id,
+                                    turn_id=turn.id,
+                                    item=_codex_wire_item(payload.item),
+                                    item_id=_codex_unwrap_item(payload.item).id,
+                                ),
+                            )
                             items.append(payload.item)
                             tool_event = _codex_tool_event(
                                 payload.item,
