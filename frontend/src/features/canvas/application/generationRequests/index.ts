@@ -2,3 +2,4 @@
 // Copyright (c) 2026 ClaymoreLab
 export * from './imageGenerationRequest';
 export * from './imageGenerationResult';
+export * from './videoGenerationRequest';
