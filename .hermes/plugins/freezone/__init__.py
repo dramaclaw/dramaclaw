@@ -163,7 +163,6 @@ except Exception:
 _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR: Exception | None = None
 try:
     from novelvideo.freezone.canvas_command_bridge import (
-        browser_presence_fresh,
         canvas_command_bridge_key,
         canvas_command_idempotency_key,
         canvas_context_bridge_key,
@@ -184,7 +183,6 @@ try:
     )
 except Exception as exc:
     _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR = exc
-    browser_presence_fresh = None
     canvas_command_bridge_key = None
     canvas_command_idempotency_key = None
     canvas_context_bridge_key = None
@@ -6115,22 +6113,30 @@ def _agent_canvas_executor() -> str:
 
 
 def _canvas_browser_required_error(project: str, canvas: str) -> dict[str, Any] | None:
-    if browser_presence_fresh is None or not browser_presence_fresh(canvas):
-        return {
-            "ok": False,
-            "code": "canvas_browser_required",
-            "tool_call_status": "failed",
-            "canvas_apply_status": "browser_required",
-            "applied": False,
-            "project_id": project,
-            "canvas_id": canvas,
-            "errors": ["需要打开画布才能运行"],
-            "message": "需要打开画布才能运行",
-            "agent_instruction": (
-                "Ask the user to open this canvas and retry. Do not retry on your own."
-            ),
-        }
-    return None
+    try:
+        response = _request(
+            "GET",
+            f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/"
+            f"{quote(canvas, safe='')}/presence",
+        )
+        if response.get("ok") and response.get("data", {}).get("browser_open") is True:
+            return None
+    except Exception:
+        pass
+    return {
+        "ok": False,
+        "code": "canvas_browser_required",
+        "tool_call_status": "failed",
+        "canvas_apply_status": "browser_required",
+        "applied": False,
+        "project_id": project,
+        "canvas_id": canvas,
+        "errors": ["需要打开画布才能运行"],
+        "message": "需要打开画布才能运行",
+        "agent_instruction": (
+            "Ask the user to open this canvas and retry. Do not retry on your own."
+        ),
+    }
 
 
 def _dispatch_server_host_commands(
@@ -6171,7 +6177,6 @@ def _server_apply_canvas_commands(
         f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}/agent-commands",
         body={
             "envelopes": [_canvas_command_envelope(project, canvas, commands)],
-            "locale": None,
         },
     )
     if not response.get("ok"):
@@ -9239,7 +9244,7 @@ def _request_canvas_context_from_frontend(
         response = _request(
             "POST",
             f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}/agent-context",
-            body={"requests": requests, "locale": None},
+            body={"requests": requests},
         )
         return tool_result(response["data"] if response.get("ok") else _canvas_executor_failure(response, context=True))
     envelope = {

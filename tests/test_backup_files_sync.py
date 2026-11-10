@@ -43,6 +43,16 @@ def test_filter_excludes_all_sqlite_and_litestream_state():
     assert lines[-1] == "+ **"
 
 
+def test_filters_exclude_canvas_change_logs():
+    for filter_text in (RCLONE_FILTER, LIVE_SYNC_FILTER, HOT_SNAPSHOT_FILTER):
+        assert "- **/freezone/canvas_changes/**" in filter_text.splitlines()
+
+
+def test_filters_exclude_canvas_presence_heartbeats():
+    for filter_text in (RCLONE_FILTER, LIVE_SYNC_FILTER, HOT_SNAPSHOT_FILTER):
+        assert "- **/freezone/canvas_presence/**" in filter_text.splitlines()
+
+
 def test_live_and_hot_filters_partition_high_churn_state():
     live_lines = [line.strip() for line in LIVE_SYNC_FILTER.strip().splitlines()]
     hot_lines = [line.strip() for line in HOT_SNAPSHOT_FILTER.strip().splitlines()]

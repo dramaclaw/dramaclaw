@@ -31,6 +31,8 @@ _BASE_FILTER_RULES = (
     "- *.snapshot.tmp",
     "- *.tmp",
     "- **/freezone/canvases/_locks/**",
+    "- **/freezone/canvas_changes/**",
+    "- **/freezone/canvas_presence/**",
     "- .hermes/.env",
     "- .hermes/*_cache/**",
     "- .hermes/logs/**",

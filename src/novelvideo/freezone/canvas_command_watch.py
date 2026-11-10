@@ -86,26 +86,29 @@ class BridgeWatchHub:
         try:
             yield event
         finally:
-            removed = False
-            for directory in directories:
-                state = self.directories.get(directory)
-                if state:
-                    state.subscribers.discard(event)
-                    if not state.subscribers:
-                        self.directories.pop(directory, None)
-                        removed = True
-            if removed:
-                self.aliases = {
-                    key: value for key, value in self.aliases.items() if value in self.directories
-                }
-                self.changed.set()
-            self.scheduled.set()
-            if not self.directories:
-                tasks = [task for task in (self.task, self.watcher) if task]
-                self.task = self.watcher = None
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+            with anyio.CancelScope(shield=True):
+                removed = False
+                for directory in directories:
+                    state = self.directories.get(directory)
+                    if state:
+                        state.subscribers.discard(event)
+                        if not state.subscribers:
+                            self.directories.pop(directory, None)
+                            removed = True
+                if removed:
+                    self.aliases = {
+                        key: value
+                        for key, value in self.aliases.items()
+                        if value in self.directories
+                    }
+                    self.changed.set()
+                self.scheduled.set()
+                if not self.directories:
+                    tasks = [task for task in (self.task, self.watcher) if task]
+                    self.task = self.watcher = None
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
     def pending(self, directory, project_id, canvas_id, kinds=None):
         path = Path(directory).absolute()

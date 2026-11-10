@@ -19,8 +19,9 @@ B2 §4 第 3 条：块二（音频节点解耦）把音色解析上移到账号�
 也不登记、也不落盘 —— 第二遍是 no-op（`tests/test_convert_canvas_voice_refs_script.py`
 断言之）。
 
-**默认 dry-run**，`--apply` 才写。写入走 `canvas_write_lock` ——
-B2 §4 第 3 条要求本转换在块一之后做，靠互斥保证它与用户并发保存不打架。
+Writes use `canvas_store.save_canvas` to convert the fresh canvas under its write mutex,
+increment the revision, and publish a change when enabled. Use `--apply` to write;
+the default is a dry run.
 
 用法::
 
@@ -34,6 +35,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Iterable
@@ -46,8 +48,7 @@ from novelvideo.freezone.audio_node import (
     list_user_audio_voices,
     resolve_speech_voice,
 )
-from novelvideo.freezone.canvas_lock import canvas_write_lock
-from novelvideo.freezone.canvas_store import atomic_write_json, load_canvas_json
+from novelvideo.freezone import canvas_store
 from novelvideo.freezone.paths import canvases_dir
 
 # 前端 `AudioVoiceRef` 的 scope 全集见
@@ -188,10 +189,13 @@ def convert_project_canvases(
     for path in iter_canvas_files(project_dir):
         result = replace(result, canvases_scanned=result.canvases_scanned + 1)
         canvas_id = path.stem
-        payload = load_canvas_json(path)
+        try:
+            payload = canvas_store.load_canvas_json(path)
+        except (canvas_store.CanvasCorruptError, OSError):
+            payload = None
         if not isinstance(payload, dict):
             result = replace(
-                result, errors=result.errors + (f"{path}: 不是可读的画布 JSON",)
+                result, errors=result.errors + (f"{path}: unreadable canvas JSON",)
             )
             continue
         if not any(True for _ in iter_voice_refs(payload)):
@@ -200,20 +204,46 @@ def convert_project_canvases(
             pending = sum(1 for _ in iter_voice_refs(payload))
             result = replace(result, nodes_converted=result.nodes_converted + pending)
             continue
-        # 拿锁之后重读一遍，避免在扫描与写入之间被用户的保存覆盖。
-        with canvas_write_lock(project_dir, canvas_id):
-            fresh = load_canvas_json(path)
+        converted = 0
+
+        def skip_if(fresh: dict | None) -> dict | None:
             if not isinstance(fresh, dict):
-                result = replace(
-                    result, errors=result.errors + (f"{path}: 取锁后读不到画布",)
-                )
-                continue
+                return {"error": f"{path}: unreadable canvas after acquiring write mutex"}
+            if not any(iter_voice_refs(fresh)):
+                return {"skipped": True}
+            return None
+
+        def build_payload(fresh: dict) -> dict:
+            nonlocal converted
+            payload = deepcopy(fresh)
             converted = convert_canvas_payload(
-                fresh, resolve_account_voice_id=resolve_account_voice_id
+                payload, resolve_account_voice_id=resolve_account_voice_id
             )
-            if not converted:
-                continue
-            atomic_write_json(path, fresh)
+            old_revision = fresh.get("revision")
+            payload["revision"] = old_revision + 1 if isinstance(old_revision, int) else 1
+            return payload
+
+        try:
+            saved = canvas_store.save_canvas(
+                project_dir,
+                canvas_id,
+                base_revision=None,
+                enforce_revision=False,
+                skip_if=skip_if,
+                build_payload=build_payload,
+                save_source="voice_ref_conversion",
+            )
+        except (canvas_store.CanvasCorruptError, OSError):
+            result = replace(
+                result, errors=result.errors + (f"{path}: unable to read or write canvas",)
+            )
+            continue
+        response = saved.response_cache or {}
+        if "error" in response:
+            result = replace(result, errors=result.errors + (response["error"],))
+            continue
+        if not converted:
+            continue
         result = replace(
             result,
             canvases_written=result.canvases_written + 1,
@@ -283,7 +313,7 @@ async def convert_project(username: str, project: str, *, apply: bool) -> Conver
     files = iter_canvas_files(project_dir)
     pending: dict[str, dict] = {}
     for path in files:
-        payload = load_canvas_json(path)
+        payload = canvas_store.load_canvas_json(path)
         if not isinstance(payload, dict):
             continue
         for voice_ref in iter_voice_refs(payload):

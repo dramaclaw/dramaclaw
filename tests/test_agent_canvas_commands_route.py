@@ -98,6 +98,31 @@ async def dispatch():
     )
 
 
+@pytest.mark.parametrize(
+    "recorded,body_locale,expected", [("en", None, "en"), ("en", "vi", "vi"), (None, None, "zh")],
+)
+async def test_commands_locale_precedence(setup, monkeypatch, recorded, body_locale, expected):
+    root, _, _ = setup
+    state_dir = root / "state"
+    if recorded is not None:
+        path = state_dir / "freezone" / "ui_locale.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"locale": recorded}))
+    monkeypatch.setattr(routes, "_canvas_state_project_dir", lambda *_: state_dir)
+    captured = []
+
+    async def dispatch_core(**kwargs):
+        captured.append(kwargs["env"])
+        return {}
+
+    monkeypatch.setattr(routes, "dispatch_agent_canvas", dispatch_core)
+    await routes.agent_canvas_commands(
+        "proj", "default",
+        routes.AgentCanvasCommandsRequest(envelopes=ENVELOPES, locale=body_locale), USER,
+    )
+    assert captured[0]["locale"] == expected
+
+
 async def test_applied_save_and_metrics(setup, caplog):
     from novelvideo.freezone.agent_canvas_metrics import metrics_snapshot
 

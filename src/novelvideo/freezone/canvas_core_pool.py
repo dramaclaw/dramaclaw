@@ -33,6 +33,11 @@ class _WorkerError(CanvasCoreError):
     """A valid worker response; the process remains usable."""
 
 
+def _log_failure(op: str, error: CanvasCoreError) -> None:
+    level = logging.WARNING if error.code == "invalid_request" else logging.ERROR
+    logger.log(level, "canvas_core op=%s failed: %s: %s", op, error.code, error)
+
+
 class _Child:
     def __init__(self, process: subprocess.Popen):
         self.process = process
@@ -55,7 +60,9 @@ def _drain_stderr(process: subprocess.Popen) -> None:
     assert process.stderr is not None
     with process.stderr:
         while line := process.stderr.readline(2048):
-            logger.debug("canvas_core stderr: %s", line.decode("utf-8", errors="replace").rstrip())
+            logger.warning(
+                "canvas_core stderr: %s", line.decode("utf-8", errors="replace").rstrip()
+            )
             while line and not line.endswith(b"\n"):
                 line = process.stderr.readline(2048)
 
@@ -215,9 +222,10 @@ class CanvasCorePool:
         raise _WorkerError(error["code"], error["message"])
 
     def call(self, op: str, payload: dict) -> dict:
-        child = self._acquire()
+        child = None
         discard = True
         try:
+            child = self._acquire()
             try:
                 result = self._exchange(child, op, payload)
             except _WorkerError:
@@ -229,8 +237,12 @@ class CanvasCorePool:
             child.calls += 1
             discard = child.calls >= self.max_calls_per_child
             return result
+        except CanvasCoreError as exc:
+            _log_failure(op, exc)
+            raise
         finally:
-            self._release(child, discard=discard)
+            if child is not None:
+                self._release(child, discard=discard)
 
     def warm(self) -> None:
         children = []
@@ -243,7 +255,9 @@ class CanvasCorePool:
                 except (OSError, ValueError) as exc:
                     raise CanvasCoreError("canvas_core_crashed", "Canvas core pipe closed") from exc
                 child.calls += 1
-        except BaseException:
+        except BaseException as exc:
+            if isinstance(exc, CanvasCoreError):
+                _log_failure("ping", exc)
             for child in children:
                 self._release(child, discard=True)
             raise

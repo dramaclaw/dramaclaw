@@ -9,6 +9,8 @@ import {
   createBlankFreezoneCanvas,
   getFreezoneCanvas,
   getProjectionStatuses,
+  generateClientSaveId,
+  isOwnClientSaveId,
   listFreezoneWorkflowRuns,
   putFreezoneCanvas,
 } from "@/api/canvas";
@@ -18,6 +20,28 @@ vi.mock("@/api/client", () => ({
   // 画布详情走整信封:`foreign_media` 挂在 `data` 同级,只解一层的 apiCall 会丢掉它。
   apiCallEnvelope: vi.fn(),
 }));
+
+describe("canvas client save ids", () => {
+  it("recognizes generated ids and rejects other values", () => {
+    const id = generateClientSaveId();
+    expect(isOwnClientSaveId(id)).toBe(true);
+    expect(isOwnClientSaveId("another-tab-save")).toBe(false);
+    expect(isOwnClientSaveId(null)).toBe(false);
+    expect(isOwnClientSaveId(undefined)).toBe(false);
+    expect(isOwnClientSaveId(1)).toBe(false);
+    expect(isOwnClientSaveId({ id })).toBe(false);
+  });
+
+  it("forgets an id only after 100 newer ids", () => {
+    const oldest = generateClientSaveId();
+    const newer = Array.from({ length: 99 }, () => generateClientSaveId());
+    expect(isOwnClientSaveId(oldest)).toBe(true);
+    const newest = generateClientSaveId();
+    expect(isOwnClientSaveId(oldest)).toBe(false);
+    expect(newer.every(isOwnClientSaveId)).toBe(true);
+    expect(isOwnClientSaveId(newest)).toBe(true);
+  });
+});
 
 describe("canvas projection api", () => {
   beforeEach(() => {

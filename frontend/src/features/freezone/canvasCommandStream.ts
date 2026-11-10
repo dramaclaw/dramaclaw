@@ -7,12 +7,14 @@ type Options<T> = {
   projectId: string;
   canvasId: string;
   getAgentIds: () => string[];
+  getLastRevision?: () => number | null | undefined;
+  getLocale?: () => string | null | undefined;
   onFrame: (frame: T) => void;
   poll: (agentIds: string[], signal: AbortSignal) => Promise<T[]>;
 };
 
 export function startCanvasCommandStream<T>({
-  projectId, canvasId, getAgentIds, onFrame, poll,
+  projectId, canvasId, getAgentIds, getLastRevision, getLocale, onFrame, poll,
 }: Options<T>): () => void {
   let disposed = false;
   let source: EventSource | null = null;
@@ -61,6 +63,14 @@ export function startCanvasCommandStream<T>({
     url.search = new URLSearchParams({
       project_id: projectId, canvas_id: canvasId, agent_ids: agents,
     }).toString();
+    const revision = getLastRevision?.();
+    if (typeof revision === "number" && Number.isInteger(revision) && revision >= 0) {
+      url.searchParams.set("last_revision", String(revision));
+    }
+    const locale = getLocale?.();
+    if (typeof locale === "string" && locale.length > 0) {
+      url.searchParams.set("locale", locale);
+    }
     const current = new EventSource(url.toString(), { withCredentials: true });
     source = current;
     current.onopen = () => {
