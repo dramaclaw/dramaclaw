@@ -965,13 +965,13 @@ def test_codex_sessions_are_project_scoped_and_backend_independent(
     assert state_file.exists()
     home_state_file = tmp_path / "state" / "admin" / "codex_sessions.json"
     assert json.loads(home_state_file.read_text(encoding="utf-8")) == {
-        f'["main","home",null,"{chat_service._CODEX_THREAD_PROTOCOL_VERSION}"]': (
+        '["main","home",null,"session"]': (
             "codex-home-thread"
         ),
     }
-    for project, thread_id in (
-        ("project-a", "codex-thread-1"),
-        ("project-b", "codex-thread-2"),
+    for project, thread_id, key in (
+        ("project-a", "codex-thread-1", '["main","project","project-a","session"]'),
+        ("project-b", "codex-thread-2", '["main","project","project-b","session"]'),
     ):
         project_state_file = (
             tmp_path
@@ -983,8 +983,7 @@ def test_codex_sessions_are_project_scoped_and_backend_independent(
             / "sessions.json"
         )
         assert json.loads(project_state_file.read_text(encoding="utf-8")) == {
-            f'["main","project","{project}",'
-            f'"{chat_service._CODEX_THREAD_PROTOCOL_VERSION}"]': thread_id,
+            key: thread_id,
         }
 
 
@@ -1044,22 +1043,25 @@ def test_codex_freezone_threads_are_canvas_and_agent_scoped(monkeypatch, tmp_pat
         / "codex"
         / "sessions.json"
     )
-    protocol = chat_service._CODEX_FREEZONE_THREAD_PROTOCOL_VERSION
     assert json.loads(state_file.read_text(encoding="utf-8")) == {
-        f'["freezone:agent-1","project","project-a","canvas-a","{protocol}"]': (
+        '["freezone:agent-1","project","project-a","canvas-a","session"]': (
             "thread-canvas-a"
         ),
-        f'["freezone:agent-1","project","project-a","canvas-b","{protocol}"]': (
+        '["freezone:agent-1","project","project-a","canvas-b","session"]': (
             "thread-canvas-b"
         ),
-        f'["freezone:agent-2","project","project-a","canvas-a","{protocol}"]': (
+        '["freezone:agent-2","project","project-a","canvas-a","session"]': (
             "thread-agent-2"
         ),
     }
 
 
-def test_codex_freezone_protocol_upgrade_does_not_resume_legacy_thread(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("old_key", [
+    '["freezone:main","project","project-a","canvas-a"]',
+    '["freezone:main","project","project-a","canvas-a","canvas-workflows-v36"]',
+])
+def test_codex_freezone_does_not_resume_threads_under_old_keys(
+    monkeypatch, tmp_path, old_key
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     state_file = (
@@ -1073,9 +1075,7 @@ def test_codex_freezone_protocol_upgrade_does_not_resume_legacy_thread(
     )
     state_file.parent.mkdir(parents=True)
     state_file.write_text(
-        json.dumps(
-            {'["freezone:main","project","project-a","canvas-a"]': ("legacy-thread")}
-        ),
+        json.dumps({old_key: "legacy-thread"}),
         encoding="utf-8",
     )
 
@@ -1090,24 +1090,26 @@ def test_codex_freezone_protocol_upgrade_does_not_resume_legacy_thread(
     )
 
 
-def test_codex_main_thread_key_is_discovery_protocol_scoped():
-    protocol = chat_service._CODEX_THREAD_PROTOCOL_VERSION
+def test_codex_main_thread_key_has_no_protocol_version():
     assert chat_service._codex_scope_key("project-a") == (
-        f'["main","project","project-a","{protocol}"]'
+        '["main","project","project-a","session"]'
     )
     assert (
         chat_service._codex_scope_key("project-a", canvas_id="ignored-canvas")
-        == f'["main","project","project-a","{protocol}"]'
+        == '["main","project","project-a","session"]'
     )
-    assert chat_service._codex_scope_key("") == f'["main","home",null,"{protocol}"]'
+    assert chat_service._codex_scope_key("") == '["main","home",null,"session"]'
+    assert not hasattr(chat_service, "_CODEX_THREAD_PROTOCOL_VERSION")
+    assert not hasattr(chat_service, "_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION")
 
 
 @pytest.mark.parametrize("old_key", [
     "project:project-a",
     '["main","project","project-a","tool-discovery-v2"]',
     '["main","project","project-a","tool-discovery-v3"]',
+    '["main","project","project-a","tool-discovery-v4"]',
 ])
-def test_codex_discovery_upgrade_does_not_resume_legacy_main_thread(
+def test_codex_main_does_not_resume_threads_under_old_keys(
     monkeypatch, tmp_path, old_key
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
@@ -1126,6 +1128,18 @@ def test_codex_discovery_upgrade_does_not_resume_legacy_main_thread(
     )
 
     assert chat_service._get_codex_thread_id("admin", "project-a") is None
+
+
+def test_codex_freezone_resumes_thread_in_same_scope(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    chat_service._set_codex_thread_id(
+        "admin", "project-a", "thread-1",
+        agent_profile="freezone:main", canvas_id="canvas-a",
+    )
+
+    assert chat_service._get_codex_thread_id(
+        "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
+    ) == "thread-1"
 
 
 @pytest.mark.anyio
@@ -1148,6 +1162,9 @@ async def test_codex_canvas_archive_removes_only_matching_scope(monkeypatch, tmp
             {
                 canvas_a: "thread-a",
                 canvas_a_agent_2: "thread-agent-2",
+                '["freezone:main","project","project-a","canvas-a",'
+                '"canvas-workflows-v36"]': "thread-old-versioned",
+                '["freezone:main","project","project-a","canvas-a"]': "thread-old-plain",
                 canvas_b: "thread-b",
                 mainline: "thread-mainline",
             }
@@ -1168,10 +1185,12 @@ async def test_codex_canvas_archive_removes_only_matching_scope(monkeypatch, tmp
         "admin", "project-a", "canvas-a", project_state_dir=project_state
     )
 
-    assert count == 2
+    assert count == 4
     assert calls == [
         ("archive", "thread-a", None),
         ("archive", "thread-agent-2", None),
+        ("archive", "thread-old-plain", None),
+        ("archive", "thread-old-versioned", None),
     ]
     assert json.loads(sessions.read_text(encoding="utf-8")) == {
         canvas_b: "thread-b",

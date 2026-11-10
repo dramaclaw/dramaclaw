@@ -508,13 +508,6 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
     "confirmation or claim creation solely because a description or plan was written."
 )
 
-# A resumed App Server thread retains the MCP tool catalog and environment from
-# when it was created. Bump the relevant value whenever MCP discovery or the
-# Freezone browser-bridge contract changes so a turn cannot silently resume a
-# thread with incompatible tool definitions.
-_CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v4"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v36"
-
 _CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS = (
     "You translate one explicit request for an existing Freezone audio node into the node data "
     "that must be saved before its already-selected action runs. Do not call tools and do not "
@@ -568,10 +561,7 @@ def _codex_developer_instructions(
     tool_mode: str | None,
     *,
     workspace: Path | None = None,
-    exact_audio_action_plan: bool = False,
 ) -> str:
-    if exact_audio_action_plan:
-        return _CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS
     if str(tool_mode or "").strip() == "freezone_canvas":
         from novelvideo.freezone.workflow_planning import WORKFLOW_PLANNING_INSTRUCTIONS
 
@@ -3314,8 +3304,6 @@ def _codex_scope_key(
         project,
         agent_profile=agent_profile,
         canvas_id=canvas_id,
-        main_protocol=_CODEX_THREAD_PROTOCOL_VERSION,
-        freezone_protocol=_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION,
     )
 
 
