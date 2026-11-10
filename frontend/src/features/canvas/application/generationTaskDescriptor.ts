@@ -2,9 +2,9 @@ import type { FreezoneJobRef } from '@/api/ops';
 
 type FreezoneTaskType = FreezoneJobRef['task_type'];
 
-export interface GenerationTaskDescriptor {
+export interface GenerationTaskDescriptor<TaskType extends string = FreezoneTaskType> {
   generationTaskKey: string;
-  generationTaskType: FreezoneTaskType;
+  generationTaskType: TaskType;
   generationTaskJobId: string;
   [key: string]: unknown;
 }
@@ -20,7 +20,9 @@ const sessionOwnedTaskKeys = new Set<string>();
  * 标记成本会话已接管 —— SPA 导航（如进出虾导）后旧等待方可能已经消失，节点仍
  * 需要恢复路径把结果接回来。
  */
-export function generationTaskDescriptor(ref: FreezoneJobRef): GenerationTaskDescriptor {
+export function generationTaskDescriptor<TaskType extends string>(
+  ref: { task_key: string; task_type: TaskType; job_id: string },
+): GenerationTaskDescriptor<TaskType> {
   return {
     generationTaskKey: ref.task_key,
     generationTaskType: ref.task_type,

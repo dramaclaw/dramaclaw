@@ -25,7 +25,7 @@
   "frontend/src/features/canvas/nodes/shared/ImageGenerationForm.tsx": 17,
   "frontend/src/features/canvas/nodes/shared/VideoGenerationForm.tsx": 48,
   "frontend/src/features/canvas/nodes/shared/assetLibraryReferenceSpawn.ts": 2,
-  "frontend/src/features/canvas/nodes/shared/imageGenerationOptions.ts": 4,
+  "frontend/src/features/canvas/nodes/shared/imageGenerationOptions.ts": 3,
   "frontend/src/features/canvas/nodes/shared/useImageGenerationForm.ts": 7,
   "frontend/src/features/canvas/nodes/shared/useVideoGenerationForm.ts": 21,
   "frontend/src/features/canvas/nodes/shared/videoFormOptions.ts": 3,
@@ -75,6 +75,5 @@
   "frontend/src/features/superchat/superchat-panel.tsx": 535,
   "frontend/src/features/superchat/task-notification-batch.ts": 10,
   "frontend/src/features/superchat/use-superchat.ts": 15,
-  "frontend/src/lib/api-errors.ts": 1,
   "frontend/src/lib/freezone-agent-config-schema.ts": 17
 }
