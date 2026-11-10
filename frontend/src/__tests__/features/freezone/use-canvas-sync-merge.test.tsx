@@ -70,6 +70,24 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('canvas sync merges', () => {
+  it('keeps locally typed text during wildcard editing and merges another node from a patch', async () => {
+    const { hook } = await open();
+    act(() => {
+      state().beginNodeFieldEdit('B', 'data.*');
+      state().updateNodeData('B', { content: 'typing' });
+    });
+    await push(hook, patch(2, [
+      { ...node('B'), data: { label: 'remote B', content: 'remote text' } },
+      node('C', 'remote C'),
+    ]));
+    expect(find('B')?.data.content).toBe('typing');
+    expect(find('B')?.data.label).toBe('remote B');
+    expect(find('C')?.data.label).toBe('remote C');
+    expect(getFreezoneCanvas).not.toHaveBeenCalled();
+    expect(hook.result.current.revision).toBe(2);
+    hook.unmount();
+  });
+
   it('merges fields while dragging and editing text without fetching', async () => {
     const { hook } = await open();
     act(() => {

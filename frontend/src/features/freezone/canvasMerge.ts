@@ -231,7 +231,8 @@ function mergeNode(
 ): CanvasNode {
   let result = local;
   for (const field of remoteFields) {
-    if (edited.has(field) && !nodeFieldEqual(base, local, field)) continue;
+    const isEdited = edited.has(field) || (field.startsWith('data.') && edited.has('data.*'));
+    if (isEdited && !nodeFieldEqual(base, local, field)) continue;
     if (nodeFieldEqual(local, remote, field)) continue;
     if (result === local) result = { ...local };
     switch (field) {
