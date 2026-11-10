@@ -49,14 +49,16 @@ def compact(path: Path, *, apply: bool = False) -> int:
                 parts = ChatStore._merge_message_parts_snapshots(
                     [parts, payload["parts"]]
                 )
+                last = (row_id, payload)
+            if last:
+                # Serialize once per turn; only the final merged snapshot is stored.
+                row_id, payload = last
                 merged = json.dumps({**payload, "parts": parts}, ensure_ascii=False)
                 if len(merged.encode()) > UI_EVENT_MAX_BYTES:
                     raise ValueError(
                         "Merged snapshot exceeds budget; database left unchanged"
                     )
-                last = (row_id, merged)
-            if last:
-                connection.execute("INSERT INTO compacted VALUES (?,?)", last)
+                connection.execute("INSERT INTO compacted VALUES (?,?)", (row_id, merged))
         connection.execute(
             "UPDATE chat_ui_events SET payload_json=(SELECT payload FROM compacted WHERE compacted.id=chat_ui_events.id) WHERE id IN (SELECT id FROM compacted)"
         )
