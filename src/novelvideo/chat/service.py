@@ -75,10 +75,7 @@ from novelvideo.chat.runtime_event_mapper import (  # noqa: F401 - compatibility
     _is_hermes_lifecycle_tool_update,
 )
 from novelvideo.chat.runtime_history import (
-    _extract_codex_history_trace as _extract_codex_history_trace,
-    _extract_codex_user_message_text as _extract_codex_user_message_text,
     _split_trace_contents,
-    parse_codex_history_item,
 )
 from novelvideo.chat.turn_images import codex_image_input_enabled, turn_image_files
 from novelvideo.chat.presentation_text import (
@@ -3036,98 +3033,6 @@ def _replace_trace_messages(
     conn: sqlite3.Connection, messages: list[dict[str, Any]]
 ) -> None:
     message_repository.replace_trace_messages(conn, messages, now_iso=_now_iso)
-
-
-def _load_codex_thread_history(
-    username: str,
-    project: str,
-    *,
-    project_state_dir: str | Path | None = None,
-) -> list[dict[str, Any]]:
-    from openai_codex import CodexConfig
-    from novelvideo.chat.codex_app_server import shared_codex
-
-    thread_id = _get_codex_thread_id(
-        username, project, project_state_dir=project_state_dir
-    )
-    if not thread_id:
-        return []
-
-    workspace, _codex_home = ensure_user_codex_workspace(
-        username, project, project_state_dir=project_state_dir
-    )
-    codex_bin = _codex_bin_path()
-    env = _build_codex_env(username, project, project_state_dir=project_state_dir)
-    config = CodexConfig(
-        codex_bin=str(codex_bin) if codex_bin is not None else None,
-        cwd=str(workspace),
-        env=env,
-        config_overrides=(
-            *_codex_gateway_config_overrides(env[_CODEX_GATEWAY_BASE_URL_ENV]),
-            *_codex_mcp_config_overrides(_dramaclaw_mcp_servers()),
-        ),
-    )
-
-    with shared_codex(config) as codex:
-        read_response = codex._client.thread_read(thread_id, include_turns=True)
-        thread = read_response.thread
-        turns = list(getattr(thread, "turns", []) or [])
-        if not turns or not any(getattr(turn, "items", None) for turn in turns):
-            resumed = codex._client.thread_resume(
-                thread_id,
-                {
-                    "cwd": str(workspace),
-                    "model": _codex_model(),
-                    "modelProvider": _CODEX_MODEL_PROVIDER,
-                },
-            )
-            turns = list(getattr(resumed.thread, "turns", []) or [])
-
-    history: list[dict[str, Any]] = []
-    for turn_index, turn in enumerate(turns):
-        for item_index, item in enumerate(getattr(turn, "items", []) or []):
-            created_at = _now_iso()
-            for parsed in parse_codex_history_item(item, turn_index, item_index):
-                content = parsed["content"]
-                role = parsed["role"]
-                media = (
-                    _filter_markdown_duplicate_images(
-                        content, _extract_media(content, username, project)
-                    )
-                    if role != "trace"
-                    else []
-                )
-                history.append(
-                    {
-                        **parsed,
-                        "media": media,
-                        "created_at": created_at,
-                    }
-                )
-
-    return history
-
-
-def _sync_codex_history_cache(
-    username: str,
-    project: str,
-    project_dir: str | Path | None = None,
-    project_state_dir: str | Path | None = None,
-) -> None:
-    history = [
-        message
-        for message in _load_codex_thread_history(
-            username, project, project_state_dir=project_state_dir
-        )
-        if message.get("role") == "trace"
-    ]
-    if not history:
-        return
-    conn = _connect(_chat_db_path(username, project, project_dir, project_state_dir))
-    try:
-        _replace_trace_messages(conn, history)
-    finally:
-        conn.close()
 
 
 def list_messages(
