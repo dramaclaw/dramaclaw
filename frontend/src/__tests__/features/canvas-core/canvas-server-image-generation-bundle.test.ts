@@ -23,6 +23,11 @@ it('serves pure image generation requests and patches from a standalone worker w
       requests.push({ id, op, payload });
       expected.push({ id, ok: true, result: wire(result) });
     };
+    add('workflow', 'plan_workflow', {
+      canvas: { nodes: [{ id: 'image', type: 'imageGenNode', position: { x: 0, y: 0 }, data: { prompt: 'A scene' } }], edges: [] },
+      commands: [{ type: 'run_workflow', scope: 'canvas' }],
+    }, { ok: true, actions: [{ command_index: 0, node_id: 'image', action: 'generate_image', execution_mode: 'workflow', label: '生成图片' }],
+      levels: [[0]], dependencies: {}, already_completed: false });
     for (const withReference of [false, true]) {
       const input = requestPayload(withReference);
       const context = requestContext(input);
