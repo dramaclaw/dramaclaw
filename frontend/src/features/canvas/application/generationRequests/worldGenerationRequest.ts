@@ -51,7 +51,7 @@ export function imageTo3gsKindForSource(
 
 /**
  * handleSubmit guard order, raw pano preparation, and the image-to-3gs wire request.
- * The browser forwards inline URLs; this pure request boundary refuses data: media.
+ * The browser forwards inline URLs; this pure request boundary refuses data: and blob: media.
  * Refusals return the exact ordered writes (usually none), then the caller publishes
  * success with an empty handler output and any latest stored world URLs.
  */
@@ -67,7 +67,7 @@ export function buildWorldGenerationRequest(ctx: WorldGenerationRequestContext):
   if (!sourceNode) return { ok: false, code: 'missing_source_node', patches: [] };
   const sourceUrl = imageUrlFromCanvasNode(sourceNode);
   if (!sourceUrl) return { ok: false, code: 'missing_source_url', patches: [] };
-  if (/^\s*data:/i.test(sourceUrl)) return { ok: false, code: 'inline_media_reference', patches: [] };
+  if (/^\s*(?:data|blob):/i.test(sourceUrl)) return { ok: false, code: 'inline_media_reference', patches: [] };
   const inferredImageSourceKind: DirectorImageSourceKind = isPanoImageCanvasNode(sourceNode) ? 'pano' : 'master';
   const selectedImageSourceKind = ctx.data.plyKind === 'pano' || ctx.data.plyKind === 'master'
     ? ctx.data.plyKind : inferredImageSourceKind;
