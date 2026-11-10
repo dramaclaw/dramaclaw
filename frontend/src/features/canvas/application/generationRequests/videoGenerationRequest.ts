@@ -15,12 +15,18 @@ import {
   DEFAULT_DURATION_MIN, videoQualityOptionsForModel, normalizeVideoQuality, videoDurationBoundsForModel,
   sceneOptimizeOptionsForModel, defaultSceneOptimizeForModel, normalizeSceneOptimize,
 } from '../../nodes/shared/videoGenerationOptions';
-import { clampVideoDuration, referenceCapsForMode } from '../../nodes/shared/videoFormOptions';
+import { clampVideoDuration, hasConfiguredReferenceCaps, referenceCapsForMode } from '../../nodes/shared/videoFormOptions';
 import {
+  audioReferenceDurationRejection, type AudioDurationRejection, referenceDurationLimitsMs,
+  isSeedance2VideoModel, isVideoModeSupportedByModel, MIN_AUDIO_REFERENCE_DURATION_MS,
+  MAX_AUDIO_REFERENCE_DURATION_MS, MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
   resolveVideoKeyframeUrls, videoModeForcesAutomaticAspectRatio, videoModeRequiresMedia,
   videoModeRequiresPrompt, videoModelDefaultGenerateAudio, videoModelReferenceDisabledReason,
   videoModelSupportsGenerateAudio, videoSubmitMediaRejectionReason,
 } from '../../nodes/shared/videoModelCapabilities';
+import { VIDEO_UPSCALE_RESOLUTIONS } from '../../domain/videoUpscaleResolutions';
+import { referenceVideoUrl } from '../../nodes/referenceMedia';
+import { extendRangeNeedsTrim, formatTimecode, type ExtendClipRange } from '../videoExtendClip';
 import { extractUpstreamContent, joinUpstreamText } from '../graphContentResolver';
 import type { CompileWorkflowNodePromptInput } from '../workflowRecipeRuntime';
 import type { WorkflowProductOperationContext } from '../workflowExecutionActivity';
@@ -39,8 +45,14 @@ export interface VideoGenerationRequestContext {
   cameraTemplates: ReadonlyArray<CameraMovementPreset> | null;
   executionSource: 'manual' | 'workflow';
   productOperation: WorkflowProductOperationContext | null;
-  /** URL-keyed durations measured outside this pure module; reserved for media modes. */
+  /** URL-keyed probe results in milliseconds. Missing/null means the probe failed. */
   mediaDurationsMs?: Record<string, number | null>;
+  /** Translation used by the component; required when an extension prefix is needed. */
+  translate?: (key: string, options?: Record<string, unknown>) => string;
+  /** Uploaded replacement for exactly the source URL and range requested below. */
+  preparedExtendClip?: {
+    sourceUrl: string; startMs: number; endMs: number; url: string; durationMs: number;
+  };
   /** Resolved task activity, when available; mirrors the browser task-state hook. */
   isGenerating?: boolean;
 }
@@ -53,12 +65,26 @@ export interface VideoGenerationHttpRequest {
   path: string;
   body: Record<string, unknown>;
 }
-export type VideoGenerationRefusalCode = 'not_video_node' | 'mode_not_supported' | 'no_model'
+export type VideoGenerationRefusalCode = 'not_video_node' | 'no_model'
   | 'no_project' | 'generation_in_progress' | 'no_effective_prompt' | 'missing_media'
-  | 'reference_limit_exceeded' | 'model_capability_error' | 'inline_media_reference';
+  | 'reference_limit_exceeded' | 'model_capability_error' | 'inline_media_reference'
+  | 'missing_source_video' | 'missing_references' | 'mode_unsupported_by_model'
+  | 'extend_clip_not_prepared' | 'reference_duration_invalid' | 'missing_upscale_source';
 export type VideoGenerationRequestResult = { ok: true; requests: VideoGenerationHttpRequest[] }
-  | { ok: false; code: VideoGenerationRefusalCode; message: string };
+  | { ok: false; code: VideoGenerationRefusalCode; message: string;
+    media?: 'audio' | 'video'; rejection?: AudioDurationRejection };
 
+/**
+ * Browser outcomes: busy/model/capability/cap/prompt/media/project guards and
+ * missing source/references return silently (subscriber publishes SUCCESS).
+ * Unsupported omni's branch shows a dialog and returns SUCCESS without a node
+ * error; normal mounting can normalize the mode before that branch is reachable.
+ * Duration rejection writes referenceValidation.title as a node error, which the
+ * subscriber publishes as an error. Missing upscale source is a published error.
+ * Wrong-node is a pure boundary check. Inline URLs and missing
+ * prepared clips are caller preparation refusals: the browser can forward inline
+ * media/files, blocks inline links as invalid, and performs its own trim/upload.
+ */
 const NOT_VIDEO_NODE = 'The target node must be a video node.';
 function refuse(code: VideoGenerationRefusalCode, message: string): VideoGenerationRequestResult {
   return { ok: false, code, message };
@@ -83,6 +109,217 @@ function imageUrls(node: CanvasNode): { preview: string | null; source: string |
 }
 function upstream(ctx: VideoGenerationRequestContext) {
   return videoReferenceNodesInEdgeOrder(ctx.nodes, ctx.edges, ctx.nodeId);
+}
+
+function extensionRange(data: VideoNodeData): ExtendClipRange | null {
+  return data.isExtendMode && typeof data.extendStartMs === 'number' && typeof data.extendEndMs === 'number'
+    ? { startMs: data.extendStartMs, endMs: data.extendEndMs } : null;
+}
+function extensionNeedsTrim(ctx: VideoGenerationRequestContext, range: ExtendClipRange): boolean {
+  const data = nodeData(ctx);
+  const source = sortUpstreamByReferenceOrder(upstream(ctx), data?.referenceOrder).find(referenceVideoUrl);
+  // Prefix/trim selection uses stored source duration only, never a measured probe.
+  const duration = source?.data.durationMs;
+  return extendRangeNeedsTrim(range, typeof duration === 'number' && duration > 0 ? duration : null);
+}
+
+/** Exact source and range for the browser trim call; null when no clip is submitted. */
+export function videoExtendTrimRequirement(
+  ctx: VideoGenerationRequestContext,
+): { videoUrl: string; startMs: number; endMs: number } | null {
+  const data = nodeData(ctx);
+  if (!data || data.isUpscaleNode || data.genMode !== 'allReference') return null;
+  const range = extensionRange(data);
+  if (!range || !extensionNeedsTrim(ctx, range)) return null;
+  const model = selectVideoModel(ctx.videoModels, data.model);
+  const caps = referenceCapsForMode(model, 'allReference');
+  if (!caps || caps.video <= 0) return null;
+  const video = collectOmniReferences(ctx, data, model).videoRefs[0];
+  return video ? { videoUrl: video.url, ...range } : null;
+}
+
+function extensionPrefix(ctx: VideoGenerationRequestContext, data: VideoNodeData): string {
+  const range = extensionRange(data);
+  if (!range) return '';
+  if (!ctx.translate) throw new Error('An extension prompt requires context.translate.');
+  const sourceName = typeof data.extendSourceName === 'string' ? data.extendSourceName : '';
+  const name = sourceName.trim() || ctx.translate('canvas.videoExtend.defaultSourceName');
+  return extensionNeedsTrim(ctx, range)
+    ? ctx.translate('canvas.videoExtend.promptPrefixTrimmed', { name })
+    : ctx.translate('canvas.videoExtend.promptPrefix', {
+      name, start: formatTimecode(range.startMs), end: formatTimecode(range.endMs),
+    });
+}
+
+interface DurationReference { url: string; nodeId: string; label: string; durationMs: number | null }
+interface MediaReference { type: 'image' | 'video' | 'audio' | 'file' | 'link'; url: string; role: string; label: string }
+function audioLabel(node: CanvasNode): string {
+  return (typeof node.data.sourceFileName === 'string' ? node.data.sourceFileName : '')
+    || (typeof node.data.displayName === 'string' ? node.data.displayName : '');
+}
+function durationReference(ctx: VideoGenerationRequestContext, node: CanvasNode, url: string,
+  media: 'audio' | 'video', index: number): DurationReference {
+  const rawLabel = media === 'audio' ? audioLabel(node) : '';
+  const key = media === 'audio' ? 'node.videoNode.audio.clipFallbackLabel'
+    : 'node.videoNode.referenceDuration.videoFallbackLabel';
+  return { url, nodeId: node.id, label: rawLabel || (ctx.translate?.(key, { index }) ?? key),
+    durationMs: typeof node.data.durationMs === 'number' ? node.data.durationMs : null };
+}
+
+function collectOmniReferences(ctx: VideoGenerationRequestContext, data: VideoNodeData,
+  model: ModelOption | null | undefined) {
+  const caps = referenceCapsForMode(model, 'allReference') ?? { image: 9, video: 3, audio: 3 };
+  const total = hasConfiguredReferenceCaps(model) ? caps.image + caps.video + caps.audio : 12;
+  const references: MediaReference[] = [];
+  const audioRefs: DurationReference[] = [];
+  const videoRefs: DurationReference[] = [];
+  let imageCount = 0;
+  for (const node of sortUpstreamByReferenceOrder(upstream(ctx), data.referenceOrder)) {
+    if (references.length >= total) break;
+    const videoUrl = referenceVideoUrl(node);
+    if (videoUrl) {
+      if (videoRefs.length < caps.video) {
+        references.push({ type: 'video', url: videoUrl, role: '', label: '' });
+        videoRefs.push(durationReference(ctx, node, videoUrl, 'video', videoRefs.length + 1));
+      }
+    } else if (isAudioNode(node)) {
+      const url = typeof node.data.audioUrl === 'string' ? node.data.audioUrl : '';
+      if (url && audioRefs.length < caps.audio) {
+        const label = audioLabel(node);
+        references.push({ type: 'audio', url, role: '配乐参考', label }); // i18n-exempt -- exact wire or subscriber contract
+        audioRefs.push(durationReference(ctx, node, url, 'audio', audioRefs.length + 1));
+      }
+    } else {
+      const url = imageUrls(node).source;
+      if (url && imageCount < caps.image) {
+        references.push({ type: 'image', url, role: '', label: '' });
+        imageCount += 1;
+      }
+    }
+  }
+  if (data.referenceFileUrl?.trim()) {
+    references.push({ type: 'file', url: data.referenceFileUrl.trim(), role: '文件参考', label: data.referenceFileName ?? '' }); // i18n-exempt -- exact wire or subscriber contract
+  } else if (data.referenceLink?.trim()) {
+    references.push({ type: 'link', url: data.referenceLink.trim(), role: '网页参考', label: '' }); // i18n-exempt -- exact wire or subscriber contract
+  }
+  return { references, audioRefs, videoRefs };
+}
+
+function validateDurations(ctx: VideoGenerationRequestContext, model: ModelOption,
+  media: 'audio' | 'video', refs: DurationReference[]): VideoGenerationRequestResult | null {
+  const configured = referenceDurationLimitsMs(model, media);
+  const familyFallback = media === 'audio' && isSeedance2VideoModel(model.apiModel ?? model.id);
+  const limits = {
+    minMs: configured.minMs ?? (familyFallback ? MIN_AUDIO_REFERENCE_DURATION_MS : undefined),
+    maxMs: configured.maxMs ?? (familyFallback ? MAX_AUDIO_REFERENCE_DURATION_MS : undefined),
+    totalMinMs: configured.totalMinMs,
+    totalMaxMs: configured.totalMaxMs ?? (familyFallback ? MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS : undefined),
+  };
+  if (!refs.length || Object.values(limits).every((value) => value == null)) return null;
+  const rejection = audioReferenceDurationRejection(refs.map((ref, index) => ({
+    ...ref, index: index + 1, durationMs: typeof ref.durationMs === 'number' && ref.durationMs > 0
+      ? ref.durationMs : ctx.mediaDurationsMs?.[ref.url] ?? null,
+  })), { minMs: limits.minMs ?? null, maxMs: limits.maxMs ?? null, totalMinMs: limits.totalMinMs,
+    totalLimitMs: limits.totalMaxMs ?? null, perClipLimits: limits.minMs != null || limits.maxMs != null });
+  // The component writes referenceValidation.title to the node; the subscriber publishes an error.
+  return rejection ? { ok: false, code: 'reference_duration_invalid',
+    message: 'Reference duration is outside the model limits.', media, rejection } : null;
+}
+
+function documentReferenceInvalid(data: VideoNodeData, model: ModelOption): boolean {
+  const file = data.referenceFileUrl?.trim();
+  const link = data.referenceLink?.trim();
+  if (file && link) return true;
+  if (file) {
+    if ((model.referenceFileMax ?? 0) < 1) return true;
+    let extension = '';
+    try { extension = new URL(file, 'https://canvas.example.test').pathname.split('.').pop()?.toLowerCase() ?? ''; }
+    catch { /* The component treats an unparseable file URL as an empty extension. */ }
+    return Boolean(model.referenceFileTypes?.length && !model.referenceFileTypes.includes(extension));
+  }
+  if (link) {
+    if ((model.referenceLinkMax ?? 0) < 1) return true;
+    try {
+      const parsed = new URL(link);
+      return !((parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname
+        && !parsed.username && !parsed.password);
+    } catch { return true; }
+  }
+  return false;
+}
+
+function requestResult(ctx: VideoGenerationRequestContext, route: string, body: Record<string, unknown>, count = 1): VideoGenerationRequestResult {
+  return { ok: true, requests: Array.from({ length: count }, () => ({ method: 'POST',
+    path: `projects/${encodeURIComponent(ctx.projectId)}/freezone/video/${route}`, body: structuredClone(body) })) };
+}
+function operationContext(ctx: VideoGenerationRequestContext) {
+  return { ...(ctx.canvasId ? { canvas_id: ctx.canvasId } : {}), ...(ctx.nodeId ? { node_id: ctx.nodeId } : {}),
+    ...(ctx.productOperation?.generationAttemptId ? {
+      product_operation_id: ctx.productOperation.operationId, generation_attempt_id: ctx.productOperation.generationAttemptId,
+    } : {}) };
+}
+function buildUpscale(ctx: VideoGenerationRequestContext, data: VideoNodeData): VideoGenerationRequestResult {
+  const source = typeof data.upscaleSourceUrl === 'string' ? data.upscaleSourceUrl : '';
+  // Published directly by the subscriber, before checking project/model/busy state.
+  if (!source) return refuse('missing_upscale_source', '缺少高清视频源'); // i18n-exempt -- exact wire or subscriber contract
+  // submitVideoUpscale silently returns; the subscriber then publishes SUCCESS.
+  if (!ctx.projectId) return refuse('no_project', 'A project is required.');
+  if (source.startsWith('data:')) return refuse('inline_media_reference', 'Upload inline media before building a video request.');
+  const resolution = VIDEO_UPSCALE_RESOLUTIONS.find((value) => value === data.upscaleResolution) ?? '1080p';
+  return requestResult(ctx, 'upscale', { source_url: source.split('?')[0], resolution,
+    slowdown: 'auto', smart_interpolation: true, scene: 'realistic', face_enhance: false,
+    ...operationContext(ctx) });
+}
+
+function buildVideoMediaRequest(ctx: VideoGenerationRequestContext, data: VideoNodeData, model: ModelOption,
+  mode: 'videoEdit' | 'videoExtend' | 'allReference', body: Record<string, unknown>, count: number): VideoGenerationRequestResult {
+  const { aspect_ratio, duration_seconds, scene_optimize, marks, ...common } = body;
+  const ordered = sortUpstreamByReferenceOrder(upstream(ctx), data.referenceOrder);
+  const inline = (urls: string[]) => urls.some((url) => url.startsWith('data:'));
+  if (mode === 'videoEdit' || mode === 'videoExtend') {
+    const videoUrl = ordered.map(referenceVideoUrl).find((url) => url !== null) ?? '';
+    const caps = referenceCapsForMode(model, mode);
+    const imageUrlsToSubmit = mode === 'videoEdit' ? ordered.flatMap((node) => {
+      const url = imageUrls(node).source;
+      return url ? [url] : [];
+    }).slice(0, caps?.image ?? 5) : [];
+    const audioRefs = mode === 'videoEdit' ? ordered.filter(isAudioNode).map((node, index) => durationReference(ctx, node,
+      typeof node.data.audioUrl === 'string' ? node.data.audioUrl : '', 'audio', index + 1))
+      .filter((ref) => ref.url.length > 0).slice(0, caps?.audio ?? 0) : [];
+    const audioUrls = audioRefs.map((ref) => ref.url);
+    if (inline([videoUrl, ...imageUrlsToSubmit, ...audioUrls])) {
+      return refuse('inline_media_reference', 'Upload inline media before building a video request.');
+    }
+    const rejection = validateDurations(ctx, model, 'audio', audioRefs);
+    if (rejection) return rejection;
+    return mode === 'videoEdit'
+      ? requestResult(ctx, 'video-edit', { ...common, video_url: videoUrl, image_urls: imageUrlsToSubmit,
+        audio_urls: audioUrls, marks, audio_setting: 'auto' }, count)
+      : requestResult(ctx, 'video-extend', { ...common, video_url: videoUrl, duration_seconds }, count);
+  }
+  const { references, audioRefs, videoRefs } = collectOmniReferences(ctx, data, model);
+  if (!references.length) return refuse('missing_references', 'At least one reference is required.');
+  const requirement = videoExtendTrimRequirement(ctx);
+  if (requirement) {
+    const clip = ctx.preparedExtendClip;
+    if (!clip || clip.sourceUrl !== requirement.videoUrl || clip.startMs !== requirement.startMs || clip.endMs !== requirement.endMs) {
+      return refuse('extend_clip_not_prepared', 'Prepare the selected extension clip before building the request.');
+    }
+    const ref = references.find((item) => item.type === 'video');
+    if (ref) ref.url = clip.url;
+    videoRefs[0] = { ...videoRefs[0], url: clip.url, durationMs: clip.durationMs };
+  }
+  // Inline references are a pure boundary refusal, even where browser document guards block them.
+  if (inline(references.map((ref) => ref.url))) {
+    return refuse('inline_media_reference', 'Upload inline media before building a video request.');
+  }
+  if (documentReferenceInvalid(data, model)) {
+    return refuse('model_capability_error', 'The model cannot consume these document references.');
+  }
+  const rejection = validateDurations(ctx, model, 'audio', audioRefs) ?? validateDurations(ctx, model, 'video', videoRefs);
+  if (rejection) return rejection;
+  return requestResult(ctx, 'omni-gen', { ...common, marks, aspect_ratio, duration_seconds, scene_optimize,
+    theme: '', references, ...(data.isExtendMode ? { continuation: true } : {}) }, count);
 }
 
 function submitAspectRatio(data: VideoNodeData, model: ModelOption): string {
@@ -114,7 +351,7 @@ export function videoPromptCompileInput(ctx: VideoGenerationRequestContext): Vid
   const userPrompt = [upstreamText, nodePrompt].filter((text) => text.length > 0).join('\n\n');
   return {
     nodeKind: 'video', nodePrompt, upstreamText, upstreamContents,
-    fallbackPrompt: fragment ? userPrompt ? `${fragment}，${userPrompt}` : fragment : userPrompt,
+    fallbackPrompt: extensionPrefix(ctx, data) + (fragment ? userPrompt ? `${fragment}，${userPrompt}` : fragment : userPrompt),
   };
 }
 
@@ -129,10 +366,12 @@ export function videoPromptCompileMetadataPatch(
 
 /**
  * Build VideoNode HTTP JSON without submitting. Recipe compilation, continuity
- * preparation, uploads, billing-rule checks and model-access checks stay with the
- * caller. Upload inline media first. Supply a normalized graph snapshot for each
- * phase: the component rereads references after compilation. These modes send the
- * compiled prompt unchanged. Other media modes and upscale are deferred.
+ * preparation, trimmed-clip uploads, measured durations, billing-rule checks and
+ * model-access checks stay with the caller. Upload inline media first. Supply a
+ * normalized graph snapshot for each phase: the component rereads references after compilation. These modes send the
+ * compiled prompt unchanged. Supply normalized mode/model state and an explicit
+ * translator for extension prefixes. Refusals describe browser outcomes above;
+ * applying the corresponding node error/result patch is the caller's next step.
  */
 export function buildVideoGenerationRequest(
   ctx: VideoGenerationRequestContext & { prompt: string },
@@ -140,9 +379,7 @@ export function buildVideoGenerationRequest(
   const data = nodeData(ctx);
   if (!data) return refuse('not_video_node', NOT_VIDEO_NODE);
   const mode = data.genMode ?? 'textToVideo';
-  if (data.isUpscaleNode || mode === 'videoEdit' || mode === 'videoExtend' || mode === 'allReference') {
-    return refuse('mode_not_supported', 'This video mode is not supported by this builder yet.');
-  }
+  if (data.isUpscaleNode === true) return buildUpscale(ctx, data);
   const model = selectVideoModel(ctx.videoModels, data.model);
   if (!model) return refuse('no_model', 'No video model is available.');
   if (ctx.isGenerating ?? data.isGenerating) return refuse('generation_in_progress', 'Video generation is already running.');
@@ -153,7 +390,14 @@ export function buildVideoGenerationRequest(
     else if (isAudioNode(node)) { if (node.data.audioUrl) counts.audios += 1; }
     else if (imageUrls(node).preview) counts.images += 1;
   }
-  const caps = referenceCapsForMode(model, mode);
+  // VideoNode's videoExtend caps ignore catalog overrides (unlike the form helper).
+  const caps = mode === 'videoExtend' ? { image: 0, video: 1, audio: 0 } : referenceCapsForMode(model, mode);
+  if ((mode === 'videoEdit' || mode === 'videoExtend') && counts.videos === 0) {
+    return refuse('missing_source_video', 'An upstream source video is required.');
+  }
+  if (mode === 'allReference' && !isVideoModeSupportedByModel(mode, model)) {
+    return refuse('mode_unsupported_by_model', 'The model does not support all-reference generation.');
+  }
   const capabilityError = videoModelReferenceDisabledReason(model, counts);
   if (capabilityError) return refuse('model_capability_error', 'The model cannot consume these references.');
   if (caps && (counts.images > caps.image || counts.videos > caps.video || counts.audios > caps.audio)) {
@@ -164,14 +408,14 @@ export function buildVideoGenerationRequest(
   }
   const compileInput = videoPromptCompileInput(ctx);
   // Camera fragments do not satisfy the component's prompt-required guard.
-  if (videoModeRequiresPrompt(mode) && !compileInput.nodePrompt && !compileInput.upstreamText) {
+  if (videoModeRequiresPrompt(mode) && !compileInput.nodePrompt && !compileInput.upstreamText && !extensionRange(data)) {
     return refuse('no_effective_prompt', 'A video prompt or upstream text is required.');
   }
-  if (nodes.some((node) => [imageUrls(node).source, imageUrls(node).preview,
+  if (mode !== 'videoEdit' && mode !== 'videoExtend' && mode !== 'allReference' && nodes.some((node) => [imageUrls(node).source, imageUrls(node).preview,
     node.data.videoUrl, node.data.audioUrl].some((url) => typeof url === 'string' && url.startsWith('data:')))) {
     return refuse('inline_media_reference', 'Upload inline media before building a video request.');
   }
-  if (videoModeRequiresMedia(mode) && counts.images === 0) return refuse('missing_media', 'An upstream image is required.');
+  if (mode !== 'videoEdit' && mode !== 'videoExtend' && mode !== 'allReference' && videoModeRequiresMedia(mode) && counts.images === 0) return refuse('missing_media', 'An upstream image is required.');
   if (!ctx.projectId) return refuse('no_project', 'A project is required.');
 
   const aspectRatio = submitAspectRatio(data, model);
@@ -194,13 +438,13 @@ export function buildVideoGenerationRequest(
     ...(modelId ? { model: modelId, model_id: modelId } : {}),
     gen_mode: mode, human_review: mode !== 'textToVideo' && model.humanReview === true && Boolean(data.humanReview),
     scene_optimize: sceneOptimize ?? null,
-    ...(ctx.canvasId ? { canvas_id: ctx.canvasId } : {}),
-    ...(ctx.nodeId ? { node_id: ctx.nodeId } : {}),
     ...(data.modelParams ? { model_params: data.modelParams } : {}),
-    ...(ctx.productOperation?.generationAttemptId ? {
-      product_operation_id: ctx.productOperation.operationId, generation_attempt_id: ctx.productOperation.generationAttemptId,
-    } : {}),
+    ...operationContext(ctx),
   };
+  const count = Math.min(Math.max(data.count ?? 1, 1), 4);
+  if (mode === 'videoEdit' || mode === 'videoExtend' || mode === 'allReference') {
+    return buildVideoMediaRequest(ctx, data, model, mode, body, count);
+  }
   let route = 'gen';
   const ordered = sortUpstreamByReferenceOrder(nodes, data.referenceOrder);
   if (mode === 'firstFrame' || mode === 'firstLastFrame') {
@@ -226,7 +470,5 @@ export function buildVideoGenerationRequest(
   } else {
     body.character_ids = [];
   }
-  return { ok: true, requests: Array.from({ length: Math.min(Math.max(data.count ?? 1, 1), 4) }, () => ({
-    method: 'POST', path: `projects/${encodeURIComponent(ctx.projectId)}/freezone/video/${route}`, body,
-  })) };
+  return requestResult(ctx, route, body, count);
 }

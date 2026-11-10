@@ -280,10 +280,12 @@ describe('pure video request boundaries', () => {
     expect(() => videoPromptCompileInput(ctx)).toThrow();
   });
   it('no model', () => expect(buildVideoGenerationRequest({ ...fixtures[0], videoModels: [], prompt: 'Test' })).toMatchObject({ ok: false, code: 'no_model' }));
-  it.each(['videoEdit', 'videoExtend', 'allReference'])('unsupported %s', (genMode) => {
-    expect(buildVideoGenerationRequest({ ...fixture('unsupported', { genMode }), prompt: 'Test' })).toMatchObject({ ok: false, code: 'mode_not_supported' });
+  it.each([
+    ['videoEdit', 'missing_source_video'], ['videoExtend', 'missing_source_video'], ['allReference', 'missing_references'],
+  ])('%s without media references', (genMode, code) => {
+    expect(buildVideoGenerationRequest({ ...fixture('no media', { genMode }), prompt: 'Test' })).toMatchObject({ ok: false, code });
   });
-  it('unsupported upscale branch', () => expect(buildVideoGenerationRequest({ ...fixture('upscale', { isUpscaleNode: true }), prompt: 'Test' })).toMatchObject({ ok: false, code: 'mode_not_supported' }));
+  it('upscale without source', () => expect(buildVideoGenerationRequest({ ...fixture('upscale', { isUpscaleNode: true }), prompt: 'Test' })).toMatchObject({ ok: false, code: 'missing_upscale_source' }));
   it('inline source reference requires upload', () => expect(buildVideoGenerationRequest({ ...fixture('inline', { genMode: 'imageReference' }, sources(source('inline', { imageUrl: 'data:image/png;base64,AA==' }))), prompt: 'Test' })).toMatchObject({ ok: false, code: 'inline_media_reference' }));
   it('resolved task activity overrides node flag', () => {
     expect(buildVideoGenerationRequest({ ...fixtures[0], isGenerating: true, prompt: 'Test' })).toMatchObject({ ok: false, code: 'generation_in_progress' });
