@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from novelvideo.api import app
 from novelvideo.chat import backend_sdk, codex_app_server, service
 from novelvideo.chat.store import ChatScope, chat_store
 
@@ -272,7 +273,6 @@ async def test_successful_finalization_completes_drain(node, tmp_path):
 @pytest.mark.parametrize("backend", ["codex", "claude"])
 async def test_app_starts_and_cancels_only_codex_sweeper(node, monkeypatch, backend):
     from fastapi import FastAPI
-    from novelvideo.api import app
 
     monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", backend)
     monkeypatch.delenv("CODEX_BIN", raising=False)

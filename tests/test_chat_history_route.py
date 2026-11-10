@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from sse_starlette.sse import AppStatus
 from starlette.websockets import WebSocketDisconnect
 
 from codex_history_stub import HistoryClient
@@ -191,6 +192,132 @@ async def test_missing_project_page_and_disconnected_socket(store, monkeypatch):
     assert await routes._send_history_page(
         Disconnected(), {"username": "alice"}, "alice", scope, "x"
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_turn_stops_on_server_shutdown(monkeypatch):
+    run_turn = routes._run_turn_until_shutdown
+    monkeypatch.setattr(AppStatus, "should_exit", False)
+    monkeypatch.setattr(routes, "_SHUTDOWN_POLL_INTERVAL_SECONDS", 0.01)
+    running, cancelled, detached = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def turn():
+        running.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            await asyncio.sleep(0.01)
+            detached.set()
+            raise
+
+    task = asyncio.create_task(run_turn(turn()))
+    try:
+        await asyncio.wait_for(running.wait(), timeout=2)
+        monkeypatch.setattr(AppStatus, "should_exit", True)
+        assert await asyncio.wait_for(task, timeout=2) == (True, None)
+        assert cancelled.is_set() is True
+        assert detached.is_set() is True
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_turn_result_and_exception_survive_shutdown_watch(monkeypatch):
+    run_turn = routes._run_turn_until_shutdown
+    monkeypatch.setattr(AppStatus, "should_exit", False)
+
+    async def finish():
+        await asyncio.sleep(0)
+        return "reply complete"
+
+    failure = RuntimeError("turn failed")
+
+    async def fail():
+        await asyncio.sleep(0)
+        raise failure
+
+    assert await asyncio.wait_for(run_turn(finish()), timeout=2) == (False, "reply complete")
+    with pytest.raises(RuntimeError, match="^turn failed$") as caught:
+        await asyncio.wait_for(run_turn(fail()), timeout=2)
+    assert caught.value is failure
+
+
+@pytest.mark.asyncio
+async def test_cancelled_shutdown_watch_cancels_turn(monkeypatch):
+    run_turn = routes._run_turn_until_shutdown
+    monkeypatch.setattr(AppStatus, "should_exit", False)
+    running, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def turn():
+        running.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    task = asyncio.create_task(run_turn(turn()))
+    try:
+        await asyncio.wait_for(running.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+        assert cancelled.is_set() is True
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["project", "freezone", "home"])
+async def test_chat_ws_returns_quietly_on_server_shutdown(store, monkeypatch, caplog, kind):
+    install_reader(monkeypatch, 0)
+    websocket_app(monkeypatch)
+    monkeypatch.setattr(AppStatus, "should_exit", False)
+    monkeypatch.setattr(routes, "_SHUTDOWN_POLL_INTERVAL_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr(routes, "_require_ai_assistant_access", AsyncMock())
+    running, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def turn(**kwargs):
+        running.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    class WebSocket(RecordingWebSocket):
+        client = None
+
+        async def accept(self):
+            pass
+
+        async def receive_json(self):
+            if running.is_set():
+                await asyncio.Future()
+            return {
+                "type": "chat.message", "text": "hello", "turn_id": "business-shutdown",
+                "scope": {"kind": kind, "id": "project-a" if kind != "home" else None},
+            }
+
+    monkeypatch.setattr(routes, "_stream_project_turn", turn)
+    monkeypatch.setattr(routes, "_stream_home_turn", turn)
+    websocket = WebSocket()
+    task = asyncio.create_task(routes.chat_ws(websocket))
+    try:
+        await asyncio.wait_for(running.wait(), timeout=2)
+        assert [frame["type"] for frame in websocket.frames] == ["scope.changed"]
+        frames_before_shutdown = list(websocket.frames)
+        monkeypatch.setattr(AppStatus, "should_exit", True)
+        assert await asyncio.wait_for(task, timeout=2) is None
+        assert cancelled.is_set() is True
+        assert websocket.frames == frames_before_shutdown
+        assert [record.message for record in caplog.records if record.levelno >= logging.ERROR] == []
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

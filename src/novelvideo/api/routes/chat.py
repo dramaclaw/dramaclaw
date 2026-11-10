@@ -15,6 +15,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Coroutine
 from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, Any
@@ -30,6 +31,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 from pydantic import AliasChoices, BaseModel, Field, field_validator
+from sse_starlette.sse import AppStatus
 
 from novelvideo.api.auth import (
     AGENT_WRITE_SCOPES,
@@ -110,6 +112,7 @@ logger = logging.getLogger(__name__)
 
 AI_ASSISTANT_CHAT_FEATURE_KEY = "assistant.chat"
 EMPTY_AGENT_REPLY_MESSAGE = "这轮操作没有收到虾导的有效回复，请稍后重试。"
+_SHUTDOWN_POLL_INTERVAL_SECONDS = 0.5
 
 # 出网台账里这条链路的 capability 口径。取自
 # `chat/hermes_egress.py:131` 的 `capability="agent.hermes.text"`，与 EG-07 对齐；
@@ -4391,6 +4394,24 @@ async def _stream_home_turn(
             )
 
 
+async def _run_turn_until_shutdown(turn: Coroutine[Any, Any, Any]) -> tuple[bool, Any]:
+    """Return (server_exiting, result), waiting for cancellation to detach the turn."""
+    task = asyncio.create_task(turn)
+    try:
+        while not task.done():
+            if AppStatus.should_exit:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                return True, None
+            await asyncio.wait({task}, timeout=_SHUTDOWN_POLL_INTERVAL_SECONDS)
+        return False, task.result()
+    except asyncio.CancelledError:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+
+
 @router.websocket("/chat/ws")
 async def chat_ws(websocket: WebSocket) -> None:
     await websocket.accept()
@@ -4598,7 +4619,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                     )
                 await _require_ai_assistant_access(user=user, scope=scope)
                 if scope.kind in {"project", "freezone"}:
-                    await _stream_project_turn(
+                    turn = _stream_project_turn(
                         websocket=websocket,
                         user=user,
                         username=username,
@@ -4615,7 +4636,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                         store_scope=scope if _is_freezone_scope(scope) else None,
                     )
                 elif scope.kind == "home":
-                    await _stream_home_turn(
+                    turn = _stream_home_turn(
                         websocket=websocket,
                         user=user,
                         username=username,
@@ -4634,6 +4655,10 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "message": f"scope not implemented: {scope.kind}",
                         }, send_lock,
                     )
+                    continue
+                server_exiting, _ = await _run_turn_until_shutdown(turn)
+                if server_exiting:
+                    return
             except Exception as exc:  # noqa: BLE001
                 busy_message = _chat_turn_busy_message(exc)
                 message = busy_message or str(exc)
