@@ -1,31 +1,35 @@
 import { STORY_CHOICE_EDGE_TYPE } from "@/features/canvas/story/storyTypes";
 import i18next from "i18next";
 import { executeWorkflowHtmlNode } from "@/features/canvas/application/workflowHtmlRuntime";
-import { type HtmlArtifactCommand, parseHtmlArtifactCommand, executeHtmlArtifactCommand } from '@/features/html-artifacts/commands';
+import { parseHtmlArtifactCommand, executeHtmlArtifactCommand } from '@/features/html-artifacts/commands';
 import { executeHtmlNodeWriteAction } from '@/features/html-artifacts/nodeActions';
 import {
   CANVAS_NODE_TYPES,
-  DEFAULT_NODE_WIDTH,
-  type BeatContextNodeData,
   type CanvasEdge,
   type CanvasNode,
   type CanvasNodeData,
   type CanvasNodeType,
-  isGroupNode,
-  isProtectedProjectionGroupNode,
-  isStoryboardGroupNode,
 } from "@/features/canvas/domain/canvasNodes";
 import {
-  getDownstreamSpawnTypes,
-  isUpstreamConnectionAllowed,
-  nodeHasSourceHandle,
-  nodeHasTargetHandle,
-} from "@/features/canvas/domain/nodeRegistry";
+  applyCanvasCommandsAsync,
+  applyCanvasCommandsNow,
+  canvasCommandLabel,
+  normalizeCanvasCommandEnvelopes,
+  isGeneratedCanvasClientId,
+  type CanvasCommandEnvironment,
+  type CanvasCommandHandlers,
+} from "@/features/canvas/core/commands/executor";
 import {
-  isPresetManagedNode,
-  isSystemManagedNodeData,
-} from "@/features/canvas/domain/mainlineNodeFlags";
-import { inheritMainlineFields, type MainlineFieldsSource } from "@/features/canvas/domain/inheritMainlineFields";
+  CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+  type CanvasChatCommand,
+  type CanvasChatCommandApplyResult,
+  type CanvasChatCommandApplyStep,
+  type CanvasChatCommandEnvelope,
+  type JsonRecord,
+  type MainlineProjectionRequest,
+} from "@/features/canvas/core/commands/types";
+import { workflowExternalSourceMismatch } from "@/features/canvas/core/commands/workflowExternalSource";
+import { selectAndFocusNode as selectAndFocusNodeIn } from "@/features/canvas/core/selection";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import {
   clearPendingNodeAction,
@@ -35,7 +39,6 @@ import {
   createFreezoneWorkflowRun,
   getFreezoneWorkflowRun,
   updateFreezoneWorkflowRun,
-  type FreezonePresetCanvasRequest,
   type FreezoneWorkflowRun,
   type WorkflowRunActionStatus,
 } from "@/api/canvas";
@@ -50,24 +53,10 @@ import {
   isAgentExecutableNodeAction,
 } from "@/features/freezone/canvasNodeActionCatalog";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
-import {
-  isBeatContextAgentEditablePatch,
-  normalizeBeatContextAgentPatch,
-  normalizeCanvasCommandCreateNodeData,
-  normalizeCanvasCommandNodeData,
-} from "@/features/freezone/canvasCommandNodeData";
-import {
-  validateCanvasChatCommandEnvelopes,
-  workflowExternalSourceMismatch,
-} from "@/features/freezone/context/canvasCommandValidator";
-import {
-  normalizeCanvasEdgeSemanticKind,
-  type CanvasEdgeSemanticKind,
-} from "@/features/freezone/canvasEdgeSemantics";
+import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
+import { normalizeCanvasEdgeSemanticKind } from "@/features/freezone/canvasEdgeSemantics";
 import { landNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
 import { useCanvasStore } from "@/stores/canvasStore";
-import { selectNodeExclusively } from "@/features/canvas/application/nodeSelection";
-import { placeGroupsOutsideStory } from "@/features/canvas/application/storyGroupPlacement";
 import { deterministicNodeOutputIssue } from "@/features/freezone/workflowQualityGate";
 import {
   bindWorkflowProductOperation,
@@ -89,115 +78,20 @@ import {
   syncStoryVideoReferencePrompt,
   videoContinuitySources,
 } from "@/features/canvas/application/videoContinuity";
-import { dedupeGenerationErrors } from "@/features/canvas/application/generationErrorReport";
 
-export const CANVAS_CHAT_COMMANDS_SCHEMA_VERSION = "canvas_chat_commands.v1";
+export { CANVAS_CHAT_COMMANDS_SCHEMA_VERSION, isGeneratedCanvasClientId };
+export type {
+  CanvasChatCommand,
+  CanvasChatCommandApplyResult,
+  CanvasChatCommandApplyStep,
+  CanvasChatCommandEnvelope,
+};
 export const FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT = "freezone/canvas-command-approval";
 export const FREEZONE_CANVAS_COMMAND_RESULT_EVENT = "freezone/canvas-command-result";
 export const FREEZONE_WORKFLOW_RUN_UPDATED_EVENT = WORKFLOW_RUN_UPDATED_EVENT;
 
-type JsonRecord = Record<string, unknown>;
-type MainlineProjectionScope = "episode" | "beat" | "asset";
-type MainlineProjectionRequest = Omit<
-  FreezonePresetCanvasRequest,
-  "canvas_id" | "overwrite_existing" | "base_revision" | "scope"
-> & {
-  scope: MainlineProjectionScope;
-};
-
 const VIDEO_COMPOSE_MIN_UPSTREAM_VIDEOS = 1;
 const VIDEO_COMPOSE_MIN_UPSTREAM_MEDIA = 2;
-
-export type CanvasChatCommand =
-  | HtmlArtifactCommand
-  | {
-      type: "create_node";
-      client_id?: string;
-      node_type: CanvasNodeType;
-      position?: { x: number; y: number };
-      data?: Partial<CanvasNodeData>;
-    }
-  | {
-      type: "add_next_node";
-      client_id?: string;
-      source_node_id: string;
-      node_type?: CanvasNodeType;
-      data?: Partial<CanvasNodeData>;
-      connect?: boolean;
-    }
-  | {
-      type: "update_node_data";
-      node_id: string;
-      data: Partial<CanvasNodeData>;
-    }
-  | {
-      type: "delete_nodes";
-      node_ids: string[];
-    }
-  | {
-      type: "clear_canvas";
-    }
-  | {
-      type: "delete_edges";
-      edge_ids?: string[];
-      pairs?: Array<{ source: string; target: string }>;
-    }
-  | {
-      type: "create_edge";
-      source: string;
-      target: string;
-      link_type: CanvasEdgeSemanticKind;
-      expected_source_image_url?: string;
-      expected_source_video_url?: string;
-    }
-  | {
-      type: "layout_nodes";
-      node_ids?: string[];
-      mode: "horizontal" | "vertical" | "grid";
-    }
-  | {
-      type: "group_nodes";
-      node_ids: string[];
-      label?: string;
-    }
-  | {
-      type: "move_nodes";
-      positions?: Record<string, { x: number; y: number }>;
-      deltas?: Record<string, { x: number; y: number }>;
-    }
-  | {
-      type: "select_nodes";
-      node_ids: string[];
-      focus?: boolean;
-    }
-  | {
-      type: "run_node_action";
-      node_id: string;
-      action: string;
-      parameters?: JsonRecord;
-    }
-  | {
-      type: "open_mainline_projection";
-      project_id?: string;
-      request: MainlineProjectionRequest;
-    }
-  | {
-      type: "run_workflow";
-      node_ids?: string[];
-      scope?: "selection" | "canvas";
-      direction?: "connected" | "node" | "downstream";
-      regenerate?: boolean;
-    };
-
-export type CanvasChatCommandEnvelope = {
-  schema_version: typeof CANVAS_CHAT_COMMANDS_SCHEMA_VERSION;
-  project_id?: string;
-  canvas_id?: string;
-  external_mcp_command?: boolean;
-  auto_apply_after_mcp_approval?: boolean;
-  autoApplyAfterMcpApproval?: boolean;
-  commands: CanvasChatCommand[];
-};
 
 export type CanvasCommandApprovalEventDetail = {
   canvasId?: string | null;
@@ -224,27 +118,6 @@ export type CanvasCommandResultEventDetail = {
   envelopes?: CanvasChatCommandEnvelope[];
   result: CanvasChatCommandApplyResult;
   receivedAt?: number;
-};
-
-export type CanvasChatCommandApplyResult = {
-  applied: number;
-  openedUiActions: number;
-  createdNodeIds: string[];
-  errors: string[];
-  warnings?: string[];
-  commandResults: CanvasChatCommandApplyStep[];
-};
-
-export type CanvasChatCommandApplyStep = {
-  commandIndex: number;
-  type: CanvasChatCommand["type"] | "validate";
-  status: "success" | "pending" | "error" | "unverified";
-  label: string;
-  nodeId?: string;
-  action?: string;
-  createdNodeId?: string;
-  output?: Record<string, unknown>;
-  error?: string;
 };
 
 type PendingNodeAction = {
@@ -785,12 +658,6 @@ const WORKFLOW_GENERATE_ACTION_BY_NODE_TYPE: Partial<Record<CanvasNodeType, stri
   [CANVAS_NODE_TYPES.threeDWorld]: ["generate_3gs_world"],
   [CANVAS_NODE_TYPES.textAnnotation]: ["generate_text", "generate_text_video"],
 };
-const WORKFLOW_LIKE_CREATE_NODE_TYPES = new Set<CanvasNodeType>([
-  CANVAS_NODE_TYPES.imageGen,
-  CANVAS_NODE_TYPES.video,
-  CANVAS_NODE_TYPES.audio,
-  CANVAS_NODE_TYPES.videoCompose,
-]);
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -1375,422 +1242,6 @@ async function ensureVideoContinuityTailFrames(
 
 function resolveNodeId(rawId: string, clientIdMap: Map<string, string>): string {
   return clientIdMap.get(rawId) ?? rawId;
-}
-
-function fallbackCreatePosition(): { x: number; y: number } {
-  const nodes = useCanvasStore.getState().nodes;
-  if (nodes.length === 0) return { x: 0, y: 0 };
-  const maxX = Math.max(...nodes.map((node) => node.position.x));
-  const minY = Math.min(...nodes.map((node) => node.position.y));
-  return { x: maxX + DEFAULT_NODE_WIDTH + 120, y: minY };
-}
-
-function chooseNextNodeType(sourceNode: CanvasNode, requestedType?: CanvasNodeType): CanvasNodeType {
-  const allowedTypes = getDownstreamSpawnTypes(sourceNode.type);
-  if (requestedType) {
-    if (!allowedTypes.includes(requestedType)) {
-      throw new Error(
-        `${sourceNode.type ?? "source node"} cannot directly connect to ${requestedType}. ` +
-        `Allowed downstream types: ${allowedTypes.join(", ") || "none"}. ` +
-        "Request neighbor_graph and attach to a compatible upstream text/script/beat context source, or create the node standalone.",
-      );
-    }
-    return requestedType;
-  }
-  return allowedTypes[0] ?? CANVAS_NODE_TYPES.textAnnotation;
-}
-
-function connectNodes(
-  source: string,
-  target: string,
-  options: {
-    link_type?: CanvasEdgeSemanticKind;
-    external_input_image_url?: string;
-    external_input_video_url?: string;
-  } = {},
-): string | null {
-  if (source === target) throw new Error("connection requires two different nodes");
-  const store = useCanvasStore.getState();
-  const data: Record<string, unknown> = {};
-  if (options.link_type) {
-    data.link_type = options.link_type;
-  }
-  if (options.external_input_image_url) {
-    data.workflowExternalInputImageUrl = options.external_input_image_url;
-  }
-  if (options.external_input_video_url) {
-    data.workflowExternalInputVideoUrl = options.external_input_video_url;
-  }
-  if (Object.keys(data).length > 0) {
-    return store.addEdgeWithData(source, target, {
-      ...data,
-    });
-  }
-  return store.addEdge(source, target);
-}
-
-function invalidConnectionReason(source: string, target: string): string | null {
-  if (source === target) return "connection requires two different nodes";
-  const sourceNode = nodeById(source);
-  if (!sourceNode) return `source node not found: ${source}`;
-  const targetNode = nodeById(target);
-  if (!targetNode) return `target node not found: ${target}`;
-  if (!nodeHasSourceHandle(sourceNode.type)) {
-    return `source node cannot start connections: ${sourceNode.type}`;
-  }
-  if (!nodeHasTargetHandle(targetNode.type)) {
-    return `target node cannot receive connections: ${targetNode.type}`;
-  }
-  if (!isUpstreamConnectionAllowed(sourceNode.type, targetNode.type)) {
-    return `${sourceNode.type} cannot directly connect to ${targetNode.type}`;
-  }
-  const binding = (sourceNode.data as { storyAssetTarget?: {
-    storyId?: unknown; kind?: unknown; entityId?: unknown; segmentIds?: unknown;
-  } }).storyAssetTarget;
-  if (binding && targetNode.type === CANVAS_NODE_TYPES.video && targetNode.data.storySegmentId) {
-    const group = useCanvasStore.getState().nodes.find((node) => node.id === targetNode.parentId);
-    const segmentId = targetNode.data.storySegmentId;
-    const planned = binding.kind === 'subject'
-      ? Array.isArray(targetNode.data.storyCharacterIds) &&
-        targetNode.data.storyCharacterIds.includes(binding.entityId as string)
-      : binding.kind === 'scene' &&
-        Array.isArray((targetNode.data as { storySceneRefs?: unknown }).storySceneRefs) &&
-        ((targetNode.data as { storySceneRefs?: Array<{ scene_id?: string }> }).storySceneRefs ?? [])
-          .some((ref) => ref.scene_id === binding.entityId);
-    if (group?.data.interactiveStoryId !== binding.storyId ||
-        !Array.isArray(binding.segmentIds) || !binding.segmentIds.includes(segmentId) || !planned) {
-      return `story asset ${source} is not planned for segment ${segmentId}`;
-    }
-  }
-  return null;
-}
-
-function isMissingOrFatalConnectionReason(reason: string | null): boolean {
-  return Boolean(
-    reason?.startsWith("source node not found:") ||
-    reason?.startsWith("target node not found:") ||
-    reason?.startsWith("story asset ") ||
-    reason === "connection requires two different nodes",
-  );
-}
-function deleteEdges(
-  command: Extract<CanvasChatCommand, { type: "delete_edges" }>,
-  clientIdMap: Map<string, string>,
-): void {
-  const store = useCanvasStore.getState();
-  const edgeIds = new Set(command.edge_ids ?? []);
-  for (const pair of command.pairs ?? []) {
-    const source = resolveNodeId(pair.source, clientIdMap);
-    const target = resolveNodeId(pair.target, clientIdMap);
-    if (source === target) throw new Error("disconnect requires two different nodes");
-    for (const edge of store.edges) {
-      if (
-        (edge.source === source && edge.target === target) ||
-        (edge.source === target && edge.target === source)
-      ) {
-        edgeIds.add(edge.id);
-      }
-    }
-  }
-  if (edgeIds.size === 0) throw new Error("edge not found");
-  for (const edgeId of edgeIds) {
-    useCanvasStore.getState().deleteEdge(edgeId);
-  }
-}
-
-function deleteNodesOrEdges(
-  rawIds: string[],
-  clientIdMap: Map<string, string>,
-): { removedNodeCount: number; removedEdgeCount: number; projectionRemovalCount: number } {
-  const store = useCanvasStore.getState();
-  if (rawIds.length === 0) throw new Error("delete_nodes requires at least one node or edge id");
-  const beforeNodeIds = new Set(store.nodes.map((node) => node.id));
-  const beforeEdgeIds = new Set(store.edges.map((edge) => edge.id));
-  const edgeIds = new Set(store.edges.map((edge) => edge.id));
-  const nodesById = new Map(store.nodes.map((node) => [node.id, node] as const));
-  const nodeIds: string[] = [];
-  const edgeIdsToDelete: string[] = [];
-  const projectionNodeIdsByKey = new Map<string, Set<string>>();
-  for (const rawId of rawIds) {
-    const id = resolveNodeId(rawId, clientIdMap);
-    if (edgeIds.has(id)) {
-      edgeIdsToDelete.push(id);
-    } else {
-      const node = nodesById.get(id);
-      if (node && isMainlineProjectionManagedNode(node)) {
-        const projectionKey = projectionKeyFromNode(node);
-        if (!projectionKey) {
-          throw new Error(`node is mainline projection managed and cannot be deleted directly: ${id}`);
-        }
-        let ids = projectionNodeIdsByKey.get(projectionKey);
-        if (!ids) {
-          ids = new Set<string>();
-          projectionNodeIdsByKey.set(projectionKey, ids);
-        }
-        ids.add(id);
-        continue;
-      }
-      nodeIds.push(id);
-    }
-  }
-  for (const [projectionKey, requestedIds] of projectionNodeIdsByKey) {
-    const allProjectionNodeIds = store.nodes
-      .filter((node) => projectionKeyFromNode(node) === projectionKey)
-      .map((node) => node.id);
-    const hasWholeProjection = allProjectionNodeIds.every((id) => requestedIds.has(id));
-    if (!hasWholeProjection) {
-      const firstRequestedId = requestedIds.values().next().value ?? projectionKey;
-      throw new Error(`node is mainline projection managed and cannot be deleted directly: ${firstRequestedId}`);
-    }
-  }
-  if (nodeIds.length > 0) {
-    useCanvasStore.getState().deleteNodes(nodeIds);
-  }
-  for (const edgeId of edgeIdsToDelete) {
-    useCanvasStore.getState().deleteEdge(edgeId);
-  }
-  for (const projectionKey of projectionNodeIdsByKey.keys()) {
-    canvasEventBus.publish("freezone/projection-remove", { projectionKey });
-  }
-
-  const after = useCanvasStore.getState();
-  const removedNode = [...beforeNodeIds].some(
-    (id) => !after.nodes.some((node) => node.id === id),
-  );
-  const removedEdge = [...beforeEdgeIds].some(
-    (id) => !after.edges.some((edge) => edge.id === id),
-  );
-  if (!removedNode && !removedEdge && projectionNodeIdsByKey.size === 0) {
-    throw new Error("没有删除任何节点或连接；请确认节点 id 正确且节点允许删除");
-  }
-  return {
-    removedNodeCount: [...beforeNodeIds].filter(
-      (id) => !after.nodes.some((node) => node.id === id),
-    ).length,
-    removedEdgeCount: [...beforeEdgeIds].filter(
-      (id) => !after.edges.some((edge) => edge.id === id),
-    ).length,
-    projectionRemovalCount: projectionNodeIdsByKey.size,
-  };
-}
-
-function isMainlineProjectionManagedNode(node: CanvasNode): boolean {
-  return isPresetManagedNode(node) || isSystemManagedNodeData(node.data);
-}
-
-function projectionKeyFromNode(node: CanvasNode): string | null {
-  const data = node.data as { projection_key?: unknown } | undefined;
-  return typeof data?.projection_key === "string" && data.projection_key.trim()
-    ? data.projection_key.trim()
-    : null;
-}
-
-function scheduleMeasuredLayout(
-  nodeIds: string[],
-  mode: "horizontal" | "vertical" | "grid",
-  hermesLegacy = false,
-): void {
-  if (typeof window === "undefined") return;
-  const schedule = typeof window.requestAnimationFrame === "function"
-    ? window.requestAnimationFrame.bind(window)
-    : (callback: FrameRequestCallback) => window.setTimeout(callback, 16);
-  schedule(() => {
-    schedule(() => {
-      layoutNodes(nodeIds, mode, false, hermesLegacy);
-    });
-  });
-}
-
-function layoutNodesInternal(
-  nodeIds: string[],
-  mode: "horizontal" | "vertical" | "grid",
-  refineAfterMeasurement = true,
-  hermesLegacy = false,
-): void {
-  const store = useCanvasStore.getState();
-  const nodesById = new Map(store.nodes.map((node) => [node.id, node] as const));
-  const nodes = nodeIds
-    .map((nodeId) => nodesById.get(nodeId))
-    .filter((node): node is CanvasNode => Boolean(node));
-  if (nodes.length < 2) return;
-  const needsMeasuredRefinement =
-    !hermesLegacy &&
-    refineAfterMeasurement &&
-    nodes.some(
-      (node) =>
-        typeof node.measured?.width !== "number" ||
-        typeof node.measured?.height !== "number",
-    );
-
-  // External MCP workflows use the exact legacy Hermes geometry and preserve
-  // the node_ids command order. Hermes websocket commands keep the existing
-  // adaptive frontend layout path below.
-  if (hermesLegacy) {
-    const minX = Math.min(...nodes.map((node) => node.position.x));
-    const minY = Math.min(...nodes.map((node) => node.position.y));
-    const columns = Math.max(1, Math.ceil(Math.sqrt(nodes.length)));
-    store.setNodePositions(Object.fromEntries(nodes.map((node, index) => {
-      if (mode === "vertical") {
-        return [node.id, { x: minX, y: minY + index * 320 }];
-      }
-      if (mode === "grid") {
-        return [node.id, {
-          x: minX + (index % columns) * 520,
-          y: minY + Math.floor(index / columns) * 360,
-        }];
-      }
-      return [node.id, { x: minX + index * 520, y: minY }];
-    })));
-    return;
-  }
-
-  const parentIds = new Set(nodes.map((node) => node.parentId).filter(Boolean));
-  if (parentIds.size === 1) {
-    const groupId = [...parentIds][0] as string;
-    const group = nodesById.get(groupId);
-    const targetIds = new Set(nodes.map((node) => node.id));
-    const groupChildren = store.nodes.filter((node) => node.parentId === groupId);
-    const targetsWholePlainGroup =
-      isGroupNode(group) &&
-      !isProtectedProjectionGroupNode(group) &&
-      !isStoryboardGroupNode(group) &&
-      groupChildren.length === targetIds.size &&
-      groupChildren.every((node) => targetIds.has(node.id));
-    if (targetsWholePlainGroup) {
-      store.arrangeGroupChildren(groupId, mode);
-      if (needsMeasuredRefinement) {
-        scheduleMeasuredLayout(nodeIds, mode, hermesLegacy);
-      }
-      return;
-    }
-  }
-
-  const ordered = nodes;
-  const minX = Math.min(...ordered.map((node) => node.position.x));
-  const minY = Math.min(...ordered.map((node) => node.position.y));
-  const positions: Record<string, { x: number; y: number }> = {};
-  const gap = 48;
-  if (mode === "horizontal") {
-    ordered.forEach((node, index) => {
-      positions[node.id] = { x: minX + index * (DEFAULT_NODE_WIDTH + gap), y: minY };
-    });
-  } else if (mode === "vertical") {
-    ordered.forEach((node, index) => {
-      positions[node.id] = { x: minX, y: minY + index * 360 };
-    });
-  } else {
-    const cols = Math.ceil(Math.sqrt(ordered.length));
-    ordered.forEach((node, index) => {
-      positions[node.id] = {
-        x: minX + (index % cols) * (DEFAULT_NODE_WIDTH + gap),
-        y: minY + Math.floor(index / cols) * 360,
-      };
-    });
-  }
-  store.setNodePositions(positions);
-  if (needsMeasuredRefinement) {
-    scheduleMeasuredLayout(nodeIds, mode, hermesLegacy);
-  }
-}
-
-function placeWorkflowGroups(groupIds: ReadonlySet<string>): void {
-  const store = useCanvasStore.getState();
-  const placed = placeGroupsOutsideStory(store.nodes, groupIds);
-  if (placed === store.nodes) return;
-  const positions: Record<string, { x: number; y: number }> = {};
-  placed.forEach((node, index) => {
-    if (node.position !== store.nodes[index].position) positions[node.id] = node.position;
-  });
-  store.setNodePositions(positions);
-}
-
-function layoutNodes(
-  nodeIds: string[],
-  mode: "horizontal" | "vertical" | "grid",
-  refineAfterMeasurement = true,
-  hermesLegacy = false,
-): void {
-  layoutNodesInternal(nodeIds, mode, refineAfterMeasurement, hermesLegacy);
-  const nodesById = new Map(useCanvasStore.getState().nodes.map((node) => [node.id, node]));
-  const rootIds = new Set<string>();
-  for (const nodeId of nodeIds) {
-    let node = nodesById.get(nodeId);
-    const visited = new Set<string>();
-    while (node?.parentId && !visited.has(node.id)) {
-      visited.add(node.id);
-      node = nodesById.get(node.parentId);
-    }
-    if (node && !node.parentId) rootIds.add(node.id);
-  }
-  placeWorkflowGroups(rootIds);
-}
-
-function moveNodes(
-  command: Extract<CanvasChatCommand, { type: "move_nodes" }>,
-  clientIdMap: Map<string, string>,
-): void {
-  const nodes = useCanvasStore.getState().nodes;
-  const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const existingNodeIds = new Set(nodeById.keys());
-  const positions: Record<string, { x: number; y: number }> = {};
-  for (const [rawNodeId, position] of Object.entries(command.positions ?? {})) {
-    const nodeId = resolveNodeId(rawNodeId, clientIdMap);
-    if (!existingNodeIds.has(nodeId)) {
-      throw new Error(`node not found: ${rawNodeId}`);
-    }
-    positions[nodeId] = position;
-  }
-  for (const [rawNodeId, delta] of Object.entries(command.deltas ?? {})) {
-    const nodeId = resolveNodeId(rawNodeId, clientIdMap);
-    const node = nodeById.get(nodeId);
-    if (!node) {
-      throw new Error(`node not found: ${rawNodeId}`);
-    }
-    const base = positions[nodeId] ?? node.position;
-    positions[nodeId] = {
-      x: base.x + delta.x,
-      y: base.y + delta.y,
-    };
-  }
-  if (Object.keys(positions).length === 0) {
-    return;
-  }
-  useCanvasStore.getState().setNodePositions(positions);
-}
-
-function selectNodes(rawNodeIds: string[], clientIdMap: Map<string, string>, focus = true): void {
-  const store = useCanvasStore.getState();
-  const nodeById = new Map(store.nodes.map((node) => [node.id, node] as const));
-  const existingNodeIds = new Set(nodeById.keys());
-  const nodeIds = rawNodeIds.map((nodeId) => resolveNodeId(nodeId, clientIdMap));
-  for (const nodeId of nodeIds) {
-    if (!existingNodeIds.has(nodeId)) throw new Error(`node not found: ${nodeId}`);
-  }
-
-  const selectedSet = new Set(nodeIds);
-  store.onNodesChange(
-    store.nodes.map((node) => ({
-      id: node.id,
-      type: "select" as const,
-      selected: selectedSet.has(node.id),
-    })),
-  );
-  store.setSelectedNode(nodeIds.length === 1 ? nodeIds[0] ?? null : null);
-  if (focus && nodeIds[0]) {
-    // Group members store positions relative to their parent. Immediately after
-    // a workflow batch, React Flow may not have mounted the child yet, so its
-    // absolute position is unavailable and focusing it can pan to empty space.
-    // Focus the outermost group instead; its position is always canvas-absolute.
-    let focusNodeId = nodeIds[0];
-    const visited = new Set<string>();
-    while (!visited.has(focusNodeId)) {
-      visited.add(focusNodeId);
-      const parentId = nodeById.get(focusNodeId)?.parentId;
-      if (!parentId || !nodeById.has(parentId)) break;
-      focusNodeId = parentId;
-    }
-    store.requestFocusNode(focusNodeId);
-  }
 }
 
 function assertNodeActionAvailable(nodeId: string, action: string): void {
@@ -4026,1013 +3477,300 @@ async function executePendingMainlineProjections(
 }
 
 function commandLabel(command: CanvasChatCommand): string {
-  switch (command.type) {
-    case "html_artifact": return i18next.t("htmlArtifact.saveCommand");
-    case "create_node":
-      return "创建节点";
-    case "add_next_node":
-      return "添加下游节点";
-    case "update_node_data":
-      return "更新节点";
-    case "delete_nodes":
-      return "删除节点";
-    case "clear_canvas":
-      return "清空画布";
-    case "delete_edges":
-      return "断开连接";
-    case "create_edge":
-      return "创建连接";
-    case "layout_nodes":
-      return "整理布局";
-    case "group_nodes":
-      return "创建普通组";
-    case "move_nodes":
-      return "移动节点";
-    case "select_nodes":
-      return "选中节点";
-    case "run_node_action":
-      if (command.action === "translate_text") return "翻译文本";
-      if (command.action === "reverse_prompt") return "图片反推提示词";
-      if (command.action === "generate_text_video") return "文生视频";
-      if (command.action === "generate_story_script") return "生成故事脚本";
-      if (command.action === "open_upload_picker") return "打开上传选择";
-      if (command.action === "generate_image") return "生成图片";
-      if (command.action === "generate_audio") return "生成音频";
-      if (command.action === "open_voice_picker") return "打开音色选择";
-      if (command.action === "generate_video") return "生成视频";
-      if (command.action === "run_skill") return "运行技能";
-      if (command.action === "open_video_compose_modal") return "打开视频合成与剪辑";
-      if (command.action === "auto_compose_video") return "自动合成视频";
-      if (command.action === "open_director_world") return "打开导演世界";
-      if (command.action === "generate_3gs_world") return "生成 3GS 世界";
-      if (command.action === "open_split_storyboard_tool") return "打开分格抽取";
-      if (command.action === "run_matting_tool") return "抠图";
-      if (command.action === "run_upscale_tool") return "高清放大";
-      if (command.action === "run_outpaint_tool") return "扩图";
-      if (command.action === "run_scene360_tool") return "生成 360 全景";
-      if (command.action === "run_grid_multi_camera") return "生成多机位九宫格";
-      if (command.action === "run_grid_plot_four") return "生成剧情四宫格";
-      if (command.action === "run_grid_face_three_view") return "生成面部三视图";
-      if (command.action === "run_grid_product_three_view") return "生成产品三视图";
-      if (command.action === "run_grid_serial_storyboard_25") return "生成连续分镜 25 格";
-      if (command.action === "run_grid_cinematic_light_correction") return "生成电影感光影修正";
-      if (command.action === "run_grid_character_three_view") return "生成角色三视图";
-      if (command.action === "run_grid_scene_setting_sheet") return "生成场景设定图";
-      if (command.action === "run_grid_frame_projection_3s_later") return "推演 3 秒后画面";
-      if (command.action === "run_grid_frame_projection_5s_earlier") return "推演 5 秒前画面";
-      if (command.action === "open_video_viewer") return "打开视频";
-      if (command.action === "download_video") return "下载视频";
-      if (command.action === "open_video_clip_tool") return "打开视频剪辑";
-      if (command.action === "open_video_upscale_tool") return "打开视频高清";
-      if (command.action === "run_video_analyze_story") return "解析视频";
-      if (command.action === "run_audio_separate") return "分离音视频";
-      if (command.action === "download_audio") return "下载音频";
-      if (command.action === "open_video_subtitle_erase_smart") return "智能去字幕";
-      if (command.action === "open_video_subtitle_erase_box") return "框选去字幕";
-      if (command.action === "run_video_breakdown") return i18next.t("nodeToolbar.video.frameAnalysis");
-      if (command.action === "start_video_breakdown") return i18next.t("videoBreakdown.start");
-      if (command.action === "open_video_crop_tool") return i18next.t("nodeToolbar.video.frameCrop");
-      if (command.action === "open_video_extend_tool") return i18next.t("nodeToolbar.video.extend");
-      if (command.action === "run_video_depth_capture") return i18next.t("nodeToolbar.video.motionCapture");
-      if (command.action === "capture_pano_current_view") return "截取当前 360 视角";
-      if (command.action === "capture_pano_2x2_views") return "截取 360 四视角";
-      if (command.action === "capture_pano_4x3_views") return "截取 360 十二视角";
-      if (command.action === "download_image") return "下载图片";
-      if (command.action === "generate_html") return i18next.t("htmlArtifact.actionGenerate");
-      if (command.action === "update_source") return i18next.t("htmlArtifact.actionSaveSource");
-      if (command.action === "select_version") return i18next.t("htmlArtifact.actionSelectVersion");
-      if (command.action === "restore") return i18next.t("htmlArtifact.actionRestoreVersion");
-      if (command.action === "open") return i18next.t("htmlArtifact.actionOpen");
-      if (command.action === "export") return i18next.t("htmlArtifact.actionExport");
-      if (command.action === "upload") return i18next.t("htmlArtifact.actionUpload");
-      if (command.action === "set_pano_current_view_as_background") return "设为当前背景";
-      if (command.action === "reset_pano_view") return "复位 360 视角";
-      if (command.action === "sync_beat_context_to_mainline") return "同步镜头上下文";
-      return "打开节点动作";
-    case "open_mainline_projection":
-      return "打开主线虾画";
-    case "run_workflow":
-      return "运行工作流";
-    default:
-      return "画布操作";
-  }
-}
-
-function commandPrimaryNodeId(command: CanvasChatCommand): string | undefined {
-  switch (command.type) {
-    case "update_node_data":
-    case "run_node_action":
-      return command.node_id;
-    case "run_workflow":
-      return command.node_ids?.[0];
-    case "clear_canvas":
-      return undefined;
-    case "add_next_node":
-      return command.source_node_id;
-    case "delete_nodes":
-    case "layout_nodes":
-    case "group_nodes":
-    case "select_nodes":
-      return command.node_ids?.[0];
-    case "create_edge":
-      return command.source;
-    case "delete_edges":
-      return command.pairs?.[0]?.source ?? command.edge_ids?.[0];
-    case "move_nodes":
-      return Object.keys(command.positions ?? {})[0] ?? Object.keys(command.deltas ?? {})[0];
-    case "create_node":
-      return command.client_id;
-    default:
-      return undefined;
-  }
+  return canvasCommandLabel(command, browserCommandEnvironment.translate);
 }
 
 function selectAndFocusNode(nodeId: string): void {
-  selectNodeExclusively(nodeId);
-  useCanvasStore.getState().requestFocusNode(nodeId);
+  selectAndFocusNodeIn(useCanvasStore, nodeId);
 }
 
-function commandNodeRefs(command: CanvasChatCommand): string[] {
-  switch (command.type) {
-    case "update_node_data":
-    case "run_node_action":
-      return [command.node_id];
-    case "run_workflow":
-      return command.node_ids ?? [];
-    case "clear_canvas":
-      return [];
-    case "delete_nodes":
-    case "layout_nodes":
-    case "group_nodes":
-    case "select_nodes":
-      return command.node_ids ?? [];
-    case "delete_edges":
-      return (command.pairs ?? []).flatMap((pair) => [pair.source, pair.target]);
-    case "create_edge":
-      return [command.source, command.target];
-    case "move_nodes":
-      return [
-        ...Object.keys(command.positions ?? {}),
-        ...Object.keys(command.deltas ?? {}),
-      ];
-    case "add_next_node":
-      return [command.source_node_id];
-    case "create_node":
-      return [];
-    default:
-      return [];
-  }
-}
-
-/**
- * 规范化时给未带 client_id 的新建命令补的合成 id 前缀。审批卡按 client_id 收集并改写
- * 新节点的生成参数，执行器再用同一个 id 找回建出的节点；没有它，这类节点在审批阶段
- * 无法被识别（#685）。格式不匹配 Agent 可引用的 `auto:N`，不会与其混淆。
- */
-const GENERATED_CLIENT_ID_PREFIX = "auto:new:";
-
-export function isGeneratedCanvasClientId(id: string | undefined): boolean {
-  return typeof id === "string" && id.startsWith(GENERATED_CLIENT_ID_PREFIX);
-}
-
+/** Normalizes against the open canvas unless the caller names the existing node ids. */
 export function normalizeCanvasChatCommandEnvelopesForValidation(
   envelopes: CanvasChatCommandEnvelope[],
   initialNodeIds?: Iterable<string>,
 ): CanvasChatCommandEnvelope[] {
-  const baseNodeIds = new Set(initialNodeIds ?? useCanvasStore.getState().nodes.map((node) => node.id));
+  return normalizeCanvasCommandEnvelopes(
+    envelopes,
+    initialNodeIds ?? useCanvasStore.getState().nodes.map((node) => node.id),
+  );
+}
 
-  return envelopes.map((envelope, envelopeIndex) => {
-    const knownRefs = new Set(baseNodeIds);
-    const referencedAutoClientIds = new Set(
-      envelope.commands
-        .flatMap((command) => commandNodeRefs(command))
-        .filter((ref) => /^auto:\d+$/i.test(ref.trim())),
-    );
-    let nextAutoClientIndex = 0;
-
-    const nextReferencedAutoClientId = (): string | null => {
-      while (referencedAutoClientIds.has(`auto:${nextAutoClientIndex}`)) {
-        const clientId = `auto:${nextAutoClientIndex}`;
-        nextAutoClientIndex += 1;
-        if (!knownRefs.has(clientId)) return clientId;
-      }
-      return null;
-    };
-    const commands = envelope.commands.map((command, index) => {
-      if (command.type !== "create_node" && command.type !== "add_next_node") {
-        for (const ref of commandNodeRefs(command)) knownRefs.add(ref);
-        return command;
-      }
-
-      if (command.client_id) {
-        knownRefs.add(command.client_id);
-        return command;
-      }
-
-      const autoClientId = nextReferencedAutoClientId();
-      if (autoClientId) {
-        knownRefs.add(autoClientId);
-        return {
-          ...command,
-          client_id: autoClientId,
-        };
-      }
-
-      const nextCommand = envelope.commands[index + 1];
-      const nextUnknownRefs = nextCommand
-        ? [...new Set(commandNodeRefs(nextCommand))]
-          .filter((ref) => ref.trim().length > 0 && !knownRefs.has(ref))
-        : [];
-      if (nextUnknownRefs.length !== 1) {
-        const generatedClientId = `${GENERATED_CLIENT_ID_PREFIX}${envelopeIndex}:${index}`;
-        knownRefs.add(generatedClientId);
-        return {
-          ...command,
-          client_id: generatedClientId,
-        };
-      }
-
-      const clientId = nextUnknownRefs[0];
-      knownRefs.add(clientId);
-      return {
-        ...command,
-        client_id: clientId,
-      };
+const browserCommandEnvironment: CanvasCommandEnvironment = {
+  translate: (key, options) => i18next.t(key, options),
+  validate: (envelopes, nodes, edges) => validateCanvasChatCommandEnvelopes(envelopes, nodes, edges),
+  afterNodesMeasured: (callback) => {
+    if (typeof window === "undefined") return;
+    const schedule = typeof window.requestAnimationFrame === "function"
+      ? window.requestAnimationFrame.bind(window)
+      : (frame: FrameRequestCallback) => window.setTimeout(frame, 16);
+    schedule(() => {
+      schedule(() => {
+        callback();
+      });
     });
+  },
+  removeProjection: (projectionKey) => {
+    canvasEventBus.publish("freezone/projection-remove", { projectionKey });
+  },
+  landSceneEdit: (nodeId, nodeData, sceneEdit) => landNodeAgentSceneEdit(nodeId, nodeData, sceneEdit),
+  onNodeDataUpdated: (nodeId, changedData) => {
+    invalidateWorkflowResultsAfterNodeUpdate(nodeId, changedData);
+  },
+};
 
-    return {
-      ...envelope,
-      commands,
-    };
-  });
-}
-
-function workflowNodeIdentity(
-  data: Partial<CanvasNodeData> | undefined,
-): { instanceId: string; planNodeId: string } | null {
-  const instanceId = nonEmptyString(data?.workflowInstanceId);
-  const planNodeId = nonEmptyString(data?.workflowPlanNodeId);
-  return instanceId && planNodeId ? { instanceId, planNodeId } : null;
-}
-
-function existingWorkflowNodeForCommand(
-  command: Extract<CanvasChatCommand, { type: "create_node" }>,
-): CanvasNode | null {
-  const identity = workflowNodeIdentity(command.data);
-  if (!identity) return null;
-  return useCanvasStore.getState().nodes.find((node) => {
-    const current = workflowNodeIdentity(node.data);
-    return (
-      current?.instanceId === identity.instanceId &&
-      current.planNodeId === identity.planNodeId
-    );
-  }) ?? null;
-}
-
-function workflowEnvelopeAlreadyApplied(envelope: CanvasChatCommandEnvelope): boolean {
-  const createCommands = envelope.commands.filter(
-    (command): command is Extract<CanvasChatCommand, { type: "create_node" }> =>
-      command.type === "create_node" && workflowNodeIdentity(command.data) !== null,
-  );
-  return (
-    createCommands.length > 0 &&
-    createCommands.every((command) => existingWorkflowNodeForCommand(command) !== null) &&
-    envelope.commands.every((command) => {
-      if (command.type !== "html_artifact" || command.action !== "prepare") return true;
-      const identity = workflowNodeIdentity(command.workflow_data);
-      return identity !== null && useCanvasStore.getState().nodes.some((node) => (
-        node.type === CANVAS_NODE_TYPES.htmlArtifact &&
-        node.data.workflowInstanceId === identity.instanceId &&
-        node.data.workflowPlanNodeId === identity.planNodeId
-      ));
-    })
-  );
-}
-
-function isStoryImageReferenceEnvelope(envelope: CanvasChatCommandEnvelope): boolean {
-  const creates = envelope.commands.filter((command) => command.type === "create_node");
-  const edges = envelope.commands.filter((command) => command.type === "create_edge");
-  if (!creates.length || !edges.length || creates.some((command) =>
-    command.node_type !== CANVAS_NODE_TYPES.imageGen || !command.client_id
-  )) return false;
-  const aliases = new Set(creates.map((command) => command.client_id));
-  if (aliases.size !== creates.length) return false;
-  const nodes = useCanvasStore.getState().nodes;
-  const storyIds = new Set<string>();
-  for (const edge of edges) {
-    if (edge.link_type !== "media_input_for" || !aliases.has(edge.source)) return false;
-    const target = nodes.find((node) => node.id === edge.target);
-    if (target?.type !== CANVAS_NODE_TYPES.video ||
-      typeof target.data.storySegmentId !== "string" || !target.data.storySegmentId.trim()
-    ) return false;
-    const group = nodes.find((node) => node.id === target.parentId);
-    if (group?.data.storyGroup !== true ||
-      typeof group.data.interactiveStoryId !== "string" || !group.data.interactiveStoryId.trim()
-    ) return false;
-    storyIds.add(group.data.interactiveStoryId);
-  }
-  for (const command of envelope.commands) {
-    if (command.type !== "update_node_data") continue;
-    const target = nodes.find((node) => node.id === command.node_id);
-    const group = nodes.find((node) => node.id === target?.parentId);
-    if (target?.type !== CANVAS_NODE_TYPES.video ||
-      typeof target.data.storySegmentId !== "string" ||
-      group?.data.storyGroup !== true ||
-      !storyIds.has(String(group.data.interactiveStoryId ?? ""))
-    ) return false;
-  }
-  return storyIds.size === 1 && creates.every((command) =>
-    edges.some((edge) => edge.source === command.client_id)
-  );
-}
-
-function* applyCanvasChatCommandsInternal(
-  envelopes: CanvasChatCommandEnvelope[],
+/**
+ * Generation, artifact and UI commands for the open canvas. Node actions,
+ * frame captures and projections queue up per call and run in `finish`, after
+ * every structural command of the batch has landed.
+ */
+function browserCommandHandlers(
   options: ApplyCanvasChatCommandsOptions & { queueNodeActions: boolean },
-): Generator<Promise<void>, CanvasChatCommandApplyResult, void> {
-  const result: CanvasChatCommandApplyResult = {
-    applied: 0,
-    openedUiActions: 0,
-    createdNodeIds: [],
-    errors: [],
-    commandResults: [],
-  };
+): CanvasCommandHandlers {
   const pendingNodeActions: PendingNodeAction[] = [];
   const pendingVideoFrameCaptures: PendingVideoFrameCapture[] = [];
   const pendingMainlineProjections: PendingMainlineProjection[] = [];
   const queuedNodeActionKeys = new Set<string>();
-  const normalizedEnvelopes = normalizeCanvasChatCommandEnvelopesForValidation(envelopes);
-  const validation = validateCanvasChatCommandEnvelopes(
-    normalizedEnvelopes,
-    useCanvasStore.getState().nodes,
-    useCanvasStore.getState().edges,
-  );
-  if (!validation.ok) {
-    result.errors.push(...validation.issues.map((issue) => `${issue.path}: ${issue.message}`));
-    result.commandResults.push({
-      commandIndex: -1,
-      type: "validate",
-      status: "error",
-      label: "校验画布命令",
-      error: result.errors.join("; "),
-    });
-    return result;
-  }
-  const clientIdMap = new Map<string, string>();
-  let commandIndex = 0;
-
-  for (const envelope of normalizedEnvelopes) {
-    if (workflowEnvelopeAlreadyApplied(envelope)) {
-      for (const command of envelope.commands) {
+  const handlers: CanvasCommandHandlers = {
+    *html_artifact(command, { envelope, commandIndex: currentCommandIndex, result, clientIdMap }) {
+      if (!options.queueNodeActions) throw new Error("HTML artifacts require the authenticated async executor");
+      const projectId = options.projectId;
+      if (!projectId || (envelope.project_id && envelope.project_id !== projectId) || !options.canvasId || (envelope.canvas_id && envelope.canvas_id !== options.canvasId)) throw new Error("HTML artifact project/canvas scope does not match the active canvas");
+      // Pause the command loop until persistence and attachment finish so
+      // later commands can resolve this create's alias in original order.
+      yield executeHtmlArtifactCommand({
+        ...command,
+        reference_node_ids: command.reference_node_ids?.map((id) => resolveNodeId(id, clientIdMap)),
+      }, projectId, options.canvasId).then((saved) => {
+        if (saved.output.warnings) result.errors.push(...saved.output.warnings);
         result.applied += 1;
-        result.commandResults.push({
-          commandIndex,
-          type: command.type,
-          status: "success",
-          label: "工作流已存在，跳过重复创建",
-          nodeId: commandPrimaryNodeId(command),
-          output: {
-            skipped: true,
-            reason: "workflow_instance_already_applied",
-          },
-        });
-        commandIndex += 1;
-      }
-      continue;
-    }
-    const existingEnvelopeNodeIds = new Set(useCanvasStore.getState().nodes.map((node) => node.id));
-    const envelopeCreatedNodeIds: string[] = [];
-    const storyImageReferenceEnvelope = isStoryImageReferenceEnvelope(envelope);
-    const envelopeSourceNodeIds = new Set<string>();
-    const envelopeErrorStart = result.errors.length;
-    let envelopeHasAddNextNode = false;
-    let envelopeAddNextCreatedCount = 0;
-    let envelopeHasExplicitGroupNodes = false;
-    let envelopeConnectionCount = 0;
-
-    for (const command of envelope.commands) {
-      const currentCommandIndex = commandIndex;
-      commandIndex += 1;
-      try {
-        switch (command.type) {
-          case "html_artifact": {
-            if (!options.queueNodeActions) throw new Error("HTML artifacts require the authenticated async executor");
-            const projectId = options.projectId;
-            if (!projectId || (envelope.project_id && envelope.project_id !== projectId) || !options.canvasId || (envelope.canvas_id && envelope.canvas_id !== options.canvasId)) throw new Error("HTML artifact project/canvas scope does not match the active canvas");
-            // Pause the command loop until persistence and attachment finish so
-            // later commands can resolve this create's alias in original order.
-            yield executeHtmlArtifactCommand({
-              ...command,
-              reference_node_ids: command.reference_node_ids?.map((id) => resolveNodeId(id, clientIdMap)),
-            }, projectId, options.canvasId).then((saved) => {
-              if (saved.output.warnings) result.errors.push(...saved.output.warnings);
-              result.applied += 1;
-              if (saved.createdNodeId) {
-                result.createdNodeIds.push(saved.createdNodeId);
-              }
-              if (command.client_id && saved.nodeId) clientIdMap.set(command.client_id, saved.nodeId);
-              result.commandResults.push({commandIndex:currentCommandIndex,type:'html_artifact',status:'success',label:commandLabel(command),...saved});
-            });
-            break;
-          }
-          case "create_node": {
-            const existingWorkflowNode = existingWorkflowNodeForCommand(command);
-            if (existingWorkflowNode) {
-              if (command.client_id) {
-                clientIdMap.set(command.client_id, existingWorkflowNode.id);
-              }
-              result.applied += 1;
-              result.commandResults.push({
-                commandIndex: currentCommandIndex,
-                type: command.type,
-                status: "success",
-                label: "复用已有工作流节点",
-                nodeId: command.client_id,
-                createdNodeId: existingWorkflowNode.id,
-                output: {
-                  skipped: true,
-                  reason: "workflow_node_already_applied",
-                },
-              });
-              break;
-            }
-            const data = normalizeCanvasCommandCreateNodeData(command.node_type, command.data);
-            const nodeId = useCanvasStore.getState().addNode(
-              command.node_type,
-              command.position ?? fallbackCreatePosition(),
-              data,
-            );
-            if (command.client_id) clientIdMap.set(command.client_id, nodeId);
-            result.createdNodeIds.push(nodeId);
-            envelopeCreatedNodeIds.push(nodeId);
-            selectAndFocusNode(nodeId);
-            result.applied += 1;
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              nodeId: command.client_id,
-              createdNodeId: nodeId,
-            });
-            break;
-          }
-          case "add_next_node": {
-            const sourceId = resolveNodeId(command.source_node_id, clientIdMap);
-            const sourceNode = nodeById(sourceId);
-            if (!sourceNode) throw new Error(`source node not found: ${command.source_node_id}`);
-            const nodeType = chooseNextNodeType(sourceNode, command.node_type);
-            const position = useCanvasStore.getState().findNodePosition(sourceId, DEFAULT_NODE_WIDTH, 320);
-            const data = inheritMainlineFields(
-              sourceNode as { data: MainlineFieldsSource },
-              normalizeCanvasCommandCreateNodeData(nodeType, command.data),
-            );
-            const nodeId = useCanvasStore.getState().addNode(nodeType, position, data);
-            if (command.client_id) clientIdMap.set(command.client_id, nodeId);
-            if (command.connect) {
-              const edgeId = connectNodes(sourceId, nodeId);
-              if (edgeId) envelopeConnectionCount += 1;
-            }
-            result.createdNodeIds.push(nodeId);
-            envelopeCreatedNodeIds.push(nodeId);
-            envelopeSourceNodeIds.add(sourceId);
-            envelopeHasAddNextNode = true;
-            envelopeAddNextCreatedCount += 1;
-            selectAndFocusNode(nodeId);
-            result.applied += 1;
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              nodeId: command.source_node_id,
-              createdNodeId: nodeId,
-            });
-            break;
-          }
-          case "update_node_data": {
-            const targetId = resolveNodeId(command.node_id, clientIdMap);
-            const targetNode = nodeById(targetId);
-            if (!targetNode) throw new Error(`node not found: ${command.node_id}`);
-            const data = normalizeCanvasCommandNodeData(targetNode.type, command.data);
-            if (isPresetManagedNode(targetNode)) {
-              if (targetNode.type !== CANVAS_NODE_TYPES.beatContext || !isBeatContextAgentEditablePatch(data)) {
-                throw new Error(`node is preset managed: ${command.node_id}`);
-              }
-              useCanvasStore.getState().updateNodeData(
-                targetId,
-                normalizeBeatContextAgentPatch(targetNode.data as BeatContextNodeData, data),
-              );
-            } else if (targetNode.type === CANVAS_NODE_TYPES.previz && "sceneEdit" in data) {
-              // sceneEdit 是一批操作而不是一个字段：换算成新场景再写，不把它本身存进节点。
-              const { sceneEdit, ...rest } = data as Record<string, unknown>;
-              useCanvasStore.getState().updateNodeData(targetId, {
-                ...rest,
-                ...landNodeAgentSceneEdit(targetId, targetNode.data as Record<string, unknown>, sceneEdit),
-              } as Partial<CanvasNodeData>);
-            } else {
-              useCanvasStore.getState().updateNodeData(targetId, data);
-            }
-            if (targetNode.type === CANVAS_NODE_TYPES.video) {
-              syncStoryVideoReferencePrompt(targetId);
-            }
-            invalidateWorkflowResultsAfterNodeUpdate(targetId, data);
-            selectAndFocusNode(targetId);
-            result.applied += 1;
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              nodeId: targetId,
-            });
-            break;
-          }
-          case "delete_nodes": {
-            const previousEdges = useCanvasStore.getState().edges;
-            const deletion = deleteNodesOrEdges(
-              command.node_ids.map((nodeId) => resolveNodeId(nodeId, clientIdMap)),
-              clientIdMap,
-            );
-            const remainingIds = new Set(useCanvasStore.getState().edges.map((edge) => edge.id));
-            for (const targetId of new Set(previousEdges
-              .filter((edge) => !remainingIds.has(edge.id)).map((edge) => edge.target))) {
-              syncStoryVideoReferencePrompt(targetId);
-            }
-            result.applied += 1;
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              nodeId: command.node_ids[0],
-              output: deletion,
-            });
-            break;
-          }
-          case "clear_canvas": {
-            const store = useCanvasStore.getState();
-            const deletableNodeIds = store.nodes
-              .filter((node) => !isMainlineProjectionManagedNode(node))
-              .map((node) => node.id);
-            const edgeIds = store.edges.map((edge) => edge.id);
-            if (deletableNodeIds.length === 0 && edgeIds.length === 0) {
-              throw new Error("画布中没有可清空的普通节点或连接");
-            }
-            const deletion = deleteNodesOrEdges(
-              [...deletableNodeIds, ...edgeIds],
-              clientIdMap,
-            );
-            result.applied += 1;
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              output: deletion,
-            });
-            break;
-          }
-          case "delete_edges": {
-            const previousEdges = useCanvasStore.getState().edges;
-            deleteEdges(command, clientIdMap);
-            const remainingIds = new Set(useCanvasStore.getState().edges.map((edge) => edge.id));
-            for (const targetId of new Set(previousEdges
-              .filter((edge) => !remainingIds.has(edge.id)).map((edge) => edge.target))) {
-              syncStoryVideoReferencePrompt(targetId);
-            }
-            result.applied += 1;
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              nodeId: commandPrimaryNodeId(command),
-            });
-            break;
-          }
-          case "create_edge": {
-            const source = resolveNodeId(command.source, clientIdMap);
-            const target = resolveNodeId(command.target, clientIdMap);
-            const sourceMismatch = workflowExternalSourceMismatch(
-              useCanvasStore.getState().nodes.find((node) => node.id === source),
-              source,
-              { imageUrl: command.expected_source_image_url, videoUrl: command.expected_source_video_url },
-            );
-            if (sourceMismatch) throw new Error(sourceMismatch);
-            const invalidReason = invalidConnectionReason(source, target);
-            if (invalidReason) {
-              if (isMissingOrFatalConnectionReason(invalidReason)) throw new Error(invalidReason);
-              result.commandResults.push({
-                commandIndex: currentCommandIndex,
-                type: command.type,
-                status: "success",
-                label: "跳过无效连接",
-                nodeId: source,
-                error: invalidReason,
-              });
-              break;
-            }
-            const edgeId = connectNodes(source, target, {
-              link_type: command.link_type,
-              external_input_image_url: command.expected_source_image_url,
-              external_input_video_url: command.expected_source_video_url,
-            });
-            if (!edgeId) throw new Error(`edge rejected: ${command.source} -> ${command.target}`);
-            syncStoryVideoReferencePrompt(target);
-            envelopeConnectionCount += 1;
-            result.applied += 1;
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              nodeId: source,
-            });
-            break;
-          }
-          case "layout_nodes": {
-            const targetNodeIds = (command.node_ids && command.node_ids.length > 0)
-              ? command.node_ids.map((nodeId) => resolveNodeId(nodeId, clientIdMap))
-              : useCanvasStore.getState().nodes.map((node) => node.id);
-            layoutNodes(
-              targetNodeIds,
-              command.mode,
-              true,
-              envelope.external_mcp_command === true,
-            );
-            result.applied += 1;
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              nodeId: targetNodeIds[0],
-            });
-            break;
-          }
-          case "group_nodes": {
-            envelopeHasExplicitGroupNodes = true;
-            const targetNodeIds = command.node_ids.map((nodeId) => resolveNodeId(nodeId, clientIdMap));
-            const groupId = useCanvasStore.getState().groupNodes(targetNodeIds, {
-              label: command.label,
-              ...(envelope.external_mcp_command === true
-                ? { padding: { side: 60, top: 80, bottom: 80 } }
-                : { extraPadding: 20 }),
-            });
-            if (!groupId) throw new Error("group requires at least two existing nodes");
-            result.applied += 1;
-            result.createdNodeIds.push(groupId);
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              nodeId: targetNodeIds[0],
-              createdNodeId: groupId,
-            });
-            break;
-          }
-          case "move_nodes": {
-            moveNodes(command, clientIdMap);
-            result.applied += 1;
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              nodeId: commandPrimaryNodeId(command),
-            });
-            break;
-          }
-          case "select_nodes": {
-            selectNodes(
-              command.node_ids,
-              clientIdMap,
-              command.focus,
-            );
-            result.applied += 1;
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              nodeId: command.node_ids[0],
-            });
-            break;
-          }
-          case "run_node_action": {
-            const targetId = resolveNodeId(command.node_id, clientIdMap);
-            assertNodeActionAvailable(targetId, command.action);
-            if (command.action === "capture_video_last_frame" || command.action === "capture_video_first_frame") {
-              if (!options.queueNodeActions) throw new Error("截取视频帧需要异步执行入口。");
-              pendingVideoFrameCaptures.push({ nodeId: targetId, commandIndex: currentCommandIndex, action: command.action });
-              break;
-            }
-            const targetNode = nodeById(targetId);
-            if (
-              targetNode?.type === CANVAS_NODE_TYPES.htmlArtifact &&
-              (command.action === "update_source" || command.action === "restore" || command.action === "select_version")
-            ) {
-              if (!options.queueNodeActions || !options.projectId || !options.canvasId) {
-                throw new Error("HTML source actions require the authenticated async executor");
-              }
-              yield executeHtmlNodeWriteAction({
-                projectId: options.projectId,
-                canvasId: options.canvasId,
-                node: targetNode,
-                action: command.action,
-                parameters: command.parameters,
-              }).then((saved) => {
-                if (saved.output.warnings) result.errors.push(...saved.output.warnings);
-                result.applied += 1;
-                result.commandResults.push({
-                  commandIndex: currentCommandIndex,
-                  type: command.type,
-                  status: "success",
-                  label: commandLabel(command),
-                  nodeId: targetId,
-                  action: command.action,
-                  output: saved.output,
-                });
-              });
-              break;
-            }
-            if (!RESULT_SPAWNING_NODE_ACTIONS.has(command.action)) {
-              selectAndFocusNode(targetId);
-            }
-            if (options.queueNodeActions && CURRENT_MEDIA_NODE_ACTIONS.has(command.action)) {
-              setTimeout(() => {
-                try {
-                  runNodeAction(targetId, command.action, command.parameters);
-                } catch (error) {
-                  console.error("[freezone] run node action failed", error);
-                }
-              }, 0);
-              result.openedUiActions += 1;
-              result.commandResults.push({
-                commandIndex: currentCommandIndex,
-                type: command.type,
-                status: "success",
-                label: commandLabel(command),
-                nodeId: targetId,
-                action: command.action,
-              });
-              break;
-            }
-            const queuedActions = options.queueNodeActions
-              ? directNodeActionQueue(
-                targetId,
-                command.action,
-                currentCommandIndex,
-                command.parameters,
-              )
-              : [];
-            const shouldQueue = (
-              options.queueNodeActions
-              && (
-                GENERATION_NODE_ACTIONS.has(command.action)
-                || queuedActions.length > 1
-              )
-            );
-            if (shouldQueue) {
-              for (const queuedAction of queuedActions) {
-                const actionKey = `${queuedAction.nodeId}:${queuedAction.action}`;
-                if (queuedNodeActionKeys.has(actionKey)) continue;
-                assertNodeActionAvailable(queuedAction.nodeId, queuedAction.action);
-                queuedNodeActionKeys.add(actionKey);
-                pendingNodeActions.push(queuedAction);
-              }
-              result.applied += 1;
-            } else {
-              runNodeAction(targetId, command.action, command.parameters);
-              result.openedUiActions += 1;
-              result.commandResults.push({
-                commandIndex: currentCommandIndex,
-                type: command.type,
-                status: "success",
-                label: commandLabel(command),
-                nodeId: targetId,
-                action: command.action,
-              });
-            }
-            break;
-          }
-          case "open_mainline_projection": {
-            if (!options.queueNodeActions) {
-              throw new Error("open_mainline_projection requires async frontend execution");
-            }
-            const projectId = command.project_id ?? envelope.project_id ?? options.projectId ?? undefined;
-            if (!projectId?.trim()) {
-              throw new Error("project_id is required to open a mainline projection");
-            }
-            pendingMainlineProjections.push({
-              commandIndex: currentCommandIndex,
-              projectId: projectId.trim(),
-              request: command.request,
-              label: commandLabel(command),
-            });
-            break;
-          }
-          case "run_workflow": {
-            const resolvedCommand: Extract<CanvasChatCommand, { type: "run_workflow" }> = {
-              ...command,
-              node_ids: command.node_ids?.map((nodeId) => resolveNodeId(nodeId, clientIdMap)),
-            };
-            const allActions = workflowNodeActions(resolvedCommand, currentCommandIndex, { skipCompleted: false });
-            const actions = workflowNodeActions(
-              resolvedCommand,
-              currentCommandIndex,
-              { skipCompleted: command.regenerate !== true },
-            );
-            if (actions.length === 0) {
-              if (allActions.length === 0) {
-                throw new Error("工作流中没有可执行的生成节点。");
-              }
-              syncCompletedStoryFrames(
-                allActions.filter((action) => action.action === "generate_image" &&
-                  hasGeneratedResult(action.nodeId, action.action)).map((action) => action.nodeId),
-                result,
-              );
-              result.commandResults.push({
-                commandIndex: currentCommandIndex,
-                type: command.type,
-                status: "success",
-                label: "工作流已完成，未重新生成",
-                nodeId: allActions[0]?.nodeId,
-                output: {
-                  skipped: true,
-                  reason: "workflow_already_completed",
-                  requires_regenerate_confirmation: true,
-                },
-              });
-              result.applied += 1;
-              break;
-            }
-            if (options.queueNodeActions) {
-              const regenerateSeedNodeIds = new Set(
-                resolvedCommand.node_ids ?? selectedWorkflowNodeIds(),
-              );
-              for (const action of actions) {
-                const actionKey = `${action.nodeId}:${action.action}`;
-                if (queuedNodeActionKeys.has(actionKey)) continue;
-                assertNodeActionAvailable(action.nodeId, action.action);
-                queuedNodeActionKeys.add(actionKey);
-                pendingNodeActions.push({
-                  ...action,
-                  ...(command.regenerate === true
-                    ? {
-                      invalidationReason: regenerateSeedNodeIds.has(action.nodeId)
-                        ? "explicit_regeneration" as const
-                        : "upstream_regeneration" as const,
-                    }
-                    : {}),
-                });
-              }
-            } else {
-              const { ordered, cycleError } = orderedNodeActionsByCanvasEdges(actions);
-              if (cycleError) throw new Error(cycleError);
-              for (const action of ordered) {
-                runNodeAction(action.nodeId, action.action);
-                result.openedUiActions += 1;
-                result.commandResults.push({
-                  commandIndex: currentCommandIndex,
-                  type: "run_node_action",
-                  status: "success",
-                  label: action.label,
-                  nodeId: action.nodeId,
-                  action: action.action,
-                });
-              }
-            }
-            result.applied += 1;
-            const firstNodeId = actions[0]?.nodeId;
-            if (firstNodeId) selectAndFocusNode(firstNodeId);
-            result.commandResults.push({
-              commandIndex: currentCommandIndex,
-              type: command.type,
-              status: "success",
-              label: commandLabel(command),
-              nodeId: firstNodeId,
-            });
-            break;
-          }
-          default:
-            break;
+        if (saved.createdNodeId) {
+          result.createdNodeIds.push(saved.createdNodeId);
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        result.errors.push(message);
+        if (command.client_id && saved.nodeId) clientIdMap.set(command.client_id, saved.nodeId);
+        result.commandResults.push({commandIndex:currentCommandIndex,type:'html_artifact',status:'success',label:commandLabel(command),...saved});
+      });
+    },
+    *run_node_action(command, { commandIndex: currentCommandIndex, result, clientIdMap }) {
+      const targetId = resolveNodeId(command.node_id, clientIdMap);
+      assertNodeActionAvailable(targetId, command.action);
+      if (command.action === "capture_video_last_frame" || command.action === "capture_video_first_frame") {
+        if (!options.queueNodeActions) throw new Error("截取视频帧需要异步执行入口。");
+        pendingVideoFrameCaptures.push({ nodeId: targetId, commandIndex: currentCommandIndex, action: command.action });
+        return;
+      }
+      const targetNode = nodeById(targetId);
+      if (
+        targetNode?.type === CANVAS_NODE_TYPES.htmlArtifact &&
+        (command.action === "update_source" || command.action === "restore" || command.action === "select_version")
+      ) {
+        if (!options.queueNodeActions || !options.projectId || !options.canvasId) {
+          throw new Error("HTML source actions require the authenticated async executor");
+        }
+        yield executeHtmlNodeWriteAction({
+          projectId: options.projectId,
+          canvasId: options.canvasId,
+          node: targetNode,
+          action: command.action,
+          parameters: command.parameters,
+        }).then((saved) => {
+          if (saved.output.warnings) result.errors.push(...saved.output.warnings);
+          result.applied += 1;
+          result.commandResults.push({
+            commandIndex: currentCommandIndex,
+            type: command.type,
+            status: "success",
+            label: commandLabel(command),
+            nodeId: targetId,
+            action: command.action,
+            output: saved.output,
+          });
+        });
+        return;
+      }
+      if (!RESULT_SPAWNING_NODE_ACTIONS.has(command.action)) {
+        selectAndFocusNode(targetId);
+      }
+      if (options.queueNodeActions && CURRENT_MEDIA_NODE_ACTIONS.has(command.action)) {
+        setTimeout(() => {
+          try {
+            runNodeAction(targetId, command.action, command.parameters);
+          } catch (error) {
+            console.error("[freezone] run node action failed", error);
+          }
+        }, 0);
+        result.openedUiActions += 1;
         result.commandResults.push({
           commandIndex: currentCommandIndex,
           type: command.type,
-          status: "error",
+          status: "success",
           label: commandLabel(command),
-          nodeId: commandPrimaryNodeId(command),
-          action: command.type === "run_node_action" ? command.action : undefined,
-          error: message,
+          nodeId: targetId,
+          action: command.action,
         });
+        return;
       }
-    }
-
-    if (
-      !envelopeHasExplicitGroupNodes &&
-      envelopeHasAddNextNode &&
-      result.errors.length === envelopeErrorStart &&
-      envelopeAddNextCreatedCount >= 2
-    ) {
-      const targetNodeIds = [...new Set([...envelopeSourceNodeIds, ...envelopeCreatedNodeIds])];
-      const groupId = useCanvasStore.getState().groupNodes(targetNodeIds, {
-        label: "工作流组",
-        extraPadding: 20,
-      });
-      if (groupId) {
+      const queuedActions = options.queueNodeActions
+        ? directNodeActionQueue(
+          targetId,
+          command.action,
+          currentCommandIndex,
+          command.parameters,
+        )
+        : [];
+      const shouldQueue = (
+        options.queueNodeActions
+        && (
+          GENERATION_NODE_ACTIONS.has(command.action)
+          || queuedActions.length > 1
+        )
+      );
+      if (shouldQueue) {
+        for (const queuedAction of queuedActions) {
+          const actionKey = `${queuedAction.nodeId}:${queuedAction.action}`;
+          if (queuedNodeActionKeys.has(actionKey)) continue;
+          assertNodeActionAvailable(queuedAction.nodeId, queuedAction.action);
+          queuedNodeActionKeys.add(actionKey);
+          pendingNodeActions.push(queuedAction);
+        }
         result.applied += 1;
-        result.createdNodeIds.push(groupId);
+      } else {
+        runNodeAction(targetId, command.action, command.parameters);
+        result.openedUiActions += 1;
         result.commandResults.push({
-          commandIndex,
-          type: "group_nodes",
+          commandIndex: currentCommandIndex,
+          type: command.type,
           status: "success",
-          label: "创建普通组",
-          nodeId: targetNodeIds[0],
-          createdNodeId: groupId,
+          label: commandLabel(command),
+          nodeId: targetId,
+          action: command.action,
         });
-        commandIndex += 1;
       }
-    }
-    if (
-      !envelopeHasExplicitGroupNodes &&
-      !envelopeHasAddNextNode &&
-      !storyImageReferenceEnvelope &&
-      result.errors.length === envelopeErrorStart &&
-      envelopeCreatedNodeIds.length >= 2 &&
-      envelope.commands.some((command) =>
-        command.type === "create_node" && WORKFLOW_LIKE_CREATE_NODE_TYPES.has(command.node_type),
-      )
-    ) {
-      const targetNodeIds = [...new Set(envelopeCreatedNodeIds)];
-      const groupId = useCanvasStore.getState().groupNodes(targetNodeIds, {
-        label: "工作流组",
-        extraPadding: 20,
+    },
+    *open_mainline_projection(command, { envelope, commandIndex: currentCommandIndex }) {
+      if (!options.queueNodeActions) {
+        throw new Error("open_mainline_projection requires async frontend execution");
+      }
+      const projectId = command.project_id ?? envelope.project_id ?? options.projectId ?? undefined;
+      if (!projectId?.trim()) {
+        throw new Error("project_id is required to open a mainline projection");
+      }
+      pendingMainlineProjections.push({
+        commandIndex: currentCommandIndex,
+        projectId: projectId.trim(),
+        request: command.request,
+        label: commandLabel(command),
       });
-      if (groupId) {
-        result.applied += 1;
-        result.createdNodeIds.push(groupId);
+    },
+    *run_workflow(command, { commandIndex: currentCommandIndex, result, clientIdMap }) {
+      const resolvedCommand: Extract<CanvasChatCommand, { type: "run_workflow" }> = {
+        ...command,
+        node_ids: command.node_ids?.map((nodeId) => resolveNodeId(nodeId, clientIdMap)),
+      };
+      const allActions = workflowNodeActions(resolvedCommand, currentCommandIndex, { skipCompleted: false });
+      const actions = workflowNodeActions(
+        resolvedCommand,
+        currentCommandIndex,
+        { skipCompleted: command.regenerate !== true },
+      );
+      if (actions.length === 0) {
+        if (allActions.length === 0) {
+          throw new Error("工作流中没有可执行的生成节点。");
+        }
+        syncCompletedStoryFrames(
+          allActions.filter((action) => action.action === "generate_image" &&
+            hasGeneratedResult(action.nodeId, action.action)).map((action) => action.nodeId),
+          result,
+        );
         result.commandResults.push({
-          commandIndex,
-          type: "group_nodes",
+          commandIndex: currentCommandIndex,
+          type: command.type,
           status: "success",
-          label: "创建普通组",
-          nodeId: targetNodeIds[0],
-          createdNodeId: groupId,
+          label: "工作流已完成，未重新生成",
+          nodeId: allActions[0]?.nodeId,
+          output: {
+            skipped: true,
+            reason: "workflow_already_completed",
+            requires_regenerate_confirmation: true,
+          },
         });
-        commandIndex += 1;
+        result.applied += 1;
+        return;
       }
-    }
-    // Grouping and layout can enlarge a workflow far beyond its initial node
-    // positions. Reserve space using the final group bounds before generation.
-    placeWorkflowGroups(new Set(useCanvasStore.getState().nodes
-      .filter((node) => !existingEnvelopeNodeIds.has(node.id) && isGroupNode(node))
-      .map((node) => node.id)));
-  }
-
+      if (options.queueNodeActions) {
+        const regenerateSeedNodeIds = new Set(
+          resolvedCommand.node_ids ?? selectedWorkflowNodeIds(),
+        );
+        for (const action of actions) {
+          const actionKey = `${action.nodeId}:${action.action}`;
+          if (queuedNodeActionKeys.has(actionKey)) continue;
+          assertNodeActionAvailable(action.nodeId, action.action);
+          queuedNodeActionKeys.add(actionKey);
+          pendingNodeActions.push({
+            ...action,
+            ...(command.regenerate === true
+              ? {
+                invalidationReason: regenerateSeedNodeIds.has(action.nodeId)
+                  ? "explicit_regeneration" as const
+                  : "upstream_regeneration" as const,
+              }
+              : {}),
+          });
+        }
+      } else {
+        const { ordered, cycleError } = orderedNodeActionsByCanvasEdges(actions);
+        if (cycleError) throw new Error(cycleError);
+        for (const action of ordered) {
+          runNodeAction(action.nodeId, action.action);
+          result.openedUiActions += 1;
+          result.commandResults.push({
+            commandIndex: currentCommandIndex,
+            type: "run_node_action",
+            status: "success",
+            label: action.label,
+            nodeId: action.nodeId,
+            action: action.action,
+          });
+        }
+      }
+      result.applied += 1;
+      const firstNodeId = actions[0]?.nodeId;
+      if (firstNodeId) selectAndFocusNode(firstNodeId);
+      result.commandResults.push({
+        commandIndex: currentCommandIndex,
+        type: command.type,
+        status: "success",
+        label: commandLabel(command),
+        nodeId: firstNodeId,
+      });
+    },
+  };
   if (options.queueNodeActions) {
-    yield (async () => {
+    handlers.finish = async (result, clientIdMap) => {
       if (!(await executePendingVideoFrameCaptures(pendingVideoFrameCaptures, result, options))) return;
       await executePendingMainlineProjections(pendingMainlineProjections, result);
       await executeQueuedNodeActions(pendingNodeActions, result, options, clientIdMap);
-    })();
+    };
   }
-
-  result.errors = dedupeGenerationErrors(result.errors);
-  return result;
+  return handlers;
 }
 
 export function applyCanvasChatCommands(envelopes: CanvasChatCommandEnvelope[]): CanvasChatCommandApplyResult {
-  const step = applyCanvasChatCommandsInternal(envelopes, { queueNodeActions: false }).next();
-  if (!step.done) throw new Error("Synchronous canvas execution cannot await commands");
-  return step.value;
+  return applyCanvasCommandsNow(
+    useCanvasStore,
+    browserCommandEnvironment,
+    envelopes,
+    browserCommandHandlers({ queueNodeActions: false }),
+  );
 }
 
-export async function applyCanvasChatCommandsAsync(
+export function applyCanvasChatCommandsAsync(
   envelopes: CanvasChatCommandEnvelope[],
   options: ApplyCanvasChatCommandsOptions = {},
 ): Promise<CanvasChatCommandApplyResult> {
-  const execution = applyCanvasChatCommandsInternal(envelopes, {
-    ...options,
-    queueNodeActions: true,
-  });
-  let step = execution.next();
-  while (!step.done) {
-    try {
-      await step.value;
-    } catch (error) {
-      // Re-enter the original command's catch to retain its error receipt and
-      // continue independent commands without replaying successful mutations.
-      step = execution.throw(error);
-      continue;
-    }
-    step = execution.next();
-  }
-  return step.value;
+  return applyCanvasCommandsAsync(
+    useCanvasStore,
+    browserCommandEnvironment,
+    envelopes,
+    browserCommandHandlers({ ...options, queueNodeActions: true }),
+  );
 }

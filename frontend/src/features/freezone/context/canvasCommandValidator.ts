@@ -1,5 +1,5 @@
 import {htmlArtifactCommandError} from '@/features/html-artifacts/commands';
-import { extractUpstreamContent } from "@/features/canvas/application/graphContentResolver";
+import { workflowExternalSourceMismatch } from "@/features/canvas/core/commands/workflowExternalSource";
 import type { CanvasEdge, CanvasNode, VideoGenMode } from "@/features/canvas/domain/canvasNodes";
 import { CANVAS_NODE_TYPES, type CanvasNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
@@ -55,24 +55,6 @@ const RESERVED_DATA_KEYS = new Set([
 
 const AUDIO_DOWNLOAD_FORMATS = new Set(["source", "mp3", "m4a", "wav"]);
 const VIDEO_UPSCALE_RESOLUTION_VALUES = new Set<string>(VIDEO_UPSCALE_RESOLUTIONS);
-
-/** Error when a workflow external input no longer holds the media its draft verified. */
-export function workflowExternalSourceMismatch(
-  source: CanvasNode | undefined,
-  sourceId: string,
-  expected: { imageUrl?: unknown; videoUrl?: unknown },
-): string | null {
-  const content = source ? extractUpstreamContent(source) : undefined;
-  if (typeof expected.videoUrl === "string" && expected.videoUrl.trim() &&
-    content?.videoUrl !== expected.videoUrl) {
-    return `workflow source video changed: ${sourceId}`;
-  }
-  if (typeof expected.imageUrl === "string" && expected.imageUrl.trim() &&
-    content?.imageUrl !== expected.imageUrl) {
-    return `workflow source image changed: ${sourceId}`;
-  }
-  return null;
-}
 
 function hasReservedKeys(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
