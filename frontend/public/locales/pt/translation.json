@@ -7016,7 +7016,9 @@
         "noHigherResolution": "A origem já está em 4K; não está disponível uma resolução superior",
         "noConfiguredResolution": "O modelo disponível não suporta uma resolução superior; peça ao administrador que verifique as respetivas definições",
         "probeError": "Não foi possível inspecionar o vídeo de origem: {{error}}",
-        "submit": "Gerar vídeo em HD"
+        "submit": "Gerar vídeo em HD",
+        "model": "Model",
+        "standardModel": "Standard video enhancement"
       }
     },
     "videoNode": {

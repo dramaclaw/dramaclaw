@@ -9924,28 +9924,45 @@ def _is_processing_only_video_model(entry: dict[str, Any]) -> bool:
 def _video_processing_entry(
     catalog: list[dict[str, Any]] | None,
     mode: str,
+    scheme: str | None = None,
 ) -> dict[str, Any] | None:
+    from novelvideo.freezone.video_slowdown import is_topaz_backend
+
     return next(
-        (item for item in catalog or [] if mode in (item.get("supportedModes") or [])),
+        (
+            item
+            for item in catalog or []
+            if mode in (item.get("supportedModes") or [])
+            and (
+                scheme is None
+                or is_topaz_backend(
+                    str(item.get("apiModel") or item.get("api_model") or "")
+                )
+                == (scheme == "topaz")
+            )
+        ),
         None,
     )
 
 
 def _video_processing_resolutions(entry: dict[str, Any] | None) -> list[str]:
     options = _catalog_resolution_options(entry)
-    return [value for value in VIDEO_UPSCALE_TARGET_LONG_EDGES if value in (options or [])]
+    return [
+        value for value in VIDEO_UPSCALE_TARGET_LONG_EDGES if value in (options or [])
+    ]
 
 
 async def _resolve_video_processing_model(
     mode: str,
     *,
     requester_user_id: str,
+    scheme: str | None = None,
 ) -> dict[str, Any]:
     catalog = await _scoped_media_model_catalog(
         "video",
         requester_user_id=requester_user_id,
     )
-    entry = _video_processing_entry(catalog, mode)
+    entry = _video_processing_entry(catalog, mode, scheme)
     if entry is None:
         label = "视频超分" if mode == "video_upscale" else "视频帧率调整"
         raise HTTPException(409, f"当前没有可用的{label}模型，请联系管理员配置")
@@ -9996,6 +10013,15 @@ def _video_enhance_billing(
             "smart_interpolation": body.smart_interpolation,
             "slowdown": body.slowdown,
         })
+    if body.enhancement_model == "topaz":
+        for stage in stages:
+            stage["enhancement_model"] = "topaz"
+            stage["source_fps"] = float(source_meta["fps"])
+            stage["target_fps"] = body.target_fps or float(source_meta["fps"])
+        if frame_rate is None:
+            stages[0]["output_fps"] = body.target_fps or float(source_meta["fps"])
+        else:
+            stages[0]["output_fps"] = float(source_meta["fps"])
     return {"feature_key": "freezone.video_enhance", "pricing_stages": stages}
 
 
@@ -11798,15 +11824,35 @@ async def _prepare_video_upscale(
     if max(int(source_meta["width"]), int(source_meta["height"])) >= target_long_edge:
         raise HTTPException(400, "目标分辨率必须高于源视频分辨率")
 
+    if body.enhancement_model == "topaz":
+        if not 0 < float(source_meta["fps"]) <= 120:
+            raise HTTPException(400, "Topaz 仅支持 1–120 FPS 的源视频")
+        if float(source_meta["duration"]) > 300:
+            raise HTTPException(400, "Topaz 仅支持最长 300 秒的视频")
+        if (
+            target_long_edge
+            / max(int(source_meta["width"]), int(source_meta["height"]))
+            > 4
+        ):
+            raise HTTPException(400, "Topaz 最高支持 4 倍超分")
+        fps = body.target_fps
+        if fps is None and body.slowdown != "auto":
+            fps = float(source_meta["fps"])
+        if fps is not None and (not float(fps).is_integer() or not 1 <= fps <= 120):
+            raise HTTPException(400, "Topaz 补帧和慢放需要选择 1–120 的整数目标帧率")
     upscale = await _resolve_video_processing_model(
         "video_upscale",
         requester_user_id=requester_user_id,
+        scheme=body.enhancement_model,
     )
     frame_rate: dict[str, Any] | None = None
-    if body.target_fps is not None or body.slowdown != "auto":
+    if (body.target_fps is not None or body.slowdown != "auto") and not (
+        body.enhancement_model == "topaz" and body.slowdown == "auto"
+    ):
         frame_rate = await _resolve_video_processing_model(
             "video_frame_rate",
             requester_user_id=requester_user_id,
+            scheme=body.enhancement_model,
         )
     for label, model in (("视频超分", upscale), ("视频帧率调整", frame_rate)):
         if model is not None and body.resolution not in model["resolution_options"]:
@@ -11817,7 +11863,9 @@ async def _prepare_video_upscale(
         "upscale_request_schema": upscale["request_schema"],
         "frame_rate_backend": frame_rate["backend"] if frame_rate else None,
         "frame_rate_model_params": frame_rate["model_params"] if frame_rate else None,
-        "frame_rate_request_schema": (frame_rate["request_schema"] if frame_rate else None),
+        "frame_rate_request_schema": (
+            frame_rate["request_schema"] if frame_rate else None
+        ),
     }
     billing = _video_enhance_billing(body, source_meta, upscale, frame_rate)
     return source_path, source_meta, processing_models, billing
@@ -11930,11 +11978,12 @@ async def freezone_video_upscale(
 async def freezone_video_upscale_probe(
     project: str,
     source_url: str = Query(...),
+    enhancement_model: Literal["standard", "topaz"] = Query("standard"),
     user: dict = Depends(get_api_user),
 ):
     """读取源视频参数，供增强面板过滤无效的目标档位。"""
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
     try:
         source_path = resolve_static_url_to_path(source_url, project_dir)
@@ -11949,14 +11998,27 @@ async def freezone_video_upscale_probe(
     except RuntimeError as exc:
         raise HTTPException(400, f"无法读取源视频信息: {exc}") from exc
     catalog = await _scoped_media_model_catalog(
-        "video", requester_user_id=ctx.requester_user_id,
+        "video",
+        requester_user_id=ctx.requester_user_id,
     )
     metadata["upscale_resolutions"] = _video_processing_resolutions(
-        _video_processing_entry(catalog, "video_upscale")
+        _video_processing_entry(catalog, "video_upscale", enhancement_model)
     )
     metadata["frame_rate_resolutions"] = _video_processing_resolutions(
-        _video_processing_entry(catalog, "video_frame_rate")
+        _video_processing_entry(catalog, "video_frame_rate", enhancement_model)
     )
+    metadata["enhancement_models"] = [
+        scheme
+        for scheme in ("topaz", "standard")
+        if _video_processing_entry(catalog, "video_upscale", scheme) is not None
+    ]
+    if enhancement_model == "topaz":
+        source_long_edge = max(int(metadata["width"]), int(metadata["height"]))
+        metadata["upscale_resolutions"] = [
+            value
+            for value in metadata["upscale_resolutions"]
+            if VIDEO_UPSCALE_TARGET_LONG_EDGES[value] / source_long_edge <= 4
+        ]
     return {"ok": True, "data": metadata}
 
 

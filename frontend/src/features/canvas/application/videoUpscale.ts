@@ -4,6 +4,8 @@ import {
   fetchFreezoneJobResult,
   submitFreezoneVideoUpscale,
   type FreezoneVideoUpscaleResolution,
+  type FreezoneVideoUpscalePayload,
+  type VideoEnhancementModel,
 } from '@/api/ops';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
@@ -37,6 +39,7 @@ export function createVideoUpscaleResultNode(
   opts: {
     sourceUrl: string;
     displayName: string;
+    enhancementModel?: VideoEnhancementModel;
     resolution: FreezoneVideoUpscaleResolution;
   },
 ): string | null {
@@ -60,6 +63,7 @@ export function createVideoUpscaleResultNode(
       isUpscaleNode: true,
       upscaleSourceUrl: opts.sourceUrl,
       upscaleResolution: opts.resolution,
+      upscaleEnhancementModel: opts.enhancementModel ?? "topaz",
       isGenerating: false,
     } as unknown as Parameters<typeof store.addNode>[2],
   );
@@ -94,7 +98,17 @@ export async function submitVideoUpscale(
   });
 
   try {
+    const saved = useCanvasStore.getState().nodes.find((node) => node.id === nodeId)?.data as Record<string, unknown> | undefined;
+    const settings: Partial<FreezoneVideoUpscalePayload> = {};
+    for (const [field, key] of [
+      ['upscaleEnhancementModel', 'enhancementModel'], ['upscaleTargetFps', 'targetFps'],
+      ['upscaleSlowdown', 'slowdown'], ['upscaleSmartInterpolation', 'smartInterpolation'],
+      ['upscaleScene', 'scene'], ['upscaleFaceEnhance', 'faceEnhance'],
+    ]) {
+      if (saved?.[field] !== undefined) Object.assign(settings, { [key]: saved[field] });
+    }
     const ref = await submitFreezoneVideoUpscale(project, {
+      ...settings,
       sourceUrl: opts.sourceUrl.split('?')[0],
       resolution: opts.resolution,
       canvasId,

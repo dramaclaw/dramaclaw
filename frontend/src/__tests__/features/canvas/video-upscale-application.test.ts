@@ -74,6 +74,7 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       isUpscaleNode: true,
       upscaleSourceUrl: '/static/v.mp4',
       upscaleResolution: '2k',
+      upscaleEnhancementModel: 'topaz',
       isGenerating: false,
     });
     expect(
@@ -101,6 +102,7 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       resolution: '1080p',
       canvasId: 'canvas-1',
       nodeId: upscaleId,
+      enhancementModel: 'topaz',
     });
     expect(awaitTaskCompletion).toHaveBeenCalledWith('tk-up', 'proj-1', {
       taskType: 'freezone_video_upscale',
