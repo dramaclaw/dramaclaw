@@ -157,6 +157,7 @@ export type ServerFrame =
       scope: ChatScope;
       history: unknown[];
       busy?: boolean;
+      turn_id?: string;
       before?: string | null;
       has_more?: boolean;
     }
