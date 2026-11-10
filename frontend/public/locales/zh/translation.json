@@ -1,6 +1,5 @@
 {
   "chatSnapshot": {
-    "saveFailed": "聊天记录保存失败，请稍后重试；当前消息仍保留在本地。",
     "historyIncomplete": "此对话的部分历史内容过大，已限制加载；正文仍可查看，请联系管理员整理历史记录。"
   },
   "workflowDraftContinuation": {
@@ -791,6 +790,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "正在压缩上下文…",
+    "contextCompacted": "已压缩上下文，对话可以继续",
     "clearChat": {
       "title": "清空当前聊天？",
       "description": "当前聊天记录将被删除，下一条消息会开启新的 Agent 上下文。画布、项目和其他聊天不会受影响；进行中的生成任务不会被取消。",
@@ -842,6 +843,8 @@
     "emptyTitle": "开始对话",
     "emptyDescription": "可以询问项目进度、任务失败原因，或让助手帮你整理创作思路。",
     "syncingHistoryTitle": "正在初始化会话",
+    "loadEarlierMessages": "加载更早的消息",
+    "loadingEarlierMessages": "正在加载更早的消息…",
     "syncingHistoryDescription": "正在连接虾导并同步历史对话，请稍候。",
     "disclaimer": "虾导可能会出错，请核对关键剧情、角色与资产信息。",
     "placeholder": "上传剧本后，说出要推进的分集、画面、配音或成片任务",

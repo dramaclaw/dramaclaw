@@ -230,6 +230,80 @@ async def test_agent_continuation_is_pinned_to_the_auto_run_episode(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stream_raises", [False, True])
+async def test_agent_continuation_broadcasts_live_items_and_done(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stream_raises: bool,
+) -> None:
+    ctx = context(tmp_path)
+    broadcasts: list[dict] = []
+    turn_ids: list[str] = []
+
+    async def resolve_context(**_kwargs):
+        return ctx
+
+    async def broadcast(*, username, project_id, payload):
+        assert username == run.username
+        assert project_id == "project-1"
+        broadcasts.append(payload)
+
+    async def stream_reply(_username, _project_id, _prompt, on_event, *, turn_id, **_kwargs):
+        turn_ids.append(turn_id)
+        await on_event({
+            "type": "item", "message_id": "assistant:turn-1", "item_id": "m-1",
+            "card": {"id": "m-1", "seq": 7, "type": "text", "text": ""},
+        })
+        await on_event({
+            "type": "item_delta", "message_id": "assistant:turn-1", "item_id": "m-1",
+            "kind": "text", "offset": 0, "text": "hello",
+        })
+        if stream_raises:
+            raise RuntimeError("Stream failed")
+
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(director_auto, "resolve_project_context", resolve_context)
+    monkeypatch.setattr(director_auto, "broadcast_project_chat_event", broadcast)
+    monkeypatch.setattr(
+        director_auto.chat_service, "chat_run_lock_is_active", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(director_auto.chat_service, "stream_assistant_reply", stream_reply)
+    store = DirectorAutoStore(tmp_path / "director-auto.db")
+    coordinator = DirectorAutoCoordinator(store)
+    run = run_record(tmp_path)
+    store.upsert(run)
+    assert store.claim_lease(run.run_id, coordinator.owner_token)
+
+    assert await coordinator._agent_continue(run) is False
+
+    turn_id, = turn_ids
+    scope = {"kind": "project", "id": "project-1", "surface": "director"}
+    item_frames = [
+        {
+            "type": "chat.item", "scope": scope, "turn_id": turn_id,
+            "message_id": "assistant:turn-1", "item_id": "m-1",
+            "card": {"id": "m-1", "seq": 7, "type": "text", "text": ""},
+        },
+        {
+            "type": "chat.item.delta", "scope": scope, "turn_id": turn_id,
+            "message_id": "assistant:turn-1", "item_id": "m-1", "kind": "text",
+            "offset": 0, "text": "hello",
+        },
+    ]
+    done = {"type": "chat.done", "scope": scope, "turn_id": turn_id, "message": None}
+    if stream_raises:
+        assert broadcasts[:2] == item_frames
+        assert [frame for frame in broadcasts if frame["type"] == "chat.done"] == [done]
+        assert broadcasts[-2] == done
+        assert broadcasts[-1]["type"] == "assistant.message"
+        assert broadcasts[-1]["message"]["content"] == (
+            "本集自动已暂停：虾导继续执行失败，请检查服务状态后重试。"
+        )
+    else:
+        assert broadcasts == [*item_frames, done]
+
+
+@pytest.mark.asyncio
 async def test_resume_only_restarts_persisted_running_sessions(tmp_path: Path) -> None:
     class RecordingCoordinator(DirectorAutoCoordinator):
         def __init__(self, store):

@@ -74,7 +74,7 @@ async def test_execution_context_overrides_client_surface_and_prompt_markers(
 
     async def fake_codex(*_args, **kwargs):
         captured.update(kwargs)
-        return {"role": "assistant", "content": "ok"}
+        return None
 
     monkeypatch.setattr(chat_service, "_stream_assistant_reply_codex", fake_codex)
 
@@ -93,7 +93,7 @@ async def test_execution_context_overrides_client_surface_and_prompt_markers(
         execution_context=execution_context,
     )
 
-    assert result["content"] == "ok"
+    assert result is None
     assert captured["tool_mode"] == "default"
     assert captured["surface_context"] is None
     assert captured["requester_user_id"] == "user-b"

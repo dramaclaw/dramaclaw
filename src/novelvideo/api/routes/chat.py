@@ -53,6 +53,7 @@ from novelvideo.chat.live_events import (
     unregister_chat_websocket,
 )
 from novelvideo.chat.home_uploads import resolve_home_upload, save_home_upload
+from novelvideo.chat.history_page import HistoryPage, read_history_page
 from novelvideo.chat.hermes_workspace import (
     ensure_user_hermes_workspace,
     sync_freezone_hermes_workflow_skills,
@@ -360,6 +361,7 @@ class ChatMessageIn(BaseModel):
 class ScopeSetIn(BaseModel):
     type: str
     scope: ChatScopePayload
+    history_before: str | None = None
 
 
 class ChatUiEventIn(BaseModel):
@@ -824,6 +826,19 @@ def _chat_store_scope_for_project_context(
     )
 
 
+def _history_store_scope(
+    scope: ChatScope,
+    project_ctx: ProjectContext | None,
+) -> ChatScope:
+    if _is_freezone_scope(scope):
+        return _chat_store_scope_for_project_context(scope, project_ctx)
+    if scope.kind == "project" and project_ctx is not None:
+        return replace(
+            scope, id=project_ctx.project_name, state_dir=str(project_ctx.state_dir)
+        )
+    return scope
+
+
 async def _persist_chat_turn_error(
     *,
     user: dict[str, Any],
@@ -841,35 +856,19 @@ async def _persist_chat_turn_error(
             if scope.kind in {"project", "freezone"}
             else None
         )
-        storage_scope = _chat_store_scope_for_project_context(scope, project_ctx)
-        if (
-            scope.kind == "project"
-            and not _is_freezone_scope(scope)
-            and project_ctx is not None
-        ):
-            storage_scope = replace(
-                scope,
-                id=project_ctx.project_name,
-                state_dir=str(project_ctx.state_dir),
-            )
+        storage_scope = _history_store_scope(scope, project_ctx)
 
-        existing_messages = await chat_store.list_messages_async(
-            username, storage_scope
-        )
-        for existing in reversed(existing_messages):
-            if (
-                str(existing.get("turn_id") or "") == turn_id
-                and existing.get("chat_error") is True
-            ):
-                return existing
-        return await chat_store.append_message_async(
+        message = await chat_store.append_message_async(
             username,
             storage_scope,
             "assistant",
             content,
             turn_id=turn_id,
             metadata={"chat_error": True},
+            idempotency_key=f"chat-error:{turn_id}",
         )
+        message.update(message.pop("metadata", {}))
+        return message
     except Exception:  # noqa: BLE001
         logger.exception(
             "failed to persist chat turn error username=%s turn_id=%s scope=%s",
@@ -1747,15 +1746,14 @@ async def _persist_clarification_result_ui_event(
         return
     project_ctx = await _project_context_for_interaction_result(user, scope)
     store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
-    turns = {turn_id}
-    for message in await chat_store.list_messages_async(username, store_scope):
-        if message.get("turn_id") and any(
-            event.get("type") == "assistant.clarification.request"
-            and event.get("bridge_key") == payload.bridge_key
-            for event in message.get("ui_events", [])
-            if isinstance(event, dict)
-        ):
-            turns.add(message["turn_id"])
+    turns = {turn_id} | set(
+        await chat_store.ui_event_turn_ids_async(
+            username,
+            store_scope,
+            event_type="assistant.clarification.request",
+            bridge_key=payload.bridge_key,
+        )
+    )
     for target_turn in turns:
         await chat_store.append_ui_event_async(
             username,
@@ -2467,23 +2465,33 @@ async def _history(
     scope: ChatScope,
     *,
     project_ctx: ProjectContext | None = None,
-) -> list[dict[str, Any]]:
-    if scope.kind == "project" and (scope.surface or "director") == "director":
-        return await asyncio.to_thread(
-            chat_service.list_messages,
-            username,
-            str(scope.id),
+    before: str | None = None,
+) -> HistoryPage:
+    project = str(scope.id or "")
+    execution_context = (
+        AgentExecutionContext.from_project_scope(scope=scope, project=project_ctx)
+        if project_ctx is not None else None
+    )
+
+    async def read_codex(codex_before: str | None):
+        return await chat_service.read_codex_scope_history(
+            username, project,
+            agent_profile=execution_context.agent_profile if execution_context else "main",
+            canvas_id=execution_context.canvas_id if execution_context else None,
+            project_state_dir=project_ctx.state_dir if project_ctx is not None else None,
+            before=codex_before,
+        )
+
+    def extract_media(content: str):
+        return chat_service._extract_media(
+            content, username, project,
             project_dir=project_ctx.output_dir if project_ctx is not None else None,
-            project_state_dir=(
-                project_ctx.state_dir if project_ctx is not None else None
-            ),
         )
-    if _is_freezone_scope(scope):
-        return await chat_store.list_messages_async(
-            username,
-            _chat_store_scope_for_project_context(scope, project_ctx),
-        )
-    return await chat_store.list_messages_async(username, scope)
+
+    return await read_history_page(
+        username=username, store_scope=_history_store_scope(scope, project_ctx),
+        before=before, read_codex=read_codex, extract_media=extract_media,
+    )
 
 
 async def _send_scope_changed(
@@ -2504,12 +2512,15 @@ async def _send_scope_changed(
             {"type": "error", "message": "项目不存在或已删除，已切回首页聊天。"},
         ):
             return None
+    page = await _history(username, scope, project_ctx=project_ctx)
     if not await _send_json_best_effort(
         websocket,
         {
             "type": "scope.changed",
             "scope": scope.to_dict(),
-            "history": await _history(username, scope, project_ctx=project_ctx),
+            "history": page.history,
+            "before": page.before,
+            "has_more": page.has_more,
             "busy": chat_service.chat_run_lock_is_active(
                 username, _chat_run_lock_project_for_scope(scope)
             ),
@@ -2517,6 +2528,37 @@ async def _send_scope_changed(
     ):
         return None
     return scope
+
+
+async def _send_history_page(
+    websocket: WebSocket,
+    user: dict[str, Any],
+    username: str,
+    scope: ChatScope,
+    history_before: str,
+) -> bool:
+    page = HistoryPage([], None, False)
+    try:
+        project_ctx = await _project_context_for_scope(user, scope)
+    except HTTPException as exc:
+        if scope.kind not in {"project", "freezone"} or exc.status_code != 404:
+            raise
+    else:
+        try:
+            page = await _history(
+                username, scope, project_ctx=project_ctx, before=history_before
+            )
+        except ValueError:
+            logger.warning(
+                "Invalid history cursor scope=%s cursor_length=%d", scope.kind, len(history_before)
+            )
+    return await _send_json_best_effort(websocket, {
+        "type": "history.page",
+        "scope": {key: value for key, value in scope.to_dict().items() if value is not None},
+        "history": page.history,
+        "before": page.before,
+        "has_more": page.has_more,
+    })
 
 
 async def _send_json_best_effort(
@@ -3586,24 +3628,14 @@ async def _stream_project_turn(
     )
     agent_text = _text_with_attachment_context(text, attachments)
     display_text = str(user_text or text).strip()
-    if storage_scope is not None:
-        await chat_store.append_message_async(
-            username,
-            storage_scope,
-            "user",
-            display_text,
-            media=_attachment_payloads(attachments),
-            turn_id=turn_id,
-        )
-    else:
-        await asyncio.to_thread(
-            chat_service.add_user_message,
-            username,
-            project,
-            display_text,
-            project_dir=project_dir,
-            project_state_dir=project_state_dir,
-        )
+    await chat_store.append_message_async(
+        username,
+        storage_scope if storage_scope is not None else _history_store_scope(scope, project_ctx),
+        "user",
+        display_text,
+        media=_attachment_payloads(attachments),
+        turn_id=turn_id,
+    )
     send_lock = asyncio.Lock()
     disconnected = asyncio.Event()
     runtime_backend = chat_service.get_chat_backend_name()
@@ -3723,6 +3755,22 @@ async def _stream_project_turn(
                     "status": event.get("status"),
                     "disposition": event.get("disposition"),
                     "error": event.get("error"),
+                },
+                send_lock,
+            )
+        elif event_type in {"item", "item_delta"}:
+            fields = (
+                ("message_id", "item_id", "card")
+                if event_type == "item"
+                else ("message_id", "item_id", "kind", "offset", "text")
+            )
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "chat.item" if event_type == "item" else "chat.item.delta",
+                    "scope": scope.to_dict(),
+                    "turn_id": turn_id,
+                    **{key: event[key] for key in fields},
                 },
                 send_lock,
             )
@@ -4012,6 +4060,22 @@ async def _stream_home_turn_codex(
                     "status": event.get("status"),
                     "disposition": event.get("disposition"),
                     "error": event.get("error"),
+                },
+                send_lock,
+            )
+        elif event_type in {"item", "item_delta"}:
+            fields = (
+                ("message_id", "item_id", "card")
+                if event_type == "item"
+                else ("message_id", "item_id", "kind", "offset", "text")
+            )
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "chat.item" if event_type == "item" else "chat.item.delta",
+                    "scope": scope.to_dict(),
+                    "turn_id": turn_id,
+                    **{key: event[key] for key in fields},
                 },
                 send_lock,
             )
@@ -4636,6 +4700,12 @@ async def chat_ws(websocket: WebSocket) -> None:
                 except Exception:
                     await _close_ws_unauthorized(websocket)
                     return
+                if msg.history_before is not None:
+                    if not await _send_history_page(
+                        websocket, user, username, requested_scope, msg.history_before
+                    ):
+                        return
+                    continue
                 current_scope = await _send_scope_changed(
                     websocket, user, username, requested_scope
                 )

@@ -332,7 +332,6 @@ async def test_chat_outline_confirmation_persists_then_allows_create(monkeypatch
     )
     from novelvideo.interactive_story.service import InteractiveStoryService
     from novelvideo.chat.runtime_event_evidence import _codex_freezone_write_receipt
-    from novelvideo.chat.canvas_outcome import finalize_canvas_reply, receipt_reference
 
     service = InteractiveStoryService(tmp_path / "project", project_id="project-a", actor_id="local")
     service.save_outline(SaveStoryOutlineRequest.model_validate({
@@ -369,7 +368,6 @@ async def test_chat_outline_confirmation_persists_then_allows_create(monkeypatch
         **create_args, "base_revision": confirmed.structuredContent["revision"],
     })
     assert not created.isError
-    receipts = set()
     for name, args_, result in [
         ("dramaclaw_confirm_interactive_story_outline", args, confirmed),
         ("dramaclaw_create_interactive_story", create_args, created),
@@ -378,12 +376,6 @@ async def test_chat_outline_confirmation_persists_then_allows_create(monkeypatch
                                 input=args_, structured=result.structuredContent, output=None)
         receipt = _codex_freezone_write_receipt(event, expected_project="project-a", expected_canvas="canvas-a")
         assert receipt is not None
-        receipts.add(receipt_reference(receipt))
-    assert receipts == {("", 2), ("", 3)}
-    assert finalize_canvas_reply(
-        "大纲已确认，剧本已创建。",
-        attempts={"confirm": "succeeded", "create": "succeeded"}, receipts=receipts,
-    ) == "大纲已确认，剧本已创建。"
     assert service.get_outline("canvas-a").outline.status == "linked"
 
 

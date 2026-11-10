@@ -8,7 +8,10 @@ import threading
 import time
 import tomllib
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, AsyncIterator, Literal, Mapping, Sequence
+
+if TYPE_CHECKING:
+    from novelvideo.chat.codex_history import CodexHistoryPage
 
 from novelvideo.chat.runtime_port import (
     AgentRuntimeThreadPort,
@@ -319,6 +322,13 @@ def _codex_final_response_from_items(items: list[Any]) -> str | None:
 
 def _codex_unwrap_item(item: Any) -> Any:
     return item.root if hasattr(item, "root") else item
+
+
+def _codex_wire_item(item: Any) -> dict[str, Any]:
+    """Serialize the SDK item using the recorded wire field names."""
+    return _codex_unwrap_item(item).model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
 
 
 def _codex_jsonable(value: Any) -> Any:
@@ -1212,7 +1222,8 @@ def revert_codex_thread_history(
         THREAD_TURNS_LIST,
         CodexThreadResponse,
         ThreadRevertResponse,
-        ThreadTurnIdsPage,
+        ThreadTurnsPage,
+        newest_turns_params,
         oldest_turn_params,
         thread_revert_params,
     )
@@ -1236,10 +1247,10 @@ def revert_codex_thread_history(
         raise CodexThreadHistoryModeError(
             f"Codex thread {thread_id} has history mode {mode}; cannot clear history"
         )
-    newest_params = {"threadId": thread_id, "limit": 1, "itemsView": "notLoaded"}
+    newest_params = newest_turns_params(thread_id, limit=1)
     if response.thread.status.type == "active":
         newest = client.request(
-            THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnIdsPage
+            THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnsPage
         )
         if newest.data and newest.data[0].status == "inProgress":
             client.turn_interrupt(thread_id, newest.data[0].id)
@@ -1258,7 +1269,7 @@ def revert_codex_thread_history(
                 f"Codex thread {thread_id} still has a turn in flight; cannot clear history"
             )
     oldest = client.request(
-        THREAD_TURNS_LIST, oldest_turn_params(thread_id), response_model=ThreadTurnIdsPage
+        THREAD_TURNS_LIST, oldest_turn_params(thread_id), response_model=ThreadTurnsPage
     )
     if not oldest.data:
         return "empty"
@@ -1268,11 +1279,30 @@ def revert_codex_thread_history(
         response_model=ThreadRevertResponse,
     )
     remaining = client.request(
-        THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnIdsPage
+        THREAD_TURNS_LIST, newest_params, response_model=ThreadTurnsPage
     )
     if remaining.data:
         raise RuntimeError(f"Codex thread {thread_id} still has turns after clearing history")
     return "reverted"
+
+
+def read_codex_thread_history(
+    *,
+    codex_bin: Path,
+    cwd: Path,
+    env: dict[str, str],
+    config_overrides: tuple[str, ...],
+    thread_id: str,
+    before: str | None,
+) -> CodexHistoryPage:
+    from novelvideo.chat.codex_app_server import shared_codex
+    from novelvideo.chat.codex_history import HISTORY_CACHE
+
+    config = _codex_runtime_config(
+        codex_bin=codex_bin, cwd=cwd, env=env, config_overrides=config_overrides
+    )
+    with shared_codex(config) as codex:
+        return HISTORY_CACHE.read_page(codex._client, thread_id, before=before)
 
 
 def clear_codex_thread_history(
@@ -1725,6 +1755,17 @@ class CodexThread:
                             isinstance(payload, AgentMessageDeltaNotification)
                             and payload.turn_id == turn.id
                         ):
+                            emit(
+                                "event",
+                                ChatBackendEvent(
+                                    type="item_delta",
+                                    thread_id=self.id,
+                                    turn_id=turn.id,
+                                    item_id=payload.item_id,
+                                    text=payload.delta,
+                                    name="text",
+                                ),
+                            )
                             assistant_parts.append(payload.delta)
                             emit(
                                 "event",
@@ -1773,8 +1814,21 @@ class CodexThread:
                         if (
                             isinstance(payload, ReasoningSummaryTextDeltaNotification)
                             and payload.turn_id == turn.id
-                            and payload.delta
                         ):
+                            emit(
+                                "event",
+                                ChatBackendEvent(
+                                    type="item_delta",
+                                    thread_id=self.id,
+                                    turn_id=turn.id,
+                                    item_id=payload.item_id,
+                                    text=payload.delta,
+                                    name="reasoning",
+                                    summary_index=payload.summary_index,
+                                ),
+                            )
+                            if not payload.delta:
+                                continue
                             emit(
                                 "event",
                                 ChatBackendEvent(
@@ -1791,6 +1845,17 @@ class CodexThread:
                             isinstance(payload, ItemStartedNotification)
                             and payload.turn_id == turn.id
                         ):
+                            emit(
+                                "event",
+                                ChatBackendEvent(
+                                    type="item_started",
+                                    thread_id=self.id,
+                                    turn_id=turn.id,
+                                    item=_codex_wire_item(payload.item),
+                                    item_id=_codex_unwrap_item(payload.item).id,
+                                    started_at_ms=payload.started_at_ms,
+                                ),
+                            )
                             tool_event = _codex_tool_event(
                                 payload.item,
                                 phase="started",
@@ -1877,6 +1942,16 @@ class CodexThread:
                             isinstance(payload, ItemCompletedNotification)
                             and payload.turn_id == turn.id
                         ):
+                            emit(
+                                "event",
+                                ChatBackendEvent(
+                                    type="item_completed",
+                                    thread_id=self.id,
+                                    turn_id=turn.id,
+                                    item=_codex_wire_item(payload.item),
+                                    item_id=_codex_unwrap_item(payload.item).id,
+                                ),
+                            )
                             items.append(payload.item)
                             tool_event = _codex_tool_event(
                                 payload.item,

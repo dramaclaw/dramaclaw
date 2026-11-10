@@ -16,8 +16,11 @@ Machine-specific values were replaced with `<TMP_ROOT>`, `<HOSTNAME>`, `<PYTHON>
 | File | Recorded behavior |
 | --- | --- |
 | `02-thread-start-ce.jsonl` | `thread/start` returns paginated history, idle status, and no turns. |
+| `03-turn-ce-plain.jsonl` | A plain text turn emits user and agent message items, replies `ready`, and completes with Unix-second turn timestamps. |
 | `04-turn-additional-context-client-id.jsonl` | `turn/start` sends `clientUserMessageId` and `additionalContext` entries `application` and `untrusted`. These entries never appear as items, and `userMessage.clientId` carries the client id. |
 | `05-history-reads.jsonl` | `thread/turns/list` defaults to newest first, supports `sortDirection: "asc"`, and returns empty item lists with `itemsView: "notLoaded"`. |
+| `08-thread-b-tools-reasoning-inflight-resume.jsonl` | A resumed thread lists an `inProgress` turn while `thread/items/list` returns only its completed user message and shell command. The turn later completes an echo MCP call and an agent reply. |
+| `09-turn-interrupt.jsonl` | Interrupting a streaming reply leaves an `interrupted` turn whose `thread/items/list` page contains only the user message. |
 | `10-approval-decline.jsonl` | A command approval receives `{"decision": "decline"}`, then the command item completes with status `declined`. |
 | `11-legacy-history-thread.jsonl` | `thread/start` accepts legacy history. Revert returns code `-32600` with message `thread/revert only supports paginated threads`. |
 | `12-revert.jsonl` | Resume excludes turns. Reverting before the first turn clears history, returns a null turns cursor, emits `thread/reverted`, and leaves an empty turns page. |

@@ -442,159 +442,6 @@ async function loadMainlineProjectionAssets(project: string): Promise<FreezonePr
   return combineMainlineProjectionAssets(assets, characters);
 }
 
-function persistCanvasCommandResult({
-  projectId,
-  canvasId,
-  turnId,
-  envelopes,
-  result,
-  anchorTextPrefix,
-  receivedAt,
-  bridgeKey,
-}: {
-  projectId: string;
-  canvasId: string;
-  turnId: string | null;
-  envelopes: ReturnType<typeof extractCanvasChatCommandEnvelopes>;
-  result: CanvasChatCommandApplyResult;
-  anchorTextPrefix?: string | null;
-  receivedAt?: number;
-  bridgeKey?: string | null;
-}) {
-  if (!turnId) return;
-  void api.post("api/v1/chat/ui-events", {
-    json: {
-      scope: {
-        kind: "project",
-        id: projectId,
-        surface: "freezone",
-        canvasId,
-      },
-      turn_id: turnId,
-      event: {
-        schema_version: "canvas_command_result.v1",
-        type: "canvas_command_result",
-        canvas_id: canvasId,
-        bridge_key: bridgeKey ?? null,
-        envelopes,
-        result,
-        anchor_text_prefix: anchorTextPrefix ?? null,
-        received_at: receivedAt ?? Date.now(),
-      },
-    },
-  }).catch((error) => {
-    console.warn("[freezone-canvas-command] failed to persist canvas command result", {
-      canvasId,
-      turnId,
-      error,
-    });
-  });
-}
-
-function persistCanvasCommandApproval({
-  projectId,
-  canvasId,
-  turnId,
-  envelopes,
-  anchorTextPrefix,
-  receivedAt,
-  externalMcpCommand,
-  bridgeKey,
-}: {
-  projectId: string;
-  canvasId: string;
-  turnId: string | null;
-  envelopes: ReturnType<typeof extractCanvasChatCommandEnvelopes>;
-  anchorTextPrefix?: string | null;
-  receivedAt?: number;
-  externalMcpCommand?: boolean;
-  bridgeKey?: string | null;
-}) {
-  if (!turnId) return;
-  void api.post("api/v1/chat/ui-events", {
-    json: {
-      scope: {
-        kind: "project",
-        id: projectId,
-        surface: "freezone",
-        canvasId,
-      },
-      turn_id: turnId,
-      event: {
-        schema_version: "canvas_command_approval.v1",
-        type: "canvas_command_approval",
-        canvas_id: canvasId,
-        bridge_key: bridgeKey ?? null,
-        envelopes,
-        anchor_text_prefix: anchorTextPrefix ?? null,
-        received_at: receivedAt ?? Date.now(),
-        ...(externalMcpCommand === true ? { external_mcp_command: true } : {}),
-      },
-    },
-  }).catch((error) => {
-    console.warn("[freezone-canvas-command] failed to persist canvas command approval", {
-      canvasId,
-      turnId,
-      error,
-    });
-  });
-}
-
-function persistCanvasCommandValidationActivity({
-  projectId,
-  canvasId,
-  turnId,
-  bridgeKey,
-  ok,
-  errors,
-  anchorTextPrefix,
-  receivedAt,
-  externalMcpCommand,
-}: {
-  projectId: string;
-  canvasId: string;
-  turnId: string | null;
-  bridgeKey: string;
-  ok: boolean;
-  errors: string[];
-  anchorTextPrefix?: string | null;
-  receivedAt?: number;
-  externalMcpCommand?: boolean;
-}) {
-  if (!turnId) return;
-  void api.post("api/v1/chat/ui-events", {
-    json: {
-      scope: {
-        kind: "project",
-        id: projectId,
-        surface: "freezone",
-        canvasId,
-      },
-      turn_id: turnId,
-      event: {
-        schema_version: "canvas_context_result.v1",
-        type: "canvas_context_result",
-        canvas_id: canvasId,
-        bridge_key: bridgeKey,
-        result: {
-          ok,
-          responses: [{ type: "validate_canvas_commands" }],
-          errors,
-        },
-        anchor_text_prefix: anchorTextPrefix ?? null,
-        received_at: receivedAt ?? Date.now(),
-        ...(externalMcpCommand === true ? { external_mcp_command: true } : {}),
-      },
-    },
-  }).catch((error) => {
-    console.warn("[freezone-canvas-command] failed to persist canvas command validation activity", {
-      canvasId,
-      turnId,
-      error,
-    });
-  });
-}
-
 /**
  * Register every trigger that refreshes projection status and tear them all
  * down synchronously when the shared API layer confirms session expiry.
@@ -1731,17 +1578,6 @@ export function FreezoneShell({
           surfaceOrder: eventReceivedAt + 1,
           externalMcpCommand: isExternalMcpCommand,
         });
-        persistCanvasCommandValidationActivity({
-          projectId,
-          canvasId,
-          turnId,
-          bridgeKey: validationBridgeKey,
-          ok: false,
-          errors,
-          anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-          receivedAt: eventReceivedAt + 1,
-          externalMcpCommand: isExternalMcpCommand,
-        });
         const result: CanvasChatCommandApplyResult = {
           applied: 0,
           openedUiActions: 0,
@@ -1765,16 +1601,6 @@ export function FreezoneShell({
           canvasId,
           agentId,
           result,
-        });
-        persistCanvasCommandResult({
-          projectId,
-          canvasId,
-          turnId,
-          envelopes: [],
-          result,
-          anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-          receivedAt: detail?.receivedAt,
-          bridgeKey,
         });
         window.dispatchEvent(new CustomEvent(FREEZONE_CANVAS_COMMAND_RESULT_EVENT, {
           detail: {
@@ -1829,17 +1655,6 @@ export function FreezoneShell({
           surfaceOrder: eventReceivedAt + 1,
           externalMcpCommand: isExternalMcpCommand,
         });
-        persistCanvasCommandValidationActivity({
-          projectId,
-          canvasId,
-          turnId,
-          bridgeKey: validationBridgeKey,
-          ok: false,
-          errors,
-          anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-          receivedAt: eventReceivedAt + 1,
-          externalMcpCommand: isExternalMcpCommand,
-        });
         const result = canvasCommandValidationFailureResult(errors);
         reportCanvasCommandToolResult({
           bridgeKey,
@@ -1849,16 +1664,6 @@ export function FreezoneShell({
           canvasId,
           agentId,
           result,
-        });
-        persistCanvasCommandResult({
-          projectId,
-          canvasId,
-          turnId,
-          envelopes: normalizedEnvelopes,
-          result,
-          anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-          receivedAt: detail?.receivedAt,
-          bridgeKey,
         });
         window.dispatchEvent(new CustomEvent(FREEZONE_CANVAS_COMMAND_RESULT_EVENT, {
           detail: {
@@ -1887,27 +1692,6 @@ export function FreezoneShell({
         labels: [t("freezone.canvasCommand.commandValidation")],
         receivedAt: eventReceivedAt + 1,
         surfaceOrder: eventReceivedAt + 1,
-        externalMcpCommand: isExternalMcpCommand,
-      });
-      persistCanvasCommandValidationActivity({
-        projectId,
-        canvasId,
-        turnId,
-        bridgeKey: validationBridgeKey,
-        ok: true,
-        errors: [],
-        anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-        receivedAt: eventReceivedAt + 1,
-        externalMcpCommand: isExternalMcpCommand,
-      });
-      persistCanvasCommandApproval({
-        projectId,
-        canvasId,
-        turnId,
-        envelopes: normalizedEnvelopes,
-        anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-        receivedAt: eventReceivedAt + 2,
-        bridgeKey,
         externalMcpCommand: isExternalMcpCommand,
       });
       console.info("[freezone-canvas-command] approval emitted", {

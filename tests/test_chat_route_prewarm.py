@@ -6,6 +6,7 @@ import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from novelvideo.api.routes import chat as chat_route
+from novelvideo.chat.history_page import HistoryPage
 from novelvideo.chat.store import ChatScope
 from novelvideo.freezone import canvas_command_bridge
 from novelvideo.freezone.canvas_command_bridge import (
@@ -26,8 +27,8 @@ async def test_send_scope_changed_returns_none_when_client_disconnected(
         async def send_json(self, payload):
             raise WebSocketDisconnect(code=1006)
 
-    async def fake_history(username, scope, *, project_ctx=None):
-        return []
+    async def fake_history(username, scope, *, project_ctx=None, before=None):
+        return HistoryPage([], None, False)
 
     monkeypatch.setattr(chat_route, "_history", fake_history)
 

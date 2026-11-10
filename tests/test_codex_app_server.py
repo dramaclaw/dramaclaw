@@ -1351,7 +1351,7 @@ async def test_public_patched_runtime_clear_keeps_thread_without_prior_history(
     monkeypatch, tmp_path
 ):
     from openai_codex import CodexConfig
-    from novelvideo.chat.codex_protocol import ThreadTurnIdsPage
+    from novelvideo.chat.codex_protocol import ThreadTurnsPage
 
     codex_bin = _contract_codex_bin()
     scripted = [
@@ -1405,7 +1405,7 @@ async def test_public_patched_runtime_clear_keeps_thread_without_prior_history(
             ) == "reverted"
             with codex_app_server.shared_codex(config) as codex:
                 page = codex._client.request(
-                    "thread/turns/list", {"threadId": thread_id}, response_model=ThreadTurnIdsPage
+                    "thread/turns/list", {"threadId": thread_id}, response_model=ThreadTurnsPage
                 )
             assert page.data == []
             third = [
@@ -1860,16 +1860,27 @@ async def test_codex_stream_maps_structured_runtime_events(monkeypatch, tmp_path
         "egress_submitted",
         "turn_started",
         "plan_update",
+        "item_delta",
         "thought_delta",
+        "item_started",
         "tool_started",
         "tool_updated",
         "usage_update",
+        "item_completed",
         "tool_updated",
+        "item_delta",
         "assistant_delta",
         "turn_completed",
         "egress_disposition",
         "complete",
     ]
+    assert [
+        (event.item_id, event.name, event.summary_index)
+        for event in events
+        if event.type == "item_delta"
+    ] == [("reasoning-1", "reasoning", 0), ("message-1", "text", None)]
+    assert [event.item_id for event in events if event.type == "item_started"] == ["call-1"]
+    assert [event.item_id for event in events if event.type == "item_completed"] == ["call-1"]
     plan = next(event for event in events if event.type == "plan_update")
     assert plan.entries == [{"status": "inProgress", "step": "List projects"}]
     thought = next(event for event in events if event.type == "thought_delta")

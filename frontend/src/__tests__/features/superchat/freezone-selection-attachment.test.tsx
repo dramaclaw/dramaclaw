@@ -24,6 +24,9 @@ const superChatMocks = vi.hoisted(() => ({
   activeTurnId: null as string | null,
   showToolEvents: false,
   replaceAssistantMessagePart: vi.fn(),
+  hasOlderHistory: false,
+  loadingOlderHistory: false,
+  loadOlderHistory: vi.fn(),
 }));
 
 const eventBusMocks = vi.hoisted(() => ({
@@ -222,10 +225,10 @@ vi.mock("@/features/superchat/use-superchat", () => ({
     clearPinned: vi.fn(),
     deleteMessage: vi.fn(),
     deletedIds: new Set<string>(),
-    historyHasMore: false,
-    historyLoadingOlder: false,
+    hasOlderHistory: superChatMocks.hasOlderHistory,
+    loadingOlderHistory: superChatMocks.loadingOlderHistory,
     historyReady: true,
-    loadOlderHistory: vi.fn(),
+    loadOlderHistory: superChatMocks.loadOlderHistory,
     messages: superChatMocks.messages,
     models: [],
     modelsLoading: false,
@@ -281,10 +284,39 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     superChatMocks.busy = false;
     superChatMocks.activeTurnId = null;
     superChatMocks.showToolEvents = false;
+    superChatMocks.hasOlderHistory = false;
+    superChatMocks.loadingOlderHistory = false;
+    superChatMocks.loadOlderHistory.mockClear();
     eventBusMocks.on.mockClear();
     apiMocks.post.mockClear();
     useCanvasStore.getState().setCanvasData([], []);
     useCanvasStore.getState().setSelectedNode(null);
+  });
+
+  it("loads earlier messages with an English button and disables it while loading", () => {
+    localeState.language = "en";
+    superChatMocks.hasOlderHistory = true;
+    superChatMocks.messages = [{
+      id: "turn-3-user", role: "user", text: "Recent message", timestamp: 6,
+    }];
+    const view = render(<SuperChatPanel variant="freezone" canvasId="canvas-a"
+      workflowStatusEnabled={false} />);
+    const button = screen.getByRole("button", { name: "Load earlier messages" });
+    expect(button).toBeEnabled();
+    superChatMocks.loadOlderHistory.mockClear();
+    fireEvent.click(button);
+    expect(superChatMocks.loadOlderHistory).toHaveBeenCalled();
+
+    superChatMocks.loadingOlderHistory = true;
+    view.rerender(<SuperChatPanel variant="freezone" canvasId="canvas-a"
+      workflowStatusEnabled={false} />);
+    expect(screen.getByRole("button", { name: "Loading earlier messages…" })).toBeDisabled();
+
+    superChatMocks.hasOlderHistory = false;
+    superChatMocks.loadingOlderHistory = false;
+    view.rerender(<SuperChatPanel variant="freezone" canvasId="canvas-a"
+      workflowStatusEnabled={false} />);
+    expect(screen.queryByRole("button", { name: "Load earlier messages" })).not.toBeInTheDocument();
   });
 
   it("localizes selection, execution mode and Skill controls without changing reference data", async () => {
@@ -1172,7 +1204,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     await waitFor(() => expect(screen.getByText("已读取画布 Ontology")).toBeInTheDocument());
   });
 
-  it("persists and reports approved canvas command results", async () => {
+  it("reports approved canvas command results", async () => {
     superChatMocks.messages = [
       {
         id: "assistant-a",
@@ -1251,15 +1283,6 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
         }),
       })),
     );
-    expect(apiMocks.post).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-      json: expect.objectContaining({
-        turn_id: "turn-a",
-        event: expect.objectContaining({
-          type: "canvas_command_result",
-          bridge_key: "bridge-a",
-        }),
-      }),
-    }));
     expect(superChatMocks.replaceAssistantMessagePart).toHaveBeenCalledWith(
       { messageId: "assistant-a", turnId: "turn-a" },
       expect.stringContaining("canvas_approval:"),
@@ -1340,38 +1363,10 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     fireEvent.change(screen.getByLabelText("图片数量"), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
 
-    await waitFor(() =>
-      expect(apiMocks.post).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-        json: expect.objectContaining({
-          turn_id: "turn-a",
-          event: expect.objectContaining({
-            type: "canvas_command_approval_resolution",
-            bridge_key: "bridge-image",
-            envelopes: [
-              expect.objectContaining({
-                commands: [
-                  {
-                    type: "update_node_data",
-                    node_id: node.id,
-                    data: {
-                      model: "seedream-4.5",
-                      aspectRatio: "9:16",
-                      size: "2K",
-                      count: 2,
-                    },
-                  },
-                  {
-                    type: "run_node_action",
-                    node_id: node.id,
-                    action: "generate_image",
-                  },
-                ],
-              }),
-            ],
-          }),
-        }),
-      })),
-    );
+    await waitFor(() => {
+      expect(useCanvasStore.getState().nodes.find(item => item.id === node.id)?.data)
+        .toMatchObject({ model: "seedream-4.5", aspectRatio: "9:16", size: "2K", count: 2 });
+    });
   });
 
   it("groups video generation parameters like the canvas video node", async () => {
@@ -1485,12 +1480,11 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     expect(screen.queryByLabelText("视频模型")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("视频时长")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
-    await waitFor(() => expect(apiMocks.post).toHaveBeenCalledWith("api/v1/chat/ui-events",
-      expect.objectContaining({ json: expect.objectContaining({ event: expect.objectContaining({
-        bridge_key: "bridge-story",
-        envelopes: [expect.objectContaining({ commands: [{ type: "run_node_action",
-          node_id: node.id, action: "generate_video" }] })],
-      }) }) })));
+    await waitFor(() => {
+      expect(useCanvasStore.getState().nodes.find(item => item.id === node.id)?.data.durationSec)
+        .toBe(17);
+      expect(screen.queryByText("待确认的画布操作")).not.toBeInTheDocument();
+    });
   });
 
   it("does not restore a persisted canvas command approval after it was confirmed", async () => {
@@ -1825,15 +1819,13 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     });
     await waitFor(() => {
       expect(apiMocks.post).toHaveBeenCalledWith(
-        "api/v1/chat/ui-events",
-        expect.objectContaining({
-          json: expect.objectContaining({
-            event: expect.objectContaining({
-              type: "canvas_command_approval_resolution",
-              decision: "timeout",
-            }),
-          }),
-        }),
+        "api/v1/chat/canvas-command-tool-result",
+        expect.objectContaining({ json: expect.objectContaining({
+          bridge_key: "bridge-a",
+          canvas_apply_status: "cancelled_by_user",
+          cancelled: true,
+          errors: ["画布操作等待超时，已自动取消。"],
+        }) }),
       );
     });
   });
@@ -2001,7 +1993,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
     });
   });
 
-  it("reports and persists cancelled canvas command approvals", async () => {
+  it("reports cancelled canvas command approvals", async () => {
     superChatMocks.messages = [
       {
         id: "assistant-a",
@@ -2064,16 +2056,6 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
         }),
       })),
     );
-    expect(apiMocks.post).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-      json: expect.objectContaining({
-        turn_id: "turn-a",
-        event: expect.objectContaining({
-          type: "canvas_command_result",
-          bridge_key: "bridge-a",
-          cancelled: true,
-        }),
-      }),
-    }));
   });
 
   it("automatically cancels canvas command approvals after the countdown", async () => {
@@ -2136,17 +2118,6 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
         }),
       })),
     );
-    expect(apiMocks.post).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-      json: expect.objectContaining({
-        turn_id: "turn-a",
-        event: expect.objectContaining({
-          type: "canvas_command_result",
-          bridge_key: "bridge-a",
-          cancelled: true,
-          cancel_reason: "timeout",
-        }),
-      }),
-    }));
   });
 
   it("shows a countdown before canvas approval buttons", async () => {

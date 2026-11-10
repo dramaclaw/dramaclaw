@@ -1861,7 +1861,8 @@ function isAgentRuntimePart(part: ChatMessagePart): boolean {
   return part.type === "tool_status"
     || part.type === "agent_plan"
     || part.type === "agent_thought"
-    || part.type === "agent_usage";
+    || part.type === "agent_usage"
+    || part.type === "context_compaction";
 }
 
 function messageHasAgentRuntimeActivity(message: ChatMessage): boolean {
@@ -1871,7 +1872,8 @@ function messageHasAgentRuntimeActivity(message: ChatMessage): boolean {
 function isVisibleAgentProgressPart(part: ChatMessagePart): boolean {
   return part.type === "tool_status"
     || part.type === "agent_plan"
-    || part.type === "agent_thought";
+    || part.type === "agent_thought"
+    || part.type === "context_compaction";
 }
 
 function messageHasVisibleAgentProgressActivity(message: ChatMessage): boolean {
@@ -2332,6 +2334,15 @@ function AgentRuntimeTimeline({
                 {statusText}{repeatText}
               </span>
               {detail && <span className="min-w-0 flex-1 break-words text-[11px] text-red-200/80">{detail}</span>}
+            </div>
+          );
+        }
+        if (part.type === "context_compaction") {
+          const running = part.event && typeof part.event === "object"
+            && "status" in part.event && part.event.status === "running";
+          return (
+            <div key={part.id} className="py-0.5 text-muted-foreground">
+              {t(running ? "aiAssistant.contextCompacting" : "aiAssistant.contextCompacted")}
             </div>
           );
         }
@@ -6505,49 +6516,6 @@ export function buildAssistantClarificationToolResultForTest(
     message: cancelled ? options.cancelMessage ?? "用户退出模型选择，需要先调整镜头模式或配置兼容模型。" : message,
   };
 }
-
-function buildPersistedAssistantClarificationEvent(
-  event: AssistantClarificationUiEvent,
-  {
-    action,
-    answers,
-    clarificationStatus,
-    receivedAt,
-    skipped,
-    usedRecommended,
-  }: {
-    action: string;
-    answers: AssistantClarificationAnswers;
-    clarificationStatus: string;
-    receivedAt: number;
-    skipped: boolean;
-    usedRecommended: boolean;
-  },
-): Record<string, unknown> {
-  return {
-    type: "assistant.clarification.request",
-    bridge_key: event.bridge_key,
-    project_id: event.project_id,
-    canvas_id: event.canvas_id,
-    agent_id: event.agent_id,
-    anchor_text_prefix: event.anchor_text_prefix ?? null,
-    received_at: receivedAt,
-    clarification_id: event.clarification_id,
-    title: event.title,
-    description: event.description,
-    questions: event.questions,
-    allow_recommended: event.allow_recommended,
-    allow_skip: event.allow_skip,
-    submitted: true,
-    action,
-    clarification_status: clarificationStatus,
-    answers,
-    skipped,
-    used_recommended: usedRecommended,
-  };
-}
-
-export const buildPersistedAssistantClarificationEventForTest = buildPersistedAssistantClarificationEvent;
 
 function skillStudioResultClientDebug(
   event: SkillStudioUiEvent,
@@ -12905,10 +12873,11 @@ export function SuperChatPanel({
   }, [agentBillingReference, isFreezoneLayout]);
   const shouldStickToBottomRef = useRef(true);
   const suppressAutoScrollUntilRef = useRef(0);
+  const restoreFromBottomRef = useRef<number | null>(null);
+  const firstMessageBeforeOlderRef = useRef<string | null>(null);
   const historyScrollKeyRef = useRef<string | null>(null);
   const composerShellRef = useRef<HTMLDivElement | null>(null);
   const composerBeamRef = useRef<BorderBeamController | null>(null);
-  const skillStudioDraftPersistTimerRef = useRef<number | null>(null);
   const onFreezoneUserMessageRef = useRef(onFreezoneUserMessage);
   const onConnectionStateChangeRef = useRef(onConnectionStateChange);
   const consumedPendingAttachmentsKeyRef = useRef<string | null>(null);
@@ -13818,11 +13787,7 @@ export function SuperChatPanel({
       const anchorTextPrefix =
         typeof detail.anchorTextPrefix === "string"
           ? detail.anchorTextPrefix
-          : assistantAnchorText
-            ? assistantAnchorText
-            : turnId && turnId === chat.activeTurnId && chat.streamText
-              ? chat.streamText
-              : null;
+          : assistantAnchorText || null;
       const surfaceOrder = Date.now();
       if (turnId) {
         const activity: CanvasContextActivity = {
@@ -13857,7 +13822,6 @@ export function SuperChatPanel({
   }, [
     activeMessages,
     chat.activeTurnId,
-    chat.streamText,
     chat,
     effectiveFreezoneCanvasId,
     freezoneAgentMatches,
@@ -13951,45 +13915,13 @@ export function SuperChatPanel({
     };
   }, [activeMessages, chat, effectiveFreezoneCanvasId, freezoneAgentMatches, latestAssistantMessageId, variant]);
 
-  const persistCanvasCommandUiEvent = useCallback((
-    turnId: string | null | undefined,
-    event: Record<string, unknown>,
-  ): Promise<boolean> => {
-    if (!params.project || !effectiveFreezoneCanvasId || !turnId) {
-      return Promise.resolve(false);
-    }
-    return api
-      .post("api/v1/chat/ui-events", {
-        json: {
-          scope: {
-            kind: "project",
-            id: params.project,
-            surface: "freezone",
-            canvasId: effectiveFreezoneCanvasId,
-          },
-          turn_id: turnId,
-          event,
-        },
-      })
-      .then(() => true)
-      .catch((error) => {
-        console.warn("[freezone-canvas-command] failed to persist superchat canvas event", {
-          canvasId: effectiveFreezoneCanvasId,
-          turnId,
-          error,
-        });
-        return false;
-      });
-  }, [effectiveFreezoneCanvasId, params.project]);
-
   useEffect(() => {
     const projectId = params.project?.trim();
     const canvasIdForRequest = effectiveFreezoneCanvasId?.trim();
     if (variant !== "freezone" || !projectId || !canvasIdForRequest) return;
 
     const recoveryFeedbacks = { ...persistedCanvasCommandFeedbackByMessageId };
-    // UI-event persistence is best effort. The live message part is also a
-    // recoverable receipt when that request fails or has not reached history.
+    // Include live receipts that have not reached the server history snapshot.
     for (const message of chat.messages) {
       for (const part of message.parts ?? []) {
         if (part.type !== "canvas_feedback") continue;
@@ -14056,19 +13988,6 @@ export function SuperChatPanel({
                 event: terminalFeedback,
               },
             );
-            await persistCanvasCommandUiEvent(feedback.turnId, {
-              schema_version: "canvas_command_result.v1",
-              type: "canvas_command_result",
-              canvas_id: canvasIdForRequest,
-              turn_id: feedback.turnId ?? null,
-              bridge_key: feedback.bridgeKey ?? null,
-              workflow_run_id: runId,
-              completion_notice: true,
-              envelopes: feedback.envelopes,
-              result,
-              anchor_text_prefix: feedback.anchorTextPrefix ?? null,
-              received_at: Date.now(),
-            });
             reportCanvasCommandToolResult({
               bridgeKey: feedback.bridgeKey,
               turnId: feedback.turnId,
@@ -14096,60 +14015,12 @@ export function SuperChatPanel({
     effectiveFreezoneAgentId,
     effectiveFreezoneCanvasId,
     params.project,
-    persistCanvasCommandUiEvent,
     persistedCanvasCommandFeedbackByMessageId,
     replaceCanvasCommandFeedback,
     queueBackgroundWorkflowNotification,
     t,
     variant,
   ]);
-
-  const persistSkillStudioUiEvent = useCallback((
-    turnId: string | null | undefined,
-    event: Record<string, unknown>,
-    options: { debounce?: boolean } = {},
-  ) => {
-    if (!params.project || !effectiveFreezoneCanvasId || !turnId) return;
-    const postEvent = () => {
-      void api.post("api/v1/chat/ui-events", {
-        json: {
-          scope: {
-            kind: "project",
-            id: params.project,
-            surface: "freezone",
-            canvasId: effectiveFreezoneCanvasId,
-            agentId: typeof event.agent_id === "string" ? event.agent_id : effectiveFreezoneAgentId,
-          },
-          turn_id: turnId,
-          event,
-        },
-      }).catch((error) => {
-        console.warn("[skill-studio] failed to persist superchat ui event", {
-          canvasId: effectiveFreezoneCanvasId,
-          turnId,
-          error,
-        });
-      });
-    };
-    if (!options.debounce) {
-      postEvent();
-      return;
-    }
-    if (skillStudioDraftPersistTimerRef.current !== null) {
-      window.clearTimeout(skillStudioDraftPersistTimerRef.current);
-    }
-    skillStudioDraftPersistTimerRef.current = window.setTimeout(() => {
-      skillStudioDraftPersistTimerRef.current = null;
-      postEvent();
-    }, 450);
-  }, [effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project]);
-
-  useEffect(() => () => {
-    if (skillStudioDraftPersistTimerRef.current !== null) {
-      window.clearTimeout(skillStudioDraftPersistTimerRef.current);
-      skillStudioDraftPersistTimerRef.current = null;
-    }
-  }, []);
 
   const handleApplyCanvasCommandApproval = useCallback((approval: PendingCanvasCommandApproval) => {
     if (executingCanvasCommandApprovalIdsRef.current.has(approval.id)) return;
@@ -14171,16 +14042,6 @@ export function SuperChatPanel({
         approval.key,
       );
       try {
-        await persistCanvasCommandUiEvent(approval.turnId, {
-          schema_version: "canvas_command_approval_resolution.v1",
-          type: "canvas_command_approval_resolution",
-          canvas_id: effectiveFreezoneCanvasId,
-          turn_id: approval.turnId ?? null,
-          bridge_key: approval.bridgeKey ?? null,
-          envelopes: approval.envelopes,
-          decision: "confirmed",
-          received_at: receivedAt,
-        });
         const applyKey = canvasCommandApprovalApplyKey(approval);
         const canRepeatApproval = canvasCommandApprovalCanRepeat(approval);
         if (!canRepeatApproval && appliedCanvasCommandApprovalKeysRef.current.has(applyKey)) {
@@ -14277,18 +14138,6 @@ export function SuperChatPanel({
                   event: pendingFeedback,
                 },
               );
-              void persistCanvasCommandUiEvent(approval.turnId, {
-                schema_version: "canvas_command_result.v1",
-                type: "canvas_command_result",
-                canvas_id: effectiveFreezoneCanvasId,
-                turn_id: approval.turnId ?? null,
-                bridge_key: approval.bridgeKey ?? null,
-                workflow_run_id: persistedWorkflowRunId,
-                envelopes: approval.envelopes,
-                result: pendingResult,
-                anchor_text_prefix: approval.anchorTextPrefix ?? null,
-                received_at: receivedAt,
-              });
               setPendingCanvasCommandApprovals((current) =>
                 removePendingCanvasCommandApproval(current, approval));
               result = await execution;
@@ -14415,26 +14264,13 @@ export function SuperChatPanel({
             feedbackPart,
           );
         }
-        void persistCanvasCommandUiEvent(approval.turnId, {
-          schema_version: "canvas_command_result.v1",
-          type: "canvas_command_result",
-          canvas_id: effectiveFreezoneCanvasId,
-          turn_id: approval.turnId ?? null,
-          bridge_key: approval.bridgeKey ?? null,
-          workflow_run_id: persistedWorkflowRunId,
-          completion_notice: backgroundAccepted && Boolean(persistedWorkflowRunId),
-          envelopes: approval.envelopes,
-          result,
-          anchor_text_prefix: approval.anchorTextPrefix ?? null,
-          received_at: receivedAt,
-        });
         setPendingCanvasCommandApprovals((current) => removePendingCanvasCommandApproval(current, approval));
       } finally {
         executingCanvasCommandApprovalIdsRef.current.delete(approval.id);
         setExecutingCanvasCommandApprovalIds(new Set(executingCanvasCommandApprovalIdsRef.current));
       }
     })();
-  }, [appendCanvasCommandFeedback, chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistCanvasCommandUiEvent, replaceCanvasCommandFeedback, queueBackgroundWorkflowNotification, t]);
+  }, [appendCanvasCommandFeedback, chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, replaceCanvasCommandFeedback, queueBackgroundWorkflowNotification, t]);
 
   const handleCancelCanvasCommandApproval = useCallback((approval: PendingCanvasCommandApproval, reason: CanvasCommandApprovalCancelReason = "user") => {
     if (executingCanvasCommandApprovalIdsRef.current.has(approval.id)) return;
@@ -14480,28 +14316,6 @@ export function SuperChatPanel({
       cancelled: true,
     });
     const feedbackKey = canvasCommandFeedbackKey(approval.bridgeKey, approval.turnId, undefined, approval.key);
-    void persistCanvasCommandUiEvent(approval.turnId, {
-      schema_version: "canvas_command_approval_resolution.v1",
-      type: "canvas_command_approval_resolution",
-      canvas_id: effectiveFreezoneCanvasId,
-      turn_id: approval.turnId ?? null,
-      bridge_key: approval.bridgeKey ?? null,
-      envelopes: approval.envelopes,
-      decision: reason === "timeout" ? "timeout" : "cancelled",
-      received_at: receivedAt,
-    });
-    void persistCanvasCommandUiEvent(approval.turnId, {
-      schema_version: "canvas_command_result.v1",
-      type: "canvas_command_result",
-      canvas_id: effectiveFreezoneCanvasId,
-      bridge_key: approval.bridgeKey ?? null,
-      envelopes: approval.envelopes,
-      result,
-      anchor_text_prefix: approval.anchorTextPrefix ?? null,
-      received_at: receivedAt,
-      cancelled: true,
-      cancel_reason: reason,
-    });
     appendCanvasCommandFeedback(
       approval.messageId,
       feedbackKey,
@@ -14541,7 +14355,7 @@ export function SuperChatPanel({
       },
     );
     setPendingCanvasCommandApprovals((current) => removePendingCanvasCommandApproval(current, approval));
-  }, [appendCanvasCommandFeedback, chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistCanvasCommandUiEvent, t]);
+  }, [appendCanvasCommandFeedback, chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, t]);
 
   const handleRetryCanvasCommandFeedback = useCallback((
     feedback: CanvasCommandFeedback,
@@ -14705,15 +14519,9 @@ export function SuperChatPanel({
     persistedCanvasCommandFeedbackByMessageId,
     visibleMessages,
   ]);
-  const activeMessageCount = activeMessages.length;
   const lastActiveMessageId = activeMessages[activeMessages.length - 1]?.id ?? "";
   const deferStructuredRender =
     chat.busy && !chat.settings.showStructuredSourceWhileStreaming;
-  const streamTextAlreadyRendered =
-    Boolean(chat.streamText)
-    && visibleMessages.some(
-      (message) => message.role === "assistant" && message.text === chat.streamText,
-    );
   const lastConversationalMessage = [...activeMessages]
     .reverse()
     .find((message) => message.role === "user" || message.role === "assistant");
@@ -14771,7 +14579,7 @@ export function SuperChatPanel({
     );
   const thinkingCanvasContextActivity = useMemo(() => {
     if (hasActiveComposerPrompt) return null;
-    if (variant !== "freezone" || !chat.busy || !chat.activeTurnId || chat.streamText.trim()) return null;
+    if (variant !== "freezone" || !chat.busy || !chat.activeTurnId) return null;
     const turnId = chat.activeTurnId;
     const hasAssistantText = activeMessages.some(
       (message) =>
@@ -14807,7 +14615,6 @@ export function SuperChatPanel({
     canvasContextActivitiesByMessageId,
     chat.activeTurnId,
     chat.busy,
-    chat.streamText,
     hasActiveComposerPrompt,
     pendingCanvasCommandApprovals,
     persistedCanvasCommandFeedbackByMessageId,
@@ -14822,7 +14629,6 @@ export function SuperChatPanel({
   );
   const showWaitingIndicator =
     chat.busy
-    && !chat.streamText.trim()
     && !hasActiveComposerPrompt
     && !thinkingCanvasContextActivity
     && (
@@ -14895,6 +14701,38 @@ export function SuperChatPanel({
     });
   }, []);
 
+  const firstRenderedMessageId = visibleMessages[0]?.id ?? "";
+  const loadOlderHistory = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || !chat.hasOlderHistory || chat.loadingOlderHistory) return;
+    restoreFromBottomRef.current = el.scrollHeight - el.scrollTop;
+    firstMessageBeforeOlderRef.current = firstRenderedMessageId;
+    shouldStickToBottomRef.current = false;
+    suppressAutoScrollUntilRef.current = Date.now() + 1500;
+    chat.loadOlderHistory();
+  }, [chat.hasOlderHistory, chat.loadingOlderHistory, chat.loadOlderHistory, firstRenderedMessageId]);
+  const olderHistoryStateRef = useRef({
+    hasOlderHistory: chat.hasOlderHistory,
+    loadingOlderHistory: chat.loadingOlderHistory,
+    loadOlderHistory,
+  });
+  olderHistoryStateRef.current = {
+    hasOlderHistory: chat.hasOlderHistory,
+    loadingOlderHistory: chat.loadingOlderHistory,
+    loadOlderHistory,
+  };
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || restoreFromBottomRef.current === null) return;
+    if (firstRenderedMessageId !== firstMessageBeforeOlderRef.current) {
+      el.scrollTop = el.scrollHeight - restoreFromBottomRef.current;
+      restoreFromBottomRef.current = null;
+    } else if (!chat.loadingOlderHistory) {
+      restoreFromBottomRef.current = null;
+    }
+  }, [chat.messages, chat.loadingOlderHistory, firstRenderedMessageId]);
+
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -14902,6 +14740,10 @@ export function SuperChatPanel({
       const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
       shouldStickToBottomRef.current = distanceToBottom < 96;
       setShowScrollToBottom(distanceToBottom > 180);
+      const olderHistory = olderHistoryStateRef.current;
+      if (el.scrollTop < 120 && olderHistory.hasOlderHistory && !olderHistory.loadingOlderHistory) {
+        olderHistory.loadOlderHistory();
+      }
     };
     updateStickiness();
     el.addEventListener("scroll", updateStickiness, { passive: true });
@@ -14915,7 +14757,7 @@ export function SuperChatPanel({
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [chat.busy, chat.messages, chat.streamText, showWaitingIndicator, scrollToChatBottom]);
+  }, [chat.busy, chat.messages, showWaitingIndicator, scrollToChatBottom]);
 
   useEffect(() => {
     const list = messageListRef.current;
@@ -14948,7 +14790,7 @@ export function SuperChatPanel({
 
   useEffect(() => {
     if (!chat.historyReady) return;
-    const scrollKey = `${params.project ?? ""}:${activeMessageCount}:${lastActiveMessageId}`;
+    const scrollKey = `${params.project ?? ""}:${lastActiveMessageId}`;
     if (historyScrollKeyRef.current === scrollKey) return;
     historyScrollKeyRef.current = scrollKey;
     shouldStickToBottomRef.current = true;
@@ -14967,7 +14809,7 @@ export function SuperChatPanel({
       window.clearTimeout(secondTimeout);
       window.clearTimeout(thirdTimeout);
     };
-  }, [activeMessageCount, chat.historyReady, lastActiveMessageId, params.project, scrollToChatBottom]);
+  }, [chat.historyReady, lastActiveMessageId, params.project, scrollToChatBottom]);
 
   useEffect(() => {
     setQueuedMessages([]);
@@ -15713,23 +15555,6 @@ export function SuperChatPanel({
         return false;
       }
       if (event.turn_id) {
-        const receivedAt = uiEventFirstReceivedAt(event);
-        const persistedEvent = {
-          type: "skill_studio.questions",
-          bridge_key: event.bridge_key,
-          skill_studio_session_id: event.skill_studio_session_id,
-          project_id: event.project_id ?? params.project,
-          canvas_id: event.canvas_id ?? effectiveFreezoneCanvasId,
-          agent_id: event.agent_id ?? effectiveFreezoneAgentId,
-          anchor_text_prefix: event.anchor_text_prefix ?? null,
-          received_at: receivedAt,
-          title: event.title,
-          description: event.description,
-          questions: event.questions,
-          submitted: true,
-          action,
-          selections: payload.selections,
-        };
         updateChatUiEvent(
           event.turn_id,
           (candidate) => skillStudioEventMatches(candidate, event),
@@ -15741,7 +15566,6 @@ export function SuperChatPanel({
             selections: payload.selections,
           }),
         );
-        persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       }
       return true;
     } catch (error) {
@@ -15749,7 +15573,7 @@ export function SuperChatPanel({
       toast.error("提交 Skill Studio 选择失败，请重试");
       return false;
     }
-  }, [chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, updateChatUiEvent]);
+  }, [chat, updateChatUiEvent]);
 
   const submitAssistantClarificationResponse = useCallback(async (
     event: AssistantClarificationUiEvent,
@@ -15825,15 +15649,6 @@ export function SuperChatPanel({
           ?? (action === "submit" ? "answered" : action === "cancel" ? "cancelled" : action);
         const skipped = result.data?.skipped ?? action === "skip";
         const usedRecommended = result.data?.used_recommended ?? action === "recommended";
-        const receivedAt = uiEventFirstReceivedAt(event);
-        const persistedEvent = buildPersistedAssistantClarificationEvent(event, {
-          action: acceptedAction,
-          answers: acceptedAnswers,
-          clarificationStatus: actionStatus,
-          receivedAt,
-          skipped,
-          usedRecommended,
-        });
         updateChatUiEvent(
           null,
           (candidate) =>
@@ -15858,7 +15673,6 @@ export function SuperChatPanel({
             used_recommended: usedRecommended,
           }),
         );
-        persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       }
       if (submittedAssistantClarificationKeysRef.current.size > 200) {
         submittedAssistantClarificationKeysRef.current = new Set(
@@ -15872,7 +15686,7 @@ export function SuperChatPanel({
       toast.error(t("freezone.chat.clarification.submitFailed"));
       return false;
     }
-	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages, t]);
+	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, updateChatUiEvent, visibleMessages, t]);
 
   const submitSkillStudioDraftResponse = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
@@ -15933,24 +15747,6 @@ export function SuperChatPanel({
           .catch(() => undefined);
       }
       if (event.turn_id) {
-        const receivedAt = uiEventFirstReceivedAt(event);
-        const persistedEvent = {
-          type: "skill_studio.draft",
-          bridge_key: event.bridge_key,
-          skill_studio_session_id: event.skill_studio_session_id,
-          project_id: event.project_id ?? params.project,
-          canvas_id: event.canvas_id ?? effectiveFreezoneCanvasId,
-          agent_id: event.agent_id ?? effectiveFreezoneAgentId,
-          anchor_text_prefix: event.anchor_text_prefix ?? null,
-          received_at: receivedAt,
-          mode: event.mode,
-          draft: payload.draft,
-          submitted: true,
-          saved_to_catalog: payload.saved_to_catalog,
-          saved_skill_ids: payload.saved_skill_ids,
-          saved_recipe_ids: payload.saved_recipe_ids,
-          action: payload.action,
-        };
         updateChatUiEvent(
           event.turn_id,
           (candidate) => skillStudioEventMatches(candidate, event),
@@ -15965,7 +15761,6 @@ export function SuperChatPanel({
               action: payload.action,
             }),
           );
-        persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       }
       toast.success("已添加到虾画 Skills / Recipes");
       return true;
@@ -15974,26 +15769,13 @@ export function SuperChatPanel({
       toast.error("添加 Skill / Recipe 失败，请检查必填字段后重试");
       return false;
     }
-  }, [chat.activeTurnId, chat.busy, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, queryClient, updateChatUiEvent]);
+  }, [chat.activeTurnId, chat.busy, queryClient, updateChatUiEvent]);
 
   const handleSkillStudioDraftChange = useCallback((
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
     draftPayload: Record<string, unknown>,
   ) => {
     if (!event.turn_id) return;
-    const receivedAt = uiEventFirstReceivedAt(event);
-    const persistedEvent = {
-      type: "skill_studio.draft",
-      bridge_key: event.bridge_key,
-      skill_studio_session_id: event.skill_studio_session_id,
-      project_id: event.project_id ?? params.project,
-      canvas_id: event.canvas_id ?? effectiveFreezoneCanvasId,
-      agent_id: event.agent_id ?? effectiveFreezoneAgentId,
-      anchor_text_prefix: event.anchor_text_prefix ?? null,
-      received_at: receivedAt,
-      mode: event.mode,
-      draft: draftPayload,
-    };
     updateChatUiEvent(
       event.turn_id,
       (candidate) => skillStudioEventMatches(candidate, event),
@@ -16003,8 +15785,7 @@ export function SuperChatPanel({
         draft: draftPayload,
       }),
     );
-    persistSkillStudioUiEvent(event.turn_id, persistedEvent, { debounce: true });
-  }, [effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, updateChatUiEvent]);
+  }, [updateChatUiEvent]);
 
   const startSkillStudioDraftRevision = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
@@ -16027,22 +15808,6 @@ export function SuperChatPanel({
         toast.error("Skill Studio 连接未就绪，请重试");
         return false;
       }
-      const receivedAt = uiEventFirstReceivedAt(event);
-      const persistedEvent = {
-        type: "skill_studio.draft",
-        bridge_key: event.bridge_key,
-        skill_studio_session_id: event.skill_studio_session_id,
-        project_id: event.project_id ?? params.project,
-        canvas_id: event.canvas_id ?? effectiveFreezoneCanvasId,
-        agent_id: event.agent_id ?? effectiveFreezoneAgentId,
-        anchor_text_prefix: event.anchor_text_prefix ?? null,
-        received_at: receivedAt,
-        mode: event.mode,
-        draft: payload.draft,
-        revision_pending: true,
-        action: payload.action,
-        skill_studio_status: payload.skill_studio_status,
-      };
       updateChatUiEvent(
         event.turn_id,
         (candidate) => skillStudioEventMatches(candidate, event),
@@ -16055,14 +15820,13 @@ export function SuperChatPanel({
           skill_studio_status: payload.skill_studio_status,
         }),
       );
-      persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       return true;
     } catch (error) {
       console.error("[superchat] skill studio draft revision submit failed", error);
       toast.error("启动草稿调整失败，请重试");
       return false;
     }
-  }, [chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, updateChatUiEvent]);
+  }, [chat, updateChatUiEvent]);
 
   const handleCancelSkillStudioDraft = useCallback((
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
@@ -16084,19 +15848,6 @@ export function SuperChatPanel({
       toast.error("Skill Studio 连接未就绪，请重试");
       return;
     }
-    const receivedAt = uiEventFirstReceivedAt(event);
-    const persistedEvent = {
-      type: "skill_studio.draft",
-      bridge_key: event.bridge_key,
-      skill_studio_session_id: event.skill_studio_session_id,
-      project_id: event.project_id ?? params.project,
-      canvas_id: event.canvas_id ?? effectiveFreezoneCanvasId,
-      agent_id: event.agent_id ?? effectiveFreezoneAgentId,
-      anchor_text_prefix: event.anchor_text_prefix ?? null,
-      received_at: receivedAt,
-      draft: draftPayload,
-      cancelled: true,
-    };
     updateChatUiEvent(
       event.turn_id,
       (candidate) => skillStudioEventMatches(candidate, event),
@@ -16107,8 +15858,7 @@ export function SuperChatPanel({
         cancelled: true,
       }),
     );
-    persistSkillStudioUiEvent(event.turn_id, persistedEvent);
-  }, [chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, updateChatUiEvent]);
+  }, [chat, updateChatUiEvent]);
 
   const handleComposerKeyDown = (event: ReactKeyboardEvent) => {
     if (!shouldSubmitComposerEnter(event)) return;
@@ -16380,7 +16130,7 @@ export function SuperChatPanel({
                   <div className="text-xs leading-5">{t("aiAssistant.syncingHistoryDescription")}</div>
                 </div>
               </div>
-            ) : chat.messages.length === 0 && !chat.streamText && !showWaitingIndicator && orphanCanvasCommandSurfaces.length === 0 ? (
+            ) : chat.messages.length === 0 && !showWaitingIndicator && orphanCanvasCommandSurfaces.length === 0 ? (
               <div className={cn("mx-auto flex h-full w-full max-w-[760px] items-center justify-center text-center", isFreezoneLayout && "max-w-none")}>
                 <div className="max-w-64 text-sm text-muted-foreground">
                   <div className="mb-2 font-medium text-foreground">{t("aiAssistant.emptyTitle")}</div>
@@ -16389,6 +16139,20 @@ export function SuperChatPanel({
               </div>
             ) : (
               <div ref={messageListRef} className={cn("mx-auto w-full max-w-[760px] space-y-5", isFreezoneLayout && "max-w-none space-y-4")}>
+                {chat.hasOlderHistory && (
+                  <div className="flex justify-center">
+                    <button
+                      type="button"
+                      className="tap-button text-xs text-muted-foreground"
+                      onClick={loadOlderHistory}
+                      disabled={chat.loadingOlderHistory}
+                    >
+                      {chat.loadingOlderHistory
+                        ? t("aiAssistant.loadingEarlierMessages")
+                        : t("aiAssistant.loadEarlierMessages")}
+                    </button>
+                  </div>
+                )}
                 {visibleMessages.map((message) => (
                   <div
                     key={message.id}
@@ -16445,32 +16209,6 @@ export function SuperChatPanel({
                     />
                   </div>
                 ))}
-                {chat.streamText && !streamTextAlreadyRendered && (
-                  <MessageBubble
-                    message={{
-                      id: "streaming",
-                      role: "assistant",
-                      text: chat.streamText,
-                      timestamp: Date.now(),
-                    }}
-                    variant={variant}
-                    onOpenDetail={setDetailMessage}
-                    onOpenMedia={setMediaDetail}
-                    pinned={false}
-                    onDelete={() => undefined}
-                    onTogglePin={() => undefined}
-                    deferStructuredRender={deferStructuredRender}
-                    streaming={chat.busy}
-                    onSubmitSkillStudioQuestionResponse={submitSkillStudioQuestionResponse}
-                    onSubmitSkillStudioDraftResponse={submitSkillStudioDraftResponse}
-                    onStartSkillStudioDraftRevision={startSkillStudioDraftRevision}
-                    onSkillStudioDraftChange={handleSkillStudioDraftChange}
-                    onCancelSkillStudioDraft={handleCancelSkillStudioDraft}
-                    onPreserveScrollAnchor={preserveScrollAnchor}
-                    freezoneSkillSuggestions={freezoneSkillSuggestions}
-                    freezoneRecipeCatalog={freezoneRecipeCatalog}
-                  />
-                )}
                 {orphanCanvasCommandSurfaces.map((surface) => (
                   <MessageBubble
                     key={`orphan-canvas-surface:${surface.id}`}
