@@ -1122,6 +1122,7 @@ frontend/src/__tests__/features/canvas/task-detach-node-state.test.ts,Elastic-2.
 frontend/src/__tests__/features/canvas/task-still-running-dialog.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/text-clone-audio-content.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/text-generate-credit-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/text-generate-upstream.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/text-ops-application.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/text-to-video-live-content.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/three-d-world-node-source-scope.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3551,6 +3552,7 @@ src/novelvideo/freezone/video_node.py,Elastic-2.0,2026 SuperTale contributors,RE
 src/novelvideo/freezone/video_slowdown.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/vision_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_contract_generated.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/workflow_draft_diagnostics.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_drafts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_external_inputs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_observation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4372,6 +4374,8 @@ tests/test_voice_design_service.py,Elastic-2.0,2026 SuperTale contributors,REUSE
 tests/test_voice_design_storage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_worker_stderr_drain.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_argument_recovery.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_workflow_draft_diagnostics.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_workflow_draft_outcome.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_drafts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_external_inputs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

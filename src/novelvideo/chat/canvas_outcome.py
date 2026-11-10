@@ -90,6 +90,7 @@ def finalize_canvas_reply(
     receipts: set[tuple[str, int | None]],
     failure: str = "",
     draft_ready: bool = False,
+    draft_updated: bool = False,
     write_requested: bool = False,
 ) -> str:
     """Report the turn's outcome from recorded write attempts and receipts.
@@ -114,6 +115,8 @@ def finalize_canvas_reply(
     if states - {"succeeded"}:
         return "画布操作等待确认或执行回执，尚未完成。"
     if draft_ready and not attempts:
+        if draft_updated:
+            return "工作流草稿已更新，等待你重新确认后创建画布节点；尚未执行生成。"
         return "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
 
     message = unwrap_legacy_canvas_envelope(text).strip()

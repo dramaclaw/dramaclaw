@@ -15,6 +15,7 @@ import math
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 from copy import deepcopy
@@ -140,6 +141,16 @@ except Exception as exc:
     validate_agent_workflow_plan = None
 
 try:
+    from novelvideo.freezone.workflow_planning import (
+        GENERATION_PARAMETER_PLANNING_INSTRUCTIONS,
+    )
+except ImportError:
+    GENERATION_PARAMETER_PLANNING_INSTRUCTIONS = (
+        "Preserve explicit user requirements and use only options supported by the "
+        "selected model's current catalog. Do not bypass preflight or confirmation."
+    )
+
+try:
     from novelvideo.freezone.workflow_schema import (
         workflow_intent_json_schema,
         workflow_plan_json_schema,
@@ -218,6 +229,7 @@ _PENDING_GENERATION_ANSWERS: dict[tuple[str, str, str], dict[str, Any]] = {}
 _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS: dict[
     tuple[str, str], dict[str, Any]
 ] = {}
+_SERVER_VIDEO_MODEL_CLARIFICATION_LOCK = threading.RLock()
 # A revision conflict is a user-authorization boundary, not a retryable canvas
 # write error. Keep the canvas blocked until the user explicitly confirms the
 # current draft revision. This process-local guard covers the follow-up tool
@@ -910,12 +922,29 @@ def _emit_clarification_event(
     if mismatch is not None:
         return tool_result(mismatch)
     key = clarification_bridge_key(project_id=project, canvas_id=canvas, event=event)
-    resolved = put_pending_clarification_event(
-        key=key,
-        project_id=project,
-        canvas_id=canvas,
-        event=event,
+    server_model_question = any(
+        isinstance(question, dict) and question.get("id") in {
+            "compatible_video_model", "video_model_constraint_adjustment",
+        }
+        for question in _safe_list(event.get("questions"))
     )
+    if server_model_question:
+        # Keep validation failures retryable, while serializing the durable
+        # card write and proof consumption so parallel calls cannot reuse it.
+        with _SERVER_VIDEO_MODEL_CLARIFICATION_LOCK:
+            scope_key = _video_model_clarification_scope_key(project, canvas)
+            pending = _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS.get(scope_key)
+            if not _server_video_model_clarification_matches(pending, event):
+                return tool_result(_unverified_video_model_clarification_result())
+            resolved = put_pending_clarification_event(
+                key=key, project_id=project, canvas_id=canvas, event=event,
+            )
+            if not isinstance(resolved, dict) or resolved.get("ok") is True:
+                _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS.pop(scope_key, None)
+    else:
+        resolved = put_pending_clarification_event(
+            key=key, project_id=project, canvas_id=canvas, event=event,
+        )
     if isinstance(resolved, dict):
         if resolved.get("canvas_apply_status") == "timeout":
             return tool_result(
@@ -1110,33 +1139,53 @@ def _remember_server_video_model_clarification(
         "video_model_constraint_adjustment",
     }:
         return
-    _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS[
-        _video_model_clarification_scope_key(project, canvas)
-    ] = {
-        "expires_at": time.monotonic() + 300,
-        "question": deepcopy(question),
-    }
+    with _SERVER_VIDEO_MODEL_CLARIFICATION_LOCK:
+        _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS[
+            _video_model_clarification_scope_key(project, canvas)
+        ] = {
+            "expires_at": time.monotonic() + 300,
+            "question": deepcopy(question),
+            "affected_node_ids": deepcopy(result.get("affected_node_ids") or []),
+        }
 
 
-def _take_server_video_model_clarification(
+def _peek_server_video_model_clarification(
     project: str | None,
     canvas: str | None,
     question_id: str,
 ) -> dict[str, Any] | None:
     key = _video_model_clarification_scope_key(project, canvas)
-    pending = _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS.get(key)
-    if not isinstance(pending, dict):
-        return None
+    with _SERVER_VIDEO_MODEL_CLARIFICATION_LOCK:
+        pending = _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS.get(key)
+        if not isinstance(pending, dict):
+            return None
+        question = pending.get("question")
+        if (
+            pending.get("expires_at", 0) < time.monotonic()
+            or not isinstance(question, dict)
+        ):
+            _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS.pop(key, None)
+            return None
+        if question.get("id") != question_id:
+            return None
+        return deepcopy(question)
+
+
+def _server_video_model_clarification_matches(
+    pending: Any, event: dict[str, Any]
+) -> bool:
+    if not isinstance(pending, dict) or pending.get("expires_at", 0) < time.monotonic():
+        return False
     question = pending.get("question")
-    if (
-        pending.get("expires_at", 0) < time.monotonic()
-        or not isinstance(question, dict)
-        or question.get("id") != question_id
-    ):
-        _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS.pop(key, None)
-        return None
-    _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS.pop(key, None)
-    return deepcopy(question)
+    if not isinstance(question, dict):
+        return False
+    return any(
+        isinstance(item, dict)
+        and item.get("id") == question.get("id")
+        and item.get("options") == question.get("options")
+        and item.get("title") == str(question.get("prompt") or "请选择下一步")
+        for item in _safe_list(event.get("questions"))
+    )
 
 
 def _unverified_video_model_clarification_result() -> dict[str, Any]:
@@ -1279,12 +1328,21 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         if model_constraint_adjustment_requested
         else "compatible_video_model" if compatible_model_questions else ""
     )
-    if requested_server_question_id:
-        question = _take_server_video_model_clarification(
+    preflight_video_node_ids: list[str] = []
+    if requested_server_question_id and resumed is None:
+        question = _peek_server_video_model_clarification(
             project, canvas, requested_server_question_id
         )
         if question is None:
             return tool_result(_unverified_video_model_clarification_result())
+        pending = _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS.get(
+            _video_model_clarification_scope_key(project, canvas), {}
+        )
+        affected = pending.get("affected_node_ids")
+        if isinstance(affected, list) and affected and all(
+            isinstance(node_id, str) and node_id.strip() for node_id in affected
+        ):
+            preflight_video_node_ids = [node_id.strip() for node_id in affected]
         questions = [
             {
                 "id": requested_server_question_id,
@@ -1506,7 +1564,18 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     # model options, and require one model to support every target's mode.
     video_node_ids = args.get("generation_video_node_ids")
     required_video_modes: list[str] = []
-    if video_node_ids is not None and resumed is None:
+    # Pre-draft targets live in the verified plan, not on the canvas. Only
+    # accept an exact match with server-observed targets; arbitrary existing
+    # node requests still require the usual canvas/mode checks below.
+    uses_preflight_targets = (
+        bool(preflight_video_node_ids)
+        and generation_media_types is None
+        and generation_required_choices is None
+        and isinstance(video_node_ids, list)
+        and all(isinstance(node_id, str) and node_id.strip() for node_id in video_node_ids)
+        and set(node_id.strip() for node_id in video_node_ids) == set(preflight_video_node_ids)
+    )
+    if video_node_ids is not None and resumed is None and not uses_preflight_targets:
         if (
             not project or not canvas or not isinstance(video_node_ids, list)
             or not video_node_ids
@@ -1521,7 +1590,12 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             node = nodes.get(node_id.strip())
             if not isinstance(node, dict) or node.get("type") != "videoNode":
                 return tool_result({"ok": False, "status": "generation_clarification_args_invalid",
-                                    "error": f"video target not found on canvas: {node_id}"})
+                                    "error": f"video target not found on canvas: {node_id}",
+                                    "agent_instruction": (
+                                        "generation_video_node_ids accepts existing canvas video nodes only. "
+                                        "For a pre-draft model question, pass the exact server-returned "
+                                        "question and omit plan node ids; preserve the complete plan."
+                                    )})
             data = node.get("data") if isinstance(node.get("data"), dict) else {}
             def is_image_source(source: Any) -> bool:
                 if not isinstance(source, dict):
@@ -10553,6 +10627,7 @@ def _schema(
     required: list[str] | None = None,
     *,
     reject_unknown: bool = True,
+    one_of_required: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     parameters: dict[str, Any] = {
         "type": "object",
@@ -10560,6 +10635,8 @@ def _schema(
         "required": required or [],
     }
     parameters["additionalProperties"] = not reject_unknown
+    if one_of_required:
+        parameters["oneOf"] = [{"required": [field]} for field in one_of_required]
     return {
         "name": name,
         "description": description,
@@ -12209,7 +12286,7 @@ TOOLS = (
                     "type": "array",
                     "minItems": 1,
                     "items": {"type": "string", "minLength": 1},
-                    "description": "For existing video nodes, pass every target node id. The server reads their current generation modes and limits the model choices to models supporting all of them. Preserve each node's reference mode and connections.",
+                    "description": "For existing canvas video nodes only, pass every target node id. The server reads their current generation modes and limits model choices accordingly. For a pre-draft compatible_video_model question, omit this field and pass the exact server-returned question; affected_node_ids are plan ids, not canvas ids. Preserve reference modes and connections.",
                 },
                 "generation_required_choices": {
                     "type": "object",
@@ -12896,7 +12973,8 @@ TOOLS = (
         "freezone_prepare_workflow",
         _schema(
             "freezone_prepare_workflow",
-            "Prepare a persisted workflow using server-owned compilation. Provide exactly one of intent or plan; user_goal belongs in intent, while a plan can use summary for the user goal and does not accept user_goal. Use plan when the user requires an exact node count, exact node set, or exact dependency graph; use intent for the selected Skill's standard topology. Optional bindings declare prompt/context/reference/dependency/composition usage. A planning-to-generator prompt binding requires actual prompt text and preserves the original planning role. Returns compact preview; does not create canvas nodes or execute. Follow normal product admission and confirm the returned revision via freezone_confirm_workflow_draft.",
+            "Prepare a persisted workflow using server-owned compilation. Provide exactly one of intent or plan; user_goal belongs in intent, while a plan can use summary for the user goal and does not accept user_goal. Use plan when the user requires an exact node count, exact node set, or exact dependency graph; use intent for the selected Skill's standard topology. Optional bindings declare prompt/context/reference/dependency/composition usage. A planning-to-generator prompt binding requires actual prompt text and preserves the original planning role. Returns compact preview; does not create canvas nodes or execute. Follow normal product admission and confirm the returned revision via freezone_confirm_workflow_draft. "
+            + GENERATION_PARAMETER_PLANNING_INSTRUCTIONS,
             {
                 **_SCOPE_PROPS,
                 "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
@@ -12917,6 +12995,7 @@ TOOLS = (
             },
             ["operation_id"],
             reject_unknown=True,
+            one_of_required=("intent", "plan"),
         ),
         _handle_prepare_workflow,
     ),
@@ -12955,11 +13034,7 @@ TOOLS = (
             (
                 "Compile a structured intent and persist its deterministic preview. "
                 "Put include_compose at intent.include_compose, not inside intent.planner. "
-                "Before choosing generation parameters, read freezone_get_node_create_schema "
-                "for imageGenNode/videoNode to choose a live model id, then call it again with "
-                "model_id to read that model's supported options. Do not reuse generic options "
-                "or change a user's selected value based on another model's options. "
-                "Do not invent low/medium quality or a recommended model id. On preflight "
+                f"{GENERATION_PARAMETER_PLANNING_INSTRUCTIONS} On preflight "
                 "failure, fix all returned blockers together using allowed_values or "
                 "available_models. Ask the user before changing an explicit requirement. "
                 "Use this compact Intent entry point only for the Skill's standard topology. "
@@ -12985,7 +13060,7 @@ TOOLS = (
                 },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
-            ["operation_id"],
+            ["operation_id", "intent"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow_draft,
@@ -13073,7 +13148,8 @@ TOOLS = (
             "display labels or native numbers/booleans: for example duration uses "
             "{\"option_ids\": [\"5\"]}, not 5 or \"5 秒\". Examples are format only; "
             "preserve the user's choices. Without clarification answers, put known parameters "
-            "in the Plan's node data; do not fabricate a clarification receipt.",
+            "in the Plan's node data; do not fabricate a clarification receipt."
+            + GENERATION_PARAMETER_PLANNING_INSTRUCTIONS,
             {
                 **_SCOPE_PROPS,
                 "operation_id": {
@@ -13534,19 +13610,43 @@ TOOLS = (
 )
 
 
-def _bind_structured_result_input(handler):
+def _bind_structured_result_input(handler, tool_name=""):
     def bound(args, *handler_args, **handler_kwargs):
         token = _STRUCTURED_RESULT_INPUT_HASH.set(args)
+        started = time.perf_counter()
+        result = None
+        completed = False
         try:
-            return handler(args, *handler_args, **handler_kwargs)
+            result = handler(args, *handler_args, **handler_kwargs)
+            completed = True
+            return result
         finally:
             _STRUCTURED_RESULT_INPUT_HASH.reset(token)
+            if tool_name in {
+                "freezone_prepare_workflow",
+                "freezone_prepare_workflow_draft",
+                "freezone_prepare_workflow_plan_draft",
+            }:
+                try:
+                    from novelvideo.freezone.workflow_draft_diagnostics import (
+                        observe_preparation,
+                    )
+
+                    observe_preparation(
+                        tool_name,
+                        args,
+                        _tool_result_payload(result),
+                        elapsed_ms=int((time.perf_counter() - started) * 1000),
+                        raised=not completed,
+                    )
+                except Exception:
+                    pass
 
     return bound
 
 
 TOOLS = tuple(
-    (name, schema, _bind_structured_result_input(handler))
+    (name, schema, _bind_structured_result_input(handler, name))
     for name, schema, handler in TOOLS
 )
 

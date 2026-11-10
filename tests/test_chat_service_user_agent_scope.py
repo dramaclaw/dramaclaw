@@ -2212,6 +2212,11 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "blocked",
         "draft_ready",
         "plan_draft_ready",
+        "generic_draft_ready",
+        "patched_draft_ready",
+        "draft_then_failed_patch",
+        "draft_then_failed_write",
+        "draft_then_unverified_write",
         "clarification_answered",
         "skill_saved",
         "read_only",
@@ -2292,12 +2297,20 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 thread_id="codex-thread",
                 turn_id="codex-turn",
             )
-            if tool_outcome in {"draft_ready", "plan_draft_ready"}:
+            if tool_outcome in {
+                "draft_ready", "plan_draft_ready", "generic_draft_ready",
+                "patched_draft_ready", "draft_then_failed_patch",
+                "draft_then_failed_write", "draft_then_unverified_write",
+            }:
                 draft_tool = (
                     "freezone_prepare_workflow_plan_draft"
                     if tool_outcome == "plan_draft_ready"
                     else "freezone_prepare_workflow_draft"
                 )
+                if tool_outcome == "generic_draft_ready":
+                    draft_tool = "freezone_prepare_workflow"
+                elif tool_outcome == "patched_draft_ready":
+                    draft_tool = "freezone_patch_workflow_draft"
                 yield SimpleNamespace(
                     type="tool_updated",
                     text=f"[mcp:completed] dramaclaw.{draft_tool}",
@@ -2312,7 +2325,11 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                                 "text": json.dumps(
                                     {
                                         "ok": True,
-                                        "status": "workflow_draft_ready",
+                                        "status": (
+                                            "workflow_draft_updated"
+                                            if tool_outcome == "patched_draft_ready"
+                                            else "workflow_draft_ready"
+                                        ),
                                         "draft_id": "draft-a",
                                         "revision": 1,
                                     }
@@ -2323,6 +2340,27 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     error=None,
                     structured=None,
                 )
+                if tool_outcome.startswith("draft_then_"):
+                    failed_patch = tool_outcome == "draft_then_failed_patch"
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="",
+                        name=(
+                            "dramaclaw.freezone_patch_workflow_draft"
+                            if failed_patch
+                            else "dramaclaw.freezone_confirm_workflow_draft"
+                        ),
+                        call_id="call-after-draft",
+                        status="completed",
+                        input={"draft_id": "draft-a", "revision": 1},
+                        output=None,
+                        structured=(
+                            {"ok": True}
+                            if tool_outcome == "draft_then_unverified_write"
+                            else {"ok": False, "error": "draft revision conflict"}
+                        ),
+                        error=None,
+                    )
             elif tool_outcome == "clarification_answered":
                 yield SimpleNamespace(
                     type="tool_updated",
@@ -3295,11 +3333,21 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         # zero-write turns; the model's self-declared mode no longer exists.
         assert result["content"] == "好的，已创建一个图片节点。"
         assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {"draft_ready", "plan_draft_ready"}:
+    elif tool_outcome in {"draft_ready", "plan_draft_ready", "generic_draft_ready"}:
         assert result["content"] == (
             "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
         )
         assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "patched_draft_ready":
+        assert result["content"] == (
+            "工作流草稿已更新，等待你重新确认后创建画布节点；尚未执行生成。"
+        )
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome.startswith("draft_then_"):
+        assert result["content"].startswith("画布操作未完成：")
+        assert "等待你" not in result["content"]
+        if tool_outcome == "draft_then_failed_write":
+            assert "draft revision conflict" in result["content"]
     elif tool_outcome == "clarification_answered":
         assert result["content"] == "参数已确认，尚未执行画布操作。"
         assert assistant_deltas == [result["content"]]
