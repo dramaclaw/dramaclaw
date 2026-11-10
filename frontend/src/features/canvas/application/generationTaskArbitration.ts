@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { TaskCompletionError } from '@/api/tasks';
+import { isTaskCancelledError } from '../domain/taskCompletionError';
+export { isTaskCancelledError } from '../domain/taskCompletionError';
 
 type NodeGenerationData = Record<string, unknown>;
 
@@ -35,10 +36,6 @@ export function buildImageGenerationSuccessPatch(url: string): Record<string, un
     generationTaskJobId: null,
     ...GENERATION_ERROR_CLEARED_PATCH,
   };
-}
-
-export function isTaskCancelledError(error: unknown): boolean {
-  return error instanceof TaskCompletionError && error.status === 'cancelled';
 }
 
 function nodeHasGeneratedMedia(nodeData: NodeGenerationData): boolean {

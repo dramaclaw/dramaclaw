@@ -17,3 +17,6 @@ export type {
   ImageGenerationHttpRequest,
   ImageGenerationRequestResult,
 } from './application/generationRequests';
+export { imageGenerationStartPatch, imageGenerationSubmitPatch, imageGenerationAcceptedPatch, imageGenerationOutcomePatch } from './application/generationRequests';
+export type { ImageGenerationTaskRef, ImageGenerationOutcome, ImageGenerationEffect, ImageGenerationOutcomeInput, ImageGenerationOutcomeResult } from './application/generationRequests';
+export { imageGenerationResultUrls } from './application/imageGenerationResults';
