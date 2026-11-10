@@ -100,6 +100,7 @@ const MAX_HEIGHT = 1200;
 const IMAGE_REVERSE_PROMPT_FEATURE_KEY = 'freezone.image_reverse_prompt';
 const TEXT_GENERATE_FEATURE_KEY = 'freezone.text_generate';
 const TEXT_WRITER_MODEL_ID = 'DC-freezone-text-writer-LLM';
+const MAX_TEXT_GENERATE_PROMPT_CHARS = 20000;
 
 const PICKER_INSET = 32;
 const COMPACT_OPS_PANEL_HEIGHT = 140;
@@ -215,7 +216,9 @@ export const TextAnnotationNode = memo(({
     (reversePromptBillingRuleMissing
       ? t('common.billingRuleNotConfiguredShort')
       : null);
-  const textGeneratePrompt = instruction;
+  const textGeneratePrompt = [upstreamTextJoined, instruction.trim()]
+    .filter(Boolean)
+    .join('\n\n');
   // Quote is only an estimate for the confirmation UI. The backend reserves and
   // settles from the trusted generated_text length after successful generation.
   const textGenerateEstimatedChars = countBillableTextChars(textGeneratePrompt);
@@ -436,9 +439,15 @@ export const TextAnnotationNode = memo(({
     }
   }, [id, modelTaskAccess.blocked, reversePromptInstruction, updateNodeData]);
 
-  const runTextGenerate = useCallback(async (promptOverride?: string) => {
-    const prompt = (promptOverride ?? instruction).trim();
-    if (modelTaskAccess.blocked || !prompt || textGenerateBillingRuleMissing) return;
+  const runTextGenerate = useCallback(async () => {
+    const prompt = textGeneratePrompt;
+    if (modelTaskAccess.blocked || !instruction.trim() || textGenerateBillingRuleMissing) return;
+    if (Array.from(prompt).length > MAX_TEXT_GENERATE_PROMPT_CHARS) {
+      toast.error(t('node.textNode.generationInputTooLong', {
+        limit: MAX_TEXT_GENERATE_PROMPT_CHARS,
+      }));
+      return;
+    }
     const projectId = readUrl().project;
     if (!projectId) {
       console.error('[text-node] text generation: no project in URL');
@@ -469,7 +478,15 @@ export const TextAnnotationNode = memo(({
       toast.error(backendErrorToastMessage(error, t));
       updateNodeData(id, { isGenerating: false, generationStartedAt: null });
     }
-  }, [id, instruction, modelTaskAccess.blocked, t, textGenerateBillingRuleMissing, updateNodeData]);
+  }, [
+    id,
+    instruction,
+    modelTaskAccess.blocked,
+    t,
+    textGenerateBillingRuleMissing,
+    textGeneratePrompt,
+    updateNodeData,
+  ]);
 
   const runInstructionTranslate = useCallback(async () => {
     if (modelTaskAccess.blocked || isGenerating || isTranslating) return;

@@ -6974,6 +6974,7 @@
       "placeholder": "Escreva uma ideia para uma história, cena ou personagem. Por exemplo: numa estação antiga, numa noite chuvosa, uma carta que chega tarde muda a decisão de todos.",
       "generatePlaceholder": "Descreva a história, cena, personagem, diálogo ou instrução criativa que pretende gerar…",
       "generateText": "Gerar texto com IA",
+      "generationInputTooLong": "A instrução e o texto de entrada excedem {{limit}} caracteres. Reduza o conteúdo e tente novamente.",
       "modelPickerHint": "Escolha um modelo",
       "submit": "Enviar",
       "translate": "Traduzir (zh ↔ en)",
