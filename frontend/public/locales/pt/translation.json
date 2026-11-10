@@ -1,4 +1,8 @@
 {
+  "chatSnapshot": {
+    "saveFailed": "Não foi possível salvar o histórico do chat. Tente novamente mais tarde; a mensagem atual continua disponível localmente.",
+    "historyIncomplete": "Parte do histórico desta conversa é grande demais para ser carregada por completo. O texto das mensagens continua disponível. Peça a um administrador para compactar o histórico."
+  },
   "workflowDraftContinuation": {
     "ariaLabel": "Confirmar criação do fluxo de trabalho",
     "title": "Plano do fluxo de trabalho a aguardar confirmação",
