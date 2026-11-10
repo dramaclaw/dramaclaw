@@ -3,15 +3,19 @@
 import json
 from pathlib import Path
 
-from novelvideo.chat.codex_app_server import _deny_unexpected_approval
+from novelvideo.chat.codex_app_server import _refuse_server_request
 from novelvideo.chat.codex_protocol import (
+    THREAD_ITEMS_LIST,
     THREAD_REVERT,
     THREAD_TURNS_LIST,
     CodexThreadResponse,
+    ThreadItemsPage,
     ThreadRevertResponse,
-    ThreadTurnIdsPage,
+    ThreadTurnsPage,
+    newest_turns_params,
     oldest_turn_params,
     thread_revert_params,
+    turn_items_params,
 )
 
 
@@ -115,7 +119,7 @@ def test_resume_and_revert_to_first_turn_clears_history():
         for record in records
     )
     result = _reply(records, following_list)["result"]
-    page = ThreadTurnIdsPage.model_validate(result)
+    page = ThreadTurnsPage.model_validate(result)
 
     assert page.data == []
     assert page.next_cursor is None
@@ -126,14 +130,14 @@ def test_history_order_and_oldest_turn_wire_params():
     records = _read_trace("05-history-reads.jsonl")
     requests = _requests(records, THREAD_TURNS_LIST)
     ascending = next(r for r in requests if r["msg"]["params"].get("sortDirection") == "asc")
-    page = ThreadTurnIdsPage.model_validate(_reply(records, ascending)["result"])
+    page = ThreadTurnsPage.model_validate(_reply(records, ascending)["result"])
     thread_id = ascending["msg"]["params"]["threadId"]
 
     assert page.data[0].id == "01a1c513-4c51-7a02-acaa-5f75458748e4"
     assert page.data[0].status == "completed"
 
     default = next(r for r in requests if r["msg"]["params"] == {"threadId": thread_id})
-    default_page = ThreadTurnIdsPage.model_validate(_reply(records, default)["result"])
+    default_page = ThreadTurnsPage.model_validate(_reply(records, default)["result"])
     assert [turn.id for turn in default_page.data] == [
         "01a1c513-66de-7730-9509-ffca305e55c0",
         "01a1c513-4c51-7a02-acaa-5f75458748e4",
@@ -149,6 +153,125 @@ def test_history_order_and_oldest_turn_wire_params():
     }
 
 
+def test_newest_turn_pages_follow_next_cursor():
+    records = _read_trace("05-history-reads.jsonl")
+    thread_id = "01a1c513-4902-7a92-81fa-3d7461d47839"
+    requests = _requests(records, THREAD_TURNS_LIST)
+    first = next(r for r in requests if r["msg"]["params"] == {"threadId": thread_id, "limit": 1})
+    page = ThreadTurnsPage.model_validate(_reply(records, first)["result"])
+
+    assert [turn.id for turn in page.data] == ["01a1c513-66de-7730-9509-ffca305e55c0"]
+    following = requests[requests.index(first) + 1]
+    assert page.next_cursor is not None
+    assert page.next_cursor == following["msg"]["params"]["cursor"]
+    following_page = ThreadTurnsPage.model_validate(_reply(records, following)["result"])
+    assert [turn.id for turn in following_page.data] == ["01a1c513-4c51-7a02-acaa-5f75458748e4"]
+    assert following_page.next_cursor is None
+
+    assert newest_turns_params(thread_id, limit=1) == {
+        "threadId": "01a1c513-4902-7a92-81fa-3d7461d47839",
+        "itemsView": "notLoaded",
+        "limit": 1,
+    }
+    assert newest_turns_params(thread_id, limit=20, cursor="c") == {
+        "threadId": "01a1c513-4902-7a92-81fa-3d7461d47839",
+        "itemsView": "notLoaded",
+        "limit": 20,
+        "cursor": "c",
+    }
+
+
+def test_not_loaded_turns_carry_status_and_times():
+    records = _read_trace("05-history-reads.jsonl")
+    request = next(
+        r for r in _requests(records, THREAD_TURNS_LIST)
+        if r["msg"]["params"].get("itemsView") == "notLoaded"
+    )
+    page = ThreadTurnsPage.model_validate(_reply(records, request)["result"])
+
+    assert [
+        (turn.id, turn.status, turn.started_at, turn.completed_at, turn.error)
+        for turn in page.data
+    ] == [
+        ("01a1c513-66de-7730-9509-ffca305e55c0", "completed", 1794307745, 1794307748, None),
+        ("01a1c513-4c51-7a02-acaa-5f75458748e4", "completed", 1794307738, 1794307744, None),
+    ]
+
+
+def test_turn_items_page_lists_items_in_order_with_times():
+    records = _read_trace("05-history-reads.jsonl")
+    thread_id = "01a1c513-4902-7a92-81fa-3d7461d47839"
+    turn_id = "01a1c513-66de-7730-9509-ffca305e55c0"
+    requests = _requests(records, THREAD_ITEMS_LIST)
+    request = next(r for r in requests if r["msg"]["params"].get("turnId") == turn_id)
+    page = ThreadItemsPage.model_validate(_reply(records, request)["result"])
+
+    assert [(r.item["type"], r.item["id"]) for r in page.data] == [
+        ("userMessage", "01a1c513-66e6-7c72-8ad9-190023ec024b"),
+        ("reasoning", "rs_56e31892808e5110f241f6b5e8119f42d2db267baec15ace"),
+        ("agentMessage", "msg_a1ad627fcf5f8db2f08a2ee8b3964aa1c8e8a5697bcc7893"),
+    ]
+    assert page.data[1].started_at_ms == 1794307748104
+    assert page.data[1].completed_at_ms == 1794307748651
+    assert [r.turn_id for r in page.data] == [
+        "01a1c513-66de-7730-9509-ffca305e55c0",
+        "01a1c513-66de-7730-9509-ffca305e55c0",
+        "01a1c513-66de-7730-9509-ffca305e55c0",
+    ]
+    assert page.next_cursor is None
+
+    first = next(r for r in requests if r["msg"]["params"] == {"threadId": thread_id, "limit": 2})
+    first_page = ThreadItemsPage.model_validate(_reply(records, first)["result"])
+    following = requests[requests.index(first) + 1]
+    assert first_page.next_cursor is not None
+    assert first_page.next_cursor == following["msg"]["params"]["cursor"]
+
+    assert turn_items_params(thread_id, turn_id, limit=2) == {
+        "threadId": "01a1c513-4902-7a92-81fa-3d7461d47839",
+        "turnId": "01a1c513-66de-7730-9509-ffca305e55c0",
+        "limit": 2,
+    }
+    assert turn_items_params(thread_id, turn_id, limit=20, cursor="c") == {
+        "threadId": "01a1c513-4902-7a92-81fa-3d7461d47839",
+        "turnId": "01a1c513-66de-7730-9509-ffca305e55c0",
+        "limit": 20,
+        "cursor": "c",
+    }
+
+
+def test_in_progress_turn_lists_only_completed_items():
+    records = _read_trace("08-thread-b-tools-reasoning-inflight-resume.jsonl")
+    request = next(r for r in _requests(records, THREAD_TURNS_LIST) if r["conn"] == "c4")
+    page = ThreadTurnsPage.model_validate(_reply(records, request)["result"])
+
+    assert [(turn.id, turn.status) for turn in page.data] == [
+        ("01a1c513-9ad9-75e0-bf99-4ff3d12fff7b", "inProgress"),
+    ]
+    items_request = next(
+        r for r in _requests(records, THREAD_ITEMS_LIST)
+        if r["conn"] == "c4" and r["seq"] > request["seq"]
+        and r["msg"]["params"].get("turnId") == page.data[0].id
+    )
+    items_page = ThreadItemsPage.model_validate(_reply(records, items_request)["result"])
+    assert [r.item["type"] for r in items_page.data] == ["userMessage", "commandExecution"]
+    assert items_page.data[1].item["status"] == "completed"
+
+
+def test_interrupted_turn_keeps_only_user_message():
+    records = _read_trace("09-turn-interrupt.jsonl")
+    request = _requests(records, THREAD_TURNS_LIST)[0]
+    page = ThreadTurnsPage.model_validate(_reply(records, request)["result"])
+
+    assert page.data[0].id == "01a1c513-ccc5-7612-927f-716a8aeb8414"
+    assert page.data[0].status == "interrupted"
+    items_request = next(
+        r for r in _requests(records, THREAD_ITEMS_LIST)
+        if r["msg"]["params"].get("turnId") == page.data[0].id
+    )
+    items_page = ThreadItemsPage.model_validate(_reply(records, items_request)["result"])
+    assert [r.item["type"] for r in items_page.data] == ["userMessage"]
+
+
 def test_command_approval_decline_matches_recorded_reply():
     records = _read_trace("10-approval-decline.jsonl")
     approval = _requests(records, "item/commandExecution/requestApproval", "recv")[0]
@@ -156,7 +279,7 @@ def test_command_approval_decline_matches_recorded_reply():
     reply = _reply(records, approval)["result"]
 
     assert reply == {"decision": "decline"}
-    assert _deny_unexpected_approval(request["method"], request["params"]) == reply
+    assert _refuse_server_request(request["method"], request["params"]) == reply
 
     completed = next(
         record["msg"]["params"]

@@ -1129,3 +1129,32 @@ def test_route_and_backend_fixture_are_wired(harness):
     # 且 `/api/v1/chat/ws` 真的能连上（其余用例都走这条）。
     with harness.client.websocket_connect("/api/v1/chat/ws") as websocket:
         assert websocket.receive_json()["type"] == "scope.changed"
+
+
+def test_home_codex_item_frames(harness):
+    card = {"id": "m-1", "seq": 7, "type": "text", "text": ""}
+
+    async def stream(username, project, prompt, on_event, **kwargs):
+        await on_event({
+            "type": "item", "message_id": "assistant:turn-1", "item_id": "m-1", "card": card,
+        })
+        await on_event({
+            "type": "item_delta", "message_id": "assistant:turn-1", "item_id": "m-1",
+            "kind": "text", "offset": 0, "text": "hello",
+        })
+
+    harness.monkeypatch.setattr(harness.chat_service, "get_chat_backend_name", lambda: "codex")
+    harness.monkeypatch.setattr(harness.chat_service, "stream_assistant_reply", stream)
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+    frames = _send_home_turn(harness)
+    assert [f for f in frames if f["type"] in {"chat.item", "chat.item.delta"}] == [
+        {
+            "type": "chat.item", "scope": {"kind": "home", "id": None}, "turn_id": "turn-1",
+            "message_id": "assistant:turn-1", "item_id": "m-1", "card": card,
+        },
+        {
+            "type": "chat.item.delta", "scope": {"kind": "home", "id": None}, "turn_id": "turn-1",
+            "message_id": "assistant:turn-1", "item_id": "m-1", "kind": "text",
+            "offset": 0, "text": "hello",
+        },
+    ]

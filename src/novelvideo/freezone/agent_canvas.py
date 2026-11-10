@@ -44,7 +44,9 @@ def _preserve_view_state(items: list[dict], stored_items: list[dict]) -> list[di
     return result
 
 
-def _agent_canvas_body(canvas: dict, output: object) -> CanvasPayload:
+def _agent_canvas_body(
+    canvas: dict, output: object, *, user_confirmed: bool = False,
+) -> CanvasPayload:
     if (
         not isinstance(output, dict)
         or not isinstance(output.get("nodes"), list)
@@ -59,7 +61,7 @@ def _agent_canvas_body(canvas: dict, output: object) -> CanvasPayload:
         nodes=_preserve_view_state(output["nodes"], canvas.get("nodes", [])),
         edges=_preserve_view_state(output["edges"], canvas.get("edges", [])),
         base_revision=canvas.get("revision"),
-        save_source="agent_patch",
+        save_source="manual_clear" if user_confirmed else "agent_patch",
         client_save_id=str(uuid.uuid4()),
     )
     return CanvasPayload(**known)
@@ -74,6 +76,7 @@ async def dispatch_agent_canvas(
     env: dict,
     build_payload: Callable[[CanvasPayload], Callable[[dict | None], dict]],
     after_save: Callable[[CanvasPayload, canvas_store.CanvasSaveResult], Awaitable[None]],
+    user_confirmed: bool = False,
 ) -> dict:
     started = time.monotonic()
     node_seconds = 0.0
@@ -119,18 +122,21 @@ async def dispatch_agent_canvas(
             ):
                 raise CanvasCoreError("canvas_core_protocol", "Invalid canvas core result")
             if status == "applied":
-                body = _agent_canvas_body(canvas, result.get("canvas"))
+                body = _agent_canvas_body(
+                    canvas, result.get("canvas"), user_confirmed=user_confirmed,
+                )
                 try:
                     saved = await canvas_store.save_canvas_async(
                         project_dir,
                         canvas_id,
                         base_revision=revision,
-                        save_source="agent_patch",
+                        save_source=body.save_source,
                         client_save_id=body.client_save_id,
                         request_hash=canvas_store.canvas_request_hash(
                             body.model_dump(exclude={"client_save_id"}, exclude_none=True)
                         ),
                         build_payload=build_payload(body),
+                        **({"allow_empty_overwrite": True} if user_confirmed else {}),
                     )
                 except canvas_store.CanvasRevisionConflict:
                     if attempt == 2:

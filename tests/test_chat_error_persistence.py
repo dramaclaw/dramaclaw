@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from novelvideo.api.routes import chat as chat_routes
@@ -45,27 +47,36 @@ def test_reasoning_required_error_has_actionable_chinese_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_home_turn_error_is_persisted_once(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("history_rows", [0, 60])
+async def test_home_turn_error_is_persisted_once(monkeypatch, tmp_path, history_rows) -> None:
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     scope = ChatScope(kind="home")
     kwargs = {
-        "user": {"username": "alice"},
-        "username": "alice",
+        "user": {"username": "test-user"},
+        "username": "test-user",
         "scope": scope,
         "turn_id": "turn-failed-1",
         "reason": "模型连接失败",
     }
 
     first = await chat_routes._persist_chat_turn_error(**kwargs)
+    for index in range(history_rows):
+        await chat_store.append_message_async(
+            "test-user", scope, "user", "Another turn", turn_id=f"turn-other-{index}"
+        )
     second = await chat_routes._persist_chat_turn_error(**kwargs)
-    history = chat_store.list_messages("alice", scope)
 
     assert first is not None
     assert second is not None
     assert first["id"] == second["id"]
-    assert len(history) == 1
-    assert history[0]["turn_id"] == "turn-failed-1"
-    assert history[0]["chat_error"] is True
-    assert history[0]["content"] == (
-        "本轮处理失败：模型连接失败\n\n请根据错误提示处理后重试。"
-    )
+    for result in (first, second):
+        assert result["chat_error"] is True
+        assert "metadata" not in result
+        assert result["turn_id"] == "turn-failed-1"
+        assert result["content"] == (
+            "本轮处理失败：模型连接失败\n\n请根据错误提示处理后重试。"
+        )
+    with sqlite3.connect(chat_store.db_for("test-user", scope)) as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM chat_messages WHERE turn_id = 'turn-failed-1'"
+        ).fetchone() == (1,)

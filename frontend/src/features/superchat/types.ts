@@ -157,6 +157,9 @@ export type ServerFrame =
       scope: ChatScope;
       history: unknown[];
       busy?: boolean;
+      turn_id?: string;
+      before?: string | null;
+      has_more?: boolean;
     }
   | {
       type: "chat.busy";
@@ -183,6 +186,24 @@ export type ServerFrame =
       status?: string | null;
       disposition?: string | null;
       error?: unknown;
+    }
+  | {
+      type: "chat.item";
+      scope?: ChatScope;
+      turn_id: string;
+      message_id: string;
+      item_id: string;
+      card: unknown;
+    }
+  | {
+      type: "chat.item.delta";
+      scope?: ChatScope;
+      turn_id: string;
+      message_id: string;
+      item_id: string;
+      kind: "text" | "reasoning";
+      offset: number;
+      text: string;
     }
   | {
       type: "assistant.delta";
@@ -365,7 +386,8 @@ export type ChatMessagePart =
         | "tool_status"
         | "agent_plan"
         | "agent_thought"
-        | "agent_usage";
+        | "agent_usage"
+        | "context_compaction";
       event: unknown;
       seq?: number;
     };

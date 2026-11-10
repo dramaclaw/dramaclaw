@@ -71,8 +71,10 @@ def state_dir(monkeypatch, tmp_path):
 async def test_poll_touches_project_state_before_frame_limit(state_dir):
     for index in range(10):
         bridge.put_pending_canvas_command(
-            key=f"command-{index}", project_id="p", canvas_id="c", commands=[],
-            envelope={"external_mcp_command": True, "canvas_id": "c"},
+            key=f"command-{index}", project_id="p", canvas_id="c",
+            commands=[{"type": "select_nodes", "node_ids": []}],
+            envelope={"external_mcp_command": True, "canvas_id": "c",
+                      "commands": [{"type": "select_nodes", "node_ids": []}]},
             bridge_dir=state_dir / "bridge",
         )
     result = await chat.list_pending_canvas_commands(
@@ -88,8 +90,10 @@ async def test_poll_touches_project_state_before_frame_limit(state_dir):
 async def test_sse_presence_is_removed_on_close_even_after_delivery(state_dir, monkeypatch, push):
     monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", "1" if push else "0")
     bridge.put_pending_canvas_command(
-        key="command", project_id="p", canvas_id="c", commands=[],
-        envelope={"external_mcp_command": True, "canvas_id": "c"},
+        key="command", project_id="p", canvas_id="c",
+        commands=[{"type": "select_nodes", "node_ids": []}],
+        envelope={"external_mcp_command": True, "canvas_id": "c",
+                  "commands": [{"type": "select_nodes", "node_ids": []}]},
         bridge_dir=state_dir / "bridge",
     )
     response = await chat.stream_canvas_commands("p", "c", user={"username": "viewer"})

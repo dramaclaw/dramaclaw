@@ -162,8 +162,10 @@ except Exception:
 
 _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR: Exception | None = None
 try:
+    from novelvideo.freezone.canvas_confirmations import confirmation_kinds
     from novelvideo.freezone.canvas_command_bridge import (
         canvas_command_bridge_key,
+        canvas_command_result_timeout_seconds,
         canvas_command_idempotency_key,
         canvas_context_bridge_key,
         clarification_bridge_key,
@@ -183,7 +185,9 @@ try:
     )
 except Exception as exc:
     _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR = exc
+    confirmation_kinds = None
     canvas_command_bridge_key = None
+    canvas_command_result_timeout_seconds = None
     canvas_command_idempotency_key = None
     canvas_context_bridge_key = None
     clarification_bridge_key = None
@@ -5497,59 +5501,6 @@ def _external_generation_parameter_preflight(
     return _generation_parameters_required_result(list(missing_by_node.values()))
 
 
-def _mcp_canvas_approval_enabled() -> bool:
-    value = os.environ.get("DRAMACLAW_MCP_CANVAS_APPROVAL", "").strip().lower()
-    if value in {"0", "false", "no", "off"}:
-        return False
-    return True
-
-
-def _approval_dir() -> Path:
-    root = os.environ.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
-    base = Path(root) if root else Path("/tmp") / "dramaclaw_canvas_command_bridge"
-    return base / "mcp_canvas_approvals"
-
-
-def _approval_path(approval_id: str) -> Path:
-    safe = "".join(ch for ch in approval_id if ch.isalnum() or ch in {"_", "-"})
-    return _approval_dir() / f"{safe}.json"
-
-
-def _approval_required_for_commands(commands: list[Any]) -> tuple[bool, list[str]]:
-    reasons: list[str] = []
-    command_count = len(commands)
-    command_types = [
-        str(command.get("type") or "").strip()
-        for command in commands
-        if isinstance(command, dict)
-    ]
-    destructive = {"delete_nodes", "delete_edges"}
-    mutating = {
-        "html_artifact",
-        "create_node",
-        "add_next_node",
-        "update_node_data",
-        "create_edge",
-        "layout_nodes",
-        "group_nodes",
-        "move_nodes",
-        "select_nodes",
-        "clear_canvas",
-    }
-    costly_or_ui = {"run_node_action", "run_workflow", "open_mainline_projection"}
-    if any(command_type in destructive for command_type in command_types):
-        reasons.append("包含删除类画布操作")
-    if any(command_type in mutating for command_type in command_types):
-        reasons.append("包含画布结构或内容变更")
-    if any(command_type in costly_or_ui for command_type in command_types):
-        reasons.append("包含运行节点动作、生成任务或打开/映射主线内容")
-    if command_count > 1:
-        reasons.append(f"包含 {command_count} 个批量画布操作")
-    if any(command_type == "group_nodes" for command_type in command_types):
-        reasons.append("包含分组结构变更")
-    return bool(reasons), reasons
-
-
 def _requires_frontend_canvas_executor(commands: list[Any]) -> bool:
     frontend_types = {"html_artifact", "run_node_action", "run_workflow", "open_mainline_projection"}
     return any(
@@ -5609,55 +5560,61 @@ def _commands_include_open_node_action(commands: list[Any]) -> bool:
     )
 
 
-def _create_mcp_canvas_approval(
-    *,
-    project: str,
-    canvas: str,
-    commands: list[Any],
-    slim_result: bool,
-    reasons: list[str],
+def _create_canvas_confirmation(
+    project: str, canvas: str, commands: list[Any],
 ) -> str:
-    approval_id = f"mcp_canvas_{uuid.uuid4().hex}"
-    now_ms = int(time.time() * 1000)
-    expires_at_ms = now_ms + max(
-        30_000,
-        int(os.environ.get("DRAMACLAW_MCP_CANVAS_APPROVAL_TTL_MS", "300000")),
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
+    agent_id, turn_id = _canvas_agent_identity()
+    response = _request(
+        "POST",
+        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/"
+        f"{quote(canvas, safe='')}/confirmations",
+        body={"agent_id": agent_id, "turn_id": turn_id, "commands": commands},
     )
-    payload = {
-        "approval_id": approval_id,
+    if not response.get("ok"):
+        return tool_result(_canvas_executor_failure(response))
+    data = response["data"]
+    card = bool(turn_id) and data["browser_open"] is True
+    paid = "paid_generation" in data["kinds"]
+    if card:
+        credits = " Say that it will consume credits; do not give any estimate." if paid else ""
+        instruction = (
+            "A confirmation card is now shown in the user's DramaClaw chat. Tell the user briefly "
+            f"what will happen, naming each target node by title and type.{credits} "
+            "Then end your turn. Do not call freezone_confirm_canvas_action in this turn and "
+            "never confirm on the user's behalf. The outcome arrives later as a canvas "
+            "background result. If the user answers in the conversation instead, call "
+            "freezone_confirm_canvas_action or freezone_cancel_canvas_action with this "
+            "confirmation_id in that later turn. The confirmation expires in 30 minutes."
+        )
+    else:
+        credits = " say that it will consume credits without giving any estimate," if paid else ""
+        instruction = (
+            "Tell the user what will happen, naming each target node by title and type,"
+            f"{credits} and ask them to confirm. Only after the user explicitly confirms in a "
+            "later message, call freezone_confirm_canvas_action with this confirmation_id; "
+            "if they decline, call freezone_cancel_canvas_action. Never confirm on your own "
+            "or in this same turn. The confirmation expires in 30 minutes; after that, ask again."
+        )
+    return tool_result({
+        "ok": False,
+        "status": "confirmation_required",
+        "code": "canvas_confirmation_required",
+        "tool_call_status": "completed",
+        "canvas_apply_status": "awaiting_confirmation",
+        "applied": False,
         "project_id": project,
         "canvas_id": canvas,
-        "commands": commands,
-        "slim_result": bool(slim_result),
-        "reasons": reasons,
-        "created_at_ms": now_ms,
-        "expires_at_ms": expires_at_ms,
-        "summary": _command_summary(commands),
-    }
-    directory = _approval_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    _approval_path(approval_id).write_text(
-        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-    )
-    return tool_result(
-        {
-            "ok": False,
-            "status": "approval_required",
-            "code": "mcp_canvas_approval_required",
-            "approval_id": approval_id,
-            "project_id": project,
-            "canvas_id": canvas,
-            "reasons": reasons,
-            "expires_at_ms": expires_at_ms,
-            "summary": payload["summary"],
-            "message": "该画布操作需要用户在 Codex 对话中确认后才能执行。",
-            "agent_instruction": (
-                "Ask the user to confirm this canvas operation in the Codex chat. "
-                "If the user confirms, call freezone_confirm_canvas_action with approval_id. "
-                "If the user cancels, call freezone_cancel_canvas_action."
-            ),
-        }
-    )
+        "confirmation_id": data["confirmation_id"],
+        "kinds": data["kinds"],
+        "targets": data["targets"],
+        "expires_at": data["expires_at"],
+        "confirmation_via": "card" if card else "conversation",
+        "message": "需要用户确认后才会执行",
+        "agent_instruction": instruction,
+    })
 
 
 def _workflow_run_turn_key(project: str, canvas: str) -> str | None:
@@ -5720,16 +5677,21 @@ def _put_frontend_canvas_command(
     return key, put_pending_canvas_command(**arguments)
 
 
-def _canvas_command_envelope(
-    project: str, canvas: str, commands: list[Any],
-) -> dict[str, Any]:
-    external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
+def _canvas_agent_identity() -> tuple[str, str | None]:
     profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
     agent_id = (
         profile.removeprefix("freezone:").strip()
         if profile.startswith("freezone:")
         else "main"
     )
+    return agent_id or "main", os.environ.get("DRAMACLAW_TURN_ID", "").strip() or None
+
+
+def _canvas_command_envelope(
+    project: str, canvas: str, commands: list[Any],
+) -> dict[str, Any]:
+    external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
+    agent_id, turn_id = _canvas_agent_identity()
     envelope = {
         "schema_version": "canvas_chat_commands.v1",
         "project_id": project,
@@ -5739,9 +5701,8 @@ def _canvas_command_envelope(
     # External MCP commands use reconnect polling and legacy canvas geometry.
     # Hermes keeps its original envelope shape.
     if external_mcp:
-        envelope["agent_id"] = agent_id or "main"
+        envelope["agent_id"] = agent_id
         envelope["external_mcp_command"] = True
-        turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
         if turn_id:
             envelope["turn_id"] = turn_id
     return envelope
@@ -5819,15 +5780,7 @@ def _dispatch_mcp_approved_frontend_commands(
             if slim_result
             else immediate_result
         )
-    try:
-        timeout_seconds = max(
-            1,
-            int(
-                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "600")
-            ),
-        )
-    except ValueError:
-        timeout_seconds = 600
+    timeout_seconds = canvas_command_result_timeout_seconds()
     timeout_result = {
         "ok": False,
         "tool_call_status": "failed",
@@ -5929,15 +5882,7 @@ def _dispatch_frontend_canvas_commands(
             if slim_result
             else immediate_result
         )
-    try:
-        timeout_seconds = max(
-            1,
-            int(
-                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "600")
-            ),
-        )
-    except ValueError:
-        timeout_seconds = 600
+    timeout_seconds = canvas_command_result_timeout_seconds()
     timeout_result = {
         "ok": False,
         "tool_call_status": "failed",
@@ -5975,98 +5920,94 @@ def _dispatch_frontend_canvas_commands(
     return tool_result(timeout_result)
 
 
-def _read_mcp_canvas_approval(
-    approval_id: str,
-) -> tuple[dict[str, Any] | None, str | None]:
-    path = _approval_path(approval_id)
-    if not path.exists():
-        return None, "approval not found or already handled"
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return None, f"failed to read approval: {exc}"
-    expires_at_ms = int(payload.get("expires_at_ms") or 0)
-    if expires_at_ms and expires_at_ms < int(time.time() * 1000):
-        try:
-            path.unlink()
-        except OSError:
-            pass
-        return None, "approval expired"
-    return payload if isinstance(payload, dict) else None, None
+_CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS = {
+    "expired": (
+        "The confirmation expired after 30 minutes and nothing was executed. Ask the user again "
+        "only if it is still wanted; that creates a new confirmation."
+    ),
+    "user_reply_required": (
+        "The user has not answered yet. Wait for the user's next message; never confirm in "
+        "the turn that requested the confirmation."
+    ),
+    "targets_changed": (
+        "The target nodes changed, so the confirmation was voided and nothing was executed. "
+        "Read the canvas again and ask the user again if it is still wanted."
+    ),
+    "already_handled": "This confirmation was already decided. Do not retry.",
+    "canvas_browser_required": (
+        "Ask the user to open this canvas, then call freezone_confirm_canvas_action again "
+        "with the same confirmation_id within 30 minutes. Do not retry on your own."
+    ),
+}
+
+
+def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
+    confirmation_id = str(args.get("confirmation_id") or "").strip()
+    if not confirmation_id:
+        return tool_result({
+            "ok": False, "status": "confirmation_id_required",
+            "error": "confirmation_id is required",
+        })
+    project = str(args.get("project_id") or _default_project_id()).strip() or None
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
+    if scope_error:
+        return scope_error
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
+    agent_id, turn_id = _canvas_agent_identity()
+    response = _request(
+        "POST",
+        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/"
+        f"{quote(canvas, safe='')}/confirmations/{quote(confirmation_id, safe='')}/decision",
+        body={
+            "decision": decision, "via": "conversation", "agent_id": agent_id, "turn_id": turn_id,
+        },
+    )
+    scope = {"confirmation_id": confirmation_id, "project_id": project, "canvas_id": canvas}
+    if not response.get("ok"):
+        code = response.get("code") or "confirmation_failed"
+        message = response.get("message") or response.get("error") or "画布确认失败，未执行。"
+        return tool_result({
+            "ok": False, "status": "confirmation_failed", "code": code,
+            "tool_call_status": "failed", "canvas_apply_status": "not_applied", "applied": False,
+            **scope, "errors": [message], "message": message,
+            "agent_instruction": _CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS.get(
+                code,
+                "This confirmation cannot be used here and nothing was executed. Do not retry.",
+            ),
+        })
+    data = response["data"]
+    if data["status"] == "executed":
+        return tool_result({
+            **_server_canvas_command_result(project, canvas, data["result"], [], slim_result=True),
+            "confirmation_id": confirmation_id,
+        })
+    if data["status"] == "submitted":
+        return tool_result({
+            "ok": True, "status": "submitted", "tool_call_status": "completed",
+            "canvas_apply_status": "submitted", "applied": False, **scope,
+            "bridge_key": data["bridge_key"],
+            "agent_instruction": (
+                "The confirmed command was handed to the open canvas. Do not call it again. "
+                "Read the canvas or wait for the canvas background result before reporting "
+                "any outcome."
+            ),
+        })
+    return tool_result({
+        "ok": True, "status": "refused", "tool_call_status": "completed",
+        "canvas_apply_status": "not_applied", "applied": False, **scope,
+        "message": "已取消，未执行任何操作",
+    })
 
 
 def _handle_confirm_canvas_action(args: dict[str, Any], **_: Any) -> str:
-    approval_id = str(args.get("approval_id") or "").strip()
-    if not approval_id:
-        return tool_result(
-            {
-                "ok": False,
-                "status": "approval_id_required",
-                "error": "approval_id is required",
-            }
-        )
-    payload, error = _read_mcp_canvas_approval(approval_id)
-    if error or payload is None:
-        return tool_result(
-            {"ok": False, "status": "approval_unavailable", "error": error}
-        )
-    path = _approval_path(approval_id)
-    try:
-        path.unlink()
-    except OSError:
-        pass
-    project = str(payload.get("project_id") or "").strip()
-    canvas = str(payload.get("canvas_id") or "").strip()
-    commands = payload.get("commands")
-    if not project or not canvas or not isinstance(commands, list):
-        return tool_result(
-            {
-                "ok": False,
-                "status": "invalid_approval_payload",
-                "error": "approval payload is missing project_id, canvas_id, or commands",
-            }
-        )
-    slim_result = bool(payload.get("slim_result", True))
-    if _agent_canvas_executor() == "server":
-        if _requires_frontend_canvas_executor(commands):
-            return _dispatch_server_host_commands(
-                project=project, canvas=canvas, commands=commands, slim_result=slim_result,
-            )
-        return _server_apply_canvas_commands(project, canvas, commands, slim_result=slim_result)
-    return _dispatch_mcp_approved_frontend_commands(
-        project=project, canvas=canvas, commands=commands, slim_result=slim_result,
-    )
+    return _decide_canvas_confirmation(args, "confirmed")
 
 
 def _handle_cancel_canvas_action(args: dict[str, Any], **_: Any) -> str:
-    approval_id = str(args.get("approval_id") or "").strip()
-    if not approval_id:
-        return tool_result(
-            {
-                "ok": False,
-                "status": "approval_id_required",
-                "error": "approval_id is required",
-            }
-        )
-    payload, error = _read_mcp_canvas_approval(approval_id)
-    if error or payload is None:
-        return tool_result(
-            {"ok": False, "status": "approval_unavailable", "error": error}
-        )
-    try:
-        _approval_path(approval_id).unlink()
-    except OSError:
-        pass
-    return tool_result(
-        {
-            "ok": True,
-            "status": "cancelled",
-            "approval_id": approval_id,
-            "project_id": payload.get("project_id"),
-            "canvas_id": payload.get("canvas_id"),
-            "message": "MCP canvas action was cancelled before apply.",
-        }
-    )
+    return _decide_canvas_confirmation(args, "refused")
 
 
 def _clone_json(value: Any) -> Any:
@@ -6186,6 +6127,14 @@ def _server_apply_canvas_commands(
         return _dispatch_server_host_commands(
             project=project, canvas=canvas, commands=commands, slim_result=slim_result,
         )
+    return tool_result(
+        _server_canvas_command_result(project, canvas, data, commands, slim_result=slim_result)
+    )
+
+
+def _server_canvas_command_result(
+    project: str, canvas: str, data: dict[str, Any], commands: list[Any], *, slim_result: bool,
+) -> dict[str, Any]:
     receipt = data["receipt"]
     resolved = {
         **receipt,
@@ -6204,8 +6153,8 @@ def _server_apply_canvas_commands(
     if slim_result:
         summarized = _summarize_canvas_command_result(resolved, bridge_key="", commands=commands)
         summarized["revision"] = data["revision"]
-        return tool_result(summarized)
-    return tool_result(resolved)
+        return summarized
+    return resolved
 
 
 def _emit_canvas_commands(
@@ -6215,7 +6164,6 @@ def _emit_canvas_commands(
     *,
     allow_dynamic_workflow_batch: bool = False,
     slim_result: bool = False,
-    require_canvas_receipt: bool = False,
 ) -> str:
     if not isinstance(commands, list) or not commands:
         return _emit_command_error(
@@ -6287,27 +6235,20 @@ def _emit_canvas_commands(
     )
     if generation_preflight is not None:
         return tool_result(generation_preflight)
+    if confirmation_kinds is None:
+        return tool_error(
+            "Canvas command bridge is unavailable; cannot determine required confirmations. "
+            f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
+        )
+    if confirmation_kinds(commands):
+        return _create_canvas_confirmation(project, canvas, commands)
     if executor == "server":
         if _requires_frontend_canvas_executor(commands):
             return _dispatch_server_host_commands(
                 project=project, canvas=canvas, commands=commands, slim_result=slim_result,
             )
-        needs_approval, approval_reasons = _approval_required_for_commands(commands)
-        if not require_canvas_receipt and _mcp_canvas_approval_enabled() and needs_approval:
-            return _create_mcp_canvas_approval(
-                project=project,
-                canvas=canvas,
-                commands=commands,
-                slim_result=slim_result,
-                reasons=approval_reasons,
-            )
         return _server_apply_canvas_commands(project, canvas, commands, slim_result=slim_result)
     if _external_mcp_agent_enabled():
-        # Codex/Claude/OpenClaw external MCP uses the same browser bridge as
-        # Hermes. Do not return a second tool-level approval_id here: that
-        # approval lives inside the agent conversation and never reaches the
-        # Freezone chat approval card. The pending bridge frame is consumed by
-        # FreezoneShell, which displays the card and applies after confirmation.
         return _dispatch_mcp_approved_frontend_commands(
             project=project,
             canvas=canvas,
@@ -8592,7 +8533,6 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             built.get("commands"),
             allow_dynamic_workflow_batch=True,
             slim_result=True,
-            require_canvas_receipt=True,
         )
     except Exception:
         _finish_workflow_draft(
@@ -9333,7 +9273,11 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
 }
 
 _CANVAS_RESULT_FIELDS = (
-    "approval_id",
+    "confirmation_id",
+    "kinds",
+    "targets",
+    "expires_at",
+    "confirmation_via",
     "project_id",
     "canvas_id",
     "operation_id",
@@ -9480,7 +9424,8 @@ _RESULT_STRING_FIELDS = frozenset(
         "run_status",
         "observation_token",
         "action",
-        "approval_id",
+        "confirmation_id",
+        "confirmation_via",
         "bridge_key",
         "canvas_apply_status",
         "canvas_id",
@@ -9525,6 +9470,12 @@ _RESULT_STRING_FIELDS = frozenset(
 
 
 def _result_field_schema(field: str) -> dict[str, Any]:
+    if field == "kinds":
+        return {"type": "array", "items": {"type": "string"}}
+    if field == "targets":
+        return {"type": "array", "items": {"type": "object"}}
+    if field == "expires_at":
+        return {"type": "number"}
     if field == "batch_id":
         return {"type": "string", "minLength": 1}
     if field == "imports":
@@ -10148,7 +10099,7 @@ def _success_contract(name: str) -> dict[str, Any]:
         }
     if name in _CANVAS_RESULT_TOOLS:
         successful_states = [
-            {"required": ["approval_id"]},
+            {"required": ["confirmation_id"]},
             {"required": ["operation_id"]},
             {"required": ["command_id"]},
             {"required": ["bridge_key"]},
@@ -12889,14 +12840,20 @@ TOOLS = (
         "freezone_confirm_canvas_action",
         _schema(
             "freezone_confirm_canvas_action",
-            "Confirm and apply a pending MCP canvas action after the user explicitly approves it in the Codex/Claude/OpenClaw chat. This is only for external MCP approval_required results; Hermes frontend approvals use their own bridge.",
+            (
+                "Confirm a pending canvas confirmation (delete nodes, clear canvas, or paid "
+                "generation) only after the user explicitly agreed in a later message of this "
+                "conversation. Never call it in the turn that requested the confirmation."
+            ),
             {
-                "approval_id": {
+                "project_id": {"type": "string"},
+                "canvas_id": {"type": "string"},
+                "confirmation_id": {
                     "type": "string",
-                    "description": "approval_id returned by a previous approval_required MCP canvas write.",
+                    "description": "confirmation_id returned by a pending canvas confirmation.",
                 },
             },
-            ["approval_id"],
+            ["confirmation_id"],
         ),
         _handle_confirm_canvas_action,
     ),
@@ -12904,14 +12861,16 @@ TOOLS = (
         "freezone_cancel_canvas_action",
         _schema(
             "freezone_cancel_canvas_action",
-            "Cancel a pending MCP canvas action when the user rejects or abandons the approval request.",
+            "Refuse a pending canvas confirmation when the user declines it. Nothing is executed.",
             {
-                "approval_id": {
+                "project_id": {"type": "string"},
+                "canvas_id": {"type": "string"},
+                "confirmation_id": {
                     "type": "string",
-                    "description": "approval_id returned by a previous approval_required MCP canvas write.",
+                    "description": "confirmation_id returned by a pending canvas confirmation.",
                 },
             },
-            ["approval_id"],
+            ["confirmation_id"],
         ),
         _handle_cancel_canvas_action,
     ),

@@ -175,6 +175,34 @@ function hydrateMessagePartEvents(
   return changed ? nextParts : parts;
 }
 
+export function normalizeMessagePart(part: unknown, index = 0): ChatMessagePart | null {
+  if (!part || typeof part !== "object" || Array.isArray(part)) return null;
+  const raw = part as Record<string, unknown>;
+  const type = raw.type;
+  const id = normalizeId(raw.id) ?? `part-${index}`;
+  const seq = typeof raw.seq === "number" && Number.isFinite(raw.seq) ? raw.seq : undefined;
+  if (type === "tool_status" && isHiddenCanvasWriteToolStatusPart(raw.event)) return null;
+  if (type === "text") {
+    const text = typeof raw.text === "string" ? raw.text : "";
+    return { id, type: "text", text, ...(seq == null ? {} : { seq }) };
+  }
+  if (
+    type === "skill_studio" ||
+    type === "clarification" ||
+    type === "canvas_approval" ||
+    type === "canvas_feedback" ||
+    type === "canvas_context" ||
+    type === "tool_status" ||
+    type === "agent_plan" ||
+    type === "agent_thought" ||
+    type === "agent_usage" ||
+    type === "context_compaction"
+  ) {
+    return { id, type, event: raw.event, ...(seq == null ? {} : { seq }) };
+  }
+  return null;
+}
+
 function normalizeMessageParts(value: Record<string, unknown>): ChatMessagePart[] | undefined {
   const rawParts = Array.isArray(value.parts)
     ? value.parts
@@ -182,31 +210,9 @@ function normalizeMessageParts(value: Record<string, unknown>): ChatMessagePart[
       ? value.message_parts
       : undefined;
   if (!rawParts) return undefined;
-  const parts = rawParts.flatMap((part, index): ChatMessagePart[] => {
-    if (!part || typeof part !== "object" || Array.isArray(part)) return [];
-    const raw = part as Record<string, unknown>;
-    const type = raw.type;
-    const id = normalizeId(raw.id) ?? `part-${index}`;
-    const seq = typeof raw.seq === "number" && Number.isFinite(raw.seq) ? raw.seq : undefined;
-    if (type === "tool_status" && isHiddenCanvasWriteToolStatusPart(raw.event)) return [];
-    if (type === "text") {
-      const text = typeof raw.text === "string" ? raw.text : "";
-      return text ? [{ id, type: "text", text, ...(seq == null ? {} : { seq }) }] : [];
-    }
-    if (
-      type === "skill_studio" ||
-      type === "clarification" ||
-      type === "canvas_approval" ||
-      type === "canvas_feedback" ||
-      type === "canvas_context" ||
-      type === "tool_status" ||
-      type === "agent_plan" ||
-      type === "agent_thought" ||
-      type === "agent_usage"
-    ) {
-      return [{ id, type, event: raw.event, ...(seq == null ? {} : { seq }) }];
-    }
-    return [];
+  const parts = rawParts.flatMap((part, index) => {
+    const normalized = normalizeMessagePart(part, index);
+    return normalized ? [normalized] : [];
   });
   return parts.length > 0 ? parts : undefined;
 }

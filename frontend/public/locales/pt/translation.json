@@ -1,6 +1,5 @@
 {
   "chatSnapshot": {
-    "saveFailed": "Não foi possível salvar o histórico do chat. Tente novamente mais tarde; a mensagem atual continua disponível localmente.",
     "historyIncomplete": "Parte do histórico desta conversa é grande demais para ser carregada por completo. O texto das mensagens continua disponível. Peça a um administrador para compactar o histórico."
   },
   "workflowDraftContinuation": {
@@ -791,6 +790,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "Compactando o contexto…",
+    "contextCompacted": "Contexto compactado para a conversa continuar",
     "directorRunMode": {
       "manualLabel": "Modo manual",
       "manualDescription": "Confirmar cada etapa de geração antes da execução",
@@ -842,6 +843,8 @@
     "emptyTitle": "Iniciar uma conversa",
     "emptyDescription": "Pergunte sobre o progresso do projeto, tarefas que falharam ou peça ao assistente para organizar o seu plano criativo.",
     "syncingHistoryTitle": "A iniciar conversa",
+    "loadEarlierMessages": "Carregar mensagens anteriores",
+    "loadingEarlierMessages": "Carregando mensagens anteriores…",
     "syncingHistoryDescription": "A ligar ao Xia Director e a sincronizar o histórico da conversa. Aguarde.",
     "disclaimer": "O Xia Director pode cometer erros. Verifique os principais detalhes da história, das personagens e dos recursos.",
     "placeholder": "Depois de enviar um guião, peça ao Xia Director para avançar com os episódios, os elementos visuais, o áudio ou o vídeo final",
@@ -994,6 +997,19 @@
         "instrumental": "Instrumental",
         "vocalsAllowed": "Vozes permitidas",
         "continue": "Continuar com a voz selecionada"
+      },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "Eliminar nós",
+          "clear_canvas": "Limpar a área de trabalho",
+          "paid_generation": "Executar geração"
+        },
+        "separator": ", ",
+        "credits": "A confirmação irá consumir créditos.",
+        "expiresIn": "Válido por {{minutes}} min",
+        "confirm": "Confirmar",
+        "refuse": "Cancelar",
+        "failed": "A ação falhou. Tente novamente."
       },
       "canvasExecuting": "A executar...",
       "canvasConfirmedExecuting": "Parâmetros confirmados. A execução está em curso; não é necessária nova confirmação.",

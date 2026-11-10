@@ -800,7 +800,7 @@ class DirectorAutoCoordinator:
         # A user-driven turn and a durable continuation share the same project
         # lock. Wait instead of treating ordinary chat activity as auto failure.
         for _ in range(120):
-            if not chat_service.chat_run_lock_is_active(run.username, run.project_id):
+            if not await chat_service.active_chat_turn(run.username, run.project_id):
                 break
             latest = await asyncio.to_thread(self.store.get, run.username, run.project_id)
             if latest is None or latest.status != "running":
@@ -850,6 +850,7 @@ class DirectorAutoCoordinator:
                 "\n[/DRAMACLAW_VOICE_POLICY]"
             )
         turn_id = f"director-auto-{run.run_id}-{uuid.uuid4().hex[:10]}"
+        scope = {"kind": "project", "id": run.project_id, "surface": "director"}
         saw_write = False
 
         async def on_event(event: dict[str, Any]) -> None:
@@ -864,12 +865,30 @@ class DirectorAutoCoordinator:
                     project_id=run.project_id,
                     payload={
                         "type": "assistant.message",
-                        "scope": {"kind": "project", "id": run.project_id, "surface": "director"},
+                        "scope": scope,
                         "turn_id": turn_id,
                         "message": event["message"],
                     },
                 )
+            elif event.get("type") in {"item", "item_delta"}:
+                event_type = event["type"]
+                fields = (
+                    ("message_id", "item_id", "card")
+                    if event_type == "item"
+                    else ("message_id", "item_id", "kind", "offset", "text")
+                )
+                await broadcast_project_chat_event(
+                    username=run.username,
+                    project_id=run.project_id,
+                    payload={
+                        "type": "chat.item" if event_type == "item" else "chat.item.delta",
+                        "scope": scope,
+                        "turn_id": turn_id,
+                        **{key: event[key] for key in fields},
+                    },
+                )
 
+        turn_busy = False
         try:
             await chat_service.stream_assistant_reply(
                 run.username,
@@ -882,8 +901,8 @@ class DirectorAutoCoordinator:
                 turn_id=turn_id,
                 route_prompt="自动继续下一步",
             )
-            return saw_write
         except Exception as exc:  # noqa: BLE001
+            turn_busy = isinstance(exc, chat_service.ChatTurnBusyError)
             logger.exception("director auto continuation failed project=%s", run.project_id)
             await self._pause_owned(
                 run_id=run.run_id,
@@ -891,8 +910,22 @@ class DirectorAutoCoordinator:
                 project_id=run.project_id,
                 reason=str(exc),
             )
-            await self._notify(run, "本集自动已暂停：虾导继续执行失败，请检查服务状态后重试。")
-            return False
+        else:
+            return saw_write
+        finally:
+            if not turn_busy:
+                await broadcast_project_chat_event(
+                    username=run.username,
+                    project_id=run.project_id,
+                    payload={
+                        "type": "chat.done",
+                        "scope": scope,
+                        "turn_id": turn_id,
+                        "message": None,
+                    },
+                )
+        await self._notify(run, "本集自动已暂停：虾导继续执行失败，请检查服务状态后重试。")
+        return False
 
     async def _run(self, run_id: str, username: str, project_id: str) -> None:
         taskless_continuations = 0
@@ -1030,7 +1063,7 @@ class DirectorAutoCoordinator:
 
             activated_age = max(0.0, datetime.now(timezone.utc).timestamp() - _timestamp(run.activated_at))
             if not pending_new and activated_age >= INITIAL_GRACE_SECONDS:
-                if chat_service.chat_run_lock_is_active(username, project_id):
+                if await chat_service.active_chat_turn(username, project_id):
                     await asyncio.sleep(POLL_SECONDS)
                     continue
                 if taskless_continuations >= 3:

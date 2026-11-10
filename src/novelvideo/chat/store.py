@@ -1314,6 +1314,125 @@ class ChatStore:
         )
         return messages
 
+    async def history_rows_async(
+        self,
+        username: str,
+        scope: ChatScope,
+        *,
+        lower_id: int | None,
+        upper_id: int | None,
+        limit: int,
+        max_bytes: int,
+    ) -> tuple[list[dict], bool]:
+        clauses = ["role NOT IN ('trace', 'agent_notification')"]
+        params: list[Any] = []
+        if lower_id is not None:
+            clauses.append("id >= ?")
+            params.append(lower_id)
+        if upper_id is not None:
+            clauses.append("id < ?")
+            params.append(upper_id)
+        where = " AND ".join(clauses)
+        db = await self.connect_async(username, scope, db_path=self.read_db_for(username, scope))
+        try:
+            async with db.execute(
+                "SELECT id, length(CAST(content AS BLOB)) "
+                "+ length(CAST(COALESCE(media_json, '') AS BLOB)) "
+                "+ length(CAST(COALESCE(metadata_json, '') AS BLOB)) AS size "
+                "FROM chat_messages WHERE " + where + " ORDER BY id DESC LIMIT ?",
+                [*params, limit + 1],
+            ) as cursor:
+                candidates = await cursor.fetchall()
+            kept_ids, total = [], 0
+            for row in candidates:
+                if len(kept_ids) >= limit or (kept_ids and total + row["size"] > max_bytes):
+                    break
+                kept_ids.append(row["id"])
+                total += row["size"]
+            overflow = len(kept_ids) < len(candidates)
+            rows = []
+            if kept_ids:
+                async with db.execute(
+                    "SELECT id, role, content, media_json, turn_id, metadata_json, "
+                    "idempotency_key, created_at FROM chat_messages WHERE "
+                    + where + " AND id BETWEEN ? AND ? ORDER BY id",
+                    [*params, kept_ids[-1], kept_ids[0]],
+                ) as cursor:
+                    rows = await cursor.fetchall()
+        finally:
+            await db.close()
+        messages = []
+        for row in rows:
+            message = self._message_from_row(row)
+            message.update(message.pop("metadata", {}))
+            message["idempotency_key"] = row["idempotency_key"]
+            messages.append(message)
+        return messages, overflow
+
+    async def history_anchor_id_async(
+        self, username: str, scope: ChatScope, *, turn_id: str, created_at: str
+    ) -> int | None:
+        db = await self.connect_async(username, scope, db_path=self.read_db_for(username, scope))
+        try:
+            async with db.execute(
+                "SELECT COALESCE("
+                "(SELECT MIN(id) FROM chat_messages WHERE role='user' AND turn_id=?), "
+                "(SELECT MIN(id) FROM chat_messages WHERE created_at >= ?))",
+                (turn_id, created_at),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row[0]
+        finally:
+            await db.close()
+
+    async def ui_event_turn_ids_async(
+        self, username: str, scope: ChatScope, *, event_type: str, bridge_key: str
+    ) -> list[str]:
+        db = await self.connect_async(username, scope, db_path=self.read_db_for(username, scope))
+        try:
+            async with db.execute(
+                "SELECT turn_id FROM chat_ui_events WHERE event_type = ? AND "
+                "json_extract(payload_json, '$.bridge_key') = ? "
+                "GROUP BY turn_id ORDER BY MIN(id)",
+                (event_type, bridge_key),
+            ) as cursor:
+                return [row["turn_id"] for row in await cursor.fetchall()]
+        finally:
+            await db.close()
+
+    async def turn_ui_events_async(
+        self, username: str, scope: ChatScope, turn_ids, *, max_bytes: int = UI_HISTORY_MAX_BYTES
+    ) -> dict[str, list[dict]]:
+        db = await self.connect_async(username, scope, db_path=self.read_db_for(username, scope))
+        try:
+            result = {}
+            total = max_bytes
+            for turn_id in dict.fromkeys(turn_ids):
+                budget = min(total, UI_TURN_MAX_BYTES)
+                events, incomplete, counts = [], False, {True: 0, False: 0}
+                async with db.execute(
+                    """SELECT id, turn_id, event_type, created_at,
+                              length(CAST(payload_json AS BLOB)) AS size,
+                              CASE WHEN length(CAST(payload_json AS BLOB)) <= ?
+                                   THEN payload_json END AS payload_json
+                         FROM chat_ui_events
+                        WHERE turn_id=? AND event_type != 'assistant.message_parts'
+                        ORDER BY id DESC LIMIT ?""",
+                    (min(UI_EVENT_MAX_BYTES, budget), turn_id, self._ui_event_row_limit()),
+                ) as cursor:
+                    while (row := await cursor.fetchone()) is not None:
+                        event = self._bounded_event(row, budget)
+                        if event is None or self._row_cap_reached(row, counts):
+                            incomplete = True
+                            break
+                        events.append(event)
+                        budget -= row["size"]
+                        total -= row["size"]
+                result[turn_id] = self._finish_ui_events(events, incomplete)
+            return result
+        finally:
+            await db.close()
+
     async def history_contents_async(
         self,
         username: str,

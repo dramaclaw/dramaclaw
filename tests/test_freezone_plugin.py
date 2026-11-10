@@ -1514,7 +1514,16 @@ def test_recommended_model_switch_replaces_stale_options_before_generation(monke
     )
     monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
 
-    def request(_method, path, **_kwargs):
+    def request(method, path, **kwargs):
+        if path.endswith("/confirmations"):
+            assert method == "POST"
+            captured.update(kwargs["body"])
+            return {"ok": True, "data": {
+                "confirmation_id": "cc_" + "a" * 32, "kinds": ["paid_generation"],
+                "targets": [{"node_id": "existing-image", "title": "Portrait",
+                             "node_type": "imageGenNode", "action": "generate_image"}],
+                "expires_at": 1900001800.0, "browser_open": False,
+            }}
         if "/canvases/" in path:
             return {"ok": True, "data": {"nodes": [existing], "edges": []}}
         return {"ok": True, "data": [catalog]}
@@ -1522,7 +1531,7 @@ def test_recommended_model_switch_replaces_stale_options_before_generation(monke
     monkeypatch.setattr(plugin, "_request", request)
     monkeypatch.setattr(
         plugin, "_dispatch_mcp_approved_frontend_commands",
-        lambda **kwargs: captured.update(kwargs) or "dispatched",
+        lambda **_kwargs: pytest.fail("paid generation must wait for confirmation"),
     )
     commands = [
         {"type": "update_node_data", "node_id": "existing-image",
@@ -1535,7 +1544,7 @@ def test_recommended_model_switch_replaces_stale_options_before_generation(monke
         "project-a", "canvas-a", commands, allow_dynamic_workflow_batch=True,
     )
 
-    assert result == "dispatched"
+    assert result["status"] == "confirmation_required"
     assert captured["commands"][0]["data"] == {
         "model": "LingShan-G2", "aspectRatio": "9:16",
         "size": "1K", "quality": "medium",

@@ -1,11 +1,12 @@
 """Small Codex wire models for the chat session protocol."""
 
-from typing import Iterable, Literal
+from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 THREAD_REVERT = "thread/revert"
 THREAD_TURNS_LIST = "thread/turns/list"
+THREAD_ITEMS_LIST = "thread/items/list"
 # Codex middle-truncates entry values above its 1000-token budget at 4 bytes per token.
 ADDITIONAL_CONTEXT_VALUE_BYTES = 4000
 
@@ -78,19 +79,52 @@ class ThreadRevertResponse(CodexThreadResponse):
     turns_backwards_cursor: str | None = Field(alias="turnsBackwardsCursor")
 
 
-class CodexTurnRef(_WireModel):
+class CodexTurn(_WireModel):
     id: str
     status: str
+    error: dict[str, Any] | None = None
+    started_at: int | None = Field(default=None, alias="startedAt")
+    completed_at: int | None = Field(default=None, alias="completedAt")
 
 
-class ThreadTurnIdsPage(_WireModel):
-    """An id-only view of thread/turns/list used to find the turn to revert to.
+class ThreadTurnsPage(_WireModel):
+    """Turn metadata from thread/turns/list read with itemsView: "notLoaded".
 
-    Full turn/item history models are deliberately not defined here.
+    The items of each turn come from thread/items/list.
     """
 
-    data: list[CodexTurnRef]
+    data: list[CodexTurn]
     next_cursor: str | None = Field(alias="nextCursor")
+
+
+class CodexItemRecord(_WireModel):
+    turn_id: str = Field(alias="turnId")
+    item: dict[str, Any]
+    started_at_ms: int | None = Field(default=None, alias="startedAtMs")
+    completed_at_ms: int | None = Field(default=None, alias="completedAtMs")
+
+
+class ThreadItemsPage(_WireModel):
+    data: list[CodexItemRecord]
+    next_cursor: str | None = Field(alias="nextCursor")
+
+
+def newest_turns_params(
+    thread_id: str, *, limit: int, cursor: str | None = None
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"threadId": thread_id, "itemsView": "notLoaded", "limit": limit}
+    if cursor is not None:
+        params["cursor"] = cursor
+    return params
+
+
+def turn_items_params(
+    thread_id: str, turn_id: str, *, limit: int, cursor: str | None = None
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"threadId": thread_id, "turnId": turn_id, "limit": limit}
+    if cursor is not None:
+        params["cursor"] = cursor
+    return params
 
 
 def thread_revert_params(thread_id: str, before_turn_id: str) -> dict[str, str]:

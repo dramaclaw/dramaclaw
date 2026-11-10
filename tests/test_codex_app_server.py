@@ -1,8 +1,10 @@
+import asyncio
 from pathlib import Path
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import gzip
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -19,6 +21,7 @@ from novelvideo.chat.backend_sdk import (
     _start_or_resume_codex_thread,
     control_codex_runtime,
 )
+from novelvideo.freezone.agent_canvas_metrics import metrics_snapshot
 
 
 def _integration_codex_binary() -> Path:
@@ -84,6 +87,7 @@ def test_control_rpc_uses_shared_app_server_for_lifecycle(monkeypatch, tmp_path)
         yield SimpleNamespace(_client=FakeClient())
 
     monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(codex_app_server, "attach_shared_codex", fake_shared_codex, raising=False)
     common = {
         "codex_bin": tmp_path / "codex",
         "cwd": tmp_path,
@@ -1089,6 +1093,8 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
         for member in tool.get("tools") or []
     }
     expected_execution_tools = {
+        "freezone_cancel_canvas_action",
+        "freezone_confirm_canvas_action",
         "freezone_confirm_workflow_draft",
         "freezone_get_canvas_ontology",
         "freezone_get_node_action_catalog",
@@ -1351,7 +1357,7 @@ async def test_public_patched_runtime_clear_keeps_thread_without_prior_history(
     monkeypatch, tmp_path
 ):
     from openai_codex import CodexConfig
-    from novelvideo.chat.codex_protocol import ThreadTurnIdsPage
+    from novelvideo.chat.codex_protocol import ThreadTurnsPage
 
     codex_bin = _contract_codex_bin()
     scripted = [
@@ -1405,7 +1411,7 @@ async def test_public_patched_runtime_clear_keeps_thread_without_prior_history(
             ) == "reverted"
             with codex_app_server.shared_codex(config) as codex:
                 page = codex._client.request(
-                    "thread/turns/list", {"threadId": thread_id}, response_model=ThreadTurnIdsPage
+                    "thread/turns/list", {"threadId": thread_id}, response_model=ThreadTurnsPage
                 )
             assert page.data == []
             third = [
@@ -1615,14 +1621,57 @@ async def test_real_gateway_app_server_native_tool_search_calls_concrete_mcp(
     )
 
 
-def test_codex_native_approval_handler_fails_closed():
-    assert codex_app_server._deny_unexpected_approval(
-        "item/commandExecution/requestApproval", {"command": "echo unsafe"}
-    ) == {"decision": "decline"}
-    assert codex_app_server._deny_unexpected_approval(
-        "item/fileChange/requestApproval", {"changes": []}
-    ) == {"decision": "decline"}
-    assert codex_app_server._deny_unexpected_approval("unknown/request", {}) == {}
+@pytest.mark.parametrize("params", [None, {"input": "do-not-log"}])
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    [
+        ("item/permissions/requestApproval", {"permissions": {}, "scope": "turn"}),
+        (
+            "mcpServer/elicitation/request",
+            {"action": "decline", "content": None, "_meta": None},
+        ),
+        ("item/tool/requestUserInput", {"answers": {}}),
+        (
+            "item/tool/call",
+            {
+                "contentItems": [
+                    {
+                        "type": "inputText",
+                        "text": "DramaClaw does not run client-side dynamic tools.",
+                    }
+                ],
+                "success": False,
+            },
+        ),
+        ("unknown/request", {}),
+    ],
+)
+def test_codex_native_approval_handler_fails_closed(method, params, expected):
+    assert codex_app_server._refuse_server_request(method, params) == expected
+
+
+def test_codex_server_request_refusals_are_logged_and_counted(caplog):
+    before = metrics_snapshot()
+    with caplog.at_level(logging.WARNING, logger=codex_app_server.__name__):
+        codex_app_server._refuse_server_request(
+            "item/permissions/requestApproval", {"input": "do-not-log"}
+        )
+        codex_app_server._refuse_server_request("vendor/secret", {"input": "do-not-log"})
+    after = metrics_snapshot()
+
+    listed_key = "codex_server_request_refused.item/permissions/requestApproval"
+    unlisted_key = "codex_server_request_refused.unlisted"
+    assert after.get(listed_key, 0) - before.get(listed_key, 0) == 1
+    assert after.get(unlisted_key, 0) - before.get(unlisted_key, 0) == 1
+    secret_key = "codex_server_request_refused.vendor/secret"
+    assert after.get(secret_key, 0) - before.get(secret_key, 0) == 0
+    records = [record for record in caplog.records if record.name == codex_app_server.__name__]
+    assert [record.getMessage() for record in records] == [
+        "codex_server_request_refused method=item/permissions/requestApproval listed=true",
+        "codex_server_request_refused method=vendor/secret listed=false",
+    ]
+    assert all(record.levelno == logging.WARNING for record in records)
+    assert all("do-not-log" not in str(record.__dict__) for record in caplog.records)
 
 
 def test_shared_codex_private_sdk_bridge_is_compatible(monkeypatch, tmp_path):
@@ -1860,16 +1909,27 @@ async def test_codex_stream_maps_structured_runtime_events(monkeypatch, tmp_path
         "egress_submitted",
         "turn_started",
         "plan_update",
+        "item_delta",
         "thought_delta",
+        "item_started",
         "tool_started",
         "tool_updated",
         "usage_update",
+        "item_completed",
         "tool_updated",
+        "item_delta",
         "assistant_delta",
         "turn_completed",
         "egress_disposition",
         "complete",
     ]
+    assert [
+        (event.item_id, event.name, event.summary_index)
+        for event in events
+        if event.type == "item_delta"
+    ] == [("reasoning-1", "reasoning", 0), ("message-1", "text", None)]
+    assert [event.item_id for event in events if event.type == "item_started"] == ["call-1"]
+    assert [event.item_id for event in events if event.type == "item_completed"] == ["call-1"]
     plan = next(event for event in events if event.type == "plan_update")
     assert plan.entries == [{"status": "inProgress", "step": "List projects"}]
     thought = next(event for event in events if event.type == "thought_delta")
@@ -1887,6 +1947,77 @@ async def test_codex_stream_maps_structured_runtime_events(monkeypatch, tmp_path
     assert turn_completed.status == "completed"
     assert turn_completed.raw["method"] == "turn/completed"
     assert events[-1].text == "Done"
+
+
+@pytest.mark.asyncio
+async def test_codex_stream_cancellation_detaches_without_interrupt(monkeypatch, tmp_path):
+    from openai_codex import TurnHandle
+
+    requests = []
+    closed = threading.Event()
+    streaming = asyncio.Event()
+
+    class FakeClient:
+        def register_turn_notifications(self, turn_id):
+            pass
+
+        def unregister_turn_notifications(self, turn_id):
+            pass
+
+        def next_turn_notification(self, turn_id):
+            closed.wait(timeout=0.25)
+            raise RuntimeError("app-server closed stdout")
+
+        def turn_interrupt(self, thread_id, turn_id):
+            requests.append(("turn/interrupt", {"threadId": thread_id, "turnId": turn_id}))
+
+        def close(self):
+            closed.set()
+
+    client = FakeClient()
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield SimpleNamespace(_client=client)
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_or_resume_codex_thread",
+        lambda *args, **kwargs: SimpleNamespace(id="thread-detach"),
+    )
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_codex_turn",
+        lambda *args, **kwargs: TurnHandle(client, "thread-detach", "turn-detach"),
+    )
+    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
+    thread = CodexThread(
+        codex_bin=None,
+        cwd=tmp_path,
+        env={},
+        model="fake-model",
+        model_provider="fake-provider",
+        developer_instructions="",
+        config_overrides=(),
+        thread_config={},
+        turn_metadata={},
+        thread_id=None,
+    )
+
+    async def consume():
+        async for event in thread.stream("hello"):
+            if event.type == "thread_started":
+                streaming.set()
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(streaming.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=0.5)
+
+    assert requests == []
+    assert closed.is_set() is True
 
 
 @pytest.mark.asyncio
@@ -1939,7 +2070,6 @@ async def test_codex_stream_times_out_before_first_runtime_progress(
     )
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 0.05)
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 1.0)
     monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
 
     thread = CodexThread(
@@ -2056,7 +2186,6 @@ async def test_codex_stream_times_out_after_runtime_becomes_idle(monkeypatch, tm
     )
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.05)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 1.0)
     monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
 
     thread = CodexThread(
@@ -2082,8 +2211,20 @@ async def test_codex_stream_times_out_after_runtime_becomes_idle(monkeypatch, tm
 
 
 @pytest.mark.asyncio
-async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize(
+    ("tool_name", "tool_delay", "expected_disposition", "progress_delay"),
+    [
+        ("freezone_finish_agent_catalog_draft", 0.4, "completed", None),
+        ("freezone_create_node", 0.12, "completed", None),
+        ("freezone_create_node", 0.55, "timeout", None),
+        pytest.param(
+            "freezone_create_node", 0.14, "completed", 0.12,
+            id="canvas-deadline-must-not-shorten-later-idle-window",
+        ),
+    ],
+)
+async def test_codex_stream_tool_wait_deadlines(
+    monkeypatch, tmp_path, tool_name, tool_delay, expected_disposition, progress_delay
 ):
     from openai_codex.generated import v2_all as v2
     from openai_codex.models import Notification
@@ -2094,7 +2235,7 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
         "type": "mcpToolCall",
         "id": "call-confirm",
         "server": "dramaclaw",
-        "tool": "freezone_finish_agent_catalog_draft",
+        "tool": tool_name,
         "arguments": {"skill_studio_session_id": "studio-1"},
         "status": "inProgress",
     }
@@ -2138,7 +2279,17 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
                     }
                 ),
             )
-            delay.wait(timeout=0.1)
+            if progress_delay is not None:
+                delay.wait(timeout=progress_delay)
+                yield Notification(
+                    method="item/reasoning/summaryTextDelta",
+                    payload=v2.ReasoningSummaryTextDeltaNotification.model_validate({
+                        "threadId": "thread-confirm", "turnId": self.id,
+                        "itemId": "reasoning-confirm", "delta": "Still working",
+                        "summaryIndex": 0,
+                    }),
+                )
+            delay.wait(timeout=tool_delay)
             yield Notification(
                 method="item/completed",
                 payload=v2.ItemCompletedNotification.model_validate(
@@ -2196,8 +2347,18 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
         backend_sdk, "_start_codex_turn", lambda *_args, **_kwargs: FakeTurn()
     )
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.03)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 0.5)
+    monkeypatch.setattr(
+        backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.18 if progress_delay is not None else 0.03
+    )
+
+    monkeypatch.setattr(
+        backend_sdk, "canvas_command_result_timeout_seconds",
+        lambda: 0.15 if progress_delay is not None else 0.2, raising=False,
+    )
+    monkeypatch.setattr(
+        backend_sdk, "CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS",
+        0.05 if progress_delay is not None else 0.1, raising=False,
+    )
 
     thread = CodexThread(
         codex_bin=None,
@@ -2213,85 +2374,13 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
     )
     events = [event async for event in thread.stream("Create a skill")]
 
-    assert interrupt_calls == []
     assert events[-1].type == "complete"
-    assert events[-1].text == "已确认"
-    assert events[-2].type == "egress_disposition"
-    assert events[-2].disposition == "completed"
-
-
-@pytest.mark.asyncio
-async def test_codex_stream_enforces_total_deadline_despite_continuous_progress(
-    monkeypatch, tmp_path
-):
-    from openai_codex.generated import v2_all as v2
-    from openai_codex.models import Notification
-
-    released = threading.Event()
-    interrupt_calls = []
-    progress = Notification(
-        method="item/agentMessage/delta",
-        payload=v2.AgentMessageDeltaNotification.model_validate(
-            {
-                "threadId": "thread-total",
-                "turnId": "turn-total",
-                "itemId": "message-total",
-                "delta": ".",
-            }
-        ),
-    )
-
-    class FakeTurn:
-        id = "turn-total"
-
-        def stream(self):
-            while not released.wait(timeout=0.005):
-                yield progress
-
-        def interrupt(self):
-            interrupt_calls.append(self.id)
-            released.set()
-
-    class FakeThread:
-        id = "thread-total"
-
-    @contextmanager
-    def fake_shared_codex(_config):
-        yield object()
-
-    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
-    monkeypatch.setattr(
-        backend_sdk,
-        "_start_or_resume_codex_thread",
-        lambda *_args, **_kwargs: FakeThread(),
-    )
-    monkeypatch.setattr(
-        backend_sdk,
-        "_start_codex_turn",
-        lambda *_args, **_kwargs: FakeTurn(),
-    )
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 0.05)
-    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
-
-    thread = CodexThread(
-        codex_bin=None,
-        cwd=tmp_path,
-        env={},
-        model="DC-codex-agent-LLM",
-        model_provider="dramaclaw_gateway",
-        developer_instructions="Use DramaClaw MCP only.",
-        config_overrides=(),
-        thread_config={},
-        turn_metadata={},
-        thread_id=None,
-    )
-    events = [event async for event in thread.stream("Create workflow")]
-
-    assert interrupt_calls == ["turn-total"]
-    assert sum(event.type == "assistant_delta" for event in events) > 1
-    assert events[-3].error["kind"] == "total"
-    assert events[-2].disposition == "timeout"
-    assert events[-1].type == "complete"
-    assert events[-1].disposition == "timeout"
+    assert events[-2].disposition == expected_disposition
+    if expected_disposition == "completed":
+        assert events[-1].text == "已确认"
+        assert interrupt_calls == []
+    else:
+        assert events[-1].disposition == "timeout"
+        assert events[-3].error["kind"] == "idle"
+        assert events[-3].error["elapsed_ms"] >= 250
+        assert interrupt_calls == ["turn-confirm"]

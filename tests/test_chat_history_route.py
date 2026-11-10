@@ -1,0 +1,641 @@
+"""Merged history through the chat socket and the shared Codex runtime."""
+
+from unittest.mock import AsyncMock
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import replace
+from types import SimpleNamespace
+
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+from sse_starlette.sse import AppStatus
+from starlette.websockets import WebSocketDisconnect
+
+from codex_history_stub import HistoryClient
+from novelvideo.api.routes import chat as routes
+from novelvideo.chat import codex_app_server, service
+from novelvideo.chat.codex_history import (
+    HISTORY_CACHE,
+    CodexHistoryCache,
+    CodexHistoryUnavailable,
+)
+from novelvideo.chat.store import ChatScope, ChatStore
+
+
+class RecordingWebSocket:
+    def __init__(self):
+        self.frames = []
+
+    async def send_json(self, payload):
+        self.frames.append(payload)
+
+
+@pytest.fixture
+def store(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(service, "active_chat_turn", AsyncMock(return_value=None), raising=False)
+    return ChatStore()
+
+
+def install_reader(monkeypatch, count):
+    client, cache, calls = HistoryClient(count), CodexHistoryCache(), []
+
+    async def read(username, project, **kwargs):
+        calls.append((username, project, kwargs))
+        return cache.read_page(client, "thread-history-route", before=kwargs["before"])
+
+    monkeypatch.setattr(service, "read_codex_scope_history", read, raising=False)
+    return calls
+
+
+def append_users(store, scope, count):
+    return [store.append_message(
+        "alice", scope, "user", f"user{index}", turn_id=f"business-{index:04d}"
+    )["id"] for index in range(1, count + 1)]
+
+
+@pytest.mark.asyncio
+async def test_home_first_screen(store, monkeypatch):
+    scope = ChatScope(kind="home")
+    assert append_users(store, scope, 3) == [1, 2, 3]
+    calls = install_reader(monkeypatch, 3)
+    websocket = RecordingWebSocket()
+
+    assert await routes._send_scope_changed(
+        websocket, {"username": "alice"}, "alice", scope
+    ) == scope
+
+    assert len(websocket.frames) == 1
+    frame = websocket.frames[0]
+    assert set(frame) == {"type", "scope", "history", "before", "has_more", "busy", "turn_id"}
+    assert frame["type"] == "scope.changed"
+    assert frame["scope"] == {"kind": "home", "id": None}
+    assert [(m["id"], m["role"]) for m in frame["history"]] == [
+        (1, "user"), ("assistant:turn-0001", "assistant"),
+        (2, "user"), ("assistant:turn-0002", "assistant"),
+        (3, "user"), ("assistant:turn-0003", "assistant"),
+    ]
+    assert frame["before"] is None
+    assert frame["has_more"] is False
+    assert frame["busy"] is False
+    assert frame["turn_id"] is None
+    assert calls == [("alice", "", {
+        "agent_profile": "main", "canvas_id": None, "project_state_dir": None, "before": None,
+    })]
+
+
+def websocket_app(monkeypatch):
+    effects = []
+
+    async def authenticate(_websocket):
+        return {"username": "alice"}
+
+    async def reauthenticate(_websocket, *, original_user, **kwargs):
+        return original_user
+
+    async def register(*args, **kwargs):
+        effects.append("register")
+
+    async def sync(*args, **kwargs):
+        effects.append("sync")
+
+    async def prewarm(**kwargs):
+        effects.append("prewarm")
+
+    monkeypatch.setattr(routes, "_authenticate_ws", authenticate)
+    monkeypatch.setattr(routes, "_scope_for_authenticated_user", lambda _: ChatScope(kind="home"))
+    monkeypatch.setattr(routes, "_reauthenticate_ws_event", reauthenticate)
+    monkeypatch.setattr(routes, "register_chat_websocket", register)
+    monkeypatch.setattr(routes, "_sync_running_agent_scope", sync)
+    monkeypatch.setattr(routes, "_prewarm_chat_scope_if_available", prewarm)
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/api/v1")
+    return app, effects
+
+
+def test_websocket_history_pages_have_every_message_once(store, monkeypatch):
+    row_ids = append_users(store, ChatScope(kind="home"), 250)
+    install_reader(monkeypatch, 250)
+    app, effects = websocket_app(monkeypatch)
+    with TestClient(app).websocket_connect("/api/v1/chat/ws") as websocket:
+        first = websocket.receive_json()
+        assert first["type"] == "scope.changed"
+        assert sum(m["role"] == "assistant" for m in first["history"]) == 100
+        assert first["has_more"] is True
+        connect_effects = list(effects)
+        assert connect_effects == ["register"]
+        pages = [first]
+        while pages[-1]["has_more"]:
+            assert len(pages) < 5
+            websocket.send_json({
+                "type": "scope.set", "scope": {"kind": "home"},
+                "history_before": pages[-1]["before"],
+            })
+            frame = websocket.receive_json()
+            assert set(frame) == {"type", "scope", "history", "before", "has_more"}
+            assert frame["type"] == "history.page"
+            assert frame["scope"] == {"kind": "home"}
+            pages.append(frame)
+        assert effects == connect_effects
+    assert [sum(m["role"] == "assistant" for m in p["history"]) for p in pages] == [100, 100, 50]
+    ids = [m["id"] for page in pages for m in page["history"]]
+    assert len(ids) == len(set(ids)) == 500
+    assert set(ids) == set(row_ids) | {f"assistant:turn-{i:04d}" for i in range(1, 251)}
+    assert pages[-1]["before"] is None
+
+
+def test_invalid_cursor_keeps_socket_usable(store, monkeypatch, caplog):
+    install_reader(monkeypatch, 3)
+    app, effects = websocket_app(monkeypatch)
+    with caplog.at_level(logging.WARNING, logger=routes.__name__):
+        with TestClient(app).websocket_connect("/api/v1/chat/ws") as websocket:
+            assert websocket.receive_json()["type"] == "scope.changed"
+            websocket.send_json({
+                "type": "scope.set", "scope": {"kind": "home"}, "history_before": "x",
+            })
+            assert websocket.receive_json() == {
+                "type": "history.page", "scope": {"kind": "home"},
+                "history": [], "before": None, "has_more": False,
+            }
+            assert effects == ["register"]
+            websocket.send_json({"type": "scope.set", "scope": {"kind": "home"}})
+            assert websocket.receive_json()["type"] == "scope.changed"
+    warnings = [r.message for r in caplog.records if r.name == routes.__name__
+                and r.levelno == logging.WARNING]
+    assert warnings == ["Invalid history cursor scope=home cursor_length=1"]
+
+
+@pytest.mark.asyncio
+async def test_missing_project_page_and_disconnected_socket(store, monkeypatch):
+    async def missing(*args):
+        raise HTTPException(404, "missing")
+
+    monkeypatch.setattr(routes, "_project_context_for_scope", missing)
+    scope = ChatScope(kind="project", id="missing-project")
+    websocket = RecordingWebSocket()
+    assert await routes._send_history_page(
+        websocket, {"username": "alice"}, "alice", scope, "x"
+    ) is True
+    assert websocket.frames == [{
+        "type": "history.page", "scope": {"kind": "project", "id": "missing-project"},
+        "history": [], "before": None, "has_more": False,
+    }]
+
+    class Disconnected:
+        async def send_json(self, payload):
+            raise WebSocketDisconnect(code=1006)
+
+    assert await routes._send_history_page(
+        Disconnected(), {"username": "alice"}, "alice", scope, "x"
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_turn_stops_on_server_shutdown(monkeypatch):
+    run_turn = routes._run_turn_until_shutdown
+    monkeypatch.setattr(AppStatus, "should_exit", False)
+    monkeypatch.setattr(routes, "_SHUTDOWN_POLL_INTERVAL_SECONDS", 0.01)
+    running, cancelled, detached = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def turn():
+        running.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            await asyncio.sleep(0.01)
+            detached.set()
+            raise
+
+    task = asyncio.create_task(run_turn(turn()))
+    try:
+        await asyncio.wait_for(running.wait(), timeout=2)
+        monkeypatch.setattr(AppStatus, "should_exit", True)
+        assert await asyncio.wait_for(task, timeout=2) == (True, None)
+        assert cancelled.is_set() is True
+        assert detached.is_set() is True
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_turn_result_and_exception_survive_shutdown_watch(monkeypatch):
+    run_turn = routes._run_turn_until_shutdown
+    monkeypatch.setattr(AppStatus, "should_exit", False)
+
+    async def finish():
+        await asyncio.sleep(0)
+        return "reply complete"
+
+    failure = RuntimeError("turn failed")
+
+    async def fail():
+        await asyncio.sleep(0)
+        raise failure
+
+    assert await asyncio.wait_for(run_turn(finish()), timeout=2) == (False, "reply complete")
+    with pytest.raises(RuntimeError, match="^turn failed$") as caught:
+        await asyncio.wait_for(run_turn(fail()), timeout=2)
+    assert caught.value is failure
+
+
+@pytest.mark.asyncio
+async def test_cancelled_shutdown_watch_cancels_turn(monkeypatch):
+    run_turn = routes._run_turn_until_shutdown
+    monkeypatch.setattr(AppStatus, "should_exit", False)
+    running, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def turn():
+        running.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    task = asyncio.create_task(run_turn(turn()))
+    try:
+        await asyncio.wait_for(running.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+        assert cancelled.is_set() is True
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["project", "freezone", "home"])
+async def test_chat_ws_returns_quietly_on_server_shutdown(store, monkeypatch, caplog, kind):
+    install_reader(monkeypatch, 0)
+    websocket_app(monkeypatch)
+    monkeypatch.setattr(AppStatus, "should_exit", False)
+    monkeypatch.setattr(routes, "_SHUTDOWN_POLL_INTERVAL_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr(routes, "_require_ai_assistant_access", AsyncMock())
+    running, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def turn(**kwargs):
+        running.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    class WebSocket(RecordingWebSocket):
+        client = None
+
+        async def accept(self):
+            pass
+
+        async def receive_json(self):
+            if running.is_set():
+                await asyncio.Future()
+            return {
+                "type": "chat.message", "text": "hello", "turn_id": "business-shutdown",
+                "scope": {"kind": kind, "id": "project-a" if kind != "home" else None},
+            }
+
+    monkeypatch.setattr(routes, "_stream_project_turn", turn)
+    monkeypatch.setattr(routes, "_stream_home_turn", turn)
+    websocket = WebSocket()
+    task = asyncio.create_task(routes.chat_ws(websocket))
+    try:
+        await asyncio.wait_for(running.wait(), timeout=2)
+        assert [frame["type"] for frame in websocket.frames] == ["scope.changed"]
+        frames_before_shutdown = list(websocket.frames)
+        monkeypatch.setattr(AppStatus, "should_exit", True)
+        assert await asyncio.wait_for(task, timeout=2) is None
+        assert cancelled.is_set() is True
+        assert websocket.frames == frames_before_shutdown
+        assert [record.message for record in caplog.records if record.levelno >= logging.ERROR] == []
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_kind", ["disconnect", "cancel", "return"])
+async def test_project_turn_survives_disconnect_without_false_completion(
+    store, monkeypatch, tmp_path, exit_kind
+):
+    scope = ChatScope(kind="project", id="project-a", surface="director")
+    ping_failed = asyncio.Event()
+    running = asyncio.Event()
+    finished = []
+    interrupts = []
+    attempted = []
+
+    async def context(*args):
+        return SimpleNamespace(
+            project_name="project-a", state_dir=tmp_path / "project-state",
+            output_dir=tmp_path / "output", project_id="project-a",
+            requester_user_id="test-user", requester_username="test-user", requester_principals=(),
+        )
+
+    @asynccontextmanager
+    async def egress(**kwargs):
+        yield None
+
+    async def never(*args, **kwargs):
+        await asyncio.Future()
+
+    async def stream(username, project, text, on_event, **kwargs):
+        await on_event({"type": "thread_started", "thread_id": "thread-a", "turn_id": "turn-a"})
+        running.set()
+        if exit_kind == "disconnect":
+            await ping_failed.wait()
+            # Let the real disconnect handling react before the turn finishes.
+            for _ in range(5):
+                await asyncio.sleep(0)
+            finished.append("Done")
+            await on_event({"type": "done", "message": {"role": "assistant", "content": "Done"}})
+        elif exit_kind == "cancel":
+            await asyncio.Future()
+
+    async def interrupt(*args, **kwargs):
+        interrupts.append("interrupted")
+
+    class WebSocket:
+        async def send_json(self, payload):
+            attempted.append(payload["type"])
+            if payload["type"] == "chat.ping":
+                ping_failed.set()
+            if ping_failed.is_set():
+                raise WebSocketDisconnect(code=1006)
+
+    real_heartbeat = routes._chat_heartbeat
+
+    async def heartbeat(*args, **kwargs):
+        await real_heartbeat(*args, **kwargs, interval_seconds=0)
+
+    monkeypatch.setattr(routes, "_project_context_for_scope", context)
+    monkeypatch.setattr(routes, "request_egress_scope", egress)
+    monkeypatch.setattr(routes, "_chat_heartbeat", heartbeat)
+    monkeypatch.setattr(service, "get_chat_backend_name", lambda: "codex")
+    monkeypatch.setattr(service, "stream_assistant_reply", stream)
+    monkeypatch.setattr(service, "interrupt_chat_turn", interrupt)
+    for name in (
+        "_receive_bridge_results_during_turn", "_watch_pending_canvas_commands",
+        "_watch_pending_canvas_context_requests", "_watch_pending_skill_studio_events",
+        "_watch_pending_clarification_events",
+    ):
+        monkeypatch.setattr(routes, name, never)
+    task = asyncio.create_task(routes._stream_project_turn(
+        websocket=WebSocket(), user={"username": "test-user"}, username="test-user",
+        scope=scope, text="hello", attachments=[], turn_id="business-a",
+    ))
+    await asyncio.wait_for(running.wait(), timeout=2)
+    if exit_kind == "cancel":
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+        assert "chat.done" not in attempted
+    else:
+        await asyncio.wait_for(task, timeout=2)
+        assert "chat.done" in attempted
+    if exit_kind == "disconnect":
+        assert ping_failed.is_set() is True
+        assert finished == ["Done"]
+    assert interrupts == []
+
+
+@pytest.mark.asyncio
+async def test_director_user_turn_and_history(store, monkeypatch, tmp_path):
+    scope = ChatScope(kind="project", id="project-id", surface="director")
+    project = SimpleNamespace(
+        project_name="project-name", state_dir=tmp_path / "project-state",
+        output_dir=tmp_path / "output", project_id="project-id",
+        requester_user_id="alice", requester_username="alice", requester_principals=(),
+    )
+
+    async def context(*args):
+        return project
+
+    @asynccontextmanager
+    async def egress(**kwargs):
+        yield None
+
+    async def never(*args, **kwargs):
+        await asyncio.Future()
+
+    async def stream(username, project, text, on_event, **kwargs):
+        assert kwargs["store_scope"] is None
+        await on_event({"type": "done", "message": {"role": "assistant", "content": "reply"}})
+
+    monkeypatch.setattr(routes, "_project_context_for_scope", context)
+    monkeypatch.setattr(routes, "request_egress_scope", egress)
+    monkeypatch.setattr(service, "get_chat_backend_name", lambda: "codex")
+    monkeypatch.setattr(service, "stream_assistant_reply", stream)
+    for name in (
+        "_chat_heartbeat", "_receive_bridge_results_during_turn",
+        "_watch_pending_canvas_commands", "_watch_pending_canvas_context_requests",
+        "_watch_pending_skill_studio_events", "_watch_pending_clarification_events",
+    ):
+        monkeypatch.setattr(routes, name, never)
+    await routes._stream_project_turn(
+        websocket=RecordingWebSocket(), user={"username": "alice"}, username="alice",
+        scope=scope, text="prompt context", user_text="user1", attachments=[],
+        turn_id="business-0001",
+    )
+    storage = replace(scope, id="project-name", state_dir=str(project.state_dir))
+    rows = store.list_messages("alice", storage)
+    assert [(m["id"], m["role"], m["content"], m["turn_id"], m["media"]) for m in rows] == [
+        (1, "user", "user1", "business-0001", []),
+    ]
+    assert (project.state_dir / "chat.db").exists()
+    calls = install_reader(monkeypatch, 1)
+    websocket = RecordingWebSocket()
+    await routes._send_scope_changed(websocket, {"username": "alice"}, "alice", scope)
+    assert [(m["id"], m["role"]) for m in websocket.frames[0]["history"]] == [
+        (1, "user"), ("assistant:turn-0001", "assistant"),
+    ]
+    assert calls == [("alice", "project-id", {
+        "agent_profile": "main", "canvas_id": None,
+        "project_state_dir": project.state_dir, "before": None,
+    })]
+
+
+@pytest.mark.asyncio
+async def test_service_without_backend_thread_or_runtime(store, monkeypatch, tmp_path):
+    monkeypatch.setattr(service, "get_chat_backend_name", lambda: "hermes")
+    assert await service.read_codex_scope_history("alice", "") is None
+    monkeypatch.setattr(service, "get_chat_backend_name", lambda: "codex")
+    assert await service.read_codex_scope_history("alice", "") is None
+    service._set_codex_thread_id("alice", "", "thread-history-route")
+    monkeypatch.setattr(service, "_codex_thread_runtime_options", lambda: None)
+    with pytest.raises(CodexHistoryUnavailable):
+        await service.read_codex_scope_history("alice", "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [RuntimeError("unavailable"), ValueError("bad cursor"),
+                                  CodexHistoryUnavailable("unavailable")])
+async def test_service_read_errors(store, monkeypatch, error):
+    monkeypatch.setattr(service, "get_chat_backend_name", lambda: "codex")
+    service._set_codex_thread_id("alice", "", "thread-history-route")
+    monkeypatch.setattr(service, "_codex_thread_runtime_options", lambda: {})
+
+    def fail(**kwargs):
+        raise error
+
+    monkeypatch.setattr(service, "read_codex_thread_history", fail, raising=False)
+    expected = ValueError if isinstance(error, ValueError) else CodexHistoryUnavailable
+    with pytest.raises(expected) as caught:
+        await service.read_codex_scope_history("alice", "", before="cursor")
+    if type(error) is RuntimeError:
+        assert caught.value.__cause__ is error
+    else:
+        assert caught.value is error
+
+
+@pytest.mark.asyncio
+async def test_service_reads_fixture_pages_through_runtime(store, monkeypatch, tmp_path):
+    monkeypatch.setattr(service, "get_chat_backend_name", lambda: "codex")
+    service._set_codex_thread_id(
+        "alice", "project-id", "thread-runtime-history", agent_profile="freezone:artist",
+        canvas_id="canvas-1", project_state_dir=tmp_path,
+    )
+    client = HistoryClient(101)
+
+    @contextmanager
+    def shared(config):
+        yield SimpleNamespace(_client=client)
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", shared)
+    monkeypatch.setattr(service, "_codex_thread_runtime_options", lambda: {
+        "codex_bin": tmp_path / "codex", "cwd": tmp_path, "env": {}, "config_overrides": (),
+    })
+    HISTORY_CACHE.invalidate("thread-runtime-history")
+    try:
+        first = await service.read_codex_scope_history(
+            "alice", "project-id", agent_profile="freezone:artist", canvas_id="canvas-1",
+            project_state_dir=tmp_path,
+        )
+        assert len(first.messages) == 100
+        assert first.messages[0]["id"] == "assistant:turn-0002"
+        last = await service.read_codex_scope_history(
+            "alice", "project-id", agent_profile="freezone:artist", canvas_id="canvas-1",
+            project_state_dir=tmp_path, before=first.before,
+        )
+        assert [(m["id"], m["content"]) for m in last.messages] == [
+            ("assistant:turn-0001", "reply-0001"),
+        ]
+        assert last.before is None
+    finally:
+        HISTORY_CACHE.invalidate("thread-runtime-history")
+
+
+@pytest.mark.asyncio
+async def test_clear_invalidates_cached_items_with_unchanged_probe(store, monkeypatch, tmp_path):
+    thread_id = "thread-clear-history"
+    service._set_codex_thread_id("alice", "", thread_id)
+    monkeypatch.setattr(service, "_clear_codex_thread_history", lambda _: "reverted")
+    client = HistoryClient(1)
+    HISTORY_CACHE.invalidate(thread_id)
+    try:
+        assert HISTORY_CACHE.read_page(client, thread_id).messages[0]["content"] == "reply-0001"
+        client.text_size = 3
+        assert await service.clear_codex_scope_thread("alice", "") == 1
+        assert HISTORY_CACHE.read_page(client, thread_id).messages[0]["content"] == "xxx"
+    finally:
+        HISTORY_CACHE.invalidate(thread_id)
+
+
+@pytest.mark.asyncio
+async def test_project_codex_item_frames(store, monkeypatch, tmp_path):
+    scope = ChatScope(kind="project", id="project-id", surface="director")
+    project = SimpleNamespace(
+        project_name="project-name", state_dir=tmp_path / "project-state",
+        output_dir=tmp_path / "output", project_id="project-id",
+        requester_user_id="test-user", requester_username="test-user", requester_principals=(),
+    )
+
+    async def context(*args):
+        return project
+
+    @asynccontextmanager
+    async def egress(**kwargs):
+        yield None
+
+    async def never(*args, **kwargs):
+        await asyncio.Future()
+
+    card = {"id": "m-1", "seq": 7, "type": "text", "text": ""}
+
+    async def stream(username, project, text, on_event, **kwargs):
+        await on_event({
+            "type": "item", "message_id": "assistant:turn-1", "item_id": "m-1", "card": card,
+        })
+        await on_event({
+            "type": "item_delta", "message_id": "assistant:turn-1", "item_id": "m-1",
+            "kind": "text", "offset": 0, "text": "hello",
+        })
+
+    monkeypatch.setattr(routes, "_project_context_for_scope", context)
+    monkeypatch.setattr(routes, "request_egress_scope", egress)
+    monkeypatch.setattr(service, "get_chat_backend_name", lambda: "codex")
+    monkeypatch.setattr(service, "stream_assistant_reply", stream)
+    for name in (
+        "_chat_heartbeat", "_receive_bridge_results_during_turn",
+        "_watch_pending_canvas_commands", "_watch_pending_canvas_context_requests",
+        "_watch_pending_skill_studio_events", "_watch_pending_clarification_events",
+    ):
+        monkeypatch.setattr(routes, name, never)
+    websocket = RecordingWebSocket()
+    await routes._stream_project_turn(
+        websocket=websocket, user={"username": "test-user"}, username="test-user",
+        scope=scope, text="hello", attachments=[], turn_id="business-1",
+    )
+    assert [f for f in websocket.frames if f["type"] in {"chat.item", "chat.item.delta"}] == [
+        {
+            "type": "chat.item",
+            "scope": {"kind": "project", "id": "project-id", "surface": "director"},
+            "turn_id": "business-1", "message_id": "assistant:turn-1",
+            "item_id": "m-1", "card": card,
+        },
+        {
+            "type": "chat.item.delta",
+            "scope": {"kind": "project", "id": "project-id", "surface": "director"},
+            "turn_id": "business-1", "message_id": "assistant:turn-1",
+            "item_id": "m-1", "kind": "text", "offset": 0, "text": "hello",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_changed_carries_running_business_turn(store, monkeypatch):
+    install_reader(monkeypatch, 0)
+    monkeypatch.setattr(service, "active_chat_turn", AsyncMock(
+        return_value=SimpleNamespace(turn_id="running-business")
+    ), raising=False)
+    socket = RecordingWebSocket()
+    await routes._send_scope_changed(socket, {"username": "alice"}, "alice", ChatScope(kind="home"))
+    assert socket.frames[0]["busy"] is True
+    assert socket.frames[0]["turn_id"] == "running-business"
+
+
+def test_chat_busy_carries_active_turn_id(store, monkeypatch):
+    install_reader(monkeypatch, 0)
+    app, _ = websocket_app(monkeypatch)
+
+    async def busy(*args, **kwargs):
+        raise service.ChatTurnBusyError(turn_id="running-business")
+
+    monkeypatch.setattr(routes, "_stream_home_turn", busy)
+    monkeypatch.setattr(routes, "_require_ai_assistant_access", AsyncMock())
+    with TestClient(app).websocket_connect("/api/v1/chat/ws") as socket:
+        assert socket.receive_json()["type"] == "scope.changed"
+        socket.send_json({"type": "chat.message", "text": "hello", "turn_id": "rejected-business"})
+        frame = socket.receive_json()
+        assert frame == {
+            "type": "chat.busy", "turn_id": "rejected-business",
+            "active_turn_id": "running-business", "scope": {"kind": "home", "id": None},
+            "message": "当前用户已有 AI 对话正在处理中，请稍后再试。",
+        }

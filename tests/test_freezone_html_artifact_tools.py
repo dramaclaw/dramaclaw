@@ -4,12 +4,11 @@ from test_freezone_plugin import _restore_tools_registry_modules as _restore_too
 
 def test_html_artifact_is_not_exposed_as_a_standalone_agent_tool():
     plugin = _load_plugin_module()
-    from novelvideo.chat import hermes_sdk, service
+    from novelvideo.chat import hermes_sdk
 
     tool_names = {name for name, _schema, _handler in plugin.TOOLS}
     assert 'freezone_html_artifact' not in tool_names
     assert not hermes_sdk._is_freezone_canvas_write_tool('freezone_html_artifact')
-    assert 'freezone_html_artifact' not in service._FREEZONE_CANVAS_WRITE_TOOLS
 
 
 def test_html_node_actions_keep_correct_read_write_classification():
@@ -35,7 +34,6 @@ def test_server_executor_routes_html_through_frontend(monkeypatch):
     monkeypatch.setattr(plugin, '_request', lambda method, path: {
         'ok': True, 'data': {'browser_open': True},
     })
-    monkeypatch.setattr(plugin, '_mcp_canvas_approval_enabled', lambda: False)
     dispatched = []
     monkeypatch.setattr(plugin, '_dispatch_mcp_approved_frontend_commands', lambda **k: dispatched.append(k) or {'ok':True})
     plugin._emit_canvas_commands('p','c',[{'type':'html_artifact','action':'create','title':'Hello','html':'hello'}])
