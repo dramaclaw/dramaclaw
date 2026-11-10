@@ -163,6 +163,7 @@ from novelvideo.freezone.agent_canvas import (
 from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
 from novelvideo.freezone.agent_canvas_metrics import count as count_canvas_metric
 from novelvideo.freezone.canvas_core_pool import CanvasCoreError
+from novelvideo.freezone.canvas_presence import canvas_browser_open
 from novelvideo.freezone.agent_bundle_store import (
     export_agent_bundle,
     install_agent_bundle,
@@ -17957,6 +17958,25 @@ async def _agent_canvas_host_value(handler, *args, **kwargs):
         return (await handler(*args, **kwargs))["data"]
     except HTTPException as exc:
         return {"error": {"message": str(exc.detail)}}
+
+
+@router.get(
+    "/projects/{project}/freezone/canvases/{canvas_id}/presence",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def get_canvas_presence(
+    project: str,
+    canvas_id: str,
+    user: dict = Depends(require_project_scope("projects:read")),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="viewer", require_home_node=False,
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    browser_open = await asyncio.to_thread(canvas_browser_open, state_dir, canvas_id)
+    return {"ok": True, "data": {"browser_open": browser_open}}
 
 
 @router.post(

@@ -7,7 +7,6 @@ import pytest
 
 from test_freezone_plugin import _load_plugin_module
 from test_freezone_plugin import _restore_tools_registry_modules as _restore_tools_registry_modules
-from novelvideo.freezone import canvas_command_bridge as bridge
 
 
 @pytest.fixture
@@ -35,6 +34,9 @@ def agent(monkeypatch, tmp_path):
         calls.append((method, path, kwargs.get("body")))
         if path == "/api/v1/config":
             return {"ok": True, "data": {"agent_canvas_executor": "server"}}
+        if path.endswith("/presence"):
+            assert method == "GET"
+            return {"ok": True, "data": {"browser_open": False}}
         assert method == "POST"
         if path.endswith("agent-context"):
             return {"ok": True, "data": context}
@@ -146,7 +148,15 @@ def test_host_commands_without_browser_fail_immediately(agent, monkeypatch, kind
 @pytest.mark.parametrize("external", [False, True])
 def test_host_commands_with_presence_use_existing_browser_dispatch(agent, monkeypatch, external):
     plugin, calls, _, directory = agent
-    bridge.touch_browser_presence("c", bridge_dir=directory)
+    original_request = plugin._request
+
+    def request(method, path, **kwargs):
+        if path.endswith("/presence"):
+            calls.append((method, path, None))
+            return {"ok": True, "data": {"browser_open": True}}
+        return original_request(method, path, **kwargs)
+
+    monkeypatch.setattr(plugin, "_request", request)
     monkeypatch.setattr(plugin, "_external_mcp_agent_enabled", lambda: external)
     monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_: None)
     monkeypatch.setattr(plugin, "wait_canvas_command_result", lambda *_, **__: {"ok": True})
@@ -198,10 +208,15 @@ def test_http_failures_preserve_server_code_and_message(agent, monkeypatch, read
 
 @pytest.mark.parametrize("fresh", [False, True])
 def test_server_host_required_response_uses_presence(agent, monkeypatch, fresh):
-    plugin, _, _, directory = agent
-    if fresh:
-        bridge.touch_browser_presence("c", bridge_dir=directory)
-    monkeypatch.setattr(plugin, "_request", lambda *_, **__: {"ok": True, "data": {"status": "host_required"}})
+    plugin, _, _, _ = agent
+
+    def request(method, path, **kwargs):
+        if path.endswith("/presence"):
+            assert method == "GET"
+            return {"ok": True, "data": {"browser_open": fresh}}
+        return {"ok": True, "data": {"status": "host_required"}}
+
+    monkeypatch.setattr(plugin, "_request", request)
     monkeypatch.setattr(plugin, "wait_canvas_command_result", lambda *_, **__: {"ok": True})
     result = plugin._server_apply_canvas_commands("p", "c", CREATE, slim_result=False)
     assert result["ok"] is fresh
@@ -334,3 +349,41 @@ def test_server_validation_failure_preserves_failed_receipt(agent, monkeypatch, 
     if not slim:
         assert result["receipt"] == receipt
     assert not list(directory.iterdir())
+
+
+@pytest.mark.parametrize("response", [
+    {"ok": False, "data": {"browser_open": True}},
+    {"ok": True, "data": {"browser_open": False}},
+    {"ok": True, "data": {"browser_open": 1}},
+    {"ok": True, "data": None},
+    None,
+    OSError("offline"),
+])
+def test_presence_request_failure_requires_browser(agent, monkeypatch, response):
+    plugin, calls, _, _ = agent
+
+    def request(method, path):
+        assert method == "GET"
+        assert path == "/api/v1/projects/p/freezone/canvases/c/presence"
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._canvas_browser_required_error("p", "c")
+    assert result["code"] == "canvas_browser_required"
+    assert result["message"] == "需要打开画布才能运行"
+    assert not calls
+
+
+def test_presence_request_quotes_project_and_canvas(agent, monkeypatch):
+    plugin, _, _, _ = agent
+    calls = []
+
+    def request(method, path):
+        calls.append((method, path))
+        return {"ok": True, "data": {"browser_open": True}}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    assert plugin._canvas_browser_required_error("p /?", "c /?") is None
+    assert calls == [("GET", "/api/v1/projects/p%20%2F%3F/freezone/canvases/c%20%2F%3F/presence")]

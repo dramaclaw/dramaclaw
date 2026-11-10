@@ -464,3 +464,55 @@ async def test_worker_error_status_message_and_outcome(setup, caplog, code, mess
     assert metrics_snapshot()[metric] == before + 1
     assert f"result={outcome}" in caplog.text
     assert canvas_store.read_canvas(root, "default") == stored
+
+
+@pytest.mark.parametrize("canvas_id", ["default", "missing"])
+def test_presence_route_reports_project_state_records(setup, canvas_id):
+    from novelvideo.freezone.canvas_presence import touch_canvas_presence
+
+    root, pool = setup
+    path = f"/projects/proj/freezone/canvases/{canvas_id}/presence"
+    client = client_for()
+    assert client.get(path).json() == {"ok": True, "data": {"browser_open": False}}
+    touch_canvas_presence(root, canvas_id, "sse-reader")
+    assert client.get(path).json() == {"ok": True, "data": {"browser_open": True}}
+    assert not pool.calls
+
+
+def test_presence_route_rejects_invalid_canvas_id(setup):
+    response = client_for().get("/projects/proj/freezone/canvases/invalid.canvas/presence")
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("scopes,project,status", [
+    ([], "proj", 403),
+    (["projects:read"], "other", 403),
+    (["projects:read"], "proj", 200),
+])
+def test_presence_route_requires_read_scope(setup, scopes, project, status):
+    user = {
+        **USER, "credential_kind": "agent_session", "scopes": scopes,
+        "current_scope_kind": "project", "current_project_id": project,
+    }
+    response = client_for(user).get("/projects/proj/freezone/canvases/default/presence")
+    assert response.status_code == status
+
+
+async def test_presence_route_scans_state_off_event_loop(setup, monkeypatch):
+    from novelvideo.freezone.canvas_presence import touch_canvas_presence
+
+    root, _ = setup
+    state = root / "state"
+    monkeypatch.setattr(routes, "_canvas_state_project_dir", lambda *_: state)
+    touch_canvas_presence(state, "default", "sse-reader")
+    loop_thread = threading.get_ident()
+    original_stat = type(root).stat
+
+    def stat(path, *args, **kwargs):
+        if "canvas_presence" in path.parts:
+            assert threading.get_ident() != loop_thread
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(root), "stat", stat)
+    response = await routes.get_canvas_presence("proj", "default", USER)
+    assert response == {"ok": True, "data": {"browser_open": True}}

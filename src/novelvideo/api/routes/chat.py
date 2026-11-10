@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import json
 import logging
@@ -63,7 +64,6 @@ from novelvideo.freezone.agent_canvas_config import canvas_patch_push_enabled
 from novelvideo.freezone.canvas_change_watch import canvas_change_watch_hub
 from novelvideo.freezone.canvas_changes import canvas_changes_dir, read_canvas_changes
 from novelvideo.freezone.canvas_command_bridge import (
-    touch_browser_presence,
     BRIDGE_PENDING_TTL_SECONDS,
     bridge_message_exists,
     claim_legacy_bridge_message,
@@ -78,6 +78,7 @@ from novelvideo.freezone.canvas_command_bridge import (
     resolve_skill_studio_result,
 )
 from novelvideo.freezone.canvas_command_watch import bridge_watch_hub
+from novelvideo.freezone.canvas_presence import remove_canvas_presence, touch_canvas_presence
 from novelvideo.freezone.canvas_store import read_canvas
 from novelvideo.freezone.agent_config_store import save_user_agent_config_item
 from novelvideo.freezone.agent_product_operations import AGENT_PRODUCT_PRICE_REFERENCE
@@ -2712,8 +2713,9 @@ def _collect_pending_canvas_commands(
                 continue
             seen_bridge_dirs.add(marker)
             bridge_targets.append((agent_id, bridge_dir))
-    for _agent_id, bridge_dir in bridge_targets:
-        touch_browser_presence(canvas_id, bridge_dir=bridge_dir)
+    if project_state_dir is not None and consumer_id is None:
+        subscriber_id = "poll-" + hashlib.sha256(username.encode("utf-8")).hexdigest()[:16]
+        touch_canvas_presence(project_state_dir, canvas_id, subscriber_id)
     for agent_id, bridge_dir in bridge_targets:
         try:
             if hub is None:
@@ -2910,11 +2912,12 @@ async def stream_canvas_commands(
         return result
 
     targets = await hub.run(directories)
-    consumer = f"sse:{username}:{uuid.uuid4().hex}"
+    subscriber_id = "sse-" + uuid.uuid4().hex
+    consumer = f"sse:{username}:{subscriber_id}"
 
     def touch_presence():
-        for directory in targets:
-            touch_browser_presence(canvas_id, bridge_dir=directory)
+        if state_dir is not None:
+            touch_canvas_presence(state_dir, canvas_id, subscriber_id)
 
     async def change_frames():
         nonlocal cursor
@@ -2983,6 +2986,8 @@ async def stream_canvas_commands(
                         yield {"id": frame["bridge_key"], "data": json.dumps(frame)}
         finally:
             hub.metrics["sse_connections"] -= 1
+            if state_dir is not None:
+                await hub.run(remove_canvas_presence, state_dir, canvas_id, subscriber_id)
 
     return EventSourceResponse(
         events(),

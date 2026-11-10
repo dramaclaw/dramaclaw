@@ -180,13 +180,13 @@ async def test_timeout_recovers_save_when_change_watcher_never_wakes(scoped_canv
     monkeypatch.setattr(canvas_change_watch_hub(), "_watch", never_wake)
     monkeypatch.setattr(chat, "CANVAS_STREAM_IDLE_SECONDS", 0.05)
     touches = []
-    original_touch = chat.touch_browser_presence
+    original_touch = chat.touch_canvas_presence
 
     def touch(*args, **kwargs):
         touches.append(True)
         return original_touch(*args, **kwargs)
 
-    monkeypatch.setattr(chat, "touch_browser_presence", touch)
+    monkeypatch.setattr(chat, "touch_canvas_presence", touch)
     async with connected_stream() as iterator:
         pending = asyncio.create_task(next_frame(iterator))
         try:
