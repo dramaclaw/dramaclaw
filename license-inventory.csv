@@ -3631,6 +3631,7 @@ src/novelvideo/freezone/canvas_change_watch.py,Elastic-2.0,2026 SuperTale contri
 src/novelvideo/freezone/canvas_changes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_command_bridge.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_command_watch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/canvas_confirmations.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_core_pool.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_events.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_inline_media.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4132,6 +4133,7 @@ tests/test_canvas_change_stream.py,Elastic-2.0,2026 SuperTale contributors,REUSE
 tests/test_canvas_command_bridge.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_command_push.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_command_stream.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_canvas_confirmations.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_core_image.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_core_pool.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_inline_media.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
