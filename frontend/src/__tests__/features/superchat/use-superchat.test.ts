@@ -5848,6 +5848,67 @@ describe("useSuperChat websocket lifecycle", () => {
     expect(freezoneCanvasCommandExecutionModeForTest()).toBe("manual_confirm");
   });
 
+  it("assembles assistant.delta offset patches across masking, rewinds and redelivery", async () => {
+    class TestWebSocket {
+      static OPEN = 1;
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+
+      constructor() {
+        sockets.push(this);
+      }
+
+      send() {}
+      close() {}
+    }
+    const sockets: TestWebSocket[] = [];
+    Object.defineProperty(globalThis, "WebSocket", {
+      value: TestWebSocket,
+      writable: true,
+      configurable: true,
+    });
+
+    const hook = renderHook(() =>
+      useSuperChat({ project: "project-delta-patch", displayName: "Tester" }),
+    );
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0];
+    const scope = { kind: "project", id: "project-delta-patch" };
+    const delta = (offset: number, text: string) => ({
+      data: JSON.stringify({ type: "assistant.delta", scope, turn_id: "turn-patch", offset, text }),
+    }) as MessageEvent;
+    const replyText = () =>
+      hook.result.current.messages.find((item) => item.id === "assistant-turn-patch")?.text;
+
+    await act(async () => {
+      socket.onopen?.();
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "scope.changed", scope, history: [] }),
+      } as MessageEvent);
+      // A replayed prefix is shown, then withdrawn from offset 0.
+      socket.onmessage?.(delta(0, "这是上一轮"));
+    });
+    expect(replyText()).toBe("这是上一轮");
+
+    await act(async () => {
+      socket.onmessage?.(delta(0, ""));
+      socket.onmessage?.(delta(0, "路径 /Users/alice"));
+      // Path masking rewrites from the change point and shortens the text.
+      socket.onmessage?.(delta(3, "[本地路径] 已保存😀"));
+      // Offsets count UTF-16 units, so the emoji occupies two.
+      socket.onmessage?.(delta(15, "，好"));
+      // A redelivered frame lands on the same offset and changes nothing.
+      socket.onmessage?.(delta(15, "，好"));
+      socket.onmessage?.(delta(17, "了"));
+    });
+
+    expect(replyText()).toBe("路径 [本地路径] 已保存😀，好了");
+    hook.unmount();
+  });
+
   it("reconciles a partial stream from the final message carried by chat.done", async () => {
     const sentFrames: string[] = [];
     class TestWebSocket {
@@ -5891,8 +5952,8 @@ describe("useSuperChat websocket lifecycle", () => {
           type: "assistant.delta",
           scope,
           turn_id: "turn-identity",
+          offset: 0,
           text: "身份规划已完成，可直",
-          accumulated: true,
         }),
       } as MessageEvent);
       socket.onmessage?.({
@@ -7795,7 +7856,8 @@ it("keeps a turn that is still streaming on this connection busy across recovery
     const history = [{ id: "user-live", role: "user", turn_id: turnId, content: "keep running",
       created_at: new Date().toISOString() }];
     await sync("first", true, history);
-    await frame({ type: "assistant.delta", scope: scope("first"), turn_id: turnId, text: "partial reply" });
+    await frame({ type: "assistant.delta", scope: scope("first"), turn_id: turnId, offset: 0,
+      text: "partial reply" });
     await frame({ type: "assistant.clarification.event", scope: scope("first"), turn_id: turnId,
       bridge_key: "live-clarify", event: { type: "assistant.clarification.request",
         bridge_key: "live-clarify", clarification_id: "live", questions: [] } });

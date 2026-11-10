@@ -1090,6 +1090,24 @@ export function mergeHistorySnapshot(
   );
 }
 
+function isAssistantDeltaPatch(
+  frame: Extract<ServerFrame, { type: "assistant.delta" }>,
+): boolean {
+  return (
+    Number.isInteger(frame.offset)
+    && frame.offset >= 0
+    && typeof frame.text === "string"
+  );
+}
+
+/** Replace the reply from `offset` (UTF-16 units, i.e. JS string indices) with `text`. */
+function applyAssistantDelta(
+  previous: string,
+  frame: Extract<ServerFrame, { type: "assistant.delta" }>,
+): string {
+  return `${previous.slice(0, frame.offset)}${frame.text}`;
+}
+
 function upsertAssistantMessage(
   messages: ChatMessage[],
   turnId: string,
@@ -2020,6 +2038,7 @@ export function useSuperChat({
   const [busy, setBusy] = useState(() => Boolean(initialScopeSnapshot.activeTurnId));
   const [activeTurnId, setActiveTurnId] = useState<string | null>(initialScopeSnapshot.activeTurnId);
   const streamTextRef = useRef("");
+  const remoteStreamTextRef = useRef(new Map<string, string>());
   const activeThoughtPartByTurnRef = useRef<Map<string, string>>(new Map());
   const thoughtTextByPartRef = useRef<Map<string, string>>(new Map());
   const thoughtSegmentCountByTurnRef = useRef<Map<string, number>>(new Map());
@@ -2463,11 +2482,15 @@ export function useSuperChat({
         // state. This lifecycle frame carries runtime status for observability.
         break;
       case "assistant.delta": {
+        if (!isAssistantDeltaPatch(frame)) break;
         if (!frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
           const remoteScopeKey = frameScopeSessionKey(frame);
           const turnId = typeof frame.turn_id === "string" && frame.turn_id.trim() ? frame.turn_id : null;
-          const next = typeof frame.text === "string" ? frame.text : "";
-          if (remoteScopeKey && turnId && next.trim()) {
+          if (!remoteScopeKey || !turnId) break;
+          const streamKey = `${remoteScopeKey}\u0000${turnId}`;
+          const next = applyAssistantDelta(remoteStreamTextRef.current.get(streamKey) ?? "", frame);
+          remoteStreamTextRef.current.set(streamKey, next);
+          if (next.trim()) {
             closeActiveThoughtPart(turnId);
             updateCachedMessagesForScope(remoteScopeKey, (current) =>
               upsertAssistantMessage(current, turnId, next),
@@ -2476,8 +2499,6 @@ export function useSuperChat({
           }
           break;
         }
-        const next = typeof frame.text === "string" ? frame.text : "";
-        if (!next) break;
         if (
           typeof frame.turn_id === "string"
           && cancelledTurnIdsRef.current.has(frame.turn_id)
@@ -2485,9 +2506,7 @@ export function useSuperChat({
           break;
         }
         setBusy(true);
-        streamTextRef.current = frame.accumulated === false
-          ? `${streamTextRef.current}${next}`
-          : next;
+        streamTextRef.current = applyAssistantDelta(streamTextRef.current, frame);
         const turnId =
           pendingClientTurnIdRef.current
           ?? activeTurnIdRef.current
@@ -2510,7 +2529,10 @@ export function useSuperChat({
           const remoteScopeKey = frameScopeSessionKey(frame);
           const turnId = typeof frame.turn_id === "string" ? frame.turn_id : undefined;
           if (remoteScopeKey) {
-            if (turnId) closeActiveThoughtPart(turnId);
+            if (turnId) {
+              closeActiveThoughtPart(turnId);
+              remoteStreamTextRef.current.delete(`${remoteScopeKey}\u0000${turnId}`);
+            }
             updateCachedMessagesForScope(remoteScopeKey, (current) =>
               upsertServerAssistantMessage(current, frame.message, turnId, messageScope),
             );

@@ -46,6 +46,7 @@ from novelvideo.chat.hermes_workspace import (
     sync_freezone_hermes_workflow_skills,
 )
 from novelvideo.chat.store import ChatScope, ChatUiEventRejected, chat_store
+from novelvideo.chat.stream_delta import AssistantDeltaEncoder
 from novelvideo.chat.turn_images import referenced_image_paths
 from novelvideo.freezone.canvas_command_bridge import (
     BRIDGE_PENDING_TTL_SECONDS,
@@ -2193,6 +2194,25 @@ def _attachment_payloads(attachments: list[ChatAttachmentIn]) -> list[dict[str, 
     return payloads
 
 
+async def _send_assistant_delta(
+    websocket: WebSocket,
+    encoder: AssistantDeltaEncoder,
+    scope: ChatScope,
+    turn_id: str,
+    text: str,
+    send_lock: asyncio.Lock,
+) -> None:
+    """Send the `{offset, text}` patch that brings the client to ``text``."""
+    patch = encoder.encode(text)
+    if patch is None:
+        return
+    await _send_json_best_effort(
+        websocket,
+        {"type": "assistant.delta", "scope": scope.to_dict(), "turn_id": turn_id, **patch},
+        send_lock,
+    )
+
+
 def _should_emit_final_text(final_text: str, last_sent_text: str) -> bool:
     final = " ".join(str(final_text or "").split())
     last = " ".join(str(last_sent_text or "").split())
@@ -3473,6 +3493,7 @@ async def _stream_project_turn(
         await _send_json_best_effort(websocket, skill_studio_status, send_lock)
     done_sent = False
     assistant_sent_text = ""
+    delta_encoder = AssistantDeltaEncoder()
 
     async def on_event(event: dict[str, Any]) -> None:
         nonlocal assistant_sent_text, done_sent
@@ -3510,16 +3531,8 @@ async def _stream_project_turn(
             )
         elif event_type == "assistant_delta":
             assistant_sent_text = str(event.get("text") or "")
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.delta",
-                    "scope": scope.to_dict(),
-                    "text": assistant_sent_text,
-                    "turn_id": turn_id,
-                    "accumulated": True,
-                },
-                send_lock,
+            await _send_assistant_delta(
+                websocket, delta_encoder, scope, turn_id, assistant_sent_text, send_lock
             )
         elif event_type == "thought_delta":
             await _send_json_best_effort(
@@ -3640,16 +3653,8 @@ async def _stream_project_turn(
             final_text = _message_content(final_message)
             if _should_emit_final_text(final_text, assistant_sent_text):
                 assistant_sent_text = final_text
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.delta",
-                        "scope": scope.to_dict(),
-                        "text": final_text,
-                        "turn_id": turn_id,
-                        "accumulated": True,
-                    },
-                    send_lock,
+                await _send_assistant_delta(
+                    websocket, delta_encoder, scope, turn_id, final_text, send_lock
                 )
             done_sent = await _send_json_best_effort(
                 websocket,
@@ -3777,6 +3782,7 @@ async def _stream_home_turn_codex(
     )
     done_sent = False
     assistant_sent_text = ""
+    delta_encoder = AssistantDeltaEncoder()
 
     async def on_event(event: dict[str, Any]) -> None:
         nonlocal assistant_sent_text, done_sent
@@ -3814,16 +3820,8 @@ async def _stream_home_turn_codex(
             )
         elif event_type == "assistant_delta":
             assistant_sent_text = str(event.get("text") or "")
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.delta",
-                    "scope": scope.to_dict(),
-                    "text": assistant_sent_text,
-                    "turn_id": turn_id,
-                    "accumulated": True,
-                },
-                send_lock,
+            await _send_assistant_delta(
+                websocket, delta_encoder, scope, turn_id, assistant_sent_text, send_lock
             )
         elif event_type in {"thought_delta", "plan_update", "usage_update"}:
             payload = {
@@ -3877,16 +3875,8 @@ async def _stream_home_turn_codex(
             final_text = _message_content(message)
             if _should_emit_final_text(final_text, assistant_sent_text):
                 assistant_sent_text = final_text
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.delta",
-                        "scope": scope.to_dict(),
-                        "text": final_text,
-                        "turn_id": turn_id,
-                        "accumulated": True,
-                    },
-                    send_lock,
+                await _send_assistant_delta(
+                    websocket, delta_encoder, scope, turn_id, final_text, send_lock
                 )
             if isinstance(message, dict):
                 await _send_json_best_effort(
@@ -4046,6 +4036,7 @@ async def _stream_home_turn(
 
     assistant_text = ""
     assistant_sent_text = ""
+    delta_encoder = AssistantDeltaEncoder()
     tool_text = ""
     tool_name = ""
     persisted = False
@@ -4220,16 +4211,8 @@ async def _stream_home_turn(
                     ),
                 )
                 assistant_sent_text = display_text
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.delta",
-                        "scope": scope.to_dict(),
-                        "text": display_text,
-                        "turn_id": turn_id,
-                        "accumulated": True,
-                    },
-                    send_lock,
+                await _send_assistant_delta(
+                    websocket, delta_encoder, scope, turn_id, display_text, send_lock
                 )
             elif event.type == "thought_delta":
                 await _send_json_best_effort(
@@ -4344,16 +4327,8 @@ async def _stream_home_turn(
         assistant_sent_text = _message_content(message)
         if _should_emit_final_text(assistant_text, assistant_sent_text):
             assistant_sent_text = assistant_text
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.delta",
-                    "scope": scope.to_dict(),
-                    "text": assistant_text,
-                    "turn_id": turn_id,
-                    "accumulated": True,
-                },
-                send_lock,
+            await _send_assistant_delta(
+                websocket, delta_encoder, scope, turn_id, assistant_text, send_lock
             )
 
         after_projects = set(list_user_projects(username))

@@ -164,10 +164,11 @@ class _FakeThread:
     """Minimal ACP thread. `on_stream` runs *inside* an active turn, which is the
     only window in which the pool holds a live org slot (see C2-11)."""
 
-    def __init__(self, session_id: str, *, on_stream=None) -> None:
+    def __init__(self, session_id: str, *, on_stream=None, deltas=()) -> None:
         self.id = session_id
         self.closed = False
         self._on_stream = on_stream
+        self._deltas = list(deltas)
         self.gateway_api_keys: list[str | None] = []
 
     async def close(self) -> None:
@@ -196,6 +197,10 @@ class _FakeThread:
         )
         if self._on_stream is not None:
             await self._on_stream()
+        for delta in self._deltas:
+            yield SimpleNamespace(
+                type="assistant_delta", text=delta, thread_id=self.id, turn_id="turn-1"
+            )
         yield SimpleNamespace(
             type="complete",
             text="hermes says hello",
@@ -289,7 +294,9 @@ def harness(monkeypatch, tmp_path):
                 if fn is not None:
                     await fn()  # type: ignore[operator]
 
-            thread = _FakeThread(session_id, on_stream=_hook)
+            thread = _FakeThread(
+                session_id, on_stream=_hook, deltas=stream_hook.get("deltas") or ()
+            )
             threads.append(thread)
             return thread
 
@@ -754,6 +761,108 @@ def test_home_codex_uses_backend_neutral_service_without_hermes_worker(harness):
     assert captured["egress_project_id"] == HOME_SCOPE_EGRESS_PROJECT_ID
     assert captured["store_scope"] == ChatScope(kind="home")
     assert harness.envs == []
+
+
+def _assemble_assistant_deltas(frames: list[dict]) -> tuple[list[dict], str]:
+    """Rebuild the reply with the browser rule: keep `offset` UTF-16 units."""
+    deltas = [frame for frame in frames if frame.get("type") == "assistant.delta"]
+    text = ""
+    for frame in deltas:
+        kept = text.encode("utf-16-le")[: frame["offset"] * 2].decode("utf-16-le")
+        text = kept + frame["text"]
+    return deltas, text
+
+
+def test_home_codex_streams_offset_patches_with_linear_traffic(harness):
+    chunk = "x" * 50
+    snapshots = [chunk * (step + 1) for step in range(200)]
+    final_text = snapshots[-1]
+
+    async def fake_stream(username, project, prompt, on_event, **kwargs):
+        for snapshot in snapshots:
+            await on_event({"type": "assistant_delta", "text": snapshot})
+        message = {"id": 1, "role": "assistant", "content": final_text, "media": []}
+        await on_event({"type": "done", "message": message})
+        return message
+
+    harness.monkeypatch.setattr(
+        harness.chat_service, "get_chat_backend_name", lambda: "codex"
+    )
+    harness.monkeypatch.setattr(
+        harness.chat_service, "stream_assistant_reply", fake_stream
+    )
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+
+    frames = _send_home_turn(harness)
+
+    deltas, assembled = _assemble_assistant_deltas(frames)
+    assert len(deltas) == 200
+    assert sorted(deltas[0]) == ["offset", "scope", "text", "turn_id", "type"]
+    assert sum(len(frame["text"]) for frame in deltas) == 10_000
+    assert [frame["offset"] for frame in deltas[:3]] == [0, 50, 100]
+    assert assembled == final_text
+
+
+def test_home_codex_final_correction_is_a_patch_from_the_change_point(harness):
+    async def fake_stream(username, project, prompt, on_event, **kwargs):
+        await on_event({"type": "assistant_delta", "text": "路径 /Users/alice"})
+        await on_event({"type": "assistant_delta", "text": "路径 [本地路径] 已保存"})
+        message = {
+            "id": 1,
+            "role": "assistant",
+            "content": "路径 [本地路径] 已保存。",
+            "media": [],
+        }
+        await on_event({"type": "done", "message": message})
+        return message
+
+    harness.monkeypatch.setattr(
+        harness.chat_service, "get_chat_backend_name", lambda: "codex"
+    )
+    harness.monkeypatch.setattr(
+        harness.chat_service, "stream_assistant_reply", fake_stream
+    )
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+
+    frames = _send_home_turn(harness)
+
+    deltas, assembled = _assemble_assistant_deltas(frames)
+    assert [(frame["offset"], frame["text"]) for frame in deltas] == [
+        (0, "路径 /Users/alice"),
+        (3, "[本地路径] 已保存"),
+        (13, "。"),
+    ]
+    assert assembled == "路径 [本地路径] 已保存。"
+
+
+def test_home_hermes_replay_rewind_reassembles_to_the_final_text(harness):
+    from novelvideo.chat.store import chat_store
+
+    previous_answer = "这是上一轮的完整回答，内容足够长以便识别出来。"
+    chat_store.append_message(_USERNAME, ChatScope(kind="home"), "assistant", previous_answer)
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+    # Hermes replays the previous answer before the new one. The short replayed
+    # prefix is displayed, withdrawn once recognised, then the reply streams.
+    harness.stream_hook["deltas"] = [
+        "这是上一轮",
+        previous_answer[:17],
+        previous_answer,
+        previous_answer + "hermes",
+        previous_answer + "hermes says hello",
+    ]
+
+    frames = _send_home_turn(harness)
+
+    deltas, assembled = _assemble_assistant_deltas(frames)
+    assert [(frame["offset"], frame["text"]) for frame in deltas] == [
+        (0, "这是上一轮"),
+        (0, ""),
+        (0, "hermes"),
+        (6, " says hello"),
+    ]
+    assert assembled == "hermes says hello"
+    messages = [frame for frame in frames if frame.get("type") == "assistant.message"]
+    assert messages[-1]["message"]["content"] == "hermes says hello"
 
 
 def test_c2_09b_scope_does_not_leak_on_the_exception_path(harness):
