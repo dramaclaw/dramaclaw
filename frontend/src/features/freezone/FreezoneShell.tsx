@@ -1703,6 +1703,7 @@ export function FreezoneShell({
       });
       setChatOpen(true);
       window.setTimeout(() => emitCanvasCommandApproval({
+        serverApproved: "server_approved" in frame && frame.server_approved === true,
         canvasId,
         agentId,
         turnId,

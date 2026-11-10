@@ -226,9 +226,11 @@ import {
   shouldIncludeCanvasSummary,
 } from "@/features/freezone/chatNodeReferences";
 import {
+  canvasApprovalAppliesWithoutClick,
   visibleStructuredBlocksForMessage,
   type CanvasCommandExecutionMode,
 } from "@/features/superchat/canvas-command-display";
+import { CanvasConfirmationStack } from "@/features/superchat/canvas-confirmation-card";
 import { looksLikeCanvasExecutionNarration } from "@/features/superchat/canvas-execution-narration";
 import {
   filterFreezoneSkillSuggestions,
@@ -11209,6 +11211,7 @@ const CANVAS_APPROVAL_VIDEO_DURATION_MIN = 5;
 const CANVAS_APPROVAL_VIDEO_DURATION_MAX = 15;
 
 type PendingCanvasCommandApproval = {
+  serverApproved?: boolean;
   id: string;
   key: string;
   messageId: string;
@@ -13585,6 +13588,7 @@ export function SuperChatPanel({
       commandCount,
       plans: canvasCommandPlansFromEnvelopes(detail.envelopes),
       externalMcpCommand: detail.externalMcpCommand === true,
+      serverApproved: detail.serverApproved,
       requiresUserChoice: detail.requiresUserChoice === true,
     };
   }, [activeMessages, effectiveFreezoneCanvasId, freezoneAgentMatches, latestAssistantMessageId, variant]);
@@ -14373,8 +14377,8 @@ export function SuperChatPanel({
   }, [chat, t]);
 
   useEffect(() => {
-    if (canvasCommandExecutionMode !== "auto_execute") return;
     for (const approval of pendingCanvasCommandApprovals) {
+      if (!canvasApprovalAppliesWithoutClick(canvasCommandExecutionMode, approval.serverApproved)) continue;
       if (approval.requiresUserChoice) continue;
       // manual_ui 动作必须由用户主动确认。自动模式不能把“重试生成”擅自
       // 解释成“打开声线选择并改用自定义声线”。
@@ -16351,6 +16355,13 @@ export function SuperChatPanel({
               scope={isFreezoneLayout ? "canvas" : "project"}
             />
           ) : null}
+          {isFreezoneLayout && params.project && effectiveFreezoneCanvasId && effectiveFreezoneAgentId && (
+            <CanvasConfirmationStack
+              projectId={params.project}
+              canvasId={effectiveFreezoneCanvasId}
+              agentIds={[effectiveFreezoneAgentId]}
+            />
+          )}
           <div
             ref={composerShellRef}
             className={cn(

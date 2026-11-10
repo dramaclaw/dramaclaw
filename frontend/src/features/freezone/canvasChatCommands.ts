@@ -98,6 +98,7 @@ const VIDEO_COMPOSE_MIN_UPSTREAM_VIDEOS = 1;
 const VIDEO_COMPOSE_MIN_UPSTREAM_MEDIA = 2;
 
 export type CanvasCommandApprovalEventDetail = {
+  serverApproved?: boolean;
   canvasId?: string | null;
   agentId?: string | null;
   turnId?: string | null;
