@@ -72,18 +72,11 @@ async def test_cancelled_canvas_turn_settles_pending_clarification(
         "clarification_id": "clarify-a",
         "questions": [{"id": "image_model", "options": []}],
     }
-    appended = []
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    scope = ChatScope(kind="project", id="project-a")
+    chat_store.append_ui_event("test-user", scope, "turn-a", event)
     resolved = []
 
-    async def list_messages(*_args, **_kwargs):
-        return [{"role": "user", "turn_id": "turn-a", "ui_events": [event]}]
-
-    async def append_event(_username, _scope, turn_id, persisted_event):
-        appended.append((turn_id, persisted_event))
-        return {}
-
-    monkeypatch.setattr(chat_store, "list_messages_async", list_messages)
-    monkeypatch.setattr(chat_store, "append_ui_event_async", append_event)
     monkeypatch.setattr(
         hermes_workspace,
         "ensure_user_hermes_workspace",
@@ -101,17 +94,17 @@ async def test_cancelled_canvas_turn_settles_pending_clarification(
     )
 
     await chat_service._cancel_pending_clarifications_for_turn(
-        username="admin",
-        store_scope=ChatScope(kind="project", id="project-a"),
+        username="test-user",
+        store_scope=scope,
         turn_id="turn-a",
         project_state_dir=tmp_path / "project",
         agent_profile="freezone:main",
     )
 
-    assert appended[0][0] == "turn-a"
-    assert appended[0][1]["submitted"] is True
-    assert appended[0][1]["cancelled"] is True
-    assert appended[0][1]["clarification_status"] == "cancelled"
+    events = (await chat_store.turn_ui_events_async("test-user", scope, ["turn-a"]))["turn-a"]
+    assert events[-1]["submitted"] is True
+    assert events[-1]["cancelled"] is True
+    assert events[-1]["clarification_status"] == "cancelled"
     assert resolved[0][0] == "bridge-a"
     assert resolved[0][1]["cancelled"] is True
     assert resolved[0][1]["message"] == "用户已取消本轮请求"
@@ -286,23 +279,6 @@ def test_completion_notice_appends_without_replacing_existing_reply():
 
     assert merged.startswith(existing)
     assert notice in merged
-
-
-def test_workflow_planning_reply_rejects_large_unmetered_text():
-    oversized = "正文" * 2_001
-
-    rejected = chat_service._bounded_workflow_planning_reply(
-        oversized,
-        draft_ready=True,
-    )
-
-    assert "已拒绝直接交付" in rejected
-    assert "text Recipe" in rejected
-    assert oversized not in rejected
-    assert (
-        chat_service._bounded_workflow_planning_reply(oversized, draft_ready=False)
-        == oversized
-    )
 
 
 def test_canvas_context_tool_result_infers_missing_status():
@@ -1475,8 +1451,6 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         "turn_completed",
         "done",
     ]
-    if tool_mode == "freezone_canvas":
-        expected_events.insert(-1, "assistant_delta")
     assert [event["type"] for event in events] == expected_events
     assert events[2] == {
         "type": "plan_update",
@@ -1496,7 +1470,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     }
     assert all("raw" not in event for event in events)
     assert all("method" not in event for event in events)
-    assert events[-1]["type"] == "done"
+    assert events[-1] == {"type": "done", "message": None}
 
 
 @pytest.mark.anyio
@@ -2000,18 +1974,17 @@ async def test_codex_stage_confirmation_is_bound_to_existing_story_and_user_inte
         surface_context={"freezone_canvas_id": "canvas-a", "nodes": [story_node]},
     )
 
-    if blocked:
-        assert result["content"].startswith("阶段确认未写入")
-    elif chat_service._freezone_canvas_write_requested(prompt):
-        # A requested canvas write that ends without a receipt keeps the canvas
-        # write guard; it is still not a stage-confirmation block.
-        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
-        assert result["content"].endswith(reply_text)
-    else:
-        assert result["content"] == reply_text
+    assert result is None
+    assert events[-1] == {"type": "done", "message": None}
+    with chat_store.connect("admin", scope) as conn:
+        rows = conn.execute("SELECT role, content, turn_id FROM chat_messages").fetchall()
+    assert [tuple(row) for row in rows] == (
+        [("system", chat_service._stage_confirmation_not_written_message(prompt), "business-turn")]
+        if blocked else []
+    )
     assert [
         event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == [result["content"]]
+    ] == [reply_text]
     thread_id = chat_service._get_codex_thread_id(
         "admin",
         "project-a",
@@ -2409,7 +2382,7 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "draft_confirm_policy_unverified_retry",
     ],
 )
-async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
+async def test_codex_freezone_tool_outcomes_do_not_store_assistant_reply(
     monkeypatch,
     tmp_path,
     tool_outcome,
@@ -3422,567 +3395,35 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         route_prompt=request_prompt,
     )
 
-    assistant_deltas = [
-        event["text"] for event in events if event["type"] == "assistant_delta"
-    ]
-    if tool_outcome in {"success", "preflight_retry"}:
-        assert result["content"] == "好的，已创建一个图片节点。"
-        assert assistant_deltas == ["好的，已创建一个图片节点。"]
-    elif tool_outcome == "video_preflight_retry":
-        assert result["content"] == "已提交视频生成任务。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "video_preflight_other_failure":
-        assert result["content"] == "画布操作未完成：另一个节点未保存"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {"single_run_retry", "workflow_run_retry"}:
-        assert result["content"] == "已提交生成任务。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {"draft_confirm_retry", "draft_confirm_policy_retry"}:
-        assert result["content"] == "工作流已提交创建。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {
-        "draft_confirm_policy_only_patch",
-        "draft_confirm_policy_skip_patch",
-        "draft_confirm_policy_unverified_retry",
-    }:
-        # The guard rejection stays a failure unless a confirming receipt of the
-        # same draft verifiably applied the requested run_after_create: no
-        # receipt at all, a receipt that kept the old policy (patch skipped), or
-        # a receipt that does not report the policy. The user sees the localized
-        # message rather than the agent hint.
-        assert result["content"] == "画布操作未完成：工作流草稿的执行方式需要先更新草稿再确认。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {
-        "preflight_only", "preflight_other_success", "single_run_only_update",
-        "draft_confirm_other_success", "draft_confirm_only_patch",
-    }:
-        assert result["content"] == (
-            "画布操作未完成：image/video generation parameters "
-            "require user clarification"
-        )
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "failure":
-        assert result["content"] == "画布操作未完成：文本节点缺少 content 字段"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "missing":
-        # #862 trade-off: the prompt is not recognised as a canvas write request
-        # and no tool ran, so the host has no evidence to contradict the reply
-        # and delivers it as written. Prompt intent detection
-        # (_freezone_canvas_write_requested) is the only guard left for
-        # zero-write turns; the model's self-declared mode no longer exists.
-        assert result["content"] == "好的，已创建一个图片节点。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {"draft_ready", "plan_draft_ready", "generic_draft_ready"}:
-        assert result["content"] == (
-            "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
-        )
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "patched_draft_ready":
-        assert result["content"] == (
-            "工作流草稿已更新，等待你重新确认后创建画布节点；尚未执行生成。"
-        )
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome.startswith("draft_then_"):
-        assert result["content"].startswith("画布操作未完成：")
-        assert "等待你" not in result["content"]
-        if tool_outcome == "draft_then_failed_write":
-            assert "draft revision conflict" in result["content"]
-    elif tool_outcome == "clarification_answered":
-        assert result["content"] == "参数已确认，尚未执行画布操作。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "skill_saved":
-        assert result["content"] == (
-            "图片转黑白线稿 Skill 已保存，当前没有运行或写入画布。"
-        )
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "read_only":
-        assert result["content"] == "建议保持当前节点位置，先检查配置。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "false_read_only":
-        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
-        assert result["content"].endswith("generate_audio。")
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "mixed":
-        assert result["content"] == "画布操作未完成：第二个节点未保存"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "wrong_scope":
-        assert "成功画布写入回执" in result["content"]
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {"story_retry", "story_create_missing_id_retry"}:
-        assert result["content"] == "互动故事已更新。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "story_wrong_retry":
-        assert result["content"] == "画布操作未完成：tool_arguments_invalid"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "story_conflict_retry":
-        assert result["content"] == "互动故事已更新。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "story_conflict_chain_retry":
-        assert result["content"] == "互动故事已更新。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "story_conflict_changed_payload":
-        assert result["content"] == "画布操作未完成：Conflict"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {
-        "story_validate_after_create",
-        "outline_conflict_retry",
-        "outline_missing_id_retry",
-        "outline_missing_id_duplicate",
-        "story_validation_save_kind",
-        "story_validation_save_kind_generated_id",
-        "story_validation_save_kind_default_version",
-        "story_validation_confirm_missing_id",
-    }:
-        assert result["content"] == "互动故事已更新。"
-    elif tool_outcome in {
-        "outline_missing_id_changed_content",
-        "outline_missing_id_wrong_scope",
-        "outline_missing_id_wrong_project",
-        "outline_missing_id_wrong_tool",
-        "outline_missing_id_wrong_receipt",
-        "outline_missing_id_handler_failure",
-        "outline_missing_id_different_rejection",
-        "outline_missing_id_wrong_phase",
-        "story_validation_save_kind_wrong_generated_id",
-        "story_validation_save_kind_default_version_changed_title",
-        "story_validation_unreported_change",
-        "story_validation_incomplete_diagnostic",
-    }:
-        assert result["content"].startswith("画布操作未完成：")
-    elif tool_outcome == "outline_missing_id_other_failure":
-        assert result["content"] == "画布操作未完成：another_failure"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "story_conflict_wrong_retry":
-        assert result["content"] == "画布操作未完成：canvas revision conflict"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "unstructured_proposal":
-        # Markdown is a valid reply shape; only the missing write is reported.
-        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
-        assert result["content"].endswith("## 互动广告方案\n先展示口香糖，再让用户选择。")
-        # No format rejection, so the thread is kept.
-        assert chat_service._get_codex_thread_id(
-            "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
-            project_state_dir=tmp_path / "state" / "admin" / "project-a",
-        ) == "codex-thread"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "unstructured_json_proposal":
-        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
-        assert result["content"].endswith("视频按九段规划。")
-        assert "canvas_receipts" not in result["content"]
-        assert assistant_deltas == [result["content"]]
-    else:
-        # "blocked": the model explains why nothing was written; the host still
-        # leads with the verified outcome because a write was requested.
-        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
-        assert result["content"].endswith("未能创建工作流：找不到匹配的 Workflow Skill。")
-        assert assistant_deltas == [result["content"]]
+    assert result is None
+    assert events[-1] == {"type": "done", "message": None}
+    assert await chat_store.history_contents_async("admin", scope, "assistant", limit=10) == []
+    assert chat_service._get_codex_thread_id(
+        "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+    ) == "codex-thread"
     assert revoked == ["agent-token"]
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "scenario",
-    [
-        "argument_retry",
-        "argument_retry_dropped_command",
-        "argument_only",
-        "handler_failure_retry",
-        "argument_retry_duplicate_dropped",
-        "argument_retry_other_draft",
-        "argument_retry_other_move_target",
-        "argument_retry_other_html_artifact",
-        "argument_retry_other_projection",
-        "argument_retry_move_corrected",
-        "argument_retry_draft_revision_corrected",
-        "argument_retry_other_draft_revision",
-        "argument_retry_other_html_version",
-        "argument_retry_non_ascii_revision",
-        "argument_retry_huge_revision",
-        "argument_retry_projection_episode_corrected",
-        "argument_retry_reordered_batch",
-        "argument_retry_with_extra_command",
-        "argument_retry_same_target_moves_reordered",
-        "argument_retry_correction_plus_data_change",
-        "argument_retry_unreported_field_dropped",
-        "argument_retry_open_data_integer_changed",
-    ],
-)
-async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
-    monkeypatch,
-    tmp_path,
-    scenario,
-):
-    """#686: a schema-rejected write retried successfully is not a failed turn.
-
-    Only the exact rejected call, minus the fields the MCP server reported as
-    unexpected and with numeric strings coerced in integer fields, supersedes
-    the rejection. Any other difference keeps the turn failed.
-    """
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
-    events = []
-
-    async def fake_authorize(**_kwargs):
-        return None
-
-    async def fake_create_token(*_args, **_kwargs):
-        return "agent-token"
-
-    class FakeAuthPort:
-        async def revoke_agent_session(self, token):
-            return None
-
-    commands = [
-        {
-            "type": "add_next_node",
-            "source_node_id": "upload-a",
-            "client_id": "watercolor",
-            "node_type": "imageGenNode",
-            "data": {"prompt": "水彩风格"},
-        },
-        {
-            "type": "run_node_action",
-            "node_id": "watercolor",
-            "action": "generate_image",
-        },
-    ]
-    rejected_commands = [dict(command) for command in commands]
-    rejected_commands[0]["position"] = {"x": 640, "y": 120}
-    if scenario == "handler_failure_retry":
-        rejected_commands = commands
-        rejection = {"ok": False, "error": "源节点不存在"}
-    else:
-        # Shape of dramaclaw_mcp._mcp_error_result for an input-schema failure.
-        rejection = {
-            "ok": False,
-            "error": "tool_arguments_invalid",
-            "tool_name": "freezone_emit_canvas_command",
-            "message": "{...} is not valid under any of the given schemas",
-            "path": "commands[0]",
-            "status": "tool_arguments_invalid",
-            "phase": "tool_validation",
-            "retryable": False,
-        }
-    retry_commands = (
-        commands[:1] if scenario == "argument_retry_dropped_command" else commands
-    )
-    tool = "freezone_emit_canvas_command"
-    rejected_input = {
-        "project_id": "project-a",
-        "canvas_id": "canvas-a",
-        "commands": rejected_commands,
-    }
-    retry_input = {
-        "project_id": "project-a",
-        "canvas_id": "canvas-a",
-        "commands": retry_commands,
-    }
-    if scenario == "argument_retry_duplicate_dropped":
-        # Two identical anonymous creates must not collapse into one identity.
-        note = {"type": "create_node", "node_type": "textAnnotationNode"}
-        rejected_input["commands"] = [
-            {**note, "data": {"text": "甲"}, "bogus": 1},
-            {**note, "data": {"text": "乙"}},
-        ]
-        retry_input["commands"] = [{**note, "data": {"text": "甲"}}]
-    elif scenario in {
-        "argument_retry_draft_revision_corrected",
-        "argument_retry_other_draft_revision",
-    }:
-        # A numeric-string revision is a schema error; retrying it as the same
-        # integer is the correction, a different revision is another version.
-        tool = "freezone_confirm_workflow_draft"
-        rejected_input = {
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-            "draft_id": "draft-a",
-            "revision": "1",
-        }
-        retry_input = {
-            **rejected_input,
-            "revision": (
-                1 if scenario == "argument_retry_draft_revision_corrected" else 2
-            ),
-        }
-    elif scenario in {
-        "argument_retry_non_ascii_revision",
-        "argument_retry_huge_revision",
-    }:
-        # "²".isdigit() is true but int("²") raises, and int() refuses strings
-        # beyond its digit limit; the turn must still fail cleanly.
-        tool = "freezone_confirm_workflow_draft"
-        rejected_input = {
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-            "draft_id": "draft-a",
-            "revision": (
-                "²" if scenario == "argument_retry_non_ascii_revision" else "9" * 5000
-            ),
-        }
-        retry_input = {**rejected_input, "revision": 2}
-    elif scenario == "argument_retry_same_target_moves_reordered":
-        # Both commands target node-a; only their coordinates and order differ.
-        first = {"type": "move_nodes", "positions": {"node-a": {"x": 10, "y": 10}}}
-        second = {"type": "move_nodes", "positions": {"node-a": {"x": 20, "y": 20}}}
-        rejected_input["commands"] = [{**first, "bogus": 1}, second]
-        retry_input["commands"] = [second, first]
-    elif scenario == "argument_retry_correction_plus_data_change":
-        retry_input["commands"] = [
-            {**commands[0], "data": {"prompt": "油画风格"}},
-            commands[1],
-        ]
-    elif scenario in {
-        "argument_retry_reordered_batch",
-        "argument_retry_with_extra_command",
-    }:
-        # Commands run in array order: set (10,10) then shift +5 gives (15,10),
-        # the reverse gives (10,10). Neither reordering nor an extra command is
-        # a provable correction.
-        absolute = {"type": "move_nodes", "positions": {"node-a": {"x": 10, "y": 10}}}
-        relative = {"type": "move_nodes", "deltas": {"node-a": {"x": 5, "y": 0}}}
-        rejected_input["commands"] = [{**absolute, "bogus": 1}, relative]
-        retry_input["commands"] = (
-            [relative, absolute]
-            if scenario == "argument_retry_reordered_batch"
-            else [absolute, {"type": "select_nodes", "node_ids": ["node-a"]}, relative]
-        )
-    elif scenario == "argument_retry_projection_episode_corrected":
-        # The single-step tool declares episode an integer; a batch command's
-        # request is an open object where "1" is never rejected at all.
-        tool = "freezone_open_mainline_projection"
-        rejected_input = {
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-            "scope": "episode",
-            "episode": "1",
-        }
-        retry_input = {**rejected_input, "episode": 1}
-    elif scenario == "argument_retry_open_data_integer_changed":
-        # data is open: the server reports only bogus, so changing the type of
-        # data.episode is a different node, not a correction.
-        beat_context = {
-            "type": "create_node",
-            "node_type": "beatContextNode",
-            "data": {"projectId": "project-a", "episode": "1", "beat": 1},
-        }
-        rejected_input["commands"] = [{**beat_context, "bogus": 1}]
-        retry_input["commands"] = [
-            {**beat_context, "data": {**beat_context["data"], "episode": 1}}
-        ]
-    elif scenario == "argument_retry_other_html_version":
-        restore = {"type": "html_artifact", "action": "restore", "artifact_id": "a"}
-        rejected_input["commands"] = [{**restore, "version": 1, "bogus": 1}]
-        retry_input["commands"] = [{**restore, "version": 2}]
-    elif scenario == "argument_retry_other_draft":
-        # Confirming draft B says nothing about the rejected draft A.
-        tool = "freezone_confirm_workflow_draft"
-        rejected_input = {
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-            "draft_id": "draft-a",
-            "revision": "1",
-        }
-        retry_input = {
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-            "draft_id": "draft-b",
-            "revision": 1,
-        }
-    elif scenario in {
-        "argument_retry_other_move_target",
-        "argument_retry_other_html_artifact",
-        "argument_retry_other_projection",
-        "argument_retry_move_corrected",
-    }:
-        # The target lives in a map key, artifact_id, or a nested request
-        # rather than a plain id field; another target must not match.
-        rejected_command, retry_command = {
-            "argument_retry_other_move_target": (
-                {"type": "move_nodes", "positions": {"node-a": {"x": 1, "y": 2}}},
-                {"type": "move_nodes", "positions": {"node-b": {"x": 1, "y": 2}}},
-            ),
-            "argument_retry_other_html_artifact": (
-                {"type": "html_artifact", "action": "update", "artifact_id": "a"},
-                {"type": "html_artifact", "action": "update", "artifact_id": "b"},
-            ),
-            "argument_retry_move_corrected": (
-                {"type": "move_nodes", "positions": {"node-a": {"x": 1, "y": 2}}},
-                {"type": "move_nodes", "positions": {"node-a": {"x": 9, "y": 8}}},
-            ),
-            "argument_retry_other_projection": (
-                {
-                    "type": "open_mainline_projection",
-                    "request": {"scope": "beat", "episode": 1, "beat": 1},
-                },
-                {
-                    "type": "open_mainline_projection",
-                    "request": {"scope": "beat", "episode": 1, "beat": 2},
-                },
-            ),
-        }[scenario]
-        rejected_input["commands"] = [{**rejected_command, "bogus": 1}]
-        retry_input["commands"] = [retry_command]
-    if tool != "freezone_emit_canvas_command":
-        rejection = {**rejection, "tool_name": tool}
-    if rejection.get("error") == "tool_arguments_invalid" and (
-        scenario != "argument_retry_unreported_field_dropped"
-    ):
-        # What dramaclaw_mcp._unexpected_argument_fields reports for these inputs.
-        unexpected = [
-            {"path": ["commands", index], "fields": fields}
-            for index, command in enumerate(rejected_input.get("commands") or [])
-            if (
-                fields := [
-                    field
-                    for field in sorted(command)
-                    if field == "bogus"
-                    or (field == "position" and command["type"] == "add_next_node")
-                ]
-            )
-        ]
-        if unexpected:
-            rejection = {**rejection, "unexpected_fields": unexpected}
-        # Top-level fields these tools' schemas declare integer; nested open
-        # objects (node data, batch requests) declare nothing.
-        integer_strings = [
-            [field]
-            for field in ("revision", "episode", "beat")
-            if isinstance(rejected_input.get(field), str)
-            and re.fullmatch(r"-?[0-9]+", rejected_input[field], re.ASCII)
-        ]
-        if integer_strings:
-            rejection = {**rejection, "integer_string_fields": integer_strings}
-
-    class FakeThread:
-        async def stream(self, _prompt):
-            yield SimpleNamespace(
-                type="thread_started",
-                thread_id="codex-thread",
-                turn_id="codex-turn",
-            )
-            yield SimpleNamespace(
-                type="tool_updated",
-                text=f"[mcp:failed] dramaclaw.{tool}",
-                name=f"dramaclaw.{tool}",
-                call_id="call-rejected",
-                status="failed",
-                input=rejected_input,
-                output={
-                    "content": [{"type": "text", "text": json.dumps(rejection)}]
-                },
-                structured=rejection,
-                error=None,
-            )
-            receipts = []
-            if scenario != "argument_only":
-                receipts.append({"bridge_key": "bridge-retry", "revision": None})
-                yield SimpleNamespace(
-                    type="tool_updated",
-                    text=f"[mcp:completed] dramaclaw.{tool}",
-                    name=f"dramaclaw.{tool}",
-                    call_id="call-retry",
-                    status="completed",
-                    input=retry_input,
-                    output=None,
-                    structured={
-                        "ok": True,
-                        "canvas_apply_status": "accepted",
-                        "applied": True,
-                        "errors": [],
-                        "bridge_key": "bridge-retry",
-                        "project_id": "project-a",
-                        "canvas_id": "canvas-a",
-                    },
-                    error=None,
-                )
-            yield SimpleNamespace(
-                type="assistant_delta",
-                text=json.dumps(
-                    {
-                        "message": "已创建水彩风格图片节点并提交生成。",
-                        "mode": "mutation",
-                        "canvas_receipts": receipts,
-                    }
-                ),
-            )
-            yield SimpleNamespace(type="complete", thread_id="codex-thread", text="")
-
-    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
-    monkeypatch.setattr(
-        chat_service, "_create_page_agent_session_token", fake_create_token
-    )
-    monkeypatch.setattr(
-        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
-    )
-    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
-    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
-
-    async def collect_event(event):
-        events.append(event)
-
-    scope = ChatScope(
-        kind="project",
-        id="project-a",
-        surface="freezone",
-        canvas_id="canvas-a",
-        agent_id="main",
-        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
-    )
-    result = await chat_service._stream_assistant_reply_codex(
-        "admin",
-        "project-a",
-        "把选中的图片转成水彩风格",
-        collect_event,
-        project_state_dir=tmp_path / "state" / "admin" / "project-a",
-        tool_mode="freezone_canvas",
-        surface_context={"freezone_canvas_id": "canvas-a"},
-        store_scope=scope,
-        turn_id="business-turn",
-        route_prompt="把选中的图片转成水彩风格",
-    )
-
-    if scenario in {
-        "argument_retry",
-        "argument_retry_draft_revision_corrected",
-        "argument_retry_projection_episode_corrected",
-    }:
-        assert result["content"] == "已创建水彩风格图片节点并提交生成。"
-    elif scenario == "handler_failure_retry":
-        # Only a pre-handler schema rejection is side-effect free; a business
-        # failure from the handler keeps the turn failed.
-        assert result["content"] == "画布操作未完成：源节点不存在"
-    else:
-        # No retry, or a retry that differs beyond the provable corrections:
-        # dropped, added or reordered commands, other targets, coordinates or
-        # data, or a field the server never reported as unexpected.
-        assert result["content"] == "画布操作未完成：tool_arguments_invalid"
-    assistant_deltas = [
-        event["text"] for event in events if event["type"] == "assistant_delta"
-    ]
-    assert assistant_deltas == [result["content"]]
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    "disposition,runtime_text,expected",
+    "disposition,runtime_text",
     [
         (
             "timeout",
             "Codex App Server 响应超时，请重试。",
-            "Codex App Server 响应超时，请重试。",
         ),
-        ("cancelled", '{"mode":"mutation","text":"已创建成功', "已取消本轮请求。"),
+        ("cancelled", '{"mode":"mutation","text":"已创建成功'),
         (
             "cancelled",
             '{"mode":"mutation","text":"已创建成功","canvas_receipts":[]}',
-            "已取消本轮请求。",
         ),
-        ("cancelled", "", "已取消本轮请求。"),
+        ("cancelled", ""),
     ],
 )
 @pytest.mark.parametrize("notification", ["egress_disposition", "turn_completed"])
-async def test_codex_freezone_interruption_discards_unvalidated_output(
-    monkeypatch, tmp_path, disposition, runtime_text, expected, notification
+async def test_codex_freezone_interruption_preserves_stream_and_records_notice(
+    monkeypatch, tmp_path, disposition, runtime_text, notification
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     events = []
@@ -4054,15 +3495,16 @@ async def test_codex_freezone_interruption_discards_unvalidated_output(
         route_prompt="创建一个图片工作流",
     )
 
-    assert result["content"] == expected
+    assert result is None
+    assert events[-1] == {"type": "done", "message": None}
     assert [
         event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == [expected]
-    from novelvideo.chat.store import chat_store
-
-    assert await chat_store.history_contents_async(
-        "admin", scope, "assistant", limit=10
-    ) == [expected]
+    ] == [runtime_text]
+    with chat_store.connect("admin", scope) as conn:
+        rows = conn.execute("SELECT role, content, turn_id FROM chat_messages").fetchall()
+    assert [tuple(row) for row in rows] == (
+        [("system", "已取消本轮请求。", "business-turn")] if disposition == "cancelled" else []
+    )
 
 
 @pytest.mark.asyncio
@@ -4624,6 +4066,15 @@ async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
                 turn_id="codex-turn",
             )
             yield SimpleNamespace(
+                type="item_started",
+                item={"type": "reasoning", "id": "audio-plan", "summary": []},
+                started_at_ms=1,
+            )
+            yield SimpleNamespace(
+                type="item_delta", item_id="audio-plan", name="reasoning",
+                text="Planning audio", summary_index=0,
+            )
+            yield SimpleNamespace(
                 type="assistant_delta",
                 text=json.dumps(
                     {
@@ -4746,10 +4197,14 @@ async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
             },
         }
     ]
-    assert result["content"] == "已更新现有音频节点，并提交 generate_audio。"
-    assert [event["text"] for event in events if event["type"] == "assistant_delta"] == [
-        result["content"]
+    assert result is None
+    assert events[-1] == {"type": "done", "message": None}
+    with chat_store.connect("admin", scope) as conn:
+        rows = conn.execute("SELECT role, content, turn_id FROM chat_messages").fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("system", "已更新现有音频节点，并提交 generate_audio。", "business-turn"),
     ]
+    assert [e for e in events if e["type"] in {"item", "item_delta", "assistant_delta"}] == []
 
 
 @pytest.mark.anyio
@@ -8909,6 +8364,7 @@ def _codex_turn_events(text, *, tool=None, disposition="completed"):
     if tool is not None:
         events.append(tool)
     events += [
+        SimpleNamespace(type="assistant_delta", text=text),
         SimpleNamespace(
             type="turn_completed",
             thread_id="codex-thread",
@@ -9188,10 +8644,11 @@ async def test_codex_freezone_read_only_reply_is_delivered_in_one_turn(
     assert len(prompts) == 1
     assert build_kwargs[0]["request_prompt"] == request_prompt
     assert build_kwargs[0].get("output_schema") is None
-    assert result["content"] == _READ_ONLY_ANSWER
+    assert result is None
+    assert events[-1] == {"type": "done", "message": None}
     assert [
         event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == [_READ_ONLY_ANSWER]
+    ] == [reply_text]
     assert revoked == ["agent-token"]
     assert chat_service._get_codex_thread_id(
         "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
@@ -9266,9 +8723,7 @@ async def test_codex_freezone_turn_never_sends_a_second_prompt(
     )
 
     assert len(prompts) == 1
-    # A requested write with no receipt is reported by the host, whatever the
-    # model said; the claim is never delivered as the outcome.
-    assert not result["content"].startswith("图片节点已创建成功")
+    assert result is None
 
 
 def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypatch, tmp_path):

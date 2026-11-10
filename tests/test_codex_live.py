@@ -319,7 +319,7 @@ async def test_service_live_events_do_not_grow_storage(service_runtime, monkeypa
             stored.append((len(rows), sum(
                 len(str(value).encode()) for row in rows for value in row if value is not None
             )))
-    assert stored[0][0] == 1
+    assert stored[0][0] == 0
     assert stored[0] == stored[1]
 
 
@@ -483,3 +483,116 @@ def test_empty_placeholders_are_removed_and_completed_items_stop_streaming():
         "item_id": "empty-reasoning", "card": None,
     }]
     assert live.item_ids == ["empty-message", "empty-reasoning"]
+
+
+@pytest.mark.asyncio
+async def test_freezone_forwards_reply_without_storing_it(
+    service_runtime, monkeypatch, tmp_path,
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+
+    class Thread:
+        async def stream(self, prompt):
+            yield ChatBackendEvent(
+                type="thread_started", thread_id="thread-1", turn_id="turn-1",
+            )
+            yield ChatBackendEvent(type="assistant_delta", text="Hel")
+            yield ChatBackendEvent(type="assistant_delta", text="Hello")
+            yield ChatBackendEvent(type="complete", text="Hello", thread_id="thread-1")
+
+    monkeypatch.setattr(service, "_build_codex_thread", lambda *a, **kw: Thread())
+    events = []
+
+    async def collect(event):
+        events.append(event)
+
+    scope = ChatScope(
+        kind="project", id="project-local", surface="freezone", canvas_id="canvas-local",
+    )
+    result = await service._stream_assistant_reply_codex(
+        "test-user", "project-local", "hello", collect,
+        project_dir=tmp_path / "project", tool_mode="freezone_canvas",
+        store_scope=scope, turn_id="business-1",
+    )
+    assert [e["text"] for e in events if e["type"] == "assistant_delta"] == ["Hel", "Hello"]
+    assert events[-1] == {"type": "done", "message": None}
+    assert result is None
+    with chat_store.connect("test-user", scope) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_freezone_cancel_notice_is_idempotent_and_settles_old_clarification(
+    service_runtime, monkeypatch, tmp_path,
+):
+    from novelvideo.chat import hermes_pool, hermes_workspace
+    from novelvideo.freezone import canvas_command_bridge
+
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    scope = ChatScope(
+        kind="project", id="project-local", surface="freezone", canvas_id="canvas-local",
+    )
+    chat_store.append_ui_event("test-user", scope, "business-1", {
+        "type": "assistant.clarification.request", "bridge_key": "bridge-1",
+        "clarification_id": "clarify-1", "questions": [{"id": "model", "options": []}],
+    })
+    for index in range(60):
+        chat_store.append_message(
+            "test-user", scope, "user", "Other request", turn_id=f"other-{index}",
+        )
+    resolved = []
+    monkeypatch.setattr(
+        hermes_workspace, "ensure_user_hermes_workspace", lambda *a, **kw: tmp_path / "hermes",
+    )
+    monkeypatch.setattr(
+        hermes_pool, "canvas_bridge_dir_for_profile", lambda *a, **kw: tmp_path / "bridge",
+    )
+    monkeypatch.setattr(
+        canvas_command_bridge, "resolve_clarification_result",
+        lambda key, result, **kw: resolved.append((key, result, kw)),
+    )
+
+    class Thread:
+        async def stream(self, prompt):
+            yield ChatBackendEvent(
+                type="thread_started", thread_id="thread-1", turn_id="turn-1",
+            )
+            yield ChatBackendEvent(type="assistant_delta", text="Partial reply")
+            yield ChatBackendEvent(type="egress_disposition", disposition="cancelled")
+            yield ChatBackendEvent(type="complete", text="Partial reply", thread_id="thread-1")
+
+    monkeypatch.setattr(service, "_build_codex_thread", lambda *a, **kw: Thread())
+    events = []
+
+    async def collect(event):
+        events.append(event)
+
+    for _ in range(2):
+        result = await service._stream_assistant_reply_codex(
+            "test-user", "project-local", "hello", collect,
+            project_dir=tmp_path / "project", project_state_dir=tmp_path / "project-state",
+            tool_mode="freezone_canvas", store_scope=scope, turn_id="business-1",
+        )
+        with chat_store.connect("test-user", scope) as conn:
+            rows = conn.execute(
+                "SELECT role, content, turn_id FROM chat_messages WHERE role != 'user'"
+            ).fetchall()
+            assert [tuple(row) for row in rows] == [
+                ("system", "已取消本轮请求。", "business-1"),
+            ]
+            assert conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 61
+        assert result is None
+        assert events[-1] == {"type": "done", "message": None}
+    turn_events = (await chat_store.turn_ui_events_async(
+        "test-user", scope, ["business-1"],
+    ))["business-1"]
+    assert turn_events[-1]["submitted"] is True
+    assert turn_events[-1]["cancelled"] is True
+    assert turn_events[-1]["clarification_status"] == "cancelled"
+    assert resolved[0][0] == "bridge-1"
+    assert resolved[0][1]["cancelled"] is True
+    assert resolved[0][1]["message"] == "用户已取消本轮请求"
+    assert resolved[0][1]["message_i18n"] == {
+        "code": "freezone.chat.clarification.cancelledRequest",
+    }
+    assert resolved[0][2]["bridge_dir"] == tmp_path / "bridge"

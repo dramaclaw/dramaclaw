@@ -108,6 +108,7 @@ async def test_merge(history_page, chat, caplog):
     assert [(m["role"], m["id"] if isinstance(m["id"], str) else m["content"])
             for m in page.history] == [
         ("user", "user1"), ("assistant", "assistant:turn-0001"),
+        ("assistant", "old reply"),
         ("user", "user2"), ("assistant", "assistant:turn-0002"),
         ("assistant", "error"), ("user", "user3"),
         ("assistant", "assistant:turn-0003"), ("assistant", "notice"),
@@ -125,7 +126,7 @@ async def test_merge(history_page, chat, caplog):
     assert page.has_more is False
     records = [r for r in caplog.records if r.name == "novelvideo.chat.history_page"]
     assert len(records) == 1
-    for field in ("scope=home", "codex=3", "store=5", "overflow=False", "has_more=False",
+    for field in ("scope=home", "codex=3", "store=6", "overflow=False", "has_more=False",
                   "elapsed_ms="):
         assert field in records[0].message
     assert "user1" not in records[0].message

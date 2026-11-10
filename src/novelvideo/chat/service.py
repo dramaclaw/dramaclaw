@@ -39,7 +39,6 @@ from novelvideo.chat.codex_history import HISTORY_CACHE, CodexHistoryPage, Codex
 from novelvideo.chat.codex_protocol import context_entries
 from novelvideo.chat.canvas_outcome import (
     CANVAS_FINAL_RESPONSE_INSTRUCTIONS,
-    finalize_canvas_reply,
     receipt_reference,
 )
 from novelvideo.chat.display_fallback import (
@@ -156,7 +155,6 @@ from novelvideo.chat.runtime_event_evidence import (
     _codex_freezone_is_execution_policy_rejection,
     _codex_freezone_is_generation_preflight_rejection,
     _codex_freezone_is_write_event,
-    _codex_freezone_ready_workflow_draft,
     _codex_freezone_tool_argument_rejection,
     _codex_freezone_tool_arguments,
     _codex_freezone_tool_name,
@@ -176,11 +174,9 @@ from novelvideo.chat.tool_policy import (
     freezone_compose_node_id_from_context as _freezone_compose_node_id_from_context,
     tool_mode_for_surface as _tool_mode_for_surface,
 )
-from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
 from novelvideo.freezone.studio import openfilm_studio_enabled
 from novelvideo.ports import get_auth_session_port
 from novelvideo.project_context import ProjectContext
-from novelvideo.utils.document_parsers import count_billable_text_chars
 from novelvideo.utils.error_redaction import redact_secrets
 
 logger = logging.getLogger("novelvideo.chat.service")
@@ -2874,19 +2870,6 @@ def _append_message(
     )
 
 
-def _bounded_workflow_planning_reply(text: str, *, draft_ready: bool) -> str:
-    """Do not deliver a large unmetered text artifact as a planning reply."""
-    if (
-        not draft_ready
-        or count_billable_text_chars(text) <= MAX_WORKFLOW_PLANNING_TEXT_CHARS
-    ):
-        return text
-    return (
-        "工作流草稿已准备完成，但规划回复包含大段正文，已拒绝直接交付。"
-        "请把正文改为 text Recipe 节点生成，以便按实际输出字符计量。"
-    )
-
-
 async def _emit_chat_event_best_effort(on_event, event: dict[str, Any]) -> bool:
     """Emit to the connected client without making persistence depend on it."""
     try:
@@ -4430,7 +4413,7 @@ async def stream_assistant_reply(
     execution_context: AgentExecutionContext | None = None,
     project_context: ProjectContext | None = None,
     image_paths: Sequence[Path] = (),
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     if project_context is not None and project != project_context.project_id:
         raise ValueError("project context project mismatch")
     if execution_context is not None:
@@ -5564,31 +5547,24 @@ async def _cancel_pending_clarifications_for_turn(
     from novelvideo.chat.store import chat_store
     from novelvideo.freezone.canvas_command_bridge import resolve_clarification_result
 
-    messages = await chat_store.list_messages_async(username, store_scope)
+    events = (await chat_store.turn_ui_events_async(username, store_scope, [turn_id])).get(
+        turn_id, []
+    )
     pending_by_key: dict[str, dict[str, Any]] = {}
     settled_keys: set[str] = set()
-    for message in messages:
-        if str(message.get("turn_id") or "") != turn_id:
+    for event in events:
+        if not isinstance(event, dict):
             continue
-        events = list(message.get("ui_events") or [])
-        events.extend(
-            part.get("event")
-            for part in message.get("parts") or []
-            if isinstance(part, dict) and part.get("type") != "text"
-        )
-        for event in events:
-            if not isinstance(event, dict):
-                continue
-            if event.get("type") != "assistant.clarification.request":
-                continue
-            key = str(event.get("bridge_key") or "").strip()
-            if not key:
-                continue
-            if event.get("submitted") is True or event.get("cancelled") is True:
-                settled_keys.add(key)
-                pending_by_key.pop(key, None)
-            elif key not in settled_keys:
-                pending_by_key[key] = event
+        if event.get("type") != "assistant.clarification.request":
+            continue
+        key = str(event.get("bridge_key") or "").strip()
+        if not key:
+            continue
+        if event.get("submitted") is True or event.get("cancelled") is True:
+            settled_keys.add(key)
+            pending_by_key.pop(key, None)
+        elif key not in settled_keys:
+            pending_by_key[key] = event
     if not pending_by_key:
         return
 
@@ -5640,6 +5616,22 @@ async def _cancel_pending_clarifications_for_turn(
         )
 
 
+async def _write_turn_notice(username, store_scope, turn_id, kind, text) -> None:
+    from novelvideo.chat.store import chat_store
+
+    if store_scope is None:
+        logger.warning("Cannot store turn notice without a scope turn=%s kind=%s", turn_id, kind)
+        return
+    await chat_store.append_message_async(
+        username,
+        store_scope,
+        "system",
+        _redact_local_filesystem_paths(text),
+        turn_id=turn_id,
+        idempotency_key=f"notice:{turn_id}:{kind}",
+    )
+
+
 async def _stream_assistant_reply_codex(
     username: str,
     project: str,
@@ -5661,19 +5653,17 @@ async def _stream_assistant_reply_codex(
     project_context: ProjectContext | None = None,
     image_paths: Sequence[Path] = (),
     script_upload_guidance: bool = False,
-) -> dict[str, Any]:
+) -> None:
     from novelvideo.chat.codex_live import LiveTurnProjector
 
     assistant_text = ""
+    audio_notice: str | None = None
     tool_text = ""
     structured_canvas_reply = str(tool_mode or "").strip() == "freezone_canvas"
     exact_audio_action_target = (
         _freezone_exact_audio_action_target(prompt, route_prompt=route_prompt)
         if structured_canvas_reply
         else None
-    )
-    canvas_write_requested = structured_canvas_reply and _freezone_canvas_write_requested(
-        route_prompt or prompt
     )
     canvas_write_attempts: dict[str, str] = {}
     preflight_rejections: dict[str, tuple[str, dict[str, Any], dict[str, Any]]] = {}
@@ -5690,7 +5680,6 @@ async def _stream_assistant_reply_codex(
     # call_id -> the exact corrected arguments that would prove a write the MCP
     # input schema rejected was only a slip; a receipt for them supersedes it.
     canvas_argument_rejections: dict[str, str] = {}
-    ready_workflow_draft: dict[str, Any] | None = None
     turn_agent_product_operations = _TurnAgentProductOperationTracker()
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
@@ -5864,7 +5853,7 @@ async def _stream_assistant_reply_codex(
                         frame = live.delta(
                             event.item_id, event.name, event.text, event.summary_index
                         )
-                    if frame is not None:
+                    if frame is not None and exact_audio_action_target is None:
                         await on_event(frame)
                     continue
                 if event.type == "egress_submitted":
@@ -5916,7 +5905,7 @@ async def _stream_assistant_reply_codex(
                     continue
                 if event.type == "assistant_delta":
                     assistant_text = _merge_stream_text(assistant_text, event.text)
-                    if not structured_canvas_reply:
+                    if exact_audio_action_target is None:
                         streamed_text = _redact_local_filesystem_paths(assistant_text)
                         await on_event(
                             {
@@ -5946,16 +5935,6 @@ async def _stream_assistant_reply_codex(
                     )
                     if event.type == "tool_updated":
                         turn_agent_product_operations.observe(event)
-                        prepared_draft = _codex_freezone_ready_workflow_draft(event)
-                        if prepared_draft is not None:
-                            ready_workflow_draft = prepared_draft
-                        elif _codex_freezone_tool_name(event) in (
-                            _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS
-                            | {"freezone_patch_workflow_draft"}
-                        ):
-                            # A later failed revision must not inherit an earlier
-                            # draft's pending-approval outcome in the same turn.
-                            ready_workflow_draft = None
                     if _codex_freezone_is_write_event(event):
                         is_stage_confirmation = (
                             _codex_freezone_tool_name(event)
@@ -6152,8 +6131,9 @@ async def _stream_assistant_reply_codex(
                             agent_profile,
                         )
         finally:
-            for frame in live.finish():
-                await _emit_chat_event_best_effort(on_event, frame)
+            if exact_audio_action_target is None:
+                for frame in live.finish():
+                    await _emit_chat_event_best_effort(on_event, frame)
         if exact_audio_action_target is not None and turn_disposition == "completed":
             node_id, action, required_subject = exact_audio_action_target
             node_data = _exact_audio_action_node_data(
@@ -6162,9 +6142,8 @@ async def _stream_assistant_reply_codex(
             orchestrated_call_id = "orchestrated:exact-audio-action"
             canvas_write_attempts[orchestrated_call_id] = "failed"
             if node_data is None:
-                canvas_write_failures[orchestrated_call_id] = (
-                    "音频执行参数无效，未提交画布操作。"
-                )
+                audio_notice = "音频执行参数无效，未提交画布操作。"
+                canvas_write_failures[orchestrated_call_id] = audio_notice
             else:
                 try:
                     dispatch_result = await _dispatch_exact_audio_node_action(
@@ -6201,7 +6180,7 @@ async def _stream_assistant_reply_codex(
                 if applied:
                     canvas_write_attempts[orchestrated_call_id] = "succeeded"
                     canvas_receipts.add((bridge_key, None))
-                    assistant_text = "已更新现有音频节点，并提交 generate_audio。"  # i18n-exempt
+                    audio_notice = "已更新现有音频节点，并提交 generate_audio。"  # i18n-exempt
                 else:
                     errors = dispatch_result.get("errors")
                     failure = str(
@@ -6211,7 +6190,7 @@ async def _stream_assistant_reply_codex(
                         or "音频节点执行失败，前端没有返回有效回执。"  # i18n-exempt
                     ).strip()
                     canvas_write_failures[orchestrated_call_id] = failure
-                    assistant_text = failure
+                    audio_notice = failure
     finally:
         logger.info(
             "codex turn cleanup user=%s project=%s profile=%s disposition=%s had_text=%s had_tool=%s",
@@ -6255,14 +6234,7 @@ async def _stream_assistant_reply_codex(
     for rejected_call in preflight_rejections:
         canvas_write_attempts[rejected_call] = "failed"
 
-    # A transport timeout/cancellation is not a canvas receipt failure. Keep
-    # the runtime's actionable reason instead of replacing it with the
-    # misleading "no canvas write" postcondition message.
-    canvas_postcondition_applies = turn_disposition not in {"timeout", "cancelled"}
     if structured_canvas_reply and turn_disposition == "cancelled":
-        # Interrupted turns can complete with partial structured JSON. None of
-        # that unvalidated payload may reach presentation or persisted history.
-        assistant_text = "已取消本轮请求。"
         if store_scope is not None:
             try:
                 await _cancel_pending_clarifications_for_turn(
@@ -6277,103 +6249,21 @@ async def _stream_assistant_reply_codex(
                     "failed to settle clarification cards for cancelled turn %s",
                     business_turn_id,
                 )
-    elif structured_canvas_reply and canvas_postcondition_applies:
-        if (
-            stage_confirmation_expected
-            and not stage_confirmation_attempted
-            and not stage_confirmation_succeeded
-        ):
-            assistant_text = _stage_confirmation_not_written_message(prompt)
-            # A host-authored notice: the canvas write guard below must not
-            # replace it with the generic missing-receipt message.
-            canvas_write_requested = False
-        assistant_text = finalize_canvas_reply(
-            assistant_text,
-            attempts=canvas_write_attempts,
-            receipts=canvas_receipts,
-            failure=next(
-                (
-                    canvas_write_failures.get(call_id, "")
-                    for call_id, state in canvas_write_attempts.items()
-                    if state == "failed" and canvas_write_failures.get(call_id)
-                ),
-                "",
-            ),
-            draft_ready=ready_workflow_draft is not None,
-            draft_updated=(ready_workflow_draft or {}).get("status")
-            == "workflow_draft_updated",
-            write_requested=canvas_write_requested,
+        await _write_turn_notice(
+            username, store_scope, business_turn_id, "cancelled", "已取消本轮请求。"
         )
-    assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
-    assistant_text = _bounded_workflow_planning_reply(
-        assistant_text,
-        draft_ready=ready_workflow_draft is not None,
-    )
-    assistant_text = _normalize_json_render_reply(assistant_text)
-    if structured_canvas_reply:
-        await on_event(
-            {
-                "type": "assistant_delta",
-                "text": _redact_local_filesystem_paths(assistant_text),
-            }
+    elif (
+        structured_canvas_reply
+        and turn_disposition not in {"timeout", "cancelled"}
+        and stage_confirmation_expected
+        and not stage_confirmation_attempted
+        and not stage_confirmation_succeeded
+    ):
+        await _write_turn_notice(
+            username, store_scope, business_turn_id, "stage",
+            _stage_confirmation_not_written_message(prompt),
         )
-    if tool_text.strip():
-        if store_scope is not None:
-            from novelvideo.chat.store import chat_store
-
-            for trace_index, trace_content in enumerate(
-                _split_trace_contents(tool_text)
-            ):
-                await chat_store.append_message_async(
-                    username,
-                    store_scope,
-                    "trace",
-                    trace_content,
-                    turn_id=turn_id,
-                    idempotency_key=(
-                        f"trace:{turn_id}:{trace_index}" if turn_id else None
-                    ),
-                )
-        else:
-            await asyncio.to_thread(
-                add_trace_messages,
-                username,
-                project,
-                _split_trace_contents(tool_text),
-                project_dir=project_dir,
-                project_state_dir=project_state_dir,
-            )
-    media = _extract_media(assistant_text, username, project, project_dir=project_dir)
-    if store_scope is not None:
-        from novelvideo.chat.store import chat_store
-
-        result_message = await chat_store.append_message_async(
-            username,
-            store_scope,
-            "assistant",
-            assistant_text,
-            media=media,
-            turn_id=turn_id,
-            idempotency_key=f"assistant:{turn_id}" if turn_id else None,
-        )
-    else:
-        result_message = await asyncio.to_thread(
-            add_assistant_message,
-            username,
-            project,
-            assistant_text,
-            media,
-            project_dir=project_dir,
-            project_state_dir=project_state_dir,
-        )
-    await on_event({"type": "done", "message": result_message})
-    return result_message
-
-
-async def generate_assistant_reply(
-    username: str, project: str, prompt: str
-) -> dict[str, Any]:
-    async def _ignore(_event: dict[str, Any]) -> None:
-        return None
-
-    return await stream_assistant_reply(username, project, prompt, _ignore)
+    if audio_notice is not None:
+        await _write_turn_notice(username, store_scope, business_turn_id, "audio", audio_notice)
+    await on_event({"type": "done", "message": None})
+    return None

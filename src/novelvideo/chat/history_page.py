@@ -106,15 +106,9 @@ async def read_history_page(
             ),
             "codex_done": not codex_more,
         }, separators=(",", ":"))
-    turn_ids = {message["turn_id"] for message in messages}
-    kept_rows = []
     for row in rows:
-        key = row.pop("idempotency_key")
-        if (row["role"] == "assistant" and row.get("turn_id") in turn_ids
-                and key == "assistant:" + row["turn_id"]):
-            continue
-        kept_rows.append(row)
-    history = _merge_messages(kept_rows, messages)
+        row.pop("idempotency_key")
+    history = _merge_messages(rows, messages)
     events = await store.turn_ui_events_async(
         username, store_scope, [m["turn_id"] for m in reversed(history) if m.get("turn_id")],
         max_bytes=UI_EVENTS_PAGE_MAX_BYTES,
@@ -123,7 +117,7 @@ async def read_history_page(
     result = HistoryPage(history, next_before, next_before is not None)
     logger.info(
         "History page scope=%s codex=%s store=%s overflow=%s has_more=%s elapsed_ms=%.1f",
-        store_scope.kind, len(messages), len(kept_rows), overflow, result.has_more,
+        store_scope.kind, len(messages), len(rows), overflow, result.has_more,
         (time.monotonic() - started) * 1000,
     )
     return result
