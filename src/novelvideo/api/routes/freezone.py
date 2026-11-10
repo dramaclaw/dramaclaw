@@ -76,6 +76,8 @@ from novelvideo.api.schemas import (
     CanvasPayload,
     AgentCanvasCommandsRequest,
     AgentCanvasContextRequest,
+    CanvasConfirmationRequest,
+    CanvasConfirmationDecisionRequest,
     CreateIdentityAssetRequest,
     FreezoneAnalyzeShotsRequest,
     FreezoneAnalyzeVideoStoryRequest,
@@ -164,6 +166,11 @@ from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
 from novelvideo.freezone.agent_canvas_metrics import count as count_canvas_metric
 from novelvideo.freezone.canvas_core_pool import CanvasCoreError
 from novelvideo.freezone.canvas_presence import canvas_browser_open
+from novelvideo.freezone import canvas_confirmations
+from novelvideo.freezone.canvas_command_bridge import (
+    canvas_command_idempotency_key,
+    put_pending_canvas_command,
+)
 from novelvideo.freezone.canvas_ui_locale import recorded_ui_locale
 from novelvideo.freezone.agent_bundle_store import (
     export_agent_bundle,
@@ -17919,16 +17926,41 @@ async def agent_canvas_commands(
     )
     if agent_canvas_executor() != "server":
         raise HTTPException(409, {"code": "agent_canvas_executor_browser"})
+    try:
+        kinds = canvas_confirmations.confirmation_kinds([
+            command for envelope in body.envelopes for command in envelope.get("commands", [])
+        ])
+    except (ValueError, KeyError, TypeError):
+        # Preserve the core validator's existing response for malformed commands.
+        kinds = []
+    if kinds:
+        count_canvas_metric("agent_canvas_write.confirmation_required")
+        logger.info(
+            "agent_canvas_write project=%s canvas=%s result=confirmation_required kinds=%s",
+            project, canvas_id, ",".join(kinds),
+        )
+        raise HTTPException(409, {"code": "canvas_confirmation_required", "kinds": kinds})
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
+    data = await execute_agent_canvas_envelopes(
+        project=project, canvas_id=canvas_id, user=user, ctx=ctx,
+        canvas_project_dir=canvas_project_dir, envelopes=body.envelopes, locale=body.locale,
+    )
+    return {"ok": True, "data": data}
+
+
+async def execute_agent_canvas_envelopes(
+    *, project: str, canvas_id: str, user: dict, ctx: ProjectContext,
+    canvas_project_dir: Path, envelopes: list[dict], locale: str | None,
+) -> dict:
     image, video = await asyncio.gather(
         _freezone_image_models_data(ctx.requester_user_id),
         _freezone_video_models_data(ctx.requester_user_id),
     )
-    locale = body.locale or await asyncio.to_thread(recorded_ui_locale, canvas_project_dir) or "zh"
+    locale = locale or await asyncio.to_thread(recorded_ui_locale, canvas_project_dir) or "zh"
     try:
         data = await dispatch_agent_canvas(
             project=project, canvas_id=canvas_id, project_dir=canvas_project_dir,
-            envelopes=body.envelopes,
+            envelopes=envelopes,
             env={"locale": locale, "catalogs": {"image": image, "video": video}},
             build_payload=partial(
                 _canvas_payload_builder, project=project, canvas_id=canvas_id, user=user, ctx=ctx,
@@ -17952,7 +17984,238 @@ async def agent_canvas_commands(
         raise HTTPException(404, "canvas not found") from exc
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
-    return {"ok": True, "data": data}
+    return data
+
+
+_confirmation_now = time.time
+
+
+def _log_canvas_confirmation_decision(record: dict, result: str, via: str, now: float) -> None:
+    count_canvas_metric(f"canvas_confirmation.{result}")
+    logger.info(
+        "canvas_confirmation result=%s id=%s via=%s kinds=%s wait_ms=%d",
+        result, record["id"], via, ",".join(record["kinds"]),
+        int((now - record["created_at"]) * 1000),
+    )
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/confirmations",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def create_canvas_confirmation(
+    project: str,
+    canvas_id: str,
+    body: CanvasConfirmationRequest,
+    user: dict = Depends(require_project_scope("projects:write")),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, require_home_node=False,
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    now = _confirmation_now()
+    try:
+        record = await asyncio.to_thread(
+            canvas_confirmations.request_confirmation,
+            username=str(user["username"]), agent_id=body.agent_id, project_id=project,
+            canvas_id=canvas_id, project_state_dir=state_dir, turn_id=body.turn_id,
+            commands=body.commands, now=now,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, {
+            "code": "invalid_agent_canvas_request", "message": str(exc),
+        }) from exc
+    except canvas_confirmations.CanvasConfirmationError as exc:
+        if exc.code == "not_needed":
+            raise HTTPException(422, {"code": "canvas_confirmation_not_needed"}) from exc
+        if exc.code == "canvas_not_found":
+            raise HTTPException(404, {"code": "canvas_not_found"}) from exc
+        raise HTTPException(409, {"code": exc.code, "message": str(exc)}) from exc
+    count_canvas_metric("canvas_confirmation.created")
+    logger.info(
+        "canvas_confirmation result=created id=%s kinds=%s turn=%s",
+        record["id"], ",".join(record["kinds"]), record["turn_id"],
+    )
+    browser_open = await asyncio.to_thread(canvas_browser_open, state_dir, canvas_id, now=now)
+    return {"ok": True, "data": {
+        "confirmation_id": record["id"], "kinds": record["kinds"], "targets": record["targets"],
+        "expires_at": record["expires_at"], "browser_open": browser_open,
+    }}
+
+
+@router.get(
+    "/projects/{project}/freezone/canvases/{canvas_id}/confirmations",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def list_canvas_confirmations(
+    project: str,
+    canvas_id: str,
+    agent_ids: list[str] = Query(default=["main"]),
+    user: dict = Depends(require_project_scope("projects:read")),
+):
+    from novelvideo.api.routes.chat import append_canvas_confirmation_notice
+
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    agent_ids = list(dict.fromkeys(agent_ids))
+    if len(agent_ids) > 50:
+        raise HTTPException(422, "At most 50 distinct agent_ids are allowed")
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="viewer", require_home_node=False,
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    now = _confirmation_now()
+    pending = []
+    for agent_id in agent_ids:
+        directory = await asyncio.to_thread(
+            canvas_confirmations.confirmations_dir, str(user["username"]), agent_id, state_dir,
+        )
+        expired = await asyncio.to_thread(canvas_confirmations.expire_due, directory, now=now)
+        for record in expired:
+            if (
+                record["turn_id"] is not None and record["project_id"] == project
+                and record["canvas_id"] == canvas_id
+            ):
+                await append_canvas_confirmation_notice(user, record, "expired")
+                _log_canvas_confirmation_decision(record, "expired", "poll", now)
+        pending.extend(await asyncio.to_thread(
+            canvas_confirmations.list_pending, directory,
+            project_id=project, canvas_id=canvas_id, now=now,
+        ))
+    fields = (
+        "id", "agent_id", "turn_id", "kinds", "targets", "command_hash", "created_at", "expires_at",
+    )
+    return {"ok": True, "data": {"confirmations": [
+        {field: record[field] for field in fields}
+        for record in sorted(pending, key=lambda item: item["created_at"])
+    ]}}
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/confirmations/{confirmation_id}/decision",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def decide_canvas_confirmation(
+    project: str,
+    canvas_id: str,
+    confirmation_id: str,
+    body: CanvasConfirmationDecisionRequest,
+    user: dict = Depends(require_project_scope("projects:write")),
+):
+    from novelvideo.api.routes.chat import append_canvas_confirmation_notice
+
+    now = _confirmation_now()
+    record = {"id": confirmation_id, "kinds": [], "created_at": now}
+
+    def reject(status: int, code: str, **detail) -> HTTPException:
+        _log_canvas_confirmation_decision(record, code, body.via, now)
+        return HTTPException(status, {"code": code, **detail})
+
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise reject(400, "invalid_canvas_id")
+    is_agent = user.get("credential_kind") in {"agent_session", "local_trusted_agent"}
+    if body.via == "card" and is_agent:
+        raise reject(403, "card_requires_browser")
+    if body.via == "conversation" and not is_agent:
+        raise reject(403, "conversation_requires_agent")
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, require_home_node=False,
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    directory = await asyncio.to_thread(
+        canvas_confirmations.confirmations_dir, str(user["username"]), body.agent_id, state_dir,
+    )
+    stored = await asyncio.to_thread(
+        canvas_confirmations.read_confirmation, directory, confirmation_id,
+    )
+    if stored is None or stored["project_id"] != project or stored["canvas_id"] != canvas_id:
+        raise reject(404, "not_found")
+    record = stored
+    executor = agent_canvas_executor()
+    needs_browser = executor != "server" or any(
+        command["type"] in {
+            "html_artifact", "run_node_action", "run_workflow", "open_mainline_projection",
+        }
+        for command in record["commands"]
+    )
+    if body.decision == "confirmed" and needs_browser:
+        if not await asyncio.to_thread(canvas_browser_open, state_dir, canvas_id, now=now):
+            raise reject(409, "canvas_browser_required", message="需要打开画布才能运行")
+    try:
+        record = await asyncio.to_thread(
+            canvas_confirmations.claim, directory, confirmation_id,
+            decision=body.decision, via=body.via, username=str(user["username"]),
+            agent_id=body.agent_id, turn_id=body.turn_id, command_hash=body.command_hash, now=now,
+        )
+    except canvas_confirmations.CanvasConfirmationError as exc:
+        if exc.code == "expired" and exc.record is not None:
+            await append_canvas_confirmation_notice(user, exc.record, "expired")
+        raise reject(404 if exc.code == "not_found" else 409, exc.code, message=str(exc)) from exc
+    _log_canvas_confirmation_decision(record, body.decision, body.via, now)
+    if body.decision == "refused":
+        if body.via == "card":
+            await append_canvas_confirmation_notice(user, record, "refused")
+        return {"ok": True, "data": {
+            "confirmation_id": confirmation_id, "status": "refused", "applied": False,
+        }}
+    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+    changed = canvas_confirmations.changed_targets(canvas or {}, record)
+    if changed:
+        record = await asyncio.to_thread(
+            canvas_confirmations.void_confirmation, directory, confirmation_id,
+            reason="targets_changed", now=now,
+        )
+        _log_canvas_confirmation_decision(record, "voided", body.via, now)
+        if body.via == "card":
+            await append_canvas_confirmation_notice(user, record, "voided", ",".join(changed))
+        raise reject(409, "targets_changed", node_ids=changed)
+    envelope = {
+        "schema_version": "canvas_chat_commands.v1", "project_id": project,
+        "canvas_id": canvas_id, "commands": record["commands"], "agent_id": record["agent_id"],
+    }
+    if record["turn_id"] is not None:
+        envelope["turn_id"] = record["turn_id"]
+    if not needs_browser:
+        try:
+            data = await execute_agent_canvas_envelopes(
+                project=project, canvas_id=canvas_id, user=user, ctx=ctx,
+                canvas_project_dir=state_dir, envelopes=[envelope], locale=None,
+            )
+        except Exception as exc:
+            await asyncio.to_thread(
+                canvas_confirmations.void_confirmation, directory, confirmation_id,
+                reason="execution_failed", now=now,
+            )
+            _log_canvas_confirmation_decision(record, "voided", body.via, now)
+            if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
+                _log_canvas_confirmation_decision(record, exc.detail["code"], body.via, now)
+            raise
+        await asyncio.to_thread(
+            canvas_confirmations.finish_confirmation, directory, confirmation_id,
+            outcome={"status": data["status"], "revision": data["revision"]}, now=now,
+        )
+        _log_canvas_confirmation_decision(record, "executed", body.via, now)
+        if body.via == "card":
+            await append_canvas_confirmation_notice(user, record, "executed", data["status"])
+        return {"ok": True, "data": {
+            "confirmation_id": confirmation_id, "status": "executed", "result": data,
+        }}
+    key = canvas_command_idempotency_key(
+        project_id=project, canvas_id=canvas_id,
+        commands=[{"canvas_confirmation": confirmation_id}],
+    )
+    await asyncio.to_thread(
+        put_pending_canvas_command, key=key, project_id=project, canvas_id=canvas_id,
+        commands=record["commands"],
+        envelope={**envelope, "external_mcp_command": True, "confirmation_id": confirmation_id},
+        bridge_dir=directory.parent,
+    )
+    _log_canvas_confirmation_decision(record, "submitted", body.via, now)
+    return {"ok": True, "data": {
+        "confirmation_id": confirmation_id, "status": "submitted", "bridge_key": key,
+    }}
 
 
 async def _agent_canvas_host_value(handler, *args, **kwargs):

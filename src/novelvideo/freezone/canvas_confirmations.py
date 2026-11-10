@@ -307,3 +307,32 @@ def expire_due(directory: str | Path, *, now: float) -> list[dict]:
             elif record["updated_at"] < now - 24 * 3600:
                 path.unlink()
     return expired
+
+
+def confirmations_dir(username: str, agent_id: str, project_state_dir: str | Path) -> Path:
+    from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
+    from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
+
+    home = ensure_user_hermes_workspace(
+        username, profile="freezone", project_state_dir=project_state_dir,
+    )
+    return canvas_bridge_dir_for_profile(home, f"freezone:{agent_id}") / CONFIRMATIONS_DIRNAME
+
+
+def request_confirmation(
+    *, username: str, agent_id: str, project_id: str, canvas_id: str,
+    project_state_dir: str | Path, turn_id: str | None, commands: list[dict], now: float,
+) -> dict:
+    from novelvideo.freezone import canvas_store
+
+    canvas = canvas_store.read_canvas(Path(project_state_dir), canvas_id)
+    if canvas is None:
+        raise CanvasConfirmationError("canvas_not_found", "Canvas not found")
+    if not confirmation_kinds(commands):
+        raise CanvasConfirmationError("not_needed", "Canvas confirmation not needed")
+    targets = confirmation_targets(canvas, commands)
+    return create_confirmation(
+        confirmations_dir(username, agent_id, project_state_dir),
+        project_id=project_id, canvas_id=canvas_id, agent_id=agent_id,
+        username=username, turn_id=turn_id, commands=commands, targets=targets, now=now,
+    )

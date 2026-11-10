@@ -1813,6 +1813,48 @@ def _canvas_context_ui_event(
     }
 
 
+async def append_canvas_confirmation_notice(
+    user: dict, record: dict, status: str, detail: str = "",
+) -> None:
+    if record["turn_id"] is None:
+        return
+    scope = ChatScope(
+        kind="project", id=record["project_id"], surface="freezone",
+        canvas_id=record["canvas_id"], agent_id=record["agent_id"],
+    )
+    project_ctx = await _project_context_for_scope(user, scope)
+    store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
+    confirmation_id = record["id"]
+    kinds = ",".join(record["kinds"])
+    texts = {
+        "refused": (
+            f"The user refused canvas confirmation {confirmation_id} ({kinds}). "
+            "Nothing was executed. Do not retry unless the user asks again."
+        ),
+        "expired": (
+            f"Canvas confirmation {confirmation_id} ({kinds}) expired after 30 minutes "
+            "without a decision. Nothing was executed. "
+            "Ask the user again only if it is still wanted."
+        ),
+        "voided": (
+            f"Canvas confirmation {confirmation_id} ({kinds}) was voided because its "
+            f"target nodes changed ({detail}). Nothing was executed. "
+            "Read the canvas again before asking."
+        ),
+        "executed": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}) "
+            f"and the server applied it with status {detail}. "
+            "Check the current canvas before reporting."
+        ),
+    }
+    await chat_store.append_message_async(
+        str(user["username"]), store_scope, "agent_notification",
+        f"[CANVAS_BACKGROUND_RESULT] {texts[status]} [/CANVAS_BACKGROUND_RESULT]",
+        turn_id=record["turn_id"],
+        idempotency_key=f"canvas-confirmation:{confirmation_id}:{status}",
+    )
+
+
 @router.post("/chat/canvas-command-tool-result")
 async def resolve_canvas_command_tool_result(
     payload: CanvasCommandToolResultIn,
