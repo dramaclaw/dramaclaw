@@ -1,11 +1,16 @@
 """Pure projection of Codex wire items into browser chat cards."""
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
+from novelvideo.chat.canvas_outcome import unwrap_legacy_canvas_envelope
 from novelvideo.chat.codex_protocol import CodexItemRecord, CodexTurn
+from novelvideo.chat.presentation_mapping import _normalize_json_render_reply
 from novelvideo.chat.presentation_text import _redact_local_filesystem_paths
+
+logger = logging.getLogger(__name__)
 
 REASONING_TEXT_MAX_BYTES = 32 * 1024
 TOOL_PREVIEW_MAX_BYTES = 2 * 1024
@@ -161,7 +166,10 @@ def project_item(
         card["seq"] = started_at_ms
     item_type = item["type"]
     if item_type == "agentMessage":
-        text = item.get("text") or ""
+        text = unwrap_legacy_canvas_envelope(item.get("text") or "")
+        text = _normalize_json_render_reply(
+            text, log_error=lambda exc, _body: logger.warning("%s", exc)
+        )
         if not text.strip():
             return None
         card.update(type="text", text=_redact_local_filesystem_paths(text))

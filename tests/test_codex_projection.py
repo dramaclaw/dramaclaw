@@ -103,6 +103,46 @@ def test_recorded_history_projects_in_timestamp_order(expected_history):
     assert project_turn(turn, list(reversed(items))) == expected_history
 
 
+@pytest.mark.parametrize(("text", "expected"), [
+    ('{"message": "hello", "mode": "chat", "canvas_receipts": []}', "hello"),
+    (
+        '```json\n{"type":"card","root":"text","elements":'
+        '{"text":{"type":"Text","props":{"children":"hello"}}}}\n```',
+        '<ui-spec type="card">\n'
+        '{\n'
+        '  "type": "card",\n'
+        '  "root": "text",\n'
+        '  "elements": {\n'
+        '    "text": {\n'
+        '      "type": "Text",\n'
+        '      "props": {\n'
+        '        "content": "hello"\n'
+        '      },\n'
+        '      "children": []\n'
+        '    }\n'
+        '  }\n'
+        '}\n'
+        '</ui-spec>',
+    ),
+])
+def test_recorded_agent_text_is_normalized(text, expected):
+    records = _read_trace("05-history-reads.jsonl")
+    request = next(
+        r for r in _requests(records, "thread/items/list")
+        if r["msg"]["params"].get("turnId") == "01a1c513-66de-7730-9509-ffca305e55c0"
+    )
+    items = ThreadItemsPage.model_validate(_reply(records, request)["result"]).data
+    record = next(r for r in items if r.item["type"] == "agentMessage")
+    record.item["text"] = text
+
+    card = project_item(
+        record.item, turn_id=record.turn_id, started_at_ms=record.started_at_ms, completed=True
+    )
+
+    assert card["type"] == "text"
+    assert card["text"] == expected
+
+
 def test_live_completed_cards_equal_recorded_history(expected_history):
     records = _read_trace("04-turn-additional-context-client-id.jsonl")
     completed = [
