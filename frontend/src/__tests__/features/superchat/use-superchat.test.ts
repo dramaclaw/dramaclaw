@@ -7664,3 +7664,52 @@ it("does not write replayed history but saves live edits after reconnect", async
   hook.unmount();
   vi.unstubAllGlobals();
 });
+
+it("tags snapshots from callbacks memoized before a scope switch with the current scope", async () => {
+  apiPostMock.mockClear();
+  const sockets: TestSocket[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose = null;
+    constructor() { sockets.push(this); }
+    send() {}
+    close() {}
+  }
+  vi.stubGlobal("WebSocket", TestSocket);
+  const hook = renderHook(({ canvas }) => useSuperChat({
+    project: "scope-switch-test", surface: "freezone", freezoneCanvasId: canvas,
+    freezoneAgentId: "main", displayName: "Tester",
+  }), { initialProps: { canvas: "first" } });
+  await waitFor(() => expect(sockets.length).toBe(1));
+  const scope = (canvas: string) => ({ kind: "project", id: "scope-switch-test", surface: "freezone", canvasId: canvas, agentId: "main" });
+  const history = [{ id: "assistant-switch", role: "assistant", turn_id: "switch-turn", content: "saved", parts: [
+    { id: "thought-switch", type: "agent_thought", event: { type: "agent.thought", text: "before" } },
+  ] }];
+  const replay = async (canvas: string) => {
+    await act(async () => {
+      sockets[0].onopen?.();
+      sockets[0].onmessage?.({ data: JSON.stringify({ type: "scope.changed", scope: scope(canvas), history, busy: false }) } as MessageEvent);
+    });
+  };
+  const writes = () => (apiPostMock.mock.calls as unknown[][]).filter(call => call[0] === "api/v1/chat/ui-events");
+  await replay("first");
+  hook.rerender({ canvas: "second" });
+  await replay("second");
+  await act(async () => {
+    hook.result.current.updateUiEvent(
+      "switch-turn",
+      event => (event as { type?: string } | undefined)?.type === "agent.thought",
+      event => ({ ...(event as object), text: "after switch" }),
+    );
+  });
+  await waitFor(() => expect(writes()).toHaveLength(1));
+  expect(writes()[0]).toEqual(["api/v1/chat/ui-events", expect.objectContaining({
+    json: expect.objectContaining({ scope: scope("second"), turn_id: "switch-turn" }),
+  })]);
+  hook.unmount();
+  vi.unstubAllGlobals();
+});

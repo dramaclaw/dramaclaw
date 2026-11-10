@@ -1971,12 +1971,18 @@ export function useSuperChat({
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [messages, setHistoryMessages] = useState<ChatMessage[]>(() => initialScopeSnapshot.cachedMessages);
+  const desiredScopeRef = useRef(desiredScope);
   // Only live updates and user edits create a persistence intent. Hydration bypasses this.
+  // Read the scope from the ref so callbacks memoized before a scope switch tag snapshots
+  // with the current scope instead of a stale closure.
   const setMessages = useCallback((update: ChatMessage[] | ((current: ChatMessage[]) => ChatMessage[])) => {
-    setHistoryMessages(current => markLocalMessageChanges(
-      current, typeof update === "function" ? update(current) : update, desiredScope, scopeKey,
-    ));
-  }, [desiredScope, scopeKey]);
+    setHistoryMessages(current => {
+      const scope = desiredScopeRef.current;
+      return markLocalMessageChanges(
+        current, typeof update === "function" ? update(current) : update, scope, scopeSessionKey(scope),
+      );
+    });
+  }, []);
   const [historyReady, setHistoryReady] = useState(false);
   const [streamText, setStreamText] = useState("");
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
@@ -2008,7 +2014,6 @@ export function useSuperChat({
   const closedRef = useRef(false);
   const authRejectedRef = useRef(false);
   const connectionIdRef = useRef(0);
-  const desiredScopeRef = useRef(desiredScope);
   const handleFrameRef = useRef<(frame: ServerFrame) => void>(() => {});
   const cacheScopeKeyRef = useRef(scopeKey);
   const skipNextCacheSaveRef = useRef(false);
