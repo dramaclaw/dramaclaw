@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from novelvideo.chat.backend_sdk import (
@@ -9,6 +10,8 @@ from novelvideo.chat.backend_sdk import (
     _codex_item_started_trace,
     _codex_unwrap_item,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _split_trace_contents(content: str) -> list[str]:
@@ -47,7 +50,12 @@ def _extract_codex_user_message_text(item: Any) -> str:
             parts.append(f"[mention] {name or path}".strip())
         elif item_type == "image":
             url = str(getattr(content, "url", "") or "").strip()
-            if url:
+            if url.lower().startswith("data:"):
+                logger.warning(
+                    "dropped inline image data from codex user message item=%s",
+                    getattr(thread_item, "id", None),
+                )
+            elif url:
                 parts.append(f"[image] {url}")
         elif item_type == "localImage":
             path = str(getattr(content, "path", "") or "").strip()

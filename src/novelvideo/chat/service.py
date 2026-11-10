@@ -77,7 +77,7 @@ from novelvideo.chat.runtime_history import (
     _split_trace_contents,
     parse_codex_history_item,
 )
-from novelvideo.chat.turn_images import codex_image_input_enabled, image_data_urls
+from novelvideo.chat.turn_images import codex_image_input_enabled, turn_image_files
 from novelvideo.chat.presentation_text import (
     _completion_text_or_existing as _completion_text_or_existing,
     _is_completion_notice as _is_completion_notice,
@@ -4075,6 +4075,9 @@ def _codex_gateway_config_overrides(
         'web_search="disabled"',
         "features.apps=false",
         "features.hooks=false",
+        # Codex would store generated images inline in the thread. DramaClaw
+        # generates media through canvas workflows, which write files to output.
+        "features.image_generation=false",
         # Native memories are CODEX_HOME-global. The shared node runtime must
         # not let one project's learned preferences bleed into another; the
         # project thread and DramaClaw project state remain authoritative.
@@ -5821,13 +5824,13 @@ async def _stream_assistant_reply_codex(
                 username, store_scope
             )
         turn_images = (
-            await image_data_urls(image_paths)
-            if image_paths and codex_image_input_enabled()
+            await turn_image_files(image_paths, Path(project_dir))
+            if image_paths and project_dir is not None and codex_image_input_enabled()
             else []
         )
         # Only pass the keyword when there is something to send: development
         # adapters implement the plain ``stream(prompt)`` port.
-        stream_kwargs = {"images": turn_images} if turn_images else {}
+        stream_kwargs = {"image_paths": turn_images} if turn_images else {}
 
         async for event in thread.stream(agent_prompt, **stream_kwargs):
             logger.debug(
