@@ -6280,7 +6280,7 @@ async def _stream_assistant_reply_codex(
                     dispatch_result.get("ok") is True
                     and dispatch_result.get("applied") is True
                     and str(dispatch_result.get("canvas_apply_status") or "")
-                    in {"accepted", "applied", "direct_applied"}
+                    in {"accepted", "applied"}
                     and bool(bridge_key)
                 )
                 if applied:

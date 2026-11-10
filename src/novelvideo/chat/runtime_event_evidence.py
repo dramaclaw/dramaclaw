@@ -113,24 +113,22 @@ def _codex_freezone_write_receipt(
                 ):
                     return payload
                 continue
-            # A transport/tool status is not proof that the canvas mutation
-            # was persisted. Browser-applied results are durable only when
-            # they carry the bridge receipt identity; direct applies must
-            # carry the saved canvas revision returned by the persistence API.
+            # Browser receipts require bridge identity; server receipts require
+            # the saved canvas revision as proof of persistence.
             browser_receipt = (
                 apply_status in {"applied", "accepted"}
                 and payload.get("applied") is True
                 and bool(bridge_key and project_id and canvas_id)
             )
-            direct_receipt = (
-                apply_status == "direct_applied"
+            server_receipt = (
+                apply_status == "applied"
                 and payload.get("applied") is True
                 and bool(project_id and canvas_id)
                 and isinstance(revision, int)
                 and not isinstance(revision, bool)
                 and revision >= 0
             )
-            if browser_receipt or direct_receipt:
+            if browser_receipt or server_receipt:
                 return payload
     return None
 

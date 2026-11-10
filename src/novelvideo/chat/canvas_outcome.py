@@ -40,13 +40,11 @@ _UNVERIFIED_WRITE_REQUEST_WITH_REPLY = (
 
 
 def receipt_reference(payload: dict[str, Any]) -> tuple[str, int | None]:
-    """Identify a browser receipt or a direct saved revision, never tool status."""
+    """Identify a browser receipt or a server-saved revision, never tool status."""
     key = str(payload.get("bridge_key") or "").strip()
     revision = payload.get("revision")
     if not isinstance(revision, int) or isinstance(revision, bool):
         revision = None
-    if payload.get("canvas_apply_status") == "direct_applied":
-        return "", revision
     return (key, None) if key else ("", revision)
 
 
