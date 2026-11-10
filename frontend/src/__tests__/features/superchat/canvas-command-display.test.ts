@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { canvasApprovalAppliesWithoutClick } from "@/features/superchat/canvas-command-display";
+import {
+  canvasApprovalAppliesWithoutClick,
+  canvasApprovalIsExpired,
+} from "@/features/superchat/canvas-command-display";
+
+describe("canvasApprovalIsExpired", () => {
+  it.each([
+    [undefined, 5, false],
+    [6, 5, false],
+    [5, 5, true],
+    [4, 5, true],
+  ])("returns %s at %s as expired: %s", (expiresAt, nowMs, expected) => {
+    expect(canvasApprovalIsExpired(expiresAt, nowMs)).toBe(expected);
+  });
+});
 
 describe("canvasApprovalAppliesWithoutClick", () => {
   it("applies a server-admitted frame in manual mode", () => {

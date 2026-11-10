@@ -227,6 +227,7 @@ import {
 } from "@/features/freezone/chatNodeReferences";
 import {
   canvasApprovalAppliesWithoutClick,
+  canvasApprovalIsExpired,
   visibleStructuredBlocksForMessage,
   type CanvasCommandExecutionMode,
 } from "@/features/superchat/canvas-command-display";
@@ -12379,6 +12380,7 @@ function canvasCommandApprovalDetailsFromUiEvents(events: unknown[] | undefined)
         ? value.receivedAt
         : canvasSurfaceEventOrder(value, approvals.length);
     approvals.push({
+      restoredFromHistory: true,
       canvasId,
       turnId,
       anchorMessageId: typeof value.anchorMessageId === "string" ? value.anchorMessageId : null,
@@ -13565,13 +13567,15 @@ export function SuperChatPanel({
     const commandCount = detail.envelopes.reduce((sum, envelope) => sum + envelope.commands.length, 0);
     const receivedAt = detail.receivedAt ?? Date.now();
     const receivedAtLooksLikeEpochMs = receivedAt > 1_000_000_000_000;
-    const expiresAt = detail.autoExpires
-      ? (
-          receivedAtLooksLikeEpochMs
-            ? receivedAt + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
-            : Date.now() + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
-        )
-      : undefined;
+    const expiresAt = detail.restoredFromHistory
+      ? Date.now()
+      : detail.autoExpires
+        ? (
+            receivedAtLooksLikeEpochMs
+              ? receivedAt + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
+              : Date.now() + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
+          )
+        : undefined;
     return {
       id: key,
       key,
@@ -13588,7 +13592,7 @@ export function SuperChatPanel({
       commandCount,
       plans: canvasCommandPlansFromEnvelopes(detail.envelopes),
       externalMcpCommand: detail.externalMcpCommand === true,
-      serverApproved: detail.serverApproved,
+      serverApproved: detail.restoredFromHistory ? false : detail.serverApproved,
       requiresUserChoice: detail.requiresUserChoice === true,
     };
   }, [activeMessages, effectiveFreezoneCanvasId, freezoneAgentMatches, latestAssistantMessageId, variant]);
@@ -14027,6 +14031,7 @@ export function SuperChatPanel({
   ]);
 
   const handleApplyCanvasCommandApproval = useCallback((approval: PendingCanvasCommandApproval) => {
+    if (canvasApprovalIsExpired(approval.expiresAt, Date.now())) return;
     if (executingCanvasCommandApprovalIdsRef.current.has(approval.id)) return;
     resolvedCanvasCommandApprovalKeysRef.current.add(approval.key);
     resolvedCanvasCommandApprovalKeysRef.current.add(canvasCommandApprovalApplyKey(approval));
@@ -14378,6 +14383,7 @@ export function SuperChatPanel({
 
   useEffect(() => {
     for (const approval of pendingCanvasCommandApprovals) {
+      if (canvasApprovalIsExpired(approval.expiresAt, Date.now())) continue;
       if (!canvasApprovalAppliesWithoutClick(canvasCommandExecutionMode, approval.serverApproved)) continue;
       if (approval.requiresUserChoice) continue;
       // manual_ui 动作必须由用户主动确认。自动模式不能把“重试生成”擅自
