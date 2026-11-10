@@ -178,6 +178,12 @@ function nodeMediaType(node: CanvasNode): string | null {
   return stringOrNull((node.data as { media_kind?: unknown }).media_kind);
 }
 
+// A reference carries the node's file address; inline `data:` payloads stay on the canvas.
+function addressOrNull(value: unknown): string | null {
+  const address = stringOrNull(value);
+  return address && !/^data:/i.test(address) ? address : null;
+}
+
 function nodeSourceUrl(node: CanvasNode): string | null {
   const data = node.data as {
     imageUrl?: unknown;
@@ -189,21 +195,21 @@ function nodeSourceUrl(node: CanvasNode): string | null {
   };
   if (node.type === CANVAS_NODE_TYPES.video) {
     return (
-      stringOrNull(data.videoUrl) ||
-      stringOrNull(data.sourceUrl) ||
-      stringOrNull(data.previewImageUrl)
+      addressOrNull(data.videoUrl) ||
+      addressOrNull(data.sourceUrl) ||
+      addressOrNull(data.previewImageUrl)
     );
   }
   if (node.type === CANVAS_NODE_TYPES.audio) {
-    return stringOrNull(data.audioUrl) || stringOrNull(data.sourceUrl);
+    return addressOrNull(data.audioUrl) || addressOrNull(data.sourceUrl);
   }
   return (
-    stringOrNull(data.imageUrl) ||
-    stringOrNull(data.previewImageUrl) ||
-    stringOrNull(data.referenceImageUrl) ||
-    stringOrNull(data.videoUrl) ||
-    stringOrNull(data.audioUrl) ||
-    stringOrNull(data.sourceUrl)
+    addressOrNull(data.imageUrl) ||
+    addressOrNull(data.previewImageUrl) ||
+    addressOrNull(data.referenceImageUrl) ||
+    addressOrNull(data.videoUrl) ||
+    addressOrNull(data.audioUrl) ||
+    addressOrNull(data.sourceUrl)
   );
 }
 
@@ -215,12 +221,12 @@ function nodePreviewUrl(node: CanvasNode): string | null {
     videoUrl?: unknown;
   };
   if (node.type === CANVAS_NODE_TYPES.video) {
-    return stringOrNull(data.previewImageUrl) || stringOrNull(data.videoUrl);
+    return addressOrNull(data.previewImageUrl) || addressOrNull(data.videoUrl);
   }
   return (
-    stringOrNull(data.previewImageUrl) ||
-    stringOrNull(data.imageUrl) ||
-    stringOrNull(data.referenceImageUrl)
+    addressOrNull(data.previewImageUrl) ||
+    addressOrNull(data.imageUrl) ||
+    addressOrNull(data.referenceImageUrl)
   );
 }
 
