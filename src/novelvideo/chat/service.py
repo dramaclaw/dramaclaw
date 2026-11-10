@@ -39,7 +39,6 @@ from novelvideo.chat.codex_history import HISTORY_CACHE, CodexHistoryPage, Codex
 from novelvideo.chat.codex_protocol import context_entries
 from novelvideo.chat.canvas_outcome import (
     CANVAS_FINAL_RESPONSE_INSTRUCTIONS,
-    receipt_reference,
 )
 from novelvideo.chat.display_fallback import (
     _limit_display_items as _limit_display_items,
@@ -143,27 +142,12 @@ from novelvideo.chat.session_registry import (
     _parse_iso_datetime as _parse_iso_datetime,
 )
 from novelvideo.chat.runtime_event_evidence import (
-    _FREEZONE_CANVAS_WRITE_TOOLS as _FREEZONE_CANVAS_WRITE_TOOLS,
-    _GENERATION_RETRY_DATA_FIELDS as _GENERATION_RETRY_DATA_FIELDS,
-    _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS as _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS,
-    _codex_freezone_clarification_answered as _codex_freezone_clarification_answered,
-    _codex_freezone_argument_retry_expectation,
-    _codex_freezone_argument_retry_signature,
-    _codex_freezone_confirmed_execution_policy,
-    _codex_freezone_execution_policy_requirement,
-    _codex_freezone_generation_retry_key,
-    _codex_freezone_is_execution_policy_rejection,
-    _codex_freezone_is_generation_preflight_rejection,
     _codex_freezone_is_write_event,
     _codex_freezone_tool_argument_rejection,
     _codex_freezone_tool_arguments,
     _codex_freezone_tool_name,
     _codex_freezone_write_receipt,
-    _codex_freezone_write_result_error,
-    _codex_freezone_write_result_state,
-    _codex_freezone_write_result_succeeded as _codex_freezone_write_result_succeeded,
     _json_objects_from_codex_tool_value,
-    story_argument_retry_matches,
 )
 from novelvideo.chat.tool_policy import (
     AGENT_PRODUCT_RESULT_TOOLS as _AGENT_PRODUCT_RESULT_TOOLS,
@@ -917,42 +901,6 @@ Skill Studio continuation:
   saved Skill/Recipe. Clarify underspecified changes, then present a complete edit draft.
 [/FREEZONE_CANVAS_ASSISTANT]"""
 
-_FREEZONE_CANVAS_WRITE_ACTION_RE = re.compile(
-    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|向[上下左右]移|再移|布局|选择|打开|运行|执行|生成|制作|做|"
-    r"create|add|insert|delete|remove|clear|update|connect|move|layout|select|open|run|execute|generate)",
-    re.IGNORECASE,
-)
-_FREEZONE_CANVAS_WRITE_OBJECT_RE = re.compile(
-    r"(?:节点|画布|工作流|连线|边|合成节点|"
-    r"node|canvas|workflow|edge|compose\s+node)",
-    re.IGNORECASE,
-)
-_FREEZONE_DIRECT_MEDIA_WRITE_RE = re.compile(
-    r"(?:"
-    r"(?:生成|创建|新建|添加|制作|做|运行|执行|用|根据|按照|基于)"
-    r"[^。！？!?\n]{0,32}"
-    r"(?:图片|图像|图|视频|音频|音乐|配音|旁白|成片)"
-    r"|(?:generate|create|add|make|run|execute)\s+(?:an?\s+|some\s+)?"
-    r"(?:image|video|audio|music|voiceover|composition)"
-    r")",
-    re.IGNORECASE,
-)
-_FREEZONE_CANVAS_KNOWLEDGE_QUESTION_RE = re.compile(
-    r"(?:如何|怎么|为什么|为何|是什么|教程|方法|步骤|是否支持|支不支持|"
-    r"\bwhat\b|\bwhy\b|\bhow\b|\bcan\s+i\b)",
-    re.IGNORECASE,
-)
-_FREEZONE_CANVAS_NO_WRITE_FAILURE_RE = re.compile(
-    r"(?:未能|无法|失败|找不到|不可用|未创建|没有创建|未执行|没有执行|不能)",
-    re.IGNORECASE,
-)
-_FREEZONE_TEXT_ONLY_REQUEST_RE = re.compile(
-    r"(?:生成|创建|编写|撰写|整理|generate|create|write|draft)"
-    r"(?:(?!\n).){0,40}"
-    r"(?:剧本|脚本|文案|提示词|解说词|screenplay|script|copy|copywriting|prompt)"
-    r"\s*[。！？!?．.]?\s*$",
-    re.IGNORECASE,
-)
 _FREEZONE_CANVAS_WRITE_NEGATION_RE = re.compile(
     r"(?:"
     r"(?:暂不|暂时不|先不|不要|无需|不用|不再|不会|不)\s*"
@@ -1011,139 +959,6 @@ _CODEX_FREEZONE_EXECUTION_TOOLS = (
     "freezone_run_workflow",
     "freezone_update_node_data",
 )
-_FREEZONE_INDEPENDENT_CANVAS_WRITE_RE = re.compile(
-    r"(?:"
-    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|向[上下左右]移|"
-    r"再移|布局|选择|打开|运行|执行|"
-    r"create|add|insert|delete|remove|clear|update|connect|move|layout|select|open|"
-    r"run|execute)"
-    r"(?:(?!(?:Skill|Recipe|技能|配方))[^。！？!?，,；;\n]){0,32}"
-    r"(?:节点|画布|连线|边|node|canvas|edge)"
-    r"|(?:节点|画布|连线|边|node|canvas|edge)"
-    r"(?:(?!(?:Skill|Recipe|技能|配方))[^。！？!?，,；;\n]){0,32}"
-    r"(?:创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|布局|选择|打开|"
-    r"运行|执行|create|add|insert|delete|remove|clear|update|connect|move|layout|"
-    r"select|open|run|execute)"
-    r")",
-    re.IGNORECASE,
-)
-_FREEZONE_SKILL_CAPABILITY_RE = re.compile(
-    r"(?:"
-    r"(?:用于|用来|功能是|作用是|设计为|会|可以|能够|可)\s*"
-    r"(?:使用|用|创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|布局|选择|打开|"
-    r"运行|执行)"
-    r"[^。！？!?，,；;\n]{0,24}(?:节点|画布|连线|边|Skill|Recipe|技能|配方)"
-    r"|(?:使用|用|创建|新建|添加|插入|删除|移除|清空|修改|更新|连接|连线|移动|布局|选择|"
-    r"打开|运行|执行)"
-    r"[^。！？!?，,；;\n]{0,24}(?:节点|画布|连线|边|Skill|Recipe|技能|配方)"
-    r"[^。！？!?，,；;\n]{0,12}的\s*(?:Skill|Recipe|技能|配方)"
-    r"|(?:Skill|Recipe)\s+"
-    r"(?:for|to|capable\s+of|(?:that|which)(?:\s+can)?|"
-    r"(?:designed|built|intended|meant|created|able)\s+to)\s+"
-    r"(?:us(?:e|es|ing)|creat(?:e|es|ing)|add(?:s|ing)?|insert(?:s|ing)?|delet(?:e|es|ing)|"
-    r"remov(?:e|es|ing)|clear(?:s|ing)?|updat(?:e|es|ing)|connect(?:s|ing)?|"
-    r"mov(?:e|es|ing)|layout|select(?:s|ing)?|open(?:s|ing)?|run(?:s|ning)?|execut(?:e|es|ing))"
-    r"[^。！？!?，,；;\n]{0,24}(?:node|canvas|edge|skill|recipe)s?"
-    r")",
-    re.IGNORECASE,
-)
-_FREEZONE_SKILL_RUNTIME_REQUEST_RE = re.compile(
-    r"(?:"
-    r"(?:用(?!于|来)|使用|应用|运行|执行|use|apply|run|execute)"
-    r"[^。！？!?\n]{0,24}"
-    r"(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
-    r"|(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
-    r"[^。！？!?\n]{0,40}"
-    r"(?:并|然后|再|随后|接着|同时|完成后|保存后|确认后|后|and\s+then|then)"
-    r"[^。！？!?\n]{0,24}"
-    r"(?:运行|执行|应用|run|execute|apply)"
-    r"|(?:Skill|Skills|Recipe|Recipes|skill|skills|recipe|recipes|技能|配方)"
-    r"[^。！？!?\n]{0,24}"
-    r"(?:添加到|放到|写入|加入|add\s+to|put\s+(?:it\s+)?on)"
-    r"[^。！？!?\n]{0,12}"
-    r"(?:画布|节点|canvas|node)"
-    r"|(?:运行|执行|应用|使用|用)\s*(?:它|这个|该(?:Skill|Recipe|技能|配方)?)"
-    r"|(?:让|由|请)\s*(?:它|这个\s*(?:Skill|Recipe|技能|配方)?|"
-    r"该\s*(?:Skill|Recipe|技能|配方)?)"
-    r"\s*(?:来)?\s*"
-    r"(?:运行|执行|应用|生成|制作|创建)"
-    r"|(?:run|execute|apply|use)\s+(?:it|this(?:\s+(?:skill|recipe))?)"
-    r"|(?:generate|make|create)\s+[^。！？!?，,；;\n]{0,32}\s+"
-    r"(?:with|using)\s+(?:it|this\s+(?:skill|recipe))"
-    r"|(?:have|let|ask|make)\s+(?:it|this\s+(?:skill|recipe))\s+(?:to\s+)?"
-    r"(?:run|execute|apply|generate|make|create)"
-    r")",
-    re.IGNORECASE,
-)
-def _freezone_canvas_write_requested(prompt: str | None) -> bool:
-    """Recognize an explicit canvas mutation without matching negated actions."""
-
-    raw_prompt = str(prompt or "")
-    user_text = raw_prompt.split("[SUPERTALE_", 1)[0].strip()
-    if not user_text:
-        return False
-    # Explicit read-only inspections can contain past-tense generation words
-    # ("核实图片是否已经生成"). Those words do not request a new write receipt.
-    if re.search(
-        r"(?:只读(?:检查)?|(?:只|仅)(?:做|作)?(?:分析|检查|核实|查询|查看))"
-        r"[，,\s]*(?:不(?:要)?(?:生成|修改|写入)[^。！？!?\n]*)?[。.!！\s]*$",
-        user_text,
-    ):
-        return False
-    intent_text = _FREEZONE_CANVAS_WRITE_NEGATION_RE.sub("", user_text)
-    # Strip only status predicates, keeping any independent instruction such as
-    # "是否已生成？没有的话生成一张" eligible for the write guard.
-    intent_text = re.sub(
-        r"(?:是否|是不是|有没有)(?:已经|已|成功)?(?:生成|创建|合成)(?:成功|完成|了)?",
-        "",
-        intent_text,
-    )
-    has_action = bool(_FREEZONE_CANVAS_WRITE_ACTION_RE.search(intent_text))
-    has_canvas_object = bool(_FREEZONE_CANVAS_WRITE_OBJECT_RE.search(intent_text))
-    has_direct_media_write = bool(_FREEZONE_DIRECT_MEDIA_WRITE_RE.search(intent_text))
-    has_node_reference = "[SUPERTALE_CANVAS_NODE_REFERENCES]" in raw_prompt
-    standalone_clear = bool(re.search(r"(?:清空|clear)", intent_text, re.IGNORECASE))
-    if _FREEZONE_CANVAS_KNOWLEDGE_QUESTION_RE.search(user_text):
-        return False
-    # Skill Studio authors catalog configuration. Media words inside a Skill
-    # description (for example, “创建图片转线稿 Skill”) do not authorize or
-    # require a canvas mutation. Keep the canvas receipt guard only when the
-    # same request explicitly asks to use/run the Skill, add it to canvas, or
-    # perform another independent canvas mutation.
-    if _FREEZONE_SKILL_STUDIO_TRIGGER_RE.search(user_text):
-        intent_text = _FREEZONE_SKILL_CAPABILITY_RE.sub("", intent_text)
-        return bool(
-            _FREEZONE_SKILL_RUNTIME_REQUEST_RE.search(intent_text)
-            or _FREEZONE_INDEPENDENT_CANVAS_WRITE_RE.search(intent_text)
-        )
-    # A text artifact request such as “生成一个视频脚本” or “create an image
-    # prompt” must remain a chat response unless the user explicitly names a
-    # canvas/node mutation. Otherwise the post-turn adapter may replace the
-    # generated text with a misleading canvas-write failure.
-    # Only suppress an explicit text-artifact request.  Media requests may
-    # legitimately contain the same words (for example “根据这个提示词生成
-    # 一张图” or “生成一张带文案的图片”), so do not use a broad keyword
-    # exclusion here.
-    if (
-        _FREEZONE_TEXT_ONLY_REQUEST_RE.search(user_text)
-        and not re.search(
-            r"(?:根据|用|按照|基于|带|包含|from|using|based\s+on|with)",
-            user_text,
-            re.IGNORECASE,
-        )
-        and not re.search(
-            r"(?:节点|画布|连线|node|canvas|edge)", user_text, re.IGNORECASE
-        )
-    ):
-        return False
-    return has_action and (
-        has_canvas_object
-        or has_direct_media_write
-        or has_node_reference
-        or standalone_clear
-    )
-
-
 def _freezone_existing_execution_requested(prompt: str | None) -> bool:
     """Select the small tool surface for executing an object already on canvas."""
 
@@ -1439,93 +1254,6 @@ def _codex_story_preflight_rejection(
     if rejection is None or arguments is None:
         return None
     return name, arguments, rejection
-
-
-def _codex_story_write_intent(
-    event: Any, *, project: str, canvas_id: str
-) -> tuple[str, str, int, str] | None:
-    """Identify the exact story, revision and key used by a story write."""
-    name = _codex_freezone_tool_name(event)
-    if name not in {
-        "dramaclaw_create_interactive_story",
-        "dramaclaw_patch_interactive_story",
-        "dramaclaw_save_interactive_story_outline",
-        "dramaclaw_confirm_interactive_story_outline",
-        "dramaclaw_confirm_interactive_story_stages",
-    }:
-        return None
-    for args in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
-        story = args.get("story")
-        outline = args.get("outline")
-        if name == "dramaclaw_create_interactive_story" and isinstance(story, dict):
-            story_id = story.get("story_id")
-        elif name == "dramaclaw_save_interactive_story_outline" and isinstance(
-            outline, dict
-        ):
-            story_id = outline.get("outline_id")
-            key = args.get("idempotency_key")
-            if (
-                "outline_id" not in outline
-                and type(args.get("base_revision")) is int
-                and args["base_revision"] == 0
-                and isinstance(key, str)
-                and 8 <= len(key) <= 200
-            ):
-                # Match the first-write ID generated by story_tools. A receipt
-                # for another ID must not settle a prior rejection.
-                story_id = "outline_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
-        elif name == "dramaclaw_confirm_interactive_story_outline":
-            story_id = args.get("outline_id")
-        else:
-            story_id = args.get("story_id")
-        base = args.get("base_revision")
-        key = args.get("idempotency_key")
-        if (
-            isinstance(story_id, str) and story_id.strip()
-            and type(base) is int and base >= 0
-            and isinstance(key, str) and key.strip()
-            and args.get("project_id", project) == project
-            and args.get("canvas_id", canvas_id) == canvas_id
-        ):
-            return name, story_id.strip(), base, key.strip()
-    return None
-
-
-def _codex_story_write_payload_signature(event: Any) -> str | None:
-    """Match retries of the same story edit without revision or save-key noise."""
-    for args in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
-        payload = {
-            key: value for key, value in args.items()
-            if key not in {"base_revision", "idempotency_key"}
-        }
-        try:
-            return json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        except (TypeError, ValueError):
-            return None
-    return None
-
-
-def _codex_story_revision_conflict(
-    event: Any, *, project: str, canvas_id: str
-) -> tuple[str, str, int, str] | None:
-    """Only a structured server conflict may be superseded by a saved retry."""
-    intent = _codex_story_write_intent(event, project=project, canvas_id=canvas_id)
-    if intent is None or str(getattr(event, "status", "")).lower() not in {
-        "completed", "failed",
-    }:
-        return None
-    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
-        for payload in _json_objects_from_codex_tool_value(value):
-            revision = payload.get("current_revision")
-            if (
-                payload.get("ok") is False
-                and payload.get("code") == "revision_conflict"
-                and payload.get("story_id") == intent[1]
-                and type(revision) is int and revision >= 0
-                and revision != intent[2]
-            ):
-                return intent[0], intent[1], revision, intent[3]
-    return None
 
 
 async def _bind_server_observed_agent_product_execution(
@@ -5665,21 +5393,9 @@ async def _stream_assistant_reply_codex(
         if structured_canvas_reply
         else None
     )
-    canvas_write_attempts: dict[str, str] = {}
-    preflight_rejections: dict[str, tuple[str, dict[str, Any], dict[str, Any]]] = {}
-    story_conflicts: dict[str, tuple[tuple[str, str, int, str], str]] = {}
-    canvas_receipts: set[tuple[str, int | None]] = set()
-    canvas_write_failures: dict[str, str] = {}
-    canvas_generation_preflights: dict[str, str] = {}
     stage_confirmation_expected = False
     stage_confirmation_attempted = False
     stage_confirmation_succeeded = False
-    # call_id -> run_after_create the agent requested when the draft policy
-    # guard rejected it; only a receipt reporting that policy may supersede it.
-    canvas_policy_requirements: dict[str, bool] = {}
-    # call_id -> the exact corrected arguments that would prove a write the MCP
-    # input schema rejected was only a slip; a receipt for them supersedes it.
-    canvas_argument_rejections: dict[str, str] = {}
     turn_agent_product_operations = _TurnAgentProductOperationTracker()
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
@@ -5935,167 +5651,22 @@ async def _stream_assistant_reply_codex(
                     )
                     if event.type == "tool_updated":
                         turn_agent_product_operations.observe(event)
-                    if _codex_freezone_is_write_event(event):
-                        is_stage_confirmation = (
-                            _codex_freezone_tool_name(event)
-                            == "dramaclaw_confirm_interactive_story_stages"
-                        )
-                        if is_stage_confirmation:
-                            stage_confirmation_attempted = True
+                    if (
+                        _codex_freezone_is_write_event(event)
+                        and _codex_freezone_tool_name(event)
+                        == "dramaclaw_confirm_interactive_story_stages"
+                    ):
+                        stage_confirmation_attempted = True
                         call_id = str(getattr(event, "call_id", "") or "")
-                        identifiable_call = bool(call_id)
-                        # An unidentified write cannot be associated with a final
-                        # claim. Keep it failed rather than merging unrelated calls.
-                        call_id = call_id or f"unidentified:{len(canvas_write_attempts)}"
-                        canvas_write_attempts.setdefault(call_id, "in_progress")
-                        if event.type == "tool_updated":
-                            preflight_target = _codex_story_preflight_rejection(event)
-                            if preflight_target is not None and identifiable_call:
-                                # No API write was attempted. A corrected call to
-                                # the same story may satisfy this rejected input.
-                                canvas_write_attempts.pop(call_id, None)
-                                preflight_rejections[call_id] = preflight_target
-                                failure = _codex_freezone_write_result_error(event)
-                                if failure:
-                                    canvas_write_failures[call_id] = failure
-                            else:
-                                receipt = _codex_freezone_write_receipt(
-                                    event, expected_project=project, expected_canvas=canvas_id
-                                )
-                                retry_key = _codex_freezone_generation_retry_key(event)
-                                if receipt is not None and identifiable_call:
-                                    intent = _codex_story_write_intent(
-                                        event, project=project, canvas_id=canvas_id or "default"
-                                    )
-                                    receipt_identity = receipt.get(
-                                        "outline_id"
-                                        if _codex_freezone_tool_name(event) in {
-                                            "dramaclaw_save_interactive_story_outline",
-                                            "dramaclaw_confirm_interactive_story_outline",
-                                        }
-                                        else "story_id"
-                                    )
-                                    if intent is not None and receipt_identity == intent[1]:
-                                        retry_args = _codex_freezone_tool_arguments(event)
-                                        for rejected_call, (rejected_name, rejected_args, rejection) in list(
-                                            preflight_rejections.items()
-                                        ):
-                                            if (
-                                                rejected_call == call_id
-                                                or rejected_name != intent[0]
-                                                or retry_args is None
-                                                or rejected_args.get("project_id", project) != project
-                                                or rejected_args.get("canvas_id", canvas_id or "default") != (canvas_id or "default")
-                                            ):
-                                                continue
-                                            # Omitted scope and explicitly supplied bound scope
-                                            # are equivalent; never permit another scope.
-                                            before = {**rejected_args, "project_id": project,
-                                                      "canvas_id": canvas_id or "default"}
-                                            after = {**retry_args, "project_id": project,
-                                                     "canvas_id": canvas_id or "default"}
-                                            if story_argument_retry_matches(
-                                                before, after, rejection, tool_name=intent[0]
-                                            ):
-                                                canvas_write_failures.pop(rejected_call, None)
-                                                del preflight_rejections[rejected_call]
-                                        # A server 409 rejected this exact story write
-                                        # before saving. Only its verified rebased
-                                        # successor can settle that failed attempt.
-                                        signature = _codex_story_write_payload_signature(event)
-                                        for rejected_call, (conflict, rejected_signature) in list(
-                                            story_conflicts.items()
-                                        ):
-                                            if (
-                                                intent[:2] == conflict[:2]
-                                                and signature is not None
-                                                and signature == rejected_signature
-                                                and intent[2] >= conflict[2]
-                                            ):
-                                                canvas_write_attempts.pop(rejected_call, None)
-                                                canvas_write_failures.pop(rejected_call, None)
-                                                del story_conflicts[rejected_call]
-                                else:
-                                    conflict = _codex_story_revision_conflict(
-                                        event, project=project, canvas_id=canvas_id or "default"
-                                    )
-                                    signature = _codex_story_write_payload_signature(event)
-                                    if conflict is not None and signature is not None:
-                                        story_conflicts[call_id] = conflict, signature
-                                canvas_write_attempts[call_id] = (
-                                    "succeeded"
-                                    if receipt is not None and identifiable_call
-                                    else _codex_freezone_write_result_state(event)
-                                )
-                                if receipt is not None and identifiable_call:
-                                    if is_stage_confirmation:
-                                        stage_confirmation_succeeded = True
-                                    reference = receipt_reference(receipt)
-                                    canvas_receipts.add(reference)
-                                    if retry_key is not None:
-                                        confirmed_policy = (
-                                            _codex_freezone_confirmed_execution_policy(event)
-                                        )
-                                        for rejected_call, rejected_key in list(
-                                            canvas_generation_preflights.items()
-                                        ):
-                                            if rejected_key != retry_key or rejected_call == call_id:
-                                                continue
-                                            required_policy = canvas_policy_requirements.get(
-                                                rejected_call
-                                            )
-                                            # A policy-guard rejection is resolved only by a
-                                            # confirmation whose receipt verifiably applied
-                                            # the requested run_after_create. An unverified
-                                            # or downgraded confirmation keeps it on record.
-                                            if (
-                                                required_policy is not None
-                                                and confirmed_policy != required_policy
-                                            ):
-                                                continue
-                                            canvas_write_attempts.pop(rejected_call, None)
-                                            canvas_write_failures.pop(rejected_call, None)
-                                            canvas_generation_preflights.pop(rejected_call, None)
-                                            canvas_policy_requirements.pop(rejected_call, None)
-                                    signature = _codex_freezone_argument_retry_signature(event)
-                                    for rejected_call, expected in list(
-                                        canvas_argument_rejections.items()
-                                    ):
-                                        if (
-                                            signature is None
-                                            or rejected_call == call_id
-                                            or expected != signature
-                                        ):
-                                            continue
-                                        canvas_write_attempts.pop(rejected_call, None)
-                                        canvas_write_failures.pop(rejected_call, None)
-                                        canvas_argument_rejections.pop(rejected_call, None)
-                                elif (
-                                    canvas_write_attempts[call_id] == "failed"
-                                    and retry_key is not None
-                                    and _codex_freezone_is_generation_preflight_rejection(event)
-                                ):
-                                    if _codex_freezone_is_execution_policy_rejection(event):
-                                        required_policy = (
-                                            _codex_freezone_execution_policy_requirement(event)
-                                        )
-                                        # A non-boolean request cannot be matched to a
-                                        # receipt, so that rejection is never superseded.
-                                        if required_policy is not None:
-                                            canvas_generation_preflights[call_id] = retry_key
-                                            canvas_policy_requirements[call_id] = required_policy
-                                    else:
-                                        canvas_generation_preflights[call_id] = retry_key
-                                elif canvas_write_attempts[call_id] == "failed" and identifiable_call:
-                                    # Rejected before the handler ran, so nothing was
-                                    # written; only the provably corrected call may
-                                    # supersede it.
-                                    expected = _codex_freezone_argument_retry_expectation(event)
-                                    if expected is not None:
-                                        canvas_argument_rejections[call_id] = expected
-                                failure = _codex_freezone_write_result_error(event)
-                                if failure:
-                                    canvas_write_failures[call_id] = failure
+                        if (
+                            event.type == "tool_updated"
+                            and call_id
+                            and _codex_story_preflight_rejection(event) is None
+                            and _codex_freezone_write_receipt(
+                                event, expected_project=project, expected_canvas=canvas_id
+                            ) is not None
+                        ):
+                            stage_confirmation_succeeded = True
                     event_tool_text = str(event.text or "")
                     if event_tool_text:
                         tool_text += event_tool_text
@@ -6139,11 +5710,8 @@ async def _stream_assistant_reply_codex(
             node_data = _exact_audio_action_node_data(
                 assistant_text, required_subject=required_subject
             )
-            orchestrated_call_id = "orchestrated:exact-audio-action"
-            canvas_write_attempts[orchestrated_call_id] = "failed"
             if node_data is None:
                 audio_notice = "音频执行参数无效，未提交画布操作。"
-                canvas_write_failures[orchestrated_call_id] = audio_notice
             else:
                 try:
                     dispatch_result = await _dispatch_exact_audio_node_action(
@@ -6178,8 +5746,6 @@ async def _stream_assistant_reply_codex(
                     and bool(bridge_key)
                 )
                 if applied:
-                    canvas_write_attempts[orchestrated_call_id] = "succeeded"
-                    canvas_receipts.add((bridge_key, None))
                     audio_notice = "已更新现有音频节点，并提交 generate_audio。"  # i18n-exempt
                 else:
                     errors = dispatch_result.get("errors")
@@ -6189,7 +5755,6 @@ async def _stream_assistant_reply_codex(
                         or (errors[0] if isinstance(errors, list) and errors else "")
                         or "音频节点执行失败，前端没有返回有效回执。"  # i18n-exempt
                     ).strip()
-                    canvas_write_failures[orchestrated_call_id] = failure
                     audio_notice = failure
     finally:
         logger.info(
@@ -6230,9 +5795,6 @@ async def _stream_assistant_reply_codex(
             )
         if turn_operation is not None:
             await turn_operation.finish(turn_disposition)
-
-    for rejected_call in preflight_rejections:
-        canvas_write_attempts[rejected_call] = "failed"
 
     if structured_canvas_reply and turn_disposition == "cancelled":
         if store_scope is not None:

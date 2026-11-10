@@ -122,9 +122,6 @@ def _confirmed_canvas_receipt():
 
 @pytest.mark.parametrize("server", [False, True])
 def test_workflow_confirmation_receipt_survives_mcp_and_chat_postcondition(monkeypatch, server):
-    from types import SimpleNamespace
-    from novelvideo.chat.service import _codex_freezone_write_result_succeeded
-
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
     payload = _confirmed_canvas_receipt()
@@ -136,11 +133,6 @@ def test_workflow_confirmation_receipt_survives_mcp_and_chat_postcondition(monke
     )
     assert result.isError is False
     assert result.structuredContent["applied"] is True
-    event = SimpleNamespace(name="dramaclaw.freezone_confirm_workflow_draft",
-                            status="completed", error=None,
-                            structured=result.structuredContent,
-                            output=result.model_dump())
-    assert _codex_freezone_write_result_succeeded(event)
 
 
 @pytest.mark.parametrize("change", [
