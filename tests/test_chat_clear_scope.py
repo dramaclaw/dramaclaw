@@ -60,59 +60,6 @@ async def test_clear_messages_preserves_other_canvas_agent_and_settings(tmp_path
         await db.close()
 
 
-def test_reset_codex_scope_thread_preserves_other_scopes(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        chat_service,
-        "_active_codex_turns_path",
-        lambda _username: tmp_path / "active_codex_turns.json",
-    )
-    chat_service._set_codex_thread_id(
-        "alice",
-        "project-1",
-        "thread-1",
-        agent_profile="freezone:main",
-        canvas_id="canvas-1",
-        project_state_dir=tmp_path,
-    )
-    chat_service._set_codex_thread_id(
-        "alice",
-        "project-1",
-        "thread-2",
-        agent_profile="freezone:other",
-        canvas_id="canvas-1",
-        project_state_dir=tmp_path,
-    )
-
-    chat_service.reset_codex_scope_thread(
-        "alice",
-        "project-1",
-        agent_profile="freezone:main",
-        canvas_id="canvas-1",
-        project_state_dir=tmp_path,
-    )
-
-    assert (
-        chat_service._get_codex_thread_id(
-            "alice",
-            "project-1",
-            agent_profile="freezone:main",
-            canvas_id="canvas-1",
-            project_state_dir=tmp_path,
-        )
-        is None
-    )
-    assert (
-        chat_service._get_codex_thread_id(
-            "alice",
-            "project-1",
-            agent_profile="freezone:other",
-            canvas_id="canvas-1",
-            project_state_dir=tmp_path,
-        )
-        == "thread-2"
-    )
-
-
 @pytest.mark.asyncio
 async def test_clear_codex_scope_thread_preserves_selected_binding(
     tmp_path, monkeypatch

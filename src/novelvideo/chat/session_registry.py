@@ -387,27 +387,6 @@ def set_codex_thread_id(
         save_codex_session_state(path, payload, write_json_atomic=write_json_atomic)
 
 
-def reset_codex_scope_thread(
-    path: Path,
-    scope_key: str,
-    *,
-    index_file_lock: Callable[[Path], ContextManager[Any]],
-    write_json_atomic: Callable[[Path, dict[str, str]], None],
-) -> None:
-    """Drop one scope's thread binding from the session index.
-
-    This only touches the thread index. The matching active-turn record lives
-    in a separate file, and clearing it stays with the caller (the
-    ``chat.service`` wrapper does so) because the registry does not know the
-    per-user active-turn path.
-    """
-    with index_file_lock(path):
-        payload = load_codex_session_state(path)
-        if scope_key in payload:
-            payload.pop(scope_key)
-            save_codex_session_state(path, payload, write_json_atomic=write_json_atomic)
-
-
 def load_active_codex_turns(path: Path) -> dict[str, dict[str, str]]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))

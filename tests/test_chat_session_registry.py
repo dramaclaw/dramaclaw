@@ -21,7 +21,6 @@ from novelvideo.chat.session_registry import (
     load_active_codex_turns,
     load_codex_session_state,
     release_chat_run_lock,
-    reset_codex_scope_thread,
     set_active_codex_turn,
     set_codex_thread_id,
 )
@@ -121,9 +120,8 @@ def test_codex_thread_state_preserves_other_scopes_and_ignores_bad_json(
     set_codex_thread_id(path, "scope-a", " thread-a ", **options)
     set_codex_thread_id(path, "scope-b", "thread-b", **options)
     set_codex_thread_id(path, "scope-a", "  ", **options)
+    assert load_codex_session_state(path) == {"scope-a": "thread-a", "scope-b": "thread-b"}
     assert get_codex_thread_id(path, "scope-a") == "thread-a"
-    reset_codex_scope_thread(path, "scope-a", **options)
-    assert load_codex_session_state(path) == {"scope-b": "thread-b"}
 
 
 def test_active_codex_turn_state_retains_business_turn_and_other_scope(

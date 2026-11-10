@@ -2019,7 +2019,14 @@ async def test_codex_stage_confirmation_is_bound_to_existing_story_and_user_inte
         canvas_id="canvas-a",
         project_state_dir=state_dir,
     )
-    assert thread_id == (None if blocked else "codex-thread")
+    assert thread_id == "codex-thread"
+
+
+def test_codex_scope_thread_reset_is_removed():
+    from novelvideo.chat import session_registry
+
+    assert not hasattr(chat_service, "reset_codex_scope_thread")
+    assert not hasattr(session_registry, "reset_codex_scope_thread")
 
 
 def test_codex_freezone_thread_advertises_exact_agent_skill_locator(

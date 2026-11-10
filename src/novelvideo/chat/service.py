@@ -3387,31 +3387,6 @@ def _set_codex_thread_id(
     )
 
 
-def reset_codex_scope_thread(
-    username: str,
-    project: str,
-    *,
-    agent_profile: str = "main",
-    canvas_id: str | None = None,
-    project_state_dir: str | Path | None = None,
-) -> None:
-    """Make the next turn start a fresh thread without touching other scopes."""
-    from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
-
-    scope_key = _codex_scope_key(
-        project, agent_profile=agent_profile, canvas_id=canvas_id
-    )
-    session_registry.reset_codex_scope_thread(
-        _codex_session_state_path(
-            username, project, project_state_dir=project_state_dir
-        ),
-        scope_key,
-        index_file_lock=index_file_lock,
-        write_json_atomic=write_json_atomic,
-    )
-    _set_active_codex_turn(username, scope_key, None)
-
-
 async def clear_codex_scope_thread(
     username: str,
     project: str,
@@ -6395,13 +6370,6 @@ async def _stream_assistant_reply_codex(
             and not stage_confirmation_attempted
             and not stage_confirmation_succeeded
         ):
-            reset_codex_scope_thread(
-                username,
-                project,
-                agent_profile=agent_profile,
-                canvas_id=canvas_id,
-                project_state_dir=project_state_dir,
-            )
             assistant_text = _stage_confirmation_not_written_message(prompt)
             # A host-authored notice: the canvas write guard below must not
             # replace it with the generic missing-receipt message.
