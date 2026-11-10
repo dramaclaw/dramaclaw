@@ -6763,38 +6763,6 @@ def test_project_chat_storage_creates_missing_resolved_state_dir(monkeypatch, tm
     assert not (tmp_path / "state" / "admin" / "01KS_PROJECT_ID").exists()
 
 
-def test_project_history_hides_trace_messages(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-
-    chat_service.add_user_message("admin", "project-a", "你好")
-    chat_service.add_trace_message(
-        "admin", "project-a", "→ dramaclaw_pipeline_status\ncompleted"
-    )
-    chat_service.add_assistant_message("admin", "project-a", "你好！")
-
-    messages = chat_service.list_messages("admin", "project-a")
-
-    assert [message["role"] for message in messages] == ["user", "assistant"]
-    assert all(
-        "dramaclaw_pipeline_status" not in message["content"] for message in messages
-    )
-
-
-def test_project_history_defaults_to_last_50_messages(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-
-    for index in range(60):
-        chat_service.add_assistant_message("admin", "project-a", f"message-{index:02d}")
-
-    messages = chat_service.list_messages("admin", "project-a")
-
-    assert len(messages) == 50
-    assert messages[0]["content"] == "message-10"
-    assert messages[-1]["content"] == "message-59"
-
-
 def test_home_history_hides_trace_messages(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     scope = ChatScope(kind="home")
@@ -6850,7 +6818,9 @@ def test_freezone_history_uses_separate_project_chat_db(monkeypatch, tmp_path):
     )
     chat_store.append_message("admin", scope, "user", "canvas")
 
-    assert chat_service.list_messages("admin", "project-a")[0]["content"] == "mainline"
+    assert chat_store.list_messages(
+        "admin", ChatScope(kind="project", id="project-a")
+    )[0]["content"] == "mainline"
     assert chat_store.list_messages("admin", scope)[0]["content"] == "canvas"
     assert (state_root / "admin" / "project-a" / "chat.db").exists()
     assert (
@@ -6909,7 +6879,12 @@ def test_freezone_agent_history_uses_separate_chat_db(monkeypatch, tmp_path):
 async def test_freezone_history_reads_project_name_storage_scope(monkeypatch, tmp_path):
     state_root = tmp_path / "state"
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_root))
-    project_ctx = SimpleNamespace(project_name="readable-project")
+    project_ctx = SimpleNamespace(
+        project_name="readable-project", state_dir=None, output_dir=tmp_path / "output",
+        requester_user_id="admin", requester_username="admin", requester_principals=(),
+        project_id="01PROJECTID",
+    )
+    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "hermes")
     request_scope = ChatScope(
         kind="project",
         id="01PROJECTID",
@@ -6933,7 +6908,7 @@ async def test_freezone_history_reads_project_name_storage_scope(monkeypatch, tm
         "admin", request_scope, project_ctx=project_ctx
     )
 
-    assert [message["content"] for message in messages] == ["stored under project name"]
+    assert [message["content"] for message in messages.history] == ["stored under project name"]
     assert not (
         state_root
         / "admin"

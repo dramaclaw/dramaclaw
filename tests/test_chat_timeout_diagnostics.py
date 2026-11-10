@@ -187,6 +187,7 @@ async def test_timeout_elapsed_reaches_public_terminal_event(
 
     async def fake_context(*args):
         return SimpleNamespace(
+            project_name="project-local",
             output_dir=tmp_path / "out",
             state_dir=tmp_path / "state",
             requester_user_id="user-local",

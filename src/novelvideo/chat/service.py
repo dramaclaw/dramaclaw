@@ -33,7 +33,9 @@ from novelvideo.chat.backend_sdk import (
     control_codex_runtime,
     interrupt_live_claude_client,
     interrupt_live_codex_turn,
+    read_codex_thread_history,
 )
+from novelvideo.chat.codex_history import HISTORY_CACHE, CodexHistoryPage, CodexHistoryUnavailable
 from novelvideo.chat.codex_protocol import context_entries
 from novelvideo.chat.canvas_outcome import (
     CANVAS_FINAL_RESPONSE_INSTRUCTIONS,
@@ -3035,50 +3037,6 @@ def _replace_trace_messages(
     message_repository.replace_trace_messages(conn, messages, now_iso=_now_iso)
 
 
-def list_messages(
-    username: str,
-    project: str,
-    *,
-    project_dir: str | Path | None = None,
-    project_state_dir: str | Path | None = None,
-    limit: int = 50,
-) -> list[dict[str, Any]]:
-    conn = _connect(_chat_db_path(username, project, project_dir, project_state_dir))
-    try:
-        rows = message_repository.recent_messages(conn, limit=limit)
-        messages: list[dict[str, Any]] = []
-        previous_assistants: list[str] = []
-        for row in rows:
-            content = str(row["content"])
-            role = str(row["role"])
-            if role == "assistant":
-                raw_content = content
-                content = _strip_replayed_assistant_prefix(content, previous_assistants)
-                previous_assistants.append(raw_content)
-            stored_media = _normalize_media_items(
-                json.loads(row["media_json"] or "[]"),
-                username,
-                project,
-                project_dir=project_dir,
-            )
-            extracted_media = _extract_media(
-                content, username, project, project_dir=project_dir
-            )
-            merged_media = _merge_media_items(stored_media, extracted_media)
-            messages.append(
-                {
-                    "id": int(row["id"]),
-                    "role": role,
-                    "content": content,
-                    "media": _filter_markdown_duplicate_images(content, merged_media),
-                    "created_at": str(row["created_at"]),
-                }
-            )
-        return messages
-    finally:
-        conn.close()
-
-
 def add_user_message(
     username: str,
     project: str,
@@ -3292,6 +3250,36 @@ def _set_codex_thread_id(
     )
 
 
+async def read_codex_scope_history(
+    username: str,
+    project: str,
+    *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
+    project_state_dir: str | Path | None = None,
+    before: str | None = None,
+) -> CodexHistoryPage | None:
+    if get_chat_backend_name() != "codex":
+        return None
+    thread_id = _get_codex_thread_id(
+        username, project, agent_profile=agent_profile, canvas_id=canvas_id,
+        project_state_dir=project_state_dir,
+    )
+    if thread_id is None:
+        return None
+    options = _codex_thread_runtime_options()
+    if options is None:
+        raise CodexHistoryUnavailable("Codex runtime is not configured")
+    try:
+        return await asyncio.to_thread(
+            read_codex_thread_history, **options, thread_id=thread_id, before=before
+        )
+    except (ValueError, CodexHistoryUnavailable):
+        raise
+    except Exception as exc:
+        raise CodexHistoryUnavailable("Codex history read failed") from exc
+
+
 async def clear_codex_scope_thread(
     username: str,
     project: str,
@@ -3314,6 +3302,7 @@ async def clear_codex_scope_thread(
     if thread_id is None:
         return 0
     result = await asyncio.to_thread(_clear_codex_thread_history, thread_id)
+    HISTORY_CACHE.invalidate(thread_id)
     if result == "missing":
         with index_file_lock(state_path):
             latest = _load_codex_session_state(

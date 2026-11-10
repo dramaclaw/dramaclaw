@@ -8,7 +8,10 @@ import threading
 import time
 import tomllib
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, AsyncIterator, Literal, Mapping, Sequence
+
+if TYPE_CHECKING:
+    from novelvideo.chat.codex_history import CodexHistoryPage
 
 from novelvideo.chat.runtime_port import (
     AgentRuntimeThreadPort,
@@ -1274,6 +1277,25 @@ def revert_codex_thread_history(
     if remaining.data:
         raise RuntimeError(f"Codex thread {thread_id} still has turns after clearing history")
     return "reverted"
+
+
+def read_codex_thread_history(
+    *,
+    codex_bin: Path,
+    cwd: Path,
+    env: dict[str, str],
+    config_overrides: tuple[str, ...],
+    thread_id: str,
+    before: str | None,
+) -> CodexHistoryPage:
+    from novelvideo.chat.codex_app_server import shared_codex
+    from novelvideo.chat.codex_history import HISTORY_CACHE
+
+    config = _codex_runtime_config(
+        codex_bin=codex_bin, cwd=cwd, env=env, config_overrides=config_overrides
+    )
+    with shared_codex(config) as codex:
+        return HISTORY_CACHE.read_page(codex._client, thread_id, before=before)
 
 
 def clear_codex_thread_history(
