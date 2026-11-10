@@ -684,7 +684,13 @@ async def read_home_chat_file(name: str, user: dict = Depends(get_api_user)) -> 
     path = resolve_home_upload(str(user["username"]), name)
     if path is None:
         raise HTTPException(status_code=404, detail="upload not found")
-    return FileResponse(path)
+    inline = path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    return FileResponse(
+        path,
+        filename=None if inline else path.name,
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.post("/chat/permission-result")
