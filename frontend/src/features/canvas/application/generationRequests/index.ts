@@ -11,3 +11,6 @@ export * from './textGenerationRequest';
 export * from './textGenerationResult';
 export * from './imageToolRequest';
 export * from './imageToolResult';
+export * from './audioTranslateRequest';
+export * from './worldGenerationRequest';
+export * from './worldGenerationResult';
