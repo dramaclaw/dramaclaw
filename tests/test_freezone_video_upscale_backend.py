@@ -132,6 +132,71 @@ async def test_model_video_enhancement_runs_upscale_slowdown_and_frame_rate(
     assert progress == pytest.approx([0.20, 0.60, 0.70, 0.75, 0.95])
 
 
+@pytest.mark.parametrize(
+    ("smart_interpolation", "width", "height", "fps", "duration", "limit"),
+    [(True, 1344, 768, 24.0, 15.083, 16), (False, 854, 480, 30.0, 29.1, 30)],
+)
+@pytest.mark.asyncio
+async def test_local_1080p60_uses_one_gateway_request_and_publishes_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, smart_interpolation: bool,
+    width: int, height: int, fps: float, duration: float, limit: int,
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.touch()
+    calls = []
+    progress = []
+
+    async def probe(*_args, **_kwargs):
+        return {"width": width, "height": height, "fps": fps, "duration": duration}
+
+    async def model(mode: str, *, requester_user_id: str):
+        assert requester_user_id == "member-1"
+        return {"catalog_id": mode,
+                "backend": "video-upscale-fast" if mode == "video_upscale" else "video-frame-rate",
+                "model_params": {}, "request_schema": {}, "resolution_options": ["1080p"]}
+
+    async def process(**kwargs):
+        calls.append(kwargs)
+        kwargs["on_progress"](0.55)
+        kwargs["output_path"].write_bytes(b"1080p60")
+
+    monkeypatch.setattr(freezone_routes, "resolve_static_url_to_path", lambda *_: source)
+    monkeypatch.setattr(freezone_routes, "_resolve_video_processing_model", model)
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
+    monkeypatch.setattr(freezone_jobs, "_run_video_processing_model", process)
+    body = freezone_routes.FreezoneVideoUpscaleRequest(
+        source_url="/static/source.mp4", target_fps=60, smart_interpolation=smart_interpolation,
+    )
+    for changes in ({"target_fps": 59.94}, {"resolution": "4k"}, {"slowdown": "2x"}, {"face_enhance": True}):
+        with pytest.raises(HTTPException, match="3060 内测补帧") as rejected:
+            await freezone_routes._prepare_video_upscale(
+                body=body.model_copy(update=changes), project_dir=tmp_path, requester_user_id="member-1",
+            )
+        assert rejected.value.status_code == 400
+    _, _, models, billing = await freezone_routes._prepare_video_upscale(
+        body=body, project_dir=tmp_path, requester_user_id="member-1",
+    )
+    assert [stage["mode"] for stage in billing["pricing_stages"]] == ["video_upscale", "video_frame_rate"]
+    output, metadata = await freezone_jobs.run_freezone_video_upscale(
+        project_dir=tmp_path, job_id="local-60", source_path=str(source),
+        target_fps=60, smart_interpolation=smart_interpolation, on_progress=progress.append, **models,
+    )
+    assert output.read_bytes() == b"1080p60"
+    assert metadata["target_fps"] == 60
+    assert len(calls) == 1
+    assert calls[0]["backend"] == "video-upscale-fast"
+    assert calls[0]["mode"] == "video_upscale"
+    assert calls[0]["processing_metadata"]["target_fps"] == 60
+    assert calls[0]["processing_metadata"]["smart_interpolation"] is smart_interpolation
+    assert progress == pytest.approx([0.5675])
+    duration = limit + 0.01
+    with pytest.raises(HTTPException, match="限 16 秒") as rejected:
+        await freezone_routes._prepare_video_upscale(
+            body=body, project_dir=tmp_path, requester_user_id="member-1",
+        )
+    assert rejected.value.status_code == 400
+
+
 @pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
 @pytest.mark.asyncio
 async def test_model_video_enhancement_removes_stages_when_task_stops(

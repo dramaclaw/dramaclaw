@@ -726,7 +726,11 @@ async def _run_model_video_enhancement(
     if not src.exists():
         raise FileNotFoundError(f"video source not found: {src}")
     factor = slowdown_factor(slowdown)
-    has_frame_rate_stage = factor > 1 or target_fps is not None
+    # The frozen backend preserves the behavior of tasks queued before this profile existed.
+    combined = upscale_backend == "video-upscale-fast" and frame_rate_backend == upscale_backend
+    if combined and (resolution != "1080p" or target_fps != 60 or factor != 1 or face_enhance):
+        raise RuntimeError("unsupported local 1080p60 enhancement parameters")
+    has_frame_rate_stage = not combined and (factor > 1 or target_fps is not None)
     upscale_end = 0.60 if has_frame_rate_stage else 0.95
     frame_rate_start = 0.70 if factor > 1 else upscale_end
 
@@ -751,6 +755,7 @@ async def _run_model_video_enhancement(
             processing_metadata={
                 "scene": scene,
                 "face_enhance": bool(face_enhance),
+                **({"target_fps": 60, "smart_interpolation": smart_interpolation} if combined else {}),
             },
             model_params=upscale_model_params,
             request_schema=upscale_request_schema,
@@ -773,7 +778,7 @@ async def _run_model_video_enhancement(
         effective_target_fps = target_fps
         if factor > 1 and effective_target_fps is None:
             effective_target_fps = max(1, round(float(probe["fps"]), 3))
-        if effective_target_fps is not None:
+        if effective_target_fps is not None and not combined:
             if not frame_rate_backend:
                 raise RuntimeError("video frame-rate model is not configured")
             framed = work_dir / "03_frame_rate.mp4"
