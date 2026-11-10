@@ -226,7 +226,6 @@ async def test_timeout_elapsed_reaches_public_terminal_event(
     monkeypatch.setattr(routes.chat_service, "stream_assistant_reply", fake_stream)
     for name in (
         "_chat_heartbeat",
-        "_interrupt_agent_on_disconnect",
         "_receive_bridge_results_during_turn",
         "_watch_pending_canvas_commands",
         "_watch_pending_canvas_context_requests",

@@ -102,6 +102,14 @@ def unregister_live_codex_turn(thread_id: str, turn_id: str) -> None:
         _LIVE_CODEX_TURNS.pop(key, None)
 
 
+def detach_live_codex_turn(thread_id: str, turn_id: str) -> None:
+    key = (str(thread_id or "").strip(), str(turn_id or "").strip())
+    with _LIVE_CODEX_TURNS_LOCK:
+        turn_handle = _LIVE_CODEX_TURNS.pop(key, None)
+    if turn_handle is not None:
+        turn_handle._client.close()
+
+
 def interrupt_live_codex_turn(thread_id: str, turn_id: str) -> bool:
     key = (str(thread_id or "").strip(), str(turn_id or "").strip())
     if not key[0] or not key[1]:
@@ -2325,16 +2333,17 @@ class CodexThread:
                     break
         finally:
             current_task = asyncio.current_task()
-            if (
+            detached = (
                 current_task is not None
                 and current_task.cancelling()
                 and self.id
                 and current_turn_id
-            ):
+            )
+            if detached:
                 await asyncio.to_thread(
-                    interrupt_live_codex_turn, self.id, current_turn_id
+                    detach_live_codex_turn, self.id, current_turn_id
                 )
-            if timed_out:
+            if timed_out or detached:
                 try:
                     await asyncio.wait_for(
                         asyncio.shield(worker_task),
@@ -2343,10 +2352,12 @@ class CodexThread:
                 except asyncio.TimeoutError:
                     # Cancelling a to_thread wrapper cannot stop the underlying
                     # thread, but it prevents this request from waiting forever.
-                    # The App Server interrupt above owns terminating the turn.
                     worker_task.cancel()
+                except Exception:
+                    if not detached:
+                        raise
                 finally:
-                    if self.id and current_turn_id:
+                    if timed_out and self.id and current_turn_id:
                         consume_interrupted_codex_turn(self.id, current_turn_id)
             else:
                 await worker_task

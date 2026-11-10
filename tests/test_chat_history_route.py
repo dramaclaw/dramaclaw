@@ -191,6 +191,92 @@ async def test_missing_project_page_and_disconnected_socket(store, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("exit_kind", ["disconnect", "cancel", "return"])
+async def test_project_turn_survives_disconnect_without_false_completion(
+    store, monkeypatch, tmp_path, exit_kind
+):
+    scope = ChatScope(kind="project", id="project-a", surface="director")
+    ping_failed = asyncio.Event()
+    running = asyncio.Event()
+    finished = []
+    interrupts = []
+    attempted = []
+
+    async def context(*args):
+        return SimpleNamespace(
+            project_name="project-a", state_dir=tmp_path / "project-state",
+            output_dir=tmp_path / "output", project_id="project-a",
+            requester_user_id="test-user", requester_username="test-user", requester_principals=(),
+        )
+
+    @asynccontextmanager
+    async def egress(**kwargs):
+        yield None
+
+    async def never(*args, **kwargs):
+        await asyncio.Future()
+
+    async def stream(username, project, text, on_event, **kwargs):
+        await on_event({"type": "thread_started", "thread_id": "thread-a", "turn_id": "turn-a"})
+        running.set()
+        if exit_kind == "disconnect":
+            await ping_failed.wait()
+            # Let the real disconnect handling react before the turn finishes.
+            for _ in range(5):
+                await asyncio.sleep(0)
+            finished.append("Done")
+            await on_event({"type": "done", "message": {"role": "assistant", "content": "Done"}})
+        elif exit_kind == "cancel":
+            await asyncio.Future()
+
+    async def interrupt(*args, **kwargs):
+        interrupts.append("interrupted")
+
+    class WebSocket:
+        async def send_json(self, payload):
+            attempted.append(payload["type"])
+            if payload["type"] == "chat.ping":
+                ping_failed.set()
+            if ping_failed.is_set():
+                raise WebSocketDisconnect(code=1006)
+
+    real_heartbeat = routes._chat_heartbeat
+
+    async def heartbeat(*args, **kwargs):
+        await real_heartbeat(*args, **kwargs, interval_seconds=0)
+
+    monkeypatch.setattr(routes, "_project_context_for_scope", context)
+    monkeypatch.setattr(routes, "request_egress_scope", egress)
+    monkeypatch.setattr(routes, "_chat_heartbeat", heartbeat)
+    monkeypatch.setattr(service, "get_chat_backend_name", lambda: "codex")
+    monkeypatch.setattr(service, "stream_assistant_reply", stream)
+    monkeypatch.setattr(service, "interrupt_chat_turn", interrupt)
+    for name in (
+        "_receive_bridge_results_during_turn", "_watch_pending_canvas_commands",
+        "_watch_pending_canvas_context_requests", "_watch_pending_skill_studio_events",
+        "_watch_pending_clarification_events",
+    ):
+        monkeypatch.setattr(routes, name, never)
+    task = asyncio.create_task(routes._stream_project_turn(
+        websocket=WebSocket(), user={"username": "test-user"}, username="test-user",
+        scope=scope, text="hello", attachments=[], turn_id="business-a",
+    ))
+    await asyncio.wait_for(running.wait(), timeout=2)
+    if exit_kind == "cancel":
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+        assert "chat.done" not in attempted
+    else:
+        await asyncio.wait_for(task, timeout=2)
+        assert "chat.done" in attempted
+    if exit_kind == "disconnect":
+        assert ping_failed.is_set() is True
+        assert finished == ["Done"]
+    assert interrupts == []
+
+
+@pytest.mark.asyncio
 async def test_director_user_turn_and_history(store, monkeypatch, tmp_path):
     scope = ChatScope(kind="project", id="project-id", surface="director")
     project = SimpleNamespace(
@@ -218,7 +304,7 @@ async def test_director_user_turn_and_history(store, monkeypatch, tmp_path):
     monkeypatch.setattr(service, "get_chat_backend_name", lambda: "codex")
     monkeypatch.setattr(service, "stream_assistant_reply", stream)
     for name in (
-        "_chat_heartbeat", "_interrupt_agent_on_disconnect", "_receive_bridge_results_during_turn",
+        "_chat_heartbeat", "_receive_bridge_results_during_turn",
         "_watch_pending_canvas_commands", "_watch_pending_canvas_context_requests",
         "_watch_pending_skill_studio_events", "_watch_pending_clarification_events",
     ):
@@ -367,7 +453,7 @@ async def test_project_codex_item_frames(store, monkeypatch, tmp_path):
     monkeypatch.setattr(service, "get_chat_backend_name", lambda: "codex")
     monkeypatch.setattr(service, "stream_assistant_reply", stream)
     for name in (
-        "_chat_heartbeat", "_interrupt_agent_on_disconnect", "_receive_bridge_results_during_turn",
+        "_chat_heartbeat", "_receive_bridge_results_during_turn",
         "_watch_pending_canvas_commands", "_watch_pending_canvas_context_requests",
         "_watch_pending_skill_studio_events", "_watch_pending_clarification_events",
     ):

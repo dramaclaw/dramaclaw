@@ -5435,6 +5435,7 @@ async def _stream_assistant_reply_codex(
     )
     active_turn_key = (username, codex_scope_key)
     active_turn_value: tuple[str, str, str] | None = None
+    detached = False
     agent_token: str | None = None
     token_file: Path | None = None
     logger.info(
@@ -5747,6 +5748,11 @@ async def _stream_assistant_reply_codex(
                         or "音频节点执行失败，前端没有返回有效回执。"  # i18n-exempt
                     ).strip()
                     audio_notice = failure
+    except asyncio.CancelledError:
+        detached = active_turn_value is not None
+        if detached:
+            turn_disposition = "detached"
+        raise
     finally:
         logger.info(
             "codex turn cleanup user=%s project=%s profile=%s disposition=%s had_text=%s had_tool=%s",
@@ -5757,33 +5763,34 @@ async def _stream_assistant_reply_codex(
             bool(assistant_text.strip()),
             bool(tool_text.strip()),
         )
-        if active_turn_value is not None:
-            with _ACTIVE_CODEX_TURNS_LOCK:
-                if _ACTIVE_CODEX_TURNS.get(active_turn_key) == active_turn_value:
-                    _ACTIVE_CODEX_TURNS.pop(active_turn_key, None)
-            try:
-                _set_active_codex_turn(username, codex_scope_key, None)
-            except OSError:
-                logger.warning(
-                    "failed to remove persisted active Codex turn",
-                    exc_info=True,
+        if not detached:
+            if active_turn_value is not None:
+                with _ACTIVE_CODEX_TURNS_LOCK:
+                    if _ACTIVE_CODEX_TURNS.get(active_turn_key) == active_turn_value:
+                        _ACTIVE_CODEX_TURNS.pop(active_turn_key, None)
+                try:
+                    _set_active_codex_turn(username, codex_scope_key, None)
+                except OSError:
+                    logger.warning(
+                        "failed to remove persisted active Codex turn",
+                        exc_info=True,
+                    )
+            if token_file is not None:
+                try:
+                    token_file.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("failed to remove Codex turn token file", exc_info=True)
+            if agent_token:
+                try:
+                    await get_auth_session_port().revoke_agent_session(agent_token)
+                except Exception:
+                    logger.warning("failed to revoke Codex turn token", exc_info=True)
+            if project_context is not None:
+                await _cancel_turn_agent_product_operations(
+                    turn_agent_product_operations.cancellation_ids(),
+                    project_dir=project_state_dir or project_dir,
+                    ctx=project_context,
                 )
-        if token_file is not None:
-            try:
-                token_file.unlink(missing_ok=True)
-            except OSError:
-                logger.warning("failed to remove Codex turn token file", exc_info=True)
-        if agent_token:
-            try:
-                await get_auth_session_port().revoke_agent_session(agent_token)
-            except Exception:
-                logger.warning("failed to revoke Codex turn token", exc_info=True)
-        if project_context is not None:
-            await _cancel_turn_agent_product_operations(
-                turn_agent_product_operations.cancellation_ids(),
-                project_dir=project_state_dir or project_dir,
-                ctx=project_context,
-            )
         if turn_operation is not None:
             await turn_operation.finish(turn_disposition)
 

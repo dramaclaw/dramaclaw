@@ -3342,6 +3342,101 @@ async def test_codex_prompt_construction_failure_cleans_turn_credentials(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("exit_kind", ["cancel_after_start", "cancel_before_start", "complete"])
+async def test_codex_turn_credentials_follow_turn_lifetime(monkeypatch, tmp_path, exit_kind):
+    from novelvideo.chat.backend_sdk import ChatBackendEvent
+
+    state_root = tmp_path / "state"
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_root))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    started = asyncio.Event()
+    revoked = []
+    dispositions = []
+    token_files = []
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, token):
+            revoked.append(token)
+
+    class FakeTurnOperation:
+        async def finish(self, disposition):
+            dispositions.append(disposition)
+
+    async def authorize(**kwargs):
+        return SimpleNamespace()
+
+    async def create_token(*args, **kwargs):
+        return "agent-token"
+
+    class FakeThread:
+        async def stream(self, prompt):
+            if exit_kind == "cancel_before_start":
+                started.set()
+                await asyncio.Future()
+            yield ChatBackendEvent(
+                type="thread_started", thread_id="thread-lifetime", turn_id="turn-lifetime"
+            )
+            started.set()
+            if exit_kind == "cancel_after_start":
+                await asyncio.Future()
+            yield ChatBackendEvent(type="complete", text="Done")
+
+    def build_thread(*args, **kwargs):
+        token_files.append(Path(kwargs["agent_token_file"]))
+        return FakeThread()
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", authorize)
+    monkeypatch.setattr(
+        chat_service, "_turn_operation_finalizer", lambda authorization: FakeTurnOperation()
+    )
+    monkeypatch.setattr(chat_service, "_create_page_agent_session_token", create_token)
+    monkeypatch.setattr(chat_service, "_build_codex_thread", build_thread)
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **kwargs: None)
+
+    async def on_event(event):
+        pass
+
+    task = asyncio.create_task(
+        chat_service.stream_assistant_reply(
+            "test-user",
+            "project-a",
+            "hello",
+            on_event,
+            backend="codex",
+            project_state_dir=state_root / "test-user" / "project-a",
+            turn_id="business-lifetime",
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=2)
+    if exit_kind != "complete":
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+    else:
+        await asyncio.wait_for(task, timeout=2)
+
+    active_path = state_root / "test-user" / "active_codex_turns.json"
+    active = json.loads(active_path.read_text()) if active_path.exists() else {}
+    if exit_kind == "cancel_after_start":
+        assert active == {
+            '["main","project","project-a","session"]': {
+                "thread_id": "thread-lifetime",
+                "turn_id": "turn-lifetime",
+                "business_turn_id": "business-lifetime",
+            }
+        }
+        assert token_files[0].read_text() == "agent-token"
+        assert revoked == []
+        assert dispositions == ["detached"]
+    else:
+        assert active == {}
+        assert token_files[0].exists() is False
+        assert revoked == ["agent-token"]
+        assert dispositions == (["completed"] if exit_kind == "complete" else ["failed"])
+
+
+@pytest.mark.asyncio
 async def test_codex_turn_token_files_are_unique_and_cleanup_is_turn_local(
     tmp_path,
 ):
@@ -4900,65 +4995,6 @@ def test_active_codex_turn_registry_keeps_mainline_and_freezone_scopes_separate(
             "turn_id": "turn-mainline",
         }
     }
-
-
-@pytest.mark.asyncio
-async def test_disconnect_interrupts_only_its_exact_codex_turn(monkeypatch):
-    disconnected = asyncio.Event()
-    disconnected.set()
-    calls = []
-
-    async def interrupt(username, project, thread_id, turn_id, *, backend=None):
-        calls.append((username, project, thread_id, turn_id, backend))
-        return True
-
-    monkeypatch.setattr(chat_service, "interrupt_chat_turn", interrupt)
-    monkeypatch.setattr(
-        chat_service,
-        "get_chat_backend_name",
-        lambda: (_ for _ in ()).throw(AssertionError("backend must be captured")),
-    )
-
-    await chat_routes._interrupt_agent_on_disconnect(
-        disconnected,
-        runtime_backend="codex",
-        username="alice",
-        project="project-a",
-        agent_profile="freezone:main",
-        runtime_ids={"thread_id": "thread-a", "turn_id": "turn-a"},
-    )
-
-    assert calls == [("alice", "project-a", "thread-a", "turn-a", "codex")]
-
-
-@pytest.mark.asyncio
-async def test_disconnect_closes_only_matching_hermes_thread(monkeypatch):
-    from novelvideo.chat import hermes_pool
-
-    disconnected = asyncio.Event()
-    disconnected.set()
-    calls = []
-
-    class FakePool:
-        async def close_user_thread(self, username, profile, thread_id):
-            calls.append((username, profile, thread_id))
-            return True
-
-        async def close_user(self, _username):
-            raise AssertionError("disconnect must not close every user worker")
-
-    monkeypatch.setattr(hermes_pool, "pool", FakePool())
-
-    await chat_routes._interrupt_agent_on_disconnect(
-        disconnected,
-        runtime_backend="hermes",
-        username="alice",
-        project="project-a",
-        agent_profile="freezone:agent-2",
-        runtime_ids={"thread_id": "session-a", "turn_id": "turn-a"},
-    )
-
-    assert calls == [("alice", "freezone:agent-2", "session-a")]
 
 
 @pytest.mark.asyncio
