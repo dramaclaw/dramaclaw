@@ -14,3 +14,4 @@ export * from './imageToolResult';
 export * from './audioTranslateRequest';
 export * from './worldGenerationRequest';
 export * from './worldGenerationResult';
+export * from './worldGenerationUpstream';

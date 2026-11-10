@@ -36,6 +36,13 @@ function preparedRequest(value: unknown): pure.WorldGenerationPreparedRequest {
     request: { method: p.choice(request.method, ['POST']), path: p.string(request.path), body: p.record(request.body) } };
 }
 
+export async function serveWorldGenerationUpstream(payload: unknown) {
+  const input = p.fields(payload, ['canvas', 'node_id', 'env']);
+  const { canvas, nodeId, env } = p.graph({ ...input, env: input.env === undefined ? {} : input.env });
+  p.fields(env, ['locale']);
+  return pure.selectWorldGenerationUpstream({ nodes: canvas.nodes, edges: canvas.edges, nodeId });
+}
+
 export async function serveWorldGenerationRequest(payload: unknown) {
   const input = p.fields(payload, ['node_id', 'node_data', 'source_node', 'upstream', 'env']);
   const env = p.fields(input.env, ['locale', 'project', 'canvas_id', 'blocked', 'is_generating', 'product_operation']);

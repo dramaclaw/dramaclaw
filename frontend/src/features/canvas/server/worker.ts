@@ -14,7 +14,7 @@ import { serveAudioGenerationRequest, serveAudioGenerationPatch } from './audioG
 import { serveTextGenerationRequest, serveTextGenerationPatch } from './textGeneration';
 import { serveImageToolRequest, serveImageToolPatch } from './imageTool';
 import { serveAudioTranslateRequest, serveAudioTranslatePatch } from './audioTranslate';
-import { serveWorldGenerationRequest, serveWorldGenerationPatch } from './worldGeneration';
+import { serveWorldGenerationRequest, serveWorldGenerationPatch, serveWorldGenerationUpstream } from './worldGeneration';
 import { serveGenerationErrorDescribe } from './generationError';
 
 console = new Console({ stdout: process.stderr, stderr: process.stderr });
@@ -77,7 +77,7 @@ const operations = ['ping', 'apply_commands', 'answer_context', 'image_generatio
   'video_generation_request', 'video_generation_patch', 'audio_generation_request', 'audio_generation_patch',
   'text_generation_request', 'text_generation_patch', 'generation_error_describe',
   'image_tool_request', 'image_tool_patch', 'audio_translate_request', 'audio_translate_patch',
-  'world_generation_request', 'world_generation_patch'];
+  'world_generation_request', 'world_generation_patch', 'world_generation_upstream'];
 
 for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
   let id: string | null = null;
@@ -126,6 +126,8 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
       result = await serveWorldGenerationRequest(parsed.payload);
     } else if (parsed.op === 'world_generation_patch') {
       result = await serveWorldGenerationPatch(parsed.payload);
+    } else if (parsed.op === 'world_generation_upstream') {
+      result = await serveWorldGenerationUpstream(parsed.payload);
     } else if (parsed.op === 'generation_error_describe') {
       result = await serveGenerationErrorDescribe(parsed.payload);
     }
