@@ -1553,10 +1553,17 @@ export function Canvas({
                   });
                   return prepared.imageUrl;
                 });
-                imageUrl = await uploadLocalImageToBackend(
-                  imageWithMetadata,
-                  `storyboard-gen-${pendingNode.id}-${Date.now()}.png`
-                );
+                try {
+                  imageUrl = await uploadLocalImageToBackend(
+                    imageWithMetadata,
+                    `storyboard-gen-${pendingNode.id}-${Date.now()}.png`
+                  );
+                } catch (error) {
+                  console.warn('[GenerationJob] storyboard metadata upload failed; keeping result URL', {
+                    nodeId: pendingNode.id,
+                    error,
+                  });
+                }
               }
               const previewImageUrl = imageUrl;
 
