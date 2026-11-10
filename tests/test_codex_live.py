@@ -265,6 +265,67 @@ def service_runtime(monkeypatch, tmp_path):
     monkeypatch.setattr(service, "get_auth_session_port", lambda: AuthPort())
     monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **kw: None)
 
+
+@pytest.mark.asyncio
+async def test_service_codex_forwards_items_and_named_tools_without_anonymous_frames(
+    service_runtime, monkeypatch, tmp_path,
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    message = {"type": "agentMessage", "id": "m-1", "text": ""}
+    reasoning = {"type": "reasoning", "id": "r-1", "summary": []}
+
+    class Thread:
+        async def stream(self, prompt):
+            yield ChatBackendEvent(
+                type="thread_started", thread_id="thread-1", turn_id="turn-1",
+            )
+            yield ChatBackendEvent(type="item_started", item=message, started_at_ms=1)
+            for text in ("Hello", " world"):
+                yield ChatBackendEvent(
+                    type="item_delta", item_id="m-1", name="text", text=text,
+                )
+                yield ChatBackendEvent(type="assistant_delta", text=text)
+            yield ChatBackendEvent(type="item_started", item=reasoning, started_at_ms=2)
+            yield ChatBackendEvent(
+                type="item_delta", item_id="r-1", name="reasoning",
+                text="Checking projects", summary_index=0,
+            )
+            yield ChatBackendEvent(type="thought_delta", text="Checking projects")
+            yield ChatBackendEvent(type="tool_update", text="Listing projects")
+            yield ChatBackendEvent(
+                type="tool_started", name="dramaclaw.list_projects",
+                call_id="call-1", status="running", input={"limit": 1},
+            )
+            yield ChatBackendEvent(
+                type="tool_updated", name="dramaclaw.list_projects",
+                call_id="call-1", status="completed", input={"limit": 1},
+                text="Projects listed",
+            )
+            yield ChatBackendEvent(
+                type="item_completed", item={**message, "text": "Hello world"},
+            )
+            yield ChatBackendEvent(
+                type="item_completed", item={**reasoning, "summary": ["Checking projects"]},
+            )
+            yield ChatBackendEvent(type="complete", thread_id="thread-1", text="Hello world")
+
+    monkeypatch.setattr(service, "_build_codex_thread", lambda *a, **kw: Thread())
+    events = []
+
+    async def collect(event):
+        events.append(event)
+
+    await service._stream_assistant_reply_codex(
+        "test-user", "", "hello", collect, store_scope=ChatScope(kind="home"),
+        turn_id="business-1",
+    )
+
+    assert [event["type"] for event in events] == [
+        "thread_started", "item", "item_delta", "item_delta", "item", "item_delta",
+        "tool_started", "tool_updated", "item", "item", "done",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_service_live_events_do_not_grow_storage(service_runtime, monkeypatch, tmp_path):
     stored = []
@@ -496,8 +557,17 @@ async def test_freezone_forwards_reply_without_storing_it(
             yield ChatBackendEvent(
                 type="thread_started", thread_id="thread-1", turn_id="turn-1",
             )
+            yield ChatBackendEvent(
+                type="item_started", item={"type": "agentMessage", "id": "m-1", "text": ""},
+            )
+            yield ChatBackendEvent(type="item_delta", item_id="m-1", name="text", text="Hel")
             yield ChatBackendEvent(type="assistant_delta", text="Hel")
+            yield ChatBackendEvent(type="item_delta", item_id="m-1", name="text", text="lo")
             yield ChatBackendEvent(type="assistant_delta", text="Hello")
+            yield ChatBackendEvent(
+                type="item_completed",
+                item={"type": "agentMessage", "id": "m-1", "text": "Hello"},
+            )
             yield ChatBackendEvent(type="complete", text="Hello", thread_id="thread-1")
 
     monkeypatch.setattr(service, "_build_codex_thread", lambda *a, **kw: Thread())
@@ -514,7 +584,16 @@ async def test_freezone_forwards_reply_without_storing_it(
         project_dir=tmp_path / "project", tool_mode="freezone_canvas",
         store_scope=scope, turn_id="business-1",
     )
-    assert [e["text"] for e in events if e["type"] == "assistant_delta"] == ["Hel", "Hello"]
+    assert [e for e in events if e["type"] == "item_delta"] == [
+        {
+            "type": "item_delta", "message_id": "assistant:turn-1", "item_id": "m-1",
+            "kind": "text", "offset": 0, "text": "Hel",
+        },
+        {
+            "type": "item_delta", "message_id": "assistant:turn-1", "item_id": "m-1",
+            "kind": "text", "offset": 3, "text": "lo",
+        },
+    ]
     assert events[-1] == {"type": "done", "message": None}
     assert result is None
     with chat_store.connect("test-user", scope) as conn:

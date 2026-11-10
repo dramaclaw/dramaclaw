@@ -1288,6 +1288,15 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
                 raw={"runtime": "codex", "method": "turn/plan/updated"},
             )
             yield SimpleNamespace(
+                type="item_started",
+                item={"type": "reasoning", "id": "r-1", "summary": []},
+                started_at_ms=1,
+            )
+            yield SimpleNamespace(
+                type="item_delta", item_id="r-1", name="reasoning",
+                text="Checking projects", summary_index=0,
+            )
+            yield SimpleNamespace(
                 type="thought_delta",
                 text="Checking projects",
                 name="reasoning_summary",
@@ -1295,6 +1304,10 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
                     "runtime": "codex",
                     "method": "item/reasoning/summaryTextDelta",
                 },
+            )
+            yield SimpleNamespace(
+                type="item_completed",
+                item={"type": "reasoning", "id": "r-1", "summary": ["Checking projects"]},
             )
             yield SimpleNamespace(
                 type="tool_started",
@@ -1445,7 +1458,9 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         "thread_started",
         "turn_started",
         "plan_update",
-        "thought_delta",
+        "item",
+        "item_delta",
+        "item",
         "tool_started",
         "usage_update",
         "turn_completed",
@@ -1457,14 +1472,17 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         "text": "Inspect the project",
         "entries": [{"step": "List projects", "status": "inProgress"}],
     }
-    assert events[3] == {
-        "type": "thought_delta",
+    assert events[4] == {
+        "type": "item_delta",
+        "message_id": "assistant:codex-turn",
+        "item_id": "r-1",
+        "kind": "reasoning",
+        "offset": 0,
         "text": "Checking projects",
-        "source": "reasoning_summary",
     }
-    assert events[4]["name"] == "dramaclaw.list_projects"
-    assert events[4]["result_json"] is None
-    assert events[5] == {
+    assert events[6]["name"] == "dramaclaw.list_projects"
+    assert events[6]["result_json"] is None
+    assert events[7] == {
         "type": "usage_update",
         "usage": {"last": {"inputTokens": 10}},
     }
@@ -1781,8 +1799,13 @@ async def test_codex_stage_confirmation_is_bound_to_existing_story_and_user_inte
         if blocked else []
     )
     assert [
-        event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == [reply_text]
+        event["card"] for event in events
+        if event["type"] == "item" and event["card"] is not None
+        and event["card"]["type"] == "text"
+    ] == [
+        {"id": "m-1", "type": "text", "text": ""},
+        {"id": "m-1", "type": "text", "text": reply_text},
+    ]
     thread_id = chat_service._get_codex_thread_id(
         "admin",
         "project-a",
@@ -3182,6 +3205,12 @@ async def test_codex_freezone_interruption_preserves_stream_and_records_notice(
                 thread_id="codex-thread",
                 turn_id="codex-turn",
             )
+            yield backend_sdk.ChatBackendEvent(
+                type="item_started", item={"type": "agentMessage", "id": "m-1", "text": ""},
+            )
+            yield backend_sdk.ChatBackendEvent(
+                type="item_delta", item_id="m-1", name="text", text=runtime_text,
+            )
             yield SimpleNamespace(type="assistant_delta", text=runtime_text)
             yield SimpleNamespace(
                 type=notification,
@@ -3235,8 +3264,8 @@ async def test_codex_freezone_interruption_preserves_stream_and_records_notice(
     assert result is None
     assert events[-1] == {"type": "done", "message": None}
     assert [
-        event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == [runtime_text]
+        event["text"] for event in events if event["type"] == "item_delta"
+    ] == ([runtime_text] if runtime_text else [])
     with chat_store.connect("admin", scope) as conn:
         rows = conn.execute("SELECT role, content, turn_id FROM chat_messages").fetchall()
     assert [tuple(row) for row in rows] == (
@@ -8101,7 +8130,16 @@ def _codex_turn_events(text, *, tool=None, disposition="completed"):
     if tool is not None:
         events.append(tool)
     events += [
+        backend_sdk.ChatBackendEvent(
+            type="item_started", item={"type": "agentMessage", "id": "m-1", "text": ""},
+        ),
+        backend_sdk.ChatBackendEvent(
+            type="item_delta", item_id="m-1", name="text", text=text,
+        ),
         SimpleNamespace(type="assistant_delta", text=text),
+        backend_sdk.ChatBackendEvent(
+            type="item_completed", item={"type": "agentMessage", "id": "m-1", "text": text},
+        ),
         SimpleNamespace(
             type="turn_completed",
             thread_id="codex-thread",
@@ -8384,8 +8422,13 @@ async def test_codex_freezone_read_only_reply_is_delivered_in_one_turn(
     assert result is None
     assert events[-1] == {"type": "done", "message": None}
     assert [
-        event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == [reply_text]
+        event["card"] for event in events
+        if event["type"] == "item" and event["card"] is not None
+        and event["card"]["type"] == "text"
+    ] == [
+        {"id": "m-1", "type": "text", "text": ""},
+        {"id": "m-1", "type": "text", "text": "工作流失败，未生成视频。"},
+    ]
     assert revoked == ["agent-token"]
     assert chat_service._get_codex_thread_id(
         "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",

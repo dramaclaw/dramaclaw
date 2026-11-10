@@ -5621,19 +5621,8 @@ async def _stream_assistant_reply_codex(
                     continue
                 if event.type == "assistant_delta":
                     assistant_text = _merge_stream_text(assistant_text, event.text)
-                    if exact_audio_action_target is None:
-                        streamed_text = _redact_local_filesystem_paths(assistant_text)
-                        await on_event(
-                            {
-                                "type": "assistant_delta",
-                                "text": streamed_text,
-                            }
-                        )
                     continue
                 if event.type == "thought_delta":
-                    await on_event(
-                        runtime_event_mapper.progress_event(event)
-                    )
                     continue
                 if event.type == "plan_update":
                     await on_event(
@@ -5676,7 +5665,6 @@ async def _stream_assistant_reply_codex(
                     continue
                 if event.type == "tool_update":
                     tool_text += str(event.text or "")
-                    await on_event({"type": "tool_update", "text": tool_text})
                     continue
                 if event.type == "complete":
                     codex_thread_id = str(event.thread_id or "").strip() or None
