@@ -10,3 +10,13 @@ export type { CanvasCommandToolResultPayload, CanvasReceiptTranslate } from '../
 export { withCanvasModelCatalogs, getCanvasImageModelCatalog, getCanvasVideoModelCatalog } from './domain/canvasModelCatalogs';
 export type { ModelOption } from './domain/modelOptions';
 export type { CanvasModelCatalog, CanvasModelCatalogs } from './domain/canvasModelCatalogs';
+export { buildImageGenerationRequest, imagePromptCompileInput, imagePromptCompileMetadataPatch } from './application/generationRequests';
+export type {
+  ImageGenerationRequestContext,
+  ImagePromptCompileInput,
+  ImageGenerationHttpRequest,
+  ImageGenerationRequestResult,
+} from './application/generationRequests';
+export { imageGenerationStartPatch, imageGenerationSubmitPatch, imageGenerationAcceptedPatch, imageGenerationOutcomePatch } from './application/generationRequests';
+export type { ImageGenerationTaskRef, ImageGenerationOutcome, ImageGenerationEffect, ImageGenerationOutcomeInput, ImageGenerationOutcomeResult } from './application/generationRequests';
+export { imageGenerationResultUrls } from './application/imageGenerationResults';

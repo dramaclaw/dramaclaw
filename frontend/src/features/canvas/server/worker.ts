@@ -2,19 +2,15 @@
 // Copyright (c) 2026 ClaymoreLab
 import { createInterface } from 'node:readline';
 import { Console } from 'node:console';
-import { applyCommands, type SavedCanvas, type ApplyCommandsEnvironment } from './applyCommands';
+import { applyCommands, type ApplyCommandsEnvironment } from './applyCommands';
 import { answerContextRequests, type AnswerContextEnvironment, type CanvasContextHostData } from './answerContextRequests';
 import { extractCanvasContextRequestEnvelopes } from '@/features/freezone/chatNodeReferences';
 import { extractCanvasChatCommandEnvelopes } from '../serverEntry';
-import { isRecord, isFiniteNumber } from '@/features/freezone/canvasCommandEnvelope';
+import { isRecord } from '@/features/freezone/canvasCommandEnvelope';
+import { InvalidRequest, invalidRequest, parseCanvasPayload } from './requestPayload';
+import { serveImageGenerationRequest, serveImageGenerationPatch } from './imageGeneration';
 
 console = new Console({ stdout: process.stderr, stderr: process.stderr });
-
-class InvalidRequest extends Error {}
-
-function invalidRequest(message: string): never {
-  throw new InvalidRequest(message);
-}
 
 function invalidEnvelope(envelopes: unknown[], field: 'commands' | 'requests', parses: (item: unknown) => boolean): never {
   for (const envelope of envelopes) {
@@ -29,19 +25,6 @@ function invalidEnvelope(envelopes: unknown[], field: 'commands' | 'requests', p
     }
   }
   invalidRequest(field === 'commands' ? 'Invalid command envelope' : 'Invalid context envelope');
-}
-
-function parseCanvasPayload(payload: unknown) {
-  if (!isRecord(payload) || !isRecord(payload.canvas) || !Array.isArray(payload.envelopes)) invalidRequest('canvas and envelopes are required');
-  const canvas = payload.canvas;
-  if (!Array.isArray(canvas.nodes) || !Array.isArray(canvas.edges)) invalidRequest('canvas nodes and edges must be arrays');
-  for (const node of canvas.nodes) {
-    if (!isRecord(node) || typeof node.id !== 'string' || typeof node.type !== 'string' || !isRecord(node.data) || !isRecord(node.position) || !isFiniteNumber(node.position.x) || !isFiniteNumber(node.position.y)) invalidRequest('Invalid canvas node');
-  }
-  for (const edge of canvas.edges) {
-    if (!isRecord(edge) || typeof edge.id !== 'string' || typeof edge.source !== 'string' || typeof edge.target !== 'string') invalidRequest('Invalid canvas edge');
-  }
-  return { canvas: canvas as unknown as SavedCanvas & { canvas_id?: string }, envelopes: payload.envelopes, env: payload.env };
 }
 
 function parsePayload(payload: unknown) {
@@ -94,7 +77,7 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
   }
   try {
     if (isRecord(parsed) && typeof parsed.id === 'string') id = parsed.id;
-    if (!isRecord(parsed) || id === null || (parsed.op !== 'ping' && parsed.op !== 'apply_commands' && parsed.op !== 'answer_context')) invalidRequest('Expected a string id and ping, apply_commands or answer_context op');
+    if (!isRecord(parsed) || id === null || (parsed.op !== 'ping' && parsed.op !== 'apply_commands' && parsed.op !== 'answer_context' && parsed.op !== 'image_generation_request' && parsed.op !== 'image_generation_patch')) invalidRequest('Expected a string id and ping, apply_commands, answer_context, image_generation_request or image_generation_patch op');
     let result: unknown = { pong: true };
     if (parsed.op === 'apply_commands') {
       const payload = parsePayload(parsed.payload);
@@ -102,6 +85,10 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     } else if (parsed.op === 'answer_context') {
       const payload = parseContextPayload(parsed.payload);
       result = await answerContextRequests(payload.canvas, payload.envelopes, payload.environment);
+    } else if (parsed.op === 'image_generation_request') {
+      result = await serveImageGenerationRequest(parsed.payload);
+    } else if (parsed.op === 'image_generation_patch') {
+      result = await serveImageGenerationPatch(parsed.payload);
     }
     process.stdout.write(JSON.stringify({ id, ok: true, result }) + '\n');
   } catch (error) {
