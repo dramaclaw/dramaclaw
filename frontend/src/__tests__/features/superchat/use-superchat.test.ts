@@ -15,7 +15,6 @@ import i18next from "i18next";
 import {
   SUPERCHAT_CANVAS_COMMAND_EVENT,
   abortTerminalGraceMsForTest,
-  approvalOptionIdForTest,
   canvasContextToolResultFrameForTest,
   cancelAssistantClarificationsForTurnForTest,
   dedupeMessagesByIdForTest,
@@ -7181,26 +7180,6 @@ describe("tool status parts", () => {
 
 });
 
-describe("agent permission options", () => {
-  const approval = {
-    id: "permission-a",
-    kind: "agent" as const,
-    title: "运行命令",
-    options: [
-      { optionId: "allow_once", kind: "allow_once", name: "Allow once" },
-      { optionId: "allow_session", kind: "allow_always", name: "Allow for session" },
-      { optionId: "allow_always", kind: "allow_always", name: "Allow always" },
-      { optionId: "deny", kind: "reject_once", name: "Deny" },
-    ],
-  };
-
-  it("does not confuse session access with permanent access", () => {
-    expect(approvalOptionIdForTest(approval, "allow-always")).toBe("allow_always");
-    expect(approvalOptionIdForTest(approval, { optionId: "allow_session" })).toBe("allow_session");
-    expect(approvalOptionIdForTest(approval, { optionId: "unknown" })).toBe("");
-  });
-});
-
 describe("canvas context bridge results", () => {
   it("preserves canvas_context_status in the websocket frame", () => {
     const frame = canvasContextToolResultFrameForTest({
@@ -7674,18 +7653,11 @@ describe("server-owned running turns", () => {
         if (cancelled) act(() => { hook.result.current.abort(); });
         await frame({ type: "chat.item", turn_id: "t-active", message_id: "assistant:active",
           item_id: "msg-active", card: { id: "msg-active", type: "text", text: "Working" } });
-        for (const turnId of ["t-other", "t-active"]) {
-          await frame({ type: "agent.permission.requested", turn_id: turnId,
-            request_id: turnId, text: "Read file", options: [] });
-        }
-        expect(hook.result.current.approvals.map(approval => approval.turnId))
-          .toEqual(["t-other", "t-active"]);
         await frame({ type: "chat.done", turn_id: "t-other", message: {
           id: "assistant:other", role: "assistant", content: "Other reply", turn_id: "t-other",
         } });
         expect(hook.result.current.busy).toBe(true);
         expect(hook.result.current.activeTurnId).toBe("t-active");
-        expect(hook.result.current.approvals.map(approval => approval.turnId)).toEqual(["t-active"]);
         expect(hook.result.current.messages.filter(message => message.role === "assistant")
           .map(message => ({ turnId: message.turnId, text: message.text })))
           .toEqual([

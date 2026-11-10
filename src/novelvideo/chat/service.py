@@ -5020,18 +5020,6 @@ async def _stream_assistant_reply_hermes(
                     runtime_event_mapper.progress_event(event, include_details=False),
                 )
                 continue
-            if event.type == "permission_requested":
-                await _emit_chat_event_best_effort(
-                    on_event,
-                    {
-                        "type": "permission_requested",
-                        "request_id": event.request_id,
-                        "text": str(event.text or "需要操作授权"),
-                        "options": event.options or [],
-                        "tool_call": event.raw,
-                    },
-                )
-                continue
             if event.type in {"tool_started", "tool_updated", "tool_update"}:
                 await _bind_server_observed_agent_product_execution(
                     event,

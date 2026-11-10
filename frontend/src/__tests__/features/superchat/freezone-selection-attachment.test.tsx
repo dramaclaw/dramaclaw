@@ -216,7 +216,6 @@ vi.mock("@/features/superchat/use-superchat", () => ({
   SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT: "superchat/canvas-context-request",
   useSuperChat: () => ({
     abort: vi.fn(),
-    approvals: [],
     activeTurnId: superChatMocks.activeTurnId,
     busy: superChatMocks.busy,
     connected: true,
@@ -237,7 +236,6 @@ vi.mock("@/features/superchat/use-superchat", () => ({
     refreshModels: vi.fn(),
     refreshRelayInstances: vi.fn(),
     relayInstances: [],
-    resolveApproval: vi.fn(),
     selectRelayInstance: vi.fn(),
     appendNotification: superChatMocks.appendNotification,
     send: superChatMocks.send,

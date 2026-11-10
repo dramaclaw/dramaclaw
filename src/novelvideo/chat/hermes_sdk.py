@@ -85,7 +85,6 @@ REPEATED_VALIDATION_TOOL_CALL_LIMIT = max(
     _env_int("HERMES_REPEATED_VALIDATION_TOOL_CALL_LIMIT", 3),
 )
 TOOL_DETAIL_LIMIT = 1600
-PERMISSION_REQUEST_TIMEOUT_SECONDS = 60.0
 CONTENT_FILTER_MESSAGE = (
     "本轮回复被模型网关的内容安全过滤拦截了，虾导没有拿到可用输出。"
     "请把需求拆得更具体，避免一次性要求完成整集或包含敏感/违规描述；"
@@ -1211,9 +1210,6 @@ class HermesSdkThread:
         self._tool_names_by_call_id: dict[str, str] = {}
         self._tool_inputs_by_call_id: dict[str, Any] = {}
         self._tool_started_at_by_call_id: dict[str, float] = {}
-        self._pending_permissions: dict[
-            str, tuple[str | int, set[str], float, str]
-        ] = {}
         # Serializes the spawn→initialize→session prologue so a background
         # warm() and the first real stream() can't interleave on the shared
         # JSON-RPC stdio. Whichever runs first pays the cold start; the other
@@ -1238,45 +1234,6 @@ class HermesSdkThread:
         self._proc.stdin.write(line.encode("utf-8"))
         await self._proc.stdin.drain()
         return req_id
-
-    async def resolve_permission(self, request_id: str | int, option_id: str) -> bool:
-        """Resolve one server-initiated ACP permission request."""
-        if self._proc is None or self._proc.stdin is None:
-            return False
-        key = str(request_id)
-        pending = self._pending_permissions.get(key)
-        if pending is None:
-            return False
-        original_id, allowed_options, expires_at, _turn_id = pending
-        if time.monotonic() >= expires_at:
-            self._pending_permissions.pop(key, None)
-            return False
-        if option_id not in allowed_options:
-            return False
-        response = {
-            "jsonrpc": "2.0",
-            "id": original_id,
-            "result": {
-                "outcome": {
-                    "outcome": "selected",
-                    "optionId": option_id,
-                }
-            },
-        }
-        self._proc.stdin.write((json.dumps(response) + "\n").encode("utf-8"))
-        await self._proc.stdin.drain()
-        self._pending_permissions.pop(key, None)
-        return True
-
-    def _clear_pending_permissions_for_turn(self, turn_id: str) -> None:
-        stale = [
-            key
-            for key, (_request_id, _options, _expires_at, pending_turn_id)
-            in self._pending_permissions.items()
-            if pending_turn_id == turn_id
-        ]
-        for key in stale:
-            self._pending_permissions.pop(key, None)
 
     async def _spawn(self) -> None:
         """Launch the hermes acp subprocess inside our sandbox."""
@@ -1777,7 +1734,6 @@ class HermesSdkThread:
         finally:
             # Don't kill subprocess here — caller may want to send more prompts.
             # HermesPool handles cleanup on idle / shutdown.
-            self._clear_pending_permissions_for_turn(turn_id)
             self._tool_names_by_call_id.clear()
             self._tool_inputs_by_call_id.clear()
             self._tool_started_at_by_call_id.clear()
@@ -1802,35 +1758,15 @@ class HermesSdkThread:
         """
         method = msg.get("method")
         if method == "session/request_permission":
-            params = msg.get("params") or {}
-            request_id = msg.get("id")
-            raw_options = params.get("options")
-            options = [option for option in raw_options if isinstance(option, dict)] \
-                if isinstance(raw_options, list) else []
-            allowed_options = {
-                str(option.get("optionId") or option.get("option_id") or "").strip()
-                for option in options
+            if self._proc is None or self._proc.stdin is None:
+                raise RuntimeError("hermes subprocess not started")
+            response = {
+                "jsonrpc": "2.0",
+                "id": msg["id"],
+                "result": {"outcome": {"outcome": "cancelled"}},
             }
-            allowed_options.discard("")
-            if request_id is None or not allowed_options:
-                return None
-            self._pending_permissions[str(request_id)] = (
-                request_id,
-                allowed_options,
-                time.monotonic() + PERMISSION_REQUEST_TIMEOUT_SECONDS,
-                turn_id,
-            )
-            tool_call = params.get("toolCall") or params.get("tool_call") or {}
-            title = tool_call.get("title") if isinstance(tool_call, dict) else None
-            return ChatBackendEvent(
-                type="permission_requested",
-                thread_id=self.id,
-                turn_id=turn_id,
-                text=str(title or "需要操作授权"),
-                request_id=request_id,
-                options=options,
-                raw=tool_call,
-            )
+            self._proc.stdin.write((json.dumps(response) + "\n").encode("utf-8"))
+            return None
         if method != "session/update":
             return None
         update = (msg.get("params") or {}).get("update") or {}
@@ -1949,7 +1885,6 @@ class HermesSdkThread:
 
     async def close(self) -> None:
         """Terminate the hermes subprocess."""
-        self._pending_permissions.clear()
         self._tool_names_by_call_id.clear()
         self._tool_inputs_by_call_id.clear()
         self._tool_started_at_by_call_id.clear()

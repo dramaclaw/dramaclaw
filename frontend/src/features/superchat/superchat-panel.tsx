@@ -153,7 +153,7 @@ import {
   type UiSpec,
 } from "@/features/superchat/spec-extract";
 import type { ChatMessage, ChatMessagePart } from "@/features/superchat/types";
-import type { ApprovalDecision, ApprovalRequest, ChatAttachment } from "@/features/superchat/types";
+import type { ChatAttachment } from "@/features/superchat/types";
 import {
   composerFileAttachment,
   composerFileOf,
@@ -9484,84 +9484,6 @@ function isVideoAttachment(attachment: ChatAttachment): boolean {
   );
 }
 
-function ApprovalCard({
-  approval,
-  onResolve,
-}: {
-  approval: ApprovalRequest;
-  onResolve: (decision: ApprovalDecision) => void;
-}) {
-  const { t } = useTranslation();
-  const remaining = approval.expiresAtMs
-    ? Math.max(0, Math.ceil((approval.expiresAtMs - Date.now()) / 1000))
-    : null;
-  const agentOptions = approval.kind === "agent"
-    ? (approval.options ?? []).flatMap((option) => {
-      const optionId = option.optionId ?? option.option_id;
-      return optionId ? [{ ...option, optionId }] : [];
-    })
-    : [];
-
-  return (
-    <div className="border-b border-amber-500/20 bg-amber-500/8 px-3 py-3">
-      <div className="mb-2 flex items-start gap-2">
-        <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-foreground">{approval.title}</div>
-          {remaining !== null && (
-            <div className="text-xs text-muted-foreground">
-              {t("aiAssistant.approvalExpires", { seconds: remaining })}
-            </div>
-          )}
-        </div>
-        <Badge variant="outline" className="rounded-md uppercase">
-          {approval.kind}
-        </Badge>
-      </div>
-      {approval.description && (
-        <p className="mb-2 text-xs leading-5 text-muted-foreground">{approval.description}</p>
-      )}
-      {approval.command && (
-        <pre className="max-h-32 overflow-auto rounded-md border border-border/70 bg-background/60 px-2 py-1.5 text-xs whitespace-pre-wrap break-all">
-          {approval.command}
-        </pre>
-      )}
-      <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
-        {approval.cwd && <div className="truncate">CWD: {approval.cwd}</div>}
-        {approval.host && <div className="truncate">Host: {approval.host}</div>}
-        {approval.security && <div className="truncate">Security: {approval.security}</div>}
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {approval.kind === "agent" ? agentOptions.map((option) => {
-          const kind = String(option.kind ?? "").toLowerCase();
-          const destructive = kind.includes("reject") || kind.includes("deny");
-          const persistent = kind.includes("always");
-          return (
-            <Button
-              key={option.optionId}
-              size="xs"
-              variant={destructive ? "destructive" : persistent ? "outline" : "default"}
-              onClick={() => onResolve({ optionId: option.optionId })}
-            >
-              {option.name || option.optionId}
-            </Button>
-          );
-        }) : (<>
-          <Button size="xs" onClick={() => onResolve("allow-once")}>
-            {t("aiAssistant.allowOnce")}
-          </Button>
-          <Button size="xs" variant="outline" onClick={() => onResolve("allow-always")}>
-            {t("aiAssistant.allowAlways")}
-          </Button>
-          <Button size="xs" variant="destructive" onClick={() => onResolve("deny")}>
-            {t("aiAssistant.deny")}
-          </Button>
-        </>)}
-      </div>
-    </div>
-  );
-}
-
 function ControlBar({
   chat,
   compact = false,
@@ -16090,14 +16012,6 @@ export function SuperChatPanel({
             {chat.error}
           </div>
         )}
-
-        {chat.approvals.map((approval) => (
-          <ApprovalCard
-            key={approval.id}
-            approval={approval}
-            onResolve={(decision) => chat.resolveApproval(approval, decision)}
-          />
-        ))}
 
         <PinnedPanel
           messages={pinnedMessages}

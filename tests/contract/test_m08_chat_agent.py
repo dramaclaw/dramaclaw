@@ -87,6 +87,10 @@ def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None
     app = create_app()
     with TestClient(app) as client:
         cancel = client.post("/api/v1/chat/cancel")
+        permission_result = client.post(
+            "/api/v1/chat/permission-result",
+            json={"request_id": "r1", "option_id": "allow"},
+        )
         ui_event = client.post(
             "/api/v1/chat/ui-events",
             json={
@@ -98,6 +102,10 @@ def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None
 
     assert cancel.status_code == 200
     assert cancel.json()["ok"] is True
+    assert permission_result.status_code == 404
+    assert "/api/v1/chat/permission-result" not in {
+        route.path for route in iter_route_contexts(app.routes)
+    }
     assert ui_event.status_code == 404
     assert "/api/v1/chat/ui-events" not in {
         route.path for route in iter_route_contexts(app.routes)
