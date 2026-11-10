@@ -3,13 +3,63 @@
 import asyncio
 import json
 import logging
+import os
+import subprocess
+import sys
 from contextlib import asynccontextmanager
+from textwrap import dedent
 
 import pytest
 from fastapi import HTTPException
 
 from novelvideo.api.routes import chat
 from novelvideo.freezone import canvas_store
+
+
+def test_cancelled_change_subscription_cleans_up_and_allows_resubscription():
+    script = dedent("""
+        import asyncio
+        import os
+        import threading
+        import time
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        def fail_if_hung():
+            time.sleep(6)
+            os._exit(3)
+
+        threading.Thread(target=fail_if_hung, daemon=True).start()
+
+        import anyio
+        from novelvideo.freezone.canvas_change_watch import CanvasChangeWatchHub
+
+        async def main():
+            hub = CanvasChangeWatchHub()
+            with TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                async with anyio.create_task_group() as group:
+                    async with hub.subscribe(directory):
+                        await anyio.sleep(1)
+                        group.cancel_scope.cancel()
+                async with hub.subscribe(directory):
+                    await anyio.sleep(0.1)
+                assert not hub.directories and hub.watcher is None
+                await anyio.sleep(0.1)
+                assert asyncio.all_tasks() == {asyncio.current_task()}
+            print("canvas change hub cleanup complete")
+
+        anyio.run(main)
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=os.environ.copy(),
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "canvas change hub cleanup complete\n"
 
 
 @pytest.fixture

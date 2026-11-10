@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 from watchfiles import awatch
 
 logger = logging.getLogger(__name__)
@@ -39,16 +40,17 @@ class CanvasChangeWatchHub:
         try:
             yield wake
         finally:
-            async with self.subscriptions:
-                subscribers = self.directories[directory]
-                subscribers.remove(wake)
-                if not subscribers:
-                    del self.directories[directory]
-                    self.changed.set()
-                if not self.directories:
-                    self.watcher.cancel()
-                    await asyncio.gather(self.watcher, return_exceptions=True)
-                    self.watcher = None
+            with anyio.CancelScope(shield=True):
+                async with self.subscriptions:
+                    subscribers = self.directories[directory]
+                    subscribers.remove(wake)
+                    if not subscribers:
+                        del self.directories[directory]
+                        self.changed.set()
+                    if not self.directories:
+                        self.watcher.cancel()
+                        await asyncio.gather(self.watcher, return_exceptions=True)
+                        self.watcher = None
 
     async def _watch(self) -> None:
         async def consume(directories: tuple[Path, ...]) -> None:
