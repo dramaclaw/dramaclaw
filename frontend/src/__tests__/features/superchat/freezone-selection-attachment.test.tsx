@@ -178,7 +178,11 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("@/features/canvas/hooks/useFreezoneImageModels", () => ({
   useFreezoneImageModels: () => imageModelMocks.result,
-  getFreezoneImageModelsSnapshot: () => imageModelMocks.result,
+}));
+
+vi.mock("@/features/canvas/domain/canvasModelCatalogs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/canvas/domain/canvasModelCatalogs")>()),
+  getCanvasImageModelCatalog: () => imageModelMocks.result,
 }));
 
 vi.mock("@/api/projects", () => ({

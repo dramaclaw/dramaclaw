@@ -16,6 +16,7 @@ export interface NodeCanvasEnvironmentOptions {
   translate: Translate;
   /** Defaults to random UUIDs, as in the browser. */
   ids?: IdGenerator;
+  now?: () => number;
   /** Video model catalog for reference limits; without one the default limits apply. */
   videoModels?: readonly VideoReferenceCatalogModel[];
   /** Video model new video nodes start from; without one they use the default model. */
@@ -29,6 +30,7 @@ export function createNodeCanvasEnvironment(
   const videoModels = options.videoModels ?? [];
   return {
     ids: options.ids ?? uuidGenerator,
+    now: options.now,
     translate: options.translate,
     // No bookkeeping or running work lives outside the store on this host.
     onCanvasReplaced: () => {},

@@ -4,10 +4,9 @@ import i18next from "i18next";
 import { enTranslation } from "@/__tests__/helpers/i18n-fixtures";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { buildCanvasActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
+import { extractCanvasChatCommandEnvelopes, isCanvasChatRunNodeAction } from "@/features/freezone/canvasCommandEnvelope";
 import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
-  extractCanvasChatCommandEnvelopes,
-  isCanvasChatRunNodeAction,
 } from "@/features/freezone/canvasChatCommands";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/canvasNodeActionCatalog";
 import {

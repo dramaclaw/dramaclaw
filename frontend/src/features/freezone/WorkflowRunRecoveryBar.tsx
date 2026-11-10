@@ -1,3 +1,4 @@
+import { hasGeneratedResult } from '@/features/canvas/core/workflowInvalidation';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, LoaderCircle, Pencil, RotateCcw, SkipForward, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -13,7 +14,6 @@ import {
   applyCanvasChatCommandsAsync,
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
   FREEZONE_WORKFLOW_RUN_UPDATED_EVENT,
-  hasGeneratedResult,
   isNodeActionGenerationPending,
 } from "@/features/freezone/canvasChatCommands";
 import { useCanvasStore } from "@/stores/canvasStore";
@@ -67,7 +67,7 @@ function unresolvedWorkflowActions(
   return run.actions.filter((action) =>
     RESUMABLE_ACTION_STATUSES.has(action.status) &&
     existingNodeIds.has(action.node_id) &&
-    !hasGeneratedResult(action.node_id, action.action)
+    !hasGeneratedResult(useCanvasStore, action.node_id, action.action)
   );
 }
 

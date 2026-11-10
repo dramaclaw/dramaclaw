@@ -1,11 +1,19 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import {
+  canvasCommandValidationFailureResult,
+  CANVAS_COMMAND_VALIDATION_FAILURE_MESSAGE,
+} from "./canvasCommandValidationFailure";
+import { combineMainlineProjectionAssets } from "@/features/canvas/domain/mainlineProjectionAssets";
+import { createBrowserCanvasContextPorts } from "./browserCanvasContextPorts";
+import { canvasContextFailureErrors } from "./context/canvasContextResult";
+import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import { startCanvasCommandStream } from "./canvasCommandStream";
 import { canvasCreationActions } from "@/features/canvas/application/nodeCatalog";
 import { uuidGenerator } from "@/features/canvas/infrastructure/idGenerator";
 import { htmlArtifactNodePatches } from '@/features/html-artifacts/nodeMetadata';
 import { HtmlArtifactEditor } from '@/features/html-artifacts/HtmlArtifactEditor';
 import { HTML_ARTIFACT_OPEN_EVENT, HTML_ARTIFACT_REFERENCE_EVENT, HTML_ARTIFACT_UPDATED_EVENT, type HtmlArtifactTarget } from '@/features/html-artifacts/api';
-// SPDX-License-Identifier: Elastic-2.0
-// Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -57,7 +65,7 @@ import {
   SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT,
 } from "@/features/superchat/use-superchat";
 import {
-  mcpDirectCanvasApplyEnabled,
+  agentCanvasExecutorIsServer,
   openFilmStudioEnabled,
 } from "@/lib/runtime-config";
 import { SuperChatPanel } from "@/features/superchat/superchat-panel";
@@ -134,11 +142,11 @@ import {
 } from "@/components/ui/tooltip";
 import type { CanvasEdge, CanvasNode } from "@/stores/canvasStore";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
+import { extractCanvasChatCommandEnvelopes } from "@/features/freezone/canvasCommandEnvelope";
 import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
   canvasCommandEnvelopeMatchesCanvas,
   emitCanvasCommandApproval,
-  extractCanvasChatCommandEnvelopes,
   FREEZONE_CANVAS_COMMAND_RESULT_EVENT,
   normalizeCanvasChatCommandEnvelopesForValidation,
   type CanvasChatCommandApplyResult,
@@ -433,49 +441,7 @@ async function loadMainlineProjectionAssets(project: string): Promise<FreezonePr
     listFreezoneProjectAssets(project),
     listCharacters(project),
   ]);
-  const characterAssets: FreezoneProjectAsset[] = characters
-    .map((character): FreezoneProjectAsset | null => {
-      const name = typeof character.name === "string" ? character.name.trim() : "";
-      if (!name) return null;
-      const displayName =
-        typeof character.display_name === "string" && character.display_name.trim()
-          ? character.display_name.trim()
-          : name;
-      return {
-        id: `character:${name}`,
-        tab: "characters",
-        kind: "character",
-        role: "character_profile",
-        label: displayName,
-        sublabel: typeof character.role === "string" && character.role.trim() ? character.role.trim() : undefined,
-        url: typeof character.portrait_url === "string" && character.portrait_url.trim()
-          ? character.portrait_url.trim()
-          : null,
-        exists: true,
-        media_type: character.portrait_url ? "image" : "text",
-        meta: { character: name },
-      };
-    })
-    .filter((asset): asset is FreezoneProjectAsset => Boolean(asset));
-  return [...assets, ...characterAssets];
-}
-
-function canvasCommandValidationFailureResult(errors: string[]): CanvasChatCommandApplyResult {
-  return {
-    applied: 0,
-    openedUiActions: 0,
-    createdNodeIds: [],
-    errors,
-    commandResults: [
-      {
-        commandIndex: -1,
-        type: "validate",
-        status: "error",
-        label: "校验画布命令",
-        error: errors.join("; "),
-      },
-    ],
-  };
+  return combineMainlineProjectionAssets(assets, characters);
 }
 
 function persistCanvasCommandResult({
@@ -1219,7 +1185,7 @@ export function FreezoneShell({
         chatReferenceCanvasNodes,
         canvasEdges,
         canvasNodes,
-        { displayNodes: visibleSelectedCanvasNodes },
+        { displayNodes: visibleSelectedCanvasNodes, nodeDataDefaults: browserNodeDataDefaults },
       ),
     [canvasEdges, canvasId, canvasNodes, chatReferenceCanvasNodes, projectId, visibleSelectedCanvasNodes],
   );
@@ -1329,7 +1295,7 @@ export function FreezoneShell({
   }, [canvasId, projectId, sync.hydratedCanvasId, sync.hydratedProject, sync.status]);
 
   useEffect(() => {
-    if (!mcpDirectCanvasApplyEnabled()) return;
+    if (!agentCanvasExecutorIsServer()) return;
     // 在虾集时不轮询：保活期间画布没人看，没必要为它占着请求配额。
     // `active` 在依赖里，切回虾画会重跑本 effect —— 末尾那次立即调用就顺带
     // 补上了「离开这段时间里画布有没有被别处改过」的新鲜度检查。以前靠整体
@@ -1898,10 +1864,11 @@ export function FreezoneShell({
         normalizedEnvelopes,
         currentState.nodes,
         currentState.edges,
+        browserNodeDataDefaults,
       );
       if (!validation.ok) {
         const errors = [
-          "画布命令预校验失败，前端未展示确认卡，也未执行。",
+          CANVAS_COMMAND_VALIDATION_FAILURE_MESSAGE,
           ...validation.issues.map((issue) => `${issue.path}: ${issue.message}`),
         ];
         console.warn("[freezone-canvas-command] validation failed", {
@@ -2129,7 +2096,7 @@ export function FreezoneShell({
             selectedNodeIds,
             envelopes,
             canvasMetadata: sync.metadata as Record<string, unknown> | null,
-            loadMainlineProjectionAssets: () => loadMainlineProjectionAssets(projectId),
+            ports: createBrowserCanvasContextPorts(projectId, () => loadMainlineProjectionAssets(projectId)),
           });
           reportCanvasContextToolResult({
             bridgeKey,
@@ -2142,8 +2109,7 @@ export function FreezoneShell({
             errors: [],
           });
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error || "unknown error");
-          const errors = [`读取画布上下文失败：${message}`];
+          const errors = canvasContextFailureErrors(error);
           emitCanvasContextActivity({
             turnId,
             anchorTextPrefix,

@@ -66,6 +66,8 @@ export interface NodeDataDefaults {
   lastVideoModel(): string | null;
 }
 
+export const defaultNodeDataDefaults: NodeDataDefaults = { lastVideoModel: () => null };
+
 const uploadNodeDefinition: CanvasNodeDefinition<UploadImageNodeData> = {
   type: CANVAS_NODE_TYPES.upload,
   menuLabelKey: 'node.menu.uploadImage',

@@ -2,12 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { TFunction } from "i18next";
 
-/**
- * 时间段的取值是协议：后端 `novelvideo/time_of_day.py` 的 CanonicalTimeOfDay 是这
- * 七个中文字面量，剧本原值也按中文存。所以数组本身不能翻，只有渲染出来的 label
- * 走 i18n —— 用 value → key 的映射，认不出的值（剧本原值）原样带出。
- */
-// i18n-exempt-start: 协议值，与后端 CanonicalTimeOfDay 逐字对应，翻译会写坏数据
+// Canonical protocol values stay in Chinese; only display labels are translated.
+// i18n-exempt-start: backend CanonicalTimeOfDay values
 export const STANDARD_TIME_OF_DAY_OPTIONS = [
   "清晨",
   "上午",

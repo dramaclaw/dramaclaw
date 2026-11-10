@@ -5371,6 +5371,6 @@ export type CanvasStoreApi = StoreApi<CanvasState>;
  */
 export function createCanvasStore(env: CanvasEnvironment): CanvasStoreApi {
   return createStore<CanvasState>()(
-    canvasStateCreator(env, new CanvasNodeFactory(env.ids, nodeCatalog, env)),
+    canvasStateCreator(env, new CanvasNodeFactory(env.ids, nodeCatalog, env, env.now)),
   );
 }

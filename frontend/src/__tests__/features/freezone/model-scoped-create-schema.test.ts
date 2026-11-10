@@ -11,9 +11,9 @@ const catalogState = vi.hoisted(() => ({
   image: { isLoading: false, isFallback: false },
 }));
 
-vi.mock("@/features/canvas/hooks/useFreezoneVideoModels", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/features/canvas/hooks/useFreezoneVideoModels")>()),
-  getFreezoneVideoModelsSnapshot: () => ({
+vi.mock("@/features/canvas/domain/canvasModelCatalogs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/canvas/domain/canvasModelCatalogs")>()),
+  getCanvasVideoModelCatalog: () => ({
     models: [{
       id: "minimax-h3",
       label: "MiniMax H3",
@@ -27,11 +27,7 @@ vi.mock("@/features/canvas/hooks/useFreezoneVideoModels", async (importOriginal)
     ...catalogState.video,
     error: null,
   }),
-}));
-
-vi.mock("@/features/canvas/hooks/useFreezoneImageModels", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/features/canvas/hooks/useFreezoneImageModels")>()),
-  getFreezoneImageModelsSnapshot: () => ({
+  getCanvasImageModelCatalog: () => ({
     models: [{
       id: "image-no-quality",
       label: "Image model without quality",

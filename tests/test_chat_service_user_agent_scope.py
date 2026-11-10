@@ -4416,7 +4416,6 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS",
         "DRAMACLAW_CHAT_SURFACE",
         "DRAMACLAW_EXTERNAL_MCP",
-        "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
         "DRAMACLAW_AGENT_PROFILE",
         "DRAMACLAW_PROJECT_ID",
         "DRAMACLAW_ROOT",
@@ -4899,7 +4898,6 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         '"DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",'
         '"DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS","DRAMACLAW_CHAT_SURFACE",'
         '"DRAMACLAW_EXTERNAL_MCP",'
-        '"DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_ROOT","DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
         '"DRAMACLAW_TURN_ID","DRAMACLAW_USERNAME",'
@@ -5268,7 +5266,6 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     assert freezone_env["DRAMACLAW_AGENT_PROFILE"] == "freezone:agent-2"
     assert Path(freezone_env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"]).is_relative_to(project_state)
     assert freezone_env["DRAMACLAW_EXTERNAL_MCP"] == "1"
-    assert freezone_env["DRAMACLAW_MCP_DIRECT_CANVAS_APPLY"] == "0"
     assert freezone_env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"].endswith(
         "supertale_canvas_command_bridge/freezone_agent-2"
     )

@@ -1,3 +1,4 @@
+import { createBrowserCanvasContextPorts } from "@/features/freezone/browserCanvasContextPorts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { buildCanvasContextRequestResponses } from "@/features/freezone/chatNodeReferences";
@@ -13,7 +14,8 @@ vi.mock("@/stores/canvasStore", () => ({
   useCanvasStore: { getState: () => ({ updateNodeData }) },
 }));
 
-import { executeHtmlNodeReadAction, executeHtmlNodeWriteAction } from "./nodeActions";
+import { executeHtmlNodeWriteAction } from "./nodeActions";
+import { executeHtmlNodeReadAction } from "./readNode";
 
 const webpage = (artifactId?: string): CanvasNode => ({
   id: "web-1",
@@ -34,6 +36,7 @@ describe("HTML node read actions", () => {
     });
 
     await expect(executeHtmlNodeReadAction({
+      ports: { readHtmlArtifact, listHtmlVersions },
       projectId: "project-1",
       node: webpage("artifact-1"),
       action: "read_source",
@@ -51,6 +54,7 @@ describe("HTML node read actions", () => {
     listHtmlVersions.mockResolvedValue({ versions: [{ version: 3, title: "Page", created_at: "now" }] });
 
     await expect(executeHtmlNodeReadAction({
+      ports: { readHtmlArtifact, listHtmlVersions },
       projectId: "project-1",
       node: webpage("artifact-1"),
       action: "history",
@@ -62,9 +66,9 @@ describe("HTML node read actions", () => {
   });
 
   it("rejects empty nodes and write actions", async () => {
-    await expect(executeHtmlNodeReadAction({projectId: "project-1", node: webpage(), action: "read_source"}))
+    await expect(executeHtmlNodeReadAction({ports: { readHtmlArtifact, listHtmlVersions }, projectId: "project-1", node: webpage(), action: "read_source"}))
       .rejects.toThrow("HTML node has no saved artifact");
-    await expect(executeHtmlNodeReadAction({projectId: "project-1", node: webpage("artifact-1"), action: "update_source" as "read_source"}))
+    await expect(executeHtmlNodeReadAction({ports: { readHtmlArtifact, listHtmlVersions }, projectId: "project-1", node: webpage("artifact-1"), action: "update_source" as "read_source"}))
       .rejects.toThrow("Unsupported HTML read action");
   });
 
@@ -77,6 +81,7 @@ describe("HTML node read actions", () => {
     });
 
     const responses = await buildCanvasContextRequestResponses({
+      ports: createBrowserCanvasContextPorts("project-1"),
       project: "project-1",
       canvasId: "canvas-1",
       nodes: [webpage("artifact-1")],

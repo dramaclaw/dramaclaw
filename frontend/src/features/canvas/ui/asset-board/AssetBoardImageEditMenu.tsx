@@ -17,7 +17,7 @@ import { nodeMainlineFlags } from '@/features/canvas/domain/mainlineNodeFlags';
 import { type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { DEFAULT_SHARED_MODEL_ID } from '@/features/canvas/domain/defaultModelIds';
-import { SHARED_MODELS } from '@/features/canvas/ui/ProviderModelPicker';
+import { SHARED_MODELS } from '@/features/canvas/domain/modelOptions';
 import { useCanvasStore } from '@/stores/canvasStore';
 
 import { ImageResizeDialog } from '../ImageResizeDialog';

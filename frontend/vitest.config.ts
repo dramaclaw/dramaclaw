@@ -6,6 +6,11 @@ import path from "path";
 
 // These tests use Node APIs only; keep browser fixtures out of their workers.
 const nodeTests = [
+  "src/__tests__/features/canvas-core/server-context-i18n.test.ts",
+  "src/__tests__/features/canvas-core/server-context.test.ts",
+  "src/__tests__/features/canvas-core/server-apply-commands.test.ts",
+  "src/__tests__/features/canvas-core/server-parity.test.ts",
+  "src/__tests__/features/canvas-core/canvas-server-bundle.test.ts",
   "src/__tests__/components/credit-promotion-coverage.test.ts",
   "src/__tests__/components/login/announcement-dialog-layout-contract.test.ts",
   "src/__tests__/components/login/login-modal-layout-contract.test.ts",
@@ -23,6 +28,7 @@ const nodeTests = [
   "src/__tests__/features/canvas-core/node-canvas-environment.test.ts",
   "src/__tests__/features/canvas-core/node-canvas-core.test.ts",
   "src/__tests__/features/canvas-core/node-entry-imports.test.ts",
+  "src/__tests__/features/canvas-core/server-entry.test.ts",
   "src/__tests__/features/companion/pet-gallery-groups-contract.test.ts",
   "src/__tests__/features/freezone/canvas-agent-single-session-contract.test.ts",
   "src/__tests__/features/freezone/chat-launcher-contract.test.ts",

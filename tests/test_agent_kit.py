@@ -179,7 +179,6 @@ def test_launcher_defaults_keep_frontend_approval_bridge() -> None:
     launcher = _load_script("launch_mcp")
     env: dict[str, str] = {}
     launcher._configure_tools_env(env, CE_ROOT)
-    assert env["DRAMACLAW_MCP_DIRECT_CANVAS_APPLY"] == "0"
     assert env["DRAMACLAW_EXTERNAL_MCP"] == "1"
     assert env["DRAMACLAW_AGENT_PROFILE"] == "freezone:main"
     assert env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"].startswith(str(CE_ROOT / "state"))

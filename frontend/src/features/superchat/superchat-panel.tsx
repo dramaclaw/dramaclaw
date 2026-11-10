@@ -181,10 +181,7 @@ import {
 import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
 import type { ComposeTimelineState } from "@/features/canvas/compose/timelineModel";
 import { VIDEO_GENERATION_ASPECT_RATIOS } from "@/features/canvas/application/imageData";
-import {
-  VIDEO_UPSCALE_RESOLUTIONS,
-  VIDEO_UPSCALE_RESOLUTION_LABEL,
-} from "@/features/canvas/application/videoUpscale";
+import { VIDEO_UPSCALE_RESOLUTIONS, VIDEO_UPSCALE_RESOLUTION_LABEL } from "@/features/canvas/domain/videoUpscaleResolutions";
 import { useFreezoneImageModels } from "@/features/canvas/hooks/useFreezoneImageModels";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { VoiceSelectionModal } from "@/features/canvas/nodes/VoiceSelectionModal";

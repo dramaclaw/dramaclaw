@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { sanitizePreviewImageUrls } from "@/features/canvas/domain/canvasSerialization";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildSavePayload,
@@ -10,7 +11,6 @@ import {
   MAX_BODY_BYTES,
   MAX_EDGES,
   MAX_NODES,
-  sanitizePreviewImageUrls,
   type SaveSnapshot,
 } from "@/features/freezone/canvasSyncCore";
 import type { CanvasMutationSource } from "@/stores/canvasStore";

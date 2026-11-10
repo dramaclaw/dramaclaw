@@ -1,5 +1,5 @@
 import type { StructuredBlock } from "@/features/superchat/spec-extract";
-import { extractCanvasChatCommandEnvelopes } from "@/features/freezone/canvasChatCommands";
+import { extractCanvasChatCommandEnvelopes } from "@/features/freezone/canvasCommandEnvelope";
 
 export type CanvasCommandExecutionMode = "manual_confirm" | "auto_execute";
 

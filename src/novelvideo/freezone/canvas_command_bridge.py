@@ -74,6 +74,32 @@ def _bridge_dir(bridge_dir: str | Path | None = None) -> Path:
     return Path(tempfile.gettempdir()) / "supertale_canvas_command_bridge"
 
 
+def _browser_presence_path(canvas_id: str, bridge_dir: str | Path | None) -> Path:
+    digest = hashlib.sha256(canvas_id.encode("utf-8")).hexdigest()
+    return _bridge_dir(bridge_dir) / f"browser-presence-{digest}"
+
+
+def touch_browser_presence(
+    canvas_id: str, *, bridge_dir: str | Path | None = None, now: float | None = None,
+) -> None:
+    path = _browser_presence_path(canvas_id, bridge_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch(exist_ok=True)
+    timestamp = time.time() if now is None else now
+    os.utime(path, (timestamp, timestamp))
+
+
+def browser_presence_fresh(
+    canvas_id: str, *, bridge_dir: str | Path | None = None,
+    max_age_seconds: float = 60, now: float | None = None,
+) -> bool:
+    try:
+        modified = _browser_presence_path(canvas_id, bridge_dir).stat().st_mtime
+    except OSError:
+        return False
+    return 0 <= (time.time() if now is None else now) - modified <= max_age_seconds
+
+
 def _bridge_db_path(bridge_dir: str | Path | None = None) -> Path:
     return _bridge_dir(bridge_dir) / "canvas_command_inbox.sqlite3"
 
