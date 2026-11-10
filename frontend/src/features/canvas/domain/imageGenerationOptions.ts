@@ -4,7 +4,7 @@ import type { ImageSize } from './canvasNodes';
 
 /** Shared form defaults when a model declares no aspect or resolution options. */
 export const IMAGE_ASPECT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'auto', label: '自适应' },
+  { value: 'auto', label: '自适应' }, // i18n-exempt -- label moved verbatim from shared options
   { value: '1:1', label: '1:1' },
   { value: '9:16', label: '9:16' },
   { value: '16:9', label: '16:9' },
