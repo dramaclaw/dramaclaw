@@ -10,7 +10,7 @@ export type { CanvasCommandToolResultPayload, CanvasReceiptTranslate } from '../
 export { withCanvasModelCatalogs, getCanvasImageModelCatalog, getCanvasVideoModelCatalog } from './domain/canvasModelCatalogs';
 export type { ModelOption } from './domain/modelOptions';
 export type { CanvasModelCatalog, CanvasModelCatalogs } from './domain/canvasModelCatalogs';
-export { buildImageGenerationRequest, imagePromptCompileInput } from './application/generationRequests';
+export { buildImageGenerationRequest, imagePromptCompileInput, imagePromptCompileMetadataPatch } from './application/generationRequests';
 export type {
   ImageGenerationRequestContext,
   ImagePromptCompileInput,

@@ -40,17 +40,19 @@ export type ImageGenerationRequestResult =
   | { ok: true; requests: ImageGenerationHttpRequest[] }
   | {
       ok: false;
-      code: 'no_model' | 'no_effective_prompt' | 'reference_limit_exceeded' | 'inline_media_reference';
+      code: 'not_image_generation_node' | 'no_model' | 'no_effective_prompt' | 'reference_limit_exceeded' | 'inline_media_reference';
       message: string;
     };
 
-function nodeData(ctx: ImageGenerationRequestContext): Partial<ImageGenNodeData> {
+const NOT_IMAGE_GENERATION_NODE = 'The target node must be an image generation node.';
+
+function nodeData(ctx: ImageGenerationRequestContext): ImageGenNodeData | undefined {
   const node = ctx.nodes.find((candidate) => candidate.id === ctx.nodeId);
-  return node && isImageGenNode(node) ? node.data : {};
+  return node && isImageGenNode(node) ? node.data : undefined;
 }
 
-function referenceUrls(ctx: ImageGenerationRequestContext): string[] {
-  const ownReference = nodeData(ctx).referenceImageUrl;
+function referenceUrls(ctx: ImageGenerationRequestContext, data: ImageGenNodeData): string[] {
+  const ownReference = data.referenceImageUrl;
   const upstreamUrls = upstreamNodesInEdgeOrder(ctx.nodes, ctx.edges, ctx.nodeId)
     .map(extractUpstreamContent)
     .flatMap((content) => typeof content.imageUrl === 'string' && content.imageUrl.length > 0
@@ -61,9 +63,13 @@ function referenceUrls(ctx: ImageGenerationRequestContext): string[] {
   );
 }
 
-/** Inputs for recipe compilation, before any user edits to the prompt draft. */
+/**
+ * Inputs for recipe compilation, before any user edits to the prompt draft.
+ * Throws when the target is missing or is not an image generation node.
+ */
 export function imagePromptCompileInput(ctx: ImageGenerationRequestContext): ImagePromptCompileInput {
   const data = nodeData(ctx);
+  if (!data) throw new Error(NOT_IMAGE_GENERATION_NODE);
   const upstreamContents = upstreamNodesInEdgeOrder(ctx.nodes, ctx.edges, ctx.nodeId)
     .map(extractUpstreamContent);
   const upstreamText = joinUpstreamText(upstreamContents);
@@ -82,21 +88,37 @@ export function imagePromptCompileInput(ctx: ImageGenerationRequestContext): Ima
     fallbackPrompt: inlineUpstream
       ? nodePrompt
       : [upstreamText, ownPrompt].filter((text) => text.length > 0).join('\n\n'),
-    referenceMedia: referenceUrls(ctx).map((_, index) => ({
+    referenceMedia: referenceUrls(ctx, data).map((_, index) => ({
       kind: 'image', label: `reference-${index + 1}`,
     })),
   };
 }
 
+/** Recipe metadata to persist after compilation; the caller supplies the timestamp. */
+export function imagePromptCompileMetadataPatch(
+  { mode, prompt, recipeIds }: Parameters<NonNullable<CompileWorkflowNodePromptInput['onCompileMetadata']>>[0],
+  compiledAt: string,
+) {
+  return {
+    workflowRecipeCompileMode: mode,
+    workflowRecipeCompiledAt: compiledAt,
+    workflowRecipeCompiledPrompt: prompt,
+    prompt,
+    workflowRecipeIds: recipeIds,
+  };
+}
+
 /**
  * Build the shared image form's HTTP requests without submitting them.
- * Recipe compilation and media uploads happen before this call. Billing-rule
+ * Recipe compilation and media uploads happen before this call. Replace inline
+ * references in the supplied canvas with their uploaded URLs before building. Billing-rule
  * checks require a price lookup and remain the caller's responsibility.
  */
 export function buildImageGenerationRequest(
   ctx: ImageGenerationRequestContext & { prompt: string },
 ): ImageGenerationRequestResult {
   const data = nodeData(ctx);
+  if (!data) return { ok: false, code: 'not_image_generation_node', message: NOT_IMAGE_GENERATION_NODE };
   const persistedModel = typeof data.model === 'string' && data.model.length > 0 ? data.model : null;
   const model = (persistedModel ? ctx.imageModels.find((item) => item.id === persistedModel) : undefined)
     ?? ctx.imageModels[0];
@@ -106,7 +128,7 @@ export function buildImageGenerationRequest(
   if (!imagePromptCompileInput(ctx).fallbackPrompt) {
     return { ok: false, code: 'no_effective_prompt', message: 'An image prompt or upstream text is required.' };
   }
-  const references = referenceUrls(ctx);
+  const references = referenceUrls(ctx, data);
   if (model.referenceImageMax != null && references.length > model.referenceImageMax) {
     return {
       ok: false, code: 'reference_limit_exceeded',
