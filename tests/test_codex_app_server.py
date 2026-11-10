@@ -1277,6 +1277,76 @@ async def test_public_patched_runtime_keeps_turn_key_out_of_metadata_and_disk(
 
 
 @pytest.mark.asyncio
+async def test_public_patched_runtime_sends_context_separately_from_user_message(
+    monkeypatch, tmp_path
+):
+    codex_bin = _contract_codex_bin()
+    from novelvideo.chat.codex_protocol import context_entries
+
+    scripted = _responses_sse(
+        _response_created("context-turn"),
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "id": "context-message",
+                "content": [{"type": "output_text", "text": "OK"}],
+            },
+        },
+        _response_completed("context-turn"),
+    )
+    additional_context = {
+        **context_entries("dramaclaw-protocol", "PROTOCOL-MARKER-A", kind="application"),
+        **context_entries("dramaclaw-execution-context", "EXECUTION-MARKER-B", kind="untrusted"),
+    }
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    with _recording_responses_gateway([scripted]) as (gateway_url, requests):
+        client = backend_sdk.CodexClient(
+            codex_bin=codex_bin,
+            cwd=tmp_path,
+            env={
+                **os.environ,
+                "CODEX_HOME": str(tmp_path / "codex-home"),
+                "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+            },
+            model="DC-codex-agent-LLM",
+            model_provider="dramaclaw_gateway",
+            developer_instructions="Reply briefly without tools.",
+            config_overrides=service._codex_gateway_config_overrides(gateway_url),
+            turn_metadata={"dramaclaw_gateway_api_key": "synthetic-context-test-key"},
+            additional_context=additional_context,
+            client_user_message_id="client-turn-1",
+        )
+        try:
+            events = [event async for event in client.thread_start().stream("Say OK")]
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
+    assert any(event.type == "complete" and event.text == "OK" for event in events)
+    assert len(requests) == 1
+    messages = requests[0]["body"]["input"]
+    text_parts = [
+        (message.get("role"), part["text"])
+        for message in messages
+        for part in message.get("content", [])
+        if "text" in part
+    ]
+    protocol = "<dramaclaw-protocol>PROTOCOL-MARKER-A</dramaclaw-protocol>"
+    execution = (
+        "<external_dramaclaw-execution-context>"
+        "EXECUTION-MARKER-B</external_dramaclaw-execution-context>"
+    )
+    assert ("developer", protocol) in text_parts, text_parts
+    assert ("user", execution) in text_parts, text_parts
+    last_user = [message for message in messages if message.get("role") == "user"][-1]
+    assert [part["text"] for part in last_user["content"] if "text" in part] == ["Say OK"]
+    assert sorted(
+        (role, text) for role, text in text_parts
+        if "PROTOCOL-MARKER-A" in text or "EXECUTION-MARKER-B" in text
+    ) == [("developer", protocol), ("user", execution)], text_parts
+
+
+@pytest.mark.asyncio
 async def test_app_server_keeps_turn_images_as_file_paths_in_thread_history(
     monkeypatch, tmp_path
 ):

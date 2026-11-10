@@ -7,7 +7,7 @@ import os
 import threading
 import tomllib
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal, Sequence
+from typing import Any, AsyncIterator, Literal, Mapping, Sequence
 
 from novelvideo.chat.runtime_port import (
     AgentRuntimeThreadPort,
@@ -1326,6 +1326,9 @@ def _start_codex_turn(
     turn_metadata: dict[str, str],
     output_schema: dict[str, Any] | None = None,
     image_paths: Sequence[Path] = (),
+    *,
+    additional_context: Mapping[str, Mapping[str, str]] | None = None,
+    client_user_message_id: str | None = None,
 ) -> Any:
     """Start a turn with metadata omitted by the 0.147 generated facade.
 
@@ -1339,7 +1342,12 @@ def _start_codex_turn(
     from openai_codex._inputs import LocalImageInput, TextInput, _to_wire_input
 
     images = [LocalImageInput(str(path)) for path in image_paths]
-    if not turn_metadata and output_schema is None:
+    if (
+        not turn_metadata
+        and output_schema is None
+        and not additional_context
+        and not client_user_message_id
+    ):
         if images:
             return thread.turn([TextInput(prompt), *images])
         return thread.turn(TextInput(prompt))
@@ -1359,6 +1367,12 @@ def _start_codex_turn(
         params["responsesapiClientMetadata"] = dict(turn_metadata)
     if output_schema is not None:
         params["outputSchema"] = output_schema
+    if additional_context:
+        params["additionalContext"] = {
+            name: dict(entry) for name, entry in additional_context.items()
+        }
+    if client_user_message_id:
+        params["clientUserMessageId"] = client_user_message_id
     started = thread._client.turn_start(
         thread.id,
         wire_input,
@@ -1381,6 +1395,8 @@ class CodexClient:
         thread_config_overrides: tuple[str, ...] | None = None,
         turn_metadata: dict[str, str] | None = None,
         output_schema: dict[str, Any] | None = None,
+        additional_context: Mapping[str, Mapping[str, str]] | None = None,
+        client_user_message_id: str | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -1397,6 +1413,11 @@ class CodexClient:
         self._thread_config = _codex_thread_config(effective_thread_overrides, env)
         self._turn_metadata = dict(turn_metadata or {})
         self._output_schema = output_schema
+        self._additional_context = (
+            {name: dict(entry) for name, entry in additional_context.items()}
+            if additional_context is not None else None
+        )
+        self._client_user_message_id = client_user_message_id
 
     def thread_start(self) -> "CodexThread":
         return CodexThread(
@@ -1410,6 +1431,8 @@ class CodexClient:
             thread_config=self._thread_config,
             turn_metadata=self._turn_metadata,
             output_schema=self._output_schema,
+            additional_context=self._additional_context,
+            client_user_message_id=self._client_user_message_id,
             thread_id=None,
         )
 
@@ -1425,6 +1448,8 @@ class CodexClient:
             thread_config=self._thread_config,
             turn_metadata=self._turn_metadata,
             output_schema=self._output_schema,
+            additional_context=self._additional_context,
+            client_user_message_id=self._client_user_message_id,
             thread_id=thread_id,
         )
 
@@ -1444,6 +1469,8 @@ class CodexThread:
         turn_metadata: dict[str, str],
         thread_id: str | None,
         output_schema: dict[str, Any] | None = None,
+        additional_context: Mapping[str, Mapping[str, str]] | None = None,
+        client_user_message_id: str | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -1455,6 +1482,11 @@ class CodexThread:
         self._thread_config = dict(thread_config)
         self._turn_metadata = dict(turn_metadata)
         self._output_schema = output_schema
+        self._additional_context = (
+            {name: dict(entry) for name, entry in additional_context.items()}
+            if additional_context is not None else None
+        )
+        self._client_user_message_id = client_user_message_id
         self.id = thread_id
 
     async def stream(
@@ -1539,6 +1571,8 @@ class CodexThread:
                     self._turn_metadata,
                     self._output_schema,
                     image_paths=image_paths,
+                    additional_context=self._additional_context,
+                    client_user_message_id=self._client_user_message_id,
                 )
                 nonlocal current_turn_id
                 current_turn_id = turn.id
