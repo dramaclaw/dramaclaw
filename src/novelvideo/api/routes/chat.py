@@ -15,6 +15,7 @@ import logging
 import time
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import (
@@ -58,6 +59,9 @@ from novelvideo.chat.hermes_workspace import (
 from novelvideo.chat.store import ChatScope, ChatUiEventRejected, chat_store
 from novelvideo.chat.stream_delta import AssistantDeltaEncoder
 from novelvideo.chat.turn_images import CANVAS_NODE_REFERENCE_TYPE, referenced_image_paths
+from novelvideo.freezone.agent_canvas_config import canvas_patch_push_enabled
+from novelvideo.freezone.canvas_change_watch import canvas_change_watch_hub
+from novelvideo.freezone.canvas_changes import canvas_changes_dir, read_canvas_changes
 from novelvideo.freezone.canvas_command_bridge import (
     touch_browser_presence,
     BRIDGE_PENDING_TTL_SECONDS,
@@ -74,6 +78,7 @@ from novelvideo.freezone.canvas_command_bridge import (
     resolve_skill_studio_result,
 )
 from novelvideo.freezone.canvas_command_watch import bridge_watch_hub
+from novelvideo.freezone.canvas_store import read_canvas
 from novelvideo.freezone.agent_config_store import save_user_agent_config_item
 from novelvideo.freezone.agent_product_operations import AGENT_PRODUCT_PRICE_REFERENCE
 from novelvideo.ports import get_product_surface_access, get_usage_meter
@@ -2833,15 +2838,31 @@ def _collect_pending_canvas_commands(
     return {"ok": True, "data": {"frames": frames}}
 
 
+CANVAS_STREAM_IDLE_SECONDS = 20
+
+
+def _canvas_stream_start_revision(state_dir: Path, canvas_id: str) -> int:
+    replay = read_canvas_changes(state_dir, canvas_id, 0)
+    if replay.reset_revision is not None:
+        return replay.reset_revision
+    if replay.entries:
+        return replay.entries[-1]["revision"]
+    canvas = read_canvas(state_dir, canvas_id)
+    return canvas.get("revision", 0) if canvas else 0
+
+
 @router.get("/chat/canvas-commands/stream")
 async def stream_canvas_commands(
     project_id: str,
     canvas_id: str,
     agent_ids: str = "main",
     user: dict = Depends(get_api_user),
+    last_revision: int | None = None,
 ):
     from sse_starlette.sse import EventSourceResponse
 
+    if last_revision is not None and last_revision < 0:
+        raise HTTPException(status_code=400, detail="Invalid canvas revision")
     project_id, canvas_id = project_id.strip(), canvas_id.strip()
     agents = list(
         dict.fromkeys(value.strip() for value in agent_ids.split(",") if value.strip())
@@ -2864,6 +2885,14 @@ async def stream_canvas_commands(
     )
     state_dir = await _bridge_project_state_dir(user, payload)
     hub = bridge_watch_hub()
+    change_hub = (
+        canvas_change_watch_hub()
+        if canvas_patch_push_enabled() and state_dir is not None
+        else None
+    )
+    cursor = last_revision
+    if change_hub is not None and cursor is None:
+        cursor = await hub.run(_canvas_stream_start_revision, state_dir, canvas_id)
     username = str(user["username"])
 
     def directories():
@@ -2887,19 +2916,59 @@ async def stream_canvas_commands(
         for directory in targets:
             touch_browser_presence(canvas_id, bridge_dir=directory)
 
+    async def change_frames():
+        nonlocal cursor
+        if change_hub is None:
+            return
+        replay = await hub.run(read_canvas_changes, state_dir, canvas_id, cursor)
+        if replay.reset_revision is not None:
+            cursor = replay.reset_revision
+            change_hub.metrics["canvas_reset_frames"] += 1
+            reset = {"type": "canvas.reset", "canvas_id": canvas_id, "revision": cursor}
+            yield {"data": json.dumps(reset)}
+        for entry in replay.entries:
+            cursor = entry["revision"]
+            change_hub.metrics["canvas_patch_frames"] += 1
+            patch = {key: value for key, value in entry.items() if key != "written_at"}
+            yield {"data": json.dumps(patch)}
+
     async def events():
         hub.metrics["sse_connections"] = hub.metrics.get("sse_connections", 0) + 1
         try:
-            async with hub.subscribe(targets) as wake:
+            async with contextlib.AsyncExitStack() as stack:
+                wake = await stack.enter_async_context(hub.subscribe(targets))
+                change_wake = None
+                if change_hub is not None:
+                    change_wake = await stack.enter_async_context(
+                        change_hub.subscribe(canvas_changes_dir(state_dir, canvas_id))
+                    )
                 await hub.run(touch_presence)
                 # Flush an initial body chunk through development/reverse proxies
                 # so an idle stream opens before the first 25-second heartbeat.
                 yield {"comment": "connected"}
+                async for frame in change_frames():
+                    yield frame
                 while True:
+                    wakes = [wake] if change_wake is None else [wake, change_wake]
+                    tasks = [asyncio.create_task(event.wait()) for event in wakes]
                     try:
-                        await asyncio.wait_for(wake.wait(), timeout=20)
+                        done, _ = await asyncio.wait_for(
+                            asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED),
+                            timeout=CANVAS_STREAM_IDLE_SECONDS,
+                        )
                     except TimeoutError:
+                        done = set()
+                    finally:
+                        for task in tasks:
+                            task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                    if not done:
                         await hub.run(touch_presence)
+                    if change_wake is not None and (not done or change_wake.is_set()):
+                        change_wake.clear()
+                        async for frame in change_frames():
+                            yield frame
+                    if not wake.is_set():
                         continue
                     wake.clear()
                     result = await hub.run(
