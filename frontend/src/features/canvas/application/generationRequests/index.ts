@@ -3,3 +3,4 @@
 export * from './imageGenerationRequest';
 export * from './imageGenerationResult';
 export * from './videoGenerationRequest';
+export * from './generationSubmitError';

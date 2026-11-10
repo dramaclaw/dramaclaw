@@ -7,31 +7,13 @@ import { selectNodeExclusively } from "@/features/canvas/application/nodeSelecti
 import { MapPin } from "lucide-react";
 import { formatAudioDurationSeconds, type AudioDurationRejection } from "./videoModelCapabilities";
 
+import type { ReferenceIssue } from '../../domain/referenceIssues';
+
 const FIRST_FRAME_ROLES = new Set(["首帧", "first_frame"]); // i18n-exempt: backend role values
 const LAST_FRAME_ROLES = new Set(["尾帧", "last_frame"]); // i18n-exempt: backend role values
 
-export interface ReferenceIssue {
-  media: string;
-  index: number;
-  name: string;
-  reference_key: string;
-  code: string;
-  actual?: unknown;
-  expected?: unknown;
-  nodeId?: string;
-  label?: string;
-  role?: string;
-}
-
-export function referenceIssues(error: unknown): ReferenceIssue[] {
-  const body = (error as { body?: { detail?: { code?: string; errors?: unknown } } })?.body;
-  const detail = body?.detail;
-  if (detail?.code !== "REFERENCE_MEDIA_INVALID" || !Array.isArray(detail.errors)) return [];
-  return detail.errors.filter((item): item is ReferenceIssue =>
-    item && typeof item.code === "string" && typeof item.reference_key === "string"
-    && typeof item.media === "string" && typeof item.index === "number",
-  );
-}
+export { referenceIssues } from '../../domain/referenceIssues';
+export type { ReferenceIssue } from '../../domain/referenceIssues';
 
 export function matchesReference(url: string, key: string): boolean {
   if (!key) return false;

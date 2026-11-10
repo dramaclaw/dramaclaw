@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { GenerationErrorInfo } from './generationSubmitError';
 import type { CanvasEnvironment } from '../../core/environment';
 import { isSystemManagedNodeData } from '../../domain/mainlineNodeFlags';
 import { TaskCompletionError } from '../../domain/taskCompletionError';
@@ -19,7 +20,7 @@ export interface ImageGenerationTaskRef {
 }
 export type ImageGenerationOutcome =
   | { kind: 'completed'; result: Record<string, unknown> | null; fallbackUrl?: string | null }
-  | { kind: 'failed'; message: string }
+  | { kind: 'failed'; message: string; error?: GenerationErrorInfo }
   | { kind: 'cancelled'; message: string }
   | { kind: 'reference_invalid'; message: string }
   | { kind: 'compile_failed'; message: string };
@@ -77,8 +78,10 @@ function batchOutput(input: ImageGenerationOutcomeInput, urls: string[]): Record
 /**
  * Completed-mode writes only. The browser's invalidateInFlightGeneration attempt
  * counter has no server equivalent and is deliberately omitted.
- * Callers must classify InsufficientCreditsError, BillingRuleNotConfiguredError
- * and ProjectQueueLimitError before passing their display text through `failed`.
+ * For a submit failure, pass the raw Error.message as message and the result of
+ * describeGenerationError as error on the failed outcome. If error.referenceIssues
+ * is non-empty, pass reference_invalid with the same raw message instead.
+ * Omitting error retains the existing task-failure display and diagnostics.
  * Effects describe calls, including story attachment calls that may be no-ops.
  */
 export function imageGenerationOutcomePatch(input: ImageGenerationOutcomeInput): ImageGenerationOutcomeResult {
@@ -92,11 +95,13 @@ export function imageGenerationOutcomePatch(input: ImageGenerationOutcomeInput):
   ): ImageGenerationOutcomeResult => ({ action: 'write', patch, completedUrls, effects, ...extra });
   const failure = (message: string, prefix: Record<string, unknown>) => {
     // An Error with an empty message falls back to String(error) for diagnostics.
-    const raw = message || ((outcome.kind === 'cancelled' || (outcome.kind === 'failed' && taskKey))
-      ? 'TaskCompletionError' : 'Error');
+    const submitError = outcome.kind === 'failed' ? outcome.error : undefined;
+    const raw = submitError ? message || submitError.name
+      : message || ((outcome.kind === 'cancelled' || (outcome.kind === 'failed' && taskKey))
+        ? 'TaskCompletionError' : 'Error');
     return write({
       ...prefix,
-      generationError: humanizeTaskError(message, translate),
+      generationError: submitError ? submitError.display : humanizeTaskError(message, translate),
       generationErrorDetails: raw,
       generationErrorRequestId: extractRequestId(raw),
     }, { error: { message } });
