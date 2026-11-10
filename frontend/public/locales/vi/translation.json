@@ -6712,6 +6712,7 @@
       "placeholder": "Viết một câu chuyện, một cảnh hoặc ý tưởng nhân vật. Ví dụ: trong một nhà ga cũ giữa đêm mưa, một lá thư đến muộn làm thay đổi lựa chọn của tất cả mọi người.",
       "generatePlaceholder": "Mô tả câu chuyện, bối cảnh, nhân vật, lời thoại hoặc ý tưởng bạn muốn tạo…",
       "generateText": "Tạo văn bản bằng AI",
+      "generationInputTooLong": "Yêu cầu và văn bản đầu vào vượt quá {{limit}} ký tự. Hãy rút ngắn nội dung rồi thử lại.",
       "modelPickerHint": "Chọn một model",
       "submit": "Gửi",
       "translate": "Dịch (zh ↔ en)",

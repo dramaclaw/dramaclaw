@@ -1,5 +1,5 @@
-import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { vi, it, expect, beforeEach } from "vitest";
+import { act, cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { vi, it, expect, beforeEach, afterEach } from "vitest";
 import { StoryPublicationPanel } from "@/features/canvas/story/StoryPublicationPanel";
 
 vi.mock("react-i18next", () => ({
@@ -47,6 +47,10 @@ beforeEach(() => {
   mocks.error = null;
   mocks.api.mockResolvedValue(work);
   mocks.flush.mockResolvedValue(true);
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
 });
 it("saves the canvas and waits for explicit preview after preparation", async () => {
   mocks.api.mockImplementation(async (path: string) =>
@@ -281,37 +285,47 @@ const preparedVersion = {
 };
 
 it.each([false, true])("restores a preparing cover without overwriting title edits (%s)", async (editTitle) => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const cover = "/api/v1/public-stories/work/versions/v1/media/poster.png";
   const ready = { ...preparedVersion, cover };
   mocks.api.mockImplementation(async (path: string) =>
     path.endsWith("/versions/v1") || path.endsWith("/prepare") ? ready :
       { ...work, versions: [{ ...preparedVersion, status: "preparing" }] });
   const { container } = render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
-  await screen.findByRole("button", { name: "storyPublication.checking" });
+  await act(async () => {});
+  screen.getByRole("button", { name: "storyPublication.checking" });
   if (editTitle) fireEvent.change(screen.getByLabelText("storyPublication.title"), { target: { value: "Updated title" } });
-  await screen.findByLabelText("storyPublication.changeCover", {}, { timeout: 3000 });
+  await act(async () => {});
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+  screen.getByLabelText("storyPublication.changeCover");
   expect(container.querySelector(".publication-cover-row img")).toHaveAttribute("src",
     "/api/v1/projects/p/canvases/c/stories/g/publication/work/versions/v1/media/poster.png");
   expect(screen.getByLabelText("storyPublication.title")).toHaveValue(editTitle ? "Updated title" : "Title");
   if (!editTitle) expect(screen.getByRole("button", { name: "storyPublication.preview" })).toBeEnabled();
   fireEvent.change(screen.getByLabelText("storyPublication.title"), { target: { value: "Final title" } });
   fireEvent.click(screen.getByRole("button", { name: "storyPublication.checkAndPreview" }));
-  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith(expect.stringContaining("/prepare"),
-    expect.objectContaining({ json: expect.objectContaining({ title: "Final title", cover }) })));
+  await act(async () => {});
+  expect(mocks.api).toHaveBeenCalledWith(expect.stringContaining("/prepare"),
+    expect.objectContaining({ json: expect.objectContaining({ title: "Final title", cover }) }));
 });
 
 it("keeps a newly uploaded cover when the restored job finishes", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const cover = "/api/v1/projects/p/media/new.png";
   mocks.api.mockImplementation(async (path: string) => path.endsWith("/upload") ? { url: cover } :
     path.endsWith("/versions/v1") ? { ...preparedVersion, cover: "/api/v1/public-stories/work/versions/v1/media/old.png" } :
       { ...work, versions: [{ ...preparedVersion, status: "preparing" }] });
   const { container } = render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
-  await screen.findByRole("button", { name: "storyPublication.checking" });
+  await act(async () => {});
+  screen.getByRole("button", { name: "storyPublication.checking" });
   fireEvent.change(screen.getByLabelText("storyPublication.uploadCover"), {
     target: { files: [new File(["image"], "new.png", { type: "image/png" })] },
   });
-  await screen.findByLabelText("storyPublication.changeCover");
-  await waitFor(() => expect(screen.getByRole("button", { name: "storyPublication.checkAndPreview" })).toBeEnabled(), { timeout: 3000 });
+  await act(async () => {});
+  screen.getByLabelText("storyPublication.changeCover");
+  await act(async () => {});
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+  expect(screen.getByRole("button", { name: "storyPublication.checkAndPreview" })).toBeEnabled();
   expect(container.querySelector(".publication-cover-row img")).toHaveAttribute("src", cover);
 });
 
@@ -403,16 +417,21 @@ it.each([false, true])("uses author media for a restored pending cover (existing
 });
 
 it("restores a preparing task and polls it instead of creating another version", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   mocks.api.mockImplementation(async (path: string) =>
     path.endsWith("/versions/v1") ? preparedVersion :
       { ...work, versions: [{ ...preparedVersion, status: "preparing", snapshot: undefined }] });
   render(<StoryPublicationPanel groupId="g" title="Other" onClose={() => {}} />);
-  await waitFor(() => expect(screen.getByLabelText("storyPublication.title")).toHaveValue("Title"));
+  await act(async () => {});
+  expect(screen.getByLabelText("storyPublication.title")).toHaveValue("Title");
   expect(screen.getByRole("button", { name: "storyPublication.checking" })).toBeDisabled();
-  const previewButton = await screen.findByRole("button", { name: "storyPublication.preview" }, { timeout: 3000 });
+  await act(async () => {});
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+  const previewButton = screen.getByRole("button", { name: "storyPublication.preview" });
   expect(mocks.enter).not.toHaveBeenCalled();
   fireEvent.click(previewButton);
-  await screen.findByText("storyPublication.publishThisVersion");
+  await act(async () => {});
+  screen.getByText("storyPublication.publishThisVersion");
   expect(mocks.api.mock.calls.some(([path]) => path.endsWith("/prepare"))).toBe(false);
 });
 
@@ -602,6 +621,7 @@ it("shows system failures as interrupted checks and offers retry", async () => {
 
 
 it("switches to the new archived cover before the old draft is retired", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const oldCover = "/api/v1/public-stories/work/versions/old/media/poster.png";
   const newCover = "/api/v1/public-stories/work/versions/v1/media/poster.png";
   mocks.api.mockImplementation(async (path: string) =>
@@ -609,26 +629,33 @@ it("switches to the new archived cover before the old draft is retired", async (
     path.endsWith("/versions/v1") ? { ...preparedVersion, title: "Updated", cover: newCover } :
     { ...work, versions: [{ ...preparedVersion, version: "old", cover: oldCover }] });
   const { container } = render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
-  await screen.findByLabelText("storyPublication.changeCover");
+  await act(async () => {});
+  screen.getByLabelText("storyPublication.changeCover");
   fireEvent.change(screen.getByLabelText("storyPublication.title"), { target: { value: "Updated" } });
   fireEvent.click(screen.getByRole("button", { name: "storyPublication.checkAndPreview" }));
-  await screen.findByRole("button", { name: "storyPublication.preview" }, { timeout: 3000 });
+  await act(async () => {});
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+  screen.getByRole("button", { name: "storyPublication.preview" });
   expect(container.querySelector(".publication-cover-row img")).toHaveAttribute("src",
     "/api/v1/projects/p/canvases/c/stories/g/publication/work/versions/v1/media/poster.png");
   fireEvent.change(screen.getByLabelText("storyPublication.title"), { target: { value: "Next" } });
   fireEvent.click(screen.getByRole("button", { name: "storyPublication.checkAndPreview" }));
-  await waitFor(() => expect(mocks.api).toHaveBeenLastCalledWith(expect.stringContaining("/prepare"),
-    expect.objectContaining({ json: expect.objectContaining({ cover: newCover }) })));
+  await act(async () => {});
+  expect(mocks.api).toHaveBeenLastCalledWith(expect.stringContaining("/prepare"),
+    expect.objectContaining({ json: expect.objectContaining({ cover: newCover }) }));
 });
 
 
 it("stops checking and explains when another window supersedes the draft", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   mocks.api.mockImplementation(async (path: string) => {
     if (path.endsWith("/versions/v1")) throw { detail: { code: "not_found" } };
     return { ...work, versions: [{ ...preparedVersion, status: "preparing" }] };
   });
   render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
-  expect(await screen.findByRole("alert", {}, { timeout: 3000 })).toHaveTextContent("storyPublication.errors.draft_superseded");
+  await act(async () => {});
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+  expect(screen.getByRole("alert")).toHaveTextContent("storyPublication.errors.draft_superseded");
   expect(screen.queryByRole("button", { name: "storyPublication.checking" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "storyPublication.openChecks" })).not.toBeInTheDocument();
 });
@@ -645,17 +672,22 @@ it("offers an explicit retry for preparation interrupted by a server restart", a
 });
 
 it("shows interruption discovered by polling and waits for the user to retry", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   mocks.api.mockImplementation(async (path: string) => path.endsWith("/versions/v1")
     ? { ...preparedVersion, status: "failed", error: "publication_interrupted" }
     : { ...work, versions: [{ ...preparedVersion, status: "preparing" }] });
   render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
-  expect(await screen.findByText("storyPublication.preparingHint")).toBeInTheDocument();
-  expect(await screen.findByRole("button", { name: "storyPublication.retryPreparation" }, { timeout: 3000 })).toBeEnabled();
+  await act(async () => {});
+  expect(screen.getByText("storyPublication.preparingHint")).toBeInTheDocument();
+  await act(async () => {});
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+  expect(screen.getByRole("button", { name: "storyPublication.retryPreparation" })).toBeEnabled();
   expect(screen.queryByText("storyPublication.preparingHint")).not.toBeInTheDocument();
   expect(mocks.api.mock.calls.some(([path]) => path.endsWith("/prepare"))).toBe(false);
 });
 
 it.each(["unchanged", "uploaded", "removed"])("preserves the retry cover after polling detects interruption (%s)", async (edit) => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const originalCover = "/api/v1/projects/p/media/original.png";
   const newCover = "/api/v1/projects/p/media/new.png";
   mocks.api.mockImplementation(async (path: string) =>
@@ -665,7 +697,8 @@ it.each(["unchanged", "uploaded", "removed"])("preserves the retry cover after p
       ? { ...preparedVersion, status: "failed", error: "publication_interrupted", cover: originalCover }
       : { ...work, versions: [{ ...preparedVersion, status: "preparing", cover: null }] });
   render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
-  await screen.findByText("storyPublication.preparingHint");
+  await act(async () => {});
+  screen.getByText("storyPublication.preparingHint");
   fireEvent.change(screen.getByLabelText("storyPublication.title"), { target: { value: "Edited title" } });
   fireEvent.change(screen.getByLabelText("storyPublication.description"), { target: { value: "Edited description" } });
   fireEvent.click(screen.getByRole("button", { name: "storyPublication.portrait" }));
@@ -673,15 +706,19 @@ it.each(["unchanged", "uploaded", "removed"])("preserves the retry cover after p
     fireEvent.change(screen.getByLabelText("storyPublication.uploadCover"), {
       target: { files: [new File(["image"], "new.png", { type: "image/png" })] },
     });
-    await screen.findByLabelText("storyPublication.changeCover");
+    await act(async () => {});
+    screen.getByLabelText("storyPublication.changeCover");
     if (edit === "removed") fireEvent.click(screen.getByRole("button", { name: "storyPublication.removeCover" }));
   }
-  fireEvent.click(await screen.findByRole("button", { name: "storyPublication.retryPreparation" }, { timeout: 3000 }));
-  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith(expect.stringContaining("/prepare"),
+  await act(async () => {});
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+  fireEvent.click(screen.getByRole("button", { name: "storyPublication.retryPreparation" }));
+  await act(async () => {});
+  expect(mocks.api).toHaveBeenCalledWith(expect.stringContaining("/prepare"),
     expect.objectContaining({ json: expect.objectContaining({
       cover: edit === "uploaded" ? newCover : edit === "removed" ? null : originalCover,
       title: "Edited title", description: "Edited description", cover_mode: "portrait",
-    }) })));
+    }) }));
 });
 
 it("requires confirmation before publication removes older versions and allows cancellation", async () => {
@@ -717,6 +754,7 @@ it("warns that manually switching from v6 to v11 will remove v6", async () => {
 
 
 it.each([false, true])("refreshes excess history after cleanup and then stops polling (reopen: %s)", async (reopen) => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const old = { ...preparedVersion, version: "old", number: 1, published: true };
   const current = { ...preparedVersion, version: "current", number: 2, published: true };
   let activated = false;
@@ -730,21 +768,26 @@ it.each([false, true])("refreshes excess history after cleanup and then stops po
       versions: cleaned ? [current] : [current, old] };
   });
   const panel = render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
-  fireEvent.click(await screen.findByText("storyPublication.versionHistory"));
+  await act(async () => {});
+  fireEvent.click(screen.getByText("storyPublication.versionHistory"));
   expect(screen.getByText("storyPublication.retentionPolicy:1")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "storyPublication.rollback" }));
   fireEvent.click(screen.getAllByRole("button", { name: "storyPublication.rollback" })[1]);
-  await waitFor(() => expect(activated).toBe(true));
+  await act(async () => {});
+  expect(activated).toBe(true);
   if (reopen) {
     panel.unmount();
     render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
-    fireEvent.click(await screen.findByText("storyPublication.versionHistory"));
+    await act(async () => {});
+    fireEvent.click(screen.getByText("storyPublication.versionHistory"));
   }
   expect(screen.getByRole("button", { name: "storyPublication.rollback" })).toBeVisible();
   cleaned = true;
-  await waitFor(() => expect(screen.queryByText(/^v1/, { selector: "p" })).not.toBeInTheDocument(), { timeout: 3000 });
+  await act(async () => {});
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+  expect(screen.queryByText(/^v1/, { selector: "p" })).not.toBeInTheDocument();
   const calls = mocks.api.mock.calls.length;
-  await new Promise(resolve => setTimeout(resolve, 1700));
+  await act(async () => { await vi.advanceTimersByTimeAsync(1700); });
   expect(mocks.api.mock.calls.length).toBe(calls);
 });
 
@@ -754,7 +797,7 @@ it.each(["unchanged", "unavailable"])("bounds retention refreshes when cleanup i
   const old = { ...preparedVersion, version: "old", number: 1, published: true };
   const excess = { ...work, retention_limit: 1, active_version: "current", versions: [current, old] };
   mocks.api.mockResolvedValue(excess);
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const panel = render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
   try {
     await act(async () => {});

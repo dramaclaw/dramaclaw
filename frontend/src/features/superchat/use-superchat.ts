@@ -58,6 +58,29 @@ import {
 const SETTINGS_KEY = "superchat:settings";
 const CANVAS_COMMAND_EXECUTION_MODE_STORAGE_KEY = "freezone.canvasCommandExecutionMode";
 const EXECUTABLE_HIDDEN_TOOL_NAMES = FREEZONE_CANVAS_WRITE_TOOL_NAME_SET;
+// Frames that prove the current connection is still streaming a turn. When they arrive,
+// the terminal frame will arrive on this connection too, so busy recovery polling is
+// unnecessary and must not end the turn on a later busy=true history sync.
+const LIVE_TURN_FRAME_TYPES = new Set<string>([
+  "agent.turn.started",
+  "thread.started",
+  "assistant.delta",
+  "assistant.message",
+  "agent.thought.delta",
+  "agent.plan.update",
+  "agent.usage.update",
+  "agent.permission.requested",
+  "agent.tool.started",
+  "agent.tool.updated",
+  "tool.call",
+  "tool.result",
+  "canvas.command",
+  "canvas.context.request",
+  "skill_studio.event",
+  "assistant.clarification.event",
+  "skill_studio.status",
+]);
+
 const INTERNAL_HIDDEN_TOOL_STATUS_NAMES = new Set<string>([
   "freezone_get_audio_voice_options",
   "freezone_get_canvas_action_catalog",
@@ -2014,6 +2037,8 @@ export function useSuperChat({
   const closedRef = useRef(false);
   const authRejectedRef = useRef(false);
   const connectionIdRef = useRef(0);
+  // Turns that received live frames on the current connection (reset per connection/scope).
+  const liveTurnIdsRef = useRef<Set<string>>(new Set());
   const handleFrameRef = useRef<(frame: ServerFrame) => void>(() => {});
   const cacheScopeKeyRef = useRef(scopeKey);
   const skipNextCacheSaveRef = useRef(false);
@@ -2038,6 +2063,15 @@ export function useSuperChat({
   const requestHistory = useCallback(() => {
     sendFrame({ type: "scope.set", scope: desiredScopeRef.current });
   }, [sendFrame]);
+
+  const [recoveringBusyScope, setRecoveringBusyScope] = useState(false);
+  useEffect(() => {
+    if (!recoveringBusyScope || !connected || !busy) return;
+    // A previous socket can still be cancelling its turn when the new socket
+    // receives scope.changed. Its terminal frame will go to the old socket.
+    const timer = window.setInterval(requestHistory, 2000);
+    return () => window.clearInterval(timer);
+  }, [recoveringBusyScope, connected, busy, scopeKey, requestHistory]);
 
   const markTurnActive = useCallback((turnId: string | null) => {
     if (!turnId) return;
@@ -2316,6 +2350,9 @@ export function useSuperChat({
         setError(null);
         const frameScope = isChatScope(frame.scope) ? frame.scope : undefined;
         if (!scopeMatches(frameScope, desiredScopeRef.current)) break;
+        const liveOnConnection = (turnId: string | null | undefined) =>
+          Boolean(turnId && liveTurnIdsRef.current.has(turnId));
+        setRecoveringBusyScope(frame.busy === true && !liveOnConnection(activeTurnIdRef.current));
         setHistoryReady(true);
         const history = mergeHistory(
           Array.isArray(frame.history) ? frame.history : [],
@@ -2327,13 +2364,19 @@ export function useSuperChat({
         const currentMessages = messagesRef.current;
         const protectedTurnId = activeTurnIdRef.current ?? recentlyCompletedTurnIdRef.current;
         setHistoryMessages((current) => {
-          const preserveRemoteBusy = frame.busy === true && currentTurnIsLive(protectedTurnId, current);
+          const preserveRemoteBusy = frame.busy === true
+            && (currentTurnIsLive(protectedTurnId, current) || liveOnConnection(protectedTurnId));
           const merged = mergeHistorySnapshot(current, history, protectedTurnId, preserveRemoteBusy);
           saveCachedMessages(scopeKey, merged);
           return merged;
         });
         const activeTurnId = activeTurnIdRef.current;
-        if (shouldKeepActiveTurnAfterScopeSync(frame.busy, activeTurnId, currentMessages)) {
+        // A partial reply makes the turn look settled to currentTurnIsLive; a turn still
+        // streaming on this connection stays active while the server reports busy.
+        if (
+          shouldKeepActiveTurnAfterScopeSync(frame.busy, activeTurnId, currentMessages)
+          || (frame.busy === true && liveOnConnection(activeTurnId))
+        ) {
           setBusy(true);
         } else if (activeTurnId) {
           // scope.changed is the server-authoritative recovery snapshot. If
@@ -2856,6 +2899,13 @@ export function useSuperChat({
       default:
         break;
     }
+    if (LIVE_TURN_FRAME_TYPES.has(frame.type) && frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
+      const turnIds = [(frame as { turn_id?: unknown }).turn_id, activeTurnIdRef.current, pendingClientTurnIdRef.current];
+      for (const turnId of turnIds) {
+        if (typeof turnId === "string" && turnId.trim()) liveTurnIdsRef.current.add(turnId);
+      }
+      setRecoveringBusyScope(false);
+    }
   }, [
     clearAbortGrace,
     finalizeStream,
@@ -2876,6 +2926,7 @@ export function useSuperChat({
     authRejectedRef.current = false;
     const connectionId = connectionIdRef.current + 1;
     connectionIdRef.current = connectionId;
+    liveTurnIdsRef.current = new Set();
     setConnecting(true);
     setError(null);
     if (reconnectRef.current) window.clearTimeout(reconnectRef.current);
@@ -2962,6 +3013,7 @@ export function useSuperChat({
 
   useEffect(() => {
     desiredScopeRef.current = desiredScope;
+    liveTurnIdsRef.current = new Set();
     if (cacheScopeKeyRef.current !== scopeKey) {
       cacheScopeKeyRef.current = scopeKey;
       skipNextCacheSaveRef.current = true;
