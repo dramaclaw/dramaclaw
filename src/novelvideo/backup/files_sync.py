@@ -17,10 +17,22 @@ from novelvideo.backup.scope import DEPRECATED_COGNEE_FILTER_RULES, is_deprecate
 from novelvideo.freezone.canvas_lock import canvas_write_lock
 from novelvideo.freezone.paths import CANVAS_ID_RE
 
-# Per-user .hermes dirs hold agent runtime state: keep only config/memory — never
-# sync .env (secrets), caches, logs, lock files or tmp to the backup bucket.
+# Hermes homes hold agent runtime state: keep only config/memory — never sync
+# .env (secrets), caches, logs, lock files or tmp to the backup bucket. Homes live
+# at state/{user}/.hermes (director), state/{user}/.hermes-freezone (freezone
+# profile) and {project}/agents/hermes/{profile} (project scope); see
+# novelvideo.chat.hermes_workspace.
 # Atomic writers use both hidden and non-hidden `*.tmp` names, so exclude the
 # suffix rather than relying on a leading dot.
+_HERMES_HOME_FILTER_GLOBS = (".hermes*", "agents/hermes/*")
+_HERMES_RUNTIME_FILTER_PATHS = (
+    ".env",
+    "*_cache/**",
+    "logs/**",
+    "tmp/**",
+    ".cache/**",
+    ".local/**",
+)
 _BASE_FILTER_RULES = (
     "- *.db",
     "- *.db-*",
@@ -31,12 +43,11 @@ _BASE_FILTER_RULES = (
     "- *.snapshot.tmp",
     "- *.tmp",
     "- **/freezone/canvases/_locks/**",
-    "- .hermes/.env",
-    "- .hermes/*_cache/**",
-    "- .hermes/logs/**",
-    "- .hermes/tmp/**",
-    "- .hermes/.cache/**",
-    "- .hermes/.local/**",
+    *(
+        f"- {home}/{path}"
+        for home in _HERMES_HOME_FILTER_GLOBS
+        for path in _HERMES_RUNTIME_FILTER_PATHS
+    ),
 )
 
 _HOT_STATE_SPECS = (
@@ -323,6 +334,11 @@ def _copy_stable_file(
     return source_stat.st_size
 
 
+def _is_hermes_home_container(parent: Path, name: str) -> bool:
+    """Return whether ``parent/name`` is (or only contains) Hermes homes."""
+    return name.startswith(".hermes") or (parent.name == "agents" and name == "hermes")
+
+
 def _iter_freezone_dirs(source_dir: Path) -> list[Path]:
     """Find project freezone roots without assuming a fixed owner/project depth."""
 
@@ -337,6 +353,15 @@ def _iter_freezone_dirs(source_dir: Path) -> list[Path]:
         followlinks=False,
     ):
         current_path = Path(current)
+        # Hermes homes are agent runtime state, not project data. Their freezone
+        # plugin/skill entries are intentional symlinks into the image and a
+        # project-scope home is itself named "freezone", so never treat anything
+        # inside them as a project freezone root.
+        directory_names[:] = [
+            name
+            for name in directory_names
+            if not _is_hermes_home_container(current_path, name)
+        ]
         symlink_directories = {
             name for name in directory_names if (current_path / name).is_symlink()
         }
