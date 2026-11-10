@@ -260,6 +260,12 @@ export function listFreezoneWorkflowRuns(
   return request;
 }
 
+const ownClientSaveIds: string[] = [];
+
+export function isOwnClientSaveId(id: unknown): boolean {
+  return typeof id === "string" && ownClientSaveIds.includes(id);
+}
+
 /**
  * Mint an idempotency token for a single canvas save attempt. Callers should
  * reuse the same id across retries of the same logical save (network blip,
@@ -267,10 +273,12 @@ export function listFreezoneWorkflowRuns(
  * is being sent — see useCanvasSync for the policy.
  */
 export function generateClientSaveId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `save-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const id = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `save-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  ownClientSaveIds.push(id);
+  if (ownClientSaveIds.length > 100) ownClientSaveIds.shift();
+  return id;
 }
 
 export interface FreezonePresetCanvasRequest {

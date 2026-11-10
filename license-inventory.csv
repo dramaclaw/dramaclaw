@@ -2371,6 +2371,8 @@ frontend/src/features/freezone/canvasMetadataContext.ts,Elastic-2.0,2026 SuperTa
 frontend/src/features/freezone/canvasNodeActionCatalog.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/canvasNodeDataNormalization.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/canvasNodeSemantics.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/freezone/canvasPushFrames.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/freezone/canvasPushFrames.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/canvasSaveCoordinator.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/canvasSyncCore.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/canvasSyncRuntime.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

@@ -9,6 +9,7 @@ import { createBrowserCanvasContextPorts } from "./browserCanvasContextPorts";
 import { canvasContextFailureErrors } from "./context/canvasContextResult";
 import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import { startCanvasCommandStream } from "./canvasCommandStream";
+import { canvasPushReloadRevision } from "./canvasPushFrames";
 import { canvasCreationActions } from "@/features/canvas/application/nodeCatalog";
 import { uuidGenerator } from "@/features/canvas/infrastructure/idGenerator";
 import { htmlArtifactNodePatches } from '@/features/html-artifacts/nodeMetadata';
@@ -43,6 +44,7 @@ import {
 import {
   buildProjectionFromPreset,
   getProjectionStatuses,
+  isOwnClientSaveId,
   type FreezonePresetCanvasRequest,
 } from "@/api/canvas";
 import { Button } from "@/components/ui/button";
@@ -60,6 +62,7 @@ import { cn } from "@/lib/utils";
 import type { TFn } from "@/lib/i18n-types";
 import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
 import { api } from "@/lib/api";
+import i18n from "@/i18n";
 import {
   SUPERCHAT_CANVAS_COMMAND_EVENT,
   SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT,
@@ -1134,9 +1137,24 @@ export function FreezoneShell({
   const canvasEdges = useCanvasStore((state) => state.edges);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const syncRetryRef = useRef(sync.retry);
+  const syncRevisionRef = useRef(sync.revision);
+  const requestedReloadRevisionRef = useRef<number | null>(null);
   useEffect(() => {
     syncRetryRef.current = sync.retry;
   }, [sync.retry]);
+  useEffect(() => {
+    syncRevisionRef.current = sync.revision;
+    if (
+      sync.revision != null &&
+      requestedReloadRevisionRef.current != null &&
+      sync.revision >= requestedReloadRevisionRef.current
+    ) {
+      requestedReloadRevisionRef.current = null;
+    }
+  }, [sync.revision]);
+  useEffect(() => {
+    requestedReloadRevisionRef.current = null;
+  }, [canvasId, projectId]);
   const visibleSelectedCanvasNodes = useMemo(() => {
     const selectedNodes = canvasNodes.filter((node) => node.selected);
     return selectedNodes.length > 0
@@ -2006,6 +2024,8 @@ export function FreezoneShell({
   useEffect(() => startCanvasCommandStream<ServerFrame>({
     projectId,
     canvasId,
+    getLastRevision: () => syncRevisionRef.current,
+    getLocale: () => i18n.language,
     getAgentIds: () => loadFreezoneCanvasAgentsWithSource(projectId, canvasId).state.agents
       .map((agent) => agent.id),
     poll: (agentIds, signal) => listPendingCanvasCommandFrames({
@@ -2015,6 +2035,17 @@ export function FreezoneShell({
       ).slice(-200),
     }),
     onFrame: (frame) => {
+      const reloadRevision = canvasPushReloadRevision(frame, {
+        canvasId,
+        currentRevision: syncRevisionRef.current,
+        requestedRevision: requestedReloadRevisionRef.current,
+        isOwnSave: isOwnClientSaveId,
+      });
+      if (reloadRevision !== null) {
+        requestedReloadRevisionRef.current = reloadRevision;
+        syncRetryRef.current();
+        return;
+      }
       const frameRecord = frame as Record<string, unknown>;
       const bridgeKey =
         typeof frameRecord.bridge_key === "string"
