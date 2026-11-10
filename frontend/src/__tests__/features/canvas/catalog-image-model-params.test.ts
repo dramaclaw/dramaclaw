@@ -11,7 +11,7 @@
 // 是测不出第 1 条的。
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { MediaModelParameterDefinition } from "@/api/ops";
+import type { MediaModelParameterDefinition } from '@/features/canvas/domain/modelCatalogPayload';
 import {
   toImageModelDefinition,
   type CatalogImageModelEntry,

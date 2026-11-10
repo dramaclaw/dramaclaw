@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import {
+  canvasCommandValidationFailureResult,
+  CANVAS_COMMAND_VALIDATION_FAILURE_MESSAGE,
+} from "./canvasCommandValidationFailure";
 import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import { startCanvasCommandStream } from "./canvasCommandStream";
 import { canvasCreationActions } from "@/features/canvas/application/nodeCatalog";
@@ -459,24 +463,6 @@ async function loadMainlineProjectionAssets(project: string): Promise<FreezonePr
     })
     .filter((asset): asset is FreezoneProjectAsset => Boolean(asset));
   return [...assets, ...characterAssets];
-}
-
-function canvasCommandValidationFailureResult(errors: string[]): CanvasChatCommandApplyResult {
-  return {
-    applied: 0,
-    openedUiActions: 0,
-    createdNodeIds: [],
-    errors,
-    commandResults: [
-      {
-        commandIndex: -1,
-        type: "validate",
-        status: "error",
-        label: "校验画布命令",
-        error: errors.join("; "),
-      },
-    ],
-  };
 }
 
 function persistCanvasCommandResult({
@@ -1903,7 +1889,7 @@ export function FreezoneShell({
       );
       if (!validation.ok) {
         const errors = [
-          "画布命令预校验失败，前端未展示确认卡，也未执行。",
+          CANVAS_COMMAND_VALIDATION_FAILURE_MESSAGE,
           ...validation.issues.map((issue) => `${issue.path}: ${issue.message}`),
         ];
         console.warn("[freezone-canvas-command] validation failed", {

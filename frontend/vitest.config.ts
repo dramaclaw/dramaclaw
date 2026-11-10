@@ -6,6 +6,9 @@ import path from "path";
 
 // These tests use Node APIs only; keep browser fixtures out of their workers.
 const nodeTests = [
+  "src/__tests__/features/canvas-core/server-apply-commands.test.ts",
+  "src/__tests__/features/canvas-core/server-parity.test.ts",
+  "src/__tests__/features/canvas-core/canvas-server-bundle.test.ts",
   "src/__tests__/components/credit-promotion-coverage.test.ts",
   "src/__tests__/components/login/announcement-dialog-layout-contract.test.ts",
   "src/__tests__/components/login/login-modal-layout-contract.test.ts",

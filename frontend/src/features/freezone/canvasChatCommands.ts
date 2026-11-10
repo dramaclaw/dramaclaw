@@ -1,3 +1,8 @@
+import {
+  GENERATION_NODE_ACTIONS, expandWorkflowNodeIds, defaultWorkflowActionForNode,
+  isWorkflowUserInputNode, hasGeneratedResult,
+  invalidateWorkflowResultsAfterNodeUpdate,
+} from '@/features/canvas/core/workflowInvalidation';
 import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import { isCanvasChatRunNodeAction, isRecord, isFiniteNumber } from "./canvasCommandEnvelope";
 import { STORY_CHOICE_EDGE_TYPE } from "@/features/canvas/story/storyTypes";
@@ -9,7 +14,6 @@ import {
   CANVAS_NODE_TYPES,
   type CanvasEdge,
   type CanvasNode,
-  type CanvasNodeType,
 } from "@/features/canvas/domain/canvasNodes";
 import {
   applyCanvasCommandsAsync,
@@ -200,19 +204,6 @@ export function subscribeCanvasCommandApprovals(
     canvasCommandApprovalSubscribers.delete(subscriber);
   };
 }
-
-const GENERATION_NODE_ACTIONS = new Set([
-  "generate_text",
-  "generate_html",
-  "generate_text_video",
-  "generate_story_script",
-  "generate_image",
-  "generate_audio",
-  "generate_video",
-  "auto_compose_video",
-  "generate_3gs_world",
-  "run_skill",
-]);
 
 export function canvasCommandEnvelopesRunInBackground(
   envelopes: CanvasChatCommandEnvelope[],
@@ -553,16 +544,6 @@ function isRetryableWorkflowActionError(error: string | null | undefined): boole
 function workflowRetryDelayMs(retryCount: number): number {
   return Math.min(1_000 * (2 ** Math.max(retryCount - 1, 0)), 4_000);
 }
-const WORKFLOW_GENERATE_ACTION_BY_NODE_TYPE: Partial<Record<CanvasNodeType, string[]>> = {
-  [CANVAS_NODE_TYPES.htmlArtifact]: ["generate_html"],
-  [CANVAS_NODE_TYPES.script]: ["generate_story_script"],
-  [CANVAS_NODE_TYPES.imageGen]: ["generate_image"],
-  [CANVAS_NODE_TYPES.audio]: ["generate_audio"],
-  [CANVAS_NODE_TYPES.video]: ["generate_video"],
-  [CANVAS_NODE_TYPES.threeDWorld]: ["generate_3gs_world"],
-  [CANVAS_NODE_TYPES.textAnnotation]: ["generate_text", "generate_text_video"],
-};
-
 export function canvasCommandEnvelopeMatchesCanvas(
   envelope: CanvasChatCommandEnvelope,
   canvasId: string | null | undefined,
@@ -770,103 +751,6 @@ function selectedWorkflowNodeIds(): string[] {
   return state.selectedNodeId ? [state.selectedNodeId] : [];
 }
 
-function expandWorkflowNodeIds(
-  seedNodeIds: string[],
-  directions: Array<"upstream" | "downstream"> = ["upstream", "downstream"],
-): string[] {
-  const state = useCanvasStore.getState();
-  const nodeByIdMap = new Map(state.nodes.map((node) => [node.id, node] as const));
-  const upstreamByNodeId = new Map<string, string[]>();
-  const downstreamByNodeId = new Map<string, string[]>();
-  for (const edge of state.edges) {
-    // A Recipe consumes the existing media at this edge. Traversing back into
-    // its source would also reach unrelated branches that share that media.
-    if (!edge.data?.workflowExternalInputImageUrl && !edge.data?.workflowExternalInputVideoUrl) {
-      const upstream = upstreamByNodeId.get(edge.target) ?? [];
-      upstream.push(edge.source);
-      upstreamByNodeId.set(edge.target, upstream);
-    }
-    const downstream = downstreamByNodeId.get(edge.source) ?? [];
-    downstream.push(edge.target);
-    downstreamByNodeId.set(edge.source, downstream);
-  }
-  const expanded = new Set<string>();
-  const queue = seedNodeIds
-    .filter((id) => nodeByIdMap.has(id))
-    .map((id) => ({ nodeId: id, traverseGraph: nodeByIdMap.get(id)?.type !== CANVAS_NODE_TYPES.group }));
-
-  while (queue.length > 0) {
-    const { nodeId, traverseGraph } = queue.shift()!;
-    if (expanded.has(nodeId)) continue;
-    expanded.add(nodeId);
-    const node = nodeByIdMap.get(nodeId);
-    if (node?.type === CANVAS_NODE_TYPES.group) {
-      for (const child of state.nodes) {
-        if (child.parentId === nodeId && !expanded.has(child.id)) {
-          queue.push({ nodeId: child.id, traverseGraph: false });
-        }
-      }
-      continue;
-    }
-    if (!traverseGraph) continue;
-    if (directions.includes("upstream")) {
-      for (const upstreamId of upstreamByNodeId.get(nodeId) ?? []) {
-        if (!expanded.has(upstreamId)) queue.push({ nodeId: upstreamId, traverseGraph: true });
-      }
-    }
-    if (directions.includes("downstream")) {
-      for (const downstreamId of downstreamByNodeId.get(nodeId) ?? []) {
-        if (!expanded.has(downstreamId)) queue.push({ nodeId: downstreamId, traverseGraph: true });
-      }
-    }
-  }
-
-  return state.nodes
-    .map((node) => node.id)
-    .filter((id) => expanded.has(id));
-}
-
-function defaultWorkflowActionForNode(node: CanvasNode): string | null {
-  if (isWorkflowUserInputNode(node)) return null;
-  const preferredActions = WORKFLOW_GENERATE_ACTION_BY_NODE_TYPE[node.type] ?? [];
-  if (preferredActions.length === 0) return null;
-  const state = useCanvasStore.getState();
-  const catalog = buildCanvasNodeActionCatalog(node, {
-    nodeDataDefaults: browserNodeDataDefaults,
-    nodes: state.nodes,
-    edges: state.edges,
-  });
-  for (const action of preferredActions) {
-    const entry = catalog.actions.find((item) => item.action === action);
-    if (!entry || entry.execution !== "frontend_node") continue;
-    if (!isCanvasChatRunNodeAction(action)) continue;
-    return action;
-  }
-  return null;
-}
-
-function isWorkflowUserInputNode(node: CanvasNode | undefined): boolean {
-  if (!node) return false;
-  const data = node.data as Record<string, unknown>;
-  if (data.workflowCatalogRole === "user_input") return true;
-  // An image node containing only an uploaded reference already supplies media to
-  // downstream nodes. It has no generated output to wait for and no prompt to run.
-  if (
-    node.type === CANVAS_NODE_TYPES.imageGen
-    && Boolean(nonEmptyString(data.referenceImageUrl))
-    && !nonEmptyString(data.imageUrl)
-    && !nonEmptyString(data.prompt)
-  ) return true;
-  const catalog = data.workflowCatalog && typeof data.workflowCatalog === "object"
-    && !Array.isArray(data.workflowCatalog)
-    ? data.workflowCatalog as Record<string, unknown>
-    : null;
-  const stepId = String(catalog?.stepId ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/-/g, "_");
-  return ["workflow_input", "user_input", "user_requirement"].includes(stepId);
-}
 
 function workflowExternalSourceIds(
   edges: CanvasEdge[],
@@ -965,7 +849,7 @@ function satisfiedVideoComposeUpstreamNodeIds(
   for (const nodeId of relatedSatisfiedVideoComposeNodeIds(nodeIds, scopedNodeIds)) {
     const node = nodeByIdMap.get(nodeId);
     if (node?.type !== CANVAS_NODE_TYPES.videoCompose) continue;
-    for (const upstreamId of expandWorkflowNodeIds([nodeId], ["upstream"])) {
+    for (const upstreamId of expandWorkflowNodeIds(useCanvasStore, [nodeId], ["upstream"])) {
       if (
         upstreamId !== nodeId
         && scopedNodeIds.has(upstreamId)
@@ -1023,7 +907,7 @@ function workflowNodeActions(
     : command.direction === "downstream"
       ? ["downstream"]
       : ["upstream", "downstream"];
-  const expandedNodeIds = expandWorkflowNodeIds(initialNodeIds, directions);
+  const expandedNodeIds = expandWorkflowNodeIds(useCanvasStore, initialNodeIds, directions);
   const nodeByIdMap = new Map(useCanvasStore.getState().nodes.map((node) => [node.id, node] as const));
   const scopedNodeIds = new Set(expandedNodeIds);
   const externalImageSourceIds = workflowExternalSourceIds(
@@ -1061,9 +945,9 @@ function workflowNodeActions(
       }];
     }
     if (protectedUpstreamNodeIds.has(nodeId)) return [];
-    const action = defaultWorkflowActionForNode(node);
+    const action = defaultWorkflowActionForNode(useCanvasStore, node, browserNodeDataDefaults);
     if (!action) return [];
-    if (options.skipCompleted !== false && hasGeneratedResult(nodeId, action)) return [];
+    if (options.skipCompleted !== false && hasGeneratedResult(useCanvasStore, nodeId, action)) return [];
     return [{
       commandIndex,
       nodeId,
@@ -1091,7 +975,7 @@ function directNodeActionQueue(
     )
   );
   const upstreamNodeIds = includeUpstream
-    ? expandWorkflowNodeIds([nodeId], ["upstream"])
+    ? expandWorkflowNodeIds(useCanvasStore, [nodeId], ["upstream"])
     : [nodeId];
   const externalImageSourceIds = workflowExternalSourceIds(
     state.edges, new Set(upstreamNodeIds), state.nodes,
@@ -1103,8 +987,8 @@ function directNodeActionQueue(
       if (!node || node.type === CANVAS_NODE_TYPES.group) return [];
       if (externalImageSourceIds.has(upstreamId)) return [];
       if (isRedundantLegacyComposeGenerator(node, state.nodes, state.edges)) return [];
-      const upstreamAction = defaultWorkflowActionForNode(node);
-      if (!upstreamAction || hasGeneratedResult(upstreamId, upstreamAction)) return [];
+      const upstreamAction = defaultWorkflowActionForNode(useCanvasStore, node, browserNodeDataDefaults);
+      if (!upstreamAction || hasGeneratedResult(useCanvasStore, upstreamId, upstreamAction)) return [];
       return [{
         commandIndex,
         nodeId: upstreamId,
@@ -1256,58 +1140,6 @@ function waitForNodeActionAccepted(
   });
 }
 
-export function hasGeneratedResult(
-  nodeId: string,
-  action: string,
-  includeInvalidatedResult = false,
-): boolean {
-  const data = nodeById(nodeId)?.data as Record<string, unknown> | undefined;
-  if (!data) return false;
-  if (
-    !includeInvalidatedResult &&
-    GENERATION_NODE_ACTIONS.has(action) &&
-    data.workflowResultStale === true
-  ) {
-    return false;
-  }
-  if (action === "generate_html") {
-    return Boolean(nonEmptyString(data.artifactId)) && Number.isInteger(data.artifactVersion) && Number(data.artifactVersion) > 0;
-  }
-  if (action === "generate_text") {
-    return data.workflowTextGenerated === true && Boolean(nonEmptyString(data.content));
-  }
-  if (action === "generate_story_script") {
-    const scriptResult = data.scriptResult as { rows?: unknown } | undefined;
-    return Array.isArray(scriptResult?.rows) && scriptResult.rows.length > 0;
-  }
-  if (action === "generate_image") {
-    return Boolean(nonEmptyString(data.imageUrl) ?? nonEmptyString(data.image_url));
-  }
-  if (action === "generate_video" || action === "generate_text_video") {
-    return Boolean(nonEmptyString(data.videoUrl) ?? nonEmptyString(data.video_url));
-  }
-  if (action === "auto_compose_video") {
-    return Boolean(nonEmptyString(data.resultVideoUrl));
-  }
-  if (action === "generate_audio") {
-    return Boolean(nonEmptyString(data.audioUrl) ?? nonEmptyString(data.audio_url));
-  }
-  if (action === "generate_3gs_world") {
-    if (typeof data.plyUrl === "string" && data.plyUrl.trim().length > 0) return true;
-    if (!Array.isArray(data.sources)) return false;
-    return data.sources.some((source) => {
-      if (!isRecord(source)) return false;
-      const url = typeof source.ply_url === "string"
-        ? source.ply_url
-        : typeof source.url === "string"
-          ? source.url
-          : "";
-      return url.trim().length > 0;
-    });
-  }
-  return true;
-}
-
 export function hasCurrentWorkflowResult(nodeId: string, action: string): boolean {
   if (!GENERATION_NODE_ACTIONS.has(action)) return false;
   const data = nodeById(nodeId)?.data as Record<string, unknown> | undefined;
@@ -1315,7 +1147,7 @@ export function hasCurrentWorkflowResult(nodeId: string, action: string): boolea
     data &&
     data.workflowResultStale !== true &&
     nonEmptyString(data.workflowGeneratedAt) &&
-    hasGeneratedResult(nodeId, action)
+    hasGeneratedResult(useCanvasStore, nodeId, action)
   );
 }
 
@@ -1337,7 +1169,7 @@ function hasActiveGenerationHandle(nodeId: string): boolean {
 export function isNodeActionGenerationPending(nodeId: string, action: string): boolean {
   return (
     GENERATION_NODE_ACTIONS.has(action) &&
-    !hasGeneratedResult(nodeId, action) &&
+    !hasGeneratedResult(useCanvasStore, nodeId, action) &&
     hasActiveGenerationHandle(nodeId) &&
     nodeGenerationError(nodeId) === null
   );
@@ -1375,7 +1207,7 @@ function generatedResultOutputFromNode(
   const data = nodeById(nodeId)?.data as Record<string, unknown> | undefined;
   if (!data) return null;
   if (action === "generate_html") {
-    return hasGeneratedResult(nodeId, action, true) ? {html_artifact:{id:data.artifactId,version:data.artifactVersion}} : null;
+    return hasGeneratedResult(useCanvasStore, nodeId, action, true) ? {html_artifact:{id:data.artifactId,version:data.artifactVersion}} : null;
   }
   if (action === "generate_text") {
     const content = nonEmptyString(data.content);
@@ -1567,19 +1399,19 @@ async function waitForGeneratedResultField(
 ): Promise<boolean> {
   if (!GENERATION_NODE_ACTIONS.has(action)) return true;
   if (hasGeneratedResultOutput(action, output)) return true;
-  if (hasGeneratedResult(nodeId, action, true)) return true;
+  if (hasGeneratedResult(useCanvasStore, nodeId, action, true)) return true;
   if (hasActiveGenerationHandle(nodeId)) return true;
   if (nodeGenerationError(nodeId)) return false;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 100));
     if (hasGeneratedResultOutput(action, output)) return true;
-    if (hasGeneratedResult(nodeId, action, true)) return true;
+    if (hasGeneratedResult(useCanvasStore, nodeId, action, true)) return true;
     if (hasActiveGenerationHandle(nodeId)) return true;
     if (nodeGenerationError(nodeId)) return false;
   }
   return hasGeneratedResultOutput(action, output)
-    || hasGeneratedResult(nodeId, action, true)
+    || hasGeneratedResult(useCanvasStore, nodeId, action, true)
     || hasActiveGenerationHandle(nodeId);
 }
 
@@ -1604,63 +1436,6 @@ function invalidateWorkflowActionResults(
       workflowResultStale: true,
       workflowInvalidatedAt: timestamp,
       workflowInvalidationReason: action.invalidationReason,
-    });
-  }
-}
-
-const WORKFLOW_OUTPUT_DATA_KEYS = new Set([
-  "audioUrl",
-  "audio_url",
-  "content",
-  "imageUrl",
-  "image_url",
-  "plyUrl",
-  "resultVideoUrl",
-  "scriptResult",
-  "sources",
-  "videoUrl",
-  "video_url",
-]);
-
-const WORKFLOW_PRESENTATION_DATA_KEYS = new Set([
-  "autoTitleIndex",
-  "displayName",
-  "height",
-  "isSizeManuallyAdjusted",
-  "previewImageUrl",
-  "selected",
-  "width",
-]);
-
-function invalidateWorkflowResultsAfterNodeUpdate(
-  nodeId: string,
-  changedData: Record<string, unknown>,
-): void {
-  const changedKeys = Object.keys(changedData).filter(
-    (key) =>
-      !WORKFLOW_PRESENTATION_DATA_KEYS.has(key) &&
-      !key.startsWith("workflow"),
-  );
-  if (changedKeys.length === 0) return;
-  const hasInputChange = changedKeys.some((key) => !WORKFLOW_OUTPUT_DATA_KEYS.has(key));
-  const affectedNodeIds = expandWorkflowNodeIds([nodeId], ["downstream"])
-    .filter((affectedNodeId) => hasInputChange || affectedNodeId !== nodeId);
-  const state = useCanvasStore.getState();
-  const nodeByIdMap = new Map(state.nodes.map((node) => [node.id, node] as const));
-  const timestamp = new Date().toISOString();
-  for (const affectedNodeId of affectedNodeIds) {
-    const affectedNode = nodeByIdMap.get(affectedNodeId);
-    if (!affectedNode || affectedNode.type === CANVAS_NODE_TYPES.group) continue;
-    const action = affectedNode.type === CANVAS_NODE_TYPES.videoCompose
-      ? "auto_compose_video"
-      : defaultWorkflowActionForNode(affectedNode);
-    if (!action || !hasGeneratedResult(affectedNodeId, action, true)) continue;
-    state.updateNodeData(affectedNodeId, {
-      workflowResultStale: true,
-      workflowInvalidatedAt: timestamp,
-      workflowInvalidationReason: affectedNodeId === nodeId
-        ? "node_input_changed"
-        : "upstream_input_changed",
     });
   }
 }
@@ -1881,7 +1656,7 @@ async function executeQueuedNodeActions(
     const completedWhileQueued = pendingActions.filter((action) =>
       action.executionMode === "workflow"
       && !action.invalidationReason
-      && hasGeneratedResult(action.nodeId, action.action));
+      && hasGeneratedResult(useCanvasStore, action.nodeId, action.action));
     const completedImageNodeIds = new Set(
       completedWhileQueued.filter((action) => action.action === "generate_image")
         .map((action) => action.nodeId),
@@ -2234,7 +2009,7 @@ async function executeQueuedNodeActions(
       if (
         action.action !== "run_skill" &&
         GENERATION_NODE_ACTIONS.has(action.action) &&
-        (!hasGeneratedResult(action.nodeId, action.action) || !output)
+        (!hasGeneratedResult(useCanvasStore, action.nodeId, action.action) || !output)
       ) {
         return { action, failed: null, pending: true, retryCount };
       }
@@ -2341,7 +2116,7 @@ async function executeQueuedNodeActions(
           const upstreamAction = actionByNodeId.get(nodeId);
           if (
             upstreamAction &&
-            hasGeneratedResult(nodeId, upstreamAction.action, true)
+            hasGeneratedResult(useCanvasStore, nodeId, upstreamAction.action, true)
           ) {
             blockedNodeIds.delete(nodeId);
             recoverableFailures.delete(nodeId);
@@ -3003,7 +2778,7 @@ const browserCommandEnvironment: CanvasCommandEnvironment = {
   },
   landSceneEdit: (nodeId, nodeData, sceneEdit) => landNodeAgentSceneEdit(nodeId, nodeData, sceneEdit),
   onNodeDataUpdated: (nodeId, changedData) => {
-    invalidateWorkflowResultsAfterNodeUpdate(nodeId, changedData);
+    invalidateWorkflowResultsAfterNodeUpdate(useCanvasStore, nodeId, changedData, Date.now, browserNodeDataDefaults);
   },
 };
 
@@ -3167,7 +2942,7 @@ function browserCommandHandlers(
         }
         syncCompletedStoryFrames(
           allActions.filter((action) => action.action === "generate_image" &&
-            hasGeneratedResult(action.nodeId, action.action)).map((action) => action.nodeId),
+            hasGeneratedResult(useCanvasStore, action.nodeId, action.action)).map((action) => action.nodeId),
           result,
         );
         result.commandResults.push({

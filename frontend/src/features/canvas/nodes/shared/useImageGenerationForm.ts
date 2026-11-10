@@ -29,8 +29,8 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import {
   fetchFreezoneJobResult,
   submitFreezoneGen,
-  type FreezoneProvider,
 } from '@/api/ops';
+import type { FreezoneProvider } from '@/features/canvas/domain/modelCatalogPayload';
 import { translateNodeText } from '@/features/canvas/application/translateText';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { awaitTaskCompletion } from '@/api/tasks';

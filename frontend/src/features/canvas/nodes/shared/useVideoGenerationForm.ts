@@ -107,8 +107,8 @@ import {
   type FreezoneJobRef,
   type FreezoneVideoAspectRatio,
   type FreezoneVideoReferenceItem,
-  type FreezoneVideoResolution,
 } from "@/api/ops";
+import type { FreezoneVideoResolution } from '@/features/canvas/domain/modelCatalogPayload';
 import { awaitTaskCompletion } from "@/api/tasks";
 import {
   CLEARED_GENERATION_TASK_FIELDS,

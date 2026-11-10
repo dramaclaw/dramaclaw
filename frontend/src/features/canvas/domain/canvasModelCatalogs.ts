@@ -54,3 +54,14 @@ export function withCanvasModelCatalogs<T>(
     scopedCatalogs = previous;
   }
 }
+
+/** Only for serialized server requests; retain the override across every await. */
+export async function withCanvasModelCatalogsAsync<T>(catalogs: CanvasModelCatalogs, fn: () => Promise<T>): Promise<T> {
+  const previous = scopedCatalogs;
+  scopedCatalogs = catalogs;
+  try {
+    return await fn();
+  } finally {
+    scopedCatalogs = previous;
+  }
+}

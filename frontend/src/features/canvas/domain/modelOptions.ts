@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { MediaModelRequestSchema } from '@/api/ops';
+import type { MediaModelRequestSchema } from '@/features/canvas/domain/modelCatalogPayload';
 
 import {
   FALLBACK_IMAGE_ASPECT_OPTIONS,

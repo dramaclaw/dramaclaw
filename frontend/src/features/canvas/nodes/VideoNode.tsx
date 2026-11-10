@@ -250,9 +250,9 @@ import {
   type FreezoneJobRef,
   type FreezoneVideoAspectRatio,
   type FreezoneVideoReferenceItem,
-  type FreezoneVideoResolution,
   type FreezoneVideoUpscaleResolution,
 } from "@/api/ops";
+import type { FreezoneVideoResolution } from '@/features/canvas/domain/modelCatalogPayload';
 import {
   awaitTaskCompletion,
   isTaskCancelledError,

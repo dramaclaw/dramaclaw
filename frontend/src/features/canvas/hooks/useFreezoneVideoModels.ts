@@ -5,8 +5,8 @@ import { useEffect, useSyncExternalStore } from "react";
 
 import {
   fetchFreezoneVideoModels,
-  type FreezoneVideoModelInfo,
 } from "@/api/ops";
+import { toModelOptions } from '@/features/canvas/domain/modelCatalogPayload';
 import { readUrl } from "@/lib/url-params";
 import { VIDEO_MODELS, type ModelOption } from "@/features/canvas/domain/modelOptions";
 
@@ -40,10 +40,6 @@ function emit(project: string) {
 function writeState(project: string, next: UseFreezoneVideoModelsResult) {
   states.set(project, next);
   emit(project);
-}
-
-function toModelOptions(models: FreezoneVideoModelInfo[]): ModelOption[] {
-  return models;
 }
 
 function ensureLoaded(project: string, force = false) {

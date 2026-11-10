@@ -5,10 +5,10 @@ import { useEffect, useSyncExternalStore } from "react";
 
 import {
   fetchFreezoneImageModels,
-  type FreezoneImageModelInfo,
 } from "@/api/ops";
+import { toModelOptions } from '@/features/canvas/domain/modelCatalogPayload';
 import { readUrl } from "@/lib/url-params";
-import { SHARED_MODELS, type ModelOption } from "@/features/canvas/domain/modelOptions";
+import { SHARED_MODELS } from "@/features/canvas/domain/modelOptions";
 
 export type UseFreezoneImageModelsResult = CanvasModelCatalog;
 
@@ -41,10 +41,6 @@ function emit(project: string) {
 function writeState(project: string, next: UseFreezoneImageModelsResult) {
   states.set(project, next);
   emit(project);
-}
-
-function toModelOptions(models: FreezoneImageModelInfo[]): ModelOption[] {
-  return models;
 }
 
 function ensureLoaded(project: string, force = false) {

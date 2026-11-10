@@ -18,7 +18,7 @@ import { useMemo } from 'react';
 // 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
 import i18n from 'i18next';
 
-import type { MediaModelRequestSchema } from '@/api/ops';
+import type { MediaModelRequestSchema } from '@/features/canvas/domain/modelCatalogPayload';
 import type { ImageModelDefinition } from '@/features/canvas/models';
 import { normalizeImageModelId } from '@/features/canvas/models';
 import {

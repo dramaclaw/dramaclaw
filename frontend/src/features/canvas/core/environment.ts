@@ -14,6 +14,8 @@ import type { VideoReferenceEnvelope } from '@/features/canvas/domain/videoRefer
 export interface CanvasEnvironment extends NodeDataDefaults {
   /** Issues ids for nodes the core creates. */
   ids: IdGenerator;
+  /** Clock for persisted creation timestamps. */
+  now?: () => number;
   /** Resolves UI copy the core writes into node data, such as default group names. */
   translate(key: string, options?: Record<string, unknown>): string;
   /** A canvas was loaded or cleared; per-canvas bookkeeping kept outside the store is stale. */

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { collectImportGraph, importChain, type ImportGraph } from "./importGraph";
 
 const srcRoot = path.resolve(__dirname, "../../..");
-const entries = ["nodeEntry.ts", "serverEntry.ts"];
+const entries = ["nodeEntry.ts", "serverEntry.ts", "server/worker.ts"];
 
 /** Packages the Node entry may load. Anything new has to be checked for browser needs first. */
 const ALLOWED_PACKAGES = ["i18next", "uuid", "zustand/vanilla"];
@@ -45,7 +45,7 @@ function relative(file: string): string {
 function browserDependencies(graph: ImportGraph): string[] {
   const problems: string[] = [];
   for (const name of [...graph.packages.keys()].sort()) {
-    if (!ALLOWED_PACKAGES.includes(name)) {
+    if (!ALLOWED_PACKAGES.includes(name) && !["node:readline", "node:console"].includes(name)) {
       const importer = [...graph.packages.get(name)!][0];
       problems.push(`package ${name} via ${importChain(graph, importer, srcRoot)}`);
     }
@@ -160,7 +160,7 @@ describe("Node and server canvas entry imports", () => {
     const graph = collectImportGraph([path.join(srcRoot, "features/canvas", entry)], srcRoot);
 
     expect(browserDependencies(graph)).toEqual([]);
-    expect([...graph.packages.keys()].sort()).toEqual(ALLOWED_PACKAGES);
+    expect([...graph.packages.keys()].filter(name => !name.startsWith("node:")).sort()).toEqual(ALLOWED_PACKAGES);
   });
 
   it.each(entries)("reads no browser global without checking that it exists: %s", (entry) => {

@@ -20,7 +20,7 @@ import { render, renderHook, waitFor } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { MediaModelParameterDefinition } from "@/api/ops";
+import type { MediaModelParameterDefinition } from '@/features/canvas/domain/modelCatalogPayload';
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { ImageEditNode } from "@/features/canvas/nodes/ImageEditNode";
 import { StoryboardGenNode } from "@/features/canvas/nodes/StoryboardGenNode";

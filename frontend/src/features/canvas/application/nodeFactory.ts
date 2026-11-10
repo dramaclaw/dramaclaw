@@ -12,7 +12,8 @@ export class CanvasNodeFactory implements NodeFactory {
   constructor(
     private readonly idGenerator: IdGenerator,
     private readonly nodeCatalog: NodeCatalog,
-    private readonly defaults: NodeDataDefaults
+    private readonly defaults: NodeDataDefaults,
+    private readonly now: () => number = () => Date.now(),
   ) {}
 
   createNode(
@@ -29,7 +30,7 @@ export class CanvasNodeFactory implements NodeFactory {
       ...definition.createDefaultData(this.defaults),
       ...data,
       ...(type === CANVAS_NODE_TYPES.audio ? { voicePolicyConfirmed: true } : {}),
-      createdAt: Date.now(),
+      createdAt: this.now(),
     } as CanvasNodeData;
 
     return {
