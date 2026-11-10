@@ -29,7 +29,7 @@ CODEX_IMAGE_INPUT_ENV = "CODEX_IMAGE_INPUT"
 MAX_TURN_IMAGES = 4
 # Compacted copies of turn images, under the project output directory.
 TURN_IMAGE_DIRNAME = ".chat-turn-images"
-_CANVAS_NODE_REFERENCE_TYPE = "canvas_node_reference"
+CANVAS_NODE_REFERENCE_TYPE = "canvas_node_reference"
 _IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 
 
@@ -45,7 +45,7 @@ def referenced_image_paths(
 
     paths: list[Path] = []
     for attachment in attachments:
-        if attachment.get("type") != _CANVAS_NODE_REFERENCE_TYPE:
+        if attachment.get("type") != CANVAS_NODE_REFERENCE_TYPE:
             continue
         try:
             payload = json.loads(str(attachment.get("content") or ""))

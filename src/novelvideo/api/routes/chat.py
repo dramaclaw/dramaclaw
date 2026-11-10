@@ -15,10 +15,19 @@ import logging
 import time
 import uuid
 from dataclasses import replace
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import AliasChoices, BaseModel, Field
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import FileResponse
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from novelvideo.api.auth import (
     AGENT_WRITE_SCOPES,
@@ -41,13 +50,14 @@ from novelvideo.chat.live_events import (
     register_chat_websocket,
     unregister_chat_websocket,
 )
+from novelvideo.chat.home_uploads import resolve_home_upload, save_home_upload
 from novelvideo.chat.hermes_workspace import (
     ensure_user_hermes_workspace,
     sync_freezone_hermes_workflow_skills,
 )
 from novelvideo.chat.store import ChatScope, ChatUiEventRejected, chat_store
 from novelvideo.chat.stream_delta import AssistantDeltaEncoder
-from novelvideo.chat.turn_images import referenced_image_paths
+from novelvideo.chat.turn_images import CANVAS_NODE_REFERENCE_TYPE, referenced_image_paths
 from novelvideo.freezone.canvas_command_bridge import (
     BRIDGE_PENDING_TTL_SECONDS,
     bridge_message_exists,
@@ -84,6 +94,7 @@ from novelvideo.shared.billing_errors import (
     insufficient_credits_payload,
 )
 from novelvideo.utils.error_redaction import safe_exception_message
+from novelvideo.utils.upload_safety import UploadTooLargeError
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -315,6 +326,16 @@ class ChatAttachmentIn(BaseModel):
     url: str | None = None
     path: str | None = None
     label: str | None = None
+
+    @field_validator("url", "path")
+    @classmethod
+    def _address_only(cls, value: str | None) -> str | None:
+        # An inline data: URL is content, not an address; it would reach the
+        # Codex thread through the attachment context block and the history.
+        if value is not None and value.lstrip()[:5].lower() == "data:":
+            logger.warning("dropped inline data from a chat attachment address")
+            return None
+        return value
 
 
 class ChatMessageIn(BaseModel):
@@ -638,6 +659,30 @@ async def append_chat_ui_event(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "data": event}
+
+
+@router.post("/chat/uploads")
+async def upload_home_chat_file(
+    file: Annotated[UploadFile, File()],
+    user: dict = Depends(get_api_user),
+) -> dict[str, Any]:
+    """Store a home chat attachment for this user and return its address."""
+    try:
+        record = await asyncio.to_thread(
+            save_home_upload, str(user["username"]), file.file, file.filename
+        )
+    except UploadTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    return {"ok": True, "data": record}
+
+
+@router.get("/chat/uploads/{name}")
+async def read_home_chat_file(name: str, user: dict = Depends(get_api_user)) -> FileResponse:
+    """Serve one of this user's home chat attachments; other users' files are not found."""
+    path = resolve_home_upload(str(user["username"]), name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="upload not found")
+    return FileResponse(path)
 
 
 @router.post("/chat/permission-result")
@@ -2185,10 +2230,48 @@ def _text_with_attachment_context(
     return f"{text}\n\n{block}" if block else text
 
 
+# What history keeps of a referenced canvas node: identity and media addresses.
+_STORED_CANVAS_NODE_FIELDS = (
+    "node_id",
+    "node_type",
+    "label",
+    "media_type",
+    "source_url",
+    "preview_url",
+)
+
+
+def _stored_canvas_reference(content: str | None) -> str | None:
+    try:
+        payload = json.loads(content or "")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    record = {
+        key: payload[key] for key in ("schema_version", "project", "canvas_id") if key in payload
+    }
+    for key in ("display_nodes", "nodes"):
+        nodes = payload.get(key)
+        if isinstance(nodes, list):
+            record[key] = [
+                {field: node.get(field) for field in _STORED_CANVAS_NODE_FIELDS}
+                for node in nodes
+                if isinstance(node, dict)
+            ]
+    return json.dumps(record, ensure_ascii=False)
+
+
 def _attachment_payloads(attachments: list[ChatAttachmentIn]) -> list[dict[str, Any]]:
+    """Attachment records as chat history stores them: addresses, never file content."""
+
     payloads: list[dict[str, Any]] = []
     for attachment in attachments:
-        payload = attachment.model_dump(exclude_none=True)
+        payload = attachment.model_dump(exclude_none=True, exclude={"content"})
+        if CANVAS_NODE_REFERENCE_TYPE in {attachment.type, attachment.kind}:
+            reference = _stored_canvas_reference(attachment.content)
+            if reference is not None:
+                payload["content"] = reference
         if payload:
             payloads.append(payload)
     return payloads

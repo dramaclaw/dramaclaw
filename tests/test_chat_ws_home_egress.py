@@ -380,7 +380,9 @@ _DRAIN_EVENT = "__drain__"
 _DRAIN_REPLY = f"unsupported event: {_DRAIN_EVENT}"
 
 
-def _send_home_turn(harness, *, text: str = "帮我想个故事") -> list[dict]:
+def _send_home_turn(
+    harness, *, text: str = "帮我想个故事", attachments: list[dict] | None = None
+) -> list[dict]:
     """Drive one **home-scope** turn through `/api/v1/chat/ws` and drain its frames.
 
     收帧不能停在 `chat.done`：`_stream_home_turn` 的 `finally` 先发 `chat.done`，
@@ -397,6 +399,7 @@ def _send_home_turn(harness, *, text: str = "帮我想个故事") -> list[dict]:
                 "scope": {"kind": "home"},
                 "turn_id": "turn-1",
                 "text": text,
+                **({"attachments": attachments} if attachments else {}),
             }
         )
         drain_sent = False
@@ -863,6 +866,65 @@ def test_home_hermes_replay_rewind_reassembles_to_the_final_text(harness):
     assert assembled == "hermes says hello"
     messages = [frame for frame in frames if frame.get("type") == "assistant.message"]
     assert messages[-1]["message"]["content"] == "hermes says hello"
+
+
+def test_home_turn_attachments_reach_history_and_codex_as_addresses_only(harness):
+    from novelvideo.chat.store import chat_store
+
+    captured: dict[str, str] = {}
+
+    async def fake_stream(username, project, prompt, on_event, **kwargs):
+        captured["prompt"] = prompt
+        message = {"id": 1, "role": "assistant", "content": "收到", "media": []}
+        await on_event({"type": "done", "message": message})
+        return message
+
+    harness.monkeypatch.setattr(
+        harness.chat_service, "get_chat_backend_name", lambda: "codex"
+    )
+    harness.monkeypatch.setattr(
+        harness.chat_service, "stream_assistant_reply", fake_stream
+    )
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+
+    frames = _send_home_turn(
+        harness,
+        text="看看附件",
+        attachments=[
+            {
+                "type": "file",
+                "fileName": "notes.md",
+                "url": "/api/v1/chat/uploads/b6aa2a754278da9f-notes.md",
+                "content": "# 大纲",
+            },
+            {
+                "type": "image",
+                "fileName": "paste.png",
+                "url": "data:image/png;base64,iVBORw0KGgo=",
+            },
+        ],
+    )
+
+    assert [frame for frame in frames if frame.get("type") == "error"] == []
+    with chat_store.connect(_USERNAME, ChatScope(kind="home")) as conn:
+        rows = conn.execute(
+            "SELECT role, media_json FROM chat_messages WHERE role = 'user'"
+        ).fetchall()
+    assert [(row[0], json.loads(row[1])) for row in rows] == [
+        (
+            "user",
+            [
+                {
+                    "type": "file",
+                    "fileName": "notes.md",
+                    "url": "/api/v1/chat/uploads/b6aa2a754278da9f-notes.md",
+                },
+                {"type": "image", "fileName": "paste.png"},
+            ],
+        )
+    ]
+    assert "url=/api/v1/chat/uploads/b6aa2a754278da9f-notes.md" in captured["prompt"]
+    assert "data:" not in captured["prompt"]
 
 
 def test_c2_09b_scope_does_not_leak_on_the_exception_path(harness):
