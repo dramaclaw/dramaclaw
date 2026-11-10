@@ -2098,7 +2098,7 @@ export function useSuperChat({
     try {
       await api.post("api/v1/chat/ui-events", { json: body });
     } catch (error) {
-      setError("聊天记录保存失败，请稍后重试；当前消息仍保留在本地。");
+      setError(i18next.t("chatSnapshot.saveFailed"));
       throw error;
     }
   }), []);
@@ -2313,7 +2313,7 @@ export function useSuperChat({
           frameScope ?? desiredScopeRef.current,
         );
         if (history.some(message => (message.raw as Record<string, unknown> | undefined)?.parts_incomplete)) {
-          setError("此对话的部分历史内容过大，已限制加载；正文仍可查看，请联系管理员整理历史记录。");
+          setError(i18next.t("chatSnapshot.historyIncomplete"));
         }
         const currentMessages = messagesRef.current;
         const protectedTurnId = activeTurnIdRef.current ?? recentlyCompletedTurnIdRef.current;
