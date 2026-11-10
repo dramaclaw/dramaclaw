@@ -7498,6 +7498,27 @@ describe("older chat history pages", () => {
     } finally { hook.unmount(); }
   });
 
+  it("guards repeated short-page loads while pending and after has_more is false", async () => {
+    const hook = await setup();
+    try {
+      act(() => {
+        hook.result.current.loadOlderHistory();
+        hook.result.current.loadOlderHistory();
+      });
+      // Also retry after React has rendered the loading state.
+      act(() => { hook.result.current.loadOlderHistory(); });
+      expect(sent).toEqual([{ type: "scope.set", scope, history_before: "c3" }]);
+      // Keep a cursor to prove has_more alone stops further requests.
+      await page(turn(2), "c2", false);
+      expect(hook.result.current.hasOlderHistory).toBe(false);
+      act(() => {
+        hook.result.current.loadOlderHistory();
+        hook.result.current.loadOlderHistory();
+      });
+      expect(sent).toEqual([{ type: "scope.set", scope, history_before: "c3" }]);
+    } finally { hook.unmount(); }
+  });
+
   it("P2 keeps loaded pages, turns displaced by snapshots, and the older cursor", async () => {
     const hook = await setup();
     try {

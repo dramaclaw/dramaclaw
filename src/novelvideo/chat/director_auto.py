@@ -888,6 +888,7 @@ class DirectorAutoCoordinator:
                     },
                 )
 
+        turn_busy = False
         try:
             await chat_service.stream_assistant_reply(
                 run.username,
@@ -901,6 +902,7 @@ class DirectorAutoCoordinator:
                 route_prompt="自动继续下一步",
             )
         except Exception as exc:  # noqa: BLE001
+            turn_busy = isinstance(exc, chat_service.ChatTurnBusyError)
             logger.exception("director auto continuation failed project=%s", run.project_id)
             await self._pause_owned(
                 run_id=run.run_id,
@@ -911,16 +913,17 @@ class DirectorAutoCoordinator:
         else:
             return saw_write
         finally:
-            await broadcast_project_chat_event(
-                username=run.username,
-                project_id=run.project_id,
-                payload={
-                    "type": "chat.done",
-                    "scope": scope,
-                    "turn_id": turn_id,
-                    "message": None,
-                },
-            )
+            if not turn_busy:
+                await broadcast_project_chat_event(
+                    username=run.username,
+                    project_id=run.project_id,
+                    payload={
+                        "type": "chat.done",
+                        "scope": scope,
+                        "turn_id": turn_id,
+                        "message": None,
+                    },
+                )
         await self._notify(run, "本集自动已暂停：虾导继续执行失败，请检查服务状态后重试。")
         return False
 
