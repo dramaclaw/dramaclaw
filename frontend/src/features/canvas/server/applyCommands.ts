@@ -16,6 +16,7 @@ import { invalidateWorkflowResultsAfterNodeUpdate } from '../core/workflowInvali
 import { sanitizePreviewImageUrls } from '@/features/canvas/domain/canvasSerialization';
 import { canvasCommandValidationFailureResult, CANVAS_COMMAND_VALIDATION_FAILURE_MESSAGE } from '@/features/freezone/canvasCommandValidationFailure';
 import { createServerTranslate } from './i18n';
+import { runServerRequest } from './requestScope';
 
 export interface SavedCanvas {
   nodes: CanvasNode[];
@@ -32,14 +33,8 @@ export interface ApplyCommandsEnvironment {
 }
 const HOST_COMMANDS = new Set(['html_artifact', 'run_node_action', 'open_mainline_projection', 'run_workflow']);
 
-let pending: Promise<unknown> = Promise.resolve();
-
 export function applyCommands(canvas: SavedCanvas, envelopes: CanvasChatCommandEnvelope[], env: ApplyCommandsEnvironment) {
-  // The worker serializes requests; this queue also protects direct callers.
-  // Keep the catalog override across awaits; browser scopes stay synchronous.
-  const next = pending.then(() => applyCommandsSerial(canvas, envelopes, env));
-  pending = next.catch(() => {});
-  return next;
+  return runServerRequest(env.locale, () => applyCommandsSerial(canvas, envelopes, env));
 }
 
 async function applyCommandsSerial(canvas: SavedCanvas, envelopes: CanvasChatCommandEnvelope[], env: ApplyCommandsEnvironment) {

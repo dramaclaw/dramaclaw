@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { build } from 'vite';
 import { expect, it } from 'vitest';
 import { envelope, initialCanvas } from './parityFixtures';
+import { contextCanvas, contextEnvelopes, contextHostData, contextNeeds } from './contextParityFixtures';
 import { structuralEnvelopes } from './structuralEnvelopes';
 
 it('bundles a standalone React-free worker and serves sequential NDJSON requests with an empty environment', async () => {
@@ -35,11 +36,15 @@ it('bundles a standalone React-free worker and serves sequential NDJSON requests
       JSON.stringify({ id: 'bad-payload', op: 'apply_commands', payload: {} }),
       JSON.stringify({ id: 'last', op: 'ping' }),
       JSON.stringify({ id: 'unknown-node', op: 'apply_commands', payload: { canvas: { nodes: [knownNode, unknownNode], edges: [unknownEdge] }, envelopes: envelope([{ type: 'create_node', node_type: 'textAnnotationNode', data: { content: 'New' } }]), env: { locale: 'en', catalogs: {} } } }),
+      JSON.stringify({ id: 'context-needs', op: 'answer_context', payload: { canvas: contextCanvas, envelopes: contextEnvelopes(), env: {} } }),
+      JSON.stringify({ id: 'context-answered', op: 'answer_context', payload: { canvas: contextCanvas, envelopes: contextEnvelopes(), env: { hostData: contextHostData } } }),
+      JSON.stringify({ id: 'context-invalid', op: 'answer_context', payload: { canvas: contextCanvas, envelopes: [{ schema_version: 'canvas_context_request.v1', requests: [{ type: 'unknown' }] }] } }),
+      JSON.stringify({ id: 'context-failed', op: 'answer_context', payload: { canvas: contextCanvas, envelopes: contextEnvelopes([{ type: 'node_action_read', node_id: 'missing', action: 'history' }]), env: {} } }),
     ].join('\n') + '\n');
     const timer = setTimeout(() => child.kill(), 20000);
     try { expect(await exit, stderr).toBe(0); } finally { clearTimeout(timer); }
     const lines = stdout.trim().split('\n').map(line => JSON.parse(line));
-    expect(lines).toHaveLength(9);
+    expect(lines).toHaveLength(13);
     expect(lines[0]).toEqual({ id: 'ping', ok: true, result: { pong: true } });
     expect(lines[1]).toMatchObject({ id: null, ok: false, error: { code: 'invalid_json', message: expect.any(String) } });
     expect(lines[2]).toMatchObject({ id: 'apply', ok: true, result: { status: 'applied', canvas: { nodes: expect.any(Array) }, receipt: { canvas_apply_status: 'applied' } } });
@@ -55,5 +60,11 @@ it('bundles a standalone React-free worker and serves sequential NDJSON requests
     expect(lines[8].result.canvas.nodes.find((node: { id: string }) => node.id === unknownNode.id)).toEqual(unknownNode);
     expect(lines[8].result.canvas.edges).toEqual([unknownEdge]);
     expect(lines[8].result.changes.updated_node_ids).toEqual([]);
+    expect(lines[9]).toEqual({ id: 'context-needs', ok: true, result: { status: 'needs_host_data', needs: contextNeeds } });
+    expect(lines[10]).toMatchObject({ id: 'context-answered', ok: true, result: { status: 'answered', result: { ok: true, canvas_id: 'context-canvas' } } });
+    expect(lines[10].result.result.responses).toHaveLength(18);
+    expect(JSON.stringify(lines[10].result.result.responses)).toContain('文生视频');
+    expect(lines[11]).toMatchObject({ id: 'context-invalid', ok: false, error: { code: 'invalid_request' } });
+    expect(lines[12]).toMatchObject({ id: 'context-failed', ok: true, result: { status: 'answered', result: { ok: false, responses: [], errors: [expect.stringContaining('node not found: missing')] } } });
   } finally { await fs.rm(outDir, { recursive: true, force: true }); }
 }, 30000);

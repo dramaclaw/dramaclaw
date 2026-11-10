@@ -1,3 +1,5 @@
+import { coerceAudioReferences } from "@/features/canvas/domain/audioReferences";
+import type { FreezoneAudioVoiceRef, FreezoneAudioReferencesResult } from "@/features/canvas/domain/audioReferences";
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { z } from "zod";
@@ -2123,88 +2125,13 @@ export async function fetchFreezoneReversePromptResult(
 
 // /freezone/audio/references + /freezone/audio/speech -------------------- //
 
-/**
- * 后端定义的声线 scope。
- * - project_narrator: 项目解说人
- * - character_default: 角色默认声线
- * - character_age_group: 角色年龄段声线（需要 slot）
- * - identity: 身份自己的声线（需要 identity_id）
- * - identity_resolved: 按 身份→年龄段→角色默认 兜底解析后的实际声线
- */
-export type FreezoneAudioVoiceRefScope =
-  | "project_narrator"
-  | "user_custom"
-  | "character_default"
-  | "character_age_group"
-  | "identity"
-  | "identity_resolved";
-
-export interface FreezoneAudioVoiceRef {
-  scope: FreezoneAudioVoiceRefScope;
-  /** scope=character_* / identity* 时必填，匹配项目角色名。 */
-  characterName?: string;
-  /** scope=identity / identity_resolved 时必填。 */
-  identityId?: string;
-  /** scope=character_age_group 时必填：child/youth/middle/elder。 */
-  slot?: string;
-  /** scope=user_custom 时必填：来自 GET/POST /freezone/audio/voices。 */
-  voiceId?: string;
-}
-
-/**
- * `GET /freezone/audio/references` 返回的单条记录。openapi 没给 schema（{}），
- * 这里按后端 description 推测，UI 防御性读取——遇到陌生字段就忽略。
- */
-export interface FreezoneAudioReferenceItem {
-  scope: FreezoneAudioVoiceRefScope;
-  /** scope=character_* 或 identity* 时有值。 */
-  character_name?: string | null;
-  /** scope=identity / identity_resolved 时有值。 */
-  identity_id?: string | null;
-  /** scope=character_age_group 时有值：child/youth/middle/elder。 */
-  slot?: string | null;
-  /** scope=user_custom 时有值：账号级音色 ID（来自 POST /freezone/audio/voices）。 */
-  voice_id?: string | null;
-  /** 展示名（后端给的，若没给前端兜底拼）。 */
-  label?: string | null;
-  /** 语言/腔调说明。 */
-  language?: string | null;
-  /** 性别（如果后端给）。 */
-  gender?: string | null;
-  /** 预览音频静态 URL（如果后端给）。 */
-  preview_url?: string | null;
-  [key: string]: unknown;
-}
-
-export interface FreezoneAudioReferencesResult {
-  /** 项目内可用的声线引用列表。 */
-  available: FreezoneAudioReferenceItem[];
-  [key: string]: unknown;
-}
-
 export async function fetchFreezoneAudioReferences(
   project: string,
 ): Promise<FreezoneAudioReferencesResult> {
   const payload = await apiCall<unknown>(
     `projects/${encodeURIComponent(project)}/freezone/audio/references`,
   );
-  // 容错：后端可能直接返回数组、或 { available: [...] }，或 { items: [...] }。
-  if (Array.isArray(payload)) {
-    return { available: payload as FreezoneAudioReferenceItem[] };
-  }
-  if (payload && typeof payload === "object") {
-    const wrapper = payload as Record<string, unknown>;
-    if (Array.isArray(wrapper.available)) {
-      return wrapper as unknown as FreezoneAudioReferencesResult;
-    }
-    if (Array.isArray(wrapper.items)) {
-      return { available: wrapper.items as FreezoneAudioReferenceItem[] };
-    }
-    if (Array.isArray(wrapper.data)) {
-      return { available: wrapper.data as FreezoneAudioReferenceItem[] };
-    }
-  }
-  return { available: [] };
+  return coerceAudioReferences(payload);
 }
 
 export interface FreezoneAudioSpeechPayload extends FreezoneNodeContext {

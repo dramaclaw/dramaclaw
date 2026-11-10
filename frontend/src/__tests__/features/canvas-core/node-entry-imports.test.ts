@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { collectImportGraph, importChain, type ImportGraph } from "./importGraph";
 
 const srcRoot = path.resolve(__dirname, "../../..");
-const entries = ["nodeEntry.ts", "serverEntry.ts", "server/worker.ts"];
+const entries = ["nodeEntry.ts", "serverEntry.ts", "server/worker.ts", "server/answerContextRequests.ts", "../freezone/chatNodeReferences.ts"];
 
 /** Packages the Node entry may load. Anything new has to be checked for browser needs first. */
 const ALLOWED_PACKAGES = ["i18next", "uuid", "zustand/vanilla"];

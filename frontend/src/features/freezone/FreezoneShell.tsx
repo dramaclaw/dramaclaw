@@ -4,6 +4,9 @@ import {
   canvasCommandValidationFailureResult,
   CANVAS_COMMAND_VALIDATION_FAILURE_MESSAGE,
 } from "./canvasCommandValidationFailure";
+import { combineMainlineProjectionAssets } from "@/features/canvas/domain/mainlineProjectionAssets";
+import { createBrowserCanvasContextPorts } from "./browserCanvasContextPorts";
+import { canvasContextFailureErrors } from "./context/canvasContextResult";
 import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import { startCanvasCommandStream } from "./canvasCommandStream";
 import { canvasCreationActions } from "@/features/canvas/application/nodeCatalog";
@@ -438,31 +441,7 @@ async function loadMainlineProjectionAssets(project: string): Promise<FreezonePr
     listFreezoneProjectAssets(project),
     listCharacters(project),
   ]);
-  const characterAssets: FreezoneProjectAsset[] = characters
-    .map((character): FreezoneProjectAsset | null => {
-      const name = typeof character.name === "string" ? character.name.trim() : "";
-      if (!name) return null;
-      const displayName =
-        typeof character.display_name === "string" && character.display_name.trim()
-          ? character.display_name.trim()
-          : name;
-      return {
-        id: `character:${name}`,
-        tab: "characters",
-        kind: "character",
-        role: "character_profile",
-        label: displayName,
-        sublabel: typeof character.role === "string" && character.role.trim() ? character.role.trim() : undefined,
-        url: typeof character.portrait_url === "string" && character.portrait_url.trim()
-          ? character.portrait_url.trim()
-          : null,
-        exists: true,
-        media_type: character.portrait_url ? "image" : "text",
-        meta: { character: name },
-      };
-    })
-    .filter((asset): asset is FreezoneProjectAsset => Boolean(asset));
-  return [...assets, ...characterAssets];
+  return combineMainlineProjectionAssets(assets, characters);
 }
 
 function persistCanvasCommandResult({
@@ -1206,7 +1185,7 @@ export function FreezoneShell({
         chatReferenceCanvasNodes,
         canvasEdges,
         canvasNodes,
-        { displayNodes: visibleSelectedCanvasNodes },
+        { displayNodes: visibleSelectedCanvasNodes, nodeDataDefaults: browserNodeDataDefaults },
       ),
     [canvasEdges, canvasId, canvasNodes, chatReferenceCanvasNodes, projectId, visibleSelectedCanvasNodes],
   );
@@ -2117,7 +2096,7 @@ export function FreezoneShell({
             selectedNodeIds,
             envelopes,
             canvasMetadata: sync.metadata as Record<string, unknown> | null,
-            loadMainlineProjectionAssets: () => loadMainlineProjectionAssets(projectId),
+            ports: createBrowserCanvasContextPorts(projectId, () => loadMainlineProjectionAssets(projectId)),
           });
           reportCanvasContextToolResult({
             bridgeKey,
@@ -2130,8 +2109,7 @@ export function FreezoneShell({
             errors: [],
           });
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error || "unknown error");
-          const errors = [`读取画布上下文失败：${message}`];
+          const errors = canvasContextFailureErrors(error);
           emitCanvasContextActivity({
             turnId,
             anchorTextPrefix,
