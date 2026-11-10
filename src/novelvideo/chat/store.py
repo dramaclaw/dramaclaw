@@ -1385,6 +1385,21 @@ class ChatStore:
         finally:
             await db.close()
 
+    async def ui_event_turn_ids_async(
+        self, username: str, scope: ChatScope, *, event_type: str, bridge_key: str
+    ) -> list[str]:
+        db = await self.connect_async(username, scope, db_path=self.read_db_for(username, scope))
+        try:
+            async with db.execute(
+                "SELECT turn_id FROM chat_ui_events WHERE event_type = ? AND "
+                "json_extract(payload_json, '$.bridge_key') = ? "
+                "GROUP BY turn_id ORDER BY MIN(id)",
+                (event_type, bridge_key),
+            ) as cursor:
+                return [row["turn_id"] for row in await cursor.fetchall()]
+        finally:
+            await db.close()
+
     async def turn_ui_events_async(
         self, username: str, scope: ChatScope, turn_ids, *, max_bytes: int = UI_HISTORY_MAX_BYTES
     ) -> dict[str, list[dict]]:

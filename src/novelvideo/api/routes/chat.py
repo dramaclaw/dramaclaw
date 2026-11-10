@@ -851,23 +851,17 @@ async def _persist_chat_turn_error(
         )
         storage_scope = _history_store_scope(scope, project_ctx)
 
-        existing_messages = await chat_store.list_messages_async(
-            username, storage_scope
-        )
-        for existing in reversed(existing_messages):
-            if (
-                str(existing.get("turn_id") or "") == turn_id
-                and existing.get("chat_error") is True
-            ):
-                return existing
-        return await chat_store.append_message_async(
+        message = await chat_store.append_message_async(
             username,
             storage_scope,
             "assistant",
             content,
             turn_id=turn_id,
             metadata={"chat_error": True},
+            idempotency_key=f"chat-error:{turn_id}",
         )
+        message.update(message.pop("metadata", {}))
+        return message
     except Exception:  # noqa: BLE001
         logger.exception(
             "failed to persist chat turn error username=%s turn_id=%s scope=%s",
@@ -1745,15 +1739,14 @@ async def _persist_clarification_result_ui_event(
         return
     project_ctx = await _project_context_for_interaction_result(user, scope)
     store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
-    turns = {turn_id}
-    for message in await chat_store.list_messages_async(username, store_scope):
-        if message.get("turn_id") and any(
-            event.get("type") == "assistant.clarification.request"
-            and event.get("bridge_key") == payload.bridge_key
-            for event in message.get("ui_events", [])
-            if isinstance(event, dict)
-        ):
-            turns.add(message["turn_id"])
+    turns = {turn_id} | set(
+        await chat_store.ui_event_turn_ids_async(
+            username,
+            store_scope,
+            event_type="assistant.clarification.request",
+            bridge_key=payload.bridge_key,
+        )
+    )
     for target_turn in turns:
         await chat_store.append_ui_event_async(
             username,

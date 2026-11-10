@@ -850,6 +850,7 @@ class DirectorAutoCoordinator:
                 "\n[/DRAMACLAW_VOICE_POLICY]"
             )
         turn_id = f"director-auto-{run.run_id}-{uuid.uuid4().hex[:10]}"
+        scope = {"kind": "project", "id": run.project_id, "surface": "director"}
         saw_write = False
 
         async def on_event(event: dict[str, Any]) -> None:
@@ -864,9 +865,26 @@ class DirectorAutoCoordinator:
                     project_id=run.project_id,
                     payload={
                         "type": "assistant.message",
-                        "scope": {"kind": "project", "id": run.project_id, "surface": "director"},
+                        "scope": scope,
                         "turn_id": turn_id,
                         "message": event["message"],
+                    },
+                )
+            elif event.get("type") in {"item", "item_delta"}:
+                event_type = event["type"]
+                fields = (
+                    ("message_id", "item_id", "card")
+                    if event_type == "item"
+                    else ("message_id", "item_id", "kind", "offset", "text")
+                )
+                await broadcast_project_chat_event(
+                    username=run.username,
+                    project_id=run.project_id,
+                    payload={
+                        "type": "chat.item" if event_type == "item" else "chat.item.delta",
+                        "scope": scope,
+                        "turn_id": turn_id,
+                        **{key: event[key] for key in fields},
                     },
                 )
 
@@ -882,7 +900,6 @@ class DirectorAutoCoordinator:
                 turn_id=turn_id,
                 route_prompt="自动继续下一步",
             )
-            return saw_write
         except Exception as exc:  # noqa: BLE001
             logger.exception("director auto continuation failed project=%s", run.project_id)
             await self._pause_owned(
@@ -891,8 +908,21 @@ class DirectorAutoCoordinator:
                 project_id=run.project_id,
                 reason=str(exc),
             )
-            await self._notify(run, "本集自动已暂停：虾导继续执行失败，请检查服务状态后重试。")
-            return False
+        else:
+            return saw_write
+        finally:
+            await broadcast_project_chat_event(
+                username=run.username,
+                project_id=run.project_id,
+                payload={
+                    "type": "chat.done",
+                    "scope": scope,
+                    "turn_id": turn_id,
+                    "message": None,
+                },
+            )
+        await self._notify(run, "本集自动已暂停：虾导继续执行失败，请检查服务状态后重试。")
+        return False
 
     async def _run(self, run_id: str, username: str, project_id: str) -> None:
         taskless_continuations = 0
