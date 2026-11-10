@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 import portalocker
 
 from novelvideo.chat import display_fallback, media_presentation, message_repository, presentation, presentation_mapping, runtime_event_mapper, session_registry
+from novelvideo.freezone.canvas_command_bridge import (
+    CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS,
+    canvas_command_result_timeout_seconds,
+)
 from novelvideo.chat.backend_sdk import (
     ClaudeSdkClient,
     CodexClient,
@@ -1148,13 +1152,7 @@ async def _dispatch_exact_audio_node_action(
     )
     if immediate is not None:
         return immediate
-    try:
-        timeout_seconds = max(
-            1,
-            int(os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "600")),
-        )
-    except ValueError:
-        timeout_seconds = 600
+    timeout_seconds = canvas_command_result_timeout_seconds()
     timeout_result = {
         "ok": False,
         "tool_call_status": "failed",
@@ -3717,11 +3715,15 @@ def _dramaclaw_mcp_servers(
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "novelvideo.chat.dramaclaw_mcp"],
+            "tool_timeout_sec": (
+                canvas_command_result_timeout_seconds() + CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS
+            ),
             "env_vars": [
                 "DRAMACLAW_API_URL",
                 "DRAMACLAW_AGENT_TOKEN_FILE",
                 "DRAMACLAW_CANVAS_ID",
                 "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",
+                "DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS",
                 "DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS",
                 "DRAMACLAW_CHAT_SURFACE",
                 "DRAMACLAW_EXTERNAL_MCP",
@@ -3810,6 +3812,8 @@ def _codex_mcp_config_overrides(
         overrides.append(
             f"{prefix}.env_vars={json.dumps([str(var) for var in env_vars], ensure_ascii=False, separators=(',', ':'))}"
         )
+        if "tool_timeout_sec" in server:
+            overrides.append(f"{prefix}.tool_timeout_sec={server['tool_timeout_sec']}")
         overrides.append(f"{prefix}.enabled=true")
         overrides.append(f"{prefix}.required=true")
         if enabled_tools is not None:

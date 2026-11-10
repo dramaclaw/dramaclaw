@@ -13,6 +13,11 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Literal, Mapping, Sequence
 if TYPE_CHECKING:
     from novelvideo.chat.codex_history import CodexHistoryPage
 
+from novelvideo.chat.hermes_sdk import _is_freezone_canvas_write_tool
+from novelvideo.freezone.canvas_command_bridge import (
+    CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS,
+    canvas_command_result_timeout_seconds,
+)
 from novelvideo.chat.runtime_port import (
     AgentRuntimeThreadPort,
     ChatBackendEvent,
@@ -2330,6 +2335,7 @@ class CodexThread:
         idle_deadline = started_at + CODEX_STREAM_IDLE_TIMEOUT
         saw_runtime_progress = False
         user_input_calls: set[str] = set()
+        canvas_tool_deadlines: dict[str, float] = {}
         timed_out = False
 
         try:
@@ -2341,6 +2347,7 @@ class CodexThread:
                         deadline = (
                             idle_deadline if saw_runtime_progress else first_progress_deadline
                         )
+                        deadline = max((deadline, *canvas_tool_deadlines.values()))
                         remaining = deadline - loop.time()
                         if remaining <= 0:
                             raise asyncio.TimeoutError
@@ -2414,19 +2421,20 @@ class CodexThread:
                 if event.type not in _CODEX_LIFECYCLE_ONLY_EVENTS:
                     saw_runtime_progress = True
                     idle_deadline = loop.time() + CODEX_STREAM_IDLE_TIMEOUT
-                if event.type == "tool_started" and _codex_tool_waits_for_user_input(
-                    event.name
-                ):
-                    user_input_calls.add(event.call_id or str(event.name))
+                call_key = event.call_id or str(event.name)
+                if event.type == "tool_started":
+                    if _codex_tool_waits_for_user_input(event.name):
+                        user_input_calls.add(call_key)
+                    elif _is_freezone_canvas_write_tool(event.name):
+                        canvas_tool_deadlines[call_key] = (
+                            loop.time() + canvas_command_result_timeout_seconds()
+                            + CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS
+                        )
                 elif event.type == "tool_updated":
-                    call_key = event.call_id or str(event.name)
                     status = str(event.status or "").strip().lower()
-                    if call_key in user_input_calls and status not in {
-                        "inprogress",
-                        "pending",
-                        "running",
-                    }:
+                    if status not in {"inprogress", "pending", "running"}:
                         user_input_calls.discard(call_key)
+                        canvas_tool_deadlines.pop(call_key, None)
                 yield event
                 if event.type == "complete":
                     break

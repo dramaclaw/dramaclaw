@@ -3719,6 +3719,7 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_AGENT_TOKEN_FILE",
         "DRAMACLAW_CANVAS_ID",
         "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",
+        "DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS",
         "DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS",
         "DRAMACLAW_CHAT_SURFACE",
         "DRAMACLAW_EXTERNAL_MCP",
@@ -4201,7 +4202,8 @@ def test_chat_agent_api_url_defaults_to_rest_listener(monkeypatch):
     assert chat_service._load_api_url() == "http://127.0.0.1:8780"
 
 
-def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
+def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "75")
     overrides = chat_service._codex_mcp_config_overrides(
         chat_service._dramaclaw_mcp_servers()
     )
@@ -4215,6 +4217,7 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         'mcp_servers.dramaclaw.env_vars=["DRAMACLAW_API_URL",'
         '"DRAMACLAW_AGENT_TOKEN_FILE","DRAMACLAW_CANVAS_ID",'
         '"DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",'
+        '"DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS",'
         '"DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS","DRAMACLAW_CHAT_SURFACE",'
         '"DRAMACLAW_EXTERNAL_MCP",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
@@ -4223,6 +4226,7 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH","PYTHON_DOTENV_DISABLED",'
         '"SUPERTALE_OPENFILM_STUDIO_ENABLED"]' in overrides
     )
+    assert "mcp_servers.dramaclaw.tool_timeout_sec=105" in overrides
     assert "mcp_servers.dramaclaw.required=true" in overrides
     assert 'mcp_servers.dramaclaw.default_tools_approval_mode="approve"' in overrides
 
@@ -8610,4 +8614,14 @@ async def test_codex_starter_reports_sweeper_timeout(codex_turn_runtime, monkeyp
     assert dispositions == ["timeout"]
     assert [m["content"] for m in chat_store.list_messages("test-user", scope)] == [
         "本轮请求超过最长 1 分钟，已停止。"
+    ]
+
+
+def test_codex_canvas_timeout_does_not_change_other_mcp_servers(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "75")
+    overrides = chat_service._codex_mcp_config_overrides(
+        chat_service._dramaclaw_mcp_servers("freezone_canvas")
+    )
+    assert [entry for entry in overrides if ".tool_timeout_sec=" in entry] == [
+        "mcp_servers.dramaclaw.tool_timeout_sec=105"
     ]

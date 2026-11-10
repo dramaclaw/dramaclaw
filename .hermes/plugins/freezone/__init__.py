@@ -164,6 +164,7 @@ _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR: Exception | None = None
 try:
     from novelvideo.freezone.canvas_command_bridge import (
         canvas_command_bridge_key,
+        canvas_command_result_timeout_seconds,
         canvas_command_idempotency_key,
         canvas_context_bridge_key,
         clarification_bridge_key,
@@ -184,6 +185,7 @@ try:
 except Exception as exc:
     _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR = exc
     canvas_command_bridge_key = None
+    canvas_command_result_timeout_seconds = None
     canvas_command_idempotency_key = None
     canvas_context_bridge_key = None
     clarification_bridge_key = None
@@ -5819,15 +5821,7 @@ def _dispatch_mcp_approved_frontend_commands(
             if slim_result
             else immediate_result
         )
-    try:
-        timeout_seconds = max(
-            1,
-            int(
-                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "600")
-            ),
-        )
-    except ValueError:
-        timeout_seconds = 600
+    timeout_seconds = canvas_command_result_timeout_seconds()
     timeout_result = {
         "ok": False,
         "tool_call_status": "failed",
@@ -5929,15 +5923,7 @@ def _dispatch_frontend_canvas_commands(
             if slim_result
             else immediate_result
         )
-    try:
-        timeout_seconds = max(
-            1,
-            int(
-                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "600")
-            ),
-        )
-    except ValueError:
-        timeout_seconds = 600
+    timeout_seconds = canvas_command_result_timeout_seconds()
     timeout_result = {
         "ok": False,
         "tool_call_status": "failed",

@@ -748,3 +748,26 @@ async def test_freezone_cancel_notice_is_idempotent_and_settles_old_clarificatio
         "code": "freezone.chat.clarification.cancelledRequest",
     }
     assert resolved[0][2]["bridge_dir"] == tmp_path / "bridge"
+
+
+def test_canvas_timeout_result_has_failed_status_live_and_in_history():
+    started = next(
+        p["item"] for method, p in notifications(RECORDINGS[1])
+        if method == "item/started" and p["item"]["type"] == "mcpToolCall"
+    )
+    started = {**started, "server": "dramaclaw", "tool": "freezone_create_node"}
+    result = {"ok": False, "tool_call_status": "failed", "cancelled": True}
+    completed = {
+        **started, "status": "completed",
+        "result": {"content": [{"type": "text", "text": json.dumps(result)}],
+                   "structuredContent": result},
+    }
+    live = projector()
+    live.started(started, 1)
+    live_card = live.completed(completed)["card"]
+    history_card = project_item(
+        completed, turn_id="business-1", started_at_ms=1, completed=True,
+    )
+    assert live_card["event"]["raw"]["status"] == "failed"
+    assert history_card["event"]["raw"]["status"] == "failed"
+    assert live.finish() == []

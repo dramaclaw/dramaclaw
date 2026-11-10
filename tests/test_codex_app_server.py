@@ -2164,8 +2164,20 @@ async def test_codex_stream_times_out_after_runtime_becomes_idle(monkeypatch, tm
 
 
 @pytest.mark.asyncio
-async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize(
+    ("tool_name", "tool_delay", "expected_disposition", "progress_delay"),
+    [
+        ("freezone_finish_agent_catalog_draft", 0.4, "completed", None),
+        ("freezone_create_node", 0.12, "completed", None),
+        ("freezone_create_node", 0.55, "timeout", None),
+        pytest.param(
+            "freezone_create_node", 0.14, "completed", 0.12,
+            id="canvas-deadline-must-not-shorten-later-idle-window",
+        ),
+    ],
+)
+async def test_codex_stream_tool_wait_deadlines(
+    monkeypatch, tmp_path, tool_name, tool_delay, expected_disposition, progress_delay
 ):
     from openai_codex.generated import v2_all as v2
     from openai_codex.models import Notification
@@ -2176,7 +2188,7 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
         "type": "mcpToolCall",
         "id": "call-confirm",
         "server": "dramaclaw",
-        "tool": "freezone_finish_agent_catalog_draft",
+        "tool": tool_name,
         "arguments": {"skill_studio_session_id": "studio-1"},
         "status": "inProgress",
     }
@@ -2220,7 +2232,17 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
                     }
                 ),
             )
-            delay.wait(timeout=0.1)
+            if progress_delay is not None:
+                delay.wait(timeout=progress_delay)
+                yield Notification(
+                    method="item/reasoning/summaryTextDelta",
+                    payload=v2.ReasoningSummaryTextDeltaNotification.model_validate({
+                        "threadId": "thread-confirm", "turnId": self.id,
+                        "itemId": "reasoning-confirm", "delta": "Still working",
+                        "summaryIndex": 0,
+                    }),
+                )
+            delay.wait(timeout=tool_delay)
             yield Notification(
                 method="item/completed",
                 payload=v2.ItemCompletedNotification.model_validate(
@@ -2278,7 +2300,18 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
         backend_sdk, "_start_codex_turn", lambda *_args, **_kwargs: FakeTurn()
     )
     monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
-    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.03)
+    monkeypatch.setattr(
+        backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.18 if progress_delay is not None else 0.03
+    )
+
+    monkeypatch.setattr(
+        backend_sdk, "canvas_command_result_timeout_seconds",
+        lambda: 0.15 if progress_delay is not None else 0.2, raising=False,
+    )
+    monkeypatch.setattr(
+        backend_sdk, "CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS",
+        0.05 if progress_delay is not None else 0.1, raising=False,
+    )
 
     thread = CodexThread(
         codex_bin=None,
@@ -2294,8 +2327,13 @@ async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
     )
     events = [event async for event in thread.stream("Create a skill")]
 
-    assert interrupt_calls == []
     assert events[-1].type == "complete"
-    assert events[-1].text == "已确认"
-    assert events[-2].type == "egress_disposition"
-    assert events[-2].disposition == "completed"
+    assert events[-2].disposition == expected_disposition
+    if expected_disposition == "completed":
+        assert events[-1].text == "已确认"
+        assert interrupt_calls == []
+    else:
+        assert events[-1].disposition == "timeout"
+        assert events[-3].error["kind"] == "idle"
+        assert events[-3].error["elapsed_ms"] >= 250
+        assert interrupt_calls == ["turn-confirm"]
